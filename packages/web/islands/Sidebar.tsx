@@ -1,7 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import type { AuthStatus, Session } from "@liuboer/shared";
 import { apiClient } from "../lib/api-client.ts";
-import { currentSessionIdSignal } from "../lib/signals.ts";
+import { currentSessionIdSignal, sidebarOpenSignal } from "../lib/signals.ts";
 import { formatRelativeTime } from "../lib/utils.ts";
 import { toast } from "../lib/toast.ts";
 import { Button } from "../components/ui/Button.tsx";
@@ -187,14 +187,47 @@ export default function Sidebar() {
     },
   ];
 
+  const handleSessionClick = (sessionId: string) => {
+    currentSessionIdSignal.value = sessionId;
+    // Close sidebar on mobile after selecting a session
+    if (window.innerWidth < 768) {
+      sidebarOpenSignal.value = false;
+    }
+  };
+
   return (
     <>
-      <div class="h-screen w-80 bg-dark-950 border-r border-dark-700 flex flex-col">
+      {/* Mobile backdrop */}
+      {sidebarOpenSignal.value && (
+        <div
+          class="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={() => sidebarOpenSignal.value = false}
+        />
+      )}
+      <div class={`
+        fixed md:relative
+        h-screen w-80
+        bg-dark-950 border-r border-dark-700
+        flex flex-col
+        z-50
+        transition-transform duration-300 ease-in-out
+        ${sidebarOpenSignal.value ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+      `}>
         {/* Header */}
         <div class="p-4 border-b border-dark-700">
           <div class="flex items-center gap-3 mb-4">
             <div class="text-2xl">🤖</div>
-            <h1 class="text-xl font-bold text-gray-100">Liuboer</h1>
+            <h1 class="text-xl font-bold text-gray-100 flex-1">Liuboer</h1>
+            {/* Close button for mobile */}
+            <button
+              onClick={() => sidebarOpenSignal.value = false}
+              class="md:hidden p-1.5 hover:bg-dark-800 rounded-lg transition-colors text-gray-400 hover:text-gray-100"
+              title="Close sidebar"
+            >
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
           <Button
             onClick={handleCreateSession}
@@ -257,7 +290,7 @@ export default function Sidebar() {
             return (
               <div
                 key={session.id}
-                onClick={() => currentSessionIdSignal.value = session.id}
+                onClick={() => handleSessionClick(session.id)}
                 class={`group relative p-4 border-b border-dark-700 cursor-pointer transition-all ${
                   isActive
                     ? "bg-dark-850 border-l-2 border-l-blue-500"
