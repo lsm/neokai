@@ -2,6 +2,22 @@ import type { Event, EventType } from "@liuboer/shared";
 
 export type EventHandler = (event: Event) => void;
 
+/**
+ * Get the daemon WebSocket base URL based on the current hostname
+ * Uses the same hostname as the web UI but with port 8283 and WebSocket protocol
+ */
+function getDaemonWsUrl(): string {
+  if (typeof window === 'undefined') {
+    return "ws://localhost:8283";
+  }
+
+  const hostname = window.location.hostname;
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+
+  // Use the current hostname with port 8283 and appropriate WebSocket protocol
+  return `${protocol}//${hostname}:8283`;
+}
+
 export class WebSocketClient {
   private ws: WebSocket | null = null;
   private sessionId: string | null = null;
@@ -11,8 +27,9 @@ export class WebSocketClient {
   private handlers: Map<EventType | "all", Set<EventHandler>> = new Map();
   private baseUrl: string;
 
-  constructor(baseUrl = "ws://localhost:8283") {
-    this.baseUrl = baseUrl;
+  constructor(baseUrl?: string) {
+    this.baseUrl = baseUrl || getDaemonWsUrl();
+    console.log(`WebSocket Client initialized with baseUrl: ${this.baseUrl}`);
   }
 
   connect(sessionId: string): void {
