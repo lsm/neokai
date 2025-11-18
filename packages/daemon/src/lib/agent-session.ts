@@ -63,36 +63,19 @@ export class AgentSession {
     });
 
     try {
-      // Get current API key (could be from API key or OAuth token)
-      const apiKey = await this.getApiKey();
-      console.log("[DEBUG] API key from getApiKey():", apiKey ? `SET (${apiKey.substring(0, 20)}...)` : "NULL");
-      if (!apiKey) {
+      // Verify authentication is configured
+      // The environment variables are already set at daemon startup, no need to modify them
+      const hasAuth = !!(process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY);
+      console.log("[DEBUG] Authentication check:");
+      console.log("[DEBUG]   CLAUDE_CODE_OAUTH_TOKEN:", process.env.CLAUDE_CODE_OAUTH_TOKEN ? "SET" : "NOT SET");
+      console.log("[DEBUG]   ANTHROPIC_API_KEY:", process.env.ANTHROPIC_API_KEY ? "SET" : "NOT SET");
+
+      if (!hasAuth) {
         throw new Error("No authentication configured. Please set up OAuth or API key.");
       }
 
       // Create abort controller for this query
       this.abortController = new AbortController();
-
-      // Set credentials in environment for the Agent SDK
-      // IMPORTANT: OAuth tokens and API keys are DIFFERENT formats!
-      // - OAuth tokens start with: sk-ant-oat01-
-      // - API keys start with: sk-ant-api03-
-      const originalApiKey = process.env.ANTHROPIC_API_KEY;
-      const originalOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
-
-      // Detect token type and set the correct environment variable
-      const isOAuthToken = apiKey.startsWith("sk-ant-oat");
-      if (isOAuthToken) {
-        // OAuth token - only set CLAUDE_CODE_OAUTH_TOKEN
-        process.env.CLAUDE_CODE_OAUTH_TOKEN = apiKey;
-        // Clear API key to avoid confusion
-        delete process.env.ANTHROPIC_API_KEY;
-      } else {
-        // API key - only set ANTHROPIC_API_KEY
-        process.env.ANTHROPIC_API_KEY = apiKey;
-        // Clear OAuth token to avoid confusion
-        delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
-      }
 
       // Call Claude Agent SDK with streaming
       const assistantMessageId = crypto.randomUUID();
@@ -103,13 +86,20 @@ export class AgentSession {
       const conversationPrompt = this.buildConversationPrompt(content);
 
       // Create query with Agent SDK
+      console.log("[DEBUG] Session workspace path:", this.session.workspacePath);
+      console.log("[DEBUG] Query options:", {
+        model: this.session.config.model,
+        cwd: this.session.workspacePath,
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+        maxTurns: 10,
+      });
       const queryStream = query({
         prompt: conversationPrompt,
         options: {
           model: this.session.config.model,
-          // Don't set cwd - let SDK use the current process cwd
-          // This avoids issues with environment variable inheritance
-          // cwd: this.session.workspacePath,
+          // Set cwd to workspace path so SDK subprocess runs in correct directory
+          cwd: this.session.workspacePath,
           abortController: this.abortController,
           // Use bypassPermissions mode for non-interactive daemon
           permissionMode: "bypassPermissions",
@@ -121,7 +111,9 @@ export class AgentSession {
       });
 
       // Process the stream
+      console.log("[DEBUG] Starting to process SDK stream...");
       for await (const message of queryStream) {
+        console.log("[DEBUG] Received SDK message, type:", message.type);
         // Handle different message types from the Agent SDK
         if (message.type === "assistant") {
           // Full assistant message received
@@ -217,18 +209,7 @@ export class AgentSession {
         }
       }
 
-      // Restore original environment variables
-      if (originalApiKey) {
-        process.env.ANTHROPIC_API_KEY = originalApiKey;
-      } else {
-        delete process.env.ANTHROPIC_API_KEY;
-      }
-
-      if (originalOAuthToken) {
-        process.env.CLAUDE_CODE_OAUTH_TOKEN = originalOAuthToken;
-      } else {
-        delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
-      }
+      console.log("[DEBUG] SDK stream processing complete");
 
       // Save assistant message
       const assistantMessage: Message = {
@@ -338,6 +319,7 @@ export class AgentSession {
     if (updates.title) this.session.title = updates.title;
     if (updates.workspacePath) this.session.workspacePath = updates.workspacePath;
     if (updates.status) this.session.status = updates.status;
+    if (updates.metadata) this.session.metadata = updates.metadata;
 
     this.db.updateSession(this.session.id, updates);
   }
@@ -347,6 +329,14 @@ export class AgentSession {
    */
   clearHistory(): void {
     this.conversationHistory = [];
+  }
+
+  /**
+   * Reload conversation history from database
+   * Useful after clearing messages or external updates
+   */
+  reloadHistory(): void {
+    this.loadConversationHistory();
   }
 
   /**
