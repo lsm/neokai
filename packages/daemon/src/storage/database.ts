@@ -388,7 +388,14 @@ export class Database {
     return decoder.decode(decrypted);
   }
 
+  // ============================================================================
+  // DEPRECATED: The following methods are deprecated and should not be used.
+  // Authentication credentials must be provided via environment variables only.
+  // These methods remain only for backward compatibility with existing tests.
+  // ============================================================================
+
   /**
+   * @deprecated Authentication is now managed via environment variables only.
    * Get current authentication method
    */
   getAuthMethod(): AuthMethod {
@@ -399,6 +406,7 @@ export class Database {
   }
 
   /**
+   * @deprecated Authentication is now managed via environment variables only.
    * Save OAuth tokens (encrypted)
    */
   async saveOAuthTokens(tokens: OAuthTokens): Promise<void> {
@@ -410,6 +418,7 @@ export class Database {
   }
 
   /**
+   * @deprecated Authentication is now managed via environment variables only.
    * Get OAuth tokens (decrypted)
    */
   async getOAuthTokens(): Promise<OAuthTokens | null> {
@@ -425,6 +434,7 @@ export class Database {
   }
 
   /**
+   * @deprecated Authentication is now managed via environment variables only.
    * Save API key (encrypted)
    */
   async saveApiKey(apiKey: string): Promise<void> {
@@ -436,6 +446,7 @@ export class Database {
   }
 
   /**
+   * @deprecated Authentication is now managed via environment variables only.
    * Get API key (decrypted)
    */
   async getApiKey(): Promise<string | null> {
@@ -450,6 +461,7 @@ export class Database {
   }
 
   /**
+   * @deprecated Authentication is now managed via environment variables only.
    * Save long-lived OAuth token (from claude setup-token)
    */
   async saveOAuthLongLivedToken(token: string): Promise<void> {
@@ -461,6 +473,7 @@ export class Database {
   }
 
   /**
+   * @deprecated Authentication is now managed via environment variables only.
    * Get long-lived OAuth token (decrypted)
    */
   async getOAuthLongLivedToken(): Promise<string | null> {
@@ -475,6 +488,7 @@ export class Database {
   }
 
   /**
+   * @deprecated Authentication is now managed via environment variables only.
    * Clear all authentication
    */
   clearAuth(): void {
@@ -485,6 +499,7 @@ export class Database {
   }
 
   /**
+   * @deprecated OAuth flow is no longer supported via the web UI.
    * Save OAuth state temporarily during flow
    */
   saveOAuthState(state: string, codeVerifier: string, expiresInMinutes = 10): void {
@@ -497,6 +512,7 @@ export class Database {
   }
 
   /**
+   * @deprecated OAuth flow is no longer supported via the web UI.
    * Get and delete OAuth state (one-time use)
    */
   getOAuthState(state: string): string | null {
@@ -518,6 +534,7 @@ export class Database {
   }
 
   /**
+   * @deprecated OAuth flow is no longer supported via the web UI.
    * Clean up expired OAuth states
    */
   cleanupExpiredOAuthStates(): void {
