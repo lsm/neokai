@@ -15,6 +15,7 @@ export class SessionManager {
       defaultModel: string;
       maxTokens: number;
       temperature: number;
+      workspaceRoot: string;
     },
   ) {}
 
@@ -28,7 +29,7 @@ export class SessionManager {
     const session: Session = {
       id: sessionId,
       title: `Session ${new Date().toLocaleString()}`,
-      workspacePath: params.workspacePath || process.cwd(),
+      workspacePath: params.workspacePath || this.config.workspaceRoot,
       createdAt: new Date().toISOString(),
       lastActiveAt: new Date().toISOString(),
       status: "active",

@@ -49,8 +49,11 @@ const sessionManager = new SessionManager(db, eventBus, authManager, {
   defaultModel: config.defaultModel,
   maxTokens: config.maxTokens,
   temperature: config.temperature,
+  workspaceRoot: config.workspaceRoot,
 });
 console.log("✅ Session manager initialized");
+console.log(`   Environment: ${config.nodeEnv}`);
+console.log(`   Workspace root: ${config.workspaceRoot}`);
 
 // Create application
 const app = new Elysia()

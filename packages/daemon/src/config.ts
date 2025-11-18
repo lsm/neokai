@@ -20,9 +20,23 @@ export interface Config {
   maxTokens: number;
   temperature: number;
   maxSessions: number;
+  nodeEnv: string;
+  workspaceRoot: string;
 }
 
 export function getConfig(): Config {
+  const nodeEnv = process.env.NODE_ENV || "development";
+
+  // Find project root by going up from daemon package directory
+  // __dirname is packages/daemon/src, so we need to go up 3 levels
+  const projectRoot = join(__dirname, "..", "..", "..");
+
+  // In development: use project_root/temp
+  // In production: use current working directory
+  const workspaceRoot = nodeEnv === "development"
+    ? join(projectRoot, "temp")
+    : process.cwd();
+
   return {
     port: parseInt(process.env.PORT || "8283"),
     host: process.env.HOST || "0.0.0.0",
@@ -33,5 +47,7 @@ export function getConfig(): Config {
     maxTokens: parseInt(process.env.MAX_TOKENS || "8192"),
     temperature: parseFloat(process.env.TEMPERATURE || "1.0"),
     maxSessions: parseInt(process.env.MAX_SESSIONS || "10"),
+    nodeEnv,
+    workspaceRoot,
   };
 }
