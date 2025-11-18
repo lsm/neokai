@@ -103,13 +103,23 @@ export default function Sidebar() {
     if (!sessionToDelete) return;
 
     try {
-      await apiClient.deleteSession(sessionToDelete);
-      await loadSessions();
+      // Check if we need to select a new session before deleting
+      const wasActiveSession = currentSessionIdSignal.value === sessionToDelete;
 
-      if (currentSessionIdSignal.value === sessionToDelete) {
-        const remaining = sessions.filter((s) => s.id !== sessionToDelete);
-        if (remaining.length > 0) {
-          currentSessionIdSignal.value = remaining[0].id;
+      await apiClient.deleteSession(sessionToDelete);
+
+      // Reload sessions to get the updated list from API
+      const response = await apiClient.listSessions();
+      setSessions(response.sessions);
+
+      // If the deleted session was active, select another one
+      if (wasActiveSession) {
+        if (response.sessions.length > 0) {
+          // Select the most recent session
+          const mostRecent = [...response.sessions].sort((a, b) =>
+            new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime()
+          )[0];
+          currentSessionIdSignal.value = mostRecent.id;
         } else {
           currentSessionIdSignal.value = null;
         }

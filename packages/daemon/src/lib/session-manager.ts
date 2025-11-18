@@ -120,6 +120,34 @@ export class SessionManager {
     });
   }
 
+  async clearMessages(sessionId: string): Promise<void> {
+    // Clear messages from database
+    this.db.clearMessages(sessionId);
+
+    // Reload history in the agent session if it's in memory
+    const agentSession = this.sessions.get(sessionId);
+    if (agentSession) {
+      agentSession.reloadHistory();
+    }
+
+    // Update session metadata
+    await this.updateSession(sessionId, {
+      metadata: {
+        messageCount: 0,
+        totalTokens: 0,
+        toolCallCount: 0,
+      },
+    });
+
+    // Emit messages cleared event
+    await this.eventBus.emit({
+      type: "messages.cleared",
+      sessionId,
+      timestamp: new Date().toISOString(),
+      data: {},
+    });
+  }
+
   getActiveSessions(): number {
     return this.sessions.size;
   }

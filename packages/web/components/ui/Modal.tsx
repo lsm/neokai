@@ -109,6 +109,7 @@ export function Modal({
             )}
             {showCloseButton && (
               <button
+                type="button"
                 onClick={onClose}
                 class="ml-auto text-gray-400 hover:text-gray-100 transition-colors p-1 rounded-lg hover:bg-dark-800"
                 aria-label="Close modal"
@@ -138,5 +139,14 @@ export function Modal({
   );
 
   // Render in portal to avoid z-index issues
-  return createPortal(modalContent, document.body);
+  // Use try-catch to handle SSR gracefully
+  try {
+    if (typeof document !== 'undefined') {
+      return createPortal(modalContent, document.body);
+    }
+  } catch (e) {
+    console.error('Modal portal error:', e);
+  }
+
+  return modalContent;
 }

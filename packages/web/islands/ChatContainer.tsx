@@ -8,6 +8,7 @@ import MessageInput from "../components/MessageInput.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { IconButton } from "../components/ui/IconButton.tsx";
 import { Dropdown } from "../components/ui/Dropdown.tsx";
+import { Modal } from "../components/ui/Modal.tsx";
 import { Skeleton, SkeletonMessage } from "../components/ui/Skeleton.tsx";
 
 interface ChatContainerProps {
@@ -26,6 +27,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   const [streamingThinking, setStreamingThinking] = useState("");
   const [streamingToolCalls, setStreamingToolCalls] = useState<ToolCall[]>([]);
   const [showScrollButton, setShowScrollButton] = useState(false);
+  const [clearModalOpen, setClearModalOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
@@ -192,6 +194,18 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
+  const handleClearMessages = async () => {
+    try {
+      await apiClient.clearMessages(sessionId);
+      setMessages([]);
+      toast.success("Messages cleared");
+      setClearModalOpen(false);
+      await loadSession(); // Reload to update metadata
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to clear messages");
+    }
+  };
+
   const getHeaderActions = () => [
     {
       label: "Session Settings",
@@ -230,7 +244,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     { type: "divider" as const },
     {
       label: "Clear Chat",
-      onClick: () => toast.info("Clear chat feature coming soon"),
+      onClick: () => setClearModalOpen(true),
       danger: true,
       icon: (
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -397,6 +411,28 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
       {/* Input */}
       <MessageInput onSend={handleSendMessage} disabled={sending} />
+
+      {/* Clear Chat Modal */}
+      <Modal
+        isOpen={clearModalOpen}
+        onClose={() => setClearModalOpen(false)}
+        title="Clear Chat"
+        size="sm"
+      >
+        <div class="space-y-4">
+          <p class="text-gray-300 text-sm">
+            Are you sure you want to clear all messages in this chat? This action cannot be undone.
+          </p>
+          <div class="flex gap-3 justify-end">
+            <Button variant="secondary" onClick={() => setClearModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={handleClearMessages}>
+              Clear Messages
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

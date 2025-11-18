@@ -4,7 +4,7 @@ import { cn } from "../../lib/utils.ts";
 
 export interface DropdownItem {
   label: string;
-  onClick: () => void;
+  onClick: (e?: Event) => void;
   icon?: ComponentChildren;
   danger?: boolean;
   disabled?: boolean;
@@ -129,9 +129,9 @@ export function Dropdown({
                 key={index}
                 role="menuitem"
                 disabled={menuItem.disabled}
-                onClick={() => {
+                onClick={(e) => {
                   if (!menuItem.disabled) {
-                    menuItem.onClick();
+                    menuItem.onClick(e);
                     setIsOpen(false);
                   }
                 }}

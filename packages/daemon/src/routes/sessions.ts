@@ -9,6 +9,7 @@ import type {
   UpdateSessionRequest,
 } from "@liuboer/shared";
 import type { SessionManager } from "../lib/session-manager";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
 export function createSessionsRouter(app: Elysia, sessionManager: SessionManager) {
   return app
@@ -138,5 +139,157 @@ export function createSessionsRouter(app: Elysia, sessionManager: SessionManager
 
       const messages = agentSession.getMessages();
       return { messages };
+    })
+
+    // Clear messages
+    .delete("/api/sessions/:sessionId/messages", async ({ params, set }) => {
+      const sessionId = params.sessionId;
+      const agentSession = sessionManager.getSession(sessionId);
+
+      if (!agentSession) {
+        set.status = 404;
+        return { error: "Session not found" };
+      }
+
+      await sessionManager.clearMessages(sessionId);
+      set.status = 204;
+    })
+
+    // Simple test endpoint that replicates the exact test behavior
+    .get("/api/test/simple-query", async ({ set }) => {
+      console.log("\n[TEST ENDPOINT] Starting simple query test");
+      console.log("[TEST ENDPOINT] OAuth token:", process.env.CLAUDE_CODE_OAUTH_TOKEN ? "SET" : "NOT SET");
+      console.log("[TEST ENDPOINT] API key:", process.env.ANTHROPIC_API_KEY ? "SET" : "NOT SET");
+
+      try {
+        const prompt = "What is 2+2? Answer with just the number.";
+
+        console.log("[TEST ENDPOINT] Creating query stream...");
+        const queryStream = query({
+          prompt,
+          options: {
+            model: "claude-sonnet-4-5-20250929",
+            permissionMode: "bypassPermissions",
+            allowDangerouslySkipPermissions: true,
+            maxTurns: 1,
+          },
+        });
+
+        console.log("[TEST ENDPOINT] Processing messages...");
+        let assistantResponse = "";
+        let messageCount = 0;
+
+        for await (const message of queryStream) {
+          messageCount++;
+          console.log(`[TEST ENDPOINT] Received message #${messageCount}, type: ${message.type}`);
+
+          if (message.type === "assistant") {
+            for (const block of message.message.content) {
+              if (block.type === "text") {
+                assistantResponse += block.text;
+                console.log("[TEST ENDPOINT] Got text:", block.text);
+              }
+            }
+          } else if (message.type === "result") {
+            console.log("[TEST ENDPOINT] Got result:", {
+              input_tokens: message.usage.input_tokens,
+              output_tokens: message.usage.output_tokens,
+            });
+          }
+        }
+
+        console.log("[TEST ENDPOINT] Complete! Response:", assistantResponse);
+
+        return {
+          success: true,
+          response: assistantResponse,
+          messageCount,
+        };
+      } catch (error) {
+        console.error("[TEST ENDPOINT] Error:", error);
+        set.status = 500;
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    })
+
+    // Test with cwd option (like daemon sendMessage does)
+    .get("/api/test/with-cwd", async ({ set }) => {
+      console.log("\n[TEST WITH CWD] Starting test");
+      console.log("[TEST WITH CWD] cwd:", "/tmp/workspace");
+
+      try {
+        const prompt = "What is 2+2? Answer with just the number.";
+
+        console.log("[TEST WITH CWD] Creating query stream with cwd...");
+        const queryStream = query({
+          prompt,
+          options: {
+            model: "claude-sonnet-4-5-20250929",
+            cwd: "/tmp/workspace",
+            permissionMode: "bypassPermissions",
+            allowDangerouslySkipPermissions: true,
+            maxTurns: 1,
+          },
+        });
+
+        console.log("[TEST WITH CWD] Processing messages...");
+        let assistantResponse = "";
+        let messageCount = 0;
+        let timeout = false;
+
+        // Add timeout to detect hanging
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => {
+            timeout = true;
+            reject(new Error("Stream timeout after 5 seconds"));
+          }, 5000);
+        });
+
+        try {
+          await Promise.race([
+            (async () => {
+              for await (const message of queryStream) {
+                messageCount++;
+                console.log(`[TEST WITH CWD] Received message #${messageCount}, type: ${message.type}`);
+
+                if (message.type === "assistant") {
+                  for (const block of message.message.content) {
+                    if (block.type === "text") {
+                      assistantResponse += block.text;
+                    }
+                  }
+                } else if (message.type === "result") {
+                  console.log("[TEST WITH CWD] Got result");
+                }
+              }
+            })(),
+            timeoutPromise,
+          ]);
+        } catch (err) {
+          if (timeout) {
+            console.error("[TEST WITH CWD] Stream timed out - SDK not yielding messages!");
+            throw new Error("SDK stream timeout - likely bad cwd path");
+          }
+          throw err;
+        }
+
+        console.log("[TEST WITH CWD] Complete! Response:", assistantResponse);
+
+        return {
+          success: true,
+          response: assistantResponse,
+          messageCount,
+        };
+      } catch (error) {
+        console.error("[TEST WITH CWD] Error:", error);
+        set.status = 500;
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
     });
 }

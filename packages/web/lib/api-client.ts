@@ -128,6 +128,12 @@ export class DaemonAPIClient implements APIClient {
     return this.fetch<ListMessagesResponse>(path);
   }
 
+  async clearMessages(sessionId: string): Promise<void> {
+    await this.fetch(`/api/sessions/${sessionId}/messages`, {
+      method: "DELETE",
+    });
+  }
+
   // Files
   async readFile(sessionId: string, req: ReadFileRequest): Promise<ReadFileResponse> {
     const queryParams = new URLSearchParams();

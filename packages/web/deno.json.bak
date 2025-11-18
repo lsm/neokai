@@ -6,7 +6,7 @@
     "check": "deno fmt --check . && deno lint . && deno check",
     "dev": "vite",
     "build": "vite build",
-    "start": "deno serve -A --port 9283 _fresh/server.js",
+    "start": "deno serve -A _fresh/server.js",
     "test": "deno test --allow-all tests/",
     "test:e2e": "deno run -A npm:playwright test --project=chromium",
     "playwright:install": "deno run -A npm:playwright install chromium",

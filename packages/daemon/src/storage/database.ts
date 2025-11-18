@@ -212,6 +212,10 @@ export class Database {
       fields.push("last_active_at = ?");
       values.push(updates.lastActiveAt);
     }
+    if (updates.metadata) {
+      fields.push("metadata = ?");
+      values.push(JSON.stringify(updates.metadata));
+    }
 
     if (fields.length > 0) {
       values.push(id);
@@ -271,6 +275,11 @@ export class Database {
 
       return message;
     }).reverse(); // Return in chronological order
+  }
+
+  clearMessages(sessionId: string): void {
+    const stmt = this.db.prepare(`DELETE FROM messages WHERE session_id = ?`);
+    stmt.run(sessionId);
   }
 
   // Tool call operations

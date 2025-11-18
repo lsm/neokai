@@ -144,6 +144,7 @@ export interface APIClient {
       after?: string;
     },
   ): Promise<ListMessagesResponse>;
+  clearMessages(sessionId: string): Promise<void>;
 
   // Files
   readFile(sessionId: string, req: ReadFileRequest): Promise<ReadFileResponse>;

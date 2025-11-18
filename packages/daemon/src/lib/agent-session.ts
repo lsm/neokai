@@ -85,6 +85,17 @@ export class AgentSession {
       // Build the prompt with conversation history
       const conversationPrompt = this.buildConversationPrompt(content);
 
+      // Ensure workspace directory exists before creating SDK query
+      // The SDK subprocess needs a valid cwd or it will hang without yielding messages
+      const fs = await import("fs/promises");
+      try {
+        await fs.mkdir(this.session.workspacePath, { recursive: true });
+        console.log("[DEBUG] Workspace directory ensured:", this.session.workspacePath);
+      } catch (error) {
+        console.error("[DEBUG] Failed to create workspace directory:", error);
+        throw new Error(`Failed to create workspace directory: ${this.session.workspacePath}`);
+      }
+
       // Create query with Agent SDK
       console.log("[DEBUG] Session workspace path:", this.session.workspacePath);
       console.log("[DEBUG] Query options:", {
