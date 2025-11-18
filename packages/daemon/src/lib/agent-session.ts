@@ -65,6 +65,7 @@ export class AgentSession {
     try {
       // Get current API key (could be from API key or OAuth token)
       const apiKey = await this.getApiKey();
+      console.log("[DEBUG] API key from getApiKey():", apiKey ? `SET (${apiKey.substring(0, 20)}...)` : "NULL");
       if (!apiKey) {
         throw new Error("No authentication configured. Please set up OAuth or API key.");
       }
@@ -72,15 +73,26 @@ export class AgentSession {
       // Create abort controller for this query
       this.abortController = new AbortController();
 
-      // Set API key in environment for the Agent SDK
-      // The SDK accepts both ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN
+      // Set credentials in environment for the Agent SDK
+      // IMPORTANT: OAuth tokens and API keys are DIFFERENT formats!
+      // - OAuth tokens start with: sk-ant-oat01-
+      // - API keys start with: sk-ant-api03-
       const originalApiKey = process.env.ANTHROPIC_API_KEY;
       const originalOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
 
-      // Try setting as OAuth token first (preferred for subscription users)
-      process.env.CLAUDE_CODE_OAUTH_TOKEN = apiKey;
-      // Also set as API key for fallback
-      process.env.ANTHROPIC_API_KEY = apiKey;
+      // Detect token type and set the correct environment variable
+      const isOAuthToken = apiKey.startsWith("sk-ant-oat");
+      if (isOAuthToken) {
+        // OAuth token - only set CLAUDE_CODE_OAUTH_TOKEN
+        process.env.CLAUDE_CODE_OAUTH_TOKEN = apiKey;
+        // Clear API key to avoid confusion
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        // API key - only set ANTHROPIC_API_KEY
+        process.env.ANTHROPIC_API_KEY = apiKey;
+        // Clear OAuth token to avoid confusion
+        delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+      }
 
       // Call Claude Agent SDK with streaming
       const assistantMessageId = crypto.randomUUID();
@@ -95,10 +107,14 @@ export class AgentSession {
         prompt: conversationPrompt,
         options: {
           model: this.session.config.model,
-          cwd: this.session.workspacePath,
+          // Don't set cwd - let SDK use the current process cwd
+          // This avoids issues with environment variable inheritance
+          // cwd: this.session.workspacePath,
           abortController: this.abortController,
           // Use bypassPermissions mode for non-interactive daemon
           permissionMode: "bypassPermissions",
+          // Allow bypassing all permission checks for daemon/test mode
+          allowDangerouslySkipPermissions: true,
           // Limit turns to prevent infinite loops
           maxTurns: 10,
         },
@@ -127,9 +143,9 @@ export class AgentSession {
                 },
               });
             } else if (block.type === "tool_use") {
-              // Tool use detected
+              // Tool use detected - use the tool's actual ID from the API
               const toolCall: ToolCall = {
-                id: crypto.randomUUID(),
+                id: block.id,  // Use the tool_use block's ID from Claude API
                 messageId: assistantMessageId,
                 tool: block.name,
                 input: block.input,
