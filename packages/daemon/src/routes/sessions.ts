@@ -93,15 +93,37 @@ export function createSessionsRouter(app: Elysia, sessionManager: SessionManager
         return { error: "Session not found" };
       }
 
-      const messageId = await agentSession.sendMessage(content);
+      try {
+        const messageId = await agentSession.sendMessage(content);
 
-      set.status = 201;
-      const response: SendMessageResponse = {
-        messageId,
-        status: "processing",
-      };
+        set.status = 201;
+        const response: SendMessageResponse = {
+          messageId,
+          status: "processing",
+        };
 
-      return response;
+        return response;
+      } catch (error) {
+        // Handle API/auth errors gracefully
+        const errorMessage = error instanceof Error ? error.message : String(error);
+
+        // Check if it's an auth error
+        if (errorMessage.includes("authentication") || errorMessage.includes("API key") ||
+            errorMessage.includes("OAuth") || errorMessage.includes("exited with code 1")) {
+          set.status = 401;
+          return {
+            error: "Authentication required",
+            message: "No valid authentication configured. Please set up OAuth or API key."
+          };
+        }
+
+        // Other errors
+        set.status = 500;
+        return {
+          error: "Failed to send message",
+          message: errorMessage
+        };
+      }
     })
 
     // Get messages

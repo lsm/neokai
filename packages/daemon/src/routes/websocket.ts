@@ -31,17 +31,16 @@ export function setupWebSocket(
 
       // Send initial connection message
       try {
-        ws.send(
-          JSON.stringify({
-            type: "connection.established",
+        const message = JSON.stringify({
+          type: "connection.established",
+          sessionId,
+          timestamp: new Date().toISOString(),
+          data: {
+            message: "WebSocket connection established",
             sessionId,
-            timestamp: new Date().toISOString(),
-            data: {
-              message: "WebSocket connection established",
-              sessionId,
-            },
-          }),
-        );
+          },
+        });
+        ws.send(message);
       } catch (error) {
         console.error(
           `Error sending initial WebSocket message for session ${sessionId}:`,
