@@ -1,7 +1,14 @@
 import { config } from "dotenv";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 
-// Load environment variables from .env file
-config();
+// Get the directory of this file
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Load environment variables from .env file in the daemon package directory
+// This ensures the .env file is loaded regardless of the current working directory
+config({ path: join(__dirname, "..", ".env") });
 
 export interface Config {
   port: number;
