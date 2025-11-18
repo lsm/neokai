@@ -1,5 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
-import type { Session } from "@liuboer/shared";
+import type { AuthStatus, Session } from "@liuboer/shared";
 import { apiClient } from "../lib/api-client.ts";
 import { currentSessionIdSignal } from "../lib/signals.ts";
 import { formatRelativeTime } from "../lib/utils.ts";
@@ -9,6 +9,7 @@ import { IconButton } from "../components/ui/IconButton.tsx";
 import { Dropdown } from "../components/ui/Dropdown.tsx";
 import { Modal } from "../components/ui/Modal.tsx";
 import { SkeletonSession } from "../components/ui/Skeleton.tsx";
+import { SettingsModal } from "../components/SettingsModal.tsx";
 
 export default function Sidebar() {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -17,10 +18,34 @@ export default function Sidebar() {
   const [creatingSession, setCreatingSession] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
 
   useEffect(() => {
     loadSessions();
+    loadAuthStatus();
   }, []);
+
+  // Auto-select most recent session if none is selected
+  useEffect(() => {
+    console.log("Auto-select effect triggered:", {
+      sessionsCount: sessions.length,
+      currentSessionId: currentSessionIdSignal.value,
+    });
+
+    if (sessions.length > 0 && !currentSessionIdSignal.value) {
+      // Sort by lastActiveAt and select the most recent
+      const mostRecent = [...sessions].sort((a, b) =>
+        new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime()
+      )[0];
+
+      console.log("Auto-selecting session:", mostRecent.id, mostRecent.title);
+
+      if (mostRecent) {
+        currentSessionIdSignal.value = mostRecent.id;
+      }
+    }
+  }, [sessions]);
 
   const loadSessions = async () => {
     try {
@@ -36,6 +61,15 @@ export default function Sidebar() {
       toast.error(message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadAuthStatus = async () => {
+    try {
+      const response = await apiClient.getAuthStatus();
+      setAuthStatus(response.authStatus);
+    } catch (err) {
+      console.error("Failed to load auth status:", err);
     }
   };
 
@@ -307,7 +341,62 @@ export default function Sidebar() {
         </div>
 
         {/* Footer */}
-        <div class="p-4 border-t border-dark-700">
+        <div class="p-4 border-t border-dark-700 space-y-3">
+          {/* Auth Status */}
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-gray-400">Authentication</span>
+            <button
+              onClick={() => setSettingsOpen(true)}
+              class="flex items-center gap-2 hover:bg-dark-800 px-2 py-1 rounded transition-colors"
+            >
+              {authStatus?.isAuthenticated ? (
+                <>
+                  <div class="relative">
+                    <span class="w-2 h-2 bg-green-500 rounded-full block" />
+                    <span class="absolute inset-0 w-2 h-2 bg-green-500 rounded-full animate-ping opacity-75" />
+                  </div>
+                  <span class="text-gray-300 flex items-center gap-1">
+                    {authStatus.method === "oauth"
+                      ? "OAuth"
+                      : authStatus.method === "oauth_token"
+                      ? "OAuth Token"
+                      : "API Key"}
+                    {authStatus.source === "env" && (
+                      <span class="text-[10px] px-1 bg-blue-500/20 text-blue-300 rounded">
+                        env
+                      </span>
+                    )}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <div class="w-2 h-2 bg-yellow-500 rounded-full" />
+                  <span class="text-yellow-300">Not configured</span>
+                </>
+              )}
+              <svg
+                class="w-3 h-3 text-gray-500"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width={2}
+                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                />
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width={2}
+                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                />
+              </svg>
+            </button>
+          </div>
+
+          {/* Connection Status */}
           <div class="flex items-center justify-between text-xs">
             <span class="text-gray-400">Status</span>
             <div class="flex items-center gap-2">
@@ -320,6 +409,15 @@ export default function Sidebar() {
           </div>
         </div>
       </div>
+
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={settingsOpen}
+        onClose={() => {
+          setSettingsOpen(false);
+          loadAuthStatus(); // Reload auth status when modal closes
+        }}
+      />
 
       {/* Delete Confirmation Modal */}
       <Modal

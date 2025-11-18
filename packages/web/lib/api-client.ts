@@ -1,8 +1,11 @@
 import type {
   APIClient,
+  CompleteOAuthFlowRequest,
+  CompleteOAuthFlowResponse,
   CreateSessionRequest,
   CreateSessionResponse,
   GetActiveToolsResponse,
+  GetAuthStatusResponse,
   GetFileTreeRequest,
   GetFileTreeResponse,
   GetSessionResponse,
@@ -14,8 +17,12 @@ import type {
   LoadToolsRequest,
   ReadFileRequest,
   ReadFileResponse,
+  RefreshTokenResponse,
   SendMessageRequest,
   SendMessageResponse,
+  SetApiKeyRequest,
+  SetOAuthTokenRequest,
+  StartOAuthFlowResponse,
   UnloadToolsRequest,
   UpdateConfigRequest,
   UpdateSessionRequest,
@@ -182,6 +189,50 @@ export class DaemonAPIClient implements APIClient {
     await this.fetch("/api/config", {
       method: "PATCH",
       body: JSON.stringify(req),
+    });
+  }
+
+  // Authentication
+  async getAuthStatus(): Promise<GetAuthStatusResponse> {
+    return this.fetch<GetAuthStatusResponse>("/api/auth/status");
+  }
+
+  async startOAuthFlow(): Promise<StartOAuthFlowResponse> {
+    return this.fetch<StartOAuthFlowResponse>("/api/auth/oauth/start", {
+      method: "POST",
+    });
+  }
+
+  async completeOAuthFlow(req: CompleteOAuthFlowRequest): Promise<CompleteOAuthFlowResponse> {
+    return this.fetch<CompleteOAuthFlowResponse>("/api/auth/oauth/complete", {
+      method: "POST",
+      body: JSON.stringify(req),
+    });
+  }
+
+  async setApiKey(req: SetApiKeyRequest): Promise<void> {
+    await this.fetch("/api/auth/api-key", {
+      method: "POST",
+      body: JSON.stringify(req),
+    });
+  }
+
+  async setOAuthToken(req: SetOAuthTokenRequest): Promise<void> {
+    await this.fetch("/api/auth/oauth-token", {
+      method: "POST",
+      body: JSON.stringify(req),
+    });
+  }
+
+  async refreshToken(): Promise<RefreshTokenResponse> {
+    return this.fetch<RefreshTokenResponse>("/api/auth/refresh", {
+      method: "POST",
+    });
+  }
+
+  async logout(): Promise<void> {
+    await this.fetch("/api/auth/logout", {
+      method: "POST",
     });
   }
 }

@@ -9,8 +9,6 @@
     "start": "deno serve -A _fresh/server.js",
     "test": "deno test --allow-all tests/",
     "test:e2e": "deno run -A npm:playwright test --project=chromium",
-    "test:e2e:ui": "deno run -A npm:playwright test --ui --project=chromium",
-    "test:e2e:headed": "deno run -A npm:playwright test --headed --project=chromium",
     "playwright:install": "deno run -A npm:playwright install chromium",
     "update": "deno run -A -r jsr:@fresh/update ."
   },

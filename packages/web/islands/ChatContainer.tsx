@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { Event, Message, Session } from "@liuboer/shared";
+import type { Event, Message, Session, ToolCall } from "@liuboer/shared";
 import { apiClient } from "../lib/api-client.ts";
 import { wsClient } from "../lib/websocket-client.ts";
 import { toast } from "../lib/toast.ts";
@@ -15,12 +15,16 @@ interface ChatContainerProps {
 }
 
 export default function ChatContainer({ sessionId }: ChatContainerProps) {
+  console.log("ChatContainer rendering with sessionId:", sessionId);
+
   const [session, setSession] = useState<Session | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
+  const [streamingThinking, setStreamingThinking] = useState("");
+  const [streamingToolCalls, setStreamingToolCalls] = useState<ToolCall[]>([]);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -74,6 +78,14 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   const connectWebSocket = () => {
     wsClient.connect(sessionId);
 
+    // Message streaming events
+    wsClient.on("message.start", (event: Event) => {
+      console.log("Message streaming started");
+      setStreamingContent("");
+      setStreamingThinking("");
+      setStreamingToolCalls([]);
+    });
+
     wsClient.on("message.content", (event: Event) => {
       const delta = (event.data as { delta: string }).delta;
       setStreamingContent((prev) => prev + delta);
@@ -83,15 +95,67 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       const message = (event.data as { message: Message }).message;
       setMessages((prev) => [...prev, message]);
       setStreamingContent("");
+      setStreamingThinking("");
+      setStreamingToolCalls([]);
       setSending(false);
     });
 
+    // Thinking events
+    wsClient.on("agent.thinking", (event: Event) => {
+      const thinking = (event.data as { thinking: string }).thinking;
+      setStreamingThinking(thinking);
+    });
+
+    // Tool call events
+    wsClient.on("tool.call", (event: Event) => {
+      const toolCall = (event.data as { toolCall: ToolCall }).toolCall;
+      setStreamingToolCalls((prev) => [...prev, toolCall]);
+      toast.info(`Calling tool: ${toolCall.tool}`);
+    });
+
+    wsClient.on("tool.result", (event: Event) => {
+      const { toolCallId, output, error: toolError } = event.data as {
+        toolCallId: string;
+        output?: unknown;
+        error?: string;
+      };
+      setStreamingToolCalls((prev) =>
+        prev.map((tc) =>
+          tc.id === toolCallId
+            ? {
+                ...tc,
+                output,
+                error: toolError,
+                status: toolError ? "error" : "success",
+              } as ToolCall
+            : tc
+        )
+      );
+      if (toolError) {
+        toast.error(`Tool error: ${toolError}`);
+      }
+    });
+
+    // Context events
+    wsClient.on("context.updated", (event: Event) => {
+      const { tokenCount } = event.data as { tokenCount: number };
+      console.log(`Context updated: ${tokenCount} tokens`);
+    });
+
+    wsClient.on("context.compacted", (event: Event) => {
+      const { before, after } = event.data as { before: number; after: number };
+      toast.info(`Context compacted: ${before} → ${after} tokens`);
+    });
+
+    // Error handling
     wsClient.on("error", (event: Event) => {
       const error = (event.data as { error: string }).error;
       setError(error);
       toast.error(error);
       setSending(false);
       setStreamingContent("");
+      setStreamingThinking("");
+      setStreamingToolCalls([]);
     });
   };
 
@@ -281,6 +345,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
         <MessageList
           messages={messages}
           streamingContent={streamingContent}
+          streamingThinking={streamingThinking}
+          streamingToolCalls={streamingToolCalls}
           isStreaming={sending}
         />
         <div ref={messagesEndRef} />
