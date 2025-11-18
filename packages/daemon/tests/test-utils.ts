@@ -40,7 +40,7 @@ export async function createTestApp(): Promise<TestContext> {
   const config: Config = {
     host: "localhost",
     port: 0, // Will be assigned randomly
-    defaultModel: "claude-sonnet-4-20250514",
+    defaultModel: "claude-sonnet-4-5-20250929",
     maxTokens: 8192,
     temperature: 1.0,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || "",

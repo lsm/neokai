@@ -41,7 +41,7 @@ describe("Authentication Security - Credentials Not In Database", () => {
       host: "localhost",
       port: 8283,
       dbPath: testDbPath,
-      defaultModel: "claude-sonnet-4-20250514",
+      defaultModel: "claude-sonnet-4-5-20250929",
       maxTokens: 8192,
       temperature: 1.0,
       maxSessions: 10,

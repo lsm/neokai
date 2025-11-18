@@ -102,7 +102,7 @@ describe("System API", () => {
         const response = await request(ctx.baseUrl, "GET", "/api/config");
         const config = await assertSuccessResponse<DaemonConfig>(response);
 
-        assertEquals(config.defaultModel, "claude-sonnet-4-20250514");
+        assertEquals(config.defaultModel, "claude-sonnet-4-5-20250929");
         assertEquals(config.maxSessions, 10);
         assertExists(config.version);
         assertExists(config.claudeSDKVersion);

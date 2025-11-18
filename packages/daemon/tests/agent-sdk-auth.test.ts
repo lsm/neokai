@@ -43,7 +43,7 @@ describe("Claude Agent SDK Authentication", () => {
         const queryStream = query({
           prompt,
           options: {
-            model: "claude-sonnet-4-20250514",
+            model: "claude-sonnet-4-5-20250929",
             // Use bypass permissions for non-interactive test
             permissionMode: "bypassPermissions",
             allowDangerouslySkipPermissions: true,
@@ -112,7 +112,7 @@ describe("Claude Agent SDK Authentication", () => {
         const queryStream = query({
           prompt: "Test",
           options: {
-            model: "claude-sonnet-4-20250514",
+            model: "claude-sonnet-4-5-20250929",
             permissionMode: "bypassPermissions",
             allowDangerouslySkipPermissions: true,
             maxTurns: 1,

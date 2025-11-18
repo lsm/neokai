@@ -24,7 +24,7 @@ function createTestSession(id: string): Session {
     lastActiveAt: new Date().toISOString(),
     status: "active",
     config: {
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-5-20250929",
       maxTokens: 8192,
       temperature: 1.0,
     },
