@@ -13,9 +13,6 @@ import { setupWebSocket } from "./src/routes/websocket";
 
 const config = getConfig();
 
-// Note: API key is now optional - can use OAuth instead
-// Authentication can be configured via the web UI
-
 // Initialize database
 const db = new Database(config.dbPath);
 await db.initialize();
@@ -30,12 +27,21 @@ const authManager = new AuthManager(db, config);
 await authManager.initialize();
 console.log("✅ Authentication manager initialized");
 
-// Check authentication status
+// Check authentication status - MUST be configured via environment variables
 const authStatus = await authManager.getAuthStatus();
 if (authStatus.isAuthenticated) {
   console.log(`✅ Authenticated via ${authStatus.method} (source: ${authStatus.source})`);
 } else {
-  console.log("⚠️  No authentication configured. Set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in .env");
+  console.error("\n❌ AUTHENTICATION REQUIRED");
+  console.error("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.error("Authentication credentials must be provided via environment variables.");
+  console.error("\nOption 1: Anthropic API Key (Recommended)");
+  console.error("  export ANTHROPIC_API_KEY=sk-ant-...");
+  console.error("\nOption 2: Claude Code OAuth Token");
+  console.error("  export CLAUDE_CODE_OAUTH_TOKEN=...");
+  console.error("\nGet your API key from: https://console.anthropic.com/");
+  console.error("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+  process.exit(1);
 }
 
 // Initialize session manager
@@ -99,7 +105,6 @@ console.log(`\n✨ Ready to accept connections!\n`);
 // Cleanup on exit
 process.on("SIGINT", () => {
   console.log("\n👋 Shutting down...");
-  authManager.destroy();
   eventBus.clear();
   db.close();
   app.stop();
