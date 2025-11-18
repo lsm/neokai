@@ -14,28 +14,40 @@ export default function MessageList({
 }: MessageListProps) {
   if (messages.length === 0 && !isStreaming) {
     return (
-      <div class="flex items-center justify-center h-full text-gray-400">
+      <div class="flex items-center justify-center h-full px-6">
         <div class="text-center">
-          <p class="text-lg mb-2">No messages yet</p>
-          <p class="text-sm">Start a conversation with Claude</p>
+          <div class="text-5xl mb-4">💬</div>
+          <p class="text-lg text-gray-300 mb-2">No messages yet</p>
+          <p class="text-sm text-gray-500">
+            Start a conversation with Claude to see the magic happen
+          </p>
         </div>
       </div>
     );
   }
 
   return (
-    <div class="max-w-4xl mx-auto py-6 px-4 space-y-6">
+    <div class="max-w-4xl mx-auto">
       {messages.map((message) => <MessageItem key={message.id} message={message} />)}
 
+      {/* Streaming message */}
       {isStreaming && streamingContent && (
-        <div class="flex items-start space-x-3">
-          <div class="w-8 h-8 rounded-full bg-purple-600 flex items-center justify-center text-white text-sm font-medium flex-shrink-0">
-            AI
+        <div class="group flex items-start gap-4 p-6 bg-dark-900/30 animate-fadeIn">
+          {/* Avatar */}
+          <div class="flex-shrink-0">
+            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center text-white text-sm font-semibold">
+              🤖
+            </div>
           </div>
-          <div class="flex-1 bg-white rounded-lg p-4 shadow-sm">
-            <div class="prose prose-sm max-w-none">
+
+          {/* Content */}
+          <div class="flex-1 min-w-0">
+            <div class="mb-2">
+              <span class="font-semibold text-sm text-gray-100">Claude</span>
+            </div>
+            <div class="prose text-gray-200">
               {streamingContent}
-              <span class="inline-block w-2 h-4 bg-gray-400 ml-1 animate-pulse"></span>
+              <span class="inline-block w-1.5 h-4 bg-purple-500 ml-1 animate-pulse rounded-sm" />
             </div>
           </div>
         </div>

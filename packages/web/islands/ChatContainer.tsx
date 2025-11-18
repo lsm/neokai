@@ -2,8 +2,13 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { Event, Message, Session } from "@liuboer/shared";
 import { apiClient } from "../lib/api-client.ts";
 import { wsClient } from "../lib/websocket-client.ts";
+import { toast } from "../lib/toast.ts";
 import MessageList from "../components/MessageList.tsx";
 import MessageInput from "../components/MessageInput.tsx";
+import { Button } from "../components/ui/Button.tsx";
+import { IconButton } from "../components/ui/IconButton.tsx";
+import { Dropdown } from "../components/ui/Dropdown.tsx";
+import { Skeleton, SkeletonMessage } from "../components/ui/Skeleton.tsx";
 
 interface ChatContainerProps {
   sessionId: string;
@@ -16,7 +21,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
+  const [showScrollButton, setShowScrollButton] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     loadSession();
@@ -31,6 +38,21 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     scrollToBottom();
   }, [messages, streamingContent]);
 
+  // Detect scroll position
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 200;
+      setShowScrollButton(!isNearBottom);
+    };
+
+    container.addEventListener("scroll", handleScroll);
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, []);
+
   const loadSession = async () => {
     try {
       setLoading(true);
@@ -39,7 +61,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       setSession(response.session);
       setMessages(response.messages);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load session");
+      const message = err instanceof Error
+        ? err.message
+        : "Failed to load session";
+      setError(message);
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -63,6 +89,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     wsClient.on("error", (event: Event) => {
       const error = (event.data as { error: string }).error;
       setError(error);
+      toast.error(error);
       setSending(false);
       setStreamingContent("");
     });
@@ -88,7 +115,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       // Send to API
       await apiClient.sendMessage(sessionId, { content });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to send message");
+      const message = err instanceof Error
+        ? err.message
+        : "Failed to send message";
+      setError(message);
+      toast.error(message);
       setSending(false);
     }
   };
@@ -97,37 +128,156 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
+  const getHeaderActions = () => [
+    {
+      label: "Session Settings",
+      onClick: () => toast.info("Session settings coming soon"),
+      icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width={2}
+            d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+          />
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width={2}
+            d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+          />
+        </svg>
+      ),
+    },
+    {
+      label: "Export Chat",
+      onClick: () => toast.info("Export feature coming soon"),
+      icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width={2}
+            d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+          />
+        </svg>
+      ),
+    },
+    { type: "divider" as const },
+    {
+      label: "Clear Chat",
+      onClick: () => toast.info("Clear chat feature coming soon"),
+      danger: true,
+      icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width={2}
+            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+          />
+        </svg>
+      ),
+    },
+  ];
+
   if (loading) {
     return (
-      <div class="flex-1 flex items-center justify-center bg-gray-50">
-        <div class="text-gray-500">Loading session...</div>
+      <div class="flex-1 flex flex-col bg-dark-900">
+        {/* Header Skeleton */}
+        <div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 p-4">
+          <Skeleton width="200px" height={24} class="mb-2" />
+          <Skeleton width="150px" height={16} />
+        </div>
+
+        {/* Messages Skeleton */}
+        <div class="flex-1 overflow-y-auto">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <SkeletonMessage key={i} />
+          ))}
+        </div>
       </div>
     );
   }
 
   if (error && !session) {
     return (
-      <div class="flex-1 flex items-center justify-center bg-gray-50">
-        <div class="text-red-500">{error}</div>
+      <div class="flex-1 flex items-center justify-center bg-dark-900">
+        <div class="text-center">
+          <div class="text-5xl mb-4">⚠️</div>
+          <h3 class="text-lg font-semibold text-gray-100 mb-2">
+            Failed to load session
+          </h3>
+          <p class="text-sm text-gray-400 mb-4">{error}</p>
+          <Button onClick={loadSession}>Retry</Button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div class="flex-1 flex flex-col bg-gray-50">
+    <div class="flex-1 flex flex-col bg-dark-900">
       {/* Header */}
-      <div class="bg-white border-b border-gray-200 p-4">
-        <h2 class="text-lg font-semibold text-gray-900">
-          {session?.title || "New Session"}
-        </h2>
-        <p class="text-sm text-gray-500 mt-1">
-          {session?.metadata.messageCount || 0} messages • {session?.metadata.totalTokens || 0}{" "}
-          tokens
-        </p>
+      <div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 p-4">
+        <div class="max-w-4xl mx-auto flex items-center justify-between">
+          <div>
+            <h2 class="text-lg font-semibold text-gray-100">
+              {session?.title || "New Session"}
+            </h2>
+            <div class="flex items-center gap-4 mt-1 text-xs text-gray-400">
+              <span class="flex items-center gap-1">
+                <svg
+                  class="w-3.5 h-3.5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width={2}
+                    d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
+                  />
+                </svg>
+                {session?.metadata.messageCount || 0} messages
+              </span>
+              <span class="flex items-center gap-1">
+                <svg
+                  class="w-3.5 h-3.5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width={2}
+                    d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"
+                  />
+                </svg>
+                {session?.metadata.totalTokens || 0} tokens
+              </span>
+            </div>
+          </div>
+
+          <Dropdown
+            trigger={
+              <IconButton title="Session options">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+                </svg>
+              </IconButton>
+            }
+            items={getHeaderActions()}
+          />
+        </div>
       </div>
 
       {/* Messages */}
-      <div class="flex-1 overflow-y-auto">
+      <div
+        ref={messagesContainerRef}
+        class="flex-1 overflow-y-auto"
+      >
         <MessageList
           messages={messages}
           streamingContent={streamingContent}
@@ -136,10 +286,46 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Scroll to Bottom Button */}
+      {showScrollButton && (
+        <div class="absolute bottom-28 right-8">
+          <IconButton
+            onClick={scrollToBottom}
+            variant="solid"
+            size="lg"
+            class="shadow-lg animate-slideIn"
+            title="Scroll to bottom"
+          >
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width={2}
+                d="M19 14l-7 7m0 0l-7-7m7 7V3"
+              />
+            </svg>
+          </IconButton>
+        </div>
+      )}
+
       {/* Error Banner */}
       {error && (
-        <div class="bg-red-50 border-t border-red-200 p-3 text-sm text-red-700">
-          {error}
+        <div class="bg-red-500/10 border-t border-red-500/20 px-4 py-3">
+          <div class="max-w-4xl mx-auto flex items-center justify-between">
+            <p class="text-sm text-red-400">{error}</p>
+            <button
+              onClick={() => setError(null)}
+              class="text-red-400 hover:text-red-300 transition-colors"
+            >
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path
+                  fill-rule="evenodd"
+                  d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                  clip-rule="evenodd"
+                />
+              </svg>
+            </button>
+          </div>
         </div>
       )}
 

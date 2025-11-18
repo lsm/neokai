@@ -2,12 +2,21 @@ import { useEffect, useState } from "preact/hooks";
 import type { Session } from "@liuboer/shared";
 import { apiClient } from "../lib/api-client.ts";
 import { currentSessionIdSignal } from "../lib/signals.ts";
+import { formatRelativeTime } from "../lib/utils.ts";
+import { toast } from "../lib/toast.ts";
+import { Button } from "../components/ui/Button.tsx";
+import { IconButton } from "../components/ui/IconButton.tsx";
+import { Dropdown } from "../components/ui/Dropdown.tsx";
+import { Modal } from "../components/ui/Modal.tsx";
+import { SkeletonSession } from "../components/ui/Skeleton.tsx";
 
 export default function Sidebar() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creatingSession, setCreatingSession] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
 
   useEffect(() => {
     loadSessions();
@@ -20,7 +29,11 @@ export default function Sidebar() {
       const response = await apiClient.listSessions();
       setSessions(response.sessions);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load sessions");
+      const message = err instanceof Error
+        ? err.message
+        : "Failed to load sessions";
+      setError(message);
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -30,131 +43,314 @@ export default function Sidebar() {
     try {
       setCreatingSession(true);
       const response = await apiClient.createSession({
-        workspacePath: "/tmp/workspace", // Default workspace path
+        workspacePath: "/tmp/workspace",
       });
       await loadSessions();
       currentSessionIdSignal.value = response.sessionId;
+      toast.success("Session created successfully");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create session");
+      const message = err instanceof Error
+        ? err.message
+        : "Failed to create session";
+      setError(message);
+      toast.error(message);
     } finally {
       setCreatingSession(false);
     }
   };
 
-  const handleDeleteSession = async (sessionId: string, e: Event) => {
+  const confirmDeleteSession = (sessionId: string, e: Event) => {
     e.stopPropagation();
-    if (!confirm("Delete this session?")) return;
+    setSessionToDelete(sessionId);
+    setDeleteModalOpen(true);
+  };
+
+  const handleDeleteSession = async () => {
+    if (!sessionToDelete) return;
 
     try {
-      await apiClient.deleteSession(sessionId);
+      await apiClient.deleteSession(sessionToDelete);
       await loadSessions();
-      if (currentSessionIdSignal.value === sessionId) {
-        const remaining = sessions.filter((s) => s.id !== sessionId);
+
+      if (currentSessionIdSignal.value === sessionToDelete) {
+        const remaining = sessions.filter((s) => s.id !== sessionToDelete);
         if (remaining.length > 0) {
           currentSessionIdSignal.value = remaining[0].id;
         } else {
           currentSessionIdSignal.value = null;
         }
       }
+
+      toast.success("Session deleted");
+      setDeleteModalOpen(false);
+      setSessionToDelete(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete session");
+      const message = err instanceof Error
+        ? err.message
+        : "Failed to delete session";
+      toast.error(message);
     }
   };
 
-  const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr);
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
-    const hours = Math.floor(diff / 1000 / 60 / 60);
-
-    if (hours < 1) return "Just now";
-    if (hours < 24) return `${hours}h ago`;
-    if (hours < 48) return "Yesterday";
-    return date.toLocaleDateString();
-  };
+  const getSessionMenuItems = (sessionId: string) => [
+    {
+      label: "Rename",
+      onClick: () => toast.info("Rename feature coming soon"),
+      icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width={2}
+            d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+          />
+        </svg>
+      ),
+    },
+    {
+      label: "Duplicate",
+      onClick: () => toast.info("Duplicate feature coming soon"),
+      icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width={2}
+            d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+          />
+        </svg>
+      ),
+    },
+    {
+      label: "Export",
+      onClick: () => toast.info("Export feature coming soon"),
+      icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width={2}
+            d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+          />
+        </svg>
+      ),
+    },
+    { type: "divider" as const },
+    {
+      label: "Delete",
+      onClick: (e: Event) => confirmDeleteSession(sessionId, e),
+      danger: true,
+      icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width={2}
+            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+          />
+        </svg>
+      ),
+    },
+  ];
 
   return (
-    <div class="h-screen w-80 bg-gray-900 text-white flex flex-col">
-      {/* Header */}
-      <div class="p-4 border-b border-gray-700">
-        <h1 class="text-xl font-bold mb-4">Liuboer</h1>
-        <button
-          type="button"
-          onClick={handleCreateSession}
-          disabled={creatingSession}
-          class="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 rounded-lg text-sm font-medium transition-colors"
-        >
-          {creatingSession ? "Creating..." : "+ New Session"}
-        </button>
-      </div>
-
-      {/* Session List */}
-      <div class="flex-1 overflow-y-auto">
-        {loading && <div class="p-4 text-center text-gray-400">Loading sessions...</div>}
-
-        {error && <div class="p-4 text-center text-red-400 text-sm">{error}</div>}
-
-        {!loading && sessions.length === 0 && (
-          <div class="p-4 text-center text-gray-400 text-sm">
-            No sessions yet. Create one to get started!
+    <>
+      <div class="h-screen w-80 bg-dark-950 border-r border-dark-700 flex flex-col">
+        {/* Header */}
+        <div class="p-4 border-b border-dark-700">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="text-2xl">🤖</div>
+            <h1 class="text-xl font-bold text-gray-100">Liuboer</h1>
           </div>
-        )}
-
-        {!loading && sessions.map((session) => (
-          <div
-            key={session.id}
-            onClick={() => currentSessionIdSignal.value = session.id}
-            class={`p-4 border-b border-gray-800 cursor-pointer hover:bg-gray-800 transition-colors ${
-              currentSessionIdSignal.value === session.id ? "bg-gray-800" : ""
-            }`}
+          <Button
+            onClick={handleCreateSession}
+            loading={creatingSession}
+            fullWidth
+            icon={
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width={2}
+                  d="M12 4v16m8-8H4"
+                />
+              </svg>
+            }
           >
-            <div class="flex items-start justify-between">
-              <div class="flex-1 min-w-0">
-                <h3 class="font-medium truncate text-sm">
-                  {session.title || "New Session"}
-                </h3>
-                <p class="text-xs text-gray-400 mt-1">
-                  {session.metadata.messageCount} messages
-                </p>
-                <p class="text-xs text-gray-500 mt-1">
-                  {formatDate(session.lastActiveAt)}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={(e) => handleDeleteSession(session.id, e)}
-                class="ml-2 p-1 text-gray-400 hover:text-red-400 transition-colors"
-                title="Delete session"
+            New Session
+          </Button>
+        </div>
+
+        {/* Session List */}
+        <div class="flex-1 overflow-y-auto">
+          {loading && (
+            <div class="divide-y divide-dark-700">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <SkeletonSession key={i} />
+              ))}
+            </div>
+          )}
+
+          {error && !loading && (
+            <div class="p-4 m-4 bg-red-500/10 border border-red-500/20 rounded-lg">
+              <p class="text-sm text-red-400">{error}</p>
+              <Button
+                onClick={loadSessions}
+                variant="ghost"
+                size="sm"
+                class="mt-2"
               >
-                <svg
-                  class="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                  />
-                </svg>
-              </button>
+                Retry
+              </Button>
+            </div>
+          )}
+
+          {!loading && sessions.length === 0 && (
+            <div class="p-6 text-center">
+              <div class="text-4xl mb-3">💬</div>
+              <p class="text-sm text-gray-400">
+                No sessions yet.
+              </p>
+              <p class="text-xs text-gray-500 mt-1">
+                Create one to get started!
+              </p>
+            </div>
+          )}
+
+          {!loading && sessions.map((session) => {
+            const isActive = currentSessionIdSignal.value === session.id;
+
+            return (
+              <div
+                key={session.id}
+                onClick={() => currentSessionIdSignal.value = session.id}
+                class={`group relative p-4 border-b border-dark-700 cursor-pointer transition-all ${
+                  isActive
+                    ? "bg-dark-850 border-l-2 border-l-blue-500"
+                    : "hover:bg-dark-900"
+                }`}
+              >
+                <div class="flex items-start justify-between gap-2">
+                  <div class="flex-1 min-w-0">
+                    <h3
+                      class={`font-medium truncate text-sm mb-1 ${
+                        isActive ? "text-gray-100" : "text-gray-200"
+                      }`}
+                    >
+                      {session.title || "New Session"}
+                    </h3>
+                    <div class="flex items-center gap-3 text-xs text-gray-500">
+                      <span class="flex items-center gap-1">
+                        <svg
+                          class="w-3 h-3"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width={2}
+                            d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
+                          />
+                        </svg>
+                        {session.metadata.messageCount || 0}
+                      </span>
+                      <span class="flex items-center gap-1">
+                        <svg
+                          class="w-3 h-3"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width={2}
+                            d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                          />
+                        </svg>
+                        {formatRelativeTime(new Date(session.lastActiveAt))}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Actions Menu */}
+                  <div
+                    class={`transition-opacity ${
+                      isActive ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                    }`}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Dropdown
+                      trigger={
+                        <IconButton
+                          size="sm"
+                          title="Session options"
+                        >
+                          <svg
+                            class="w-4 h-4"
+                            fill="currentColor"
+                            viewBox="0 0 20 20"
+                          >
+                            <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+                          </svg>
+                        </IconButton>
+                      }
+                      items={getSessionMenuItems(session.id)}
+                    />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Footer */}
+        <div class="p-4 border-t border-dark-700">
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-gray-400">Status</span>
+            <div class="flex items-center gap-2">
+              <div class="relative">
+                <span class="w-2 h-2 bg-green-500 rounded-full block" />
+                <span class="absolute inset-0 w-2 h-2 bg-green-500 rounded-full animate-ping opacity-75" />
+              </div>
+              <span class="text-gray-300">Connected</span>
             </div>
           </div>
-        ))}
-      </div>
-
-      {/* Footer */}
-      <div class="p-4 border-t border-gray-700 text-xs text-gray-400">
-        <div class="flex items-center justify-between">
-          <span>Status:</span>
-          <span class="flex items-center">
-            <span class="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
-            Connected
-          </span>
         </div>
       </div>
-    </div>
+
+      {/* Delete Confirmation Modal */}
+      <Modal
+        isOpen={deleteModalOpen}
+        onClose={() => {
+          setDeleteModalOpen(false);
+          setSessionToDelete(null);
+        }}
+        title="Delete Session"
+        size="sm"
+      >
+        <div class="space-y-4">
+          <p class="text-gray-300 text-sm">
+            Are you sure you want to delete this session? This action cannot be undone.
+          </p>
+          <div class="flex gap-3 justify-end">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setDeleteModalOpen(false);
+                setSessionToDelete(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={handleDeleteSession}>
+              Delete
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </>
   );
 }
