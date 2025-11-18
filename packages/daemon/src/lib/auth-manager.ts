@@ -2,23 +2,29 @@ import type { AuthMethod, AuthStatus, OAuthTokens } from "@liuboer/shared";
 import type { Config } from "../config";
 import { Database } from "../storage/database";
 import { OAuthService } from "./oauth-service";
+import { EnvManager } from "./env-manager";
 
 /**
  * AuthManager - Central authentication coordinator
  *
  * Manages both OAuth and API key authentication methods,
  * handles token refresh, and provides a unified interface for authentication.
+ *
+ * IMPORTANT: Credentials are NEVER stored in the database.
+ * They are only stored in environment variables and the .env file.
  */
 export class AuthManager {
   private oauth: OAuthService;
   private db: Database;
   private config: Config;
+  private envManager: EnvManager;
   private refreshInterval?: number;
 
-  constructor(db: Database, config: Config) {
+  constructor(db: Database, config: Config, envPath?: string) {
     this.db = db;
     this.config = config;
     this.oauth = new OAuthService(config);
+    this.envManager = new EnvManager(envPath);
   }
 
   /**
@@ -36,8 +42,9 @@ export class AuthManager {
    * Get current authentication status
    */
   async getAuthStatus(): Promise<AuthStatus> {
-    // Check for CLAUDE_CODE_OAUTH_TOKEN env var first (highest priority)
-    if (this.config.claudeCodeOAuthToken) {
+    // Check for OAuth token in env (highest priority)
+    const oauthToken = this.envManager.getOAuthToken();
+    if (oauthToken) {
       return {
         method: "oauth_token",
         isAuthenticated: true,
@@ -48,62 +55,38 @@ export class AuthManager {
       };
     }
 
-    const method = this.db.getAuthMethod();
-
-    if (method === "none") {
-      return {
-        method: "none",
-        isAuthenticated: false,
-        source: "database",
-      };
-    }
-
-    if (method === "api_key") {
-      const apiKey = await this.db.getApiKey();
+    // Check for API key in env
+    const apiKey = this.envManager.getApiKey();
+    if (apiKey) {
       return {
         method: "api_key",
-        isAuthenticated: !!apiKey,
-        source: "database",
+        isAuthenticated: true,
+        source: "env",
       };
     }
 
-    if (method === "oauth_token") {
-      const token = await this.db.getOAuthLongLivedToken();
-      return {
-        method: "oauth_token",
-        isAuthenticated: !!token,
-        source: "database",
-        user: {
-          // Long-lived token from claude setup-token (valid for 1 year)
-        },
-      };
-    }
-
+    // Check for OAuth flow tokens in database (temporary during OAuth flow)
+    const method = this.db.getAuthMethod();
     if (method === "oauth") {
       const tokens = await this.db.getOAuthTokens();
-      if (!tokens) {
+      if (tokens) {
         return {
           method: "oauth",
-          isAuthenticated: false,
+          isAuthenticated: true,
+          expiresAt: tokens.expiresAt,
           source: "database",
+          user: {
+            // OAuth flow tokens (short-lived, will be refreshed)
+          },
         };
       }
-
-      return {
-        method: "oauth",
-        isAuthenticated: true,
-        expiresAt: tokens.expiresAt,
-        source: "database",
-        user: {
-          // Could fetch user info from Claude API in the future
-        },
-      };
     }
 
+    // No authentication configured
     return {
       method: "none",
       isAuthenticated: false,
-      source: "database",
+      source: "env",
     };
   }
 
@@ -137,52 +120,50 @@ export class AuthManager {
   }
 
   /**
-   * Set API key
+   * Set API key - writes to .env file, NOT database
    */
   async setApiKey(apiKey: string): Promise<void> {
     // TODO: Validate API key by making a test request to Anthropic
-    await this.db.saveApiKey(apiKey);
+    this.envManager.setApiKey(apiKey);
+
+    // Clear any OAuth tokens from database
+    this.db.clearAuth();
   }
 
   /**
-   * Set long-lived OAuth token (from claude setup-token)
+   * Set long-lived OAuth token - writes to .env file, NOT database
    */
   async setOAuthToken(token: string): Promise<void> {
-    await this.db.saveOAuthLongLivedToken(token);
+    this.envManager.setOAuthToken(token);
+
+    // Clear any OAuth tokens from database
+    this.db.clearAuth();
   }
 
   /**
    * Get current API key (for use in agent sessions)
    */
   async getCurrentApiKey(): Promise<string | null> {
-    // Priority 1: CLAUDE_CODE_OAUTH_TOKEN env var (highest priority)
-    if (this.config.claudeCodeOAuthToken) {
-      return this.config.claudeCodeOAuthToken;
+    // Priority 1: OAuth token from env
+    const oauthToken = this.envManager.getOAuthToken();
+    if (oauthToken) {
+      return oauthToken;
     }
 
+    // Priority 2: API key from env
+    const apiKey = this.envManager.getApiKey();
+    if (apiKey) {
+      return apiKey;
+    }
+
+    // Priority 3: OAuth flow tokens (temporary, short-lived)
     const method = this.db.getAuthMethod();
-
-    if (method === "api_key") {
-      return await this.db.getApiKey();
-    }
-
-    if (method === "oauth_token") {
-      // Return long-lived OAuth token
-      return await this.db.getOAuthLongLivedToken();
-    }
-
     if (method === "oauth") {
-      // Get OAuth token and ensure it's not expired
       const tokens = await this.getValidOAuthToken();
-      if (!tokens) return null;
-
-      // Return access token (Claude Agent SDK accepts it via CLAUDE_CODE_OAUTH_TOKEN env var)
-      return tokens.accessToken;
-    }
-
-    // Also check config for fallback API key
-    if (this.config.anthropicApiKey) {
-      return this.config.anthropicApiKey;
+      if (tokens) {
+        // Return access token (Claude Agent SDK accepts it via CLAUDE_CODE_OAUTH_TOKEN env var)
+        return tokens.accessToken;
+      }
     }
 
     return null;
@@ -230,6 +211,10 @@ export class AuthManager {
    * Logout and clear authentication
    */
   logout(): void {
+    // Clear credentials from .env file
+    this.envManager.clearCredentials();
+
+    // Clear any OAuth flow tokens from database
     this.db.clearAuth();
   }
 

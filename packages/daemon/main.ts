@@ -30,13 +30,12 @@ const authManager = new AuthManager(db, config);
 await authManager.initialize();
 console.log("✅ Authentication manager initialized");
 
-// Check for API key in config and auto-set if present
-if (config.anthropicApiKey) {
-  const authStatus = await authManager.getAuthStatus();
-  if (!authStatus.isAuthenticated) {
-    await authManager.setApiKey(config.anthropicApiKey);
-    console.log("✅ API key from environment configured");
-  }
+// Check authentication status
+const authStatus = await authManager.getAuthStatus();
+if (authStatus.isAuthenticated) {
+  console.log(`✅ Authenticated via ${authStatus.method} (source: ${authStatus.source})`);
+} else {
+  console.log("⚠️  No authentication configured. Set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in .env");
 }
 
 // Initialize session manager
