@@ -1,7 +1,5 @@
 import type {
   APIClient,
-  CompleteOAuthFlowRequest,
-  CompleteOAuthFlowResponse,
   CreateSessionRequest,
   CreateSessionResponse,
   GetActiveToolsResponse,
@@ -17,23 +15,36 @@ import type {
   LoadToolsRequest,
   ReadFileRequest,
   ReadFileResponse,
-  RefreshTokenResponse,
   SendMessageRequest,
   SendMessageResponse,
-  SetApiKeyRequest,
-  SetOAuthTokenRequest,
-  StartOAuthFlowResponse,
   UnloadToolsRequest,
   UpdateConfigRequest,
   UpdateSessionRequest,
 } from "@liuboer/shared";
 import type { DaemonConfig, HealthStatus } from "@liuboer/shared";
 
+/**
+ * Get the daemon API base URL based on the current hostname
+ * Uses the same hostname as the web UI but with port 8283
+ */
+function getDaemonBaseUrl(): string {
+  if (typeof window === 'undefined') {
+    return "http://localhost:8283";
+  }
+
+  const hostname = window.location.hostname;
+  const protocol = window.location.protocol;
+
+  // Use the current hostname with port 8283
+  return `${protocol}//${hostname}:8283`;
+}
+
 export class DaemonAPIClient implements APIClient {
   private baseUrl: string;
 
-  constructor(baseUrl = "http://localhost:8283") {
-    this.baseUrl = baseUrl;
+  constructor(baseUrl?: string) {
+    this.baseUrl = baseUrl || getDaemonBaseUrl();
+    console.log(`API Client initialized with baseUrl: ${this.baseUrl}`);
   }
 
   private async fetch<T>(
@@ -195,45 +206,6 @@ export class DaemonAPIClient implements APIClient {
   // Authentication
   async getAuthStatus(): Promise<GetAuthStatusResponse> {
     return this.fetch<GetAuthStatusResponse>("/api/auth/status");
-  }
-
-  async startOAuthFlow(): Promise<StartOAuthFlowResponse> {
-    return this.fetch<StartOAuthFlowResponse>("/api/auth/oauth/start", {
-      method: "POST",
-    });
-  }
-
-  async completeOAuthFlow(req: CompleteOAuthFlowRequest): Promise<CompleteOAuthFlowResponse> {
-    return this.fetch<CompleteOAuthFlowResponse>("/api/auth/oauth/complete", {
-      method: "POST",
-      body: JSON.stringify(req),
-    });
-  }
-
-  async setApiKey(req: SetApiKeyRequest): Promise<void> {
-    await this.fetch("/api/auth/api-key", {
-      method: "POST",
-      body: JSON.stringify(req),
-    });
-  }
-
-  async setOAuthToken(req: SetOAuthTokenRequest): Promise<void> {
-    await this.fetch("/api/auth/oauth-token", {
-      method: "POST",
-      body: JSON.stringify(req),
-    });
-  }
-
-  async refreshToken(): Promise<RefreshTokenResponse> {
-    return this.fetch<RefreshTokenResponse>("/api/auth/refresh", {
-      method: "POST",
-    });
-  }
-
-  async logout(): Promise<void> {
-    await this.fetch("/api/auth/logout", {
-      method: "POST",
-    });
   }
 }
 
