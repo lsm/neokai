@@ -1,21 +1,24 @@
-import { Database as DB } from "@db/sqlite";
-import { ensureDir } from "@std/fs";
-import { dirname } from "@std/path";
+import { Database as BunDatabase } from "bun:sqlite";
+import { dirname } from "node:path";
+import { mkdirSync, existsSync } from "node:fs";
 import type { AuthMethod, Message, OAuthTokens, Session, ToolCall } from "@liuboer/shared";
 
 export class Database {
-  private db: DB;
+  private db: BunDatabase;
 
   constructor(private dbPath: string) {
-    this.db = null as unknown as DB;
+    this.db = null as unknown as BunDatabase;
   }
 
   async initialize() {
     // Ensure directory exists
-    await ensureDir(dirname(this.dbPath));
+    const dir = dirname(this.dbPath);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
 
     // Open database
-    this.db = new DB(this.dbPath);
+    this.db = new BunDatabase(this.dbPath);
 
     // Create tables
     this.createTables();
@@ -155,11 +158,10 @@ export class Database {
 
   getSession(id: string): Session | null {
     const stmt = this.db.prepare(`SELECT * FROM sessions WHERE id = ?`);
-    const rows = stmt.all(id) as unknown[];
+    const row = stmt.get(id) as Record<string, unknown> | undefined;
 
-    if (rows.length === 0) return null;
+    if (!row) return null;
 
-    const row = rows[0] as Record<string, unknown>;
     return {
       id: row.id as string,
       title: row.title as string,
@@ -174,10 +176,9 @@ export class Database {
 
   listSessions(): Session[] {
     const stmt = this.db.prepare(`SELECT * FROM sessions ORDER BY last_active_at DESC`);
-    const rows = stmt.all() as unknown[];
+    const rows = stmt.all() as Record<string, unknown>[];
 
-    return rows.map((row) => {
-      const r = row as Record<string, unknown>;
+    return rows.map((r) => {
       return {
         id: r.id as string,
         title: r.title as string,
@@ -215,7 +216,7 @@ export class Database {
     if (fields.length > 0) {
       values.push(id);
       const stmt = this.db.prepare(`UPDATE sessions SET ${fields.join(", ")} WHERE id = ?`);
-      stmt.run(...(values as (string | number | boolean | null | undefined)[]));
+      stmt.run(...values);
     }
   }
 
@@ -252,10 +253,9 @@ export class Database {
     const stmt = this.db.prepare(
       `SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?`
     );
-    const rows = stmt.all(sessionId, limit, offset) as unknown[];
+    const rows = stmt.all(sessionId, limit, offset) as Record<string, unknown>[];
 
-    return rows.map((row) => {
-      const r = row as Record<string, unknown>;
+    return rows.map((r) => {
       const message: Message = {
         id: r.id as string,
         sessionId: r.session_id as string,
@@ -296,10 +296,9 @@ export class Database {
     const stmt = this.db.prepare(
       `SELECT * FROM tool_calls WHERE message_id = ? ORDER BY timestamp`
     );
-    const rows = stmt.all(messageId) as unknown[];
+    const rows = stmt.all(messageId) as Record<string, unknown>[];
 
-    return rows.map((row) => {
-      const r = row as Record<string, unknown>;
+    return rows.map((r) => {
       return {
         id: r.id as string,
         messageId: r.message_id as string,
@@ -394,9 +393,8 @@ export class Database {
    */
   getAuthMethod(): AuthMethod {
     const stmt = this.db.prepare(`SELECT auth_method FROM auth_config WHERE id = 1`);
-    const rows = stmt.all() as unknown[];
-    if (rows.length === 0) return "none";
-    const row = rows[0] as Record<string, unknown>;
+    const row = stmt.get() as Record<string, unknown> | undefined;
+    if (!row) return "none";
     return row.auth_method as AuthMethod;
   }
 
@@ -416,10 +414,9 @@ export class Database {
    */
   async getOAuthTokens(): Promise<OAuthTokens | null> {
     const stmt = this.db.prepare(`SELECT oauth_tokens_encrypted FROM auth_config WHERE id = 1`);
-    const rows = stmt.all() as unknown[];
-    if (rows.length === 0) return null;
+    const row = stmt.get() as Record<string, unknown> | undefined;
+    if (!row) return null;
 
-    const row = rows[0] as Record<string, unknown>;
     const encrypted = row.oauth_tokens_encrypted as string | null;
     if (!encrypted) return null;
 
@@ -443,10 +440,9 @@ export class Database {
    */
   async getApiKey(): Promise<string | null> {
     const stmt = this.db.prepare(`SELECT api_key_encrypted FROM auth_config WHERE id = 1`);
-    const rows = stmt.all() as unknown[];
-    if (rows.length === 0) return null;
+    const row = stmt.get() as Record<string, unknown> | undefined;
+    if (!row) return null;
 
-    const row = rows[0] as Record<string, unknown>;
     const encrypted = row.api_key_encrypted as string | null;
     if (!encrypted) return null;
 
@@ -469,10 +465,9 @@ export class Database {
    */
   async getOAuthLongLivedToken(): Promise<string | null> {
     const stmt = this.db.prepare(`SELECT oauth_token_encrypted FROM auth_config WHERE id = 1`);
-    const rows = stmt.all() as unknown[];
-    if (rows.length === 0) return null;
+    const row = stmt.get() as Record<string, unknown> | undefined;
+    if (!row) return null;
 
-    const row = rows[0] as Record<string, unknown>;
     const encrypted = row.oauth_token_encrypted as string | null;
     if (!encrypted) return null;
 
@@ -509,11 +504,10 @@ export class Database {
     const selectStmt = this.db.prepare(
       `SELECT code_verifier FROM oauth_states WHERE state = ? AND expires_at > datetime('now')`
     );
-    const rows = selectStmt.all(state) as unknown[];
+    const row = selectStmt.get(state) as Record<string, unknown> | undefined;
 
-    if (rows.length === 0) return null;
+    if (!row) return null;
 
-    const row = rows[0] as Record<string, unknown>;
     const codeVerifier = row.code_verifier as string;
 
     // Delete the state (one-time use)

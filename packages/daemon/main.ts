@@ -1,14 +1,15 @@
-import { Application, Router } from "@oak/oak";
-import { getConfig } from "./src/config.ts";
-import { Database } from "./src/storage/database.ts";
-import { SessionManager } from "./src/lib/session-manager.ts";
-import { EventBus } from "./src/lib/event-bus.ts";
-import { AuthManager } from "./src/lib/auth-manager.ts";
-import { createSessionsRouter } from "./src/routes/sessions.ts";
-import { createSystemRouter } from "./src/routes/system.ts";
-import { createFilesRouter } from "./src/routes/files.ts";
-import { createAuthRouter } from "./src/routes/auth.ts";
-import { setupWebSocket } from "./src/routes/websocket.ts";
+import { Elysia } from "elysia";
+import { cors } from "@elysiajs/cors";
+import { getConfig } from "./src/config";
+import { Database } from "./src/storage/database";
+import { SessionManager } from "./src/lib/session-manager";
+import { EventBus } from "./src/lib/event-bus";
+import { AuthManager } from "./src/lib/auth-manager";
+import { createSessionsRouter } from "./src/routes/sessions";
+import { createSystemRouter } from "./src/routes/system";
+import { createFilesRouter } from "./src/routes/files";
+import { createAuthRouter } from "./src/routes/auth";
+import { setupWebSocket } from "./src/routes/websocket";
 
 const config = getConfig();
 
@@ -47,74 +48,21 @@ const sessionManager = new SessionManager(db, eventBus, authManager, {
 console.log("✅ Session manager initialized");
 
 // Create application
-const app = new Application();
-
-// Error handling
-app.use(async (ctx, next) => {
-  try {
-    await next();
-  } catch (err) {
-    console.error("Error:", err);
-    ctx.response.status = 500;
-    ctx.response.body = {
+const app = new Elysia()
+  .use(cors({
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type"],
+  }))
+  .onError(({ error, set }) => {
+    console.error("Error:", error);
+    set.status = 500;
+    return {
       error: "Internal server error",
-      message: err instanceof Error ? err.message : String(err),
+      message: error instanceof Error ? error.message : String(error),
     };
-  }
-});
-
-// CORS middleware
-app.use(async (ctx, next) => {
-  ctx.response.headers.set("Access-Control-Allow-Origin", "*");
-  ctx.response.headers.set(
-    "Access-Control-Allow-Methods",
-    "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-  );
-  ctx.response.headers.set("Access-Control-Allow-Headers", "Content-Type");
-
-  if (ctx.request.method === "OPTIONS") {
-    ctx.response.status = 204;
-    return;
-  }
-
-  await next();
-});
-
-// Logging middleware
-app.use(async (ctx, next) => {
-  const start = Date.now();
-  await next();
-  const ms = Date.now() - start;
-  console.log(
-    `${ctx.request.method} ${ctx.request.url} - ${ctx.response.status} (${ms}ms)`,
-  );
-});
-
-// Routes
-const sessionsRouter = createSessionsRouter(sessionManager);
-const systemRouter = createSystemRouter(sessionManager, config, authManager);
-const filesRouter = createFilesRouter(sessionManager);
-const authRouter = createAuthRouter(authManager);
-
-app.use(authRouter.routes());
-app.use(authRouter.allowedMethods());
-app.use(sessionsRouter.routes());
-app.use(sessionsRouter.allowedMethods());
-app.use(systemRouter.routes());
-app.use(systemRouter.allowedMethods());
-app.use(filesRouter.routes());
-app.use(filesRouter.allowedMethods());
-
-// WebSocket route
-const wsRouter = new Router();
-wsRouter.get("/ws/:sessionId", setupWebSocket(eventBus, sessionManager));
-app.use(wsRouter.routes());
-app.use(wsRouter.allowedMethods());
-
-// Root endpoint
-const rootRouter = new Router();
-rootRouter.get("/", (ctx) => {
-  ctx.response.body = {
+  })
+  .get("/", () => ({
     name: "Liuboer Daemon",
     version: "0.1.0",
     status: "running",
@@ -125,26 +73,36 @@ rootRouter.get("/", (ctx) => {
       files: "/api/sessions/:sessionId/files",
       websocket: "/ws/:sessionId",
     },
-  };
-});
-app.use(rootRouter.routes());
+  }));
+
+// Mount routers
+createAuthRouter(app, authManager);
+createSessionsRouter(app, sessionManager);
+createSystemRouter(app, sessionManager, config, authManager);
+createFilesRouter(app, sessionManager);
+setupWebSocket(app, eventBus, sessionManager);
 
 // Start server
 console.log(`\n🚀 Liuboer Daemon starting...`);
 console.log(`   Host: ${config.host}`);
 console.log(`   Port: ${config.port}`);
 console.log(`   Model: ${config.defaultModel}`);
-console.log(`\n📡 HTTP Server: http://${config.host}:${config.port}`);
-console.log(`📡 WebSocket: ws://${config.host}:${config.port}/ws/:sessionId`);
+
+app.listen({
+  hostname: config.host,
+  port: config.port,
+});
+
+console.log(`\n📡 HTTP Server: http://${app.server?.hostname}:${app.server?.port}`);
+console.log(`📡 WebSocket: ws://${app.server?.hostname}:${app.server?.port}/ws/:sessionId`);
 console.log(`\n✨ Ready to accept connections!\n`);
 
-await app.listen({ hostname: config.host, port: config.port });
-
 // Cleanup on exit
-Deno.addSignalListener("SIGINT", () => {
+process.on("SIGINT", () => {
   console.log("\n👋 Shutting down...");
   authManager.destroy();
   eventBus.clear();
   db.close();
-  Deno.exit(0);
+  app.stop();
+  process.exit(0);
 });

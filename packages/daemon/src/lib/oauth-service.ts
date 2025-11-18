@@ -1,5 +1,5 @@
 import type { OAuthTokens } from "@liuboer/shared";
-import type { Config } from "../config.ts";
+import type { Config } from "../config";
 
 /**
  * OAuth PKCE Service for Claude.ai authentication

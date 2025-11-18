@@ -4,8 +4,9 @@
  * Provides safe file read/list/tree operations with path traversal protection.
  */
 
-import { join, normalize, relative } from "@std/path";
-import { exists, walk } from "@std/fs";
+import { join, normalize, relative } from "node:path";
+import { stat, readFile, readdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
 
 export interface FileInfo {
   path: string;
@@ -56,29 +57,29 @@ export class FileManager {
   }> {
     const absolutePath = this.validatePath(filePath);
 
-    if (!(await exists(absolutePath))) {
+    if (!existsSync(absolutePath)) {
       throw new Error(`File not found: ${filePath}`);
     }
 
-    const stat = await Deno.stat(absolutePath);
-    if (stat.isDirectory) {
+    const stats = await stat(absolutePath);
+    if (stats.isDirectory()) {
       throw new Error(`Path is a directory, not a file: ${filePath}`);
     }
 
     let content: string;
     if (encoding === "base64") {
-      const bytes = await Deno.readFile(absolutePath);
-      content = btoa(String.fromCharCode(...bytes));
+      const bytes = await readFile(absolutePath);
+      content = bytes.toString("base64");
     } else {
-      content = await Deno.readTextFile(absolutePath);
+      content = await readFile(absolutePath, "utf-8");
     }
 
     return {
       path: filePath,
       content,
       encoding,
-      size: stat.size,
-      mtime: stat.mtime?.toISOString() || new Date().toISOString(),
+      size: stats.size,
+      mtime: stats.mtime.toISOString(),
     };
   }
 
@@ -91,40 +92,33 @@ export class FileManager {
   ): Promise<FileInfo[]> {
     const absolutePath = this.validatePath(dirPath);
 
-    if (!(await exists(absolutePath))) {
+    if (!existsSync(absolutePath)) {
       throw new Error(`Directory not found: ${dirPath}`);
     }
 
-    const stat = await Deno.stat(absolutePath);
-    if (!stat.isDirectory) {
+    const stats = await stat(absolutePath);
+    if (!stats.isDirectory()) {
       throw new Error(`Path is not a directory: ${dirPath}`);
     }
 
     const files: FileInfo[] = [];
 
     if (recursive) {
-      for await (const entry of walk(absolutePath)) {
-        const relativePath = relative(this.workspacePath, entry.path);
-        files.push({
-          path: relativePath,
-          name: entry.name,
-          type: entry.isDirectory ? "directory" : "file",
-          size: entry.isFile ? (await Deno.stat(entry.path)).size : undefined,
-          mtime: (await Deno.stat(entry.path)).mtime?.toISOString(),
-        });
-      }
+      await this.walkDirectory(absolutePath, files);
     } else {
-      for await (const entry of Deno.readDir(absolutePath)) {
+      const entries = await readdir(absolutePath, { withFileTypes: true });
+
+      for (const entry of entries) {
         const entryPath = join(absolutePath, entry.name);
-        const stat = await Deno.stat(entryPath);
+        const entryStats = await stat(entryPath);
         const relativePath = relative(this.workspacePath, entryPath);
 
         files.push({
           path: relativePath,
           name: entry.name,
-          type: entry.isDirectory ? "directory" : "file",
-          size: entry.isFile ? stat.size : undefined,
-          mtime: stat.mtime?.toISOString(),
+          type: entry.isDirectory() ? "directory" : "file",
+          size: entry.isFile() ? entryStats.size : undefined,
+          mtime: entryStats.mtime.toISOString(),
         });
       }
     }
@@ -139,6 +133,31 @@ export class FileManager {
   }
 
   /**
+   * Helper method to recursively walk a directory
+   */
+  private async walkDirectory(dirPath: string, files: FileInfo[]): Promise<void> {
+    const entries = await readdir(dirPath, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const entryPath = join(dirPath, entry.name);
+      const entryStats = await stat(entryPath);
+      const relativePath = relative(this.workspacePath, entryPath);
+
+      files.push({
+        path: relativePath,
+        name: entry.name,
+        type: entry.isDirectory() ? "directory" : "file",
+        size: entry.isFile() ? entryStats.size : undefined,
+        mtime: entryStats.mtime.toISOString(),
+      });
+
+      if (entry.isDirectory()) {
+        await this.walkDirectory(entryPath, files);
+      }
+    }
+  }
+
+  /**
    * Get file tree for UI (with max depth)
    */
   async getFileTree(
@@ -148,14 +167,14 @@ export class FileManager {
   ): Promise<FileTree> {
     const absolutePath = this.validatePath(dirPath);
 
-    if (!(await exists(absolutePath))) {
+    if (!existsSync(absolutePath)) {
       throw new Error(`Path not found: ${dirPath}`);
     }
 
-    const stat = await Deno.stat(absolutePath);
+    const stats = await stat(absolutePath);
     const name = dirPath === "." ? this.workspacePath.split("/").pop() || "workspace" : dirPath.split("/").pop() || dirPath;
 
-    if (!stat.isDirectory) {
+    if (!stats.isDirectory()) {
       return {
         name,
         path: dirPath,
@@ -176,7 +195,9 @@ export class FileManager {
     }
 
     const entries: FileInfo[] = [];
-    for await (const entry of Deno.readDir(absolutePath)) {
+    const dirEntries = await readdir(absolutePath, { withFileTypes: true });
+
+    for (const entry of dirEntries) {
       // Skip hidden files and common ignore patterns
       if (entry.name.startsWith(".")) continue;
       if (["node_modules", "dist", "build", "coverage"].includes(entry.name)) {
@@ -189,7 +210,7 @@ export class FileManager {
       entries.push({
         path: relativePath,
         name: entry.name,
-        type: entry.isDirectory ? "directory" : "file",
+        type: entry.isDirectory() ? "directory" : "file",
       });
     }
 
@@ -228,7 +249,7 @@ export class FileManager {
   async pathExists(filePath: string): Promise<boolean> {
     try {
       const absolutePath = this.validatePath(filePath);
-      return await exists(absolutePath);
+      return existsSync(absolutePath);
     } catch {
       return false;
     }

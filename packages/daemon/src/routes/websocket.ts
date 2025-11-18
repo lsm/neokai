@@ -4,46 +4,32 @@
  * Provides WebSocket endpoint for clients to receive real-time updates.
  */
 
-import { RouterContext } from "@oak/oak";
-import { EventBus } from "../lib/event-bus.ts";
-import { SessionManager } from "../lib/session-manager.ts";
+import type { Elysia } from "elysia";
+import type { EventBus } from "../lib/event-bus";
+import type { SessionManager } from "../lib/session-manager";
 
 export function setupWebSocket(
+  app: Elysia,
   eventBus: EventBus,
   sessionManager: SessionManager,
 ) {
-  return async (ctx: RouterContext<"/ws/:sessionId">) => {
-    if (!ctx.isUpgradable) {
-      ctx.response.status = 400;
-      ctx.response.body = { error: "WebSocket upgrade required" };
-      return;
-    }
+  return app.ws("/ws/:sessionId", {
+    open(ws) {
+      const sessionId = ws.data.params.sessionId;
+      console.log(`WebSocket connected for session: ${sessionId}`);
 
-    // Get session ID from URL params
-    const sessionId = ctx.params.sessionId;
-    if (!sessionId) {
-      ctx.response.status = 400;
-      ctx.response.body = { error: "Session ID required" };
-      return;
-    }
+      // Verify session exists
+      const session = sessionManager.getSession(sessionId);
+      if (!session) {
+        console.error(`Session ${sessionId} not found during WebSocket open`);
+        ws.close();
+        return;
+      }
 
-    // Verify session exists
-    const session = sessionManager.getSession(sessionId);
-    if (!session) {
-      ctx.response.status = 404;
-      ctx.response.body = { error: `Session ${sessionId} not found` };
-      return;
-    }
+      // Subscribe to events
+      eventBus.subscribeWebSocket(sessionId, ws.raw);
 
-    // Upgrade connection to WebSocket
-    const ws = await ctx.upgrade();
-    console.log(`WebSocket connected for session: ${sessionId}`);
-
-    // Subscribe to events
-    eventBus.subscribeWebSocket(sessionId, ws);
-
-    // Send initial connection message (only if WebSocket is OPEN)
-    if (ws.readyState === WebSocket.OPEN) {
+      // Send initial connection message
       try {
         ws.send(
           JSON.stringify({
@@ -62,27 +48,22 @@ export function setupWebSocket(
           error,
         );
       }
-    } else {
-      console.warn(
-        `WebSocket for session ${sessionId} not in OPEN state (readyState: ${ws.readyState})`,
-      );
-    }
+    },
 
-    // Handle incoming messages
-    ws.onmessage = (event) => {
+    message(ws, message) {
+      const sessionId = ws.data.params.sessionId;
+
       try {
-        const data = JSON.parse(event.data);
+        const data = typeof message === "string" ? JSON.parse(message) : message;
 
         if (data.type === "ping") {
           // Respond to ping with pong
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(
-              JSON.stringify({
-                type: "pong",
-                timestamp: new Date().toISOString(),
-              }),
-            );
-          }
+          ws.send(
+            JSON.stringify({
+              type: "pong",
+              timestamp: new Date().toISOString(),
+            }),
+          );
         } else if (data.type === "subscribe") {
           // Handle subscription requests (for future filtering)
           console.log(
@@ -91,31 +72,29 @@ export function setupWebSocket(
         }
       } catch (error) {
         console.error("Error processing WebSocket message:", error);
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(
-            JSON.stringify({
-              type: "error",
-              sessionId,
-              timestamp: new Date().toISOString(),
-              data: {
-                error: "Invalid message format",
-              },
-            }),
-          );
-        }
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            sessionId,
+            timestamp: new Date().toISOString(),
+            data: {
+              error: "Invalid message format",
+            },
+          }),
+        );
       }
-    };
+    },
 
-    // Handle connection close
-    ws.onclose = () => {
+    close(ws) {
+      const sessionId = ws.data.params.sessionId;
       console.log(`WebSocket disconnected for session: ${sessionId}`);
-      eventBus.unsubscribeWebSocket(sessionId, ws);
-    };
+      eventBus.unsubscribeWebSocket(sessionId, ws.raw);
+    },
 
-    // Handle errors
-    ws.onerror = (error) => {
+    error(ws, error) {
+      const sessionId = ws.data.params.sessionId;
       console.error(`WebSocket error for session ${sessionId}:`, error);
-      eventBus.unsubscribeWebSocket(sessionId, ws);
-    };
-  };
+      eventBus.unsubscribeWebSocket(sessionId, ws.raw);
+    },
+  });
 }

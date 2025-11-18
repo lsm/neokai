@@ -1,7 +1,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { Message, Session, ToolCall } from "@liuboer/shared";
-import { Database } from "../storage/database.ts";
-import { EventBus } from "./event-bus.ts";
+import { Database } from "../storage/database";
+import { EventBus } from "./event-bus";
 
 /**
  * Agent Session - wraps a single session with Claude using Claude Agent SDK
@@ -74,13 +74,13 @@ export class AgentSession {
 
       // Set API key in environment for the Agent SDK
       // The SDK accepts both ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN
-      const originalApiKey = Deno.env.get("ANTHROPIC_API_KEY");
-      const originalOAuthToken = Deno.env.get("CLAUDE_CODE_OAUTH_TOKEN");
+      const originalApiKey = process.env.ANTHROPIC_API_KEY;
+      const originalOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
 
       // Try setting as OAuth token first (preferred for subscription users)
-      Deno.env.set("CLAUDE_CODE_OAUTH_TOKEN", apiKey);
+      process.env.CLAUDE_CODE_OAUTH_TOKEN = apiKey;
       // Also set as API key for fallback
-      Deno.env.set("ANTHROPIC_API_KEY", apiKey);
+      process.env.ANTHROPIC_API_KEY = apiKey;
 
       // Call Claude Agent SDK with streaming
       const assistantMessageId = crypto.randomUUID();
@@ -203,15 +203,15 @@ export class AgentSession {
 
       // Restore original environment variables
       if (originalApiKey) {
-        Deno.env.set("ANTHROPIC_API_KEY", originalApiKey);
+        process.env.ANTHROPIC_API_KEY = originalApiKey;
       } else {
-        Deno.env.delete("ANTHROPIC_API_KEY");
+        delete process.env.ANTHROPIC_API_KEY;
       }
 
       if (originalOAuthToken) {
-        Deno.env.set("CLAUDE_CODE_OAUTH_TOKEN", originalOAuthToken);
+        process.env.CLAUDE_CODE_OAUTH_TOKEN = originalOAuthToken;
       } else {
-        Deno.env.delete("CLAUDE_CODE_OAUTH_TOKEN");
+        delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
       }
 
       // Save assistant message

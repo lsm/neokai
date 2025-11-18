@@ -1,7 +1,7 @@
 import type { AuthMethod, AuthStatus, OAuthTokens } from "@liuboer/shared";
-import type { Config } from "../config.ts";
-import { Database } from "../storage/database.ts";
-import { OAuthService } from "./oauth-service.ts";
+import type { Config } from "../config";
+import { Database } from "../storage/database";
+import { OAuthService } from "./oauth-service";
 
 /**
  * AuthManager - Central authentication coordinator

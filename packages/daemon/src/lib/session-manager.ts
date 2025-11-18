@@ -1,8 +1,8 @@
 import type { Session } from "@liuboer/shared";
-import { Database } from "../storage/database.ts";
-import { AgentSession } from "./agent-session.ts";
-import { EventBus } from "./event-bus.ts";
-import type { AuthManager } from "./auth-manager.ts";
+import { Database } from "../storage/database";
+import { AgentSession } from "./agent-session";
+import { EventBus } from "./event-bus";
+import type { AuthManager } from "./auth-manager";
 
 export class SessionManager {
   private sessions: Map<string, AgentSession> = new Map();
@@ -28,7 +28,7 @@ export class SessionManager {
     const session: Session = {
       id: sessionId,
       title: `Session ${new Date().toLocaleString()}`,
-      workspacePath: params.workspacePath || Deno.cwd(),
+      workspacePath: params.workspacePath || process.cwd(),
       createdAt: new Date().toISOString(),
       lastActiveAt: new Date().toISOString(),
       status: "active",
