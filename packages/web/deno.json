@@ -1,7 +1,7 @@
 {
   "name": "@liuboer/web",
   "version": "0.1.0",
-  "nodeModulesDir": "manual",
+  "exports": "./main.ts",
   "tasks": {
     "check": "deno fmt --check . && deno lint . && deno check",
     "dev": "vite",
@@ -23,15 +23,19 @@
   ],
   "imports": {
     "@/": "./",
-    "fresh": "jsr:@fresh/core@^2.1.4",
-    "fresh/runtime": "jsr:@fresh/core@^2.1.4/runtime",
+    "fresh": "jsr:@fresh/core@^2.2.0",
+    "fresh/runtime": "jsr:@fresh/core@^2.2.0/runtime",
     "preact": "npm:preact@^10.27.2",
-    "@preact/signals": "npm:@preact/signals@^2.3.2",
-    "@fresh/plugin-vite": "jsr:@fresh/plugin-vite@^1.0.7",
-    "vite": "npm:vite@^7.1.3",
-    "tailwindcss": "npm:tailwindcss@^4.1.10",
-    "@tailwindcss/vite": "npm:@tailwindcss/vite@^4.1.12",
-    "@liuboer/shared": "../shared/src/mod.ts"
+    "@preact/signals": "npm:@preact/signals@^2.5.0",
+    "@fresh/plugin-vite": "jsr:@fresh/plugin-vite@^1.0.8",
+    "vite": "npm:vite@^7.2.2",
+    "tailwindcss": "npm:tailwindcss@^4.1.17",
+    "@tailwindcss/vite": "npm:@tailwindcss/vite@^4.1.17",
+    "@liuboer/shared": "../shared/src/mod.ts",
+    "marked": "npm:marked@^17.0.0",
+    "highlight.js": "npm:highlight.js@^11.11.1",
+    "clsx": "npm:clsx@^2.1.1",
+    "date-fns": "npm:date-fns@^4.1.0"
   },
   "compilerOptions": {
     "lib": [
