@@ -42,18 +42,31 @@ export function setupWebSocket(
     // Subscribe to events
     eventBus.subscribeWebSocket(sessionId, ws);
 
-    // Send initial connection message
-    ws.send(
-      JSON.stringify({
-        type: "connection.established",
-        sessionId,
-        timestamp: new Date().toISOString(),
-        data: {
-          message: "WebSocket connection established",
-          sessionId,
-        },
-      }),
-    );
+    // Send initial connection message (only if WebSocket is OPEN)
+    if (ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(
+          JSON.stringify({
+            type: "connection.established",
+            sessionId,
+            timestamp: new Date().toISOString(),
+            data: {
+              message: "WebSocket connection established",
+              sessionId,
+            },
+          }),
+        );
+      } catch (error) {
+        console.error(
+          `Error sending initial WebSocket message for session ${sessionId}:`,
+          error,
+        );
+      }
+    } else {
+      console.warn(
+        `WebSocket for session ${sessionId} not in OPEN state (readyState: ${ws.readyState})`,
+      );
+    }
 
     // Handle incoming messages
     ws.onmessage = (event) => {
@@ -62,12 +75,14 @@ export function setupWebSocket(
 
         if (data.type === "ping") {
           // Respond to ping with pong
-          ws.send(
-            JSON.stringify({
-              type: "pong",
-              timestamp: new Date().toISOString(),
-            }),
-          );
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(
+              JSON.stringify({
+                type: "pong",
+                timestamp: new Date().toISOString(),
+              }),
+            );
+          }
         } else if (data.type === "subscribe") {
           // Handle subscription requests (for future filtering)
           console.log(
@@ -76,16 +91,18 @@ export function setupWebSocket(
         }
       } catch (error) {
         console.error("Error processing WebSocket message:", error);
-        ws.send(
-          JSON.stringify({
-            type: "error",
-            sessionId,
-            timestamp: new Date().toISOString(),
-            data: {
-              error: "Invalid message format",
-            },
-          }),
-        );
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              sessionId,
+              timestamp: new Date().toISOString(),
+              data: {
+                error: "Invalid message format",
+              },
+            }),
+          );
+        }
       }
     };
 

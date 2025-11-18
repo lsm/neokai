@@ -2,6 +2,7 @@ import type { Session } from "@liuboer/shared";
 import { Database } from "../storage/database.ts";
 import { AgentSession } from "./agent-session.ts";
 import { EventBus } from "./event-bus.ts";
+import type { AuthManager } from "./auth-manager.ts";
 
 export class SessionManager {
   private sessions: Map<string, AgentSession> = new Map();
@@ -9,8 +10,8 @@ export class SessionManager {
   constructor(
     private db: Database,
     private eventBus: EventBus,
+    private authManager: AuthManager,
     private config: {
-      anthropicApiKey: string;
       defaultModel: string;
       maxTokens: number;
       temperature: number;
@@ -46,12 +47,12 @@ export class SessionManager {
     // Save to database
     this.db.createSession(session);
 
-    // Create agent session with EventBus
+    // Create agent session with EventBus and auth function
     const agentSession = new AgentSession(
       session,
       this.db,
       this.eventBus,
-      this.config.anthropicApiKey,
+      () => this.authManager.getCurrentApiKey(),
     );
 
     this.sessions.set(sessionId, agentSession);
@@ -77,12 +78,12 @@ export class SessionManager {
     const session = this.db.getSession(sessionId);
     if (!session) return null;
 
-    // Create agent session with EventBus
+    // Create agent session with EventBus and auth function
     const agentSession = new AgentSession(
       session,
       this.db,
       this.eventBus,
-      this.config.anthropicApiKey,
+      () => this.authManager.getCurrentApiKey(),
     );
     this.sessions.set(sessionId, agentSession);
 

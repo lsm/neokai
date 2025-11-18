@@ -3,19 +3,17 @@ import { getConfig } from "./src/config.ts";
 import { Database } from "./src/storage/database.ts";
 import { SessionManager } from "./src/lib/session-manager.ts";
 import { EventBus } from "./src/lib/event-bus.ts";
+import { AuthManager } from "./src/lib/auth-manager.ts";
 import { createSessionsRouter } from "./src/routes/sessions.ts";
 import { createSystemRouter } from "./src/routes/system.ts";
 import { createFilesRouter } from "./src/routes/files.ts";
+import { createAuthRouter } from "./src/routes/auth.ts";
 import { setupWebSocket } from "./src/routes/websocket.ts";
 
 const config = getConfig();
 
-// Validate API key
-if (!config.anthropicApiKey) {
-  console.error("❌ ANTHROPIC_API_KEY is required");
-  console.error("Please set it in .env file or environment variables");
-  Deno.exit(1);
-}
+// Note: API key is now optional - can use OAuth instead
+// Authentication can be configured via the web UI
 
 // Initialize database
 const db = new Database(config.dbPath);
@@ -26,9 +24,22 @@ console.log(`✅ Database initialized at ${config.dbPath}`);
 const eventBus = new EventBus();
 console.log("✅ Event bus initialized");
 
+// Initialize authentication manager
+const authManager = new AuthManager(db, config);
+await authManager.initialize();
+console.log("✅ Authentication manager initialized");
+
+// Check for API key in config and auto-set if present
+if (config.anthropicApiKey) {
+  const authStatus = await authManager.getAuthStatus();
+  if (!authStatus.isAuthenticated) {
+    await authManager.setApiKey(config.anthropicApiKey);
+    console.log("✅ API key from environment configured");
+  }
+}
+
 // Initialize session manager
-const sessionManager = new SessionManager(db, eventBus, {
-  anthropicApiKey: config.anthropicApiKey,
+const sessionManager = new SessionManager(db, eventBus, authManager, {
   defaultModel: config.defaultModel,
   maxTokens: config.maxTokens,
   temperature: config.temperature,
@@ -81,9 +92,12 @@ app.use(async (ctx, next) => {
 
 // Routes
 const sessionsRouter = createSessionsRouter(sessionManager);
-const systemRouter = createSystemRouter(sessionManager, config);
+const systemRouter = createSystemRouter(sessionManager, config, authManager);
 const filesRouter = createFilesRouter(sessionManager);
+const authRouter = createAuthRouter(authManager);
 
+app.use(authRouter.routes());
+app.use(authRouter.allowedMethods());
 app.use(sessionsRouter.routes());
 app.use(sessionsRouter.allowedMethods());
 app.use(systemRouter.routes());
@@ -129,6 +143,7 @@ await app.listen({ hostname: config.host, port: config.port });
 // Cleanup on exit
 Deno.addSignalListener("SIGINT", () => {
   console.log("\n👋 Shutting down...");
+  authManager.destroy();
   eventBus.clear();
   db.close();
   Deno.exit(0);

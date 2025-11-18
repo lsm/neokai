@@ -1,7 +1,7 @@
 import { Database as DB } from "@db/sqlite";
 import { ensureDir } from "@std/fs";
 import { dirname } from "@std/path";
-import type { Message, Session, ToolCall } from "@liuboer/shared";
+import type { AuthMethod, Message, OAuthTokens, Session, ToolCall } from "@liuboer/shared";
 
 export class Database {
   private db: DB;
@@ -19,6 +19,9 @@ export class Database {
 
     // Create tables
     this.createTables();
+
+    // Run migrations
+    this.runMigrations();
   }
 
   private createTables() {
@@ -78,6 +81,34 @@ export class Database {
       )
     `);
 
+    // Authentication configuration table (stores current auth method and credentials)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS auth_config (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        auth_method TEXT NOT NULL CHECK(auth_method IN ('oauth', 'oauth_token', 'api_key', 'none')),
+        api_key_encrypted TEXT,
+        oauth_tokens_encrypted TEXT,
+        oauth_token_encrypted TEXT,
+        updated_at TEXT NOT NULL
+      )
+    `);
+
+    // OAuth state table (temporary storage during OAuth flow)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS oauth_states (
+        state TEXT PRIMARY KEY,
+        code_verifier TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+      )
+    `);
+
+    // Initialize auth_config with default values if not exists
+    this.db.exec(`
+      INSERT OR IGNORE INTO auth_config (id, auth_method, updated_at)
+      VALUES (1, 'none', datetime('now'))
+    `);
+
     // Create indexes
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_session
       ON messages(session_id, timestamp)`);
@@ -85,6 +116,23 @@ export class Database {
       ON tool_calls(message_id)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_events_session
       ON events(session_id, timestamp)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_oauth_states_expires
+      ON oauth_states(expires_at)`);
+  }
+
+  /**
+   * Run database migrations for schema changes
+   */
+  private runMigrations() {
+    // Migration 1: Add oauth_token_encrypted column if it doesn't exist
+    try {
+      // Check if column exists by trying to query it
+      this.db.prepare(`SELECT oauth_token_encrypted FROM auth_config LIMIT 1`).all();
+    } catch (_error) {
+      // Column doesn't exist, add it
+      console.log("🔧 Running migration: Adding oauth_token_encrypted column");
+      this.db.exec(`ALTER TABLE auth_config ADD COLUMN oauth_token_encrypted TEXT`);
+    }
   }
 
   // Session operations
@@ -264,6 +312,223 @@ export class Database {
         timestamp: r.timestamp as string,
       };
     });
+  }
+
+  // Authentication operations
+
+  /**
+   * Simple encryption using AES-GCM
+   * Note: For production, consider using a proper key derivation function
+   */
+  private async encryptData(data: string): Promise<string> {
+    const encoder = new TextEncoder();
+    const dataBuffer = encoder.encode(data);
+
+    // Generate a random encryption key (in production, derive from a master key)
+    const key = await crypto.subtle.generateKey(
+      { name: "AES-GCM", length: 256 },
+      true,
+      ["encrypt", "decrypt"]
+    );
+
+    // Generate IV
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+
+    // Encrypt
+    const encrypted = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      key,
+      dataBuffer
+    );
+
+    // Export key
+    const exportedKey = await crypto.subtle.exportKey("raw", key);
+
+    // Combine key + iv + encrypted data
+    const combined = new Uint8Array(
+      exportedKey.byteLength + iv.byteLength + encrypted.byteLength
+    );
+    combined.set(new Uint8Array(exportedKey), 0);
+    combined.set(iv, exportedKey.byteLength);
+    combined.set(new Uint8Array(encrypted), exportedKey.byteLength + iv.byteLength);
+
+    // Return as base64
+    return btoa(String.fromCharCode(...combined));
+  }
+
+  /**
+   * Decrypt data encrypted with encryptData
+   */
+  private async decryptData(encrypted: string): Promise<string> {
+    // Decode from base64
+    const combined = Uint8Array.from(atob(encrypted), c => c.charCodeAt(0));
+
+    // Extract key, IV, and encrypted data
+    const keyData = combined.slice(0, 32);
+    const iv = combined.slice(32, 44);
+    const encryptedData = combined.slice(44);
+
+    // Import key
+    const key = await crypto.subtle.importKey(
+      "raw",
+      keyData,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["decrypt"]
+    );
+
+    // Decrypt
+    const decrypted = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv },
+      key,
+      encryptedData
+    );
+
+    // Convert back to string
+    const decoder = new TextDecoder();
+    return decoder.decode(decrypted);
+  }
+
+  /**
+   * Get current authentication method
+   */
+  getAuthMethod(): AuthMethod {
+    const stmt = this.db.prepare(`SELECT auth_method FROM auth_config WHERE id = 1`);
+    const rows = stmt.all() as unknown[];
+    if (rows.length === 0) return "none";
+    const row = rows[0] as Record<string, unknown>;
+    return row.auth_method as AuthMethod;
+  }
+
+  /**
+   * Save OAuth tokens (encrypted)
+   */
+  async saveOAuthTokens(tokens: OAuthTokens): Promise<void> {
+    const encrypted = await this.encryptData(JSON.stringify(tokens));
+    const stmt = this.db.prepare(
+      `UPDATE auth_config SET auth_method = 'oauth', oauth_tokens_encrypted = ?, api_key_encrypted = NULL, updated_at = datetime('now') WHERE id = 1`
+    );
+    stmt.run(encrypted);
+  }
+
+  /**
+   * Get OAuth tokens (decrypted)
+   */
+  async getOAuthTokens(): Promise<OAuthTokens | null> {
+    const stmt = this.db.prepare(`SELECT oauth_tokens_encrypted FROM auth_config WHERE id = 1`);
+    const rows = stmt.all() as unknown[];
+    if (rows.length === 0) return null;
+
+    const row = rows[0] as Record<string, unknown>;
+    const encrypted = row.oauth_tokens_encrypted as string | null;
+    if (!encrypted) return null;
+
+    const decrypted = await this.decryptData(encrypted);
+    return JSON.parse(decrypted) as OAuthTokens;
+  }
+
+  /**
+   * Save API key (encrypted)
+   */
+  async saveApiKey(apiKey: string): Promise<void> {
+    const encrypted = await this.encryptData(apiKey);
+    const stmt = this.db.prepare(
+      `UPDATE auth_config SET auth_method = 'api_key', api_key_encrypted = ?, oauth_tokens_encrypted = NULL, updated_at = datetime('now') WHERE id = 1`
+    );
+    stmt.run(encrypted);
+  }
+
+  /**
+   * Get API key (decrypted)
+   */
+  async getApiKey(): Promise<string | null> {
+    const stmt = this.db.prepare(`SELECT api_key_encrypted FROM auth_config WHERE id = 1`);
+    const rows = stmt.all() as unknown[];
+    if (rows.length === 0) return null;
+
+    const row = rows[0] as Record<string, unknown>;
+    const encrypted = row.api_key_encrypted as string | null;
+    if (!encrypted) return null;
+
+    return await this.decryptData(encrypted);
+  }
+
+  /**
+   * Save long-lived OAuth token (from claude setup-token)
+   */
+  async saveOAuthLongLivedToken(token: string): Promise<void> {
+    const encrypted = await this.encryptData(token);
+    const stmt = this.db.prepare(
+      `UPDATE auth_config SET auth_method = 'oauth_token', oauth_token_encrypted = ?, api_key_encrypted = NULL, oauth_tokens_encrypted = NULL, updated_at = datetime('now') WHERE id = 1`
+    );
+    stmt.run(encrypted);
+  }
+
+  /**
+   * Get long-lived OAuth token (decrypted)
+   */
+  async getOAuthLongLivedToken(): Promise<string | null> {
+    const stmt = this.db.prepare(`SELECT oauth_token_encrypted FROM auth_config WHERE id = 1`);
+    const rows = stmt.all() as unknown[];
+    if (rows.length === 0) return null;
+
+    const row = rows[0] as Record<string, unknown>;
+    const encrypted = row.oauth_token_encrypted as string | null;
+    if (!encrypted) return null;
+
+    return await this.decryptData(encrypted);
+  }
+
+  /**
+   * Clear all authentication
+   */
+  clearAuth(): void {
+    const stmt = this.db.prepare(
+      `UPDATE auth_config SET auth_method = 'none', api_key_encrypted = NULL, oauth_tokens_encrypted = NULL, oauth_token_encrypted = NULL, updated_at = datetime('now') WHERE id = 1`
+    );
+    stmt.run();
+  }
+
+  /**
+   * Save OAuth state temporarily during flow
+   */
+  saveOAuthState(state: string, codeVerifier: string, expiresInMinutes = 10): void {
+    const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000).toISOString();
+    const stmt = this.db.prepare(
+      `INSERT INTO oauth_states (state, code_verifier, created_at, expires_at)
+       VALUES (?, ?, datetime('now'), ?)`
+    );
+    stmt.run(state, codeVerifier, expiresAt);
+  }
+
+  /**
+   * Get and delete OAuth state (one-time use)
+   */
+  getOAuthState(state: string): string | null {
+    // Check if state exists and not expired
+    const selectStmt = this.db.prepare(
+      `SELECT code_verifier FROM oauth_states WHERE state = ? AND expires_at > datetime('now')`
+    );
+    const rows = selectStmt.all(state) as unknown[];
+
+    if (rows.length === 0) return null;
+
+    const row = rows[0] as Record<string, unknown>;
+    const codeVerifier = row.code_verifier as string;
+
+    // Delete the state (one-time use)
+    const deleteStmt = this.db.prepare(`DELETE FROM oauth_states WHERE state = ?`);
+    deleteStmt.run(state);
+
+    return codeVerifier;
+  }
+
+  /**
+   * Clean up expired OAuth states
+   */
+  cleanupExpiredOAuthStates(): void {
+    const stmt = this.db.prepare(`DELETE FROM oauth_states WHERE expires_at < datetime('now')`);
+    stmt.run();
   }
 
   close() {

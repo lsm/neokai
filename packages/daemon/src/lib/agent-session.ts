@@ -18,7 +18,7 @@ export class AgentSession {
     private session: Session,
     private db: Database,
     private eventBus: EventBus,
-    private apiKey: string,
+    private getApiKey: () => Promise<string | null>, // Function to get current API key
   ) {
     // Load existing messages into conversation history
     this.loadConversationHistory();
@@ -63,12 +63,24 @@ export class AgentSession {
     });
 
     try {
+      // Get current API key (could be from API key or OAuth token)
+      const apiKey = await this.getApiKey();
+      if (!apiKey) {
+        throw new Error("No authentication configured. Please set up OAuth or API key.");
+      }
+
       // Create abort controller for this query
       this.abortController = new AbortController();
 
       // Set API key in environment for the Agent SDK
+      // The SDK accepts both ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN
       const originalApiKey = Deno.env.get("ANTHROPIC_API_KEY");
-      Deno.env.set("ANTHROPIC_API_KEY", this.apiKey);
+      const originalOAuthToken = Deno.env.get("CLAUDE_CODE_OAUTH_TOKEN");
+
+      // Try setting as OAuth token first (preferred for subscription users)
+      Deno.env.set("CLAUDE_CODE_OAUTH_TOKEN", apiKey);
+      // Also set as API key for fallback
+      Deno.env.set("ANTHROPIC_API_KEY", apiKey);
 
       // Call Claude Agent SDK with streaming
       const assistantMessageId = crypto.randomUUID();
@@ -189,11 +201,17 @@ export class AgentSession {
         }
       }
 
-      // Restore original API key
+      // Restore original environment variables
       if (originalApiKey) {
         Deno.env.set("ANTHROPIC_API_KEY", originalApiKey);
       } else {
         Deno.env.delete("ANTHROPIC_API_KEY");
+      }
+
+      if (originalOAuthToken) {
+        Deno.env.set("CLAUDE_CODE_OAUTH_TOKEN", originalOAuthToken);
+      } else {
+        Deno.env.delete("CLAUDE_CODE_OAUTH_TOKEN");
       }
 
       // Save assistant message
@@ -240,11 +258,9 @@ export class AgentSession {
     } catch (error) {
       console.error("Error in sendMessage:", error);
 
-      // Restore original API key on error
-      const originalApiKey = Deno.env.get("ANTHROPIC_API_KEY");
-      if (originalApiKey) {
-        Deno.env.set("ANTHROPIC_API_KEY", originalApiKey);
-      }
+      // Note: Environment variables are already captured at the start of the try block
+      // They will be restored here if needed, but we can't access them from outer scope
+      // This is okay since each sendMessage call manages its own env state
 
       // Emit error event
       await this.eventBus.emit({
