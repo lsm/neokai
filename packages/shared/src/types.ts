@@ -160,6 +160,28 @@ export interface HealthStatus {
   };
 }
 
+// Authentication types
+export type AuthMethod = "oauth" | "oauth_token" | "api_key" | "none";
+
+export interface OAuthTokens {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number; // Unix timestamp in milliseconds
+  scopes: string[];
+  isMax?: boolean;
+}
+
+export interface AuthStatus {
+  method: AuthMethod;
+  isAuthenticated: boolean;
+  user?: {
+    email?: string;
+    name?: string;
+  };
+  expiresAt?: number;
+  source?: "env" | "database"; // Where the credentials come from
+}
+
 // Configuration
 export interface DaemonConfig {
   version: string;
@@ -167,4 +189,6 @@ export interface DaemonConfig {
   defaultModel: string;
   maxSessions: number;
   storageLocation: string;
+  authMethod: AuthMethod;
+  authStatus: AuthStatus;
 }

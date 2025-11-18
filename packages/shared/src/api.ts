@@ -1,9 +1,11 @@
 import type {
+  AuthStatus,
   DaemonConfig,
   FileInfo,
   FileTree,
   HealthStatus,
   Message,
+  OAuthTokens,
   Session,
   SessionConfig,
   Tool,
@@ -117,6 +119,39 @@ export interface UpdateConfigRequest {
   maxSessions?: number;
 }
 
+// Authentication API types
+export interface StartOAuthFlowResponse {
+  authorizationUrl: string;
+  state: string;
+}
+
+export interface CompleteOAuthFlowRequest {
+  code: string;
+  state: string;
+}
+
+export interface CompleteOAuthFlowResponse {
+  success: boolean;
+  authStatus: AuthStatus;
+}
+
+export interface SetApiKeyRequest {
+  apiKey: string;
+}
+
+export interface SetOAuthTokenRequest {
+  token: string;
+}
+
+export interface GetAuthStatusResponse {
+  authStatus: AuthStatus;
+}
+
+export interface RefreshTokenResponse {
+  success: boolean;
+  expiresAt: number;
+}
+
 // API client interface
 export interface APIClient {
   // Sessions
@@ -153,4 +188,13 @@ export interface APIClient {
   health(): Promise<HealthStatus>;
   getConfig(): Promise<DaemonConfig>;
   updateConfig(req: UpdateConfigRequest): Promise<void>;
+
+  // Authentication
+  getAuthStatus(): Promise<GetAuthStatusResponse>;
+  startOAuthFlow(): Promise<StartOAuthFlowResponse>;
+  completeOAuthFlow(req: CompleteOAuthFlowRequest): Promise<CompleteOAuthFlowResponse>;
+  setApiKey(req: SetApiKeyRequest): Promise<void>;
+  setOAuthToken(req: SetOAuthTokenRequest): Promise<void>;
+  refreshToken(): Promise<RefreshTokenResponse>;
+  logout(): Promise<void>;
 }
