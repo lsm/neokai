@@ -93,35 +93,31 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
   const [showDetails, setShowDetails] = useState(false);
 
   return (
-    <div class="py-3 px-4 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-200 dark:border-indigo-800">
-      <div class="flex items-center justify-between">
+    <div class="py-2 px-3 bg-indigo-50 dark:bg-indigo-900/20 rounded border border-indigo-200 dark:border-indigo-800">
+      <button
+        onClick={() => setShowDetails(!showDetails)}
+        class="w-full flex items-center justify-between hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors -m-1 p-1 rounded"
+      >
         <div class="flex items-center gap-2">
-          <svg class="w-5 h-5 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-4 h-4 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
           </svg>
-          <div>
-            <div class="font-semibold text-indigo-900 dark:text-indigo-100 text-sm">
-              Session Started
-            </div>
-            <div class="text-xs text-indigo-700 dark:text-indigo-300">
-              {message.model} • {message.permissionMode} mode • v{message.claude_code_version}
-            </div>
+          <div class="text-xs">
+            <span class="font-medium text-indigo-900 dark:text-indigo-100">Session Started</span>
+            <span class="text-indigo-600 dark:text-indigo-400 ml-2">
+              {message.model.replace('claude-', '')} • {message.permissionMode}
+            </span>
           </div>
         </div>
-        <button
-          onClick={() => setShowDetails(!showDetails)}
-          class="text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-200"
+        <svg
+          class={`w-4 h-4 text-indigo-600 dark:text-indigo-400 transition-transform ${showDetails ? 'rotate-180' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
         >
-          <svg
-            class={`w-5 h-5 transition-transform ${showDetails ? 'rotate-180' : ''}`}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-      </div>
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
 
       {showDetails && (
         <div class="mt-3 pt-3 border-t border-indigo-200 dark:border-indigo-800 space-y-2 text-sm">

@@ -10,31 +10,38 @@ import {
   isSDKStreamEvent,
   isSDKToolProgressMessage,
   isSDKAuthStatusMessage,
+  isSDKUserMessage,
   isUserVisibleMessage,
 } from "@liuboer/shared/sdk/type-guards";
 
-// Component imports (will be created next)
+// Component imports
 import { SDKAssistantMessage } from "./SDKAssistantMessage.tsx";
 import { SDKResultMessage } from "./SDKResultMessage.tsx";
 import { SDKSystemMessage } from "./SDKSystemMessage.tsx";
 import { SDKToolProgressMessage } from "./SDKToolProgressMessage.tsx";
+import { SDKUserMessage } from "./SDKUserMessage.tsx";
 
 interface Props {
   message: SDKMessage;
+  toolResultsMap?: Map<string, any>;
 }
 
 /**
  * Main SDK message renderer - routes to appropriate sub-renderer
  */
-export function SDKMessageRenderer({ message }: Props) {
+export function SDKMessageRenderer({ message, toolResultsMap }: Props) {
   // Skip messages that shouldn't be shown to user (e.g., stream events, replays)
   if (!isUserVisibleMessage(message)) {
     return null;
   }
 
   // Route to appropriate renderer based on message type
+  if (isSDKUserMessage(message)) {
+    return <SDKUserMessage message={message} />;
+  }
+
   if (isSDKAssistantMessage(message)) {
-    return <SDKAssistantMessage message={message} />;
+    return <SDKAssistantMessage message={message} toolResultsMap={toolResultsMap} />;
   }
 
   if (isSDKResultMessage(message)) {

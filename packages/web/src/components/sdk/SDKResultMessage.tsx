@@ -27,107 +27,40 @@ export function SDKResultMessage({ message }: Props) {
   const isError = isSDKResultError(message);
 
   return (
-    <div class={`rounded-lg border ${
+    <div class={`rounded border ${
       isSuccess
         ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800'
         : 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800'
     }`}>
-      {/* Header */}
-      <div class="p-4">
-        <div class="flex items-center gap-2 mb-3">
+      {/* Compact Summary - Always Visible */}
+      <button
+        onClick={() => setShowDetails(!showDetails)}
+        class="w-full px-3 py-2 flex items-center justify-between hover:bg-green-100 dark:hover:bg-green-900/20 transition-colors"
+      >
+        <div class="flex items-center gap-2 text-xs">
           {isSuccess ? (
-            <svg class="w-5 h-5 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="w-4 h-4 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           ) : (
-            <svg class="w-5 h-5 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="w-4 h-4 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           )}
-          <span class={`font-semibold ${isSuccess ? 'text-green-900 dark:text-green-100' : 'text-red-900 dark:text-red-100'}`}>
-            {isSuccess ? 'Query Completed Successfully' : `Query Failed: ${message.subtype.replace('error_', '').replace(/_/g, ' ')}`}
+          <span class="font-medium text-green-900 dark:text-green-100">
+            {message.usage.input_tokens}→{message.usage.output_tokens} tokens
+          </span>
+          <span class="text-green-700 dark:text-green-300">•</span>
+          <span class="font-mono text-green-700 dark:text-green-300">
+            ${message.total_cost_usd.toFixed(4)}
+          </span>
+          <span class="text-green-700 dark:text-green-300">•</span>
+          <span class="text-green-700 dark:text-green-300">
+            {(message.duration_ms / 1000).toFixed(2)}s
           </span>
         </div>
-
-        {/* Main Stats Grid */}
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-          <StatCard
-            label="Input Tokens"
-            value={message.usage.input_tokens.toLocaleString()}
-            icon={
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
-              </svg>
-            }
-          />
-          <StatCard
-            label="Output Tokens"
-            value={message.usage.output_tokens.toLocaleString()}
-            icon={
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
-              </svg>
-            }
-          />
-          <StatCard
-            label="Cost"
-            value={`$${message.total_cost_usd.toFixed(4)}`}
-            icon={
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            }
-            highlight={true}
-          />
-          <StatCard
-            label="Duration"
-            value={`${(message.duration_ms / 1000).toFixed(2)}s`}
-            icon={
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            }
-          />
-        </div>
-
-        {/* Cache Stats (if any) */}
-        {(message.usage.cache_read_input_tokens > 0 || message.usage.cache_creation_input_tokens > 0) && (
-          <div class="mt-3 pt-3 border-t border-green-200 dark:border-green-800">
-            <div class="flex items-center gap-4 text-xs text-green-700 dark:text-green-300">
-              <div class="flex items-center gap-1">
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                <span>Cache Read: {message.usage.cache_read_input_tokens.toLocaleString()} tokens</span>
-              </div>
-              {message.usage.cache_creation_input_tokens > 0 && (
-                <div class="flex items-center gap-1">
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                  </svg>
-                  <span>Cache Created: {message.usage.cache_creation_input_tokens.toLocaleString()} tokens</span>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Turns */}
-        <div class="mt-2 text-xs text-gray-600 dark:text-gray-400">
-          Completed in {message.num_turns} turn{message.num_turns !== 1 ? 's' : ''}
-          {' • '}
-          API time: {(message.duration_api_ms / 1000).toFixed(2)}s
-        </div>
-      </div>
-
-      {/* Expandable Details */}
-      <button
-        onClick={() => setShowDetails(!showDetails)}
-        class="w-full px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/50 border-t border-green-200 dark:border-green-800 flex items-center justify-center gap-2 transition-colors"
-      >
-        <span>{showDetails ? 'Hide' : 'Show'} Details</span>
         <svg
-          class={`w-4 h-4 transition-transform ${showDetails ? 'rotate-180' : ''}`}
+          class={`w-4 h-4 text-green-600 dark:text-green-400 transition-transform ${showDetails ? 'rotate-180' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -136,8 +69,79 @@ export function SDKResultMessage({ message }: Props) {
         </svg>
       </button>
 
+      {/* Expanded Details */}
       {showDetails && (
-        <div class="p-4 border-t border-green-200 dark:border-green-800 bg-white dark:bg-gray-900 space-y-4">
+        <div class="p-3 border-t border-green-200 dark:border-green-800 bg-white dark:bg-gray-900 space-y-3">
+          {/* Full Stats Grid */}
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+            <StatCard
+              label="Input Tokens"
+              value={message.usage.input_tokens.toLocaleString()}
+              icon={
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 11l5-5m0 0l5 5m-5-5v12" />
+                </svg>
+              }
+            />
+            <StatCard
+              label="Output Tokens"
+              value={message.usage.output_tokens.toLocaleString()}
+              icon={
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 13l-5 5m0 0l-5-5m5 5V6" />
+                </svg>
+              }
+            />
+            <StatCard
+              label="Cost"
+              value={`$${message.total_cost_usd.toFixed(4)}`}
+              icon={
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              }
+              highlight={true}
+            />
+            <StatCard
+              label="Duration"
+              value={`${(message.duration_ms / 1000).toFixed(2)}s`}
+              icon={
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              }
+            />
+          </div>
+
+          {/* Cache Stats (if any) */}
+          {(message.usage.cache_read_input_tokens > 0 || message.usage.cache_creation_input_tokens > 0) && (
+            <div class="pt-2 border-t border-green-200 dark:border-green-800">
+              <div class="flex items-center gap-4 text-xs text-green-700 dark:text-green-300">
+                <div class="flex items-center gap-1">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  <span>Cache Read: {message.usage.cache_read_input_tokens.toLocaleString()} tokens</span>
+                </div>
+                {message.usage.cache_creation_input_tokens > 0 && (
+                  <div class="flex items-center gap-1">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    <span>Cache Created: {message.usage.cache_creation_input_tokens.toLocaleString()} tokens</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Turns and API Time */}
+          <div class="text-xs text-gray-600 dark:text-gray-400">
+            Completed in {message.num_turns} turn{message.num_turns !== 1 ? 's' : ''}
+            {' • '}
+            API time: {(message.duration_api_ms / 1000).toFixed(2)}s
+          </div>
+
           {/* Model Usage Breakdown */}
           {Object.keys(message.modelUsage).length > 0 && (
             <div>

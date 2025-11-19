@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { Event, Message, Session, ToolCall } from "@liuboer/shared";
+import type { Event, Session } from "@liuboer/shared";
 import type { SDKMessage } from "@liuboer/shared/sdk/sdk.d.ts";
+import { isSDKStreamEvent } from "@liuboer/shared/sdk/type-guards";
 import { apiClient } from "../lib/api-client.ts";
 import { wsClient } from "../lib/websocket-client.ts";
 import { toast } from "../lib/toast.ts";
 import { sidebarOpenSignal } from "../lib/signals.ts";
-import MessageList from "../components/MessageList.tsx";
 import MessageInput from "../components/MessageInput.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { IconButton } from "../components/ui/IconButton.tsx";
@@ -13,6 +13,7 @@ import { Dropdown } from "../components/ui/Dropdown.tsx";
 import { Modal } from "../components/ui/Modal.tsx";
 import { Skeleton, SkeletonMessage } from "../components/ui/Skeleton.tsx";
 import { SDKMessageRenderer } from "../components/sdk/SDKMessageRenderer.tsx";
+import { SDKStreamingAccumulator } from "../components/sdk/SDKStreamingMessage.tsx";
 
 interface ChatContainerProps {
   sessionId: string;
@@ -22,14 +23,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   console.log("ChatContainer rendering with sessionId:", sessionId);
 
   const [session, setSession] = useState<Session | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [sdkMessages, setSdkMessages] = useState<SDKMessage[]>([]);
+  const [messages, setMessages] = useState<SDKMessage[]>([]);
+  const [streamingEvents, setStreamingEvents] = useState<Extract<SDKMessage, { type: "stream_event" }>[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const [streamingContent, setStreamingContent] = useState("");
-  const [streamingThinking, setStreamingThinking] = useState("");
-  const [streamingToolCalls, setStreamingToolCalls] = useState<ToolCall[]>([]);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [clearModalOpen, setClearModalOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -47,7 +45,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, sdkMessages, streamingContent]);
+  }, [messages, streamingEvents]);
 
   // Detect scroll position
   useEffect(() => {
@@ -70,11 +68,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       setError(null);
       const response = await apiClient.getSession(sessionId);
       setSession(response.session);
-      setMessages(response.messages);
 
       // Load SDK messages
       const sdkResponse = await apiClient.getSDKMessages(sessionId);
-      setSdkMessages(sdkResponse.sdkMessages);
+      setMessages(sdkResponse.sdkMessages);
     } catch (err) {
       const message = err instanceof Error
         ? err.message
@@ -89,61 +86,35 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   const connectWebSocket = () => {
     wsClient.connect(sessionId);
 
-    // Message streaming events
-    const unsubMessageStart = wsClient.on("message.start", (event: Event) => {
-      console.log("Message streaming started");
-      setStreamingContent("");
-      setStreamingThinking("");
-      setStreamingToolCalls([]);
-    });
+    // SDK message events - PRIMARY EVENT HANDLER
+    const unsubSDKMessage = wsClient.on("sdk.message", (event: Event) => {
+      const sdkMessage = event.data as SDKMessage;
+      console.log("Received SDK message:", sdkMessage.type, sdkMessage);
 
-    const unsubMessageContent = wsClient.on("message.content", (event: Event) => {
-      const delta = (event.data as { delta: string }).delta;
-      setStreamingContent((prev) => prev + delta);
-    });
-
-    const unsubMessageComplete = wsClient.on("message.complete", (event: Event) => {
-      const message = (event.data as { message: Message }).message;
-      setMessages((prev) => [...prev, message]);
-      setStreamingContent("");
-      setStreamingThinking("");
-      setStreamingToolCalls([]);
-      setSending(false);
-    });
-
-    // Thinking events
-    const unsubThinking = wsClient.on("agent.thinking", (event: Event) => {
-      const thinking = (event.data as { thinking: string }).thinking;
-      setStreamingThinking(thinking);
-    });
-
-    // Tool call events
-    const unsubToolCall = wsClient.on("tool.call", (event: Event) => {
-      const toolCall = (event.data as { toolCall: ToolCall }).toolCall;
-      setStreamingToolCalls((prev) => [...prev, toolCall]);
-      toast.info(`Calling tool: ${toolCall.tool}`);
-    });
-
-    const unsubToolResult = wsClient.on("tool.result", (event: Event) => {
-      const { toolCallId, output, error: toolError } = event.data as {
-        toolCallId: string;
-        output?: unknown;
-        error?: string;
-      };
-      setStreamingToolCalls((prev) =>
-        prev.map((tc) =>
-          tc.id === toolCallId
-            ? {
-                ...tc,
-                output,
-                error: toolError,
-                status: toolError ? "error" : "success",
-              } as ToolCall
-            : tc
-        )
-      );
-      if (toolError) {
-        toast.error(`Tool error: ${toolError}`);
+      // Handle stream events separately for real-time display
+      if (isSDKStreamEvent(sdkMessage)) {
+        setStreamingEvents((prev) => [...prev, sdkMessage]);
+      } else {
+        // Clear streaming when we get a complete message
+        if (sdkMessage.type === "assistant" || sdkMessage.type === "result") {
+          setStreamingEvents([]);
+          setSending(false);
+        }
+        // Add non-stream messages to main array, deduplicating by uuid
+        setMessages((prev) => {
+          // If message has a uuid, check if it already exists (from optimistic update)
+          if (sdkMessage.uuid) {
+            const existingIndex = prev.findIndex(m => m.uuid === sdkMessage.uuid);
+            if (existingIndex !== -1) {
+              // Replace optimistic message with confirmed one
+              const updated = [...prev];
+              updated[existingIndex] = sdkMessage;
+              return updated;
+            }
+          }
+          // New message, add to end
+          return [...prev, sdkMessage];
+        });
       }
     });
 
@@ -164,30 +135,15 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       setError(error);
       toast.error(error);
       setSending(false);
-      setStreamingContent("");
-      setStreamingThinking("");
-      setStreamingToolCalls([]);
-    });
-
-    // SDK message events
-    const unsubSDKMessage = wsClient.on("sdk.message", (event: Event) => {
-      const sdkMessage = event.data as SDKMessage;
-      console.log("Received SDK message:", sdkMessage.type, sdkMessage);
-      setSdkMessages((prev) => [...prev, sdkMessage]);
+      setStreamingEvents([]);
     });
 
     // Return cleanup function that unsubscribes all handlers
     return () => {
-      unsubMessageStart();
-      unsubMessageContent();
-      unsubMessageComplete();
-      unsubThinking();
-      unsubToolCall();
-      unsubToolResult();
+      unsubSDKMessage();
       unsubContextUpdated();
       unsubContextCompacted();
       unsubError();
-      unsubSDKMessage();
     };
   };
 
@@ -198,17 +154,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       setSending(true);
       setError(null);
 
-      // Add user message immediately
-      const userMessage: Message = {
-        id: `temp-${Date.now()}`,
-        sessionId,
-        role: "user",
-        content,
-        timestamp: new Date().toISOString(),
-      };
-      setMessages((prev) => [...prev, userMessage]);
-
-      // Send to API
+      // Send to API - WebSocket will add the message when daemon confirms
+      // No optimistic update to avoid duplicates
       await apiClient.sendMessage(sessionId, { content });
     } catch (err) {
       const message = err instanceof Error
@@ -327,6 +274,28 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     );
   }
 
+  // Calculate accumulated stats from result messages
+  const accumulatedStats = messages.reduce((acc, msg) => {
+    if (msg.type === 'result' && msg.subtype === 'success') {
+      acc.inputTokens += msg.usage.input_tokens;
+      acc.outputTokens += msg.usage.output_tokens;
+      acc.totalCost += msg.total_cost_usd;
+    }
+    return acc;
+  }, { inputTokens: 0, outputTokens: 0, totalCost: 0 });
+
+  // Create a map of tool use IDs to tool results for easy lookup
+  const toolResultsMap = new Map<string, any>();
+  messages.forEach((msg) => {
+    if (msg.type === 'user' && Array.isArray(msg.message.content)) {
+      msg.message.content.forEach((block: any) => {
+        if (block.type === 'tool_result') {
+          toolResultsMap.set(block.tool_use_id, block);
+        }
+      });
+    }
+  });
+
   return (
     <div class="flex-1 flex flex-col bg-dark-900 overflow-x-hidden">
       {/* Header */}
@@ -348,39 +317,22 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
             <h2 class="text-lg font-semibold text-gray-100 truncate">
               {session?.title || "New Session"}
             </h2>
-            <div class="flex items-center gap-4 mt-1 text-xs text-gray-400">
-              <span class="flex items-center gap-1">
-                <svg
-                  class="w-3.5 h-3.5"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width={2}
-                    d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
-                  />
+            <div class="flex items-center gap-3 mt-1 text-xs text-gray-400">
+              <span class="flex items-center gap-1" title="Input tokens">
+                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M7 11l5-5m0 0l5 5m-5-5v12" />
                 </svg>
-                {session?.metadata.messageCount || 0} messages
+                {accumulatedStats.inputTokens.toLocaleString()}
               </span>
-              <span class="flex items-center gap-1">
-                <svg
-                  class="w-3.5 h-3.5"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width={2}
-                    d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"
-                  />
+              <span class="flex items-center gap-1" title="Output tokens">
+                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M17 13l-5 5m0 0l-5-5m5 5V6" />
                 </svg>
-                {session?.metadata.totalTokens || 0} tokens
+                {accumulatedStats.outputTokens.toLocaleString()}
               </span>
+              <span class="text-gray-500">({(accumulatedStats.inputTokens + accumulatedStats.outputTokens).toLocaleString()} total)</span>
+              <span class="text-gray-500">•</span>
+              <span class="font-mono text-green-400">${accumulatedStats.totalCost.toFixed(4)}</span>
             </div>
           </div>
 
@@ -403,23 +355,27 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
         ref={messagesContainerRef}
         class="flex-1 overflow-y-auto overflow-x-hidden"
       >
-        <MessageList
-          messages={messages}
-          streamingContent={streamingContent}
-          streamingThinking={streamingThinking}
-          streamingToolCalls={streamingToolCalls}
-          isStreaming={sending}
-        />
-
-        {/* SDK Messages */}
-        {sdkMessages.length > 0 && (
-          <div class="max-w-4xl mx-auto w-full px-4 md:px-0 space-y-4 mt-8">
-            <div class="text-sm font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-4">
-              SDK Messages
+        {messages.length === 0 && streamingEvents.length === 0 ? (
+          <div class="flex items-center justify-center h-full px-6">
+            <div class="text-center">
+              <div class="text-5xl mb-4">💬</div>
+              <p class="text-lg text-gray-300 mb-2">No messages yet</p>
+              <p class="text-sm text-gray-500">
+                Start a conversation with Claude to see the magic happen
+              </p>
             </div>
-            {sdkMessages.map((msg, idx) => (
-              <SDKMessageRenderer key={idx} message={msg} />
+          </div>
+        ) : (
+          <div class="max-w-4xl mx-auto w-full px-4 md:px-6 space-y-0">
+            {/* Render all messages using SDK components */}
+            {messages.map((msg, idx) => (
+              <SDKMessageRenderer key={msg.uuid || `msg-${idx}`} message={msg} toolResultsMap={toolResultsMap} />
             ))}
+
+            {/* Render streaming events if present */}
+            {streamingEvents.length > 0 && (
+              <SDKStreamingAccumulator events={streamingEvents} />
+            )}
           </div>
         )}
 
