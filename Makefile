@@ -10,4 +10,4 @@ web:
 	@echo "Killing any process on port 9283..."
 	@lsof -ti:9283 | xargs kill -9 2>/dev/null || true
 	@echo "Starting web dev server..."
-	@cd packages/web && deno task dev
+	@cd packages/web && bun run dev

@@ -1,0 +1,24 @@
+{
+  "name": "@liuboer/web",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot src/index.ts",
+    "build": "bun build src/index.html --outdir=dist --minify",
+    "start": "NODE_ENV=production bun src/server-prod.ts",
+    "preview": "bun src/index.html"
+  },
+  "dependencies": {
+    "preact": "^10.27.2",
+    "@preact/signals": "^2.5.0",
+    "marked": "^17.0.0",
+    "highlight.js": "^11.11.1",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.1.0"
+  },
+  "devDependencies": {
+    "bun-types": "latest",
+    "tailwindcss": "^4.1.17",
+    "@tailwindcss/postcss": "^4.1.17"
+  }
+}
