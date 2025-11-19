@@ -2,6 +2,7 @@ import { Database as BunDatabase } from "bun:sqlite";
 import { dirname } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import type { AuthMethod, Message, OAuthTokens, Session, ToolCall } from "@liuboer/shared";
+import type { SDKMessage } from "@liuboer/shared/sdk";
 
 export class Database {
   private db: BunDatabase;
@@ -106,6 +107,19 @@ export class Database {
       )
     `);
 
+    // SDK Messages table (stores full SDK messages with all metadata)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS sdk_messages (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        message_type TEXT NOT NULL,
+        message_subtype TEXT,
+        sdk_message TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+      )
+    `);
+
     // Initialize auth_config with default values if not exists
     this.db.exec(`
       INSERT OR IGNORE INTO auth_config (id, auth_method, updated_at)
@@ -121,6 +135,10 @@ export class Database {
       ON events(session_id, timestamp)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_oauth_states_expires
       ON oauth_states(expires_at)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session
+      ON sdk_messages(session_id, timestamp)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_type
+      ON sdk_messages(message_type, message_subtype)`);
   }
 
   /**
@@ -549,6 +567,93 @@ export class Database {
   cleanupExpiredOAuthStates(): void {
     const stmt = this.db.prepare(`DELETE FROM oauth_states WHERE expires_at < datetime('now')`);
     stmt.run();
+  }
+
+  // ============================================================================
+  // SDK Message operations
+  // ============================================================================
+
+  /**
+   * Save a full SDK message to the database
+   */
+  saveSDKMessage(sessionId: string, message: SDKMessage): void {
+    const id = crypto.randomUUID();
+    const messageType = message.type;
+    const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
+    const timestamp = new Date().toISOString();
+
+    const stmt = this.db.prepare(
+      `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    );
+
+    stmt.run(
+      id,
+      sessionId,
+      messageType,
+      messageSubtype,
+      JSON.stringify(message),
+      timestamp
+    );
+  }
+
+  /**
+   * Get SDK messages for a session
+   */
+  getSDKMessages(sessionId: string, limit = 100, offset = 0): SDKMessage[] {
+    const stmt = this.db.prepare(
+      `SELECT sdk_message FROM sdk_messages
+       WHERE session_id = ?
+       ORDER BY timestamp ASC
+       LIMIT ? OFFSET ?`
+    );
+
+    const rows = stmt.all(sessionId, limit, offset) as Record<string, unknown>[];
+
+    return rows.map((r) => JSON.parse(r.sdk_message as string) as SDKMessage);
+  }
+
+  /**
+   * Get SDK messages by type
+   */
+  getSDKMessagesByType(
+    sessionId: string,
+    messageType: string,
+    messageSubtype?: string,
+    limit = 100
+  ): SDKMessage[] {
+    let query = `SELECT sdk_message FROM sdk_messages WHERE session_id = ? AND message_type = ?`;
+    const params: unknown[] = [sessionId, messageType];
+
+    if (messageSubtype) {
+      query += ` AND message_subtype = ?`;
+      params.push(messageSubtype);
+    }
+
+    query += ` ORDER BY timestamp ASC LIMIT ?`;
+    params.push(limit);
+
+    const stmt = this.db.prepare(query);
+    const rows = stmt.all(...params) as Record<string, unknown>[];
+
+    return rows.map((r) => JSON.parse(r.sdk_message as string) as SDKMessage);
+  }
+
+  /**
+   * Clear all SDK messages for a session
+   */
+  clearSDKMessages(sessionId: string): void {
+    const stmt = this.db.prepare(`DELETE FROM sdk_messages WHERE session_id = ?`);
+    stmt.run(sessionId);
+  }
+
+  /**
+   * Get the count of SDK messages for a session
+   */
+  getSDKMessageCount(sessionId: string): number {
+    const stmt = this.db.prepare(`SELECT COUNT(*) as count FROM sdk_messages WHERE session_id = ?`);
+    const result = stmt.get(sessionId) as { count: number };
+    return result.count;
   }
 
   close() {

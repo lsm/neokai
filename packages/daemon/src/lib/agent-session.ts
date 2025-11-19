@@ -126,6 +126,17 @@ export class AgentSession {
       console.log("[DEBUG] Starting to process SDK stream...");
       for await (const message of queryStream) {
         console.log("[DEBUG] Received SDK message, type:", message.type);
+
+        // ALWAYS emit and store the full SDK message for web UI
+        await this.eventBus.emit({
+          id: crypto.randomUUID(),
+          type: "sdk.message",
+          sessionId: this.session.id,
+          timestamp: new Date().toISOString(),
+          data: message,
+        });
+        this.db.saveSDKMessage(this.session.id, message);
+
         // Handle different message types from the Agent SDK
         if (message.type === "assistant") {
           // Full assistant message received
@@ -322,6 +333,13 @@ export class AgentSession {
    */
   getMessages(limit?: number, offset?: number): Message[] {
     return this.db.getMessages(this.session.id, limit, offset);
+  }
+
+  /**
+   * Get SDK messages for this session
+   */
+  getSDKMessages(limit?: number, offset?: number) {
+    return this.db.getSDKMessages(this.session.id, limit, offset);
   }
 
   /**

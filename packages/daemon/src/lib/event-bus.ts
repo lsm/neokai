@@ -16,7 +16,8 @@ export type EventType =
   | "tools.unloaded"
   | "session.created"
   | "session.ended"
-  | "error";
+  | "error"
+  | "sdk.message"; // Full SDK message event
 
 export interface Event {
   type: EventType;
