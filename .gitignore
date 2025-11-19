@@ -1,8 +1,4 @@
-# Deno
-.deno/
-deno.lock
-
-# Node (for research)
+# Node
 node_modules/
 package-lock.json
 
