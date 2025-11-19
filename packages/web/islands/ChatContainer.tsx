@@ -34,10 +34,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
   useEffect(() => {
     loadSession();
-    connectWebSocket();
+    const cleanupHandlers = connectWebSocket();
 
     return () => {
       wsClient.disconnect();
+      cleanupHandlers();
     };
   }, [sessionId]);
 
@@ -82,19 +83,19 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     wsClient.connect(sessionId);
 
     // Message streaming events
-    wsClient.on("message.start", (event: Event) => {
+    const unsubMessageStart = wsClient.on("message.start", (event: Event) => {
       console.log("Message streaming started");
       setStreamingContent("");
       setStreamingThinking("");
       setStreamingToolCalls([]);
     });
 
-    wsClient.on("message.content", (event: Event) => {
+    const unsubMessageContent = wsClient.on("message.content", (event: Event) => {
       const delta = (event.data as { delta: string }).delta;
       setStreamingContent((prev) => prev + delta);
     });
 
-    wsClient.on("message.complete", (event: Event) => {
+    const unsubMessageComplete = wsClient.on("message.complete", (event: Event) => {
       const message = (event.data as { message: Message }).message;
       setMessages((prev) => [...prev, message]);
       setStreamingContent("");
@@ -104,19 +105,19 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     });
 
     // Thinking events
-    wsClient.on("agent.thinking", (event: Event) => {
+    const unsubThinking = wsClient.on("agent.thinking", (event: Event) => {
       const thinking = (event.data as { thinking: string }).thinking;
       setStreamingThinking(thinking);
     });
 
     // Tool call events
-    wsClient.on("tool.call", (event: Event) => {
+    const unsubToolCall = wsClient.on("tool.call", (event: Event) => {
       const toolCall = (event.data as { toolCall: ToolCall }).toolCall;
       setStreamingToolCalls((prev) => [...prev, toolCall]);
       toast.info(`Calling tool: ${toolCall.tool}`);
     });
 
-    wsClient.on("tool.result", (event: Event) => {
+    const unsubToolResult = wsClient.on("tool.result", (event: Event) => {
       const { toolCallId, output, error: toolError } = event.data as {
         toolCallId: string;
         output?: unknown;
@@ -140,18 +141,18 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     });
 
     // Context events
-    wsClient.on("context.updated", (event: Event) => {
+    const unsubContextUpdated = wsClient.on("context.updated", (event: Event) => {
       const { tokenCount } = event.data as { tokenCount: number };
       console.log(`Context updated: ${tokenCount} tokens`);
     });
 
-    wsClient.on("context.compacted", (event: Event) => {
+    const unsubContextCompacted = wsClient.on("context.compacted", (event: Event) => {
       const { before, after } = event.data as { before: number; after: number };
       toast.info(`Context compacted: ${before} → ${after} tokens`);
     });
 
     // Error handling
-    wsClient.on("error", (event: Event) => {
+    const unsubError = wsClient.on("error", (event: Event) => {
       const error = (event.data as { error: string }).error;
       setError(error);
       toast.error(error);
@@ -160,6 +161,19 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       setStreamingThinking("");
       setStreamingToolCalls([]);
     });
+
+    // Return cleanup function that unsubscribes all handlers
+    return () => {
+      unsubMessageStart();
+      unsubMessageContent();
+      unsubMessageComplete();
+      unsubThinking();
+      unsubToolCall();
+      unsubToolResult();
+      unsubContextUpdated();
+      unsubContextCompacted();
+      unsubError();
+    };
   };
 
   const handleSendMessage = async (content: string) => {

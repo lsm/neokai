@@ -64,7 +64,27 @@ export class DaemonAPIClient implements APIClient {
       throw new Error(`API error: ${response.status} - ${error}`);
     }
 
-    return response.json();
+    // Handle empty responses (like 204 No Content)
+    const contentType = response.headers.get("content-type");
+    const contentLength = response.headers.get("content-length");
+
+    // If no content or content-length is 0, return undefined
+    if (response.status === 204 || contentLength === "0") {
+      return undefined as T;
+    }
+
+    // If there's no content-type or it's not JSON, try to parse anyway
+    // but catch errors for empty responses
+    try {
+      const text = await response.text();
+      if (!text || text.trim() === "") {
+        return undefined as T;
+      }
+      return JSON.parse(text);
+    } catch (error) {
+      // If parsing fails, return undefined for void responses
+      return undefined as T;
+    }
   }
 
   // Sessions

@@ -126,13 +126,15 @@ export default function Sidebar() {
       }
 
       toast.success("Session deleted");
-      setDeleteModalOpen(false);
-      setSessionToDelete(null);
     } catch (err) {
       const message = err instanceof Error
         ? err.message
         : "Failed to delete session";
       toast.error(message);
+    } finally {
+      // Always close the modal and clear the session to delete
+      setDeleteModalOpen(false);
+      setSessionToDelete(null);
     }
   };
 

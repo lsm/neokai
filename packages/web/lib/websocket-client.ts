@@ -26,6 +26,8 @@ export class WebSocketClient {
   private reconnectDelay = 1000;
   private handlers: Map<EventType | "all", Set<EventHandler>> = new Map();
   private baseUrl: string;
+  private shouldReconnect = true;
+  private pingInterval: number | null = null;
 
   constructor(baseUrl?: string) {
     this.baseUrl = baseUrl || getDaemonWsUrl();
@@ -34,6 +36,7 @@ export class WebSocketClient {
 
   connect(sessionId: string): void {
     this.sessionId = sessionId;
+    this.shouldReconnect = true;
     this.disconnect();
 
     try {
@@ -43,12 +46,17 @@ export class WebSocketClient {
         console.log(`WebSocket connected to session ${sessionId}`);
         this.reconnectAttempts = 0;
 
+        // Clear any existing ping interval
+        if (this.pingInterval !== null) {
+          clearInterval(this.pingInterval);
+        }
+
         // Send ping every 30 seconds
-        setInterval(() => {
+        this.pingInterval = setInterval(() => {
           if (this.ws?.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify({ type: "ping", timestamp: Date.now() }));
           }
-        }, 30000);
+        }, 30000) as unknown as number;
       };
 
       this.ws.onmessage = (event) => {
@@ -66,15 +74,26 @@ export class WebSocketClient {
 
       this.ws.onclose = () => {
         console.log("WebSocket closed");
-        this.attemptReconnect();
+        if (this.shouldReconnect) {
+          this.attemptReconnect();
+        }
       };
     } catch (error) {
       console.error("Error creating WebSocket:", error);
-      this.attemptReconnect();
+      if (this.shouldReconnect) {
+        this.attemptReconnect();
+      }
     }
   }
 
   disconnect(): void {
+    this.shouldReconnect = false;
+
+    if (this.pingInterval !== null) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
+
     if (this.ws) {
       this.ws.close();
       this.ws = null;
