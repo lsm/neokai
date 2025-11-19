@@ -5,7 +5,7 @@
     "": {
       "name": "@liuboer/daemon",
       "dependencies": {
-        "@anthropic-ai/claude-agent-sdk": "0.1.45",
+        "@anthropic-ai/claude-agent-sdk": "0.1.46",
         "@elysiajs/cors": "1.4.0",
         "dotenv": "17.2.3",
         "elysia": "1.4.16",
@@ -16,7 +16,7 @@
     },
   },
   "packages": {
-    "@anthropic-ai/claude-agent-sdk": ["@anthropic-ai/claude-agent-sdk@0.1.45", "", { "optionalDependencies": { "@img/sharp-darwin-arm64": "^0.33.5", "@img/sharp-darwin-x64": "^0.33.5", "@img/sharp-linux-arm": "^0.33.5", "@img/sharp-linux-arm64": "^0.33.5", "@img/sharp-linux-x64": "^0.33.5", "@img/sharp-win32-x64": "^0.33.5" }, "peerDependencies": { "zod": "^3.24.1" } }, "sha512-4TE8tp5XFu+4BMphqFhQ8fxW8C9x4bGz8QPC9Up9YUll3nidWOosaNFgTCo+qqbVsOvDXNpHx/S4iEK7ll041A=="],
+    "@anthropic-ai/claude-agent-sdk": ["@anthropic-ai/claude-agent-sdk@0.1.46", "", { "optionalDependencies": { "@img/sharp-darwin-arm64": "^0.33.5", "@img/sharp-darwin-x64": "^0.33.5", "@img/sharp-linux-arm": "^0.33.5", "@img/sharp-linux-arm64": "^0.33.5", "@img/sharp-linux-x64": "^0.33.5", "@img/sharp-win32-x64": "^0.33.5" }, "peerDependencies": { "zod": "^3.24.1" } }, "sha512-2Jf8ODvZ8rAciQyal2s/ky2E83BRlWmIs66/aAzgb37OzP04uI47HWMuHj+GYlk19QakJRqN74L3+JT2bIj5Gg=="],
 
     "@borewit/text-codec": ["@borewit/text-codec@0.1.1", "", {}, "sha512-5L/uBxmjaCIX5h8Z+uu+kA9BQLkc/Wl06UGR5ajNRxu+/XjonB5i8JpgFMrPj3LXTCPA0pv8yxUvbUi+QthGGA=="],
 
