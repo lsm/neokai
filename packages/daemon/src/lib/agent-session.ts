@@ -39,7 +39,6 @@ export class AgentSession {
     const messageId = crypto.randomUUID();
 
     // Add to conversation history for SDK prompt building
-    // Note: User message will be saved to sdk_messages when SDK stream echoes it back
     const userMessage: Message = {
       id: messageId,
       sessionId: this.session.id,
@@ -48,6 +47,34 @@ export class AgentSession {
       timestamp: new Date().toISOString(),
     };
     this.conversationHistory.push(userMessage);
+
+    // Create SDK user message format and save it to database
+    // The SDK doesn't echo back user messages, so we need to save it ourselves
+    const sdkUserMessage = {
+      type: "user" as const,
+      uuid: messageId,
+      message: {
+        role: "user" as const,
+        content: [
+          {
+            type: "text" as const,
+            text: content,
+          },
+        ],
+      },
+    };
+
+    // Save user message to sdk_messages table
+    this.db.saveSDKMessage(this.session.id, sdkUserMessage);
+
+    // Emit SDK message event so WebSocket clients get it immediately
+    await this.eventBus.emit({
+      id: crypto.randomUUID(),
+      type: "sdk.message",
+      sessionId: this.session.id,
+      timestamp: new Date().toISOString(),
+      data: sdkUserMessage,
+    });
 
     // Emit message start event (legacy)
     await this.eventBus.emit({
