@@ -46,18 +46,5 @@ export default function MainContent() {
     );
   }
 
-  return (
-    <>
-      <button
-        onClick={handleMenuClick}
-        class="md:hidden fixed top-4 left-4 z-50 p-2 bg-dark-850 border border-dark-700 rounded-lg hover:bg-dark-800 transition-colors text-gray-400 hover:text-gray-100"
-        title="Open menu"
-      >
-        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M4 6h16M4 12h16M4 18h16" />
-        </svg>
-      </button>
-      <ChatContainer sessionId={currentSessionIdSignal.value} />
-    </>
-  );
+  return <ChatContainer sessionId={currentSessionIdSignal.value} />;
 }
