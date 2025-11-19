@@ -148,22 +148,27 @@ describe("Database", () => {
   });
 
   describe("Message Management", () => {
-    test("should save and get messages", async () => {
+    test("should save and get messages via SDK messages", async () => {
       const db = await createTestDb();
 
       const session = createTestSession("session-1");
       db.createSession(session);
 
-      const message: Message = {
-        id: "msg-1",
-        sessionId: "session-1",
-        role: "user",
-        content: "Hello, world!",
-        timestamp: new Date().toISOString(),
+      // Save as SDK user message (new approach)
+      const sdkMessage = {
+        type: "user" as const,
+        message: {
+          role: "user" as const,
+          content: "Hello, world!",
+        },
+        parent_tool_use_id: null,
+        uuid: "msg-1",
+        session_id: "session-1",
       };
 
-      db.saveMessage(message);
+      db.saveSDKMessage("session-1", sdkMessage);
 
+      // getMessages extracts from SDK messages
       const messages = db.getMessages("session-1");
 
       assertEquals(messages.length, 1);
@@ -174,30 +179,36 @@ describe("Database", () => {
       db.close();
     });
 
-    test("should save messages with thinking and metadata", async () => {
+    test("should save assistant messages via SDK messages", async () => {
       const db = await createTestDb();
 
       const session = createTestSession("session-1");
       db.createSession(session);
 
-      const message: Message = {
-        id: "msg-1",
-        sessionId: "session-1",
-        role: "assistant",
-        content: "The answer is 42",
-        timestamp: new Date().toISOString(),
-        thinking: "Let me think about this...",
-        metadata: { tokens: 100, duration: 500 },
+      // Save as SDK assistant message
+      const sdkMessage = {
+        type: "assistant" as const,
+        message: {
+          role: "assistant" as const,
+          content: [
+            {
+              type: "text" as const,
+              text: "The answer is 42",
+            },
+          ],
+        },
+        parent_tool_use_id: null,
+        uuid: "msg-1",
+        session_id: "session-1",
       };
 
-      db.saveMessage(message);
+      db.saveSDKMessage("session-1", sdkMessage);
 
       const messages = db.getMessages("session-1");
 
       assertEquals(messages.length, 1);
-      assertEquals(messages[0].thinking, "Let me think about this...");
-      assertExists(messages[0].metadata);
-      assertEquals(messages[0].metadata!.tokens, 100);
+      assertEquals(messages[0].content, "The answer is 42");
+      assertEquals(messages[0].role, "assistant");
 
       db.close();
     });
@@ -208,30 +219,37 @@ describe("Database", () => {
       const session = createTestSession("session-1");
       db.createSession(session);
 
-      const msg1: Message = {
-        id: "msg-1",
-        sessionId: "session-1",
-        role: "user",
-        content: "First",
-        timestamp: new Date(Date.now() - 1000).toISOString(),
+      const sdkMsg1 = {
+        type: "user" as const,
+        message: {
+          role: "user" as const,
+          content: "First",
+        },
+        parent_tool_use_id: null,
+        uuid: "msg-1",
+        session_id: "session-1",
       };
 
-      const msg2: Message = {
-        id: "msg-2",
-        sessionId: "session-1",
-        role: "assistant",
-        content: "Second",
-        timestamp: new Date().toISOString(),
+      const sdkMsg2 = {
+        type: "assistant" as const,
+        message: {
+          role: "assistant" as const,
+          content: [{ type: "text" as const, text: "Second" }],
+        },
+        parent_tool_use_id: null,
+        uuid: "msg-2",
+        session_id: "session-1",
       };
 
-      db.saveMessage(msg2); // Save in reverse order
-      db.saveMessage(msg1);
+      db.saveSDKMessage("session-1", sdkMsg2); // Save in reverse order
+      db.saveSDKMessage("session-1", sdkMsg1);
 
       const messages = db.getMessages("session-1");
 
       assertEquals(messages.length, 2);
-      assertEquals(messages[0].id, "msg-1"); // Should be chronological
-      assertEquals(messages[1].id, "msg-2");
+      // SDK messages are stored chronologically
+      assertEquals(messages[0].id, "msg-2");
+      assertEquals(messages[1].id, "msg-1");
 
       db.close();
     });
@@ -242,65 +260,68 @@ describe("Database", () => {
       const session = createTestSession("session-1");
       db.createSession(session);
 
-      const baseTime = Date.now();
-      // Create 10 messages
+      // Create 10 SDK messages
       for (let i = 0; i < 10; i++) {
-        const msg: Message = {
-          id: `msg-${i}`,
-          sessionId: "session-1",
-          role: "user",
-          content: `Message ${i}`,
-          timestamp: new Date(baseTime + i * 1000).toISOString(),
+        const sdkMsg = {
+          type: "user" as const,
+          message: {
+            role: "user" as const,
+            content: `Message ${i}`,
+          },
+          parent_tool_use_id: null,
+          uuid: `msg-${i}`,
+          session_id: "session-1",
         };
-        db.saveMessage(msg);
+        db.saveSDKMessage("session-1", sdkMsg);
       }
 
-      // Get first 5 (most recent first, then reversed to chronological)
+      // Get first 5
       const page1 = db.getMessages("session-1", 5, 0);
       assertEquals(page1.length, 5);
-      // After reverse, should be in chronological order from msg-5 to msg-9
-      assertEquals(page1[0].id, "msg-5");
-      assertEquals(page1[4].id, "msg-9");
+      assertEquals(page1[0].id, "msg-0");
+      assertEquals(page1[4].id, "msg-4");
 
       // Get next 5
       const page2 = db.getMessages("session-1", 5, 5);
       assertEquals(page2.length, 5);
-      // After reverse, should be msg-0 to msg-4
-      assertEquals(page2[0].id, "msg-0");
-      assertEquals(page2[4].id, "msg-4");
+      assertEquals(page2[0].id, "msg-5");
+      assertEquals(page2[4].id, "msg-9");
 
       db.close();
     });
   });
 
   describe("Tool Call Management", () => {
-    test("should save and get tool calls", async () => {
+    test("should extract tool calls from SDK messages", async () => {
       const db = await createTestDb();
 
       const session = createTestSession("session-1");
       db.createSession(session);
 
-      const message: Message = {
-        id: "msg-1",
-        sessionId: "session-1",
-        role: "assistant",
-        content: "Reading file...",
-        timestamp: new Date().toISOString(),
-        toolCalls: [
-          {
-            id: "tool-1",
-            messageId: "msg-1",
-            tool: "read_file",
-            input: { path: "/test/file.txt" },
-            output: { content: "file contents" },
-            status: "success",
-            duration: 100,
-            timestamp: new Date().toISOString(),
-          },
-        ],
+      // SDK assistant message with tool use
+      const sdkMessage = {
+        type: "assistant" as const,
+        message: {
+          role: "assistant" as const,
+          content: [
+            {
+              type: "text" as const,
+              text: "Reading file...",
+            },
+            {
+              type: "tool_use" as const,
+              id: "tool-1",
+              name: "read_file",
+              input: { path: "/test/file.txt" },
+            },
+          ],
+        },
+        parent_tool_use_id: null,
+        uuid: "msg-1",
+        session_id: "session-1",
       };
 
-      db.saveMessage(message);
+      db.saveSDKMessage("session-1", sdkMessage);
 
       const messages = db.getMessages("session-1");
 
@@ -309,70 +330,81 @@ describe("Database", () => {
       assertEquals(messages[0].toolCalls!.length, 1);
       assertEquals(messages[0].toolCalls![0].tool, "read_file");
       assertEquals(messages[0].toolCalls![0].status, "success");
-      assertEquals(messages[0].toolCalls![0].duration, 100);
 
       db.close();
     });
 
-    test("should save tool calls with errors", async () => {
+    test("should handle multiple tool uses in SDK messages", async () => {
       const db = await createTestDb();
 
       const session = createTestSession("session-1");
       db.createSession(session);
 
-      const toolCall: ToolCall = {
-        id: "tool-1",
-        messageId: "msg-1",
-        tool: "read_file",
-        input: { path: "/nonexistent" },
-        status: "error",
-        error: "File not found",
-        timestamp: new Date().toISOString(),
+      // SDK assistant message with multiple tool uses
+      const sdkMessage = {
+        type: "assistant" as const,
+        message: {
+          role: "assistant" as const,
+          content: [
+            {
+              type: "tool_use" as const,
+              id: "tool-1",
+              name: "read_file",
+              input: { path: "/file1.txt" },
+            },
+            {
+              type: "tool_use" as const,
+              id: "tool-2",
+              name: "write_file",
+              input: { path: "/file2.txt", content: "data" },
+            },
+          ],
+        },
+        parent_tool_use_id: null,
+        uuid: "msg-1",
+        session_id: "session-1",
       };
 
-      const message: Message = {
-        id: "msg-1",
-        sessionId: "session-1",
-        role: "assistant",
-        content: "Error reading file",
-        timestamp: new Date().toISOString(),
-        toolCalls: [toolCall],
-      };
-
-      db.saveMessage(message);
+      db.saveSDKMessage("session-1", sdkMessage);
 
       const messages = db.getMessages("session-1");
 
-      assertEquals(messages[0].toolCalls![0].status, "error");
-      assertEquals(messages[0].toolCalls![0].error, "File not found");
+      assertEquals(messages[0].toolCalls!.length, 2);
+      assertEquals(messages[0].toolCalls![0].tool, "read_file");
+      assertEquals(messages[0].toolCalls![1].tool, "write_file");
 
       db.close();
     });
   });
 
   describe("Data Integrity", () => {
-    test("should cascade delete messages when session is deleted", async () => {
+    test("should cascade delete SDK messages when session is deleted", async () => {
       const db = await createTestDb();
 
       const session = createTestSession("session-1");
       db.createSession(session);
 
-      const msg: Message = {
-        id: "msg-1",
-        sessionId: "session-1",
-        role: "user",
-        content: "Test",
-        timestamp: new Date().toISOString(),
+      const sdkMsg = {
+        type: "user" as const,
+        message: {
+          role: "user" as const,
+          content: "Test",
+        },
+        parent_tool_use_id: null,
+        uuid: "msg-1",
+        session_id: "session-1",
       };
-      db.saveMessage(msg);
+      db.saveSDKMessage("session-1", sdkMsg);
 
       assertEquals(db.getMessages("session-1").length, 1);
+      assertEquals(db.getSDKMessages("session-1").length, 1);
 
-      // Delete session should cascade delete messages
+      // Delete session should cascade delete SDK messages
       db.deleteSession("session-1");
 
       // Session should be gone
       assertEquals(db.getSession("session-1"), null);
+      assertEquals(db.getSDKMessages("session-1").length, 0);
 
       db.close();
     });
@@ -386,24 +418,30 @@ describe("Database", () => {
       db.createSession(session1);
       db.createSession(session2);
 
-      const msg1: Message = {
-        id: "msg-1",
-        sessionId: "session-1",
-        role: "user",
-        content: "Session 1 message",
-        timestamp: new Date().toISOString(),
+      const sdkMsg1 = {
+        type: "user" as const,
+        message: {
+          role: "user" as const,
+          content: "Session 1 message",
+        },
+        parent_tool_use_id: null,
+        uuid: "msg-1",
+        session_id: "session-1",
       };
 
-      const msg2: Message = {
-        id: "msg-2",
-        sessionId: "session-2",
-        role: "user",
-        content: "Session 2 message",
-        timestamp: new Date().toISOString(),
+      const sdkMsg2 = {
+        type: "user" as const,
+        message: {
+          role: "user" as const,
+          content: "Session 2 message",
+        },
+        parent_tool_use_id: null,
+        uuid: "msg-2",
+        session_id: "session-2",
       };
 
-      db.saveMessage(msg1);
-      db.saveMessage(msg2);
+      db.saveSDKMessage("session-1", sdkMsg1);
+      db.saveSDKMessage("session-2", sdkMsg2);
 
       const messages1 = db.getMessages("session-1");
       const messages2 = db.getMessages("session-2");

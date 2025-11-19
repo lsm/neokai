@@ -21,6 +21,9 @@ export class Database {
     // Open database
     this.db = new BunDatabase(this.dbPath);
 
+    // Enable foreign key constraints (required for CASCADE deletes)
+    this.db.exec("PRAGMA foreign_keys = ON");
+
     // Create tables
     this.createTables();
 
@@ -43,35 +46,8 @@ export class Database {
       )
     `);
 
-    // Messages table
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS messages (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
-        content TEXT NOT NULL,
-        timestamp TEXT NOT NULL,
-        thinking TEXT,
-        metadata TEXT,
-        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-      )
-    `);
-
-    // Tool calls table
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS tool_calls (
-        id TEXT PRIMARY KEY,
-        message_id TEXT NOT NULL,
-        tool TEXT NOT NULL,
-        input TEXT NOT NULL,
-        output TEXT,
-        status TEXT NOT NULL CHECK(status IN ('pending', 'success', 'error')),
-        error TEXT,
-        duration INTEGER,
-        timestamp TEXT NOT NULL,
-        FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
-      )
-    `);
+    // Messages and tool_calls tables removed - we now only use sdk_messages table
+    // This provides a cleaner design with single source of truth
 
     // Events table
     this.db.exec(`
@@ -127,10 +103,6 @@ export class Database {
     `);
 
     // Create indexes
-    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_session
-      ON messages(session_id, timestamp)`);
-    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_tool_calls_message
-      ON tool_calls(message_id)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_events_session
       ON events(session_id, timestamp)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_oauth_states_expires
@@ -153,6 +125,20 @@ export class Database {
       // Column doesn't exist, add it
       console.log("🔧 Running migration: Adding oauth_token_encrypted column");
       this.db.exec(`ALTER TABLE auth_config ADD COLUMN oauth_token_encrypted TEXT`);
+    }
+
+    // Migration 2: Remove messages and tool_calls tables (replaced by sdk_messages)
+    try {
+      // Check if messages table exists
+      this.db.prepare(`SELECT 1 FROM messages LIMIT 1`).all();
+      // Table exists, drop it
+      console.log("🔧 Running migration: Dropping messages and tool_calls tables");
+      this.db.exec(`DROP TABLE IF EXISTS tool_calls`);
+      this.db.exec(`DROP TABLE IF EXISTS messages`);
+      this.db.exec(`DROP INDEX IF EXISTS idx_messages_session`);
+      this.db.exec(`DROP INDEX IF EXISTS idx_tool_calls_message`);
+    } catch (_error) {
+      // Tables don't exist, migration already complete
     }
   }
 
@@ -247,97 +233,73 @@ export class Database {
     stmt.run(id);
   }
 
-  // Message operations
-  saveMessage(message: Message): void {
-    const stmt = this.db.prepare(
-      `INSERT INTO messages (id, session_id, role, content, timestamp, thinking, metadata)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    );
-    stmt.run(
-      message.id,
-      message.sessionId,
-      message.role,
-      message.content,
-      message.timestamp,
-      message.thinking || null,
-      message.metadata ? JSON.stringify(message.metadata) : null,
-    );
+  // Message operations - now using sdk_messages table as single source of truth
 
-    // Save tool calls if any
-    if (message.toolCalls) {
-      for (const toolCall of message.toolCalls) {
-        this.saveToolCall(toolCall);
+  /**
+   * Get messages for a session by extracting from SDK messages
+   * Returns simplified Message format for conversation history
+   */
+  getMessages(sessionId: string, limit = 100, offset = 0): Message[] {
+    const sdkMessages = this.getSDKMessages(sessionId, limit, offset);
+    const messages: Message[] = [];
+
+    for (const sdkMsg of sdkMessages) {
+      // Convert user messages
+      if (sdkMsg.type === 'user') {
+        const userContent = sdkMsg.message.content;
+        const contentText = Array.isArray(userContent)
+          ? userContent.map(block => block.type === 'text' ? block.text : '').join('\n')
+          : userContent;
+
+        messages.push({
+          id: sdkMsg.uuid || crypto.randomUUID(),
+          sessionId: sdkMsg.session_id,
+          role: 'user',
+          content: contentText,
+          timestamp: new Date().toISOString(), // SDK messages have timestamp in parent row
+        });
+      }
+      // Convert assistant messages
+      else if (sdkMsg.type === 'assistant') {
+        const content = sdkMsg.message.content;
+        let textContent = '';
+        const toolCalls: ToolCall[] = [];
+
+        for (const block of content) {
+          if (block.type === 'text') {
+            textContent += block.text;
+          } else if (block.type === 'tool_use') {
+            toolCalls.push({
+              id: block.id,
+              messageId: sdkMsg.uuid,
+              tool: block.name,
+              input: block.input,
+              status: 'success',
+              timestamp: new Date().toISOString(),
+            });
+          }
+        }
+
+        messages.push({
+          id: sdkMsg.uuid,
+          sessionId: sdkMsg.session_id,
+          role: 'assistant',
+          content: textContent,
+          timestamp: new Date().toISOString(),
+          toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+        });
       }
     }
+
+    return messages;
   }
 
-  getMessages(sessionId: string, limit = 100, offset = 0): Message[] {
-    const stmt = this.db.prepare(
-      `SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?`
-    );
-    const rows = stmt.all(sessionId, limit, offset) as Record<string, unknown>[];
-
-    return rows.map((r) => {
-      const message: Message = {
-        id: r.id as string,
-        sessionId: r.session_id as string,
-        role: r.role as "user" | "assistant" | "system",
-        content: r.content as string,
-        timestamp: r.timestamp as string,
-        thinking: r.thinking as string | undefined,
-        metadata: r.metadata ? JSON.parse(r.metadata as string) : undefined,
-      };
-
-      // Load tool calls
-      message.toolCalls = this.getToolCallsForMessage(message.id);
-
-      return message;
-    }).reverse(); // Return in chronological order
-  }
-
+  /**
+   * Clear all messages for a session (deletes from sdk_messages)
+   */
   clearMessages(sessionId: string): void {
-    const stmt = this.db.prepare(`DELETE FROM messages WHERE session_id = ?`);
+    const stmt = this.db.prepare(`DELETE FROM sdk_messages WHERE session_id = ?`);
     stmt.run(sessionId);
-  }
-
-  // Tool call operations
-  saveToolCall(toolCall: ToolCall): void {
-    const stmt = this.db.prepare(
-      `INSERT INTO tool_calls (id, message_id, tool, input, output, status, error, duration, timestamp)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    );
-    stmt.run(
-      toolCall.id,
-      toolCall.messageId,
-      toolCall.tool,
-      JSON.stringify(toolCall.input),
-      toolCall.output ? JSON.stringify(toolCall.output) : null,
-      toolCall.status,
-      toolCall.error || null,
-      toolCall.duration || null,
-      toolCall.timestamp,
-    );
-  }
-
-  getToolCallsForMessage(messageId: string): ToolCall[] {
-    const stmt = this.db.prepare(
-      `SELECT * FROM tool_calls WHERE message_id = ? ORDER BY timestamp`
-    );
-    const rows = stmt.all(messageId) as Record<string, unknown>[];
-
-    return rows.map((r) => {
-      return {
-        id: r.id as string,
-        messageId: r.message_id as string,
-        tool: r.tool as string,
-        input: JSON.parse(r.input as string),
-        output: r.output ? JSON.parse(r.output as string) : undefined,
-        status: r.status as "pending" | "success" | "error",
-        error: r.error as string | undefined,
-        duration: r.duration as number | undefined,
-        timestamp: r.timestamp as string,
-      };
-    });
   }
 
   // Authentication operations

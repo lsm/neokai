@@ -38,7 +38,8 @@ export class AgentSession {
   async sendMessage(content: string): Promise<string> {
     const messageId = crypto.randomUUID();
 
-    // Save user message
+    // Add to conversation history for SDK prompt building
+    // Note: User message will be saved to sdk_messages when SDK stream echoes it back
     const userMessage: Message = {
       id: messageId,
       sessionId: this.session.id,
@@ -46,11 +47,9 @@ export class AgentSession {
       content,
       timestamp: new Date().toISOString(),
     };
-
-    this.db.saveMessage(userMessage);
     this.conversationHistory.push(userMessage);
 
-    // Emit message start event
+    // Emit message start event (legacy)
     await this.eventBus.emit({
       id: crypto.randomUUID(),
       type: "message.start",
@@ -239,7 +238,7 @@ export class AgentSession {
 
       console.log("[DEBUG] SDK stream processing complete");
 
-      // Save assistant message
+      // Build assistant message for conversation history
       const assistantMessage: Message = {
         id: assistantMessageId,
         sessionId: this.session.id,
@@ -249,13 +248,9 @@ export class AgentSession {
         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       };
 
-      this.db.saveMessage(assistantMessage);
+      // Add to conversation history for SDK prompt building
+      // Note: Already saved to sdk_messages table during stream processing
       this.conversationHistory.push(assistantMessage);
-
-      // Save tool calls to database
-      for (const toolCall of toolCalls) {
-        this.db.saveToolCall(toolCall);
-      }
 
       // Emit message complete event
       await this.eventBus.emit({
