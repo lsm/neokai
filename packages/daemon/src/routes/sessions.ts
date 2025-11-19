@@ -218,7 +218,7 @@ export function createSessionsRouter(app: Elysia, sessionManager: SessionManager
     // Test with cwd option (like daemon sendMessage does)
     .get("/api/test/with-cwd", async ({ set }) => {
       console.log("\n[TEST WITH CWD] Starting test");
-      console.log("[TEST WITH CWD] cwd:", "/tmp/workspace");
+      console.log("[TEST WITH CWD] cwd:", process.env.WORKSPACE_ROOT || "/tmp/workspace");
 
       try {
         const prompt = "What is 2+2? Answer with just the number.";
@@ -228,7 +228,7 @@ export function createSessionsRouter(app: Elysia, sessionManager: SessionManager
           prompt,
           options: {
             model: "claude-sonnet-4-5-20250929",
-            cwd: "/tmp/workspace",
+            cwd: process.env.WORKSPACE_ROOT || "/tmp/workspace",
             permissionMode: "bypassPermissions",
             allowDangerouslySkipPermissions: true,
             maxTurns: 1,

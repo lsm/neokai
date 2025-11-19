@@ -77,7 +77,7 @@ export default function Sidebar() {
     try {
       setCreatingSession(true);
       const response = await apiClient.createSession({
-        workspacePath: "/tmp/workspace",
+        workspacePath: undefined, // Let daemon use configured workspace root
       });
       await loadSessions();
       currentSessionIdSignal.value = response.sessionId;

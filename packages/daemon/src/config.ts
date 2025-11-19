@@ -31,10 +31,10 @@ export function getConfig(): Config {
   // __dirname is packages/daemon/src, so we need to go up 3 levels
   const projectRoot = join(__dirname, "..", "..", "..");
 
-  // In development: use project_root/temp
+  // In development: use project_root/tmp/workspace
   // In production: use current working directory
   const workspaceRoot = nodeEnv === "development"
-    ? join(projectRoot, "temp")
+    ? join(projectRoot, "tmp", "workspace")
     : process.cwd();
 
   return {
