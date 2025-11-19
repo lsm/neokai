@@ -3,8 +3,11 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "bun --hot src/index.ts",
-    "build": "bun build src/index.html --outdir=dist --minify",
+    "css:build": "tailwindcss --input src/styles.css --output src/styles.out.css",
+    "css:watch": "tailwindcss --input src/styles.css --output src/styles.out.css --watch",
+    "server:dev": "bun --hot src/index.ts",
+    "dev": "bun run css:build && bun run --bun css:watch & bun run server:dev",
+    "build": "bun run css:build && bun build src/index.html --outdir=dist --minify",
     "start": "NODE_ENV=production bun src/server-prod.ts",
     "preview": "bun src/index.html"
   },
@@ -17,8 +20,9 @@
     "date-fns": "^4.1.0"
   },
   "devDependencies": {
+    "@tailwindcss/cli": "^4.1.17",
+    "@tailwindcss/postcss": "^4.1.17",
     "bun-types": "latest",
-    "tailwindcss": "^4.1.17",
-    "@tailwindcss/postcss": "^4.1.17"
+    "tailwindcss": "^4.1.17"
   }
 }
