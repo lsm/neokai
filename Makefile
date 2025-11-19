@@ -1,4 +1,11 @@
-.PHONY: daemon web
+.PHONY: daemon web sync-sdk-types
+
+sync-sdk-types:
+	@echo "Syncing Claude SDK type definitions..."
+	@mkdir -p packages/shared/src/sdk
+	@cp node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts packages/shared/src/sdk/
+	@cp node_modules/@anthropic-ai/claude-agent-sdk/sdk-tools.d.ts packages/shared/src/sdk/
+	@echo "✓ SDK types synced to packages/shared/src/sdk/"
 
 daemon:
 	@echo "Killing any process on port 8283..."
