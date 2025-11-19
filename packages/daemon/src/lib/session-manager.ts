@@ -60,6 +60,7 @@ export class SessionManager {
 
     // Emit session created event
     await this.eventBus.emit({
+      id: crypto.randomUUID(),
       type: "session.created",
       sessionId,
       timestamp: new Date().toISOString(),
@@ -114,6 +115,7 @@ export class SessionManager {
 
     // Emit session ended event
     await this.eventBus.emit({
+      id: crypto.randomUUID(),
       type: "session.ended",
       sessionId,
       timestamp: new Date().toISOString(),
@@ -140,13 +142,15 @@ export class SessionManager {
       },
     });
 
-    // Emit messages cleared event
-    await this.eventBus.emit({
-      type: "messages.cleared",
-      sessionId,
-      timestamp: new Date().toISOString(),
-      data: {},
-    });
+    // Note: "messages.cleared" is not a valid EventType in the shared types
+    // If needed, this event type should be added to the EventType union in shared/src/types.ts
+    // await this.eventBus.emit({
+    //   id: crypto.randomUUID(),
+    //   type: "messages.cleared",
+    //   sessionId,
+    //   timestamp: new Date().toISOString(),
+    //   data: {},
+    // });
   }
 
   getActiveSessions(): number {

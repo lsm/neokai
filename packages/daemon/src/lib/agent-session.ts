@@ -52,6 +52,7 @@ export class AgentSession {
 
     // Emit message start event
     await this.eventBus.emit({
+      id: crypto.randomUUID(),
       type: "message.start",
       sessionId: this.session.id,
       timestamp: new Date().toISOString(),
@@ -137,6 +138,7 @@ export class AgentSession {
 
               // Emit content delta event
               await this.eventBus.emit({
+                id: crypto.randomUUID(),
                 type: "message.content",
                 sessionId: this.session.id,
                 timestamp: new Date().toISOString(),
@@ -159,6 +161,7 @@ export class AgentSession {
 
               // Emit tool call event
               await this.eventBus.emit({
+                id: crypto.randomUUID(),
                 type: "tool.call",
                 sessionId: this.session.id,
                 timestamp: new Date().toISOString(),
@@ -177,6 +180,7 @@ export class AgentSession {
 
               // Emit content delta event
               await this.eventBus.emit({
+                id: crypto.randomUUID(),
                 type: "message.content",
                 sessionId: this.session.id,
                 timestamp: new Date().toISOString(),
@@ -191,6 +195,7 @@ export class AgentSession {
           // Final result message with usage stats
           // We can emit this as a context.updated event
           await this.eventBus.emit({
+            id: crypto.randomUUID(),
             type: "context.updated",
             sessionId: this.session.id,
             timestamp: new Date().toISOString(),
@@ -209,6 +214,7 @@ export class AgentSession {
           // Status message (compacting, etc.)
           if (message.status === "compacting") {
             await this.eventBus.emit({
+              id: crypto.randomUUID(),
               type: "agent.thinking",
               sessionId: this.session.id,
               timestamp: new Date().toISOString(),
@@ -242,6 +248,7 @@ export class AgentSession {
 
       // Emit message complete event
       await this.eventBus.emit({
+        id: crypto.randomUUID(),
         type: "message.complete",
         sessionId: this.session.id,
         timestamp: new Date().toISOString(),
@@ -272,6 +279,7 @@ export class AgentSession {
 
       // Emit error event
       await this.eventBus.emit({
+        id: crypto.randomUUID(),
         type: "error",
         sessionId: this.session.id,
         timestamp: new Date().toISOString(),
