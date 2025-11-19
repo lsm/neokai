@@ -1,39 +1,39 @@
-import { assertEquals, assertExists } from "jsr:@std/assert";
+import { describe, test, expect } from "bun:test";
 import IndexRoute from "../routes/index.tsx";
 import Sidebar from "../islands/Sidebar.tsx";
 import ChatContainer from "../islands/ChatContainer.tsx";
 import { currentSessionIdSignal } from "../lib/signals.ts";
 
-Deno.test("Serialization - islands and routes", async (t) => {
-  await t.step("index route component can be imported without errors", () => {
-    assertExists(IndexRoute, "Index route should be importable");
-    assertEquals(typeof IndexRoute, "function", "Index route should be a function");
+describe("Serialization - islands and routes", () => {
+  test("index route component can be imported without errors", () => {
+    expect(IndexRoute).toBeDefined();
+    expect(typeof IndexRoute).toBe("function");
   });
 
-  await t.step("Sidebar island can be imported without errors", () => {
-    assertExists(Sidebar, "Sidebar island should be importable");
-    assertEquals(typeof Sidebar, "function", "Sidebar should be a function");
+  test("Sidebar island can be imported without errors", () => {
+    expect(Sidebar).toBeDefined();
+    expect(typeof Sidebar).toBe("function");
   });
 
-  await t.step("ChatContainer island can be imported without errors", () => {
-    assertExists(ChatContainer, "ChatContainer island should be importable");
-    assertEquals(typeof ChatContainer, "function", "ChatContainer should be a function");
+  test("ChatContainer island can be imported without errors", () => {
+    expect(ChatContainer).toBeDefined();
+    expect(typeof ChatContainer).toBe("function");
   });
 
-  await t.step("shared signal is properly initialized", () => {
-    assertExists(currentSessionIdSignal, "Signal should exist");
-    assertEquals(currentSessionIdSignal.value, null, "Signal should start as null");
+  test("shared signal is properly initialized", () => {
+    expect(currentSessionIdSignal).toBeDefined();
+    expect(currentSessionIdSignal.value).toBe(null);
 
     // Test that signal can be updated
     currentSessionIdSignal.value = "test-session-id";
-    assertEquals(currentSessionIdSignal.value, "test-session-id", "Signal should update");
+    expect(currentSessionIdSignal.value).toBe("test-session-id");
 
     // Reset
     currentSessionIdSignal.value = null;
-    assertEquals(currentSessionIdSignal.value, null, "Signal should reset");
+    expect(currentSessionIdSignal.value).toBe(null);
   });
 
-  await t.step("islands do not receive function props (no serialization errors)", () => {
+  test("islands do not receive function props (no serialization errors)", () => {
     // This test verifies the fix: Sidebar should not have any required function props
     // If it did, we'd get serialization errors when Fresh tries to hydrate the island
 
@@ -42,6 +42,6 @@ Deno.test("Serialization - islands and routes", async (t) => {
 
     // Just verifying we can reference the island without type errors
     const SidebarRef = Sidebar;
-    assertExists(SidebarRef, "Sidebar should not require function props");
+    expect(SidebarRef).toBeDefined();
   });
 });

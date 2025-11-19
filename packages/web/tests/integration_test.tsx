@@ -1,32 +1,32 @@
-import { assertEquals, assertExists } from "jsr:@std/assert";
+import { describe, test, expect } from "bun:test";
 import { App } from "fresh";
 import { define } from "../utils.ts";
 import IndexRoute from "../routes/index.tsx";
 import AppWrapper from "../routes/_app.tsx";
 
-Deno.test("Fresh app - route integration tests", async (t) => {
-  await t.step("index route component exists and is defined", () => {
-    assertExists(IndexRoute, "Index route should exist");
-    assertEquals(typeof IndexRoute, "function", "Route should be a function");
+describe("Fresh app - route integration tests", () => {
+  test("index route component exists and is defined", () => {
+    expect(IndexRoute).toBeDefined();
+    expect(typeof IndexRoute).toBe("function");
   });
 
-  await t.step("app wrapper component exists", () => {
-    assertExists(AppWrapper, "App wrapper should exist");
-    assertEquals(typeof AppWrapper, "function", "App wrapper should be a function");
+  test("app wrapper component exists", () => {
+    expect(AppWrapper).toBeDefined();
+    expect(typeof AppWrapper).toBe("function");
   });
 
-  await t.step("can create app instance with routes", () => {
+  test("can create app instance with routes", () => {
     const testApp = new App();
-    assertExists(testApp, "Should be able to create App instance");
+    expect(testApp).toBeDefined();
   });
 
-  await t.step("define utility creates page definitions", () => {
-    assertExists(define, "Define utility should exist");
-    assertExists(define.page, "Define should have page method");
-    assertEquals(typeof define.page, "function", "define.page should be a function");
+  test("define utility creates page definitions", () => {
+    expect(define).toBeDefined();
+    expect(define.page).toBeDefined();
+    expect(typeof define.page).toBe("function");
   });
 
-  await t.step("test route renders without serialization errors", async () => {
+  test("test route renders without serialization errors", async () => {
     // Create a test app with just the app wrapper
     const handler = new App()
       .get("/test", (ctx) => {
@@ -42,12 +42,12 @@ Deno.test("Fresh app - route integration tests", async (t) => {
     const request = new Request("http://localhost/test");
     const response = await handler(request);
 
-    assertEquals(response.status, 200, "Should return 200 OK");
+    expect(response.status).toBe(200);
     const html = await response.text();
-    assertEquals(html.includes("Test Page"), true, "Should contain test content");
+    expect(html.includes("Test Page")).toBe(true);
   });
 
-  await t.step("static routes return proper responses", async () => {
+  test("static routes return proper responses", async () => {
     const handler = new App()
       .get("/health", () => new Response("OK", { status: 200 }))
       .handler();
@@ -55,12 +55,12 @@ Deno.test("Fresh app - route integration tests", async (t) => {
     const request = new Request("http://localhost/health");
     const response = await handler(request);
 
-    assertEquals(response.status, 200, "Health check should return 200");
+    expect(response.status).toBe(200);
     const text = await response.text();
-    assertEquals(text, "OK", "Health check should return OK");
+    expect(text).toBe("OK");
   });
 
-  await t.step("404 handling works correctly", async () => {
+  test("404 handling works correctly", async () => {
     const handler = new App()
       .get("/exists", () => new Response("exists"))
       .handler();
@@ -68,10 +68,10 @@ Deno.test("Fresh app - route integration tests", async (t) => {
     const request = new Request("http://localhost/nonexistent");
     const response = await handler(request);
 
-    assertEquals(response.status, 404, "Should return 404 for non-existent routes");
+    expect(response.status).toBe(404);
   });
 
-  await t.step("app handles different HTTP methods", async () => {
+  test("app handles different HTTP methods", async () => {
     const handler = new App()
       .get("/resource", () => new Response("GET"))
       .post("/resource", () => new Response("POST"))
@@ -79,10 +79,10 @@ Deno.test("Fresh app - route integration tests", async (t) => {
 
     const getReq = new Request("http://localhost/resource", { method: "GET" });
     const getRes = await handler(getReq);
-    assertEquals(await getRes.text(), "GET", "GET method should work");
+    expect(await getRes.text()).toBe("GET");
 
     const postReq = new Request("http://localhost/resource", { method: "POST" });
     const postRes = await handler(postReq);
-    assertEquals(await postRes.text(), "POST", "POST method should work");
+    expect(await postRes.text()).toBe("POST");
   });
 });
