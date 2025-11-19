@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import { Button } from "./ui/Button.tsx";
-import { IconButton } from "./ui/IconButton.tsx";
 import { cn } from "../lib/utils.ts";
+import { Dropdown } from "./ui/Dropdown.tsx";
 
 interface MessageInputProps {
   onSend: (content: string) => void;
   disabled?: boolean;
 }
 
+type ModeType = "Auto" | "Agent" | "Manual";
+
 export default function MessageInput({ onSend, disabled }: MessageInputProps) {
   const [content, setContent] = useState("");
+  const [mode, setMode] = useState<ModeType>("Auto");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const maxChars = 10000;
 
@@ -18,7 +20,8 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
     const textarea = textareaRef.current;
     if (textarea) {
       textarea.style.height = "auto";
-      textarea.style.height = `${Math.min(textarea.scrollHeight, 300)}px`;
+      const newHeight = Math.min(textarea.scrollHeight, 300);
+      textarea.style.height = `${newHeight}px`;
     }
   }, [content]);
 
@@ -36,7 +39,8 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    // Cmd+Enter or Ctrl+Enter to send
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       handleSubmit(e);
     } else if (e.key === "Escape") {
@@ -51,78 +55,127 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
   return (
     <div class="bg-dark-850 border-t border-dark-700 p-4">
       <form onSubmit={handleSubmit} class="max-w-4xl mx-auto">
-        <div class="relative">
+        {/* Add Context Button */}
+        <button
+          type="button"
+          class="mb-3 flex items-center gap-2 px-4 py-2 rounded-xl border border-dark-700/50 bg-dark-800/40 text-gray-400 hover:text-gray-300 hover:border-dark-600 hover:bg-dark-800/60 transition-all"
+        >
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M16 12a4 4 0 10-8 0 4 4 0 008 0zm0 0v1.5a2.5 2.5 0 005 0V12a9 9 0 10-9 9m4.5-1.206a8.959 8.959 0 01-4.5 1.207" />
+          </svg>
+          <span class="text-sm">Add context</span>
+        </button>
+
+        {/* Input Group */}
+        <div class="relative rounded-[28px] border border-dark-700/50 bg-dark-800/40 backdrop-blur-sm shadow-lg transition-all focus-within:border-blue-500/40 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:bg-dark-800/60">
+          {/* Textarea */}
           <textarea
             ref={textareaRef}
             value={content}
             onInput={(e) => setContent((e.target as HTMLTextAreaElement).value)}
             onKeyDown={handleKeyDown}
-            placeholder="Type your message... (Enter to send, Shift+Enter for new line, Esc to clear)"
+            placeholder="Ask, search, or make anything..."
             disabled={disabled}
             maxLength={maxChars}
             class={cn(
-              "w-full px-4 py-3 bg-dark-800 border-2 border-dark-700 text-gray-100 rounded-lg resize-none",
+              "w-full px-5 pt-4 pb-14 text-gray-100 resize-none bg-transparent",
               "placeholder:text-gray-500",
-              "focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20",
+              "focus:outline-none",
               "disabled:opacity-50 disabled:cursor-not-allowed",
-              "transition-colors",
             )}
-            style={{ minHeight: "60px", maxHeight: "300px" }}
+            style={{
+              minHeight: "120px",
+              maxHeight: "300px",
+              lineHeight: "1.5",
+            }}
           />
 
           {/* Character Counter */}
           {showCharCount && (
             <div
               class={cn(
-                "absolute bottom-2 left-3 text-xs",
+                "absolute top-3 right-4 text-xs",
                 charCount >= maxChars ? "text-red-400" : "text-gray-500",
               )}
             >
               {charCount}/{maxChars}
             </div>
           )}
-        </div>
 
-        <div class="flex items-center justify-between mt-3">
-          <div class="flex items-center gap-2">
-            {/* Attachment button placeholder */}
-            <IconButton
-              size="sm"
-              title="Attach file (coming soon)"
-              disabled
+          {/* Bottom Toolbar */}
+          <div class="absolute bottom-0 left-0 right-0 px-4 py-3 flex items-center gap-3 border-t border-dark-700/30">
+            {/* Attachment Button */}
+            <button
+              type="button"
+              class="p-2 rounded-lg text-gray-400 hover:text-gray-300 hover:bg-dark-700/50 transition-all"
+              title="Attach file"
+            >
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+              </svg>
+            </button>
+
+            {/* Mode Dropdown */}
+            <Dropdown
+              trigger={
+                <button
+                  type="button"
+                  class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-gray-300 hover:bg-dark-700/50 transition-all"
+                >
+                  <span>{mode}</span>
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              }
+              items={[
+                { label: "Auto", onClick: () => setMode("Auto") },
+                { label: "Agent", onClick: () => setMode("Agent") },
+                { label: "Manual", onClick: () => setMode("Manual") },
+              ]}
+              position="left"
+            />
+
+            {/* All Sources Button */}
+            <button
+              type="button"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-gray-300 hover:bg-dark-700/50 transition-all"
             >
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>All Sources</span>
+            </button>
+
+            <div class="flex-1" />
+
+            {/* Send Button */}
+            <button
+              type="submit"
+              disabled={disabled || !content.trim()}
+              title="Send message (⌘+Enter)"
+              class={cn(
+                "p-2.5 rounded-full transition-all flex items-center justify-center",
+                disabled || !content.trim()
+                  ? "bg-dark-700 text-gray-600 cursor-not-allowed"
+                  : "bg-blue-500 text-white hover:bg-blue-600 active:scale-95",
+              )}
+            >
+              <svg
+                class="w-5 h-5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
                 <path
                   stroke-linecap="round"
                   stroke-linejoin="round"
                   stroke-width={2}
-                  d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
+                  d="M5 10l7-7m0 0l7 7m-7-7v18"
                 />
               </svg>
-            </IconButton>
-
-            <span class="text-xs text-gray-500">
-              Shortcuts: <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">↵</kbd> send, <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">⇧↵</kbd> new line
-            </span>
+            </button>
           </div>
-
-          <Button
-            type="submit"
-            disabled={disabled || !content.trim()}
-            loading={disabled}
-            icon={
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-                />
-              </svg>
-            }
-          >
-            Send
-          </Button>
         </div>
       </form>
     </div>

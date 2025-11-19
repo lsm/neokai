@@ -1,7 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import type { AuthStatus, Session } from "@liuboer/shared";
 import { apiClient } from "../lib/api-client.ts";
-import { currentSessionIdSignal, sidebarOpenSignal } from "../lib/signals.ts";
+import { currentSessionIdSignal, sidebarOpenSignal, sessionsSignal } from "../lib/signals.ts";
 import { formatRelativeTime } from "../lib/utils.ts";
 import { toast } from "../lib/toast.ts";
 import { Button } from "../components/ui/Button.tsx";
@@ -26,33 +26,13 @@ export default function Sidebar() {
     loadAuthStatus();
   }, []);
 
-  // Auto-select most recent session if none is selected
-  useEffect(() => {
-    console.log("Auto-select effect triggered:", {
-      sessionsCount: sessions.length,
-      currentSessionId: currentSessionIdSignal.value,
-    });
-
-    if (sessions.length > 0 && !currentSessionIdSignal.value) {
-      // Sort by lastActiveAt and select the most recent
-      const mostRecent = [...sessions].sort((a, b) =>
-        new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime()
-      )[0];
-
-      console.log("Auto-selecting session:", mostRecent.id, mostRecent.title);
-
-      if (mostRecent) {
-        currentSessionIdSignal.value = mostRecent.id;
-      }
-    }
-  }, [sessions]);
-
   const loadSessions = async () => {
     try {
       setLoading(true);
       setError(null);
       const response = await apiClient.listSessions();
       setSessions(response.sessions);
+      sessionsSignal.value = response.sessions; // Update shared signal
     } catch (err) {
       const message = err instanceof Error
         ? err.message
@@ -79,7 +59,7 @@ export default function Sidebar() {
       const response = await apiClient.createSession({
         workspacePath: undefined, // Let daemon use configured workspace root
       });
-      await loadSessions();
+      await loadSessions(); // This will update sessionsSignal
       currentSessionIdSignal.value = response.sessionId;
       toast.success("Session created successfully");
     } catch (err) {
@@ -103,7 +83,7 @@ export default function Sidebar() {
     if (!sessionToDelete) return;
 
     try {
-      // Check if we need to select a new session before deleting
+      // Check if we need to clear selection if deleting active session
       const wasActiveSession = currentSessionIdSignal.value === sessionToDelete;
 
       await apiClient.deleteSession(sessionToDelete);
@@ -111,18 +91,11 @@ export default function Sidebar() {
       // Reload sessions to get the updated list from API
       const response = await apiClient.listSessions();
       setSessions(response.sessions);
+      sessionsSignal.value = response.sessions; // Update shared signal
 
-      // If the deleted session was active, select another one
+      // If the deleted session was active, clear the selection
       if (wasActiveSession) {
-        if (response.sessions.length > 0) {
-          // Select the most recent session
-          const mostRecent = [...response.sessions].sort((a, b) =>
-            new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime()
-          )[0];
-          currentSessionIdSignal.value = mostRecent.id;
-        } else {
-          currentSessionIdSignal.value = null;
-        }
+        currentSessionIdSignal.value = null;
       }
 
       toast.success("Session deleted");
