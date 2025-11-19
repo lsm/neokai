@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Event, Message, Session, ToolCall } from "@liuboer/shared";
+import type { SDKMessage } from "@liuboer/shared/sdk/sdk.d.ts";
 import { apiClient } from "../lib/api-client.ts";
 import { wsClient } from "../lib/websocket-client.ts";
 import { toast } from "../lib/toast.ts";
@@ -11,6 +12,7 @@ import { IconButton } from "../components/ui/IconButton.tsx";
 import { Dropdown } from "../components/ui/Dropdown.tsx";
 import { Modal } from "../components/ui/Modal.tsx";
 import { Skeleton, SkeletonMessage } from "../components/ui/Skeleton.tsx";
+import { SDKMessageRenderer } from "../components/sdk/SDKMessageRenderer.tsx";
 
 interface ChatContainerProps {
   sessionId: string;
@@ -21,6 +23,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
   const [session, setSession] = useState<Session | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [sdkMessages, setSdkMessages] = useState<SDKMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -44,7 +47,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, streamingContent]);
+  }, [messages, sdkMessages, streamingContent]);
 
   // Detect scroll position
   useEffect(() => {
@@ -68,6 +71,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       const response = await apiClient.getSession(sessionId);
       setSession(response.session);
       setMessages(response.messages);
+
+      // Load SDK messages
+      const sdkResponse = await apiClient.getSDKMessages(sessionId);
+      setSdkMessages(sdkResponse.sdkMessages);
     } catch (err) {
       const message = err instanceof Error
         ? err.message
@@ -162,6 +169,13 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       setStreamingToolCalls([]);
     });
 
+    // SDK message events
+    const unsubSDKMessage = wsClient.on("sdk.message", (event: Event) => {
+      const sdkMessage = event.data as SDKMessage;
+      console.log("Received SDK message:", sdkMessage.type, sdkMessage);
+      setSdkMessages((prev) => [...prev, sdkMessage]);
+    });
+
     // Return cleanup function that unsubscribes all handlers
     return () => {
       unsubMessageStart();
@@ -173,6 +187,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       unsubContextUpdated();
       unsubContextCompacted();
       unsubError();
+      unsubSDKMessage();
     };
   };
 
@@ -395,6 +410,19 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
           streamingToolCalls={streamingToolCalls}
           isStreaming={sending}
         />
+
+        {/* SDK Messages */}
+        {sdkMessages.length > 0 && (
+          <div class="max-w-4xl mx-auto w-full px-4 md:px-0 space-y-4 mt-8">
+            <div class="text-sm font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-4">
+              SDK Messages
+            </div>
+            {sdkMessages.map((msg, idx) => (
+              <SDKMessageRenderer key={idx} message={msg} />
+            ))}
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 

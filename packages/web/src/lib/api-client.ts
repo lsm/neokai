@@ -154,6 +154,23 @@ export class DaemonAPIClient implements APIClient {
     });
   }
 
+  async getSDKMessages(
+    sessionId: string,
+    params?: {
+      limit?: number;
+      offset?: number;
+    },
+  ): Promise<{ sdkMessages: any[] }> {
+    const queryParams = new URLSearchParams();
+    if (params?.limit) queryParams.set("limit", params.limit.toString());
+    if (params?.offset) queryParams.set("offset", params.offset.toString());
+
+    const query = queryParams.toString();
+    const path = `/api/sessions/${sessionId}/sdk-messages${query ? `?${query}` : ""}`;
+
+    return this.fetch<{ sdkMessages: any[] }>(path);
+  }
+
   // Files
   async readFile(sessionId: string, req: ReadFileRequest): Promise<ReadFileResponse> {
     const queryParams = new URLSearchParams();
