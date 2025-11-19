@@ -297,7 +297,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     <div class="flex-1 flex flex-col bg-dark-900 overflow-x-hidden">
       {/* Header */}
       <div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 p-4">
-        <div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center justify-between">
+        <div class="max-w-4xl mx-auto w-full pl-16 pr-4 md:px-0 flex items-center justify-between">
           <div>
             <h2 class="text-lg font-semibold text-gray-100">
               {session?.title || "New Session"}
