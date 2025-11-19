@@ -112,7 +112,7 @@ export default function MessageItem({
   return (
     <div
       class={cn(
-        "group flex items-start gap-4 p-6 transition-colors",
+        "group flex items-start gap-3 md:gap-4 p-4 md:p-6 transition-colors",
         isUser ? "bg-dark-850/30" : "bg-dark-900/30",
       )}
       onMouseEnter={() => setShowActions(true)}
@@ -133,7 +133,7 @@ export default function MessageItem({
       </div>
 
       {/* Content */}
-      <div class="flex-1 min-w-0">
+      <div class="flex-1 min-w-0 overflow-hidden">
         <div class="flex items-center justify-between mb-2">
           <div class="flex items-center gap-2">
             <span class="font-semibold text-sm text-gray-100">
@@ -211,7 +211,7 @@ export default function MessageItem({
 
         {/* Main Content */}
         {message.content && (
-          <div class="text-gray-200">
+          <div class="text-gray-200 max-w-full">
             <MarkdownRenderer content={message.content} />
           </div>
         )}

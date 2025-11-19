@@ -31,12 +31,12 @@ export default function MessageList({
   }
 
   return (
-    <div class="max-w-4xl mx-auto">
+    <div class="max-w-4xl mx-auto w-full px-4 md:px-6">
       {messages.map((message) => <MessageItem key={message.id} message={message} />)}
 
       {/* Streaming message */}
       {isStreaming && (streamingContent || streamingThinking) && (
-        <div class="group flex items-start gap-4 p-6 bg-dark-900/30 animate-fadeIn">
+        <div class="group flex items-start gap-3 md:gap-4 p-4 md:p-6 bg-dark-900/30 animate-fadeIn">
           {/* Avatar */}
           <div class="flex-shrink-0">
             <div class="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center text-white text-sm font-semibold">
@@ -45,7 +45,7 @@ export default function MessageList({
           </div>
 
           {/* Content */}
-          <div class="flex-1 min-w-0">
+          <div class="flex-1 min-w-0 overflow-hidden">
             <div class="mb-2">
               <span class="font-semibold text-sm text-gray-100">Claude</span>
             </div>
@@ -98,7 +98,7 @@ export default function MessageList({
 
             {/* Streaming content */}
             {streamingContent && (
-              <div class="prose text-gray-200">
+              <div class="prose text-gray-200 max-w-full">
                 {streamingContent}
                 <span class="inline-block w-1.5 h-4 bg-purple-500 ml-1 animate-pulse rounded-sm" />
               </div>

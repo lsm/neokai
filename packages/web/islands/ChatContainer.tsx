@@ -294,10 +294,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   }
 
   return (
-    <div class="flex-1 flex flex-col bg-dark-900">
+    <div class="flex-1 flex flex-col bg-dark-900 overflow-x-hidden">
       {/* Header */}
       <div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 p-4">
-        <div class="max-w-4xl mx-auto flex items-center justify-between">
+        <div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center justify-between">
           <div>
             <h2 class="text-lg font-semibold text-gray-100">
               {session?.title || "New Session"}
@@ -354,7 +354,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       {/* Messages */}
       <div
         ref={messagesContainerRef}
-        class="flex-1 overflow-y-auto"
+        class="flex-1 overflow-y-auto overflow-x-hidden"
       >
         <MessageList
           messages={messages}
@@ -391,7 +391,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       {/* Error Banner */}
       {error && (
         <div class="bg-red-500/10 border-t border-red-500/20 px-4 py-3">
-          <div class="max-w-4xl mx-auto flex items-center justify-between">
+          <div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center justify-between">
             <p class="text-sm text-red-400">{error}</p>
             <button
               onClick={() => setError(null)}
