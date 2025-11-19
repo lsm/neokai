@@ -1,0 +1,217 @@
+/**
+ * SDKUserMessage Renderer
+ *
+ * Renders user messages from the SDK message stream
+ */
+
+import type { SDKMessage } from "@liuboer/shared/sdk/sdk.d.ts";
+import { useState } from "preact/hooks";
+import { IconButton } from "../ui/IconButton.tsx";
+import { Dropdown } from "../ui/Dropdown.tsx";
+import { Tooltip } from "../ui/Tooltip.tsx";
+import { copyToClipboard } from "../../lib/utils.ts";
+import { toast } from "../../lib/toast.ts";
+import { cn } from "../../lib/utils.ts";
+
+type UserMessage = Extract<SDKMessage, { type: "user" }>;
+
+interface Props {
+  message: UserMessage;
+  onEdit?: () => void;
+  onDelete?: () => void;
+}
+
+export function SDKUserMessage({ message, onEdit, onDelete }: Props) {
+  const [showActions, setShowActions] = useState(false);
+  const { message: apiMessage } = message;
+
+  // Check if this is a tool result message (should not be rendered as user message)
+  const isToolResultMessage = (): boolean => {
+    if (Array.isArray(apiMessage.content)) {
+      return apiMessage.content.some((block: any) => block.type === 'tool_result');
+    }
+    return false;
+  };
+
+  // Don't render tool result messages - they'll be shown with their tool use blocks
+  if (isToolResultMessage()) {
+    return null;
+  }
+
+  // Extract text content from the message
+  const getTextContent = (): string => {
+    if (Array.isArray(apiMessage.content)) {
+      return apiMessage.content
+        .map((block: any) => {
+          // Text blocks
+          if (block.type === 'text') {
+            return block.text;
+          }
+          // Image blocks or other types - skip or show type
+          return '';
+        })
+        .filter(Boolean)
+        .join('\n');
+    }
+    if (typeof apiMessage.content === 'string') {
+      return apiMessage.content;
+    }
+    return '';
+  };
+
+  const textContent = getTextContent();
+
+  const handleCopy = async () => {
+    const success = await copyToClipboard(textContent);
+    if (success) {
+      toast.success("Message copied to clipboard");
+    } else {
+      toast.error("Failed to copy message");
+    }
+  };
+
+  const getMessageActions = () => {
+    const actions = [
+      {
+        label: "Copy text",
+        onClick: handleCopy,
+        icon: (
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width={2}
+              d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+            />
+          </svg>
+        ),
+      },
+    ];
+
+    if (onEdit) {
+      actions.push({
+        label: "Edit",
+        onClick: onEdit,
+        icon: (
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width={2}
+              d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+            />
+          </svg>
+        ),
+      });
+    }
+
+    if (onDelete) {
+      actions.push({ type: "divider" as const });
+      actions.push({
+        label: "Delete",
+        onClick: onDelete,
+        danger: true,
+        icon: (
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width={2}
+              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+            />
+          </svg>
+        ),
+      });
+    }
+
+    return actions;
+  };
+
+  // Generate timestamp from UUID or use current time
+  const getTimestamp = (): string => {
+    // UUID v7 contains timestamp in first part, but for now just show a placeholder
+    // In real implementation, this should come from message metadata or be tracked separately
+    return new Date().toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  return (
+    <div
+      class={cn(
+        "group flex items-start gap-3 md:gap-4 p-4 md:p-6 transition-colors bg-dark-850/30"
+      )}
+      onMouseEnter={() => setShowActions(true)}
+      onMouseLeave={() => setShowActions(false)}
+    >
+      {/* Avatar */}
+      <div class="flex-shrink-0">
+        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white text-sm font-semibold">
+          👤
+        </div>
+      </div>
+
+      {/* Content */}
+      <div class="flex-1 min-w-0 overflow-hidden">
+        <div class="flex items-center justify-between mb-2">
+          <div class="flex items-center gap-2">
+            <span class="font-semibold text-sm text-gray-100">You</span>
+            <Tooltip content={new Date().toLocaleString()} position="right">
+              <span class="text-xs text-gray-500">{getTimestamp()}</span>
+            </Tooltip>
+            {message.isSynthetic && (
+              <Tooltip content="System-generated message" position="right">
+                <span class="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded">
+                  synthetic
+                </span>
+              </Tooltip>
+            )}
+          </div>
+
+          {/* Actions */}
+          <div
+            class={cn(
+              "flex items-center gap-1 transition-opacity",
+              showActions ? "opacity-100" : "opacity-0"
+            )}
+          >
+            <IconButton size="sm" onClick={handleCopy} title="Copy message">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width={2}
+                  d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                />
+              </svg>
+            </IconButton>
+
+            <Dropdown
+              trigger={
+                <IconButton size="sm" title="More actions">
+                  <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+                  </svg>
+                </IconButton>
+              }
+              items={getMessageActions()}
+            />
+          </div>
+        </div>
+
+        {/* Main Content */}
+        <div class="text-gray-200 max-w-full whitespace-pre-wrap break-words">
+          {textContent}
+        </div>
+
+        {/* Parent tool use indicator (for sub-agent messages) */}
+        {message.parent_tool_use_id && (
+          <div class="mt-2 text-xs text-gray-500 dark:text-gray-400 italic">
+            Sub-agent message (parent: {message.parent_tool_use_id.slice(0, 8)}...)
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
