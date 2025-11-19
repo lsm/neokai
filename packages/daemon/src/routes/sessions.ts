@@ -155,6 +155,23 @@ export function createSessionsRouter(app: Elysia, sessionManager: SessionManager
       set.status = 204;
     })
 
+    // Get SDK messages
+    .get("/api/sessions/:sessionId/sdk-messages", ({ params, query, set }) => {
+      const sessionId = params.sessionId;
+      const agentSession = sessionManager.getSession(sessionId);
+
+      if (!agentSession) {
+        set.status = 404;
+        return { error: "Session not found" };
+      }
+
+      const limit = query.limit ? parseInt(query.limit as string, 10) : 100;
+      const offset = query.offset ? parseInt(query.offset as string, 10) : 0;
+
+      const sdkMessages = agentSession.getSDKMessages(limit, offset);
+      return { sdkMessages };
+    })
+
     // Simple test endpoint that replicates the exact test behavior
     .get("/api/test/simple-query", async ({ set }) => {
       console.log("\n[TEST ENDPOINT] Starting simple query test");
