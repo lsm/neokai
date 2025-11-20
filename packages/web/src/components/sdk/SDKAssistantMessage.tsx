@@ -57,79 +57,85 @@ export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
     });
   };
 
+  // Separate tool use blocks from text/thinking blocks
+  const textBlocks = apiMessage.content.filter(block => !isToolUseBlock(block));
+  const toolBlocks = apiMessage.content.filter(isToolUseBlock);
+
   return (
-    <div class="py-2 px-4 md:px-6">
-      <div class="max-w-[85%] md:max-w-[70%] w-auto">
-        {/* Content */}
-        <div class="space-y-3">
-          {apiMessage.content.map((block, idx) => {
-            // Text block - render as markdown
-            if (isTextBlock(block)) {
-              return (
-                <div key={idx} class="prose dark:prose-invert max-w-none prose-pre:bg-gray-900 prose-pre:text-gray-100">
-                  <MarkdownRenderer content={block.text} />
-                </div>
-              );
-            }
+    <div class="py-2 space-y-3">
+      {/* Tool use blocks - full width like result messages */}
+      {toolBlocks.map((block, idx) => {
+        const toolResult = toolResultsMap?.get(block.id);
+        return <ToolUseBlock key={`tool-${idx}`} block={block} toolResult={toolResult} />;
+      })}
 
-            // Tool use block - show expandable details with result
-            if (isToolUseBlock(block)) {
-              const toolResult = toolResultsMap?.get(block.id);
-              return <ToolUseBlock key={idx} block={block} toolResult={toolResult} />;
-            }
-
-            // Thinking block - collapsible
-            if (isThinkingBlock(block)) {
-              return (
-                <Collapsible
-                  key={idx}
-                  trigger={
-                    <div class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer hover:text-gray-800 dark:hover:text-gray-200">
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                      </svg>
-                      <span>Thinking...</span>
-                    </div>
-                  }
-                >
-                  <div class="mt-2 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
-                    <div class="text-sm text-amber-900 dark:text-amber-100 whitespace-pre-wrap font-mono">
-                      {block.thinking}
-                    </div>
+      {/* Text and thinking blocks - constrained width */}
+      {textBlocks.length > 0 && (
+        <div class="max-w-[85%] md:max-w-[70%] w-auto">
+          <div class="space-y-3">
+            {textBlocks.map((block, idx) => {
+              // Text block - render as markdown
+              if (isTextBlock(block)) {
+                return (
+                  <div key={idx} class="prose dark:prose-invert max-w-none prose-pre:bg-gray-900 prose-pre:text-gray-100">
+                    <MarkdownRenderer content={block.text} />
                   </div>
-                </Collapsible>
-              );
-            }
+                );
+              }
 
-            return null;
-          })}
+              // Thinking block - collapsible
+              if (isThinkingBlock(block)) {
+                return (
+                  <Collapsible
+                    key={idx}
+                    trigger={
+                      <div class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer hover:text-gray-800 dark:hover:text-gray-200">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                        </svg>
+                        <span>Thinking...</span>
+                      </div>
+                    }
+                  >
+                    <div class="mt-2 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
+                      <div class="text-sm text-amber-900 dark:text-amber-100 whitespace-pre-wrap font-mono">
+                        {block.thinking}
+                      </div>
+                    </div>
+                  </Collapsible>
+                );
+              }
 
-          {/* Parent tool use indicator (for sub-agent messages) */}
-          {message.parent_tool_use_id && (
-            <div class="text-xs text-gray-500 dark:text-gray-400 italic">
-              Sub-agent response (parent: {message.parent_tool_use_id.slice(0, 8)}...)
-            </div>
-          )}
+              return null;
+            })}
+
+            {/* Parent tool use indicator (for sub-agent messages) */}
+            {message.parent_tool_use_id && (
+              <div class="text-xs text-gray-500 dark:text-gray-400 italic">
+                Sub-agent response (parent: {message.parent_tool_use_id.slice(0, 8)}...)
+              </div>
+            )}
+          </div>
+
+          {/* Actions and timestamp - bottom left */}
+          <div class="flex items-center gap-2 mt-2 px-1">
+            <Tooltip content={new Date().toLocaleString()} position="right">
+              <span class="text-xs text-gray-500">{getTimestamp()}</span>
+            </Tooltip>
+
+            <IconButton size="md" onClick={handleCopy} title="Copy message">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width={2}
+                  d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                />
+              </svg>
+            </IconButton>
+          </div>
         </div>
-
-        {/* Actions and timestamp - bottom left */}
-        <div class="flex items-center gap-2 mt-2 px-1">
-          <Tooltip content={new Date().toLocaleString()} position="right">
-            <span class="text-xs text-gray-500">{getTimestamp()}</span>
-          </Tooltip>
-
-          <IconButton size="md" onClick={handleCopy} title="Copy message">
-            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={2}
-                d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-              />
-            </svg>
-          </IconButton>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -143,6 +149,24 @@ function ToolUseBlock({ block, toolResult }: { block: Extract<ReturnType<typeof 
 
   // Get a readable summary of the tool input
   const getToolSummary = (): string => {
+    // For Write tool, show the file path
+    if (block.name === 'Write' && block.input && typeof block.input === 'object') {
+      const input = block.input as any;
+      if (input.file_path) {
+        const parts = input.file_path.split('/');
+        return parts[parts.length - 1] || input.file_path;
+      }
+    }
+
+    // For Edit tool, show the file path
+    if (block.name === 'Edit' && block.input && typeof block.input === 'object') {
+      const input = block.input as any;
+      if (input.file_path) {
+        const parts = input.file_path.split('/');
+        return parts[parts.length - 1] || input.file_path;
+      }
+    }
+
     // For Bash tool, show the command
     if (block.name === 'Bash' && block.input && typeof block.input === 'object') {
       const input = block.input as any;
@@ -162,7 +186,7 @@ function ToolUseBlock({ block, toolResult }: { block: Extract<ReturnType<typeof 
       }
     }
 
-    // For other tools, show tool name
+    // For other tools, show tool ID
     return block.id.slice(0, 12) + '...';
   };
 
@@ -181,7 +205,7 @@ function ToolUseBlock({ block, toolResult }: { block: Extract<ReturnType<typeof 
           <span class="font-semibold text-sm text-blue-900 dark:text-blue-100 flex-shrink-0">
             {block.name}
           </span>
-          <span class="text-sm text-blue-700 dark:text-blue-300 font-mono truncate">
+          <span class="text-sm text-blue-700 dark:text-blue-300 font-mono truncate" title={getToolSummary()}>
             {getToolSummary()}
           </span>
         </div>
@@ -201,7 +225,7 @@ function ToolUseBlock({ block, toolResult }: { block: Extract<ReturnType<typeof 
           {/* Tool ID */}
           <div>
             <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">Tool ID:</div>
-            <div class="text-xs font-mono text-gray-700 dark:text-gray-300">{block.id}</div>
+            <div class="text-xs font-mono text-gray-700 dark:text-gray-300 break-all">{block.id}</div>
           </div>
 
           {/* Input */}

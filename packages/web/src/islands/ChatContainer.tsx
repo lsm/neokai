@@ -296,6 +296,18 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     }
   });
 
+  // Create a map of tool use IDs to tool inputs for easy lookup
+  const toolInputsMap = new Map<string, any>();
+  messages.forEach((msg) => {
+    if (msg.type === 'assistant' && Array.isArray(msg.message.content)) {
+      msg.message.content.forEach((block: any) => {
+        if (block.type === 'tool_use') {
+          toolInputsMap.set(block.id, block.input);
+        }
+      });
+    }
+  });
+
   // Create a map of user message UUIDs to their attached session init info
   // Session init messages appear after the first user message, so we attach them to the preceding user message
   const sessionInfoMap = new Map<string, any>();
@@ -398,6 +410,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
                 key={msg.uuid || `msg-${idx}`}
                 message={msg}
                 toolResultsMap={toolResultsMap}
+                toolInputsMap={toolInputsMap}
                 sessionInfo={sessionInfoMap.get(msg.uuid)}
               />
             ))}

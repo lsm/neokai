@@ -10,11 +10,46 @@ type ToolProgressMessage = Extract<SDKMessage, { type: "tool_progress" }>;
 
 interface Props {
   message: ToolProgressMessage;
+  toolInput?: any; // Tool input parameters (e.g., file_path for Write/Edit tools)
 }
 
-export function SDKToolProgressMessage({ message }: Props) {
+export function SDKToolProgressMessage({ message, toolInput }: Props) {
+  // Get a readable summary based on tool type and input
+  const getToolSummary = (): string | null => {
+    if (!toolInput) return null;
+
+    // For Write tool, show the file path
+    if (message.tool_name === 'Write' && toolInput.file_path) {
+      const parts = toolInput.file_path.split('/');
+      return parts[parts.length - 1] || toolInput.file_path;
+    }
+
+    // For Edit tool, show the file path
+    if (message.tool_name === 'Edit' && toolInput.file_path) {
+      const parts = toolInput.file_path.split('/');
+      return parts[parts.length - 1] || toolInput.file_path;
+    }
+
+    // For Read tool, show the file path
+    if (message.tool_name === 'Read' && toolInput.file_path) {
+      const parts = toolInput.file_path.split('/');
+      return parts[parts.length - 1] || toolInput.file_path;
+    }
+
+    // For Bash tool, show the command
+    if (message.tool_name === 'Bash' && toolInput.command) {
+      return toolInput.command.length > 50
+        ? toolInput.command.slice(0, 50) + '...'
+        : toolInput.command;
+    }
+
+    return null;
+  };
+
+  const summary = getToolSummary();
+
   return (
-    <div class="py-2 px-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 flex items-center gap-3">
+    <div class="py-2 px-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 flex items-center gap-3">
       {/* Animated spinner */}
       <div class="flex-shrink-0">
         <svg
@@ -49,14 +84,20 @@ export function SDKToolProgressMessage({ message }: Props) {
           </span>
         </div>
 
-        <div class="text-xs text-blue-700 dark:text-blue-300 truncate">
-          Tool ID: {message.tool_use_id.slice(0, 12)}...
-          {message.parent_tool_use_id && (
-            <span class="ml-2">
-              (parent: {message.parent_tool_use_id.slice(0, 8)}...)
-            </span>
-          )}
-        </div>
+        {summary ? (
+          <div class="text-xs text-blue-700 dark:text-blue-300 truncate" title={summary}>
+            {summary}
+          </div>
+        ) : (
+          <div class="text-xs text-blue-700 dark:text-blue-300 truncate">
+            Tool ID: {message.tool_use_id.slice(0, 12)}...
+            {message.parent_tool_use_id && (
+              <span class="ml-2">
+                (parent: {message.parent_tool_use_id.slice(0, 8)}...)
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Progress indicator */}

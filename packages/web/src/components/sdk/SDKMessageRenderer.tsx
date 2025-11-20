@@ -27,13 +27,14 @@ type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }
 interface Props {
   message: SDKMessage;
   toolResultsMap?: Map<string, any>;
+  toolInputsMap?: Map<string, any>;
   sessionInfo?: SystemInitMessage; // Optional session init info to attach to user messages
 }
 
 /**
  * Main SDK message renderer - routes to appropriate sub-renderer
  */
-export function SDKMessageRenderer({ message, toolResultsMap, sessionInfo }: Props) {
+export function SDKMessageRenderer({ message, toolResultsMap, toolInputsMap, sessionInfo }: Props) {
   // Skip messages that shouldn't be shown to user (e.g., stream events, replays)
   if (!isUserVisibleMessage(message)) {
     return null;
@@ -62,7 +63,8 @@ export function SDKMessageRenderer({ message, toolResultsMap, sessionInfo }: Pro
   }
 
   if (isSDKToolProgressMessage(message)) {
-    return <SDKToolProgressMessage message={message} />;
+    const toolInput = toolInputsMap?.get(message.tool_use_id);
+    return <SDKToolProgressMessage message={message} toolInput={toolInput} />;
   }
 
   if (isSDKAuthStatusMessage(message)) {
