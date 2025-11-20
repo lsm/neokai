@@ -140,81 +140,68 @@ export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo }: Props
   };
 
   return (
-    <div
-      class={cn(
-        "group flex items-start gap-3 md:gap-4 p-4 md:p-6 transition-colors bg-dark-850/30"
-      )}
-    >
-      {/* Avatar */}
-      <div class="flex-shrink-0">
-        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white text-sm font-semibold">
-          👤
-        </div>
-      </div>
+    <div class="py-2 px-4 md:px-6 flex justify-end">
+      <div class="max-w-[85%] md:max-w-[70%] w-auto">
+        {/* Message bubble */}
+        <div class="bg-zinc-700 rounded-2xl p-3 md:p-4">
+          {/* Main Content */}
+          <div class="text-gray-200 whitespace-pre-wrap break-words">
+            {textContent}
+          </div>
 
-      {/* Content */}
-      <div class="flex-1 min-w-0 overflow-hidden">
-        <div class="flex items-center justify-between mb-2">
-          <div class="flex items-center gap-2">
-            <span class="font-semibold text-sm text-gray-100">You</span>
-            <Tooltip content={new Date().toLocaleString()} position="right">
-              <span class="text-xs text-gray-500">{getTimestamp()}</span>
+          {/* Parent tool use indicator (for sub-agent messages) */}
+          {message.parent_tool_use_id && (
+            <div class="mt-2 text-xs text-gray-500 dark:text-gray-400 italic">
+              Sub-agent message (parent: {message.parent_tool_use_id.slice(0, 8)}...)
+            </div>
+          )}
+        </div>
+
+        {/* Actions and timestamp - outside the bubble, bottom right */}
+        <div class="flex items-center justify-end gap-2 mt-2 px-1">
+          <Tooltip content={new Date().toLocaleString()} position="left">
+            <span class="text-xs text-gray-500">{getTimestamp()}</span>
+          </Tooltip>
+
+          {message.isSynthetic && (
+            <Tooltip content="System-generated message" position="left">
+              <span class="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded">
+                synthetic
+              </span>
             </Tooltip>
-            {message.isSynthetic && (
-              <Tooltip content="System-generated message" position="right">
-                <span class="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded">
-                  synthetic
-                </span>
-              </Tooltip>
-            )}
-          </div>
+          )}
 
-          {/* Actions - Always visible, larger size for mobile */}
-          <div class="flex items-center gap-2">
-            {/* Session info icon (if session info is attached) */}
-            {sessionInfo && (
-              <Dropdown
-                trigger={
-                  <IconButton size="md" title="Session info">
-                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width={2}
-                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                  </IconButton>
-                }
-                items={[]}
-                customContent={<SessionIndicator sessionInfo={sessionInfo} />}
+          {/* Session info icon (if session info is attached) */}
+          {sessionInfo && (
+            <Dropdown
+              trigger={
+                <IconButton size="md" title="Session info">
+                  <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width={2}
+                      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                </IconButton>
+              }
+              items={[]}
+              customContent={<SessionIndicator sessionInfo={sessionInfo} />}
+            />
+          )}
+
+          <IconButton size="md" onClick={handleCopy} title="Copy message">
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width={2}
+                d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
               />
-            )}
-
-            <IconButton size="md" onClick={handleCopy} title="Copy message">
-              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                />
-              </svg>
-            </IconButton>
-          </div>
+            </svg>
+          </IconButton>
         </div>
-
-        {/* Main Content */}
-        <div class="text-gray-200 max-w-full whitespace-pre-wrap break-words">
-          {textContent}
-        </div>
-
-        {/* Parent tool use indicator (for sub-agent messages) */}
-        {message.parent_tool_use_id && (
-          <div class="mt-2 text-xs text-gray-500 dark:text-gray-400 italic">
-            Sub-agent message (parent: {message.parent_tool_use_id.slice(0, 8)}...)
-          </div>
-        )}
       </div>
     </div>
   );
