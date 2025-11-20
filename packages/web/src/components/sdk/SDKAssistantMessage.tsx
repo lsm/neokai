@@ -16,7 +16,7 @@ import { Tooltip } from "../ui/Tooltip.tsx";
 import { copyToClipboard } from "../../lib/utils.ts";
 import { toast } from "../../lib/toast.ts";
 import { useState } from "preact/hooks";
-import { messageSpacing } from "../../lib/design-tokens.ts";
+import { messageSpacing, messageColors, borderRadius } from "../../lib/design-tokens.ts";
 import { cn } from "../../lib/utils.ts";
 
 type AssistantMessage = Extract<SDKMessage, { type: "assistant" }>;
@@ -74,13 +74,16 @@ export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
       {/* Text and thinking blocks - constrained width */}
       {textBlocks.length > 0 && (
         <div class="max-w-[85%] md:max-w-[70%] w-auto">
-          <div class="space-y-3">
+          <div class={cn(messageColors.assistant.background, borderRadius.message.bubble, messageSpacing.assistant.bubble.combined, "space-y-3")}>
             {textBlocks.map((block, idx) => {
               // Text block - render as markdown
               if (isTextBlock(block)) {
                 return (
-                  <div key={idx} class="prose dark:prose-invert max-w-none prose-pre:bg-gray-900 prose-pre:text-gray-100">
-                    <MarkdownRenderer content={block.text} />
+                  <div key={idx} class={messageColors.assistant.text}>
+                    <MarkdownRenderer
+                      content={block.text}
+                      class="dark:prose-invert max-w-none prose-pre:bg-gray-900 prose-pre:text-gray-100"
+                    />
                   </div>
                 );
               }

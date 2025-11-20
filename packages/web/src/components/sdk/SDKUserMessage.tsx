@@ -13,7 +13,7 @@ import { copyToClipboard } from "../../lib/utils.ts";
 import { toast } from "../../lib/toast.ts";
 import { cn } from "../../lib/utils.ts";
 import { SessionIndicator } from "./SessionIndicator.tsx";
-import { messageSpacing } from "../../lib/design-tokens.ts";
+import { messageSpacing, messageColors, borderRadius } from "../../lib/design-tokens.ts";
 
 type UserMessage = Extract<SDKMessage, { type: "user" }>;
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
@@ -144,9 +144,9 @@ export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo }: Props
     <div class={cn(messageSpacing.user.container.combined, "flex justify-end")}>
       <div class="max-w-[85%] md:max-w-[70%] w-auto">
         {/* Message bubble */}
-        <div class={cn("bg-zinc-700 rounded-2xl", messageSpacing.user.bubble.combined)}>
+        <div class={cn(messageColors.user.background, borderRadius.message.bubble, messageSpacing.user.bubble.combined)}>
           {/* Main Content */}
-          <div class="text-gray-200 whitespace-pre-wrap break-words">
+          <div class={cn(messageColors.user.text, "whitespace-pre-wrap break-words")}>
             {textContent}
           </div>
 

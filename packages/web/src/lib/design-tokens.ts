@@ -8,18 +8,19 @@
 /**
  * Message Spacing Tokens
  * Defines standardized padding and spacing for message bubbles
+ * Based on real iMessage design
  */
 export const messageSpacing = {
   /**
    * User message bubble padding
-   * Mobile: 12px horizontal, 8px vertical (px-3 py-2)
-   * Desktop: 16px horizontal, 10px vertical (px-4 py-2.5)
+   * Mobile: 12px horizontal, 6px vertical (px-3 py-1.5)
+   * Desktop: 14px horizontal, 8px vertical (px-3.5 py-2)
    */
   user: {
     bubble: {
-      mobile: "px-3 py-2",
-      desktop: "md:px-4 md:py-2.5",
-      combined: "px-3 py-2 md:px-4 md:py-2.5"
+      mobile: "px-3 py-1.5",
+      desktop: "md:px-3.5 md:py-2",
+      combined: "px-3 py-1.5 md:px-3.5 md:py-2"
     },
     container: {
       mobile: "px-4 py-2",
@@ -30,14 +31,13 @@ export const messageSpacing = {
 
   /**
    * Assistant message bubble padding
-   * Mobile: 12px horizontal, 8px vertical (px-3 py-2)
-   * Desktop: 16px horizontal, 10px vertical (px-4 py-2.5)
+   * Same as user for consistency
    */
   assistant: {
     bubble: {
-      mobile: "px-3 py-2",
-      desktop: "md:px-4 md:py-2.5",
-      combined: "px-3 py-2 md:px-4 md:py-2.5"
+      mobile: "px-3 py-1.5",
+      desktop: "md:px-3.5 md:py-2",
+      combined: "px-3 py-1.5 md:px-3.5 md:py-2"
     },
     container: {
       mobile: "py-2",
@@ -59,11 +59,34 @@ export const messageSpacing = {
 
 /**
  * Border Radius Tokens
+ * iMessage-style corner radius - 20px for that signature Apple look
  */
 export const borderRadius = {
   message: {
-    bubble: "rounded-2xl", // 16px
-    tool: "rounded-lg"     // 8px
+    bubble: "rounded-[20px]", // 20px - matches Apple iMessage
+    tool: "rounded-lg"        // 8px
+  }
+} as const;
+
+/**
+ * Color Tokens
+ * iMessage-style color scheme - exact colors from real iMessage
+ */
+export const messageColors = {
+  /**
+   * User message colors (blue bubble like iMessage)
+   */
+  user: {
+    background: "bg-blue-500",
+    text: "text-white"
+  },
+  /**
+   * Assistant message colors (dark gray bubble)
+   * Using exact iMessage color #3b3b3d
+   */
+  assistant: {
+    background: "bg-[#3b3b3d]",
+    text: "text-white"
   }
 } as const;
 
