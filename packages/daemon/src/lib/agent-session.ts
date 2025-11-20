@@ -65,16 +65,8 @@ export class AgentSession {
     };
 
     // Save user message to sdk_messages table
+    // Note: We don't emit here - the SDK stream will include the user message and emit it
     this.db.saveSDKMessage(this.session.id, sdkUserMessage);
-
-    // Emit SDK message event so WebSocket clients get it immediately
-    await this.eventBus.emit({
-      id: crypto.randomUUID(),
-      type: "sdk.message",
-      sessionId: this.session.id,
-      timestamp: new Date().toISOString(),
-      data: sdkUserMessage,
-    });
 
     // Emit message start event (legacy)
     await this.eventBus.emit({
@@ -153,7 +145,7 @@ export class AgentSession {
       for await (const message of queryStream) {
         console.log("[DEBUG] Received SDK message, type:", message.type);
 
-        // ALWAYS emit and store the full SDK message for web UI
+        // Emit and store ALL SDK messages (including user messages from the stream)
         await this.eventBus.emit({
           id: crypto.randomUUID(),
           type: "sdk.message",
@@ -161,6 +153,8 @@ export class AgentSession {
           timestamp: new Date().toISOString(),
           data: message,
         });
+
+        // Save to DB (will update if message already exists based on UUID)
         this.db.saveSDKMessage(this.session.id, message);
 
         // Handle different message types from the Agent SDK

@@ -12,17 +12,19 @@ import { Tooltip } from "../ui/Tooltip.tsx";
 import { copyToClipboard } from "../../lib/utils.ts";
 import { toast } from "../../lib/toast.ts";
 import { cn } from "../../lib/utils.ts";
+import { SessionIndicator } from "./SessionIndicator.tsx";
 
 type UserMessage = Extract<SDKMessage, { type: "user" }>;
+type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 
 interface Props {
   message: UserMessage;
   onEdit?: () => void;
   onDelete?: () => void;
+  sessionInfo?: SystemInitMessage; // Optional session init info to display
 }
 
-export function SDKUserMessage({ message, onEdit, onDelete }: Props) {
-  const [showActions, setShowActions] = useState(false);
+export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo }: Props) {
   const { message: apiMessage } = message;
 
   // Check if this is a tool result message (should not be rendered as user message)
@@ -142,8 +144,6 @@ export function SDKUserMessage({ message, onEdit, onDelete }: Props) {
       class={cn(
         "group flex items-start gap-3 md:gap-4 p-4 md:p-6 transition-colors bg-dark-850/30"
       )}
-      onMouseEnter={() => setShowActions(true)}
-      onMouseLeave={() => setShowActions(false)}
     >
       {/* Avatar */}
       <div class="flex-shrink-0">
@@ -169,15 +169,30 @@ export function SDKUserMessage({ message, onEdit, onDelete }: Props) {
             )}
           </div>
 
-          {/* Actions */}
-          <div
-            class={cn(
-              "flex items-center gap-1 transition-opacity",
-              showActions ? "opacity-100" : "opacity-0"
+          {/* Actions - Always visible, larger size for mobile */}
+          <div class="flex items-center gap-2">
+            {/* Session info icon (if session info is attached) */}
+            {sessionInfo && (
+              <Dropdown
+                trigger={
+                  <IconButton size="md" title="Session info">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width={2}
+                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
+                    </svg>
+                  </IconButton>
+                }
+                items={[]}
+                customContent={<SessionIndicator sessionInfo={sessionInfo} />}
+              />
             )}
-          >
-            <IconButton size="sm" onClick={handleCopy} title="Copy message">
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+
+            <IconButton size="md" onClick={handleCopy} title="Copy message">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
                   stroke-linecap="round"
                   stroke-linejoin="round"
@@ -186,17 +201,6 @@ export function SDKUserMessage({ message, onEdit, onDelete }: Props) {
                 />
               </svg>
             </IconButton>
-
-            <Dropdown
-              trigger={
-                <IconButton size="sm" title="More actions">
-                  <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
-                  </svg>
-                </IconButton>
-              }
-              items={getMessageActions()}
-            />
           </div>
         </div>
 

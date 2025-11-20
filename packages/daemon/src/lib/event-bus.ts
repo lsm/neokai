@@ -83,6 +83,7 @@ export class EventBus {
     // Emit to WebSocket clients subscribed to this session
     const sessionWs = this.websockets.get(event.sessionId);
     if (sessionWs) {
+      console.log(`[EventBus] Emitting ${event.type} to ${sessionWs.size} WebSocket(s) for session ${event.sessionId}`);
       const message = JSON.stringify(event);
       for (const ws of sessionWs) {
         try {

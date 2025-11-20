@@ -7,6 +7,7 @@ import {
   isSDKAssistantMessage,
   isSDKResultMessage,
   isSDKSystemMessage,
+  isSDKSystemInit,
   isSDKStreamEvent,
   isSDKToolProgressMessage,
   isSDKAuthStatusMessage,
@@ -21,23 +22,31 @@ import { SDKSystemMessage } from "./SDKSystemMessage.tsx";
 import { SDKToolProgressMessage } from "./SDKToolProgressMessage.tsx";
 import { SDKUserMessage } from "./SDKUserMessage.tsx";
 
+type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
+
 interface Props {
   message: SDKMessage;
   toolResultsMap?: Map<string, any>;
+  sessionInfo?: SystemInitMessage; // Optional session init info to attach to user messages
 }
 
 /**
  * Main SDK message renderer - routes to appropriate sub-renderer
  */
-export function SDKMessageRenderer({ message, toolResultsMap }: Props) {
+export function SDKMessageRenderer({ message, toolResultsMap, sessionInfo }: Props) {
   // Skip messages that shouldn't be shown to user (e.g., stream events, replays)
   if (!isUserVisibleMessage(message)) {
     return null;
   }
 
+  // Skip session init messages - they're now shown as indicators attached to user messages
+  if (isSDKSystemInit(message)) {
+    return null;
+  }
+
   // Route to appropriate renderer based on message type
   if (isSDKUserMessage(message)) {
-    return <SDKUserMessage message={message} />;
+    return <SDKUserMessage message={message} sessionInfo={sessionInfo} />;
   }
 
   if (isSDKAssistantMessage(message)) {

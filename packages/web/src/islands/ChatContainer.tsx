@@ -296,6 +296,31 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     }
   });
 
+  // Create a map of user message UUIDs to their attached session init info
+  // Session init messages appear after the first user message, so we attach them to the preceding user message
+  const sessionInfoMap = new Map<string, any>();
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (msg.type === 'system' && msg.subtype === 'init') {
+      // Find the most recent user message before this session init
+      for (let j = i - 1; j >= 0; j--) {
+        if (messages[j].type === 'user') {
+          sessionInfoMap.set(messages[j].uuid, msg);
+          break;
+        }
+      }
+      // If no preceding user message, attach to the first user message after this session init
+      if (!sessionInfoMap.has(msg.uuid)) {
+        for (let j = i + 1; j < messages.length; j++) {
+          if (messages[j].type === 'user') {
+            sessionInfoMap.set(messages[j].uuid, msg);
+            break;
+          }
+        }
+      }
+    }
+  }
+
   return (
     <div class="flex-1 flex flex-col bg-dark-900 overflow-x-hidden">
       {/* Header */}
@@ -353,7 +378,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       {/* Messages */}
       <div
         ref={messagesContainerRef}
-        class="flex-1 overflow-y-auto overflow-x-hidden"
+        class="flex-1 overflow-y-auto"
       >
         {messages.length === 0 && streamingEvents.length === 0 ? (
           <div class="flex items-center justify-center h-full px-6">
@@ -369,7 +394,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
           <div class="max-w-4xl mx-auto w-full px-4 md:px-6 space-y-0">
             {/* Render all messages using SDK components */}
             {messages.map((msg, idx) => (
-              <SDKMessageRenderer key={msg.uuid || `msg-${idx}`} message={msg} toolResultsMap={toolResultsMap} />
+              <SDKMessageRenderer
+                key={msg.uuid || `msg-${idx}`}
+                message={msg}
+                toolResultsMap={toolResultsMap}
+                sessionInfo={sessionInfoMap.get(msg.uuid)}
+              />
             ))}
 
             {/* Render streaming events if present */}

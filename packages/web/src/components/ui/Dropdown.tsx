@@ -21,6 +21,7 @@ export interface DropdownProps {
   items: DropdownMenuItem[];
   position?: "left" | "right";
   class?: string;
+  customContent?: ComponentChildren; // Optional custom content instead of menu items
 }
 
 export function Dropdown({
@@ -28,9 +29,45 @@ export function Dropdown({
   items,
   position = "right",
   class: className,
+  customContent,
 }: DropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left?: number; right?: number }>({ top: 0 });
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Calculate and update menu position when opened
+  useEffect(() => {
+    if (isOpen && triggerRef.current) {
+      const triggerRect = triggerRef.current.getBoundingClientRect();
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+
+      // Start with position below the trigger
+      let top = triggerRect.bottom + 8; // 8px spacing (mt-2)
+
+      // Check if there's enough space below, otherwise position above
+      const estimatedMenuHeight = 400; // Approximate max height
+      if (top + estimatedMenuHeight > viewportHeight && triggerRect.top > estimatedMenuHeight) {
+        top = triggerRect.top - estimatedMenuHeight - 8;
+      }
+
+      // Calculate horizontal position
+      const newPosition: { top: number; left?: number; right?: number } = { top };
+
+      if (position === "right") {
+        // Align to right edge of trigger
+        const right = viewportWidth - triggerRect.right;
+        newPosition.right = right;
+      } else {
+        // Align to left edge of trigger
+        newPosition.left = triggerRect.left;
+      }
+
+      setMenuPosition(newPosition);
+    }
+  }, [isOpen, position]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -101,56 +138,71 @@ export function Dropdown({
   return (
     <div ref={dropdownRef} class={cn("relative", className)}>
       {/* Trigger */}
-      <div onClick={() => setIsOpen(!isOpen)}>{trigger}</div>
+      <div ref={triggerRef} onClick={() => setIsOpen(!isOpen)}>{trigger}</div>
 
-      {/* Menu */}
+      {/* Menu - Using fixed positioning to avoid clipping by overflow containers */}
       {isOpen && (
         <div
+          ref={menuRef}
+          style={{
+            position: "fixed",
+            top: `${menuPosition.top}px`,
+            ...(menuPosition.left !== undefined ? { left: `${menuPosition.left}px` } : {}),
+            ...(menuPosition.right !== undefined ? { right: `${menuPosition.right}px` } : {}),
+          }}
           class={cn(
-            "absolute top-full mt-2 py-1 bg-dark-850 border border-dark-700 rounded-lg shadow-xl z-50 min-w-[200px] animate-slideIn",
-            position === "right" ? "right-0" : "left-0",
+            "shadow-xl z-[100] animate-slideIn",
+            customContent
+              ? ""
+              : "py-1 bg-dark-850 border border-dark-700 rounded-lg min-w-[200px]",
           )}
           role="menu"
         >
-          {items.map((item, index) => {
-            if ("type" in item && item.type === "divider") {
-              return (
-                <div
-                  key={`divider-${index}`}
-                  class="h-px bg-dark-700 my-1"
-                />
-              );
-            }
+          {customContent ? (
+            customContent
+          ) : (
+            <>
+              {items.map((item, index) => {
+                if ("type" in item && item.type === "divider") {
+                  return (
+                    <div
+                      key={`divider-${index}`}
+                      class="h-px bg-dark-700 my-1"
+                    />
+                  );
+                }
 
-            const menuItem = item as DropdownItem;
+                const menuItem = item as DropdownItem;
 
-            return (
-              <button
-                key={index}
-                role="menuitem"
-                disabled={menuItem.disabled}
-                onClick={(e) => {
-                  if (!menuItem.disabled) {
-                    menuItem.onClick(e);
-                    setIsOpen(false);
-                  }
-                }}
-                class={cn(
-                  "w-full px-4 py-2 text-left text-sm flex items-center gap-3 transition-colors",
-                  menuItem.disabled
-                    ? "text-gray-600 cursor-not-allowed"
-                    : menuItem.danger
-                    ? "text-red-400 hover:bg-red-500/10 hover:text-red-300"
-                    : "text-gray-300 hover:bg-dark-800 hover:text-gray-100",
-                )}
-              >
-                {menuItem.icon && (
-                  <span class="w-4 h-4 flex-shrink-0">{menuItem.icon}</span>
-                )}
-                <span>{menuItem.label}</span>
-              </button>
-            );
-          })}
+                return (
+                  <button
+                    key={index}
+                    role="menuitem"
+                    disabled={menuItem.disabled}
+                    onClick={(e) => {
+                      if (!menuItem.disabled) {
+                        menuItem.onClick(e);
+                        setIsOpen(false);
+                      }
+                    }}
+                    class={cn(
+                      "w-full px-4 py-2 text-left text-sm flex items-center gap-3 transition-colors",
+                      menuItem.disabled
+                        ? "text-gray-600 cursor-not-allowed"
+                        : menuItem.danger
+                        ? "text-red-400 hover:bg-red-500/10 hover:text-red-300"
+                        : "text-gray-300 hover:bg-dark-800 hover:text-gray-100",
+                    )}
+                  >
+                    {menuItem.icon && (
+                      <span class="w-4 h-4 flex-shrink-0">{menuItem.icon}</span>
+                    )}
+                    <span>{menuItem.label}</span>
+                  </button>
+                );
+              })}
+            </>
+          )}
         </div>
       )}
     </div>
