@@ -36,11 +36,50 @@ export function SDKToolProgressMessage({ message, toolInput }: Props) {
       return parts[parts.length - 1] || toolInput.file_path;
     }
 
+    // For Glob tool, show the pattern
+    if (message.tool_name === 'Glob' && toolInput.pattern) {
+      return toolInput.pattern.length > 50
+        ? toolInput.pattern.slice(0, 50) + '...'
+        : toolInput.pattern;
+    }
+
+    // For Grep tool, show the pattern
+    if (message.tool_name === 'Grep' && toolInput.pattern) {
+      return toolInput.pattern.length > 50
+        ? toolInput.pattern.slice(0, 50) + '...'
+        : toolInput.pattern;
+    }
+
     // For Bash tool, show the command
     if (message.tool_name === 'Bash' && toolInput.command) {
       return toolInput.command.length > 50
         ? toolInput.command.slice(0, 50) + '...'
         : toolInput.command;
+    }
+
+    // For Task/Agent tool, show the description
+    if ((message.tool_name === 'Task' || message.tool_name === 'Agent') && toolInput.description) {
+      return toolInput.description;
+    }
+
+    // For WebFetch tool, show the URL
+    if (message.tool_name === 'WebFetch' && toolInput.url) {
+      return toolInput.url.length > 50
+        ? toolInput.url.slice(0, 50) + '...'
+        : toolInput.url;
+    }
+
+    // For WebSearch tool, show the query
+    if (message.tool_name === 'WebSearch' && toolInput.query) {
+      return toolInput.query.length > 50
+        ? toolInput.query.slice(0, 50) + '...'
+        : toolInput.query;
+    }
+
+    // For NotebookEdit tool, show the notebook path
+    if (message.tool_name === 'NotebookEdit' && toolInput.notebook_path) {
+      const parts = toolInput.notebook_path.split('/');
+      return parts[parts.length - 1] || toolInput.notebook_path;
     }
 
     return null;

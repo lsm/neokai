@@ -167,6 +167,35 @@ function ToolUseBlock({ block, toolResult }: { block: Extract<ReturnType<typeof 
       }
     }
 
+    // For Read tool, show the file path
+    if (block.name === 'Read' && block.input && typeof block.input === 'object') {
+      const input = block.input as any;
+      if (input.file_path) {
+        const parts = input.file_path.split('/');
+        return parts[parts.length - 1] || input.file_path;
+      }
+    }
+
+    // For Glob tool, show the pattern
+    if (block.name === 'Glob' && block.input && typeof block.input === 'object') {
+      const input = block.input as any;
+      if (input.pattern) {
+        return input.pattern.length > 50
+          ? input.pattern.slice(0, 50) + '...'
+          : input.pattern;
+      }
+    }
+
+    // For Grep tool, show the pattern
+    if (block.name === 'Grep' && block.input && typeof block.input === 'object') {
+      const input = block.input as any;
+      if (input.pattern) {
+        return input.pattern.length > 50
+          ? input.pattern.slice(0, 50) + '...'
+          : input.pattern;
+      }
+    }
+
     // For Bash tool, show the command
     if (block.name === 'Bash' && block.input && typeof block.input === 'object') {
       const input = block.input as any;
@@ -177,12 +206,40 @@ function ToolUseBlock({ block, toolResult }: { block: Extract<ReturnType<typeof 
       }
     }
 
-    // For Read tool, show the file path
-    if (block.name === 'Read' && block.input && typeof block.input === 'object') {
+    // For Task/Agent tool, show the description
+    if ((block.name === 'Task' || block.name === 'Agent') && block.input && typeof block.input === 'object') {
       const input = block.input as any;
-      if (input.file_path) {
-        const parts = input.file_path.split('/');
-        return parts[parts.length - 1] || input.file_path;
+      if (input.description) {
+        return input.description;
+      }
+    }
+
+    // For WebFetch tool, show the URL
+    if (block.name === 'WebFetch' && block.input && typeof block.input === 'object') {
+      const input = block.input as any;
+      if (input.url) {
+        return input.url.length > 50
+          ? input.url.slice(0, 50) + '...'
+          : input.url;
+      }
+    }
+
+    // For WebSearch tool, show the query
+    if (block.name === 'WebSearch' && block.input && typeof block.input === 'object') {
+      const input = block.input as any;
+      if (input.query) {
+        return input.query.length > 50
+          ? input.query.slice(0, 50) + '...'
+          : input.query;
+      }
+    }
+
+    // For NotebookEdit tool, show the notebook path
+    if (block.name === 'NotebookEdit' && block.input && typeof block.input === 'object') {
+      const input = block.input as any;
+      if (input.notebook_path) {
+        const parts = input.notebook_path.split('/');
+        return parts[parts.length - 1] || input.notebook_path;
       }
     }
 
