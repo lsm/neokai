@@ -17,7 +17,7 @@ export function SessionIndicator({ sessionInfo }: Props) {
   const simplifiedModel = sessionInfo.model.replace('claude-', '').replace('anthropic.', '');
 
   return (
-    <div class="w-80 max-h-[70vh] overflow-y-auto bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-200 dark:border-indigo-800 p-3 space-y-3 shadow-2xl">
+    <div class="w-80 max-h-[70vh] overflow-y-auto bg-indigo-50 dark:bg-indigo-900/70 rounded-lg border border-indigo-200 dark:border-indigo-800 p-3 space-y-3 shadow-2xl backdrop-blur-sm">
       {/* Header */}
       <div class="flex items-center gap-2 pb-2 border-b border-indigo-200 dark:border-indigo-800">
         <svg class="w-4 h-4 text-indigo-600 dark:text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
