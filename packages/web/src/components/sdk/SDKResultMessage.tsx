@@ -27,7 +27,7 @@ export function SDKResultMessage({ message }: Props) {
   const isError = isSDKResultError(message);
 
   return (
-    <div class={`rounded border ${
+    <div class={`rounded border mb-4 ${
       isSuccess
         ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800'
         : 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800'

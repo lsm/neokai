@@ -46,22 +46,10 @@ export function SDKStreamingMessage({ message }: Props) {
   }
 
   return (
-    <div class="group flex items-start gap-3 md:gap-4 p-4 md:p-6 bg-dark-900/30 animate-fadeIn">
-      {/* Avatar */}
-      <div class="flex-shrink-0">
-        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center text-white text-sm font-semibold">
-          🤖
-        </div>
-      </div>
-
-      {/* Content */}
-      <div class="flex-1 min-w-0 overflow-hidden">
-        <div class="mb-2">
-          <span class="font-semibold text-sm text-gray-100">Claude</span>
-        </div>
-
+    <div class="py-2 px-4 md:px-6 animate-fadeIn">
+      <div class="max-w-[85%] md:max-w-[70%] w-auto">
         {/* Streaming content */}
-        <div class="prose text-gray-200 max-w-full prose-pre:bg-gray-900 prose-pre:text-gray-100">
+        <div class="prose dark:prose-invert max-w-none prose-pre:bg-gray-900 prose-pre:text-gray-100">
           <MarkdownRenderer content={streamingContent} />
           <span class="inline-block w-1.5 h-4 bg-purple-500 ml-1 animate-pulse rounded-sm" />
         </div>
@@ -102,16 +90,8 @@ export function SDKStreamingAccumulator({ events }: AccumulatorProps) {
 
   if (!accumulatedContent && !hasThinking) {
     return (
-      <div class="group flex items-start gap-3 md:gap-4 p-4 md:p-6 bg-dark-900/30 animate-fadeIn">
-        <div class="flex-shrink-0">
-          <div class="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center text-white text-sm font-semibold">
-            🤖
-          </div>
-        </div>
-        <div class="flex-1 min-w-0 overflow-hidden">
-          <div class="mb-2">
-            <span class="font-semibold text-sm text-gray-100">Claude</span>
-          </div>
+      <div class="py-2 px-4 md:px-6 animate-fadeIn">
+        <div class="max-w-[85%] md:max-w-[70%] w-auto">
           <div class="flex items-center gap-2 text-gray-400">
             <div class="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></div>
             <span class="text-sm">Thinking...</span>
@@ -122,20 +102,8 @@ export function SDKStreamingAccumulator({ events }: AccumulatorProps) {
   }
 
   return (
-    <div class="group flex items-start gap-3 md:gap-4 p-4 md:p-6 bg-dark-900/30 animate-fadeIn">
-      {/* Avatar */}
-      <div class="flex-shrink-0">
-        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center text-white text-sm font-semibold">
-          🤖
-        </div>
-      </div>
-
-      {/* Content */}
-      <div class="flex-1 min-w-0 overflow-hidden">
-        <div class="mb-2">
-          <span class="font-semibold text-sm text-gray-100">Claude</span>
-        </div>
-
+    <div class="py-2 px-4 md:px-6 animate-fadeIn">
+      <div class="max-w-[85%] md:max-w-[70%] w-auto">
         {/* Thinking indicator */}
         {hasThinking && (
           <div class="mb-3 bg-dark-850/50 rounded-lg px-4 py-2">
@@ -156,7 +124,7 @@ export function SDKStreamingAccumulator({ events }: AccumulatorProps) {
 
         {/* Accumulated streaming content */}
         {accumulatedContent && (
-          <div class="prose text-gray-200 max-w-full prose-pre:bg-gray-900 prose-pre:text-gray-100">
+          <div class="prose dark:prose-invert max-w-none prose-pre:bg-gray-900 prose-pre:text-gray-100">
             <MarkdownRenderer content={accumulatedContent} />
             <span class="inline-block w-1.5 h-4 bg-purple-500 ml-1 animate-pulse rounded-sm" />
           </div>

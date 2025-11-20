@@ -11,6 +11,10 @@ import type { SDKMessage } from "@liuboer/shared/sdk/sdk.d.ts";
 import { isTextBlock, isToolUseBlock, isThinkingBlock } from "@liuboer/shared/sdk/type-guards";
 import MarkdownRenderer from "../chat/MarkdownRenderer.tsx";
 import { Collapsible } from "../ui/Collapsible.tsx";
+import { IconButton } from "../ui/IconButton.tsx";
+import { Tooltip } from "../ui/Tooltip.tsx";
+import { copyToClipboard } from "../../lib/utils.ts";
+import { toast } from "../../lib/toast.ts";
 import { useState } from "preact/hooks";
 
 type AssistantMessage = Extract<SDKMessage, { type: "assistant" }>;
@@ -23,63 +27,108 @@ interface Props {
 export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
   const { message: apiMessage } = message;
 
+  // Extract text content for copy functionality
+  const getTextContent = (): string => {
+    return apiMessage.content
+      .map((block) => {
+        if (isTextBlock(block)) {
+          return block.text;
+        }
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n');
+  };
+
+  const handleCopy = async () => {
+    const textContent = getTextContent();
+    const success = await copyToClipboard(textContent);
+    if (success) {
+      toast.success("Message copied to clipboard");
+    } else {
+      toast.error("Failed to copy message");
+    }
+  };
+
+  const getTimestamp = (): string => {
+    return new Date().toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
   return (
-    <div class="flex gap-3 py-4">
-      {/* Avatar */}
-      <div class="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-semibold text-sm shadow-md">
-        AI
-      </div>
-
-      {/* Content */}
-      <div class="flex-1 space-y-3 min-w-0">
-        {apiMessage.content.map((block, idx) => {
-          // Text block - render as markdown
-          if (isTextBlock(block)) {
-            return (
-              <div key={idx} class="prose dark:prose-invert max-w-none prose-pre:bg-gray-900 prose-pre:text-gray-100">
-                <MarkdownRenderer content={block.text} />
-              </div>
-            );
-          }
-
-          // Tool use block - show expandable details with result
-          if (isToolUseBlock(block)) {
-            const toolResult = toolResultsMap?.get(block.id);
-            return <ToolUseBlock key={idx} block={block} toolResult={toolResult} />;
-          }
-
-          // Thinking block - collapsible
-          if (isThinkingBlock(block)) {
-            return (
-              <Collapsible
-                key={idx}
-                trigger={
-                  <div class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer hover:text-gray-800 dark:hover:text-gray-200">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                    </svg>
-                    <span>Thinking...</span>
-                  </div>
-                }
-              >
-                <div class="mt-2 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
-                  <div class="text-sm text-amber-900 dark:text-amber-100 whitespace-pre-wrap font-mono">
-                    {block.thinking}
-                  </div>
+    <div class="py-2 px-4 md:px-6">
+      <div class="max-w-[85%] md:max-w-[70%] w-auto">
+        {/* Content */}
+        <div class="space-y-3">
+          {apiMessage.content.map((block, idx) => {
+            // Text block - render as markdown
+            if (isTextBlock(block)) {
+              return (
+                <div key={idx} class="prose dark:prose-invert max-w-none prose-pre:bg-gray-900 prose-pre:text-gray-100">
+                  <MarkdownRenderer content={block.text} />
                 </div>
-              </Collapsible>
-            );
-          }
+              );
+            }
 
-          return null;
-        })}
+            // Tool use block - show expandable details with result
+            if (isToolUseBlock(block)) {
+              const toolResult = toolResultsMap?.get(block.id);
+              return <ToolUseBlock key={idx} block={block} toolResult={toolResult} />;
+            }
 
-        {/* Parent tool use indicator (for sub-agent messages) */}
-        {message.parent_tool_use_id && (
-          <div class="text-xs text-gray-500 dark:text-gray-400 italic">
-            Sub-agent response (parent: {message.parent_tool_use_id.slice(0, 8)}...)
-          </div>
-        )}
+            // Thinking block - collapsible
+            if (isThinkingBlock(block)) {
+              return (
+                <Collapsible
+                  key={idx}
+                  trigger={
+                    <div class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer hover:text-gray-800 dark:hover:text-gray-200">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                      </svg>
+                      <span>Thinking...</span>
+                    </div>
+                  }
+                >
+                  <div class="mt-2 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
+                    <div class="text-sm text-amber-900 dark:text-amber-100 whitespace-pre-wrap font-mono">
+                      {block.thinking}
+                    </div>
+                  </div>
+                </Collapsible>
+              );
+            }
+
+            return null;
+          })}
+
+          {/* Parent tool use indicator (for sub-agent messages) */}
+          {message.parent_tool_use_id && (
+            <div class="text-xs text-gray-500 dark:text-gray-400 italic">
+              Sub-agent response (parent: {message.parent_tool_use_id.slice(0, 8)}...)
+            </div>
+          )}
+        </div>
+
+        {/* Actions and timestamp - bottom left */}
+        <div class="flex items-center gap-2 mt-2 px-1">
+          <Tooltip content={new Date().toLocaleString()} position="right">
+            <span class="text-xs text-gray-500">{getTimestamp()}</span>
+          </Tooltip>
+
+          <IconButton size="md" onClick={handleCopy} title="Copy message">
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width={2}
+                d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+              />
+            </svg>
+          </IconButton>
+        </div>
       </div>
     </div>
   );
