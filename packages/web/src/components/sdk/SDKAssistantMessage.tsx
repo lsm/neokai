@@ -16,6 +16,8 @@ import { Tooltip } from "../ui/Tooltip.tsx";
 import { copyToClipboard } from "../../lib/utils.ts";
 import { toast } from "../../lib/toast.ts";
 import { useState } from "preact/hooks";
+import { messageSpacing } from "../../lib/design-tokens.ts";
+import { cn } from "../../lib/utils.ts";
 
 type AssistantMessage = Extract<SDKMessage, { type: "assistant" }>;
 
@@ -118,7 +120,7 @@ export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
           </div>
 
           {/* Actions and timestamp - bottom left */}
-          <div class="flex items-center gap-2 mt-2 px-1">
+          <div class={cn("flex items-center", messageSpacing.actions.gap, messageSpacing.actions.marginTop, messageSpacing.actions.padding)}>
             <Tooltip content={new Date().toLocaleString()} position="right">
               <span class="text-xs text-gray-500">{getTimestamp()}</span>
             </Tooltip>

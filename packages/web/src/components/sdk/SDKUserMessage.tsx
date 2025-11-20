@@ -13,6 +13,7 @@ import { copyToClipboard } from "../../lib/utils.ts";
 import { toast } from "../../lib/toast.ts";
 import { cn } from "../../lib/utils.ts";
 import { SessionIndicator } from "./SessionIndicator.tsx";
+import { messageSpacing } from "../../lib/design-tokens.ts";
 
 type UserMessage = Extract<SDKMessage, { type: "user" }>;
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
@@ -140,10 +141,10 @@ export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo }: Props
   };
 
   return (
-    <div class="py-2 px-4 md:px-6 flex justify-end">
+    <div class={cn(messageSpacing.user.container.combined, "flex justify-end")}>
       <div class="max-w-[85%] md:max-w-[70%] w-auto">
         {/* Message bubble */}
-        <div class="bg-zinc-700 rounded-2xl p-3 md:p-4">
+        <div class={cn("bg-zinc-700 rounded-2xl", messageSpacing.user.bubble.combined)}>
           {/* Main Content */}
           <div class="text-gray-200 whitespace-pre-wrap break-words">
             {textContent}
@@ -158,7 +159,7 @@ export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo }: Props
         </div>
 
         {/* Actions and timestamp - outside the bubble, bottom right */}
-        <div class="flex items-center justify-end gap-2 mt-2 px-1">
+        <div class={cn("flex items-center justify-end", messageSpacing.actions.gap, messageSpacing.actions.marginTop, messageSpacing.actions.padding)}>
           <Tooltip content={new Date().toLocaleString()} position="left">
             <span class="text-xs text-gray-500">{getTimestamp()}</span>
           </Tooltip>
