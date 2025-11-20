@@ -1,17 +1,13 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { cn } from "../lib/utils.ts";
-import { Dropdown } from "./ui/Dropdown.tsx";
 
 interface MessageInputProps {
   onSend: (content: string) => void;
   disabled?: boolean;
 }
 
-type ModeType = "Auto" | "Agent" | "Manual";
-
 export default function MessageInput({ onSend, disabled }: MessageInputProps) {
   const [content, setContent] = useState("");
-  const [mode, setMode] = useState<ModeType>("Auto");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const maxChars = 10000;
 
@@ -55,17 +51,6 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
   return (
     <div class="bg-dark-850 border-t border-dark-700 p-4">
       <form onSubmit={handleSubmit} class="max-w-4xl mx-auto">
-        {/* Add Context Button */}
-        <button
-          type="button"
-          class="mb-3 flex items-center gap-2 px-4 py-2 rounded-xl border border-dark-700/50 bg-dark-800/40 text-gray-400 hover:text-gray-300 hover:border-dark-600 hover:bg-dark-800/60 transition-all"
-        >
-          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M16 12a4 4 0 10-8 0 4 4 0 008 0zm0 0v1.5a2.5 2.5 0 005 0V12a9 9 0 10-9 9m4.5-1.206a8.959 8.959 0 01-4.5 1.207" />
-          </svg>
-          <span class="text-sm">Add context</span>
-        </button>
-
         {/* Input Group */}
         <div class="relative rounded-[28px] border border-dark-700/50 bg-dark-800/40 backdrop-blur-sm shadow-lg transition-all focus-within:border-blue-500/40 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:bg-dark-800/60">
           {/* Textarea */}
@@ -113,38 +98,6 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
               <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
               </svg>
-            </button>
-
-            {/* Mode Dropdown */}
-            <Dropdown
-              trigger={
-                <button
-                  type="button"
-                  class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-gray-300 hover:bg-dark-700/50 transition-all"
-                >
-                  <span>{mode}</span>
-                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-              }
-              items={[
-                { label: "Auto", onClick: () => setMode("Auto") },
-                { label: "Agent", onClick: () => setMode("Agent") },
-                { label: "Manual", onClick: () => setMode("Manual") },
-              ]}
-              position="left"
-            />
-
-            {/* All Sources Button */}
-            <button
-              type="button"
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-gray-300 hover:bg-dark-700/50 transition-all"
-            >
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span>All Sources</span>
             </button>
 
             <div class="flex-1" />

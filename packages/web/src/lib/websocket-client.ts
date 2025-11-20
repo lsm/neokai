@@ -1,6 +1,7 @@
 import type { Event, EventType } from "@liuboer/shared";
 
 export type EventHandler = (event: Event) => void;
+export type ConnectionHandler = () => void;
 
 /**
  * Get the daemon WebSocket base URL based on the current hostname
@@ -25,6 +26,7 @@ export class WebSocketClient {
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
   private handlers: Map<EventType | "all", Set<EventHandler>> = new Map();
+  private connectionHandlers: Map<"connect" | "disconnect", Set<ConnectionHandler>> = new Map();
   private baseUrl: string;
   private shouldReconnect = true;
   private pingInterval: number | null = null;
@@ -45,6 +47,9 @@ export class WebSocketClient {
       this.ws.onopen = () => {
         console.log(`WebSocket connected to session ${sessionId}`);
         this.reconnectAttempts = 0;
+
+        // Emit connect event
+        this.emitConnectionEvent("connect");
 
         // Clear any existing ping interval
         if (this.pingInterval !== null) {
@@ -74,6 +79,10 @@ export class WebSocketClient {
 
       this.ws.onclose = () => {
         console.log("WebSocket closed");
+
+        // Emit disconnect event
+        this.emitConnectionEvent("disconnect");
+
         if (this.shouldReconnect) {
           this.attemptReconnect();
         }
@@ -118,20 +127,45 @@ export class WebSocketClient {
     }, delay);
   }
 
-  on(eventType: EventType | "all", handler: EventHandler): () => void {
-    if (!this.handlers.has(eventType)) {
-      this.handlers.set(eventType, new Set());
+  on(eventType: EventType | "all" | "connect" | "disconnect", handler: EventHandler | ConnectionHandler): () => void {
+    // Handle connection events separately
+    if (eventType === "connect" || eventType === "disconnect") {
+      if (!this.connectionHandlers.has(eventType)) {
+        this.connectionHandlers.set(eventType, new Set());
+      }
+      this.connectionHandlers.get(eventType)!.add(handler as ConnectionHandler);
+
+      // Return unsubscribe function
+      return () => {
+        this.connectionHandlers.get(eventType)?.delete(handler as ConnectionHandler);
+      };
     }
-    this.handlers.get(eventType)!.add(handler);
+
+    // Handle regular events
+    if (!this.handlers.has(eventType as EventType | "all")) {
+      this.handlers.set(eventType as EventType | "all", new Set());
+    }
+    this.handlers.get(eventType as EventType | "all")!.add(handler as EventHandler);
 
     // Return unsubscribe function
     return () => {
-      this.handlers.get(eventType)?.delete(handler);
+      this.handlers.get(eventType as EventType | "all")?.delete(handler as EventHandler);
     };
   }
 
-  off(eventType: EventType | "all", handler: EventHandler): void {
-    this.handlers.get(eventType)?.delete(handler);
+  off(eventType: EventType | "all" | "connect" | "disconnect", handler: EventHandler | ConnectionHandler): void {
+    if (eventType === "connect" || eventType === "disconnect") {
+      this.connectionHandlers.get(eventType)?.delete(handler as ConnectionHandler);
+    } else {
+      this.handlers.get(eventType as EventType | "all")?.delete(handler as EventHandler);
+    }
+  }
+
+  private emitConnectionEvent(eventType: "connect" | "disconnect"): void {
+    const handlers = this.connectionHandlers.get(eventType);
+    if (handlers) {
+      handlers.forEach((handler) => handler());
+    }
   }
 
   private handleEvent(event: Event): void {

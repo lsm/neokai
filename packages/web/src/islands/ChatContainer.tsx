@@ -7,6 +7,7 @@ import { wsClient } from "../lib/websocket-client.ts";
 import { toast } from "../lib/toast.ts";
 import { sidebarOpenSignal } from "../lib/signals.ts";
 import MessageInput from "../components/MessageInput.tsx";
+import StatusIndicator from "../components/StatusIndicator.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { IconButton } from "../components/ui/IconButton.tsx";
 import { Dropdown } from "../components/ui/Dropdown.tsx";
@@ -14,6 +15,7 @@ import { Modal } from "../components/ui/Modal.tsx";
 import { Skeleton, SkeletonMessage } from "../components/ui/Skeleton.tsx";
 import { SDKMessageRenderer } from "../components/sdk/SDKMessageRenderer.tsx";
 import { SDKStreamingAccumulator } from "../components/sdk/SDKStreamingMessage.tsx";
+import { getCurrentAction } from "../lib/status-actions.ts";
 
 interface ChatContainerProps {
   sessionId: string;
@@ -30,6 +32,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   const [sending, setSending] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [clearModalOpen, setClearModalOpen] = useState(false);
+  const [isWsConnected, setIsWsConnected] = useState(false);
+  const [currentAction, setCurrentAction] = useState<string | undefined>(undefined);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
@@ -85,20 +89,29 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
   const connectWebSocket = () => {
     wsClient.connect(sessionId);
+    setIsWsConnected(true);
 
     // SDK message events - PRIMARY EVENT HANDLER
     const unsubSDKMessage = wsClient.on("sdk.message", (event: Event) => {
       const sdkMessage = event.data as SDKMessage;
       console.log("Received SDK message:", sdkMessage.type, sdkMessage);
 
+      // Update current action based on this message
+      const isProcessing = sending || streamingEvents.length > 0;
+      const action = getCurrentAction(sdkMessage, isProcessing);
+      if (action) {
+        setCurrentAction(action);
+      }
+
       // Handle stream events separately for real-time display
       if (isSDKStreamEvent(sdkMessage)) {
         setStreamingEvents((prev) => [...prev, sdkMessage]);
       } else {
-        // Clear streaming when we get a complete message
-        if (sdkMessage.type === "assistant" || sdkMessage.type === "result") {
+        // Only clear processing state when we get the FINAL result message with token usage
+        if (sdkMessage.type === "result" && sdkMessage.subtype === "success") {
           setStreamingEvents([]);
           setSending(false);
+          setCurrentAction(undefined);
         }
         // Add non-stream messages to main array, deduplicating by uuid
         setMessages((prev) => {
@@ -136,6 +149,17 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       toast.error(error);
       setSending(false);
       setStreamingEvents([]);
+      setCurrentAction(undefined);
+      setIsWsConnected(false);
+    });
+
+    // Connection status tracking
+    const unsubConnect = wsClient.on("connect", () => {
+      setIsWsConnected(true);
+    });
+
+    const unsubDisconnect = wsClient.on("disconnect", () => {
+      setIsWsConnected(false);
     });
 
     // Return cleanup function that unsubscribes all handlers
@@ -144,6 +168,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       unsubContextUpdated();
       unsubContextCompacted();
       unsubError();
+      unsubConnect();
+      unsubDisconnect();
     };
   };
 
@@ -153,6 +179,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     try {
       setSending(true);
       setError(null);
+      setCurrentAction("Processing...");
 
       // Send to API - WebSocket will add the message when daemon confirms
       // No optimistic update to avoid duplicates
@@ -164,6 +191,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       setError(message);
       toast.error(message);
       setSending(false);
+      setCurrentAction(undefined);
     }
   };
 
@@ -467,6 +495,13 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
           </div>
         </div>
       )}
+
+      {/* Status Indicator */}
+      <StatusIndicator
+        isConnected={isWsConnected}
+        isProcessing={sending || streamingEvents.length > 0}
+        currentAction={currentAction}
+      />
 
       {/* Input */}
       <MessageInput onSend={handleSendMessage} disabled={sending} />
