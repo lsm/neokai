@@ -366,8 +366,8 @@ export class AgentSession {
   /**
    * Get SDK messages for this session
    */
-  getSDKMessages(limit?: number, offset?: number) {
-    return this.db.getSDKMessages(this.session.id, limit, offset);
+  getSDKMessages(limit?: number, offset?: number, since?: number) {
+    return this.db.getSDKMessages(this.session.id, limit, offset, since);
   }
 
   /**
