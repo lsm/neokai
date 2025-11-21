@@ -97,8 +97,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       console.log("Received SDK message:", sdkMessage.type, sdkMessage);
 
       // Update current action based on this message
-      // We're processing if: sending is true OR we haven't received final result yet
-      const isProcessing = sending;
+      // We're processing if: sending is true OR we have streaming events OR we haven't received final result yet
+      const isProcessing = sending || streamingEvents.length > 0 || sdkMessage.type !== "result";
       const action = getCurrentAction(sdkMessage, isProcessing);
       if (action) {
         setCurrentAction(action);
