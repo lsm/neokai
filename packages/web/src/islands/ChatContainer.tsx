@@ -34,6 +34,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   const [clearModalOpen, setClearModalOpen] = useState(false);
   const [isWsConnected, setIsWsConnected] = useState(false);
   const [currentAction, setCurrentAction] = useState<string | undefined>(undefined);
+  const [contextUsage, setContextUsage] = useState<{ inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }>({
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0
+  });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
@@ -76,6 +82,24 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       // Load SDK messages
       const sdkResponse = await apiClient.getSDKMessages(sessionId);
       setMessages(sdkResponse.sdkMessages);
+
+      // Calculate initial context usage from existing messages
+      // Total input tokens = input_tokens + cache_creation_input_tokens + cache_read_input_tokens
+      // Find the last result message with success status to get the most up-to-date usage
+      // The SDK returns cumulative usage in each result message, so we shouldn't sum them up
+      const lastResultMessage = [...sdkResponse.sdkMessages].reverse().find(
+        msg => msg.type === 'result' && msg.subtype === 'success'
+      );
+
+      const initialUsage = lastResultMessage && lastResultMessage.type === 'result' && lastResultMessage.subtype === 'success'
+        ? {
+            inputTokens: lastResultMessage.usage.input_tokens,
+            outputTokens: lastResultMessage.usage.output_tokens,
+            cacheReadTokens: lastResultMessage.usage.cache_read_input_tokens || 0,
+            cacheCreationTokens: lastResultMessage.usage.cache_creation_input_tokens || 0
+          }
+        : { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+      setContextUsage(initialUsage);
     } catch (err) {
       const message = err instanceof Error
         ? err.message
@@ -134,8 +158,17 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
     // Context events
     const unsubContextUpdated = wsClient.on("context.updated", (event: Event) => {
-      const { tokenCount } = event.data as { tokenCount: number };
-      console.log(`Context updated: ${tokenCount} tokens`);
+      const data = event.data as { tokenUsage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }; costUSD: number; durationMs: number };
+      console.log(`Context updated:`, data);
+
+      // Update context usage with the latest values
+      // The event contains the usage for the current turn, which represents the full context window size
+      setContextUsage({
+        inputTokens: data.tokenUsage.inputTokens,
+        outputTokens: data.tokenUsage.outputTokens,
+        cacheReadTokens: data.tokenUsage.cacheReadTokens,
+        cacheCreationTokens: data.tokenUsage.cacheCreationTokens,
+      });
     });
 
     const unsubContextCompacted = wsClient.on("context.compacted", (event: Event) => {
@@ -502,6 +535,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
         isConnected={isWsConnected}
         isProcessing={sending || streamingEvents.length > 0}
         currentAction={currentAction}
+        contextUsage={contextUsage}
+        maxContextTokens={200000}
       />
 
       {/* Input */}

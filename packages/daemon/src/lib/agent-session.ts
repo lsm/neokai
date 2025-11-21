@@ -248,6 +248,7 @@ export class AgentSession {
                 cacheReadTokens: message.usage.cache_read_input_tokens || 0,
                 cacheCreationTokens: message.usage.cache_creation_input_tokens || 0,
               },
+              modelUsage: message.modelUsage, // Include per-model usage data with context window info
               costUSD: message.total_cost_usd,
               durationMs: message.duration_ms,
             },
