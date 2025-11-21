@@ -216,7 +216,7 @@ test.describe("Chat Functionality", () => {
     // Check menu items
     await expect(page.locator("text=Session Settings")).toBeVisible();
     await expect(page.locator("text=Export Chat")).toBeVisible();
-    await expect(page.locator("text=Clear Chat")).toBeVisible();
+    await expect(page.locator("text=Delete Chat")).toBeVisible();
   });
 
   test("should auto-scroll to bottom when new messages arrive", async ({

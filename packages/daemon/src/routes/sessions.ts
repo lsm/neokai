@@ -141,19 +141,7 @@ export function createSessionsRouter(app: Elysia, sessionManager: SessionManager
       return { messages };
     })
 
-    // Clear messages
-    .delete("/api/sessions/:sessionId/messages", async ({ params, set }) => {
-      const sessionId = params.sessionId;
-      const agentSession = sessionManager.getSession(sessionId);
 
-      if (!agentSession) {
-        set.status = 404;
-        return { error: "Session not found" };
-      }
-
-      await sessionManager.clearMessages(sessionId);
-      set.status = 204;
-    })
 
     // Get SDK messages
     .get("/api/sessions/:sessionId/sdk-messages", ({ params, query, set }) => {
@@ -167,8 +155,9 @@ export function createSessionsRouter(app: Elysia, sessionManager: SessionManager
 
       const limit = query.limit ? parseInt(query.limit as string, 10) : 100;
       const offset = query.offset ? parseInt(query.offset as string, 10) : 0;
+      const since = query.since ? parseInt(query.since as string, 10) : undefined;
 
-      const sdkMessages = agentSession.getSDKMessages(limit, offset);
+      const sdkMessages = agentSession.getSDKMessages(limit, offset, since);
       return { sdkMessages };
     })
 

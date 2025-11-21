@@ -294,13 +294,7 @@ export class Database {
     return messages;
   }
 
-  /**
-   * Clear all messages for a session (deletes from sdk_messages)
-   */
-  clearMessages(sessionId: string): void {
-    const stmt = this.db.prepare(`DELETE FROM sdk_messages WHERE session_id = ?`);
-    stmt.run(sessionId);
-  }
+
 
   // Authentication operations
 
@@ -562,17 +556,34 @@ export class Database {
   /**
    * Get SDK messages for a session
    */
-  getSDKMessages(sessionId: string, limit = 100, offset = 0): SDKMessage[] {
-    const stmt = this.db.prepare(
-      `SELECT sdk_message FROM sdk_messages
-       WHERE session_id = ?
-       ORDER BY timestamp ASC
-       LIMIT ? OFFSET ?`
-    );
+  getSDKMessages(
+    sessionId: string,
+    limit = 100,
+    offset = 0,
+    since?: number
+  ): SDKMessage[] {
+    let query = `SELECT sdk_message, timestamp FROM sdk_messages WHERE session_id = ?`;
+    const params: unknown[] = [sessionId];
 
-    const rows = stmt.all(sessionId, limit, offset) as Record<string, unknown>[];
+    // Add timestamp filter if 'since' is provided
+    if (since !== undefined && since > 0) {
+      query += ` AND timestamp > ?`;
+      params.push(since);
+    }
 
-    return rows.map((r) => JSON.parse(r.sdk_message as string) as SDKMessage);
+    query += ` ORDER BY timestamp ASC LIMIT ? OFFSET ?`;
+    params.push(limit, offset);
+
+    const stmt = this.db.prepare(query);
+    const rows = stmt.all(...params) as Record<string, unknown>[];
+
+    // Parse SDK message and inject the timestamp from the database row
+    return rows.map((r) => {
+      const sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
+      const timestamp = new Date(r.timestamp as string).getTime();
+      // Inject timestamp into SDK message object for client-side filtering
+      return { ...sdkMessage, timestamp } as SDKMessage & { timestamp: number };
+    });
   }
 
   /**
@@ -601,13 +612,7 @@ export class Database {
     return rows.map((r) => JSON.parse(r.sdk_message as string) as SDKMessage);
   }
 
-  /**
-   * Clear all SDK messages for a session
-   */
-  clearSDKMessages(sessionId: string): void {
-    const stmt = this.db.prepare(`DELETE FROM sdk_messages WHERE session_id = ?`);
-    stmt.run(sessionId);
-  }
+
 
   /**
    * Get the count of SDK messages for a session

@@ -5,7 +5,7 @@ import { isSDKStreamEvent } from "@liuboer/shared/sdk/type-guards";
 import { apiClient } from "../lib/api-client.ts";
 import { wsClient } from "../lib/websocket-client.ts";
 import { toast } from "../lib/toast.ts";
-import { sidebarOpenSignal } from "../lib/signals.ts";
+import { currentSessionIdSignal, sessionsSignal, sidebarOpenSignal } from "../lib/signals.ts";
 import MessageInput from "../components/MessageInput.tsx";
 import StatusIndicator from "../components/StatusIndicator.tsx";
 import { Button } from "../components/ui/Button.tsx";
@@ -31,7 +31,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
-  const [clearModalOpen, setClearModalOpen] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [isWsConnected, setIsWsConnected] = useState(false);
   const [currentAction, setCurrentAction] = useState<string | undefined>(undefined);
   const [contextUsage, setContextUsage] = useState<{ inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }>({
@@ -187,9 +187,44 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       setIsWsConnected(false);
     });
 
-    // Connection status tracking
-    const unsubConnect = wsClient.on("connect", () => {
+    // Connection status tracking with reconciliation
+    const unsubConnect = wsClient.on("connect", async () => {
       setIsWsConnected(true);
+
+      // Reconcile missed messages on reconnect
+      try {
+        // Use setMessages with updater function to get current state
+        let lastTimestamp = 0;
+        setMessages((currentMessages) => {
+          // Calculate the timestamp of the last message we have
+          if (currentMessages.length > 0) {
+            lastTimestamp = Math.max(...currentMessages.map(m => m.timestamp));
+          }
+          return currentMessages; // Don't modify state here
+        });
+
+        // Fetch any messages we missed while disconnected
+        if (lastTimestamp > 0) {
+          const response = await apiClient.getSDKMessages(sessionId, {
+            since: lastTimestamp,
+          });
+
+          if (response.sdkMessages.length > 0) {
+            console.log(`Reconciled ${response.sdkMessages.length} missed messages`);
+
+            // Merge with existing messages, deduplicating by UUID
+            setMessages((prev) => {
+              const merged = [...prev, ...response.sdkMessages];
+              // Deduplicate by UUID
+              const uniqueMap = new Map(merged.map(m => [m.uuid, m]));
+              return Array.from(uniqueMap.values()).sort((a, b) => a.timestamp - b.timestamp);
+            });
+          }
+        }
+      } catch (error) {
+        console.error("Failed to reconcile messages on reconnect:", error);
+        // Don't show error to user - connection is still established
+      }
     });
 
     const unsubDisconnect = wsClient.on("disconnect", () => {
@@ -233,15 +268,21 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  const handleClearMessages = async () => {
+  const handleDeleteSession = async () => {
     try {
-      await apiClient.clearMessages(sessionId);
-      setMessages([]);
-      toast.success("Messages cleared");
-      setClearModalOpen(false);
-      await loadSession(); // Reload to update metadata
+      await apiClient.deleteSession(sessionId);
+      
+      // Reload sessions to get the updated list from API
+      const response = await apiClient.listSessions();
+      sessionsSignal.value = response.sessions;
+      
+      // Clear current session to redirect to home
+      currentSessionIdSignal.value = null;
+      
+      toast.success("Session deleted");
+      setDeleteModalOpen(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to clear messages");
+      toast.error(err instanceof Error ? err.message : "Failed to delete session");
     }
   };
 
@@ -286,8 +327,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     },
     { type: "divider" as const },
     {
-      label: "Clear Chat",
-      onClick: () => setClearModalOpen(true),
+      label: "Delete Chat",
+      onClick: () => setDeleteModalOpen(true),
       danger: true,
       icon: (
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -542,23 +583,23 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       {/* Input */}
       <MessageInput onSend={handleSendMessage} disabled={sending} />
 
-      {/* Clear Chat Modal */}
+      {/* Delete Chat Modal */}
       <Modal
-        isOpen={clearModalOpen}
-        onClose={() => setClearModalOpen(false)}
-        title="Clear Chat"
+        isOpen={deleteModalOpen}
+        onClose={() => setDeleteModalOpen(false)}
+        title="Delete Chat"
         size="sm"
       >
         <div class="space-y-4">
           <p class="text-gray-300 text-sm">
-            Are you sure you want to clear all messages in this chat? This action cannot be undone.
+            Are you sure you want to delete this chat session? This action cannot be undone.
           </p>
           <div class="flex gap-3 justify-end">
-            <Button variant="secondary" onClick={() => setClearModalOpen(false)}>
+            <Button variant="secondary" onClick={() => setDeleteModalOpen(false)}>
               Cancel
             </Button>
-            <Button variant="danger" onClick={handleClearMessages}>
-              Clear Messages
+            <Button variant="danger" onClick={handleDeleteSession}>
+              Delete Chat
             </Button>
           </div>
         </div>

@@ -148,22 +148,20 @@ export class DaemonAPIClient implements APIClient {
     return this.fetch<ListMessagesResponse>(path);
   }
 
-  async clearMessages(sessionId: string): Promise<void> {
-    await this.fetch(`/api/sessions/${sessionId}/messages`, {
-      method: "DELETE",
-    });
-  }
+
 
   async getSDKMessages(
     sessionId: string,
     params?: {
       limit?: number;
       offset?: number;
+      since?: number;
     },
   ): Promise<{ sdkMessages: any[] }> {
     const queryParams = new URLSearchParams();
     if (params?.limit) queryParams.set("limit", params.limit.toString());
     if (params?.offset) queryParams.set("offset", params.offset.toString());
+    if (params?.since !== undefined) queryParams.set("since", params.since.toString());
 
     const query = queryParams.toString();
     const path = `/api/sessions/${sessionId}/sdk-messages${query ? `?${query}` : ""}`;
