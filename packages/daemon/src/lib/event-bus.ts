@@ -20,6 +20,7 @@ export type EventType =
   | "sdk.message"; // Full SDK message event
 
 export interface Event {
+  id?: string;
   type: EventType;
   sessionId: string;
   timestamp: string;

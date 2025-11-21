@@ -53,6 +53,8 @@ export class AgentSession {
     const sdkUserMessage = {
       type: "user" as const,
       uuid: messageId,
+      session_id: this.session.id,
+      parent_tool_use_id: null,
       message: {
         role: "user" as const,
         content: [
@@ -67,6 +69,15 @@ export class AgentSession {
     // Save user message to sdk_messages table
     // Note: We don't emit here - the SDK stream will include the user message and emit it
     this.db.saveSDKMessage(this.session.id, sdkUserMessage);
+
+    // Emit the user message to the client so it appears in the UI
+    await this.eventBus.emit({
+      id: crypto.randomUUID(),
+      type: "sdk.message",
+      sessionId: this.session.id,
+      timestamp: new Date().toISOString(),
+      data: sdkUserMessage,
+    });
 
     // Emit message start event (legacy)
     await this.eventBus.emit({

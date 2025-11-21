@@ -329,10 +329,12 @@ export type SDKUserMessageReplay = SDKUserMessageContent & {
      */
     isReplay: true;
 };
+export type SDKAssistantMessageError = 'authentication_failed' | 'billing_error' | 'rate_limit' | 'invalid_request' | 'server_error' | 'unknown';
 export type SDKAssistantMessage = {
     type: 'assistant';
     message: APIAssistantMessage;
     parent_tool_use_id: string | null;
+    error?: SDKAssistantMessageError;
     uuid: UUID;
     session_id: string;
 };
