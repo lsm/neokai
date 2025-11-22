@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Liuboer - Claude Agent Wrapper</title>
     <link rel="stylesheet" href="./styles.out.css" />
+    <script>
+      // Prevent errors from browser extensions trying to access window.ethereum
+      if (typeof window.ethereum === 'undefined') {
+        window.ethereum = {};
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
