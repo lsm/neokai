@@ -566,9 +566,10 @@ export class Database {
     const params: unknown[] = [sessionId];
 
     // Add timestamp filter if 'since' is provided
+    // 'since' is a JavaScript millisecond timestamp, convert to ISO string for comparison
     if (since !== undefined && since > 0) {
       query += ` AND timestamp > ?`;
-      params.push(since);
+      params.push(new Date(since).toISOString());
     }
 
     query += ` ORDER BY timestamp ASC LIMIT ? OFFSET ?`;

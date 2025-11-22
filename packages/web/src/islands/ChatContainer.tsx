@@ -5,6 +5,7 @@ import { isSDKStreamEvent } from "@liuboer/shared/sdk/type-guards";
 import { apiClient } from "../lib/api-client.ts";
 import { eventBusClient } from "../lib/event-bus-client.ts";
 import { toast } from "../lib/toast.ts";
+import { generateUUID } from "../lib/utils.ts";
 import { currentSessionIdSignal, sessionsSignal, sidebarOpenSignal } from "../lib/signals.ts";
 import MessageInput from "../components/MessageInput.tsx";
 import StatusIndicator from "../components/StatusIndicator.tsx";
@@ -104,6 +105,16 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       const message = err instanceof Error
         ? err.message
         : "Failed to load session";
+
+      // Check if this is a 404 error (session not found)
+      // If so, clear the session ID to navigate back to the default page
+      if (message.includes("404")) {
+        console.log("Session not found (404), clearing session ID");
+        currentSessionIdSignal.value = null;
+        toast.error("Session not found. Returning to sessions list.");
+        return; // Don't set error state, just clear and return
+      }
+
       setError(message);
       toast.error(message);
     } finally {
@@ -187,6 +198,19 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       setIsWsConnected(false);
     });
 
+    // Message queue events (streaming input mode)
+    const unsubMessageQueued = eventBusClient.on("message.queued", (event: Event) => {
+      const { messageId } = event.data as { messageId: string };
+      console.log("Message queued:", messageId);
+      setCurrentAction("Queued...");
+    });
+
+    const unsubMessageProcessing = eventBusClient.on("message.processing", (event: Event) => {
+      const { messageId } = event.data as { messageId: string };
+      console.log("Message processing:", messageId);
+      setCurrentAction("Processing...");
+    });
+
     // Connection status tracking with reconciliation
     const unsubConnect = eventBusClient.on("connect", async () => {
       setIsWsConnected(true);
@@ -212,13 +236,47 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
           if (response.sdkMessages.length > 0) {
             console.log(`Reconciled ${response.sdkMessages.length} missed messages`);
 
-            // Merge with existing messages, deduplicating by UUID
-            setMessages((prev) => {
-              const merged = [...prev, ...response.sdkMessages];
-              // Deduplicate by UUID
-              const uniqueMap = new Map(merged.map(m => [m.uuid, m]));
-              return Array.from(uniqueMap.values()).sort((a, b) => a.timestamp - b.timestamp);
-            });
+            // Separate stream events from regular messages
+            const streamEvents: Extract<SDKMessage, { type: "stream_event" }>[] = [];
+            const regularMessages: SDKMessage[] = [];
+            let hasStreamEvents = false;
+            let hasFinalResult = false;
+
+            for (const msg of response.sdkMessages) {
+              if (isSDKStreamEvent(msg)) {
+                streamEvents.push(msg);
+                hasStreamEvents = true;
+              } else {
+                regularMessages.push(msg);
+                if (msg.type === "result" && msg.subtype === "success") {
+                  hasFinalResult = true;
+                }
+              }
+            }
+
+            // Update streaming events if we have active stream events without a final result
+            if (hasStreamEvents && !hasFinalResult) {
+              setStreamingEvents((prev) => [...prev, ...streamEvents]);
+              setSending(true); // Indicate we're still processing
+            }
+
+            // Merge regular messages with existing messages, deduplicating by UUID
+            if (regularMessages.length > 0) {
+              setMessages((prev) => {
+                const merged = [...prev, ...regularMessages];
+                // Deduplicate by UUID
+                const uniqueMap = new Map(merged.map(m => [m.uuid, m]));
+                return Array.from(uniqueMap.values()).sort((a, b) => a.timestamp - b.timestamp);
+              });
+            }
+
+            // Update current action based on the latest message
+            const latestMessage = response.sdkMessages[response.sdkMessages.length - 1];
+            const isStillProcessing = hasStreamEvents && !hasFinalResult;
+            const action = getCurrentAction(latestMessage, isStillProcessing);
+            if (action) {
+              setCurrentAction(action);
+            }
           }
         }
       } catch (error) {
@@ -237,6 +295,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       unsubContextUpdated();
       unsubContextCompacted();
       unsubError();
+      unsubMessageQueued();
+      unsubMessageProcessing();
       unsubConnect();
       unsubDisconnect();
     };
@@ -245,14 +305,34 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   const handleSendMessage = async (content: string) => {
     if (!content.trim() || sending) return;
 
+    // Check if WebSocket is connected
+    if (!isWsConnected) {
+      toast.error("WebSocket not connected. Please refresh the page.");
+      return;
+    }
+
     try {
       setSending(true);
       setError(null);
-      setCurrentAction("Processing...");
+      setCurrentAction("Sending...");
 
-      // Send to API - WebSocket will add the message when daemon confirms
-      // No optimistic update to avoid duplicates
-      await apiClient.sendMessage(sessionId, { content });
+      // Send via EventBus WebSocket (streaming input mode!)
+      // The daemon will queue the message and yield it to the SDK AsyncGenerator
+      await eventBusClient.emit({
+        id: generateUUID(),
+        type: "message.send",
+        sessionId,
+        timestamp: new Date().toISOString(),
+        data: {
+          content,
+          // images: undefined, // Future: support image uploads
+        },
+      }).catch((err) => {
+        console.error("Failed to emit message.send:", err);
+        throw err;
+      });
+
+      // Note: Don't set sending=false here - wait for message.queued or message.processing event
     } catch (err) {
       const message = err instanceof Error
         ? err.message
