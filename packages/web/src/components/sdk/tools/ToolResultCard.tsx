@@ -7,6 +7,7 @@ import type { ToolResultCardProps } from './tool-types.ts';
 import { ToolIcon } from './ToolIcon.tsx';
 import { ToolSummary } from './ToolSummary.tsx';
 import { DiffViewer } from './DiffViewer.tsx';
+import { CodeViewer } from './CodeViewer.tsx';
 import {
   getToolDisplayName,
   getToolColors,
@@ -113,6 +114,29 @@ export function ToolResultCard({
               newText={input.new_string}
               filePath={input.file_path}
             />
+          ) : /* Special handling for Read tool - show syntax-highlighted code */
+          toolName === 'Read' && output && typeof output === 'string' ? (
+            <CodeViewer
+              code={output}
+              filePath={input?.file_path}
+              showLineNumbers={true}
+              showHeader={true}
+            />
+          ) : /* Special handling for Write tool - show syntax-highlighted code */
+          toolName === 'Write' && input?.content && typeof input.content === 'string' ? (
+            <div>
+              {variant === 'detailed' && (
+                <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
+                  File Content:
+                </div>
+              )}
+              <CodeViewer
+                code={input.content}
+                filePath={input.file_path}
+                showLineNumbers={true}
+                showHeader={true}
+              />
+            </div>
           ) : /* Special handling for Thinking tool - just show the content */
           toolName === 'Thinking' ? (
             <div>
