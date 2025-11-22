@@ -1,7 +1,7 @@
 import type { Session } from "@liuboer/shared";
 import { Database } from "../storage/database";
 import { AgentSession } from "./agent-session";
-import { EventBus } from "./event-bus";
+import { EventBusManager } from "./event-bus-manager";
 import type { AuthManager } from "./auth-manager";
 
 export class SessionManager {
@@ -9,7 +9,7 @@ export class SessionManager {
 
   constructor(
     private db: Database,
-    private eventBus: EventBus,
+    private eventBusManager: EventBusManager,
     private authManager: AuthManager,
     private config: {
       defaultModel: string;
@@ -26,10 +26,12 @@ export class SessionManager {
   }): Promise<string> {
     const sessionId = crypto.randomUUID();
 
+    const sessionWorkspacePath = params.workspacePath || this.config.workspaceRoot;
+
     const session: Session = {
       id: sessionId,
       title: `Session ${new Date().toLocaleString()}`,
-      workspacePath: params.workspacePath || this.config.workspaceRoot,
+      workspacePath: sessionWorkspacePath,
       createdAt: new Date().toISOString(),
       lastActiveAt: new Date().toISOString(),
       status: "active",
@@ -48,18 +50,21 @@ export class SessionManager {
     // Save to database
     this.db.createSession(session);
 
+    // Get or create EventBus for this session
+    const eventBus = this.eventBusManager.getOrCreateEventBus(sessionId);
+
     // Create agent session with EventBus and auth function
     const agentSession = new AgentSession(
       session,
       this.db,
-      this.eventBus,
+      eventBus,
       () => this.authManager.getCurrentApiKey(),
     );
 
     this.sessions.set(sessionId, agentSession);
 
     // Emit session created event
-    await this.eventBus.emit({
+    await eventBus.emit({
       id: crypto.randomUUID(),
       type: "session.created",
       sessionId,
@@ -80,11 +85,14 @@ export class SessionManager {
     const session = this.db.getSession(sessionId);
     if (!session) return null;
 
+    // Get or create EventBus for this session
+    const eventBus = this.eventBusManager.getOrCreateEventBus(sessionId);
+
     // Create agent session with EventBus and auth function
     const agentSession = new AgentSession(
       session,
       this.db,
-      this.eventBus,
+      eventBus,
       () => this.authManager.getCurrentApiKey(),
     );
     this.sessions.set(sessionId, agentSession);
@@ -107,20 +115,28 @@ export class SessionManager {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
+    // Get EventBus before cleanup
+    const eventBus = this.eventBusManager.getEventBus(sessionId);
+
+    // Emit session ended event
+    if (eventBus) {
+      await eventBus.emit({
+        id: crypto.randomUUID(),
+        type: "session.ended",
+        sessionId,
+        timestamp: new Date().toISOString(),
+        data: { reason: "deleted" },
+      });
+    }
+
     // Remove from memory
     this.sessions.delete(sessionId);
 
     // Remove from database
     this.db.deleteSession(sessionId);
 
-    // Emit session ended event
-    await this.eventBus.emit({
-      id: crypto.randomUUID(),
-      type: "session.ended",
-      sessionId,
-      timestamp: new Date().toISOString(),
-      data: { reason: "deleted" },
-    });
+    // Cleanup EventBus
+    await this.eventBusManager.removeEventBus(sessionId);
   }
 
 

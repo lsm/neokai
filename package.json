@@ -1,4 +1,7 @@
 {
+	"workspaces": [
+		"packages/*"
+	],
 	"devDependencies": {
 		"shadcn": "^3.5.0"
 	}

@@ -1,7 +1,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { Message, Session, ToolCall } from "@liuboer/shared";
+import { EventBus } from "@liuboer/shared";
 import { Database } from "../storage/database";
-import { EventBus } from "./event-bus";
 
 /**
  * Agent Session - wraps a single session with Claude using Claude Agent SDK

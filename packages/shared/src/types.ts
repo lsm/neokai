@@ -94,16 +94,25 @@ export interface Event {
 }
 
 export type EventType =
+  // Server → Client events
   | "sdk.message"
   | "context.updated"
   | "context.compacted"
   | "tools.loaded"
   | "tools.unloaded"
-  | "error"
   | "session.created"
   | "session.updated"
   | "session.deleted"
-  | "session.ended";
+  | "session.ended"
+  | "error"
+
+  // Client → Server events
+  | "client.typing"        // User is typing
+  | "client.presence"      // Presence update
+  | "client.cursor"        // Cursor position
+  | "client.action"        // Generic client action
+  | "client.interrupt"     // Cancel/interrupt operation
+  | "client.ack";          // Acknowledge received event
 
 // File system types
 export interface FileInfo {

@@ -3,7 +3,7 @@ import type { Event, Session } from "@liuboer/shared";
 import type { SDKMessage } from "@liuboer/shared/sdk/sdk.d.ts";
 import { isSDKStreamEvent } from "@liuboer/shared/sdk/type-guards";
 import { apiClient } from "../lib/api-client.ts";
-import { wsClient } from "../lib/websocket-client.ts";
+import { eventBusClient } from "../lib/event-bus-client.ts";
 import { toast } from "../lib/toast.ts";
 import { currentSessionIdSignal, sessionsSignal, sidebarOpenSignal } from "../lib/signals.ts";
 import MessageInput from "../components/MessageInput.tsx";
@@ -48,7 +48,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     const cleanupHandlers = connectWebSocket();
 
     return () => {
-      wsClient.disconnect();
+      eventBusClient.disconnect();
       cleanupHandlers();
     };
   }, [sessionId]);
@@ -112,11 +112,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   };
 
   const connectWebSocket = () => {
-    wsClient.connect(sessionId);
+    eventBusClient.connect(sessionId);
     setIsWsConnected(true);
 
     // SDK message events - PRIMARY EVENT HANDLER
-    const unsubSDKMessage = wsClient.on("sdk.message", (event: Event) => {
+    const unsubSDKMessage = eventBusClient.on("sdk.message", (event: Event) => {
       const sdkMessage = event.data as SDKMessage;
       console.log("Received SDK message:", sdkMessage.type, sdkMessage);
 
@@ -157,7 +157,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     });
 
     // Context events
-    const unsubContextUpdated = wsClient.on("context.updated", (event: Event) => {
+    const unsubContextUpdated = eventBusClient.on("context.updated", (event: Event) => {
       const data = event.data as { tokenUsage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }; costUSD: number; durationMs: number };
       console.log(`Context updated:`, data);
 
@@ -171,13 +171,13 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       });
     });
 
-    const unsubContextCompacted = wsClient.on("context.compacted", (event: Event) => {
+    const unsubContextCompacted = eventBusClient.on("context.compacted", (event: Event) => {
       const { before, after } = event.data as { before: number; after: number };
       toast.info(`Context compacted: ${before} → ${after} tokens`);
     });
 
     // Error handling
-    const unsubError = wsClient.on("error", (event: Event) => {
+    const unsubError = eventBusClient.on("error", (event: Event) => {
       const error = (event.data as { error: string }).error;
       setError(error);
       toast.error(error);
@@ -188,7 +188,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     });
 
     // Connection status tracking with reconciliation
-    const unsubConnect = wsClient.on("connect", async () => {
+    const unsubConnect = eventBusClient.on("connect", async () => {
       setIsWsConnected(true);
 
       // Reconcile missed messages on reconnect
@@ -227,7 +227,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       }
     });
 
-    const unsubDisconnect = wsClient.on("disconnect", () => {
+    const unsubDisconnect = eventBusClient.on("disconnect", () => {
       setIsWsConnected(false);
     });
 

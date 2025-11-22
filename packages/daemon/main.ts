@@ -3,7 +3,7 @@ import { cors } from "@elysiajs/cors";
 import { getConfig } from "./src/config";
 import { Database } from "./src/storage/database";
 import { SessionManager } from "./src/lib/session-manager";
-import { EventBus } from "./src/lib/event-bus";
+import { EventBusManager } from "./src/lib/event-bus-manager";
 import { AuthManager } from "./src/lib/auth-manager";
 import { createSessionsRouter } from "./src/routes/sessions";
 import { createSystemRouter } from "./src/routes/system";
@@ -18,9 +18,9 @@ const db = new Database(config.dbPath);
 await db.initialize();
 console.log(`✅ Database initialized at ${config.dbPath}`);
 
-// Initialize event bus
-const eventBus = new EventBus();
-console.log("✅ Event bus initialized");
+// Initialize event bus manager
+const eventBusManager = new EventBusManager();
+console.log("✅ Event bus manager initialized");
 
 // Initialize authentication manager
 const authManager = new AuthManager(db, config);
@@ -45,7 +45,7 @@ if (authStatus.isAuthenticated) {
 }
 
 // Initialize session manager
-const sessionManager = new SessionManager(db, eventBus, authManager, {
+const sessionManager = new SessionManager(db, eventBusManager, authManager, {
   defaultModel: config.defaultModel,
   maxTokens: config.maxTokens,
   temperature: config.temperature,
@@ -88,7 +88,7 @@ createAuthRouter(app, authManager);
 createSessionsRouter(app, sessionManager);
 createSystemRouter(app, sessionManager, config, authManager);
 createFilesRouter(app, sessionManager);
-setupWebSocket(app, eventBus, sessionManager);
+setupWebSocket(app, eventBusManager, sessionManager);
 
 // Start server
 console.log(`\n🚀 Liuboer Daemon starting...`);
@@ -106,9 +106,9 @@ console.log(`📡 WebSocket: ws://${app.server?.hostname}:${app.server?.port}/ws
 console.log(`\n✨ Ready to accept connections!\n`);
 
 // Cleanup on exit
-process.on("SIGINT", () => {
+process.on("SIGINT", async () => {
   console.log("\n👋 Shutting down...");
-  eventBus.clear();
+  await eventBusManager.closeAll();
   db.close();
   app.stop();
   process.exit(0);
