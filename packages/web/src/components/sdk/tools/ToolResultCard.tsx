@@ -6,6 +6,7 @@ import { useState } from 'preact/hooks';
 import type { ToolResultCardProps } from './tool-types.ts';
 import { ToolIcon } from './ToolIcon.tsx';
 import { ToolSummary } from './ToolSummary.tsx';
+import { DiffViewer } from './DiffViewer.tsx';
 import {
   getToolDisplayName,
   getToolColors,
@@ -33,14 +34,7 @@ export function ToolResultCard({
   const displayName = getToolDisplayName(toolName);
   const shouldExpand = defaultExpanded !== undefined ? defaultExpanded : shouldExpandByDefault(toolName);
   const [isExpanded, setIsExpanded] = useState(shouldExpand);
-
-  // Check for custom renderer
-  if (hasCustomRenderer(toolName)) {
-    const CustomRenderer = getCustomRenderer(toolName);
-    if (CustomRenderer) {
-      return <CustomRenderer toolName={toolName} input={input} output={output} isError={isError} variant={variant} />;
-    }
-  }
+  const customRenderer = hasCustomRenderer(toolName) ? getCustomRenderer(toolName) : null;
 
   // Compact variant - minimal display
   if (variant === 'compact') {
@@ -109,8 +103,18 @@ export function ToolResultCard({
       {/* Expanded content - input and output details */}
       {isExpanded && (
         <div class={cn('p-3 border-t bg-white dark:bg-gray-900 space-y-3', colors.border)}>
-          {/* Special handling for Thinking tool - just show the content */}
-          {toolName === 'Thinking' ? (
+          {/* Custom renderer takes priority */}
+          {customRenderer ? (
+            customRenderer({ toolName, input, output, isError, variant })
+          ) : /* Special handling for Edit tool - show diff view */
+          toolName === 'Edit' && input?.old_string && input?.new_string ? (
+            <DiffViewer
+              oldText={input.old_string}
+              newText={input.new_string}
+              filePath={input.file_path}
+            />
+          ) : /* Special handling for Thinking tool - just show the content */
+          toolName === 'Thinking' ? (
             <div>
               {variant === 'detailed' && (
                 <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">

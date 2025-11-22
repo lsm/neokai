@@ -24,6 +24,7 @@ export { ToolSummary } from './ToolSummary.tsx';
 export { ToolProgressCard } from './ToolProgressCard.tsx';
 export { ToolResultCard } from './ToolResultCard.tsx';
 export { AuthStatusCard } from './AuthStatusCard.tsx';
+export { DiffViewer } from './DiffViewer.tsx';
 
 // Registry
 export {
