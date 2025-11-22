@@ -84,22 +84,34 @@ export function CodeViewer({
       codeRef.current.removeAttribute('data-highlighted');
 
       // Apply syntax highlighting
+      let highlightedCode: string;
       if (detectedLanguage) {
         try {
           const highlighted = hljs.highlight(code, { language: detectedLanguage });
-          codeRef.current.innerHTML = highlighted.value;
+          highlightedCode = highlighted.value;
         } catch (e) {
           // If language detection fails, try auto-detect
           const highlighted = hljs.highlightAuto(code);
-          codeRef.current.innerHTML = highlighted.value;
+          highlightedCode = highlighted.value;
         }
       } else {
         // Auto-detect language
         const highlighted = hljs.highlightAuto(code);
-        codeRef.current.innerHTML = highlighted.value;
+        highlightedCode = highlighted.value;
+      }
+
+      // Wrap lines for line numbering if enabled
+      if (showLineNumbers) {
+        const lines = highlightedCode.split('\n');
+        const wrappedLines = lines.map((line) => {
+          return `<div class="code-line"><span class="code-line-content">${line || ' '}</span></div>`;
+        }).join('');
+        codeRef.current.innerHTML = `<div class="code-with-lines">${wrappedLines}</div>`;
+      } else {
+        codeRef.current.innerHTML = highlightedCode;
       }
     }
-  }, [code, detectedLanguage]);
+  }, [code, detectedLanguage, showLineNumbers]);
 
   const lines = code.split('\n');
   const lineCount = lines.length;
@@ -123,7 +135,7 @@ export function CodeViewer({
         <pre class="!m-0 !p-0 overflow-auto">
           <code
             ref={codeRef}
-            class={cn('block p-3 text-xs font-mono', showLineNumbers && 'line-numbers')}
+            class="block text-xs font-mono"
             style={{ whiteSpace: 'pre' }}
           />
         </pre>

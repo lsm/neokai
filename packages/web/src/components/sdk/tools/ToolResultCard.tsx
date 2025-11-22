@@ -1,5 +1,5 @@
 /**
- * ToolResultCard Component - Displays completed tool execution results
+ * ToolResultCard Component - Displays completed tool execution results with syntax highlighting
  */
 
 import { useState } from 'preact/hooks';
@@ -17,6 +17,21 @@ import {
   shouldExpandByDefault,
 } from './tool-utils.ts';
 import { cn } from '../../../lib/utils.ts';
+
+/**
+ * Strip line numbers from Read tool output
+ * Read tool output format: "   1→content\n   2→content"
+ */
+function stripLineNumbers(content: string): string {
+  return content
+    .split('\n')
+    .map(line => {
+      // Match pattern: optional spaces, digits, →, then content
+      const match = line.match(/^\s*\d+→(.*)$/);
+      return match ? match[1] : line;
+    })
+    .join('\n');
+}
 
 /**
  * ToolResultCard Component
@@ -115,12 +130,13 @@ export function ToolResultCard({
               filePath={input.file_path}
             />
           ) : /* Special handling for Read tool - show syntax-highlighted code */
-          toolName === 'Read' && output && typeof output === 'string' ? (
+          toolName === 'Read' && output && (typeof output === 'string' || (typeof output === 'object' && 'content' in output && typeof output.content === 'string')) ? (
             <CodeViewer
-              code={output}
+              code={stripLineNumbers(typeof output === 'string' ? output : output.content)}
               filePath={input?.file_path}
               showLineNumbers={true}
               showHeader={true}
+              maxHeight="none"
             />
           ) : /* Special handling for Write tool - show syntax-highlighted code */
           toolName === 'Write' && input?.content && typeof input.content === 'string' ? (

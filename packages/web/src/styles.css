@@ -5,7 +5,9 @@
   --color-dark-950: #0a0a0b;
   --color-dark-900: #111113;
   --color-dark-850: #18181b;
+  --color-dark-850-rgb: 24 24 27;
   --color-dark-800: #1f1f23;
+  --color-dark-800-rgb: 31 31 35;
   --color-dark-700: #2a2a30;
   --color-dark-600: #3a3a42;
 }
@@ -128,7 +130,7 @@ html {
 
 .prose pre {
   color: #e5e7eb;
-  background-color: rgb(var(--color-dark-850));
+  background-color: rgb(var(--color-dark-850-rgb));
   overflow-x: auto;
   font-weight: 400;
   font-size: 0.875em;
@@ -188,7 +190,7 @@ html {
 }
 
 .prose th {
-  background: rgb(var(--color-dark-850));
+  background: rgb(var(--color-dark-850-rgb));
   color: #f9fafb;
   font-weight: 600;
   text-align: left;
@@ -217,7 +219,7 @@ html {
 
 /* Syntax highlighting theme - GitHub Dark style */
 .hljs {
-  background: rgb(var(--color-dark-850));
+  background: rgb(var(--color-dark-850-rgb));
   color: #e6edf3;
 }
 
@@ -297,6 +299,39 @@ html {
 
 .hljs-strong {
   font-weight: bold;
+}
+
+/* Line numbers for code blocks */
+.code-with-lines {
+  counter-reset: line-number;
+  display: table;
+  width: 100%;
+}
+
+.code-with-lines .code-line {
+  display: table-row;
+  counter-increment: line-number;
+}
+
+.code-with-lines .code-line::before {
+  content: counter(line-number);
+  display: table-cell;
+  text-align: right;
+  padding-right: 1em;
+  padding-left: 0.5em;
+  user-select: none;
+  color: #6e7681;
+  border-right: 1px solid rgb(var(--color-dark-700));
+  background: rgb(var(--color-dark-800-rgb));
+  min-width: 3em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.code-with-lines .code-line-content {
+  display: table-cell;
+  padding-left: 1em;
+  padding-right: 0.5em;
+  white-space: pre;
 }
 
 /* Animations */
@@ -407,9 +442,9 @@ a:focus-visible {
 .skeleton {
   background: linear-gradient(
     90deg,
-    rgb(var(--color-dark-850)) 0px,
-    rgb(var(--color-dark-800)) 40px,
-    rgb(var(--color-dark-850)) 80px
+    rgb(var(--color-dark-850-rgb)) 0px,
+    rgb(var(--color-dark-800-rgb)) 40px,
+    rgb(var(--color-dark-850-rgb)) 80px
   );
   background-size: 1000px 100%;
   animation: shimmer 2s infinite;
