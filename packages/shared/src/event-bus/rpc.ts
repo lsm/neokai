@@ -10,6 +10,7 @@
 
 import type { Event, EventType } from "../types";
 import type { EventBus } from "./event-bus";
+import { generateUUID } from "../utils";
 
 /**
  * RPC Response data structure
@@ -98,7 +99,7 @@ export class RPCManager {
     data: unknown,
     options: RPCRequestOptions = {},
   ): Promise<T> {
-    const requestId = crypto.randomUUID();
+    const requestId = generateUUID();
     const sessionId = options.sessionId || this.defaultSessionId;
     const timeout = options.timeout || 10000;
 
@@ -157,7 +158,7 @@ export class RPCManager {
     };
 
     await this.eventBus.emit({
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       type: responseType,
       sessionId,
       timestamp: new Date().toISOString(),
