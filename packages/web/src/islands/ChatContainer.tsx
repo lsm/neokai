@@ -49,7 +49,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     const cleanupHandlers = connectWebSocket();
 
     return () => {
-      eventBusClient.disconnect();
+      // Don't disconnect here - let the next ChatContainer's useEffect handle session switching
+      // eventBusClient manages session switching internally in its connect() method
       cleanupHandlers();
     };
   }, [sessionId]);
@@ -124,7 +125,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
   const connectWebSocket = () => {
     eventBusClient.connect(sessionId);
-    setIsWsConnected(true);
+    // Don't set isWsConnected here - wait for actual connection event
 
     // SDK message events - PRIMARY EVENT HANDLER
     const unsubSDKMessage = eventBusClient.on("sdk.message", (event: Event) => {
@@ -222,7 +223,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
         setMessages((currentMessages) => {
           // Calculate the timestamp of the last message we have
           if (currentMessages.length > 0) {
-            lastTimestamp = Math.max(...currentMessages.map(m => m.timestamp));
+            lastTimestamp = Math.max(...currentMessages.map(m => (m as any).timestamp || 0));
           }
           return currentMessages; // Don't modify state here
         });
@@ -266,7 +267,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
                 const merged = [...prev, ...regularMessages];
                 // Deduplicate by UUID
                 const uniqueMap = new Map(merged.map(m => [m.uuid, m]));
-                return Array.from(uniqueMap.values()).sort((a, b) => a.timestamp - b.timestamp);
+                return Array.from(uniqueMap.values()).sort((a, b) => ((a as any).timestamp || 0) - ((b as any).timestamp || 0));
               });
             }
 
@@ -291,14 +292,14 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
     // Return cleanup function that unsubscribes all handlers
     return () => {
-      unsubSDKMessage();
-      unsubContextUpdated();
-      unsubContextCompacted();
-      unsubError();
-      unsubMessageQueued();
-      unsubMessageProcessing();
-      unsubConnect();
-      unsubDisconnect();
+      unsubSDKMessage?.();
+      unsubContextUpdated?.();
+      unsubContextCompacted?.();
+      unsubError?.();
+      unsubMessageQueued?.();
+      unsubMessageProcessing?.();
+      unsubConnect?.();
+      unsubDisconnect?.();
     };
   };
 
@@ -499,16 +500,16 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     if (msg.type === 'system' && msg.subtype === 'init') {
       // Find the most recent user message before this session init
       for (let j = i - 1; j >= 0; j--) {
-        if (messages[j].type === 'user') {
-          sessionInfoMap.set(messages[j].uuid, msg);
+        if (messages[j].type === 'user' && messages[j].uuid) {
+          sessionInfoMap.set(messages[j].uuid!, msg);
           break;
         }
       }
       // If no preceding user message, attach to the first user message after this session init
-      if (!sessionInfoMap.has(msg.uuid)) {
+      if (msg.uuid && !sessionInfoMap.has(msg.uuid)) {
         for (let j = i + 1; j < messages.length; j++) {
-          if (messages[j].type === 'user') {
-            sessionInfoMap.set(messages[j].uuid, msg);
+          if (messages[j].type === 'user' && messages[j].uuid) {
+            sessionInfoMap.set(messages[j].uuid!, msg);
             break;
           }
         }
@@ -594,7 +595,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
                 message={msg}
                 toolResultsMap={toolResultsMap}
                 toolInputsMap={toolInputsMap}
-                sessionInfo={sessionInfoMap.get(msg.uuid)}
+                sessionInfo={msg.uuid ? sessionInfoMap.get(msg.uuid) : undefined}
               />
             ))}
 
