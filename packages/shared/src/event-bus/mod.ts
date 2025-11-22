@@ -12,3 +12,6 @@ export type {
   TransportOptions,
 } from "./transport";
 export * from "./transports/mod";
+
+export { RPCManager } from "./rpc";
+export type { RPCResponse, RPCRequestOptions } from "./rpc";

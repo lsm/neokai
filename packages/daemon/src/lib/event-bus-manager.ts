@@ -2,10 +2,13 @@
  * Event Bus Manager for Daemon
  *
  * Manages EventBus instances for each session with WebSocket transport.
+ * Also maintains a special "global" EventBus for system-level operations.
  */
 
-import { EventBus } from "@liuboer/shared";
+import { EventBus, RPCManager } from "@liuboer/shared";
 import { WebSocketServerTransport } from "@liuboer/shared";
+
+const GLOBAL_SESSION_ID = "global";
 
 /**
  * Manager for session-scoped EventBus instances
@@ -13,6 +16,12 @@ import { WebSocketServerTransport } from "@liuboer/shared";
 export class EventBusManager {
   private eventBuses: Map<string, EventBus> = new Map();
   private transports: Map<string, WebSocketServerTransport> = new Map();
+  private rpcManagers: Map<string, RPCManager> = new Map();
+
+  constructor() {
+    // Initialize global EventBus on construction
+    this.getOrCreateEventBus(GLOBAL_SESSION_ID, false);
+  }
 
   /**
    * Get or create an EventBus for a session
@@ -29,14 +38,32 @@ export class EventBusManager {
       transport.initialize();
       eventBus.registerTransport(transport);
 
+      // Create RPC Manager for this session
+      const rpcManager = new RPCManager(eventBus, sessionId);
+
       // Store instances
       this.eventBuses.set(sessionId, eventBus);
       this.transports.set(sessionId, transport);
+      this.rpcManagers.set(sessionId, rpcManager);
 
       console.log(`EventBus created for session: ${sessionId}`);
     }
 
     return eventBus;
+  }
+
+  /**
+   * Get RPC Manager for a session
+   */
+  getRPCManager(sessionId: string): RPCManager | undefined {
+    return this.rpcManagers.get(sessionId);
+  }
+
+  /**
+   * Get global RPC Manager
+   */
+  getGlobalRPCManager(): RPCManager | undefined {
+    return this.rpcManagers.get(GLOBAL_SESSION_ID);
   }
 
   /**
@@ -57,8 +84,22 @@ export class EventBusManager {
    * Remove EventBus and cleanup
    */
   async removeEventBus(sessionId: string): Promise<void> {
+    // Don't allow removing global event bus
+    if (sessionId === GLOBAL_SESSION_ID) {
+      console.warn("Cannot remove global EventBus");
+      return;
+    }
+
     const eventBus = this.eventBuses.get(sessionId);
+    const rpcManager = this.rpcManagers.get(sessionId);
+
     if (eventBus) {
+      // Cleanup RPC Manager
+      if (rpcManager) {
+        rpcManager.cleanup();
+        this.rpcManagers.delete(sessionId);
+      }
+
       await eventBus.close();
       this.eventBuses.delete(sessionId);
       this.transports.delete(sessionId);

@@ -44,6 +44,23 @@ export interface MessageMetadata {
   duration?: number;
 }
 
+// Message content types for streaming input (supports images)
+export type MessageContent = TextContent | ImageContent;
+
+export interface TextContent {
+  type: "text";
+  text: string;
+}
+
+export interface ImageContent {
+  type: "image";
+  source: {
+    type: "base64";
+    media_type: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+    data: string; // base64 encoded
+  };
+}
+
 // Tool types
 export interface ToolCall {
   id: string;
@@ -94,7 +111,7 @@ export interface Event {
 }
 
 export type EventType =
-  // Server → Client events
+  // Server → Client events (broadcasts)
   | "sdk.message"
   | "context.updated"
   | "context.compacted"
@@ -104,15 +121,54 @@ export type EventType =
   | "session.updated"
   | "session.deleted"
   | "session.ended"
+  | "session.interrupted"
+  | "message.queued"
+  | "message.processing"
   | "error"
 
-  // Client → Server events
-  | "client.typing"        // User is typing
-  | "client.presence"      // Presence update
-  | "client.cursor"        // Cursor position
-  | "client.action"        // Generic client action
-  | "client.interrupt"     // Cancel/interrupt operation
-  | "client.ack";          // Acknowledge received event
+  // Client → Server request events
+  | "session.create.request"
+  | "session.list.request"
+  | "session.get.request"
+  | "session.update.request"
+  | "session.delete.request"
+  | "message.send"              // Already exists
+  | "message.list.request"
+  | "message.sdkMessages.request"
+  | "file.read.request"
+  | "file.list.request"
+  | "file.tree.request"
+  | "system.health.request"
+  | "system.config.request"
+  | "auth.status.request"
+
+  // Server → Client response events
+  | "session.create.response"
+  | "session.list.response"
+  | "session.get.response"
+  | "session.update.response"
+  | "session.delete.response"
+  | "message.list.response"
+  | "message.sdkMessages.response"
+  | "file.read.response"
+  | "file.list.response"
+  | "file.tree.response"
+  | "system.health.response"
+  | "system.config.response"
+  | "auth.status.response"
+
+  // Client presence/interaction events
+  | "message.cancel"
+  | "client.typing"
+  | "client.presence"
+  | "client.cursor"
+  | "client.action"
+  | "client.interrupt"
+  | "client.ack"
+
+  // WebSocket heartbeat events (internal)
+  | "ping"
+  | "pong";
 
 // File system types
 export interface FileInfo {

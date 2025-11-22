@@ -5,10 +5,7 @@ import { Database } from "./src/storage/database";
 import { SessionManager } from "./src/lib/session-manager";
 import { EventBusManager } from "./src/lib/event-bus-manager";
 import { AuthManager } from "./src/lib/auth-manager";
-import { createSessionsRouter } from "./src/routes/sessions";
-import { createSystemRouter } from "./src/routes/system";
-import { createFilesRouter } from "./src/routes/files";
-import { createAuthRouter } from "./src/routes/auth";
+import { WebSocketRPCRouter } from "./src/lib/websocket-rpc-router";
 import { setupWebSocket } from "./src/routes/websocket";
 
 const config = getConfig();
@@ -55,6 +52,17 @@ console.log("✅ Session manager initialized");
 console.log(`   Environment: ${config.nodeEnv}`);
 console.log(`   Workspace root: ${config.workspaceRoot}`);
 
+// Initialize WebSocket RPC Router
+const rpcRouter = new WebSocketRPCRouter(sessionManager, authManager, config);
+const globalRPCManager = eventBusManager.getGlobalRPCManager();
+if (globalRPCManager) {
+  rpcRouter.setupHandlers(globalRPCManager, "global");
+  console.log("✅ WebSocket RPC router initialized");
+} else {
+  console.error("❌ Failed to get global RPC manager");
+  process.exit(1);
+}
+
 // Create application
 const app = new Elysia()
   .use(cors({
@@ -74,20 +82,15 @@ const app = new Elysia()
     name: "Liuboer Daemon",
     version: "0.1.0",
     status: "running",
+    protocol: "WebSocket-only (RPC over EventBus)",
     endpoints: {
-      health: "/api/health",
-      config: "/api/config",
-      sessions: "/api/sessions",
-      files: "/api/sessions/:sessionId/files",
-      websocket: "/ws/:sessionId",
+      globalWebSocket: "/ws",
+      sessionWebSocket: "/ws/:sessionId",
     },
+    note: "All operations use WebSocket events with request/response pattern. REST API has been removed.",
   }));
 
-// Mount routers
-createAuthRouter(app, authManager);
-createSessionsRouter(app, sessionManager);
-createSystemRouter(app, sessionManager, config, authManager);
-createFilesRouter(app, sessionManager);
+// Mount WebSocket routes
 setupWebSocket(app, eventBusManager, sessionManager);
 
 // Start server
@@ -101,9 +104,9 @@ app.listen({
   port: config.port,
 });
 
-console.log(`\n📡 HTTP Server: http://${app.server?.hostname}:${app.server?.port}`);
-console.log(`📡 WebSocket: ws://${app.server?.hostname}:${app.server?.port}/ws/:sessionId`);
-console.log(`\n✨ Ready to accept connections!\n`);
+console.log(`\n📡 Global WebSocket: ws://${app.server?.hostname}:${app.server?.port}/ws`);
+console.log(`📡 Session WebSocket: ws://${app.server?.hostname}:${app.server?.port}/ws/:sessionId`);
+console.log(`\n✨ WebSocket-only mode! All REST endpoints removed.\n`);
 
 // Cleanup on exit
 process.on("SIGINT", async () => {

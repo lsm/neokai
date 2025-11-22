@@ -149,7 +149,8 @@ export class WebSocketServerTransport implements ITransport {
 
       // Emit to event handlers
       for (const handler of this.eventHandlers) {
-        handler(event).catch((error) => {
+        // Wrap in Promise.resolve to handle both sync and async handlers
+        Promise.resolve(handler(event)).catch((error) => {
           console.error("Error in event handler:", error);
         });
       }

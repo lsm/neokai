@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import type { AuthStatus, Session } from "@liuboer/shared";
-import { apiClient } from "../lib/api-client.ts";
+import { websocketApiClient as apiClient } from "../lib/websocket-api-client.ts";
 import { currentSessionIdSignal, sidebarOpenSignal, sessionsSignal } from "../lib/signals.ts";
 import { formatRelativeTime } from "../lib/utils.ts";
 import { toast } from "../lib/toast.ts";

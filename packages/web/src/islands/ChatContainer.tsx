@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { Event, Session } from "@liuboer/shared";
 import type { SDKMessage } from "@liuboer/shared/sdk/sdk.d.ts";
 import { isSDKStreamEvent } from "@liuboer/shared/sdk/type-guards";
-import { apiClient } from "../lib/api-client.ts";
+import { websocketApiClient as apiClient } from "../lib/websocket-api-client.ts";
 import { eventBusClient } from "../lib/event-bus-client.ts";
 import { toast } from "../lib/toast.ts";
 import { generateUUID } from "../lib/utils.ts";

@@ -1,19 +1,86 @@
 /**
  * WebSocket Routes - Real-time event streaming
  *
- * Provides WebSocket endpoint for clients to receive real-time updates.
- * REQUIRES valid sessionId in URL path.
+ * Provides WebSocket endpoints for:
+ * - /ws - Global connection for system operations (health, config, session CRUD)
+ * - /ws/:sessionId - Session-scoped connection for session-specific operations
  */
 
 import type { Elysia } from "elysia";
 import type { EventBusManager } from "../lib/event-bus-manager";
 import type { SessionManager } from "../lib/session-manager";
 
+const GLOBAL_SESSION_ID = "global";
+
 export function setupWebSocket(
   app: Elysia,
   eventBusManager: EventBusManager,
   sessionManager: SessionManager,
 ) {
+  // Global WebSocket for system-level operations
+  app.ws("/ws", {
+    open(ws) {
+      console.log("Global WebSocket connection established");
+
+      // Subscribe to global event bus
+      eventBusManager.subscribeWebSocket(GLOBAL_SESSION_ID, ws.raw);
+
+      // Send connection confirmation
+      ws.send(
+        JSON.stringify({
+          type: "connection.established",
+          sessionId: GLOBAL_SESSION_ID,
+          timestamp: new Date().toISOString(),
+          data: {
+            message: "Global WebSocket connection established",
+            connectionType: "global",
+          },
+        }),
+      );
+    },
+
+    message(ws, message) {
+      try {
+        const data = typeof message === "string" ? JSON.parse(message) : message;
+
+        if (data.type === "ping") {
+          ws.send(
+            JSON.stringify({
+              type: "pong",
+              timestamp: new Date().toISOString(),
+            }),
+          );
+        } else {
+          // Route through global event bus
+          const messageString = typeof message === "string" ? message : JSON.stringify(message);
+          eventBusManager.handleWebSocketMessage(GLOBAL_SESSION_ID, messageString);
+        }
+      } catch (error) {
+        console.error("Error processing global WebSocket message:", error);
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            timestamp: new Date().toISOString(),
+            data: {
+              error: "Invalid message format",
+            },
+          }),
+        );
+      }
+    },
+
+    close(ws) {
+      console.log("Global WebSocket disconnected");
+      eventBusManager.unsubscribeWebSocket(GLOBAL_SESSION_ID, ws.raw);
+    },
+
+    error(ws, error) {
+      console.error("Global WebSocket error:", error);
+      eventBusManager.unsubscribeWebSocket(GLOBAL_SESSION_ID, ws.raw);
+    },
+  });
+
+  // Session-scoped WebSocket (existing behavior)
   return app.ws("/ws/:sessionId", {
     open(ws) {
       const sessionId = ws.data.params.sessionId;
@@ -104,9 +171,11 @@ export function setupWebSocket(
           console.log(
             `Client subscribed to events: ${data.events?.join(", ") || "all"}`,
           );
-        } else if (typeof message === "string") {
-          // Handle client-emitted events through EventBus
-          eventBusManager.handleWebSocketMessage(sessionId, message);
+        } else {
+          // Handle all other client-emitted events through EventBus
+          // Convert to string if it's not already (Bun may auto-parse JSON)
+          const messageString = typeof message === "string" ? message : JSON.stringify(message);
+          eventBusManager.handleWebSocketMessage(sessionId, messageString);
         }
       } catch (error) {
         console.error("Error processing WebSocket message:", error);
