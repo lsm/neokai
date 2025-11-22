@@ -79,19 +79,6 @@ export class AgentSession {
       data: sdkUserMessage,
     });
 
-    // Emit message start event (legacy)
-    await this.eventBus.emit({
-      id: crypto.randomUUID(),
-      type: "message.start",
-      sessionId: this.session.id,
-      timestamp: new Date().toISOString(),
-      data: {
-        messageId,
-        role: "user",
-        content,
-      },
-    });
-
     try {
       // Verify authentication is configured
       // The environment variables are already set at daemon startup, no need to modify them
@@ -177,18 +164,6 @@ export class AgentSession {
           for (const block of apiMessage.content) {
             if (block.type === "text") {
               assistantContent += block.text;
-
-              // Emit content delta event
-              await this.eventBus.emit({
-                id: crypto.randomUUID(),
-                type: "message.content",
-                sessionId: this.session.id,
-                timestamp: new Date().toISOString(),
-                data: {
-                  messageId: assistantMessageId,
-                  delta: block.text,
-                },
-              });
             } else if (block.type === "tool_use") {
               // Tool use detected - use the tool's actual ID from the API
               const toolCall: ToolCall = {
@@ -200,15 +175,6 @@ export class AgentSession {
                 timestamp: new Date().toISOString(),
               };
               toolCalls.push(toolCall);
-
-              // Emit tool call event
-              await this.eventBus.emit({
-                id: crypto.randomUUID(),
-                type: "tool.call",
-                sessionId: this.session.id,
-                timestamp: new Date().toISOString(),
-                data: toolCall,
-              });
             }
           }
         } else if (message.type === "stream_event") {
@@ -219,18 +185,6 @@ export class AgentSession {
             if (event.delta.type === "text_delta") {
               const delta = event.delta.text;
               assistantContent += delta;
-
-              // Emit content delta event
-              await this.eventBus.emit({
-                id: crypto.randomUUID(),
-                type: "message.content",
-                sessionId: this.session.id,
-                timestamp: new Date().toISOString(),
-                data: {
-                  messageId: assistantMessageId,
-                  delta,
-                },
-              });
             }
           }
         } else if (message.type === "result") {
@@ -255,17 +209,7 @@ export class AgentSession {
           });
         } else if (message.type === "system" && message.subtype === "status") {
           // Status message (compacting, etc.)
-          if (message.status === "compacting") {
-            await this.eventBus.emit({
-              id: crypto.randomUUID(),
-              type: "agent.thinking",
-              sessionId: this.session.id,
-              timestamp: new Date().toISOString(),
-              data: {
-                thinking: true,
-              },
-            });
-          }
+          // No additional processing needed - SDK message already emitted
         }
       }
 
@@ -284,18 +228,6 @@ export class AgentSession {
       // Add to conversation history for SDK prompt building
       // Note: Already saved to sdk_messages table during stream processing
       this.conversationHistory.push(assistantMessage);
-
-      // Emit message complete event
-      await this.eventBus.emit({
-        id: crypto.randomUUID(),
-        type: "message.complete",
-        sessionId: this.session.id,
-        timestamp: new Date().toISOString(),
-        data: {
-          messageId: assistantMessageId,
-          message: assistantMessage,
-        },
-      });
 
       // Update session last active time
       this.session.lastActiveAt = new Date().toISOString();

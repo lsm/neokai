@@ -94,20 +94,15 @@ export interface Event {
 }
 
 export type EventType =
-  | "message.start"
-  | "message.content"
-  | "message.complete"
-  | "tool.call"
-  | "tool.result"
-  | "agent.thinking"
-  | "agent.subagent_spawned"
-  | "agent.subagent_completed"
+  | "sdk.message"
   | "context.updated"
   | "context.compacted"
   | "tools.loaded"
   | "tools.unloaded"
   | "error"
   | "session.created"
+  | "session.updated"
+  | "session.deleted"
   | "session.ended";
 
 // File system types

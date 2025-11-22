@@ -5,19 +5,16 @@
  */
 
 export type EventType =
-  | "message.start"
-  | "message.content"
-  | "message.complete"
-  | "tool.call"
-  | "tool.result"
-  | "agent.thinking"
+  | "sdk.message" // Full SDK message event
   | "context.updated"
+  | "context.compacted"
   | "tools.loaded"
   | "tools.unloaded"
   | "session.created"
+  | "session.updated"
+  | "session.deleted"
   | "session.ended"
-  | "error"
-  | "sdk.message"; // Full SDK message event
+  | "error";
 
 export interface Event {
   id?: string;
