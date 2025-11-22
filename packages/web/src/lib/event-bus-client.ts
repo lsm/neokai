@@ -91,7 +91,13 @@ class EventBusClient {
   /**
    * Disconnect from current session
    */
-  async disconnect(): Promise<void> {
+  async disconnect(force = false): Promise<void> {
+    // Don't disconnect if we're just switching sessions and connect() will handle it
+    if (!force && this.currentSessionId) {
+      console.log(`[EventBusClient] Skipping disconnect - session switch will be handled by connect()`);
+      return;
+    }
+
     if (this.eventBus) {
       await this.eventBus.close();
       this.eventBus = null;
