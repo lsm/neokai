@@ -1,0 +1,151 @@
+/**
+ * ToolResultCard Component - Displays completed tool execution results
+ */
+
+import { useState } from 'preact/hooks';
+import type { ToolResultCardProps } from './tool-types.ts';
+import { ToolIcon } from './ToolIcon.tsx';
+import { ToolSummary } from './ToolSummary.tsx';
+import {
+  getToolDisplayName,
+  getToolColors,
+  getOutputDisplayText,
+  hasCustomRenderer,
+  getCustomRenderer,
+  shouldExpandByDefault,
+} from './tool-utils.ts';
+import { cn } from '../../../lib/utils.ts';
+
+/**
+ * ToolResultCard Component
+ */
+export function ToolResultCard({
+  toolName,
+  toolId,
+  input,
+  output,
+  isError = false,
+  variant = 'default',
+  defaultExpanded,
+  className,
+}: ToolResultCardProps) {
+  const colors = getToolColors(toolName);
+  const displayName = getToolDisplayName(toolName);
+  const shouldExpand = defaultExpanded !== undefined ? defaultExpanded : shouldExpandByDefault(toolName);
+  const [isExpanded, setIsExpanded] = useState(shouldExpand);
+
+  // Check for custom renderer
+  if (hasCustomRenderer(toolName)) {
+    const CustomRenderer = getCustomRenderer(toolName);
+    if (CustomRenderer) {
+      return <CustomRenderer toolName={toolName} input={input} output={output} isError={isError} variant={variant} />;
+    }
+  }
+
+  // Compact variant - minimal display
+  if (variant === 'compact') {
+    return (
+      <div class={cn('flex items-center gap-2 py-1 px-2 rounded border', colors.bg, colors.border, className)}>
+        <ToolIcon toolName={toolName} size="sm" />
+        <span class={cn('text-xs font-medium truncate', colors.text)}>{displayName}</span>
+        {isError && (
+          <svg class="w-3 h-3 text-red-500 ml-auto flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        )}
+      </div>
+    );
+  }
+
+  // Inline variant - for text flow
+  if (variant === 'inline') {
+    return (
+      <span class={cn('inline-flex items-center gap-1.5 px-2 py-0.5 rounded', colors.bg, className)}>
+        <ToolIcon toolName={toolName} size="xs" />
+        <span class={cn('text-xs font-medium', colors.text)}>{displayName}</span>
+        {isError && <span class="text-xs text-red-500">✗</span>}
+      </span>
+    );
+  }
+
+  // Default & detailed variants - full display with expand/collapse
+  return (
+    <div class={cn('border rounded-lg overflow-hidden', colors.bg, colors.border, className)}>
+      {/* Header - clickable to expand/collapse */}
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        class={cn(
+          'w-full flex items-center justify-between p-3 transition-colors',
+          'hover:bg-opacity-80 dark:hover:bg-opacity-80'
+        )}
+      >
+        <div class="flex items-center gap-2 min-w-0 flex-1">
+          <ToolIcon toolName={toolName} size="md" />
+          <span class={cn('font-semibold text-sm flex-shrink-0', colors.text)}>
+            {displayName}
+          </span>
+          <span class={cn('text-sm font-mono truncate', colors.lightText)}>
+            <ToolSummary toolName={toolName} input={input} maxLength={60} />
+          </span>
+        </div>
+
+        <div class="flex items-center gap-2 flex-shrink-0">
+          {isError && (
+            <svg class="w-4 h-4 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          )}
+          <svg
+            class={cn('w-5 h-5 transition-transform', colors.iconColor, isExpanded ? 'rotate-180' : '')}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
+      </button>
+
+      {/* Expanded content - input and output details */}
+      {isExpanded && (
+        <div class={cn('p-3 border-t bg-white dark:bg-gray-900 space-y-3', colors.border)}>
+          {/* Tool ID (only in detailed variant) */}
+          {variant === 'detailed' && (
+            <div>
+              <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">Tool ID:</div>
+              <div class="text-xs font-mono text-gray-700 dark:text-gray-300 break-all">{toolId}</div>
+            </div>
+          )}
+
+          {/* Input */}
+          <div>
+            <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">Input:</div>
+            <pre class="text-xs bg-gray-50 dark:bg-gray-800 p-3 rounded overflow-x-auto border border-gray-200 dark:border-gray-700">
+              {JSON.stringify(input, null, 2)}
+            </pre>
+          </div>
+
+          {/* Output/Result */}
+          {output !== undefined && (
+            <div>
+              <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
+                Output:
+                {isError && (
+                  <span class="ml-2 text-red-600 dark:text-red-400">(Error)</span>
+                )}
+              </div>
+              <pre class={cn(
+                'text-xs p-3 rounded overflow-x-auto border',
+                isError
+                  ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-900 dark:text-red-100'
+                  : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100'
+              )}>
+                {getOutputDisplayText(output)}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

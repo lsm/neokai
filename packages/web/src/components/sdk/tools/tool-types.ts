@@ -1,0 +1,136 @@
+/**
+ * Type definitions for tool rendering system
+ */
+
+/**
+ * Display variant for tool components
+ */
+export type ToolCardVariant =
+  | 'compact'      // Minimal, single line (best for mobile)
+  | 'default'      // Standard display
+  | 'detailed'     // Full information with all metadata
+  | 'inline';      // Inline with text flow
+
+/**
+ * Size variants for tool icons
+ */
+export type ToolIconSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+
+/**
+ * Tool category for grouping and styling
+ */
+export type ToolCategory =
+  | 'file'         // File operations (Read, Write, Edit, NotebookEdit)
+  | 'search'       // Search operations (Glob, Grep)
+  | 'terminal'     // Terminal operations (Bash, BashOutput, KillShell)
+  | 'agent'        // Agent/Task operations
+  | 'web'          // Web operations (WebFetch, WebSearch)
+  | 'todo'         // Todo operations
+  | 'mcp'          // MCP operations
+  | 'system'       // System operations (ExitPlanMode, TimeMachine)
+  | 'unknown';     // Unknown tool type
+
+/**
+ * Tool metadata configuration
+ */
+export interface ToolConfig {
+  /** Display name for the tool */
+  displayName?: string;
+
+  /** Tool category for styling and grouping */
+  category: ToolCategory;
+
+  /** Custom icon component (optional) */
+  icon?: () => JSX.Element;
+
+  /** Custom summary extractor function */
+  summaryExtractor?: (input: any) => string | null;
+
+  /** Custom full renderer component (optional) */
+  customRenderer?: (props: ToolRendererProps) => JSX.Element;
+
+  /** Color theme override */
+  colors?: {
+    bg: string;
+    text: string;
+    border: string;
+    iconColor: string;
+  };
+
+  /** Whether this tool typically has long output */
+  hasLongOutput?: boolean;
+
+  /** Default expanded state for result cards */
+  defaultExpanded?: boolean;
+}
+
+/**
+ * Props for custom tool renderers
+ */
+export interface ToolRendererProps {
+  toolName: string;
+  input: any;
+  output?: any;
+  isError?: boolean;
+  variant?: ToolCardVariant;
+}
+
+/**
+ * Tool icon props
+ */
+export interface ToolIconProps {
+  toolName: string;
+  size?: ToolIconSize;
+  className?: string;
+  animated?: boolean;
+  category?: ToolCategory;
+}
+
+/**
+ * Tool summary props
+ */
+export interface ToolSummaryProps {
+  toolName: string;
+  input: any;
+  maxLength?: number;
+  showTooltip?: boolean;
+  className?: string;
+}
+
+/**
+ * Tool progress card props
+ */
+export interface ToolProgressCardProps {
+  toolName: string;
+  toolInput?: any;
+  elapsedTime: number;
+  toolUseId: string;
+  parentToolUseId?: string;
+  variant?: ToolCardVariant;
+  className?: string;
+}
+
+/**
+ * Tool result card props
+ */
+export interface ToolResultCardProps {
+  toolName: string;
+  toolId: string;
+  input: any;
+  output?: any;
+  isError?: boolean;
+  variant?: ToolCardVariant;
+  defaultExpanded?: boolean;
+  className?: string;
+}
+
+/**
+ * Auth status card props
+ */
+export interface AuthStatusCardProps {
+  isAuthenticating: boolean;
+  output?: string[];
+  error?: string;
+  variant?: ToolCardVariant;
+  className?: string;
+}

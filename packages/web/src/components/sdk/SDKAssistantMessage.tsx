@@ -18,6 +18,7 @@ import { toast } from "../../lib/toast.ts";
 import { useState } from "preact/hooks";
 import { messageSpacing, messageColors, borderRadius } from "../../lib/design-tokens.ts";
 import { cn } from "../../lib/utils.ts";
+import { ToolResultCard } from "./tools/index.ts";
 
 type AssistantMessage = Extract<SDKMessage, { type: "assistant" }>;
 
@@ -242,176 +243,38 @@ function getToolIcon(toolName: string) {
 
 /**
  * Tool Use Block Component
- * Shows tool calls with expandable input/output details
+ * Now uses the new ToolResultCard component
  */
 function ToolUseBlock({ block, toolResult }: { block: Extract<ReturnType<typeof isToolUseBlock> extends true ? any : never, { type: "tool_use" }>, toolResult?: any }) {
-  const [isExpanded, setIsExpanded] = useState(false);
-
-  // Get a readable summary of the tool input
-  const getToolSummary = (): string => {
-    // For Write tool, show the file path
-    if (block.name === 'Write' && block.input && typeof block.input === 'object') {
-      const input = block.input as any;
-      if (input.file_path) {
-        const parts = input.file_path.split('/');
-        return parts[parts.length - 1] || input.file_path;
-      }
-    }
-
-    // For Edit tool, show the file path
-    if (block.name === 'Edit' && block.input && typeof block.input === 'object') {
-      const input = block.input as any;
-      if (input.file_path) {
-        const parts = input.file_path.split('/');
-        return parts[parts.length - 1] || input.file_path;
-      }
-    }
-
-    // For Read tool, show the file path
-    if (block.name === 'Read' && block.input && typeof block.input === 'object') {
-      const input = block.input as any;
-      if (input.file_path) {
-        const parts = input.file_path.split('/');
-        return parts[parts.length - 1] || input.file_path;
-      }
-    }
-
-    // For Glob tool, show the pattern
-    if (block.name === 'Glob' && block.input && typeof block.input === 'object') {
-      const input = block.input as any;
-      if (input.pattern) {
-        return input.pattern.length > 50
-          ? input.pattern.slice(0, 50) + '...'
-          : input.pattern;
-      }
-    }
-
-    // For Grep tool, show the pattern
-    if (block.name === 'Grep' && block.input && typeof block.input === 'object') {
-      const input = block.input as any;
-      if (input.pattern) {
-        return input.pattern.length > 50
-          ? input.pattern.slice(0, 50) + '...'
-          : input.pattern;
-      }
-    }
-
-    // For Bash tool, show the command
-    if (block.name === 'Bash' && block.input && typeof block.input === 'object') {
-      const input = block.input as any;
-      if (input.command) {
-        return input.command.length > 50
-          ? input.command.slice(0, 50) + '...'
-          : input.command;
-      }
-    }
-
-    // For Task/Agent tool, show the description
-    if ((block.name === 'Task' || block.name === 'Agent') && block.input && typeof block.input === 'object') {
-      const input = block.input as any;
-      if (input.description) {
-        return input.description;
-      }
-    }
-
-    // For WebFetch tool, show the URL
-    if (block.name === 'WebFetch' && block.input && typeof block.input === 'object') {
-      const input = block.input as any;
-      if (input.url) {
-        return input.url.length > 50
-          ? input.url.slice(0, 50) + '...'
-          : input.url;
-      }
-    }
-
-    // For WebSearch tool, show the query
-    if (block.name === 'WebSearch' && block.input && typeof block.input === 'object') {
-      const input = block.input as any;
-      if (input.query) {
-        return input.query.length > 50
-          ? input.query.slice(0, 50) + '...'
-          : input.query;
-      }
-    }
-
-    // For NotebookEdit tool, show the notebook path
-    if (block.name === 'NotebookEdit' && block.input && typeof block.input === 'object') {
-      const input = block.input as any;
-      if (input.notebook_path) {
-        const parts = input.notebook_path.split('/');
-        return parts[parts.length - 1] || input.notebook_path;
-      }
-    }
-
-    // For other tools, show tool ID
-    return block.id.slice(0, 12) + '...';
-  };
-
   return (
-    <div class="border border-blue-200 dark:border-blue-800 rounded-lg overflow-hidden bg-blue-50 dark:bg-blue-900/10">
-      {/* Header - clickable to expand/collapse */}
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        class="w-full flex items-center justify-between p-3 hover:bg-blue-100 dark:hover:bg-blue-900/20 transition-colors"
-      >
-        <div class="flex items-center gap-2 min-w-0 flex-1">
-          {getToolIcon(block.name)}
-          <span class="font-semibold text-sm text-blue-900 dark:text-blue-100 flex-shrink-0">
-            {block.name}
-          </span>
-          <span class="text-sm text-blue-700 dark:text-blue-300 font-mono truncate" title={getToolSummary()}>
-            {getToolSummary()}
-          </span>
-        </div>
-        <svg
-          class={`w-5 h-5 text-blue-600 dark:text-blue-400 transition-transform flex-shrink-0 ${isExpanded ? 'rotate-180' : ''}`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
-
-      {/* Expanded content - input and output details */}
-      {isExpanded && (
-        <div class="p-3 border-t border-blue-200 dark:border-blue-800 bg-white dark:bg-gray-900 space-y-3">
-          {/* Tool ID */}
-          <div>
-            <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">Tool ID:</div>
-            <div class="text-xs font-mono text-gray-700 dark:text-gray-300 break-all">{block.id}</div>
-          </div>
-
-          {/* Input */}
-          <div>
-            <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">Input:</div>
-            <pre class="text-xs bg-gray-50 dark:bg-gray-800 p-3 rounded overflow-x-auto border border-gray-200 dark:border-gray-700">
-              {JSON.stringify(block.input, null, 2)}
-            </pre>
-          </div>
-
-          {/* Output/Result */}
-          {toolResult && (
-            <div>
-              <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
-                Output:
-                {toolResult.is_error && (
-                  <span class="ml-2 text-red-600 dark:text-red-400">(Error)</span>
-                )}
-              </div>
-              <pre class={`text-xs p-3 rounded overflow-x-auto border ${
-                toolResult.is_error
-                  ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-900 dark:text-red-100'
-                  : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100'
-              }`}>
-                {typeof toolResult.content === 'string'
-                  ? toolResult.content
-                  : JSON.stringify(toolResult.content, null, 2)}
-              </pre>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+    <ToolResultCard
+      toolName={block.name}
+      toolId={block.id}
+      input={block.input}
+      output={toolResult}
+      isError={toolResult?.is_error || false}
+      variant="default"
+    />
   );
+}
+
+// ============================================================================
+// LEGACY CODE BELOW - KEPT FOR REFERENCE, CAN BE REMOVED AFTER TESTING
+// ============================================================================
+
+/**
+ * @deprecated Legacy icon function - now handled by ToolIcon component
+ */
+function getToolIcon_LEGACY(toolName: string) {
+  // This function has been moved to ToolIcon component
+  // Can be removed after testing
+  return null;
+}
+
+/**
+ * @deprecated Legacy summary function - now handled by ToolSummary component
+ */
+function getToolSummary_LEGACY() {
+  // This function has been moved to tool-registry.ts as summaryExtractor functions
+  // Can be removed after testing
 }

@@ -21,6 +21,7 @@ import { SDKResultMessage } from "./SDKResultMessage.tsx";
 import { SDKSystemMessage } from "./SDKSystemMessage.tsx";
 import { SDKToolProgressMessage } from "./SDKToolProgressMessage.tsx";
 import { SDKUserMessage } from "./SDKUserMessage.tsx";
+import { AuthStatusCard } from "./tools/index.ts";
 
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 
@@ -69,21 +70,12 @@ export function SDKMessageRenderer({ message, toolResultsMap, toolInputsMap, ses
 
   if (isSDKAuthStatusMessage(message)) {
     return (
-      <div class="p-3 bg-blue-50 dark:bg-blue-900/20 rounded text-sm">
-        <div class="font-medium text-blue-900 dark:text-blue-100 mb-1">
-          {message.isAuthenticating ? "Authenticating..." : "Authentication Complete"}
-        </div>
-        {message.output && message.output.length > 0 && (
-          <div class="text-blue-700 dark:text-blue-300 text-xs whitespace-pre-wrap">
-            {message.output.join("\n")}
-          </div>
-        )}
-        {message.error && (
-          <div class="text-red-600 dark:text-red-400 text-xs mt-1">
-            Error: {message.error}
-          </div>
-        )}
-      </div>
+      <AuthStatusCard
+        isAuthenticating={message.isAuthenticating}
+        output={message.output}
+        error={message.error}
+        variant="default"
+      />
     );
   }
 
