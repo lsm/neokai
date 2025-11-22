@@ -60,9 +60,10 @@ export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
     });
   };
 
-  // Separate tool use blocks from text/thinking blocks
-  const textBlocks = apiMessage.content.filter(block => !isToolUseBlock(block));
+  // Separate blocks by type - tool use and thinking blocks get full width, text blocks are constrained
+  const textBlocks = apiMessage.content.filter(block => isTextBlock(block));
   const toolBlocks = apiMessage.content.filter(isToolUseBlock);
+  const thinkingBlocks = apiMessage.content.filter(isThinkingBlock);
 
   return (
     <div class="py-2 space-y-3">
@@ -72,48 +73,31 @@ export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
         return <ToolUseBlock key={`tool-${idx}`} block={block} toolResult={toolResult} />;
       })}
 
-      {/* Text and thinking blocks - constrained width */}
+      {/* Thinking blocks - treated as tool blocks for unified UI */}
+      {thinkingBlocks.map((block, idx) => (
+        <ToolResultCard
+          key={`thinking-${idx}`}
+          toolName="Thinking"
+          toolId={`thinking-${idx}`}
+          input={block.thinking}
+          output={null}
+          isError={false}
+          variant="default"
+        />
+      ))}
+
+      {/* Text blocks - constrained width */}
       {textBlocks.length > 0 && (
         <div class="max-w-[85%] md:max-w-[70%] w-auto">
           <div class={cn(messageColors.assistant.background, borderRadius.message.bubble, messageSpacing.assistant.bubble.combined, "space-y-3")}>
-            {textBlocks.map((block, idx) => {
-              // Text block - render as markdown
-              if (isTextBlock(block)) {
-                return (
-                  <div key={idx} class={messageColors.assistant.text}>
-                    <MarkdownRenderer
-                      content={block.text}
-                      class="dark:prose-invert max-w-none prose-pre:bg-gray-900 prose-pre:text-gray-100"
-                    />
-                  </div>
-                );
-              }
-
-              // Thinking block - collapsible
-              if (isThinkingBlock(block)) {
-                return (
-                  <Collapsible
-                    key={idx}
-                    trigger={
-                      <div class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer hover:text-gray-800 dark:hover:text-gray-200">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                        </svg>
-                        <span>Thinking...</span>
-                      </div>
-                    }
-                  >
-                    <div class="mt-2 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
-                      <div class="text-sm text-amber-900 dark:text-amber-100 whitespace-pre-wrap font-mono">
-                        {block.thinking}
-                      </div>
-                    </div>
-                  </Collapsible>
-                );
-              }
-
-              return null;
-            })}
+            {textBlocks.map((block, idx) => (
+              <div key={idx} class={messageColors.assistant.text}>
+                <MarkdownRenderer
+                  content={block.text}
+                  class="dark:prose-invert max-w-none prose-pre:bg-gray-900 prose-pre:text-gray-100"
+                />
+              </div>
+            ))}
 
             {/* Parent tool use indicator (for sub-agent messages) */}
             {message.parent_tool_use_id && (

@@ -155,6 +155,28 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
     hasLongOutput: false,
     defaultExpanded: false,
   },
+  Thinking: {
+    displayName: 'Thinking',
+    category: 'system',
+    summaryExtractor: (input) => {
+      // Input will be the thinking text
+      if (typeof input === 'string') {
+        const charCount = input.length;
+        return `${charCount} character${charCount !== 1 ? 's' : ''}`;
+      }
+      return 'Extended reasoning process';
+    },
+    hasLongOutput: true,
+    defaultExpanded: false,
+    // Custom amber colors for Thinking
+    colors: {
+      bg: 'bg-amber-50 dark:bg-amber-900/20',
+      text: 'text-amber-900 dark:text-amber-100',
+      border: 'border-amber-200 dark:border-amber-800',
+      iconColor: 'text-amber-600 dark:text-amber-400',
+      lightText: 'text-amber-700 dark:text-amber-300',
+    },
+  },
 };
 
 /**

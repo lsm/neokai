@@ -109,40 +109,63 @@ export function ToolResultCard({
       {/* Expanded content - input and output details */}
       {isExpanded && (
         <div class={cn('p-3 border-t bg-white dark:bg-gray-900 space-y-3', colors.border)}>
-          {/* Tool ID (only in detailed variant) */}
-          {variant === 'detailed' && (
+          {/* Special handling for Thinking tool - just show the content */}
+          {toolName === 'Thinking' ? (
             <div>
-              <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">Tool ID:</div>
-              <div class="text-xs font-mono text-gray-700 dark:text-gray-300 break-all">{toolId}</div>
-            </div>
-          )}
-
-          {/* Input */}
-          <div>
-            <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">Input:</div>
-            <pre class="text-xs bg-gray-50 dark:bg-gray-800 p-3 rounded overflow-x-auto border border-gray-200 dark:border-gray-700">
-              {JSON.stringify(input, null, 2)}
-            </pre>
-          </div>
-
-          {/* Output/Result */}
-          {output !== undefined && (
-            <div>
-              <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
-                Output:
-                {isError && (
-                  <span class="ml-2 text-red-600 dark:text-red-400">(Error)</span>
-                )}
+              {variant === 'detailed' && (
+                <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
+                  Extended Thinking Process ({typeof input === 'string' ? input.length : 0} characters)
+                </div>
+              )}
+              <div class={cn('text-xs p-3 rounded overflow-x-auto border', colors.bg, colors.border)}>
+                <pre class={cn('text-sm whitespace-pre-wrap font-mono', colors.text)}>
+                  {typeof input === 'string' ? input : JSON.stringify(input, null, 2)}
+                </pre>
               </div>
-              <pre class={cn(
-                'text-xs p-3 rounded overflow-x-auto border',
-                isError
-                  ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-900 dark:text-red-100'
-                  : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100'
-              )}>
-                {getOutputDisplayText(output)}
-              </pre>
+              {variant === 'detailed' && (
+                <div class="text-xs text-gray-500 dark:text-gray-400 italic">
+                  This is Claude's internal reasoning process before generating the final response.
+                </div>
+              )}
             </div>
+          ) : (
+            <>
+              {/* Tool ID (only in detailed variant) */}
+              {variant === 'detailed' && (
+                <div>
+                  <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">Tool ID:</div>
+                  <div class="text-xs font-mono text-gray-700 dark:text-gray-300 break-all">{toolId}</div>
+                </div>
+              )}
+
+              {/* Input */}
+              <div>
+                <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">Input:</div>
+                <pre class="text-xs bg-gray-50 dark:bg-gray-800 p-3 rounded overflow-x-auto border border-gray-200 dark:border-gray-700">
+                  {JSON.stringify(input, null, 2)}
+                </pre>
+              </div>
+
+              {/* Output/Result */}
+              {output !== undefined && output !== null && (
+                <div>
+                  <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
+                    Output:
+                    {isError && (
+                      <span class="ml-2 text-red-600 dark:text-red-400">(Error)</span>
+                    )}
+                  </div>
+                  <pre class={cn(
+                    'text-xs p-3 rounded overflow-x-auto border',
+                    isError
+                      ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-900 dark:text-red-100'
+                      : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100'
+                  )}>
+                    {getOutputDisplayText(output)}
+                  </pre>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
