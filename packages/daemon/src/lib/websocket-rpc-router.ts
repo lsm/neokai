@@ -64,6 +64,11 @@ export class WebSocketRPCRouter {
       this.handleSDKMessagesList(rpcManager, event),
     );
 
+    // Command operations
+    eventBus.on("commands.list.request", (event) =>
+      this.handleCommandsList(rpcManager, event),
+    );
+
     // File operations
     eventBus.on("file.read.request", (event) =>
       this.handleFileRead(rpcManager, event),
@@ -357,6 +362,46 @@ export class WebSocketRPCRouter {
       await rpcManager.respond(
         event.id,
         "message.sdkMessages.response",
+        event.sessionId,
+        undefined,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  /**
+   * Commands: List available slash commands
+   */
+  private async handleCommandsList(
+    rpcManager: RPCManager,
+    event: Event,
+  ): Promise<void> {
+    try {
+      const { sessionId: targetSessionId } = event.data as { sessionId: string };
+      const agentSession = this.sessionManager.getSession(targetSessionId);
+
+      if (!agentSession) {
+        await rpcManager.respond(
+          event.id,
+          "commands.list.response",
+          event.sessionId,
+          undefined,
+          "Session not found",
+        );
+        return;
+      }
+
+      const commands = await agentSession.getSlashCommands();
+      await rpcManager.respond(
+        event.id,
+        "commands.list.response",
+        event.sessionId,
+        { commands },
+      );
+    } catch (error) {
+      await rpcManager.respond(
+        event.id,
+        "commands.list.response",
         event.sessionId,
         undefined,
         error instanceof Error ? error.message : String(error),

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { cn } from "../lib/utils.ts";
+import { slashCommandsSignal } from "../lib/signals.ts";
+import CommandAutocomplete from "./CommandAutocomplete.tsx";
 
 interface MessageInputProps {
   onSend: (content: string) => void;
@@ -8,6 +10,9 @@ interface MessageInputProps {
 
 export default function MessageInput({ onSend, disabled }: MessageInputProps) {
   const [content, setContent] = useState("");
+  const [showCommandAutocomplete, setShowCommandAutocomplete] = useState(false);
+  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
+  const [filteredCommands, setFilteredCommands] = useState<string[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const maxChars = 10000;
 
@@ -26,6 +31,28 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
     textareaRef.current?.focus();
   }, []);
 
+  // Detect slash commands
+  useEffect(() => {
+    const trimmedContent = content.trimStart();
+
+    // Show autocomplete if content starts with "/" and we have commands
+    if (trimmedContent.startsWith("/") && slashCommandsSignal.value.length > 0) {
+      const query = trimmedContent.slice(1).toLowerCase();
+
+      // Filter commands based on query
+      const filtered = slashCommandsSignal.value.filter((cmd) =>
+        cmd.toLowerCase().includes(query)
+      );
+
+      setFilteredCommands(filtered);
+      setShowCommandAutocomplete(filtered.length > 0);
+      setSelectedCommandIndex(0);
+    } else {
+      setShowCommandAutocomplete(false);
+      setFilteredCommands([]);
+    }
+  }, [content]);
+
   const handleSubmit = (e: Event) => {
     e.preventDefault();
     if (content.trim() && !disabled) {
@@ -34,7 +61,41 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
     }
   };
 
+  const handleCommandSelect = (command: string) => {
+    // Replace the slash command input with the selected command (with / prefix and trailing space)
+    setContent("/" + command + " ");
+    setShowCommandAutocomplete(false);
+    textareaRef.current?.focus();
+  };
+
   const handleKeyDown = (e: KeyboardEvent) => {
+    // Handle autocomplete navigation
+    if (showCommandAutocomplete) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSelectedCommandIndex((prev) =>
+          prev < filteredCommands.length - 1 ? prev + 1 : 0
+        );
+        return;
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelectedCommandIndex((prev) =>
+          prev > 0 ? prev - 1 : filteredCommands.length - 1
+        );
+        return;
+      } else if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        if (filteredCommands[selectedCommandIndex]) {
+          handleCommandSelect(filteredCommands[selectedCommandIndex]);
+        }
+        return;
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        setShowCommandAutocomplete(false);
+        return;
+      }
+    }
+
     // Cmd+Enter or Ctrl+Enter to send
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
@@ -53,6 +114,15 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
       <form onSubmit={handleSubmit} class="max-w-4xl mx-auto">
         {/* Input Group */}
         <div class="relative rounded-[28px] border border-dark-700/50 bg-dark-800/40 backdrop-blur-sm shadow-lg transition-all focus-within:border-blue-500/40 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:bg-dark-800/60">
+          {/* Command Autocomplete */}
+          {showCommandAutocomplete && (
+            <CommandAutocomplete
+              commands={filteredCommands}
+              selectedIndex={selectedCommandIndex}
+              onSelect={handleCommandSelect}
+              onClose={() => setShowCommandAutocomplete(false)}
+            />
+          )}
           {/* Textarea */}
           <textarea
             ref={textareaRef}

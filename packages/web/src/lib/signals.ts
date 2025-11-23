@@ -33,3 +33,6 @@ export const sidebarOpenSignal = signal<boolean>(false);
 
 // Shared signal for all sessions
 export const sessionsSignal = signal<Session[]>([]);
+
+// Shared signal for available slash commands from SDK
+export const slashCommandsSignal = signal<string[]>([]);

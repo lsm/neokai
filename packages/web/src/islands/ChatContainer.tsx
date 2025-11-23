@@ -6,7 +6,7 @@ import { websocketApiClient as apiClient } from "../lib/websocket-api-client.ts"
 import { eventBusClient } from "../lib/event-bus-client.ts";
 import { toast } from "../lib/toast.ts";
 import { generateUUID } from "../lib/utils.ts";
-import { currentSessionIdSignal, sessionsSignal, sidebarOpenSignal } from "../lib/signals.ts";
+import { currentSessionIdSignal, sessionsSignal, sidebarOpenSignal, slashCommandsSignal } from "../lib/signals.ts";
 import MessageInput from "../components/MessageInput.tsx";
 import StatusIndicator from "../components/StatusIndicator.tsx";
 import { Button } from "../components/ui/Button.tsx";
@@ -85,6 +85,18 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       const sdkResponse = await apiClient.getSDKMessages(sessionId);
       setMessages(sdkResponse.sdkMessages);
 
+      // Load slash commands for this session
+      try {
+        const commandsResponse = await apiClient.getSlashCommands(sessionId);
+        if (commandsResponse.commands && commandsResponse.commands.length > 0) {
+          console.log("Loaded slash commands:", commandsResponse.commands);
+          slashCommandsSignal.value = commandsResponse.commands;
+        }
+      } catch (cmdError) {
+        // Slash commands might not be available yet (needs first message)
+        console.log("Slash commands not yet available:", cmdError);
+      }
+
       // Calculate initial context usage from existing messages
       // Total input tokens = input_tokens + cache_creation_input_tokens + cache_read_input_tokens
       // Find the last result message with success status to get the most up-to-date usage
@@ -107,10 +119,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
         ? err.message
         : "Failed to load session";
 
-      // Check if this is a 404 error (session not found)
+      // Check if this is a session not found error
       // If so, clear the session ID to navigate back to the default page
-      if (message.includes("404")) {
-        console.log("Session not found (404), clearing session ID");
+      if (message.includes("Session not found") || message.includes("404")) {
+        console.log("Session not found, clearing session ID and returning to home");
         currentSessionIdSignal.value = null;
         toast.error("Session not found. Returning to sessions list.");
         return; // Don't set error state, just clear and return
@@ -131,6 +143,15 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     const unsubSDKMessage = eventBusClient.on("sdk.message", (event: Event) => {
       const sdkMessage = event.data as SDKMessage;
       console.log("Received SDK message:", sdkMessage.type, sdkMessage);
+
+      // Extract slash commands from SDK init message
+      if (sdkMessage.type === "system" && sdkMessage.subtype === "init") {
+        const initMessage = sdkMessage as any;
+        if (initMessage.slash_commands && Array.isArray(initMessage.slash_commands)) {
+          console.log("Extracted slash commands from SDK:", initMessage.slash_commands);
+          slashCommandsSignal.value = initMessage.slash_commands;
+        }
+      }
 
       // Update current action based on this message
       // We're processing if: sending is true OR we have streaming events OR we haven't received final result yet

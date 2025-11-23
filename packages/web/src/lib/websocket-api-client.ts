@@ -252,6 +252,16 @@ export class WebSocketAPIClient implements APIClient {
     );
   }
 
+  // ==================== Command Operations ====================
+
+  async getSlashCommands(sessionId: string): Promise<{ commands: string[] }> {
+    const rpc = await this.ensureConnection();
+    return await rpc.request<{ commands: string[] }>(
+      "commands.list.request",
+      { sessionId },
+    );
+  }
+
   // ==================== File Operations ====================
 
   async readFile(sessionId: string, req: ReadFileRequest): Promise<ReadFileResponse> {

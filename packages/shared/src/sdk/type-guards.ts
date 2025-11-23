@@ -226,10 +226,10 @@ export function getMessageTypeDescription(msg: SDKMessage): string {
  * Check if a message should be displayed to the user (vs internal system messages)
  */
 export function isUserVisibleMessage(msg: SDKMessage): boolean {
-  // User should see: assistant, user, result, tool_progress, auth_status
-  // User should NOT see: stream events (these are intermediate), user replays
+  // User should see: assistant, user, result, tool_progress, auth_status, user replays (slash command responses)
+  // User should NOT see: stream events (these are intermediate)
   if (isSDKStreamEvent(msg)) return false;
-  if (isSDKUserMessageReplay(msg)) return false;
+  // Note: User replays ARE visible - they contain slash command output like /context
   if (isSDKCompactBoundary(msg)) return false; // Internal compaction marker
   if (isSDKStatusMessage(msg) && msg.status === 'compacting') return false; // Transient status
 

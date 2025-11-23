@@ -14,6 +14,7 @@ import { toast } from "../../lib/toast.ts";
 import { cn } from "../../lib/utils.ts";
 import { SessionIndicator } from "./SessionIndicator.tsx";
 import { messageSpacing, messageColors, borderRadius } from "../../lib/design-tokens.ts";
+import MarkdownRenderer from "../chat/MarkdownRenderer.tsx";
 
 type UserMessage = Extract<SDKMessage, { type: "user" }>;
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
@@ -23,9 +24,10 @@ interface Props {
   onEdit?: () => void;
   onDelete?: () => void;
   sessionInfo?: SystemInitMessage; // Optional session init info to display
+  isReplay?: boolean; // Whether this is a replay message (slash command response)
 }
 
-export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo }: Props) {
+export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo, isReplay }: Props) {
   const { message: apiMessage } = message;
 
   // Check if this is a tool result message (should not be rendered as user message)
@@ -63,6 +65,16 @@ export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo }: Props
   };
 
   const textContent = getTextContent();
+
+  // Extract and parse slash command output (for replay messages)
+  const getCommandOutput = (): string | null => {
+    if (!isReplay) return null;
+
+    const match = textContent.match(/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/);
+    return match ? match[1].trim() : null;
+  };
+
+  const commandOutput = getCommandOutput();
 
   const handleCopy = async () => {
     const success = await copyToClipboard(textContent);
@@ -139,6 +151,45 @@ export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo }: Props
       minute: "2-digit",
     });
   };
+
+  // If this is a replay message with command output, render it as assistant-style with markdown
+  if (isReplay && commandOutput) {
+    return (
+      <div class={cn(messageSpacing.assistant.container.combined)}>
+        <div class="max-w-full">
+          {/* Command output card */}
+          <div class={cn(
+            "bg-dark-800/60 border border-dark-700/50 rounded-lg p-4",
+            "prose prose-invert max-w-none"
+          )}>
+            <MarkdownRenderer content={commandOutput} class="text-sm" />
+          </div>
+
+          {/* Actions and timestamp */}
+          <div class={cn("flex items-center justify-start", messageSpacing.actions.gap, messageSpacing.actions.marginTop, messageSpacing.actions.padding)}>
+            <Tooltip content={new Date().toLocaleString()} position="right">
+              <span class="text-xs text-gray-500">{getTimestamp()}</span>
+            </Tooltip>
+
+            <span class="text-xs px-2 py-0.5 bg-blue-500/20 text-blue-300 rounded">
+              command output
+            </span>
+
+            <IconButton size="md" onClick={handleCopy} title="Copy message">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width={2}
+                  d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                />
+              </svg>
+            </IconButton>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div class={cn(messageSpacing.user.container.combined, "flex justify-end")}>

@@ -252,3 +252,36 @@ export interface DaemonConfig {
   authMethod: AuthMethod;
   authStatus: AuthStatus;
 }
+
+// Slash Command types
+export interface SlashCommand {
+  name: string;
+  description: string;
+  usage?: string;
+  aliases?: string[];
+  category?: "chat" | "session" | "system" | "debug";
+  requiresConfirmation?: boolean;
+  parameters?: CommandParameter[];
+}
+
+export interface CommandParameter {
+  name: string;
+  description: string;
+  type: "string" | "number" | "boolean";
+  required?: boolean;
+  default?: unknown;
+}
+
+export interface CommandExecutionRequest {
+  command: string;
+  args?: string[];
+  rawInput: string;
+}
+
+export interface CommandExecutionResult {
+  success: boolean;
+  message?: string;
+  data?: unknown;
+  error?: string;
+  displayType?: "text" | "markdown" | "json" | "component";
+}

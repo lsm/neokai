@@ -33,6 +33,10 @@ export class AgentSession {
   private queryRunning: boolean = false;
   private messageWaiters: Array<() => void> = [];
 
+  // SDK query object with control methods
+  private queryObject: any | null = null;
+  private slashCommands: string[] | null = null;
+
   constructor(
     private session: Session,
     private db: Database,
@@ -301,7 +305,7 @@ export class AgentSession {
       console.log(`[AgentSession ${this.session.id}] Creating streaming query with AsyncGenerator`);
 
       // Create query with AsyncGenerator!
-      const queryStream = query({
+      this.queryObject = query({
         prompt: this.messageGenerator(), // <-- AsyncGenerator!
         options: {
           model: this.session.config.model,
@@ -313,9 +317,20 @@ export class AgentSession {
         },
       });
 
+      // Fetch and cache slash commands
+      try {
+        if (this.queryObject && typeof this.queryObject.supportedCommands === "function") {
+          const commands = await this.queryObject.supportedCommands();
+          this.slashCommands = commands.map((cmd: any) => cmd.name);
+          console.log(`[AgentSession ${this.session.id}] Fetched slash commands:`, this.slashCommands);
+        }
+      } catch (error) {
+        console.warn(`[AgentSession ${this.session.id}] Failed to fetch slash commands:`, error);
+      }
+
       // Process SDK messages
       console.log(`[AgentSession ${this.session.id}] Processing SDK stream...`);
-      for await (const message of queryStream) {
+      for await (const message of this.queryObject) {
         await this.handleSDKMessage(message);
       }
 
@@ -474,5 +489,30 @@ export class AgentSession {
    */
   abort(): void {
     this.handleInterrupt();
+  }
+
+  /**
+   * Get available slash commands for this session
+   * Returns cached commands or fetches from SDK if not yet available
+   */
+  async getSlashCommands(): Promise<string[]> {
+    // Return cached if available
+    if (this.slashCommands) {
+      return this.slashCommands;
+    }
+
+    // Try to fetch from SDK query object
+    if (this.queryObject && typeof this.queryObject.supportedCommands === "function") {
+      try {
+        const commands = await this.queryObject.supportedCommands();
+        this.slashCommands = commands.map((cmd: any) => cmd.name);
+        return this.slashCommands;
+      } catch (error) {
+        console.warn(`[AgentSession ${this.session.id}] Failed to fetch slash commands:`, error);
+        return [];
+      }
+    }
+
+    return [];
   }
 }

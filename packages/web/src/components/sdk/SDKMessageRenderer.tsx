@@ -12,6 +12,7 @@ import {
   isSDKToolProgressMessage,
   isSDKAuthStatusMessage,
   isSDKUserMessage,
+  isSDKUserMessageReplay,
   isUserVisibleMessage,
 } from "@liuboer/shared/sdk/type-guards";
 
@@ -47,6 +48,11 @@ export function SDKMessageRenderer({ message, toolResultsMap, toolInputsMap, ses
   }
 
   // Route to appropriate renderer based on message type
+  // Handle user replay messages (slash command responses) first
+  if (isSDKUserMessageReplay(message)) {
+    return <SDKUserMessage message={message} sessionInfo={sessionInfo} isReplay={true} />;
+  }
+
   if (isSDKUserMessage(message)) {
     return <SDKUserMessage message={message} sessionInfo={sessionInfo} />;
   }
