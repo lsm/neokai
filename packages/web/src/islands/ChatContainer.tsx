@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { Event, Session, ContextInfo } from "@liuboer/shared";
+import type { Session, ContextInfo } from "@liuboer/shared";
 import type { SDKMessage } from "@liuboer/shared/sdk/sdk.d.ts";
 import { isSDKStreamEvent } from "@liuboer/shared/sdk/type-guards";
-import { websocketApiClient as apiClient } from "../lib/websocket-api-client.ts";
-import { eventBusClient } from "../lib/event-bus-client.ts";
+import { messageHubApiClient as apiClient } from "../lib/messagehub-api-client.ts";
 import { toast } from "../lib/toast.ts";
 import { generateUUID } from "../lib/utils.ts";
 import { currentSessionIdSignal, sessionsSignal, sidebarOpenSignal, slashCommandsSignal } from "../lib/signals.ts";
@@ -120,62 +119,65 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   };
 
   const connectWebSocket = () => {
-    eventBusClient.connect(sessionId);
-    // Don't set isWsConnected here - wait for actual connection event
+    // Subscribe to session-specific events via MessageHub
+    setIsWsConnected(true); // MessageHub is already connected from apiClient
 
     // SDK message events - PRIMARY EVENT HANDLER
-    const unsubSDKMessage = eventBusClient.on("sdk.message", (event: Event) => {
-      const sdkMessage = event.data as SDKMessage;
-      console.log("Received SDK message:", sdkMessage.type, sdkMessage);
+    const unsubSDKMessage = apiClient.subscribe<SDKMessage>(
+      'sdk.message',
+      (sdkMessage) => {
+        console.log("Received SDK message:", sdkMessage.type, sdkMessage);
 
-      // Extract slash commands from SDK init message
-      if (sdkMessage.type === "system" && sdkMessage.subtype === "init") {
-        const initMessage = sdkMessage as any;
-        if (initMessage.slash_commands && Array.isArray(initMessage.slash_commands)) {
-          console.log("Extracted slash commands from SDK:", initMessage.slash_commands);
-          slashCommandsSignal.value = initMessage.slash_commands;
-        }
-      }
-
-      // Update current action based on this message
-      // We're processing if: sending is true OR we have streaming events OR we haven't received final result yet
-      const isProcessing = sending || streamingEvents.length > 0 || sdkMessage.type !== "result";
-      const action = getCurrentAction(sdkMessage, isProcessing);
-      if (action) {
-        setCurrentAction(action);
-      }
-
-      // Handle stream events separately for real-time display
-      if (isSDKStreamEvent(sdkMessage)) {
-        setStreamingEvents((prev) => [...prev, sdkMessage]);
-      } else {
-        // Only clear processing state when we get the FINAL result message with token usage
-        if (sdkMessage.type === "result" && sdkMessage.subtype === "success") {
-          setStreamingEvents([]);
-          setSending(false);
-          setCurrentAction(undefined);
-        }
-        // Add non-stream messages to main array, deduplicating by uuid
-        setMessages((prev) => {
-          // If message has a uuid, check if it already exists (from optimistic update)
-          if (sdkMessage.uuid) {
-            const existingIndex = prev.findIndex(m => m.uuid === sdkMessage.uuid);
-            if (existingIndex !== -1) {
-              // Replace optimistic message with confirmed one
-              const updated = [...prev];
-              updated[existingIndex] = sdkMessage;
-              return updated;
-            }
+        // Extract slash commands from SDK init message
+        if (sdkMessage.type === "system" && sdkMessage.subtype === "init") {
+          const initMessage = sdkMessage as any;
+          if (initMessage.slash_commands && Array.isArray(initMessage.slash_commands)) {
+            console.log("Extracted slash commands from SDK:", initMessage.slash_commands);
+            slashCommandsSignal.value = initMessage.slash_commands;
           }
-          // New message, add to end
-          return [...prev, sdkMessage];
-        });
-      }
-    });
+        }
+
+        // Update current action based on this message
+        // We're processing if: sending is true OR we have streaming events OR we haven't received final result yet
+        const isProcessing = sending || streamingEvents.length > 0 || sdkMessage.type !== "result";
+        const action = getCurrentAction(sdkMessage, isProcessing);
+        if (action) {
+          setCurrentAction(action);
+        }
+
+        // Handle stream events separately for real-time display
+        if (isSDKStreamEvent(sdkMessage)) {
+          setStreamingEvents((prev) => [...prev, sdkMessage]);
+        } else {
+          // Only clear processing state when we get the FINAL result message with token usage
+          if (sdkMessage.type === "result" && sdkMessage.subtype === "success") {
+            setStreamingEvents([]);
+            setSending(false);
+            setCurrentAction(undefined);
+          }
+          // Add non-stream messages to main array, deduplicating by uuid
+          setMessages((prev) => {
+            // If message has a uuid, check if it already exists (from optimistic update)
+            if (sdkMessage.uuid) {
+              const existingIndex = prev.findIndex(m => m.uuid === sdkMessage.uuid);
+              if (existingIndex !== -1) {
+                // Replace optimistic message with confirmed one
+                const updated = [...prev];
+                updated[existingIndex] = sdkMessage;
+                return updated;
+              }
+            }
+            // New message, add to end
+            return [...prev, sdkMessage];
+          });
+        }
+      },
+      { sessionId }
+    );
 
     // Context events
-    const unsubContextUpdated = eventBusClient.on("context.updated", (event: Event) => {
-      const data = event.data as any;
+    const unsubContextUpdated = apiClient.subscribe<any>('context.updated', (data) => {
+      // data is already the payload
       console.log(`Context updated:`, data);
 
       // Only handle accurate context info from /context command
@@ -197,114 +199,36 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
           slashCommandTool: data.slashCommandTool,
         });
       }
-    });
+    }, { sessionId });
 
-    const unsubContextCompacted = eventBusClient.on("context.compacted", (event: Event) => {
-      const { before, after } = event.data as { before: number; after: number };
+    const unsubContextCompacted = apiClient.subscribe<{ before: number; after: number }>('context.compacted', (data) => {
+      const { before, after } = data;
       toast.info(`Context compacted: ${before} → ${after} tokens`);
-    });
+    }, { sessionId });
 
     // Error handling
-    const unsubError = eventBusClient.on("error", (event: Event) => {
-      const error = (event.data as { error: string }).error;
+    const unsubError = apiClient.subscribe<{ error: string }>('session.error', (data) => {
+      const error = data.error;
       setError(error);
       toast.error(error);
       setSending(false);
       setStreamingEvents([]);
       setCurrentAction(undefined);
       setIsWsConnected(false);
-    });
+    }, { sessionId });
 
     // Message queue events (streaming input mode)
-    const unsubMessageQueued = eventBusClient.on("message.queued", (event: Event) => {
-      const { messageId } = event.data as { messageId: string };
+    const unsubMessageQueued = apiClient.subscribe<{ messageId: string }>('message.queued', (data) => {
+      const { messageId } = data;
       console.log("Message queued:", messageId);
       setCurrentAction("Queued...");
-    });
+    }, { sessionId });
 
-    const unsubMessageProcessing = eventBusClient.on("message.processing", (event: Event) => {
-      const { messageId } = event.data as { messageId: string };
+    const unsubMessageProcessing = apiClient.subscribe<{ messageId: string }>('message.processing', (data) => {
+      const { messageId } = data;
       console.log("Message processing:", messageId);
       setCurrentAction("Processing...");
-    });
-
-    // Connection status tracking with reconciliation
-    const unsubConnect = eventBusClient.on("connect", async () => {
-      setIsWsConnected(true);
-
-      // Reconcile missed messages on reconnect
-      try {
-        // Use setMessages with updater function to get current state
-        let lastTimestamp = 0;
-        setMessages((currentMessages) => {
-          // Calculate the timestamp of the last message we have
-          if (currentMessages.length > 0) {
-            lastTimestamp = Math.max(...currentMessages.map(m => (m as any).timestamp || 0));
-          }
-          return currentMessages; // Don't modify state here
-        });
-
-        // Fetch any messages we missed while disconnected
-        if (lastTimestamp > 0) {
-          const response = await apiClient.getSDKMessages(sessionId, {
-            since: lastTimestamp,
-          });
-
-          if (response.sdkMessages.length > 0) {
-            console.log(`Reconciled ${response.sdkMessages.length} missed messages`);
-
-            // Separate stream events from regular messages
-            const streamEvents: Extract<SDKMessage, { type: "stream_event" }>[] = [];
-            const regularMessages: SDKMessage[] = [];
-            let hasStreamEvents = false;
-            let hasFinalResult = false;
-
-            for (const msg of response.sdkMessages) {
-              if (isSDKStreamEvent(msg)) {
-                streamEvents.push(msg);
-                hasStreamEvents = true;
-              } else {
-                regularMessages.push(msg);
-                if (msg.type === "result" && msg.subtype === "success") {
-                  hasFinalResult = true;
-                }
-              }
-            }
-
-            // Update streaming events if we have active stream events without a final result
-            if (hasStreamEvents && !hasFinalResult) {
-              setStreamingEvents((prev) => [...prev, ...streamEvents]);
-              setSending(true); // Indicate we're still processing
-            }
-
-            // Merge regular messages with existing messages, deduplicating by UUID
-            if (regularMessages.length > 0) {
-              setMessages((prev) => {
-                const merged = [...prev, ...regularMessages];
-                // Deduplicate by UUID
-                const uniqueMap = new Map(merged.map(m => [m.uuid, m]));
-                return Array.from(uniqueMap.values()).sort((a, b) => ((a as any).timestamp || 0) - ((b as any).timestamp || 0));
-              });
-            }
-
-            // Update current action based on the latest message
-            const latestMessage = response.sdkMessages[response.sdkMessages.length - 1];
-            const isStillProcessing = hasStreamEvents && !hasFinalResult;
-            const action = getCurrentAction(latestMessage, isStillProcessing);
-            if (action) {
-              setCurrentAction(action);
-            }
-          }
-        }
-      } catch (error) {
-        console.error("Failed to reconcile messages on reconnect:", error);
-        // Don't show error to user - connection is still established
-      }
-    });
-
-    const unsubDisconnect = eventBusClient.on("disconnect", () => {
-      setIsWsConnected(false);
-    });
+    }, { sessionId });
 
     // Return cleanup function that unsubscribes all handlers
     return () => {
@@ -314,17 +238,15 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       unsubError?.();
       unsubMessageQueued?.();
       unsubMessageProcessing?.();
-      unsubConnect?.();
-      unsubDisconnect?.();
     };
   };
 
   const handleSendMessage = async (content: string) => {
     if (!content.trim() || sending) return;
 
-    // Check if WebSocket is connected
+    // Check if MessageHub is connected
     if (!isWsConnected) {
-      toast.error("WebSocket not connected. Please refresh the page.");
+      toast.error("Connection lost. Please refresh the page.");
       return;
     }
 
@@ -333,21 +255,16 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       setError(null);
       setCurrentAction("Sending...");
 
-      // Send via EventBus WebSocket (streaming input mode!)
+      // Send via MessageHub pub/sub (streaming input mode!)
       // The daemon will queue the message and yield it to the SDK AsyncGenerator
-      await eventBusClient.emit({
-        id: generateUUID(),
-        type: "message.send",
-        sessionId,
-        timestamp: new Date().toISOString(),
-        data: {
+      await apiClient.getMessageHub()?.publish(
+        'message.send',
+        {
           content,
           // images: undefined, // Future: support image uploads
         },
-      }).catch((err) => {
-        console.error("Failed to emit message.send:", err);
-        throw err;
-      });
+        { sessionId }
+      );
 
       // Note: Don't set sending=false here - wait for message.queued or message.processing event
     } catch (err) {

@@ -3,10 +3,11 @@ import { cors } from "@elysiajs/cors";
 import { getConfig } from "./src/config";
 import { Database } from "./src/storage/database";
 import { SessionManager } from "./src/lib/session-manager";
-import { EventBusManager } from "./src/lib/event-bus-manager";
 import { AuthManager } from "./src/lib/auth-manager";
-import { WebSocketRPCRouter } from "./src/lib/websocket-rpc-router";
-import { setupWebSocket } from "./src/routes/websocket";
+import { MessageHub } from "@liuboer/shared";
+import { MessageHubRPCRouter } from "./src/lib/messagehub-rpc-router";
+import { ElysiaWebSocketTransport } from "./src/lib/elysia-websocket-transport";
+import { setupMessageHubWebSocket } from "./src/routes/messagehub-websocket";
 
 const config = getConfig();
 
@@ -14,10 +15,6 @@ const config = getConfig();
 const db = new Database(config.dbPath);
 await db.initialize();
 console.log(`✅ Database initialized at ${config.dbPath}`);
-
-// Initialize event bus manager
-const eventBusManager = new EventBusManager();
-console.log("✅ Event bus manager initialized");
 
 // Initialize authentication manager
 const authManager = new AuthManager(db, config);
@@ -41,8 +38,23 @@ if (authStatus.isAuthenticated) {
   process.exit(1);
 }
 
-// Initialize session manager
-const sessionManager = new SessionManager(db, eventBusManager, authManager, {
+// Initialize MessageHub with ElysiaWebSocketTransport
+const messageHub = new MessageHub({
+  defaultSessionId: "global",
+  debug: config.nodeEnv === "development",
+});
+
+const transport = new ElysiaWebSocketTransport({
+  name: "elysia-ws",
+  debug: config.nodeEnv === "development",
+});
+
+// Register transport with MessageHub
+messageHub.registerTransport(transport);
+console.log("✅ MessageHub initialized with Elysia WebSocket transport");
+
+// Initialize session manager (after MessageHub)
+const sessionManager = new SessionManager(db, messageHub, authManager, {
   defaultModel: config.defaultModel,
   maxTokens: config.maxTokens,
   temperature: config.temperature,
@@ -52,16 +64,15 @@ console.log("✅ Session manager initialized");
 console.log(`   Environment: ${config.nodeEnv}`);
 console.log(`   Workspace root: ${config.workspaceRoot}`);
 
-// Initialize WebSocket RPC Router
-const rpcRouter = new WebSocketRPCRouter(sessionManager, authManager, config);
-const globalRPCManager = eventBusManager.getGlobalRPCManager();
-if (globalRPCManager) {
-  rpcRouter.setupHandlers(globalRPCManager, "global");
-  console.log("✅ WebSocket RPC router initialized");
-} else {
-  console.error("❌ Failed to get global RPC manager");
-  process.exit(1);
-}
+// Initialize MessageHub RPC Router
+const messageHubRPCRouter = new MessageHubRPCRouter(
+  messageHub,
+  sessionManager,
+  authManager,
+  config,
+);
+messageHubRPCRouter.setupHandlers();
+console.log("✅ MessageHub RPC router initialized");
 
 // Create application
 const app = new Elysia()
@@ -82,16 +93,16 @@ const app = new Elysia()
     name: "Liuboer Daemon",
     version: "0.1.0",
     status: "running",
-    protocol: "WebSocket-only (RPC over EventBus)",
+    protocol: "WebSocket-only (MessageHub RPC + Pub/Sub)",
     endpoints: {
       globalWebSocket: "/ws",
       sessionWebSocket: "/ws/:sessionId",
     },
-    note: "All operations use WebSocket events with request/response pattern. REST API has been removed.",
+    note: "All operations use MessageHub protocol with bidirectional RPC and Pub/Sub. REST API has been removed.",
   }));
 
-// Mount WebSocket routes
-setupWebSocket(app, eventBusManager, sessionManager);
+// Mount MessageHub WebSocket routes
+setupMessageHubWebSocket(app, messageHub, transport, sessionManager);
 
 // Start server
 console.log(`\n🚀 Liuboer Daemon starting...`);
@@ -106,12 +117,11 @@ app.listen({
 
 console.log(`\n📡 Global WebSocket: ws://${app.server?.hostname}:${app.server?.port}/ws`);
 console.log(`📡 Session WebSocket: ws://${app.server?.hostname}:${app.server?.port}/ws/:sessionId`);
-console.log(`\n✨ WebSocket-only mode! All REST endpoints removed.\n`);
+console.log(`\n✨ MessageHub mode! Unified RPC + Pub/Sub over WebSocket.\n`);
 
 // Cleanup on exit
 process.on("SIGINT", async () => {
   console.log("\n👋 Shutting down...");
-  await eventBusManager.closeAll();
   db.close();
   app.stop();
   process.exit(0);

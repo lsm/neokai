@@ -7,12 +7,9 @@ import { cors } from "@elysiajs/cors";
 import "dotenv/config";
 import { Database } from "../src/storage/database";
 import { SessionManager } from "../src/lib/session-manager";
-import { EventBus } from "../src/lib/event-bus";
+import { EventBusManager } from "../src/lib/event-bus-manager";
 import { AuthManager } from "../src/lib/auth-manager";
-import { createSessionsRouter } from "../src/routes/sessions";
-import { createSystemRouter } from "../src/routes/system";
-import { createFilesRouter } from "../src/routes/files";
-import { createAuthRouter } from "../src/routes/auth";
+import { WebSocketRPCRouter } from "../src/lib/websocket-rpc-router";
 import { setupWebSocket } from "../src/routes/websocket";
 import type { Config } from "../src/config";
 
@@ -20,7 +17,7 @@ export interface TestContext {
   app: Elysia;
   db: Database;
   sessionManager: SessionManager;
-  eventBus: EventBus;
+  eventBusManager: EventBusManager;
   authManager: AuthManager;
   baseUrl: string;
   config: Config;
@@ -54,8 +51,8 @@ export async function createTestApp(): Promise<TestContext> {
     oauthScopes: "public limited",
   };
 
-  // Initialize event bus
-  const eventBus = new EventBus();
+  // Initialize event bus manager
+  const eventBusManager = new EventBusManager();
 
   // Initialize authentication manager
   // Note: Credentials are read from environment variables, not set in database
@@ -70,11 +67,18 @@ export async function createTestApp(): Promise<TestContext> {
   }
 
   // Create session manager
-  const sessionManager = new SessionManager(db, eventBus, authManager, {
+  const sessionManager = new SessionManager(db, eventBusManager, authManager, {
     defaultModel: config.defaultModel,
     maxTokens: config.maxTokens,
     temperature: config.temperature,
   });
+
+  // Initialize WebSocket RPC Router
+  const rpcRouter = new WebSocketRPCRouter(sessionManager, authManager, config);
+  const globalRPCManager = eventBusManager.getGlobalRPCManager();
+  if (globalRPCManager) {
+    rpcRouter.setupHandlers(globalRPCManager, "global");
+  }
 
   // Create application
   const app = new Elysia()
@@ -99,12 +103,8 @@ export async function createTestApp(): Promise<TestContext> {
       status: "running",
     }));
 
-  // Mount routers
-  createAuthRouter(app, authManager);
-  createSessionsRouter(app, sessionManager);
-  createSystemRouter(app, sessionManager, config, authManager);
-  createFilesRouter(app, sessionManager);
-  setupWebSocket(app, eventBus, sessionManager);
+  // Mount WebSocket routes
+  setupWebSocket(app, eventBusManager, sessionManager);
 
   // Start server on random available port (0 = OS assigns free port)
   app.listen({
@@ -141,13 +141,12 @@ export async function createTestApp(): Promise<TestContext> {
     app,
     db,
     sessionManager,
-    eventBus,
+    eventBusManager,
     authManager,
     baseUrl,
     config,
     cleanup: async () => {
-      authManager.destroy();
-      eventBus.clear();
+      await eventBusManager.closeAll();
       db.close();
       app.stop();
     },

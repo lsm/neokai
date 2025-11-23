@@ -1,6 +1,6 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { Message, MessageContent, Session, ToolCall, ContextInfo } from "@liuboer/shared";
-import { EventBus } from "@liuboer/shared";
+import type { MessageHub } from "@liuboer/shared";
 import { Database } from "../storage/database";
 
 /**
@@ -52,7 +52,7 @@ export class AgentSession {
   constructor(
     private session: Session,
     private db: Database,
-    private eventBus: EventBus,
+    private messageHub: MessageHub,
     private getApiKey: () => Promise<string | null>, // Function to get current API key
   ) {
     // Load existing messages into conversation history
@@ -76,42 +76,36 @@ export class AgentSession {
   }
 
   /**
-   * Setup EventBus listeners for incoming messages and controls
+   * Setup MessageHub listeners for incoming messages and controls
    */
   private setupEventListeners(): void {
-    // Listen for incoming messages from WebSocket
-    this.eventBus.on("message.send", async (event: any) => {
+    // Listen for incoming messages from WebSocket (session-scoped events)
+    this.messageHub.subscribe('message.send', async (data: any) => {
       try {
-        const { content, images } = event.data;
+        const { content, images } = data;
         const messageContent = this.buildMessageContent(content, images);
         const messageId = await this.enqueueMessage(messageContent);
 
         // Acknowledge that message was queued
-        await this.eventBus.emit({
-          id: crypto.randomUUID(),
-          type: "message.queued",
-          sessionId: this.session.id,
-          timestamp: new Date().toISOString(),
-          data: { messageId },
-        });
+        await this.messageHub.publish('message.queued',
+          { messageId },
+          { sessionId: this.session.id }
+        );
       } catch (error) {
         console.error(`[AgentSession ${this.session.id}] Error handling message.send:`, error);
-        await this.eventBus.emit({
-          id: crypto.randomUUID(),
-          type: "error",
-          sessionId: this.session.id,
-          timestamp: new Date().toISOString(),
-          data: {
+        await this.messageHub.publish('session.error',
+          {
             error: error instanceof Error ? error.message : String(error),
           },
-        });
+          { sessionId: this.session.id }
+        );
       }
-    });
+    }, { sessionId: this.session.id });
 
     // Handle interruption requests
-    this.eventBus.on("client.interrupt", async () => {
+    this.messageHub.subscribe('client.interrupt', async () => {
       this.handleInterrupt();
-    });
+    }, { sessionId: this.session.id });
   }
 
   /**
@@ -247,22 +241,18 @@ export class AgentSession {
         this.db.saveSDKMessage(this.session.id, sdkUserMessage);
 
         // Emit user message
-        await this.eventBus.emit({
-          id: crypto.randomUUID(),
-          type: "sdk.message",
-          sessionId: this.session.id,
-          timestamp: new Date().toISOString(),
-          data: sdkUserMessage,
-        });
+        await this.messageHub.publish(
+          'sdk.message',
+          sdkUserMessage,
+          { sessionId: this.session.id }
+        );
 
         // Emit processing status
-        await this.eventBus.emit({
-          id: crypto.randomUUID(),
-          type: "message.processing",
-          sessionId: this.session.id,
-          timestamp: new Date().toISOString(),
-          data: { messageId: queuedMessage.id },
-        });
+        await this.messageHub.publish(
+          'message.processing',
+          { messageId: queuedMessage.id },
+          { sessionId: this.session.id }
+        );
 
         // Add to conversation history
         const userMessage: Message = {
@@ -387,15 +377,13 @@ export class AgentSession {
       }
       this.messageQueue = [];
 
-      await this.eventBus.emit({
-        id: crypto.randomUUID(),
-        type: "error",
-        sessionId: this.session.id,
-        timestamp: new Date().toISOString(),
-        data: {
+      await this.messageHub.publish(
+        'session.error',
+        {
           error: error instanceof Error ? error.message : String(error),
         },
-      });
+        { sessionId: this.session.id }
+      );
     } finally {
       this.queryRunning = false;
       console.log(`[AgentSession ${this.session.id}] Streaming query stopped`);
@@ -422,26 +410,15 @@ export class AgentSession {
 
         if (contextInfo) {
           // Emit the full parsed context info to client
-          await this.eventBus.emit({
-            id: crypto.randomUUID(),
-            type: "context.updated",
-            sessionId: this.session.id,
-            timestamp: new Date().toISOString(),
-            data: {
+          await this.messageHub.publish('context.updated', {
               ...contextInfo,
               costUSD: message.total_cost_usd,
               durationMs: message.duration_ms,
-            },
-          });
+            }, { sessionId: this.session.id });
         } else {
           // Fallback: emit basic context info from result message
           console.warn(`[AgentSession ${this.session.id}] Failed to parse context info, using fallback`);
-          await this.eventBus.emit({
-            id: crypto.randomUUID(),
-            type: "context.updated",
-            sessionId: this.session.id,
-            timestamp: new Date().toISOString(),
-            data: {
+          await this.messageHub.publish('context.updated', {
               model: null,
               totalUsed: message.usage.input_tokens + message.usage.output_tokens,
               totalCapacity: 200000,
@@ -455,8 +432,7 @@ export class AgentSession {
               },
               costUSD: message.total_cost_usd,
               durationMs: message.duration_ms,
-            },
-          });
+            }, { sessionId: this.session.id });
         }
 
         // Reset internal message tracking
@@ -468,13 +444,11 @@ export class AgentSession {
     }
 
     // Normal message processing - emit and save
-    await this.eventBus.emit({
-      id: crypto.randomUUID(),
-      type: "sdk.message",
-      sessionId: this.session.id,
-      timestamp: new Date().toISOString(),
-      data: message,
-    });
+    await this.messageHub.publish(
+      'sdk.message',
+      message,
+      { sessionId: this.session.id }
+    );
 
     // Save to DB
     this.db.saveSDKMessage(this.session.id, message);
@@ -482,12 +456,7 @@ export class AgentSession {
     // Handle specific message types
     if (message.type === "result") {
       // First emit basic token usage from API response
-      await this.eventBus.emit({
-        id: crypto.randomUUID(),
-        type: "context.updated",
-        sessionId: this.session.id,
-        timestamp: new Date().toISOString(),
-        data: {
+      await this.messageHub.publish('context.updated', {
           tokenUsage: {
             inputTokens: message.usage.input_tokens,
             outputTokens: message.usage.output_tokens,
@@ -497,8 +466,7 @@ export class AgentSession {
           modelUsage: message.modelUsage,
           costUSD: message.total_cost_usd,
           durationMs: message.duration_ms,
-        },
-      });
+        }, { sessionId: this.session.id });
 
       // Update session metadata
       this.session.lastActiveAt = new Date().toISOString();
@@ -708,13 +676,7 @@ export class AgentSession {
       this.abortController = null;
     }
 
-    await this.eventBus.emit({
-      id: crypto.randomUUID(),
-      type: "session.interrupted",
-      sessionId: this.session.id,
-      timestamp: new Date().toISOString(),
-      data: {},
-    });
+    await this.messageHub.publish('session.interrupted', {}, { sessionId: this.session.id });
   }
 
 

@@ -1,20 +1,20 @@
 /**
- * WebSocket Routes - Real-time event streaming
+ * MessageHub WebSocket Routes
  *
- * Provides WebSocket endpoints for:
- * - /ws - Global connection for system operations (health, config, session CRUD)
- * - /ws/:sessionId - Session-scoped connection for session-specific operations
+ * WebSocket endpoints using MessageHub protocol with ElysiaWebSocketTransport
  */
 
 import type { Elysia } from "elysia";
-import type { EventBusManager } from "../lib/event-bus-manager";
+import type { MessageHub } from "@liuboer/shared";
+import type { ElysiaWebSocketTransport } from "../lib/elysia-websocket-transport";
 import type { SessionManager } from "../lib/session-manager";
 
 const GLOBAL_SESSION_ID = "global";
 
-export function setupWebSocket(
+export function setupMessageHubWebSocket(
   app: Elysia,
-  eventBusManager: EventBusManager,
+  messageHub: MessageHub,
+  transport: ElysiaWebSocketTransport,
   sessionManager: SessionManager,
 ) {
   // Global WebSocket for system-level operations
@@ -22,8 +22,11 @@ export function setupWebSocket(
     open(ws) {
       console.log("Global WebSocket connection established");
 
-      // Subscribe to global event bus
-      eventBusManager.subscribeWebSocket(GLOBAL_SESSION_ID, ws.raw);
+      // Register client with transport
+      const clientId = transport.registerClient(ws.raw, GLOBAL_SESSION_ID);
+
+      // Store clientId on websocket for cleanup
+      (ws.raw as any).__clientId = clientId;
 
       // Send connection confirmation
       ws.send(
@@ -34,6 +37,7 @@ export function setupWebSocket(
           data: {
             message: "Global WebSocket connection established",
             connectionType: "global",
+            protocol: "MessageHub",
           },
         }),
       );
@@ -43,27 +47,27 @@ export function setupWebSocket(
       try {
         const data = typeof message === "string" ? JSON.parse(message) : message;
 
-        if (data.type === "ping") {
+        // Handle ping/pong
+        if (data.type === "ping" || data.type === "PING") {
           ws.send(
             JSON.stringify({
-              type: "pong",
+              type: "PONG",
               timestamp: new Date().toISOString(),
             }),
           );
-        } else {
-          // Route through global event bus
-          const messageString = typeof message === "string" ? message : JSON.stringify(message);
-          eventBusManager.handleWebSocketMessage(GLOBAL_SESSION_ID, messageString);
+          return;
         }
+
+        // Pass to transport which will notify MessageHub
+        transport.handleClientMessage(data);
       } catch (error) {
         console.error("Error processing global WebSocket message:", error);
         ws.send(
           JSON.stringify({
-            type: "error",
+            type: "ERROR",
             timestamp: new Date().toISOString(),
-            data: {
-              error: "Invalid message format",
-            },
+            error: "Invalid message format",
+            errorCode: "INVALID_MESSAGE",
           }),
         );
       }
@@ -71,16 +75,22 @@ export function setupWebSocket(
 
     close(ws) {
       console.log("Global WebSocket disconnected");
-      eventBusManager.unsubscribeWebSocket(GLOBAL_SESSION_ID, ws.raw);
+      const clientId = (ws.raw as any).__clientId;
+      if (clientId) {
+        transport.unregisterClient(clientId);
+      }
     },
 
     error(ws, error) {
       console.error("Global WebSocket error:", error);
-      eventBusManager.unsubscribeWebSocket(GLOBAL_SESSION_ID, ws.raw);
+      const clientId = (ws.raw as any).__clientId;
+      if (clientId) {
+        transport.unregisterClient(clientId);
+      }
     },
   });
 
-  // Session-scoped WebSocket (existing behavior)
+  // Session-scoped WebSocket
   return app.ws("/ws/:sessionId", {
     open(ws) {
       const sessionId = ws.data.params.sessionId;
@@ -90,12 +100,10 @@ export function setupWebSocket(
         console.error("WebSocket connection rejected: no sessionId provided");
         ws.send(
           JSON.stringify({
-            type: "error",
+            type: "ERROR",
             timestamp: new Date().toISOString(),
-            data: {
-              error: "Session ID required",
-              message: "WebSocket connection requires a valid sessionId",
-            },
+            error: "Session ID required",
+            errorCode: "MISSING_SESSION_ID",
           }),
         );
         ws.close();
@@ -110,21 +118,22 @@ export function setupWebSocket(
         console.error(`WebSocket connection rejected: session ${sessionId} not found`);
         ws.send(
           JSON.stringify({
-            type: "error",
+            type: "ERROR",
             sessionId,
             timestamp: new Date().toISOString(),
-            data: {
-              error: "Session not found",
-              message: `Session ${sessionId} does not exist`,
-            },
+            error: "Session not found",
+            errorCode: "SESSION_NOT_FOUND",
           }),
         );
         ws.close();
         return;
       }
 
-      // Subscribe to events
-      eventBusManager.subscribeWebSocket(sessionId, ws.raw);
+      // Register client with transport
+      const clientId = transport.registerClient(ws.raw, sessionId);
+
+      // Store clientId on websocket for cleanup
+      (ws.raw as any).__clientId = clientId;
 
       // Send initial connection message
       try {
@@ -135,6 +144,7 @@ export function setupWebSocket(
           data: {
             message: "WebSocket connection established",
             sessionId,
+            protocol: "MessageHub",
           },
         });
         ws.send(message);
@@ -158,35 +168,31 @@ export function setupWebSocket(
       try {
         const data = typeof message === "string" ? JSON.parse(message) : message;
 
-        if (data.type === "ping") {
-          // Respond to ping with pong
+        // Handle ping/pong
+        if (data.type === "ping" || data.type === "PING") {
           ws.send(
             JSON.stringify({
-              type: "pong",
+              type: "PONG",
               timestamp: new Date().toISOString(),
             }),
           );
-        } else if (data.type === "subscribe") {
-          // Handle subscription requests (for future filtering)
-          console.log(
-            `Client subscribed to events: ${data.events?.join(", ") || "all"}`,
-          );
-        } else {
-          // Handle all other client-emitted events through EventBus
-          // Convert to string if it's not already (Bun may auto-parse JSON)
-          const messageString = typeof message === "string" ? message : JSON.stringify(message);
-          eventBusManager.handleWebSocketMessage(sessionId, messageString);
+          return;
         }
+
+        // Ensure message has correct sessionId
+        data.sessionId = sessionId;
+
+        // Pass to transport which will notify MessageHub
+        transport.handleClientMessage(data);
       } catch (error) {
         console.error("Error processing WebSocket message:", error);
         ws.send(
           JSON.stringify({
-            type: "error",
+            type: "ERROR",
             sessionId,
             timestamp: new Date().toISOString(),
-            data: {
-              error: "Invalid message format",
-            },
+            error: "Invalid message format",
+            errorCode: "INVALID_MESSAGE",
           }),
         );
       }
@@ -196,7 +202,10 @@ export function setupWebSocket(
       const sessionId = ws.data.params.sessionId;
       if (sessionId) {
         console.log(`WebSocket disconnected for session: ${sessionId}`);
-        eventBusManager.unsubscribeWebSocket(sessionId, ws.raw);
+        const clientId = (ws.raw as any).__clientId;
+        if (clientId) {
+          transport.unregisterClient(clientId);
+        }
       }
     },
 
@@ -204,7 +213,10 @@ export function setupWebSocket(
       const sessionId = ws.data.params.sessionId;
       if (sessionId) {
         console.error(`WebSocket error for session ${sessionId}:`, error);
-        eventBusManager.unsubscribeWebSocket(sessionId, ws.raw);
+        const clientId = (ws.raw as any).__clientId;
+        if (clientId) {
+          transport.unregisterClient(clientId);
+        }
       }
     },
   });

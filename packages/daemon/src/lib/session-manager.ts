@@ -1,7 +1,7 @@
 import type { Session } from "@liuboer/shared";
+import type { MessageHub } from "@liuboer/shared";
 import { Database } from "../storage/database";
 import { AgentSession } from "./agent-session";
-import { EventBusManager } from "./event-bus-manager";
 import type { AuthManager } from "./auth-manager";
 
 export class SessionManager {
@@ -9,7 +9,7 @@ export class SessionManager {
 
   constructor(
     private db: Database,
-    private eventBusManager: EventBusManager,
+    private messageHub: MessageHub,
     private authManager: AuthManager,
     private config: {
       defaultModel: string;
@@ -50,27 +50,22 @@ export class SessionManager {
     // Save to database
     this.db.createSession(session);
 
-    // Get or create EventBus for this session
-    const eventBus = this.eventBusManager.getOrCreateEventBus(sessionId);
-
-    // Create agent session with EventBus and auth function
+    // Create agent session with MessageHub and auth function
     const agentSession = new AgentSession(
       session,
       this.db,
-      eventBus,
+      this.messageHub,
       () => this.authManager.getCurrentApiKey(),
     );
 
     this.sessions.set(sessionId, agentSession);
 
-    // Emit session created event
-    await eventBus.emit({
-      id: crypto.randomUUID(),
-      type: "session.created",
-      sessionId,
-      timestamp: new Date().toISOString(),
-      data: { session },
-    });
+    // Emit session created event via MessageHub
+    await this.messageHub.publish(
+      `global:session.created`,
+      { session },
+      { sessionId: "global" }
+    );
 
     return sessionId;
   }
@@ -85,14 +80,11 @@ export class SessionManager {
     const session = this.db.getSession(sessionId);
     if (!session) return null;
 
-    // Get or create EventBus for this session
-    const eventBus = this.eventBusManager.getOrCreateEventBus(sessionId);
-
-    // Create agent session with EventBus and auth function
+    // Create agent session with MessageHub and auth function
     const agentSession = new AgentSession(
       session,
       this.db,
-      eventBus,
+      this.messageHub,
       () => this.authManager.getCurrentApiKey(),
     );
     this.sessions.set(sessionId, agentSession);
@@ -115,28 +107,18 @@ export class SessionManager {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    // Get EventBus before cleanup
-    const eventBus = this.eventBusManager.getEventBus(sessionId);
-
-    // Emit session ended event
-    if (eventBus) {
-      await eventBus.emit({
-        id: crypto.randomUUID(),
-        type: "session.ended",
-        sessionId,
-        timestamp: new Date().toISOString(),
-        data: { reason: "deleted" },
-      });
-    }
+    // Emit session ended event via MessageHub
+    await this.messageHub.publish(
+      `global:session.deleted`,
+      { sessionId, reason: "deleted" },
+      { sessionId: "global" }
+    );
 
     // Remove from memory
     this.sessions.delete(sessionId);
 
     // Remove from database
     this.db.deleteSession(sessionId);
-
-    // Cleanup EventBus
-    await this.eventBusManager.removeEventBus(sessionId);
   }
 
 

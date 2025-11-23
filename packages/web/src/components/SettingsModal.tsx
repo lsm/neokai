@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import type { AuthStatus } from "@liuboer/shared";
-import { websocketApiClient as apiClient } from "../lib/websocket-api-client.ts";
+import { messageHubApiClient as apiClient } from "../lib/messagehub-api-client.ts";
 import { toast } from "../lib/toast.ts";
 import { Modal } from "./ui/Modal.tsx";
 
