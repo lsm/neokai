@@ -8,24 +8,13 @@
  */
 
 import { useState, useRef, useEffect } from "preact/hooks";
-import type { ContextInfo, ContextAPIUsage } from "@liuboer/shared";
-
-/**
- * Extended context usage that includes both ContextInfo and basic API usage fallback
- */
-interface ContextUsage extends Partial<ContextInfo> {
-  // Basic API usage (fallback when accurate context info is not available)
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-}
+import type { ContextInfo } from "@liuboer/shared";
 
 interface StatusIndicatorProps {
   isConnected: boolean;
   isProcessing: boolean;
   currentAction?: string;
-  contextUsage?: ContextUsage;
+  contextUsage?: ContextInfo;
   maxContextTokens?: number;
   onSendMessage?: (message: string) => void;
 }
@@ -85,26 +74,10 @@ export default function StatusIndicator({
 
   const status = getStatus();
 
-  // Use accurate context info if available, otherwise fall back to API response
-  const hasAccurateContextInfo = contextUsage?.totalUsed !== undefined;
-  const totalTokens = hasAccurateContextInfo
-    ? (contextUsage?.totalUsed || 0)
-    : (() => {
-        // Calculate from API response
-        // According to Anthropic docs: Total input tokens = input_tokens + cache_creation_input_tokens + cache_read_input_tokens
-        const totalInputTokens = (contextUsage?.inputTokens || 0) +
-                                 (contextUsage?.cacheCreationTokens || 0) +
-                                 (contextUsage?.cacheReadTokens || 0);
-        return totalInputTokens + (contextUsage?.outputTokens || 0);
-      })();
-
-  const contextCapacity = hasAccurateContextInfo
-    ? (contextUsage?.totalCapacity || maxContextTokens)
-    : maxContextTokens;
-
-  const contextPercentage = hasAccurateContextInfo && contextUsage?.percentUsed !== undefined
-    ? contextUsage.percentUsed
-    : (totalTokens / contextCapacity) * 100;
+  // Only show context info when accurate data is available
+  const totalTokens = contextUsage?.totalUsed || 0;
+  const contextCapacity = contextUsage?.totalCapacity || maxContextTokens;
+  const contextPercentage = contextUsage?.percentUsed || 0;
 
   // Determine color based on usage - green for lower usage
   const getContextColor = () => {
@@ -173,45 +146,22 @@ export default function StatusIndicator({
             </span>
           </div>
 
-          {/* Context usage indicator */}
-          {totalTokens > 0 && (
-            <div
-              class="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
-              onClick={() => setShowContextDetails(!showContextDetails)}
-              title="Click for context details"
-            >
-              <span class={`text-xs font-medium ${getContextColor()}`}>
-                {contextPercentage.toFixed(1)}%
-              </span>
-              <div class="w-24 sm:w-32 h-2 bg-dark-700 rounded-full overflow-hidden flex">
-                {hasAccurateContextInfo && contextUsage?.breakdown ? (
-                  // Show stacked bar with category colors
-                  <>
-                    {Object.entries(contextUsage.breakdown)
-                      .sort(([categoryA], [categoryB]) => getCategorySortOrder(categoryA) - getCategorySortOrder(categoryB))
-                      .map(([category, data]) => {
-                        const { bg } = getCategoryColor(category);
-                        const percentage = (data.tokens / contextCapacity) * 100;
-                        return (
-                          <div
-                            key={category}
-                            class={`h-full transition-all duration-300 ${bg}`}
-                            style={{ width: `${percentage}%` }}
-                            title={`${category}: ${data.tokens.toLocaleString()} tokens`}
-                          />
-                        );
-                      })}
-                  </>
-                ) : (
-                  // Fallback to single color bar
-                  <div
-                    class={`h-full transition-all duration-300 ${getContextBarColor()}`}
-                    style={{ width: `${Math.min(contextPercentage, 100)}%` }}
-                  />
-                )}
-              </div>
+          {/* Context usage indicator - always show */}
+          <div
+            class="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
+            onClick={() => totalTokens > 0 && setShowContextDetails(!showContextDetails)}
+            title={totalTokens > 0 ? "Click for context details" : "Context data loading..."}
+          >
+            <span class={`text-xs font-medium ${getContextColor()}`}>
+              {contextPercentage.toFixed(1)}%
+            </span>
+            <div class="w-24 sm:w-32 h-2 bg-dark-700 rounded-full overflow-hidden">
+              <div
+                class={`h-full transition-all duration-300 ${getContextBarColor()}`}
+                style={{ width: `${Math.min(contextPercentage, 100)}%` }}
+              />
             </div>
-          )}
+          </div>
         </div>
       </div>
 
@@ -248,118 +198,55 @@ export default function StatusIndicator({
                     {/* Total Usage */}
                     <div class="bg-dark-700 rounded-lg p-2.5">
                       <div class="flex justify-between items-center mb-1.5">
-                        <span class="text-xs text-gray-400">
-                          {hasAccurateContextInfo ? "Context Window" : "Total (API)"}
-                        </span>
+                        <span class="text-xs text-gray-400">Context Window</span>
                         <span class={`text-xs font-semibold ${getContextColor()}`}>
                           {contextPercentage.toFixed(1)}%
                         </span>
                       </div>
-                      <div class="w-full h-2.5 bg-dark-600 rounded-full overflow-hidden flex">
-                        {hasAccurateContextInfo && contextUsage?.breakdown ? (
-                          // Show stacked bar with category colors
-                          <>
-                            {Object.entries(contextUsage.breakdown)
-                              .sort(([categoryA], [categoryB]) => getCategorySortOrder(categoryA) - getCategorySortOrder(categoryB))
-                              .map(([category, data]) => {
-                                const { bg } = getCategoryColor(category);
-                                const percentage = (data.tokens / contextCapacity) * 100;
-                                return (
-                                  <div
-                                    key={category}
-                                    class={`h-full transition-all duration-300 ${bg}`}
-                                    style={{ width: `${percentage}%` }}
-                                    title={`${category}: ${data.tokens.toLocaleString()} tokens`}
-                                  />
-                                );
-                              })}
-                          </>
-                        ) : (
-                          // Fallback to single color bar
-                          <div
-                            class={`h-full transition-all duration-300 ${getContextBarColor()}`}
-                            style={{ width: `${Math.min(contextPercentage, 100)}%` }}
-                          />
-                        )}
+                      <div class="w-full h-2.5 bg-dark-600 rounded-full overflow-hidden">
+                        <div
+                          class={`h-full transition-all duration-300 ${getContextBarColor()}`}
+                          style={{ width: `${Math.min(contextPercentage, 100)}%` }}
+                        />
                       </div>
                       <div class="text-xs text-gray-500 mt-1">
                         {totalTokens.toLocaleString()} / {contextCapacity.toLocaleString()}
                       </div>
                     </div>
 
-                    {/* Token Breakdown */}
-                    <div class="space-y-1.5">
-                      <h4 class="text-xs font-medium text-gray-300">Breakdown</h4>
-
-                      {hasAccurateContextInfo && contextUsage?.breakdown ? (
-                        // Show accurate breakdown from /context command
-                        <>
+                    {/* Token Breakdown with colored squares */}
+                    {contextUsage?.breakdown && (
+                      <div class="space-y-2">
+                        <h4 class="text-xs font-medium text-gray-300">Breakdown</h4>
+                        <div class="space-y-1.5">
                           {Object.entries(contextUsage.breakdown)
                             .sort(([categoryA], [categoryB]) => getCategorySortOrder(categoryA) - getCategorySortOrder(categoryB))
                             .map(([category, data]) => {
-                              const { dot, text } = getCategoryColor(category);
+                              const { bg, text } = getCategoryColor(category);
                               const percentage = data.percent !== null ? data.percent : ((data.tokens / contextCapacity) * 100);
                               return (
-                                <div key={category} class="flex justify-between items-center text-xs">
-                                  <div class="flex items-center gap-2">
-                                    <div class={`w-2 h-2 rounded-full ${dot}`} />
-                                    <span class="text-gray-400">{category}</span>
-                                  </div>
-                                  <div class="flex items-center gap-2">
-                                    <span class={text}>{percentage.toFixed(1)}%</span>
-                                    <span class="text-gray-200 font-mono">{data.tokens.toLocaleString()}</span>
-                                  </div>
+                                <div key={category} class="flex items-center gap-2 text-xs">
+                                  {/* Colored square icon */}
+                                  <div class={`w-3 h-3 rounded ${bg} flex-shrink-0`} />
+                                  <span class="text-gray-400 flex-1 min-w-0 truncate">{category}</span>
+                                  <span class={`${text} font-medium`}>{percentage.toFixed(1)}%</span>
+                                  <span class="text-gray-200 font-mono text-xs">{data.tokens.toLocaleString()}</span>
                                 </div>
                               );
                             })}
-                        </>
-                      ) : (
-                        // Show basic API response breakdown
-                        <>
-                          <div class="flex justify-between text-xs">
-                            <span class="text-gray-400">Input</span>
-                            <span class="text-gray-200">{(contextUsage?.inputTokens || 0).toLocaleString()}</span>
-                          </div>
-
-                          <div class="flex justify-between text-xs">
-                            <span class="text-gray-400">Output</span>
-                            <span class="text-gray-200">{(contextUsage?.outputTokens || 0).toLocaleString()}</span>
-                          </div>
-
-                          {(contextUsage?.cacheReadTokens || 0) > 0 && (
-                            <div class="flex justify-between text-xs">
-                              <span class="text-gray-400">Cache Read</span>
-                              <span class="text-green-400">{(contextUsage?.cacheReadTokens || 0).toLocaleString()}</span>
-                            </div>
-                          )}
-
-                          {(contextUsage?.cacheCreationTokens || 0) > 0 && (
-                            <div class="flex justify-between text-xs">
-                              <span class="text-gray-400">Cache Creation</span>
-                              <span class="text-blue-400">{(contextUsage?.cacheCreationTokens || 0).toLocaleString()}</span>
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </div>
-
-                    {/* Accuracy Note */}
-                    {!hasAccurateContextInfo && (
-                      <div class="pt-3 border-t border-dark-700">
-                        <p class="text-xs text-gray-500">
-                          Note: Showing API response tokens. Accurate context info with system prompts, tools, and cache breakdown will appear automatically after each response.
-                        </p>
+                        </div>
                       </div>
                     )}
 
-                    {/* Status indicator for accurate data */}
-                    {hasAccurateContextInfo && (
+                    {/* Model info */}
+                    {contextUsage?.model && (
                       <div class="pt-3 border-t border-dark-700">
-                        <div class="flex items-center gap-2 text-xs text-green-400">
-                          <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
-                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                        <div class="flex items-center gap-2 text-xs">
+                          <svg class="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
                           </svg>
-                          <span>Showing accurate SDK context data</span>
+                          <span class="text-gray-400">Model:</span>
+                          <span class="text-gray-200 font-mono">{contextUsage.model}</span>
                         </div>
                       </div>
                     )}

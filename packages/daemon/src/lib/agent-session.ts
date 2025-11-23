@@ -362,6 +362,15 @@ export class AgentSession {
         console.warn(`[AgentSession ${this.session.id}] Failed to fetch slash commands:`, error);
       }
 
+      // Fetch initial context info on connection
+      // Only if history replay is complete (has existing messages) or no history (new session)
+      if (this.historyReplayComplete || this.conversationHistory.length === 0) {
+        console.log(`[AgentSession ${this.session.id}] Fetching initial context info on connection`);
+        this.fetchContextInfo().catch(error => {
+          console.warn(`[AgentSession ${this.session.id}] Failed to fetch initial context info:`, error);
+        });
+      }
+
       // Process SDK messages
       console.log(`[AgentSession ${this.session.id}] Processing SDK stream...`);
       for await (const message of this.queryObject) {

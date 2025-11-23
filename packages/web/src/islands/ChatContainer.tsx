@@ -37,19 +37,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   const [currentAction, setCurrentAction] = useState<string | undefined>(undefined);
 
   /**
-   * Context usage that combines both ContextInfo and basic API usage fallback
+   * Context usage from accurate SDK context info
    */
-  const [contextUsage, setContextUsage] = useState<Partial<ContextInfo> & {
-    inputTokens: number;
-    outputTokens: number;
-    cacheReadTokens: number;
-    cacheCreationTokens: number;
-  }>({
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
-    cacheCreationTokens: 0
-  });
+  const [contextUsage, setContextUsage] = useState<ContextInfo | undefined>(undefined);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
@@ -106,23 +96,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
         console.log("Slash commands not yet available:", cmdError);
       }
 
-      // Calculate initial context usage from existing messages
-      // Total input tokens = input_tokens + cache_creation_input_tokens + cache_read_input_tokens
-      // Find the last result message with success status to get the most up-to-date usage
-      // The SDK returns cumulative usage in each result message, so we shouldn't sum them up
-      const lastResultMessage = [...sdkResponse.sdkMessages].reverse().find(
-        msg => msg.type === 'result' && msg.subtype === 'success'
-      );
-
-      const initialUsage = lastResultMessage && lastResultMessage.type === 'result' && lastResultMessage.subtype === 'success'
-        ? {
-            inputTokens: lastResultMessage.usage.input_tokens,
-            outputTokens: lastResultMessage.usage.output_tokens,
-            cacheReadTokens: lastResultMessage.usage.cache_read_input_tokens || 0,
-            cacheCreationTokens: lastResultMessage.usage.cache_creation_input_tokens || 0
-          }
-        : { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
-      setContextUsage(initialUsage);
+      // Context usage will be populated from context.updated events
+      // No need to calculate from API response messages
     } catch (err) {
       const message = err instanceof Error
         ? err.message
@@ -203,9 +178,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       const data = event.data as any;
       console.log(`Context updated:`, data);
 
-      // Check if this is the detailed context info from /context command (flattened structure)
+      // Only handle accurate context info from /context command
       if (data.totalUsed !== undefined) {
-        // This is the accurate parsed context info from /context command
         console.log(`Received accurate context info:`, {
           totalUsed: data.totalUsed,
           totalCapacity: data.totalCapacity,
@@ -213,29 +187,14 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
           breakdown: data.breakdown,
         });
 
-        // Update with accurate data
-        // Note: The accurate context shows total tokens in window, not just this turn's usage
-        // We'll store the detailed breakdown for display
-        setContextUsage((prev) => ({
-          ...prev,
-          // Add the detailed context info
+        // Update with accurate SDK context data
+        setContextUsage({
           totalUsed: data.totalUsed,
           totalCapacity: data.totalCapacity,
           percentUsed: data.percentUsed,
           breakdown: data.breakdown,
           model: data.model,
           slashCommandTool: data.slashCommandTool,
-          // Keep the API usage for reference
-          apiUsage: data.apiUsage,
-        }));
-      } else if (data.tokenUsage && data.tokenUsage.inputTokens !== undefined) {
-        // This is the basic API response (sent first) with nested tokenUsage structure
-        // Update with approximate values from API response
-        setContextUsage({
-          inputTokens: data.tokenUsage.inputTokens,
-          outputTokens: data.tokenUsage.outputTokens,
-          cacheReadTokens: data.tokenUsage.cacheReadTokens,
-          cacheCreationTokens: data.tokenUsage.cacheCreationTokens,
         });
       }
     });
