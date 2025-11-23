@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { Event, Session } from "@liuboer/shared";
+import type { Event, Session, ContextInfo } from "@liuboer/shared";
 import type { SDKMessage } from "@liuboer/shared/sdk/sdk.d.ts";
 import { isSDKStreamEvent } from "@liuboer/shared/sdk/type-guards";
 import { websocketApiClient as apiClient } from "../lib/websocket-api-client.ts";
@@ -35,7 +35,16 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [isWsConnected, setIsWsConnected] = useState(false);
   const [currentAction, setCurrentAction] = useState<string | undefined>(undefined);
-  const [contextUsage, setContextUsage] = useState<{ inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }>({
+
+  /**
+   * Context usage that combines both ContextInfo and basic API usage fallback
+   */
+  const [contextUsage, setContextUsage] = useState<Partial<ContextInfo> & {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+  }>({
     inputTokens: 0,
     outputTokens: 0,
     cacheReadTokens: 0,
@@ -191,17 +200,44 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
     // Context events
     const unsubContextUpdated = eventBusClient.on("context.updated", (event: Event) => {
-      const data = event.data as { tokenUsage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number }; costUSD: number; durationMs: number };
+      const data = event.data as any;
       console.log(`Context updated:`, data);
 
-      // Update context usage with the latest values
-      // The event contains the usage for the current turn, which represents the full context window size
-      setContextUsage({
-        inputTokens: data.tokenUsage.inputTokens,
-        outputTokens: data.tokenUsage.outputTokens,
-        cacheReadTokens: data.tokenUsage.cacheReadTokens,
-        cacheCreationTokens: data.tokenUsage.cacheCreationTokens,
-      });
+      // Check if this is the detailed context info from /context command (flattened structure)
+      if (data.totalUsed !== undefined) {
+        // This is the accurate parsed context info from /context command
+        console.log(`Received accurate context info:`, {
+          totalUsed: data.totalUsed,
+          totalCapacity: data.totalCapacity,
+          percentUsed: data.percentUsed,
+          breakdown: data.breakdown,
+        });
+
+        // Update with accurate data
+        // Note: The accurate context shows total tokens in window, not just this turn's usage
+        // We'll store the detailed breakdown for display
+        setContextUsage((prev) => ({
+          ...prev,
+          // Add the detailed context info
+          totalUsed: data.totalUsed,
+          totalCapacity: data.totalCapacity,
+          percentUsed: data.percentUsed,
+          breakdown: data.breakdown,
+          model: data.model,
+          slashCommandTool: data.slashCommandTool,
+          // Keep the API usage for reference
+          apiUsage: data.apiUsage,
+        }));
+      } else if (data.tokenUsage && data.tokenUsage.inputTokens !== undefined) {
+        // This is the basic API response (sent first) with nested tokenUsage structure
+        // Update with approximate values from API response
+        setContextUsage({
+          inputTokens: data.tokenUsage.inputTokens,
+          outputTokens: data.tokenUsage.outputTokens,
+          cacheReadTokens: data.tokenUsage.cacheReadTokens,
+          cacheCreationTokens: data.tokenUsage.cacheCreationTokens,
+        });
+      }
     });
 
     const unsubContextCompacted = eventBusClient.on("context.compacted", (event: Event) => {
@@ -680,6 +716,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
         currentAction={currentAction}
         contextUsage={contextUsage}
         maxContextTokens={200000}
+        onSendMessage={handleSendMessage}
       />
 
       {/* Input */}

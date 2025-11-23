@@ -285,3 +285,48 @@ export interface CommandExecutionResult {
   error?: string;
   displayType?: "text" | "markdown" | "json" | "component";
 }
+
+// Context information types
+
+/**
+ * Category breakdown for context usage
+ */
+export interface ContextCategoryBreakdown {
+  tokens: number;
+  percent: number | null;
+}
+
+/**
+ * SlashCommand tool statistics
+ */
+export interface ContextSlashCommandTool {
+  commands: number;
+  totalTokens: number;
+}
+
+/**
+ * API usage statistics from Claude response
+ */
+export interface ContextAPIUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+}
+
+/**
+ * Comprehensive context information from /context command
+ * Includes model info, token usage, category breakdown, and tool statistics
+ */
+export interface ContextInfo {
+  model: string | null;
+  // Token usage
+  totalUsed: number;
+  totalCapacity: number;
+  percentUsed: number;
+  // Category breakdown
+  breakdown: Record<string, ContextCategoryBreakdown>;
+  // Optional additional info
+  slashCommandTool?: ContextSlashCommandTool;
+  apiUsage?: ContextAPIUsage;
+}
