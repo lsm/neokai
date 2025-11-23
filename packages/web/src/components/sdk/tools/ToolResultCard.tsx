@@ -151,6 +151,7 @@ export function ToolResultCard({
                 filePath={input.file_path}
                 showLineNumbers={true}
                 showHeader={true}
+                maxHeight="none"
               />
             </div>
           ) : /* Special handling for Thinking tool - just show the content */
