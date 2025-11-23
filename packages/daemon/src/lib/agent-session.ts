@@ -1,5 +1,5 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import type { Message, MessageContent, Session, ToolCall } from "@liuboer/shared";
+import type { Message, MessageContent, Session, ToolCall, ContextInfo } from "@liuboer/shared";
 import { EventBus } from "@liuboer/shared";
 import { Database } from "../storage/database";
 
@@ -12,6 +12,7 @@ interface QueuedMessage {
   timestamp: string;
   resolve: (messageId: string) => void;
   reject: (error: Error) => void;
+  internal?: boolean; // If true, don't save to DB or emit to client
 }
 
 /**
@@ -36,6 +37,17 @@ export class AgentSession {
   // SDK query object with control methods
   private queryObject: any | null = null;
   private slashCommands: string[] | null = null;
+
+  // Internal message tracking
+  private processingInternalMessage: boolean = false;
+  private internalMessageBuffer: any[] = [];
+
+  // History replay tracking - prevents /context loop during startup
+  private replayingHistory: boolean = false;
+  private historyReplayComplete: boolean = false;
+
+  // In-flight flag for /context calls - prevents concurrent calls
+  private contextFetchInProgress: boolean = false;
 
   constructor(
     private session: Session,
@@ -129,7 +141,7 @@ export class AgentSession {
   /**
    * Enqueue a message to be sent to Claude via the streaming query
    */
-  async enqueueMessage(content: string | MessageContent[]): Promise<string> {
+  async enqueueMessage(content: string | MessageContent[], internal: boolean = false): Promise<string> {
     const messageId = crypto.randomUUID();
 
     return new Promise((resolve, reject) => {
@@ -139,6 +151,7 @@ export class AgentSession {
         timestamp: new Date().toISOString(),
         resolve,
         reject,
+        internal,
       };
 
       this.messageQueue.push(queuedMessage);
@@ -172,6 +185,11 @@ export class AgentSession {
     console.log(`[AgentSession ${this.session.id}] Message generator started`);
 
     // First, yield conversation history (if resuming session)
+    if (this.conversationHistory.length > 0) {
+      this.replayingHistory = true;
+      console.log(`[AgentSession ${this.session.id}] Replaying ${this.conversationHistory.length} historical messages`);
+    }
+
     for (const msg of this.conversationHistory) {
       if (msg.role === "user") {
         console.log(`[AgentSession ${this.session.id}] Yielding history message: ${msg.id}`);
@@ -185,6 +203,13 @@ export class AgentSession {
       }
     }
 
+    // Mark history replay as complete
+    if (this.replayingHistory) {
+      this.historyReplayComplete = true;
+      this.replayingHistory = false;
+      console.log(`[AgentSession ${this.session.id}] History replay complete`);
+    }
+
     // Continuously yield new messages from queue
     while (this.queryRunning) {
       const queuedMessage = await this.waitForNextMessage();
@@ -194,55 +219,64 @@ export class AgentSession {
         break;
       }
 
-      console.log(`[AgentSession ${this.session.id}] Yielding queued message: ${queuedMessage.id}`);
+      console.log(`[AgentSession ${this.session.id}] Yielding queued message: ${queuedMessage.id}${queuedMessage.internal ? ' (internal)' : ''}`);
 
-      // Save user message to DB
-      const sdkUserMessage = {
-        type: "user" as const,
-        uuid: queuedMessage.id,
-        session_id: this.session.id,
-        parent_tool_use_id: null,
-        message: {
-          role: "user" as const,
+      // Set internal message tracking flag
+      if (queuedMessage.internal) {
+        this.processingInternalMessage = true;
+        this.internalMessageBuffer = [];
+      }
+
+      // Only save and emit if NOT internal
+      if (!queuedMessage.internal) {
+        // Save user message to DB
+        const sdkUserMessage = {
+          type: "user" as const,
+          uuid: queuedMessage.id,
+          session_id: this.session.id,
+          parent_tool_use_id: null,
+          message: {
+            role: "user" as const,
+            content:
+              typeof queuedMessage.content === "string"
+                ? [{ type: "text" as const, text: queuedMessage.content }]
+                : queuedMessage.content,
+          },
+        };
+
+        this.db.saveSDKMessage(this.session.id, sdkUserMessage);
+
+        // Emit user message
+        await this.eventBus.emit({
+          id: crypto.randomUUID(),
+          type: "sdk.message",
+          sessionId: this.session.id,
+          timestamp: new Date().toISOString(),
+          data: sdkUserMessage,
+        });
+
+        // Emit processing status
+        await this.eventBus.emit({
+          id: crypto.randomUUID(),
+          type: "message.processing",
+          sessionId: this.session.id,
+          timestamp: new Date().toISOString(),
+          data: { messageId: queuedMessage.id },
+        });
+
+        // Add to conversation history
+        const userMessage: Message = {
+          id: queuedMessage.id,
+          sessionId: this.session.id,
+          role: "user",
           content:
             typeof queuedMessage.content === "string"
-              ? [{ type: "text" as const, text: queuedMessage.content }]
-              : queuedMessage.content,
-        },
-      };
-
-      this.db.saveSDKMessage(this.session.id, sdkUserMessage);
-
-      // Emit user message
-      await this.eventBus.emit({
-        id: crypto.randomUUID(),
-        type: "sdk.message",
-        sessionId: this.session.id,
-        timestamp: new Date().toISOString(),
-        data: sdkUserMessage,
-      });
-
-      // Emit processing status
-      await this.eventBus.emit({
-        id: crypto.randomUUID(),
-        type: "message.processing",
-        sessionId: this.session.id,
-        timestamp: new Date().toISOString(),
-        data: { messageId: queuedMessage.id },
-      });
-
-      // Add to conversation history
-      const userMessage: Message = {
-        id: queuedMessage.id,
-        sessionId: this.session.id,
-        role: "user",
-        content:
-          typeof queuedMessage.content === "string"
-            ? queuedMessage.content
-            : JSON.stringify(queuedMessage.content),
-        timestamp: queuedMessage.timestamp,
-      };
-      this.conversationHistory.push(userMessage);
+              ? queuedMessage.content
+              : JSON.stringify(queuedMessage.content),
+          timestamp: queuedMessage.timestamp,
+        };
+        this.conversationHistory.push(userMessage);
+      }
 
       // Yield to SDK
       yield {
@@ -363,7 +397,68 @@ export class AgentSession {
    * Handle incoming SDK messages
    */
   private async handleSDKMessage(message: any): Promise<void> {
-    // Emit all SDK messages
+    // If processing internal message, buffer it instead of saving/emitting
+    if (this.processingInternalMessage) {
+      this.internalMessageBuffer.push(message);
+
+      // Check if this is the result message (end of internal response)
+      if (message.type === "result") {
+        console.log(`[AgentSession ${this.session.id}] Internal /context command completed`);
+
+        // Clear in-flight flag
+        this.contextFetchInProgress = false;
+
+        // Parse the full context info from the internal message buffer
+        const contextInfo = this.parseContextInfo(this.internalMessageBuffer);
+
+        if (contextInfo) {
+          // Emit the full parsed context info to client
+          await this.eventBus.emit({
+            id: crypto.randomUUID(),
+            type: "context.updated",
+            sessionId: this.session.id,
+            timestamp: new Date().toISOString(),
+            data: {
+              ...contextInfo,
+              costUSD: message.total_cost_usd,
+              durationMs: message.duration_ms,
+            },
+          });
+        } else {
+          // Fallback: emit basic context info from result message
+          console.warn(`[AgentSession ${this.session.id}] Failed to parse context info, using fallback`);
+          await this.eventBus.emit({
+            id: crypto.randomUUID(),
+            type: "context.updated",
+            sessionId: this.session.id,
+            timestamp: new Date().toISOString(),
+            data: {
+              model: null,
+              totalUsed: message.usage.input_tokens + message.usage.output_tokens,
+              totalCapacity: 200000,
+              percentUsed: ((message.usage.input_tokens + message.usage.output_tokens) / 200000) * 100,
+              breakdown: {},
+              apiUsage: {
+                inputTokens: message.usage.input_tokens,
+                outputTokens: message.usage.output_tokens,
+                cacheReadTokens: message.usage.cache_read_input_tokens || 0,
+                cacheCreationTokens: message.usage.cache_creation_input_tokens || 0,
+              },
+              costUSD: message.total_cost_usd,
+              durationMs: message.duration_ms,
+            },
+          });
+        }
+
+        // Reset internal message tracking
+        this.processingInternalMessage = false;
+        this.internalMessageBuffer = [];
+      }
+
+      return; // Don't process further
+    }
+
+    // Normal message processing - emit and save
     await this.eventBus.emit({
       id: crypto.randomUUID(),
       type: "sdk.message",
@@ -377,6 +472,7 @@ export class AgentSession {
 
     // Handle specific message types
     if (message.type === "result") {
+      // First emit basic token usage from API response
       await this.eventBus.emit({
         id: crypto.randomUUID(),
         type: "context.updated",
@@ -405,6 +501,183 @@ export class AgentSession {
         lastActiveAt: this.session.lastActiveAt,
         metadata: this.session.metadata,
       });
+
+      // Silently fetch accurate context info using /context command
+      // Only fetch if:
+      // 1. Not already processing an internal message
+      // 2. History replay is complete (prevents loop during startup)
+      // 3. No context fetch already in progress (prevents concurrent calls)
+      if (!this.processingInternalMessage && this.historyReplayComplete) {
+        this.fetchContextInfo().catch(error => {
+          console.warn(`[AgentSession ${this.session.id}] Failed to fetch context info:`, error);
+        });
+      }
+    }
+  }
+
+  /**
+   * Silently fetch context information using /context command
+   * This runs internally and doesn't save to DB or emit to client
+   */
+  private async fetchContextInfo(): Promise<void> {
+    // Skip if already fetching context (prevents concurrent calls)
+    if (this.contextFetchInProgress) {
+      console.log(`[AgentSession ${this.session.id}] Skipping /context fetch (already in progress)`);
+      return;
+    }
+
+    try {
+      this.contextFetchInProgress = true;
+      console.log(`[AgentSession ${this.session.id}] Fetching context info with /context command`);
+      await this.enqueueMessage("/context", true); // true = internal
+    } catch (error) {
+      console.error(`[AgentSession ${this.session.id}] Error fetching context info:`, error);
+      // Clear flag on error
+      this.contextFetchInProgress = false;
+    }
+  }
+
+  /**
+   * Parse context information from /context command response
+   * The /context command returns markdown-formatted text in a user message
+   */
+  private parseContextInfo(messages: any[]): ContextInfo | null {
+    try {
+      // Find the user message with the context info (contains <local-command-stdout>)
+      const userMessage = messages.find((msg: any) => {
+        if (msg.type !== "user") return false;
+        const content = msg.message?.content;
+        if (typeof content === "string") {
+          return content.includes("Context Usage") || content.includes("<local-command-stdout>");
+        }
+        return false;
+      });
+
+      if (!userMessage || !userMessage.message) {
+        console.warn(`[AgentSession ${this.session.id}] No user message with context info found`);
+        return null;
+      }
+
+      // Extract text content from the message
+      let text = userMessage.message.content;
+      if (typeof text !== "string") {
+        console.warn(`[AgentSession ${this.session.id}] Context message content is not a string`);
+        return null;
+      }
+
+      // Remove <local-command-stdout> tags if present
+      text = text.replace(/<\/?local-command-stdout>/g, "").trim();
+
+      console.log(`[AgentSession ${this.session.id}] Parsing context info from text:`, text.substring(0, 200));
+
+      // Parse the markdown formatted context info
+      const parsed: ContextInfo = {
+        model: null,
+        totalUsed: 0,
+        totalCapacity: 0,
+        percentUsed: 0,
+        breakdown: {},
+      };
+
+      const lines = text.split("\n");
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+
+        // Match "**Model:** claude-sonnet-4-5-20250929"
+        const modelMatch = line.match(/\*\*Model:\*\*\s*(.+)/);
+        if (modelMatch) {
+          parsed.model = modelMatch[1].trim();
+          continue;
+        }
+
+        // Match "**Tokens:** 65.8k / 200.0k (33%)"
+        const tokensMatch = line.match(/\*\*Tokens:\*\*\s*([\d.]+)(k?)\s*\/\s*([\d.]+)(k?)\s*\((\d+(?:\.\d+)?)%\)/);
+        if (tokensMatch) {
+          // Convert k notation to actual numbers
+          const parseTokens = (numStr: string, kSuffix: string) => {
+            const num = parseFloat(numStr);
+            return kSuffix.toLowerCase() === 'k' ? Math.round(num * 1000) : num;
+          };
+
+          parsed.totalUsed = parseTokens(tokensMatch[1], tokensMatch[2]);
+          parsed.totalCapacity = parseTokens(tokensMatch[3], tokensMatch[4]);
+          parsed.percentUsed = parseFloat(tokensMatch[5]);
+          continue;
+        }
+
+        // Parse markdown table rows (skip header and separator)
+        const tableRowMatch = line.match(/^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|$/);
+        if (tableRowMatch) {
+          const category = tableRowMatch[1].trim();
+          const tokensStr = tableRowMatch[2].trim();
+          const percentStr = tableRowMatch[3].trim();
+
+          // Skip table headers and separators
+          if (
+            category.toLowerCase() === "category" ||
+            category.includes("---") ||
+            tokensStr.toLowerCase() === "tokens" ||
+            tokensStr.includes("---")
+          ) {
+            continue;
+          }
+
+          // Parse tokens (handle "3.0k" format and plain numbers like "8")
+          let tokens = 0;
+          if (tokensStr.toLowerCase().includes("k")) {
+            tokens = Math.round(parseFloat(tokensStr.replace(/k/i, "")) * 1000);
+          } else {
+            tokens = parseInt(tokensStr.replace(/,/g, ""));
+          }
+
+          // Parse percentage (handle "1.5%" format)
+          const percent = parseFloat(percentStr.replace("%", ""));
+
+          parsed.breakdown[category] = {
+            tokens,
+            percent: isNaN(percent) ? null : percent,
+          };
+          continue;
+        }
+
+        // Match "**Commands:** 0"
+        const commandsMatch = line.match(/\*\*Commands:\*\*\s*(\d+)/);
+        if (commandsMatch) {
+          if (!parsed.slashCommandTool) {
+            parsed.slashCommandTool = { commands: 0, totalTokens: 0 };
+          }
+          parsed.slashCommandTool.commands = parseInt(commandsMatch[1]);
+          continue;
+        }
+
+        // Match "**Total tokens:** 864"
+        const totalTokensMatch = line.match(/\*\*Total tokens:\*\*\s*(\d+(?:,\d+)*)/);
+        if (totalTokensMatch) {
+          if (!parsed.slashCommandTool) {
+            parsed.slashCommandTool = { commands: 0, totalTokens: 0 };
+          }
+          parsed.slashCommandTool.totalTokens = parseInt(totalTokensMatch[1].replace(/,/g, ""));
+          continue;
+        }
+      }
+
+      // Also include the result message for API usage details
+      const resultMessage = messages.find((msg: any) => msg.type === "result");
+      if (resultMessage && resultMessage.usage) {
+        parsed.apiUsage = {
+          inputTokens: resultMessage.usage.input_tokens,
+          outputTokens: resultMessage.usage.output_tokens,
+          cacheReadTokens: resultMessage.usage.cache_read_input_tokens || 0,
+          cacheCreationTokens: resultMessage.usage.cache_creation_input_tokens || 0,
+        };
+      }
+
+      console.log(`[AgentSession ${this.session.id}] Parsed context info:`, JSON.stringify(parsed, null, 2));
+      return parsed;
+    } catch (error) {
+      console.error(`[AgentSession ${this.session.id}] Error parsing context info:`, error);
+      return null;
     }
   }
 
@@ -515,4 +788,5 @@ export class AgentSession {
 
     return [];
   }
+
 }
