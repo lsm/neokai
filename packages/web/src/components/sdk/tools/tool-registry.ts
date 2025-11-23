@@ -5,7 +5,9 @@
  * enabling consistent rendering and easy extensibility.
  */
 
+import { h } from 'preact';
 import type { ToolConfig, ToolCategory } from './tool-types.ts';
+import { TodoViewer } from './TodoViewer.tsx';
 
 /**
  * Default tool configurations
@@ -120,8 +122,14 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
       const count = input?.todos?.length;
       return count ? `${count} todo${count !== 1 ? 's' : ''}` : 'Update todos';
     },
+    customRenderer: ({ input }) => {
+      if (input?.todos && Array.isArray(input.todos)) {
+        return h(TodoViewer, { todos: input.todos });
+      }
+      return null;
+    },
     hasLongOutput: false,
-    defaultExpanded: false,
+    defaultExpanded: true,
   },
 
   // MCP operations
