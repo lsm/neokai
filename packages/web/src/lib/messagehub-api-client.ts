@@ -323,6 +323,21 @@ export class MessageHubAPIClient implements APIClient {
   getMessageHub(): MessageHub | null {
     return this.messageHub;
   }
+
+  /**
+   * Wait for connection to be ready and return MessageHub
+   * This is useful for initializing state management that needs a connected hub
+   */
+  async waitForConnection(): Promise<MessageHub> {
+    return await this.ensureConnection();
+  }
+
+  /**
+   * Check if currently connected
+   */
+  isConnected(): boolean {
+    return this.messageHub?.isConnected() || false;
+  }
 }
 
 // Singleton instance

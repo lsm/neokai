@@ -3,3 +3,4 @@ export * from "./types.ts";
 export * from "./api.ts";
 export * from "./message-hub/index.ts";
 export * from "./utils.ts";
+export * from "./state-types.ts";

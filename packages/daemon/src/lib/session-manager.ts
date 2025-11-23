@@ -3,9 +3,11 @@ import type { MessageHub } from "@liuboer/shared";
 import { Database } from "../storage/database";
 import { AgentSession } from "./agent-session";
 import type { AuthManager } from "./auth-manager";
+import type { StateManager } from "./state-manager";
 
 export class SessionManager {
   private sessions: Map<string, AgentSession> = new Map();
+  private stateManager: StateManager | null = null;
 
   constructor(
     private db: Database,
@@ -18,6 +20,13 @@ export class SessionManager {
       workspaceRoot: string;
     },
   ) {}
+
+  /**
+   * Set state manager (called after initialization to avoid circular dependency)
+   */
+  setStateManager(stateManager: StateManager): void {
+    this.stateManager = stateManager;
+  }
 
   async createSession(params: {
     workspacePath?: string;
@@ -60,12 +69,20 @@ export class SessionManager {
 
     this.sessions.set(sessionId, agentSession);
 
-    // Emit session created event via MessageHub
+    // Emit session created event via MessageHub (legacy)
     await this.messageHub.publish(
       `global:session.created`,
       { session },
       { sessionId: "global" }
     );
+
+    // Broadcast state change via StateManager
+    if (this.stateManager) {
+      await this.stateManager.broadcastSessionsDelta({
+        added: [session],
+        timestamp: Date.now(),
+      });
+    }
 
     return sessionId;
   }
@@ -104,15 +121,38 @@ export class SessionManager {
     if (agentSession) {
       agentSession.updateMetadata(updates);
     }
+
+    // Broadcast state change via StateManager
+    if (this.stateManager) {
+      // Broadcast session meta change
+      await this.stateManager.broadcastSessionMetaChange(sessionId);
+
+      // Also update global sessions list
+      const updatedSession = this.db.getSession(sessionId);
+      if (updatedSession) {
+        await this.stateManager.broadcastSessionsDelta({
+          updated: [updatedSession],
+          timestamp: Date.now(),
+        });
+      }
+    }
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    // Emit session ended event via MessageHub
+    // Emit session ended event via MessageHub (legacy)
     await this.messageHub.publish(
       `global:session.deleted`,
       { sessionId, reason: "deleted" },
       { sessionId: "global" }
     );
+
+    // Broadcast state change via StateManager
+    if (this.stateManager) {
+      await this.stateManager.broadcastSessionsDelta({
+        removed: [sessionId],
+        timestamp: Date.now(),
+      });
+    }
 
     // Remove from memory
     this.sessions.delete(sessionId);

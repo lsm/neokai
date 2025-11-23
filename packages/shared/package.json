@@ -4,6 +4,7 @@
   "type": "module",
   "main": "src/mod.ts",
   "exports": {
-    ".": "./src/mod.ts"
+    ".": "./src/mod.ts",
+    "./state-types": "./src/state-types.ts"
   }
 }

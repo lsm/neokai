@@ -4,6 +4,7 @@ import { getConfig } from "./src/config";
 import { Database } from "./src/storage/database";
 import { SessionManager } from "./src/lib/session-manager";
 import { AuthManager } from "./src/lib/auth-manager";
+import { StateManager } from "./src/lib/state-manager";
 import { MessageHub } from "@liuboer/shared";
 import { MessageHubRPCRouter } from "./src/lib/messagehub-rpc-router";
 import { ElysiaWebSocketTransport } from "./src/lib/elysia-websocket-transport";
@@ -63,6 +64,17 @@ const sessionManager = new SessionManager(db, messageHub, authManager, {
 console.log("✅ Session manager initialized");
 console.log(`   Environment: ${config.nodeEnv}`);
 console.log(`   Workspace root: ${config.workspaceRoot}`);
+
+// Initialize State Manager (before RPC router)
+const stateManager = new StateManager(
+  messageHub,
+  sessionManager,
+  authManager,
+  config,
+);
+// Wire up state manager to session manager
+sessionManager.setStateManager(stateManager);
+console.log("✅ State manager initialized (fine-grained channels)");
 
 // Initialize MessageHub RPC Router
 const messageHubRPCRouter = new MessageHubRPCRouter(
