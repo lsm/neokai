@@ -37,7 +37,7 @@ interface Props {
  * Main SDK message renderer - routes to appropriate sub-renderer
  */
 export function SDKMessageRenderer({ message, toolResultsMap, toolInputsMap, sessionInfo }: Props) {
-  // Skip messages that shouldn't be shown to user (e.g., stream events, replays)
+  // Skip messages that shouldn't be shown to user (e.g., stream events)
   if (!isUserVisibleMessage(message)) {
     return null;
   }
