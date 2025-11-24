@@ -164,12 +164,12 @@ export class MessageHubRouter {
 
   /**
    * Subscribe a client to a method in a session
-   * Validates subscription keys
+   * Validates subscription keys (method validation done in protocol.validateMethod)
    */
   subscribe(sessionId: string, method: string, clientId: string): void {
-    // Validate no colons in keys (reserved for internal use)
-    if (sessionId.includes(':') || method.includes(':')) {
-      throw new Error('SessionId and method cannot contain colon character');
+    // Validate sessionId - colons not allowed (reserved for internal routing)
+    if (sessionId.includes(':')) {
+      throw new Error('SessionId cannot contain colon character (reserved for internal use)');
     }
 
     // Initialize maps if needed
