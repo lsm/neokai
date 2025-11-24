@@ -10,6 +10,16 @@
       if (typeof window.ethereum === 'undefined') {
         window.ethereum = {};
       }
+
+      // Development cache-busting: add timestamp to force fresh module loads
+      // This ensures browser never uses cached JavaScript in development
+      const isDev = !window.location.hostname.includes('production');
+      if (isDev) {
+        const script = document.createElement('script');
+        script.type = 'module';
+        script.src = `./client.tsx?t=${Date.now()}`;
+        document.currentScript.parentNode.insertBefore(script, document.currentScript.nextSibling);
+      }
     </script>
   </head>
   <body>

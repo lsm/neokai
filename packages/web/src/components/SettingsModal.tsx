@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import type { AuthStatus } from "@liuboer/shared";
-import { messageHubApiClient as apiClient } from "../lib/messagehub-api-client.ts";
+import { getAuthStatus } from "../lib/api-helpers.ts";
 import { toast } from "../lib/toast.ts";
 import { Modal } from "./ui/Modal.tsx";
 
@@ -22,7 +22,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const loadAuthStatus = async () => {
     try {
       setLoading(true);
-      const response = await apiClient.getAuthStatus();
+      const response = await getAuthStatus();
       setAuthStatus(response.authStatus);
     } catch (error) {
       console.error("Failed to load auth status:", error);

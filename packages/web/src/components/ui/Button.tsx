@@ -1,10 +1,10 @@
-import { ComponentChildren } from "preact";
+import { ComponentChildren, JSX } from "preact";
 import { cn } from "../../lib/utils.ts";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 export type ButtonSize = "sm" | "md" | "lg";
 
-export interface ButtonProps {
+export interface ButtonProps extends Omit<JSX.HTMLAttributes<HTMLButtonElement>, 'size' | 'loading' | 'icon'> {
   children: ComponentChildren;
   variant?: ButtonVariant;
   size?: ButtonSize;
@@ -28,6 +28,7 @@ export function Button({
   type = "button",
   class: className,
   icon,
+  ...rest
 }: ButtonProps) {
   const baseStyles =
     "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-dark-950 disabled:opacity-50 disabled:cursor-not-allowed";
@@ -61,6 +62,7 @@ export function Button({
         fullWidth && "w-full",
         className,
       )}
+      {...rest}
     >
       {loading && (
         <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
