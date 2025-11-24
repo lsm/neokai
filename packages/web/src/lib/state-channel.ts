@@ -220,32 +220,58 @@ export class StateChannel<T> {
     // Apply optimistic update immediately
     this.state.value = optimistic;
 
-    // Setup timeout to revert if not confirmed
-    const timeout = setTimeout(() => {
-      this.log(`Optimistic update timeout: ${id}, reverting`);
-      this.revertOptimistic(id);
-    }, this.options.optimisticTimeout);
-
-    // Track update
-    this.optimisticUpdates.set(id, {
-      id,
-      original,
-      optimistic,
-      timestamp: Date.now(),
-      timeout,
-    });
-
-    // If confirmation promise provided, handle it
+    // If confirmation promise provided, use it to control lifecycle
     if (confirmed) {
+      // Setup timeout only if promise doesn't resolve
+      let timeoutId: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+        this.log(`Optimistic update timeout: ${id}, reverting`);
+        this.revertOptimistic(id);
+        timeoutId = null;
+      }, this.options.optimisticTimeout);
+
+      // Track update with timeout
+      this.optimisticUpdates.set(id, {
+        id,
+        original,
+        optimistic,
+        timestamp: Date.now(),
+        timeout: timeoutId,
+      });
+
       confirmed
         .then(() => {
+          // Cancel timeout and commit
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+            timeoutId = null;
+          }
           this.log(`Optimistic update confirmed: ${id}`);
           this.commitOptimistic(id);
         })
         .catch((err) => {
+          // Cancel timeout and revert
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+            timeoutId = null;
+          }
           this.log(`Optimistic update failed: ${id}`, err);
           this.revertOptimistic(id);
         });
+    } else {
+      // No confirmation promise - use timeout-based revert
+      const timeout = setTimeout(() => {
+        this.log(`Optimistic update timeout: ${id}, reverting`);
+        this.revertOptimistic(id);
+      }, this.options.optimisticTimeout);
+
+      // Track update
+      this.optimisticUpdates.set(id, {
+        id,
+        original,
+        optimistic,
+        timestamp: Date.now(),
+        timeout,
+      });
     }
   }
 
