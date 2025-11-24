@@ -18,6 +18,6 @@
       "@liuboer/shared/*": ["../shared/src/*"]
     }
   },
-  "include": ["src/**/*", "tests/**/*", "build.ts"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["src/**/*", "build.ts"],
+  "exclude": ["node_modules", "dist", "tests/**/*"]
 }
