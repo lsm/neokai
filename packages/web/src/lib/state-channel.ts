@@ -62,7 +62,7 @@ interface OptimisticUpdate<T> {
   original: T;
   optimistic: T;
   timestamp: number;
-  timeout: number;
+  timeout: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -77,7 +77,7 @@ export class StateChannel<T> {
   private lastSync = signal<number>(0);
 
   private subscriptions: UnsubscribeFn[] = [];
-  private refreshTimer: number | null = null;
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private optimisticUpdates = new Map<string, OptimisticUpdate<T>>();
 
   constructor(
@@ -280,10 +280,17 @@ export class StateChannel<T> {
     this.error.value = null;
 
     try {
+      // For RPC calls, pass sessionId as data parameter (not in options)
+      // because StateManager handlers expect it in the data, not as session routing
+      const callData = this.options.sessionId !== "global"
+        ? { sessionId: this.options.sessionId }
+        : {};
+
       const snapshot = await this.hub.call<T>(
         this.channelName,
-        {},
-        { sessionId: this.options.sessionId },
+        callData,
+        // Always use "global" for RPC routing - handlers are registered globally
+        { sessionId: "global" },
       );
 
       this.state.value = snapshot;

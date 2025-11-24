@@ -2,8 +2,8 @@ import { useEffect } from "preact/hooks";
 import Sidebar from "./islands/Sidebar.tsx";
 import MainContent from "./islands/MainContent.tsx";
 import ToastContainer from "./islands/ToastContainer.tsx";
-import { messageHubApiClient } from "./lib/messagehub-api-client.ts";
-import { initializeApplicationState } from "./lib/state.ts";
+import { connectionManager } from "./lib/connection-manager.ts";
+import { initializeApplicationState, appState, sessions, authStatus, currentSession } from "./lib/state.ts";
 import { currentSessionIdSignal } from "./lib/signals.ts";
 
 export function App() {
@@ -12,11 +12,25 @@ export function App() {
     const init = async () => {
       try {
         // Wait for MessageHub connection to be ready
-        const hub = await messageHubApiClient.waitForConnection();
+        const hub = await connectionManager.getHub();
 
         // Initialize state channels now that connection is ready
         await initializeApplicationState(hub, currentSessionIdSignal);
         console.log("[App] State management initialized successfully");
+
+        // Expose state and connectionManager to window for E2E tests
+        if (typeof window !== 'undefined') {
+          // @ts-ignore - exposing for E2E tests
+          window.connectionManager = connectionManager;
+          // @ts-ignore
+          window.appState = appState;
+          // @ts-ignore
+          window.sessions = sessions;
+          // @ts-ignore
+          window.authStatus = authStatus;
+          // @ts-ignore
+          window.currentSession = currentSession;
+        }
       } catch (error) {
         console.error("[App] Failed to initialize state management:", error);
       }

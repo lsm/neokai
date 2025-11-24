@@ -70,7 +70,7 @@ class GlobalStateChannels {
             timestamp: delta.timestamp,
           };
         },
-        debug: false,
+        debug: true, // Enable debug to see what's happening
       },
     );
 
@@ -80,7 +80,7 @@ class GlobalStateChannels {
       {
         sessionId: "global",
         enableDeltas: false, // Auth is small, full updates are fine
-        debug: false,
+        debug: true, // Enable debug to see what's happening
       },
     );
 
@@ -265,8 +265,8 @@ class ApplicationState {
   private hub: MessageHub | null = null;
   private initialized = signal(false);
 
-  // Global channels
-  global: GlobalStateChannels | null = null;
+  // Global channels - must be a signal so computed signals can track when it's initialized
+  global = signal<GlobalStateChannels | null>(null);
 
   // Session channels (lazy-loaded)
   private sessionChannels = new Map<string, SessionStateChannels>();
@@ -287,8 +287,9 @@ class ApplicationState {
     this.currentSessionIdSignal = currentSessionId;
 
     // Initialize global channels
-    this.global = new GlobalStateChannels(hub);
-    await this.global.start();
+    const globalChannels = new GlobalStateChannels(hub);
+    await globalChannels.start();
+    this.global.value = globalChannels;
 
     // Setup current session auto-loading
     this.setupCurrentSessionAutoLoad();
@@ -346,8 +347,8 @@ class ApplicationState {
    */
   cleanup(): void {
     // Stop global channels
-    this.global?.stop();
-    this.global = null;
+    this.global.value?.stop();
+    this.global.value = null;
 
     // Stop all session channels
     this.sessionChannels.forEach((channels) => channels.stop());
@@ -365,95 +366,118 @@ export const appState = new ApplicationState();
  * Convenience signals - reactive accessors for UI components
  */
 
-// Global state signals
-export const sessions = new ComputedStateChannel<Session[]>(() => {
-  return appState.global?.sessions.value?.sessions || [];
+// Global state signals - exported as direct Preact computed signals for proper reactivity
+// IMPORTANT: Access appState.global.value (signal) then the channel's .$.value for proper tracking
+export const sessions = computed<Session[]>(() => {
+  const global = appState.global.value;
+  if (!global) return [];
+  const stateValue = global.sessions.$.value;
+  const value = stateValue?.sessions || [];
+  console.log('[State Signal] sessions.value:', value);
+  return value;
 });
 
-export const authStatus = new ComputedStateChannel<AuthStatus | null>(() => {
-  return appState.global?.auth.value?.authStatus || null;
+export const authStatus = computed<AuthStatus | null>(() => {
+  const global = appState.global.value;
+  if (!global) return null;
+  const stateValue = global.auth.$.value;
+  const value = stateValue?.authStatus || null;
+  console.log('[State Signal] authStatus.value:', value);
+  return value;
 });
 
-export const daemonConfig = new ComputedStateChannel<DaemonConfig | null>(() => {
-  return appState.global?.config.value?.config || null;
+export const daemonConfig = computed<DaemonConfig | null>(() => {
+  const global = appState.global.value;
+  if (!global) return null;
+  const stateValue = global.config.$.value;
+  return stateValue?.config || null;
 });
 
-export const healthStatus = new ComputedStateChannel<HealthStatus | null>(() => {
-  return appState.global?.health.value?.health || null;
+export const healthStatus = computed<HealthStatus | null>(() => {
+  const global = appState.global.value;
+  if (!global) return null;
+  const stateValue = global.health.$.value;
+  return stateValue?.health || null;
 });
 
-// Current session signals (derived from currentSessionId)
-export const currentSession = new ComputedStateChannel<Session | null>(() => {
+// Current session signals (derived from currentSessionId) - exported as direct Preact computed signals
+// IMPORTANT: Access the underlying signal via .$ to ensure Preact tracks the dependency
+export const currentSession = computed<Session | null>(() => {
   const sessionId = appState["currentSessionIdSignal"].value;
   if (!sessionId) return null;
 
   const channels = appState.getSessionChannels(sessionId);
-  return channels.session.value?.session || null;
+  const stateValue = channels.session.$.value;
+  return stateValue?.session || null;
 });
 
-export const currentMessages = new ComputedStateChannel<Message[]>(() => {
+export const currentMessages = computed<Message[]>(() => {
   const sessionId = appState["currentSessionIdSignal"].value;
   if (!sessionId) return [];
 
   const channels = appState.getSessionChannels(sessionId);
-  return channels.messages.value?.messages || [];
+  const stateValue = channels.messages.$.value;
+  return stateValue?.messages || [];
 });
 
-export const currentSDKMessages = new ComputedStateChannel<SDKMessage[]>(() => {
+export const currentSDKMessages = computed<SDKMessage[]>(() => {
   const sessionId = appState["currentSessionIdSignal"].value;
   if (!sessionId) return [];
 
   const channels = appState.getSessionChannels(sessionId);
-  return channels.sdkMessages.value?.sdkMessages || [];
+  const stateValue = channels.sdkMessages.$.value;
+  return stateValue?.sdkMessages || [];
 });
 
-export const currentAgentState = new ComputedStateChannel<AgentState | null>(() => {
+export const currentAgentState = computed<AgentState | null>(() => {
   const sessionId = appState["currentSessionIdSignal"].value;
   if (!sessionId) return null;
 
   const channels = appState.getSessionChannels(sessionId);
-  return channels.agent.value || null;
+  return channels.agent.$.value || null;
 });
 
-export const currentContextInfo = new ComputedStateChannel<ContextInfo | null>(() => {
+export const currentContextInfo = computed<ContextInfo | null>(() => {
   const sessionId = appState["currentSessionIdSignal"].value;
   if (!sessionId) return null;
 
   const channels = appState.getSessionChannels(sessionId);
-  return channels.context.value?.contextInfo || null;
+  const stateValue = channels.context.$.value;
+  return stateValue?.contextInfo || null;
 });
 
-export const currentCommands = new ComputedStateChannel<string[]>(() => {
+export const currentCommands = computed<string[]>(() => {
   const sessionId = appState["currentSessionIdSignal"].value;
   if (!sessionId) return [];
 
   const channels = appState.getSessionChannels(sessionId);
-  return channels.commands.value?.availableCommands || [];
+  const stateValue = channels.commands.$.value;
+  return stateValue?.availableCommands || [];
 });
 
 /**
- * Derived/computed state
+ * Derived/computed state - exported as direct Preact computed signals
  */
-export const isAgentWorking = new ComputedStateChannel<boolean>(() => {
+export const isAgentWorking = computed<boolean>(() => {
   return currentAgentState.value?.isProcessing || false;
 });
 
-export const canSendMessage = new ComputedStateChannel<boolean>(() => {
+export const canSendMessage = computed<boolean>(() => {
   const auth = authStatus.value;
   const agentWorking = isAgentWorking.value;
 
   return auth?.isAuthenticated === true && !agentWorking;
 });
 
-export const totalSessions = new ComputedStateChannel<number>(() => {
+export const totalSessions = computed<number>(() => {
   return sessions.value.length;
 });
 
-export const activeSessions = new ComputedStateChannel<number>(() => {
+export const activeSessions = computed<number>(() => {
   return sessions.value.filter(s => s.status === 'active').length;
 });
 
-export const recentSessions = new ComputedStateChannel<Session[]>(() => {
+export const recentSessions = computed<Session[]>(() => {
   return sessions.value
     .sort((a, b) => new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime())
     .slice(0, 5);
@@ -469,7 +493,8 @@ export const recentSessions = new ComputedStateChannel<Session[]>(() => {
 export async function createSessionOptimistic(
   workspacePath?: string,
 ): Promise<string> {
-  if (!appState.global) {
+  const global = appState.global.value;
+  if (!global) {
     throw new Error("State not initialized");
   }
 
@@ -494,7 +519,7 @@ export async function createSessionOptimistic(
   };
 
   // Optimistic update
-  appState.global.sessions.updateOptimistic(
+  global.sessions.updateOptimistic(
     tempId,
     (current) => ({
       ...current,
@@ -511,12 +536,13 @@ export async function createSessionOptimistic(
  * Delete a session (optimistic)
  */
 export function deleteSessionOptimistic(sessionId: string): void {
-  if (!appState.global) {
+  const global = appState.global.value;
+  if (!global) {
     throw new Error("State not initialized");
   }
 
   // Optimistic update
-  appState.global.sessions.updateOptimistic(
+  global.sessions.updateOptimistic(
     `delete-${sessionId}`,
     (current) => ({
       ...current,

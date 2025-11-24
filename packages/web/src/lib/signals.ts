@@ -31,8 +31,13 @@ effect(() => {
 // Shared signal for sidebar open/closed state on mobile
 export const sidebarOpenSignal = signal<boolean>(false);
 
-// Shared signal for all sessions
+/**
+ * @deprecated Use the reactive state channels from lib/state.ts instead:
+ * - sessions: import { sessions } from "../lib/state.ts"
+ * This signal is kept for backward compatibility but will be removed in the future.
+ */
 export const sessionsSignal = signal<Session[]>([]);
 
 // Shared signal for available slash commands from SDK
+// TODO: Migrate to state channels when slash commands are added to state management
 export const slashCommandsSignal = signal<string[]>([]);

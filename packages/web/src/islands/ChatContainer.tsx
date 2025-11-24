@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { Session, ContextInfo } from "@liuboer/shared";
 import type { SDKMessage } from "@liuboer/shared/sdk/sdk.d.ts";
 import { isSDKStreamEvent } from "@liuboer/shared/sdk/type-guards";
-import { messageHubApiClient as apiClient } from "../lib/messagehub-api-client.ts";
+import { connectionManager } from "../lib/connection-manager.ts";
+import { getSession, getSDKMessages, getSlashCommands, deleteSession, listSessions } from "../lib/api-helpers.ts";
 import { toast } from "../lib/toast.ts";
 import { generateUUID } from "../lib/utils.ts";
 import { currentSessionIdSignal, sessionsSignal, sidebarOpenSignal, slashCommandsSignal } from "../lib/signals.ts";
@@ -76,16 +77,16 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     try {
       setLoading(true);
       setError(null);
-      const response = await apiClient.getSession(sessionId);
+      const response = await getSession(sessionId);
       setSession(response.session);
 
       // Load SDK messages
-      const sdkResponse = await apiClient.getSDKMessages(sessionId);
+      const sdkResponse = await getSDKMessages(sessionId);
       setMessages(sdkResponse.sdkMessages);
 
       // Load slash commands for this session
       try {
-        const commandsResponse = await apiClient.getSlashCommands(sessionId);
+        const commandsResponse = await getSlashCommands(sessionId);
         if (commandsResponse.commands && commandsResponse.commands.length > 0) {
           console.log("Loaded slash commands:", commandsResponse.commands);
           slashCommandsSignal.value = commandsResponse.commands;
@@ -120,12 +121,21 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
   const connectWebSocket = () => {
     // Subscribe to session-specific events via MessageHub
-    setIsWsConnected(true); // MessageHub is already connected from apiClient
+    setIsWsConnected(true); // MessageHub is already connected via connectionManager
 
-    // SDK message events - PRIMARY EVENT HANDLER
-    const unsubSDKMessage = apiClient.subscribe<SDKMessage>(
-      'sdk.message',
-      (sdkMessage) => {
+    // Get MessageHub instance and set up subscriptions
+    let unsubSDKMessage: (() => void) | undefined;
+    let unsubContextUpdated: (() => void) | undefined;
+    let unsubContextCompacted: (() => void) | undefined;
+    let unsubError: (() => void) | undefined;
+    let unsubMessageQueued: (() => void) | undefined;
+    let unsubMessageProcessing: (() => void) | undefined;
+
+    connectionManager.getHub().then(hub => {
+      // SDK message events - PRIMARY EVENT HANDLER
+      unsubSDKMessage = hub.subscribe<SDKMessage>(
+        'sdk.message',
+        (sdkMessage) => {
         console.log("Received SDK message:", sdkMessage.type, sdkMessage);
 
         // Extract slash commands from SDK init message
@@ -171,12 +181,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
             return [...prev, sdkMessage];
           });
         }
-      },
-      { sessionId }
-    );
+        },
+        { sessionId }
+      );
 
-    // Context events
-    const unsubContextUpdated = apiClient.subscribe<any>('context.updated', (data) => {
+      // Context events
+      unsubContextUpdated = hub.subscribe<any>('context.updated', (data) => {
       // data is already the payload
       console.log(`Context updated:`, data);
 
@@ -198,37 +208,43 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
           model: data.model,
           slashCommandTool: data.slashCommandTool,
         });
-      }
-    }, { sessionId });
+        }
+      }, { sessionId });
 
-    const unsubContextCompacted = apiClient.subscribe<{ before: number; after: number }>('context.compacted', (data) => {
-      const { before, after } = data;
-      toast.info(`Context compacted: ${before} → ${after} tokens`);
-    }, { sessionId });
+      unsubContextCompacted = hub.subscribe<{ before: number; after: number }>('context.compacted', (data) => {
+        const { before, after } = data;
+        toast.info(`Context compacted: ${before} → ${after} tokens`);
+      }, { sessionId });
 
-    // Error handling
-    const unsubError = apiClient.subscribe<{ error: string }>('session.error', (data) => {
-      const error = data.error;
-      setError(error);
-      toast.error(error);
-      setSending(false);
-      setStreamingEvents([]);
-      setCurrentAction(undefined);
+      // Error handling
+      unsubError = hub.subscribe<{ error: string }>('session.error', (data) => {
+        const error = data.error;
+        setError(error);
+        toast.error(error);
+        setSending(false);
+        setStreamingEvents([]);
+        setCurrentAction(undefined);
+        setIsWsConnected(false);
+      }, { sessionId });
+
+      // Message queue events (streaming input mode)
+      unsubMessageQueued = hub.subscribe<{ messageId: string }>('message.queued', (data) => {
+        const { messageId } = data;
+        console.log("Message queued:", messageId);
+        setCurrentAction("Queued...");
+      }, { sessionId });
+
+      unsubMessageProcessing = hub.subscribe<{ messageId: string }>('message.processing', (data) => {
+        const { messageId } = data;
+        console.log("Message processing:", messageId);
+        setCurrentAction("Processing...");
+      }, { sessionId });
+    }).catch(error => {
+      console.error("[ChatContainer] Failed to set up subscriptions:", error);
       setIsWsConnected(false);
-    }, { sessionId });
-
-    // Message queue events (streaming input mode)
-    const unsubMessageQueued = apiClient.subscribe<{ messageId: string }>('message.queued', (data) => {
-      const { messageId } = data;
-      console.log("Message queued:", messageId);
-      setCurrentAction("Queued...");
-    }, { sessionId });
-
-    const unsubMessageProcessing = apiClient.subscribe<{ messageId: string }>('message.processing', (data) => {
-      const { messageId } = data;
-      console.log("Message processing:", messageId);
-      setCurrentAction("Processing...");
-    }, { sessionId });
+      setError("Failed to connect to daemon");
+      toast.error("Failed to connect to daemon");
+    });
 
     // Return cleanup function that unsubscribes all handlers
     return () => {
@@ -257,7 +273,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
       // Send via MessageHub pub/sub (streaming input mode!)
       // The daemon will queue the message and yield it to the SDK AsyncGenerator
-      await apiClient.getMessageHub()?.publish(
+      const hub = await connectionManager.getHub();
+      await hub.publish(
         'message.send',
         {
           content,
@@ -284,15 +301,15 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
   const handleDeleteSession = async () => {
     try {
-      await apiClient.deleteSession(sessionId);
-      
+      await deleteSession(sessionId);
+
       // Reload sessions to get the updated list from API
-      const response = await apiClient.listSessions();
+      const response = await listSessions();
       sessionsSignal.value = response.sessions;
-      
+
       // Clear current session to redirect to home
       currentSessionIdSignal.value = null;
-      
+
       toast.success("Session deleted");
       setDeleteModalOpen(false);
     } catch (err) {
@@ -613,7 +630,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
             <Button variant="secondary" onClick={() => setDeleteModalOpen(false)}>
               Cancel
             </Button>
-            <Button variant="danger" onClick={handleDeleteSession}>
+            <Button variant="danger" onClick={handleDeleteSession} data-testid="confirm-delete-session">
               Delete Chat
             </Button>
           </div>
