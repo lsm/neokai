@@ -131,7 +131,7 @@ describe("MessageHub Protocol", () => {
 
   describe("Message Validators", () => {
     test("isValidMessage should validate message structure", () => {
-      const validMsg = createCallMessage({ method: "test", data: {}, sessionId: "session1", id: "msg1" });
+      const validMsg = createCallMessage({ method: "test.method", data: {}, sessionId: "session1", id: "msg1" });
       expect(isValidMessage(validMsg)).toBe(true);
 
       // Missing required fields

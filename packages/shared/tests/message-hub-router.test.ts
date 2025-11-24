@@ -527,7 +527,7 @@ describe("MessageHubRouter", () => {
 
         expect(() => {
           router.subscribe("session:1", "user.created", clientId);
-        }).toThrow("SessionId and method cannot contain colon character");
+        }).toThrow("SessionId cannot contain colon character");
       });
 
       test("should reject method with colon", () => {
@@ -536,7 +536,7 @@ describe("MessageHubRouter", () => {
 
         expect(() => {
           router.subscribe("session1", "user:created", clientId);
-        }).toThrow("SessionId and method cannot contain colon character");
+        }).toThrow("Method cannot contain colon character");
       });
     });
 

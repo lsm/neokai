@@ -172,6 +172,11 @@ export class MessageHubRouter {
       throw new Error('SessionId cannot contain colon character (reserved for internal use)');
     }
 
+    // Validate method format (including colon restriction)
+    if (method.includes(':')) {
+      throw new Error('Method cannot contain colon character (reserved for internal use)');
+    }
+
     // Initialize maps if needed
     if (!this.subscriptions.has(sessionId)) {
       this.subscriptions.set(sessionId, new Map());
