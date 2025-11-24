@@ -193,6 +193,36 @@ export interface MessageHubOptions {
    * @default 30000
    */
   pingInterval?: number;
+
+  /**
+   * Maximum number of pending RPC calls (backpressure)
+   * @default 1000
+   */
+  maxPendingCalls?: number;
+
+  /**
+   * Maximum cache size for request deduplication
+   * @default 500
+   */
+  maxCacheSize?: number;
+
+  /**
+   * Cache entry TTL in milliseconds
+   * @default 60000 (1 minute)
+   */
+  cacheTTL?: number;
+
+  /**
+   * Maximum subscriptions per client (router-side)
+   * @default 1000
+   */
+  maxSubscriptionsPerClient?: number;
+
+  /**
+   * Maximum event handler nesting depth (prevents infinite recursion)
+   * @default 10
+   */
+  maxEventDepth?: number;
 }
 
 /**
