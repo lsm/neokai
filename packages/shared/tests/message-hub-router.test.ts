@@ -300,27 +300,9 @@ describe("MessageHubRouter", () => {
     });
   });
 
-  describe("Auto-subscription", () => {
-    test("should auto-subscribe to global session events", () => {
-      const conn1 = createMockConnection(mockWs1);
-      const clientId = router.registerConnection(conn1);
-      router.autoSubscribeConnection(clientId, "global");
-
-      expect(router.getSubscriptionCount("global", "session.created")).toBeGreaterThan(0);
-      expect(router.getSubscriptionCount("global", "session.updated")).toBeGreaterThan(0);
-      expect(router.getSubscriptionCount("global", "session.deleted")).toBeGreaterThan(0);
-    });
-
-    test("should auto-subscribe to session-specific events", () => {
-      const conn1 = createMockConnection(mockWs1);
-      const clientId = router.registerConnection(conn1);
-      router.autoSubscribeConnection(clientId, "session1");
-
-      expect(router.getSubscriptionCount("session1", "sdk.message")).toBeGreaterThan(0);
-      expect(router.getSubscriptionCount("session1", "context.updated")).toBeGreaterThan(0);
-      expect(router.getSubscriptionCount("session1", "message.queued")).toBeGreaterThan(0);
-    });
-  });
+  // Auto-subscription tests removed - this is now application-layer logic
+  // handled by SubscriptionManager, not Router
+  // Router is pure infrastructure - no business logic
 
   describe("Error Handling", () => {
     test("should handle routing non-EVENT message gracefully", () => {
@@ -580,23 +562,8 @@ describe("MessageHubRouter", () => {
       });
     });
 
-    describe("Configurable Auto-Subscribe", () => {
-      test("should use custom auto-subscribe config", () => {
-        const customRouter = new MessageHubRouter({
-          autoSubscribe: {
-            global: ["custom.global.event"],
-            session: ["custom.session.event"],
-          },
-        });
-
-        const conn1 = createMockConnection(mockWs1);
-        const clientId = customRouter.registerConnection(conn1);
-        customRouter.autoSubscribeConnection(clientId, "session1");
-
-        expect(customRouter.getSubscriptionCount("session1", "custom.session.event")).toBe(1);
-        expect(customRouter.getSubscriptionCount("session1", "sdk.message")).toBe(0);
-      });
-    });
+    // Configurable Auto-Subscribe tests removed - this is now application-layer logic
+    // handled by SubscriptionManager, not Router
 
     describe("Subscription Storage", () => {
       test("should track subscriptions as Map<sessionId, Set<method>>", () => {

@@ -4,20 +4,17 @@
  * Server-side router for handling session-based message routing
  * Routes messages by sessionId to appropriate handlers
  *
- * PHASE 1 IMPROVEMENTS:
+ * ARCHITECTURE:
+ * - Pure routing layer - NO application logic
  * - O(1) client lookups with reverse index
  * - Memory leak prevention with empty Map cleanup
  * - Subscription key validation
  * - Duplicate registration prevention
  * - Observability with delivery stats
- * - Configurable auto-subscribe patterns
  * - Pluggable logger interface
- *
- * PHASE 2 IMPROVEMENTS:
  * - Transport-agnostic design (works with any connection type)
  * - Abstract ClientConnection interface
  * - Decoupled from WebSocket specifics
- * - Backward compatible WebSocket API
  */
 
 import { generateUUID } from "../utils.ts";
@@ -53,20 +50,11 @@ export interface RouterLogger {
 }
 
 /**
- * Auto-subscribe configuration
- */
-export interface AutoSubscribeConfig {
-  global: string[];  // Methods to auto-subscribe for global session
-  session: string[]; // Methods to auto-subscribe for specific sessions
-}
-
-/**
  * Router configuration options
  */
 export interface MessageHubRouterOptions {
   logger?: RouterLogger;
   debug?: boolean;
-  autoSubscribe?: AutoSubscribeConfig;
 }
 
 /**
@@ -105,15 +93,10 @@ export class MessageHubRouter {
 
   private logger: RouterLogger;
   private debug: boolean;
-  private autoSubscribeConfig: AutoSubscribeConfig;
 
   constructor(options: MessageHubRouterOptions = {}) {
     this.logger = options.logger || console;
     this.debug = options.debug || false;
-    this.autoSubscribeConfig = options.autoSubscribe || {
-      global: ["session.created", "session.updated", "session.deleted"],
-      session: ["sdk.message", "context.updated", "message.queued"],
-    };
   }
 
   /**
@@ -389,31 +372,6 @@ export class MessageHubRouter {
       return 0;
     }
     return sessionSubs.get(method)?.size || 0;
-  }
-
-  /**
-   * Auto-subscribe connection to configured patterns
-   */
-  autoSubscribeConnection(clientId: string, sessionId: string): void {
-    const info = this.clients.get(clientId);
-    if (!info) {
-      return;
-    }
-
-    // Auto-subscribe to configured events based on sessionId
-    if (sessionId === "global") {
-      // Global session: subscribe to global events
-      for (const method of this.autoSubscribeConfig.global) {
-        this.subscribe("global", method, info.clientId);
-      }
-    } else {
-      // Specific session: subscribe to session-specific events
-      for (const method of this.autoSubscribeConfig.session) {
-        this.subscribe(sessionId, method, info.clientId);
-      }
-    }
-
-    this.log(`Auto-subscribed client ${info.clientId} to ${sessionId} events`);
   }
 
   /**
