@@ -1,0 +1,150 @@
+/**
+ * Connection Manager
+ *
+ * Manages the WebSocket connection lifecycle for MessageHub.
+ * Simpler and more focused than MessageHubAPIClient.
+ */
+
+import { MessageHub, HubWebSocketClientTransport } from "@liuboer/shared";
+
+/**
+ * Get the daemon WebSocket base URL
+ */
+function getDaemonWsUrl(): string {
+  if (typeof window === "undefined") {
+    return "ws://localhost:8283";
+  }
+
+  const hostname = window.location.hostname;
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+
+  return `${protocol}//${hostname}:8283`;
+}
+
+/**
+ * ConnectionManager - manages MessageHub connection lifecycle
+ *
+ * Responsibilities:
+ * - Lazy connection initialization
+ * - Connection caching and reuse
+ * - WebSocket transport configuration
+ * - Connection state management
+ */
+export class ConnectionManager {
+  private messageHub: MessageHub | null = null;
+  private transport: HubWebSocketClientTransport | null = null;
+  private baseUrl: string;
+  private connectionPromise: Promise<MessageHub> | null = null;
+
+  constructor(baseUrl?: string) {
+    this.baseUrl = baseUrl || getDaemonWsUrl();
+    console.log(`[ConnectionManager] Initialized with baseUrl: ${this.baseUrl}`);
+  }
+
+  /**
+   * Get the MessageHub instance, creating connection if needed
+   *
+   * PHASE 3.3 FIX: Prevent race condition where multiple concurrent calls
+   * could create duplicate connections
+   */
+  async getHub(): Promise<MessageHub> {
+    // Return existing connected hub
+    if (this.messageHub && this.transport?.isReady()) {
+      return this.messageHub;
+    }
+
+    // If already connecting, wait for that
+    if (this.connectionPromise) {
+      return this.connectionPromise;
+    }
+
+    // Start new connection - assign immediately to prevent race
+    this.connectionPromise = (async () => {
+      try {
+        const hub = await this.connect();
+        return hub;
+      } catch (error) {
+        // On error, clear promise so next call can retry
+        this.connectionPromise = null;
+        throw error;
+      }
+    })();
+
+    // Return the promise (no finally block to clear it)
+    // connectionPromise stays set until disconnect() is called
+    return this.connectionPromise;
+  }
+
+  /**
+   * Connect to daemon WebSocket with MessageHub
+   */
+  private async connect(): Promise<MessageHub> {
+    console.log("[ConnectionManager] Connecting to WebSocket...");
+
+    // Create MessageHub
+    this.messageHub = new MessageHub({
+      defaultSessionId: "global",
+      debug: false,
+    });
+
+    // Create WebSocket transport with auto-reconnect
+    this.transport = new HubWebSocketClientTransport({
+      url: `${this.baseUrl}/ws`,
+      autoReconnect: true,
+      maxReconnectAttempts: 10,
+      reconnectDelay: 1000,
+      pingInterval: 30000,
+    });
+
+    // Register transport
+    this.messageHub.registerTransport(this.transport);
+
+    // Initialize transport (establishes WebSocket connection)
+    await this.transport.initialize();
+
+    // Wait for connection to be established
+    await this.waitForConnection(5000);
+
+    console.log("[ConnectionManager] WebSocket connected");
+    return this.messageHub;
+  }
+
+  /**
+   * Wait for WebSocket to be ready
+   */
+  private async waitForConnection(timeout: number): Promise<void> {
+    const start = Date.now();
+
+    while (!this.messageHub?.isConnected()) {
+      if (Date.now() - start > timeout) {
+        throw new Error("WebSocket connection timeout");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
+  /**
+   * Disconnect from WebSocket
+   */
+  async disconnect(): Promise<void> {
+    if (this.transport) {
+      this.transport.close();
+      this.transport = null;
+    }
+
+    this.messageHub = null;
+    this.connectionPromise = null; // Clear connection promise on disconnect
+
+    console.log("[ConnectionManager] Disconnected");
+  }
+
+  /**
+   * Check if currently connected
+   */
+  isConnected(): boolean {
+    return this.messageHub?.isConnected() || false;
+  }
+}
+
+// Singleton instance
+export const connectionManager = new ConnectionManager();
