@@ -17,7 +17,6 @@ import {
   createCallMessage,
   createResultMessage,
   createErrorMessage,
-  createPublishMessage,
   createEventMessage,
   isCallMessage,
   isResponseMessage,
@@ -244,9 +243,8 @@ export class MessageHub {
    * // Global event
    * hub.publish('session.created', { sessionId: 'abc-123' }, { sessionId: 'global' });
    *
-   * // Session-scoped event (sessionId will be prepended automatically)
+   * // Session-scoped event
    * hub.publish('sdk.message', sdkMessage, { sessionId: 'abc-123' });
-   * // Actual method sent: 'abc-123:sdk.message'
    */
   async publish(
     method: string,
@@ -267,14 +265,15 @@ export class MessageHub {
       throw new Error(`Invalid method name: ${fullMethod}`);
     }
 
-    // Create PUBLISH message (server will convert to EVENT for subscribers)
-    const message = createPublishMessage({
+    // Create EVENT message directly - no need for PUBLISH message type
+    const message = createEventMessage({
       method: fullMethod,
       data,
       sessionId,
       id: messageId,
     });
 
+    // Send to transport for broadcasting
     await this.sendMessage(message);
   }
 
@@ -287,11 +286,10 @@ export class MessageHub {
    *   console.log('Session deleted:', data.sessionId);
    * }, { sessionId: 'global' });
    *
-   * // Session-scoped event (sessionId will be prepended automatically)
+   * // Session-scoped event
    * hub.subscribe('sdk.message', (data) => {
    *   console.log('SDK message:', data);
    * }, { sessionId: 'abc-123' });
-   * // Actual method subscribed: 'abc-123:sdk.message'
    */
   subscribe<TData = unknown>(
     method: string,
@@ -592,16 +590,12 @@ export class MessageHub {
   // ========================================
 
   /**
-   * Build full method name with session scoping
-   * If sessionId is provided and not global, prepend it to the method name
+   * Build full method name
+   * No longer prepends session ID - routing is handled via message.sessionId field
    */
   private buildFullMethod(method: string, sessionId: string): string {
-    // For global events, don't prepend sessionId
-    if (sessionId === GLOBAL_SESSION_ID) {
-      return method;
-    }
-    // For session-scoped events, prepend sessionId
-    return `${sessionId}:${method}`;
+    // Keep method names clean - session routing is handled via the sessionId field
+    return method;
   }
 
   /**

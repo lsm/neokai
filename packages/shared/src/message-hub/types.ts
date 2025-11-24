@@ -252,9 +252,9 @@ export interface PendingCall {
   reject: (error: Error) => void;
 
   /**
-   * Timeout timer
+   * Timeout timer (cross-platform compatible type)
    */
-  timer: number;
+  timer: ReturnType<typeof setTimeout>;
 
   /**
    * Method name

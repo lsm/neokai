@@ -10,7 +10,6 @@ import {
   createCallMessage,
   createResultMessage,
   createErrorMessage,
-  createPublishMessage,
   createEventMessage,
 } from "../src/message-hub/protocol";
 
@@ -377,7 +376,7 @@ describe("MessageHub", () => {
       await messageHub.publish("user.created", { userId: "123" });
 
       const sentMessage = transport.sentMessages[0];
-      expect(sentMessage.type).toBe(MessageType.PUBLISH);
+      expect(sentMessage.type).toBe(MessageType.EVENT);
       expect(sentMessage.method).toBe("user.created");
       expect((sentMessage as any).data).toEqual({ userId: "123" });
     });
@@ -539,11 +538,11 @@ describe("MessageHub", () => {
       // Manually publish after call succeeds
       await messageHub.publish("user.created", { userId: "123" });
 
-      // Should have PUBLISH message
-      const publishMessage = transport.sentMessages.find(
-        (msg) => msg.type === MessageType.PUBLISH && msg.method === "user.created"
+      // Should have EVENT message
+      const eventMessage = transport.sentMessages.find(
+        (msg) => msg.type === MessageType.EVENT && msg.method === "user.created"
       );
-      expect(publishMessage).toBeDefined();
+      expect(eventMessage).toBeDefined();
     });
 
     test("should not publish if RPC call fails", async () => {
@@ -551,8 +550,8 @@ describe("MessageHub", () => {
 
       const callPromise = messageHub.callAndPublish(
         "test.fail",
-        {},
-        "test.event"
+        "test.event",
+        {}
       );
 
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -573,11 +572,11 @@ describe("MessageHub", () => {
 
       await expect(callPromise).rejects.toThrow();
 
-      // Should NOT have PUBLISH message
-      const publishMessage = transport.sentMessages.find(
-        (msg) => msg.type === MessageType.PUBLISH
+      // Should NOT have EVENT message
+      const eventMessage = transport.sentMessages.find(
+        (msg) => msg.type === MessageType.EVENT
       );
-      expect(publishMessage).toBeUndefined();
+      expect(eventMessage).toBeUndefined();
     });
   });
 

@@ -5,7 +5,6 @@ import {
   createCallMessage,
   createResultMessage,
   createErrorMessage,
-  createPublishMessage,
   createEventMessage,
   createSubscribeMessage,
   createUnsubscribeMessage,
@@ -13,7 +12,6 @@ import {
   isCallMessage,
   isResultMessage,
   isErrorMessage,
-  isPublishMessage,
   isEventMessage,
   isSubscribeMessage,
   isUnsubscribeMessage,
@@ -27,7 +25,6 @@ describe("MessageHub Protocol", () => {
       expect(MessageType.CALL).toBe("CALL");
       expect(MessageType.RESULT).toBe("RESULT");
       expect(MessageType.ERROR).toBe("ERROR");
-      expect(MessageType.PUBLISH).toBe("PUBLISH");
       expect(MessageType.EVENT).toBe("EVENT");
       expect(MessageType.SUBSCRIBE).toBe("SUBSCRIBE");
       expect(MessageType.UNSUBSCRIBE).toBe("UNSUBSCRIBE");
@@ -91,20 +88,6 @@ describe("MessageHub Protocol", () => {
       expect(msg.method).toBe("test.method");
       expect(msg.error).toBe("Something went wrong");
       expect(msg.errorCode).toBe("TEST_ERROR");
-    });
-
-    test("createPublishMessage should create valid PUBLISH message", () => {
-      const msg = createPublishMessage({
-        method: "user.created",
-        data: { userId: 123 },
-        sessionId: "session1",
-        id: "pub123",
-      });
-
-      expect(msg.type).toBe(MessageType.PUBLISH);
-      expect(msg.sessionId).toBe("session1");
-      expect(msg.method).toBe("user.created");
-      expect(msg.data).toEqual({ userId: 123 });
     });
 
     test("createEventMessage should create valid EVENT message", () => {
@@ -182,20 +165,12 @@ describe("MessageHub Protocol", () => {
       expect(isErrorMessage(callMsg)).toBe(false);
     });
 
-    test("isPublishMessage should identify PUBLISH messages", () => {
-      const publishMsg = createPublishMessage({ method: "event", data: {}, sessionId: "s1", id: "msg1" });
-      const eventMsg = createEventMessage({ method: "event", data: {}, sessionId: "s1", id: "msg2" });
-
-      expect(isPublishMessage(publishMsg)).toBe(true);
-      expect(isPublishMessage(eventMsg)).toBe(false);
-    });
-
     test("isEventMessage should identify EVENT messages", () => {
       const eventMsg = createEventMessage({ method: "event", data: {}, sessionId: "s1", id: "msg1" });
-      const publishMsg = createPublishMessage({ method: "event", data: {}, sessionId: "s1", id: "msg2" });
+      const callMsg = createCallMessage({ method: "event", data: {}, sessionId: "s1", id: "msg2" });
 
       expect(isEventMessage(eventMsg)).toBe(true);
-      expect(isEventMessage(publishMsg)).toBe(false);
+      expect(isEventMessage(callMsg)).toBe(false);
     });
 
     test("isSubscribeMessage should identify SUBSCRIBE messages", () => {

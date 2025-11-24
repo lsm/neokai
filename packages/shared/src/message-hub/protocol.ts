@@ -38,9 +38,9 @@ export enum MessageType {
   ERROR = "ERROR",
 
   /**
-   * Publish an event
+   * Event delivery to subscriber
    */
-  PUBLISH = "PUBLISH",
+  EVENT = "EVENT",
 
   /**
    * Explicit subscription request (optional)
@@ -51,11 +51,6 @@ export enum MessageType {
    * Unsubscribe request
    */
   UNSUBSCRIBE = "UNSUBSCRIBE",
-
-  /**
-   * Event delivery to subscriber
-   */
-  EVENT = "EVENT",
 
   /**
    * Heartbeat/ping for connection health
@@ -158,16 +153,7 @@ export interface ErrorMessage extends HubMessage {
 }
 
 /**
- * PUBLISH message
- */
-export interface PublishMessage extends HubMessage {
-  type: MessageType.PUBLISH;
-  method: string;
-  data?: unknown;
-}
-
-/**
- * EVENT message (delivered to subscribers)
+ * EVENT message (pub/sub event delivery)
  */
 export interface EventMessage extends HubMessage {
   type: MessageType.EVENT;
@@ -204,10 +190,6 @@ export function isResultMessage(msg: HubMessage): msg is ResultMessage {
 
 export function isErrorMessage(msg: HubMessage): msg is ErrorMessage {
   return msg.type === MessageType.ERROR;
-}
-
-export function isPublishMessage(msg: HubMessage): msg is PublishMessage {
-  return msg.type === MessageType.PUBLISH;
 }
 
 export function isEventMessage(msg: HubMessage): msg is EventMessage {
@@ -335,16 +317,6 @@ export interface CreateErrorMessageParams {
 }
 
 /**
- * Parameters for creating a PUBLISH message
- */
-export interface CreatePublishMessageParams {
-  method: string;
-  data: unknown;
-  sessionId: string;
-  id?: string;
-}
-
-/**
  * Parameters for creating an EVENT message
  */
 export interface CreateEventMessageParams {
@@ -421,22 +393,6 @@ export function createErrorMessage(params: CreateErrorMessageParams): ErrorMessa
     error: errorMessage,
     errorCode: code,
     requestId: requestId || '',
-    timestamp: new Date().toISOString(),
-    version: PROTOCOL_VERSION,
-  };
-}
-
-/**
- * Create a PUBLISH message
- */
-export function createPublishMessage(params: CreatePublishMessageParams): PublishMessage {
-  const { method, data, sessionId, id } = params;
-  return {
-    id: id || generateUUID(),
-    type: MessageType.PUBLISH,
-    sessionId,
-    method,
-    data,
     timestamp: new Date().toISOString(),
     version: PROTOCOL_VERSION,
   };
