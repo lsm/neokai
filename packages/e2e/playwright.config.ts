@@ -5,10 +5,11 @@ import { defineConfig, devices } from "@playwright/test";
  * See https://playwright.dev/docs/test-configuration
  */
 export default defineConfig({
-  testDir: "./e2e",
+  testDir: "./tests",
+  testMatch: "**/*.e2e.ts",
 
   /* Run tests in files in parallel */
-  fullyParallel: true,
+  fullyParallel: false, // Disabled due to shared daemon state
 
   /* Fail the build on CI if you accidentally left test.only in the source code */
   forbidOnly: !!process.env.CI,
@@ -38,6 +39,17 @@ export default defineConfig({
 
     /* Video on failure */
     video: "retain-on-failure",
+
+    /* Action timeout - 10s for quick app */
+    actionTimeout: 10000,
+  },
+
+  /* Global timeout for each test */
+  timeout: 30000,
+
+  /* Expect timeout for assertions */
+  expect: {
+    timeout: 10000,
   },
 
   /* Configure projects for major browsers */
@@ -49,12 +61,22 @@ export default defineConfig({
   ],
 
   /* Run your local dev server before starting the tests */
-  webServer: {
-    command: "bun run dev",
-    url: "http://localhost:9283",
-    reuseExistingServer: !process.env.CI,
-    stdout: "ignore",
-    stderr: "pipe",
-    timeout: 120 * 1000,
-  },
+  webServer: [
+    {
+      command: "cd ../daemon && bun run dev",
+      url: "http://localhost:8283",
+      reuseExistingServer: !process.env.CI,
+      stdout: "ignore",
+      stderr: "pipe",
+      timeout: 120 * 1000,
+    },
+    {
+      command: "cd ../web && bun run dev",
+      url: "http://localhost:9283",
+      reuseExistingServer: !process.env.CI,
+      stdout: "ignore",
+      stderr: "pipe",
+      timeout: 120 * 1000,
+    },
+  ],
 });

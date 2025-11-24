@@ -8,13 +8,16 @@ test.describe("Home Page", () => {
 
     // Check for welcome message
     await expect(page.locator("text=Welcome to Liuboer")).toBeVisible();
+
+    // The subtitle changes based on whether there are sessions
+    // Check for the "Create a new session" part which appears in both variants
     await expect(
-      page.locator("text=Select a session or create a new one to get started"),
+      page.locator("text=/create a new session/i")
     ).toBeVisible();
 
     // Check for description
     await expect(
-      page.locator("text=A modern wrapper around Claude Agent SDK"),
+      page.locator("text=A modern wrapper around Claude Agent SDK with rich UI and multi-device access"),
     ).toBeVisible();
   });
 

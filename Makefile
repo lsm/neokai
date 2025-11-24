@@ -1,4 +1,4 @@
-.PHONY: daemon web sync-sdk-types
+.PHONY: daemon web sync-sdk-types clean-cache clean-all build-prod e2e e2e-ui e2e-headed e2e-debug e2e-report
 
 sync-sdk-types:
 	@echo "Syncing Claude SDK type definitions..."
@@ -18,3 +18,47 @@ web:
 	@lsof -ti:9283 | xargs kill -9 2>/dev/null || true
 	@echo "Starting web dev server..."
 	@cd packages/web && bun run dev
+
+# Clean Bun's package cache (helps with dependency issues)
+clean-cache:
+	@echo "🧹 Cleaning Bun package cache..."
+	@rm -rf ~/.bun/install/cache
+	@echo "�� Removing lockfiles..."
+	@find . -name "bun.lock" -type f -delete
+	@echo "✅ Cache cleaned! Run 'bun install' to rebuild cache."
+
+# Clean all build artifacts and caches
+clean-all: clean-cache
+	@echo "🧹 Cleaning all build artifacts..."
+	@rm -rf packages/web/dist
+	@rm -rf packages/daemon/dist
+	@rm -rf node_modules
+	@rm -rf packages/*/node_modules
+	@echo "✅ All clean! Run 'bun install' to reinstall dependencies."
+
+# Build production bundles
+build-prod:
+	@echo "🏗️  Building production bundles..."
+	@cd packages/web && bun run build
+	@echo "✅ Production build complete!"
+
+# E2E Testing with Playwright
+e2e:
+	@echo "🎭 Running E2E tests..."
+	@cd packages/e2e && bun run test
+
+e2e-ui:
+	@echo "🎭 Running E2E tests in UI mode..."
+	@cd packages/e2e && bun run test:ui
+
+e2e-headed:
+	@echo "🎭 Running E2E tests in headed mode..."
+	@cd packages/e2e && bun run test:headed
+
+e2e-debug:
+	@echo "🎭 Running E2E tests in debug mode..."
+	@cd packages/e2e && bun run test:debug
+
+e2e-report:
+	@echo "📊 Opening E2E test report..."
+	@cd packages/e2e && bun run report

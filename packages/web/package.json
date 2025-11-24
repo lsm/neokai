@@ -5,9 +5,9 @@
   "scripts": {
     "css:build": "tailwindcss --input src/styles.css --output src/styles.out.css",
     "css:watch": "tailwindcss --input src/styles.css --output src/styles.out.css --watch",
-    "server:dev": "bun --hot src/index.ts",
+    "server:dev": "bun --watch src/index.ts",
     "dev": "bun run css:build && bun run --bun css:watch & bun run server:dev",
-    "build": "bun run css:build && bun build src/index.html --outdir=dist --minify",
+    "build": "bun run build.ts",
     "start": "NODE_ENV=production bun src/server-prod.ts",
     "preview": "bun src/index.html"
   },
