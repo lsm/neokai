@@ -5,10 +5,10 @@ import { Database } from "./src/storage/database";
 import { SessionManager } from "./src/lib/session-manager";
 import { AuthManager } from "./src/lib/auth-manager";
 import { StateManager } from "./src/lib/state-manager";
-import { MessageHub } from "@liuboer/shared";
+import { MessageHub, MessageHubRouter } from "@liuboer/shared";
 import { MessageHubRPCRouter } from "./src/lib/messagehub-rpc-router";
-import { ElysiaWebSocketTransport } from "./src/lib/elysia-websocket-transport";
-import { setupMessageHubWebSocket } from "./src/routes/messagehub-websocket";
+import { BunWebSocketTransport } from "./src/lib/bun-websocket-transport";
+import { setupMessageHubWebSocket } from "./src/routes/bun-websocket";
 
 const config = getConfig();
 
@@ -39,20 +39,35 @@ if (authStatus.isAuthenticated) {
   process.exit(1);
 }
 
-// Initialize MessageHub with ElysiaWebSocketTransport
+// PHASE 2 ARCHITECTURE: MessageHub -> Router -> Transport
+// Initialize MessageHubRouter (routing layer)
+const router = new MessageHubRouter({
+  logger: console,
+  debug: config.nodeEnv === "development",
+  autoSubscribe: {
+    global: ["session.created", "session.updated", "session.deleted"],
+    session: ["sdk.message", "context.updated", "message.queued"],
+  },
+});
+console.log("✅ MessageHubRouter initialized");
+
+// Initialize MessageHub (protocol layer)
 const messageHub = new MessageHub({
   defaultSessionId: "global",
   debug: config.nodeEnv === "development",
 });
 
-const transport = new ElysiaWebSocketTransport({
-  name: "elysia-ws",
+// Initialize Transport (I/O layer) with router
+const transport = new BunWebSocketTransport({
+  name: "bun-ws",
   debug: config.nodeEnv === "development",
+  router,
 });
 
 // Register transport with MessageHub
 messageHub.registerTransport(transport);
-console.log("✅ MessageHub initialized with Elysia WebSocket transport");
+console.log("✅ MessageHub initialized with layered architecture");
+console.log("   Protocol: MessageHub -> Router: MessageHubRouter -> I/O: BunWebSocketTransport");
 
 // Initialize session manager (after MessageHub)
 const sessionManager = new SessionManager(db, messageHub, authManager, {
@@ -131,10 +146,60 @@ console.log(`\n📡 Global WebSocket: ws://${app.server?.hostname}:${app.server?
 console.log(`📡 Session WebSocket: ws://${app.server?.hostname}:${app.server?.port}/ws/:sessionId`);
 console.log(`\n✨ MessageHub mode! Unified RPC + Pub/Sub over WebSocket.\n`);
 
-// Cleanup on exit
-process.on("SIGINT", async () => {
-  console.log("\n👋 Shutting down...");
-  db.close();
-  app.stop();
-  process.exit(0);
-});
+// Graceful shutdown handler
+async function gracefulShutdown(signal: string): Promise<void> {
+  console.log(`\n👋 Received ${signal}, shutting down gracefully...`);
+
+  try {
+    // 1. Stop accepting new connections
+    console.log("   1/5 Stopping server...");
+    app.stop();
+
+    // 2. Wait for pending RPC calls (with 5s timeout)
+    console.log("   2/5 Waiting for pending RPC calls...");
+    const pendingCallsCount = messageHub["pendingCalls"]?.size || 0;
+    if (pendingCallsCount > 0) {
+      console.log(`       ${pendingCallsCount} pending calls detected`);
+      await Promise.race([
+        new Promise(resolve => {
+          const checkInterval = setInterval(() => {
+            const remaining = messageHub["pendingCalls"]?.size || 0;
+            if (remaining === 0) {
+              clearInterval(checkInterval);
+              resolve(null);
+            }
+          }, 100);
+        }),
+        new Promise(resolve => setTimeout(resolve, 5000)),
+      ]);
+      const remaining = messageHub["pendingCalls"]?.size || 0;
+      if (remaining > 0) {
+        console.log(`       ⚠️  Timeout: ${remaining} calls still pending`);
+      } else {
+        console.log(`       ✅ All pending calls completed`);
+      }
+    }
+
+    // 3. Cleanup MessageHub (rejects remaining calls)
+    console.log("   3/5 Cleaning up MessageHub...");
+    messageHub.cleanup();
+
+    // 4. Stop all agent sessions
+    console.log("   4/5 Stopping agent sessions...");
+    await sessionManager.cleanup();
+
+    // 5. Close database
+    console.log("   5/5 Closing database...");
+    db.close();
+
+    console.log("\n✅ Graceful shutdown complete\n");
+    process.exit(0);
+  } catch (error) {
+    console.error("\n❌ Error during shutdown:", error);
+    process.exit(1);
+  }
+}
+
+// Register shutdown handlers
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
