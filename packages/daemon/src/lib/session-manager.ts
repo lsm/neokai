@@ -139,9 +139,26 @@ export class SessionManager {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    // Emit session ended event via MessageHub (legacy)
+    // IMPORTANT: Delete from database and memory FIRST, before broadcasting
+    // This ensures that when broadcastSessionsChange() fetches from DB,
+    // the deleted session is already gone (fixes race condition)
+
+    // PHASE 3 FIX: Cleanup AgentSession resources BEFORE removing from memory
+    const agentSession = this.sessions.get(sessionId);
+    if (agentSession) {
+      agentSession.cleanup(); // Unsubscribe from MessageHub events
+    }
+
+    // Remove from database FIRST
+    this.db.deleteSession(sessionId);
+
+    // Remove from memory
+    this.sessions.delete(sessionId);
+
+    // THEN broadcast changes (after DB/memory are clean)
+    // Emit session ended event via MessageHub (fixed legacy prefix)
     await this.messageHub.publish(
-      `global:session.deleted`,
+      `session.deleted`,
       { sessionId, reason: "deleted" },
       { sessionId: "global" }
     );
@@ -153,12 +170,6 @@ export class SessionManager {
         timestamp: Date.now(),
       });
     }
-
-    // Remove from memory
-    this.sessions.delete(sessionId);
-
-    // Remove from database
-    this.db.deleteSession(sessionId);
   }
 
 
@@ -169,5 +180,25 @@ export class SessionManager {
 
   getTotalSessions(): number {
     return this.db.listSessions().length;
+  }
+
+  /**
+   * Cleanup all sessions (called during shutdown)
+   */
+  async cleanup(): Promise<void> {
+    console.log(`[SessionManager] Cleaning up ${this.sessions.size} active sessions...`);
+
+    // Cleanup all in-memory sessions
+    for (const [sessionId, agentSession] of this.sessions) {
+      try {
+        agentSession.cleanup();
+      } catch (error) {
+        console.error(`[SessionManager] Error cleaning up session ${sessionId}:`, error);
+      }
+    }
+
+    // Clear session map
+    this.sessions.clear();
+    console.log(`[SessionManager] All sessions cleaned up`);
   }
 }

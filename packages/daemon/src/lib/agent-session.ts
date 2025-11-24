@@ -49,6 +49,9 @@ export class AgentSession {
   // In-flight flag for /context calls - prevents concurrent calls
   private contextFetchInProgress: boolean = false;
 
+  // PHASE 3 FIX: Store unsubscribe functions to prevent memory leaks
+  private unsubscribers: Array<() => void> = [];
+
   constructor(
     private session: Session,
     private db: Database,
@@ -77,10 +80,11 @@ export class AgentSession {
 
   /**
    * Setup MessageHub listeners for incoming messages and controls
+   * PHASE 3 FIX: Store unsubscribe functions for cleanup
    */
   private setupEventListeners(): void {
     // Listen for incoming messages from WebSocket (session-scoped events)
-    this.messageHub.subscribe('message.send', async (data: any) => {
+    const unsubMessageSend = this.messageHub.subscribe('message.send', async (data: any) => {
       try {
         const { content, images } = data;
         const messageContent = this.buildMessageContent(content, images);
@@ -103,9 +107,12 @@ export class AgentSession {
     }, { sessionId: this.session.id });
 
     // Handle interruption requests
-    this.messageHub.subscribe('client.interrupt', async () => {
+    const unsubInterrupt = this.messageHub.subscribe('client.interrupt', async () => {
       this.handleInterrupt();
     }, { sessionId: this.session.id });
+
+    // Store unsubscribe functions for cleanup
+    this.unsubscribers.push(unsubMessageSend, unsubInterrupt);
   }
 
   /**
@@ -455,18 +462,9 @@ export class AgentSession {
 
     // Handle specific message types
     if (message.type === "result") {
-      // First emit basic token usage from API response
-      await this.messageHub.publish('context.updated', {
-          tokenUsage: {
-            inputTokens: message.usage.input_tokens,
-            outputTokens: message.usage.output_tokens,
-            cacheReadTokens: message.usage.cache_read_input_tokens || 0,
-            cacheCreationTokens: message.usage.cache_creation_input_tokens || 0,
-          },
-          modelUsage: message.modelUsage,
-          costUSD: message.total_cost_usd,
-          durationMs: message.duration_ms,
-        }, { sessionId: this.session.id });
+      // PHASE 3.4 FIX: Removed immediate basic context publish
+      // Full context will be published after /context command completes
+      // This consolidates 2 publishes into 1 complete update
 
       // Update session metadata
       this.session.lastActiveAt = new Date().toISOString();
@@ -733,6 +731,37 @@ export class AgentSession {
    */
   abort(): void {
     this.handleInterrupt();
+  }
+
+  /**
+   * Cleanup resources when session is destroyed
+   * PHASE 3 FIX: Unsubscribe from all MessageHub subscriptions to prevent memory leaks
+   */
+  cleanup(): void {
+    console.log(`[AgentSession ${this.session.id}] Cleaning up resources...`);
+
+    // Unsubscribe from all MessageHub events
+    for (const unsubscribe of this.unsubscribers) {
+      try {
+        unsubscribe();
+      } catch (error) {
+        console.error(`[AgentSession ${this.session.id}] Error during unsubscribe:`, error);
+      }
+    }
+    this.unsubscribers = [];
+
+    // Abort any running query
+    if (this.abortController) {
+      this.abortController.abort();
+      this.abortController = null;
+    }
+
+    // Clear state
+    this.queryRunning = false;
+    this.messageQueue = [];
+    this.messageWaiters = [];
+
+    console.log(`[AgentSession ${this.session.id}] Cleanup complete`);
   }
 
   /**
