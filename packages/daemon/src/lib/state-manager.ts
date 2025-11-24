@@ -338,6 +338,7 @@ export class StateManager {
 
   /**
    * Broadcast sessions delta update (more efficient for single changes)
+   * Only sends delta - clients not subscribed to deltas should subscribe to full channel
    */
   async broadcastSessionsDelta(update: SessionsUpdate): Promise<void> {
     await this.messageHub.publish(
@@ -346,8 +347,8 @@ export class StateManager {
       { sessionId: "global" },
     );
 
-    // Also broadcast full update for clients that don't support deltas
-    await this.broadcastSessionsChange();
+    // Increment version for delta
+    this.stateVersion++;
   }
 
   /**
@@ -399,7 +400,9 @@ export class StateManager {
       sessionId,
     });
 
-    // Also update global sessions list
+    this.stateVersion++;
+
+    // Also update global sessions list (no double increment - broadcastSessionsChange handles its own)
     await this.broadcastSessionsChange();
   }
 
@@ -418,6 +421,7 @@ export class StateManager {
 
   /**
    * Broadcast messages delta (single new message)
+   * Only sends delta - clients not subscribed to deltas should subscribe to full channel
    */
   async broadcastMessagesDelta(
     sessionId: string,
@@ -429,8 +433,8 @@ export class StateManager {
       { sessionId },
     );
 
-    // Also broadcast full update for clients that don't support deltas
-    await this.broadcastMessagesChange(sessionId);
+    // Increment version for delta
+    this.stateVersion++;
   }
 
   /**
@@ -448,6 +452,7 @@ export class StateManager {
 
   /**
    * Broadcast SDK messages delta (single new message)
+   * Only sends delta - clients not subscribed to deltas should subscribe to full channel
    */
   async broadcastSDKMessagesDelta(
     sessionId: string,
@@ -458,6 +463,9 @@ export class StateManager {
       update,
       { sessionId },
     );
+
+    // Increment version for delta
+    this.stateVersion++;
   }
 
   /**
