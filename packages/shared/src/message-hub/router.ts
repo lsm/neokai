@@ -55,6 +55,11 @@ export interface RouterLogger {
 export interface MessageHubRouterOptions {
   logger?: RouterLogger;
   debug?: boolean;
+  /**
+   * Maximum subscriptions per client (prevents subscription bombing)
+   * @default 1000
+   */
+  maxSubscriptionsPerClient?: number;
 }
 
 /**
@@ -93,10 +98,12 @@ export class MessageHubRouter {
 
   private logger: RouterLogger;
   private debug: boolean;
+  private readonly maxSubscriptionsPerClient: number;
 
   constructor(options: MessageHubRouterOptions = {}) {
     this.logger = options.logger || console;
     this.debug = options.debug || false;
+    this.maxSubscriptionsPerClient = options.maxSubscriptionsPerClient || 1000;
   }
 
   /**
@@ -147,9 +154,18 @@ export class MessageHubRouter {
 
   /**
    * Subscribe a client to a method in a session
-   * Validates subscription keys (method validation done in protocol.validateMethod)
+   *
+   * FIXES:
+   * - ✅ P1.4: Validates clientId (non-empty string)
+   * - ✅ P1.3: Enforces max subscriptions limit per client
+   * - ✅ P2.5: Warns on duplicate subscriptions (idempotent)
    */
   subscribe(sessionId: string, method: string, clientId: string): void {
+    // FIX P1.4: Validate clientId
+    if (!clientId || typeof clientId !== 'string' || clientId.trim().length === 0) {
+      throw new Error(`Invalid clientId: ${JSON.stringify(clientId)}`);
+    }
+
     // Validate sessionId - colons not allowed (reserved for internal routing)
     if (sessionId.includes(':')) {
       throw new Error('SessionId cannot contain colon character (reserved for internal use)');
@@ -158,6 +174,34 @@ export class MessageHubRouter {
     // Validate method format (including colon restriction)
     if (method.includes(':')) {
       throw new Error('Method cannot contain colon character (reserved for internal use)');
+    }
+
+    // FIX P1.3: Check subscription limit before adding
+    const client = this.getClientById(clientId);
+    if (client) {
+      // Count total subscriptions across all sessions
+      let totalSubs = 0;
+      for (const methods of client.subscriptions.values()) {
+        totalSubs += methods.size;
+      }
+
+      // Check if already subscribed (idempotent)
+      const existingMethods = client.subscriptions.get(sessionId);
+      const alreadySubscribed = existingMethods?.has(method);
+
+      if (!alreadySubscribed && totalSubs >= this.maxSubscriptionsPerClient) {
+        throw new Error(
+          `Client ${clientId} has reached max subscriptions limit (${this.maxSubscriptionsPerClient})`
+        );
+      }
+
+      // FIX P2.5: Warn on duplicate subscriptions (but allow - idempotent)
+      if (alreadySubscribed) {
+        this.logger.warn(
+          `[MessageHubRouter] Client ${clientId} already subscribed to ${sessionId}:${method}`
+        );
+        return; // Idempotent - do nothing
+      }
     }
 
     // Initialize maps if needed
@@ -174,7 +218,6 @@ export class MessageHubRouter {
     sessionSubs.get(method)!.add(clientId);
 
     // Track subscription in client info using O(1) lookup
-    const client = this.getClientById(clientId);
     if (client) {
       if (!client.subscriptions.has(sessionId)) {
         client.subscriptions.set(sessionId, new Set());
