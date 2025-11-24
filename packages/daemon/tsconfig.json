@@ -1,11 +1,9 @@
 {
   "compilerOptions": {
-    "lib": ["DOM", "DOM.Iterable", "ESNext"],
+    "lib": ["ESNext"],
     "module": "ESNext",
     "target": "ESNext",
     "moduleResolution": "bundler",
-    "jsx": "react-jsx",
-    "jsxImportSource": "preact",
     "strict": true,
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
@@ -13,11 +11,11 @@
     "composite": true,
     "types": ["bun-types"],
     "paths": {
-      "@/*": ["./*"],
+      "@/*": ["./src/*"],
       "@liuboer/shared": ["../shared/src/mod.ts"],
       "@liuboer/shared/*": ["../shared/src/*"]
     }
   },
-  "include": ["src/**/*", "tests/**/*", "build.ts"],
+  "include": ["src/**/*", "main.ts", "tests/**/*", "test-*.ts"],
   "exclude": ["node_modules", "dist"]
 }
