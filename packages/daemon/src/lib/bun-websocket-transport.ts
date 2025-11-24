@@ -1,20 +1,21 @@
 /**
  * Bun Native WebSocket Transport for MessageHub
  *
- * PHASE 2 REFACTOR:
- * - Pure I/O layer (no routing logic)
- * - Delegates client management to MessageHubRouter
- * - Focuses only on WebSocket send/receive operations
+ * PHASE 3 ARCHITECTURE (FIXED):
+ * - Pure I/O layer - handles WebSocket send/receive only
+ * - Uses Router for CLIENT MANAGEMENT (register connections, subscriptions)
+ * - NO ROUTING LOGIC - MessageHub handles routing, Transport handles I/O
+ * - Provides sendToClient() for targeted sends (called by MessageHub via Router)
  */
 
 import type { ServerWebSocket } from "bun";
-import type { HubMessage, IMessageTransport, ConnectionState } from "@liuboer/shared";
+import type { HubMessage, IMessageTransport, ConnectionState, BroadcastResult } from "@liuboer/shared";
 import type { MessageHubRouter, ClientConnection } from "@liuboer/shared";
 
 export interface BunWebSocketTransportOptions {
   name?: string;
   debug?: boolean;
-  router: MessageHubRouter;
+  router: MessageHubRouter; // For client management only, not routing
   maxQueueSize?: number; // Backpressure: max queued messages per client
 }
 
@@ -117,9 +118,6 @@ export class BunWebSocketTransport implements IMessageTransport {
 
     this.log(`Client registered: ${clientId} (session: ${connectionSessionId})`);
 
-    // Auto-subscribe to connection session
-    this.router.autoSubscribeConnection(clientId, connectionSessionId);
-
     // Notify connection handlers
     if (this.router.getClientCount() === 1) {
       this.notifyConnectionHandlers("connected");
@@ -156,10 +154,16 @@ export class BunWebSocketTransport implements IMessageTransport {
 
   /**
    * Handle incoming message from a WebSocket client
-   * Simplified: just forward to handlers (no routing logic)
+   * Adds clientId to message for subscription tracking
    */
   handleClientMessage(message: HubMessage, clientId?: string): void {
     this.log(`Received message: ${message.type} ${message.method}`, message);
+
+    // Add clientId to message metadata for SUBSCRIBE/UNSUBSCRIBE handling
+    // MessageHub needs this to track which client subscribed
+    if (clientId) {
+      (message as any).clientId = clientId;
+    }
 
     // Notify all message handlers (MessageHub will process)
     for (const handler of this.messageHandlers) {
@@ -172,19 +176,30 @@ export class BunWebSocketTransport implements IMessageTransport {
   }
 
   /**
-   * Send message via router
-   * Router determines which clients should receive it
+   * Send message (deprecated - MessageHub now handles routing)
+   *
+   * @deprecated MessageHub now routes EVENT messages via Router directly.
+   * This method is kept for backwards compatibility and non-EVENT messages.
+   *
+   * New architecture flow:
+   * - MessageHub.sendMessage() checks if Router is registered
+   * - If yes: MessageHub → Router.routeEvent() → ClientConnection.send()
+   * - If no: MessageHub → Transport.send() (this method)
    */
   async send(message: HubMessage): Promise<void> {
-    // For EVENT messages, use router's routing logic
+    // For EVENT messages: MessageHub should have routed via Router already
+    // If we get here, it means no router registered (shouldn't happen server-side)
     if (message.type === "EVENT") {
-      const result = this.router.routeEvent(message);
-      this.log(`Routed event: ${result.sent} sent, ${result.failed} failed`);
+      console.warn(
+        `[${this.name}] EVENT message sent via deprecated path. ` +
+        `MessageHub should route via Router.`
+      );
+      // Fallback: broadcast to all clients
+      this.router.broadcast(message);
       return;
     }
 
-    // For non-EVENT messages (CALL, RESULT, ERROR), broadcast to relevant clients
-    // The router will handle filtering based on subscriptions
+    // For non-EVENT messages (CALL, RESULT, ERROR): broadcast
     this.router.broadcast(message);
   }
 

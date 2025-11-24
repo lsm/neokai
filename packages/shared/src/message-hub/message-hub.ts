@@ -18,9 +18,13 @@ import {
   createResultMessage,
   createErrorMessage,
   createEventMessage,
+  createSubscribeMessage,
+  createUnsubscribeMessage,
   isCallMessage,
   isResponseMessage,
   isEventMessage,
+  isSubscribeMessage,
+  isUnsubscribeMessage,
   validateMethod,
   isValidMessage,
 } from "./protocol.ts";
@@ -39,14 +43,24 @@ import type {
   CallContext,
   EventContext,
   ConnectionState,
+  BroadcastResult,
 } from "./types.ts";
+import type { MessageHubRouter } from "./router.ts";
 
 /**
  * MessageHub class
  * Core implementation of unified messaging system
+ *
+ * ARCHITECTURE:
+ * - MessageHub: Protocol layer (RPC + Pub/Sub logic)
+ * - MessageHubRouter: Server-side routing layer (determines recipients)
+ * - IMessageTransport: I/O layer (sends/receives over wire)
+ *
+ * Flow: MessageHub → Router (if server-side) → Transport → Wire
  */
 export class MessageHub {
   private transport: IMessageTransport | null = null;
+  private router: MessageHubRouter | null = null;  // Server-side only
   private readonly defaultSessionId: string;
   private readonly defaultTimeout: number;
   private readonly debug: boolean;
@@ -145,6 +159,32 @@ export class MessageHub {
     return () => {
       this.connectionStateHandlers.delete(handler);
     };
+  }
+
+  // ========================================
+  // Router Management (Server-side)
+  // ========================================
+
+  /**
+   * Register a router for server-side message routing
+   * Optional - only needed for server-side deployments
+   *
+   * When registered, MessageHub uses the router to determine which clients
+   * should receive EVENT messages based on their subscriptions.
+   */
+  registerRouter(router: MessageHubRouter): void {
+    if (this.router) {
+      console.warn("[MessageHub] Router already registered, replacing...");
+    }
+    this.router = router;
+    this.log(`Router registered`);
+  }
+
+  /**
+   * Get the registered router (if any)
+   */
+  getRouter(): MessageHubRouter | null {
+    return this.router;
   }
 
   // ========================================
@@ -320,6 +360,12 @@ export class MessageHub {
   /**
    * Subscribe to events
    *
+   * EXPLICIT SUBSCRIPTION PROTOCOL:
+   * - Stores subscription locally (for event routing)
+   * - Sends SUBSCRIBE message to server (if connected)
+   * - Server tracks subscription in Router
+   * - Auto-resubscribes on reconnection
+   *
    * @example
    * // Global event
    * hub.subscribe('session.deleted', (data) => {
@@ -369,8 +415,35 @@ export class MessageHub {
     sessionSubs.get(fullMethod)!.add(handler as EventHandler);
     this.log(`Subscribed to: ${fullMethod} (session: ${sessionId})`);
 
+    // Send SUBSCRIBE message to server (explicit subscription protocol)
+    if (this.isConnected()) {
+      const subscribeMsg = createSubscribeMessage({
+        method: fullMethod,
+        sessionId,
+        id: subId,
+      });
+
+      this.sendMessage(subscribeMsg).catch((error) => {
+        console.warn(`[MessageHub] Failed to send SUBSCRIBE message:`, error);
+        // Continue - local subscription still works
+      });
+    }
+
     // Return unsubscribe function
     return () => {
+      // Send UNSUBSCRIBE message to server
+      if (this.isConnected()) {
+        const unsubscribeMsg = createUnsubscribeMessage({
+          method: fullMethod,
+          sessionId,
+          id: generateUUID(),
+        });
+
+        this.sendMessage(unsubscribeMsg).catch((error) => {
+          console.warn(`[MessageHub] Failed to send UNSUBSCRIBE message:`, error);
+        });
+      }
+
       // Remove from persisted subscriptions
       this.persistedSubscriptions.delete(subId);
 
@@ -457,6 +530,10 @@ export class MessageHub {
         await this.handlePing(message);
       } else if (message.type === MessageType.PONG) {
         this.handlePong(message);
+      } else if (isSubscribeMessage(message)) {
+        await this.handleSubscribe(message);
+      } else if (isUnsubscribeMessage(message)) {
+        await this.handleUnsubscribe(message);
       } else if (isCallMessage(message)) {
         await this.handleIncomingCall(message);
       } else if (isResponseMessage(message)) {
@@ -584,6 +661,98 @@ export class MessageHub {
   }
 
   /**
+   * Handle SUBSCRIBE message (server-side)
+   *
+   * Client sends SUBSCRIBE to register interest in specific events.
+   * Server tracks subscription in Router for targeted event routing.
+   */
+  private async handleSubscribe(message: HubMessage): Promise<void> {
+    if (!this.router) {
+      this.log('No router registered, ignoring SUBSCRIBE');
+      return;
+    }
+
+    // Get clientId from message metadata (added by transport)
+    const clientId = (message as any).clientId;
+
+    if (!clientId) {
+      console.error('[MessageHub] SUBSCRIBE without clientId - transport must add clientId to messages');
+      return;
+    }
+
+    try {
+      // Register subscription in router
+      this.router.subscribe(message.sessionId, message.method, clientId);
+
+      this.log(`Client ${clientId} subscribed to ${message.sessionId}:${message.method}`);
+
+      // Send ACK (optional - confirms subscription)
+      const ackMsg = createResultMessage({
+        method: message.method,
+        data: { subscribed: true, method: message.method, sessionId: message.sessionId },
+        sessionId: message.sessionId,
+        requestId: message.id,
+      });
+
+      await this.sendMessage(ackMsg);
+    } catch (error) {
+      console.error(`[MessageHub] Error handling SUBSCRIBE:`, error);
+
+      // Send error response
+      const errorMsg = createErrorMessage({
+        method: message.method,
+        error: {
+          code: ErrorCode.HANDLER_ERROR,
+          message: error instanceof Error ? error.message : String(error),
+        },
+        sessionId: message.sessionId,
+        requestId: message.id,
+      });
+
+      await this.sendMessage(errorMsg);
+    }
+  }
+
+  /**
+   * Handle UNSUBSCRIBE message (server-side)
+   *
+   * Client sends UNSUBSCRIBE to stop receiving specific events.
+   * Server removes subscription from Router.
+   */
+  private async handleUnsubscribe(message: HubMessage): Promise<void> {
+    if (!this.router) {
+      this.log('No router registered, ignoring UNSUBSCRIBE');
+      return;
+    }
+
+    const clientId = (message as any).clientId;
+
+    if (!clientId) {
+      console.error('[MessageHub] UNSUBSCRIBE without clientId');
+      return;
+    }
+
+    try {
+      // Remove subscription from router
+      this.router.unsubscribeClient(message.sessionId, message.method, clientId);
+
+      this.log(`Client ${clientId} unsubscribed from ${message.sessionId}:${message.method}`);
+
+      // Send ACK (optional)
+      const ackMsg = createResultMessage({
+        method: message.method,
+        data: { unsubscribed: true, method: message.method, sessionId: message.sessionId },
+        sessionId: message.sessionId,
+        requestId: message.id,
+      });
+
+      await this.sendMessage(ackMsg);
+    } catch (error) {
+      console.error(`[MessageHub] Error handling UNSUBSCRIBE:`, error);
+    }
+  }
+
+  /**
    * Handle PING message - respond with PONG
    */
   private async handlePing(message: HubMessage): Promise<void> {
@@ -615,6 +784,12 @@ export class MessageHub {
 
   /**
    * Send a message via transport
+   *
+   * Routing logic:
+   * - If router is registered (server-side) AND message is EVENT:
+   *   Router determines subscribers → Transport sends to those clients
+   * - Otherwise (client-side or non-EVENT):
+   *   Transport broadcasts directly
    */
   private async sendMessage(message: HubMessage): Promise<void> {
     if (!this.transport || !this.transport.isReady()) {
@@ -629,6 +804,15 @@ export class MessageHub {
     // Notify message handlers
     this.notifyMessageHandlers(message, "out");
 
+    // Server-side routing for EVENT messages
+    if (this.router && message.type === MessageType.EVENT) {
+      // Use router to route EVENT to subscribed clients
+      const result = this.router.routeEvent(message);
+      this.log(`Routed event: ${result.sent}/${result.totalSubscribers} delivered`);
+      return;
+    }
+
+    // Client-side or non-EVENT messages: send via transport
     await this.transport.send(message);
   }
 

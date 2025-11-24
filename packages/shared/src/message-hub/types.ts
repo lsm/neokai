@@ -196,7 +196,19 @@ export interface MessageHubOptions {
 }
 
 /**
+ * Result of broadcast operation
+ */
+export interface BroadcastResult {
+  sent: number;
+  failed: number;
+  totalTargets: number;
+}
+
+/**
  * Transport interface for MessageHub
+ *
+ * Transports are pure I/O layers - they send/receive messages but don't route.
+ * MessageHub is responsible for determining message recipients.
  */
 export interface IMessageTransport {
   /**
@@ -210,7 +222,20 @@ export interface IMessageTransport {
   initialize(): Promise<void>;
 
   /**
-   * Send a message
+   * Send a message to a specific client (server-side transports only)
+   * @returns true if sent successfully, false otherwise
+   */
+  sendToClient?(clientId: string, message: HubMessage): Promise<boolean>;
+
+  /**
+   * Broadcast a message to multiple clients (server-side transports only)
+   * @returns statistics about delivery success/failure
+   */
+  broadcastToClients?(clientIds: string[], message: HubMessage): Promise<BroadcastResult>;
+
+  /**
+   * Send a message (client-side: to server, server-side: broadcast to all)
+   * @deprecated Use sendToClient or broadcastToClients for server-side transports
    */
   send(message: HubMessage): Promise<void>;
 
