@@ -14,7 +14,7 @@ test.describe("UI Components", () => {
 
       // Get initial styles
       const initialColor = await newSessionButton.evaluate((el) =>
-        window.getComputedStyle(el).backgroundColor
+        (globalThis as any).getComputedStyle(el).backgroundColor
       );
 
       // Hover over button

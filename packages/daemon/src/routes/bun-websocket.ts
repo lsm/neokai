@@ -12,7 +12,7 @@ import type { SessionManager } from "../lib/session-manager";
 const GLOBAL_SESSION_ID = "global";
 
 export function setupMessageHubWebSocket(
-  app: Elysia,
+  app: Elysia<any>,
   messageHub: MessageHub,
   transport: BunWebSocketTransport,
   sessionManager: SessionManager,
