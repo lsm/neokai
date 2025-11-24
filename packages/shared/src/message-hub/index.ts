@@ -10,7 +10,6 @@ export { MessageHubRouter } from "./router.ts";
 export type {
   ClientConnection,
   RouterLogger,
-  AutoSubscribeConfig,
   MessageHubRouterOptions,
   RouteResult,
 } from "./router.ts";
@@ -70,3 +69,7 @@ export type {
 // Transports - renamed to avoid conflict with EventBus transports
 export { WebSocketClientTransport as HubWebSocketClientTransport } from "./transport-websocket-client.ts";
 export type { WebSocketClientTransportOptions as HubWebSocketClientTransportOptions } from "./transport-websocket-client.ts";
+
+// Cache utilities (for advanced use cases)
+export { LRUCache, fastHash, createCacheKey } from "./cache.ts";
+export type { CacheEntry } from "./cache.ts";
