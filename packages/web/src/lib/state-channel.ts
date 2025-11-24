@@ -77,7 +77,7 @@ export class StateChannel<T> {
   private lastSync = signal<number>(0);
 
   private subscriptions: UnsubscribeFn[] = [];
-  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private refreshTimer: ReturnType<typeof setInterval> | null = null;
   private optimisticUpdates = new Map<string, OptimisticUpdate<T>>();
 
   constructor(
@@ -356,7 +356,7 @@ export class StateChannel<T> {
         this.log(`Auto-refreshing stale channel: ${this.channelName}`);
         this.refresh().catch(console.error);
       }
-    }, this.options.refreshInterval) as unknown as number;
+    }, this.options.refreshInterval);
   }
 
   /**

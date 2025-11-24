@@ -54,8 +54,8 @@ export class WebSocketClientTransport implements IMessageTransport {
   private readonly pingInterval: number;
 
   private reconnectAttempts = 0;
-  private reconnectTimer: number | null = null;
-  private pingTimer: number | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
 
   private messageHandlers: Set<(message: HubMessage) => void> = new Set();
   private connectionHandlers: Set<ConnectionStateHandler> = new Set();
