@@ -6,6 +6,9 @@
 
 import type { HubMessage } from "./protocol.ts";
 
+// Re-export HubMessage for convenience
+export type { HubMessage };
+
 /**
  * Unsubscribe function returned by subscribe operations
  */
