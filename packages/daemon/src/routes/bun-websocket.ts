@@ -9,6 +9,7 @@ import type { Elysia } from "elysia";
 import type { MessageHub } from "@liuboer/shared";
 import type { BunWebSocketTransport } from "../lib/bun-websocket-transport";
 import type { SessionManager } from "../lib/session-manager";
+import type { SubscriptionManager } from "../lib/subscription-manager";
 
 const GLOBAL_SESSION_ID = "global";
 
@@ -17,6 +18,7 @@ export function setupMessageHubWebSocket(
   messageHub: MessageHub,
   transport: BunWebSocketTransport,
   sessionManager: SessionManager,
+  subscriptionManager: SubscriptionManager,
 ) {
   // UNIFIED WebSocket endpoint - single connection handles all sessions
   // Session routing is done via message.sessionId field, not URL
@@ -29,6 +31,12 @@ export function setupMessageHubWebSocket(
 
       // Store clientId on websocket for cleanup and message handling
       (ws.raw as any).__clientId = clientId;
+
+      // Subscribe client to global events
+      // This is APPLICATION logic - SubscriptionManager defines what events to subscribe to
+      subscriptionManager.subscribeToGlobalEvents(clientId).catch((error) => {
+        console.error(`Failed to subscribe client ${clientId} to global events:`, error);
+      });
 
       // Send connection confirmation
       ws.send(

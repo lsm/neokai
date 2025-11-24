@@ -5,6 +5,7 @@ import { Database } from "./src/storage/database";
 import { SessionManager } from "./src/lib/session-manager";
 import { AuthManager } from "./src/lib/auth-manager";
 import { StateManager } from "./src/lib/state-manager";
+import { SubscriptionManager } from "./src/lib/subscription-manager";
 import { MessageHub, MessageHubRouter } from "@liuboer/shared";
 import { MessageHubRPCRouter } from "./src/lib/messagehub-rpc-router";
 import { BunWebSocketTransport } from "./src/lib/bun-websocket-transport";
@@ -39,35 +40,35 @@ if (authStatus.isAuthenticated) {
   process.exit(1);
 }
 
-// PHASE 2 ARCHITECTURE: MessageHub -> Router -> Transport
-// Initialize MessageHubRouter (routing layer)
+// PHASE 3 ARCHITECTURE (FIXED): MessageHub owns Router, Transport is pure I/O
+// 1. Initialize MessageHubRouter (routing layer - pure routing, no app logic)
 const router = new MessageHubRouter({
   logger: console,
   debug: config.nodeEnv === "development",
-  autoSubscribe: {
-    global: ["session.created", "session.updated", "session.deleted"],
-    session: ["sdk.message", "context.updated", "message.queued"],
-  },
 });
-console.log("✅ MessageHubRouter initialized");
+console.log("✅ MessageHubRouter initialized (clean - no application logic)");
 
-// Initialize MessageHub (protocol layer)
+// 2. Initialize MessageHub (protocol layer)
 const messageHub = new MessageHub({
   defaultSessionId: "global",
   debug: config.nodeEnv === "development",
 });
 
-// Initialize Transport (I/O layer) with router
+// 3. Register Router with MessageHub (MessageHub owns routing)
+messageHub.registerRouter(router);
+console.log("✅ Router registered with MessageHub");
+
+// 4. Initialize Transport (I/O layer) - needs router for client management
 const transport = new BunWebSocketTransport({
   name: "bun-ws",
   debug: config.nodeEnv === "development",
-  router,
+  router, // For client management only, not routing
 });
 
-// Register transport with MessageHub
+// 5. Register Transport with MessageHub
 messageHub.registerTransport(transport);
-console.log("✅ MessageHub initialized with layered architecture");
-console.log("   Protocol: MessageHub -> Router: MessageHubRouter -> I/O: BunWebSocketTransport");
+console.log("✅ MessageHub initialized with corrected architecture");
+console.log("   Flow: MessageHub (protocol) → Router (routing) → ClientConnection (I/O)");
 
 // Initialize session manager (after MessageHub)
 const sessionManager = new SessionManager(db, messageHub, authManager, {
@@ -101,6 +102,10 @@ const messageHubRPCRouter = new MessageHubRPCRouter(
 messageHubRPCRouter.setupHandlers();
 console.log("✅ MessageHub RPC router initialized");
 
+// Initialize Subscription Manager (application layer)
+const subscriptionManager = new SubscriptionManager(messageHub);
+console.log("✅ Subscription manager initialized (application-level subscription patterns)");
+
 // Create application
 const app = new Elysia()
   .use(cors({
@@ -129,7 +134,7 @@ const app = new Elysia()
   }));
 
 // Mount MessageHub WebSocket routes
-setupMessageHubWebSocket(app, messageHub, transport, sessionManager);
+setupMessageHubWebSocket(app, messageHub, transport, sessionManager, subscriptionManager);
 
 // Start server
 console.log(`\n🚀 Liuboer Daemon starting...`);
