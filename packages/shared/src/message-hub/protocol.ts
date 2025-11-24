@@ -120,6 +120,13 @@ export interface HubMessage {
    * Protocol version
    */
   version?: string;
+
+  /**
+   * Sequence number for message ordering (optional)
+   * Monotonically increasing per-session sequence number
+   * Allows detection of out-of-order messages
+   */
+  sequence?: number;
 }
 
 /**
@@ -228,9 +235,10 @@ export const RESERVED_METHOD_PREFIXES = [
 /**
  * Validate method name
  *
- * Supports both:
- * - Simple methods: "session.create", "user.update"
- * - Session-scoped events: "sessionId:event.name", "global:session.created"
+ * Format: "domain.action" (e.g., "session.create", "user.update")
+ * - Must contain at least one dot
+ * - Can contain alphanumeric, dots, underscores, hyphens
+ * - Colons are RESERVED for internal use (not allowed in user-defined methods)
  */
 export function validateMethod(method: string): boolean {
   // Must have at least one dot (for the method part)
@@ -238,14 +246,18 @@ export function validateMethod(method: string): boolean {
     return false;
   }
 
-  // Must not start or end with dot or colon
-  if (method.startsWith(".") || method.endsWith(".") || method.startsWith(":") || method.endsWith(":")) {
+  // Must not start or end with dot
+  if (method.startsWith(".") || method.endsWith(".")) {
     return false;
   }
 
-  // Must contain only alphanumeric, dots, underscores, hyphens, and colons
-  // Colons are used for session-scoped event patterns like "sessionId:event.name"
-  return /^[a-zA-Z0-9._:-]+$/.test(method);
+  // Must not contain colons (reserved for internal routing)
+  if (method.includes(":")) {
+    return false;
+  }
+
+  // Must contain only alphanumeric, dots, underscores, and hyphens
+  return /^[a-zA-Z0-9._-]+$/.test(method);
 }
 
 /**
@@ -446,15 +458,51 @@ export function createUnsubscribeMessage(params: CreateUnsubscribeMessageParams)
 
 /**
  * Validate message structure
+ * Checks all required fields and basic type correctness
  */
 export function isValidMessage(msg: any): msg is HubMessage {
-  return (
-    msg &&
-    typeof msg === "object" &&
-    typeof msg.id === "string" &&
-    typeof msg.type === "string" &&
-    typeof msg.sessionId === "string" &&
-    typeof msg.method === "string" &&
-    typeof msg.timestamp === "string"
-  );
+  if (!msg || typeof msg !== "object") {
+    return false;
+  }
+
+  // Check required fields
+  if (typeof msg.id !== "string" || msg.id.length === 0) {
+    return false;
+  }
+
+  if (typeof msg.type !== "string" || !Object.values(MessageType).includes(msg.type as MessageType)) {
+    return false;
+  }
+
+  if (typeof msg.sessionId !== "string" || msg.sessionId.length === 0) {
+    return false;
+  }
+
+  if (typeof msg.method !== "string" || msg.method.length === 0) {
+    return false;
+  }
+
+  if (typeof msg.timestamp !== "string") {
+    return false;
+  }
+
+  // Validate method format (except for PING/PONG which don't need method validation)
+  if (msg.type !== MessageType.PING && msg.type !== MessageType.PONG) {
+    if (!validateMethod(msg.method)) {
+      return false;
+    }
+  }
+
+  // Response messages must have requestId
+  if ((msg.type === MessageType.RESULT || msg.type === MessageType.ERROR) &&
+      typeof msg.requestId !== "string") {
+    return false;
+  }
+
+  // ERROR messages must have error field
+  if (msg.type === MessageType.ERROR && typeof msg.error !== "string") {
+    return false;
+  }
+
+  return true;
 }
