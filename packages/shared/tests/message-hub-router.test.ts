@@ -253,7 +253,7 @@ describe("MessageHubRouter", () => {
         method: "test.event",
         sessionId: "session1",
         data: { test: true },
-        timestamp: Date.now(),
+        timestamp: new Date().toISOString(),
       };
 
       router.sendToClient(clientId, message);
@@ -271,7 +271,7 @@ describe("MessageHubRouter", () => {
         method: "test.event",
         sessionId: "session1",
         data: {},
-        timestamp: Date.now(),
+        timestamp: new Date().toISOString(),
       });
 
       // Should not throw, just log warning
@@ -290,7 +290,7 @@ describe("MessageHubRouter", () => {
         method: "broadcast.event",
         sessionId: "global",
         data: { test: true },
-        timestamp: Date.now(),
+        timestamp: new Date().toISOString(),
       };
 
       router.broadcast(message);
@@ -347,7 +347,7 @@ describe("MessageHubRouter", () => {
         method: "test.event",
         sessionId: "session1",
         data: {},
-        timestamp: Date.now(),
+        timestamp: new Date().toISOString(),
       };
 
       // Should not throw
@@ -451,7 +451,7 @@ describe("MessageHubRouter", () => {
           method: "broadcast.event",
           sessionId: "global",
           data: {},
-          timestamp: Date.now(),
+          timestamp: new Date().toISOString(),
         };
 
         const result = router.broadcast(message);
@@ -470,7 +470,7 @@ describe("MessageHubRouter", () => {
           method: "test.event",
           sessionId: "session1",
           data: {},
-          timestamp: Date.now(),
+          timestamp: new Date().toISOString(),
         };
 
         const success = router.sendToClient(clientId, message);

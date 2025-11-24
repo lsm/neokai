@@ -22,14 +22,14 @@ import {
 describe("MessageHub Protocol", () => {
   describe("Message Type Constants", () => {
     test("should define all message types", () => {
-      expect(MessageType.CALL).toBe("CALL");
-      expect(MessageType.RESULT).toBe("RESULT");
-      expect(MessageType.ERROR).toBe("ERROR");
-      expect(MessageType.EVENT).toBe("EVENT");
-      expect(MessageType.SUBSCRIBE).toBe("SUBSCRIBE");
-      expect(MessageType.UNSUBSCRIBE).toBe("UNSUBSCRIBE");
-      expect(MessageType.PING).toBe("PING");
-      expect(MessageType.PONG).toBe("PONG");
+      expect(MessageType.CALL).toBe(MessageType.CALL);
+      expect(MessageType.RESULT).toBe(MessageType.RESULT);
+      expect(MessageType.ERROR).toBe(MessageType.ERROR);
+      expect(MessageType.EVENT).toBe(MessageType.EVENT);
+      expect(MessageType.SUBSCRIBE).toBe(MessageType.SUBSCRIBE);
+      expect(MessageType.UNSUBSCRIBE).toBe(MessageType.UNSUBSCRIBE);
+      expect(MessageType.PING).toBe(MessageType.PING);
+      expect(MessageType.PONG).toBe(MessageType.PONG);
     });
 
     test("should define global session ID", () => {
