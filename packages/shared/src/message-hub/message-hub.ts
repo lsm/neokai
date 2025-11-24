@@ -22,6 +22,7 @@ import {
   isResponseMessage,
   isEventMessage,
   validateMethod,
+  isValidMessage,
 } from "./protocol.ts";
 import type {
   MessageHubOptions,
@@ -54,9 +55,21 @@ export class MessageHub {
   private pendingCalls: Map<string, PendingCall> = new Map();
   private rpcHandlers: Map<string, RPCHandler> = new Map();
 
+  // Request deduplication cache (prevents duplicate concurrent calls)
+  private requestCache: Map<string, Promise<any>> = new Map();
+
   // Pub/Sub state
   private subscriptions: Map<string, Map<string, Set<EventHandler>>> = new Map();
   //                          ^sessionId  ^method   ^handlers
+
+  // Subscription persistence for auto-resubscription
+  private persistedSubscriptions: Map<
+    string,
+    { method: string; handler: EventHandler; options: SubscribeOptions }
+  > = new Map();
+
+  // Message sequencing for ordering guarantees
+  private messageSequence = 0;
 
   // Message inspection
   private messageHandlers: Set<MessageHandler> = new Set();
@@ -94,6 +107,11 @@ export class MessageHub {
     const unsubConnection = transport.onConnectionChange((state, error) => {
       this.log(`Connection state: ${state}`, error);
       this.notifyConnectionStateHandlers(state, error);
+
+      // Auto-resubscribe on reconnection
+      if (state === "connected") {
+        this.resubscribeAll();
+      }
     });
 
     // Return unregister function
@@ -152,9 +170,7 @@ export class MessageHub {
       throw new Error("Not connected to transport");
     }
 
-    const messageId = generateUUID();
     const sessionId = options.sessionId || this.defaultSessionId;
-    const timeout = options.timeout || this.defaultTimeout;
 
     // Build full method name with session scoping
     const fullMethod = this.buildFullMethod(method, sessionId);
@@ -163,17 +179,35 @@ export class MessageHub {
       throw new Error(`Invalid method name: ${fullMethod}`);
     }
 
-    return new Promise<TResult>((resolve, reject) => {
+    // Request deduplication: check if identical request is already in flight
+    const cacheKey = `${fullMethod}:${sessionId}:${JSON.stringify(data)}`;
+    const cached = this.requestCache.get(cacheKey);
+    if (cached) {
+      this.log(`Returning cached request for: ${fullMethod}`);
+      return cached as Promise<TResult>;
+    }
+
+    const messageId = generateUUID();
+    const timeout = options.timeout || this.defaultTimeout;
+
+    const requestPromise = new Promise<TResult>((resolve, reject) => {
       // Setup timeout
       const timer = setTimeout(() => {
         this.pendingCalls.delete(messageId);
+        this.requestCache.delete(cacheKey);
         reject(new Error(`RPC timeout: ${fullMethod} (${timeout}ms)`));
       }, timeout);
 
       // Store pending call
       this.pendingCalls.set(messageId, {
-        resolve,
-        reject,
+        resolve: (result) => {
+          this.requestCache.delete(cacheKey);
+          resolve(result);
+        },
+        reject: (error) => {
+          this.requestCache.delete(cacheKey);
+          reject(error);
+        },
         timer,
         method: fullMethod,
         sessionId,
@@ -190,9 +224,15 @@ export class MessageHub {
       this.sendMessage(message).catch((error) => {
         clearTimeout(timer);
         this.pendingCalls.delete(messageId);
+        this.requestCache.delete(cacheKey);
         reject(error);
       });
     });
+
+    // Cache the promise
+    this.requestCache.set(cacheKey, requestPromise);
+
+    return requestPromise;
   }
 
   /**
@@ -305,6 +345,16 @@ export class MessageHub {
       throw new Error(`Invalid method name: ${fullMethod}`);
     }
 
+    // Generate unique subscription ID
+    const subId = generateUUID();
+
+    // Persist subscription for auto-resubscription on reconnect
+    this.persistedSubscriptions.set(subId, {
+      method: fullMethod,
+      handler: handler as EventHandler,
+      options: { sessionId },
+    });
+
     // Initialize subscription maps if needed
     if (!this.subscriptions.has(sessionId)) {
       this.subscriptions.set(sessionId, new Map());
@@ -321,6 +371,10 @@ export class MessageHub {
 
     // Return unsubscribe function
     return () => {
+      // Remove from persisted subscriptions
+      this.persistedSubscriptions.delete(subId);
+
+      // Remove from active subscriptions
       sessionSubs.get(fullMethod)?.delete(handler as EventHandler);
       this.log(`Unsubscribed from: ${fullMethod} (session: ${sessionId})`);
     };
@@ -387,13 +441,23 @@ export class MessageHub {
    * Handle incoming message from transport
    */
   private async handleIncomingMessage(message: HubMessage): Promise<void> {
+    // Validate message structure
+    if (!isValidMessage(message)) {
+      console.error(`[MessageHub] Invalid message format:`, message);
+      throw new Error(`Invalid message format: ${JSON.stringify(message)}`);
+    }
+
     this.log(`← Incoming: ${message.type} ${message.method}`, message);
 
     // Notify message handlers
     this.notifyMessageHandlers(message, "in");
 
     try {
-      if (isCallMessage(message)) {
+      if (message.type === MessageType.PING) {
+        await this.handlePing(message);
+      } else if (message.type === MessageType.PONG) {
+        this.handlePong(message);
+      } else if (isCallMessage(message)) {
         await this.handleIncomingCall(message);
       } else if (isResponseMessage(message)) {
         this.handleResponse(message);
@@ -520,6 +584,36 @@ export class MessageHub {
   }
 
   /**
+   * Handle PING message - respond with PONG
+   */
+  private async handlePing(message: HubMessage): Promise<void> {
+    this.log(`Received PING from session: ${message.sessionId}`);
+
+    // Create PONG response
+    const pongMessage: HubMessage = {
+      id: generateUUID(),
+      type: MessageType.PONG,
+      sessionId: message.sessionId,
+      method: "heartbeat",
+      timestamp: new Date().toISOString(),
+      requestId: message.id,
+    };
+
+    // Send PONG response
+    await this.sendMessage(pongMessage);
+  }
+
+  /**
+   * Handle PONG message - track connection health
+   */
+  private handlePong(message: HubMessage): void {
+    this.log(`Received PONG from session: ${message.sessionId}`);
+    // Optional: Could track latency metrics here
+    // const latency = Date.now() - new Date(message.timestamp).getTime();
+    // this.connectionHealth.set(message.sessionId, { latency, lastPong: Date.now() });
+  }
+
+  /**
    * Send a message via transport
    */
   private async sendMessage(message: HubMessage): Promise<void> {
@@ -527,7 +621,10 @@ export class MessageHub {
       throw new Error("Transport not ready");
     }
 
-    this.log(`→ Outgoing: ${message.type} ${message.method}`, message);
+    // Add sequence number for ordering guarantees
+    message.sequence = this.messageSequence++;
+
+    this.log(`→ Outgoing: ${message.type} ${message.method} [seq=${message.sequence}]`, message);
 
     // Notify message handlers
     this.notifyMessageHandlers(message, "out");
@@ -566,6 +663,39 @@ export class MessageHub {
   // ========================================
 
   /**
+   * Re-subscribe all persisted subscriptions after reconnection
+   */
+  private resubscribeAll(): void {
+    if (this.persistedSubscriptions.size === 0) {
+      return;
+    }
+
+    this.log(`Re-subscribing ${this.persistedSubscriptions.size} subscriptions after reconnection`);
+
+    // Clear current subscriptions
+    this.subscriptions.clear();
+
+    // Re-establish all persisted subscriptions
+    for (const [subId, { method, handler, options }] of this.persistedSubscriptions) {
+      const sessionId = options.sessionId || this.defaultSessionId;
+
+      // Initialize subscription maps if needed
+      if (!this.subscriptions.has(sessionId)) {
+        this.subscriptions.set(sessionId, new Map());
+      }
+
+      const sessionSubs = this.subscriptions.get(sessionId)!;
+
+      if (!sessionSubs.has(method)) {
+        sessionSubs.set(method, new Set());
+      }
+
+      sessionSubs.get(method)!.add(handler);
+      this.log(`Re-subscribed to: ${method} (session: ${sessionId})`);
+    }
+  }
+
+  /**
    * Cleanup all state
    */
   cleanup(): void {
@@ -579,6 +709,7 @@ export class MessageHub {
     // Clear handlers
     this.rpcHandlers.clear();
     this.subscriptions.clear();
+    this.persistedSubscriptions.clear();
     this.messageHandlers.clear();
     this.connectionStateHandlers.clear();
 
@@ -590,11 +721,15 @@ export class MessageHub {
   // ========================================
 
   /**
-   * Build full method name
-   * No longer prepends session ID - routing is handled via message.sessionId field
+   * Validate and return method name (no transformation needed)
+   *
+   * This is intentionally a pass-through function for architectural clarity.
+   * Session routing is handled via message.sessionId field, NOT method name prefixes.
+   *
+   * Historical note: Previously prepended sessionId to method names (e.g., "session123:method.name").
+   * Now follows principle: "sessionId in message, not URL/method name"
    */
-  private buildFullMethod(method: string, sessionId: string): string {
-    // Keep method names clean - session routing is handled via the sessionId field
+  private buildFullMethod(method: string, _sessionId: string): string {
     return method;
   }
 
