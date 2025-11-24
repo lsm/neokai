@@ -3,24 +3,70 @@
  *
  * Server-side router for handling session-based message routing
  * Routes messages by sessionId to appropriate handlers
+ *
+ * PHASE 1 IMPROVEMENTS:
+ * - O(1) client lookups with reverse index
+ * - Memory leak prevention with empty Map cleanup
+ * - Subscription key validation
+ * - Duplicate registration prevention
+ * - Observability with delivery stats
+ * - Configurable auto-subscribe patterns
+ * - Pluggable logger interface
+ *
+ * PHASE 2 IMPROVEMENTS:
+ * - Transport-agnostic design (works with any connection type)
+ * - Abstract ClientConnection interface
+ * - Decoupled from WebSocket specifics
+ * - Backward compatible WebSocket API
  */
 
 import { generateUUID } from "../utils.ts";
 import type { HubMessage } from "./protocol.ts";
 import {
   MessageType,
-  createEventMessage,
-  isPublishMessage,
+  isEventMessage,
 } from "./protocol.ts";
 import type { UnsubscribeFn } from "./types.ts";
 
 /**
- * Subscription tracker for routing events to specific clients
+ * Abstract connection interface
+ * Allows router to work with any transport (WebSocket, HTTP/2, etc.)
  */
-interface Subscription {
-  sessionId: string;
-  method: string;
-  clientId: string;
+export interface ClientConnection {
+  /** Unique connection identifier */
+  id: string;
+  /** Send data to the client */
+  send(data: string): void;
+  /** Check if connection is open and ready */
+  isOpen(): boolean;
+  /** Optional: Get connection metadata */
+  metadata?: Record<string, any>;
+}
+
+/**
+ * Logger interface for dependency injection
+ */
+export interface RouterLogger {
+  log(message: string, ...args: any[]): void;
+  warn(message: string, ...args: any[]): void;
+  error(message: string, ...args: any[]): void;
+}
+
+/**
+ * Auto-subscribe configuration
+ */
+export interface AutoSubscribeConfig {
+  global: string[];  // Methods to auto-subscribe for global session
+  session: string[]; // Methods to auto-subscribe for specific sessions
+}
+
+/**
+ * Router configuration options
+ */
+export interface MessageHubRouterOptions {
+  logger?: RouterLogger;
+  debug?: boolean;
+  autoSubscribe?: AutoSubscribeConfig;
 }
 
 /**
@@ -28,9 +74,32 @@ interface Subscription {
  */
 interface ClientInfo {
   clientId: string;
-  ws: WebSocket;
+  connection: ClientConnection;
   connectedAt: number;
-  subscriptions: Set<string>; // Set of "sessionId:method"
+  subscriptions: Map<string, Set<string>>; // Map<sessionId, Set<method>>
+}
+
+/**
+ * Route result with delivery statistics
+ */
+export interface RouteResult {
+  sent: number;
+  failed: number;
+  totalSubscribers: number;
+  sessionId: string;
+  method: string;
+}
+
+/**
+ * WebSocket adapter for backward compatibility
+ */
+function createWebSocketConnection(ws: WebSocket, clientId?: string): ClientConnection {
+  return {
+    id: clientId || generateUUID(),
+    send: (data: string) => ws.send(data),
+    isOpen: () => ws.readyState === 1, // WebSocket.OPEN
+    metadata: { ws },
+  };
 }
 
 /**
@@ -40,54 +109,113 @@ interface ClientInfo {
  * - Route messages by sessionId
  * - Manage client subscriptions
  * - Broadcast events to subscribed clients
- * - Handle PUBLISH → EVENT conversion
  */
 export class MessageHubRouter {
-  private clients: Map<WebSocket, ClientInfo> = new Map();
+  private clients: Map<string, ClientInfo> = new Map(); // Now keyed by clientId
   private subscriptions: Map<string, Map<string, Set<string>>> = new Map();
   //                          ^sessionId  ^method   ^clientIds
 
-  /**
-   * Register a WebSocket client
-   */
-  registerClient(ws: WebSocket): string {
-    const clientId = generateUUID();
-    const info: ClientInfo = {
-      clientId,
-      ws,
-      connectedAt: Date.now(),
-      subscriptions: new Set(),
+  private logger: RouterLogger;
+  private debug: boolean;
+  private autoSubscribeConfig: AutoSubscribeConfig;
+
+  constructor(options: MessageHubRouterOptions = {}) {
+    this.logger = options.logger || console;
+    this.debug = options.debug || false;
+    this.autoSubscribeConfig = options.autoSubscribe || {
+      global: ["session.created", "session.updated", "session.deleted"],
+      session: ["sdk.message", "context.updated", "message.queued"],
     };
-
-    this.clients.set(ws, info);
-    console.log(`[MessageHubRouter] Client registered: ${clientId}`);
-
-    return clientId;
   }
 
   /**
-   * Unregister a WebSocket client
+   * Register a client connection (new API)
+   * Prevents duplicate registration
    */
-  unregisterClient(ws: WebSocket): void {
-    const info = this.clients.get(ws);
+  registerConnection(connection: ClientConnection): string {
+    // Check for duplicate registration
+    const existing = this.clients.get(connection.id);
+    if (existing) {
+      this.log(`Client already registered: ${existing.clientId}, returning existing ID`);
+      return existing.clientId;
+    }
+
+    const info: ClientInfo = {
+      clientId: connection.id,
+      connection,
+      connectedAt: Date.now(),
+      subscriptions: new Map(),
+    };
+
+    this.clients.set(connection.id, info);
+    this.log(`Client registered: ${connection.id}`);
+
+    return connection.id;
+  }
+
+  /**
+   * Register a WebSocket client (backward compatible API)
+   * @deprecated Use registerConnection() instead
+   */
+  registerClient(ws: WebSocket): string {
+    // Create a unique ID for this WebSocket if not already registered
+    for (const info of this.clients.values()) {
+      if (info.connection.metadata?.ws === ws) {
+        this.log(`WebSocket already registered: ${info.clientId}, returning existing ID`);
+        return info.clientId;
+      }
+    }
+
+    const clientId = generateUUID();
+    const connection = createWebSocketConnection(ws, clientId);
+    return this.registerConnection(connection);
+  }
+
+  /**
+   * Unregister a client by clientId (new API)
+   * Cleans up all subscriptions
+   */
+  unregisterConnection(clientId: string): void {
+    const info = this.clients.get(clientId);
     if (!info) {
       return;
     }
 
     // Remove all subscriptions for this client
-    for (const sub of info.subscriptions) {
-      const [sessionId, method] = sub.split(":");
-      this.unsubscribeClient(sessionId, method, info.clientId);
+    for (const [sessionId, methods] of info.subscriptions.entries()) {
+      for (const method of methods) {
+        this.unsubscribeClient(sessionId, method, info.clientId);
+      }
     }
 
-    this.clients.delete(ws);
-    console.log(`[MessageHubRouter] Client unregistered: ${info.clientId}`);
+    this.clients.delete(clientId);
+    this.log(`Client unregistered: ${info.clientId}`);
+  }
+
+  /**
+   * Unregister a WebSocket client (backward compatible API)
+   * @deprecated Use unregisterConnection(clientId) instead
+   */
+  unregisterClient(ws: WebSocket): void {
+    // Find client by WebSocket
+    for (const [clientId, info] of this.clients.entries()) {
+      if (info.connection.metadata?.ws === ws) {
+        this.unregisterConnection(clientId);
+        return;
+      }
+    }
   }
 
   /**
    * Subscribe a client to a method in a session
+   * Validates subscription keys
    */
   subscribe(sessionId: string, method: string, clientId: string): void {
+    // Validate no colons in keys (reserved for internal use)
+    if (sessionId.includes(':') || method.includes(':')) {
+      throw new Error('SessionId and method cannot contain colon character');
+    }
+
     // Initialize maps if needed
     if (!this.subscriptions.has(sessionId)) {
       this.subscriptions.set(sessionId, new Map());
@@ -101,17 +229,21 @@ export class MessageHubRouter {
 
     sessionSubs.get(method)!.add(clientId);
 
-    // Track subscription in client info
-    const client = Array.from(this.clients.values()).find(c => c.clientId === clientId);
+    // Track subscription in client info using O(1) lookup
+    const client = this.getClientById(clientId);
     if (client) {
-      client.subscriptions.add(`${sessionId}:${method}`);
+      if (!client.subscriptions.has(sessionId)) {
+        client.subscriptions.set(sessionId, new Set());
+      }
+      client.subscriptions.get(sessionId)!.add(method);
     }
 
-    console.log(`[MessageHubRouter] Client ${clientId} subscribed to ${sessionId}:${method}`);
+    this.log(`Client ${clientId} subscribed to ${sessionId}:${method}`);
   }
 
   /**
    * Unsubscribe a client from a method in a session
+   * Cleans up empty Maps to prevent memory leaks
    */
   unsubscribeClient(sessionId: string, method: string, clientId: string): void {
     const sessionSubs = this.subscriptions.get(sessionId);
@@ -126,111 +258,171 @@ export class MessageHubRouter {
 
     methodSubs.delete(clientId);
 
-    // Remove from client info
-    const client = Array.from(this.clients.values()).find(c => c.clientId === clientId);
+    // MEMORY LEAK FIX: Cleanup empty structures
+    if (methodSubs.size === 0) {
+      sessionSubs.delete(method);
+      if (sessionSubs.size === 0) {
+        this.subscriptions.delete(sessionId);
+      }
+    }
+
+    // Remove from client info using O(1) lookup
+    const client = this.getClientById(clientId);
     if (client) {
-      client.subscriptions.delete(`${sessionId}:${method}`);
-    }
-
-    console.log(`[MessageHubRouter] Client ${clientId} unsubscribed from ${sessionId}:${method}`);
-  }
-
-  /**
-   * Route a PUBLISH message to subscribed clients
-   * Converts PUBLISH to EVENT messages for each subscriber
-   */
-  routePublish(message: HubMessage): void {
-    if (!isPublishMessage(message)) {
-      console.warn(`[MessageHubRouter] Not a PUBLISH message:`, message);
-      return;
-    }
-
-    const sessionSubs = this.subscriptions.get(message.sessionId);
-    if (!sessionSubs) {
-      console.log(`[MessageHubRouter] No subscriptions for session: ${message.sessionId}`);
-      return;
-    }
-
-    const methodSubs = sessionSubs.get(message.method);
-    if (!methodSubs || methodSubs.size === 0) {
-      console.log(`[MessageHubRouter] No subscribers for ${message.sessionId}:${message.method}`);
-      return;
-    }
-
-    // Create EVENT message
-    const eventMessage = createEventMessage({
-      method: message.method,
-      data: message.data,
-      sessionId: message.sessionId,
-    });
-
-    // Send to all subscribed clients
-    let sentCount = 0;
-    for (const clientId of methodSubs) {
-      const client = Array.from(this.clients.values()).find(c => c.clientId === clientId);
-      if (client && client.ws.readyState === 1) { // WebSocket.OPEN
-        try {
-          client.ws.send(JSON.stringify(eventMessage));
-          sentCount++;
-        } catch (error) {
-          console.error(`[MessageHubRouter] Failed to send to client ${clientId}:`, error);
+      const clientMethods = client.subscriptions.get(sessionId);
+      if (clientMethods) {
+        clientMethods.delete(method);
+        if (clientMethods.size === 0) {
+          client.subscriptions.delete(sessionId);
         }
       }
     }
 
-    console.log(
-      `[MessageHubRouter] Routed ${message.sessionId}:${message.method} to ${sentCount} clients`,
+    this.log(`Client ${clientId} unsubscribed from ${sessionId}:${method}`);
+  }
+
+  /**
+   * Route an EVENT message to subscribed clients
+   * Returns delivery statistics for observability
+   */
+  routeEvent(message: HubMessage): RouteResult {
+    if (!isEventMessage(message)) {
+      this.logger.warn(`[MessageHubRouter] Not an EVENT message:`, message);
+      return {
+        sent: 0,
+        failed: 0,
+        totalSubscribers: 0,
+        sessionId: message.sessionId,
+        method: message.method,
+      };
+    }
+
+    const sessionSubs = this.subscriptions.get(message.sessionId);
+    if (!sessionSubs) {
+      this.log(`No subscriptions for session: ${message.sessionId}`);
+      return {
+        sent: 0,
+        failed: 0,
+        totalSubscribers: 0,
+        sessionId: message.sessionId,
+        method: message.method,
+      };
+    }
+
+    const methodSubs = sessionSubs.get(message.method);
+    if (!methodSubs || methodSubs.size === 0) {
+      this.log(`No subscribers for ${message.sessionId}:${message.method}`);
+      return {
+        sent: 0,
+        failed: 0,
+        totalSubscribers: 0,
+        sessionId: message.sessionId,
+        method: message.method,
+      };
+    }
+
+    // Send to all subscribed clients
+    let sentCount = 0;
+    let failedCount = 0;
+    const json = JSON.stringify(message);
+
+    for (const clientId of methodSubs) {
+      const client = this.getClientById(clientId);
+      if (client && client.connection.isOpen()) {
+        try {
+          client.connection.send(json);
+          sentCount++;
+        } catch (error) {
+          this.logger.error(`Failed to send to client ${clientId}:`, error);
+          failedCount++;
+        }
+      } else {
+        failedCount++;
+      }
+    }
+
+    this.log(
+      `Routed ${message.sessionId}:${message.method} to ${sentCount}/${methodSubs.size} clients`,
     );
+
+    return {
+      sent: sentCount,
+      failed: failedCount,
+      totalSubscribers: methodSubs.size,
+      sessionId: message.sessionId,
+      method: message.method,
+    };
   }
 
   /**
    * Send a message to a specific client
    */
-  sendToClient(clientId: string, message: HubMessage): void {
-    const client = Array.from(this.clients.values()).find(c => c.clientId === clientId);
+  sendToClient(clientId: string, message: HubMessage): boolean {
+    const client = this.getClientById(clientId);
     if (!client) {
-      console.warn(`[MessageHubRouter] Client not found: ${clientId}`);
-      return;
+      this.logger.warn(`[MessageHubRouter] Client not found: ${clientId}`);
+      return false;
     }
 
-    if (client.ws.readyState !== 1) { // WebSocket.OPEN
-      console.warn(`[MessageHubRouter] Client not ready: ${clientId}`);
-      return;
+    if (!client.connection.isOpen()) {
+      this.logger.warn(`[MessageHubRouter] Client not ready: ${clientId}`);
+      return false;
     }
 
     try {
-      client.ws.send(JSON.stringify(message));
+      client.connection.send(JSON.stringify(message));
+      return true;
     } catch (error) {
-      console.error(`[MessageHubRouter] Failed to send to client ${clientId}:`, error);
+      this.logger.error(`[MessageHubRouter] Failed to send to client ${clientId}:`, error);
+      return false;
     }
   }
 
   /**
    * Broadcast a message to all clients
    */
-  broadcast(message: HubMessage): void {
+  broadcast(message: HubMessage): { sent: number; failed: number } {
     const json = JSON.stringify(message);
     let sentCount = 0;
+    let failedCount = 0;
 
     for (const client of this.clients.values()) {
-      if (client.ws.readyState === 1) { // WebSocket.OPEN
+      if (client.connection.isOpen()) {
         try {
-          client.ws.send(json);
+          client.connection.send(json);
           sentCount++;
         } catch (error) {
-          console.error(`[MessageHubRouter] Failed to broadcast to client ${client.clientId}:`, error);
+          this.logger.error(`Failed to broadcast to client ${client.clientId}:`, error);
+          failedCount++;
         }
+      } else {
+        failedCount++;
       }
     }
 
-    console.log(`[MessageHubRouter] Broadcast message to ${sentCount} clients`);
+    this.log(`Broadcast message to ${sentCount} clients (${failedCount} failed)`);
+
+    return { sent: sentCount, failed: failedCount };
   }
 
   /**
-   * Get client info by WebSocket
+   * Get client info by WebSocket (backward compatible API)
+   * @deprecated Use getClientById() instead
    */
   getClientInfo(ws: WebSocket): ClientInfo | undefined {
-    return this.clients.get(ws);
+    for (const info of this.clients.values()) {
+      if (info.connection.metadata?.ws === ws) {
+        return info;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Get client info by clientId (O(1) lookup)
+   */
+  getClientById(clientId: string): ClientInfo | undefined {
+    return this.clients.get(clientId);
   }
 
   /**
@@ -252,28 +444,71 @@ export class MessageHubRouter {
   }
 
   /**
-   * Auto-subscribe client to common patterns
-   * This is a convenience method for implicit subscriptions
+   * Auto-subscribe connection to configured patterns (new API)
    */
-  autoSubscribe(ws: WebSocket, sessionId: string): void {
-    const info = this.clients.get(ws);
+  autoSubscribeConnection(clientId: string, sessionId: string): void {
+    const info = this.clients.get(clientId);
     if (!info) {
       return;
     }
 
-    // Auto-subscribe to common events based on sessionId
+    // Auto-subscribe to configured events based on sessionId
     if (sessionId === "global") {
-      // Global session: subscribe to session management events
-      this.subscribe("global", "session.created", info.clientId);
-      this.subscribe("global", "session.updated", info.clientId);
-      this.subscribe("global", "session.deleted", info.clientId);
+      // Global session: subscribe to global events
+      for (const method of this.autoSubscribeConfig.global) {
+        this.subscribe("global", method, info.clientId);
+      }
     } else {
       // Specific session: subscribe to session-specific events
-      this.subscribe(sessionId, "sdk.message", info.clientId);
-      this.subscribe(sessionId, "context.updated", info.clientId);
-      this.subscribe(sessionId, "message.queued", info.clientId);
+      for (const method of this.autoSubscribeConfig.session) {
+        this.subscribe(sessionId, method, info.clientId);
+      }
     }
 
-    console.log(`[MessageHubRouter] Auto-subscribed client ${info.clientId} to ${sessionId} events`);
+    this.log(`Auto-subscribed client ${info.clientId} to ${sessionId} events`);
+  }
+
+  /**
+   * Auto-subscribe client to configured patterns (backward compatible API)
+   * @deprecated Use autoSubscribeConnection(clientId, sessionId) instead
+   */
+  autoSubscribe(ws: WebSocket, sessionId: string): void {
+    const info = this.getClientInfo(ws);
+    if (info) {
+      this.autoSubscribeConnection(info.clientId, sessionId);
+    }
+  }
+
+  /**
+   * Get all subscriptions for debugging
+   */
+  getSubscriptions(): Map<string, Map<string, Set<string>>> {
+    return new Map(this.subscriptions);
+  }
+
+  /**
+   * Handle incoming message from a client
+   * This allows the router to process messages directly
+   */
+  handleMessage(message: HubMessage, clientId: string): void {
+    // Router can intercept and process certain message types
+    // For now, this is a placeholder for future functionality
+    this.log(`Received message from client ${clientId}: ${message.type} ${message.method}`);
+  }
+
+  /**
+   * Get all connected client IDs
+   */
+  getClientIds(): string[] {
+    return Array.from(this.clients.keys());
+  }
+
+  /**
+   * Debug logging
+   */
+  private log(message: string, ...args: any[]): void {
+    if (this.debug) {
+      this.logger.log(`[MessageHubRouter] ${message}`, ...args);
+    }
   }
 }
