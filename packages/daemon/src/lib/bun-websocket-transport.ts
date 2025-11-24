@@ -15,6 +15,7 @@ export interface BunWebSocketTransportOptions {
   name?: string;
   debug?: boolean;
   router: MessageHubRouter;
+  maxQueueSize?: number; // Backpressure: max queued messages per client
 }
 
 /**
@@ -31,14 +32,19 @@ export class BunWebSocketTransport implements IMessageTransport {
   private messageHandlers: Set<(message: HubMessage) => void> = new Set();
   private connectionHandlers: Set<(state: ConnectionState, error?: Error) => void> = new Set();
   private debug: boolean;
+  private readonly maxQueueSize: number;
 
   // Track WebSocket -> ClientId mapping for cleanup
   private wsToClientId: Map<ServerWebSocket<unknown>, string> = new Map();
+
+  // Backpressure: track pending messages per client
+  private clientQueues: Map<string, number> = new Map();
 
   constructor(options: BunWebSocketTransportOptions) {
     this.name = options.name || "bun-websocket";
     this.debug = options.debug || false;
     this.router = options.router;
+    this.maxQueueSize = options.maxQueueSize || 1000;
   }
 
   /**
@@ -72,13 +78,26 @@ export class BunWebSocketTransport implements IMessageTransport {
    * Creates a ClientConnection and registers with router
    */
   registerClient(ws: ServerWebSocket<unknown>, connectionSessionId: string): string {
-    // Create connection wrapper
+    // Generate client ID first (no mutation needed)
+    const clientId = crypto.randomUUID();
+
+    // Create connection wrapper with ID already set
     const connection: ClientConnection = {
-      id: '', // Will be set by router
+      id: clientId,
       send: (data: string) => {
+        // Backpressure check
+        const queueSize = this.clientQueues.get(clientId) || 0;
+        if (queueSize >= this.maxQueueSize) {
+          throw new Error(`Message queue full for client ${clientId} (max: ${this.maxQueueSize})`);
+        }
+
         try {
+          this.clientQueues.set(clientId, queueSize + 1);
           ws.send(data);
+          // Decrement after successful send
+          this.clientQueues.set(clientId, queueSize);
         } catch (error) {
+          this.clientQueues.set(clientId, queueSize); // Revert on error
           console.error(`[${this.name}] Failed to send:`, error);
           throw error;
         }
@@ -90,11 +109,8 @@ export class BunWebSocketTransport implements IMessageTransport {
       },
     };
 
-    // Register with router (router assigns the clientId)
-    const clientId = this.router.registerConnection(connection);
-
-    // Update connection id
-    connection.id = clientId;
+    // Register with router
+    this.router.registerConnection(connection);
 
     // Track mapping for cleanup
     this.wsToClientId.set(ws, clientId);
@@ -123,6 +139,9 @@ export class BunWebSocketTransport implements IMessageTransport {
         break;
       }
     }
+
+    // Clean up queue tracking
+    this.clientQueues.delete(clientId);
 
     // Unregister from router
     this.router.unregisterConnection(clientId);
