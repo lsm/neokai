@@ -7,6 +7,13 @@
 // Core
 export { MessageHub } from "./message-hub.ts";
 export { MessageHubRouter } from "./router.ts";
+export type {
+  ClientConnection,
+  RouterLogger,
+  AutoSubscribeConfig,
+  MessageHubRouterOptions,
+  RouteResult,
+} from "./router.ts";
 
 // Protocol
 export {
@@ -18,7 +25,6 @@ export {
   type CallMessage,
   type ResultMessage,
   type ErrorMessage,
-  type PublishMessage,
   type EventMessage,
   type SubscribeMessage,
   type UnsubscribeMessage,
@@ -26,14 +32,12 @@ export {
   type CreateCallMessageParams,
   type CreateResultMessageParams,
   type CreateErrorMessageParams,
-  type CreatePublishMessageParams,
   type CreateEventMessageParams,
   type CreateSubscribeMessageParams,
   type CreateUnsubscribeMessageParams,
   isCallMessage,
   isResultMessage,
   isErrorMessage,
-  isPublishMessage,
   isEventMessage,
   isSubscribeMessage,
   isUnsubscribeMessage,
@@ -42,7 +46,6 @@ export {
   createCallMessage,
   createResultMessage,
   createErrorMessage,
-  createPublishMessage,
   createEventMessage,
 } from "./protocol.ts";
 
@@ -66,6 +69,4 @@ export type {
 
 // Transports - renamed to avoid conflict with EventBus transports
 export { WebSocketClientTransport as HubWebSocketClientTransport } from "./transport-websocket-client.ts";
-export { WebSocketServerTransport as HubWebSocketServerTransport } from "./transport-websocket-server.ts";
 export type { WebSocketClientTransportOptions as HubWebSocketClientTransportOptions } from "./transport-websocket-client.ts";
-export type { WebSocketServerTransportOptions as HubWebSocketServerTransportOptions } from "./transport-websocket-server.ts";
