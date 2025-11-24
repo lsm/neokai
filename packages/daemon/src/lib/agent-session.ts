@@ -38,20 +38,9 @@ export class AgentSession {
   private queryObject: any | null = null;
   private slashCommands: string[] | null = null;
 
-  // Internal message tracking
-  private processingInternalMessage: boolean = false;
-  private internalMessageBuffer: any[] = [];
-
-  // History replay tracking - prevents /context loop during startup
+  // History replay tracking
   private replayingHistory: boolean = false;
   private historyReplayComplete: boolean = false;
-
-  // In-flight flag for /context calls - prevents concurrent calls
-  private contextFetchInProgress: boolean = false;
-
-  // Debounce tracking for /context calls
-  private lastContextFetchTime: number = 0;
-  private readonly CONTEXT_FETCH_DEBOUNCE_MS = 2000; // 2 seconds minimum between calls
 
   // PHASE 3 FIX: Store unsubscribe functions to prevent memory leaks
   private unsubscribers: Array<() => void> = [];
@@ -226,13 +215,7 @@ export class AgentSession {
 
       console.log(`[AgentSession ${this.session.id}] Yielding queued message: ${queuedMessage.id}${queuedMessage.internal ? ' (internal)' : ''}`);
 
-      // Set internal message tracking flag
-      if (queuedMessage.internal) {
-        this.processingInternalMessage = true;
-        this.internalMessageBuffer = [];
-      }
-
-      // Only save and emit if NOT internal
+      // Only save and emit if NOT internal (reserved for future use)
       if (!queuedMessage.internal) {
         // Save user message to DB
         const sdkUserMessage = {
@@ -363,14 +346,6 @@ export class AgentSession {
         console.warn(`[AgentSession ${this.session.id}] Failed to fetch slash commands:`, error);
       }
 
-      // Fetch initial context info on connection
-      // ONLY for new sessions (no history). For resumed sessions, wait for historyReplayComplete.
-      if (this.conversationHistory.length === 0) {
-        console.log(`[AgentSession ${this.session.id}] New session - fetching initial context info`);
-        this.fetchContextInfo().catch(error => {
-          console.warn(`[AgentSession ${this.session.id}] Failed to fetch initial context info:`, error);
-        });
-      }
 
       // Process SDK messages
       console.log(`[AgentSession ${this.session.id}] Processing SDK stream...`);
@@ -405,66 +380,7 @@ export class AgentSession {
    * Handle incoming SDK messages
    */
   private async handleSDKMessage(message: any): Promise<void> {
-    // If processing internal message, buffer it instead of saving/emitting
-    if (this.processingInternalMessage) {
-      console.log(`[AgentSession ${this.session.id}] Buffering internal message (type: ${message.type}) - NOT saving to DB`);
-      this.internalMessageBuffer.push(message);
-
-      // Check if this is the result message (end of internal response)
-      if (message.type === "result") {
-        console.log(`[AgentSession ${this.session.id}] Internal /context command completed`);
-
-        // Clear in-flight flag
-        this.contextFetchInProgress = false;
-
-        // Safety check: Only publish context if history replay is complete
-        // This prevents publishing stale context during session resume
-        if (!this.historyReplayComplete) {
-          console.warn(`[AgentSession ${this.session.id}] Context fetch completed during history replay - skipping publish`);
-          this.processingInternalMessage = false;
-          this.internalMessageBuffer = [];
-          return;
-        }
-
-        // Parse the full context info from the internal message buffer
-        const contextInfo = this.parseContextInfo(this.internalMessageBuffer);
-
-        if (contextInfo) {
-          // Emit the full parsed context info to client
-          await this.messageHub.publish('context.updated', {
-              ...contextInfo,
-              costUSD: message.total_cost_usd,
-              durationMs: message.duration_ms,
-            }, { sessionId: this.session.id });
-        } else {
-          // Fallback: emit basic context info from result message
-          console.warn(`[AgentSession ${this.session.id}] Failed to parse context info, using fallback`);
-          await this.messageHub.publish('context.updated', {
-              model: null,
-              totalUsed: message.usage.input_tokens + message.usage.output_tokens,
-              totalCapacity: 200000,
-              percentUsed: ((message.usage.input_tokens + message.usage.output_tokens) / 200000) * 100,
-              breakdown: {},
-              apiUsage: {
-                inputTokens: message.usage.input_tokens,
-                outputTokens: message.usage.output_tokens,
-                cacheReadTokens: message.usage.cache_read_input_tokens || 0,
-                cacheCreationTokens: message.usage.cache_creation_input_tokens || 0,
-              },
-              costUSD: message.total_cost_usd,
-              durationMs: message.duration_ms,
-            }, { sessionId: this.session.id });
-        }
-
-        // Reset internal message tracking
-        this.processingInternalMessage = false;
-        this.internalMessageBuffer = [];
-      }
-
-      return; // Don't process further
-    }
-
-    // Normal message processing - emit and save
+    // Emit and save message
     await this.messageHub.publish(
       'sdk.message',
       message,
@@ -476,10 +392,6 @@ export class AgentSession {
 
     // Handle specific message types
     if (message.type === "result") {
-      // PHASE 3.4 FIX: Removed immediate basic context publish
-      // Full context will be published after /context command completes
-      // This consolidates 2 publishes into 1 complete update
-
       // Update session metadata
       this.session.lastActiveAt = new Date().toISOString();
       this.session.metadata = {
@@ -490,196 +402,9 @@ export class AgentSession {
         lastActiveAt: this.session.lastActiveAt,
         metadata: this.session.metadata,
       });
-
-      // Silently fetch accurate context info using /context command
-      // Only fetch if:
-      // 1. Not already processing an internal message
-      // 2. History replay is complete (prevents loop during startup)
-      // 3. No context fetch already in progress (prevents concurrent calls)
-      // 4. Enough time has passed since last fetch (debounce)
-      const now = Date.now();
-      const timeSinceLastFetch = now - this.lastContextFetchTime;
-      const shouldFetch = !this.processingInternalMessage
-        && this.historyReplayComplete
-        && timeSinceLastFetch >= this.CONTEXT_FETCH_DEBOUNCE_MS;
-
-      if (shouldFetch) {
-        console.log(`[AgentSession ${this.session.id}] Fetching context info (${Math.round(timeSinceLastFetch/1000)}s since last fetch)`);
-        this.lastContextFetchTime = now;
-        this.fetchContextInfo().catch(error => {
-          console.warn(`[AgentSession ${this.session.id}] Failed to fetch context info:`, error);
-        });
-      } else if (timeSinceLastFetch < this.CONTEXT_FETCH_DEBOUNCE_MS) {
-        console.log(`[AgentSession ${this.session.id}] Skipping context fetch (debounce: ${Math.round(timeSinceLastFetch/1000)}s < ${this.CONTEXT_FETCH_DEBOUNCE_MS/1000}s)`);
-      }
     }
   }
 
-  /**
-   * Silently fetch context information using /context command
-   * This runs internally and doesn't save to DB or emit to client
-   */
-  private async fetchContextInfo(): Promise<void> {
-    // Skip if already fetching context (prevents concurrent calls)
-    if (this.contextFetchInProgress) {
-      console.log(`[AgentSession ${this.session.id}] Skipping /context fetch (already in progress)`);
-      return;
-    }
-
-    try {
-      this.contextFetchInProgress = true;
-      console.log(`[AgentSession ${this.session.id}] Fetching context info with /context command`);
-      await this.enqueueMessage("/context", true); // true = internal
-    } catch (error) {
-      console.error(`[AgentSession ${this.session.id}] Error fetching context info:`, error);
-      // Clear flag on error
-      this.contextFetchInProgress = false;
-    }
-  }
-
-  /**
-   * Parse context information from /context command response
-   * The /context command returns markdown-formatted text in a user message
-   */
-  private parseContextInfo(messages: any[]): ContextInfo | null {
-    try {
-      // Find the user message with the context info (contains <local-command-stdout>)
-      const userMessage = messages.find((msg: any) => {
-        if (msg.type !== "user") return false;
-        const content = msg.message?.content;
-        if (typeof content === "string") {
-          return content.includes("Context Usage") || content.includes("<local-command-stdout>");
-        }
-        return false;
-      });
-
-      if (!userMessage || !userMessage.message) {
-        console.warn(`[AgentSession ${this.session.id}] No user message with context info found`);
-        return null;
-      }
-
-      // Extract text content from the message
-      let text = userMessage.message.content;
-      if (typeof text !== "string") {
-        console.warn(`[AgentSession ${this.session.id}] Context message content is not a string`);
-        return null;
-      }
-
-      // Remove <local-command-stdout> tags if present
-      text = text.replace(/<\/?local-command-stdout>/g, "").trim();
-
-      console.log(`[AgentSession ${this.session.id}] Parsing context info from text:`, text.substring(0, 200));
-
-      // Parse the markdown formatted context info
-      const parsed: ContextInfo = {
-        model: null,
-        totalUsed: 0,
-        totalCapacity: 0,
-        percentUsed: 0,
-        breakdown: {},
-      };
-
-      const lines = text.split("\n");
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-
-        // Match "**Model:** claude-sonnet-4-5-20250929"
-        const modelMatch = line.match(/\*\*Model:\*\*\s*(.+)/);
-        if (modelMatch) {
-          parsed.model = modelMatch[1].trim();
-          continue;
-        }
-
-        // Match "**Tokens:** 65.8k / 200.0k (33%)"
-        const tokensMatch = line.match(/\*\*Tokens:\*\*\s*([\d.]+)(k?)\s*\/\s*([\d.]+)(k?)\s*\((\d+(?:\.\d+)?)%\)/);
-        if (tokensMatch) {
-          // Convert k notation to actual numbers
-          const parseTokens = (numStr: string, kSuffix: string) => {
-            const num = parseFloat(numStr);
-            return kSuffix.toLowerCase() === 'k' ? Math.round(num * 1000) : num;
-          };
-
-          parsed.totalUsed = parseTokens(tokensMatch[1], tokensMatch[2]);
-          parsed.totalCapacity = parseTokens(tokensMatch[3], tokensMatch[4]);
-          parsed.percentUsed = parseFloat(tokensMatch[5]);
-          continue;
-        }
-
-        // Parse markdown table rows (skip header and separator)
-        const tableRowMatch = line.match(/^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|$/);
-        if (tableRowMatch) {
-          const category = tableRowMatch[1].trim();
-          const tokensStr = tableRowMatch[2].trim();
-          const percentStr = tableRowMatch[3].trim();
-
-          // Skip table headers and separators
-          if (
-            category.toLowerCase() === "category" ||
-            category.includes("---") ||
-            tokensStr.toLowerCase() === "tokens" ||
-            tokensStr.includes("---")
-          ) {
-            continue;
-          }
-
-          // Parse tokens (handle "3.0k" format and plain numbers like "8")
-          let tokens = 0;
-          if (tokensStr.toLowerCase().includes("k")) {
-            tokens = Math.round(parseFloat(tokensStr.replace(/k/i, "")) * 1000);
-          } else {
-            tokens = parseInt(tokensStr.replace(/,/g, ""));
-          }
-
-          // Parse percentage (handle "1.5%" format)
-          const percent = parseFloat(percentStr.replace("%", ""));
-
-          parsed.breakdown[category] = {
-            tokens,
-            percent: isNaN(percent) ? null : percent,
-          };
-          continue;
-        }
-
-        // Match "**Commands:** 0"
-        const commandsMatch = line.match(/\*\*Commands:\*\*\s*(\d+)/);
-        if (commandsMatch) {
-          if (!parsed.slashCommandTool) {
-            parsed.slashCommandTool = { commands: 0, totalTokens: 0 };
-          }
-          parsed.slashCommandTool.commands = parseInt(commandsMatch[1]);
-          continue;
-        }
-
-        // Match "**Total tokens:** 864"
-        const totalTokensMatch = line.match(/\*\*Total tokens:\*\*\s*(\d+(?:,\d+)*)/);
-        if (totalTokensMatch) {
-          if (!parsed.slashCommandTool) {
-            parsed.slashCommandTool = { commands: 0, totalTokens: 0 };
-          }
-          parsed.slashCommandTool.totalTokens = parseInt(totalTokensMatch[1].replace(/,/g, ""));
-          continue;
-        }
-      }
-
-      // Also include the result message for API usage details
-      const resultMessage = messages.find((msg: any) => msg.type === "result");
-      if (resultMessage && resultMessage.usage) {
-        parsed.apiUsage = {
-          inputTokens: resultMessage.usage.input_tokens,
-          outputTokens: resultMessage.usage.output_tokens,
-          cacheReadTokens: resultMessage.usage.cache_read_input_tokens || 0,
-          cacheCreationTokens: resultMessage.usage.cache_creation_input_tokens || 0,
-        };
-      }
-
-      console.log(`[AgentSession ${this.session.id}] Parsed context info:`, JSON.stringify(parsed, null, 2));
-      return parsed;
-    } catch (error) {
-      console.error(`[AgentSession ${this.session.id}] Error parsing context info:`, error);
-      return null;
-    }
-  }
 
   /**
    * Handle interrupt request - clear queue and abort
@@ -785,8 +510,6 @@ export class AgentSession {
     this.queryRunning = false;
     this.messageQueue = [];
     this.messageWaiters = [];
-    this.contextFetchInProgress = false;
-    this.lastContextFetchTime = 0;
     this.historyReplayComplete = false;
     this.replayingHistory = false;
 
