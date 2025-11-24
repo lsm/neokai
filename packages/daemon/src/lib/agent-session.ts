@@ -49,6 +49,10 @@ export class AgentSession {
   // In-flight flag for /context calls - prevents concurrent calls
   private contextFetchInProgress: boolean = false;
 
+  // Debounce tracking for /context calls
+  private lastContextFetchTime: number = 0;
+  private readonly CONTEXT_FETCH_DEBOUNCE_MS = 2000; // 2 seconds minimum between calls
+
   // PHASE 3 FIX: Store unsubscribe functions to prevent memory leaks
   private unsubscribers: Array<() => void> = [];
 
@@ -360,9 +364,9 @@ export class AgentSession {
       }
 
       // Fetch initial context info on connection
-      // Only if history replay is complete (has existing messages) or no history (new session)
-      if (this.historyReplayComplete || this.conversationHistory.length === 0) {
-        console.log(`[AgentSession ${this.session.id}] Fetching initial context info on connection`);
+      // ONLY for new sessions (no history). For resumed sessions, wait for historyReplayComplete.
+      if (this.conversationHistory.length === 0) {
+        console.log(`[AgentSession ${this.session.id}] New session - fetching initial context info`);
         this.fetchContextInfo().catch(error => {
           console.warn(`[AgentSession ${this.session.id}] Failed to fetch initial context info:`, error);
         });
@@ -403,6 +407,7 @@ export class AgentSession {
   private async handleSDKMessage(message: any): Promise<void> {
     // If processing internal message, buffer it instead of saving/emitting
     if (this.processingInternalMessage) {
+      console.log(`[AgentSession ${this.session.id}] Buffering internal message (type: ${message.type}) - NOT saving to DB`);
       this.internalMessageBuffer.push(message);
 
       // Check if this is the result message (end of internal response)
@@ -411,6 +416,15 @@ export class AgentSession {
 
         // Clear in-flight flag
         this.contextFetchInProgress = false;
+
+        // Safety check: Only publish context if history replay is complete
+        // This prevents publishing stale context during session resume
+        if (!this.historyReplayComplete) {
+          console.warn(`[AgentSession ${this.session.id}] Context fetch completed during history replay - skipping publish`);
+          this.processingInternalMessage = false;
+          this.internalMessageBuffer = [];
+          return;
+        }
 
         // Parse the full context info from the internal message buffer
         const contextInfo = this.parseContextInfo(this.internalMessageBuffer);
@@ -482,10 +496,21 @@ export class AgentSession {
       // 1. Not already processing an internal message
       // 2. History replay is complete (prevents loop during startup)
       // 3. No context fetch already in progress (prevents concurrent calls)
-      if (!this.processingInternalMessage && this.historyReplayComplete) {
+      // 4. Enough time has passed since last fetch (debounce)
+      const now = Date.now();
+      const timeSinceLastFetch = now - this.lastContextFetchTime;
+      const shouldFetch = !this.processingInternalMessage
+        && this.historyReplayComplete
+        && timeSinceLastFetch >= this.CONTEXT_FETCH_DEBOUNCE_MS;
+
+      if (shouldFetch) {
+        console.log(`[AgentSession ${this.session.id}] Fetching context info (${Math.round(timeSinceLastFetch/1000)}s since last fetch)`);
+        this.lastContextFetchTime = now;
         this.fetchContextInfo().catch(error => {
           console.warn(`[AgentSession ${this.session.id}] Failed to fetch context info:`, error);
         });
+      } else if (timeSinceLastFetch < this.CONTEXT_FETCH_DEBOUNCE_MS) {
+        console.log(`[AgentSession ${this.session.id}] Skipping context fetch (debounce: ${Math.round(timeSinceLastFetch/1000)}s < ${this.CONTEXT_FETCH_DEBOUNCE_MS/1000}s)`);
       }
     }
   }
@@ -760,6 +785,10 @@ export class AgentSession {
     this.queryRunning = false;
     this.messageQueue = [];
     this.messageWaiters = [];
+    this.contextFetchInProgress = false;
+    this.lastContextFetchTime = 0;
+    this.historyReplayComplete = false;
+    this.replayingHistory = false;
 
     console.log(`[AgentSession ${this.session.id}] Cleanup complete`);
   }
