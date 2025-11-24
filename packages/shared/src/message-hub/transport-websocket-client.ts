@@ -122,6 +122,8 @@ export class WebSocketClientTransport implements IMessageTransport {
 
   /**
    * Handle disconnect
+   *
+   * FIX P1.2: Add jitter to prevent thundering herd on reconnect
    */
   private handleDisconnect(): void {
     if (!this.autoReconnect) {
@@ -136,10 +138,14 @@ export class WebSocketClientTransport implements IMessageTransport {
     }
 
     this.reconnectAttempts++;
-    const delay = this.reconnectDelay * this.reconnectAttempts;
+
+    // FIX P1.2: Add exponential backoff + jitter (±30%) to prevent thundering herd
+    const baseDelay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
+    const jitter = Math.random() * baseDelay * 0.6 - baseDelay * 0.3; // ±30%
+    const delay = Math.max(100, baseDelay + jitter); // Minimum 100ms
 
     console.log(
-      `[${this.name}] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`,
+      `[${this.name}] Reconnecting in ${Math.round(delay)}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`,
     );
 
     this.reconnectTimer = setTimeout(() => {
@@ -257,6 +263,8 @@ export class WebSocketClientTransport implements IMessageTransport {
 
   /**
    * Start ping/heartbeat
+   *
+   * FIX P1.1: Send real PING messages to detect half-open connections
    */
   private startPing(): void {
     if (this.pingInterval <= 0) {
@@ -267,9 +275,19 @@ export class WebSocketClientTransport implements IMessageTransport {
 
     this.pingTimer = setInterval(() => {
       if (this.isReady()) {
-        // Send ping (could be a PING message type if needed)
-        // For now, just check connection
-        if (this.ws!.readyState !== WebSocket.OPEN) {
+        // FIX P1.1: Send actual PING message (not just check readyState)
+        const pingMessage = {
+          id: crypto.randomUUID(),
+          type: "PING" as const,
+          method: "heartbeat",
+          sessionId: "global",
+          timestamp: new Date().toISOString(),
+        };
+
+        try {
+          this.ws!.send(JSON.stringify(pingMessage));
+        } catch (error) {
+          console.error(`[${this.name}] Failed to send PING:`, error);
           this.handleDisconnect();
         }
       }
