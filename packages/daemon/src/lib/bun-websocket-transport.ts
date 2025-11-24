@@ -42,6 +42,32 @@ export class BunWebSocketTransport implements IMessageTransport {
   }
 
   /**
+   * Initialize transport (no-op for Bun WebSocket - managed by Elysia)
+   */
+  async initialize(): Promise<void> {
+    this.log("Transport initialized (Bun WebSocket managed by Elysia)");
+  }
+
+  /**
+   * Close transport and cleanup all connections
+   */
+  async close(): Promise<void> {
+    this.log("Closing transport and cleaning up connections");
+
+    // Unregister all clients
+    const clientIds = Array.from(this.wsToClientId.values());
+    for (const clientId of clientIds) {
+      this.unregisterClient(clientId);
+    }
+
+    // Clear mappings
+    this.wsToClientId.clear();
+
+    // Notify connection handlers
+    this.notifyConnectionHandlers("disconnected");
+  }
+
+  /**
    * Register a WebSocket client
    * Creates a ClientConnection and registers with router
    */

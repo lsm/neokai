@@ -20,6 +20,16 @@ class MockTransport implements IMessageTransport {
   private stateHandlers: Set<(state: ConnectionState) => void> = new Set();
   public sentMessages: HubMessage[] = [];
 
+  async initialize(): Promise<void> {
+    this.state = "connected";
+    this.notifyStateChange("connected");
+  }
+
+  async close(): Promise<void> {
+    this.state = "disconnected";
+    this.notifyStateChange("disconnected");
+  }
+
   async connect(): Promise<void> {
     this.state = "connected";
     this.notifyStateChange("connected");
