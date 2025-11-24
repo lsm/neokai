@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, mock } from "bun:test";
-import { MessageHubRouter } from "../src/message-hub/router";
+import { MessageHubRouter, type ClientConnection } from "../src/message-hub/router";
 import type { HubMessage } from "../src/message-hub/types";
 import {
   MessageType,
@@ -21,6 +21,16 @@ class MockWebSocket {
   }
 }
 
+// Helper to create ClientConnection from MockWebSocket
+function createMockConnection(ws: MockWebSocket, id?: string): ClientConnection {
+  return {
+    id: id || crypto.randomUUID(),
+    send: (data: string) => ws.send(data),
+    isOpen: () => ws.readyState === 1,
+    metadata: { ws },
+  };
+}
+
 describe("MessageHubRouter", () => {
   let router: MessageHubRouter;
   let mockWs1: MockWebSocket;
@@ -34,15 +44,18 @@ describe("MessageHubRouter", () => {
 
   describe("Client Registration", () => {
     test("should register a client and return clientId", () => {
-      const clientId = router.registerClient(mockWs1 as any);
+      const conn1 = createMockConnection(mockWs1);
+      const clientId = router.registerConnection(conn1);
 
       expect(clientId).toBeTruthy();
       expect(router.getClientCount()).toBe(1);
     });
 
     test("should register multiple clients", () => {
-      const clientId1 = router.registerClient(mockWs1 as any);
-      const clientId2 = router.registerClient(mockWs2 as any);
+      const conn1 = createMockConnection(mockWs1);
+      const conn2 = createMockConnection(mockWs2);
+      const clientId1 = router.registerConnection(conn1);
+      const clientId2 = router.registerConnection(conn2);
 
       expect(clientId1).toBeTruthy();
       expect(clientId2).toBeTruthy();
@@ -51,16 +64,18 @@ describe("MessageHubRouter", () => {
     });
 
     test("should unregister a client", () => {
-      router.registerClient(mockWs1 as any);
+      const conn1 = createMockConnection(mockWs1);
+      const clientId = router.registerConnection(conn1);
       expect(router.getClientCount()).toBe(1);
 
-      router.unregisterClient(mockWs1 as any);
+      router.unregisterConnection(clientId);
       expect(router.getClientCount()).toBe(0);
     });
 
     test("should get client info by WebSocket", () => {
-      const clientId = router.registerClient(mockWs1 as any);
-      const info = router.getClientInfo(mockWs1 as any);
+      const conn1 = createMockConnection(mockWs1);
+      const clientId = router.registerConnection(conn1);
+      const info = router.getClientById(clientId);
 
       expect(info).toBeDefined();
       expect(info?.clientId).toBe(clientId);
@@ -70,7 +85,8 @@ describe("MessageHubRouter", () => {
 
   describe("Subscription Management", () => {
     test("should subscribe client to method", () => {
-      const clientId = router.registerClient(mockWs1 as any);
+      const conn1 = createMockConnection(mockWs1);
+      const clientId = router.registerConnection(conn1);
       router.subscribe("session1", "user.created", clientId);
 
       const count = router.getSubscriptionCount("session1", "user.created");
@@ -78,8 +94,10 @@ describe("MessageHubRouter", () => {
     });
 
     test("should subscribe multiple clients to same method", () => {
-      const clientId1 = router.registerClient(mockWs1 as any);
-      const clientId2 = router.registerClient(mockWs2 as any);
+      const conn1 = createMockConnection(mockWs1);
+      const conn2 = createMockConnection(mockWs2);
+      const clientId1 = router.registerConnection(conn1);
+      const clientId2 = router.registerConnection(conn2);
 
       router.subscribe("session1", "user.created", clientId1);
       router.subscribe("session1", "user.created", clientId2);
@@ -89,7 +107,8 @@ describe("MessageHubRouter", () => {
     });
 
     test("should unsubscribe client from method", () => {
-      const clientId = router.registerClient(mockWs1 as any);
+      const conn1 = createMockConnection(mockWs1);
+      const clientId = router.registerConnection(conn1);
       router.subscribe("session1", "user.created", clientId);
 
       router.unsubscribeClient("session1", "user.created", clientId);
@@ -99,7 +118,8 @@ describe("MessageHubRouter", () => {
     });
 
     test("should track subscriptions per session", () => {
-      const clientId = router.registerClient(mockWs1 as any);
+      const conn1 = createMockConnection(mockWs1);
+      const clientId = router.registerConnection(conn1);
 
       router.subscribe("session1", "user.created", clientId);
       router.subscribe("session2", "user.created", clientId);
@@ -109,12 +129,13 @@ describe("MessageHubRouter", () => {
     });
 
     test("should unregister all subscriptions when client is removed", () => {
-      const clientId = router.registerClient(mockWs1 as any);
+      const conn1 = createMockConnection(mockWs1);
+      const clientId = router.registerConnection(conn1);
 
       router.subscribe("session1", "user.created", clientId);
       router.subscribe("session1", "user.updated", clientId);
 
-      router.unregisterClient(mockWs1 as any);
+      router.unregisterConnection(clientId);
 
       expect(router.getSubscriptionCount("session1", "user.created")).toBe(0);
       expect(router.getSubscriptionCount("session1", "user.updated")).toBe(0);
@@ -123,7 +144,8 @@ describe("MessageHubRouter", () => {
 
   describe("Message Routing", () => {
     test("should route EVENT message to subscribed client", () => {
-      const clientId = router.registerClient(mockWs1 as any);
+      const conn1 = createMockConnection(mockWs1);
+      const clientId = router.registerConnection(conn1);
       router.subscribe("session1", "user.created", clientId);
 
       const eventMessage = createEventMessage({
@@ -143,8 +165,10 @@ describe("MessageHubRouter", () => {
     });
 
     test("should route to multiple subscribed clients", () => {
-      const clientId1 = router.registerClient(mockWs1 as any);
-      const clientId2 = router.registerClient(mockWs2 as any);
+      const conn1 = createMockConnection(mockWs1);
+      const conn2 = createMockConnection(mockWs2);
+      const clientId1 = router.registerConnection(conn1);
+      const clientId2 = router.registerConnection(conn2);
 
       router.subscribe("session1", "user.created", clientId1);
       router.subscribe("session1", "user.created", clientId2);
@@ -162,8 +186,10 @@ describe("MessageHubRouter", () => {
     });
 
     test("should not route to unsubscribed clients", () => {
-      const clientId1 = router.registerClient(mockWs1 as any);
-      const clientId2 = router.registerClient(mockWs2 as any);
+      const conn1 = createMockConnection(mockWs1);
+      const conn2 = createMockConnection(mockWs2);
+      const clientId1 = router.registerConnection(conn1);
+      const clientId2 = router.registerConnection(conn2);
 
       router.subscribe("session1", "user.created", clientId1);
       // clientId2 is not subscribed
@@ -181,7 +207,8 @@ describe("MessageHubRouter", () => {
     });
 
     test("should not route to wrong session", () => {
-      const clientId = router.registerClient(mockWs1 as any);
+      const conn1 = createMockConnection(mockWs1);
+      const clientId = router.registerConnection(conn1);
       router.subscribe("session1", "user.created", clientId);
 
       const eventMessage = createEventMessage({
@@ -196,7 +223,8 @@ describe("MessageHubRouter", () => {
     });
 
     test("should skip clients with closed WebSocket", () => {
-      const clientId = router.registerClient(mockWs1 as any);
+      const conn1 = createMockConnection(mockWs1);
+      const clientId = router.registerConnection(conn1);
       router.subscribe("session1", "user.created", clientId);
 
       mockWs1.close();
@@ -216,7 +244,8 @@ describe("MessageHubRouter", () => {
 
   describe("Direct Messaging", () => {
     test("should send message to specific client", () => {
-      const clientId = router.registerClient(mockWs1 as any);
+      const conn1 = createMockConnection(mockWs1);
+      const clientId = router.registerConnection(conn1);
 
       const message: HubMessage = {
         id: "msg1",
@@ -250,8 +279,10 @@ describe("MessageHubRouter", () => {
     });
 
     test("should broadcast to all clients", () => {
-      router.registerClient(mockWs1 as any);
-      router.registerClient(mockWs2 as any);
+      const conn1 = createMockConnection(mockWs1);
+      const conn2 = createMockConnection(mockWs2);
+      router.registerConnection(conn1);
+      router.registerConnection(conn2);
 
       const message: HubMessage = {
         id: "msg1",
@@ -271,8 +302,9 @@ describe("MessageHubRouter", () => {
 
   describe("Auto-subscription", () => {
     test("should auto-subscribe to global session events", () => {
-      router.registerClient(mockWs1 as any);
-      router.autoSubscribe(mockWs1 as any, "global");
+      const conn1 = createMockConnection(mockWs1);
+      const clientId = router.registerConnection(conn1);
+      router.autoSubscribeConnection(clientId, "global");
 
       expect(router.getSubscriptionCount("global", "session.created")).toBeGreaterThan(0);
       expect(router.getSubscriptionCount("global", "session.updated")).toBeGreaterThan(0);
@@ -280,8 +312,9 @@ describe("MessageHubRouter", () => {
     });
 
     test("should auto-subscribe to session-specific events", () => {
-      router.registerClient(mockWs1 as any);
-      router.autoSubscribe(mockWs1 as any, "session1");
+      const conn1 = createMockConnection(mockWs1);
+      const clientId = router.registerConnection(conn1);
+      router.autoSubscribeConnection(clientId, "session1");
 
       expect(router.getSubscriptionCount("session1", "sdk.message")).toBeGreaterThan(0);
       expect(router.getSubscriptionCount("session1", "context.updated")).toBeGreaterThan(0);
@@ -304,7 +337,8 @@ describe("MessageHubRouter", () => {
     });
 
     test("should handle sending to closed WebSocket gracefully", () => {
-      const clientId = router.registerClient(mockWs1 as any);
+      const conn1 = createMockConnection(mockWs1);
+      const clientId = router.registerConnection(conn1);
       mockWs1.close();
 
       const message: HubMessage = {
@@ -326,8 +360,9 @@ describe("MessageHubRouter", () => {
   describe("Phase 1 Improvements", () => {
     describe("Duplicate Registration Prevention", () => {
       test("should return existing clientId when registering same WebSocket twice", () => {
-        const clientId1 = router.registerClient(mockWs1 as any);
-        const clientId2 = router.registerClient(mockWs1 as any);
+        const conn1 = createMockConnection(mockWs1);
+        const clientId1 = router.registerConnection(conn1);
+        const clientId2 = router.registerConnection(conn1);
 
         expect(clientId1).toBe(clientId2);
         expect(router.getClientCount()).toBe(1);
@@ -336,7 +371,8 @@ describe("MessageHubRouter", () => {
 
     describe("O(1) Client Lookup", () => {
       test("should get client by clientId efficiently", () => {
-        const clientId = router.registerClient(mockWs1 as any);
+        const conn1 = createMockConnection(mockWs1);
+        const clientId = router.registerConnection(conn1);
         const client = router.getClientById(clientId);
 
         expect(client).toBeDefined();
@@ -352,10 +388,13 @@ describe("MessageHubRouter", () => {
 
     describe("Route Result Observability", () => {
       test("should return delivery statistics from routeEvent", () => {
-        const clientId1 = router.registerClient(mockWs1 as any);
-        const clientId2 = router.registerClient(mockWs2 as any);
+        const conn1 = createMockConnection(mockWs1);
+        const conn2 = createMockConnection(mockWs2);
         const mockWs3 = new MockWebSocket();
-        const clientId3 = router.registerClient(mockWs3 as any);
+        const conn3 = createMockConnection(mockWs3);
+        const clientId1 = router.registerConnection(conn1);
+        const clientId2 = router.registerConnection(conn2);
+        const clientId3 = router.registerConnection(conn3);
 
         router.subscribe("session1", "user.created", clientId1);
         router.subscribe("session1", "user.created", clientId2);
@@ -380,7 +419,8 @@ describe("MessageHubRouter", () => {
       });
 
       test("should return zero stats for unsubscribed event", () => {
-        router.registerClient(mockWs1 as any);
+        const conn1 = createMockConnection(mockWs1);
+        router.registerConnection(conn1);
 
         const eventMessage = createEventMessage({
           method: "unsubscribed.event",
@@ -396,11 +436,14 @@ describe("MessageHubRouter", () => {
       });
 
       test("broadcast should return delivery statistics", () => {
-        router.registerClient(mockWs1 as any);
-        router.registerClient(mockWs2 as any);
+        const conn1 = createMockConnection(mockWs1);
+        const conn2 = createMockConnection(mockWs2);
         const mockWs3 = new MockWebSocket();
         mockWs3.close();
-        router.registerClient(mockWs3 as any);
+        const conn3 = createMockConnection(mockWs3);
+        router.registerConnection(conn1);
+        router.registerConnection(conn2);
+        router.registerConnection(conn3);
 
         const message: HubMessage = {
           id: "msg1",
@@ -418,7 +461,8 @@ describe("MessageHubRouter", () => {
       });
 
       test("sendToClient should return boolean success indicator", () => {
-        const clientId = router.registerClient(mockWs1 as any);
+        const conn1 = createMockConnection(mockWs1);
+        const clientId = router.registerConnection(conn1);
 
         const message: HubMessage = {
           id: "msg1",
@@ -439,7 +483,8 @@ describe("MessageHubRouter", () => {
 
     describe("Memory Leak Prevention", () => {
       test("should cleanup empty subscription Maps", () => {
-        const clientId = router.registerClient(mockWs1 as any);
+        const conn1 = createMockConnection(mockWs1);
+        const clientId = router.registerConnection(conn1);
 
         router.subscribe("session1", "user.created", clientId);
         router.subscribe("session1", "user.updated", clientId);
@@ -454,8 +499,10 @@ describe("MessageHubRouter", () => {
       });
 
       test("should cleanup nested Maps when last method is unsubscribed", () => {
-        const clientId1 = router.registerClient(mockWs1 as any);
-        const clientId2 = router.registerClient(mockWs2 as any);
+        const conn1 = createMockConnection(mockWs1);
+        const conn2 = createMockConnection(mockWs2);
+        const clientId1 = router.registerConnection(conn1);
+        const clientId2 = router.registerConnection(conn2);
 
         router.subscribe("session1", "user.created", clientId1);
         router.subscribe("session1", "user.created", clientId2);
@@ -475,7 +522,8 @@ describe("MessageHubRouter", () => {
 
     describe("Subscription Key Validation", () => {
       test("should reject sessionId with colon", () => {
-        const clientId = router.registerClient(mockWs1 as any);
+        const conn1 = createMockConnection(mockWs1);
+        const clientId = router.registerConnection(conn1);
 
         expect(() => {
           router.subscribe("session:1", "user.created", clientId);
@@ -483,7 +531,8 @@ describe("MessageHubRouter", () => {
       });
 
       test("should reject method with colon", () => {
-        const clientId = router.registerClient(mockWs1 as any);
+        const conn1 = createMockConnection(mockWs1);
+        const clientId = router.registerConnection(conn1);
 
         expect(() => {
           router.subscribe("session1", "user:created", clientId);
@@ -504,7 +553,8 @@ describe("MessageHubRouter", () => {
           debug: true,
         });
 
-        customRouter.registerClient(mockWs1 as any);
+        const conn1 = createMockConnection(mockWs1);
+        customRouter.registerConnection(conn1);
 
         expect(mockLogger.log).toHaveBeenCalled();
       });
@@ -521,7 +571,8 @@ describe("MessageHubRouter", () => {
           debug: false,
         });
 
-        customRouter.registerClient(mockWs1 as any);
+        const conn1 = createMockConnection(mockWs1);
+        customRouter.registerConnection(conn1);
 
         // Should still call for registration (not debug log)
         // But internal debug logs should be skipped
@@ -538,8 +589,9 @@ describe("MessageHubRouter", () => {
           },
         });
 
-        const clientId = customRouter.registerClient(mockWs1 as any);
-        customRouter.autoSubscribe(mockWs1 as any, "session1");
+        const conn1 = createMockConnection(mockWs1);
+        const clientId = customRouter.registerConnection(conn1);
+        customRouter.autoSubscribeConnection(clientId, "session1");
 
         expect(customRouter.getSubscriptionCount("session1", "custom.session.event")).toBe(1);
         expect(customRouter.getSubscriptionCount("session1", "sdk.message")).toBe(0);
@@ -548,7 +600,8 @@ describe("MessageHubRouter", () => {
 
     describe("Subscription Storage", () => {
       test("should track subscriptions as Map<sessionId, Set<method>>", () => {
-        const clientId = router.registerClient(mockWs1 as any);
+        const conn1 = createMockConnection(mockWs1);
+        const clientId = router.registerConnection(conn1);
 
         router.subscribe("session1", "user.created", clientId);
         router.subscribe("session1", "user.updated", clientId);

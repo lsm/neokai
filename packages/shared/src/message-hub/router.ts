@@ -91,18 +91,6 @@ export interface RouteResult {
 }
 
 /**
- * WebSocket adapter for backward compatibility
- */
-function createWebSocketConnection(ws: WebSocket, clientId?: string): ClientConnection {
-  return {
-    id: clientId || generateUUID(),
-    send: (data: string) => ws.send(data),
-    isOpen: () => ws.readyState === 1, // WebSocket.OPEN
-    metadata: { ws },
-  };
-}
-
-/**
  * MessageHub Router for server-side
  *
  * Responsibilities:
@@ -129,7 +117,7 @@ export class MessageHubRouter {
   }
 
   /**
-   * Register a client connection (new API)
+   * Register a client connection
    * Prevents duplicate registration
    */
   registerConnection(connection: ClientConnection): string {
@@ -154,25 +142,7 @@ export class MessageHubRouter {
   }
 
   /**
-   * Register a WebSocket client (backward compatible API)
-   * @deprecated Use registerConnection() instead
-   */
-  registerClient(ws: WebSocket): string {
-    // Create a unique ID for this WebSocket if not already registered
-    for (const info of this.clients.values()) {
-      if (info.connection.metadata?.ws === ws) {
-        this.log(`WebSocket already registered: ${info.clientId}, returning existing ID`);
-        return info.clientId;
-      }
-    }
-
-    const clientId = generateUUID();
-    const connection = createWebSocketConnection(ws, clientId);
-    return this.registerConnection(connection);
-  }
-
-  /**
-   * Unregister a client by clientId (new API)
+   * Unregister a client by clientId
    * Cleans up all subscriptions
    */
   unregisterConnection(clientId: string): void {
@@ -190,20 +160,6 @@ export class MessageHubRouter {
 
     this.clients.delete(clientId);
     this.log(`Client unregistered: ${info.clientId}`);
-  }
-
-  /**
-   * Unregister a WebSocket client (backward compatible API)
-   * @deprecated Use unregisterConnection(clientId) instead
-   */
-  unregisterClient(ws: WebSocket): void {
-    // Find client by WebSocket
-    for (const [clientId, info] of this.clients.entries()) {
-      if (info.connection.metadata?.ws === ws) {
-        this.unregisterConnection(clientId);
-        return;
-      }
-    }
   }
 
   /**
@@ -406,19 +362,6 @@ export class MessageHubRouter {
   }
 
   /**
-   * Get client info by WebSocket (backward compatible API)
-   * @deprecated Use getClientById() instead
-   */
-  getClientInfo(ws: WebSocket): ClientInfo | undefined {
-    for (const info of this.clients.values()) {
-      if (info.connection.metadata?.ws === ws) {
-        return info;
-      }
-    }
-    return undefined;
-  }
-
-  /**
    * Get client info by clientId (O(1) lookup)
    */
   getClientById(clientId: string): ClientInfo | undefined {
@@ -444,7 +387,7 @@ export class MessageHubRouter {
   }
 
   /**
-   * Auto-subscribe connection to configured patterns (new API)
+   * Auto-subscribe connection to configured patterns
    */
   autoSubscribeConnection(clientId: string, sessionId: string): void {
     const info = this.clients.get(clientId);
@@ -466,17 +409,6 @@ export class MessageHubRouter {
     }
 
     this.log(`Auto-subscribed client ${info.clientId} to ${sessionId} events`);
-  }
-
-  /**
-   * Auto-subscribe client to configured patterns (backward compatible API)
-   * @deprecated Use autoSubscribeConnection(clientId, sessionId) instead
-   */
-  autoSubscribe(ws: WebSocket, sessionId: string): void {
-    const info = this.getClientInfo(ws);
-    if (info) {
-      this.autoSubscribeConnection(info.clientId, sessionId);
-    }
   }
 
   /**

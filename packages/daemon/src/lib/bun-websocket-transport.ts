@@ -110,49 +110,11 @@ export class BunWebSocketTransport implements IMessageTransport {
   }
 
   /**
-   * Add a subscription for a client (delegates to router)
-   * @deprecated Use router.subscribe() directly
-   */
-  addSubscription(clientId: string, sessionId: string): void {
-    // For backward compatibility, subscribe to all common events in that session
-    const methods = sessionId === "global"
-      ? ["session.created", "session.updated", "session.deleted"]
-      : ["sdk.message", "context.updated", "message.queued"];
-
-    for (const method of methods) {
-      try {
-        this.router.subscribe(sessionId, method, clientId);
-      } catch (error) {
-        // Ignore validation errors for backward compatibility
-      }
-    }
-  }
-
-  /**
-   * Remove a subscription from a client (delegates to router)
-   * @deprecated Use router.unsubscribeClient() directly
-   */
-  removeSubscription(clientId: string, sessionId: string): void {
-    // This is no longer supported - subscriptions are managed by router
-    this.log(`removeSubscription deprecated: ${clientId} ${sessionId}`);
-  }
-
-  /**
    * Handle incoming message from a WebSocket client
    * Simplified: just forward to handlers (no routing logic)
    */
   handleClientMessage(message: HubMessage, clientId?: string): void {
     this.log(`Received message: ${message.type} ${message.method}`, message);
-
-    // Auto-subscribe to sessions mentioned in message data
-    if (clientId && message.data && typeof message.data === 'object') {
-      if ('sessionId' in message.data) {
-        const sessionId = (message.data as any).sessionId;
-        if (sessionId && typeof sessionId === 'string' && sessionId !== 'global') {
-          this.addSubscription(clientId, sessionId);
-        }
-      }
-    }
 
     // Notify all message handlers (MessageHub will process)
     for (const handler of this.messageHandlers) {
