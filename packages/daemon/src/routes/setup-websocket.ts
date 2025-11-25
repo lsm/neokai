@@ -13,6 +13,10 @@ import type { SubscriptionManager } from "../lib/subscription-manager";
 
 const GLOBAL_SESSION_ID = "global";
 
+// FIX P1.1: Message size validation constants (DoS prevention)
+const MAX_MESSAGE_SIZE = 10 * 1024 * 1024; // 10MB max message size
+const MAX_MESSAGE_SIZE_MB = MAX_MESSAGE_SIZE / (1024 * 1024);
+
 export function setupMessageHubWebSocket(
   app: Elysia<any>,
   transport: WebSocketServerTransport,
@@ -52,6 +56,24 @@ export function setupMessageHubWebSocket(
 
     message(ws, message) {
       try {
+        // FIX P1.1: Validate message size before parsing (DoS prevention)
+        const messageStr = typeof message === "string" ? message : JSON.stringify(message);
+        const messageSize = new TextEncoder().encode(messageStr).length;
+
+        if (messageSize > MAX_MESSAGE_SIZE) {
+          console.error(`Message rejected: size ${(messageSize / (1024 * 1024)).toFixed(2)}MB exceeds limit ${MAX_MESSAGE_SIZE_MB}MB`);
+          const errorMsg = createErrorMessage({
+            method: "message.process",
+            error: {
+              code: "MESSAGE_TOO_LARGE",
+              message: `Message size ${(messageSize / (1024 * 1024)).toFixed(2)}MB exceeds maximum ${MAX_MESSAGE_SIZE_MB}MB`,
+            },
+            sessionId: GLOBAL_SESSION_ID,
+          });
+          ws.send(JSON.stringify(errorMsg));
+          return;
+        }
+
         const data = typeof message === "string" ? JSON.parse(message) : message;
 
         // Handle ping/pong
