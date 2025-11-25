@@ -22,8 +22,16 @@ export class LRUCache<K, V> {
     this.maxSize = maxSize;
     this.ttl = ttl;
 
-    // Periodic cleanup every 30 seconds
-    this.cleanupTimer = setInterval(() => this.cleanup(), 30000);
+    // FIX P0.4: Periodic cleanup every 30 seconds with error handling
+    // If cleanup throws, catch it to prevent timer chain from breaking
+    this.cleanupTimer = setInterval(() => {
+      try {
+        this.cleanup();
+      } catch (error) {
+        console.error('[LRUCache] Cleanup failed:', error);
+        // Continue - don't break the timer chain
+      }
+    }, 30000);
   }
 
   get(key: K): V | undefined {
