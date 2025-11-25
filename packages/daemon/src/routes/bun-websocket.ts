@@ -8,7 +8,7 @@
 import type { Elysia } from "elysia";
 import type { MessageHub } from "@liuboer/shared";
 import { createEventMessage, createErrorMessage, MessageType, generateUUID } from "@liuboer/shared";
-import type { BunWebSocketTransport } from "../lib/bun-websocket-transport";
+import type { WebSocketServerTransport } from "../lib/websocket-server-transport";
 import type { SessionManager } from "../lib/session-manager";
 import type { SubscriptionManager } from "../lib/subscription-manager";
 
@@ -17,7 +17,7 @@ const GLOBAL_SESSION_ID = "global";
 export function setupMessageHubWebSocket(
   app: Elysia<any>,
   messageHub: MessageHub,
-  transport: BunWebSocketTransport,
+  transport: WebSocketServerTransport,
   sessionManager: SessionManager,
   subscriptionManager: SubscriptionManager,
 ) {

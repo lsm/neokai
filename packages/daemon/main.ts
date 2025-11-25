@@ -8,7 +8,7 @@ import { StateManager } from "./src/lib/state-manager";
 import { SubscriptionManager } from "./src/lib/subscription-manager";
 import { MessageHub, MessageHubRouter } from "@liuboer/shared";
 import { setupRPCHandlers } from "./src/lib/rpc-handlers";
-import { BunWebSocketTransport } from "./src/lib/bun-websocket-transport";
+import { WebSocketServerTransport } from "./src/lib/websocket-server-transport";
 import { setupMessageHubWebSocket } from "./src/routes/bun-websocket";
 
 const config = getConfig();
@@ -59,8 +59,8 @@ messageHub.registerRouter(router);
 console.log("✅ Router registered with MessageHub");
 
 // 4. Initialize Transport (I/O layer) - needs router for client management
-const transport = new BunWebSocketTransport({
-  name: "bun-ws",
+const transport = new WebSocketServerTransport({
+  name: "websocket-server",
   debug: config.nodeEnv === "development",
   router, // For client management only, not routing
 });
@@ -126,10 +126,9 @@ const app = new Elysia()
     status: "running",
     protocol: "WebSocket-only (MessageHub RPC + Pub/Sub)",
     endpoints: {
-      globalWebSocket: "/ws",
-      sessionWebSocket: "/ws/:sessionId",
+      webSocket: "/ws",
     },
-    note: "All operations use MessageHub protocol with bidirectional RPC and Pub/Sub. REST API has been removed.",
+    note: "All operations use MessageHub protocol with bidirectional RPC and Pub/Sub. Session routing via message.sessionId field. REST API has been removed.",
   }));
 
 // Mount MessageHub WebSocket routes
@@ -146,9 +145,9 @@ app.listen({
   port: config.port,
 });
 
-console.log(`\n📡 Global WebSocket: ws://${app.server?.hostname}:${app.server?.port}/ws`);
-console.log(`📡 Session WebSocket: ws://${app.server?.hostname}:${app.server?.port}/ws/:sessionId`);
-console.log(`\n✨ MessageHub mode! Unified RPC + Pub/Sub over WebSocket.\n`);
+console.log(`\n📡 WebSocket: ws://${app.server?.hostname}:${app.server?.port}/ws`);
+console.log(`\n✨ MessageHub mode! Unified RPC + Pub/Sub over WebSocket.`);
+console.log(`   Session routing via message.sessionId field.\n`);
 
 // Graceful shutdown handler
 async function gracefulShutdown(signal: string): Promise<void> {
