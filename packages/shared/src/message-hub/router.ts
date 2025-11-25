@@ -36,6 +36,8 @@ export interface ClientConnection {
   send(data: string): void;
   /** Check if connection is open and ready */
   isOpen(): boolean;
+  /** FIX P0.6: Check if connection can accept messages (backpressure) */
+  canAccept?(): boolean;
   /** Optional: Get connection metadata */
   metadata?: Record<string, any>;
 }
@@ -217,13 +219,32 @@ export class MessageHubRouter {
 
     sessionSubs.get(method)!.add(clientId);
 
-    // Track subscription in client info using O(1) lookup
-    if (client) {
-      if (!client.subscriptions.has(sessionId)) {
-        client.subscriptions.set(sessionId, new Set());
+    // FIX P0.1: Re-check client exists AFTER adding subscription (race condition fix)
+    // Client could have disconnected between line 180 and here!
+    const clientNow = this.getClientById(clientId);
+    if (!clientNow) {
+      // Client disconnected - cleanup the subscription we just added
+      sessionSubs.get(method)!.delete(clientId);
+
+      // Cleanup empty maps
+      if (sessionSubs.get(method)!.size === 0) {
+        sessionSubs.delete(method);
+        if (sessionSubs.size === 0) {
+          this.subscriptions.delete(sessionId);
+        }
       }
-      client.subscriptions.get(sessionId)!.add(method);
+
+      this.logger.warn(
+        `Client ${clientId} disconnected during subscription to ${sessionId}:${method} - cleaned up`
+      );
+      return;
     }
+
+    // Track subscription in client info using O(1) lookup
+    if (!clientNow.subscriptions.has(sessionId)) {
+      clientNow.subscriptions.set(sessionId, new Set());
+    }
+    clientNow.subscriptions.get(sessionId)!.add(method);
 
     this.log(`Client ${clientId} subscribed to ${sessionId}:${method}`);
   }
@@ -367,29 +388,43 @@ export class MessageHubRouter {
 
   /**
    * Broadcast a message to all clients
+   * FIX P0.6: Check backpressure before sending to prevent server OOM
    */
-  broadcast(message: HubMessage): { sent: number; failed: number } {
+  broadcast(message: HubMessage): { sent: number; failed: number; skipped?: number } {
     const json = JSON.stringify(message);
     let sentCount = 0;
     let failedCount = 0;
+    let skippedCount = 0;
 
     for (const client of this.clients.values()) {
-      if (client.connection.isOpen()) {
-        try {
-          client.connection.send(json);
-          sentCount++;
-        } catch (error) {
-          this.logger.error(`Failed to broadcast to client ${client.clientId}:`, error);
-          failedCount++;
-        }
-      } else {
+      if (!client.connection.isOpen()) {
+        failedCount++;
+        continue;
+      }
+
+      // FIX P0.6: Check backpressure before sending
+      if (client.connection.canAccept && !client.connection.canAccept()) {
+        this.logger.warn(
+          `Skipping broadcast to client ${client.clientId} - queue full (backpressure)`
+        );
+        skippedCount++;
+        continue;
+      }
+
+      try {
+        client.connection.send(json);
+        sentCount++;
+      } catch (error) {
+        this.logger.error(`Failed to broadcast to client ${client.clientId}:`, error);
         failedCount++;
       }
     }
 
-    this.log(`Broadcast message to ${sentCount} clients (${failedCount} failed)`);
+    this.log(
+      `Broadcast message to ${sentCount} clients (${failedCount} failed, ${skippedCount} skipped)`
+    );
 
-    return { sent: sentCount, failed: failedCount };
+    return { sent: sentCount, failed: failedCount, skipped: skippedCount };
   }
 
   /**
