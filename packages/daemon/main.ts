@@ -9,7 +9,7 @@ import { SubscriptionManager } from "./src/lib/subscription-manager";
 import { MessageHub, MessageHubRouter } from "@liuboer/shared";
 import { setupRPCHandlers } from "./src/lib/rpc-handlers";
 import { WebSocketServerTransport } from "./src/lib/websocket-server-transport";
-import { setupMessageHubWebSocket } from "./src/routes/bun-websocket";
+import { setupMessageHubWebSocket } from "./src/routes/setup-websocket";
 
 const config = getConfig();
 
@@ -132,7 +132,7 @@ const app = new Elysia()
   }));
 
 // Mount MessageHub WebSocket routes
-setupMessageHubWebSocket(app, messageHub, transport, sessionManager, subscriptionManager);
+setupMessageHubWebSocket(app, transport, sessionManager, subscriptionManager);
 
 // Start server
 console.log(`\n🚀 Liuboer Daemon starting...`);
