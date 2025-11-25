@@ -16,14 +16,33 @@ export default function Sidebar() {
   // Debug logging will happen when signals are accessed in JSX below
 
   const handleCreateSession = async () => {
+    setCreatingSession(true);
+
     try {
-      setCreatingSession(true);
       const response = await createSession({
         workspacePath: undefined, // Let daemon use configured workspace root
       });
+
+      if (!response?.sessionId) {
+        console.error("[Sidebar] Invalid response from createSession:", response);
+        toast.error("No sessionId in response");
+        return;
+      }
+
+      console.log("[Sidebar] Session created successfully, sessionId:", response.sessionId);
+
+      // Wait 1 second for state channels to sync the new session before navigating
+      // This prevents ChatContainer from getting "session not found" error immediately
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      console.log("[Sidebar] Navigating to new session:", response.sessionId);
+
+      // Navigate to the new session
       currentSessionIdSignal.value = response.sessionId;
+
       toast.success("Session created successfully");
     } catch (err) {
+      console.error("[Sidebar] Error creating session:", err);
       const message = err instanceof Error
         ? err.message
         : "Failed to create session";
