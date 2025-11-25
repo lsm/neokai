@@ -459,6 +459,7 @@ export function createUnsubscribeMessage(params: CreateUnsubscribeMessageParams)
 /**
  * Validate message structure
  * Checks all required fields and basic type correctness
+ * FIX P2.3: Add protocol version validation
  */
 export function isValidMessage(msg: any): msg is HubMessage {
   if (!msg || typeof msg !== "object") {
@@ -484,6 +485,21 @@ export function isValidMessage(msg: any): msg is HubMessage {
 
   if (typeof msg.timestamp !== "string") {
     return false;
+  }
+
+  // FIX P2.3: Validate protocol version if present (warn on mismatch, but don't reject)
+  if (msg.version !== undefined) {
+    if (typeof msg.version !== "string") {
+      return false;
+    }
+
+    // Warn if version doesn't match (but allow for backward/forward compatibility)
+    if (msg.version !== PROTOCOL_VERSION) {
+      console.warn(
+        `[MessageHub Protocol] Version mismatch: received ${msg.version}, expected ${PROTOCOL_VERSION}. ` +
+        `Message will be processed but may have compatibility issues.`
+      );
+    }
   }
 
   // Validate method format (except for PING/PONG which don't need method validation)
