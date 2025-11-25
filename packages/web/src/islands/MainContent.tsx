@@ -4,15 +4,15 @@ import ChatContainer from "./ChatContainer.tsx";
 import RecentSessions from "../components/RecentSessions.tsx";
 
 export default function MainContent() {
-  console.log("MainContent rendering, sessionId:", currentSessionIdSignal.value);
-
-  // Use reactive state signals - component will re-render when these change
-  const currentSessionId = currentSessionIdSignal.value;
-  const sessionsList = sessions.value;
-
-  if (!currentSessionId) {
-    return <RecentSessions sessions={sessionsList} />;
-  }
-
-  return <ChatContainer sessionId={currentSessionId} />;
+  // For Preact Signals to track dependencies, we must access .value in the return statement
+  // Accessing it in console.log or const assignment doesn't establish the subscription
+  return (
+    <>
+      {!currentSessionIdSignal.value ? (
+        <RecentSessions sessions={sessions.value} />
+      ) : (
+        <ChatContainer sessionId={currentSessionIdSignal.value} />
+      )}
+    </>
+  );
 }

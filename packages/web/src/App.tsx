@@ -17,20 +17,6 @@ export function App() {
         // Initialize state channels now that connection is ready
         await initializeApplicationState(hub, currentSessionIdSignal);
         console.log("[App] State management initialized successfully");
-
-        // Expose state and connectionManager to window for E2E tests
-        if (typeof window !== 'undefined') {
-          // @ts-ignore - exposing for E2E tests
-          window.connectionManager = connectionManager;
-          // @ts-ignore
-          window.appState = appState;
-          // @ts-ignore
-          window.sessions = sessions;
-          // @ts-ignore
-          window.authStatus = authStatus;
-          // @ts-ignore
-          window.currentSession = currentSession;
-        }
       } catch (error) {
         console.error("[App] Failed to initialize state management:", error);
       }
