@@ -45,6 +45,9 @@ if (authStatus.isAuthenticated) {
 const router = new MessageHubRouter({
   logger: console,
   debug: config.nodeEnv === "development",
+  // Higher rate limit for E2E testing (default: 10 ops/sec)
+  // E2E tests run 7 parallel workers that all connect and subscribe rapidly
+  subscriptionRateLimit: config.nodeEnv === "test" ? 100 : 10,
 });
 console.log("✅ MessageHubRouter initialized (clean - no application logic)");
 

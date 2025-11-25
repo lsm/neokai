@@ -63,12 +63,15 @@ export default defineConfig({
   /* Run your local dev server before starting the tests */
   webServer: [
     {
-      command: "cd ../daemon && bun run dev",
+      command: "cd ../daemon && NODE_ENV=test bun run dev",
       url: "http://localhost:8283",
       reuseExistingServer: !process.env.CI,
       stdout: "ignore",
       stderr: "pipe",
       timeout: 120 * 1000,
+      env: {
+        NODE_ENV: "test",
+      },
     },
     {
       command: "cd ../web && bun run dev",
