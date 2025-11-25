@@ -35,8 +35,9 @@ export class WebSocketServerTransport implements IMessageTransport {
   private debug: boolean;
   private readonly maxQueueSize: number;
 
-  // Track WebSocket -> ClientId mapping for cleanup
+  // FIX P2.2: Bidirectional mapping for O(1) lookups
   private wsToClientId: Map<ServerWebSocket<unknown>, string> = new Map();
+  private clientIdToWs: Map<string, ServerWebSocket<unknown>> = new Map();
 
   // Backpressure: track pending messages per client
   private clientQueues: Map<string, number> = new Map();
@@ -57,18 +58,20 @@ export class WebSocketServerTransport implements IMessageTransport {
 
   /**
    * Close transport and cleanup all connections
+   * FIX P2.2: Clear both bidirectional maps
    */
   async close(): Promise<void> {
     this.log("Closing transport and cleaning up connections");
 
     // Unregister all clients
-    const clientIds = Array.from(this.wsToClientId.values());
+    const clientIds = Array.from(this.clientIdToWs.keys());
     for (const clientId of clientIds) {
       this.unregisterClient(clientId);
     }
 
-    // Clear mappings
+    // FIX P2.2: Clear both mappings
     this.wsToClientId.clear();
+    this.clientIdToWs.clear();
 
     // Notify connection handlers
     this.notifyConnectionHandlers("disconnected");
@@ -118,8 +121,9 @@ export class WebSocketServerTransport implements IMessageTransport {
     // Register with router
     this.router.registerConnection(connection);
 
-    // Track mapping for cleanup
+    // FIX P2.2: Track bidirectional mapping for O(1) cleanup
     this.wsToClientId.set(ws, clientId);
+    this.clientIdToWs.set(clientId, ws);
 
     this.log(`Client registered: ${clientId} (session: ${connectionSessionId})`);
 
@@ -133,14 +137,14 @@ export class WebSocketServerTransport implements IMessageTransport {
 
   /**
    * Unregister a WebSocket client
+   * FIX P2.2: O(1) lookup using bidirectional mapping
    */
   unregisterClient(clientId: string): void {
-    // Find and remove WebSocket mapping
-    for (const [ws, id] of this.wsToClientId.entries()) {
-      if (id === clientId) {
-        this.wsToClientId.delete(ws);
-        break;
-      }
+    // FIX P2.2: O(1) reverse lookup instead of O(n) iteration
+    const ws = this.clientIdToWs.get(clientId);
+    if (ws) {
+      this.wsToClientId.delete(ws);
+      this.clientIdToWs.delete(clientId);
     }
 
     // Clean up queue tracking
