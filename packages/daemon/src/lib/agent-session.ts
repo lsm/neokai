@@ -46,6 +46,9 @@ export class AgentSession {
   // PHASE 3 FIX: Store unsubscribe functions to prevent memory leaks
   private unsubscribers: Array<() => void> = [];
 
+  // FIX: Track query promise for proper cleanup
+  private queryPromise: Promise<void> | null = null;
+
   constructor(
     private session: Session,
     private db: Database,
@@ -310,6 +313,14 @@ export class AgentSession {
     this.queryRunning = true;
     this.abortController = new AbortController();
 
+    // FIX: Store query promise for cleanup
+    this.queryPromise = this.runQuery();
+  }
+
+  /**
+   * Run the query (extracted for promise tracking)
+   */
+  private async runQuery(): Promise<void> {
     try {
       // Verify authentication
       const hasAuth = !!(process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY);
@@ -486,9 +497,11 @@ export class AgentSession {
 
   /**
    * Cleanup resources when session is destroyed
+   *
+   * FIX: Made async and waits for query to stop properly
    * PHASE 3 FIX: Unsubscribe from all MessageHub subscriptions to prevent memory leaks
    */
-  cleanup(): void {
+  async cleanup(): Promise<void> {
     console.log(`[AgentSession ${this.session.id}] Cleaning up resources...`);
 
     // Unsubscribe from all MessageHub events
@@ -501,14 +514,30 @@ export class AgentSession {
     }
     this.unsubscribers = [];
 
+    // Signal query to stop
+    this.queryRunning = false;
+
     // Abort any running query
     if (this.abortController) {
       this.abortController.abort();
       this.abortController = null;
     }
 
+    // FIX: Wait for query to fully stop (with timeout)
+    if (this.queryPromise) {
+      try {
+        await Promise.race([
+          this.queryPromise,
+          new Promise((resolve) => setTimeout(resolve, 5000)), // 5s timeout
+        ]);
+      } catch (error) {
+        // Ignore errors during cleanup
+        console.warn(`[AgentSession ${this.session.id}] Query cleanup error:`, error);
+      }
+      this.queryPromise = null;
+    }
+
     // Clear state
-    this.queryRunning = false;
     this.messageQueue = [];
     this.messageWaiters = [];
     this.historyReplayComplete = false;
