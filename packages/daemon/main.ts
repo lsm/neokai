@@ -7,7 +7,7 @@ import { AuthManager } from "./src/lib/auth-manager";
 import { StateManager } from "./src/lib/state-manager";
 import { SubscriptionManager } from "./src/lib/subscription-manager";
 import { MessageHub, MessageHubRouter } from "@liuboer/shared";
-import { MessageHubRPCRouter } from "./src/lib/messagehub-rpc-router";
+import { setupRPCHandlers } from "./src/lib/rpc-handlers";
 import { BunWebSocketTransport } from "./src/lib/bun-websocket-transport";
 import { setupMessageHubWebSocket } from "./src/routes/bun-websocket";
 
@@ -92,15 +92,14 @@ const stateManager = new StateManager(
 sessionManager.setStateManager(stateManager);
 console.log("✅ State manager initialized (fine-grained channels)");
 
-// Initialize MessageHub RPC Router
-const messageHubRPCRouter = new MessageHubRPCRouter(
+// Setup RPC handlers
+setupRPCHandlers({
   messageHub,
   sessionManager,
   authManager,
   config,
-);
-messageHubRPCRouter.setupHandlers();
-console.log("✅ MessageHub RPC router initialized");
+});
+console.log("✅ RPC handlers registered");
 
 // Initialize Subscription Manager (application layer)
 const subscriptionManager = new SubscriptionManager(messageHub);

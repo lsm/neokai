@@ -1,0 +1,23 @@
+/**
+ * Command RPC Handlers
+ */
+
+import type { MessageHub } from "@liuboer/shared";
+import type { SessionManager } from "../session-manager";
+
+export function setupCommandHandlers(
+  messageHub: MessageHub,
+  sessionManager: SessionManager,
+): void {
+  messageHub.handle("commands.list", async (data) => {
+    const { sessionId: targetSessionId } = data as { sessionId: string };
+    const agentSession = sessionManager.getSession(targetSessionId);
+
+    if (!agentSession) {
+      throw new Error("Session not found");
+    }
+
+    const commands = await agentSession.getSlashCommands();
+    return { commands };
+  });
+}

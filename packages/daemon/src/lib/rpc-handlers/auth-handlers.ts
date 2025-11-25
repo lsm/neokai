@@ -1,0 +1,16 @@
+/**
+ * Auth RPC Handlers
+ */
+
+import type { MessageHub } from "@liuboer/shared";
+import type { AuthManager } from "../auth-manager";
+
+export function setupAuthHandlers(
+  messageHub: MessageHub,
+  authManager: AuthManager,
+): void {
+  messageHub.handle("auth.status", async () => {
+    const authStatus = await authManager.getAuthStatus();
+    return { authStatus };
+  });
+}
