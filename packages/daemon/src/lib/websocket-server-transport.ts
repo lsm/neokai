@@ -1,5 +1,5 @@
 /**
- * Bun Native WebSocket Transport for MessageHub
+ * Server-Side WebSocket Transport for MessageHub
  *
  * PHASE 3 ARCHITECTURE (FIXED):
  * - Pure I/O layer - handles WebSocket send/receive only
@@ -12,7 +12,7 @@ import type { ServerWebSocket } from "bun";
 import type { HubMessage, IMessageTransport, ConnectionState, BroadcastResult } from "@liuboer/shared";
 import type { MessageHubRouter, ClientConnection } from "@liuboer/shared";
 
-export interface BunWebSocketTransportOptions {
+export interface WebSocketServerTransportOptions {
   name?: string;
   debug?: boolean;
   router: MessageHubRouter; // For client management only, not routing
@@ -20,14 +20,14 @@ export interface BunWebSocketTransportOptions {
 }
 
 /**
- * Bun WebSocket Transport - Pure I/O Layer
+ * Server-Side WebSocket Transport - Pure I/O Layer
  *
  * Responsibilities:
  * - Create ClientConnection wrappers for Bun WebSockets
  * - Forward incoming messages to MessageHub handlers
  * - Delegate all routing to MessageHubRouter
  */
-export class BunWebSocketTransport implements IMessageTransport {
+export class WebSocketServerTransport implements IMessageTransport {
   readonly name: string;
   private router: MessageHubRouter;
   private messageHandlers: Set<(message: HubMessage) => void> = new Set();
@@ -41,8 +41,8 @@ export class BunWebSocketTransport implements IMessageTransport {
   // Backpressure: track pending messages per client
   private clientQueues: Map<string, number> = new Map();
 
-  constructor(options: BunWebSocketTransportOptions) {
-    this.name = options.name || "bun-websocket";
+  constructor(options: WebSocketServerTransportOptions) {
+    this.name = options.name || "websocket-server";
     this.debug = options.debug || false;
     this.router = options.router;
     this.maxQueueSize = options.maxQueueSize || 1000;
