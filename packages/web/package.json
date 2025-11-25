@@ -9,7 +9,8 @@
     "dev": "bun run css:build && bun run --bun css:watch & bun run server:dev",
     "build": "bun run build.ts",
     "start": "NODE_ENV=production bun src/server-prod.ts",
-    "preview": "bun src/index.html"
+    "preview": "bun src/index.html",
+    "typecheck": "tsc --build"
   },
   "dependencies": {
     "preact": "10.27.2",

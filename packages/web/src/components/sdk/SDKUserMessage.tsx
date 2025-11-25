@@ -7,7 +7,7 @@
 import type { SDKMessage } from "@liuboer/shared/sdk/sdk.d.ts";
 import { useState } from "preact/hooks";
 import { IconButton } from "../ui/IconButton.tsx";
-import { Dropdown } from "../ui/Dropdown.tsx";
+import { Dropdown, type DropdownMenuItem } from "../ui/Dropdown.tsx";
 import { Tooltip } from "../ui/Tooltip.tsx";
 import { copyToClipboard } from "../../lib/utils.ts";
 import { toast } from "../../lib/toast.ts";
@@ -85,8 +85,8 @@ export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo, isRepla
     }
   };
 
-  const getMessageActions = () => {
-    const actions = [
+  const getMessageActions = (): DropdownMenuItem[] => {
+    const actions: DropdownMenuItem[] = [
       {
         label: "Copy text",
         onClick: handleCopy,
@@ -106,7 +106,7 @@ export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo, isRepla
     if (onEdit) {
       actions.push({
         label: "Edit",
-        onClick: onEdit,
+        onClick: async () => { onEdit(); },
         icon: (
           <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path
@@ -121,10 +121,10 @@ export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo, isRepla
     }
 
     if (onDelete) {
-      actions.push({ type: "divider" as const });
+      actions.push({ type: "divider" });
       actions.push({
         label: "Delete",
-        onClick: onDelete,
+        onClick: async () => { onDelete(); },
         danger: true,
         icon: (
           <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">

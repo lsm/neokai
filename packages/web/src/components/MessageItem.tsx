@@ -2,7 +2,7 @@ import { useState } from "preact/hooks";
 import type { Message } from "@liuboer/shared";
 import { Collapsible } from "./ui/Collapsible.tsx";
 import { IconButton } from "./ui/IconButton.tsx";
-import { Dropdown } from "./ui/Dropdown.tsx";
+import { Dropdown, type DropdownMenuItem } from "./ui/Dropdown.tsx";
 import { Tooltip } from "./ui/Tooltip.tsx";
 import MarkdownRenderer from "./chat/MarkdownRenderer.tsx";
 import CodeBlock from "./chat/CodeBlock.tsx";
@@ -35,8 +35,8 @@ export default function MessageItem({
     }
   };
 
-  const getMessageActions = () => {
-    const actions = [
+  const getMessageActions = (): DropdownMenuItem[] => {
+    const actions: DropdownMenuItem[] = [
       {
         label: "Copy text",
         onClick: handleCopy,
@@ -56,7 +56,7 @@ export default function MessageItem({
     if (!isUser && onRegenerate) {
       actions.push({
         label: "Regenerate",
-        onClick: onRegenerate,
+        onClick: async () => { onRegenerate(); },
         icon: (
           <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path
@@ -73,7 +73,7 @@ export default function MessageItem({
     if (onEdit) {
       actions.push({
         label: "Edit",
-        onClick: onEdit,
+        onClick: async () => { onEdit(); },
         icon: (
           <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path
@@ -88,10 +88,10 @@ export default function MessageItem({
     }
 
     if (onDelete) {
-      actions.push({ type: "divider" as const });
+      actions.push({ type: "divider" });
       actions.push({
         label: "Delete",
-        onClick: onDelete,
+        onClick: async () => { onDelete(); },
         danger: true,
         icon: (
           <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">

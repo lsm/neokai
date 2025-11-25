@@ -178,8 +178,8 @@ export function SDKResultMessage({ message }: Props) {
               <div class="space-y-2">
                 {message.permission_denials.map((denial, idx) => (
                   <div key={idx} class="bg-yellow-50 dark:bg-yellow-900/20 p-3 rounded border border-yellow-200 dark:border-yellow-800 text-sm">
-                    <div class="font-medium text-yellow-900 dark:text-yellow-100">{denial.toolName}</div>
-                    <div class="text-yellow-700 dark:text-yellow-300 mt-1">{denial.reason}</div>
+                    <div class="font-medium text-yellow-900 dark:text-yellow-100">{denial.tool_name}</div>
+                    <div class="text-yellow-700 dark:text-yellow-300 mt-1 text-xs font-mono">{denial.tool_use_id}</div>
                   </div>
                 ))}
               </div>

@@ -8,7 +8,7 @@
  */
 
 import type { SDKMessage } from "@liuboer/shared/sdk/sdk.d.ts";
-import { isTextBlock, isToolUseBlock, isThinkingBlock } from "@liuboer/shared/sdk/type-guards";
+import { isTextBlock, isToolUseBlock, isThinkingBlock, type ContentBlock } from "@liuboer/shared/sdk/type-guards";
 import MarkdownRenderer from "../chat/MarkdownRenderer.tsx";
 import { Collapsible } from "../ui/Collapsible.tsx";
 import { IconButton } from "../ui/IconButton.tsx";
@@ -33,7 +33,7 @@ export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
   // Extract text content for copy functionality
   const getTextContent = (): string => {
     return apiMessage.content
-      .map((block) => {
+      .map((block: ContentBlock) => {
         if (isTextBlock(block)) {
           return block.text;
         }
@@ -61,20 +61,20 @@ export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
   };
 
   // Separate blocks by type - tool use and thinking blocks get full width, text blocks are constrained
-  const textBlocks = apiMessage.content.filter(block => isTextBlock(block));
-  const toolBlocks = apiMessage.content.filter(isToolUseBlock);
-  const thinkingBlocks = apiMessage.content.filter(isThinkingBlock);
+  const textBlocks = apiMessage.content.filter((block: ContentBlock) => isTextBlock(block));
+  const toolBlocks = apiMessage.content.filter((block: ContentBlock) => isToolUseBlock(block));
+  const thinkingBlocks = apiMessage.content.filter((block: ContentBlock) => isThinkingBlock(block));
 
   return (
     <div class="py-2 space-y-3">
       {/* Tool use blocks - full width like result messages */}
-      {toolBlocks.map((block, idx) => {
+      {toolBlocks.map((block: any, idx: number) => {
         const toolResult = toolResultsMap?.get(block.id);
         return <ToolUseBlock key={`tool-${idx}`} block={block} toolResult={toolResult} />;
       })}
 
       {/* Thinking blocks - treated as tool blocks for unified UI */}
-      {thinkingBlocks.map((block, idx) => (
+      {thinkingBlocks.map((block: any, idx: number) => (
         <ToolResultCard
           key={`thinking-${idx}`}
           toolName="Thinking"
@@ -90,7 +90,7 @@ export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
       {textBlocks.length > 0 && (
         <div class="max-w-[85%] md:max-w-[70%] w-auto">
           <div class={cn(messageColors.assistant.background, borderRadius.message.bubble, messageSpacing.assistant.bubble.combined, "space-y-3")}>
-            {textBlocks.map((block, idx) => (
+            {textBlocks.map((block: any, idx: number) => (
               <div key={idx} class={messageColors.assistant.text}>
                 <MarkdownRenderer
                   content={block.text}
@@ -229,7 +229,7 @@ function getToolIcon(toolName: string) {
  * Tool Use Block Component
  * Now uses the new ToolResultCard component
  */
-function ToolUseBlock({ block, toolResult }: { block: Extract<ReturnType<typeof isToolUseBlock> extends true ? any : never, { type: "tool_use" }>, toolResult?: any }) {
+function ToolUseBlock({ block, toolResult }: { block: Extract<ContentBlock, { type: "tool_use" }>, toolResult?: any }) {
   return (
     <ToolResultCard
       toolName={block.name}

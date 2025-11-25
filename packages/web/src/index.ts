@@ -8,7 +8,7 @@ const isDev = process.env.NODE_ENV !== "production";
 const server = serve({
   port: PORT,
 
-  async fetch(req, server) {
+  async fetch(req: Request, server: any) {
     const url = new URL(req.url);
 
     // API proxy to daemon - forward all /api requests
@@ -37,7 +37,7 @@ const server = serve({
 
     // Let Bun's development server handle static files (JS, CSS, etc.)
     // This is important for proper MIME types and module serving
-    return null;
+    return null as any;
   },
 
   routes: {
@@ -49,14 +49,7 @@ const server = serve({
     hmr: true, // Hot module replacement
     console: true, // Stream browser console to terminal
   },
-
-  headers: isDev ? {
-    // Add no-cache headers in development to prevent stale code
-    "Cache-Control": "no-cache, no-store, must-revalidate",
-    "Pragma": "no-cache",
-    "Expires": "0",
-  } : undefined,
-});
+} as any);
 
 console.log(`🚀 Liuboer Web UI running on ${server.url}`);
 console.log(`📡 Proxying API requests to ${DAEMON_URL}`);

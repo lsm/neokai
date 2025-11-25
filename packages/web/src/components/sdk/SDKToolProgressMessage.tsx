@@ -22,7 +22,7 @@ export function SDKToolProgressMessage({ message, toolInput }: Props) {
       toolInput={toolInput}
       elapsedTime={message.elapsed_time_seconds}
       toolUseId={message.tool_use_id}
-      parentToolUseId={message.parent_tool_use_id}
+      parentToolUseId={message.parent_tool_use_id || undefined}
       variant="default"
     />
   );

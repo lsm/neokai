@@ -8,7 +8,6 @@
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
-    "composite": true,
     "types": ["bun-types"],
     "paths": {
       "@/*": ["./src/*"],
@@ -16,6 +15,6 @@
       "@liuboer/shared/*": ["../shared/src/*"]
     }
   },
-  "include": ["src/**/*", "main.ts", "tests/**/*", "test-*.ts"],
+  "include": ["src/**/*", "main.ts", "tests/**/*", "test-*.ts", "../shared/src/**/*"],
   "exclude": ["node_modules", "dist"]
 }

@@ -1,6 +1,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { Message, MessageContent, Session, ToolCall, ContextInfo } from "@liuboer/shared";
 import type { MessageHub } from "@liuboer/shared";
+import type { SDKUserMessage } from "@liuboer/shared/sdk/sdk.d.ts";
 import { Database } from "../storage/database";
 
 /**
@@ -169,13 +170,7 @@ export class AgentSession {
    * AsyncGenerator that yields messages continuously from the queue
    * This is the heart of streaming input mode!
    */
-  private async *messageGenerator(): AsyncGenerator<{
-    type: "user";
-    message: {
-      role: "user";
-      content: string | MessageContent[];
-    };
-  }> {
+  private async *messageGenerator(): AsyncGenerator<SDKUserMessage> {
     console.log(`[AgentSession ${this.session.id}] Message generator started`);
 
     // First, yield conversation history (if resuming session)
@@ -189,6 +184,9 @@ export class AgentSession {
         console.log(`[AgentSession ${this.session.id}] Yielding history message: ${msg.id}`);
         yield {
           type: "user" as const,
+          uuid: msg.id as any,
+          session_id: this.session.id,
+          parent_tool_use_id: null,
           message: {
             role: "user" as const,
             content: msg.content,
@@ -218,9 +216,9 @@ export class AgentSession {
       // Only save and emit if NOT internal (reserved for future use)
       if (!queuedMessage.internal) {
         // Save user message to DB
-        const sdkUserMessage = {
+        const sdkUserMessage: SDKUserMessage = {
           type: "user" as const,
-          uuid: queuedMessage.id,
+          uuid: queuedMessage.id as any,
           session_id: this.session.id,
           parent_tool_use_id: null,
           message: {
@@ -232,7 +230,7 @@ export class AgentSession {
           },
         };
 
-        this.db.saveSDKMessage(this.session.id, sdkUserMessage);
+        this.db.saveSDKMessage(this.session.id, sdkUserMessage as any);
 
         // Emit user message
         await this.messageHub.publish(
@@ -265,6 +263,9 @@ export class AgentSession {
       // Yield to SDK
       yield {
         type: "user" as const,
+        uuid: queuedMessage.id as any,
+        session_id: this.session.id,
+        parent_tool_use_id: null,
         message: {
           role: "user" as const,
           content: queuedMessage.content,

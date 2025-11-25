@@ -9,7 +9,7 @@ if (!root) {
 
 // Render the app
 function renderApp() {
-  render(<App />, root);
+  render(<App />, root!);
 }
 
 // Initial render

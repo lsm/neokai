@@ -2,6 +2,8 @@
  * Type definitions for tool rendering system
  */
 
+import type { JSX } from 'preact';
+
 /**
  * Display variant for tool components
  */
@@ -47,7 +49,7 @@ export interface ToolConfig {
   summaryExtractor?: (input: any) => string | null;
 
   /** Custom full renderer component (optional) */
-  customRenderer?: (props: ToolRendererProps) => JSX.Element;
+  customRenderer?: (props: ToolRendererProps) => JSX.Element | null;
 
   /** Color theme override */
   colors?: {
@@ -55,6 +57,7 @@ export interface ToolConfig {
     text: string;
     border: string;
     iconColor: string;
+    lightText?: string;
   };
 
   /** Whether this tool typically has long output */
