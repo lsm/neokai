@@ -7,17 +7,23 @@ import { cors } from "@elysiajs/cors";
 import "dotenv/config";
 import { Database } from "../src/storage/database";
 import { SessionManager } from "../src/lib/session-manager";
-import { EventBusManager } from "../src/lib/event-bus-manager";
 import { AuthManager } from "../src/lib/auth-manager";
-import { WebSocketRPCRouter } from "../src/lib/websocket-rpc-router";
-import { setupWebSocket } from "../src/routes/websocket";
+import { StateManager } from "../src/lib/state-manager";
+import { SubscriptionManager } from "../src/lib/subscription-manager";
+import { MessageHub, MessageHubRouter } from "@liuboer/shared";
+import { setupRPCHandlers } from "../src/lib/rpc-handlers";
+import { WebSocketServerTransport } from "../src/lib/websocket-server-transport";
+import { setupMessageHubWebSocket } from "../src/routes/setup-websocket";
 import type { Config } from "../src/config";
 
 export interface TestContext {
   app: Elysia;
   db: Database;
   sessionManager: SessionManager;
-  eventBusManager: EventBusManager;
+  messageHub: MessageHub;
+  transport: WebSocketServerTransport;
+  stateManager: StateManager;
+  subscriptionManager: SubscriptionManager;
   authManager: AuthManager;
   baseUrl: string;
   config: Config;
@@ -49,10 +55,9 @@ export async function createTestApp(): Promise<TestContext> {
     oauthClientId: "test-client-id",
     oauthRedirectUri: "http://localhost:3000/oauth/callback",
     oauthScopes: "public limited",
+    nodeEnv: "test",
+    workspaceRoot: process.cwd(),
   };
-
-  // Initialize event bus manager
-  const eventBusManager = new EventBusManager();
 
   // Initialize authentication manager
   // Note: Credentials are read from environment variables, not set in database
@@ -66,19 +71,54 @@ export async function createTestApp(): Promise<TestContext> {
     console.log("[TEST] WARNING: No authentication configured! Tests requiring API calls will be skipped.");
   }
 
+  // Initialize MessageHub architecture
+  const router = new MessageHubRouter({
+    logger: console,
+    debug: false,
+  });
+
+  const messageHub = new MessageHub({
+    defaultSessionId: "global",
+    debug: false,
+  });
+
+  messageHub.registerRouter(router);
+
+  const transport = new WebSocketServerTransport({
+    name: "test-ws",
+    debug: false,
+    router,
+  });
+
+  messageHub.registerTransport(transport);
+
   // Create session manager
-  const sessionManager = new SessionManager(db, eventBusManager, authManager, {
+  const sessionManager = new SessionManager(db, messageHub, authManager, {
     defaultModel: config.defaultModel,
     maxTokens: config.maxTokens,
     temperature: config.temperature,
+    workspaceRoot: config.workspaceRoot,
   });
 
-  // Initialize WebSocket RPC Router
-  const rpcRouter = new WebSocketRPCRouter(sessionManager, authManager, config);
-  const globalRPCManager = eventBusManager.getGlobalRPCManager();
-  if (globalRPCManager) {
-    rpcRouter.setupHandlers(globalRPCManager, "global");
-  }
+  // Initialize State Manager
+  const stateManager = new StateManager(
+    messageHub,
+    sessionManager,
+    authManager,
+    config,
+  );
+  sessionManager.setStateManager(stateManager);
+
+  // Setup RPC handlers
+  setupRPCHandlers({
+    messageHub,
+    sessionManager,
+    authManager,
+    config,
+  });
+
+  // Initialize Subscription Manager
+  const subscriptionManager = new SubscriptionManager(messageHub);
 
   // Create application
   const app = new Elysia()
@@ -103,8 +143,8 @@ export async function createTestApp(): Promise<TestContext> {
       status: "running",
     }));
 
-  // Mount WebSocket routes
-  setupWebSocket(app, eventBusManager, sessionManager);
+  // Mount MessageHub WebSocket routes
+  setupMessageHubWebSocket(app, transport, sessionManager, subscriptionManager);
 
   // Start server on random available port (0 = OS assigns free port)
   app.listen({
@@ -141,12 +181,16 @@ export async function createTestApp(): Promise<TestContext> {
     app,
     db,
     sessionManager,
-    eventBusManager,
+    messageHub,
+    transport,
+    stateManager,
+    subscriptionManager,
     authManager,
     baseUrl,
     config,
     cleanup: async () => {
-      await eventBusManager.closeAll();
+      messageHub.cleanup();
+      await sessionManager.cleanup();
       db.close();
       app.stop();
     },
@@ -226,6 +270,7 @@ export async function assertErrorResponse(
 
 /**
  * Create WebSocket connection to test server and return both the WebSocket and a promise for the first message
+ * Note: Uses unified /ws endpoint - sessionId is passed in message payloads, not URL
  */
 export function createWebSocketWithFirstMessage(
   baseUrl: string,
@@ -233,7 +278,7 @@ export function createWebSocketWithFirstMessage(
   timeout = 5000,
 ): { ws: WebSocket; firstMessagePromise: Promise<any> } {
   const wsUrl = baseUrl.replace("http://", "ws://");
-  const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`);
+  const ws = new WebSocket(`${wsUrl}/ws`);
 
   // Set up message listener IMMEDIATELY (synchronously)
   const firstMessagePromise = new Promise((resolve, reject) => {
@@ -271,13 +316,14 @@ export function createWebSocketWithFirstMessage(
 
 /**
  * Create WebSocket connection to test server (legacy, for backward compatibility)
+ * Note: Uses unified /ws endpoint - sessionId is passed in message payloads, not URL
  */
 export function createWebSocket(
   baseUrl: string,
   sessionId: string,
 ): WebSocket {
   const wsUrl = baseUrl.replace("http://", "ws://");
-  const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`);
+  const ws = new WebSocket(`${wsUrl}/ws`);
 
   // Set up error handler immediately to catch early errors
   ws.addEventListener("error", (error) => {
