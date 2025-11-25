@@ -223,20 +223,6 @@ export interface MessageHubOptions {
    * @default 10
    */
   maxEventDepth?: number;
-
-  /**
-   * FIX P1.3: Warn on message sequence gaps (out-of-order or missing messages)
-   * @default true
-   */
-  warnOnSequenceGap?: boolean;
-
-  /**
-   * FIX P1.4: Stop on first event handler error (strict mode)
-   * If false (default), all handlers execute and errors are collected
-   * If true, stops on first handler error
-   * @default false
-   */
-  stopOnEventHandlerError?: boolean;
 }
 
 /**

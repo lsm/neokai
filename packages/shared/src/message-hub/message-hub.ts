@@ -95,17 +95,6 @@ export class MessageHub {
   // Message sequencing for ordering guarantees
   private messageSequence = 0;
 
-  // FIX P0.7: Queue events during resubscription to prevent event loss
-  private resubscribing: boolean = false;
-  private pendingEvents: HubMessage[] = [];
-
-  // FIX P1.3: Message sequence tracking (per-session)
-  private expectedSequence: Map<string, number> = new Map(); // sessionId -> next expected sequence
-  private readonly warnOnSequenceGap: boolean;
-
-  // FIX P1.4: Event handler error handling mode
-  private readonly stopOnEventHandlerError: boolean;
-
   // Message inspection
   private messageHandlers: Set<MessageHandler> = new Set();
 
@@ -120,8 +109,6 @@ export class MessageHub {
     this.maxCacheSize = options.maxCacheSize || 500;
     this.cacheTTL = options.cacheTTL || 60000;
     this.maxEventDepth = options.maxEventDepth || 10;
-    this.warnOnSequenceGap = options.warnOnSequenceGap ?? true; // FIX P1.3: Enable sequence gap warnings by default
-    this.stopOnEventHandlerError = options.stopOnEventHandlerError ?? false; // FIX P1.4: Continue on handler errors by default
 
     // Initialize LRU cache
     this.requestCache = new LRUCache(this.maxCacheSize, this.cacheTTL);
@@ -550,7 +537,6 @@ export class MessageHub {
 
   /**
    * Handle incoming message from transport
-   * FIX P1.3: Validate message sequence to detect out-of-order or missing messages
    */
   private async handleIncomingMessage(message: HubMessage): Promise<void> {
     // Validate message structure
@@ -560,31 +546,6 @@ export class MessageHub {
     }
 
     this.log(`← Incoming: ${message.type} ${message.method}`, message);
-
-    // FIX P1.3: Validate message sequence (if present)
-    if (typeof message.sequence === 'number' && this.warnOnSequenceGap) {
-      const sessionId = message.sessionId;
-      const expected = this.expectedSequence.get(sessionId);
-
-      if (expected !== undefined) {
-        // We've seen messages from this session before
-        if (message.sequence < expected) {
-          console.warn(
-            `[MessageHub] Out-of-order message detected for session ${sessionId}: ` +
-            `received sequence ${message.sequence}, expected >= ${expected}`
-          );
-        } else if (message.sequence > expected) {
-          const gap = message.sequence - expected;
-          console.warn(
-            `[MessageHub] Message sequence gap detected for session ${sessionId}: ` +
-            `received sequence ${message.sequence}, expected ${expected} (gap: ${gap} messages)`
-          );
-        }
-      }
-
-      // Update expected sequence for next message
-      this.expectedSequence.set(sessionId, message.sequence + 1);
-    }
 
     // Notify message handlers
     this.notifyMessageHandlers(message, "in");
@@ -697,16 +658,8 @@ export class MessageHub {
    * Handle event message
    *
    * FIX P0.4: Prevent infinite recursion in event handlers
-   * FIX P0.7: Queue events during resubscription to prevent event loss
    */
   private async handleEvent(message: HubMessage): Promise<void> {
-    // FIX P0.7: Queue events during resubscription
-    if (this.resubscribing) {
-      this.pendingEvents.push(message);
-      this.log(`Event queued during resubscription: ${message.method}`);
-      return;
-    }
-
     // FIX P0.4: Check recursion depth
     const currentDepth = this.eventDepthMap.get(message.id) || 0;
     if (currentDepth >= this.maxEventDepth) {
@@ -738,37 +691,14 @@ export class MessageHub {
     this.eventDepthMap.set(message.id, currentDepth + 1);
 
     try {
-      // FIX P1.4: Collect all handler errors for better visibility
-      const handlerErrors: Array<{ handler: EventHandler; error: Error }> = [];
-
       // Execute all handlers synchronously but with depth tracking
       // This maintains backward compat while preventing infinite recursion
       for (const handler of handlers) {
         try {
           await Promise.resolve(handler(message.data, context));
         } catch (error) {
-          const err = error instanceof Error ? error : new Error(String(error));
-          handlerErrors.push({ handler, error: err });
-
-          // FIX P1.4: Configurable error handling behavior
-          if (this.stopOnEventHandlerError) {
-            // Stop on first error (strict mode)
-            console.error(
-              `[MessageHub] Event handler failed for ${message.method} (stopping):`,
-              err
-            );
-            break;
-          }
-          // Default: Continue executing other handlers (resilient mode)
+          console.error(`[MessageHub] Error in event handler for ${message.method}:`, error);
         }
-      }
-
-      // FIX P1.4: Log all collected errors together
-      if (handlerErrors.length > 0 && !this.stopOnEventHandlerError) {
-        console.error(
-          `[MessageHub] ${handlerErrors.length} event handler(s) failed for ${message.method}:`,
-          handlerErrors.map((e) => e.error.message)
-        );
       }
     } finally {
       // Clean up depth tracking immediately after handlers complete
@@ -966,7 +896,6 @@ export class MessageHub {
    * Re-subscribe all persisted subscriptions after reconnection
    *
    * FIX P0.3: Atomic swap to prevent race condition where events are dropped
-   * FIX P0.7: Queue events during resubscription, then replay after swap
    */
   private resubscribeAll(): void {
     if (this.persistedSubscriptions.size === 0) {
@@ -975,58 +904,35 @@ export class MessageHub {
 
     this.log(`Re-subscribing ${this.persistedSubscriptions.size} subscriptions after reconnection`);
 
-    // FIX P0.7: Set flag to queue incoming events during rebuild
-    this.resubscribing = true;
+    // FIX P0.3: Build new subscription map first, then atomically swap
+    // This prevents the window where subscriptions.clear() makes us miss events
+    const newSubscriptions = new Map<string, Map<string, Set<EventHandler>>>();
 
-    try {
-      // FIX P0.3: Build new subscription map first, then atomically swap
-      // This prevents the window where subscriptions.clear() makes us miss events
-      const newSubscriptions = new Map<string, Map<string, Set<EventHandler>>>();
+    // Re-establish all persisted subscriptions in new map
+    for (const [subId, { method, handler, options }] of this.persistedSubscriptions) {
+      const sessionId = options.sessionId || this.defaultSessionId;
 
-      // Re-establish all persisted subscriptions in new map
-      for (const [subId, { method, handler, options }] of this.persistedSubscriptions) {
-        const sessionId = options.sessionId || this.defaultSessionId;
-
-        // Initialize subscription maps if needed
-        if (!newSubscriptions.has(sessionId)) {
-          newSubscriptions.set(sessionId, new Map());
-        }
-
-        const sessionSubs = newSubscriptions.get(sessionId)!;
-
-        if (!sessionSubs.has(method)) {
-          sessionSubs.set(method, new Set());
-        }
-
-        sessionSubs.get(method)!.add(handler);
-        this.log(`Re-subscribed to: ${method} (session: ${sessionId})`);
+      // Initialize subscription maps if needed
+      if (!newSubscriptions.has(sessionId)) {
+        newSubscriptions.set(sessionId, new Map());
       }
 
-      // Atomic swap - no window where events are missed
-      this.subscriptions = newSubscriptions;
-    } finally {
-      // FIX P0.7: Clear flag to allow event processing
-      this.resubscribing = false;
-    }
+      const sessionSubs = newSubscriptions.get(sessionId)!;
 
-    // FIX P0.7: Replay queued events after subscription rebuild
-    if (this.pendingEvents.length > 0) {
-      this.log(`Replaying ${this.pendingEvents.length} queued events`);
-      const events = [...this.pendingEvents];
-      this.pendingEvents = [];
-
-      for (const event of events) {
-        // Replay event asynchronously (don't block reconnection)
-        this.handleEvent(event).catch((error) => {
-          console.error(`[MessageHub] Error replaying queued event:`, error);
-        });
+      if (!sessionSubs.has(method)) {
+        sessionSubs.set(method, new Set());
       }
+
+      sessionSubs.get(method)!.add(handler);
+      this.log(`Re-subscribed to: ${method} (session: ${sessionId})`);
     }
+
+    // Atomic swap - no window where events are missed
+    this.subscriptions = newSubscriptions;
   }
 
   /**
    * Cleanup all state
-   * FIX P1.3: Clear sequence tracking map
    */
   cleanup(): void {
     // Reject all pending calls
@@ -1046,9 +952,6 @@ export class MessageHub {
     this.messageHandlers.clear();
     this.connectionStateHandlers.clear();
     this.eventDepthMap.clear();
-
-    // FIX P1.3: Clear sequence tracking
-    this.expectedSequence.clear();
 
     this.log("MessageHub cleaned up");
   }

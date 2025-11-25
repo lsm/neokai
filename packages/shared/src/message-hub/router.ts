@@ -62,6 +62,22 @@ export interface MessageHubRouterOptions {
    * @default 1000
    */
   maxSubscriptionsPerClient?: number;
+  /**
+   * FIX P2.4: Rate limit for subscribe/unsubscribe operations (per client)
+   * Using token bucket: max operations per second
+   * @default 10 operations/sec
+   */
+  subscriptionRateLimit?: number;
+}
+
+/**
+ * FIX P2.4: Token bucket for rate limiting
+ */
+interface TokenBucket {
+  tokens: number;
+  lastRefill: number;
+  capacity: number;
+  refillRate: number; // tokens per second
 }
 
 /**
@@ -72,6 +88,7 @@ interface ClientInfo {
   connection: ClientConnection;
   connectedAt: number;
   subscriptions: Map<string, Set<string>>; // Map<sessionId, Set<method>>
+  rateLimitBucket?: TokenBucket; // FIX P2.4: Rate limiting
 }
 
 /**
@@ -101,11 +118,13 @@ export class MessageHubRouter {
   private logger: RouterLogger;
   private debug: boolean;
   private readonly maxSubscriptionsPerClient: number;
+  private readonly subscriptionRateLimit: number; // FIX P2.4
 
   constructor(options: MessageHubRouterOptions = {}) {
     this.logger = options.logger || console;
     this.debug = options.debug || false;
     this.maxSubscriptionsPerClient = options.maxSubscriptionsPerClient || 1000;
+    this.subscriptionRateLimit = options.subscriptionRateLimit || 10; // FIX P2.4: 10 ops/sec default
   }
 
   /**
@@ -125,6 +144,13 @@ export class MessageHubRouter {
       connection,
       connectedAt: Date.now(),
       subscriptions: new Map(),
+      // FIX P2.4: Initialize rate limit bucket
+      rateLimitBucket: this.subscriptionRateLimit > 0 ? {
+        tokens: this.subscriptionRateLimit,
+        lastRefill: Date.now(),
+        capacity: this.subscriptionRateLimit,
+        refillRate: this.subscriptionRateLimit,
+      } : undefined,
     };
 
     this.clients.set(connection.id, info);
@@ -155,17 +181,57 @@ export class MessageHubRouter {
   }
 
   /**
+   * FIX P2.4: Check and consume rate limit token
+   * Returns true if operation allowed, false if rate limit exceeded
+   */
+  private checkRateLimit(clientId: string): boolean {
+    const client = this.getClientById(clientId);
+    if (!client || !client.rateLimitBucket) {
+      return true; // No rate limiting enabled
+    }
+
+    const bucket = client.rateLimitBucket;
+    const now = Date.now();
+    const elapsed = (now - bucket.lastRefill) / 1000; // seconds
+
+    // Refill tokens based on elapsed time
+    const newTokens = Math.min(
+      bucket.capacity,
+      bucket.tokens + elapsed * bucket.refillRate
+    );
+
+    bucket.tokens = newTokens;
+    bucket.lastRefill = now;
+
+    // Check if we have a token
+    if (bucket.tokens >= 1) {
+      bucket.tokens -= 1;
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
    * Subscribe a client to a method in a session
    *
    * FIXES:
    * - ✅ P1.4: Validates clientId (non-empty string)
    * - ✅ P1.3: Enforces max subscriptions limit per client
+   * - ✅ P2.4: Rate limits subscribe operations (token bucket)
    * - ✅ P2.5: Warns on duplicate subscriptions (idempotent)
    */
   subscribe(sessionId: string, method: string, clientId: string): void {
     // FIX P1.4: Validate clientId
     if (!clientId || typeof clientId !== 'string' || clientId.trim().length === 0) {
       throw new Error(`Invalid clientId: ${JSON.stringify(clientId)}`);
+    }
+
+    // FIX P2.4: Check rate limit
+    if (!this.checkRateLimit(clientId)) {
+      throw new Error(
+        `Rate limit exceeded for client ${clientId}. Max ${this.subscriptionRateLimit} subscribe operations per second.`
+      );
     }
 
     // Validate sessionId - colons not allowed (reserved for internal routing)
@@ -252,8 +318,18 @@ export class MessageHubRouter {
   /**
    * Unsubscribe a client from a method in a session
    * Cleans up empty Maps to prevent memory leaks
+   * FIX P2.4: Rate limits unsubscribe operations
    */
   unsubscribeClient(sessionId: string, method: string, clientId: string): void {
+    // FIX P2.4: Check rate limit (same limit as subscribe)
+    if (!this.checkRateLimit(clientId)) {
+      this.logger.warn(
+        `Rate limit exceeded for client ${clientId} during unsubscribe. Max ${this.subscriptionRateLimit} operations per second.`
+      );
+      // Don't throw for unsubscribe - just log warning and proceed
+      // Allows cleanup to continue even if rate limited
+    }
+
     const sessionSubs = this.subscriptions.get(sessionId);
     if (!sessionSubs) {
       return;
@@ -292,6 +368,7 @@ export class MessageHubRouter {
   /**
    * Route an EVENT message to subscribed clients
    * Returns delivery statistics for observability
+   * FIX P2.1: Handle serialization errors (circular refs, etc.)
    */
   routeEvent(message: HubMessage): RouteResult {
     if (!isEventMessage(message)) {
@@ -329,10 +406,27 @@ export class MessageHubRouter {
       };
     }
 
+    // FIX P2.1: Handle serialization errors (circular refs, BigInt, etc.)
+    let json: string;
+    try {
+      json = JSON.stringify(message);
+    } catch (error) {
+      this.logger.error(
+        `[MessageHubRouter] Failed to serialize message for ${message.sessionId}:${message.method}:`,
+        error
+      );
+      return {
+        sent: 0,
+        failed: methodSubs.size,
+        totalSubscribers: methodSubs.size,
+        sessionId: message.sessionId,
+        method: message.method,
+      };
+    }
+
     // Send to all subscribed clients
     let sentCount = 0;
     let failedCount = 0;
-    const json = JSON.stringify(message);
 
     for (const clientId of methodSubs) {
       const client = this.getClientById(clientId);
@@ -364,6 +458,7 @@ export class MessageHubRouter {
 
   /**
    * Send a message to a specific client
+   * FIX P2.1: Handle serialization errors
    */
   sendToClient(clientId: string, message: HubMessage): boolean {
     const client = this.getClientById(clientId);
@@ -377,8 +472,20 @@ export class MessageHubRouter {
       return false;
     }
 
+    // FIX P2.1: Handle serialization errors
+    let json: string;
     try {
-      client.connection.send(JSON.stringify(message));
+      json = JSON.stringify(message);
+    } catch (error) {
+      this.logger.error(
+        `[MessageHubRouter] Failed to serialize message for client ${clientId}:`,
+        error
+      );
+      return false;
+    }
+
+    try {
+      client.connection.send(json);
       return true;
     } catch (error) {
       this.logger.error(`[MessageHubRouter] Failed to send to client ${clientId}:`, error);
@@ -389,9 +496,18 @@ export class MessageHubRouter {
   /**
    * Broadcast a message to all clients
    * FIX P0.6: Check backpressure before sending to prevent server OOM
+   * FIX P2.1: Handle serialization errors
    */
   broadcast(message: HubMessage): { sent: number; failed: number; skipped?: number } {
-    const json = JSON.stringify(message);
+    // FIX P2.1: Handle serialization errors
+    let json: string;
+    try {
+      json = JSON.stringify(message);
+    } catch (error) {
+      this.logger.error(`[MessageHubRouter] Failed to serialize broadcast message:`, error);
+      return { sent: 0, failed: this.clients.size, skipped: 0 };
+    }
+
     let sentCount = 0;
     let failedCount = 0;
     let skippedCount = 0;
