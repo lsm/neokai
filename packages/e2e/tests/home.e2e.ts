@@ -11,8 +11,9 @@ test.describe("Home Page", () => {
 
     // The subtitle changes based on whether there are sessions
     // Check for the "Create a new session" part which appears in both variants
+    // Use .first() to handle multiple matches in strict mode
     await expect(
-      page.locator("text=/create a new session/i")
+      page.locator("text=/create a new session/i").first()
     ).toBeVisible();
 
     // Check for description
