@@ -66,9 +66,9 @@ export type {
   PendingCall,
 } from "./types.ts";
 
-// Transports - renamed to avoid conflict with EventBus transports
-export { WebSocketClientTransport as HubWebSocketClientTransport } from "./transport-websocket-client.ts";
-export type { WebSocketClientTransportOptions as HubWebSocketClientTransportOptions } from "./transport-websocket-client.ts";
+// Transports
+export { WebSocketClientTransport } from "./websocket-client-transport.ts";
+export type { WebSocketClientTransportOptions } from "./websocket-client-transport.ts";
 
 // Cache utilities (for advanced use cases)
 export { LRUCache, fastHash, createCacheKey } from "./cache.ts";

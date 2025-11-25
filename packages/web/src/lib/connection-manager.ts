@@ -5,7 +5,7 @@
  * Simpler and more focused than MessageHubAPIClient.
  */
 
-import { MessageHub, HubWebSocketClientTransport } from "@liuboer/shared";
+import { MessageHub, WebSocketClientTransport } from "@liuboer/shared";
 
 /**
  * Get the daemon WebSocket base URL
@@ -32,7 +32,7 @@ function getDaemonWsUrl(): string {
  */
 export class ConnectionManager {
   private messageHub: MessageHub | null = null;
-  private transport: HubWebSocketClientTransport | null = null;
+  private transport: WebSocketClientTransport | null = null;
   private baseUrl: string;
   private connectionPromise: Promise<MessageHub> | null = null;
 
@@ -88,7 +88,7 @@ export class ConnectionManager {
     });
 
     // Create WebSocket transport with auto-reconnect
-    this.transport = new HubWebSocketClientTransport({
+    this.transport = new WebSocketClientTransport({
       url: `${this.baseUrl}/ws`,
       autoReconnect: true,
       maxReconnectAttempts: 10,
