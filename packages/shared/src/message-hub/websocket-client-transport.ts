@@ -60,6 +60,14 @@ export class WebSocketClientTransport implements IMessageTransport {
   private messageHandlers: Set<(message: HubMessage) => void> = new Set();
   private connectionHandlers: Set<ConnectionStateHandler> = new Set();
 
+  // FIX P1.1: Message size validation (DoS prevention)
+  private readonly maxMessageSize: number = 10 * 1024 * 1024; // 10MB
+
+  // FIX P1.2: PONG timeout detection (stale connection detection)
+  private lastPongTime: number = Date.now();
+  private readonly pongTimeout: number = 60000; // 60s timeout for PONG
+  private pongTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+
   constructor(options: WebSocketClientTransportOptions) {
     this.url = options.url;
     this.autoReconnect = options.autoReconnect ?? true;
@@ -157,14 +165,37 @@ export class WebSocketClientTransport implements IMessageTransport {
 
   /**
    * Send a message
+   * FIX P0.5: Wrap send in try-catch to handle race condition where
+   * WebSocket closes between isReady() check and send() call
+   * FIX P1.1: Validate message size before sending (DoS prevention)
    */
   async send(message: HubMessage): Promise<void> {
     if (!this.isReady()) {
       throw new Error("WebSocket not connected");
     }
 
-    const json = JSON.stringify(message);
-    this.ws!.send(json);
+    try {
+      const json = JSON.stringify(message);
+
+      // FIX P1.1: Validate message size before sending
+      const messageSize = new TextEncoder().encode(json).length;
+      if (messageSize > this.maxMessageSize) {
+        throw new Error(
+          `Message size ${(messageSize / (1024 * 1024)).toFixed(2)}MB exceeds maximum ${this.maxMessageSize / (1024 * 1024)}MB`
+        );
+      }
+
+      this.ws!.send(json);
+    } catch (error) {
+      console.error(`[${this.name}] Send failed:`, error);
+
+      // Update state if WebSocket closed
+      if (this.ws && this.ws.readyState !== WebSocket.OPEN) {
+        this.setState('disconnected');
+      }
+
+      throw new Error(`Failed to send message: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /**
@@ -223,10 +254,26 @@ export class WebSocketClientTransport implements IMessageTransport {
 
   /**
    * Handle incoming message
+   * FIX P1.1: Validate message size before parsing (DoS prevention)
+   * FIX P1.2: Track PONG responses to detect stale connections
    */
   private handleMessage(data: string): void {
     try {
+      // FIX P1.1: Validate message size before parsing
+      const messageSize = new TextEncoder().encode(data).length;
+      if (messageSize > this.maxMessageSize) {
+        console.error(
+          `[${this.name}] Message rejected: size ${(messageSize / (1024 * 1024)).toFixed(2)}MB exceeds limit ${this.maxMessageSize / (1024 * 1024)}MB`
+        );
+        return;
+      }
+
       const message = JSON.parse(data) as HubMessage;
+
+      // FIX P1.2: Track PONG responses for connection health
+      if (message.type === "PONG") {
+        this.lastPongTime = Date.now();
+      }
 
       // Notify all handlers
       for (const handler of this.messageHandlers) {
@@ -265,6 +312,7 @@ export class WebSocketClientTransport implements IMessageTransport {
    * Start ping/heartbeat
    *
    * FIX P1.1: Send real PING messages to detect half-open connections
+   * FIX P1.2: Check for PONG timeout to detect stale connections
    */
   private startPing(): void {
     if (this.pingInterval <= 0) {
@@ -273,8 +321,25 @@ export class WebSocketClientTransport implements IMessageTransport {
 
     this.stopPing();
 
+    // FIX P1.2: Reset lastPongTime when starting ping
+    this.lastPongTime = Date.now();
+
     this.pingTimer = setInterval(() => {
       if (this.isReady()) {
+        // FIX P1.2: Check if PONG timeout exceeded
+        const timeSinceLastPong = Date.now() - this.lastPongTime;
+        if (timeSinceLastPong > this.pongTimeout) {
+          console.error(
+            `[${this.name}] PONG timeout exceeded (${Math.round(timeSinceLastPong / 1000)}s > ${this.pongTimeout / 1000}s). Connection appears stale.`
+          );
+          // Force disconnect and reconnect
+          if (this.ws) {
+            this.ws.close();
+          }
+          this.handleDisconnect();
+          return;
+        }
+
         // FIX P1.1: Send actual PING message (not just check readyState)
         const pingMessage = {
           id: crypto.randomUUID(),
@@ -296,11 +361,17 @@ export class WebSocketClientTransport implements IMessageTransport {
 
   /**
    * Stop ping/heartbeat
+   * FIX P1.2: Clear PONG timeout timer
    */
   private stopPing(): void {
     if (this.pingTimer) {
-      clearInterval(this.pingTimer );
+      clearInterval(this.pingTimer);
       this.pingTimer = null;
+    }
+
+    if (this.pongTimeoutTimer) {
+      clearTimeout(this.pongTimeoutTimer);
+      this.pongTimeoutTimer = null;
     }
   }
 }
