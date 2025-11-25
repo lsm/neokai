@@ -1,0 +1,169 @@
+/**
+ * EventBus - Mediator pattern for breaking circular dependencies
+ *
+ * Provides a central event coordination point between components
+ * without requiring direct dependencies.
+ *
+ * ARCHITECTURE:
+ * - SessionManager emits events (no dependency on StateManager)
+ * - StateManager listens to events (read-only dependency on SessionManager)
+ * - AuthManager emits events (no dependency on StateManager)
+ * - No circular dependencies!
+ *
+ * Events are typed for safety and IDE autocomplete.
+ */
+
+export type UnsubscribeFn = () => void;
+
+/**
+ * Event handler function
+ */
+export type EventHandler<T = unknown> = (data: T) => void | Promise<void>;
+
+/**
+ * Event types for type safety
+ */
+export interface EventMap {
+  // Session lifecycle events
+  'session:created': { session: any };
+  'session:updated': { sessionId: string; updates: Partial<any> };
+  'session:deleted': { sessionId: string };
+
+  // Message events
+  'message:created': { sessionId: string; message: any };
+
+  // SDK events
+  'sdk:message': { sessionId: string; message: any };
+
+  // Auth events
+  'auth:changed': { method: string; isAuthenticated: boolean };
+
+  // Generic fallback
+  [key: string]: any;
+}
+
+/**
+ * EventBus class
+ *
+ * Simple pub/sub for internal application events.
+ * NOT to be confused with MessageHub (which is for client-server communication).
+ * This is purely server-side component coordination.
+ */
+export class EventBus {
+  private handlers: Map<string, Set<EventHandler>> = new Map();
+  private debug: boolean;
+
+  constructor(options: { debug?: boolean } = {}) {
+    this.debug = options.debug || false;
+  }
+
+  /**
+   * Emit an event to all registered handlers
+   */
+  async emit<K extends keyof EventMap>(event: K, data: EventMap[K]): Promise<void> {
+    this.log(`Emitting event: ${String(event)}`, data);
+
+    const eventHandlers = this.handlers.get(String(event));
+    if (!eventHandlers || eventHandlers.size === 0) {
+      this.log(`No handlers for event: ${String(event)}`);
+      return;
+    }
+
+    // Execute all handlers (parallel execution)
+    const promises: Promise<void>[] = [];
+    for (const handler of eventHandlers) {
+      try {
+        const result = handler(data);
+        if (result instanceof Promise) {
+          promises.push(result);
+        }
+      } catch (error) {
+        console.error(`[EventBus] Error in handler for ${String(event)}:`, error);
+      }
+    }
+
+    // Wait for all async handlers to complete
+    if (promises.length > 0) {
+      await Promise.all(promises.map(p => p.catch(error => {
+        console.error(`[EventBus] Async handler error for ${String(event)}:`, error);
+      })));
+    }
+  }
+
+  /**
+   * Register an event handler
+   */
+  on<K extends keyof EventMap>(event: K, handler: EventHandler<EventMap[K]>): UnsubscribeFn {
+    const eventKey = String(event);
+
+    if (!this.handlers.has(eventKey)) {
+      this.handlers.set(eventKey, new Set());
+    }
+
+    this.handlers.get(eventKey)!.add(handler as EventHandler);
+    this.log(`Registered handler for: ${eventKey}`);
+
+    // Return unsubscribe function
+    return () => {
+      const handlers = this.handlers.get(eventKey);
+      if (handlers) {
+        handlers.delete(handler as EventHandler);
+
+        // Cleanup empty sets to prevent memory leaks
+        if (handlers.size === 0) {
+          this.handlers.delete(eventKey);
+        }
+      }
+      this.log(`Unregistered handler for: ${eventKey}`);
+    };
+  }
+
+  /**
+   * Register a one-time event handler (auto-unsubscribes after first call)
+   */
+  once<K extends keyof EventMap>(event: K, handler: EventHandler<EventMap[K]>): UnsubscribeFn {
+    let unsubscribe: UnsubscribeFn | null = null;
+
+    const wrappedHandler = async (data: EventMap[K]) => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+      await handler(data);
+    };
+
+    unsubscribe = this.on(event, wrappedHandler);
+    return unsubscribe;
+  }
+
+  /**
+   * Remove all handlers for an event
+   */
+  off(event: keyof EventMap): void {
+    this.handlers.delete(String(event));
+    this.log(`Removed all handlers for: ${String(event)}`);
+  }
+
+  /**
+   * Get handler count for an event (for debugging)
+   */
+  getHandlerCount(event: keyof EventMap): number {
+    return this.handlers.get(String(event))?.size || 0;
+  }
+
+  /**
+   * Clear all handlers (for cleanup)
+   */
+  clear(): void {
+    this.handlers.clear();
+    this.log('Cleared all handlers');
+  }
+
+  /**
+   * Debug logging
+   */
+  private log(message: string, ...args: unknown[]): void {
+    if (this.debug) {
+      console.log(`[EventBus] ${message}`, ...args);
+    }
+  }
+}
