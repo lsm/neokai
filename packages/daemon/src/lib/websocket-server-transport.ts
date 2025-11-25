@@ -104,6 +104,11 @@ export class WebSocketServerTransport implements IMessageTransport {
         }
       },
       isOpen: () => ws.readyState === 1, // Bun WebSocket OPEN state
+      // FIX P0.6: Add canAccept() for backpressure checking
+      canAccept: () => {
+        const queueSize = this.clientQueues.get(clientId) || 0;
+        return queueSize < this.maxQueueSize;
+      },
       metadata: {
         ws,
         connectionSessionId,
@@ -265,6 +270,22 @@ export class WebSocketServerTransport implements IMessageTransport {
    */
   getRouter(): MessageHubRouter {
     return this.router;
+  }
+
+  /**
+   * FIX P0.6: Check if client can accept messages (backpressure check)
+   * Returns true if client queue is not full
+   */
+  canClientAccept(clientId: string): boolean {
+    const queueSize = this.clientQueues.get(clientId) || 0;
+    return queueSize < this.maxQueueSize;
+  }
+
+  /**
+   * Get current queue size for a client
+   */
+  getClientQueueSize(clientId: string): number {
+    return this.clientQueues.get(clientId) || 0;
   }
 
   private notifyConnectionHandlers(state: ConnectionState, error?: Error): void {
