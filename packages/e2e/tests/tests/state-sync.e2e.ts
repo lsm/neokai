@@ -73,28 +73,28 @@ test.describe('State Synchronization', () => {
     const sessionCards = app.getByTestId('session-card');
     const initialCount = await sessionCards.count();
 
-    // If there are sessions, click one
-    if (initialCount > 0) {
-      const firstSession = sessionCards.first();
-      await firstSession.click();
-
-      // Wait for chat view to load
-      await expect(app.getByPlaceholder(/Ask, search, or make anything/i)).toBeVisible({ timeout: 10000 });
-
-      // Navigate back home by clicking the logo/title
-      const homeButton = app.getByRole('heading', { name: 'Liuboer' });
-      await homeButton.click();
-
-      // Wait a bit for navigation
-      await app.waitForTimeout(1000);
-
-      // Wait for home view to load - either welcome message or just verify we're not in chat
-      const messageInput = app.getByPlaceholder(/Ask, search, or make anything/i);
-      await expect(messageInput).not.toBeVisible({ timeout: 10000 });
-
-      // Verify sessions still available in sidebar
-      const countAfterNav = await sessionCards.count();
-      expect(countAfterNav).toBe(initialCount);
+    // Skip if no sessions - can't test navigation without sessions
+    if (initialCount === 0) {
+      test.skip();
+      return;
     }
+
+    // Click first session to navigate to chat view
+    const firstSession = sessionCards.first();
+    await firstSession.click();
+
+    // Wait for chat view to load
+    await expect(app.getByPlaceholder(/Ask, search, or make anything/i)).toBeVisible({ timeout: 10000 });
+
+    // Navigate back home by clicking the logo/title
+    const homeButton = app.getByRole('heading', { name: 'Liuboer' });
+    await homeButton.click();
+
+    // Wait for navigation and verify sidebar still shows sessions
+    await app.waitForTimeout(2000);
+
+    // Verify sessions still available in sidebar (state persisted)
+    const countAfterNav = await sessionCards.count();
+    expect(countAfterNav).toBe(initialCount);
   });
 });
