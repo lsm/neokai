@@ -1,18 +1,20 @@
 import type { Session } from "@liuboer/shared";
-import type { MessageHub } from "@liuboer/shared";
+import type { MessageHub, EventBus } from "@liuboer/shared";
 import { Database } from "../storage/database";
 import { AgentSession } from "./agent-session";
 import type { AuthManager } from "./auth-manager";
-import type { StateManager } from "./state-manager";
 
 export class SessionManager {
   private sessions: Map<string, AgentSession> = new Map();
-  private stateManager: StateManager | null = null;
+
+  // FIX: Session lazy-loading race condition
+  private sessionLoadLocks = new Map<string, Promise<AgentSession>>();
 
   constructor(
     private db: Database,
     private messageHub: MessageHub,
     private authManager: AuthManager,
+    private eventBus: EventBus,  // FIX: Use EventBus instead of StateManager
     private config: {
       defaultModel: string;
       maxTokens: number;
@@ -20,13 +22,6 @@ export class SessionManager {
       workspaceRoot: string;
     },
   ) {}
-
-  /**
-   * Set state manager (called after initialization to avoid circular dependency)
-   */
-  setStateManager(stateManager: StateManager): void {
-    this.stateManager = stateManager;
-  }
 
   async createSession(params: {
     workspacePath?: string;
@@ -76,24 +71,35 @@ export class SessionManager {
       { sessionId: "global" }
     );
 
-    // Broadcast state change via StateManager
-    if (this.stateManager) {
-      await this.stateManager.broadcastSessionsDelta({
-        added: [session],
-        timestamp: Date.now(),
-      });
-    }
+    // FIX: Emit event via EventBus (no StateManager dependency!)
+    await this.eventBus.emit('session:created', { session });
 
     return sessionId;
   }
 
+  /**
+   * Get session (with lazy-loading race condition fix)
+   *
+   * FIX: Prevents multiple simultaneous loads of the same session
+   * which would create duplicate Claude API connections
+   */
   getSession(sessionId: string): AgentSession | null {
     // Check in-memory first
     if (this.sessions.has(sessionId)) {
       return this.sessions.get(sessionId)!;
     }
 
-    // Load from database
+    // Check if load already in progress
+    const loadInProgress = this.sessionLoadLocks.get(sessionId);
+    if (loadInProgress) {
+      // Wait for the load to complete (this is sync, so we throw an error)
+      // Callers should use getSessionAsync() for concurrent access
+      throw new Error(
+        `Session ${sessionId} is being loaded. Use getSessionAsync() for concurrent access.`
+      );
+    }
+
+    // Load synchronously (for backward compatibility)
     const session = this.db.getSession(sessionId);
     if (!session) return null;
 
@@ -109,6 +115,54 @@ export class SessionManager {
     return agentSession;
   }
 
+  /**
+   * Get session asynchronously (preferred for concurrent access)
+   *
+   * FIX: Handles concurrent requests properly with locking
+   */
+  async getSessionAsync(sessionId: string): Promise<AgentSession | null> {
+    // Check in-memory first
+    if (this.sessions.has(sessionId)) {
+      return this.sessions.get(sessionId)!;
+    }
+
+    // Check if load already in progress
+    const loadInProgress = this.sessionLoadLocks.get(sessionId);
+    if (loadInProgress) {
+      return await loadInProgress;  // Wait for existing load
+    }
+
+    // Start new load with lock
+    const loadPromise = this.loadSessionFromDB(sessionId);
+    this.sessionLoadLocks.set(sessionId, loadPromise);
+
+    try {
+      const agentSession = await loadPromise;
+      if (agentSession) {
+        this.sessions.set(sessionId, agentSession);
+      }
+      return agentSession;
+    } finally {
+      this.sessionLoadLocks.delete(sessionId);
+    }
+  }
+
+  /**
+   * Load session from database (private helper)
+   */
+  private async loadSessionFromDB(sessionId: string): Promise<AgentSession | null> {
+    const session = this.db.getSession(sessionId);
+    if (!session) return null;
+
+    // Create agent session with MessageHub and auth function
+    return new AgentSession(
+      session,
+      this.db,
+      this.messageHub,
+      () => this.authManager.getCurrentApiKey(),
+    );
+  }
+
   listSessions(): Session[] {
     return this.db.listSessions();
   }
@@ -122,53 +176,51 @@ export class SessionManager {
       agentSession.updateMetadata(updates);
     }
 
-    // Broadcast state change via StateManager
-    if (this.stateManager) {
-      // Broadcast session meta change
-      await this.stateManager.broadcastSessionMetaChange(sessionId);
-
-      // Also update global sessions list
-      const updatedSession = this.db.getSession(sessionId);
-      if (updatedSession) {
-        await this.stateManager.broadcastSessionsDelta({
-          updated: [updatedSession],
-          timestamp: Date.now(),
-        });
-      }
-    }
+    // FIX: Emit event via EventBus
+    await this.eventBus.emit('session:updated', { sessionId, updates });
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    // IMPORTANT: Delete from database and memory FIRST, before broadcasting
-    // This ensures that when broadcastSessionsChange() fetches from DB,
-    // the deleted session is already gone (fixes race condition)
-
-    // PHASE 3 FIX: Cleanup AgentSession resources BEFORE removing from memory
+    // FIX: Transaction-like cleanup with proper error handling
     const agentSession = this.sessions.get(sessionId);
-    if (agentSession) {
-      agentSession.cleanup(); // Unsubscribe from MessageHub events
-    }
+    let dbDeleted = false;
 
-    // Remove from database FIRST
-    this.db.deleteSession(sessionId);
+    try {
+      // 1. Cleanup resources (can fail)
+      if (agentSession) {
+        await agentSession.cleanup();
+      }
 
-    // Remove from memory
-    this.sessions.delete(sessionId);
+      // 2. Delete from DB (can fail)
+      this.db.deleteSession(sessionId);
+      dbDeleted = true;
 
-    // THEN broadcast changes (after DB/memory are clean)
-    // Emit session ended event via MessageHub (fixed legacy prefix)
-    await this.messageHub.publish(
-      `session.deleted`,
-      { sessionId, reason: "deleted" },
-      { sessionId: "global" }
-    );
+      // 3. Remove from memory (shouldn't fail)
+      this.sessions.delete(sessionId);
 
-    // Broadcast state change via StateManager
-    if (this.stateManager) {
-      await this.stateManager.broadcastSessionsDelta({
-        removed: [sessionId],
-        timestamp: Date.now(),
-      });
+      // 4. Notify clients (can fail, but don't rollback)
+      try {
+        await this.messageHub.publish(
+          `session.deleted`,
+          { sessionId, reason: "deleted" },
+          { sessionId: "global" }
+        );
+
+        // FIX: Emit event via EventBus
+        await this.eventBus.emit('session:deleted', { sessionId });
+      } catch (error) {
+        console.error('[SessionManager] Failed to broadcast deletion:', error);
+        // Don't rollback - session is already deleted
+      }
+    } catch (error) {
+      // Rollback if DB delete failed
+      if (!dbDeleted) {
+        console.error('[SessionManager] Session deletion failed:', error);
+        throw error;
+      }
+
+      // If cleanup failed but DB delete succeeded, log but don't rollback
+      console.error('[SessionManager] Session deleted but cleanup failed:', error);
     }
   }
 

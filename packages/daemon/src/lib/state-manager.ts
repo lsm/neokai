@@ -3,9 +3,12 @@
  *
  * Manages authoritative state and broadcasts changes to clients
  * via fine-grained state channels
+ *
+ * FIX: Uses EventBus to listen for internal events instead of
+ * being directly called by SessionManager (breaks circular dependency)
  */
 
-import type { MessageHub } from "@liuboer/shared";
+import type { MessageHub, EventBus } from "@liuboer/shared";
 import type { SessionManager } from "./session-manager";
 import type { AuthManager } from "./auth-manager";
 import type { Config } from "../config";
@@ -34,15 +37,73 @@ const CLAUDE_SDK_VERSION = "0.1.37";
 const startTime = Date.now();
 
 export class StateManager {
-  private stateVersion = 0;
+  // FIX: Per-channel versioning instead of global version
+  private channelVersions = new Map<string, number>();
 
   constructor(
     private messageHub: MessageHub,
     private sessionManager: SessionManager,
     private authManager: AuthManager,
     private config: Config,
+    private eventBus: EventBus,  // FIX: Listen to EventBus for changes
   ) {
     this.setupHandlers();
+    this.setupEventListeners();  // FIX: Listen to internal events
+  }
+
+  /**
+   * FIX: Setup EventBus listeners for internal events
+   *
+   * StateManager listens to events from SessionManager/AuthManager
+   * and broadcasts state changes to clients. This breaks the circular
+   * dependency where SessionManager had to call StateManager directly.
+   */
+  private setupEventListeners(): void {
+    // Session lifecycle events
+    this.eventBus.on('session:created', async (data) => {
+      await this.broadcastSessionsDelta({
+        added: [data.session],
+        timestamp: Date.now(),
+      });
+    });
+
+    this.eventBus.on('session:updated', async (data) => {
+      // Broadcast session meta change
+      await this.broadcastSessionMetaChange(data.sessionId);
+
+      // Also update global sessions list
+      const updatedSession = this.sessionManager.listSessions().find(
+        s => s.id === data.sessionId
+      );
+      if (updatedSession) {
+        await this.broadcastSessionsDelta({
+          updated: [updatedSession],
+          timestamp: Date.now(),
+        });
+      }
+    });
+
+    this.eventBus.on('session:deleted', async (data) => {
+      await this.broadcastSessionsDelta({
+        removed: [data.sessionId],
+        timestamp: Date.now(),
+      });
+    });
+
+    // Auth events
+    this.eventBus.on('auth:changed', async () => {
+      await this.broadcastAuthChange();
+    });
+  }
+
+  /**
+   * FIX: Get and increment version for a specific channel
+   */
+  private incrementVersion(channel: string): number {
+    const current = this.channelVersions.get(channel) || 0;
+    const next = current + 1;
+    this.channelVersions.set(channel, next);
+    return next;
   }
 
   /**
@@ -133,7 +194,7 @@ export class StateManager {
         channel: "global",
         sessionId: "global",
         lastUpdate: Date.now(),
-        version: this.stateVersion,
+        version: this.channelVersions.get('global') || 0,
       },
     };
   }
@@ -219,7 +280,7 @@ export class StateManager {
         channel: "session",
         sessionId,
         lastUpdate: Date.now(),
-        version: this.stateVersion,
+        version: this.channelVersions.get(`session:${sessionId}`) || 0,
       },
     };
   }
@@ -323,187 +384,184 @@ export class StateManager {
 
   /**
    * Broadcast sessions list change (full update)
+   * FIX: Uses per-channel versioning
    */
   async broadcastSessionsChange(sessions?: Session[]): Promise<void> {
+    const version = this.incrementVersion(STATE_CHANNELS.GLOBAL_SESSIONS);
     const state = sessions
-      ? { sessions, timestamp: Date.now() }
-      : await this.getSessionsState();
+      ? { sessions, timestamp: Date.now(), version }
+      : { ...await this.getSessionsState(), version };
 
     await this.messageHub.publish(STATE_CHANNELS.GLOBAL_SESSIONS, state, {
       sessionId: "global",
     });
-
-    this.stateVersion++;
   }
 
   /**
    * Broadcast sessions delta update (more efficient for single changes)
    * Only sends delta - clients not subscribed to deltas should subscribe to full channel
+   * FIX: Uses per-channel versioning
    */
   async broadcastSessionsDelta(update: SessionsUpdate): Promise<void> {
+    const version = this.incrementVersion(`${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`);
     await this.messageHub.publish(
       `${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`,
-      update,
+      { ...update, version },
       { sessionId: "global" },
     );
-
-    // Increment version for delta
-    this.stateVersion++;
   }
 
   /**
    * Broadcast auth status change
+   * FIX: Uses per-channel versioning
    */
   async broadcastAuthChange(): Promise<void> {
-    const state = await this.getAuthState();
+    const version = this.incrementVersion(STATE_CHANNELS.GLOBAL_AUTH);
+    const state = { ...await this.getAuthState(), version };
 
     await this.messageHub.publish(STATE_CHANNELS.GLOBAL_AUTH, state, {
       sessionId: "global",
     });
-
-    this.stateVersion++;
   }
 
   /**
    * Broadcast config change
+   * FIX: Uses per-channel versioning
    */
   async broadcastConfigChange(): Promise<void> {
-    const state = await this.getConfigState();
+    const version = this.incrementVersion(STATE_CHANNELS.GLOBAL_CONFIG);
+    const state = { ...await this.getConfigState(), version };
 
     await this.messageHub.publish(STATE_CHANNELS.GLOBAL_CONFIG, state, {
       sessionId: "global",
     });
-
-    this.stateVersion++;
   }
 
   /**
    * Broadcast health status change
+   * FIX: Uses per-channel versioning
    */
   async broadcastHealthChange(): Promise<void> {
-    const state = await this.getHealthState();
+    const version = this.incrementVersion(STATE_CHANNELS.GLOBAL_HEALTH);
+    const state = { ...await this.getHealthState(), version };
 
     await this.messageHub.publish(STATE_CHANNELS.GLOBAL_HEALTH, state, {
       sessionId: "global",
     });
-
-    this.stateVersion++;
   }
 
   /**
    * Broadcast session metadata change
+   * FIX: Uses per-channel versioning
    */
   async broadcastSessionMetaChange(sessionId: string): Promise<void> {
-    const state = await this.getSessionMetaState(sessionId);
+    const version = this.incrementVersion(`${STATE_CHANNELS.SESSION_META}:${sessionId}`);
+    const state = { ...await this.getSessionMetaState(sessionId), version };
 
     await this.messageHub.publish(STATE_CHANNELS.SESSION_META, state, {
       sessionId,
     });
 
-    this.stateVersion++;
-
-    // Also update global sessions list (no double increment - broadcastSessionsChange handles its own)
+    // Also update global sessions list
     await this.broadcastSessionsChange();
   }
 
   /**
    * Broadcast messages change
+   * FIX: Uses per-channel versioning
    */
   async broadcastMessagesChange(sessionId: string): Promise<void> {
-    const state = await this.getMessagesState(sessionId);
+    const version = this.incrementVersion(`${STATE_CHANNELS.SESSION_MESSAGES}:${sessionId}`);
+    const state = { ...await this.getMessagesState(sessionId), version };
 
     await this.messageHub.publish(STATE_CHANNELS.SESSION_MESSAGES, state, {
       sessionId,
     });
-
-    this.stateVersion++;
   }
 
   /**
    * Broadcast messages delta (single new message)
    * Only sends delta - clients not subscribed to deltas should subscribe to full channel
+   * FIX: Uses per-channel versioning
    */
   async broadcastMessagesDelta(
     sessionId: string,
     update: MessagesUpdate,
   ): Promise<void> {
+    const version = this.incrementVersion(`${STATE_CHANNELS.SESSION_MESSAGES}.delta:${sessionId}`);
     await this.messageHub.publish(
       `${STATE_CHANNELS.SESSION_MESSAGES}.delta`,
-      update,
+      { ...update, version },
       { sessionId },
     );
-
-    // Increment version for delta
-    this.stateVersion++;
   }
 
   /**
    * Broadcast SDK messages change
+   * FIX: Uses per-channel versioning
    */
   async broadcastSDKMessagesChange(sessionId: string): Promise<void> {
-    const state = await this.getSDKMessagesState(sessionId);
+    const version = this.incrementVersion(`${STATE_CHANNELS.SESSION_SDK_MESSAGES}:${sessionId}`);
+    const state = { ...await this.getSDKMessagesState(sessionId), version };
 
     await this.messageHub.publish(STATE_CHANNELS.SESSION_SDK_MESSAGES, state, {
       sessionId,
     });
-
-    this.stateVersion++;
   }
 
   /**
    * Broadcast SDK messages delta (single new message)
    * Only sends delta - clients not subscribed to deltas should subscribe to full channel
+   * FIX: Uses per-channel versioning
    */
   async broadcastSDKMessagesDelta(
     sessionId: string,
     update: SDKMessagesUpdate,
   ): Promise<void> {
+    const version = this.incrementVersion(`${STATE_CHANNELS.SESSION_SDK_MESSAGES}.delta:${sessionId}`);
     await this.messageHub.publish(
       `${STATE_CHANNELS.SESSION_SDK_MESSAGES}.delta`,
-      update,
+      { ...update, version },
       { sessionId },
     );
-
-    // Increment version for delta
-    this.stateVersion++;
   }
 
   /**
    * Broadcast agent state change
+   * FIX: Uses per-channel versioning
    */
   async broadcastAgentStateChange(sessionId: string): Promise<void> {
-    const state = await this.getAgentState(sessionId);
+    const version = this.incrementVersion(`${STATE_CHANNELS.SESSION_AGENT}:${sessionId}`);
+    const state = { ...await this.getAgentState(sessionId), version };
 
     await this.messageHub.publish(STATE_CHANNELS.SESSION_AGENT, state, {
       sessionId,
     });
-
-    this.stateVersion++;
   }
 
   /**
    * Broadcast context info change
+   * FIX: Uses per-channel versioning
    */
   async broadcastContextChange(sessionId: string): Promise<void> {
-    const state = await this.getContextState(sessionId);
+    const version = this.incrementVersion(`${STATE_CHANNELS.SESSION_CONTEXT}:${sessionId}`);
+    const state = { ...await this.getContextState(sessionId), version };
 
     await this.messageHub.publish(STATE_CHANNELS.SESSION_CONTEXT, state, {
       sessionId,
     });
-
-    this.stateVersion++;
   }
 
   /**
    * Broadcast commands change
+   * FIX: Uses per-channel versioning
    */
   async broadcastCommandsChange(sessionId: string): Promise<void> {
-    const state = await this.getCommandsState(sessionId);
+    const version = this.incrementVersion(`${STATE_CHANNELS.SESSION_COMMANDS}:${sessionId}`);
+    const state = { ...await this.getCommandsState(sessionId), version };
 
     await this.messageHub.publish(STATE_CHANNELS.SESSION_COMMANDS, state, {
       sessionId,
     });
-
-    this.stateVersion++;
   }
 }

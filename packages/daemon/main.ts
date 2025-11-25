@@ -6,7 +6,7 @@ import { SessionManager } from "./src/lib/session-manager";
 import { AuthManager } from "./src/lib/auth-manager";
 import { StateManager } from "./src/lib/state-manager";
 import { SubscriptionManager } from "./src/lib/subscription-manager";
-import { MessageHub, MessageHubRouter } from "@liuboer/shared";
+import { MessageHub, MessageHubRouter, EventBus } from "@liuboer/shared";
 import { setupRPCHandlers } from "./src/lib/rpc-handlers";
 import { WebSocketServerTransport } from "./src/lib/websocket-server-transport";
 import { setupMessageHubWebSocket } from "./src/routes/setup-websocket";
@@ -70,27 +70,32 @@ messageHub.registerTransport(transport);
 console.log("✅ MessageHub initialized with corrected architecture");
 console.log("   Flow: MessageHub (protocol) → Router (routing) → ClientConnection (I/O)");
 
-// Initialize session manager (after MessageHub)
-const sessionManager = new SessionManager(db, messageHub, authManager, {
+// FIX: Initialize EventBus (breaks circular dependency!)
+const eventBus = new EventBus({
+  debug: config.nodeEnv === "development",
+});
+console.log("✅ EventBus initialized (mediator pattern for component coordination)");
+
+// Initialize session manager (with EventBus, no StateManager dependency!)
+const sessionManager = new SessionManager(db, messageHub, authManager, eventBus, {
   defaultModel: config.defaultModel,
   maxTokens: config.maxTokens,
   temperature: config.temperature,
   workspaceRoot: config.workspaceRoot,
 });
-console.log("✅ Session manager initialized");
+console.log("✅ Session manager initialized (no circular dependency!)");
 console.log(`   Environment: ${config.nodeEnv}`);
 console.log(`   Workspace root: ${config.workspaceRoot}`);
 
-// Initialize State Manager (before RPC router)
+// Initialize State Manager (listens to EventBus, clean dependency graph!)
 const stateManager = new StateManager(
   messageHub,
   sessionManager,
   authManager,
   config,
+  eventBus,  // FIX: Listens to events instead of being called directly
 );
-// Wire up state manager to session manager
-sessionManager.setStateManager(stateManager);
-console.log("✅ State manager initialized (fine-grained channels)");
+console.log("✅ State manager initialized (fine-grained channels + per-channel versioning)");
 
 // Setup RPC handlers
 setupRPCHandlers({
