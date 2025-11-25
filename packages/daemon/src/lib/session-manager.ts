@@ -66,7 +66,7 @@ export class SessionManager {
 
     // Emit session created event via MessageHub (legacy)
     await this.messageHub.publish(
-      `global:session.created`,
+      `session.created`,
       { session },
       { sessionId: "global" }
     );
