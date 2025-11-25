@@ -7,6 +7,7 @@
 
 import type { Elysia } from "elysia";
 import type { MessageHub } from "@liuboer/shared";
+import { createEventMessage, createErrorMessage, MessageType, generateUUID } from "@liuboer/shared";
 import type { BunWebSocketTransport } from "../lib/bun-websocket-transport";
 import type { SessionManager } from "../lib/session-manager";
 import type { SubscriptionManager } from "../lib/subscription-manager";
@@ -38,19 +39,17 @@ export function setupMessageHubWebSocket(
         console.error(`Failed to subscribe client ${clientId} to global events:`, error);
       });
 
-      // Send connection confirmation
-      ws.send(
-        JSON.stringify({
-          type: "connection.established",
-          sessionId: GLOBAL_SESSION_ID,
-          timestamp: new Date().toISOString(),
-          data: {
-            message: "WebSocket connection established",
-            protocol: "MessageHub",
-            version: "1.0.0",
-          },
-        }),
-      );
+      // Send connection confirmation as a proper EVENT message
+      const connectionEvent = createEventMessage({
+        method: "connection.established",
+        sessionId: GLOBAL_SESSION_ID,
+        data: {
+          message: "WebSocket connection established",
+          protocol: "MessageHub",
+          version: "1.0.0",
+        },
+      });
+      ws.send(JSON.stringify(connectionEvent));
     },
 
     message(ws, message) {
@@ -59,12 +58,15 @@ export function setupMessageHubWebSocket(
 
         // Handle ping/pong
         if (data.type === "ping" || data.type === "PING") {
-          ws.send(
-            JSON.stringify({
-              type: "PONG",
-              timestamp: new Date().toISOString(),
-            }),
-          );
+          const pongMsg = {
+            id: generateUUID(),
+            type: MessageType.PONG,
+            sessionId: data.sessionId || GLOBAL_SESSION_ID,
+            method: "heartbeat",
+            timestamp: new Date().toISOString(),
+            requestId: data.id,
+          };
+          ws.send(JSON.stringify(pongMsg));
           return;
         }
 
@@ -81,15 +83,16 @@ export function setupMessageHubWebSocket(
         if (data.sessionId !== GLOBAL_SESSION_ID) {
           const session = sessionManager.getSession(data.sessionId);
           if (!session) {
-            ws.send(
-              JSON.stringify({
-                type: "ERROR",
-                sessionId: data.sessionId,
-                timestamp: new Date().toISOString(),
-                error: `Session not found: ${data.sessionId}`,
-                errorCode: "SESSION_NOT_FOUND",
-              }),
-            );
+            const errorMsg = createErrorMessage({
+              method: data.method || "unknown.method",
+              error: {
+                code: "SESSION_NOT_FOUND",
+                message: `Session not found: ${data.sessionId}`,
+              },
+              sessionId: data.sessionId,
+              requestId: data.id,
+            });
+            ws.send(JSON.stringify(errorMsg));
             return;
           }
         }
@@ -99,14 +102,15 @@ export function setupMessageHubWebSocket(
         transport.handleClientMessage(data, clientId);
       } catch (error) {
         console.error("Error processing WebSocket message:", error);
-        ws.send(
-          JSON.stringify({
-            type: "ERROR",
-            timestamp: new Date().toISOString(),
-            error: error instanceof Error ? error.message : "Invalid message format",
-            errorCode: "INVALID_MESSAGE",
-          }),
-        );
+        const errorMsg = createErrorMessage({
+          method: "message.process",
+          error: {
+            code: "INVALID_MESSAGE",
+            message: error instanceof Error ? error.message : "Invalid message format",
+          },
+          sessionId: GLOBAL_SESSION_ID,
+        });
+        ws.send(JSON.stringify(errorMsg));
       }
     },
 
