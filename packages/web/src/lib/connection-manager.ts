@@ -10,6 +10,9 @@ import { appState } from "./state";
 
 /**
  * Get the daemon WebSocket base URL
+ *
+ * In development, use the Vite dev server's proxy (same origin).
+ * In production, connect directly to daemon port.
  */
 function getDaemonWsUrl(): string {
   if (typeof window === "undefined") {
@@ -17,8 +20,17 @@ function getDaemonWsUrl(): string {
   }
 
   const hostname = window.location.hostname;
+  const port = window.location.port;
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
 
+  // In development (Vite dev server on port 9283), use the proxy
+  // This allows accessing via Tailscale without exposing daemon port
+  if (port === "9283") {
+    // Use same origin - Vite will proxy /ws to localhost:8283
+    return `${protocol}//${hostname}:${port}`;
+  }
+
+  // In production (or direct access), connect to daemon port
   return `${protocol}//${hostname}:8283`;
 }
 
