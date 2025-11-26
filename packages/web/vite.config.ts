@@ -23,6 +23,11 @@ export default defineConfig({
     port: 9283,
     strictPort: true,
     host: true,
+    allowedHosts: [
+	          'localhost',
+		        '127.0.0.1',
+			      'ai0.tailcd822a.ts.net',
+			         ],
     hmr: {
       overlay: true,
       protocol: 'ws',
@@ -55,11 +60,15 @@ export default defineConfig({
   },
 
   resolve: {
-    alias: {
-      'react': 'preact/compat',
-      'react-dom': 'preact/compat',
-      '@liuboer/shared': resolve(__dirname, '../shared/src'),
-    },
+    alias: [
+      { find: 'react', replacement: 'preact/compat' },
+      { find: 'react-dom', replacement: 'preact/compat' },
+      // Handle subpath imports (e.g., @liuboer/shared/sdk/type-guards)
+      { find: /^@liuboer\/shared\/(.+)$/, replacement: resolve(__dirname, '../shared/src/$1') },
+      // Handle main package import
+      { find: '@liuboer/shared', replacement: resolve(__dirname, '../shared/src/mod.ts') },
+    ],
+    extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],
   },
 
   css: {
