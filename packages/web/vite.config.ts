@@ -24,10 +24,11 @@ export default defineConfig({
     strictPort: true,
     host: true,
     allowedHosts: [
-	          'localhost',
-		        '127.0.0.1',
-			      'ai0.tailcd822a.ts.net',
-			         ],
+      'localhost',
+      '127.0.0.1',
+      'ai0.tailcd822a.ts.net',
+      'tts.tailcd822a.ts.net',
+    ],
     hmr: {
       overlay: true,
       protocol: 'ws',
