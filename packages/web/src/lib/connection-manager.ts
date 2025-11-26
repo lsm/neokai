@@ -6,6 +6,7 @@
  */
 
 import { MessageHub, WebSocketClientTransport } from "@liuboer/shared";
+import { appState } from "./state";
 
 /**
  * Get the daemon WebSocket base URL
@@ -87,6 +88,18 @@ export class ConnectionManager {
       debug: false,
     });
 
+    // Expose to window for testing
+    if (typeof window !== "undefined" && (window.location.hostname === "localhost" || process.env.NODE_ENV === "test")) {
+      (window as any).__messageHub = this.messageHub;
+      (window as any).appState = appState;
+      (window as any).__messageHubReady = false; // Will be set to true after connection
+
+      // Also expose currentSessionIdSignal for testing
+      import("./signals.ts").then(({ currentSessionIdSignal }) => {
+        (window as any).currentSessionIdSignal = currentSessionIdSignal;
+      });
+    }
+
     // Create WebSocket transport with auto-reconnect
     this.transport = new WebSocketClientTransport({
       url: `${this.baseUrl}/ws`,
@@ -106,6 +119,12 @@ export class ConnectionManager {
     await this.waitForConnection(5000);
 
     console.log("[ConnectionManager] WebSocket connected");
+
+    // Mark ready for testing
+    if (typeof window !== "undefined" && (window as any).__messageHub) {
+      (window as any).__messageHubReady = true;
+    }
+
     return this.messageHub;
   }
 

@@ -5,7 +5,7 @@
  * making tests more reliable and faster.
  */
 
-import { Page, Locator } from '@playwright/test';
+import type { Page, Locator } from '@playwright/test';
 
 /**
  * Wait for WebSocket connection to be established
@@ -36,12 +36,40 @@ export async function waitForSessionCreated(page: Page): Promise<string> {
   // Wait for message input to be visible and enabled
   const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
   await messageInput.waitFor({ state: 'visible', timeout: 10000 });
-  await messageInput.waitFor({ state: 'enabled', timeout: 5000 });
+  // Wait for the input to be enabled (not disabled)
+  await page.waitForFunction(
+    () => {
+      const input = document.querySelector('textarea[placeholder*="Ask"]') as HTMLTextAreaElement;
+      return input && !input.disabled;
+    },
+    { timeout: 5000 }
+  );
 
   // Get and return the session ID
   const sessionId = await page.evaluate(() => {
-    return (window as any).appState?.currentSessionId?.value ||
-           window.location.pathname.split('/').filter(Boolean)[0];
+    // Try multiple ways to get session ID
+    // 1. From appState's private field (if exposed)
+    const appStateSessionId = (window as any).appState?.currentSessionIdSignal?.value;
+    if (appStateSessionId) return appStateSessionId;
+
+    // 2. From global currentSessionIdSignal (if exposed)
+    const globalSignal = (window as any).currentSessionIdSignal?.value;
+    if (globalSignal) return globalSignal;
+
+    // 3. From localStorage
+    const localStorageId = localStorage.getItem("currentSessionId");
+    if (localStorageId) return localStorageId;
+
+    // 4. From URL path
+    const pathId = window.location.pathname.split('/').filter(Boolean)[0];
+    if (pathId && pathId !== 'undefined') return pathId;
+
+    // 5. From latest session in sessions list
+    const sessions = (window as any).appState?.global?.value?.sessions?.$.value?.sessions || [];
+    const latestSession = sessions[sessions.length - 1];
+    if (latestSession?.id) return latestSession.id;
+
+    return null;
   });
 
   if (!sessionId) {
@@ -110,7 +138,15 @@ export async function waitForMessageProcessed(page: Page, messageText: string): 
 
   // Input should be enabled again
   const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
-  await messageInput.waitFor({ state: 'enabled', timeout: 5000 });
+  await messageInput.waitFor({ state: 'visible', timeout: 5000 });
+  // Wait for the input to be enabled (not disabled)
+  await page.waitForFunction(
+    () => {
+      const input = document.querySelector('textarea[placeholder*="Ask"]') as HTMLTextAreaElement;
+      return input && !input.disabled;
+    },
+    { timeout: 5000 }
+  );
 }
 
 /**

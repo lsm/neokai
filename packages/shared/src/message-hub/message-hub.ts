@@ -667,6 +667,10 @@ export class MessageHub {
 
   /**
    * Handle response message (RESULT or ERROR)
+   *
+   * FIX: Unknown responses can occur legitimately for SUBSCRIBE/UNSUBSCRIBE ACKs,
+   * which are fire-and-forget operations that don't track pending calls.
+   * Only log these as debug messages to reduce noise.
    */
   private handleResponse(message: HubMessage): void {
     const requestId = message.requestId;
@@ -677,7 +681,9 @@ export class MessageHub {
 
     const pending = this.pendingCalls.get(requestId);
     if (!pending) {
-      console.warn(`[MessageHub] Response for unknown request: ${requestId}`);
+      // This can happen legitimately for SUBSCRIBE/UNSUBSCRIBE acknowledgments
+      // which are sent but not tracked as pending calls (fire-and-forget pattern)
+      this.log(`Response for unknown request: ${requestId} (method: ${message.method})`);
       return;
     }
 

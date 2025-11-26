@@ -8,7 +8,8 @@
  * - Queue handling across sessions
  */
 
-import { test, expect, Browser, Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import type { Browser, Page } from '@playwright/test';
 import {
   setupMessageHubTesting,
   waitForSessionCreated,
