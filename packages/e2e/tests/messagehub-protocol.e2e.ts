@@ -278,24 +278,27 @@ test.describe('MessageHub Pub/Sub Protocol', () => {
       // Subscribe to specific session events
       const unsubSession = await hub.subscribe(testEvent, () => {}, { sessionId: currentSessionId });
 
-      // Subscribe to different session
-      const unsubWrong = await hub.subscribe(testEvent, () => {}, { sessionId: 'wrong-session-id' });
+      // Try to subscribe to non-existent session - should reject with reliable async subscribe
+      let wrongSessionError = null;
+      try {
+        await hub.subscribe(testEvent, () => {}, { sessionId: 'wrong-session-id' });
+      } catch (error: any) {
+        wrongSessionError = error.message;
+      }
 
       // Check subscription counts for different sessions
       const globalCount = hub.getSubscriptionCount(testEvent, 'global');
       const sessionCount = hub.getSubscriptionCount(testEvent, currentSessionId);
-      const wrongCount = hub.getSubscriptionCount(testEvent, 'wrong-session-id');
 
       // Clean up
       await unsubGlobal();
       await unsubSession();
-      await unsubWrong();
 
       return {
         canSubscribeToDifferentScopes: true,
         globalCount,
         sessionCount,
-        wrongCount,
+        wrongSessionError,
         currentSessionId,
       };
     });
@@ -303,7 +306,9 @@ test.describe('MessageHub Pub/Sub Protocol', () => {
     expect(sessionScopeTest.canSubscribeToDifferentScopes).toBe(true);
     expect(sessionScopeTest.globalCount).toBe(1);
     expect(sessionScopeTest.sessionCount).toBe(1);
-    expect(sessionScopeTest.wrongCount).toBe(1);
+    // With reliable async subscribe, subscribing to non-existent session should fail
+    expect(sessionScopeTest.wrongSessionError).toBeTruthy();
+    expect(sessionScopeTest.wrongSessionError).toContain('not found');
   });
 
   test('should handle unsubscribe correctly', async ({ page }) => {
