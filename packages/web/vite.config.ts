@@ -1,9 +1,10 @@
 import { defineConfig } from 'vite';
 import preact from '@preact/preset-vite';
+import tailwindcss from '@tailwindcss/vite';
 import { resolve } from 'path';
 
 export default defineConfig({
-  plugins: [preact()],
+  plugins: [preact(), tailwindcss()],
 
   root: 'src',
   publicDir: '../public',
@@ -70,11 +71,5 @@ export default defineConfig({
       { find: '@liuboer/shared', replacement: resolve(__dirname, '../shared/src/mod.ts') },
     ],
     extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],
-  },
-
-  css: {
-    postcss: {
-      plugins: [],
-    },
   },
 });
