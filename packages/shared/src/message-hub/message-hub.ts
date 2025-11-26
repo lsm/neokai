@@ -79,6 +79,15 @@ export class MessageHub {
   // Request deduplication cache with LRU eviction and TTL
   private requestCache: LRUCache<string, Promise<any>>;
 
+  // Subscription ACK tracking (for reliable subscribe/unsubscribe)
+  private pendingSubscribes: Map<string, {
+    resolve: (value: void) => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+    method: string;
+    type: 'subscribe' | 'unsubscribe';
+  }> = new Map();
+
   // Pub/Sub state
   private subscriptions: Map<string, Map<string, Set<EventHandler>>> = new Map();
   //                          ^sessionId  ^method   ^handlers
@@ -397,30 +406,31 @@ export class MessageHub {
   }
 
   /**
-   * Subscribe to events
+   * Subscribe to events (RELIABLE - waits for server ACK)
    *
    * EXPLICIT SUBSCRIPTION PROTOCOL:
    * - Stores subscription locally (for event routing)
-   * - Sends SUBSCRIBE message to server (if connected)
+   * - Sends SUBSCRIBE message to server
+   * - Waits for ACK to confirm subscription
    * - Server tracks subscription in Router
    * - Auto-resubscribes on reconnection
    *
    * @example
    * // Global event
-   * hub.subscribe('session.deleted', (data) => {
+   * const unsubscribe = await hub.subscribe('session.deleted', (data) => {
    *   console.log('Session deleted:', data.sessionId);
    * }, { sessionId: 'global' });
    *
    * // Session-scoped event
-   * hub.subscribe('sdk.message', (data) => {
+   * const unsubscribe = await hub.subscribe('sdk.message', (data) => {
    *   console.log('SDK message:', data);
    * }, { sessionId: 'abc-123' });
    */
-  subscribe<TData = unknown>(
+  async subscribe<TData = unknown>(
     method: string,
     handler: EventHandler<TData>,
     options: SubscribeOptions = {},
-  ): UnsubscribeFn {
+  ): Promise<UnsubscribeFn> {
     const sessionId = options.sessionId || this.defaultSessionId;
 
     // FIX P2: Remove unnecessary buildFullMethod() call
@@ -431,15 +441,7 @@ export class MessageHub {
     // Generate unique subscription ID
     const subId = generateUUID();
 
-    // FIX P0.2: Track creation time for subscription lifecycle management
-    this.persistedSubscriptions.set(subId, {
-      method,
-      handler: handler as EventHandler,
-      options: { sessionId },
-      createdAt: Date.now(),
-    });
-
-    // Initialize subscription maps if needed
+    // Initialize subscription maps if needed (do this early for local events)
     if (!this.subscriptions.has(sessionId)) {
       this.subscriptions.set(sessionId, new Map());
     }
@@ -451,35 +453,95 @@ export class MessageHub {
     }
 
     sessionSubs.get(method)!.add(handler as EventHandler);
-    this.log(`Subscribed to: ${method} (session: ${sessionId})`);
 
-    // Send SUBSCRIBE message to server (explicit subscription protocol)
+    // Send SUBSCRIBE message to server and wait for ACK
     if (this.isConnected()) {
+      const timeout = options.timeout || this.defaultTimeout;
+
+      // Create promise that waits for ACK
+      const ackPromise = new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          this.pendingSubscribes.delete(subId);
+          reject(new Error(`Subscription timeout: ${method} (${timeout}ms)`));
+        }, timeout);
+
+        // Track pending subscription
+        this.pendingSubscribes.set(subId, {
+          resolve,
+          reject,
+          timer,
+          method,
+          type: 'subscribe',
+        });
+      });
+
+      // Send SUBSCRIBE message
       const subscribeMsg = createSubscribeMessage({
         method,
         sessionId,
         id: subId,
       });
 
-      this.sendMessage(subscribeMsg).catch((error) => {
-        console.warn(`[MessageHub] Failed to send SUBSCRIBE message:`, error);
-        // Continue - local subscription still works
-      });
+      try {
+        await this.sendMessage(subscribeMsg);
+        // Wait for ACK from server
+        await ackPromise;
+        this.log(`Subscribed to: ${method} (session: ${sessionId}) - ACK received`);
+      } catch (error) {
+        // Cleanup on failure
+        sessionSubs.get(method)?.delete(handler as EventHandler);
+        throw error;
+      }
+    } else {
+      // Not connected - local-only subscription
+      this.log(`Subscribed to: ${method} (session: ${sessionId}) - local only (not connected)`);
     }
 
-    // Return unsubscribe function
-    return () => {
-      // Send UNSUBSCRIBE message to server
+    // FIX P0.2: Track creation time for subscription lifecycle management
+    this.persistedSubscriptions.set(subId, {
+      method,
+      handler: handler as EventHandler,
+      options: { sessionId },
+      createdAt: Date.now(),
+    });
+
+    // Return async unsubscribe function
+    return async () => {
+      // Send UNSUBSCRIBE message to server and wait for ACK
       if (this.isConnected()) {
+        const unsubId = generateUUID();
+        const timeout = options.timeout || this.defaultTimeout;
+
+        // Create promise that waits for ACK
+        const ackPromise = new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            this.pendingSubscribes.delete(unsubId);
+            reject(new Error(`Unsubscribe timeout: ${method} (${timeout}ms)`));
+          }, timeout);
+
+          this.pendingSubscribes.set(unsubId, {
+            resolve,
+            reject,
+            timer,
+            method,
+            type: 'unsubscribe',
+          });
+        });
+
         const unsubscribeMsg = createUnsubscribeMessage({
           method,
           sessionId,
-          id: generateUUID(),
+          id: unsubId,
         });
 
-        this.sendMessage(unsubscribeMsg).catch((error) => {
-          console.warn(`[MessageHub] Failed to send UNSUBSCRIBE message:`, error);
-        });
+        try {
+          await this.sendMessage(unsubscribeMsg);
+          await ackPromise;
+          this.log(`Unsubscribed from: ${method} (session: ${sessionId}) - ACK received`);
+        } catch (error) {
+          console.warn(`[MessageHub] Unsubscribe failed:`, error);
+          // Continue with local cleanup even if server unsubscribe fails
+        }
       }
 
       // Remove from persisted subscriptions
@@ -668,9 +730,7 @@ export class MessageHub {
   /**
    * Handle response message (RESULT or ERROR)
    *
-   * FIX: Unknown responses can occur legitimately for SUBSCRIBE/UNSUBSCRIBE ACKs,
-   * which are fire-and-forget operations that don't track pending calls.
-   * Only log these as debug messages to reduce noise.
+   * Handles responses for both RPC calls and subscription operations (SUBSCRIBE/UNSUBSCRIBE)
    */
   private handleResponse(message: HubMessage): void {
     const requestId = message.requestId;
@@ -679,16 +739,33 @@ export class MessageHub {
       return;
     }
 
+    // Check if it's a subscription ACK (SUBSCRIBE/UNSUBSCRIBE)
+    const pendingSub = this.pendingSubscribes.get(requestId);
+    if (pendingSub) {
+      clearTimeout(pendingSub.timer);
+      this.pendingSubscribes.delete(requestId);
+
+      if (message.type === MessageType.RESULT) {
+        this.log(`${pendingSub.type === 'subscribe' ? 'SUBSCRIBE' : 'UNSUBSCRIBE'} ACK received: ${pendingSub.method}`);
+        pendingSub.resolve();
+      } else {
+        const error = new Error(
+          message.error || `${pendingSub.type === 'subscribe' ? 'Subscription' : 'Unsubscription'} failed: ${pendingSub.method}`
+        );
+        pendingSub.reject(error);
+      }
+      return;
+    }
+
+    // Check if it's an RPC call response
     const pending = this.pendingCalls.get(requestId);
     if (!pending) {
-      // This can happen legitimately for SUBSCRIBE/UNSUBSCRIBE acknowledgments
-      // which are sent but not tracked as pending calls (fire-and-forget pattern)
       this.log(`Response for unknown request: ${requestId} (method: ${message.method})`);
       return;
     }
 
     // Clear timeout
-    clearTimeout(pending.timer );
+    clearTimeout(pending.timer);
     this.pendingCalls.delete(requestId);
 
     // Resolve or reject
@@ -1033,6 +1110,7 @@ export class MessageHub {
   /**
    * Cleanup all state
    * FIX P1.3: Clear sequence tracking map
+   * FIX: Clear pending subscription operations
    */
   cleanup(): void {
     // Reject all pending calls
@@ -1041,6 +1119,13 @@ export class MessageHub {
       pending.reject(new Error("MessageHub cleanup"));
     }
     this.pendingCalls.clear();
+
+    // Reject all pending subscription operations
+    for (const [requestId, pending] of this.pendingSubscribes) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error("MessageHub cleanup"));
+    }
+    this.pendingSubscribes.clear();
 
     // FIX P0.1: Properly destroy cache (stops cleanup timer)
     this.requestCache.destroy();

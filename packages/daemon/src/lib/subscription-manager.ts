@@ -51,8 +51,9 @@ export class SubscriptionManager {
     // Subscribe to each event
     // The MessageHub will send SUBSCRIBE messages to the server
     // which will register them in the Router
+    // RELIABLE: Wait for each subscription to be acknowledged
     for (const method of globalEvents) {
-      this.messageHub.subscribe(
+      await this.messageHub.subscribe(
         method,
         () => {}, // Empty handler - actual handling done in client-side state channels
         { sessionId: "global" },
@@ -99,8 +100,9 @@ export class SubscriptionManager {
     ];
 
     // Subscribe to each event for this specific session
+    // RELIABLE: Wait for each subscription to be acknowledged
     for (const method of sessionEvents) {
-      this.messageHub.subscribe(
+      await this.messageHub.subscribe(
         method,
         () => {}, // Empty handler - actual handling in client
         { sessionId },
