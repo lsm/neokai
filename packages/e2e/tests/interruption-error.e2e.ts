@@ -39,11 +39,11 @@ test.describe('Session Interruption', () => {
     const sessionId = await waitForSessionCreated(page);
 
     // Set up interrupt tracking
-    await page.evaluate((sid) => {
+    await page.evaluate(async (sid) => {
       const hub = (window as any).__messageHub;
       let interruptReceived = false;
 
-      hub.subscribe('session.interrupted', () => {
+      await hub.subscribe('session.interrupted', () => {
         interruptReceived = true;
       }, { sessionId: sid });
 

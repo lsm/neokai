@@ -180,14 +180,14 @@ test.describe('MessageHub Pub/Sub Protocol', () => {
       const hub = (window as any).__messageHub;
       if (!hub) throw new Error('MessageHub not found');
 
-      return new Promise((resolve) => {
+      return new Promise(async (resolve) => {
         const testEvent = 'test.event.' + Date.now();
         let received = false;
 
         // Subscribe to event
-        const unsubscribe = hub.subscribe(testEvent, (data: any) => {
+        const unsubscribe = await hub.subscribe(testEvent, async (data: any) => {
           received = true;
-          unsubscribe();
+          await unsubscribe();
           resolve({ received, data });
         }, { sessionId: 'global' });
 
@@ -196,18 +196,18 @@ test.describe('MessageHub Pub/Sub Protocol', () => {
         // For testing, we'll listen to existing events instead.
 
         // Subscribe to a known event that should fire
-        const unsubSession = hub.subscribe('session.created', (data: any) => {
+        const unsubSession = await hub.subscribe('session.created', async (data: any) => {
           if (!received) {
-            unsubscribe();
+            await unsubscribe();
             resolve({ received: true, data: { eventType: 'session.created' } });
           }
         }, { sessionId: 'global' });
 
         // Timeout fallback - consider test successful if subscription works
-        setTimeout(() => {
+        setTimeout(async () => {
           if (!received) {
-            unsubscribe();
-            unsubSession();
+            await unsubscribe();
+            await unsubSession();
             // Subscription mechanism works even if no event fired
             const subCount = hub.getSubscriptionCount ?
               hub.getSubscriptionCount(testEvent, 'global') : -1;
@@ -229,18 +229,18 @@ test.describe('MessageHub Pub/Sub Protocol', () => {
       const testEvent = 'test.multi.' + Date.now();
 
       // Create 3 subscribers
-      const unsub1 = hub.subscribe(testEvent, () => {}, { sessionId: 'global' });
-      const unsub2 = hub.subscribe(testEvent, () => {}, { sessionId: 'global' });
-      const unsub3 = hub.subscribe(testEvent, () => {}, { sessionId: 'global' });
+      const unsub1 = await hub.subscribe(testEvent, () => {}, { sessionId: 'global' });
+      const unsub2 = await hub.subscribe(testEvent, () => {}, { sessionId: 'global' });
+      const unsub3 = await hub.subscribe(testEvent, () => {}, { sessionId: 'global' });
 
       // Check subscription count
       const subCount = hub.getSubscriptionCount ?
         hub.getSubscriptionCount(testEvent, 'global') : 0;
 
       // Clean up
-      unsub1();
-      unsub2();
-      unsub3();
+      await unsub1();
+      await unsub2();
+      await unsub3();
 
       // Check count after unsubscribe
       const afterCount = hub.getSubscriptionCount ?
@@ -273,13 +273,13 @@ test.describe('MessageHub Pub/Sub Protocol', () => {
       const testEvent = 'test.scoped.' + Date.now();
 
       // Subscribe to global events
-      const unsubGlobal = hub.subscribe(testEvent, () => {}, { sessionId: 'global' });
+      const unsubGlobal = await hub.subscribe(testEvent, () => {}, { sessionId: 'global' });
 
       // Subscribe to specific session events
-      const unsubSession = hub.subscribe(testEvent, () => {}, { sessionId: currentSessionId });
+      const unsubSession = await hub.subscribe(testEvent, () => {}, { sessionId: currentSessionId });
 
       // Subscribe to different session
-      const unsubWrong = hub.subscribe(testEvent, () => {}, { sessionId: 'wrong-session-id' });
+      const unsubWrong = await hub.subscribe(testEvent, () => {}, { sessionId: 'wrong-session-id' });
 
       // Check subscription counts for different sessions
       const globalCount = hub.getSubscriptionCount(testEvent, 'global');
@@ -287,9 +287,9 @@ test.describe('MessageHub Pub/Sub Protocol', () => {
       const wrongCount = hub.getSubscriptionCount(testEvent, 'wrong-session-id');
 
       // Clean up
-      unsubGlobal();
-      unsubSession();
-      unsubWrong();
+      await unsubGlobal();
+      await unsubSession();
+      await unsubWrong();
 
       return {
         canSubscribeToDifferentScopes: true,
@@ -314,13 +314,13 @@ test.describe('MessageHub Pub/Sub Protocol', () => {
       const testEvent = 'test.unsub.' + Date.now();
 
       // Subscribe to event
-      const unsubscribe = hub.subscribe(testEvent, () => {}, { sessionId: 'global' });
+      const unsubscribe = await hub.subscribe(testEvent, () => {}, { sessionId: 'global' });
 
       // Check initial subscription count
       const beforeCount = hub.getSubscriptionCount(testEvent, 'global');
 
       // Unsubscribe
-      unsubscribe();
+      await unsubscribe();
 
       // Check count after unsubscribe
       const afterCount = hub.getSubscriptionCount(testEvent, 'global');
@@ -346,7 +346,7 @@ test.describe('MessageHub Pub/Sub Protocol', () => {
       if (!hub) throw new Error('MessageHub not found');
 
       // Create persistent subscription
-      (window as any).__testSubscription = hub.subscribe(
+      (window as any).__testSubscription = await hub.subscribe(
         'test.persistent',
         (data: any) => {
           (window as any).__testReceived = data;
@@ -369,7 +369,7 @@ test.describe('MessageHub Pub/Sub Protocol', () => {
 
       // Clean up
       if ((window as any).__testSubscription) {
-        (window as any).__testSubscription();
+        await (window as any).__testSubscription();
       }
 
       return {
@@ -516,19 +516,19 @@ test.describe('Multi-Tab Event Routing', () => {
     });
 
     // Test that each tab can subscribe to its own session independently
-    const subscriptionTestA = await tabA.evaluate((sessionId) => {
+    const subscriptionTestA = await tabA.evaluate(async (sessionId) => {
       const hub = (window as any).__messageHub;
       const testEvent = 'test.routing.' + Date.now();
 
       // Subscribe to session-specific event
-      const unsub = hub.subscribe(testEvent, () => {}, { sessionId });
+      const unsub = await hub.subscribe(testEvent, () => {}, { sessionId });
 
       // Check subscription count
       const count = hub.getSubscriptionCount ?
         hub.getSubscriptionCount(testEvent, sessionId) : -1;
 
       // Clean up
-      unsub();
+      await unsub();
 
       return {
         sessionId,
@@ -537,19 +537,19 @@ test.describe('Multi-Tab Event Routing', () => {
       };
     }, sessionIdA);
 
-    const subscriptionTestB = await tabB.evaluate((sessionId) => {
+    const subscriptionTestB = await tabB.evaluate(async (sessionId) => {
       const hub = (window as any).__messageHub;
       const testEvent = 'test.routing.' + Date.now();
 
       // Subscribe to different session-specific event
-      const unsub = hub.subscribe(testEvent, () => {}, { sessionId });
+      const unsub = await hub.subscribe(testEvent, () => {}, { sessionId });
 
       // Check subscription count
       const count = hub.getSubscriptionCount ?
         hub.getSubscriptionCount(testEvent, sessionId) : -1;
 
       // Clean up
-      unsub();
+      await unsub();
 
       return {
         sessionId,
@@ -559,19 +559,19 @@ test.describe('Multi-Tab Event Routing', () => {
     }, sessionIdB);
 
     // Test global subscription in tab A
-    const globalSubscriptionTest = await tabA.evaluate(() => {
+    const globalSubscriptionTest = await tabA.evaluate(async () => {
       const hub = (window as any).__messageHub;
       const testEvent = 'test.global.' + Date.now();
 
       // Subscribe to global event
-      const unsub = hub.subscribe(testEvent, () => {}, { sessionId: 'global' });
+      const unsub = await hub.subscribe(testEvent, () => {}, { sessionId: 'global' });
 
       // Check subscription count
       const count = hub.getSubscriptionCount ?
         hub.getSubscriptionCount(testEvent, 'global') : -1;
 
       // Clean up
-      unsub();
+      await unsub();
 
       return {
         canSubscribeGlobal: count > 0,

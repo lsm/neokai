@@ -217,8 +217,8 @@ export async function waitForEvent(
   sessionId: string = 'global'
 ): Promise<any> {
   return page.evaluate(
-    ({ event, sid }) => {
-      return new Promise((resolve) => {
+    async ({ event, sid }) => {
+      return new Promise(async (resolve) => {
         const hub = (window as any).__messageHub || (window as any).appState?.messageHub;
         if (!hub) {
           throw new Error('MessageHub not found');
@@ -228,11 +228,11 @@ export async function waitForEvent(
           resolve({ timeout: true });
         }, 10000);
 
-        const unsubscribe = hub.subscribe(
+        const unsubscribe = await hub.subscribe(
           event,
-          (data: any) => {
+          async (data: any) => {
             clearTimeout(timeout);
-            unsubscribe();
+            await unsubscribe();
             resolve(data);
           },
           { sessionId: sid }
@@ -361,13 +361,13 @@ export async function setupMessageHubTesting(page: Page): Promise<void> {
     (window as any).__sdkMessages = [];
 
     // Wait for MessageHub to be available and expose it
-    const checkInterval = setInterval(() => {
+    const checkInterval = setInterval(async () => {
       const hub = (window as any).appState?.messageHub;
       if (hub) {
         (window as any).__messageHub = hub;
 
         // Subscribe to SDK messages for tracking
-        hub.subscribe('sdk.message', (msg: any) => {
+        await hub.subscribe('sdk.message', (msg: any) => {
           (window as any).__sdkMessages.push(msg);
         }, { sessionId: 'global' });
 
