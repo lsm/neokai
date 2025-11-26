@@ -260,14 +260,21 @@ test.describe('MessageHub Pub/Sub Protocol', () => {
   test('should respect session-scoped event routing', async ({ page }) => {
     // Create a session first
     await page.click('button:has-text("New Session")');
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(2000); // Wait longer for session creation
 
     const sessionScopeTest = await page.evaluate(async () => {
       const hub = (window as any).__messageHub;
       if (!hub) throw new Error('MessageHub not found');
 
-      // Get current session ID from state
-      const currentSessionId = (window as any).currentSessionIdSignal?.value || 'test-session';
+      // Get current session ID from state - try multiple sources
+      const appStateSessionId = (window as any).appState?.currentSessionIdSignal?.value;
+      const sessions = (window as any).appState?.global?.value?.sessions?.$.value?.sessions || [];
+      const latestSession = sessions[sessions.length - 1];
+      const currentSessionId = appStateSessionId || latestSession?.id;
+
+      if (!currentSessionId) {
+        throw new Error('No session ID found after creation');
+      }
 
       // Test that we can subscribe to different session scopes
       const testEvent = 'test.scoped.' + Date.now();
