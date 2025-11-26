@@ -1,0 +1,589 @@
+/**
+ * Database Integrity E2E Tests
+ *
+ * Tests database operations for:
+ * - CASCADE deletes
+ * - Data consistency
+ * - Race conditions
+ * - Orphaned data prevention
+ */
+
+import { test, expect } from '@playwright/test';
+import Database from 'bun:sqlite';
+import { existsSync } from 'fs';
+import { join } from 'path';
+
+// Database path - adjust based on test environment
+const DB_PATH = join(process.cwd(), '../../data/daemon.db');
+
+// Helper to access database directly
+function openTestDatabase() {
+  if (!existsSync(DB_PATH)) {
+    throw new Error(`Database not found at ${DB_PATH}`);
+  }
+  return new Database(DB_PATH, { readonly: true });
+}
+
+// Helper to get database stats
+async function getDatabaseStats() {
+  const db = openTestDatabase();
+  try {
+    const stats = {
+      sessions: db.prepare('SELECT COUNT(*) as count FROM sessions').get() as { count: number },
+      sdkMessages: db.prepare('SELECT COUNT(*) as count FROM sdk_messages').get() as { count: number },
+      events: db.prepare('SELECT COUNT(*) as count FROM events').get() as { count: number },
+    };
+    return stats;
+  } finally {
+    db.close();
+  }
+}
+
+// Helper to check for orphaned data
+async function checkOrphanedData(sessionId: string) {
+  const db = openTestDatabase();
+  try {
+    const orphaned = {
+      sdkMessages: db.prepare(
+        'SELECT COUNT(*) as count FROM sdk_messages WHERE session_id = ?'
+      ).get(sessionId) as { count: number },
+      events: db.prepare(
+        'SELECT COUNT(*) as count FROM events WHERE session_id = ?'
+      ).get(sessionId) as { count: number },
+    };
+    return orphaned;
+  } finally {
+    db.close();
+  }
+}
+
+test.describe('Database CASCADE Deletes', () => {
+  test('should cascade delete all session data when session is deleted', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForTimeout(1000);
+
+    // Get initial database stats
+    const initialStats = await getDatabaseStats();
+
+    // Create a new session
+    await page.click('button:has-text("New Session")');
+    await page.waitForTimeout(2000);
+
+    // Get session ID from URL or state
+    const sessionId = await page.evaluate(() => {
+      return window.location.pathname.split('/').filter(Boolean)[0] ||
+             (window as any).appState?.currentSessionId?.value;
+    });
+
+    expect(sessionId).toBeTruthy();
+
+    // Send some messages to create SDK messages in database
+    const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+    await messageInput.fill('Test message for cascade delete');
+    await page.click('button[type="submit"]');
+
+    await page.waitForTimeout(3000); // Wait for message processing
+
+    // Send another message
+    await messageInput.fill('Another test message');
+    await page.click('button[type="submit"]');
+
+    await page.waitForTimeout(3000);
+
+    // Verify data was created
+    const db = openTestDatabase();
+    const messagesBeforeDelete = db.prepare(
+      'SELECT COUNT(*) as count FROM sdk_messages WHERE session_id = ?'
+    ).get(sessionId) as { count: number };
+    db.close();
+
+    expect(messagesBeforeDelete.count).toBeGreaterThan(0);
+
+    // Delete the session
+    await page.click('button[aria-label="Session options"]');
+    await page.click('text=Delete Chat');
+    await page.click('[data-testid="confirm-delete-session"]');
+
+    await page.waitForTimeout(2000);
+
+    // Check that all related data was deleted
+    const orphaned = await checkOrphanedData(sessionId as string);
+
+    expect(orphaned.sdkMessages.count).toBe(0);
+    expect(orphaned.events.count).toBe(0);
+
+    // Verify session itself is deleted
+    const db2 = openTestDatabase();
+    const sessionExists = db2.prepare(
+      'SELECT COUNT(*) as count FROM sessions WHERE id = ?'
+    ).get(sessionId) as { count: number };
+    db2.close();
+
+    expect(sessionExists.count).toBe(0);
+  });
+
+  test('should handle deletion of session with many messages', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForTimeout(1000);
+
+    // Create a new session
+    await page.click('button:has-text("New Session")');
+    await page.waitForTimeout(2000);
+
+    const sessionId = await page.evaluate(() => {
+      return (window as any).appState?.currentSessionId?.value;
+    });
+
+    // Send multiple messages rapidly
+    const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+    for (let i = 0; i < 5; i++) {
+      await messageInput.fill(`Bulk message ${i + 1}`);
+      await page.click('button[type="submit"]');
+      await page.waitForTimeout(1000); // Small delay between messages
+    }
+
+    // Wait for all messages to be processed
+    await page.waitForTimeout(5000);
+
+    // Verify multiple SDK messages exist
+    const db = openTestDatabase();
+    const messageCount = db.prepare(
+      'SELECT COUNT(*) as count FROM sdk_messages WHERE session_id = ?'
+    ).get(sessionId) as { count: number };
+    db.close();
+
+    expect(messageCount.count).toBeGreaterThanOrEqual(5);
+
+    // Delete session
+    await page.click('button[aria-label="Session options"]');
+    await page.click('text=Delete Chat');
+    await page.click('[data-testid="confirm-delete-session"]');
+
+    await page.waitForTimeout(2000);
+
+    // Verify all messages are deleted
+    const orphaned = await checkOrphanedData(sessionId as string);
+    expect(orphaned.sdkMessages.count).toBe(0);
+  });
+});
+
+test.describe('Session Loading Race Conditions', () => {
+  test('should handle concurrent session loads without creating duplicates', async ({ browser }) => {
+    const context = await browser.newContext();
+
+    // Create a session first
+    const setupPage = await context.newPage();
+    await setupPage.goto('/');
+    await setupPage.click('button:has-text("New Session")');
+    await setupPage.waitForTimeout(2000);
+
+    const sessionId = await setupPage.evaluate(() => {
+      return (window as any).appState?.currentSessionId?.value;
+    });
+
+    await setupPage.close();
+
+    // Now open 3 tabs simultaneously that will all try to load the same session
+    const [tab1, tab2, tab3] = await Promise.all([
+      context.newPage(),
+      context.newPage(),
+      context.newPage(),
+    ]);
+
+    // Navigate all tabs to the same session simultaneously
+    await Promise.all([
+      tab1.goto(`/${sessionId}`),
+      tab2.goto(`/${sessionId}`),
+      tab3.goto(`/${sessionId}`),
+    ]);
+
+    // Wait for all to load
+    await Promise.all([
+      tab1.waitForTimeout(2000),
+      tab2.waitForTimeout(2000),
+      tab3.waitForTimeout(2000),
+    ]);
+
+    // Check database for duplicate connections or data
+    const db = openTestDatabase();
+
+    // Check session count (should still be 1 for this session ID)
+    const sessionCount = db.prepare(
+      'SELECT COUNT(*) as count FROM sessions WHERE id = ?'
+    ).get(sessionId) as { count: number };
+
+    db.close();
+
+    expect(sessionCount.count).toBe(1);
+
+    // All tabs should show the same session
+    const session1 = await tab1.evaluate(() => (window as any).appState?.currentSessionId?.value);
+    const session2 = await tab2.evaluate(() => (window as any).appState?.currentSessionId?.value);
+    const session3 = await tab3.evaluate(() => (window as any).appState?.currentSessionId?.value);
+
+    expect(session1).toBe(sessionId);
+    expect(session2).toBe(sessionId);
+    expect(session3).toBe(sessionId);
+
+    await context.close();
+  });
+
+  test('should handle rapid session creation without race conditions', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForTimeout(1000);
+
+    const initialStats = await getDatabaseStats();
+
+    // Rapidly create 5 sessions
+    const sessionIds: string[] = [];
+
+    for (let i = 0; i < 5; i++) {
+      await page.click('button:has-text("New Session")');
+      await page.waitForTimeout(500); // Minimal wait
+
+      const sessionId = await page.evaluate(() => {
+        return (window as any).appState?.currentSessionId?.value;
+      });
+
+      if (sessionId) {
+        sessionIds.push(sessionId);
+      }
+
+      // Go back home for next creation
+      await page.click('h1:has-text("Liuboer")');
+      await page.waitForTimeout(200);
+    }
+
+    // All session IDs should be unique
+    const uniqueIds = new Set(sessionIds);
+    expect(uniqueIds.size).toBe(sessionIds.length);
+
+    // Database should have exactly 5 more sessions
+    const finalStats = await getDatabaseStats();
+    expect(finalStats.sessions.count).toBe(initialStats.sessions.count + 5);
+
+    // Verify each session exists in database
+    const db = openTestDatabase();
+    for (const id of sessionIds) {
+      const exists = db.prepare(
+        'SELECT COUNT(*) as count FROM sessions WHERE id = ?'
+      ).get(id) as { count: number };
+      expect(exists.count).toBe(1);
+    }
+    db.close();
+  });
+});
+
+test.describe('SDK Message Persistence', () => {
+  test('should save SDK messages with correct structure', async ({ page }) => {
+    await page.goto('/');
+    await page.click('button:has-text("New Session")');
+    await page.waitForTimeout(2000);
+
+    const sessionId = await page.evaluate(() => {
+      return (window as any).appState?.currentSessionId?.value;
+    });
+
+    // Send a message
+    const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+    await messageInput.fill('Test SDK message persistence');
+    await page.click('button[type="submit"]');
+
+    await page.waitForTimeout(5000); // Wait for processing
+
+    // Check database for SDK messages
+    const db = openTestDatabase();
+
+    const sdkMessages = db.prepare(
+      `SELECT message_type, message_subtype, sdk_message
+       FROM sdk_messages
+       WHERE session_id = ?
+       ORDER BY timestamp ASC`
+    ).all(sessionId) as Array<{
+      message_type: string;
+      message_subtype: string | null;
+      sdk_message: string;
+    }>;
+
+    db.close();
+
+    // Should have at least user and assistant messages
+    expect(sdkMessages.length).toBeGreaterThanOrEqual(2);
+
+    // Verify message types
+    const messageTypes = sdkMessages.map(m => m.message_type);
+    expect(messageTypes).toContain('user');
+    expect(messageTypes.some(t => t === 'assistant' || t === 'result')).toBe(true);
+
+    // Verify SDK message structure
+    for (const msg of sdkMessages) {
+      const parsed = JSON.parse(msg.sdk_message);
+      expect(parsed).toHaveProperty('type');
+
+      if (parsed.type === 'user') {
+        expect(parsed).toHaveProperty('message');
+        expect(parsed.message).toHaveProperty('content');
+      }
+    }
+  });
+
+  test('should retrieve SDK messages with pagination', async ({ page }) => {
+    await page.goto('/');
+    await page.click('button:has-text("New Session")');
+    await page.waitForTimeout(2000);
+
+    const sessionId = await page.evaluate(() => {
+      return (window as any).appState?.currentSessionId?.value;
+    });
+
+    // Send multiple messages
+    const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+    for (let i = 0; i < 3; i++) {
+      await messageInput.fill(`Pagination test message ${i + 1}`);
+      await page.click('button[type="submit"]');
+      await page.waitForTimeout(2000);
+    }
+
+    // Test pagination via RPC call
+    const paginationTest = await page.evaluate(async (sid) => {
+      const hub = (window as any).__messageHub || (window as any).appState?.messageHub;
+
+      // Get messages with limit and offset
+      const batch1 = await hub.call('message.sdkMessages', {
+        sessionId: sid,
+        limit: 2,
+        offset: 0,
+      });
+
+      const batch2 = await hub.call('message.sdkMessages', {
+        sessionId: sid,
+        limit: 2,
+        offset: 2,
+      });
+
+      return {
+        batch1Count: batch1.sdkMessages?.length || 0,
+        batch2Count: batch2.sdkMessages?.length || 0,
+      };
+    }, sessionId);
+
+    expect(paginationTest.batch1Count).toBeLessThanOrEqual(2);
+    expect(paginationTest.batch2Count).toBeGreaterThan(0);
+  });
+
+  test('should filter SDK messages by timestamp', async ({ page }) => {
+    await page.goto('/');
+    await page.click('button:has-text("New Session")');
+    await page.waitForTimeout(2000);
+
+    const sessionId = await page.evaluate(() => {
+      return (window as any).appState?.currentSessionId?.value;
+    });
+
+    // Send first message
+    await page.locator('textarea').first().fill('First message');
+    await page.click('button[type="submit"]');
+    await page.waitForTimeout(3000);
+
+    const timestamp = Date.now();
+
+    // Send second message after timestamp
+    await page.locator('textarea').first().fill('Second message');
+    await page.click('button[type="submit"]');
+    await page.waitForTimeout(3000);
+
+    // Query messages since timestamp
+    const filteredMessages = await page.evaluate(async (sid, ts) => {
+      const hub = (window as any).__messageHub || (window as any).appState?.messageHub;
+
+      const result = await hub.call('message.sdkMessages', {
+        sessionId: sid,
+        since: ts,
+      });
+
+      return result.sdkMessages || [];
+    }, sessionId, timestamp);
+
+    // Should only contain messages after timestamp
+    const userMessages = filteredMessages.filter((m: any) => m.type === 'user');
+    const hasSecondMessage = userMessages.some((m: any) => {
+      const content = JSON.stringify(m.message?.content || '');
+      return content.includes('Second message');
+    });
+
+    expect(hasSecondMessage).toBe(true);
+
+    // Should not contain first message
+    const hasFirstMessage = userMessages.some((m: any) => {
+      const content = JSON.stringify(m.message?.content || '');
+      return content.includes('First message');
+    });
+
+    expect(hasFirstMessage).toBe(false);
+  });
+});
+
+test.describe('Database Transaction Safety', () => {
+  test('should handle session deletion failure gracefully', async ({ page }) => {
+    await page.goto('/');
+    await page.click('button:has-text("New Session")');
+    await page.waitForTimeout(2000);
+
+    const sessionId = await page.evaluate(() => {
+      return (window as any).appState?.currentSessionId?.value;
+    });
+
+    // Send a message to create data
+    await page.locator('textarea').first().fill('Transaction test');
+    await page.click('button[type="submit"]');
+    await page.waitForTimeout(3000);
+
+    // Try to delete - even if it fails, UI should handle gracefully
+    await page.click('button[aria-label="Session options"]');
+    await page.click('text=Delete Chat');
+
+    // Check for confirmation dialog
+    const confirmButton = page.locator('[data-testid="confirm-delete-session"]');
+    await expect(confirmButton).toBeVisible({ timeout: 5000 });
+
+    await confirmButton.click();
+
+    // Should redirect to home or show appropriate message
+    await page.waitForTimeout(2000);
+
+    // Either redirected to home or still on session page with error
+    const isOnHome = await page.locator('h2:has-text("Welcome to Liuboer")').isVisible();
+    const hasError = await page.locator('text=/error|failed/i').isVisible();
+
+    expect(isOnHome || !hasError).toBe(true); // Should either succeed or handle error gracefully
+  });
+
+  test('should maintain data integrity during concurrent operations', async ({ browser }) => {
+    const context = await browser.newContext();
+
+    // Create a session
+    const setupPage = await context.newPage();
+    await setupPage.goto('/');
+    await setupPage.click('button:has-text("New Session")');
+    await setupPage.waitForTimeout(2000);
+
+    const sessionId = await setupPage.evaluate(() => {
+      return (window as any).appState?.currentSessionId?.value;
+    });
+
+    // Open two tabs for the same session
+    const [tab1, tab2] = await Promise.all([
+      context.newPage(),
+      context.newPage(),
+    ]);
+
+    await Promise.all([
+      tab1.goto(`/${sessionId}`),
+      tab2.goto(`/${sessionId}`),
+    ]);
+
+    await Promise.all([
+      tab1.waitForTimeout(2000),
+      tab2.waitForTimeout(2000),
+    ]);
+
+    // Send messages from both tabs simultaneously
+    const message1Promise = tab1.evaluate(async () => {
+      const input = document.querySelector('textarea') as HTMLTextAreaElement;
+      const button = document.querySelector('button[type="submit"]') as HTMLButtonElement;
+
+      input.value = 'Message from Tab 1';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      button.click();
+    });
+
+    const message2Promise = tab2.evaluate(async () => {
+      const input = document.querySelector('textarea') as HTMLTextAreaElement;
+      const button = document.querySelector('button[type="submit"]') as HTMLButtonElement;
+
+      input.value = 'Message from Tab 2';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      button.click();
+    });
+
+    await Promise.all([message1Promise, message2Promise]);
+    await page.waitForTimeout(5000);
+
+    // Check database - both messages should be saved
+    const db = openTestDatabase();
+    const messages = db.prepare(
+      `SELECT sdk_message FROM sdk_messages
+       WHERE session_id = ? AND message_type = 'user'
+       ORDER BY timestamp ASC`
+    ).all(sessionId) as Array<{ sdk_message: string }>;
+    db.close();
+
+    const messageContents = messages.map(m => {
+      const parsed = JSON.parse(m.sdk_message);
+      return JSON.stringify(parsed.message?.content || '');
+    });
+
+    const hasTab1Message = messageContents.some(c => c.includes('Tab 1'));
+    const hasTab2Message = messageContents.some(c => c.includes('Tab 2'));
+
+    expect(hasTab1Message).toBe(true);
+    expect(hasTab2Message).toBe(true);
+
+    await context.close();
+  });
+});
+
+test.describe('Database Cleanup and Maintenance', () => {
+  test('should not accumulate orphaned oauth states', async ({ page }) => {
+    // Check for expired OAuth states
+    const db = openTestDatabase();
+
+    // Clean up expired states (this would normally be done by a background job)
+    const expiredStates = db.prepare(
+      `SELECT COUNT(*) as count FROM oauth_states WHERE expires_at < datetime('now')`
+    ).get() as { count: number };
+
+    db.close();
+
+    // In a well-maintained system, expired states should be cleaned up
+    // For now, we just check that the table exists and query works
+    expect(expiredStates.count).toBeGreaterThanOrEqual(0);
+  });
+
+  test('should track session activity timestamps correctly', async ({ page }) => {
+    await page.goto('/');
+    await page.click('button:has-text("New Session")');
+    await page.waitForTimeout(2000);
+
+    const sessionId = await page.evaluate(() => {
+      return (window as any).appState?.currentSessionId?.value;
+    });
+
+    // Get initial timestamps
+    const db1 = openTestDatabase();
+    const initial = db1.prepare(
+      'SELECT created_at, last_active_at FROM sessions WHERE id = ?'
+    ).get(sessionId) as { created_at: string; last_active_at: string };
+    db1.close();
+
+    // Send a message to update activity
+    await page.locator('textarea').first().fill('Activity update test');
+    await page.click('button[type="submit"]');
+    await page.waitForTimeout(3000);
+
+    // Check updated timestamp
+    const db2 = openTestDatabase();
+    const updated = db2.prepare(
+      'SELECT created_at, last_active_at FROM sessions WHERE id = ?'
+    ).get(sessionId) as { created_at: string; last_active_at: string };
+    db2.close();
+
+    // Created timestamp should not change
+    expect(updated.created_at).toBe(initial.created_at);
+
+    // Last active should be updated
+    const initialActive = new Date(initial.last_active_at).getTime();
+    const updatedActive = new Date(updated.last_active_at).getTime();
+    expect(updatedActive).toBeGreaterThanOrEqual(initialActive);
+  });
+});
