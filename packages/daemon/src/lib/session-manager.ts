@@ -1,5 +1,6 @@
 import type { Session } from "@liuboer/shared";
 import type { MessageHub, EventBus } from "@liuboer/shared";
+import { generateUUID } from "@liuboer/shared";
 import { Database } from "../storage/database";
 import { AgentSession } from "./agent-session";
 import type { AuthManager } from "./auth-manager";
@@ -28,7 +29,7 @@ export class SessionManager {
     initialTools?: string[];
     config?: Partial<Session["config"]>;
   }): Promise<string> {
-    const sessionId = crypto.randomUUID();
+    const sessionId = generateUUID();
 
     const sessionWorkspacePath = params.workspacePath || this.config.workspaceRoot;
 

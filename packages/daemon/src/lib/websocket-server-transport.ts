@@ -11,6 +11,7 @@
 import type { ServerWebSocket } from "bun";
 import type { HubMessage, IMessageTransport, ConnectionState, BroadcastResult } from "@liuboer/shared";
 import type { MessageHubRouter, ClientConnection } from "@liuboer/shared";
+import { generateUUID } from "@liuboer/shared";
 
 export interface WebSocketServerTransportOptions {
   name?: string;
@@ -83,7 +84,7 @@ export class WebSocketServerTransport implements IMessageTransport {
    */
   registerClient(ws: ServerWebSocket<unknown>, connectionSessionId: string): string {
     // Generate client ID first (no mutation needed)
-    const clientId = crypto.randomUUID();
+    const clientId = generateUUID();
 
     // Create connection wrapper with ID already set
     const connection: ClientConnection = {

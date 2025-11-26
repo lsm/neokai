@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import type { AuthMethod, Message, OAuthTokens, Session, ToolCall } from "@liuboer/shared";
 import type { SDKMessage } from "@liuboer/shared/sdk";
+import { generateUUID } from "@liuboer/shared";
 
 export class Database {
   private db: BunDatabase;
@@ -252,7 +253,7 @@ export class Database {
           : userContent;
 
         messages.push({
-          id: sdkMsg.uuid || crypto.randomUUID(),
+          id: sdkMsg.uuid || generateUUID(),
           sessionId: sdkMsg.session_id,
           role: 'user',
           content: contentText,
@@ -533,7 +534,7 @@ export class Database {
    * Save a full SDK message to the database
    */
   saveSDKMessage(sessionId: string, message: SDKMessage): void {
-    const id = crypto.randomUUID();
+    const id = generateUUID();
     const messageType = message.type;
     const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
     const timestamp = new Date().toISOString();

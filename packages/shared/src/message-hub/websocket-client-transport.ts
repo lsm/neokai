@@ -11,6 +11,7 @@ import type {
   UnsubscribeFn,
 } from "./types.ts";
 import type { HubMessage } from "./protocol.ts";
+import { generateUUID } from "../utils.ts";
 
 export interface WebSocketClientTransportOptions {
   /**
@@ -342,7 +343,7 @@ export class WebSocketClientTransport implements IMessageTransport {
 
         // FIX P1.1: Send actual PING message (not just check readyState)
         const pingMessage = {
-          id: crypto.randomUUID(),
+          id: generateUUID(),
           type: "PING" as const,
           method: "heartbeat",
           sessionId: "global",

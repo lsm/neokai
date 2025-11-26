@@ -6,6 +6,7 @@ import {
   createEventMessage,
   createCallMessage,
 } from "../src/message-hub/protocol";
+import { generateUUID } from "../src/utils";
 
 // Mock WebSocket
 class MockWebSocket {
@@ -24,7 +25,7 @@ class MockWebSocket {
 // Helper to create ClientConnection from MockWebSocket
 function createMockConnection(ws: MockWebSocket, id?: string): ClientConnection {
   return {
-    id: id || crypto.randomUUID(),
+    id: id || generateUUID(),
     send: (data: string) => ws.send(data),
     isOpen: () => ws.readyState === 1,
     metadata: { ws },

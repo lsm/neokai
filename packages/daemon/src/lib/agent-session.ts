@@ -2,6 +2,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { Message, MessageContent, Session, ToolCall, ContextInfo } from "@liuboer/shared";
 import type { MessageHub } from "@liuboer/shared";
 import type { SDKUserMessage } from "@liuboer/shared/sdk/sdk.d.ts";
+import { generateUUID } from "@liuboer/shared";
 import { Database } from "../storage/database";
 
 /**
@@ -140,7 +141,7 @@ export class AgentSession {
    * Enqueue a message to be sent to Claude via the streaming query
    */
   async enqueueMessage(content: string | MessageContent[], internal: boolean = false): Promise<string> {
-    const messageId = crypto.randomUUID();
+    const messageId = generateUUID();
 
     return new Promise((resolve, reject) => {
       const queuedMessage: QueuedMessage = {
