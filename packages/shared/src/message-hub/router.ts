@@ -65,7 +65,7 @@ export interface MessageHubRouterOptions {
   /**
    * FIX P2.4: Rate limit for subscribe/unsubscribe operations (per client)
    * Using token bucket: max operations per second
-   * @default 10 operations/sec
+   * @default 50 operations/sec
    */
   subscriptionRateLimit?: number;
 }
@@ -124,7 +124,7 @@ export class MessageHubRouter {
     this.logger = options.logger || console;
     this.debug = options.debug || false;
     this.maxSubscriptionsPerClient = options.maxSubscriptionsPerClient || 1000;
-    this.subscriptionRateLimit = options.subscriptionRateLimit || 10; // FIX P2.4: 10 ops/sec default
+    this.subscriptionRateLimit = options.subscriptionRateLimit || 50; // FIX P2.4: 50 ops/sec default
   }
 
   /**
