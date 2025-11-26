@@ -42,6 +42,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   const [contextUsage, setContextUsage] = useState<ContextInfo | undefined>(undefined);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const sendTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     loadSession();
@@ -51,6 +52,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       // Don't disconnect here - let the next ChatContainer's useEffect handle session switching
       // eventBusClient manages session switching internally in its connect() method
       cleanupHandlers();
+
+      // Clean up any pending send timeout
+      if (sendTimeoutRef.current) {
+        clearTimeout(sendTimeoutRef.current);
+        sendTimeoutRef.current = null;
+      }
     };
   }, [sessionId]);
 
@@ -164,6 +171,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
             setStreamingEvents([]);
             setSending(false);
             setCurrentAction(undefined);
+            // Clear the send timeout since we got a successful result
+            if (sendTimeoutRef.current) {
+              clearTimeout(sendTimeoutRef.current);
+              sendTimeoutRef.current = null;
+            }
           }
           // Add non-stream messages to main array, deduplicating by uuid
           setMessages((prev) => {
@@ -225,6 +237,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
         setStreamingEvents([]);
         setCurrentAction(undefined);
         setIsWsConnected(false);
+        // Clear the send timeout on error
+        if (sendTimeoutRef.current) {
+          clearTimeout(sendTimeoutRef.current);
+          sendTimeoutRef.current = null;
+        }
       }, { sessionId });
 
       // Message queue events (streaming input mode)
@@ -232,6 +249,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
         const { messageId } = data;
         console.log("Message queued:", messageId);
         setCurrentAction("Queued...");
+        // Clear the send timeout since we got confirmation the message was queued
+        if (sendTimeoutRef.current) {
+          clearTimeout(sendTimeoutRef.current);
+          sendTimeoutRef.current = null;
+        }
       }, { sessionId });
 
       unsubMessageProcessing = hub.subscribe<{ messageId: string }>('message.processing', (data) => {
@@ -271,6 +293,16 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       setError(null);
       setCurrentAction("Sending...");
 
+      // Set a timeout to prevent getting stuck in "sending" state
+      // If we don't get any response in 10 seconds, clear the sending state
+      sendTimeoutRef.current = setTimeout(() => {
+        console.warn("Send timeout - no response from server");
+        setSending(false);
+        setCurrentAction(undefined);
+        setError("Message send timed out. Please try again.");
+        toast.error("Message send timed out. Please try again.");
+      }, 10000);
+
       // Send via MessageHub pub/sub (streaming input mode!)
       // The daemon will queue the message and yield it to the SDK AsyncGenerator
       const hub = await connectionManager.getHub();
@@ -284,6 +316,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       );
 
       // Note: Don't set sending=false here - wait for message.queued or message.processing event
+      // The timeout above will handle the case where we never get a response
     } catch (err) {
       const message = err instanceof Error
         ? err.message
@@ -292,6 +325,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       toast.error(message);
       setSending(false);
       setCurrentAction(undefined);
+
+      // Clear the timeout since we're handling the error
+      if (sendTimeoutRef.current) {
+        clearTimeout(sendTimeoutRef.current);
+        sendTimeoutRef.current = null;
+      }
     }
   };
 
