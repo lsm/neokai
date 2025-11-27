@@ -6,15 +6,15 @@ dev:
 	@lsof -ti:9283 | xargs kill -9 2>/dev/null || true
 	@cd packages/cli && bun run dev
 
-# Self-hosting mode - use Liuboer to develop itself
+# Self-hosting mode - use Liuboer to develop itself (production mode, no HMR)
 self:
-	@echo "🔄 Starting self-hosting development server..."
+	@echo "🔄 Starting self-hosting server (production mode)..."
 	@echo "   Workspace: $(shell pwd)"
 	@echo "   Database: $(shell pwd)/tmp/self-dev/daemon.db"
 	@echo "   Listening on port 9983 to avoid conflicts"
 	@mkdir -p $(shell pwd)/tmp/self-dev
 	@lsof -ti:9983 | xargs kill -9 2>/dev/null || true
-	@bun run packages/cli/main.ts --port 9983 --workspace $(shell pwd) --db-path $(shell pwd)/tmp/self-dev/daemon.db
+	@NODE_ENV=production bun run packages/cli/main.ts --port 9983 --workspace $(shell pwd) --db-path $(shell pwd)/tmp/self-dev/daemon.db
 
 start:
 	@echo "🚀 Starting production server..."
