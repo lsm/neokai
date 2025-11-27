@@ -23,7 +23,14 @@ export async function startProdServer(config: Config) {
   const app = new Elysia()
     // Mount daemon routes first (includes WebSocket at /ws)
     .use(daemonApp)
-    // Serve static files from web/dist for everything else
+    // Explicit root route for SPA
+    .get("/", async () => {
+      const indexFile = Bun.file(resolve(distPath, "index.html"));
+      return new Response(indexFile, {
+        headers: { "Content-Type": "text/html" },
+      });
+    })
+    // Serve static files from web/dist
     .use(
       await staticPlugin({
         assets: distPath,
@@ -35,12 +42,9 @@ export async function startProdServer(config: Config) {
     // SPA fallback - serve index.html for unmatched routes
     .get("*", async () => {
       const indexFile = Bun.file(resolve(distPath, "index.html"));
-      if (await indexFile.exists()) {
-        return new Response(indexFile, {
-          headers: { "Content-Type": "text/html" },
-        });
-      }
-      return new Response("Not Found", { status: 404 });
+      return new Response(indexFile, {
+        headers: { "Content-Type": "text/html" },
+      });
     })
     .onStop(async () => {
       console.log("🛑 Stopping daemon...");
