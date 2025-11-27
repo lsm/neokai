@@ -74,15 +74,8 @@ export class Database {
       )
     `);
 
-    // OAuth state table (temporary storage during OAuth flow)
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS oauth_states (
-        state TEXT PRIMARY KEY,
-        code_verifier TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        expires_at TEXT NOT NULL
-      )
-    `);
+    // OAuth state table removed - web-based OAuth flow is no longer supported
+    // Authentication is now handled via environment variables only
 
     // SDK Messages table (stores full SDK messages with all metadata)
     this.db.exec(`
@@ -106,8 +99,6 @@ export class Database {
     // Create indexes
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_events_session
       ON events(session_id, timestamp)`);
-    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_oauth_states_expires
-      ON oauth_states(expires_at)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session
       ON sdk_messages(session_id, timestamp)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_type
@@ -482,49 +473,10 @@ export class Database {
     stmt.run();
   }
 
-  /**
-   * @deprecated OAuth flow is no longer supported via the web UI.
-   * Save OAuth state temporarily during flow
-   */
-  saveOAuthState(state: string, codeVerifier: string, expiresInMinutes = 10): void {
-    const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000).toISOString();
-    const stmt = this.db.prepare(
-      `INSERT INTO oauth_states (state, code_verifier, created_at, expires_at)
-       VALUES (?, ?, datetime('now'), ?)`
-    );
-    stmt.run(state, codeVerifier, expiresAt);
-  }
-
-  /**
-   * @deprecated OAuth flow is no longer supported via the web UI.
-   * Get and delete OAuth state (one-time use)
-   */
-  getOAuthState(state: string): string | null {
-    // Check if state exists and not expired
-    const selectStmt = this.db.prepare(
-      `SELECT code_verifier FROM oauth_states WHERE state = ? AND expires_at > datetime('now')`
-    );
-    const row = selectStmt.get(state) as Record<string, unknown> | undefined;
-
-    if (!row) return null;
-
-    const codeVerifier = row.code_verifier as string;
-
-    // Delete the state (one-time use)
-    const deleteStmt = this.db.prepare(`DELETE FROM oauth_states WHERE state = ?`);
-    deleteStmt.run(state);
-
-    return codeVerifier;
-  }
-
-  /**
-   * @deprecated OAuth flow is no longer supported via the web UI.
-   * Clean up expired OAuth states
-   */
-  cleanupExpiredOAuthStates(): void {
-    const stmt = this.db.prepare(`DELETE FROM oauth_states WHERE expires_at < datetime('now')`);
-    stmt.run();
-  }
+  // OAuth web flow methods removed - no longer supported
+  // Authentication is now managed via environment variables only:
+  // - ANTHROPIC_API_KEY for API key authentication
+  // - CLAUDE_CODE_OAUTH_TOKEN for long-lived OAuth token authentication
 
   // ============================================================================
   // SDK Message operations

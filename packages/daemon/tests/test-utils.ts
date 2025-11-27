@@ -50,16 +50,6 @@ export async function createTestApp(): Promise<TestContext> {
     claudeCodeOAuthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN,
     dbPath,
     maxSessions: 10,
-    // @ts-expect-error - OAuth config properties removed from Config type
-    oauthAuthUrl: "https://console.anthropic.com/oauth/authorize",
-    // @ts-expect-error - OAuth config properties removed from Config type
-    oauthTokenUrl: "https://console.anthropic.com/oauth/token",
-    // @ts-expect-error - OAuth config properties removed from Config type
-    oauthClientId: "test-client-id",
-    // @ts-expect-error - OAuth config properties removed from Config type
-    oauthRedirectUri: "http://localhost:3000/oauth/callback",
-    // @ts-expect-error - OAuth config properties removed from Config type
-    oauthScopes: "public limited",
     nodeEnv: "test",
     workspaceRoot: process.cwd(),
   };
