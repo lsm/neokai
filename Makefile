@@ -1,4 +1,28 @@
-.PHONY: daemon web sync-sdk-types clean-cache clean-all build-prod e2e e2e-ui e2e-headed e2e-debug e2e-report
+.PHONY: dev start daemon web restart sync-sdk-types clean-cache clean-all build-prod e2e e2e-ui e2e-headed e2e-debug e2e-report
+
+# Unified server (daemon + web in single process) - RECOMMENDED
+dev:
+	@echo "🚀 Starting unified development server..."
+	@lsof -ti:9283 | xargs kill -9 2>/dev/null || true
+	@cd packages/cli && bun run dev
+
+start:
+	@echo "🚀 Starting production server..."
+	@lsof -ti:9283 | xargs kill -9 2>/dev/null || true
+	@cd packages/cli && bun run start
+
+# Standalone servers (for debugging) - LEGACY
+daemon:
+	@echo "⚠️  Starting daemon in standalone mode (legacy)..."
+	@echo "💡 Tip: Use 'make dev' for unified server"
+	@lsof -ti:8283 | xargs kill -9 2>/dev/null || true
+	@cd packages/daemon && bun run dev
+
+web:
+	@echo "⚠️  Starting web in standalone mode (legacy)..."
+	@echo "💡 Tip: Use 'make dev' for unified server"
+	@lsof -ti:9283 | xargs kill -9 2>/dev/null || true
+	@cd packages/web && bun run dev
 
 sync-sdk-types:
 	@echo "Syncing Claude SDK type definitions..."
@@ -17,6 +41,22 @@ web:
 	@echo "Killing any process on port 9283..."
 	@lsof -ti:9283 | xargs kill -9 2>/dev/null || true
 	@echo "Starting web dev server..."
+	@cd packages/web && bun run dev
+
+restart:
+	@echo "🔄 Restarting all services..."
+	@echo "Killing processes on ports 8283 and 9283..."
+	@lsof -ti:8283 | xargs kill -9 2>/dev/null || true
+	@lsof -ti:9283 | xargs kill -9 2>/dev/null || true
+	@echo "🧹 Cleaning web cache..."
+	@rm -rf packages/web/dist
+	@rm -rf packages/web/.vite
+	@echo "📦 Reinstalling dependencies..."
+	@bun install
+	@echo "🚀 Starting daemon..."
+	@cd packages/daemon && bun run dev &
+	@sleep 2
+	@echo "🌐 Starting web..."
 	@cd packages/web && bun run dev
 
 # Clean Bun's package cache (helps with dependency issues)
