@@ -383,24 +383,59 @@ export async function setupMessageHubTesting(page: Page): Promise<void> {
 
 /**
  * Helper to clean up after tests
+ * IMPORTANT: E2E tests must test the actual UI, not bypass it
  */
 export async function cleanupTestSession(page: Page, sessionId: string): Promise<void> {
   try {
     // Navigate to session if not already there
     if (!page.url().includes(sessionId)) {
       await page.goto(`/${sessionId}`);
-      await waitForElement(page, 'button[aria-label="Session options"]');
+      await page.waitForTimeout(1000); // Wait for page to fully load and stabilize
     }
 
-    // Delete session
-    await page.click('button[aria-label="Session options"]');
-    await page.click('text=Delete Chat');
+    // Find and click the session options button
+    const optionsButton = page.locator('button[aria-label="Session options"]').first();
+    await optionsButton.waitFor({ state: 'visible', timeout: 5000 });
 
-    const confirmButton = await waitForElement(page, '[data-testid="confirm-delete-session"]');
+    // Scroll into view to ensure it's visible
+    await optionsButton.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(300);
+
+    // Click to open dropdown
+    await optionsButton.click();
+
+    // Wait for dropdown menu to appear and be ready for interaction
+    await page.waitForTimeout(500);
+
+    // Find the "Delete Chat" button in the dropdown menu using more specific selector
+    const deleteButton = page.locator('button[role="menuitem"]').filter({ hasText: 'Delete Chat' }).first();
+    await deleteButton.waitFor({ state: 'visible', timeout: 5000 });
+
+    // Ensure the button is ready for interaction
+    await deleteButton.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(200);
+
+    // Click the delete button
+    await deleteButton.click();
+
+    // Wait for modal to appear
+    await page.waitForTimeout(300);
+
+    // Find and click the confirm button in the modal
+    const confirmButton = page.locator('[data-testid="confirm-delete-session"]').first();
+    await confirmButton.waitFor({ state: 'visible', timeout: 5000 });
     await confirmButton.click();
 
+    // Wait for session deletion and UI update
     await waitForSessionDeleted(page, sessionId);
   } catch (error) {
-    console.warn(`Failed to cleanup session ${sessionId}:`, error);
+    console.warn(`Failed to cleanup session ${sessionId}:`, (error as Error).message || error);
+    // Try to navigate home if cleanup failed
+    try {
+      await page.goto('/');
+      await page.waitForTimeout(500);
+    } catch {
+      // Ignore navigation errors
+    }
   }
 }
