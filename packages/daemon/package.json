@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "type": "module",
   "main": "main.ts",
+  "exports": {
+    ".": "./main.ts",
+    "./app": "./src/app.ts",
+    "./config": "./src/config.ts"
+  },
   "scripts": {
     "dev": "bun run --watch main.ts",
     "start": "NODE_ENV=production bun run main.ts",
