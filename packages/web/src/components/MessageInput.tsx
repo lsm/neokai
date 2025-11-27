@@ -113,7 +113,7 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
     <div class="bg-dark-850 border-t border-dark-700 p-4">
       <form onSubmit={handleSubmit} class="max-w-4xl mx-auto">
         {/* Input Group */}
-        <div class="relative rounded-[28px] border border-dark-700/50 bg-dark-800/40 backdrop-blur-sm shadow-lg transition-all focus-within:border-blue-500/40 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:bg-dark-800/60">
+        <div class="relative rounded-[28px] border border-dark-700/50 bg-dark-800/40 backdrop-blur-sm shadow-lg transition-all focus-within:border-blue-500/40 focus-within:bg-dark-800/60">
           {/* Command Autocomplete */}
           {showCommandAutocomplete && (
             <CommandAutocomplete

@@ -35,11 +35,9 @@ export function setupMessageHubWebSocket(
       // Store clientId on websocket for cleanup and message handling
       (ws.raw as any).__clientId = clientId;
 
-      // Subscribe client to global events
-      // This is APPLICATION logic - SubscriptionManager defines what events to subscribe to
-      subscriptionManager.subscribeToGlobalEvents(clientId).catch((error) => {
-        console.error(`Failed to subscribe client ${clientId} to global events:`, error);
-      });
+      // NOTE: We don't auto-subscribe clients to events anymore.
+      // Clients will subscribe themselves by sending SUBSCRIBE messages.
+      // This prevents the server-side subscription timeout issue.
 
       // Send connection confirmation as a proper EVENT message
       const connectionEvent = createEventMessage({

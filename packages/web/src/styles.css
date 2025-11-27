@@ -412,6 +412,12 @@ html {
   outline-offset: 2px;
 }
 
+/* Exception for input/textarea elements that have their own focus styles */
+input:focus-visible,
+textarea:focus-visible {
+  outline: none;
+}
+
 button:focus-visible,
 a:focus-visible {
   outline: 2px solid rgb(var(--color-blue));
