@@ -1,10 +1,20 @@
-.PHONY: dev start daemon web restart sync-sdk-types clean-cache clean-all build-prod e2e e2e-ui e2e-headed e2e-debug e2e-report
+.PHONY: dev start daemon web self restart sync-sdk-types clean-cache clean-all build-prod e2e e2e-ui e2e-headed e2e-debug e2e-report
 
 # Unified server (daemon + web in single process) - RECOMMENDED
 dev:
 	@echo "🚀 Starting unified development server..."
 	@lsof -ti:9283 | xargs kill -9 2>/dev/null || true
 	@cd packages/cli && bun run dev
+
+# Self-hosting mode - use Liuboer to develop itself
+self:
+	@echo "🔄 Starting self-hosting development server..."
+	@echo "   Workspace: $(shell pwd)"
+	@echo "   Database: $(shell pwd)/tmp/self-dev/daemon.db"
+	@echo "   Listening on port 9983 to avoid conflicts"
+	@mkdir -p $(shell pwd)/tmp/self-dev
+	@lsof -ti:9983 | xargs kill -9 2>/dev/null || true
+	@bun run packages/cli/main.ts --port 9983 --workspace $(shell pwd) --db-path $(shell pwd)/tmp/self-dev/daemon.db
 
 start:
 	@echo "🚀 Starting production server..."
@@ -30,18 +40,6 @@ sync-sdk-types:
 	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts packages/shared/src/sdk/
 	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk-tools.d.ts packages/shared/src/sdk/
 	@echo "✓ SDK types synced to packages/shared/src/sdk/"
-
-daemon:
-	@echo "Killing any process on port 8283..."
-	@lsof -ti:8283 | xargs kill -9 2>/dev/null || true
-	@echo "Starting daemon dev server..."
-	@cd packages/daemon && bun run dev
-
-web:
-	@echo "Killing any process on port 9283..."
-	@lsof -ti:9283 | xargs kill -9 2>/dev/null || true
-	@echo "Starting web dev server..."
-	@cd packages/web && bun run dev
 
 restart:
 	@echo "🔄 Restarting all services..."
