@@ -23,14 +23,15 @@ function getDaemonWsUrl(): string {
   const port = window.location.port;
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
 
-  // In development (Vite dev server on port 9283), use the proxy
-  // This allows accessing via Tailscale without exposing daemon port
-  if (port === "9283") {
-    // Use same origin - Vite will proxy /ws to localhost:8283
+  // In unified server mode (CLI), daemon and web share the same port
+  // The CLI runs daemon+web on the same port (default 9283, or custom via --port)
+  // Always use same origin when running through the CLI
+  if (port) {
+    // Use same origin - the unified server handles both web and WebSocket
     return `${protocol}//${hostname}:${port}`;
   }
 
-  // In production (or direct access), connect to daemon port
+  // Fallback for no port (unlikely in practice)
   return `${protocol}//${hostname}:8283`;
 }
 
