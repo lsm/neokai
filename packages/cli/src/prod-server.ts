@@ -47,8 +47,8 @@ export async function startProdServer(config: Config) {
       await daemonContext.cleanup();
     });
 
-  const port = 9283;
-  app.listen({ hostname: "0.0.0.0", port });
+  const port = config.port;
+  app.listen({ hostname: config.host, port });
 
   console.log(`\n✨ Production server running!`);
   console.log(`   🌐 UI: http://localhost:${port}`);
