@@ -9,7 +9,7 @@ export class SessionManager {
   private sessions: Map<string, AgentSession> = new Map();
 
   // FIX: Session lazy-loading race condition
-  private sessionLoadLocks = new Map<string, Promise<AgentSession>>();
+  private sessionLoadLocks = new Map<string, Promise<AgentSession | null>>();
 
   constructor(
     private db: Database,

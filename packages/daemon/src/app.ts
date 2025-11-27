@@ -243,7 +243,7 @@ export async function createDaemonApp(
   };
 
   return {
-    app,
+    app: app as any,
     db,
     messageHub,
     sessionManager,

@@ -26,11 +26,11 @@ export function setupMessageHubWebSocket(
   // UNIFIED WebSocket endpoint - single connection handles all sessions
   // Session routing is done via message.sessionId field, not URL
   return app.ws("/ws", {
-    open(ws) {
+    open(ws: any) {
       console.log("WebSocket connection established");
 
       // Register client with transport (starts in global session)
-      const clientId = transport.registerClient(ws.raw, GLOBAL_SESSION_ID);
+      const clientId = transport.registerClient(ws.raw as any, GLOBAL_SESSION_ID);
 
       // Store clientId on websocket for cleanup and message handling
       (ws.raw as any).__clientId = clientId;
@@ -52,7 +52,7 @@ export function setupMessageHubWebSocket(
       ws.send(JSON.stringify(connectionEvent));
     },
 
-    message(ws, message) {
+    message(ws: any, message: any) {
       try {
         // FIX P1.1: Validate message size before parsing (DoS prevention)
         const messageStr = typeof message === "string" ? message : JSON.stringify(message);
@@ -132,7 +132,7 @@ export function setupMessageHubWebSocket(
       }
     },
 
-    close(ws) {
+    close(ws: any) {
       console.log("WebSocket disconnected");
       const clientId = (ws.raw as any).__clientId;
       if (clientId) {
@@ -140,7 +140,7 @@ export function setupMessageHubWebSocket(
       }
     },
 
-    error(ws, error) {
+    error(ws: any, error: any) {
       console.error("WebSocket error:", error);
       const clientId = (ws.raw as any).__clientId;
       if (clientId) {

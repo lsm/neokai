@@ -199,7 +199,7 @@ export class Database {
 
   updateSession(id: string, updates: Partial<Session>): void {
     const fields: string[] = [];
-    const values: unknown[] = [];
+    const values: any[] = [];
 
     if (updates.title) {
       fields.push("title = ?");
@@ -564,7 +564,7 @@ export class Database {
     since?: number
   ): SDKMessage[] {
     let query = `SELECT sdk_message, timestamp FROM sdk_messages WHERE session_id = ?`;
-    const params: unknown[] = [sessionId];
+    const params: any[] = [sessionId];
 
     // Add timestamp filter if 'since' is provided
     // 'since' is a JavaScript millisecond timestamp, convert to ISO string for comparison
@@ -598,7 +598,7 @@ export class Database {
     limit = 100
   ): SDKMessage[] {
     let query = `SELECT sdk_message FROM sdk_messages WHERE session_id = ? AND message_type = ?`;
-    const params: unknown[] = [sessionId, messageType];
+    const params: any[] = [sessionId, messageType];
 
     if (messageSubtype) {
       query += ` AND message_subtype = ?`;

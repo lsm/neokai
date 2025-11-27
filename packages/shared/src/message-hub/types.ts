@@ -145,6 +145,12 @@ export interface SubscribeOptions {
    * If not specified, subscribes to all sessions
    */
   sessionId?: string;
+
+  /**
+   * Subscription timeout in milliseconds (deprecated, not used)
+   * @deprecated This option is no longer used
+   */
+  timeout?: number;
 }
 
 /**

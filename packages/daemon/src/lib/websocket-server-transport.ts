@@ -9,7 +9,7 @@
  */
 
 import type { ServerWebSocket } from "bun";
-import type { HubMessage, IMessageTransport, ConnectionState, BroadcastResult } from "@liuboer/shared";
+import type { HubMessage, IMessageTransport, ConnectionState } from "@liuboer/shared";
 import type { MessageHubRouter, ClientConnection } from "@liuboer/shared";
 import { generateUUID } from "@liuboer/shared";
 

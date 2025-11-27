@@ -29,7 +29,7 @@ interface QueuedMessage {
  */
 export class AgentSession {
   private conversationHistory: Message[] = [];
-  private abortController: AbortController | null = null;
+  private abortController: AbortController | undefined = undefined;
 
   // Message queue for streaming input
   private messageQueue: QueuedMessage[] = [];
@@ -38,7 +38,7 @@ export class AgentSession {
 
   // SDK query object with control methods
   private queryObject: any | null = null;
-  private slashCommands: string[] | null = null;
+  private slashCommands: string[] = [];
 
   // History replay tracking
   private replayingHistory: boolean = false;
@@ -439,7 +439,7 @@ export class AgentSession {
     // Abort current query
     if (this.abortController) {
       this.abortController.abort();
-      this.abortController = null;
+      this.abortController = undefined;
     }
 
     await this.messageHub.publish('session.interrupted', {}, { sessionId: this.session.id });
@@ -526,7 +526,7 @@ export class AgentSession {
     // Abort any running query
     if (this.abortController) {
       this.abortController.abort();
-      this.abortController = null;
+      this.abortController = undefined;
     }
 
     // FIX: Wait for query to fully stop (with timeout)
