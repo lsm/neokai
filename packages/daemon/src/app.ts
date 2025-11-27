@@ -28,7 +28,7 @@ export interface CreateDaemonAppOptions {
 }
 
 export interface DaemonAppContext {
-  app: Elysia;
+  app: Elysia<any>;
   db: Database;
   messageHub: MessageHub;
   sessionManager: SessionManager;
@@ -194,8 +194,8 @@ export async function createDaemonApp(
     }));
   }
 
-  // Mount MessageHub WebSocket routes
-  setupMessageHubWebSocket(app, transport, sessionManager, subscriptionManager);
+  // Mount MessageHub WebSocket routes (setupMessageHubWebSocket modifies app in-place)
+  setupMessageHubWebSocket(app as any, transport, sessionManager, subscriptionManager);
 
   // Cleanup function for graceful shutdown
   const cleanup = async () => {
