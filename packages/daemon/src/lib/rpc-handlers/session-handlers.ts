@@ -76,4 +76,33 @@ export function setupSessionHandlers(
 
     return { success: true };
   });
+
+  // Handle message sending to a session
+  messageHub.handle("message.send", async (data) => {
+    const { sessionId: targetSessionId, content, images } = data as {
+      sessionId: string;
+      content: string;
+      images?: Array<{ data: string; media_type: string }>;
+    };
+
+    const agentSession = sessionManager.getSession(targetSessionId);
+    if (!agentSession) {
+      throw new Error("Session not found");
+    }
+
+    return await agentSession.handleMessageSend({ content, images });
+  });
+
+  // Handle session interruption
+  messageHub.handle("client.interrupt", async (data) => {
+    const { sessionId: targetSessionId } = data as { sessionId: string };
+
+    const agentSession = sessionManager.getSession(targetSessionId);
+    if (!agentSession) {
+      throw new Error("Session not found");
+    }
+
+    await agentSession.handleInterrupt();
+    return { success: true };
+  });
 }

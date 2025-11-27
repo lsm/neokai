@@ -79,38 +79,13 @@ export class AgentSession {
   /**
    * Setup MessageHub listeners for incoming messages and controls
    * PHASE 3 FIX: Store unsubscribe functions for cleanup
+   *
+   * NOTE: We don't subscribe to events server-side anymore.
+   * Instead, RPC handlers in session-handlers.ts call handleMessageSend() and handleInterrupt() directly.
+   * This prevents server-side subscription timeout issues.
    */
   private setupEventListeners(): void {
-    // Listen for incoming messages from WebSocket (session-scoped events)
-    const unsubMessageSend = this.messageHub.subscribe('message.send', async (data: any) => {
-      try {
-        const { content, images } = data;
-        const messageContent = this.buildMessageContent(content, images);
-        const messageId = await this.enqueueMessage(messageContent);
-
-        // Acknowledge that message was queued
-        await this.messageHub.publish('message.queued',
-          { messageId },
-          { sessionId: this.session.id }
-        );
-      } catch (error) {
-        console.error(`[AgentSession ${this.session.id}] Error handling message.send:`, error);
-        await this.messageHub.publish('session.error',
-          {
-            error: error instanceof Error ? error.message : String(error),
-          },
-          { sessionId: this.session.id }
-        );
-      }
-    }, { sessionId: this.session.id });
-
-    // Handle interruption requests
-    const unsubInterrupt = this.messageHub.subscribe('client.interrupt', async () => {
-      this.handleInterrupt();
-    }, { sessionId: this.session.id });
-
-    // Store unsubscribe functions for cleanup
-    this.unsubscribers.push(unsubMessageSend, unsubInterrupt);
+    // No subscriptions needed - RPC handlers will call methods directly
   }
 
   /**
@@ -168,6 +143,35 @@ export class AgentSession {
   async sendMessage(content: string): Promise<string> {
     // Just delegate to enqueueMessage
     return this.enqueueMessage(content);
+  }
+
+  /**
+   * Handle message.send RPC call
+   * Called by RPC handler in session-handlers.ts
+   */
+  async handleMessageSend(data: { content: string; images?: Array<{ data: string; media_type: string }> }): Promise<{ messageId: string }> {
+    try {
+      const { content, images } = data;
+      const messageContent = this.buildMessageContent(content, images);
+      const messageId = await this.enqueueMessage(messageContent);
+
+      // Acknowledge that message was queued
+      await this.messageHub.publish('message.queued',
+        { messageId },
+        { sessionId: this.session.id }
+      );
+
+      return { messageId };
+    } catch (error) {
+      console.error(`[AgentSession ${this.session.id}] Error handling message.send:`, error);
+      await this.messageHub.publish('session.error',
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+        { sessionId: this.session.id }
+      );
+      throw error;
+    }
   }
 
   /**
@@ -421,8 +425,9 @@ export class AgentSession {
 
   /**
    * Handle interrupt request - clear queue and abort
+   * Called by RPC handler in session-handlers.ts
    */
-  private async handleInterrupt(): Promise<void> {
+  async handleInterrupt(): Promise<void> {
     console.log(`[AgentSession ${this.session.id}] Handling interrupt...`);
 
     // Clear pending messages

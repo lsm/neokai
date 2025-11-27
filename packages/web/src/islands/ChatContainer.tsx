@@ -303,16 +303,16 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
         toast.error("Message send timed out. Please try again.");
       }, 10000);
 
-      // Send via MessageHub pub/sub (streaming input mode!)
+      // Send via MessageHub RPC (streaming input mode!)
       // The daemon will queue the message and yield it to the SDK AsyncGenerator
       const hub = await connectionManager.getHub();
-      await hub.publish(
+      await hub.call(
         'message.send',
         {
+          sessionId,
           content,
           // images: undefined, // Future: support image uploads
-        },
-        { sessionId }
+        }
       );
 
       // Note: Don't set sending=false here - wait for message.queued or message.processing event
