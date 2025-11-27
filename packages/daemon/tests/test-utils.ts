@@ -4,7 +4,13 @@
 
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
-import "dotenv/config";
+import { config as dotenvConfig } from "dotenv";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Load .env from daemon package directory
+const __dirname = dirname(fileURLToPath(import.meta.url));
+dotenvConfig({ path: join(__dirname, "../.env") });
 import { Database } from "../src/storage/database";
 import { SessionManager } from "../src/lib/session-manager";
 import { AuthManager } from "../src/lib/auth-manager";
@@ -39,7 +45,10 @@ export async function createTestApp(): Promise<TestContext> {
   const db = new Database(dbPath);
   await db.initialize();
 
-  // Test config
+  // Test config - use temp directory for workspace root
+  const tmpDir = process.env.TMPDIR || "/tmp";
+  const testWorkspaceRoot = `${tmpDir}/liuboer-test-${Date.now()}`;
+
   const config: Config = {
     host: "localhost",
     port: 0, // Will be assigned randomly
@@ -51,7 +60,7 @@ export async function createTestApp(): Promise<TestContext> {
     dbPath,
     maxSessions: 10,
     nodeEnv: "test",
-    workspaceRoot: process.cwd(),
+    workspaceRoot: testWorkspaceRoot,
   };
 
   // Initialize authentication manager
@@ -87,20 +96,18 @@ export async function createTestApp(): Promise<TestContext> {
 
   messageHub.registerTransport(transport);
 
-  // Initialize State Manager first (needed by SessionManager)
-  const stateManager = new StateManager(
-    messageHub,
-    null as any, // SessionManager not created yet
-    authManager,
-    config,
-  );
+  // Initialize EventBus (breaks circular dependency!)
+  const { EventBus } = await import("@liuboer/shared");
+  const eventBus = new EventBus({
+    debug: false,
+  });
 
   // Create session manager with EventBus
   const sessionManager = new SessionManager(
     db,
     messageHub,
     authManager,
-    stateManager.eventBus, // Pass EventBus instead of StateManager
+    eventBus, // Pass EventBus instead of StateManager
     {
       defaultModel: config.defaultModel,
       maxTokens: config.maxTokens,
@@ -109,15 +116,20 @@ export async function createTestApp(): Promise<TestContext> {
     },
   );
 
-  // @ts-expect-error - setSessionManager exists for circular dependency resolution
-  stateManager.setSessionManager(sessionManager);
+  // Initialize State Manager (listens to EventBus)
+  const stateManager = new StateManager(
+    messageHub,
+    sessionManager,
+    authManager,
+    config,
+    eventBus,
+  );
 
   // Setup RPC handlers
   setupRPCHandlers({
     messageHub,
     sessionManager,
     authManager,
-    stateManager,
     config,
   });
 
@@ -563,4 +575,24 @@ export function requiresCredentials(test: any) {
   if (!hasAnyCredentials()) {
     test.skip();
   }
+}
+
+/**
+ * Call RPC handler directly (for integration tests)
+ * Bypasses transport layer to test handlers directly
+ */
+export async function callRPCHandler<T = any>(
+  messageHub: MessageHub,
+  method: string,
+  data: any = {},
+): Promise<T> {
+  // Access the handler directly from MessageHub's internal handlers map
+  const handler = (messageHub as any).rpcHandlers.get(method);
+  if (!handler) {
+    throw new Error(`RPC handler not found: ${method}`);
+  }
+
+  // Call handler with data and empty context
+  const result = await handler(data, {});
+  return result as T;
 }

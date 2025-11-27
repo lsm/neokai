@@ -42,6 +42,27 @@ class MockTransport implements IMessageTransport {
 
   async send(message: HubMessage): Promise<void> {
     this.sentMessages.push(message);
+
+    // Auto-respond to SUBSCRIBE/UNSUBSCRIBE messages (simulate server ACK)
+    if (message.type === MessageType.SUBSCRIBE || message.type === MessageType.UNSUBSCRIBE) {
+      // Send ACK response immediately
+      setTimeout(() => {
+        const ackMessage = {
+          id: `ack-${message.id}`,
+          type: MessageType.RESULT,
+          sessionId: message.sessionId,
+          method: message.method,
+          requestId: message.id,
+          data: {
+            [message.type === MessageType.SUBSCRIBE ? 'subscribed' : 'unsubscribed']: true,
+            method: message.method,
+            sessionId: message.sessionId
+          },
+          timestamp: new Date().toISOString(),
+        };
+        this.simulateMessage(ackMessage);
+      }, 0);
+    }
   }
 
   onMessage(handler: (message: HubMessage) => void): () => void {
@@ -116,7 +137,7 @@ describe("MessageHub Critical Fixes", () => {
       };
 
       // Subscribe to an event
-      messageHub.subscribe("user.created", handler);
+      await messageHub.subscribe("user.created", handler);
 
       // Simulate event before disconnect
       transport.simulateMessage(
@@ -154,8 +175,8 @@ describe("MessageHub Critical Fixes", () => {
       };
 
       // Subscribe and then immediately unsubscribe
-      const unsub = messageHub.subscribe("user.created", handler);
-      unsub();
+      const unsub = await messageHub.subscribe("user.created", handler);
+      await unsub();
 
       // Simulate reconnection
       transport.simulateStateChange("disconnected");

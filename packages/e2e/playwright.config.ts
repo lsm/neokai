@@ -17,8 +17,8 @@ export default defineConfig({
   /* Retry on CI only */
   retries: process.env.CI ? 2 : 0,
 
-  /* Opt out of parallel tests on CI */
-  workers: process.env.CI ? 1 : undefined,
+  /* Force single worker due to shared daemon state */
+  workers: 1,
 
   /* Reporter to use */
   reporter: [
@@ -61,25 +61,15 @@ export default defineConfig({
   ],
 
   /* Run your local dev server before starting the tests */
-  webServer: [
-    {
-      command: "cd ../daemon && NODE_ENV=test bun run dev",
-      url: "http://localhost:8283",
-      reuseExistingServer: !process.env.CI,
-      stdout: "ignore",
-      stderr: "pipe",
-      timeout: 120 * 1000,
-      env: {
-        NODE_ENV: "test",
-      },
+  webServer: {
+    command: "cd ../cli && NODE_ENV=test bun run dev",
+    url: "http://localhost:9283",
+    reuseExistingServer: !process.env.CI,
+    stdout: "ignore",
+    stderr: "pipe",
+    timeout: 120 * 1000,
+    env: {
+      NODE_ENV: "test",
     },
-    {
-      command: "cd ../web && bun run dev",
-      url: "http://localhost:9283",
-      reuseExistingServer: !process.env.CI,
-      stdout: "ignore",
-      stderr: "pipe",
-      timeout: 120 * 1000,
-    },
-  ],
+  },
 });

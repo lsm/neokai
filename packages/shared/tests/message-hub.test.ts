@@ -42,6 +42,27 @@ class MockTransport implements IMessageTransport {
 
   async send(message: HubMessage): Promise<void> {
     this.sentMessages.push(message);
+
+    // Auto-respond to SUBSCRIBE/UNSUBSCRIBE messages (simulate server ACK)
+    if (message.type === MessageType.SUBSCRIBE || message.type === MessageType.UNSUBSCRIBE) {
+      // Send ACK response immediately
+      setTimeout(() => {
+        const ackMessage = {
+          id: `ack-${message.id}`,
+          type: MessageType.RESULT,
+          sessionId: message.sessionId,
+          method: message.method,
+          requestId: message.id,
+          data: {
+            [message.type === MessageType.SUBSCRIBE ? 'subscribed' : 'unsubscribed']: true,
+            method: message.method,
+            sessionId: message.sessionId
+          },
+          timestamp: new Date().toISOString(),
+        };
+        this.simulateMessage(ackMessage);
+      }, 0);
+    }
   }
 
   onMessage(handler: (message: HubMessage) => void): () => void {
@@ -402,30 +423,32 @@ describe("MessageHub", () => {
       expect(sentMessage.sessionId).toBe("custom-session");
     });
 
-    test("should throw error when publishing while disconnected", async () => {
+    test("should not throw when publishing while disconnected (skips send)", async () => {
       transport.simulateStateChange("disconnected");
 
-      await expect(
-        messageHub.publish("test.event", {})
-      ).rejects.toThrow("Not connected to transport");
+      // Should not throw, just skip sending
+      await messageHub.publish("test.event", {});
+
+      // No message should be sent
+      expect(transport.sentMessages.length).toBe(0);
     });
   });
 
   describe("Pub/Sub - Subscribing", () => {
-    test("should subscribe to event pattern", () => {
+    test("should subscribe to event pattern", async () => {
       const handler = mock((data: any) => {});
 
-      messageHub.subscribe("user.created", handler, { sessionId: "test-session" });
+      await messageHub.subscribe("user.created", handler, { sessionId: "test-session" });
 
       const sessionSubs = (messageHub as any).subscriptions.get("test-session");
       expect(sessionSubs).toBeDefined();
       expect(sessionSubs.has("user.created")).toBe(true);
     });
 
-    test("should receive events matching subscription", () => {
+    test("should receive events matching subscription", async () => {
       const handler = mock((data: any) => {});
 
-      messageHub.subscribe("user.created", handler);
+      await messageHub.subscribe("user.created", handler);
 
       const eventMessage = createEventMessage({
         method: "user.created",
@@ -444,12 +467,12 @@ describe("MessageHub", () => {
       );
     });
 
-    test("should support wildcard subscriptions", () => {
+    test("should support wildcard subscriptions", async () => {
       const handler = mock((data: any) => {});
 
       // Subscribe to specific methods and manually test wildcard pattern matching
-      messageHub.subscribe("user.created", handler);
-      messageHub.subscribe("user.updated", handler);
+      await messageHub.subscribe("user.created", handler);
+      await messageHub.subscribe("user.updated", handler);
 
       const event1 = createEventMessage({
         method: "user.created",
@@ -469,12 +492,12 @@ describe("MessageHub", () => {
       expect(handler).toHaveBeenCalledTimes(2);
     });
 
-    test("should unsubscribe from events", () => {
+    test("should unsubscribe from events", async () => {
       const handler = mock((data: any) => {});
 
-      const unsubscribe = messageHub.subscribe("user.created", handler);
+      const unsubscribe = await messageHub.subscribe("user.created", handler);
 
-      unsubscribe();
+      await unsubscribe();
 
       const eventMessage = createEventMessage({
         method: "user.created",
@@ -487,24 +510,24 @@ describe("MessageHub", () => {
       expect(handler).not.toHaveBeenCalled();
     });
 
-    test("should track subscriptions internally", () => {
+    test("should track subscriptions internally", async () => {
       const handler = mock(() => {});
-      messageHub.subscribe("user.created", handler, { sessionId: "test-session" });
+      await messageHub.subscribe("user.created", handler, { sessionId: "test-session" });
 
       const sessionSubs = (messageHub as any).subscriptions.get("test-session");
       expect(sessionSubs).toBeDefined();
       expect(sessionSubs.has("user.created")).toBe(true);
     });
 
-    test("should remove subscriptions on unsubscribe", () => {
+    test("should remove subscriptions on unsubscribe", async () => {
       const handler = mock(() => {});
-      const unsubscribe = messageHub.subscribe("user.created", handler, { sessionId: "test-session" });
+      const unsubscribe = await messageHub.subscribe("user.created", handler, { sessionId: "test-session" });
 
       // Verify subscription exists first
       let sessionSubs = (messageHub as any).subscriptions.get("test-session");
       expect(sessionSubs?.has("user.created")).toBe(true);
 
-      unsubscribe();
+      await unsubscribe();
 
       // After unsubscribe, the method should be removed from the set
       sessionSubs = (messageHub as any).subscriptions.get("test-session");
@@ -591,12 +614,12 @@ describe("MessageHub", () => {
   });
 
   describe("Message Routing", () => {
-    test("should route messages to correct handlers", () => {
+    test("should route messages to correct handlers", async () => {
       const rpcHandler = mock(async () => ({}));
       const eventHandler = mock(() => {});
 
       messageHub.handle("test.rpc", rpcHandler);
-      messageHub.subscribe("test.event", eventHandler);
+      await messageHub.subscribe("test.event", eventHandler);
 
       // Send RPC call
       const callMessage = createCallMessage({
@@ -751,9 +774,9 @@ describe("MessageHub", () => {
       expect((messageHub as any).pendingCalls.size).toBe(0);
     });
 
-    test("should clear all handlers on cleanup", () => {
+    test("should clear all handlers on cleanup", async () => {
       messageHub.handle("test.rpc", async () => ({}));
-      messageHub.subscribe("test.event", () => {});
+      await messageHub.subscribe("test.event", () => {});
 
       messageHub.cleanup();
 
@@ -840,32 +863,32 @@ describe("MessageHub", () => {
       expect(messageHub.getPendingCallCount()).toBe(0);
     });
 
-    test("should get subscription count", () => {
+    test("should get subscription count", async () => {
       // Add subscriptions
-      const unsub1 = messageHub.subscribe("user.created", () => {});
+      const unsub1 = await messageHub.subscribe("user.created", () => {});
       expect(messageHub.getSubscriptionCount("user.created")).toBe(1);
 
-      const unsub2 = messageHub.subscribe("user.updated", () => {});
+      const unsub2 = await messageHub.subscribe("user.updated", () => {});
       expect(messageHub.getSubscriptionCount("user.updated")).toBe(1);
 
-      const unsub3 = messageHub.subscribe("user.deleted", () => {});
+      const unsub3 = await messageHub.subscribe("user.deleted", () => {});
       expect(messageHub.getSubscriptionCount("user.deleted")).toBe(1);
 
       // Multiple handlers for same event
-      const unsub4 = messageHub.subscribe("user.created", () => {});
+      const unsub4 = await messageHub.subscribe("user.created", () => {});
       expect(messageHub.getSubscriptionCount("user.created")).toBe(2);
 
       // Unsubscribe
-      unsub1();
+      await unsub1();
       expect(messageHub.getSubscriptionCount("user.created")).toBe(1);
 
-      unsub4();
+      await unsub4();
       expect(messageHub.getSubscriptionCount("user.created")).toBe(0);
 
-      unsub2();
+      await unsub2();
       expect(messageHub.getSubscriptionCount("user.updated")).toBe(0);
 
-      unsub3();
+      await unsub3();
       expect(messageHub.getSubscriptionCount("user.deleted")).toBe(0);
     });
   });
