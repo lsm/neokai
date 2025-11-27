@@ -100,6 +100,7 @@ export function Modal({
           "relative w-full bg-dark-900 rounded-xl shadow-2xl border border-dark-700 animate-scaleIn",
           sizes[size],
         )}
+        onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         {(title || showCloseButton) && (

@@ -42,6 +42,7 @@ export function IconButton({
       onClick={onClick}
       disabled={disabled}
       title={title}
+      aria-label={title}
       class={cn(baseStyles, variants[variant], sizes[size], className)}
     >
       {children}

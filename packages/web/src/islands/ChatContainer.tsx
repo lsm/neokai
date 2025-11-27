@@ -340,17 +340,22 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
   const handleDeleteSession = async () => {
     try {
+      // Close modal immediately to give user feedback
+      setDeleteModalOpen(false);
+
       await deleteSession(sessionId);
 
       // Reload sessions to get the updated list from API
       const response = await listSessions();
       sessionsSignal.value = response.sessions;
 
-      // Clear current session to redirect to home
-      currentSessionIdSignal.value = null;
+      // Navigate to home page - use setTimeout to ensure state updates propagate
+      // This gives the component tree a chance to process the session deletion
+      setTimeout(() => {
+        currentSessionIdSignal.value = null;
+      }, 0);
 
       toast.success("Session deleted");
-      setDeleteModalOpen(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to delete session");
     }

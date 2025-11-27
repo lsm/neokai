@@ -71,12 +71,16 @@ export function Dropdown({
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
+      // Don't close if clicking inside the menu (which uses position:fixed)
+      // Check both dropdownRef and menuRef since fixed positioning can affect contains()
       if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
+        menuRef.current?.contains(event.target as Node) ||
+        (dropdownRef.current && dropdownRef.current.contains(event.target as Node))
       ) {
-        setIsOpen(false);
+        return;
       }
+
+      setIsOpen(false);
     };
 
     const handleEscape = (event: KeyboardEvent) => {
@@ -86,12 +90,13 @@ export function Dropdown({
     };
 
     if (isOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
+      // Use 'click' instead of 'mousedown' to allow onClick handlers to fire first
+      document.addEventListener("click", handleClickOutside);
       document.addEventListener("keydown", handleEscape);
     }
 
     return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("click", handleClickOutside);
       document.removeEventListener("keydown", handleEscape);
     };
   }, [isOpen]);
@@ -179,9 +184,14 @@ export function Dropdown({
                     key={index}
                     role="menuitem"
                     disabled={menuItem.disabled}
-                    onClick={(e) => {
+                    onClick={async (e) => {
                       if (!menuItem.disabled) {
+                        // Stop propagation to prevent handleClickOutside from closing dropdown prematurely
+                        e.stopPropagation();
                         menuItem.onClick(e);
+                        // Small delay to ensure state updates propagate before closing dropdown
+                        // This helps with modal/dialog triggers that depend on dropdown item clicks
+                        await new Promise(resolve => setTimeout(resolve, 0));
                         setIsOpen(false);
                       }
                     }}
