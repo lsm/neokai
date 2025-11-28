@@ -1,8 +1,6 @@
 # Docker Compose for Liuboer Self-Hosting Mode
 # Mounts project root for live development with isolated node_modules
 
-version: '3.8'
-
 services:
   liuboer-self:
     build:
