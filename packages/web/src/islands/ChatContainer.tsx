@@ -96,7 +96,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
     container.addEventListener("scroll", handleScroll);
     return () => container.removeEventListener("scroll", handleScroll);
-  }, [loadingOlder, hasMoreMessages, messages.length, loadOlderMessages]);
+  }, [loadingOlder, hasMoreMessages, messages.length]);
 
   const loadSession = async () => {
     try {
