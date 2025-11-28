@@ -21,6 +21,8 @@ export interface SessionConfig {
 export interface SessionMetadata {
   messageCount: number;
   totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
   toolCallCount: number;
 }
 

@@ -96,7 +96,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
     container.addEventListener("scroll", handleScroll);
     return () => container.removeEventListener("scroll", handleScroll);
-  }, [loadingOlder, hasMoreMessages, messages.length]);
+  }, [loadingOlder, hasMoreMessages, messages.length, loadOlderMessages]);
 
   const loadSession = async () => {
     try {
@@ -539,6 +539,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   }
 
   // Calculate accumulated stats from result messages
+  // Note: We still need to traverse messages for cost calculation since it's not in metadata yet
+  // But token counts should come from session metadata for accuracy (handles pagination properly)
   const accumulatedStats = messages.reduce((acc, msg) => {
     if (msg.type === 'result' && msg.subtype === 'success') {
       acc.inputTokens += msg.usage.input_tokens;
@@ -547,6 +549,15 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     }
     return acc;
   }, { inputTokens: 0, outputTokens: 0, totalCost: 0 });
+
+  // Use session metadata for token counts if available (more accurate than loaded messages)
+  // This ensures the token count is correct even when messages are paginated
+  const displayStats = {
+    inputTokens: session?.metadata?.inputTokens ?? accumulatedStats.inputTokens,
+    outputTokens: session?.metadata?.outputTokens ?? accumulatedStats.outputTokens,
+    totalTokens: session?.metadata?.totalTokens ?? (accumulatedStats.inputTokens + accumulatedStats.outputTokens),
+    totalCost: accumulatedStats.totalCost,
+  };
 
   // Create a map of tool use IDs to tool results for easy lookup
   const toolResultsMap = new Map<string, any>();
@@ -623,17 +634,17 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
                 <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M7 11l5-5m0 0l5 5m-5-5v12" />
                 </svg>
-                {accumulatedStats.inputTokens.toLocaleString()}
+                {displayStats.inputTokens.toLocaleString()}
               </span>
               <span class="flex items-center gap-1" title="Output tokens">
                 <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M17 13l-5 5m0 0l-5-5m5 5V6" />
                 </svg>
-                {accumulatedStats.outputTokens.toLocaleString()}
+                {displayStats.outputTokens.toLocaleString()}
               </span>
-              <span class="text-gray-500">({(accumulatedStats.inputTokens + accumulatedStats.outputTokens).toLocaleString()} total)</span>
+              <span class="text-gray-500">({displayStats.totalTokens.toLocaleString()} total)</span>
               <span class="text-gray-500">•</span>
-              <span class="font-mono text-green-400">${accumulatedStats.totalCost.toFixed(4)}</span>
+              <span class="font-mono text-green-400">${displayStats.totalCost.toFixed(4)}</span>
             </div>
           </div>
 

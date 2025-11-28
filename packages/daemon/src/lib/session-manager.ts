@@ -48,6 +48,8 @@ export class SessionManager {
       metadata: {
         messageCount: 0,
         totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
         toolCallCount: 0,
       },
     };

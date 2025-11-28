@@ -390,17 +390,38 @@ export class AgentSession {
     this.db.saveSDKMessage(this.session.id, message);
 
     // Handle specific message types
-    if (message.type === "result") {
-      // Update session metadata
+    if (message.type === "result" && message.subtype === "success") {
+      // Update session metadata with token usage and costs
+      const usage = message.usage;
+      const totalTokens = usage.input_tokens + usage.output_tokens;
+
       this.session.lastActiveAt = new Date().toISOString();
       this.session.metadata = {
         ...this.session.metadata,
         messageCount: (this.session.metadata?.messageCount || 0) + 1,
+        totalTokens: (this.session.metadata?.totalTokens || 0) + totalTokens,
+        inputTokens: (this.session.metadata?.inputTokens || 0) + usage.input_tokens,
+        outputTokens: (this.session.metadata?.outputTokens || 0) + usage.output_tokens,
+        toolCallCount: this.session.metadata?.toolCallCount || 0, // Will be updated separately
       };
       this.db.updateSession(this.session.id, {
         lastActiveAt: this.session.lastActiveAt,
         metadata: this.session.metadata,
       });
+    }
+
+    // Track tool calls
+    if (message.type === "assistant" && Array.isArray(message.message?.content)) {
+      const toolCalls = message.message.content.filter((block: any) => block.type === "tool_use");
+      if (toolCalls.length > 0) {
+        this.session.metadata = {
+          ...this.session.metadata,
+          toolCallCount: (this.session.metadata?.toolCallCount || 0) + toolCalls.length,
+        };
+        this.db.updateSession(this.session.id, {
+          metadata: this.session.metadata,
+        });
+      }
     }
   }
 
