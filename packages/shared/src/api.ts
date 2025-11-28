@@ -125,6 +125,34 @@ export interface GetAuthStatusResponse {
   authStatus: AuthStatus;
 }
 
+// Model API types
+export interface GetCurrentModelRequest {
+  sessionId: string;
+}
+
+export interface GetCurrentModelResponse {
+  currentModel: string;
+  modelInfo: {
+    id: string;
+    name: string;
+    alias: string;
+    family: 'opus' | 'sonnet' | 'haiku';
+    contextWindow: number;
+    description: string;
+  } | null;
+}
+
+export interface SwitchModelRequest {
+  sessionId: string;
+  model: string; // Can be alias (e.g., "opus") or full ID
+}
+
+export interface SwitchModelResponse {
+  success: boolean;
+  model: string; // The resolved model ID
+  error?: string;
+}
+
 // API client interface
 export interface APIClient {
   // Sessions
@@ -165,4 +193,8 @@ export interface APIClient {
 
   // Authentication
   getAuthStatus(): Promise<GetAuthStatusResponse>;
+
+  // Models
+  getCurrentModel(sessionId: string): Promise<GetCurrentModelResponse>;
+  switchModel(sessionId: string, model: string): Promise<SwitchModelResponse>;
 }

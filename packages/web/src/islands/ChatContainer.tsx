@@ -35,6 +35,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [currentAction, setCurrentAction] = useState<string | undefined>(undefined);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
 
   /**
    * Context usage from accurate SDK context info
@@ -43,6 +46,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const sendTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const processingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     loadSession();
@@ -53,19 +57,26 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       // eventBusClient manages session switching internally in its connect() method
       cleanupHandlers();
 
-      // Clean up any pending send timeout
+      // Clean up any pending timeouts
       if (sendTimeoutRef.current) {
         clearTimeout(sendTimeoutRef.current);
         sendTimeoutRef.current = null;
+      }
+      if (processingTimeoutRef.current) {
+        clearTimeout(processingTimeoutRef.current);
+        processingTimeoutRef.current = null;
       }
     };
   }, [sessionId]);
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, streamingEvents]);
+    // Only auto-scroll on initial load or when new messages arrive (not when loading older)
+    if (isInitialLoad || !loadingOlder) {
+      scrollToBottom();
+    }
+  }, [messages, streamingEvents, isInitialLoad, loadingOlder]);
 
-  // Detect scroll position
+  // Detect scroll position and load older messages when scrolling to top
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (!container) return;
@@ -73,23 +84,34 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     const handleScroll = () => {
       const { scrollTop, scrollHeight, clientHeight } = container;
       const isNearBottom = scrollHeight - scrollTop - clientHeight < 200;
+      const isNearTop = scrollTop < 100;
+
       setShowScrollButton(!isNearBottom);
+
+      // Load older messages when scrolling near the top
+      if (isNearTop && !loadingOlder && hasMoreMessages && messages.length > 0) {
+        loadOlderMessages();
+      }
     };
 
     container.addEventListener("scroll", handleScroll);
     return () => container.removeEventListener("scroll", handleScroll);
-  }, []);
+  }, [loadingOlder, hasMoreMessages, messages.length]);
 
   const loadSession = async () => {
     try {
       setLoading(true);
       setError(null);
+      setIsInitialLoad(true);
       const response = await getSession(sessionId);
       setSession(response.session);
 
-      // Load SDK messages
-      const sdkResponse = await getSDKMessages(sessionId);
+      // Load most recent 100 SDK messages (reverse pagination)
+      const sdkResponse = await getSDKMessages(sessionId, { limit: 100, offset: 0 });
       setMessages(sdkResponse.sdkMessages);
+
+      // Check if there are more messages to load
+      setHasMoreMessages(sdkResponse.sdkMessages.length === 100);
 
       // Load slash commands for this session
       try {
@@ -105,6 +127,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
       // Context usage will be populated from context.updated events
       // No need to calculate from API response messages
+
+      // Mark initial load complete after a short delay to ensure scroll happens
+      setTimeout(() => setIsInitialLoad(false), 100);
     } catch (err) {
       const message = err instanceof Error
         ? err.message
@@ -123,6 +148,48 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       toast.error(message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadOlderMessages = async () => {
+    if (loadingOlder || !hasMoreMessages) return;
+
+    try {
+      setLoadingOlder(true);
+
+      // Save current scroll position to restore after loading
+      const container = messagesContainerRef.current;
+      const oldScrollHeight = container?.scrollHeight || 0;
+      const oldScrollTop = container?.scrollTop || 0;
+
+      // Load next batch of older messages
+      const offset = messages.length;
+      const sdkResponse = await getSDKMessages(sessionId, { limit: 100, offset });
+
+      if (sdkResponse.sdkMessages.length === 0) {
+        setHasMoreMessages(false);
+        return;
+      }
+
+      // Prepend older messages to the beginning of the array
+      setMessages((prev) => [...sdkResponse.sdkMessages, ...prev]);
+
+      // Check if there are more messages
+      setHasMoreMessages(sdkResponse.sdkMessages.length === 100);
+
+      // Restore scroll position after new messages are rendered
+      setTimeout(() => {
+        if (container) {
+          const newScrollHeight = container.scrollHeight;
+          const scrollDiff = newScrollHeight - oldScrollHeight;
+          container.scrollTop = oldScrollTop + scrollDiff;
+        }
+      }, 0);
+    } catch (err) {
+      console.error("Failed to load older messages:", err);
+      toast.error("Failed to load older messages");
+    } finally {
+      setLoadingOlder(false);
     }
   };
 
@@ -165,16 +232,33 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
         // Handle stream events separately for real-time display
         if (isSDKStreamEvent(sdkMessage)) {
           setStreamingEvents((prev) => [...prev, sdkMessage]);
+
+          // Reset processing timeout when we receive streaming events (connection is alive)
+          if (processingTimeoutRef.current) {
+            clearTimeout(processingTimeoutRef.current);
+          }
+          // Set a long timeout (5 minutes) to clear stuck processing state
+          processingTimeoutRef.current = setTimeout(() => {
+            console.warn("[ChatContainer] Processing timeout - clearing stuck state");
+            setSending(false);
+            setStreamingEvents([]);
+            setCurrentAction(undefined);
+            setError("Response timed out. The connection may have been interrupted.");
+          }, 5 * 60 * 1000);
         } else {
           // Only clear processing state when we get the FINAL result message with token usage
           if (sdkMessage.type === "result" && sdkMessage.subtype === "success") {
             setStreamingEvents([]);
             setSending(false);
             setCurrentAction(undefined);
-            // Clear the send timeout since we got a successful result
+            // Clear both timeouts since we got a successful result
             if (sendTimeoutRef.current) {
               clearTimeout(sendTimeoutRef.current);
               sendTimeoutRef.current = null;
+            }
+            if (processingTimeoutRef.current) {
+              clearTimeout(processingTimeoutRef.current);
+              processingTimeoutRef.current = null;
             }
           }
           // Add non-stream messages to main array, deduplicating by uuid
@@ -236,10 +320,14 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
         setSending(false);
         setStreamingEvents([]);
         setCurrentAction(undefined);
-        // Clear the send timeout on error
+        // Clear both timeouts on error
         if (sendTimeoutRef.current) {
           clearTimeout(sendTimeoutRef.current);
           sendTimeoutRef.current = null;
+        }
+        if (processingTimeoutRef.current) {
+          clearTimeout(processingTimeoutRef.current);
+          processingTimeoutRef.current = null;
         }
       }, { sessionId });
 
@@ -281,7 +369,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     if (!content.trim() || sending) return;
 
     // Check if MessageHub is connected
-    if (connectionState !== "connected") {
+    if (connectionState.value !== "connected") {
       toast.error("Connection lost. Please refresh the page.");
       return;
     }
@@ -580,6 +668,28 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
           </div>
         ) : (
           <div class="max-w-4xl mx-auto w-full px-4 md:px-6 space-y-0">
+            {/* Loading indicator for older messages */}
+            {loadingOlder && (
+              <div class="flex items-center justify-center py-4">
+                <div class="flex items-center gap-2 text-sm text-gray-400">
+                  <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span>Loading older messages...</span>
+                </div>
+              </div>
+            )}
+
+            {/* Show "No more messages" indicator */}
+            {!hasMoreMessages && messages.length > 0 && (
+              <div class="flex items-center justify-center py-4">
+                <div class="text-xs text-gray-500">
+                  Beginning of conversation
+                </div>
+              </div>
+            )}
+
             {/* Render all messages using SDK components */}
             {messages.map((msg, idx) => (
               <SDKMessageRenderer

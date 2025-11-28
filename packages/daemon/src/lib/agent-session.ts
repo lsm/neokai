@@ -2,7 +2,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { Message, MessageContent, Session, ToolCall, ContextInfo } from "@liuboer/shared";
 import type { MessageHub } from "@liuboer/shared";
 import type { SDKUserMessage } from "@liuboer/shared/sdk/sdk.d.ts";
-import { generateUUID } from "@liuboer/shared";
+import { generateUUID, isValidModel, resolveModelAlias, getModelInfo } from "@liuboer/shared";
 import { Database } from "../storage/database";
 
 /**
@@ -427,6 +427,136 @@ export class AgentSession {
     await this.messageHub.publish('session.interrupted', {}, { sessionId: this.session.id });
   }
 
+  /**
+   * Switch to a different Claude model mid-session
+   * Called by RPC handler in session-handlers.ts
+   *
+   * This will:
+   * 1. Validate the new model
+   * 2. Stop the current query
+   * 3. Update session config
+   * 4. Restart query with new model
+   * 5. Preserve conversation history (displayed to user, but NOT replayed to SDK)
+   *
+   * ⚠️ WARNING: Switching models increases token consumption because
+   * the new model must process the entire conversation history.
+   */
+  async handleModelSwitch(newModel: string): Promise<{ success: boolean; model: string; error?: string }> {
+    console.log(`[AgentSession ${this.session.id}] Handling model switch to: ${newModel}`);
+
+    try {
+      // Validate the model
+      if (!isValidModel(newModel)) {
+        const error = `Invalid model: ${newModel}. Use a valid model ID or alias.`;
+        console.error(`[AgentSession ${this.session.id}] ${error}`);
+        return { success: false, model: this.session.config.model, error };
+      }
+
+      // Resolve alias to full model ID
+      const resolvedModel = resolveModelAlias(newModel);
+      const modelInfo = getModelInfo(resolvedModel);
+
+      // Check if already using this model
+      if (this.session.config.model === resolvedModel) {
+        console.log(`[AgentSession ${this.session.id}] Already using model: ${resolvedModel}`);
+        return {
+          success: true,
+          model: resolvedModel,
+          error: `Already using ${modelInfo?.name || resolvedModel}`,
+        };
+      }
+
+      const previousModel = this.session.config.model;
+
+      // Emit model switching event
+      await this.messageHub.publish(
+        'session.model-switching',
+        {
+          from: previousModel,
+          to: resolvedModel,
+        },
+        { sessionId: this.session.id }
+      );
+
+      // Step 1: Stop the current query gracefully
+      console.log(`[AgentSession ${this.session.id}] Stopping current query...`);
+      this.queryRunning = false;
+
+      // Abort current query
+      if (this.abortController) {
+        this.abortController.abort();
+        this.abortController = undefined;
+      }
+
+      // Wait for query to fully stop (with timeout)
+      if (this.queryPromise) {
+        try {
+          await Promise.race([
+            this.queryPromise,
+            new Promise((resolve) => setTimeout(resolve, 3000)), // 3s timeout
+          ]);
+        } catch (error) {
+          console.warn(`[AgentSession ${this.session.id}] Query cleanup warning:`, error);
+        }
+        this.queryPromise = null;
+      }
+
+      // Step 2: Update session config with new model
+      this.session.config.model = resolvedModel;
+      this.db.updateSession(this.session.id, {
+        config: this.session.config,
+      });
+
+      console.log(`[AgentSession ${this.session.id}] Updated config to model: ${resolvedModel}`);
+
+      // Step 3: Restart the streaming query with new model
+      console.log(`[AgentSession ${this.session.id}] Restarting query with new model...`);
+      await this.startStreamingQuery();
+
+      // Emit success event
+      await this.messageHub.publish(
+        'session.model-switched',
+        {
+          from: previousModel,
+          to: resolvedModel,
+          modelInfo: modelInfo || null,
+        },
+        { sessionId: this.session.id }
+      );
+
+      console.log(`[AgentSession ${this.session.id}] Model switched successfully to: ${resolvedModel}`);
+
+      return {
+        success: true,
+        model: resolvedModel,
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`[AgentSession ${this.session.id}] Model switch failed:`, error);
+
+      await this.messageHub.publish(
+        'session.error',
+        { error: `Failed to switch model: ${errorMessage}` },
+        { sessionId: this.session.id }
+      );
+
+      return {
+        success: false,
+        model: this.session.config.model,
+        error: errorMessage,
+      };
+    }
+  }
+
+  /**
+   * Get current model information
+   */
+  getCurrentModel(): { id: string; info: ReturnType<typeof getModelInfo> } {
+    return {
+      id: this.session.config.model,
+      info: getModelInfo(this.session.config.model),
+    };
+  }
 
   /**
    * Get messages for this session

@@ -8,6 +8,12 @@ import type {
   CreateSessionRequest,
   UpdateSessionRequest,
 } from "@liuboer/shared";
+import {
+  fetchAvailableModels,
+  getAllAvailableModels,
+  getCachedAvailableModels,
+  clearModelCache,
+} from "@liuboer/shared";
 
 export function setupSessionHandlers(
   messageHub: MessageHub,
@@ -35,7 +41,7 @@ export function setupSessionHandlers(
 
   messageHub.handle("session.get", async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
-    const agentSession = sessionManager.getSession(targetSessionId);
+    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
 
     if (!agentSession) {
       throw new Error("Session not found");
@@ -90,7 +96,7 @@ export function setupSessionHandlers(
       images?: Array<{ data: string; media_type: string }>;
     };
 
-    const agentSession = sessionManager.getSession(targetSessionId);
+    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
     if (!agentSession) {
       throw new Error("Session not found");
     }
@@ -102,12 +108,89 @@ export function setupSessionHandlers(
   messageHub.handle("client.interrupt", async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
 
-    const agentSession = sessionManager.getSession(targetSessionId);
+    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
     if (!agentSession) {
       throw new Error("Session not found");
     }
 
     await agentSession.handleInterrupt();
+    return { success: true };
+  });
+
+  // Handle getting current model information
+  messageHub.handle("session.model.get", async (data) => {
+    const { sessionId: targetSessionId } = data as { sessionId: string };
+
+    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    if (!agentSession) {
+      throw new Error("Session not found");
+    }
+
+    const modelInfo = agentSession.getCurrentModel();
+    return {
+      currentModel: modelInfo.id,
+      modelInfo: modelInfo.info,
+    };
+  });
+
+  // Handle model switching
+  messageHub.handle("session.model.switch", async (data) => {
+    const { sessionId: targetSessionId, model } = data as {
+      sessionId: string;
+      model: string;
+    };
+
+    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    if (!agentSession) {
+      throw new Error("Session not found");
+    }
+
+    const result = await agentSession.handleModelSwitch(model);
+
+    // If successful, broadcast the model switch event
+    if (result.success) {
+      await messageHub.publish(
+        "session.updated",
+        { model: result.model },
+        { sessionId: targetSessionId }
+      );
+    }
+
+    return result;
+  });
+
+  // Handle listing available models from Anthropic API
+  messageHub.handle("models.list", async (data) => {
+    const { useCache = true, forceRefresh = false } = data as {
+      useCache?: boolean;
+      forceRefresh?: boolean;
+    };
+
+    try {
+      if (useCache) {
+        const models = await getCachedAvailableModels({}, forceRefresh);
+        return {
+          models,
+          cached: !forceRefresh,
+        };
+      } else {
+        const response = await fetchAvailableModels({});
+        return {
+          models: response.data,
+          cached: false,
+          hasMore: response.has_more,
+        };
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error("[RPC] Failed to list models:", errorMessage);
+      throw new Error(`Failed to list models: ${errorMessage}`);
+    }
+  });
+
+  // Handle clearing the model cache
+  messageHub.handle("models.clearCache", async () => {
+    clearModelCache();
     return { success: true };
   });
 }

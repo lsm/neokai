@@ -49,10 +49,13 @@ export class ConnectionManager {
   private transport: WebSocketClientTransport | null = null;
   private baseUrl: string;
   private connectionPromise: Promise<MessageHub> | null = null;
+  private visibilityHandler: (() => void) | null = null;
+  private pageHideHandler: (() => void) | null = null;
 
   constructor(baseUrl?: string) {
     this.baseUrl = baseUrl || getDaemonWsUrl();
     console.log(`[ConnectionManager] Initialized with baseUrl: ${this.baseUrl}`);
+    this.setupVisibilityHandlers();
   }
 
   /**
@@ -174,6 +177,9 @@ export class ConnectionManager {
     // Update connection state
     connectionState.value = "disconnected";
 
+    // Cleanup visibility handlers
+    this.cleanupVisibilityHandlers();
+
     if (this.transport) {
       this.transport.close();
       this.transport = null;
@@ -190,6 +196,80 @@ export class ConnectionManager {
    */
   isConnected(): boolean {
     return this.messageHub?.isConnected() || false;
+  }
+
+  /**
+   * Setup page visibility handlers to detect Safari background tab issues
+   * Safari pauses WebSocket activity when tab is backgrounded
+   */
+  private setupVisibilityHandlers(): void {
+    if (typeof document === "undefined") {
+      return; // Not in browser environment
+    }
+
+    // Handle visibility changes (tab switch, minimize)
+    this.visibilityHandler = () => {
+      if (document.hidden) {
+        console.log("[ConnectionManager] Page hidden - connection may be paused by browser");
+      } else {
+        console.log("[ConnectionManager] Page visible - validating connection");
+        this.validateConnectionOnResume();
+      }
+    };
+
+    // Handle page hide (navigation away, close tab)
+    this.pageHideHandler = () => {
+      console.log("[ConnectionManager] Page hiding - marking connection as stale");
+    };
+
+    document.addEventListener("visibilitychange", this.visibilityHandler);
+    document.addEventListener("pagehide", this.pageHideHandler);
+  }
+
+  /**
+   * Validate connection when returning from background
+   * Safari may have paused the WebSocket, so we need to check if it's still alive
+   */
+  private async validateConnectionOnResume(): Promise<void> {
+    if (!this.messageHub || !this.transport) {
+      return;
+    }
+
+    try {
+      // Send a lightweight health check with short timeout
+      // If this fails, the connection is dead and needs reconnect
+      await this.messageHub.call("system.health", {}, { timeout: 3000 });
+      console.log("[ConnectionManager] Connection validated successfully");
+    } catch (error) {
+      console.error("[ConnectionManager] Connection validation failed, forcing reconnect:", error);
+
+      // Update connection state to show we're reconnecting
+      connectionState.value = "reconnecting";
+
+      // Force close and let auto-reconnect handle it
+      if (this.transport) {
+        this.transport.close();
+      }
+    }
+  }
+
+  /**
+   * Cleanup visibility handlers
+   */
+  private cleanupVisibilityHandlers(): void {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    if (this.visibilityHandler) {
+      document.removeEventListener("visibilitychange", this.visibilityHandler);
+      this.visibilityHandler = null;
+    }
+
+    if (this.pageHideHandler) {
+      document.removeEventListener("pagehide", this.pageHideHandler);
+      this.pageHideHandler = null;
+    }
   }
 
   /**
