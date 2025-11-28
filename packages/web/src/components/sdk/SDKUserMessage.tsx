@@ -142,14 +142,22 @@ export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo, isRepla
     return actions;
   };
 
-  // Generate timestamp from UUID or use current time
+  // Get timestamp from message
   const getTimestamp = (): string => {
-    // UUID v7 contains timestamp in first part, but for now just show a placeholder
-    // In real implementation, this should come from message metadata or be tracked separately
-    return new Date().toLocaleTimeString([], {
+    // Use the timestamp injected by the database (milliseconds since epoch)
+    const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
+    const date = messageWithTimestamp.timestamp ? new Date(messageWithTimestamp.timestamp) : new Date();
+    return date.toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
     });
+  };
+
+  // Get full timestamp for tooltip
+  const getFullTimestamp = (): string => {
+    const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
+    const date = messageWithTimestamp.timestamp ? new Date(messageWithTimestamp.timestamp) : new Date();
+    return date.toLocaleString();
   };
 
   // If this is a replay message with command output, render it as assistant-style with markdown
@@ -167,7 +175,7 @@ export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo, isRepla
 
           {/* Actions and timestamp */}
           <div class={cn("flex items-center justify-start", messageSpacing.actions.gap, messageSpacing.actions.marginTop, messageSpacing.actions.padding)}>
-            <Tooltip content={new Date().toLocaleString()} position="right">
+            <Tooltip content={getFullTimestamp()} position="right">
               <span class="text-xs text-gray-500">{getTimestamp()}</span>
             </Tooltip>
 
@@ -211,7 +219,7 @@ export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo, isRepla
 
         {/* Actions and timestamp - outside the bubble, bottom right */}
         <div class={cn("flex items-center justify-end", messageSpacing.actions.gap, messageSpacing.actions.marginTop, messageSpacing.actions.padding)}>
-          <Tooltip content={new Date().toLocaleString()} position="left">
+          <Tooltip content={getFullTimestamp()} position="left">
             <span class="text-xs text-gray-500">{getTimestamp()}</span>
           </Tooltip>
 

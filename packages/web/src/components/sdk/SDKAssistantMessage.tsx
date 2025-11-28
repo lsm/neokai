@@ -53,11 +53,22 @@ export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
     }
   };
 
+  // Get timestamp from message
   const getTimestamp = (): string => {
-    return new Date().toLocaleTimeString([], {
+    // Use the timestamp injected by the database (milliseconds since epoch)
+    const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
+    const date = messageWithTimestamp.timestamp ? new Date(messageWithTimestamp.timestamp) : new Date();
+    return date.toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
     });
+  };
+
+  // Get full timestamp for tooltip
+  const getFullTimestamp = (): string => {
+    const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
+    const date = messageWithTimestamp.timestamp ? new Date(messageWithTimestamp.timestamp) : new Date();
+    return date.toLocaleString();
   };
 
   // Separate blocks by type - tool use and thinking blocks get full width, text blocks are constrained
@@ -109,7 +120,7 @@ export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
 
           {/* Actions and timestamp - bottom left */}
           <div class={cn("flex items-center", messageSpacing.actions.gap, messageSpacing.actions.marginTop, messageSpacing.actions.padding)}>
-            <Tooltip content={new Date().toLocaleString()} position="right">
+            <Tooltip content={getFullTimestamp()} position="right">
               <span class="text-xs text-gray-500">{getTimestamp()}</span>
             </Tooltip>
 
