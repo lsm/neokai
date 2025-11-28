@@ -23,6 +23,7 @@ export interface SessionMetadata {
   totalTokens: number;
   inputTokens: number;
   outputTokens: number;
+  totalCost: number;
   toolCallCount: number;
 }
 

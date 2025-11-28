@@ -538,9 +538,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     );
   }
 
-  // Calculate accumulated stats from result messages
-  // Note: We still need to traverse messages for cost calculation since it's not in metadata yet
-  // But token counts should come from session metadata for accuracy (handles pagination properly)
+  // Calculate accumulated stats from result messages (fallback if metadata not available)
+  // Session metadata is the source of truth for accurate counts across pagination
   const accumulatedStats = messages.reduce((acc, msg) => {
     if (msg.type === 'result' && msg.subtype === 'success') {
       acc.inputTokens += msg.usage.input_tokens;
@@ -550,13 +549,13 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     return acc;
   }, { inputTokens: 0, outputTokens: 0, totalCost: 0 });
 
-  // Use session metadata for token counts if available (more accurate than loaded messages)
-  // This ensures the token count is correct even when messages are paginated
+  // Use session metadata for all stats if available (more accurate than loaded messages)
+  // This ensures counts are correct even when messages are paginated
   const displayStats = {
     inputTokens: session?.metadata?.inputTokens ?? accumulatedStats.inputTokens,
     outputTokens: session?.metadata?.outputTokens ?? accumulatedStats.outputTokens,
     totalTokens: session?.metadata?.totalTokens ?? (accumulatedStats.inputTokens + accumulatedStats.outputTokens),
-    totalCost: accumulatedStats.totalCost,
+    totalCost: session?.metadata?.totalCost ?? accumulatedStats.totalCost,
   };
 
   // Create a map of tool use IDs to tool results for easy lookup

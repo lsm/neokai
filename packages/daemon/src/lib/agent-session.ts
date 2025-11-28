@@ -394,6 +394,7 @@ export class AgentSession {
       // Update session metadata with token usage and costs
       const usage = message.usage;
       const totalTokens = usage.input_tokens + usage.output_tokens;
+      const cost = message.total_cost_usd || 0;
 
       this.session.lastActiveAt = new Date().toISOString();
       this.session.metadata = {
@@ -402,6 +403,7 @@ export class AgentSession {
         totalTokens: (this.session.metadata?.totalTokens || 0) + totalTokens,
         inputTokens: (this.session.metadata?.inputTokens || 0) + usage.input_tokens,
         outputTokens: (this.session.metadata?.outputTokens || 0) + usage.output_tokens,
+        totalCost: (this.session.metadata?.totalCost || 0) + cost,
         toolCallCount: this.session.metadata?.toolCallCount || 0, // Will be updated separately
       };
       this.db.updateSession(this.session.id, {

@@ -33,6 +33,7 @@ function createTestSession(id: string): Session {
       totalTokens: 0,
       inputTokens: 0,
       outputTokens: 0,
+      totalCost: 0,
       toolCallCount: 0,
     },
   };
