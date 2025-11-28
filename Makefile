@@ -4,7 +4,7 @@
 dev:
 	@echo "🚀 Starting unified development server..."
 	@lsof -ti:9283 | xargs kill -9 2>/dev/null || true
-	@cd packages/cli && bun run dev
+	@cd packages/cli && NODE_ENV=development bun run dev
 
 # Self-hosting mode - use Liuboer to develop itself (production mode, no HMR)
 self:
