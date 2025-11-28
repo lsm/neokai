@@ -73,7 +73,9 @@ export class SessionManager {
     );
 
     // FIX: Emit event via EventBus (no StateManager dependency!)
+    console.log('[SessionManager] Emitting session:created event for session:', sessionId);
     await this.eventBus.emit('session:created', { session });
+    console.log('[SessionManager] Event emitted, returning sessionId:', sessionId);
 
     return sessionId;
   }

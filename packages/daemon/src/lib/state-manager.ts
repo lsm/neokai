@@ -61,10 +61,12 @@ export class StateManager {
   private setupEventListeners(): void {
     // Session lifecycle events
     this.eventBus.on('session:created', async (data) => {
+      console.log('[StateManager] Received session:created event, broadcasting delta for session:', data.session.id);
       await this.broadcastSessionsDelta({
         added: [data.session],
         timestamp: Date.now(),
       });
+      console.log('[StateManager] Delta broadcasted for session:', data.session.id);
     });
 
     this.eventBus.on('session:updated', async (data) => {

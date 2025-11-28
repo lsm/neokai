@@ -12,6 +12,12 @@ export default function MainContent() {
   // Validate that the current session actually exists in the sessions list
   const sessionExists = sessionId && sessionsList.some(s => s.id === sessionId);
 
+  // Debug logging for session state
+  if (sessionId && !sessionExists) {
+    console.warn('[MainContent] Session ID set but not in list:', sessionId);
+    console.log('[MainContent] Available sessions:', sessionsList.map(s => s.id));
+  }
+
   return (
     <>
       {!sessionId || !sessionExists ? (

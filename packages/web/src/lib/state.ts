@@ -64,11 +64,17 @@ class GlobalStateChannels {
         sessionId: "global",
         enableDeltas: true,
         mergeDelta: (current, delta: SessionsUpdate) => {
-          return {
+          console.log('[State] Merging sessions delta:', {
+            currentCount: current.sessions.length,
+            delta: delta,
+          });
+          const merged = {
             ...current,
             sessions: DeltaMergers.array(current.sessions, delta),
             timestamp: delta.timestamp,
           };
+          console.log('[State] After merge, sessions count:', merged.sessions.length);
+          return merged;
         },
         debug: true, // Enable debug to see what's happening
       },
