@@ -128,7 +128,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
   const connectWebSocket = () => {
     // Subscribe to session-specific events via MessageHub
-    setIsWsConnected(true); // MessageHub is already connected via connectionManager
+    // Note: Don't set isWsConnected here - wait for actual connection state
 
     // Get MessageHub instance and set up subscriptions
     let unsubSDKMessage: (() => void) | undefined;
@@ -137,8 +137,22 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     let unsubError: (() => void) | undefined;
     let unsubMessageQueued: (() => void) | undefined;
     let unsubMessageProcessing: (() => void) | undefined;
+    let unsubConnection: (() => void) | undefined;
 
     connectionManager.getHub().then(hub => {
+      // Listen to actual WebSocket connection state changes
+      unsubConnection = hub.onConnection((state, error) => {
+        console.log(`[ChatContainer] Connection state changed: ${state}`, error);
+        setIsWsConnected(state === "connected");
+
+        if (state === "disconnected") {
+          setError("Connection lost. Attempting to reconnect...");
+        } else if (state === "connected") {
+          setError(null);
+          // Reload session data after reconnection
+          loadSession();
+        }
+      });
       // SDK message events - PRIMARY EVENT HANDLER
       unsubSDKMessage = hub.subscribe<SDKMessage>(
         'sdk.message',
@@ -270,6 +284,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
     // Return cleanup function that unsubscribes all handlers
     return () => {
+      unsubConnection?.();
       unsubSDKMessage?.();
       unsubContextUpdated?.();
       unsubContextCompacted?.();
