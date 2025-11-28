@@ -21,6 +21,7 @@ export interface CreateSessionRequest {
 
 export interface CreateSessionResponse {
   sessionId: string;
+  session?: Session; // Optionally include the full session for optimistic updates
 }
 
 export interface ListSessionsResponse {

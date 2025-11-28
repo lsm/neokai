@@ -20,7 +20,12 @@ export function setupSessionHandlers(
       initialTools: req.initialTools,
       config: req.config,
     });
-    return { sessionId };
+
+    // Return the full session object so client can optimistically update
+    const agentSession = sessionManager.getSession(sessionId);
+    const session = agentSession?.getSessionData();
+
+    return { sessionId, session };
   });
 
   messageHub.handle("session.list", async () => {
