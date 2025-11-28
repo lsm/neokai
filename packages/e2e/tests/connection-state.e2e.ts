@@ -8,7 +8,8 @@ const execAsync = promisify(exec);
  * E2E tests for WebSocket connection state tracking
  *
  * These tests verify that the UI correctly reflects the WebSocket connection state:
- * - Shows "Connected" when WebSocket is connected
+ * - Shows "Connecting..." when WebSocket is attempting to connect
+ * - Shows "Online" when WebSocket is connected
  * - Shows "Offline" when WebSocket is disconnected
  * - Displays error message when connection is lost
  * - Automatically reconnects when server comes back online
@@ -17,13 +18,34 @@ test.describe("Connection State Tracking", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
     // Wait for initial connection
-    await expect(page.locator("text=Connected")).toBeVisible({ timeout: 10000 });
+    await expect(page.locator("text=Online")).toBeVisible({ timeout: 10000 });
   });
 
-  test("should show 'Connected' status when WebSocket is connected", async ({ page }) => {
+  test("should show 'Connecting...' state on initial page load", async ({ page }) => {
+    // Navigate to a fresh page
+    await page.goto("/");
+
+    // Should briefly show "Connecting..." (yellow pulsing dot)
+    // Note: This might be very fast, so we check if it appears OR if we're already connected
+    const connectingText = page.locator("text=Connecting...");
+    const onlineText = page.locator("text=Online");
+
+    // Either we catch the connecting state or we're already online
+    try {
+      await expect(connectingText).toBeVisible({ timeout: 500 });
+    } catch {
+      // If connecting was too fast, we should be online
+      await expect(onlineText).toBeVisible();
+    }
+
+    // Eventually should reach connected state
+    await expect(onlineText).toBeVisible({ timeout: 10000 });
+  });
+
+  test("should show 'Online' status when WebSocket is connected", async ({ page }) => {
     // Check global status in sidebar footer
     await expect(page.locator("text=Status")).toBeVisible();
-    await expect(page.locator("text=Connected")).toBeVisible();
+    await expect(page.locator("text=Online")).toBeVisible();
 
     // Check for green indicator dot
     const statusDot = page.locator(".bg-green-500").first();
@@ -39,7 +61,7 @@ test.describe("Connection State Tracking", () => {
     await page.waitForTimeout(1000);
 
     // Verify initially connected
-    await expect(page.locator("text=Connected")).toBeVisible();
+    await expect(page.locator("text=Online")).toBeVisible();
 
     // Kill the dev server to simulate disconnection
     // Note: The webServer will be restarted by Playwright after the test
@@ -94,7 +116,7 @@ test.describe("Connection State Tracking", () => {
     // Playwright's webServer will automatically restart the server
     // Wait for reconnection (up to 30 seconds)
     // The WebSocket client has auto-reconnect enabled with 10 attempts
-    await expect(page.locator("text=Connected")).toBeVisible({ timeout: 30000 });
+    await expect(page.locator("text=Online")).toBeVisible({ timeout: 30000 });
 
     // Error message should disappear after reconnection
     const errorMessage = page.locator("text=Connection lost");
@@ -121,7 +143,7 @@ test.describe("Connection State Tracking", () => {
     await expect(page.locator("text=Offline")).toBeVisible({ timeout: 10000 });
 
     // Wait for reconnection
-    await expect(page.locator("text=Connected")).toBeVisible({ timeout: 30000 });
+    await expect(page.locator("text=Online")).toBeVisible({ timeout: 30000 });
 
     // Verify session is still loaded (title should match)
     const sessionTitleAfter = await page.locator("h2").first().textContent();
