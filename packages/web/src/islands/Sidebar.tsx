@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
 import { currentSessionIdSignal, sidebarOpenSignal } from "../lib/signals.ts";
-import { sessions, authStatus } from "../lib/state.ts";
+import { sessions, authStatus, connectionState } from "../lib/state.ts";
 import { createSession } from "../lib/api-helpers.ts";
 import { formatRelativeTime } from "../lib/utils.ts";
 import { toast } from "../lib/toast.ts";
@@ -265,11 +265,27 @@ export default function Sidebar() {
           <div class="flex items-center justify-between text-xs">
             <span class="text-gray-400">Status</span>
             <div class="flex items-center gap-2">
-              <div class="relative">
-                <span class="w-2 h-2 bg-green-500 rounded-full block" />
-                <span class="absolute inset-0 w-2 h-2 bg-green-500 rounded-full animate-ping opacity-75" />
-              </div>
-              <span class="text-gray-300">Connected</span>
+              {connectionState.value === "connected" && (
+                <>
+                  <div class="relative">
+                    <span class="w-2 h-2 bg-green-500 rounded-full block" />
+                    <span class="absolute inset-0 w-2 h-2 bg-green-500 rounded-full animate-ping opacity-75" />
+                  </div>
+                  <span class="text-gray-300">Online</span>
+                </>
+              )}
+              {connectionState.value === "connecting" && (
+                <>
+                  <div class="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
+                  <span class="text-yellow-300">Connecting...</span>
+                </>
+              )}
+              {connectionState.value === "disconnected" && (
+                <>
+                  <div class="w-2 h-2 bg-gray-500 rounded-full" />
+                  <span class="text-gray-500">Offline</span>
+                </>
+              )}
             </div>
           </div>
         </div>

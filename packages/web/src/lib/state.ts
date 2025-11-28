@@ -490,6 +490,13 @@ export const recentSessions = computed<Session[]>(() => {
 });
 
 /**
+ * Global WebSocket connection state
+ * Single source of truth for the entire app
+ */
+export type ConnectionState = "connecting" | "connected" | "disconnected";
+export const connectionState = signal<ConnectionState>("connecting");
+
+/**
  * Helper functions for optimistic updates
  */
 

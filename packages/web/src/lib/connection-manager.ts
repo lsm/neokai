@@ -6,7 +6,7 @@
  */
 
 import { MessageHub, WebSocketClientTransport } from "@liuboer/shared";
-import { appState } from "./state";
+import { appState, connectionState } from "./state";
 
 /**
  * Get the daemon WebSocket base URL
@@ -95,10 +95,19 @@ export class ConnectionManager {
   private async connect(): Promise<MessageHub> {
     console.log("[ConnectionManager] Connecting to WebSocket...");
 
+    // Set initial connecting state
+    connectionState.value = "connecting";
+
     // Create MessageHub
     this.messageHub = new MessageHub({
       defaultSessionId: "global",
       debug: false,
+    });
+
+    // Listen to connection state changes and update global state
+    this.messageHub.onConnection((state, error) => {
+      console.log(`[ConnectionManager] Connection state: ${state}`, error);
+      connectionState.value = state;
     });
 
     // Expose to window for testing
@@ -106,6 +115,7 @@ export class ConnectionManager {
       (window as any).__messageHub = this.messageHub;
       (window as any).appState = appState;
       (window as any).__messageHubReady = false; // Will be set to true after connection
+      (window as any).connectionManager = this; // Expose for testing
 
       // Also expose currentSessionIdSignal for testing
       import("./signals.ts").then(({ currentSessionIdSignal }) => {
@@ -159,6 +169,11 @@ export class ConnectionManager {
    * Disconnect from WebSocket
    */
   async disconnect(): Promise<void> {
+    console.log("[ConnectionManager] Disconnecting...");
+
+    // Update connection state
+    connectionState.value = "disconnected";
+
     if (this.transport) {
       this.transport.close();
       this.transport = null;
@@ -175,6 +190,18 @@ export class ConnectionManager {
    */
   isConnected(): boolean {
     return this.messageHub?.isConnected() || false;
+  }
+
+  /**
+   * Simulate disconnection for testing purposes
+   * This closes the WebSocket but allows auto-reconnect to work
+   */
+  simulateDisconnect(): void {
+    if (this.transport) {
+      console.log("[ConnectionManager] Simulating disconnect for testing");
+      // Close the WebSocket transport (will trigger reconnect if autoReconnect is enabled)
+      this.transport.close();
+    }
   }
 }
 

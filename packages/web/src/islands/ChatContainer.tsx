@@ -7,6 +7,7 @@ import { getSession, getSDKMessages, getSlashCommands, deleteSession, listSessio
 import { toast } from "../lib/toast.ts";
 import { generateUUID } from "../lib/utils.ts";
 import { currentSessionIdSignal, sessionsSignal, sidebarOpenSignal, slashCommandsSignal } from "../lib/signals.ts";
+import { connectionState } from "../lib/state.ts";
 import MessageInput from "../components/MessageInput.tsx";
 import StatusIndicator from "../components/StatusIndicator.tsx";
 import { Button } from "../components/ui/Button.tsx";
@@ -33,7 +34,6 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   const [sending, setSending] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-  const [connectionState, setConnectionState] = useState<"connecting" | "connected" | "disconnected">("connecting");
   const [currentAction, setCurrentAction] = useState<string | undefined>(undefined);
 
   /**
@@ -128,7 +128,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
   const connectWebSocket = () => {
     // Subscribe to session-specific events via MessageHub
-    // Note: Don't set isWsConnected here - wait for actual connection state
+    // Connection state is managed globally by ConnectionManager
 
     // Get MessageHub instance and set up subscriptions
     let unsubSDKMessage: (() => void) | undefined;
@@ -137,22 +137,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     let unsubError: (() => void) | undefined;
     let unsubMessageQueued: (() => void) | undefined;
     let unsubMessageProcessing: (() => void) | undefined;
-    let unsubConnection: (() => void) | undefined;
 
     connectionManager.getHub().then(hub => {
-      // Listen to actual WebSocket connection state changes
-      unsubConnection = hub.onConnection((state, error) => {
-        console.log(`[ChatContainer] Connection state changed: ${state}`, error);
-        setConnectionState(state);
-
-        if (state === "disconnected") {
-          setError("Connection lost. Attempting to reconnect...");
-        } else if (state === "connected") {
-          setError(null);
-          // Reload session data after reconnection
-          loadSession();
-        }
-      });
       // SDK message events - PRIMARY EVENT HANDLER
       unsubSDKMessage = hub.subscribe<SDKMessage>(
         'sdk.message',
@@ -250,7 +236,6 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
         setSending(false);
         setStreamingEvents([]);
         setCurrentAction(undefined);
-        setConnectionState("disconnected");
         // Clear the send timeout on error
         if (sendTimeoutRef.current) {
           clearTimeout(sendTimeoutRef.current);
@@ -277,14 +262,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       }, { sessionId });
     }).catch(error => {
       console.error("[ChatContainer] Failed to set up subscriptions:", error);
-      setConnectionState("disconnected");
       setError("Failed to connect to daemon");
       toast.error("Failed to connect to daemon");
     });
 
     // Return cleanup function that unsubscribes all handlers
     return () => {
-      unsubConnection?.();
       unsubSDKMessage?.();
       unsubContextUpdated?.();
       unsubContextCompacted?.();
@@ -663,7 +646,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
       {/* Status Indicator */}
       <StatusIndicator
-        connectionState={connectionState}
+        connectionState={connectionState.value}
         isProcessing={sending || streamingEvents.length > 0}
         currentAction={currentAction}
         contextUsage={contextUsage}
