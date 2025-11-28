@@ -70,8 +70,8 @@ test.describe("Connection State Tracking", () => {
       (window as any).connectionManager.simulateDisconnect();
     });
 
-    // Wait for disconnection to be detected
-    await expect(page.locator("text=Offline")).toBeVisible({ timeout: 10000 });
+    // Wait for disconnection to be detected (use .first() to handle multiple instances)
+    await expect(page.locator("text=Offline").first()).toBeVisible({ timeout: 10000 });
 
     // Should show offline in both sidebar and session view
     const offlineTexts = page.locator("text=Offline");
@@ -89,14 +89,14 @@ test.describe("Connection State Tracking", () => {
       (window as any).connectionManager.simulateDisconnect();
     });
 
-    // Wait for offline status
-    await expect(page.locator("text=Offline")).toBeVisible({ timeout: 10000 });
+    // Wait for offline status (use .first() to handle multiple instances)
+    await expect(page.locator("text=Offline").first()).toBeVisible({ timeout: 10000 });
 
     // Should show "Connecting..." during reconnection attempt
-    await expect(page.locator("text=Connecting...")).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("text=Connecting...").first()).toBeVisible({ timeout: 5000 });
 
     // Wait for reconnection (auto-reconnect is enabled)
-    await expect(page.locator("text=Online")).toBeVisible({ timeout: 15000 });
+    await expect(page.locator("text=Online").first()).toBeVisible({ timeout: 15000 });
   });
 
   test("should maintain session data after reconnection", async ({ page }) => {
@@ -113,11 +113,11 @@ test.describe("Connection State Tracking", () => {
       (window as any).connectionManager.simulateDisconnect();
     });
 
-    // Wait for offline
-    await expect(page.locator("text=Offline")).toBeVisible({ timeout: 10000 });
+    // Wait for offline (use .first() to handle multiple instances)
+    await expect(page.locator("text=Offline").first()).toBeVisible({ timeout: 10000 });
 
     // Wait for reconnection
-    await expect(page.locator("text=Online")).toBeVisible({ timeout: 15000 });
+    await expect(page.locator("text=Online").first()).toBeVisible({ timeout: 15000 });
 
     // Verify session is still loaded (title should match)
     const sessionTitleAfter = await page.locator("h2").first().textContent();
@@ -136,7 +136,7 @@ test.describe("Connection State Tracking", () => {
     // Should be online initially
     const sidebar = page.locator("text=Status").locator("..");
     await expect(sidebar.locator("text=Online")).toBeVisible();
-    await expect(sidebar.locator(".bg-green-500")).toBeVisible();
+    await expect(sidebar.locator(".bg-green-500").first()).toBeVisible();
 
     // Simulate disconnection
     await page.evaluate(() => {
