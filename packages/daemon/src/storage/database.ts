@@ -525,19 +525,24 @@ export class Database {
       params.push(new Date(since).toISOString());
     }
 
-    query += ` ORDER BY timestamp ASC LIMIT ? OFFSET ?`;
+    // Order DESC to get most recent messages first, then reverse
+    // This enables reverse pagination (load recent, then load older on scroll up)
+    query += ` ORDER BY timestamp DESC LIMIT ? OFFSET ?`;
     params.push(limit, offset);
 
     const stmt = this.db.prepare(query);
     const rows = stmt.all(...params) as Record<string, unknown>[];
 
     // Parse SDK message and inject the timestamp from the database row
-    return rows.map((r) => {
+    const messages = rows.map((r) => {
       const sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
       const timestamp = new Date(r.timestamp as string).getTime();
       // Inject timestamp into SDK message object for client-side filtering
       return { ...sdkMessage, timestamp } as SDKMessage & { timestamp: number };
     });
+
+    // Reverse to maintain chronological order (oldest to newest)
+    return messages.reverse();
   }
 
   /**
