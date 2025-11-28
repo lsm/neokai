@@ -2,7 +2,7 @@
 set -e
 
 echo "🔧 Installing dependencies..."
-bun install --frozen-lockfile
+bun install
 
 echo "📦 Building web production bundle..."
 cd packages/web && bun run build && cd ../..

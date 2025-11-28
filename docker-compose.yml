@@ -23,7 +23,6 @@ services:
       # Mount project root for development
       - ./packages:/app/packages
       - ./package.json:/app/package.json
-      - ./bun.lockb:/app/bun.lockb
 
       # Override node_modules with named volumes to avoid conflicts
       - liuboer_node_modules:/app/node_modules
