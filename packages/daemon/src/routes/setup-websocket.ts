@@ -52,7 +52,7 @@ export function setupMessageHubWebSocket(
       ws.send(JSON.stringify(connectionEvent));
     },
 
-    message(ws: any, message: any) {
+    async message(ws: any, message: any) {
       try {
         // FIX P1.1: Validate message size before parsing (DoS prevention)
         const messageStr = typeof message === "string" ? message : JSON.stringify(message);
@@ -99,7 +99,7 @@ export function setupMessageHubWebSocket(
 
         // For session-specific messages, verify session exists (except for global)
         if (data.sessionId !== GLOBAL_SESSION_ID) {
-          const session = sessionManager.getSession(data.sessionId);
+          const session = await sessionManager.getSessionAsync(data.sessionId);
           if (!session) {
             const errorMsg = createErrorMessage({
               method: data.method || "unknown.method",

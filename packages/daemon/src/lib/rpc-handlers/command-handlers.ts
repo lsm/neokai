@@ -11,7 +11,7 @@ export function setupCommandHandlers(
 ): void {
   messageHub.handle("commands.list", async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
-    const agentSession = sessionManager.getSession(targetSessionId);
+    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
 
     if (!agentSession) {
       throw new Error("Session not found");

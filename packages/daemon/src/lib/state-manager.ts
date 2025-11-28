@@ -289,7 +289,7 @@ export class StateManager {
   }
 
   private async getSessionMetaState(sessionId: string): Promise<SessionMetaState> {
-    const agentSession = this.sessionManager.getSession(sessionId);
+    const agentSession = await this.sessionManager.getSessionAsync(sessionId);
     if (!agentSession) {
       throw new Error("Session not found");
     }
@@ -301,7 +301,7 @@ export class StateManager {
   }
 
   private async getMessagesState(sessionId: string): Promise<MessagesState> {
-    const agentSession = this.sessionManager.getSession(sessionId);
+    const agentSession = await this.sessionManager.getSessionAsync(sessionId);
     if (!agentSession) {
       throw new Error("Session not found");
     }
@@ -316,7 +316,7 @@ export class StateManager {
   }
 
   private async getSDKMessagesState(sessionId: string): Promise<SDKMessagesState> {
-    const agentSession = this.sessionManager.getSession(sessionId);
+    const agentSession = await this.sessionManager.getSessionAsync(sessionId);
     if (!agentSession) {
       throw new Error("Session not found");
     }
@@ -330,7 +330,7 @@ export class StateManager {
   }
 
   private async getAgentState(sessionId: string): Promise<AgentState> {
-    const agentSession = this.sessionManager.getSession(sessionId);
+    const agentSession = await this.sessionManager.getSessionAsync(sessionId);
     if (!agentSession) {
       throw new Error("Session not found");
     }
@@ -353,7 +353,7 @@ export class StateManager {
   }
 
   private async getContextState(sessionId: string): Promise<ContextState> {
-    const agentSession = this.sessionManager.getSession(sessionId);
+    const agentSession = await this.sessionManager.getSessionAsync(sessionId);
     if (!agentSession) {
       throw new Error("Session not found");
     }
@@ -368,7 +368,7 @@ export class StateManager {
   }
 
   private async getCommandsState(sessionId: string): Promise<CommandsState> {
-    const agentSession = this.sessionManager.getSession(sessionId);
+    const agentSession = await this.sessionManager.getSessionAsync(sessionId);
     if (!agentSession) {
       throw new Error("Session not found");
     }

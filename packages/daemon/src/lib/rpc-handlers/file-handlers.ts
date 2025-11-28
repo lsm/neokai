@@ -20,7 +20,7 @@ export function setupFileHandlers(
       & ReadFileRequest
       & { sessionId: string };
 
-    const agentSession = sessionManager.getSession(targetSessionId);
+    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
     if (!agentSession) {
       throw new Error("Session not found");
     }
@@ -41,7 +41,7 @@ export function setupFileHandlers(
       & ListFilesRequest
       & { sessionId: string };
 
-    const agentSession = sessionManager.getSession(targetSessionId);
+    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
     if (!agentSession) {
       throw new Error("Session not found");
     }
@@ -59,7 +59,7 @@ export function setupFileHandlers(
       & GetFileTreeRequest
       & { sessionId: string };
 
-    const agentSession = sessionManager.getSession(targetSessionId);
+    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
     if (!agentSession) {
       throw new Error("Session not found");
     }
