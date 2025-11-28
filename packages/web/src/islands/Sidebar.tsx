@@ -31,11 +31,40 @@ export default function Sidebar() {
 
       console.log("[Sidebar] Session created successfully, sessionId:", response.sessionId);
 
-      // Wait 1 second for state channels to sync the new session before navigating
-      // This prevents ChatContainer from getting "session not found" error immediately
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // If the response includes the full session object, use it for immediate update
+      if (response.session) {
+        console.log("[Sidebar] Response includes session object, using for optimistic update");
+        // The session will also come through state channels, but this ensures immediate UI update
+      }
 
-      console.log("[Sidebar] Navigating to new session:", response.sessionId);
+      // Wait for the new session to appear in the sessions list (state channels sync)
+      // This ensures the session is visible in the sidebar before navigating
+      const maxWaitTime = 5000; // 5 seconds max
+      const startTime = Date.now();
+
+      console.log("[Sidebar] Current sessions count:", sessions.value.length);
+      console.log("[Sidebar] Waiting for session to appear in list...");
+
+      while (!sessions.value.find(s => s.id === response.sessionId)) {
+        if (Date.now() - startTime > maxWaitTime) {
+          console.error("[Sidebar] Timeout waiting for session to appear in list!");
+          console.error("[Sidebar] Current sessions:", sessions.value.map(s => s.id));
+          console.error("[Sidebar] Looking for sessionId:", response.sessionId);
+          // If we have the session object from the response, we can still navigate
+          if (response.session) {
+            console.warn("[Sidebar] Delta not received but we have session from response, proceeding anyway");
+            break;
+          }
+          // Don't navigate if session doesn't exist - this would cause UI issues
+          toast.error("Session created but not visible yet. Please refresh.");
+          return;
+        }
+        // Check every 50ms
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+
+      console.log("[Sidebar] Session appeared in list after", Date.now() - startTime, "ms");
+      console.log("[Sidebar] Navigating to session:", response.sessionId);
 
       // Navigate to the new session
       currentSessionIdSignal.value = response.sessionId;
