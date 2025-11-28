@@ -1,0 +1,65 @@
+# Docker Compose for Liuboer Self-Hosting Mode
+# Mounts project root for live development with isolated node_modules
+
+version: '3.8'
+
+services:
+  liuboer-self:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: liuboer-self
+    ports:
+      - "9983:9983"
+    environment:
+      - NODE_ENV=production
+      - PORT=9983
+      - HOST=0.0.0.0
+      # Add your API key here or use .env file
+      # - ANTHROPIC_API_KEY=sk-ant-...
+      # - CLAUDE_CODE_OAUTH_TOKEN=...
+    env_file:
+      - .env
+    volumes:
+      # Mount project root for development (read-only source, writable workspace)
+      - ./packages:/app/packages:ro
+      - ./package.json:/app/package.json:ro
+      - ./bun.lockb:/app/bun.lockb:ro
+
+      # Override node_modules with named volumes to avoid conflicts
+      - liuboer_node_modules:/app/node_modules
+      - liuboer_cli_node_modules:/app/packages/cli/node_modules
+      - liuboer_daemon_node_modules:/app/packages/daemon/node_modules
+      - liuboer_web_node_modules:/app/packages/web/node_modules
+      - liuboer_shared_node_modules:/app/packages/shared/node_modules
+
+      # Mount workspace (the project itself for self-development)
+      - .:/workspace
+
+      # Persist database
+      - liuboer_self_data:/data
+
+      # Build output cache
+      - liuboer_web_dist:/app/packages/web/dist
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9983/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  # Named volumes for isolated node_modules
+  liuboer_node_modules:
+  liuboer_cli_node_modules:
+  liuboer_daemon_node_modules:
+  liuboer_web_node_modules:
+  liuboer_shared_node_modules:
+
+  # Data persistence
+  liuboer_self_data:
+
+  # Build cache
+  liuboer_web_dist:

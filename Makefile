@@ -1,4 +1,4 @@
-.PHONY: dev start daemon web self restart sync-sdk-types clean-cache clean-all build-prod e2e e2e-ui e2e-headed e2e-debug e2e-report
+.PHONY: dev start daemon web self restart sync-sdk-types clean-cache clean-all build-prod e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self
 
 # Unified server (daemon + web in single process) - RECOMMENDED
 dev:
@@ -102,3 +102,27 @@ e2e-debug:
 e2e-report:
 	@echo "📊 Opening E2E test report..."
 	@cd packages/e2e && bun run report
+
+# Docker commands
+docker-build:
+	@echo "🐳 Building Docker image..."
+	@docker compose build
+
+docker-up:
+	@echo "🐳 Starting Docker containers..."
+	@docker compose up -d
+	@echo "✅ Container started! Access at http://localhost:9983"
+
+docker-down:
+	@echo "🐳 Stopping Docker containers..."
+	@docker compose down
+
+docker-logs:
+	@echo "📋 Showing Docker logs..."
+	@docker compose logs -f
+
+docker-self: docker-build docker-up
+	@echo "🐳 Docker self-hosting mode started!"
+	@echo "   Access at: http://localhost:9983"
+	@echo "   View logs: make docker-logs"
+	@echo "   Stop: make docker-down"
