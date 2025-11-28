@@ -20,10 +20,10 @@ services:
     env_file:
       - .env
     volumes:
-      # Mount project root for development (read-only source, writable workspace)
-      - ./packages:/app/packages:ro
-      - ./package.json:/app/package.json:ro
-      - ./bun.lockb:/app/bun.lockb:ro
+      # Mount project root for development
+      - ./packages:/app/packages
+      - ./package.json:/app/package.json
+      - ./bun.lockb:/app/bun.lockb
 
       # Override node_modules with named volumes to avoid conflicts
       - liuboer_node_modules:/app/node_modules
