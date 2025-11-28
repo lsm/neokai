@@ -22,19 +22,9 @@ RUN cd packages/web && bun run build
 FROM base AS production
 WORKDIR /app
 
-# Copy dependencies
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/packages/cli/node_modules ./packages/cli/node_modules
-COPY --from=deps /app/packages/daemon/node_modules ./packages/daemon/node_modules
-COPY --from=deps /app/packages/web/node_modules ./packages/web/node_modules
-COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules
-
-# Copy source code
-COPY package.json bun.lockb ./
-COPY packages ./packages
-
-# Copy built web assets
-COPY --from=build /app/packages/web/dist ./packages/web/dist
+# Copy entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Expose port
 EXPOSE 9983
@@ -42,5 +32,5 @@ EXPOSE 9983
 # Set environment
 ENV NODE_ENV=production
 
-# Run the unified server
-CMD ["bun", "run", "packages/cli/main.ts", "--port", "9983", "--workspace", "/workspace", "--db-path", "/data/daemon.db"]
+# Use entrypoint script that installs deps and builds web at runtime
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
