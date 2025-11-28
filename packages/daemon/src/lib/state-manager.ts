@@ -62,6 +62,7 @@ export class StateManager {
     // Session lifecycle events
     this.eventBus.on('session:created', async (data) => {
       console.log('[StateManager] Received session:created event, broadcasting delta for session:', data.session.id);
+      console.log('[StateManager] Session data:', JSON.stringify(data.session, null, 2));
       await this.broadcastSessionsDelta({
         added: [data.session],
         timestamp: Date.now(),
@@ -406,11 +407,15 @@ export class StateManager {
    */
   async broadcastSessionsDelta(update: SessionsUpdate): Promise<void> {
     const version = this.incrementVersion(`${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`);
+    const channel = `${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`;
+    console.log('[StateManager] Broadcasting to channel:', channel);
+    console.log('[StateManager] Delta payload:', JSON.stringify({ ...update, version }, null, 2));
     await this.messageHub.publish(
-      `${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`,
+      channel,
       { ...update, version },
       { sessionId: "global" },
     );
+    console.log('[StateManager] Delta published successfully to:', channel);
   }
 
   /**

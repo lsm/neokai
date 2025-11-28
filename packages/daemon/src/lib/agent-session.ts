@@ -40,10 +40,6 @@ export class AgentSession {
   private queryObject: any | null = null;
   private slashCommands: string[] = [];
 
-  // History replay tracking
-  private replayingHistory: boolean = false;
-  private historyReplayComplete: boolean = false;
-
   // PHASE 3 FIX: Store unsubscribe functions to prevent memory leaks
   private unsubscribers: Array<() => void> = [];
 
@@ -177,37 +173,23 @@ export class AgentSession {
   /**
    * AsyncGenerator that yields messages continuously from the queue
    * This is the heart of streaming input mode!
+   *
+   * FIX: Do NOT replay conversation history to SDK when re-entering session.
+   * The Claude Agent SDK is a long-running process that accumulates state.
+   * When a session is destroyed and re-created, the SDK loses all context.
+   * Re-sending historical messages would cause the SDK to process them as
+   * NEW messages, leading to duplicate responses.
+   *
+   * Conversation history is kept in the database for display purposes only.
    */
   private async *messageGenerator(): AsyncGenerator<SDKUserMessage> {
     console.log(`[AgentSession ${this.session.id}] Message generator started`);
 
-    // First, yield conversation history (if resuming session)
+    // FIX: Do NOT replay conversation history!
+    // History is loaded from DB for display only, not to be re-sent to SDK.
+    // If we re-send history, SDK will process all user messages again as NEW messages.
     if (this.conversationHistory.length > 0) {
-      this.replayingHistory = true;
-      console.log(`[AgentSession ${this.session.id}] Replaying ${this.conversationHistory.length} historical messages`);
-    }
-
-    for (const msg of this.conversationHistory) {
-      if (msg.role === "user") {
-        console.log(`[AgentSession ${this.session.id}] Yielding history message: ${msg.id}`);
-        yield {
-          type: "user" as const,
-          uuid: msg.id as any,
-          session_id: this.session.id,
-          parent_tool_use_id: null,
-          message: {
-            role: "user" as const,
-            content: msg.content,
-          },
-        };
-      }
-    }
-
-    // Mark history replay as complete
-    if (this.replayingHistory) {
-      this.historyReplayComplete = true;
-      this.replayingHistory = false;
-      console.log(`[AgentSession ${this.session.id}] History replay complete`);
+      console.log(`[AgentSession ${this.session.id}] Loaded ${this.conversationHistory.length} historical messages from DB (for display only, NOT replaying to SDK)`);
     }
 
     // Continuously yield new messages from queue
@@ -546,8 +528,6 @@ export class AgentSession {
     // Clear state
     this.messageQueue = [];
     this.messageWaiters = [];
-    this.historyReplayComplete = false;
-    this.replayingHistory = false;
 
     console.log(`[AgentSession ${this.session.id}] Cleanup complete`);
   }

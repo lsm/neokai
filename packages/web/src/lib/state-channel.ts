@@ -353,21 +353,33 @@ export class StateChannel<T> {
 
     // Subscribe to delta updates if enabled
     if (this.options.enableDeltas && this.options.mergeDelta) {
+      const deltaChannel = `${this.channelName}.delta`;
+      console.log(`[StateChannel:${this.channelName}] Subscribing to delta channel:`, deltaChannel, 'with sessionId:', this.options.sessionId);
+
       const deltaUpdateSub = this.hub.subscribe<any>(
-        `${this.channelName}.delta`,
+        deltaChannel,
         (delta) => {
+          console.log(`[StateChannel:${this.channelName}] <<<< DELTA RECEIVED >>>>`, delta);
           this.log(`Delta update received: ${this.channelName}`, delta);
 
           if (this.state.value && this.options.mergeDelta) {
+            const oldState = this.state.value;
             this.state.value = this.options.mergeDelta(this.state.value, delta);
+            console.log(`[StateChannel:${this.channelName}] State updated from delta:`, { oldState, newState: this.state.value });
             this.lastSync.value = Date.now();
             this.error.value = null;
+          } else {
+            console.warn(`[StateChannel:${this.channelName}] Cannot apply delta - state or mergeDelta missing`, {
+              hasState: !!this.state.value,
+              hasMergeDelta: !!this.options.mergeDelta
+            });
           }
         },
         { sessionId: this.options.sessionId },
       );
 
       this.subscriptions.push(deltaUpdateSub);
+      console.log(`[StateChannel:${this.channelName}] Successfully subscribed to delta channel:`, deltaChannel);
     }
   }
 

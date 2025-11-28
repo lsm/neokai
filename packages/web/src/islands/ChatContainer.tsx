@@ -33,7 +33,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   const [sending, setSending] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-  const [isWsConnected, setIsWsConnected] = useState(false);
+  const [connectionState, setConnectionState] = useState<"connecting" | "connected" | "disconnected">("connecting");
   const [currentAction, setCurrentAction] = useState<string | undefined>(undefined);
 
   /**
@@ -143,7 +143,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       // Listen to actual WebSocket connection state changes
       unsubConnection = hub.onConnection((state, error) => {
         console.log(`[ChatContainer] Connection state changed: ${state}`, error);
-        setIsWsConnected(state === "connected");
+        setConnectionState(state);
 
         if (state === "disconnected") {
           setError("Connection lost. Attempting to reconnect...");
@@ -250,7 +250,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
         setSending(false);
         setStreamingEvents([]);
         setCurrentAction(undefined);
-        setIsWsConnected(false);
+        setConnectionState("disconnected");
         // Clear the send timeout on error
         if (sendTimeoutRef.current) {
           clearTimeout(sendTimeoutRef.current);
@@ -277,7 +277,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       }, { sessionId });
     }).catch(error => {
       console.error("[ChatContainer] Failed to set up subscriptions:", error);
-      setIsWsConnected(false);
+      setConnectionState("disconnected");
       setError("Failed to connect to daemon");
       toast.error("Failed to connect to daemon");
     });
@@ -298,7 +298,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     if (!content.trim() || sending) return;
 
     // Check if MessageHub is connected
-    if (!isWsConnected) {
+    if (connectionState !== "connected") {
       toast.error("Connection lost. Please refresh the page.");
       return;
     }
@@ -663,7 +663,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
       {/* Status Indicator */}
       <StatusIndicator
-        isConnected={isWsConnected}
+        connectionState={connectionState}
         isProcessing={sending || streamingEvents.length > 0}
         currentAction={currentAction}
         contextUsage={contextUsage}

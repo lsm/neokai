@@ -30,44 +30,28 @@ export default function Sidebar() {
       }
 
       console.log("[Sidebar] Session created successfully, sessionId:", response.sessionId);
+      console.log("[Sidebar] Response includes session:", !!response.session);
 
-      // If the response includes the full session object, use it for immediate update
-      if (response.session) {
-        console.log("[Sidebar] Response includes session object, using for optimistic update");
-        // The session will also come through state channels, but this ensures immediate UI update
-      }
-
-      // Wait for the new session to appear in the sessions list (state channels sync)
-      // This ensures the session is visible in the sidebar before navigating
-      const maxWaitTime = 5000; // 5 seconds max
-      const startTime = Date.now();
-
-      console.log("[Sidebar] Current sessions count:", sessions.value.length);
-      console.log("[Sidebar] Waiting for session to appear in list...");
-
-      while (!sessions.value.find(s => s.id === response.sessionId)) {
-        if (Date.now() - startTime > maxWaitTime) {
-          console.error("[Sidebar] Timeout waiting for session to appear in list!");
-          console.error("[Sidebar] Current sessions:", sessions.value.map(s => s.id));
-          console.error("[Sidebar] Looking for sessionId:", response.sessionId);
-          // If we have the session object from the response, we can still navigate
-          if (response.session) {
-            console.warn("[Sidebar] Delta not received but we have session from response, proceeding anyway");
-            break;
-          }
-          // Don't navigate if session doesn't exist - this would cause UI issues
-          toast.error("Session created but not visible yet. Please refresh.");
-          return;
-        }
-        // Check every 50ms
-        await new Promise(resolve => setTimeout(resolve, 50));
-      }
-
-      console.log("[Sidebar] Session appeared in list after", Date.now() - startTime, "ms");
+      // Navigate immediately - the session will sync via state channels
       console.log("[Sidebar] Navigating to session:", response.sessionId);
-
-      // Navigate to the new session
       currentSessionIdSignal.value = response.sessionId;
+
+      // FIX: Force a manual refresh of sessions list after a short delay
+      // to ensure the session appears even if delta doesn't arrive
+      setTimeout(async () => {
+        const currentSessionIds = sessions.value.map(s => s.id);
+        if (!currentSessionIds.includes(response.sessionId)) {
+          console.warn("[Sidebar] Session not in list after navigation, forcing refresh");
+          // Trigger a refresh by accessing the state channel
+          const global = (await import("../lib/state.ts")).appState.global.value;
+          if (global) {
+            await global.sessions.refresh();
+            console.log("[Sidebar] Sessions list refreshed");
+          }
+        } else {
+          console.log("[Sidebar] Session successfully appeared in list");
+        }
+      }, 1000); // Wait 1 second for delta to arrive
 
       toast.success("Session created successfully");
     } catch (err) {

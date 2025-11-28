@@ -2,7 +2,9 @@
  * StatusIndicator Component
  *
  * Shows daemon connection and processing status above the message input
- * - Idle: Green dot + "Online" or Red dot + "Offline"
+ * - Connecting: Yellow dot + "Connecting..."
+ * - Connected: Green dot + "Online"
+ * - Disconnected: Gray dot + "Offline"
  * - Processing: Pulsing purple dot + dynamic verb (e.g., "Reading files...", "Thinking...")
  * - Shows context usage percentage on the right
  */
@@ -11,7 +13,7 @@ import { useState, useRef, useEffect } from "preact/hooks";
 import type { ContextInfo } from "@liuboer/shared";
 
 interface StatusIndicatorProps {
-  isConnected: boolean;
+  connectionState: "connecting" | "connected" | "disconnected";
   isProcessing: boolean;
   currentAction?: string;
   contextUsage?: ContextInfo;
@@ -20,7 +22,7 @@ interface StatusIndicatorProps {
 }
 
 export default function StatusIndicator({
-  isConnected,
+  connectionState,
   isProcessing,
   currentAction,
   contextUsage,
@@ -49,6 +51,7 @@ export default function StatusIndicator({
   }, [showContextDetails]);
 
   const getStatus = () => {
+    // Processing state takes priority
     if (isProcessing && currentAction) {
       return {
         dotClass: "bg-purple-500 animate-pulse",
@@ -57,7 +60,8 @@ export default function StatusIndicator({
       };
     }
 
-    if (isConnected) {
+    // Connection states
+    if (connectionState === "connected") {
       return {
         dotClass: "bg-green-500",
         text: "Online",
@@ -65,6 +69,15 @@ export default function StatusIndicator({
       };
     }
 
+    if (connectionState === "connecting") {
+      return {
+        dotClass: "bg-yellow-500 animate-pulse",
+        text: "Connecting...",
+        textClass: "text-yellow-400",
+      };
+    }
+
+    // disconnected
     return {
       dotClass: "bg-gray-500",
       text: "Offline",
