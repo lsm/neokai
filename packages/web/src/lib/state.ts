@@ -235,6 +235,20 @@ class SessionStateChannels {
         debug: false,
       },
     );
+
+    // Subscribe to immediate commands updates (broadcasted when SDK fetches commands)
+    hub.subscribe(
+      'session.commands-updated',
+      (data: { availableCommands: string[] }) => {
+        console.log(`[State] Received commands update for session ${sessionId}:`, data.availableCommands);
+        // Update the commands channel immediately
+        this.commands.$.value = {
+          availableCommands: data.availableCommands,
+          timestamp: Date.now(),
+        };
+      },
+      { sessionId }
+    );
   }
 
   /**

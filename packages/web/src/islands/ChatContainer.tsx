@@ -204,8 +204,18 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     let unsubError: (() => void) | undefined;
     let unsubMessageQueued: (() => void) | undefined;
     let unsubMessageProcessing: (() => void) | undefined;
+    let unsubCommandsUpdated: (() => void) | undefined;
 
     connectionManager.getHub().then(hub => {
+      // Subscribe to commands updates
+      unsubCommandsUpdated = hub.subscribe<{ availableCommands: string[] }>(
+        'session.commands-updated',
+        (data) => {
+          console.log("Received commands update:", data.availableCommands);
+          slashCommandsSignal.value = data.availableCommands;
+        },
+        { sessionId }
+      );
       // SDK message events - PRIMARY EVENT HANDLER
       unsubSDKMessage = hub.subscribe<SDKMessage>(
         'sdk.message',
@@ -362,6 +372,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       unsubError?.();
       unsubMessageQueued?.();
       unsubMessageProcessing?.();
+      unsubCommandsUpdated?.();
     };
   };
 
