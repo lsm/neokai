@@ -97,9 +97,9 @@ export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
         />
       ))}
 
-      {/* Text blocks - constrained width */}
+      {/* Text blocks - full width like tool results */}
       {textBlocks.length > 0 && (
-        <div class="max-w-[85%] md:max-w-[70%] w-auto">
+        <div class="w-full">
           <div class={cn(messageColors.assistant.background, borderRadius.message.bubble, messageSpacing.assistant.bubble.combined, "space-y-3")}>
             {textBlocks.map((block: any, idx: number) => (
               <div key={idx} class={messageColors.assistant.text}>
