@@ -76,6 +76,11 @@ export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo, isRepla
 
   const commandOutput = getCommandOutput();
 
+  // Check if this is a compact summary (replay message with long text content)
+  const isCompactSummary = (): boolean => {
+    return isReplay && !commandOutput && textContent.length > 200;
+  };
+
   const handleCopy = async () => {
     const success = await copyToClipboard(textContent);
     if (success) {
@@ -160,17 +165,20 @@ export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo, isRepla
     return date.toLocaleString();
   };
 
-  // If this is a replay message with command output, render it as assistant-style with markdown
-  if (isReplay && commandOutput) {
+  // If this is a replay message with command output or compact summary, render it as assistant-style with markdown
+  if (isReplay && (commandOutput || isCompactSummary())) {
+    const contentToRender = commandOutput || textContent;
+    const label = commandOutput ? "command output" : "conversation summary";
+
     return (
       <div class={cn(messageSpacing.assistant.container.combined)}>
         <div class="max-w-full">
-          {/* Command output card */}
+          {/* Command output or compact summary card */}
           <div class={cn(
             "bg-dark-800/60 border border-dark-700/50 rounded-lg p-4",
             "prose prose-invert max-w-none"
           )}>
-            <MarkdownRenderer content={commandOutput} class="text-sm" />
+            <MarkdownRenderer content={contentToRender} class="text-sm" />
           </div>
 
           {/* Actions and timestamp */}
@@ -180,7 +188,7 @@ export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo, isRepla
             </Tooltip>
 
             <span class="text-xs px-2 py-0.5 bg-blue-500/20 text-blue-300 rounded">
-              command output
+              {label}
             </span>
 
             <IconButton size="md" onClick={handleCopy} title="Copy message">
