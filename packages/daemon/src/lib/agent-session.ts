@@ -339,7 +339,20 @@ export class AgentSession {
         if (this.queryObject && typeof this.queryObject.supportedCommands === "function") {
           const commands = await this.queryObject.supportedCommands();
           this.slashCommands = commands.map((cmd: any) => cmd.name);
+
+          // Add built-in commands that the SDK supports but doesn't advertise
+          // These commands work but aren't returned by supportedCommands()
+          const builtInCommands = ['clear', 'help'];
+          this.slashCommands = [...new Set([...this.slashCommands, ...builtInCommands])];
+
           console.log(`[AgentSession ${this.session.id}] Fetched slash commands:`, this.slashCommands);
+
+          // Broadcast commands to client immediately after fetching
+          await this.messageHub.publish(
+            'session.commands-updated',
+            { availableCommands: this.slashCommands },
+            { sessionId: this.session.id }
+          );
         }
       } catch (error) {
         console.warn(`[AgentSession ${this.session.id}] Failed to fetch slash commands:`, error);
