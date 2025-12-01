@@ -2,18 +2,19 @@ import { useState } from "preact/hooks";
 import { currentSessionIdSignal, sidebarOpenSignal } from "../lib/signals.ts";
 import { sessions, authStatus, connectionState } from "../lib/state.ts";
 import { createSession } from "../lib/api-helpers.ts";
-import { formatRelativeTime } from "../lib/utils.ts";
 import { toast } from "../lib/toast.ts";
 import { Button } from "../components/ui/Button.tsx";
 import { SettingsModal } from "../components/SettingsModal.tsx";
+import SessionListItem from "../components/SessionListItem.tsx";
 
 export default function Sidebar() {
   // Keep local UI state
   const [creatingSession, setCreatingSession] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // IMPORTANT: Do NOT access .value here - only access in JSX for proper reactivity tracking
-  // Debug logging will happen when signals are accessed in JSX below
+  // FIX: Access sessionsList once to prevent multiple subscriptions
+  // But we need to keep currentSessionIdSignal reactive for active state
+  const sessionsList = sessions.value;
 
   const handleCreateSession = async () => {
     setCreatingSession(true);
@@ -66,7 +67,10 @@ export default function Sidebar() {
   };
 
   const handleSessionClick = (sessionId: string) => {
+    console.log("[Sidebar] Session clicked:", sessionId);
+    console.log("[Sidebar] Current signal value before update:", currentSessionIdSignal.value);
     currentSessionIdSignal.value = sessionId;
+    console.log("[Sidebar] Current signal value after update:", currentSessionIdSignal.value);
     // Close sidebar on mobile after selecting a session
     if (window.innerWidth < 768) {
       sidebarOpenSignal.value = false;
@@ -128,7 +132,7 @@ export default function Sidebar() {
 
         {/* Session List */}
         <div class="flex-1 overflow-y-auto">
-          {sessions.value.length === 0 && (
+          {sessionsList.length === 0 && (
             <div class="p-6 text-center">
               <div class="text-4xl mb-3">💬</div>
               <p class="text-sm text-gray-400">
@@ -140,69 +144,13 @@ export default function Sidebar() {
             </div>
           )}
 
-          {sessions.value.map((session) => {
-            const isActive = currentSessionIdSignal.value === session.id;
-
-            return (
-              <div
-                key={session.id}
-                data-testid="session-card"
-                data-session-id={session.id}
-                onClick={() => handleSessionClick(session.id)}
-                class={`group relative p-4 border-b border-dark-700 cursor-pointer transition-all ${
-                  isActive
-                    ? "bg-dark-850 border-l-2 border-l-blue-500"
-                    : "hover:bg-dark-900"
-                }`}
-              >
-                <div class="flex items-start justify-between gap-2">
-                  <div class="flex-1 min-w-0">
-                    <h3
-                      class={`font-medium truncate text-sm mb-1 ${
-                        isActive ? "text-gray-100" : "text-gray-200"
-                      }`}
-                    >
-                      {session.title || "New Session"}
-                    </h3>
-                    <div class="flex items-center gap-3 text-xs text-gray-500">
-                      <span class="flex items-center gap-1">
-                        <svg
-                          class="w-3 h-3"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                        >
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width={2}
-                            d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
-                          />
-                        </svg>
-                        {session.metadata.messageCount || 0}
-                      </span>
-                      <span class="flex items-center gap-1">
-                        <svg
-                          class="w-3 h-3"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                        >
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width={2}
-                            d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                          />
-                        </svg>
-                        {formatRelativeTime(new Date(session.lastActiveAt))}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+          {sessionsList.map((session) => (
+            <SessionListItem
+              key={session.id}
+              session={session}
+              onSessionClick={handleSessionClick}
+            />
+          ))}
         </div>
 
         {/* Footer */}
