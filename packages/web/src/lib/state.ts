@@ -157,6 +157,9 @@ class SessionStateChannels {
   // Available commands
   commands: StateChannel<CommandsState>;
 
+  // Cleanup functions for subscriptions
+  private cleanupFunctions: Array<() => void> = [];
+
   constructor(
     private hub: MessageHub,
     private sessionId: string,
@@ -237,6 +240,7 @@ class SessionStateChannels {
     );
 
     // Subscribe to immediate commands updates (broadcasted when SDK fetches commands)
+    // IMPORTANT: hub.subscribe() returns a Promise, must await it
     hub.subscribe(
       'session.commands-updated',
       (data: { availableCommands: string[] }) => {
@@ -248,7 +252,11 @@ class SessionStateChannels {
         };
       },
       { sessionId }
-    );
+    ).then(unsub => {
+      this.cleanupFunctions.push(unsub);
+    }).catch(err => {
+      console.error(`[State] Failed to subscribe to session.commands-updated for session ${sessionId}:`, err);
+    });
   }
 
   /**
@@ -275,6 +283,14 @@ class SessionStateChannels {
     this.agent.stop();
     this.context.stop();
     this.commands.stop();
+
+    // Cleanup subscriptions
+    this.cleanupFunctions.forEach(cleanup => {
+      if (typeof cleanup === 'function') {
+        cleanup();
+      }
+    });
+    this.cleanupFunctions = [];
   }
 }
 

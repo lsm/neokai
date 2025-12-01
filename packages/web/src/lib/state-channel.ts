@@ -105,8 +105,8 @@ export class StateChannel<T> {
       // 1. Get initial snapshot
       await this.fetchSnapshot();
 
-      // 2. Subscribe to updates
-      this.setupSubscriptions();
+      // 2. Subscribe to updates (now async)
+      await this.setupSubscriptions();
 
       // 3. Setup auto-refresh if configured
       if (this.options.refreshInterval && this.options.refreshInterval > 0) {
@@ -336,9 +336,10 @@ export class StateChannel<T> {
   /**
    * Setup subscriptions to state updates
    */
-  private setupSubscriptions(): void {
+  private async setupSubscriptions(): Promise<void> {
     // Subscribe to full updates
-    const fullUpdateSub = this.hub.subscribe<T>(
+    // IMPORTANT: hub.subscribe() returns a Promise<UnsubscribeFn>, must await it
+    const fullUpdateSub = await this.hub.subscribe<T>(
       this.channelName,
       (data) => {
         this.log(`Full update received: ${this.channelName}`, data);
@@ -356,7 +357,7 @@ export class StateChannel<T> {
       const deltaChannel = `${this.channelName}.delta`;
       console.log(`[StateChannel:${this.channelName}] Subscribing to delta channel:`, deltaChannel, 'with sessionId:', this.options.sessionId);
 
-      const deltaUpdateSub = this.hub.subscribe<any>(
+      const deltaUpdateSub = await this.hub.subscribe<any>(
         deltaChannel,
         (delta) => {
           console.log(`[StateChannel:${this.channelName}] <<<< DELTA RECEIVED >>>>`, delta);
