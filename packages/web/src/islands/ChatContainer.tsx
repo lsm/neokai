@@ -50,12 +50,187 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
   useEffect(() => {
     loadSession();
-    const cleanupHandlers = connectWebSocket();
 
+    // Track cleanup functions and whether component is still mounted
+    let isMounted = true;
+    const cleanupFunctions: Array<() => void> = [];
+
+    // Set up WebSocket subscriptions asynchronously
+    connectionManager.getHub().then(async hub => {
+      // Only subscribe if component is still mounted
+      if (!isMounted) return;
+
+      // Subscribe to commands updates
+      const unsubCommands = await hub.subscribe<{ availableCommands: string[] }>(
+        'session.commands-updated',
+        (data) => {
+          console.log("Received commands update:", data.availableCommands);
+          slashCommandsSignal.value = data.availableCommands;
+        },
+        { sessionId }
+      );
+      if (!isMounted) return;
+      cleanupFunctions.push(unsubCommands);
+
+      // SDK message events - PRIMARY EVENT HANDLER
+      const unsubSDKMessage = await hub.subscribe<SDKMessage>(
+        'sdk.message',
+        (sdkMessage) => {
+          console.log("Received SDK message:", sdkMessage.type, sdkMessage);
+
+          // Extract slash commands from SDK init message
+          if (sdkMessage.type === "system" && sdkMessage.subtype === "init") {
+            const initMessage = sdkMessage as any;
+            if (initMessage.slash_commands && Array.isArray(initMessage.slash_commands)) {
+              console.log("Extracted slash commands from SDK:", initMessage.slash_commands);
+              slashCommandsSignal.value = initMessage.slash_commands;
+            }
+          }
+
+          // Update current action based on this message
+          const isProcessing = sending || streamingEvents.length > 0 || sdkMessage.type !== "result";
+          const action = getCurrentAction(sdkMessage, isProcessing);
+          if (action) {
+            setCurrentAction(action);
+          }
+
+          // Handle stream events separately for real-time display
+          if (isSDKStreamEvent(sdkMessage)) {
+            setStreamingEvents((prev) => [...prev, sdkMessage]);
+
+            // Reset processing timeout when we receive streaming events
+            if (processingTimeoutRef.current) {
+              clearTimeout(processingTimeoutRef.current);
+            }
+            processingTimeoutRef.current = setTimeout(() => {
+              console.warn("[ChatContainer] Processing timeout - clearing stuck state");
+              setSending(false);
+              setStreamingEvents([]);
+              setCurrentAction(undefined);
+              setError("Response timed out. The connection may have been interrupted.");
+            }, 5 * 60 * 1000);
+          } else {
+            // Only clear processing state when we get the FINAL result message
+            if (sdkMessage.type === "result" && sdkMessage.subtype === "success") {
+              setStreamingEvents([]);
+              setSending(false);
+              setCurrentAction(undefined);
+              if (sendTimeoutRef.current) {
+                clearTimeout(sendTimeoutRef.current);
+                sendTimeoutRef.current = null;
+              }
+              if (processingTimeoutRef.current) {
+                clearTimeout(processingTimeoutRef.current);
+                processingTimeoutRef.current = null;
+              }
+            }
+            // Add non-stream messages to main array, deduplicating by uuid
+            setMessages((prev) => {
+              if (sdkMessage.uuid) {
+                const existingIndex = prev.findIndex(m => m.uuid === sdkMessage.uuid);
+                if (existingIndex !== -1) {
+                  const updated = [...prev];
+                  updated[existingIndex] = sdkMessage;
+                  return updated;
+                }
+              }
+              return [...prev, sdkMessage];
+            });
+          }
+        },
+        { sessionId }
+      );
+      if (!isMounted) return;
+      cleanupFunctions.push(unsubSDKMessage);
+
+      // Context events
+      const unsubContextUpdated = await hub.subscribe<any>('context.updated', (data) => {
+        console.log(`Context updated:`, data);
+        if (data.totalUsed !== undefined) {
+          console.log(`Received accurate context info:`, {
+            totalUsed: data.totalUsed,
+            totalCapacity: data.totalCapacity,
+            percentUsed: data.percentUsed,
+            breakdown: data.breakdown,
+          });
+          setContextUsage({
+            totalUsed: data.totalUsed,
+            totalCapacity: data.totalCapacity,
+            percentUsed: data.percentUsed,
+            breakdown: data.breakdown,
+            model: data.model,
+            slashCommandTool: data.slashCommandTool,
+          });
+        }
+      }, { sessionId });
+      if (!isMounted) return;
+      cleanupFunctions.push(unsubContextUpdated);
+
+      const unsubContextCompacted = await hub.subscribe<{ before: number; after: number }>('context.compacted', (data) => {
+        const { before, after } = data;
+        toast.info(`Context compacted: ${before} → ${after} tokens`);
+      }, { sessionId });
+      if (!isMounted) return;
+      cleanupFunctions.push(unsubContextCompacted);
+
+      // Error handling
+      const unsubSessionError = await hub.subscribe<{ error: string }>('session.error', (data) => {
+        const error = data.error;
+        setError(error);
+        toast.error(error);
+        setSending(false);
+        setStreamingEvents([]);
+        setCurrentAction(undefined);
+        if (sendTimeoutRef.current) {
+          clearTimeout(sendTimeoutRef.current);
+          sendTimeoutRef.current = null;
+        }
+        if (processingTimeoutRef.current) {
+          clearTimeout(processingTimeoutRef.current);
+          processingTimeoutRef.current = null;
+        }
+      }, { sessionId });
+      if (!isMounted) return;
+      cleanupFunctions.push(unsubSessionError);
+
+      // Message queue events
+      const unsubMessageQueued = await hub.subscribe<{ messageId: string }>('message.queued', (data) => {
+        const { messageId } = data;
+        console.log("Message queued:", messageId);
+        setCurrentAction("Queued...");
+        if (sendTimeoutRef.current) {
+          clearTimeout(sendTimeoutRef.current);
+          sendTimeoutRef.current = null;
+        }
+      }, { sessionId });
+      if (!isMounted) return;
+      cleanupFunctions.push(unsubMessageQueued);
+
+      const unsubMessageProcessing = await hub.subscribe<{ messageId: string }>('message.processing', (data) => {
+        const { messageId } = data;
+        console.log("Message processing:", messageId);
+        setCurrentAction("Processing...");
+      }, { sessionId });
+      if (!isMounted) return;
+      cleanupFunctions.push(unsubMessageProcessing);
+    }).catch(error => {
+      console.error("[ChatContainer] Failed to set up subscriptions:", error);
+      setError("Failed to connect to daemon");
+      toast.error("Failed to connect to daemon");
+    });
+
+    // Cleanup function
     return () => {
-      // Don't disconnect here - let the next ChatContainer's useEffect handle session switching
-      // eventBusClient manages session switching internally in its connect() method
-      cleanupHandlers();
+      isMounted = false;
+
+      // Unsubscribe from all event handlers
+      cleanupFunctions.forEach(cleanup => {
+        if (typeof cleanup === 'function') {
+          cleanup();
+        } else {
+          console.warn('[ChatContainer] Cleanup function is not a function:', cleanup);
+        }
+      });
 
       // Clean up any pending timeouts
       if (sendTimeoutRef.current) {
@@ -191,189 +366,6 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
     } finally {
       setLoadingOlder(false);
     }
-  };
-
-  const connectWebSocket = () => {
-    // Subscribe to session-specific events via MessageHub
-    // Connection state is managed globally by ConnectionManager
-
-    // Get MessageHub instance and set up subscriptions
-    let unsubSDKMessage: (() => void) | undefined;
-    let unsubContextUpdated: (() => void) | undefined;
-    let unsubContextCompacted: (() => void) | undefined;
-    let unsubError: (() => void) | undefined;
-    let unsubMessageQueued: (() => void) | undefined;
-    let unsubMessageProcessing: (() => void) | undefined;
-    let unsubCommandsUpdated: (() => void) | undefined;
-
-    connectionManager.getHub().then(hub => {
-      // Subscribe to commands updates
-      unsubCommandsUpdated = hub.subscribe<{ availableCommands: string[] }>(
-        'session.commands-updated',
-        (data) => {
-          console.log("Received commands update:", data.availableCommands);
-          slashCommandsSignal.value = data.availableCommands;
-        },
-        { sessionId }
-      );
-      // SDK message events - PRIMARY EVENT HANDLER
-      unsubSDKMessage = hub.subscribe<SDKMessage>(
-        'sdk.message',
-        (sdkMessage) => {
-        console.log("Received SDK message:", sdkMessage.type, sdkMessage);
-
-        // Extract slash commands from SDK init message
-        if (sdkMessage.type === "system" && sdkMessage.subtype === "init") {
-          const initMessage = sdkMessage as any;
-          if (initMessage.slash_commands && Array.isArray(initMessage.slash_commands)) {
-            console.log("Extracted slash commands from SDK:", initMessage.slash_commands);
-            slashCommandsSignal.value = initMessage.slash_commands;
-          }
-        }
-
-        // Update current action based on this message
-        // We're processing if: sending is true OR we have streaming events OR we haven't received final result yet
-        const isProcessing = sending || streamingEvents.length > 0 || sdkMessage.type !== "result";
-        const action = getCurrentAction(sdkMessage, isProcessing);
-        if (action) {
-          setCurrentAction(action);
-        }
-
-        // Handle stream events separately for real-time display
-        if (isSDKStreamEvent(sdkMessage)) {
-          setStreamingEvents((prev) => [...prev, sdkMessage]);
-
-          // Reset processing timeout when we receive streaming events (connection is alive)
-          if (processingTimeoutRef.current) {
-            clearTimeout(processingTimeoutRef.current);
-          }
-          // Set a long timeout (5 minutes) to clear stuck processing state
-          processingTimeoutRef.current = setTimeout(() => {
-            console.warn("[ChatContainer] Processing timeout - clearing stuck state");
-            setSending(false);
-            setStreamingEvents([]);
-            setCurrentAction(undefined);
-            setError("Response timed out. The connection may have been interrupted.");
-          }, 5 * 60 * 1000);
-        } else {
-          // Only clear processing state when we get the FINAL result message with token usage
-          if (sdkMessage.type === "result" && sdkMessage.subtype === "success") {
-            setStreamingEvents([]);
-            setSending(false);
-            setCurrentAction(undefined);
-            // Clear both timeouts since we got a successful result
-            if (sendTimeoutRef.current) {
-              clearTimeout(sendTimeoutRef.current);
-              sendTimeoutRef.current = null;
-            }
-            if (processingTimeoutRef.current) {
-              clearTimeout(processingTimeoutRef.current);
-              processingTimeoutRef.current = null;
-            }
-          }
-          // Add non-stream messages to main array, deduplicating by uuid
-          setMessages((prev) => {
-            // If message has a uuid, check if it already exists (from optimistic update)
-            if (sdkMessage.uuid) {
-              const existingIndex = prev.findIndex(m => m.uuid === sdkMessage.uuid);
-              if (existingIndex !== -1) {
-                // Replace optimistic message with confirmed one
-                const updated = [...prev];
-                updated[existingIndex] = sdkMessage;
-                return updated;
-              }
-            }
-            // New message, add to end
-            return [...prev, sdkMessage];
-          });
-        }
-        },
-        { sessionId }
-      );
-
-      // Context events
-      unsubContextUpdated = hub.subscribe<any>('context.updated', (data) => {
-      // data is already the payload
-      console.log(`Context updated:`, data);
-
-      // Only handle accurate context info from /context command
-      if (data.totalUsed !== undefined) {
-        console.log(`Received accurate context info:`, {
-          totalUsed: data.totalUsed,
-          totalCapacity: data.totalCapacity,
-          percentUsed: data.percentUsed,
-          breakdown: data.breakdown,
-        });
-
-        // Update with accurate SDK context data
-        setContextUsage({
-          totalUsed: data.totalUsed,
-          totalCapacity: data.totalCapacity,
-          percentUsed: data.percentUsed,
-          breakdown: data.breakdown,
-          model: data.model,
-          slashCommandTool: data.slashCommandTool,
-        });
-        }
-      }, { sessionId });
-
-      unsubContextCompacted = hub.subscribe<{ before: number; after: number }>('context.compacted', (data) => {
-        const { before, after } = data;
-        toast.info(`Context compacted: ${before} → ${after} tokens`);
-      }, { sessionId });
-
-      // Error handling
-      unsubError = hub.subscribe<{ error: string }>('session.error', (data) => {
-        const error = data.error;
-        setError(error);
-        toast.error(error);
-        setSending(false);
-        setStreamingEvents([]);
-        setCurrentAction(undefined);
-        // Clear both timeouts on error
-        if (sendTimeoutRef.current) {
-          clearTimeout(sendTimeoutRef.current);
-          sendTimeoutRef.current = null;
-        }
-        if (processingTimeoutRef.current) {
-          clearTimeout(processingTimeoutRef.current);
-          processingTimeoutRef.current = null;
-        }
-      }, { sessionId });
-
-      // Message queue events (streaming input mode)
-      unsubMessageQueued = hub.subscribe<{ messageId: string }>('message.queued', (data) => {
-        const { messageId } = data;
-        console.log("Message queued:", messageId);
-        setCurrentAction("Queued...");
-        // Clear the send timeout since we got confirmation the message was queued
-        if (sendTimeoutRef.current) {
-          clearTimeout(sendTimeoutRef.current);
-          sendTimeoutRef.current = null;
-        }
-      }, { sessionId });
-
-      unsubMessageProcessing = hub.subscribe<{ messageId: string }>('message.processing', (data) => {
-        const { messageId } = data;
-        console.log("Message processing:", messageId);
-        setCurrentAction("Processing...");
-      }, { sessionId });
-    }).catch(error => {
-      console.error("[ChatContainer] Failed to set up subscriptions:", error);
-      setError("Failed to connect to daemon");
-      toast.error("Failed to connect to daemon");
-    });
-
-    // Return cleanup function that unsubscribes all handlers
-    return () => {
-      unsubSDKMessage?.();
-      unsubContextUpdated?.();
-      unsubContextCompacted?.();
-      unsubError?.();
-      unsubMessageQueued?.();
-      unsubMessageProcessing?.();
-      unsubCommandsUpdated?.();
-    };
   };
 
   const handleSendMessage = async (content: string) => {
