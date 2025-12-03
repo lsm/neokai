@@ -5,7 +5,7 @@
  * making tests more reliable and faster.
  */
 
-import type { Page, Locator } from '@playwright/test';
+import { expect, type Page, type Locator } from '@playwright/test';
 
 /**
  * Wait for WebSocket connection to be established
@@ -92,7 +92,7 @@ export async function waitForSessionDeleted(page: Page, sessionId: string): Prom
   // Wait for session to disappear from sidebar
   await page.waitForFunction(
     (sid) => {
-      const sessionElements = document.querySelectorAll('[data-session-id]');
+      const sessionElements = Array.from(document.querySelectorAll('[data-session-id]'));
       for (const el of sessionElements) {
         if (el.getAttribute('data-session-id') === sid) {
           return false;
@@ -106,50 +106,64 @@ export async function waitForSessionDeleted(page: Page, sessionId: string): Prom
 }
 
 /**
- * Wait for message to be sent and processing to complete
+ * Wait for user message to be sent
  */
-export async function waitForMessageProcessed(page: Page, messageText: string): Promise<void> {
-  // Wait for user message to appear
-  await page.locator(`text="${messageText}"`).waitFor({ state: 'visible', timeout: 5000 });
+export async function waitForMessageSent(page: Page, messageText: string): Promise<void> {
+  // Wait for user message to appear in the UI
+  await page.locator(`[data-testid="user-message"]:has-text("${messageText}")`).waitFor({
+    state: 'visible',
+    timeout: 5000
+  });
+}
 
-  // Wait for processing state to appear and disappear
-  const processingIndicator = page.locator('text=/Sending|Processing|Queued/i').first();
+/**
+ * Wait for new assistant response to appear
+ * @param options.containsText - Optional text that should be in the response
+ * @param options.timeout - Custom timeout (default 30s)
+ */
+export async function waitForAssistantResponse(
+  page: Page,
+  options: { containsText?: string; timeout?: number } = {}
+): Promise<void> {
+  const timeout = options.timeout || 30000;
 
-  // Wait for processing to start
-  await processingIndicator.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {
-    // Processing might be too fast to catch
+  // Count existing assistant messages
+  const initialCount = await page.locator('[data-testid="assistant-message"]').count();
+
+  // Wait for input to be disabled (processing started)
+  await page.waitForFunction(
+    () => {
+      const input = document.querySelector('textarea[placeholder*="Ask"]') as HTMLTextAreaElement;
+      return input && input.disabled;
+    },
+    { timeout: 5000 }
+  ).catch(() => {
+    // Input might disable too fast to catch
   });
 
-  // Wait for processing to complete (indicator disappears)
-  await processingIndicator.waitFor({ state: 'hidden', timeout: 30000 }).catch(() => {
-    // If not found, assume processing is complete
-  });
-
-  // Wait for assistant response - try multiple detection methods for reliability
-  const assistantDetected = await Promise.race([
-    // Method 1: Test-specific attribute (future-proof, requires component rebuild)
-    page.locator('[data-testid="assistant-message"]').waitFor({ state: 'visible', timeout: 30000 })
-      .then(() => true)
-      .catch(() => false),
-
-    // Method 2: Token usage indicator (current production fallback)
-    page.locator('text=/→.*tokens/i').waitFor({ state: 'visible', timeout: 30000 })
-      .then(() => true)
-      .catch(() => false),
-  ]);
-
-  if (!assistantDetected) {
+  // Wait for new assistant message to appear
+  await page.waitForFunction(
+    (expectedCount) => {
+      const messages = document.querySelectorAll('[data-testid="assistant-message"]');
+      return messages.length > expectedCount;
+    },
+    initialCount,
+    { timeout }
+  ).catch(async () => {
     // Check for error state
     const hasError = await page.locator('[data-error-message]').count();
     if (hasError === 0) {
-      throw new Error('Assistant response not detected (tried data-testid and token indicator)');
+      throw new Error('No new assistant response appeared (timeout)');
     }
+  });
+
+  // If text matching is requested, verify it
+  if (options.containsText) {
+    const lastAssistant = page.locator('[data-testid="assistant-message"]').last();
+    await expect(lastAssistant).toContainText(options.containsText, { timeout: 5000 });
   }
 
-  // Input should be enabled again
-  const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
-  await messageInput.waitFor({ state: 'visible', timeout: 5000 });
-  // Wait for the input to be enabled (not disabled)
+  // Wait for input to be enabled again (processing complete)
   await page.waitForFunction(
     () => {
       const input = document.querySelector('textarea[placeholder*="Ask"]') as HTMLTextAreaElement;
@@ -157,6 +171,15 @@ export async function waitForMessageProcessed(page: Page, messageText: string): 
     },
     { timeout: 5000 }
   );
+}
+
+/**
+ * Wait for message to be sent and get a response
+ * Convenience wrapper around waitForMessageSent + waitForAssistantResponse
+ */
+export async function waitForMessageProcessed(page: Page, messageText: string): Promise<void> {
+  await waitForMessageSent(page, messageText);
+  await waitForAssistantResponse(page);
 }
 
 /**
@@ -412,7 +435,7 @@ export async function cleanupTestSession(page: Page, sessionId: string): Promise
           return { success: false, error: 'MessageHub not available' };
         }
 
-        await hub.call('session.delete', { sessionId: sid }, { timeout: 5000 });
+        await hub.call('session.delete', { sessionId: sid }, { timeout: 15000 });
         return { success: true };
       } catch (error: any) {
         return { success: false, error: error?.message || String(error) };
