@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { cleanupTestSession, waitForSessionCreated } from "./helpers/wait-helpers";
 
 /**
  * Chat Flow E2E Tests
@@ -7,6 +8,8 @@ import { test, expect } from "@playwright/test";
  * These tests rely on the daemon and web server being running.
  */
 test.describe("Chat Flow", () => {
+  let sessionId: string | null = null;
+
   test.beforeEach(async ({ page }) => {
     // Navigate to home page
     await page.goto("/");
@@ -14,6 +17,20 @@ test.describe("Chat Flow", () => {
     // Wait for app to initialize (check for sidebar heading specifically)
     await expect(page.getByRole('heading', { name: 'Liuboer', exact: true }).first()).toBeVisible();
     await page.waitForTimeout(1000); // Wait for WebSocket connection
+
+    sessionId = null; // Reset for each test
+  });
+
+  test.afterEach(async ({ page }) => {
+    // Cleanup any session created during the test
+    if (sessionId) {
+      try {
+        await cleanupTestSession(page, sessionId);
+      } catch (error) {
+        console.warn(`Failed to cleanup session ${sessionId}:`, error);
+      }
+      sessionId = null;
+    }
   });
 
   test("should create a new session and send a message", async ({ page }) => {
@@ -29,6 +46,12 @@ test.describe("Chat Flow", () => {
     const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
     await expect(messageInput).toBeVisible();
     await expect(messageInput).toBeEnabled();
+
+    // Track session ID for cleanup
+    sessionId = await page.evaluate(() => {
+      const pathId = window.location.pathname.split('/').filter(Boolean)[0];
+      return pathId && pathId !== 'undefined' ? pathId : null;
+    });
 
     // Type a message
     await messageInput.fill("Hello, can you respond with just 'Hi!'?");
@@ -56,6 +79,12 @@ test.describe("Chat Flow", () => {
     await page.locator('button:has-text("New Session")').click();
     await page.waitForTimeout(1500);
 
+    // Track session ID for cleanup
+    sessionId = await page.evaluate(() => {
+      const pathId = window.location.pathname.split('/').filter(Boolean)[0];
+      return pathId && pathId !== 'undefined' ? pathId : null;
+    });
+
     // Check for textarea
     const messageInput = page.locator("textarea").first();
     await expect(messageInput).toBeVisible();
@@ -69,25 +98,27 @@ test.describe("Chat Flow", () => {
   test("should show session in sidebar after creation", async ({ page }) => {
     // Create a new session
     await page.locator('button:has-text("New Session")').click();
-    await page.waitForTimeout(1500);
 
-    // Send a message to give the session some content
-    const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
-    await messageInput.fill("test");
-    await page.locator('button[type="submit"]').first().click();
+    // Wait for session to be created and get sessionId
+    sessionId = await waitForSessionCreated(page);
+    expect(sessionId).toBeTruthy();
 
-    await page.waitForTimeout(2000);
-
-    // The session should appear in the sidebar
-    // Look for session entries with message count
-    const sessionItems = page.locator('[class*="cursor-pointer"]').filter({ hasText: /Session|ago/ });
-    await expect(sessionItems.first()).toBeVisible();
+    // The session should appear in the sidebar immediately after creation
+    // Use data-session-id attribute to find the session
+    const sessionCard = page.locator(`[data-session-id="${sessionId}"]`);
+    await expect(sessionCard).toBeVisible({ timeout: 10000 });
   });
 
   test("should disable input while message is being sent", async ({ page }) => {
     // Create a new session
     await page.locator('button:has-text("New Session")').click();
     await page.waitForTimeout(1500);
+
+    // Track session ID for cleanup
+    sessionId = await page.evaluate(() => {
+      const pathId = window.location.pathname.split('/').filter(Boolean)[0];
+      return pathId && pathId !== 'undefined' ? pathId : null;
+    });
 
     // Type and send a message
     const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
@@ -110,6 +141,12 @@ test.describe("Chat Flow", () => {
     // Create a new session
     await page.locator('button:has-text("New Session")').click();
     await page.waitForTimeout(1500);
+
+    // Track session ID for cleanup
+    sessionId = await page.evaluate(() => {
+      const pathId = window.location.pathname.split('/').filter(Boolean)[0];
+      return pathId && pathId !== 'undefined' ? pathId : null;
+    });
 
     // Send a message
     const messageInput = page.locator('textarea[placeholder*="Ask"]').first();

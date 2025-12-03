@@ -25,12 +25,12 @@ test.describe('State Channel Delta Updates', () => {
   test('should receive session delta updates instead of full list', async ({ page }) => {
     // Set up delta subscription tracking
     const deltaTracking = await page.evaluate(() => {
-      return new Promise((resolve) => {
+      return new Promise(async (resolve) => {
         const hub = (window as any).__messageHub;
         const deltas: any[] = [];
 
-        // Subscribe to session delta updates
-        const unsubscribe = hub.subscribe(
+        // Subscribe to session delta updates (subscribe returns Promise<UnsubscribeFn>)
+        const unsubscribe = await hub.subscribe(
           'state.sessions.delta',
           (delta: any) => {
             deltas.push(delta);
@@ -85,12 +85,12 @@ test.describe('State Channel Delta Updates', () => {
     const sessionId = await waitForSessionCreated(page);
 
     // Set up message delta tracking
-    await page.evaluate((sid) => {
+    await page.evaluate(async (sid) => {
       const hub = (window as any).__messageHub;
       const messageDeltas: any[] = [];
 
-      // Subscribe to message delta updates
-      const unsubscribe = hub.subscribe(
+      // Subscribe to message delta updates (subscribe returns Promise<UnsubscribeFn>)
+      const unsubscribe = await hub.subscribe(
         'state.messages.delta',
         (delta: any) => {
           messageDeltas.push(delta);
@@ -133,11 +133,11 @@ test.describe('State Channel Delta Updates', () => {
     const sessionId = await waitForSessionCreated(page);
 
     // Track SDK message deltas
-    await page.evaluate((sid) => {
+    await page.evaluate(async (sid) => {
       const hub = (window as any).__messageHub;
       const sdkDeltas: any[] = [];
 
-      const unsubscribe = hub.subscribe(
+      const unsubscribe = await hub.subscribe(
         'state.sdkMessages.delta',
         (delta: any) => {
           sdkDeltas.push(delta);
@@ -174,7 +174,7 @@ test.describe('State Channel Delta Updates', () => {
 
   test('should maintain per-channel versioning', async ({ page }) => {
     // Track versions across different channels
-    const versionTracking = await page.evaluate(() => {
+    const versionTracking = await page.evaluate(async () => {
       const hub = (window as any).__messageHub;
       const versions = {
         sessions: [],
@@ -183,20 +183,20 @@ test.describe('State Channel Delta Updates', () => {
         health: [],
       };
 
-      // Subscribe to multiple channels
-      hub.subscribe('state.sessions', (data: any) => {
+      // Subscribe to multiple channels (subscribe returns Promise<UnsubscribeFn>)
+      await hub.subscribe('state.sessions', (data: any) => {
         if (data.version) versions.sessions.push(data.version);
       }, { sessionId: 'global' });
 
-      hub.subscribe('state.auth', (data: any) => {
+      await hub.subscribe('state.auth', (data: any) => {
         if (data.version) versions.auth.push(data.version);
       }, { sessionId: 'global' });
 
-      hub.subscribe('state.config', (data: any) => {
+      await hub.subscribe('state.config', (data: any) => {
         if (data.version) versions.config.push(data.version);
       }, { sessionId: 'global' });
 
-      hub.subscribe('state.health', (data: any) => {
+      await hub.subscribe('state.health', (data: any) => {
         if (data.version) versions.health.push(data.version);
       }, { sessionId: 'global' });
 
@@ -282,11 +282,11 @@ test.describe('State Channel Delta Updates', () => {
     const sessionId = await waitForSessionCreated(page);
 
     // Track agent state changes
-    await page.evaluate((sid) => {
+    await page.evaluate(async (sid) => {
       const hub = (window as any).__messageHub;
       const agentStates: any[] = [];
 
-      hub.subscribe('state.agent', (state: any) => {
+      await hub.subscribe('state.agent', (state: any) => {
         agentStates.push(state);
       }, { sessionId: sid });
 
@@ -327,16 +327,16 @@ test.describe('State Channel Delta Updates', () => {
     const sessionId = await waitForSessionCreated(page);
 
     // Track context updates
-    await page.evaluate((sid) => {
+    await page.evaluate(async (sid) => {
       const hub = (window as any).__messageHub;
       const contextUpdates: any[] = [];
 
-      hub.subscribe('state.context', (context: any) => {
+      await hub.subscribe('state.context', (context: any) => {
         contextUpdates.push(context);
       }, { sessionId: sid });
 
       // Also track context.updated events
-      hub.subscribe('context.updated', (data: any) => {
+      await hub.subscribe('context.updated', (data: any) => {
         contextUpdates.push({ event: 'context.updated', ...data });
       }, { sessionId: sid });
 
@@ -379,11 +379,11 @@ test.describe('State Channel Delta Updates', () => {
     const sessionId = await waitForSessionCreated(page);
 
     // Track command state updates
-    await page.evaluate((sid) => {
+    await page.evaluate(async (sid) => {
       const hub = (window as any).__messageHub;
       const commandUpdates: any[] = [];
 
-      hub.subscribe('state.commands', (commands: any) => {
+      await hub.subscribe('state.commands', (commands: any) => {
         commandUpdates.push(commands);
       }, { sessionId: sid });
 

@@ -20,7 +20,7 @@ export async function waitForWebSocketConnected(page: Page): Promise<void> {
   );
 
   // Also wait for visual indicator
-  await page.locator('text=Connected').waitFor({ state: 'visible', timeout: 5000 });
+  await page.locator('text=Online').waitFor({ state: 'visible', timeout: 5000 });
 }
 
 /**
@@ -125,16 +125,26 @@ export async function waitForMessageProcessed(page: Page, messageText: string): 
     // If not found, assume processing is complete
   });
 
-  // Wait for assistant response or error
-  await page.waitForFunction(
-    () => {
-      const messages = document.querySelectorAll('[data-message-role]');
-      const lastMessage = messages[messages.length - 1];
-      return lastMessage?.getAttribute('data-message-role') === 'assistant' ||
-             document.querySelector('[data-error-message]') !== null;
-    },
-    { timeout: 30000 }
-  );
+  // Wait for assistant response - try multiple detection methods for reliability
+  const assistantDetected = await Promise.race([
+    // Method 1: Test-specific attribute (future-proof, requires component rebuild)
+    page.locator('[data-testid="assistant-message"]').waitFor({ state: 'visible', timeout: 30000 })
+      .then(() => true)
+      .catch(() => false),
+
+    // Method 2: Token usage indicator (current production fallback)
+    page.locator('text=/→.*tokens/i').waitFor({ state: 'visible', timeout: 30000 })
+      .then(() => true)
+      .catch(() => false),
+  ]);
+
+  if (!assistantDetected) {
+    // Check for error state
+    const hasError = await page.locator('[data-error-message]').count();
+    if (hasError === 0) {
+      throw new Error('Assistant response not detected (tried data-testid and token indicator)');
+    }
+  }
 
   // Input should be enabled again
   const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
@@ -384,58 +394,60 @@ export async function setupMessageHubTesting(page: Page): Promise<void> {
 /**
  * Helper to clean up after tests
  * IMPORTANT: E2E tests must test the actual UI, not bypass it
+ *
+ * For parallel execution, this helper uses RPC as primary method for reliability.
+ * ALWAYS uses RPC cleanup - UI cleanup is completely removed for better reliability.
  */
 export async function cleanupTestSession(page: Page, sessionId: string): Promise<void> {
+  if (!sessionId || sessionId === 'undefined' || sessionId === 'null') {
+    return; // Nothing to clean up
+  }
+
   try {
-    // Navigate to session if not already there
-    if (!page.url().includes(sessionId)) {
-      await page.goto(`/${sessionId}`);
-      await page.waitForTimeout(1000); // Wait for page to fully load and stabilize
+    // Use MessageHub RPC for reliable cleanup (works even if page is in bad state)
+    const result = await page.evaluate(async (sid) => {
+      try {
+        const hub = (window as any).__messageHub || (window as any).appState?.messageHub;
+        if (!hub || !hub.call) {
+          return { success: false, error: 'MessageHub not available' };
+        }
+
+        await hub.call('session.delete', { sessionId: sid }, { timeout: 5000 });
+        return { success: true };
+      } catch (error: any) {
+        return { success: false, error: error?.message || String(error) };
+      }
+    }, sessionId);
+
+    if (result.success) {
+      // Successfully deleted via RPC
+      // Navigate home if we're still on the deleted session
+      try {
+        await page.waitForTimeout(500);
+        if (page.url().includes(sessionId)) {
+          await page.goto('/').catch(() => {}); // Ignore navigation errors
+          await page.waitForTimeout(300);
+        }
+      } catch {
+        // Ignore navigation errors
+      }
+    } else {
+      // RPC deletion failed, log warning but don't throw
+      console.warn(`⚠️  Failed to cleanup session ${sessionId}: ${result.error}`);
     }
-
-    // Find and click the session options button
-    const optionsButton = page.locator('button[aria-label="Session options"]').first();
-    await optionsButton.waitFor({ state: 'visible', timeout: 5000 });
-
-    // Scroll into view to ensure it's visible
-    await optionsButton.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(300);
-
-    // Click to open dropdown
-    await optionsButton.click();
-
-    // Wait for dropdown menu to appear and be ready for interaction
-    await page.waitForTimeout(500);
-
-    // Find the "Delete Chat" button in the dropdown menu using more specific selector
-    const deleteButton = page.locator('button[role="menuitem"]').filter({ hasText: 'Delete Chat' }).first();
-    await deleteButton.waitFor({ state: 'visible', timeout: 5000 });
-
-    // Ensure the button is ready for interaction
-    await deleteButton.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(200);
-
-    // Click the delete button
-    await deleteButton.click();
-
-    // Wait for modal to appear
-    await page.waitForTimeout(300);
-
-    // Find and click the confirm button in the modal
-    const confirmButton = page.locator('[data-testid="confirm-delete-session"]').first();
-    await confirmButton.waitFor({ state: 'visible', timeout: 5000 });
-    await confirmButton.click();
-
-    // Wait for session deletion and UI update
-    await waitForSessionDeleted(page, sessionId);
   } catch (error) {
-    console.warn(`Failed to cleanup session ${sessionId}:`, (error as Error).message || error);
-    // Try to navigate home if cleanup failed
-    try {
-      await page.goto('/');
-      await page.waitForTimeout(500);
-    } catch {
-      // Ignore navigation errors
-    }
+    // page.evaluate itself failed (page might be closed/crashed)
+    console.warn(`⚠️  Cleanup error for session ${sessionId}:`, (error as Error).message || error);
+  }
+
+  // Never throw errors from cleanup - just log warnings
+}
+
+/**
+ * Cleanup multiple sessions at once (for test suites)
+ */
+export async function cleanupTestSessions(page: Page, sessionIds: string[]): Promise<void> {
+  for (const sessionId of sessionIds) {
+    await cleanupTestSession(page, sessionId);
   }
 }

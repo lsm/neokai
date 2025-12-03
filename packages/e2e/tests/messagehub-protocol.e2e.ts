@@ -403,7 +403,7 @@ test.describe('WebSocket Connection Management', () => {
   });
 
   test('should show connected status', async ({ page }) => {
-    await expect(page.locator('text=Connected')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('text=Online')).toBeVisible({ timeout: 5000 });
 
     const connectionState = await page.evaluate(() => {
       const hub = (window as any).__messageHub;

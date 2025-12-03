@@ -61,11 +61,11 @@ test.describe("Message Send and Receive", () => {
       timeout: 30000
     });
 
-    // Verify input is re-enabled after response
-    await expect(messageInput).toBeEnabled({ timeout: 5000 });
+    // Wait for processing status to disappear first (including /context fetch)
+    await expect(statusText).not.toBeVisible({ timeout: 10000 });
 
-    // Verify status indicator is no longer showing processing
-    await expect(statusText).not.toBeVisible({ timeout: 2000 });
+    // Verify input is re-enabled after all processing completes
+    await expect(messageInput).toBeEnabled({ timeout: 5000 });
 
     // Cleanup
     await cleanupTestSession(page, sessionId);
@@ -155,31 +155,25 @@ test.describe("Message Send and Receive", () => {
 
     const sessionId = await waitForSessionCreated(page);
 
-    // Close WebSocket connection (simulate network issue)
+    // Simulate disconnection using exposed method
     await page.evaluate(() => {
-      // @ts-ignore - access internal state for testing
-      if (window.messageHub) {
-        // @ts-ignore
-        window.messageHub.transport.disconnect();
-      }
+      (window as any).connectionManager.simulateDisconnect();
     });
 
     await page.waitForTimeout(500);
 
-    // Try to send a message
-    const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
-    await messageInput.fill("This should fail");
-
-    const sendButton = await waitForElement(page, 'button[type="submit"]');
-    await sendButton.click();
-
-    // Should show error message about connection
-    await expect(page.locator('text=/connection|lost|failed/i')).toBeVisible({
-      timeout: 3000
+    // Should show offline status
+    await expect(page.locator('text=Offline').first()).toBeVisible({
+      timeout: 5000
     });
 
-    // Input should not remain stuck in sending state
-    await expect(messageInput).toBeEnabled({ timeout: 2000 });
+    // Try to send a message (should be disabled while offline)
+    const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
+    const sendButton = await waitForElement(page, 'button[type="submit"]');
+
+    // Input/button should be disabled while offline
+    // (The app prevents sending when disconnected)
+    await expect(messageInput).toBeDisabled({ timeout: 2000 });
 
     // Cleanup (may fail due to disconnection)
     try {
@@ -239,8 +233,13 @@ test.describe("Message Send and Receive", () => {
       // Wait for message to appear
       await expect(page.locator(`text="${msg}"`)).toBeVisible({ timeout: 5000 });
 
+      // Wait for processing status to appear and disappear (includes API call + /context fetch)
+      const processingIndicator = page.locator('text=/Sending|Processing|Queued/i').first();
+      await processingIndicator.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
+      await processingIndicator.waitFor({ state: 'hidden', timeout: 35000 }).catch(() => {});
+
       // Wait for input to be re-enabled (response complete)
-      await expect(messageInput).toBeEnabled({ timeout: 15000 });
+      await expect(messageInput).toBeEnabled({ timeout: 5000 });
     }
 
     // All messages should be visible

@@ -1,8 +1,24 @@
 import { test, expect } from "@playwright/test";
+import { cleanupTestSession } from "./helpers/wait-helpers";
 
 test.describe("Session Management", () => {
+  let sessionId: string | null = null;
+
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
+    sessionId = null; // Reset for each test
+  });
+
+  test.afterEach(async ({ page }) => {
+    // Cleanup any session created during the test
+    if (sessionId) {
+      try {
+        await cleanupTestSession(page, sessionId);
+      } catch (error) {
+        console.warn(`Failed to cleanup session ${sessionId}:`, error);
+      }
+      sessionId = null;
+    }
   });
 
   test("should display sidebar with branding", async ({ page }) => {
@@ -22,7 +38,7 @@ test.describe("Session Management", () => {
   test("should display connection status in footer", async ({ page }) => {
     // Check for connection status indicator
     await expect(page.locator("text=Status")).toBeVisible();
-    await expect(page.locator("text=Connected")).toBeVisible();
+    await expect(page.locator("text=Online")).toBeVisible();
 
     // Check for green indicator dot
     const statusDot = page.locator(".bg-green-500").first();
@@ -35,10 +51,19 @@ test.describe("Session Management", () => {
     const newSessionButton = page.locator("button:has-text('New Session')");
     await newSessionButton.click();
 
-    // Wait for session creation
-    await page.waitForTimeout(1000);
+    // Wait for session creation and navigation
+    await page.waitForTimeout(1500);
 
-    // Should show success toast (if no errors)
-    // Note: This test relies on real MessageHub connection and session creation
+    // Verify we're in a session (message input should be visible)
+    const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+    await expect(messageInput).toBeVisible({ timeout: 5000 });
+
+    // Get the session ID from the URL for cleanup
+    sessionId = await page.evaluate(() => {
+      const pathId = window.location.pathname.split('/').filter(Boolean)[0];
+      return pathId && pathId !== 'undefined' ? pathId : null;
+    });
+
+    // Note: Session will be cleaned up in afterEach
   });
 });

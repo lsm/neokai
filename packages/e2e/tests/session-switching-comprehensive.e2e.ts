@@ -87,7 +87,7 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
     const sessionIds: string[] = [];
     for (let i = 0; i < 3; i++) {
       await page.click('button:has-text("New Session")');
-      const sessionId = await waitForSessionCreated(app);
+      const sessionId = await waitForSessionCreated(page);
       sessionIds.push(sessionId);
 
       if (i < 2) {
@@ -126,7 +126,7 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
 
     // Cleanup
     for (const sessionId of sessionIds) {
-      await cleanupTestSession(app, sessionId);
+      await cleanupTestSession(page, sessionId);
     }
   });
 
@@ -143,7 +143,7 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
     const sessionIds: string[] = [];
     for (let i = 0; i < 2; i++) {
       await page.click('button:has-text("New Session")');
-      const sessionId = await waitForSessionCreated(app);
+      const sessionId = await waitForSessionCreated(page);
       sessionIds.push(sessionId);
 
       if (i < 1) {
@@ -154,7 +154,7 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
 
     // Navigate to session 1
     await page.click(`[data-session-id="${sessionIds[0]}"]`);
-    await waitForElement(app, 'textarea');
+    await waitForElement(page, 'textarea');
     await page.waitForTimeout(1000);
 
     // Get subscription count with session loaded
@@ -165,7 +165,7 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
 
     // Switch to session 2 - this should trigger cleanup of session 1's subscriptions
     await page.click(`[data-session-id="${sessionIds[1]}"]`);
-    await waitForElement(app, 'textarea');
+    await waitForElement(page, 'textarea');
     await page.waitForTimeout(1000);
 
     // Get subscription count with session 2 loaded
@@ -180,7 +180,7 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
 
     // Switch back to session 1
     await page.click(`[data-session-id="${sessionIds[0]}"]`);
-    await waitForElement(app, 'textarea');
+    await waitForElement(page, 'textarea');
     await page.waitForTimeout(1000);
 
     // Get subscription count again
@@ -207,7 +207,7 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
 
     // Cleanup
     for (const sessionId of sessionIds) {
-      await cleanupTestSession(app, sessionId);
+      await cleanupTestSession(page, sessionId);
     }
   });
 
@@ -218,7 +218,7 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
     const sessionIds: string[] = [];
     for (let i = 0; i < 2; i++) {
       await page.click('button:has-text("New Session")');
-      const sessionId = await waitForSessionCreated(app);
+      const sessionId = await waitForSessionCreated(page);
       sessionIds.push(sessionId);
 
       if (i < 1) {
@@ -229,7 +229,7 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
 
     // Navigate to session 1
     await page.click(`[data-session-id="${sessionIds[0]}"]`);
-    const textarea1 = await waitForElement(app, 'textarea');
+    const textarea1 = await waitForElement(page, 'textarea');
 
     // Send a message (DON'T wait for completion)
     await textarea1.fill('Write a long detailed explanation of quantum computing');
@@ -240,7 +240,7 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
 
     // Switch to session 2 WHILE session 1 is still processing
     await page.click(`[data-session-id="${sessionIds[1]}"]`);
-    await waitForElement(app, 'textarea');
+    await waitForElement(page, 'textarea');
 
     // Send a message in session 2
     const textarea2 = page.locator('textarea').first();
@@ -251,21 +251,21 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
     await page.waitForTimeout(2000);
 
     // VERIFY: Session 2's message appears
-    await expect(app.locator('text="Hello from session 2"')).toBeVisible();
+    await expect(page.locator('text="Hello from session 2"')).toBeVisible();
 
     // Switch back to session 1
     await page.click(`[data-session-id="${sessionIds[0]}"]`);
     await page.waitForTimeout(1000);
 
     // VERIFY: Session 1's message should be there (even if still processing)
-    await expect(app.locator('text="quantum computing"')).toBeVisible();
+    await expect(page.locator('text="quantum computing"')).toBeVisible();
 
     // VERIFY: Session 2's message should NOT be visible in session 1
-    await expect(app.locator('text="Hello from session 2"')).not.toBeVisible();
+    await expect(page.locator('text="Hello from session 2"')).not.toBeVisible();
 
     // Cleanup
     for (const sessionId of sessionIds) {
-      await cleanupTestSession(app, sessionId);
+      await cleanupTestSession(page, sessionId);
     }
   });
 
@@ -277,16 +277,16 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
 
     for (let i = 0; i < 3; i++) {
       await page.click('button:has-text("New Session")');
-      const sessionId = await waitForSessionCreated(app);
+      const sessionId = await waitForSessionCreated(page);
 
       // Send unique message
       const message = `Unique message ${i + 1} - ${Math.random().toString(36).substring(7)}`;
-      const textarea = await waitForElement(app, 'textarea');
+      const textarea = await waitForElement(page, 'textarea');
       await textarea.fill(message);
       await page.click('button[type="submit"]');
 
       // Wait for message to appear
-      await expect(app.locator(`text="${message}"`)).toBeVisible({ timeout: 5000 });
+      await expect(page.locator(`text="${message}"`)).toBeVisible({ timeout: 5000 });
 
       sessionData.push({ id: sessionId, message });
 
@@ -308,22 +308,22 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
     // VERIFY: Each session still shows its correct unique message
     for (const session of sessionData) {
       await page.click(`[data-session-id="${session.id}"]`);
-      await waitForElement(app, 'textarea');
+      await waitForElement(page, 'textarea');
 
       // Should show its own message
-      await expect(app.locator(`text="${session.message}"`)).toBeVisible({ timeout: 5000 });
+      await expect(page.locator(`text="${session.message}"`)).toBeVisible({ timeout: 5000 });
 
       // Should NOT show other sessions' messages
       for (const otherSession of sessionData) {
         if (otherSession.id !== session.id) {
-          await expect(app.locator(`text="${otherSession.message}"`)).not.toBeVisible();
+          await expect(page.locator(`text="${otherSession.message}"`)).not.toBeVisible();
         }
       }
     }
 
     // Cleanup
     for (const session of sessionData) {
-      await cleanupTestSession(app, session.id);
+      await cleanupTestSession(page, session.id);
     }
   });
 });

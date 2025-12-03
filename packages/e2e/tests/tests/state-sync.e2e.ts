@@ -12,8 +12,8 @@ import { test, expect } from '../fixtures/app.fixture';
 
 test.describe('State Synchronization', () => {
   test('should initialize state channels and load sessions', async ({ app }) => {
-    // Verify MessageHub is connected by checking for "Connected" status in UI
-    await expect(app.getByText('Connected')).toBeVisible();
+    // Verify MessageHub is connected by checking for "Online" status in UI
+    await expect(app.getByText('Online')).toBeVisible();
 
     // Verify state channels initialized by checking that UI is functional
     // New Session button should be clickable (indicates state is ready)
@@ -43,7 +43,7 @@ test.describe('State Synchronization', () => {
 
   test('should show connected status', async ({ app }) => {
     // Verify status indicator shows connected
-    await expect(app.getByText('Connected')).toBeVisible();
+    await expect(app.getByText('Online')).toBeVisible();
   });
 
   test('should have no MessageHub connection errors in console', async ({ app }) => {
@@ -58,8 +58,8 @@ test.describe('State Synchronization', () => {
     // Reload the page to test HMR-like scenario
     await app.reload();
 
-    // Wait for app to initialize again (check for Connected status)
-    await expect(app.getByText('Connected')).toBeVisible({ timeout: 10000 });
+    // Wait for app to initialize again (check for Online status)
+    await expect(app.getByText('Online')).toBeVisible({ timeout: 10000 });
 
     // Check that no "MessageHub not connected" errors occurred
     const hasConnectionError = consoleErrors.some(err =>
