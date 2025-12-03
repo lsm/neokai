@@ -77,7 +77,7 @@ export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
   const thinkingBlocks = apiMessage.content.filter((block: ContentBlock) => isThinkingBlock(block));
 
   return (
-    <div class="py-2 space-y-3">
+    <div class="py-2 space-y-3" data-testid="assistant-message" data-message-role="assistant">
       {/* Tool use blocks - full width like result messages */}
       {toolBlocks.map((block: any, idx: number) => {
         const toolResult = toolResultsMap?.get(block.id);

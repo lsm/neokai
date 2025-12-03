@@ -208,7 +208,7 @@ export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo, isRepla
   }
 
   return (
-    <div class={cn(messageSpacing.user.container.combined, "flex justify-end")}>
+    <div class={cn(messageSpacing.user.container.combined, "flex justify-end")} data-testid="user-message" data-message-role="user">
       <div class="max-w-[85%] md:max-w-[70%] w-auto">
         {/* Message bubble */}
         <div class={cn(messageColors.user.background, borderRadius.message.bubble, messageSpacing.user.bubble.combined)}>

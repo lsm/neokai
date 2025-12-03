@@ -46,7 +46,7 @@ export function SDKStreamingMessage({ message }: Props) {
   }
 
   return (
-    <div class="py-2 px-4 md:px-6 animate-fadeIn">
+    <div class="py-2 px-4 md:px-6 animate-fadeIn" data-testid="assistant-message" data-message-role="assistant" data-streaming="true">
       <div class="max-w-[85%] md:max-w-[70%] w-auto">
         {/* Streaming content */}
         <div class="prose dark:prose-invert max-w-none prose-pre:bg-gray-900 prose-pre:text-gray-100">
@@ -90,7 +90,7 @@ export function SDKStreamingAccumulator({ events }: AccumulatorProps) {
 
   if (!accumulatedContent && !hasThinking) {
     return (
-      <div class="py-2 px-4 md:px-6 animate-fadeIn">
+      <div class="py-2 px-4 md:px-6 animate-fadeIn" data-testid="assistant-message" data-message-role="assistant" data-streaming="true">
         <div class="max-w-[85%] md:max-w-[70%] w-auto">
           <div class="flex items-center gap-2 text-gray-400">
             <div class="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></div>
@@ -102,7 +102,7 @@ export function SDKStreamingAccumulator({ events }: AccumulatorProps) {
   }
 
   return (
-    <div class="py-2 px-4 md:px-6 animate-fadeIn">
+    <div class="py-2 px-4 md:px-6 animate-fadeIn" data-testid="assistant-message" data-message-role="assistant" data-streaming="true">
       <div class="max-w-[85%] md:max-w-[70%] w-auto">
         {/* Thinking indicator */}
         {hasThinking && (
