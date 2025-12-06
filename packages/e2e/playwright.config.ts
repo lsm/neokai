@@ -81,8 +81,6 @@ export default defineConfig({
         "**/message-send-receive.e2e.ts",
         "**/tests/state-sync.e2e.ts",
         "**/tests/multi-tab.e2e.ts",
-        "**/messagehub-protocol.e2e.ts",
-        "**/state-channel-delta.e2e.ts",
         "**/session-management.e2e.ts", // Will add cleanup
         "**/chat-flow.e2e.ts", // Will add cleanup
       ],

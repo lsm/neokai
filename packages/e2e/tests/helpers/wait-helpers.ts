@@ -428,6 +428,7 @@ export async function cleanupTestSession(page: Page, sessionId: string): Promise
 
   try {
     // Use MessageHub RPC for reliable cleanup (works even if page is in bad state)
+    // Generous timeout: manual deletion takes ~3ms, but may take longer during agent processing
     const result = await page.evaluate(async (sid) => {
       try {
         const hub = (window as any).__messageHub || (window as any).appState?.messageHub;
@@ -435,8 +436,9 @@ export async function cleanupTestSession(page: Page, sessionId: string): Promise
           return { success: false, error: 'MessageHub not available' };
         }
 
-        await hub.call('session.delete', { sessionId: sid }, { timeout: 15000 });
-        return { success: true };
+        // 10s timeout - if it takes longer, something is likely stuck/deadlocked
+        await hub.call('session.delete', { sessionId: sid }, { timeout: 10000 });
+        return { success: true, error: undefined };
       } catch (error: any) {
         return { success: false, error: error?.message || String(error) };
       }
@@ -455,7 +457,7 @@ export async function cleanupTestSession(page: Page, sessionId: string): Promise
         // Ignore navigation errors
       }
     } else {
-      // RPC deletion failed, log warning but don't throw
+      // RPC deletion failed after retries, log warning but don't throw
       console.warn(`⚠️  Failed to cleanup session ${sessionId}: ${result.error}`);
     }
   } catch (error) {

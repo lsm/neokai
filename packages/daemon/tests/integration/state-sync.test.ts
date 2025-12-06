@@ -225,7 +225,7 @@ describe("State Synchronization Integration", () => {
 
       // Wait for subscription acknowledgment
       const subAck = await waitForWebSocketMessage(ws);
-      expect(subAck.type).toBe(MessageType.RESULT);
+      expect(subAck.type).toBe(MessageType.SUBSCRIBED);
 
       // Create session (triggers EventBus → StateManager → MessageHub publish)
       ws.send(JSON.stringify({
@@ -276,7 +276,7 @@ describe("State Synchronization Integration", () => {
 
       // Wait for subscription acknowledgment
       const subAck = await waitForWebSocketMessage(ws);
-      expect(subAck.type).toBe(MessageType.RESULT);
+      expect(subAck.type).toBe(MessageType.SUBSCRIBED);
 
       // Create session via WebSocket
       ws.send(JSON.stringify({
@@ -345,7 +345,7 @@ describe("State Synchronization Integration", () => {
 
       // Wait for subscription acknowledgment
       const subAck = await waitForWebSocketMessage(ws);
-      expect(subAck.type).toBe(MessageType.RESULT);
+      expect(subAck.type).toBe(MessageType.SUBSCRIBED);
 
       // Update session
       ws.send(JSON.stringify({
