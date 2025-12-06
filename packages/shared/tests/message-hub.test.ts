@@ -49,7 +49,7 @@ class MockTransport implements IMessageTransport {
       setTimeout(() => {
         const ackMessage = {
           id: `ack-${message.id}`,
-          type: MessageType.RESULT,
+          type: message.type === MessageType.SUBSCRIBE ? MessageType.SUBSCRIBED : MessageType.UNSUBSCRIBED,
           sessionId: message.sessionId,
           method: message.method,
           requestId: message.id,

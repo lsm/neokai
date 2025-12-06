@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach } from "bun:test";
 import { MessageHub } from "../src/message-hub/message-hub.ts";
-import { MessageType, createSubscribeMessage } from "../src/message-hub/protocol.ts";
+import { MessageType } from "../src/message-hub/protocol.ts";
 import type { HubMessage, IMessageTransport, ConnectionState } from "../src/message-hub/types.ts";
 
 /**
@@ -36,7 +36,7 @@ class MockTransport implements IMessageTransport {
     if (message.type === MessageType.SUBSCRIBE || message.type === MessageType.UNSUBSCRIBE) {
       const ackMessage: HubMessage = {
         id: `ack-${message.id}`,
-        type: MessageType.RESULT,
+        type: message.type === MessageType.SUBSCRIBE ? MessageType.SUBSCRIBED : MessageType.UNSUBSCRIBED,
         method: message.method,
         sessionId: message.sessionId,
         data: {
