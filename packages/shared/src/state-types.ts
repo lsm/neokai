@@ -7,7 +7,6 @@
 import type {
   AuthStatus,
   Session,
-  Message,
   DaemonConfig,
   HealthStatus,
   ContextInfo,
@@ -54,13 +53,6 @@ export interface SystemState {
 // State channel: {sessionId}:state.session
 export interface SessionMetaState {
   session: Session;
-  timestamp: number;
-}
-
-// State channel: {sessionId}:state.messages
-export interface MessagesState {
-  messages: Message[];
-  messageCount: number;
   timestamp: number;
 }
 
@@ -111,7 +103,6 @@ export interface GlobalStateSnapshot {
 
 export interface SessionStateSnapshot {
   session: SessionMetaState;
-  messages: MessagesState;
   sdkMessages: SDKMessagesState;
   agent: AgentState;
   context: ContextState;
@@ -132,13 +123,6 @@ export interface SessionsUpdate {
   timestamp: number;
 }
 
-export interface MessagesUpdate {
-  added?: Message[];
-  updated?: Message[];
-  removed?: string[]; // message IDs
-  timestamp: number;
-}
-
 export interface SDKMessagesUpdate {
   added?: SDKMessage[];
   timestamp: number;
@@ -156,7 +140,6 @@ export const STATE_CHANNELS = {
 
   // Session channels (prefix with sessionId:)
   SESSION_META: 'state.session',
-  SESSION_MESSAGES: 'state.messages',
   SESSION_SDK_MESSAGES: 'state.sdkMessages',
   SESSION_AGENT: 'state.agent',
   SESSION_CONTEXT: 'state.context',

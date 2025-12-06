@@ -17,7 +17,6 @@ import type {
   AuthStatus,
   DaemonConfig,
   HealthStatus,
-  Message,
   ContextInfo,
 } from "@liuboer/shared";
 import type { SDKMessage } from "@liuboer/shared/sdk";
@@ -28,13 +27,11 @@ import type {
   ConfigState,
   HealthState,
   SessionMetaState,
-  MessagesState,
   SDKMessagesState,
   AgentState,
   ContextState,
   CommandsState,
   SessionsUpdate,
-  MessagesUpdate,
   SDKMessagesUpdate,
 } from "@liuboer/shared";
 import { STATE_CHANNELS } from "@liuboer/shared";
@@ -114,9 +111,6 @@ class SessionStateChannels {
   // Session metadata
   session: StateChannel<SessionMetaState>;
 
-  // Messages
-  messages: StateChannel<MessagesState>;
-
   // SDK Messages
   sdkMessages: StateChannel<SDKMessagesState>;
 
@@ -142,24 +136,6 @@ class SessionStateChannels {
       {
         sessionId,
         enableDeltas: false,
-        debug: false,
-      },
-    );
-
-    this.messages = new StateChannel<MessagesState>(
-      hub,
-      STATE_CHANNELS.SESSION_MESSAGES,
-      {
-        sessionId,
-        enableDeltas: true,
-        mergeDelta: (current, delta: MessagesUpdate) => {
-          return {
-            ...current,
-            messages: DeltaMergers.array(current.messages, delta),
-            messageCount: current.messages.length,
-            timestamp: delta.timestamp,
-          };
-        },
         debug: false,
       },
     );
@@ -237,7 +213,6 @@ class SessionStateChannels {
   async start(): Promise<void> {
     await Promise.all([
       this.session.start(),
-      this.messages.start(),
       this.sdkMessages.start(),
       this.agent.start(),
       this.context.start(),
@@ -250,7 +225,6 @@ class SessionStateChannels {
    */
   stop(): void {
     this.session.stop();
-    this.messages.stop();
     this.sdkMessages.stop();
     this.agent.stop();
     this.context.stop();
@@ -429,15 +403,6 @@ export const currentSession = computed<Session | null>(() => {
   const channels = appState.getSessionChannels(sessionId);
   const stateValue = channels.session.$.value;
   return stateValue?.session || null;
-});
-
-export const currentMessages = computed<Message[]>(() => {
-  const sessionId = appState["currentSessionIdSignal"].value;
-  if (!sessionId) return [];
-
-  const channels = appState.getSessionChannels(sessionId);
-  const stateValue = channels.messages.$.value;
-  return stateValue?.messages || [];
 });
 
 export const currentSDKMessages = computed<SDKMessage[]>(() => {

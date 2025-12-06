@@ -91,8 +91,6 @@ export class SubscriptionManager {
 
       // State channel events for this session
       "state.session", // Session metadata
-      "state.messages", // Conversation messages
-      "state.messages.delta", // Message deltas
       "state.sdkMessages", // SDK-level messages
       "state.sdkMessages.delta", // SDK message deltas
       "state.agent", // Agent status
@@ -161,8 +159,6 @@ export class SubscriptionManager {
       "session.interrupted",
       "agent.state",
       "state.session",
-      "state.messages",
-      "state.messages.delta",
       "state.sdkMessages",
       "state.sdkMessages.delta",
       "state.agent",

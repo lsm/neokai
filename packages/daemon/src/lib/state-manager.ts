@@ -18,13 +18,11 @@ import type {
   GlobalStateSnapshot,
   SessionStateSnapshot,
   SessionMetaState,
-  MessagesState,
   SDKMessagesState,
   AgentState,
   ContextState,
   CommandsState,
   SessionsUpdate,
-  MessagesUpdate,
   SDKMessagesUpdate,
 } from "@liuboer/shared";
 import type { Session } from "@liuboer/shared";
@@ -152,11 +150,6 @@ export class StateManager {
       return await this.getSessionMetaState(sessionId);
     });
 
-    this.messageHub.handle(STATE_CHANNELS.SESSION_MESSAGES, async (data) => {
-      const { sessionId } = data as { sessionId: string };
-      return await this.getMessagesState(sessionId);
-    });
-
     this.messageHub.handle(STATE_CHANNELS.SESSION_SDK_MESSAGES, async (data) => {
       const { sessionId } = data as { sessionId: string };
       return await this.getSDKMessagesState(sessionId);
@@ -254,10 +247,9 @@ export class StateManager {
    * Get full session state snapshot
    */
   async getSessionSnapshot(sessionId: string): Promise<SessionStateSnapshot> {
-    const [session, messages, sdkMessages, agent, context, commands] =
+    const [session, sdkMessages, agent, context, commands] =
       await Promise.all([
         this.getSessionMetaState(sessionId),
-        this.getMessagesState(sessionId),
         this.getSDKMessagesState(sessionId),
         this.getAgentState(sessionId),
         this.getContextState(sessionId),
@@ -266,7 +258,6 @@ export class StateManager {
 
     return {
       session,
-      messages,
       sdkMessages,
       agent,
       context,
@@ -288,21 +279,6 @@ export class StateManager {
 
     return {
       session: agentSession.getSessionData(),
-      timestamp: Date.now(),
-    };
-  }
-
-  private async getMessagesState(sessionId: string): Promise<MessagesState> {
-    const agentSession = await this.sessionManager.getSessionAsync(sessionId);
-    if (!agentSession) {
-      throw new Error("Session not found");
-    }
-
-    const messages = agentSession.getMessages();
-
-    return {
-      messages,
-      messageCount: messages.length,
       timestamp: Date.now(),
     };
   }
@@ -437,36 +413,6 @@ export class StateManager {
 
     // Also update global sessions list
     await this.broadcastSessionsChange();
-  }
-
-  /**
-   * Broadcast messages change
-   * FIX: Uses per-channel versioning
-   */
-  async broadcastMessagesChange(sessionId: string): Promise<void> {
-    const version = this.incrementVersion(`${STATE_CHANNELS.SESSION_MESSAGES}:${sessionId}`);
-    const state = { ...await this.getMessagesState(sessionId), version };
-
-    await this.messageHub.publish(STATE_CHANNELS.SESSION_MESSAGES, state, {
-      sessionId,
-    });
-  }
-
-  /**
-   * Broadcast messages delta (single new message)
-   * Only sends delta - clients not subscribed to deltas should subscribe to full channel
-   * FIX: Uses per-channel versioning
-   */
-  async broadcastMessagesDelta(
-    sessionId: string,
-    update: MessagesUpdate,
-  ): Promise<void> {
-    const version = this.incrementVersion(`${STATE_CHANNELS.SESSION_MESSAGES}.delta:${sessionId}`);
-    await this.messageHub.publish(
-      `${STATE_CHANNELS.SESSION_MESSAGES}.delta`,
-      { ...update, version },
-      { sessionId },
-    );
   }
 
   /**
