@@ -206,16 +206,7 @@ export function setupSessionHandlers(
 
     const state = agentSession.getProcessingState();
 
-    // Immediately broadcast current state to subscriber
-    await messageHub.publish(
-      "agent.state",
-      {
-        state,
-        timestamp: Date.now(),
-      },
-      { sessionId: targetSessionId }
-    );
-
+    // Return current state (don't publish - this is just a query, not a state change)
     return { state };
   });
 }
