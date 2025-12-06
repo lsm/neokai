@@ -236,8 +236,8 @@ describe("End-to-End Workflow Integration", () => {
 
       // Verify all components are consistent
       expect(snapshot.sessions.sessions.length).toBe(2);
-      expect(snapshot.health.health.sessions.total).toBe(2);
-      expect(snapshot.health.health.sessions.active).toBe(2);
+      expect(snapshot.system.health.sessions.total).toBe(2);
+      expect(snapshot.system.health.sessions.active).toBe(2);
     });
 
     test("should provide consistent session snapshot", async () => {

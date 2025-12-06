@@ -50,12 +50,12 @@ describe("Authentication Integration", () => {
       }
     });
 
-    test("should expose auth status in config state", async () => {
-      const result = await callRPCHandler(ctx.messageHub, "state.config", {});
+    test("should expose auth status in system state", async () => {
+      const result = await callRPCHandler(ctx.messageHub, "state.system", {});
 
-      expect(result.config.authMethod).toBeString();
-      expect(result.config.authStatus).toBeDefined();
-      expect(result.config.authStatus.isAuthenticated).toBeBoolean();
+      expect(result.auth).toBeDefined();
+      expect(result.auth.isAuthenticated).toBeBoolean();
+      expect(result.auth.method).toBeString();
     });
   });
 
@@ -135,12 +135,12 @@ describe("Authentication Integration", () => {
       },
     );
 
-    test("should expose auth method in config", async () => {
-      const config = await callRPCHandler(ctx.messageHub, "state.config", {});
+    test("should expose auth method in system state", async () => {
+      const system = await callRPCHandler(ctx.messageHub, "state.system", {});
 
-      expect(config.config.authMethod).toBeString();
+      expect(system.auth.method).toBeString();
       expect(["api_key", "oauth_token", "none"]).toContain(
-        config.config.authMethod,
+        system.auth.method,
       );
     });
   });

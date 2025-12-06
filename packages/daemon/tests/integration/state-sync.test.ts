@@ -33,16 +33,17 @@ describe("State Synchronization Integration", () => {
 
   describe("Global State Snapshot", () => {
     test("should get global state snapshot", async () => {
-      const snapshot = await callRPCHandler(ctx.messageHub, 
+      const snapshot = await callRPCHandler(ctx.messageHub,
         STATE_CHANNELS.GLOBAL_SNAPSHOT,
         {},
       );
 
       expect(snapshot).toBeDefined();
       expect(snapshot.sessions).toBeDefined();
-      expect(snapshot.auth).toBeDefined();
-      expect(snapshot.config).toBeDefined();
-      expect(snapshot.health).toBeDefined();
+      expect(snapshot.system).toBeDefined();
+      expect(snapshot.system.auth).toBeDefined();
+      expect(snapshot.system.health).toBeDefined();
+      expect(snapshot.system.version).toBeDefined();
       expect(snapshot.meta).toBeDefined();
       expect(snapshot.meta.channel).toBe("global");
     });
@@ -143,24 +144,24 @@ describe("State Synchronization Integration", () => {
     });
   });
 
-  describe("Health State", () => {
-    test("should report health status", async () => {
-      const health = await callRPCHandler(ctx.messageHub, 
-        STATE_CHANNELS.GLOBAL_HEALTH,
+  describe("System State (Unified)", () => {
+    test("should report system status with health", async () => {
+      const system = await callRPCHandler(ctx.messageHub,
+        STATE_CHANNELS.GLOBAL_SYSTEM,
         {},
       );
 
-      expect(health.health).toBeDefined();
-      expect(health.health.status).toBe("ok");
-      expect(health.health.version).toBeString();
-      expect(health.health.uptime).toBeNumber();
-      expect(health.health.uptime).toBeGreaterThanOrEqual(0);
-      expect(health.health.sessions).toBeDefined();
-      expect(health.health.sessions.active).toBe(0);
-      expect(health.health.sessions.total).toBe(0);
+      expect(system.health).toBeDefined();
+      expect(system.health.status).toBe("ok");
+      expect(system.health.version).toBeString();
+      expect(system.health.uptime).toBeNumber();
+      expect(system.health.uptime).toBeGreaterThanOrEqual(0);
+      expect(system.health.sessions).toBeDefined();
+      expect(system.health.sessions.active).toBe(0);
+      expect(system.health.sessions.total).toBe(0);
     });
 
-    test("should track active and total sessions", async () => {
+    test("should track active and total sessions in health", async () => {
       // Create sessions
       await callRPCHandler(ctx.messageHub, "session.create", { workspacePath: `${TMP_DIR}/test-workspace` }, {
         workspacePath: "/test/1",
@@ -169,40 +170,35 @@ describe("State Synchronization Integration", () => {
         workspacePath: "/test/2",
       });
 
-      const health = await callRPCHandler(ctx.messageHub, 
-        STATE_CHANNELS.GLOBAL_HEALTH,
+      const system = await callRPCHandler(ctx.messageHub,
+        STATE_CHANNELS.GLOBAL_SYSTEM,
         {},
       );
 
-      expect(health.health.sessions.active).toBe(2);
-      expect(health.health.sessions.total).toBe(2);
+      expect(system.health.sessions.active).toBe(2);
+      expect(system.health.sessions.total).toBe(2);
     });
-  });
 
-  describe("Config State", () => {
     test("should expose config information", async () => {
-      const config = await callRPCHandler(ctx.messageHub, 
-        STATE_CHANNELS.GLOBAL_CONFIG,
+      const system = await callRPCHandler(ctx.messageHub,
+        STATE_CHANNELS.GLOBAL_SYSTEM,
         {},
       );
 
-      expect(config.config).toBeDefined();
-      expect(config.config.version).toBeString();
-      expect(config.config.claudeSDKVersion).toBeString();
-      expect(config.config.defaultModel).toBeString();
-      expect(config.config.maxSessions).toBeNumber();
-      expect(config.config.authMethod).toBeString();
+      expect(system.version).toBeString();
+      expect(system.claudeSDKVersion).toBeString();
+      expect(system.defaultModel).toBeString();
+      expect(system.maxSessions).toBeNumber();
+      expect(system.storageLocation).toBeString();
     });
-  });
 
-  describe("Auth State", () => {
     test("should expose auth status", async () => {
-      const auth = await callRPCHandler(ctx.messageHub, STATE_CHANNELS.GLOBAL_AUTH, {});
+      const system = await callRPCHandler(ctx.messageHub, STATE_CHANNELS.GLOBAL_SYSTEM, {});
 
-      expect(auth.authStatus).toBeDefined();
-      expect(auth.authStatus.isAuthenticated).toBeBoolean();
-      expect(auth.authStatus.method).toBeString();
-      expect(auth.authStatus.source).toBeString();
+      expect(system.auth).toBeDefined();
+      expect(system.auth.isAuthenticated).toBeBoolean();
+      expect(system.auth.method).toBeString();
+      expect(system.auth.source).toBeString();
     });
   });
 

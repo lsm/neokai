@@ -324,14 +324,28 @@ describe("WebSocket Connection Management", () => {
     expect(ws2.readyState).toBe(WebSocket.OPEN);
     expect(ws3.readyState).toBe(WebSocket.OPEN);
 
+    // Small delay to let connection.established events be sent
+    await Bun.sleep(100);
+
     // All connections should be able to make RPC calls
     const id1 = sendRPCCall(ws1, 'session.list');
     const id2 = sendRPCCall(ws2, 'session.list');
     const id3 = sendRPCCall(ws3, 'session.list');
 
-    const response1 = await waitForWebSocketMessage(ws1);
-    const response2 = await waitForWebSocketMessage(ws2);
-    const response3 = await waitForWebSocketMessage(ws3);
+    // Helper to get the next RESULT message, skipping any EVENT messages
+    const getResult = async (ws: WebSocket) => {
+      while (true) {
+        const msg = await waitForWebSocketMessage(ws, 10000);
+        if (msg.type === "RESULT") return msg;
+        // Skip any EVENT messages (like connection.established)
+      }
+    };
+
+    const [response1, response2, response3] = await Promise.all([
+      getResult(ws1),
+      getResult(ws2),
+      getResult(ws3),
+    ]);
 
     expect(response1.type).toBe("RESULT");
     expect(response2.type).toBe("RESULT");
@@ -340,7 +354,7 @@ describe("WebSocket Connection Management", () => {
     ws1.close();
     ws2.close();
     ws3.close();
-  });
+  }, 15000);
 
   test("should handle many concurrent calls", async () => {
     const ws = createWebSocket(ctx.baseUrl, "global");
@@ -415,38 +429,45 @@ describe("Multi-Client Event Routing", () => {
     await waitForWebSocketState(ws1, WebSocket.OPEN);
     await waitForWebSocketState(ws2, WebSocket.OPEN);
 
+    // Small delay to let connection.established events be sent
+    await Bun.sleep(100);
+
     // Both clients subscribe to global session.created event
     await subscribeToEvent(ws1, 'session.created', 'global');
     await subscribeToEvent(ws2, 'session.created', 'global');
 
     // Create a session from client 1
-    sendRPCCall(ws1, 'session.create', {});
+    const callId = sendRPCCall(ws1, 'session.create', { workspacePath: '/tmp/test-workspace' });
 
     // ws1 will receive:  RESULT (create response) + EVENT (session.created)
     // ws2 will receive: EVENT (session.created)
 
-    // Collect messages from both clients
-    const message1 = await waitForWebSocketMessage(ws1);
-    const message2 = await waitForWebSocketMessage(ws2);
+    // Collect messages sequentially to avoid race conditions
+    const ws1Result = await waitForWebSocketMessage(ws1, 5000);
+    const ws2Event = await waitForWebSocketMessage(ws2, 5000);
+    const ws1Event = await waitForWebSocketMessage(ws1, 5000);
 
-    // ws2 should get EVENT (session.created broadcast)
-    expect(message2.type).toBe("EVENT");
-    expect(message2.method).toBe("session.created");
+    // Debug: log what we received
+    console.log("ws1 received:", ws1Result.type, ws1Result.method || '', ws1Event.type, ws1Event.method || '');
+    console.log("ws2 received:", ws2Event.type, ws2Event.method || '');
 
-    // ws1 gets RESULT first (from the RPC call it made)
-    if (message1.type === "RESULT") {
-      expect(message1.data).toHaveProperty("sessionId");
-      // Then get the EVENT
-      const event1 = await waitForWebSocketMessage(ws1);
-      expect(event1.type).toBe("EVENT");
-      expect(event1.method).toBe("session.created");
-    } else {
-      // If we got EVENT first, that's also valid
-      expect(message1.type).toBe("EVENT");
-      expect(message1.method).toBe("session.created");
+    // ws2 should have received session.created event
+    expect(ws2Event.type).toBe("EVENT");
+    expect(ws2Event.method).toBe("session.created");
+
+    // ws1 should have received RESULT and EVENT (order may vary)
+    const messages = [ws1Result, ws1Event];
+    const result = messages.find(m => m.type === "RESULT");
+    const event = messages.find(m => m.type === "EVENT" && m.method === "session.created");
+
+    expect(result).toBeDefined();
+    if (result) {
+      expect(result.data).toHaveProperty("sessionId");
     }
+
+    expect(event).toBeDefined();
 
     ws1.close();
     ws2.close();
-  });
+  }, 15000);
 });

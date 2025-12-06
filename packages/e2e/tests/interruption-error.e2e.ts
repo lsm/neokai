@@ -441,11 +441,23 @@ test.describe('Authentication Errors', () => {
     await page.evaluate(() => {
       const hub = (window as any).__messageHub;
 
-      // Update auth state to not authenticated
-      hub.publish('state.auth', {
-        authStatus: {
+      // Update system state to not authenticated
+      hub.publish('state.system', {
+        version: '0.1.0',
+        claudeSDKVersion: '0.1.37',
+        defaultModel: 'claude-sonnet-4-5-20250929',
+        maxSessions: 10,
+        storageLocation: '/tmp',
+        auth: {
           isAuthenticated: false,
           method: 'none',
+          source: 'env',
+        },
+        health: {
+          status: 'ok',
+          version: '0.1.0',
+          uptime: 0,
+          sessions: { active: 0, total: 0 },
         },
         timestamp: Date.now(),
       }, { sessionId: 'global' });

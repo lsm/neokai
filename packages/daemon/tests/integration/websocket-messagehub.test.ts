@@ -14,20 +14,6 @@ import {
   waitForWebSocketState,
   waitForWebSocketMessage,
 } from "../test-utils";
-import { WebSocketClientTransport, generateUUID } from "@liuboer/shared";
-
-// Helper to create properly formatted protocol messages
-function createWSMessage(type: string, method: string, data: any, sessionId = "global", id?: string) {
-  return JSON.stringify({
-    id: id || generateUUID(),
-    type,
-    method,
-    data,
-    sessionId,
-    timestamp: new Date().toISOString(),
-    version: "1.0.0",
-  });
-}
 
 describe("WebSocket + MessageHub Integration", () => {
   let ctx: TestContext;
