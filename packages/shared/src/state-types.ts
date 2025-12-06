@@ -25,21 +25,24 @@ export interface SessionsState {
   timestamp: number;
 }
 
-// State channel: global:state.auth
-export interface AuthState {
-  authStatus: AuthStatus;
-  timestamp: number;
-}
+// State channel: global:state.system (UNIFIED)
+// Combines auth, config, and health into single channel
+export interface SystemState {
+  // Version & build info
+  version: string;
+  claudeSDKVersion: string;
 
-// State channel: global:state.config
-export interface ConfigState {
-  config: DaemonConfig;
-  timestamp: number;
-}
+  // Configuration
+  defaultModel: string;
+  maxSessions: number;
+  storageLocation: string;
 
-// State channel: global:state.health
-export interface HealthState {
+  // Authentication
+  auth: AuthStatus;
+
+  // System health
   health: HealthStatus;
+
   timestamp: number;
 }
 
@@ -102,9 +105,7 @@ export interface StateChannelMeta {
  */
 export interface GlobalStateSnapshot {
   sessions: SessionsState;
-  auth: AuthState;
-  config: ConfigState;
-  health: HealthState;
+  system: SystemState;
   meta: StateChannelMeta;
 }
 
@@ -150,9 +151,7 @@ export interface SDKMessagesUpdate {
 export const STATE_CHANNELS = {
   // Global channels
   GLOBAL_SESSIONS: 'state.sessions',
-  GLOBAL_AUTH: 'state.auth',
-  GLOBAL_CONFIG: 'state.config',
-  GLOBAL_HEALTH: 'state.health',
+  GLOBAL_SYSTEM: 'state.system', // Unified system state (auth + config + health)
   GLOBAL_SNAPSHOT: 'state.global.snapshot',
 
   // Session channels (prefix with sessionId:)

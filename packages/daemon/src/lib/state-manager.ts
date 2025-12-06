@@ -14,9 +14,7 @@ import type { AuthManager } from "./auth-manager";
 import type { Config } from "../config";
 import type {
   SessionsState,
-  AuthState,
-  ConfigState,
-  HealthState,
+  SystemState,
   GlobalStateSnapshot,
   SessionStateSnapshot,
   SessionMetaState,
@@ -107,9 +105,9 @@ export class StateManager {
       await this.messageHub.publish('session.deleted', { sessionId: data.sessionId }, { sessionId: 'global' });
     });
 
-    // Auth events
+    // Auth events - broadcast unified system state
     this.eventBus.on('auth:changed', async () => {
-      await this.broadcastAuthChange();
+      await this.broadcastSystemChange();
     });
   }
 
@@ -138,21 +136,14 @@ export class StateManager {
       return await this.getSessionSnapshot(sessionId);
     });
 
-    // Individual channel requests (fallback for on-demand refresh)
+    // Unified system state handler
+    this.messageHub.handle(STATE_CHANNELS.GLOBAL_SYSTEM, async () => {
+      return await this.getSystemState();
+    });
+
+    // Individual channel requests (for on-demand refresh)
     this.messageHub.handle(STATE_CHANNELS.GLOBAL_SESSIONS, async () => {
       return await this.getSessionsState();
-    });
-
-    this.messageHub.handle(STATE_CHANNELS.GLOBAL_AUTH, async () => {
-      return await this.getAuthState();
-    });
-
-    this.messageHub.handle(STATE_CHANNELS.GLOBAL_CONFIG, async () => {
-      return await this.getConfigState();
-    });
-
-    this.messageHub.handle(STATE_CHANNELS.GLOBAL_HEALTH, async () => {
-      return await this.getHealthState();
     });
 
     // Session-specific channel requests
@@ -195,18 +186,14 @@ export class StateManager {
    * Get full global state snapshot
    */
   async getGlobalSnapshot(): Promise<GlobalStateSnapshot> {
-    const [sessions, auth, config, health] = await Promise.all([
+    const [sessions, system] = await Promise.all([
       this.getSessionsState(),
-      this.getAuthState(),
-      this.getConfigState(),
-      this.getHealthState(),
+      this.getSystemState(),
     ]);
 
     return {
       sessions,
-      auth,
-      config,
-      health,
+      system,
       meta: {
         channel: "global",
         sessionId: "global",
@@ -216,54 +203,45 @@ export class StateManager {
     };
   }
 
+  /**
+   * Get unified system state (auth + config + health)
+   * NEW: Replaces individual getAuthState/getConfigState/getHealthState
+   */
+  private async getSystemState(): Promise<SystemState> {
+    const authStatus = await this.authManager.getAuthStatus();
+
+    return {
+      // Version & build info
+      version: VERSION,
+      claudeSDKVersion: CLAUDE_SDK_VERSION,
+
+      // Configuration
+      defaultModel: this.config.defaultModel,
+      maxSessions: this.config.maxSessions,
+      storageLocation: this.config.dbPath,
+
+      // Authentication
+      auth: authStatus,
+
+      // System health
+      health: {
+        status: "ok" as const,
+        version: VERSION,
+        uptime: Date.now() - startTime,
+        sessions: {
+          active: this.sessionManager.getActiveSessions(),
+          total: this.sessionManager.getTotalSessions(),
+        },
+      },
+
+      timestamp: Date.now(),
+    };
+  }
+
   private async getSessionsState(): Promise<SessionsState> {
     const sessions = this.sessionManager.listSessions();
     return {
       sessions,
-      timestamp: Date.now(),
-    };
-  }
-
-  private async getAuthState(): Promise<AuthState> {
-    const authStatus = await this.authManager.getAuthStatus();
-    return {
-      authStatus,
-      timestamp: Date.now(),
-    };
-  }
-
-  private async getConfigState(): Promise<ConfigState> {
-    const authStatus = await this.authManager.getAuthStatus();
-
-    const config = {
-      version: VERSION,
-      claudeSDKVersion: CLAUDE_SDK_VERSION,
-      defaultModel: this.config.defaultModel,
-      maxSessions: this.config.maxSessions,
-      storageLocation: this.config.dbPath,
-      authMethod: authStatus.method,
-      authStatus,
-    };
-
-    return {
-      config,
-      timestamp: Date.now(),
-    };
-  }
-
-  private async getHealthState(): Promise<HealthState> {
-    const health = {
-      status: "ok" as const,
-      version: VERSION,
-      uptime: Date.now() - startTime,
-      sessions: {
-        active: this.sessionManager.getActiveSessions(),
-        total: this.sessionManager.getTotalSessions(),
-      },
-    };
-
-    return {
-      health,
       timestamp: Date.now(),
     };
   }
@@ -433,40 +411,14 @@ export class StateManager {
   }
 
   /**
-   * Broadcast auth status change
+   * Broadcast unified system state change (auth + config + health)
    * FIX: Uses per-channel versioning
    */
-  async broadcastAuthChange(): Promise<void> {
-    const version = this.incrementVersion(STATE_CHANNELS.GLOBAL_AUTH);
-    const state = { ...await this.getAuthState(), version };
+  async broadcastSystemChange(): Promise<void> {
+    const version = this.incrementVersion(STATE_CHANNELS.GLOBAL_SYSTEM);
+    const state = { ...await this.getSystemState(), version };
 
-    await this.messageHub.publish(STATE_CHANNELS.GLOBAL_AUTH, state, {
-      sessionId: "global",
-    });
-  }
-
-  /**
-   * Broadcast config change
-   * FIX: Uses per-channel versioning
-   */
-  async broadcastConfigChange(): Promise<void> {
-    const version = this.incrementVersion(STATE_CHANNELS.GLOBAL_CONFIG);
-    const state = { ...await this.getConfigState(), version };
-
-    await this.messageHub.publish(STATE_CHANNELS.GLOBAL_CONFIG, state, {
-      sessionId: "global",
-    });
-  }
-
-  /**
-   * Broadcast health status change
-   * FIX: Uses per-channel versioning
-   */
-  async broadcastHealthChange(): Promise<void> {
-    const version = this.incrementVersion(STATE_CHANNELS.GLOBAL_HEALTH);
-    const state = { ...await this.getHealthState(), version };
-
-    await this.messageHub.publish(STATE_CHANNELS.GLOBAL_HEALTH, state, {
+    await this.messageHub.publish(STATE_CHANNELS.GLOBAL_SYSTEM, state, {
       sessionId: "global",
     });
   }

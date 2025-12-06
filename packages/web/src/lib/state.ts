@@ -23,6 +23,7 @@ import type {
 import type { SDKMessage } from "@liuboer/shared/sdk";
 import type {
   SessionsState,
+  SystemState,
   AuthState,
   ConfigState,
   HealthState,
@@ -46,14 +47,8 @@ class GlobalStateChannels {
   // Sessions list
   sessions: StateChannel<SessionsState>;
 
-  // Auth status
-  auth: StateChannel<AuthState>;
-
-  // Daemon config
-  config: StateChannel<ConfigState>;
-
-  // Health status
-  health: StateChannel<HealthState>;
+  // Unified system state (auth + config + health)
+  system: StateChannel<SystemState>;
 
   constructor(private hub: MessageHub) {
     // Initialize channels with delta support
@@ -80,34 +75,15 @@ class GlobalStateChannels {
       },
     );
 
-    this.auth = new StateChannel<AuthState>(
+    // NEW: Unified system state channel
+    this.system = new StateChannel<SystemState>(
       hub,
-      STATE_CHANNELS.GLOBAL_AUTH,
+      STATE_CHANNELS.GLOBAL_SYSTEM,
       {
         sessionId: "global",
-        enableDeltas: false, // Auth is small, full updates are fine
+        enableDeltas: false, // System state is small, full updates are fine
+        refreshInterval: 30000, // Refresh every 30s (for health uptime)
         debug: true, // Enable debug to see what's happening
-      },
-    );
-
-    this.config = new StateChannel<ConfigState>(
-      hub,
-      STATE_CHANNELS.GLOBAL_CONFIG,
-      {
-        sessionId: "global",
-        enableDeltas: false,
-        debug: false,
-      },
-    );
-
-    this.health = new StateChannel<HealthState>(
-      hub,
-      STATE_CHANNELS.GLOBAL_HEALTH,
-      {
-        sessionId: "global",
-        enableDeltas: false,
-        refreshInterval: 30000, // Refresh health every 30s
-        debug: false,
       },
     );
   }
@@ -118,9 +94,7 @@ class GlobalStateChannels {
   async start(): Promise<void> {
     await Promise.all([
       this.sessions.start(),
-      this.auth.start(),
-      this.config.start(),
-      this.health.start(),
+      this.system.start(),
     ]);
   }
 
@@ -129,9 +103,7 @@ class GlobalStateChannels {
    */
   stop(): void {
     this.sessions.stop();
-    this.auth.stop();
-    this.config.stop();
-    this.health.stop();
+    this.system.stop();
   }
 }
 
@@ -413,27 +385,39 @@ export const sessions = computed<Session[]>(() => {
   return value;
 });
 
-export const authStatus = computed<AuthStatus | null>(() => {
+// NEW: Extract from unified system state
+export const systemState = computed<SystemState | null>(() => {
   const global = appState.global.value;
   if (!global) return null;
-  const stateValue = global.auth.$.value;
-  const value = stateValue?.authStatus || null;
+  return global.system.$.value;
+});
+
+export const authStatus = computed<AuthStatus | null>(() => {
+  const system = systemState.value;
+  const value = system?.auth || null;
   console.log('[State Signal] authStatus.value:', value);
   return value;
 });
 
 export const daemonConfig = computed<DaemonConfig | null>(() => {
-  const global = appState.global.value;
-  if (!global) return null;
-  const stateValue = global.config.$.value;
-  return stateValue?.config || null;
+  const system = systemState.value;
+  if (!system) return null;
+
+  // Reconstruct DaemonConfig from SystemState
+  return {
+    version: system.version,
+    claudeSDKVersion: system.claudeSDKVersion,
+    defaultModel: system.defaultModel,
+    maxSessions: system.maxSessions,
+    storageLocation: system.storageLocation,
+    authMethod: system.auth.method,
+    authStatus: system.auth,
+  };
 });
 
 export const healthStatus = computed<HealthStatus | null>(() => {
-  const global = appState.global.value;
-  if (!global) return null;
-  const stateValue = global.health.$.value;
-  return stateValue?.health || null;
+  const system = systemState.value;
+  return system?.health || null;
 });
 
 // Current session signals (derived from currentSessionId) - exported as direct Preact computed signals
