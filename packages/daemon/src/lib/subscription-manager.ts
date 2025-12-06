@@ -81,12 +81,13 @@ export class SubscriptionManager {
       // Agent communication events
       "sdk.message", // Messages from Claude SDK
       "context.updated", // Token usage / context info
-      "message.queued", // User message accepted
-      "message.processing", // Processing started
 
       // Session status events
       "session.error", // Session errors
       "session.interrupted", // Agent interrupted
+
+      // Agent processing state (push-based, replaces message.queued/processing)
+      "agent.state", // Current processing state (queued/processing/idle/interrupted)
 
       // State channel events for this session
       "state.session", // Session metadata
@@ -156,10 +157,9 @@ export class SubscriptionManager {
     return [
       "sdk.message",
       "context.updated",
-      "message.queued",
-      "message.processing",
       "session.error",
       "session.interrupted",
+      "agent.state",
       "state.session",
       "state.messages",
       "state.messages.delta",

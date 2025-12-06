@@ -20,11 +20,15 @@ import {
   createEventMessage,
   createSubscribeMessage,
   createUnsubscribeMessage,
+  createSubscribedMessage,
+  createUnsubscribedMessage,
   isCallMessage,
   isResponseMessage,
   isEventMessage,
   isSubscribeMessage,
   isUnsubscribeMessage,
+  isSubscribedMessage,
+  isUnsubscribedMessage,
   validateMethod,
   isValidMessage,
 } from "./protocol.ts";
@@ -663,6 +667,8 @@ export class MessageHub {
         await this.handleSubscribe(message);
       } else if (isUnsubscribeMessage(message)) {
         await this.handleUnsubscribe(message);
+      } else if (isSubscribedMessage(message) || isUnsubscribedMessage(message)) {
+        this.handleSubscriptionResponse(message);
       } else if (isCallMessage(message)) {
         await this.handleIncomingCall(message);
       } else if (isResponseMessage(message)) {
@@ -680,6 +686,7 @@ export class MessageHub {
    */
   private async handleIncomingCall(message: HubMessage): Promise<void> {
     const handler = this.rpcHandlers.get(message.method);
+    const clientId = (message as any).clientId; // Added by transport
 
     if (!handler) {
       // No handler - send error response
@@ -692,7 +699,7 @@ export class MessageHub {
         sessionId: message.sessionId,
         requestId: message.id,
       });
-      await this.sendMessage(errorMsg);
+      await this.sendResponseToClient(errorMsg, clientId);
       return;
     }
 
@@ -714,7 +721,7 @@ export class MessageHub {
         sessionId: message.sessionId,
         requestId: message.id,
       });
-      await this.sendMessage(resultMsg);
+      await this.sendResponseToClient(resultMsg, clientId);
     } catch (error) {
       // Send error response
       const errorMsg = createErrorMessage({
@@ -726,37 +733,51 @@ export class MessageHub {
         sessionId: message.sessionId,
         requestId: message.id,
       });
-      await this.sendMessage(errorMsg);
+      await this.sendResponseToClient(errorMsg, clientId);
+    }
+  }
+
+  /**
+   * Handle SUBSCRIBED/UNSUBSCRIBED response messages
+   */
+  private handleSubscriptionResponse(message: HubMessage): void {
+    const requestId = message.requestId;
+    if (!requestId) {
+      console.warn(`[MessageHub] Subscription response without requestId:`, message);
+      return;
+    }
+
+    const pendingSub = this.pendingSubscribes.get(requestId);
+    if (!pendingSub) {
+      this.log(`Subscription response for unknown request: ${requestId} (method: ${message.method})`);
+      return;
+    }
+
+    clearTimeout(pendingSub.timer);
+    this.pendingSubscribes.delete(requestId);
+
+    if (message.type === MessageType.SUBSCRIBED || message.type === MessageType.UNSUBSCRIBED) {
+      const action = message.type === MessageType.SUBSCRIBED ? 'SUBSCRIBE' : 'UNSUBSCRIBE';
+      this.log(`${action} ACK received: ${pendingSub.method}`);
+      pendingSub.resolve();
+    } else {
+      // Shouldn't reach here, but handle just in case
+      const error = new Error(
+        `Unexpected subscription response type: ${message.type} for ${pendingSub.method}`
+      );
+      pendingSub.reject(error);
     }
   }
 
   /**
    * Handle response message (RESULT or ERROR)
    *
-   * Handles responses for both RPC calls and subscription operations (SUBSCRIBE/UNSUBSCRIBE)
+   * Handles responses for RPC calls only (subscription responses handled separately)
    */
   private handleResponse(message: HubMessage): void {
     const requestId = message.requestId;
     if (!requestId) {
       console.warn(`[MessageHub] Response without requestId:`, message);
-      return;
-    }
-
-    // Check if it's a subscription ACK (SUBSCRIBE/UNSUBSCRIBE)
-    const pendingSub = this.pendingSubscribes.get(requestId);
-    if (pendingSub) {
-      clearTimeout(pendingSub.timer);
-      this.pendingSubscribes.delete(requestId);
-
-      if (message.type === MessageType.RESULT) {
-        this.log(`${pendingSub.type === 'subscribe' ? 'SUBSCRIBE' : 'UNSUBSCRIBE'} ACK received: ${pendingSub.method}`);
-        pendingSub.resolve();
-      } else {
-        const error = new Error(
-          message.error || `${pendingSub.type === 'subscribe' ? 'Subscription' : 'Unsubscription'} failed: ${pendingSub.method}`
-        );
-        pendingSub.reject(error);
-      }
       return;
     }
 
@@ -888,15 +909,14 @@ export class MessageHub {
 
       this.log(`Client ${clientId} subscribed to ${message.sessionId}:${message.method}`);
 
-      // Send ACK (optional - confirms subscription)
-      const ackMsg = createResultMessage({
+      // Send SUBSCRIBED confirmation
+      const ackMsg = createSubscribedMessage({
         method: message.method,
-        data: { subscribed: true, method: message.method, sessionId: message.sessionId },
         sessionId: message.sessionId,
         requestId: message.id,
       });
 
-      await this.sendMessage(ackMsg);
+      await this.sendResponseToClient(ackMsg, clientId);
     } catch (error) {
       console.error(`[MessageHub] Error handling SUBSCRIBE:`, error);
 
@@ -940,15 +960,14 @@ export class MessageHub {
 
       this.log(`Client ${clientId} unsubscribed from ${message.sessionId}:${message.method}`);
 
-      // Send ACK (optional)
-      const ackMsg = createResultMessage({
+      // Send UNSUBSCRIBED confirmation
+      const ackMsg = createUnsubscribedMessage({
         method: message.method,
-        data: { unsubscribed: true, method: message.method, sessionId: message.sessionId },
         sessionId: message.sessionId,
         requestId: message.id,
       });
 
-      await this.sendMessage(ackMsg);
+      await this.sendResponseToClient(ackMsg, clientId);
     } catch (error) {
       console.error(`[MessageHub] Error handling UNSUBSCRIBE:`, error);
     }
@@ -1019,6 +1038,37 @@ export class MessageHub {
   }
 
   /**
+   * Send RPC response (RESULT/ERROR/SUBSCRIBED/UNSUBSCRIBED) to a specific client
+   * Server-side only - routes the response to the client that made the request
+   */
+  private async sendResponseToClient(message: HubMessage, clientId?: string): Promise<void> {
+    // Add sequence number for ordering guarantees
+    message.sequence = this.messageSequence++;
+
+    this.log(`→ Outgoing response: ${message.type} ${message.method} [seq=${message.sequence}]`, message);
+
+    // Notify message handlers
+    this.notifyMessageHandlers(message, "out");
+
+    // If we have a router and clientId, send to specific client
+    if (this.router && clientId) {
+      const success = this.router.sendToClient(clientId, message);
+      if (!success) {
+        console.warn(`[MessageHub] Failed to send response to client ${clientId}, falling back to broadcast`);
+        // Fallback to broadcast if client not found
+        this.router.broadcast(message);
+      }
+      return;
+    }
+
+    // Fallback: send via transport (will broadcast on server-side)
+    if (!this.transport || !this.transport.isReady()) {
+      throw new Error("Transport not ready");
+    }
+    await this.transport.send(message);
+  }
+
+  /**
    * Notify message handlers
    */
   private notifyMessageHandlers(message: HubMessage, direction: "in" | "out"): void {
@@ -1053,6 +1103,7 @@ export class MessageHub {
    *
    * FIX P0.3: Atomic swap to prevent race condition where events are dropped
    * FIX P0.7: Queue events during resubscription, then replay after swap
+   * FIX: Send SUBSCRIBE messages to server to re-establish server-side subscriptions
    */
   private resubscribeAll(): void {
     if (this.persistedSubscriptions.size === 0) {
@@ -1069,7 +1120,7 @@ export class MessageHub {
       // This prevents the window where subscriptions.clear() makes us miss events
       const newSubscriptions = new Map<string, Map<string, Set<EventHandler>>>();
 
-      // Re-establish all persisted subscriptions in new map
+      // Re-establish all persisted subscriptions in new map AND send SUBSCRIBE to server
       for (const [subId, { method, handler, options }] of this.persistedSubscriptions) {
         const sessionId = options.sessionId || this.defaultSessionId;
 
@@ -1085,6 +1136,27 @@ export class MessageHub {
         }
 
         sessionSubs.get(method)!.add(handler);
+
+        // FIX: Send SUBSCRIBE message to server to re-establish server-side subscription
+        // Fire and forget - don't await or block reconnection on subscription ACKs
+        // The server needs to know about this subscription for event routing
+        if (this.isConnected()) {
+          const subscribeMsg = createSubscribeMessage({
+            method,
+            sessionId,
+            id: generateUUID(),
+          });
+
+          // Send asynchronously without waiting for ACK
+          // If this fails, the subscription will be retried on next reconnect
+          this.sendMessage(subscribeMsg).catch((error) => {
+            console.error(
+              `[MessageHub] Failed to send SUBSCRIBE for ${method} (session: ${sessionId}):`,
+              error
+            );
+          });
+        }
+
         this.log(`Re-subscribed to: ${method} (session: ${sessionId})`);
       }
 

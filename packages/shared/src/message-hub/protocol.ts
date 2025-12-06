@@ -53,6 +53,16 @@ export enum MessageType {
   UNSUBSCRIBE = "UNSUBSCRIBE",
 
   /**
+   * Subscription confirmation (response to SUBSCRIBE)
+   */
+  SUBSCRIBED = "SUBSCRIBED",
+
+  /**
+   * Unsubscription confirmation (response to UNSUBSCRIBE)
+   */
+  UNSUBSCRIBED = "UNSUBSCRIBED",
+
+  /**
    * Heartbeat/ping for connection health
    */
   PING = "PING",
@@ -185,6 +195,34 @@ export interface UnsubscribeMessage extends HubMessage {
 }
 
 /**
+ * SUBSCRIBED message (subscription confirmation)
+ */
+export interface SubscribedMessage extends HubMessage {
+  type: MessageType.SUBSCRIBED;
+  method: string;
+  requestId: string;
+  data?: {
+    subscribed: boolean;
+    method: string;
+    sessionId: string;
+  };
+}
+
+/**
+ * UNSUBSCRIBED message (unsubscription confirmation)
+ */
+export interface UnsubscribedMessage extends HubMessage {
+  type: MessageType.UNSUBSCRIBED;
+  method: string;
+  requestId: string;
+  data?: {
+    unsubscribed: boolean;
+    method: string;
+    sessionId: string;
+  };
+}
+
+/**
  * Type guards
  */
 export function isCallMessage(msg: HubMessage): msg is CallMessage {
@@ -211,11 +249,26 @@ export function isUnsubscribeMessage(msg: HubMessage): msg is UnsubscribeMessage
   return msg.type === MessageType.UNSUBSCRIBE;
 }
 
+export function isSubscribedMessage(msg: HubMessage): msg is SubscribedMessage {
+  return msg.type === MessageType.SUBSCRIBED;
+}
+
+export function isUnsubscribedMessage(msg: HubMessage): msg is UnsubscribedMessage {
+  return msg.type === MessageType.UNSUBSCRIBED;
+}
+
 /**
  * Check if message is a response (RESULT or ERROR)
  */
 export function isResponseMessage(msg: HubMessage): msg is ResultMessage | ErrorMessage {
   return msg.type === MessageType.RESULT || msg.type === MessageType.ERROR;
+}
+
+/**
+ * Check if message is a subscription response (SUBSCRIBED or UNSUBSCRIBED)
+ */
+export function isSubscriptionResponseMessage(msg: HubMessage): msg is SubscribedMessage | UnsubscribedMessage {
+  return msg.type === MessageType.SUBSCRIBED || msg.type === MessageType.UNSUBSCRIBED;
 }
 
 /**
@@ -357,6 +410,26 @@ export interface CreateUnsubscribeMessageParams {
 }
 
 /**
+ * Parameters for creating a SUBSCRIBED message
+ */
+export interface CreateSubscribedMessageParams {
+  method: string;
+  sessionId: string;
+  requestId: string;
+  id?: string;
+}
+
+/**
+ * Parameters for creating an UNSUBSCRIBED message
+ */
+export interface CreateUnsubscribedMessageParams {
+  method: string;
+  sessionId: string;
+  requestId: string;
+  id?: string;
+}
+
+/**
  * Create a CALL message
  */
 export function createCallMessage(params: CreateCallMessageParams): CallMessage {
@@ -451,6 +524,48 @@ export function createUnsubscribeMessage(params: CreateUnsubscribeMessageParams)
     type: MessageType.UNSUBSCRIBE,
     sessionId,
     method,
+    timestamp: new Date().toISOString(),
+    version: PROTOCOL_VERSION,
+  };
+}
+
+/**
+ * Create a SUBSCRIBED message (subscription confirmation)
+ */
+export function createSubscribedMessage(params: CreateSubscribedMessageParams): SubscribedMessage {
+  const { method, sessionId, requestId, id } = params;
+  return {
+    id: id || generateUUID(),
+    type: MessageType.SUBSCRIBED,
+    sessionId,
+    method,
+    requestId,
+    data: {
+      subscribed: true,
+      method,
+      sessionId,
+    },
+    timestamp: new Date().toISOString(),
+    version: PROTOCOL_VERSION,
+  };
+}
+
+/**
+ * Create an UNSUBSCRIBED message (unsubscription confirmation)
+ */
+export function createUnsubscribedMessage(params: CreateUnsubscribedMessageParams): UnsubscribedMessage {
+  const { method, sessionId, requestId, id } = params;
+  return {
+    id: id || generateUUID(),
+    type: MessageType.UNSUBSCRIBED,
+    sessionId,
+    method,
+    requestId,
+    data: {
+      unsubscribed: true,
+      method,
+      sessionId,
+    },
     timestamp: new Date().toISOString(),
     version: PROTOCOL_VERSION,
   };
