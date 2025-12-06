@@ -63,10 +63,18 @@ export class StateManager {
     this.eventBus.on('session:created', async (data) => {
       console.log('[StateManager] Received session:created event, broadcasting delta for session:', data.session.id);
       console.log('[StateManager] Session data:', JSON.stringify(data.session, null, 2));
+
+      // Broadcast state channel delta
       await this.broadcastSessionsDelta({
         added: [data.session],
         timestamp: Date.now(),
       });
+
+      // Publish session.created event for subscribers
+      console.log('[StateManager] Publishing session.created event with data:', { sessionId: data.session.id });
+      await this.messageHub.publish('session.created', { sessionId: data.session.id }, { sessionId: 'global' });
+      console.log('[StateManager] session.created event published');
+
       console.log('[StateManager] Delta broadcasted for session:', data.session.id);
     });
 
@@ -84,6 +92,9 @@ export class StateManager {
           timestamp: Date.now(),
         });
       }
+
+      // Publish session.updated event for subscribers
+      await this.messageHub.publish('session.updated', { sessionId: data.sessionId }, { sessionId: 'global' });
     });
 
     this.eventBus.on('session:deleted', async (data) => {
@@ -91,6 +102,9 @@ export class StateManager {
         removed: [data.sessionId],
         timestamp: Date.now(),
       });
+
+      // Publish session.deleted event for subscribers
+      await this.messageHub.publish('session.deleted', { sessionId: data.sessionId }, { sessionId: 'global' });
     });
 
     // Auth events

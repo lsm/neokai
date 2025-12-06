@@ -114,6 +114,7 @@ export default function Sidebar() {
           <Button
             onClick={handleCreateSession}
             loading={creatingSession}
+            disabled={!authStatus.value?.isAuthenticated}
             fullWidth
             icon={
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

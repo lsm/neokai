@@ -68,14 +68,7 @@ export class SessionManager {
 
     this.sessions.set(sessionId, agentSession);
 
-    // Emit session created event via MessageHub (legacy)
-    await this.messageHub.publish(
-      `session.created`,
-      { session },
-      { sessionId: "global" }
-    );
-
-    // FIX: Emit event via EventBus (no StateManager dependency!)
+    // Emit event via EventBus (StateManager will handle publishing to MessageHub)
     console.log('[SessionManager] Emitting session:created event for session:', sessionId);
     await this.eventBus.emit('session:created', { session });
     console.log('[SessionManager] Event emitted, returning sessionId:', sessionId);

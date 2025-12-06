@@ -525,9 +525,9 @@ export class Database {
       params.push(new Date(since).toISOString());
     }
 
-    // Order DESC to get most recent messages first, then reverse
-    // This enables reverse pagination (load recent, then load older on scroll up)
-    query += ` ORDER BY timestamp DESC LIMIT ? OFFSET ?`;
+    // Order ASC to get messages in chronological order (oldest to newest)
+    // This provides consistent pagination behavior
+    query += ` ORDER BY timestamp ASC LIMIT ? OFFSET ?`;
     params.push(limit, offset);
 
     const stmt = this.db.prepare(query);
@@ -541,8 +541,7 @@ export class Database {
       return { ...sdkMessage, timestamp } as SDKMessage & { timestamp: number };
     });
 
-    // Reverse to maintain chronological order (oldest to newest)
-    return messages.reverse();
+    return messages;
   }
 
   /**

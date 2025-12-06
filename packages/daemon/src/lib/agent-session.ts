@@ -4,6 +4,7 @@ import type { MessageHub } from "@liuboer/shared";
 import type { SDKUserMessage } from "@liuboer/shared/sdk/sdk.d.ts";
 import { generateUUID, isValidModel, resolveModelAlias, getModelInfo } from "@liuboer/shared";
 import { Database } from "../storage/database";
+import { ErrorManager, ErrorCategory } from "./error-manager";
 
 /**
  * Queued message waiting to be sent to Claude
@@ -16,6 +17,16 @@ interface QueuedMessage {
   reject: (error: Error) => void;
   internal?: boolean; // If true, don't save to DB or emit to client
 }
+
+/**
+ * Agent processing state
+ * Tracks what the agent is currently doing
+ */
+export type AgentProcessingState =
+  | { status: 'idle' }
+  | { status: 'queued'; messageId: string }
+  | { status: 'processing'; messageId: string }
+  | { status: 'interrupted' };
 
 /**
  * Agent Session - wraps a single session with Claude using Claude Agent SDK
@@ -46,12 +57,25 @@ export class AgentSession {
   // FIX: Track query promise for proper cleanup
   private queryPromise: Promise<void> | null = null;
 
+  // Error manager for structured error handling
+  private errorManager: ErrorManager;
+
+  // Delta versioning for state channels
+  private messageDeltaVersion: number = 0;
+  private sdkMessageDeltaVersion: number = 0;
+
+  // FIX: Agent processing state (server-side state for push-based sync)
+  private processingState: AgentProcessingState = { status: 'idle' };
+
   constructor(
     private session: Session,
     private db: Database,
     private messageHub: MessageHub,
     private getApiKey: () => Promise<string | null>, // Function to get current API key
   ) {
+    // Initialize error manager
+    this.errorManager = new ErrorManager(this.messageHub);
+
     // Load existing messages into conversation history
     this.loadConversationHistory();
 
@@ -59,8 +83,14 @@ export class AgentSession {
     this.setupEventListeners();
 
     // Start the streaming query immediately
-    this.startStreamingQuery().catch((error) => {
+    this.startStreamingQuery().catch(async (error) => {
       console.error(`[AgentSession ${this.session.id}] Failed to start streaming query:`, error);
+      await this.errorManager.handleError(
+        this.session.id,
+        error as Error,
+        ErrorCategory.SESSION,
+        "Failed to initialize session. Please try again."
+      );
     });
   }
 
@@ -82,6 +112,34 @@ export class AgentSession {
    */
   private setupEventListeners(): void {
     // No subscriptions needed - RPC handlers will call methods directly
+  }
+
+  /**
+   * Update and broadcast the agent processing state
+   * FIX: Server maintains state and pushes to all connected clients
+   */
+  private async setProcessingState(newState: AgentProcessingState): Promise<void> {
+    this.processingState = newState;
+
+    // Broadcast state to all subscribers
+    await this.messageHub.publish(
+      'agent.state',
+      {
+        state: newState,
+        timestamp: Date.now(),
+      },
+      { sessionId: this.session.id }
+    );
+
+    console.log(`[AgentSession ${this.session.id}] State updated:`, newState);
+  }
+
+  /**
+   * Get current processing state
+   * Used when clients subscribe/reconnect to get immediate snapshot
+   */
+  getProcessingState(): AgentProcessingState {
+    return this.processingState;
   }
 
   /**
@@ -151,20 +209,17 @@ export class AgentSession {
       const messageContent = this.buildMessageContent(content, images);
       const messageId = await this.enqueueMessage(messageContent);
 
-      // Acknowledge that message was queued
-      await this.messageHub.publish('message.queued',
-        { messageId },
-        { sessionId: this.session.id }
-      );
+      // Update state to 'queued' (broadcasts agent.state event)
+      await this.setProcessingState({ status: 'queued', messageId });
 
       return { messageId };
     } catch (error) {
       console.error(`[AgentSession ${this.session.id}] Error handling message.send:`, error);
-      await this.messageHub.publish('session.error',
-        {
-          error: error instanceof Error ? error.message : String(error),
-        },
-        { sessionId: this.session.id }
+      await this.errorManager.handleError(
+        this.session.id,
+        error as Error,
+        ErrorCategory.MESSAGE,
+        "Failed to send message. Please try again."
       );
       throw error;
     }
@@ -229,12 +284,8 @@ export class AgentSession {
           { sessionId: this.session.id }
         );
 
-        // Emit processing status
-        await this.messageHub.publish(
-          'message.processing',
-          { messageId: queuedMessage.id },
-          { sessionId: this.session.id }
-        );
+        // Update state to 'processing' (broadcasts agent.state event)
+        await this.setProcessingState({ status: 'processing', messageId: queuedMessage.id });
 
         // Add to conversation history
         const userMessage: Message = {
@@ -248,6 +299,13 @@ export class AgentSession {
           timestamp: queuedMessage.timestamp,
         };
         this.conversationHistory.push(userMessage);
+
+        // Broadcast message delta for user message
+        await this.messageHub.publish(
+          'state.messages.delta',
+          { added: [userMessage], timestamp: Date.now(), version: ++this.messageDeltaVersion },
+          { sessionId: this.session.id }
+        );
       }
 
       // Yield to SDK
@@ -312,7 +370,13 @@ export class AgentSession {
       // Verify authentication
       const hasAuth = !!(process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY);
       if (!hasAuth) {
-        throw new Error("No authentication configured. Please set up OAuth or API key.");
+        const authError = new Error("No authentication configured. Please set up OAuth or API key.");
+        await this.errorManager.handleError(
+          this.session.id,
+          authError,
+          ErrorCategory.AUTHENTICATION
+        );
+        throw authError;
       }
 
       // Ensure workspace exists
@@ -375,12 +439,26 @@ export class AgentSession {
       }
       this.messageQueue = [];
 
-      await this.messageHub.publish(
-        'session.error',
-        {
-          error: error instanceof Error ? error.message : String(error),
-        },
-        { sessionId: this.session.id }
+      // Determine error category based on error message
+      let category = ErrorCategory.SYSTEM;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      if (errorMessage.includes("401") || errorMessage.includes("unauthorized") || errorMessage.includes("invalid_api_key")) {
+        category = ErrorCategory.AUTHENTICATION;
+      } else if (errorMessage.includes("ECONNREFUSED") || errorMessage.includes("ENOTFOUND")) {
+        category = ErrorCategory.CONNECTION;
+      } else if (errorMessage.includes("429") || errorMessage.includes("rate limit")) {
+        category = ErrorCategory.RATE_LIMIT;
+      } else if (errorMessage.includes("timeout")) {
+        category = ErrorCategory.TIMEOUT;
+      } else if (errorMessage.includes("model_not_found")) {
+        category = ErrorCategory.MODEL;
+      }
+
+      await this.errorManager.handleError(
+        this.session.id,
+        error as Error,
+        category
       );
     } finally {
       this.queryRunning = false;
@@ -402,8 +480,18 @@ export class AgentSession {
     // Save to DB
     this.db.saveSDKMessage(this.session.id, message);
 
+    // Broadcast SDK message delta
+    await this.messageHub.publish(
+      'state.sdkMessages.delta',
+      { added: [message], timestamp: Date.now(), version: ++this.sdkMessageDeltaVersion },
+      { sessionId: this.session.id }
+    );
+
     // Handle specific message types
     if (message.type === "result" && message.subtype === "success") {
+      // FIX: Set state back to 'idle' when result received
+      await this.setProcessingState({ status: 'idle' });
+
       // Update session metadata with token usage and costs
       const usage = message.usage;
       const totalTokens = usage.input_tokens + usage.output_tokens;
@@ -448,6 +536,9 @@ export class AgentSession {
   async handleInterrupt(): Promise<void> {
     console.log(`[AgentSession ${this.session.id}] Handling interrupt...`);
 
+    // FIX: Set state to 'interrupted'
+    await this.setProcessingState({ status: 'interrupted' });
+
     // Clear pending messages
     for (const msg of this.messageQueue) {
       msg.reject(new Error("Interrupted by user"));
@@ -461,6 +552,9 @@ export class AgentSession {
     }
 
     await this.messageHub.publish('session.interrupted', {}, { sessionId: this.session.id });
+
+    // FIX: Set state back to 'idle' after interrupt completes
+    await this.setProcessingState({ status: 'idle' });
   }
 
   /**
@@ -570,10 +664,11 @@ export class AgentSession {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error(`[AgentSession ${this.session.id}] Model switch failed:`, error);
 
-      await this.messageHub.publish(
-        'session.error',
-        { error: `Failed to switch model: ${errorMessage}` },
-        { sessionId: this.session.id }
+      await this.errorManager.handleError(
+        this.session.id,
+        error as Error,
+        ErrorCategory.MODEL,
+        `Failed to switch model: ${errorMessage}`
       );
 
       return {

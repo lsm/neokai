@@ -193,4 +193,29 @@ export function setupSessionHandlers(
     clearModelCache();
     return { success: true };
   });
+
+  // FIX: Handle getting current agent processing state
+  // Called by clients after subscribing to agent.state to get initial snapshot
+  messageHub.handle("agent.getState", async (data) => {
+    const { sessionId: targetSessionId } = data as { sessionId: string };
+
+    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    if (!agentSession) {
+      throw new Error("Session not found");
+    }
+
+    const state = agentSession.getProcessingState();
+
+    // Immediately broadcast current state to subscriber
+    await messageHub.publish(
+      "agent.state",
+      {
+        state,
+        timestamp: Date.now(),
+      },
+      { sessionId: targetSessionId }
+    );
+
+    return { state };
+  });
 }

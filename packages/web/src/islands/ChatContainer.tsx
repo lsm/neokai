@@ -49,6 +49,22 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
   const processingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    // Reset state when switching sessions
+    setSending(false);
+    setError(null);
+    setCurrentAction(undefined);
+    setStreamingEvents([]);
+
+    // Clear any pending timeouts from previous session
+    if (sendTimeoutRef.current) {
+      clearTimeout(sendTimeoutRef.current);
+      sendTimeoutRef.current = null;
+    }
+    if (processingTimeoutRef.current) {
+      clearTimeout(processingTimeoutRef.current);
+      processingTimeoutRef.current = null;
+    }
+
     loadSession();
 
     // Track cleanup functions and whether component is still mounted
@@ -193,26 +209,47 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       if (!isMounted) return;
       cleanupFunctions.push(unsubSessionError);
 
-      // Message queue events
-      const unsubMessageQueued = await hub.subscribe<{ messageId: string }>('message.queued', (data) => {
-        const { messageId } = data;
-        console.log("Message queued:", messageId);
-        setCurrentAction("Queued...");
-        if (sendTimeoutRef.current) {
-          clearTimeout(sendTimeoutRef.current);
-          sendTimeoutRef.current = null;
+      // Subscribe to agent state updates (replaces message.queued/processing)
+      const unsubAgentState = await hub.subscribe<{ state: any; timestamp: number }>('agent.state', (data) => {
+        const { state } = data;
+        console.log("Agent state updated:", state);
+
+        // Update UI based on server's authoritative state
+        switch (state.status) {
+          case 'idle':
+            setSending(false);
+            setStreamingEvents([]);
+            setCurrentAction(undefined);
+            break;
+          case 'queued':
+            setSending(true);
+            setCurrentAction("Queued...");
+            break;
+          case 'processing':
+            setSending(true);
+            setCurrentAction("Processing...");
+            break;
+          case 'interrupted':
+            setSending(false);
+            setStreamingEvents([]);
+            setCurrentAction("Interrupted");
+            // Clear interrupted status after brief delay
+            setTimeout(() => setCurrentAction(undefined), 2000);
+            break;
         }
       }, { sessionId });
       if (!isMounted) return;
-      cleanupFunctions.push(unsubMessageQueued);
+      cleanupFunctions.push(unsubAgentState);
 
-      const unsubMessageProcessing = await hub.subscribe<{ messageId: string }>('message.processing', (data) => {
-        const { messageId } = data;
-        console.log("Message processing:", messageId);
-        setCurrentAction("Processing...");
-      }, { sessionId });
-      if (!isMounted) return;
-      cleanupFunctions.push(unsubMessageProcessing);
+      // FIX: After subscribing, request current state snapshot
+      // This ensures we get the current state even if we missed events during disconnection
+      try {
+        await hub.call('agent.getState', { sessionId });
+        console.log("Received initial agent state snapshot");
+      } catch (error) {
+        console.warn("Failed to get initial agent state:", error);
+        // Don't fail - we'll get updates from future state changes
+      }
     }).catch(error => {
       console.error("[ChatContainer] Failed to set up subscriptions:", error);
       setError("Failed to connect to daemon");
@@ -404,7 +441,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
         }
       );
 
-      // Note: Don't set sending=false here - wait for message.queued or message.processing event
+      // Note: Don't set sending=false here - wait for agent.state event
       // The timeout above will handle the case where we never get a response
     } catch (err) {
       const message = err instanceof Error
@@ -748,7 +785,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
       {/* Error Banner */}
       {error && (
-        <div class="bg-red-500/10 border-t border-red-500/20 px-4 py-3">
+        <div data-testid="error-banner" class="bg-red-500/10 border-t border-red-500/20 px-4 py-3">
           <div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center justify-between">
             <p class="text-sm text-red-400">{error}</p>
             <button
@@ -778,7 +815,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       />
 
       {/* Input */}
-      <MessageInput onSend={handleSendMessage} disabled={sending} />
+      <MessageInput onSend={handleSendMessage} disabled={sending || connectionState.value !== "connected"} />
 
       {/* Delete Chat Modal */}
       <Modal
