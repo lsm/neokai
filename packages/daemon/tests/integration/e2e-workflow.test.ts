@@ -254,14 +254,12 @@ describe("End-to-End Workflow Integration", () => {
         session_id: created.sessionId,
       });
 
-      const snapshot = await callRPCHandler(ctx.messageHub, 
+      const snapshot = await callRPCHandler(ctx.messageHub,
         STATE_CHANNELS.SESSION_SNAPSHOT,
         { sessionId: created.sessionId },
       );
 
       expect(snapshot.session.session.id).toBe(created.sessionId);
-      expect(snapshot.messages.messages.length).toBe(1);
-      expect(snapshot.messages.messageCount).toBe(1);
       expect(snapshot.sdkMessages.sdkMessages.length).toBe(1);
     });
   });

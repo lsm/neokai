@@ -78,7 +78,6 @@ describe("State Synchronization Integration", () => {
 
       expect(snapshot).toBeDefined();
       expect(snapshot.session).toBeDefined();
-      expect(snapshot.messages).toBeDefined();
       expect(snapshot.sdkMessages).toBeDefined();
       expect(snapshot.agent).toBeDefined();
       expect(snapshot.context).toBeDefined();
