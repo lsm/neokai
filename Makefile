@@ -1,4 +1,4 @@
-.PHONY: dev start daemon web self restart sync-sdk-types clean-cache clean-all build-prod e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self
+.PHONY: dev start daemon web self restart sync-sdk-types clean-cache clean-all build-prod test test-daemon e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self
 
 # Unified server (daemon + web in single process) - RECOMMENDED
 dev:
@@ -81,6 +81,15 @@ build-prod:
 	@echo "🏗️  Building production bundles..."
 	@cd packages/web && bun run build
 	@echo "✅ Production build complete!"
+
+# Unit Testing
+test:
+	@echo "🧪 Running all tests..."
+	@bun test
+
+test-daemon:
+	@echo "🧪 Running daemon tests..."
+	@cd packages/daemon && bun test
 
 # E2E Testing with Playwright
 e2e:
