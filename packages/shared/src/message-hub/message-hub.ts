@@ -1045,8 +1045,6 @@ export class MessageHub {
     // Add sequence number for ordering guarantees
     message.sequence = this.messageSequence++;
 
-    this.log(`→ Outgoing response: ${message.type} ${message.method} [seq=${message.sequence}]`, message);
-
     // Notify message handlers
     this.notifyMessageHandlers(message, "out");
 
