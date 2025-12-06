@@ -15,7 +15,7 @@
     "typecheck": "tsc --build"
   },
   "dependencies": {
-    "preact": "10.27.2",
+    "preact": "10.28.0",
     "@preact/signals": "2.5.1",
     "marked": "17.0.1",
     "highlight.js": "11.11.1",
@@ -28,6 +28,6 @@
     "bun-types": "latest",
     "tailwindcss": "^4.1.17",
     "typescript": "^5.9.3",
-    "vite": "^7.2.4"
+    "vite": "^7.2.6"
   }
 }
