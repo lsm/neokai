@@ -98,7 +98,9 @@ export function setupMessageHubWebSocket(
         }
 
         // For session-specific messages, verify session exists (except for global)
-        if (data.sessionId !== GLOBAL_SESSION_ID) {
+        // SUBSCRIBE/UNSUBSCRIBE are protocol-level and don't require session validation
+        const isProtocolMessage = data.type === "SUBSCRIBE" || data.type === "UNSUBSCRIBE";
+        if (data.sessionId !== GLOBAL_SESSION_ID && !isProtocolMessage) {
           const session = await sessionManager.getSessionAsync(data.sessionId);
           if (!session) {
             const errorMsg = createErrorMessage({
