@@ -135,7 +135,7 @@ describe('MessageHub', () => {
 
 			newHub.registerTransport(newTransport);
 
-			expect((newHub as any).transport).toBe(newTransport);
+			expect((newHub as unknown).transport).toBe(newTransport);
 		});
 
 		test('should unregister transport successfully', () => {
@@ -143,10 +143,10 @@ describe('MessageHub', () => {
 			const newTransport = new MockTransport();
 
 			const unregister = newHub.registerTransport(newTransport);
-			expect((newHub as any).transport).toBe(newTransport);
+			expect((newHub as unknown).transport).toBe(newTransport);
 
 			unregister();
-			expect((newHub as any).transport).toBe(null);
+			expect((newHub as unknown).transport).toBe(null);
 		});
 
 		test('should throw error when registering multiple transports', () => {
@@ -211,15 +211,15 @@ describe('MessageHub', () => {
 
 	describe('RPC - Method Handlers', () => {
 		test('should register RPC handler', () => {
-			const handler = mock(async (_data: any) => ({ result: 'success' }));
+			const handler = mock(async (_data: unknown) => ({ result: 'success' }));
 
 			messageHub.handle('test.method', handler);
 
-			expect((messageHub as any).rpcHandlers.has('test.method')).toBe(true);
+			expect((messageHub as unknown).rpcHandlers.has('test.method')).toBe(true);
 		});
 
 		test('should execute RPC handler when call message received', async () => {
-			const handler = mock(async (data: any) => {
+			const handler = mock(async (data: unknown) => {
 				return { echo: data.message };
 			});
 
@@ -247,11 +247,11 @@ describe('MessageHub', () => {
 			// Check that result was sent back
 			const sentMessages = transport.sentMessages;
 			const resultMessage = sentMessages.find(
-				(msg) => msg.type === MessageType.RESULT && (msg as any).requestId === callMessage.id
+				(msg) => msg.type === MessageType.RESULT && (msg as unknown).requestId === callMessage.id
 			);
 
 			expect(resultMessage).toBeDefined();
-			expect((resultMessage as any).data).toEqual({ echo: 'hello' });
+			expect((resultMessage as unknown).data).toEqual({ echo: 'hello' });
 		});
 
 		test('should send error response when handler throws', async () => {
@@ -274,21 +274,21 @@ describe('MessageHub', () => {
 
 			const sentMessages = transport.sentMessages;
 			const errorMessage = sentMessages.find(
-				(msg) => msg.type === MessageType.ERROR && (msg as any).requestId === callMessage.id
+				(msg) => msg.type === MessageType.ERROR && (msg as unknown).requestId === callMessage.id
 			);
 
 			expect(errorMessage).toBeDefined();
-			expect((errorMessage as any).error).toContain('Handler failed');
+			expect((errorMessage as unknown).error).toContain('Handler failed');
 		});
 
 		test('should unregister RPC handler', () => {
 			const handler = mock(async () => ({}));
 
 			const unregister = messageHub.handle('test.method', handler);
-			expect((messageHub as any).rpcHandlers.has('test.method')).toBe(true);
+			expect((messageHub as unknown).rpcHandlers.has('test.method')).toBe(true);
 
 			unregister();
-			expect((messageHub as any).rpcHandlers.has('test.method')).toBe(false);
+			expect((messageHub as unknown).rpcHandlers.has('test.method')).toBe(false);
 		});
 	});
 
@@ -302,7 +302,7 @@ describe('MessageHub', () => {
 			const sentMessage = transport.sentMessages[0];
 			expect(sentMessage.type).toBe(MessageType.CALL);
 			expect(sentMessage.method).toBe('test.method');
-			expect((sentMessage as any).data).toEqual({ value: 42 });
+			expect((sentMessage as unknown).data).toEqual({ value: 42 });
 
 			// Simulate result from server
 			const resultMessage = createResultMessage({
@@ -398,7 +398,7 @@ describe('MessageHub', () => {
 			const sentMessage = transport.sentMessages[0];
 			expect(sentMessage.type).toBe(MessageType.EVENT);
 			expect(sentMessage.method).toBe('user.created');
-			expect((sentMessage as any).data).toEqual({ userId: '123' });
+			expect((sentMessage as unknown).data).toEqual({ userId: '123' });
 		});
 
 		test('should use custom session ID when publishing', async () => {
@@ -421,17 +421,17 @@ describe('MessageHub', () => {
 
 	describe('Pub/Sub - Subscribing', () => {
 		test('should subscribe to event pattern', async () => {
-			const handler = mock((_data: any) => {});
+			const handler = mock((_data: unknown) => {});
 
 			await messageHub.subscribe('user.created', handler, { sessionId: 'test-session' });
 
-			const sessionSubs = (messageHub as any).subscriptions.get('test-session');
+			const sessionSubs = (messageHub as unknown).subscriptions.get('test-session');
 			expect(sessionSubs).toBeDefined();
 			expect(sessionSubs.has('user.created')).toBe(true);
 		});
 
 		test('should receive events matching subscription', async () => {
-			const handler = mock((_data: any) => {});
+			const handler = mock((_data: unknown) => {});
 
 			await messageHub.subscribe('user.created', handler);
 
@@ -453,7 +453,7 @@ describe('MessageHub', () => {
 		});
 
 		test('should support wildcard subscriptions', async () => {
-			const handler = mock((_data: any) => {});
+			const handler = mock((_data: unknown) => {});
 
 			// Subscribe to specific methods and manually test wildcard pattern matching
 			await messageHub.subscribe('user.created', handler);
@@ -478,7 +478,7 @@ describe('MessageHub', () => {
 		});
 
 		test('should unsubscribe from events', async () => {
-			const handler = mock((_data: any) => {});
+			const handler = mock((_data: unknown) => {});
 
 			const unsubscribe = await messageHub.subscribe('user.created', handler);
 
@@ -499,7 +499,7 @@ describe('MessageHub', () => {
 			const handler = mock(() => {});
 			await messageHub.subscribe('user.created', handler, { sessionId: 'test-session' });
 
-			const sessionSubs = (messageHub as any).subscriptions.get('test-session');
+			const sessionSubs = (messageHub as unknown).subscriptions.get('test-session');
 			expect(sessionSubs).toBeDefined();
 			expect(sessionSubs.has('user.created')).toBe(true);
 		});
@@ -511,13 +511,13 @@ describe('MessageHub', () => {
 			});
 
 			// Verify subscription exists first
-			let sessionSubs = (messageHub as any).subscriptions.get('test-session');
+			let sessionSubs = (messageHub as unknown).subscriptions.get('test-session');
 			expect(sessionSubs?.has('user.created')).toBe(true);
 
 			await unsubscribe();
 
 			// After unsubscribe, the method should be removed from the set
-			sessionSubs = (messageHub as any).subscriptions.get('test-session');
+			sessionSubs = (messageHub as unknown).subscriptions.get('test-session');
 			const handlers = sessionSubs?.get('user.created');
 			expect(!handlers || handlers.size === 0).toBe(true);
 		});
@@ -525,7 +525,7 @@ describe('MessageHub', () => {
 
 	describe('Hybrid - Call and Publish', () => {
 		test('should execute RPC call and publish event', async () => {
-			const handler = mock(async (_data: any) => {
+			const handler = mock(async (_data: unknown) => {
 				return { result: 'success' };
 			});
 
@@ -660,7 +660,7 @@ describe('MessageHub', () => {
 			const unregister = newHub.registerTransport(newTransport);
 
 			// Verify transport is registered
-			expect((newHub as any).transport).toBe(newTransport);
+			expect((newHub as unknown).transport).toBe(newTransport);
 
 			// Verify transport has message handlers registered
 			expect(newTransport['messageHandlers'].size).toBe(1);
@@ -669,7 +669,7 @@ describe('MessageHub', () => {
 			unregister();
 
 			// Verify transport is unregistered
-			expect((newHub as any).transport).toBe(null);
+			expect((newHub as unknown).transport).toBe(null);
 
 			// Verify transport's message handlers are removed
 			expect(newTransport['messageHandlers'].size).toBe(0);
@@ -750,7 +750,7 @@ describe('MessageHub', () => {
 
 			messageHub.cleanup();
 
-			expect((messageHub as any).pendingCalls.size).toBe(0);
+			expect((messageHub as unknown).pendingCalls.size).toBe(0);
 		});
 
 		test('should clear all handlers on cleanup', async () => {
@@ -759,8 +759,8 @@ describe('MessageHub', () => {
 
 			messageHub.cleanup();
 
-			expect((messageHub as any).rpcHandlers.size).toBe(0);
-			expect((messageHub as any).subscriptions.size).toBe(0);
+			expect((messageHub as unknown).rpcHandlers.size).toBe(0);
+			expect((messageHub as unknown).subscriptions.size).toBe(0);
 		});
 
 		test('should remove connection state handlers on cleanup', () => {
@@ -768,7 +768,7 @@ describe('MessageHub', () => {
 
 			messageHub.cleanup();
 
-			expect((messageHub as any).connectionStateHandlers.size).toBe(0);
+			expect((messageHub as unknown).connectionStateHandlers.size).toBe(0);
 		});
 
 		test('should clear message inspection handlers on cleanup', () => {
@@ -776,7 +776,7 @@ describe('MessageHub', () => {
 
 			messageHub.cleanup();
 
-			expect((messageHub as any).messageHandlers.size).toBe(0);
+			expect((messageHub as unknown).messageHandlers.size).toBe(0);
 		});
 	});
 
@@ -788,7 +788,7 @@ describe('MessageHub', () => {
 			});
 
 			// Debug mode should be enabled
-			expect((debugHub as any).debug).toBe(true);
+			expect((debugHub as unknown).debug).toBe(true);
 		});
 
 		test('should disable debug logging by default', () => {
@@ -796,7 +796,7 @@ describe('MessageHub', () => {
 				defaultSessionId: 'test',
 			});
 
-			expect((normalHub as any).debug).toBe(false);
+			expect((normalHub as unknown).debug).toBe(false);
 		});
 	});
 

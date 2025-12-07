@@ -443,7 +443,7 @@ test.describe('Multi-Session Concurrent Operations', () => {
 
 		// Track resource usage
 		const initialResources = await page.evaluate(() => {
-			const hub = (window as any).__messageHub;
+			const hub = window.__messageHub;
 			return {
 				pendingCalls: hub.pendingCalls?.size || 0,
 				subscriptions: hub.subscriptions?.size || 0,
@@ -471,7 +471,7 @@ test.describe('Multi-Session Concurrent Operations', () => {
 
 		// Check resource usage after creating sessions
 		const afterCreation = await page.evaluate(() => {
-			const hub = (window as any).__messageHub;
+			const hub = window.__messageHub;
 			return {
 				pendingCalls: hub.pendingCalls?.size || 0,
 				subscriptions: hub.subscriptions?.size || 0,
@@ -495,7 +495,7 @@ test.describe('Multi-Session Concurrent Operations', () => {
 
 		// Check resources after cleanup
 		const afterCleanup = await page.evaluate(() => {
-			const hub = (window as any).__messageHub;
+			const hub = window.__messageHub;
 			return {
 				pendingCalls: hub.pendingCalls?.size || 0,
 				subscriptions: hub.subscriptions?.size || 0,

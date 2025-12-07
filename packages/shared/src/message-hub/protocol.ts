@@ -582,7 +582,7 @@ export function createUnsubscribedMessage(
  * Checks all required fields and basic type correctness
  * FIX P2.3: Add protocol version validation
  */
-export function isValidMessage(msg: any): msg is HubMessage {
+export function isValidMessage(msg: unknown): msg is HubMessage {
 	if (!msg || typeof msg !== 'object') {
 		return false;
 	}

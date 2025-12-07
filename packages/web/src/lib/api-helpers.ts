@@ -78,9 +78,9 @@ export async function getSDKMessages(
 		offset?: number;
 		since?: number;
 	}
-): Promise<{ sdkMessages: any[] }> {
+): Promise<{ sdkMessages: unknown[] }> {
 	const hub = await connectionManager.getHub();
-	return await hub.call<{ sdkMessages: any[] }>('message.sdkMessages', {
+	return await hub.call<{ sdkMessages: unknown[] }>('message.sdkMessages', {
 		sessionId,
 		...params,
 	});

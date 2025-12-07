@@ -32,7 +32,7 @@ export function SDKUserMessage({ message, _onEdit, _onDelete, sessionInfo, isRep
 	// Check if this is a tool result message (should not be rendered as user message)
 	const isToolResultMessage = (): boolean => {
 		if (Array.isArray(apiMessage.content)) {
-			return apiMessage.content.some((block: any) => block.type === 'tool_result');
+			return apiMessage.content.some((block) => block.type === 'tool_result');
 		}
 		return false;
 	};
@@ -46,7 +46,7 @@ export function SDKUserMessage({ message, _onEdit, _onDelete, sessionInfo, isRep
 	const getTextContent = (): string => {
 		if (Array.isArray(apiMessage.content)) {
 			return apiMessage.content
-				.map((block: any) => {
+				.map((block) => {
 					// Text blocks
 					if (block.type === 'text') {
 						return block.text;

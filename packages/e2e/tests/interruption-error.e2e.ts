@@ -39,7 +39,7 @@ test.describe.skip('Session Interruption', () => {
 
 		// Set up interrupt tracking
 		await page.evaluate(async (sid) => {
-			const hub = (window as any).__messageHub;
+			const hub = window.__messageHub;
 			let interruptReceived = false;
 
 			await hub.subscribe(
@@ -50,7 +50,7 @@ test.describe.skip('Session Interruption', () => {
 				{ sessionId: sid }
 			);
 
-			(window as any).__checkInterrupt = () => interruptReceived;
+			window.__checkInterrupt = () => interruptReceived;
 		}, sessionId);
 
 		// Send a long message that we'll interrupt
@@ -76,7 +76,7 @@ test.describe.skip('Session Interruption', () => {
 		} else {
 			// Fallback: Send interrupt via MessageHub
 			await page.evaluate((sid) => {
-				const hub = (window as any).__messageHub;
+				const hub = window.__messageHub;
 				hub.publish('client.interrupt', {}, { sessionId: sid });
 			}, sessionId);
 		}
@@ -86,7 +86,7 @@ test.describe.skip('Session Interruption', () => {
 
 		// Check if interrupt was received
 		const wasInterrupted = await page.evaluate(() => {
-			return (window as any).__checkInterrupt();
+			return window.__checkInterrupt();
 		});
 
 		// Input should be enabled again
@@ -124,7 +124,7 @@ test.describe.skip('Session Interruption', () => {
 
 		// Trigger interrupt
 		await page.evaluate((sid) => {
-			const hub = (window as any).__messageHub;
+			const hub = window.__messageHub;
 			hub.publish('client.interrupt', {}, { sessionId: sid });
 		}, sessionId);
 
@@ -190,7 +190,7 @@ test.describe('Error Handling', () => {
 		// Simulate connection lost by closing WebSocket
 		await page.evaluate(() => {
 			// Force disconnect by simulating connection state change
-			const state = (window as any).appState?.connectionState;
+			const state = window.appState?.connectionState;
 			if (state) {
 				state.value = 'disconnected';
 			}
@@ -284,13 +284,13 @@ test.describe('Error Handling', () => {
 
 		// Simulate timeout by calling with very short timeout
 		const timeoutError = await page.evaluate(async (sid) => {
-			const hub = (window as any).__messageHub;
+			const hub = window.__messageHub;
 
 			try {
 				// Call with impossibly short timeout - use actual session ID
 				await hub.call('session.send', { sessionId: sid, message: 'test' }, { timeout: 1 });
 				return null;
-			} catch (error: any) {
+			} catch (error: unknown) {
 				return error.message || error.toString();
 			}
 		}, sessionId);
@@ -303,14 +303,14 @@ test.describe('Error Handling', () => {
 	test('should recover from temporary WebSocket disconnection', async ({ page }) => {
 		// Track reconnection
 		await page.evaluate(() => {
-			const hub = (window as any).__messageHub;
+			const hub = window.__messageHub;
 			const states: string[] = [];
 
 			hub.onConnection((state: string) => {
 				states.push(state);
 			});
 
-			(window as any).__getConnectionStates = () => states;
+			window.__getConnectionStates = () => states;
 		});
 
 		// Create a session
@@ -319,7 +319,7 @@ test.describe('Error Handling', () => {
 
 		// Simulate WebSocket disconnection by calling internal method
 		await page.evaluate(() => {
-			const hub = (window as any).__messageHub;
+			const hub = window.__messageHub;
 			if (hub.transport && hub.transport.ws) {
 				// Force close WebSocket
 				hub.transport.ws.close();
@@ -331,7 +331,7 @@ test.describe('Error Handling', () => {
 
 		// Check connection states
 		const states = await page.evaluate(() => {
-			return (window as any).__getConnectionStates();
+			return window.__getConnectionStates();
 		});
 
 		// Should have disconnected and reconnected
@@ -352,7 +352,7 @@ test.describe('Error Handling', () => {
 
 		// Send malformed SDK message
 		await page.evaluate((sid) => {
-			const hub = (window as any).__messageHub;
+			const hub = window.__messageHub;
 
 			// Publish malformed SDK message
 			hub.publish(
@@ -442,7 +442,7 @@ test.describe('Authentication Errors', () => {
 
 		// Simulate token expiration
 		await page.evaluate(() => {
-			const hub = (window as any).__messageHub;
+			const hub = window.__messageHub;
 
 			// Publish auth error event
 			hub.publish(
@@ -479,7 +479,7 @@ test.describe('Authentication Errors', () => {
 
 		// Simulate no auth state
 		await page.evaluate(() => {
-			const hub = (window as any).__messageHub;
+			const hub = window.__messageHub;
 
 			// Update system state to not authenticated
 			hub.publish(

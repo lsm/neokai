@@ -27,8 +27,8 @@ type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }
 
 interface Props {
 	message: SDKMessage;
-	toolResultsMap?: Map<string, any>;
-	toolInputsMap?: Map<string, any>;
+	toolResultsMap?: Map<string, unknown>;
+	toolInputsMap?: Map<string, unknown>;
 	sessionInfo?: SystemInitMessage; // Optional session init info to attach to user messages
 }
 

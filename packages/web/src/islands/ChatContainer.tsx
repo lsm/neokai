@@ -99,7 +99,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 						// Extract slash commands from SDK init message
 						if (sdkMessage.type === 'system' && sdkMessage.subtype === 'init') {
-							const initMessage = sdkMessage as any;
+							const initMessage = sdkMessage as unknown;
 							if (initMessage.slash_commands && Array.isArray(initMessage.slash_commands)) {
 								console.log('Extracted slash commands from SDK:', initMessage.slash_commands);
 								slashCommandsSignal.value = initMessage.slash_commands;
@@ -167,7 +167,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				cleanupFunctions.push(unsubSDKMessage);
 
 				// Context events
-				const unsubContextUpdated = await hub.subscribe<any>(
+				const unsubContextUpdated = await hub.subscribe<unknown>(
 					'context.updated',
 					(data) => {
 						console.log(`Context updated:`, data);
@@ -230,10 +230,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 				// Subscribe to unified session state (includes agent state and commands)
 				const unsubSessionState = await hub.subscribe<{
-					session: any;
+					session: unknown;
 					agent: { status: 'idle' | 'queued' | 'processing' | 'interrupted'; messageId?: string };
 					commands: { availableCommands: string[] };
-					context: any;
+					context: unknown;
 				}>(
 					'state.session',
 					(data) => {
@@ -618,10 +618,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	};
 
 	// Create a map of tool use IDs to tool results for easy lookup
-	const toolResultsMap = new Map<string, any>();
+	const toolResultsMap = new Map<string, unknown>();
 	messages.forEach((msg) => {
 		if (msg.type === 'user' && Array.isArray(msg.message.content)) {
-			msg.message.content.forEach((block: any) => {
+			msg.message.content.forEach((block: unknown) => {
 				if (block.type === 'tool_result') {
 					toolResultsMap.set(block.tool_use_id, block);
 				}
@@ -630,10 +630,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	});
 
 	// Create a map of tool use IDs to tool inputs for easy lookup
-	const toolInputsMap = new Map<string, any>();
+	const toolInputsMap = new Map<string, unknown>();
 	messages.forEach((msg) => {
 		if (msg.type === 'assistant' && Array.isArray(msg.message.content)) {
-			msg.message.content.forEach((block: any) => {
+			msg.message.content.forEach((block: unknown) => {
 				if (block.type === 'tool_use') {
 					toolInputsMap.set(block.id, block.input);
 				}
@@ -643,7 +643,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 	// Create a map of user message UUIDs to their attached session init info
 	// Session init messages appear after the first user message, so we attach them to the preceding user message
-	const sessionInfoMap = new Map<string, any>();
+	const sessionInfoMap = new Map<string, unknown>();
 	for (let i = 0; i < messages.length; i++) {
 		const msg = messages[i];
 		if (msg.type === 'system' && msg.subtype === 'init') {

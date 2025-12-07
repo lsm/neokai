@@ -118,14 +118,14 @@ export class ConnectionManager {
 			typeof window !== 'undefined' &&
 			(window.location.hostname === 'localhost' || process.env.NODE_ENV === 'test')
 		) {
-			(window as any).__messageHub = this.messageHub;
-			(window as any).appState = appState;
-			(window as any).__messageHubReady = false; // Will be set to true after connection
-			(window as any).connectionManager = this; // Expose for testing
+			window.__messageHub = this.messageHub;
+			window.appState = appState;
+			window.__messageHubReady = false; // Will be set to true after connection
+			window.connectionManager = this; // Expose for testing
 
 			// Also expose currentSessionIdSignal for testing
 			import('./signals.ts').then(({ currentSessionIdSignal }) => {
-				(window as any).currentSessionIdSignal = currentSessionIdSignal;
+				window.currentSessionIdSignal = currentSessionIdSignal;
 			});
 		}
 
@@ -150,8 +150,8 @@ export class ConnectionManager {
 		console.log('[ConnectionManager] WebSocket connected');
 
 		// Mark ready for testing
-		if (typeof window !== 'undefined' && (window as any).__messageHub) {
-			(window as any).__messageHubReady = true;
+		if (typeof window !== 'undefined' && window.__messageHub) {
+			window.__messageHubReady = true;
 		}
 
 		return this.messageHub;

@@ -172,7 +172,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 		// Add clientId to message metadata for SUBSCRIBE/UNSUBSCRIBE handling
 		// MessageHub needs this to track which client subscribed
 		if (clientId) {
-			(message as any).clientId = clientId;
+			(message as unknown).clientId = clientId;
 		}
 
 		// Notify all message handlers (MessageHub will process)
@@ -257,7 +257,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 	/**
 	 * Get client by ID (delegates to router)
 	 */
-	getClient(clientId: string): any {
+	getClient(clientId: string): unknown {
 		return this.router.getClientById(clientId);
 	}
 
@@ -303,7 +303,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 		}
 	}
 
-	private log(message: string, ...args: any[]): void {
+	private log(message: string, ...args: unknown[]): void {
 		if (this.debug) {
 			console.log(`[${this.name}] ${message}`, ...args);
 		}

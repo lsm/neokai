@@ -324,7 +324,7 @@ function StatCard({
 }: {
 	label: string;
 	value: string;
-	icon: any;
+	icon: unknown;
 	highlight?: boolean;
 }) {
 	return (

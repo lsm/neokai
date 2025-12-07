@@ -136,7 +136,7 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
 
 		// Get baseline subscription count
 		const initialSubs = await page.evaluate(() => {
-			const hub = (window as any).__messageHub;
+			const hub = window.__messageHub;
 			return hub?.subscriptions?.size || 0;
 		});
 
@@ -160,7 +160,7 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
 
 		// Get subscription count with session loaded
 		const withSession1 = await page.evaluate(() => {
-			const hub = (window as any).__messageHub;
+			const hub = window.__messageHub;
 			return hub?.subscriptions?.size || 0;
 		});
 
@@ -171,7 +171,7 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
 
 		// Get subscription count with session 2 loaded
 		const withSession2 = await page.evaluate(() => {
-			const hub = (window as any).__messageHub;
+			const hub = window.__messageHub;
 			return hub?.subscriptions?.size || 0;
 		});
 
@@ -186,7 +186,7 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
 
 		// Get subscription count again
 		const backToSession1 = await page.evaluate(() => {
-			const hub = (window as any).__messageHub;
+			const hub = window.__messageHub;
 			return hub?.subscriptions?.size || 0;
 		});
 
@@ -198,7 +198,7 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
 		await page.waitForTimeout(1000);
 
 		const backHome = await page.evaluate(() => {
-			const hub = (window as any).__messageHub;
+			const hub = window.__messageHub;
 			return hub?.subscriptions?.size || 0;
 		});
 

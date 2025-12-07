@@ -32,7 +32,7 @@ export interface StateChannelOptions<T> {
 	 * Merge function for delta updates
 	 * Only used if enableDeltas is true
 	 */
-	mergeDelta?: (current: T, delta: any) => T;
+	mergeDelta?: (current: T, delta: unknown) => T;
 
 	/**
 	 * Auto-refresh interval in ms (0 to disable)
@@ -357,7 +357,7 @@ export class StateChannel<T> {
 				this.options.sessionId
 			);
 
-			const deltaUpdateSub = await this.hub.subscribe<any>(
+			const deltaUpdateSub = await this.hub.subscribe<unknown>(
 				deltaChannel,
 				(delta) => {
 					console.log(`[StateChannel:${this.channelName}] <<<< DELTA RECEIVED >>>>`, delta);
@@ -426,7 +426,7 @@ export class StateChannel<T> {
 	/**
 	 * Debug logging
 	 */
-	private log(message: string, ...args: any[]): void {
+	private log(message: string, ...args: unknown[]): void {
 		if (this.options.debug) {
 			console.log(`[StateChannel:${this.channelName}] ${message}`, ...args);
 		}
@@ -495,7 +495,7 @@ export const DeltaMergers = {
 	/**
 	 * Merge object properties
 	 */
-	object: <T extends Record<string, any>>(current: T, delta: Partial<T>): T => {
+	object: <T extends Record<string, unknown>>(current: T, delta: Partial<T>): T => {
 		return { ...current, ...delta };
 	},
 

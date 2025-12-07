@@ -25,7 +25,7 @@ export interface StructuredError {
 	code: string;
 	message: string;
 	userMessage: string;
-	details?: any;
+	details?: unknown;
 	recoverable: boolean;
 	timestamp: string;
 }

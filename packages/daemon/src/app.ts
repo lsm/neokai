@@ -28,7 +28,7 @@ export interface CreateDaemonAppOptions {
 }
 
 export interface DaemonAppContext {
-	app: Elysia<any>;
+	app: Elysia<unknown>;
 	db: Database;
 	messageHub: MessageHub;
 	sessionManager: SessionManager;
@@ -195,7 +195,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	}
 
 	// Mount MessageHub WebSocket routes (setupMessageHubWebSocket modifies app in-place)
-	setupMessageHubWebSocket(app as any, transport, sessionManager, subscriptionManager);
+	setupMessageHubWebSocket(app as unknown, transport, sessionManager, subscriptionManager);
 
 	// Cleanup function for graceful shutdown
 	const cleanup = async () => {
@@ -204,13 +204,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 		// Wait for pending RPC calls (with 5s timeout)
 		log('   2/5 Waiting for pending RPC calls...');
-		const pendingCallsCount = (messageHub as any)['pendingCalls']?.size || 0;
+		const pendingCallsCount = (messageHub as unknown)['pendingCalls']?.size || 0;
 		if (pendingCallsCount > 0) {
 			log(`       ${pendingCallsCount} pending calls detected`);
 			await Promise.race([
 				new Promise((resolve) => {
 					const checkInterval = setInterval(() => {
-						const remaining = (messageHub as any)['pendingCalls']?.size || 0;
+						const remaining = (messageHub as unknown)['pendingCalls']?.size || 0;
 						if (remaining === 0) {
 							clearInterval(checkInterval);
 							resolve(null);
@@ -219,7 +219,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				}),
 				new Promise((resolve) => setTimeout(resolve, 5000)),
 			]);
-			const remaining = (messageHub as any)['pendingCalls']?.size || 0;
+			const remaining = (messageHub as unknown)['pendingCalls']?.size || 0;
 			if (remaining > 0) {
 				log(`       ⚠️  Timeout: ${remaining} calls still pending`);
 			} else {
@@ -243,7 +243,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	};
 
 	return {
-		app: app as any,
+		app: app as unknown,
 		db,
 		messageHub,
 		sessionManager,

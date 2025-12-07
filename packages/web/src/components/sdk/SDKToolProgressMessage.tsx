@@ -12,7 +12,7 @@ type ToolProgressMessage = Extract<SDKMessage, { type: 'tool_progress' }>;
 
 interface Props {
 	message: ToolProgressMessage;
-	toolInput?: any; // Tool input parameters (e.g., file_path for Write/Edit tools)
+	toolInput?: unknown; // Tool input parameters (e.g., file_path for Write/Edit tools)
 }
 
 export function SDKToolProgressMessage({ message, toolInput }: Props) {

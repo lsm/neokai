@@ -65,11 +65,11 @@ export function Modal({
 				}
 			};
 
-			modalRef.current.addEventListener('keydown', handleTab as any);
+			modalRef.current.addEventListener('keydown', handleTab as EventListener);
 			firstElement?.focus();
 
 			return () => {
-				modalRef.current?.removeEventListener('keydown', handleTab as any);
+				modalRef.current?.removeEventListener('keydown', handleTab as EventListener);
 			};
 		}
 	}, [isOpen]);

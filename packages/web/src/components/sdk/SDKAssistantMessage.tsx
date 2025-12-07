@@ -180,7 +180,7 @@ function ToolUseBlock({
 			toolId={block.id}
 			input={block.input}
 			output={toolResult}
-			isError={(toolResult as any)?.is_error || false}
+			isError={(toolResult as unknown)?.is_error || false}
 			variant="default"
 		/>
 	);

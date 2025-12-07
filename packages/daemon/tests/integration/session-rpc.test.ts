@@ -62,7 +62,7 @@ describe('Session RPC Integration', () => {
 			// Subscribe to session creation event
 			let createdSession = null;
 			const eventPromise = new Promise((resolve) => {
-				(ctx.stateManager as any).eventBus.on('session:created', (data: any) => {
+				(ctx.stateManager as unknown).eventBus.on('session:created', (data: unknown) => {
 					createdSession = data.session;
 					resolve(data);
 				});
@@ -77,7 +77,7 @@ describe('Session RPC Integration', () => {
 			await eventPromise;
 
 			expect(createdSession).toBeDefined();
-			expect((createdSession as any).id).toBe(result.sessionId);
+			expect((createdSession as unknown).id).toBe(result.sessionId);
 		});
 	});
 
@@ -96,7 +96,7 @@ describe('Session RPC Integration', () => {
 			expect(result.sessions).toBeArray();
 			expect(result.sessions.length).toBe(2);
 
-			const sessionIds = result.sessions.map((s: any) => s.id);
+			const sessionIds = result.sessions.map((s: unknown) => s.id);
 			expect(sessionIds).toContain(session1.sessionId);
 			expect(sessionIds).toContain(session2.sessionId);
 		});
@@ -159,7 +159,7 @@ describe('Session RPC Integration', () => {
 
 			let eventReceived = false;
 			const eventPromise = new Promise((resolve) => {
-				(ctx.stateManager as any).eventBus.on('session:updated', (data: any) => {
+				(ctx.stateManager as unknown).eventBus.on('session:updated', (data: unknown) => {
 					if (data.sessionId === created.sessionId) {
 						eventReceived = true;
 						resolve(data);
@@ -201,7 +201,7 @@ describe('Session RPC Integration', () => {
 
 			let deletedSessionId = null;
 			const eventPromise = new Promise((resolve) => {
-				(ctx.stateManager as any).eventBus.on('session:deleted', (data: any) => {
+				(ctx.stateManager as unknown).eventBus.on('session:deleted', (data: unknown) => {
 					deletedSessionId = data.sessionId;
 					resolve(data);
 				});

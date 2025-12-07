@@ -26,7 +26,7 @@ describe('setupRPCHandlers - Handler Registration', () => {
 		});
 
 		// Get initial handler count
-		const initialHandlers = (messageHub as any).rpcHandlers.size;
+		const initialHandlers = (messageHub as unknown).rpcHandlers.size;
 
 		// Setup handlers - FUNCTIONAL APPROACH (no class instantiation!)
 		setupRPCHandlers({
@@ -37,7 +37,7 @@ describe('setupRPCHandlers - Handler Registration', () => {
 		});
 
 		// Verify handlers were registered
-		const finalHandlers = (messageHub as any).rpcHandlers.size;
+		const finalHandlers = (messageHub as unknown).rpcHandlers.size;
 		expect(finalHandlers).toBeGreaterThan(initialHandlers);
 
 		// Should have at least 14 handlers
@@ -72,7 +72,7 @@ describe('setupRPCHandlers - Handler Registration', () => {
 			config,
 		});
 
-		const handlers = (messageHub as any).rpcHandlers;
+		const handlers = (messageHub as unknown).rpcHandlers;
 
 		// Session handlers
 		expect(handlers.has('session.create')).toBe(true);

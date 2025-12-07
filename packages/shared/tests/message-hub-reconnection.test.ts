@@ -190,7 +190,7 @@ describe('MessageHub Reconnection', () => {
 
 		// 2. Subscribe to event
 		let eventReceived = false;
-		const handler = (_data: any) => {
+		const handler = (_data: unknown) => {
 			eventReceived = true;
 		};
 

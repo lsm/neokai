@@ -95,7 +95,7 @@ describe.skip('Agent State Event Broadcasting (DEPRECATED)', () => {
 				);
 
 				// Collect state transition events
-				const events: any[] = [];
+				const events: unknown[] = [];
 
 				// We need to collect messages until we see the complete state cycle
 				// Expected: queued → processing → idle (plus RESULT from message.send)
@@ -188,9 +188,9 @@ describe.skip('Agent State Event Broadcasting (DEPRECATED)', () => {
 				);
 
 				// Collect messages until we get both queued and processing states
-				let queuedEvent: any = null;
-				let processingEvent: any = null;
-				const allStateEvents: any[] = [];
+				let queuedEvent: unknown = null;
+				let processingEvent: unknown = null;
+				const allStateEvents: unknown[] = [];
 
 				for (let i = 0; i < 20; i++) {
 					try {
@@ -279,7 +279,7 @@ describe.skip('Agent State Event Broadcasting (DEPRECATED)', () => {
 			);
 
 			// Collect messages
-			const events: any[] = [];
+			const events: unknown[] = [];
 			for (let i = 0; i < 5; i++) {
 				const msg = await waitForWebSocketMessage(ws, 5000);
 				if (msg.type === MessageType.EVENT && msg.method === 'agent.state') {
@@ -376,7 +376,7 @@ describe.skip('Agent State Event Broadcasting (DEPRECATED)', () => {
 				);
 
 				// Collect subsequent state events
-				const events: any[] = [];
+				const events: unknown[] = [];
 				for (let i = 0; i < 5; i++) {
 					const msg = await waitForWebSocketMessage(ws, 5000);
 					if (msg.type === MessageType.EVENT && msg.method === 'agent.state') {
@@ -455,7 +455,7 @@ describe.skip('Agent State Event Broadcasting (DEPRECATED)', () => {
 			]);
 
 			// At least one of the messages should be the interrupted state
-			const isStateEvent = (msg: any) =>
+			const isStateEvent = (msg: unknown) =>
 				msg.type === MessageType.EVENT &&
 				msg.method === 'agent.state' &&
 				msg.data.state.status === 'interrupted';

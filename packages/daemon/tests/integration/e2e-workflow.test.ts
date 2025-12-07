@@ -150,7 +150,7 @@ describe('End-to-End Workflow Integration', () => {
 			const list = await callRPCHandler(ctx.messageHub, 'session.list', {});
 			expect(list.sessions.length).toBe(2);
 
-			const ids = list.sessions.map((s: any) => s.id);
+			const ids = list.sessions.map((s: unknown) => s.id);
 			expect(ids).toContain(session1.sessionId);
 			expect(ids).toContain(session3.sessionId);
 			expect(ids).not.toContain(session2.sessionId);
@@ -205,7 +205,7 @@ describe('End-to-End Workflow Integration', () => {
 
 			// Verify all updates
 			const list = await callRPCHandler(ctx.messageHub, 'session.list', {});
-			const titles = list.sessions.map((s: any) => s.title).sort();
+			const titles = list.sessions.map((s: unknown) => s.title).sort();
 			expect(titles).toEqual(['Updated 0', 'Updated 1', 'Updated 2']);
 
 			// Concurrent deletes

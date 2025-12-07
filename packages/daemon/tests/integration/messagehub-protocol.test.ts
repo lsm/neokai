@@ -22,7 +22,7 @@ import {
 import { generateUUID } from '@liuboer/shared';
 
 // Helper to send RPC call via WebSocket
-function sendRPCCall(ws: WebSocket, method: string, data: any = {}, sessionId = 'global'): string {
+function sendRPCCall(ws: WebSocket, method: string, data: unknown = {}, sessionId = 'global'): string {
 	const messageId = generateUUID();
 	ws.send(
 		JSON.stringify({
@@ -58,7 +58,7 @@ async function subscribeToEvent(
 	);
 
 	// Wait for SUBSCRIBED ACK
-	let ack: any;
+	let ack: unknown;
 	let attempts = 0;
 	while (attempts < 5) {
 		ack = await waitForWebSocketMessage(ws, 5000);

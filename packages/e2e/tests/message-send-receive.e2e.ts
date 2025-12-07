@@ -157,7 +157,7 @@ test.describe('Message Send and Receive', () => {
 
 		// Simulate disconnection using exposed method
 		await page.evaluate(() => {
-			(window as any).connectionManager.simulateDisconnect();
+			window.connectionManager.simulateDisconnect();
 		});
 
 		await page.waitForTimeout(500);

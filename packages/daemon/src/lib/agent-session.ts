@@ -50,7 +50,7 @@ export class AgentSession {
 	private messageWaiters: Array<() => void> = [];
 
 	// SDK query object with control methods
-	private queryObject: any | null = null;
+	private queryObject: unknown | null = null;
 	private slashCommands: string[] = [];
 
 	// PHASE 3 FIX: Store unsubscribe functions to prevent memory leaks
@@ -271,7 +271,7 @@ export class AgentSession {
 				// Save user message to DB
 				const sdkUserMessage: SDKUserMessage = {
 					type: 'user' as const,
-					uuid: queuedMessage.id as any,
+					uuid: queuedMessage.id as unknown,
 					session_id: this.session.id,
 					parent_tool_use_id: null,
 					message: {
@@ -283,7 +283,7 @@ export class AgentSession {
 					},
 				};
 
-				this.db.saveSDKMessage(this.session.id, sdkUserMessage as any);
+				this.db.saveSDKMessage(this.session.id, sdkUserMessage as unknown);
 
 				// Emit user message
 				await this.messageHub.publish('sdk.message', sdkUserMessage, {
@@ -324,7 +324,7 @@ export class AgentSession {
 			// Yield to SDK
 			yield {
 				type: 'user' as const,
-				uuid: queuedMessage.id as any,
+				uuid: queuedMessage.id as unknown,
 				session_id: this.session.id,
 				parent_tool_use_id: null,
 				message: {
@@ -417,7 +417,7 @@ export class AgentSession {
 			try {
 				if (this.queryObject && typeof this.queryObject.supportedCommands === 'function') {
 					const commands = await this.queryObject.supportedCommands();
-					this.slashCommands = commands.map((cmd: any) => cmd.name);
+					this.slashCommands = commands.map((cmd: unknown) => cmd.name);
 
 					// Add built-in commands that the SDK supports but doesn't advertise
 					// These commands work but aren't returned by supportedCommands()
@@ -485,7 +485,7 @@ export class AgentSession {
 	/**
 	 * Handle incoming SDK messages
 	 */
-	private async handleSDKMessage(message: any): Promise<void> {
+	private async handleSDKMessage(message: unknown): Promise<void> {
 		// Emit and save message
 		await this.messageHub.publish('sdk.message', message, { sessionId: this.session.id });
 
@@ -531,7 +531,7 @@ export class AgentSession {
 
 		// Track tool calls
 		if (message.type === 'assistant' && Array.isArray(message.message?.content)) {
-			const toolCalls = message.message.content.filter((block: any) => block.type === 'tool_use');
+			const toolCalls = message.message.content.filter((block: unknown) => block.type === 'tool_use');
 			if (toolCalls.length > 0) {
 				this.session.metadata = {
 					...this.session.metadata,
@@ -834,7 +834,7 @@ export class AgentSession {
 		if (this.queryObject && typeof this.queryObject.supportedCommands === 'function') {
 			try {
 				const commands = await this.queryObject.supportedCommands();
-				this.slashCommands = commands.map((cmd: any) => cmd.name);
+				this.slashCommands = commands.map((cmd: unknown) => cmd.name);
 				return this.slashCommands;
 			} catch (error) {
 				console.warn(`[AgentSession ${this.session.id}] Failed to fetch slash commands:`, error);

@@ -36,16 +36,16 @@ export interface ClientConnection {
 	/** FIX P0.6: Check if connection can accept messages (backpressure) */
 	canAccept?(): boolean;
 	/** Optional: Get connection metadata */
-	metadata?: Record<string, any>;
+	metadata?: Record<string, unknown>;
 }
 
 /**
  * Logger interface for dependency injection
  */
 export interface RouterLogger {
-	log(message: string, ...args: any[]): void;
-	warn(message: string, ...args: any[]): void;
-	error(message: string, ...args: any[]): void;
+	log(message: string, ...args: unknown[]): void;
+	warn(message: string, ...args: unknown[]): void;
+	error(message: string, ...args: unknown[]): void;
 }
 
 /**
@@ -591,7 +591,7 @@ export class MessageHubRouter {
 	/**
 	 * Debug logging
 	 */
-	private log(message: string, ...args: any[]): void {
+	private log(message: string, ...args: unknown[]): void {
 		if (this.debug) {
 			this.logger.log(`[MessageHubRouter] ${message}`, ...args);
 		}

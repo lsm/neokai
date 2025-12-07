@@ -677,7 +677,7 @@ export class MessageHub {
 	 */
 	private async handleIncomingCall(message: HubMessage): Promise<void> {
 		const handler = this.rpcHandlers.get(message.method);
-		const clientId = (message as any).clientId; // Added by transport
+		const clientId = (message as unknown).clientId; // Added by transport
 
 		if (!handler) {
 			// No handler - send error response
@@ -889,7 +889,7 @@ export class MessageHub {
 		}
 
 		// Get clientId from message metadata (added by transport)
-		const clientId = (message as any).clientId;
+		const clientId = (message as unknown as { clientId?: string }).clientId;
 
 		if (!clientId) {
 			console.error(
@@ -942,7 +942,7 @@ export class MessageHub {
 			return;
 		}
 
-		const clientId = (message as any).clientId;
+		const clientId = (message as unknown as { clientId?: string }).clientId;
 
 		if (!clientId) {
 			console.error('[MessageHub] UNSUBSCRIBE without clientId');

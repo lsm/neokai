@@ -46,7 +46,7 @@ export interface ToolConfig {
 	icon?: () => JSX.Element;
 
 	/** Custom summary extractor function */
-	summaryExtractor?: (input: any) => string | null;
+	summaryExtractor?: (input: unknown) => string | null;
 
 	/** Custom full renderer component (optional) */
 	customRenderer?: (props: ToolRendererProps) => JSX.Element | null;
@@ -72,8 +72,8 @@ export interface ToolConfig {
  */
 export interface ToolRendererProps {
 	toolName: string;
-	input: any;
-	output?: any;
+	input: unknown;
+	output?: unknown;
 	isError?: boolean;
 	variant?: ToolCardVariant;
 }
@@ -94,7 +94,7 @@ export interface ToolIconProps {
  */
 export interface ToolSummaryProps {
 	toolName: string;
-	input: any;
+	input: unknown;
 	maxLength?: number;
 	showTooltip?: boolean;
 	className?: string;
@@ -105,7 +105,7 @@ export interface ToolSummaryProps {
  */
 export interface ToolProgressCardProps {
 	toolName: string;
-	toolInput?: any;
+	toolInput?: unknown;
 	elapsedTime: number;
 	toolUseId: string;
 	parentToolUseId?: string;
@@ -119,8 +119,8 @@ export interface ToolProgressCardProps {
 export interface ToolResultCardProps {
 	toolName: string;
 	toolId: string;
-	input: any;
-	output?: any;
+	input: unknown;
+	output?: unknown;
 	isError?: boolean;
 	variant?: ToolCardVariant;
 	defaultExpanded?: boolean;

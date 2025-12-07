@@ -8,7 +8,7 @@ import type { ToolIconSize } from './tool-types.ts';
 /**
  * Get tool summary text
  */
-export function getToolSummary(toolName: string, input: any): string {
+export function getToolSummary(toolName: string, input: unknown): string {
 	const config = getToolConfig(toolName);
 
 	// Try custom extractor first
@@ -98,7 +98,7 @@ export function extractFileName(path: string): string {
 /**
  * Format JSON for display
  */
-export function formatJSON(data: any, indent: number = 2): string {
+export function formatJSON(data: unknown, indent: number = 2): string {
 	try {
 		return JSON.stringify(data, null, indent);
 	} catch {
@@ -109,7 +109,7 @@ export function formatJSON(data: any, indent: number = 2): string {
 /**
  * Check if output is likely JSON
  */
-export function isJSONOutput(output: any): boolean {
+export function isJSONOutput(output: unknown): boolean {
 	if (typeof output === 'object' && output !== null) {
 		return true;
 	}
@@ -127,7 +127,7 @@ export function isJSONOutput(output: any): boolean {
 /**
  * Get output display text
  */
-export function getOutputDisplayText(output: any): string {
+export function getOutputDisplayText(output: unknown): string {
 	if (output === null || output === undefined) {
 		return '';
 	}
