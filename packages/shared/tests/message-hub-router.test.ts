@@ -577,5 +577,42 @@ describe('MessageHubRouter', () => {
 				expect(client?.subscriptions.get('session2')?.size).toBe(1); // 1 method in session2
 			});
 		});
+
+		describe('handleMessage', () => {
+			test('should handle incoming message from client (placeholder functionality)', () => {
+				const conn1 = createMockConnection(mockWs1);
+				const clientId = router.registerConnection(conn1);
+
+				const message = createCallMessage({
+					method: 'test.method',
+					data: { foo: 'bar' },
+					sessionId: 'session1',
+				});
+
+				// Should not throw - this is a placeholder method for future functionality
+				expect(() => {
+					router.handleMessage(message, clientId);
+				}).not.toThrow();
+			});
+		});
+
+		describe('getClientIds', () => {
+			test('should return all connected client IDs', () => {
+				const conn1 = createMockConnection(mockWs1);
+				const conn2 = createMockConnection(mockWs2);
+				const clientId1 = router.registerConnection(conn1);
+				const clientId2 = router.registerConnection(conn2);
+
+				const clientIds = router.getClientIds();
+				expect(clientIds).toContain(clientId1);
+				expect(clientIds).toContain(clientId2);
+				expect(clientIds.length).toBe(2);
+			});
+
+			test('should return empty array when no clients', () => {
+				const clientIds = router.getClientIds();
+				expect(clientIds.length).toBe(0);
+			});
+		});
 	});
 });
