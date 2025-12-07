@@ -9,7 +9,7 @@
 		"allowImportingTsExtensions": true,
 		"noEmit": true,
 		"composite": true,
-		"types": ["@playwright/test"]
+		"types": ["@playwright/test", "node"]
 	},
 	"include": ["tests/**/*", "playwright.config.ts"],
 	"exclude": ["node_modules"]

@@ -3,8 +3,7 @@
 	"references": [
 		{ "path": "./packages/daemon" },
 		{ "path": "./packages/shared" },
-		{ "path": "./packages/web" },
-		{ "path": "./packages/e2e" }
+		{ "path": "./packages/web" }
 	],
 	"exclude": ["node_modules", "tmp", "dist"]
 }
