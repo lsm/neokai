@@ -3,28 +3,12 @@
  *
  * These helpers wait for specific conditions or events instead of fixed timeouts,
  * making tests more reliable and faster.
+ *
+ * NOTE: Window augmentation for test types is in packages/e2e/global.d.ts
+ * The global Window interface is extended there with test-specific properties.
  */
 
 import { expect, type Page, type Locator } from '@playwright/test';
-
-// Type for window with test helpers
-type TestWindow = Window & {
-	__messageHub?: unknown;
-	__sdkMessages?: unknown[];
-	appState?: {
-		messageHub?: unknown;
-		currentSessionIdSignal?: { value?: string };
-		global?: {
-			value?: {
-				sessions?: {
-					$: { value?: { sessions?: unknown[] } };
-				};
-			};
-		};
-		sessions?: Map<string, { agent?: { $: { value?: unknown } }; context?: { $: { value?: unknown } }; commands?: { $: { value?: unknown } } }>;
-	};
-	currentSessionIdSignal?: { value?: string };
-};
 
 /**
  * Wait for WebSocket connection to be established
@@ -32,7 +16,7 @@ type TestWindow = Window & {
 export async function waitForWebSocketConnected(page: Page): Promise<void> {
 	await page.waitForFunction(
 		() => {
-			const hub = (window as TestWindow).__messageHub || (window as TestWindow).appState?.messageHub;
+			const hub = window.__messageHub || window.appState?.messageHub;
 			return hub?.getState && hub.getState() === 'connected';
 		},
 		{ timeout: 10000 }
@@ -68,11 +52,11 @@ export async function waitForSessionCreated(page: Page): Promise<string> {
 	const sessionId = await page.evaluate(() => {
 		// Try multiple ways to get session ID
 		// 1. From appState's private field (if exposed)
-		const appStateSessionId = (window as TestWindow).appState?.currentSessionIdSignal?.value;
+		const appStateSessionId = window.appState?.currentSessionIdSignal?.value;
 		if (appStateSessionId) return appStateSessionId;
 
 		// 2. From global currentSessionIdSignal (if exposed)
-		const globalSignal = (window as TestWindow).currentSessionIdSignal?.value;
+		const globalSignal = window.currentSessionIdSignal?.value;
 		if (globalSignal) return globalSignal;
 
 		// 3. From localStorage
@@ -84,8 +68,8 @@ export async function waitForSessionCreated(page: Page): Promise<string> {
 		if (pathId && pathId !== 'undefined') return pathId;
 
 		// 5. From latest session in sessions list
-		const sessions = (window as TestWindow).appState?.global?.value?.sessions?.$.value?.sessions || [];
-		const latestSession = sessions[sessions.length - 1];
+		const sessions = window.appState?.global?.value?.sessions?.$.value?.sessions || [];
+		const latestSession = sessions[sessions.length - 1] as { id?: string } | undefined;
 		if (latestSession?.id) return latestSession.id;
 
 		return null;
@@ -215,13 +199,16 @@ export async function waitForStateChannel(
 ): Promise<void> {
 	await page.waitForFunction(
 		({ chan, sid }) => {
-			const state = (window as TestWindow).appState;
+			const state = window.appState;
 			if (!state) return false;
 
 			if (sid === 'global') {
-				return state.global?.value?.[chan]?.$ !== undefined;
+				// Access dynamic channel property
+				const globalValue = state.global?.value as Record<string, { $?: unknown }> | undefined;
+				return globalValue?.[chan]?.$ !== undefined;
 			} else {
-				return state.sessions?.get(sid)?.[chan]?.$ !== undefined;
+				const sessionState = state.sessions?.get(sid) as Record<string, { $?: unknown }> | undefined;
+				return sessionState?.[chan]?.$ !== undefined;
 			}
 		},
 		{ chan: channel, sid: sessionId },
@@ -255,8 +242,8 @@ export async function waitForSDKMessage(
 ): Promise<void> {
 	await page.waitForFunction(
 		(type) => {
-			const messages = (window as TestWindow).__sdkMessages || [];
-			return messages.some((m: { type?: string }) => m.type === type);
+			const messages = window.__sdkMessages || [];
+			return messages.some((m) => m.type === type);
 		},
 		messageType,
 		{ timeout }
@@ -273,7 +260,7 @@ export async function waitForEvent(
 ): Promise<unknown> {
 	return page.evaluate(
 		async ({ event, sid }) => {
-			const hub = (window as unknown as { __messageHub?: unknown; appState?: { messageHub?: unknown } }).__messageHub || (window as unknown as { __messageHub?: unknown; appState?: { messageHub?: unknown } }).appState?.messageHub;
+			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub) {
 				throw new Error('MessageHub not found');
 			}
@@ -284,7 +271,7 @@ export async function waitForEvent(
 				}, 10000);
 
 				(async () => {
-					const unsubscribe = await (hub as { subscribe: (event: string, handler: (data: unknown) => Promise<void>, options: { sessionId: string }) => Promise<() => Promise<void>> }).subscribe(
+					const unsubscribe = await hub.subscribe(
 						event,
 						async (data: unknown) => {
 							clearTimeout(timeout);
@@ -341,7 +328,7 @@ export async function waitForTabSync(pages: Page[], timeout: number = 5000): Pro
 		const sessionCounts = await Promise.all(
 			pages.map((page) =>
 				page.evaluate(() => {
-					const sessions = (window as TestWindow).appState?.global?.value?.sessions?.$.value?.sessions;
+					const sessions = window.appState?.global?.value?.sessions?.$.value?.sessions;
 					return sessions?.length || 0;
 				})
 			)
@@ -371,7 +358,7 @@ export async function waitForAgentState(
 ): Promise<void> {
 	await page.waitForFunction(
 		({ sid, state }) => {
-			const agentState = (window as TestWindow).appState?.sessions?.get(sid)?.agent?.$.value;
+			const agentState = window.appState?.sessions?.get(sid)?.agent?.$.value;
 			return agentState?.status === state;
 		},
 		{ sid: sessionId, state: expectedState },
@@ -386,8 +373,10 @@ export async function waitForContextUpdate(page: Page, sessionId: string): Promi
 	// Wait for context state channel update
 	await page.waitForFunction(
 		(sid) => {
-			const context = (window as TestWindow).appState?.sessions?.get(sid)?.context?.$.value;
-			return context?.contextInfo !== null && context?.contextInfo !== undefined;
+			const context = window.appState?.sessions?.get(sid)?.context?.$.value;
+			// Check if contextInfo exists (it's on ContextState)
+			const contextWithInfo = context as { contextInfo?: unknown } | undefined;
+			return contextWithInfo?.contextInfo !== null && contextWithInfo?.contextInfo !== undefined;
 		},
 		sessionId,
 		{ timeout: 10000 }
@@ -400,8 +389,10 @@ export async function waitForContextUpdate(page: Page, sessionId: string): Promi
 export async function waitForSlashCommands(page: Page, sessionId: string): Promise<void> {
 	await page.waitForFunction(
 		(sid) => {
-			const commands = (window as TestWindow).appState?.sessions?.get(sid)?.commands?.$.value;
-			return commands?.availableCommands && commands.availableCommands.length > 0;
+			const commands = window.appState?.sessions?.get(sid)?.commands?.$.value;
+			// Check if availableCommands exists (it's on CommandsState)
+			const commandsWithAvailable = commands as { availableCommands?: unknown[] } | undefined;
+			return commandsWithAvailable?.availableCommands && commandsWithAvailable.availableCommands.length > 0;
 		},
 		sessionId,
 		{ timeout: 10000 }
@@ -415,19 +406,19 @@ export async function setupMessageHubTesting(page: Page): Promise<void> {
 	// Inject script to expose MessageHub and track SDK messages
 	await page.addInitScript(() => {
 		// Track SDK messages
-		(window as TestWindow).__sdkMessages = [];
+		window.__sdkMessages = [];
 
 		// Wait for MessageHub to be available and expose it
 		const checkInterval = setInterval(async () => {
-			const hub = (window as TestWindow).appState?.messageHub;
+			const hub = window.appState?.messageHub;
 			if (hub) {
-				(window as TestWindow).__messageHub = hub;
+				window.__messageHub = hub;
 
 				// Subscribe to SDK messages for tracking
 				await hub.subscribe(
 					'sdk.message',
 					(msg: unknown) => {
-						(window as TestWindow).__sdkMessages?.push(msg);
+						window.__sdkMessages?.push(msg as Parameters<NonNullable<typeof window.__sdkMessages>['push']>[0]);
 					},
 					{ sessionId: 'global' }
 				);
@@ -459,7 +450,7 @@ export async function cleanupTestSession(page: Page, sessionId: string): Promise
 		// Generous timeout: manual deletion takes ~3ms, but may take longer during agent processing
 		const result = await page.evaluate(async (sid) => {
 			try {
-				const hub = (window as TestWindow).__messageHub || (window as TestWindow).appState?.messageHub;
+				const hub = window.__messageHub || window.appState?.messageHub;
 				if (!hub || !hub.call) {
 					return { success: false, error: 'MessageHub not available' };
 				}

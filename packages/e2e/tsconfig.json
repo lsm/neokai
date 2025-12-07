@@ -11,6 +11,6 @@
 		"composite": true,
 		"types": ["@playwright/test", "node"]
 	},
-	"include": ["tests/**/*", "playwright.config.ts"],
+	"include": ["global.d.ts", "tests/**/*", "playwright.config.ts"],
 	"exclude": ["node_modules"]
 }

@@ -5,10 +5,19 @@ import type { AuthMethod, Message, OAuthTokens, Session, ToolCall } from '@liubo
 import type { SDKMessage } from '@liuboer/shared/sdk';
 import { generateUUID } from '@liuboer/shared';
 
+/**
+ * SQLite parameter value type.
+ * These are the valid types that can be bound to SQLite prepared statement parameters.
+ */
+type SQLiteValue = string | number | boolean | null | Buffer | Uint8Array;
+
 export class Database {
 	private db: BunDatabase;
 
 	constructor(private dbPath: string) {
+		// Initialize as null until initialize() is called
+		// This pattern is necessary because BunDatabase constructor is synchronous
+		// but we want to allow async directory creation before opening the DB
 		this.db = null as unknown as BunDatabase;
 	}
 
@@ -190,7 +199,7 @@ export class Database {
 
 	updateSession(id: string, updates: Partial<Session>): void {
 		const fields: string[] = [];
-		const values: any[] = [];
+		const values: SQLiteValue[] = [];
 
 		if (updates.title) {
 			fields.push('title = ?');
@@ -491,7 +500,7 @@ export class Database {
 	 */
 	getSDKMessages(sessionId: string, limit = 100, offset = 0, since?: number): SDKMessage[] {
 		let query = `SELECT sdk_message, timestamp FROM sdk_messages WHERE session_id = ?`;
-		const params: any[] = [sessionId];
+		const params: SQLiteValue[] = [sessionId];
 
 		// Add timestamp filter if 'since' is provided
 		// 'since' is a JavaScript millisecond timestamp, convert to ISO string for comparison
@@ -529,7 +538,7 @@ export class Database {
 		limit = 100
 	): SDKMessage[] {
 		let query = `SELECT sdk_message FROM sdk_messages WHERE session_id = ? AND message_type = ?`;
-		const params: any[] = [sessionId, messageType];
+		const params: SQLiteValue[] = [sessionId, messageType];
 
 		if (messageSubtype) {
 			query += ` AND message_subtype = ?`;

@@ -7,9 +7,16 @@
 
 import type { Elysia } from 'elysia';
 import { createEventMessage, createErrorMessage, MessageType, generateUUID } from '@liuboer/shared';
+import type { HubMessage } from '@liuboer/shared/message-hub/protocol';
 import type { WebSocketServerTransport } from '../lib/websocket-server-transport';
 import type { SessionManager } from '../lib/session-manager';
 import type { SubscriptionManager } from '../lib/subscription-manager';
+import type {
+	ElysiaWebSocket,
+	WebSocketMessage,
+	ParsedWebSocketMessage,
+	WebSocketHandlers,
+} from '../types/websocket';
 
 const GLOBAL_SESSION_ID = 'global';
 
@@ -23,17 +30,16 @@ export function setupMessageHubWebSocket(
 	sessionManager: SessionManager,
 	_subscriptionManager: SubscriptionManager
 ) {
-	// UNIFIED WebSocket endpoint - single connection handles all sessions
-	// Session routing is done via message.sessionId field, not URL
-	return app.ws('/ws', ({
-		open(ws: any) {
+	// Define typed handlers
+	const handlers: WebSocketHandlers = {
+		open(ws: ElysiaWebSocket) {
 			console.log('WebSocket connection established');
 
 			// Register client with transport (starts in global session)
-			const clientId = transport.registerClient(ws.raw as any, GLOBAL_SESSION_ID);
+			const clientId = transport.registerClient(ws.raw, GLOBAL_SESSION_ID);
 
 			// Store clientId on websocket for cleanup and message handling
-			(ws.raw as any).__clientId = clientId;
+			ws.raw.__clientId = clientId;
 
 			// NOTE: We don't auto-subscribe clients to events anymore.
 			// Clients will subscribe themselves by sending SUBSCRIBE messages.
@@ -52,7 +58,7 @@ export function setupMessageHubWebSocket(
 			ws.send(JSON.stringify(connectionEvent));
 		},
 
-		async message(ws: any, message: any) {
+		async message(ws: ElysiaWebSocket, message: WebSocketMessage) {
 			try {
 				// FIX P1.1: Validate message size before parsing (DoS prevention)
 				const messageStr = typeof message === 'string' ? message : JSON.stringify(message);
@@ -74,7 +80,8 @@ export function setupMessageHubWebSocket(
 					return;
 				}
 
-				const data = typeof message === 'string' ? JSON.parse(message) : message;
+				const data: ParsedWebSocketMessage =
+					typeof message === 'string' ? JSON.parse(message) : message;
 
 				// Handle ping/pong
 				if (data.type === 'ping' || data.type === 'PING') {
@@ -91,7 +98,7 @@ export function setupMessageHubWebSocket(
 				}
 
 				// Get client ID for subscription tracking
-				const clientId = (ws.raw as any).__clientId;
+				const clientId = ws.raw.__clientId;
 
 				// Validate sessionId exists in message
 				if (!data.sessionId) {
@@ -121,7 +128,10 @@ export function setupMessageHubWebSocket(
 
 				// Pass to transport which will notify MessageHub
 				// Message routing is handled by sessionId field, not connection
-				transport.handleClientMessage(data, clientId);
+				// Cast to HubMessage - the parsed JSON has the same structure
+				if (clientId) {
+					transport.handleClientMessage(data as unknown as HubMessage, clientId);
+				}
 			} catch (error) {
 				console.error('Error processing WebSocket message:', error);
 				const errorMsg = createErrorMessage({
@@ -136,20 +146,25 @@ export function setupMessageHubWebSocket(
 			}
 		},
 
-		close(ws: any) {
+		close(ws: ElysiaWebSocket) {
 			console.log('WebSocket disconnected');
-			const clientId = (ws.raw as any).__clientId;
+			const clientId = ws.raw.__clientId;
 			if (clientId) {
 				transport.unregisterClient(clientId);
 			}
 		},
 
-		error(ws: any, error: any) {
+		error(ws: ElysiaWebSocket, error: Error) {
 			console.error('WebSocket error:', error);
-			const clientId = (ws.raw as any).__clientId;
+			const clientId = ws.raw.__clientId;
 			if (clientId) {
 				transport.unregisterClient(clientId);
 			}
 		},
-	} as any));
+	};
+
+	// UNIFIED WebSocket endpoint - single connection handles all sessions
+	// Session routing is done via message.sessionId field, not URL
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Elysia's ws() types are incomplete
+	return app.ws('/ws', handlers as any);
 }

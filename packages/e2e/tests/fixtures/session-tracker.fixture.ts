@@ -40,7 +40,7 @@ async function cleanupSessionDirect(page: Page, sessionId: string): Promise<bool
 	try {
 		const result = await page.evaluate(async (sid) => {
 			try {
-				const hub = (window as unknown as { __messageHub?: unknown; appState?: { messageHub?: unknown } }).__messageHub || (window as unknown as { __messageHub?: unknown; appState?: { messageHub?: unknown } }).appState?.messageHub;
+				const hub = window.__messageHub || window.appState?.messageHub;
 				if (!hub || !hub.call) {
 					return { success: false, error: 'MessageHub not available' };
 				}
