@@ -105,6 +105,16 @@ export class StateManager {
     this.eventBus.on('auth:changed', async () => {
       await this.broadcastSystemChange();
     });
+
+    // Agent state events - broadcast unified session state
+    this.eventBus.on('agent-state:changed', async (data: { sessionId: string; state: AgentProcessingState }) => {
+      await this.broadcastSessionStateChange(data.sessionId);
+    });
+
+    // Commands events - broadcast unified session state
+    this.eventBus.on('commands:updated', async (data: { sessionId: string; commands: string[] }) => {
+      await this.broadcastSessionStateChange(data.sessionId);
+    });
   }
 
   /**
@@ -273,18 +283,6 @@ export class StateManager {
     };
   }
 
-  private async getSessionMetaState(sessionId: string): Promise<SessionMetaState> {
-    const agentSession = await this.sessionManager.getSessionAsync(sessionId);
-    if (!agentSession) {
-      throw new Error("Session not found");
-    }
-
-    return {
-      session: agentSession.getSessionData(),
-      timestamp: Date.now(),
-    };
-  }
-
   private async getSDKMessagesState(sessionId: string): Promise<SDKMessagesState> {
     const agentSession = await this.sessionManager.getSessionAsync(sessionId);
     if (!agentSession) {
@@ -295,58 +293,6 @@ export class StateManager {
 
     return {
       sdkMessages,
-      timestamp: Date.now(),
-    };
-  }
-
-  private async getAgentState(sessionId: string): Promise<AgentState> {
-    const agentSession = await this.sessionManager.getSessionAsync(sessionId);
-    if (!agentSession) {
-      throw new Error("Session not found");
-    }
-
-    // TODO: Add these methods to AgentSession
-    const isProcessing = false; // agentSession.isProcessing();
-    const currentTask = null; // agentSession.getCurrentTask();
-
-    let status: AgentState["status"] = "idle";
-    if (isProcessing) {
-      status = "working";
-    }
-
-    return {
-      isProcessing,
-      currentTask,
-      status,
-      timestamp: Date.now(),
-    };
-  }
-
-  private async getContextState(sessionId: string): Promise<ContextState> {
-    const agentSession = await this.sessionManager.getSessionAsync(sessionId);
-    if (!agentSession) {
-      throw new Error("Session not found");
-    }
-
-    // TODO: Add getContextInfo method to AgentSession
-    const contextInfo = null; // agentSession.getContextInfo();
-
-    return {
-      contextInfo,
-      timestamp: Date.now(),
-    };
-  }
-
-  private async getCommandsState(sessionId: string): Promise<CommandsState> {
-    const agentSession = await this.sessionManager.getSessionAsync(sessionId);
-    if (!agentSession) {
-      throw new Error("Session not found");
-    }
-
-    const availableCommands = await agentSession.getSlashCommands();
-
-    return {
-      availableCommands,
       timestamp: Date.now(),
     };
   }
@@ -443,44 +389,5 @@ export class StateManager {
       { ...update, version },
       { sessionId },
     );
-  }
-
-  /**
-   * Broadcast agent state change
-   * FIX: Uses per-channel versioning
-   */
-  async broadcastAgentStateChange(sessionId: string): Promise<void> {
-    const version = this.incrementVersion(`${STATE_CHANNELS.SESSION_AGENT}:${sessionId}`);
-    const state = { ...await this.getAgentState(sessionId), version };
-
-    await this.messageHub.publish(STATE_CHANNELS.SESSION_AGENT, state, {
-      sessionId,
-    });
-  }
-
-  /**
-   * Broadcast context info change
-   * FIX: Uses per-channel versioning
-   */
-  async broadcastContextChange(sessionId: string): Promise<void> {
-    const version = this.incrementVersion(`${STATE_CHANNELS.SESSION_CONTEXT}:${sessionId}`);
-    const state = { ...await this.getContextState(sessionId), version };
-
-    await this.messageHub.publish(STATE_CHANNELS.SESSION_CONTEXT, state, {
-      sessionId,
-    });
-  }
-
-  /**
-   * Broadcast commands change
-   * FIX: Uses per-channel versioning
-   */
-  async broadcastCommandsChange(sessionId: string): Promise<void> {
-    const version = this.incrementVersion(`${STATE_CHANNELS.SESSION_COMMANDS}:${sessionId}`);
-    const state = { ...await this.getCommandsState(sessionId), version };
-
-    await this.messageHub.publish(STATE_CHANNELS.SESSION_COMMANDS, state, {
-      sessionId,
-    });
   }
 }

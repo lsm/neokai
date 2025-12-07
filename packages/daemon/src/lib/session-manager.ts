@@ -58,11 +58,12 @@ export class SessionManager {
     // Save to database
     this.db.createSession(session);
 
-    // Create agent session with MessageHub and auth function
+    // Create agent session with MessageHub, EventBus, and auth function
     const agentSession = new AgentSession(
       session,
       this.db,
       this.messageHub,
+      this.eventBus,
       () => this.authManager.getCurrentApiKey(),
     );
 
@@ -102,11 +103,12 @@ export class SessionManager {
     const session = this.db.getSession(sessionId);
     if (!session) return null;
 
-    // Create agent session with MessageHub and auth function
+    // Create agent session with MessageHub, EventBus, and auth function
     const agentSession = new AgentSession(
       session,
       this.db,
       this.messageHub,
+      this.eventBus,
       () => this.authManager.getCurrentApiKey(),
     );
     this.sessions.set(sessionId, agentSession);
@@ -153,11 +155,12 @@ export class SessionManager {
     const session = this.db.getSession(sessionId);
     if (!session) return null;
 
-    // Create agent session with MessageHub and auth function
+    // Create agent session with MessageHub, EventBus, and auth function
     return new AgentSession(
       session,
       this.db,
       this.messageHub,
+      this.eventBus,
       () => this.authManager.getCurrentApiKey(),
     );
   }

@@ -78,10 +78,11 @@ describe("State Synchronization Integration", () => {
 
       expect(snapshot).toBeDefined();
       expect(snapshot.session).toBeDefined();
+      expect(snapshot.session.session).toBeDefined();
+      expect(snapshot.session.agent).toBeDefined();
+      expect(snapshot.session.context).toBeDefined();
+      expect(snapshot.session.commands).toBeDefined();
       expect(snapshot.sdkMessages).toBeDefined();
-      expect(snapshot.agent).toBeDefined();
-      expect(snapshot.context).toBeDefined();
-      expect(snapshot.commands).toBeDefined();
       expect(snapshot.meta).toBeDefined();
       expect(snapshot.meta.sessionId).toBe(created.sessionId);
     });
@@ -331,7 +332,7 @@ describe("State Synchronization Integration", () => {
       ws.send(JSON.stringify({
         id: "subscribe-1",
         type: MessageType.SUBSCRIBE,
-        method: STATE_CHANNELS.SESSION_META,
+        method: STATE_CHANNELS.SESSION,
         data: {},
         sessionId: created.sessionId,
         timestamp: new Date().toISOString(),
@@ -365,7 +366,7 @@ describe("State Synchronization Integration", () => {
 
       expect(updateResult.type).toBe(MessageType.RESULT);
       expect(stateEvent.type).toBe(MessageType.EVENT);
-      expect(stateEvent.method).toBe(STATE_CHANNELS.SESSION_META);
+      expect(stateEvent.method).toBe(STATE_CHANNELS.SESSION);
       expect(stateEvent.data.session).toBeDefined();
       expect(stateEvent.data.session.title).toBe("Updated Title");
 

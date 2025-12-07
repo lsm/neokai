@@ -1,6 +1,6 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { Message, MessageContent, Session, ToolCall, ContextInfo, AgentProcessingState } from "@liuboer/shared";
-import type { MessageHub } from "@liuboer/shared";
+import type { MessageHub, EventBus } from "@liuboer/shared";
 import type { SDKUserMessage } from "@liuboer/shared/sdk/sdk.d.ts";
 import { generateUUID, isValidModel, resolveModelAlias, getModelInfo } from "@liuboer/shared";
 import { Database } from "../storage/database";
@@ -61,6 +61,7 @@ export class AgentSession {
     private session: Session,
     private db: Database,
     private messageHub: MessageHub,
+    private eventBus: EventBus, // EventBus for state change notifications
     private getApiKey: () => Promise<string | null>, // Function to get current API key
   ) {
     // Initialize error manager
@@ -106,22 +107,18 @@ export class AgentSession {
 
   /**
    * Update and broadcast the agent processing state
-   * FIX: Server maintains state and pushes to all connected clients
+   * NEW: Uses EventBus to notify StateManager, which broadcasts unified session state
    */
   private async setProcessingState(newState: AgentProcessingState): Promise<void> {
     this.processingState = newState;
 
-    // Broadcast state to all subscribers
-    await this.messageHub.publish(
-      'agent.state',
-      {
-        state: newState,
-        timestamp: Date.now(),
-      },
-      { sessionId: this.session.id }
-    );
+    // Emit event via EventBus (StateManager will broadcast unified session state)
+    await this.eventBus.emit('agent-state:changed', {
+      sessionId: this.session.id,
+      state: newState,
+    });
 
-    console.log(`[AgentSession ${this.session.id}] State updated:`, newState);
+    console.log(`[AgentSession ${this.session.id}] Agent state changed:`, newState);
   }
 
   /**
@@ -401,12 +398,11 @@ export class AgentSession {
 
           console.log(`[AgentSession ${this.session.id}] Fetched slash commands:`, this.slashCommands);
 
-          // Broadcast commands to client immediately after fetching
-          await this.messageHub.publish(
-            'session.commands-updated',
-            { availableCommands: this.slashCommands },
-            { sessionId: this.session.id }
-          );
+          // Emit event via EventBus (StateManager will broadcast unified session state)
+          await this.eventBus.emit('commands:updated', {
+            sessionId: this.session.id,
+            commands: this.slashCommands,
+          });
         }
       } catch (error) {
         console.warn(`[AgentSession ${this.session.id}] Failed to fetch slash commands:`, error);

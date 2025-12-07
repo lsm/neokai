@@ -23,14 +23,9 @@ import type { SDKMessage } from "@liuboer/shared/sdk";
 import type {
   SessionsState,
   SystemState,
-  AuthState,
-  ConfigState,
-  HealthState,
-  SessionMetaState,
+  SessionState,
   SDKMessagesState,
-  AgentState,
-  ContextState,
-  CommandsState,
+  AgentProcessingState,
   SessionsUpdate,
   SDKMessagesUpdate,
 } from "@liuboer/shared";
@@ -108,31 +103,20 @@ class GlobalStateChannels {
  * Session-Specific State Channels
  */
 class SessionStateChannels {
-  // Session metadata
-  session: StateChannel<SessionMetaState>;
+  // Unified session state (metadata + agent + commands + context)
+  session: StateChannel<SessionState>;
 
   // SDK Messages
   sdkMessages: StateChannel<SDKMessagesState>;
-
-  // Agent state
-  agent: StateChannel<AgentState>;
-
-  // Context info
-  context: StateChannel<ContextState>;
-
-  // Available commands
-  commands: StateChannel<CommandsState>;
-
-  // Cleanup functions for subscriptions
-  private cleanupFunctions: Array<() => void> = [];
 
   constructor(
     private hub: MessageHub,
     private sessionId: string,
   ) {
-    this.session = new StateChannel<SessionMetaState>(
+    // Unified session state channel
+    this.session = new StateChannel<SessionState>(
       hub,
-      STATE_CHANNELS.SESSION_META,
+      STATE_CHANNELS.SESSION,
       {
         sessionId,
         enableDeltas: false,
@@ -140,6 +124,7 @@ class SessionStateChannels {
       },
     );
 
+    // SDK Messages channel
     this.sdkMessages = new StateChannel<SDKMessagesState>(
       hub,
       STATE_CHANNELS.SESSION_SDK_MESSAGES,
@@ -156,55 +141,6 @@ class SessionStateChannels {
         debug: false,
       },
     );
-
-    this.agent = new StateChannel<AgentState>(
-      hub,
-      STATE_CHANNELS.SESSION_AGENT,
-      {
-        sessionId,
-        enableDeltas: false,
-        debug: false,
-      },
-    );
-
-    this.context = new StateChannel<ContextState>(
-      hub,
-      STATE_CHANNELS.SESSION_CONTEXT,
-      {
-        sessionId,
-        enableDeltas: false,
-        debug: false,
-      },
-    );
-
-    this.commands = new StateChannel<CommandsState>(
-      hub,
-      STATE_CHANNELS.SESSION_COMMANDS,
-      {
-        sessionId,
-        enableDeltas: false,
-        debug: false,
-      },
-    );
-
-    // Subscribe to immediate commands updates (broadcasted when SDK fetches commands)
-    // IMPORTANT: hub.subscribe() returns a Promise, must await it
-    hub.subscribe(
-      'session.commands-updated',
-      (data: { availableCommands: string[] }) => {
-        console.log(`[State] Received commands update for session ${sessionId}:`, data.availableCommands);
-        // Update the commands channel immediately
-        this.commands.$.value = {
-          availableCommands: data.availableCommands,
-          timestamp: Date.now(),
-        };
-      },
-      { sessionId }
-    ).then(unsub => {
-      this.cleanupFunctions.push(unsub);
-    }).catch(err => {
-      console.error(`[State] Failed to subscribe to session.commands-updated for session ${sessionId}:`, err);
-    });
   }
 
   /**
@@ -214,9 +150,6 @@ class SessionStateChannels {
     await Promise.all([
       this.session.start(),
       this.sdkMessages.start(),
-      this.agent.start(),
-      this.context.start(),
-      this.commands.start(),
     ]);
   }
 
@@ -226,17 +159,6 @@ class SessionStateChannels {
   stop(): void {
     this.session.stop();
     this.sdkMessages.stop();
-    this.agent.stop();
-    this.context.stop();
-    this.commands.stop();
-
-    // Cleanup subscriptions
-    this.cleanupFunctions.forEach(cleanup => {
-      if (typeof cleanup === 'function') {
-        cleanup();
-      }
-    });
-    this.cleanupFunctions = [];
   }
 }
 
@@ -396,13 +318,16 @@ export const healthStatus = computed<HealthStatus | null>(() => {
 
 // Current session signals (derived from currentSessionId) - exported as direct Preact computed signals
 // IMPORTANT: Access the underlying signal via .$ to ensure Preact tracks the dependency
-export const currentSession = computed<Session | null>(() => {
+export const currentSessionState = computed<SessionState | null>(() => {
   const sessionId = appState["currentSessionIdSignal"].value;
   if (!sessionId) return null;
 
   const channels = appState.getSessionChannels(sessionId);
-  const stateValue = channels.session.$.value;
-  return stateValue?.session || null;
+  return channels.session.$.value || null;
+});
+
+export const currentSession = computed<Session | null>(() => {
+  return currentSessionState.value?.session || null;
 });
 
 export const currentSDKMessages = computed<SDKMessage[]>(() => {
@@ -414,37 +339,24 @@ export const currentSDKMessages = computed<SDKMessage[]>(() => {
   return stateValue?.sdkMessages || [];
 });
 
-export const currentAgentState = computed<AgentState | null>(() => {
-  const sessionId = appState["currentSessionIdSignal"].value;
-  if (!sessionId) return null;
-
-  const channels = appState.getSessionChannels(sessionId);
-  return channels.agent.$.value || null;
+export const currentAgentState = computed<AgentProcessingState>(() => {
+  return currentSessionState.value?.agent || { status: 'idle' };
 });
 
 export const currentContextInfo = computed<ContextInfo | null>(() => {
-  const sessionId = appState["currentSessionIdSignal"].value;
-  if (!sessionId) return null;
-
-  const channels = appState.getSessionChannels(sessionId);
-  const stateValue = channels.context.$.value;
-  return stateValue?.contextInfo || null;
+  return currentSessionState.value?.context || null;
 });
 
 export const currentCommands = computed<string[]>(() => {
-  const sessionId = appState["currentSessionIdSignal"].value;
-  if (!sessionId) return [];
-
-  const channels = appState.getSessionChannels(sessionId);
-  const stateValue = channels.commands.$.value;
-  return stateValue?.availableCommands || [];
+  return currentSessionState.value?.commands?.availableCommands || [];
 });
 
 /**
  * Derived/computed state - exported as direct Preact computed signals
  */
 export const isAgentWorking = computed<boolean>(() => {
-  return currentAgentState.value?.isProcessing || false;
+  const state = currentAgentState.value;
+  return state.status === 'processing' || state.status === 'queued';
 });
 
 export const canSendMessage = computed<boolean>(() => {
@@ -506,6 +418,9 @@ export async function createSessionOptimistic(
     metadata: {
       messageCount: 0,
       totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalCost: 0,
       toolCallCount: 0,
     },
   };
