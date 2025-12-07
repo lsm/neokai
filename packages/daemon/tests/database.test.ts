@@ -175,7 +175,7 @@ describe('Database', () => {
 			const messages = db.getMessages('session-1');
 
 			assertEquals(messages.length, 1);
-			assertEquals(messages[0].id, 'msg-1');
+			assertEquals(messages[0].id, '00000000-0000-0000-0000-000000000001');
 			assertEquals(messages[0].content, 'Hello, world!');
 			assertEquals(messages[0].role, 'user');
 
@@ -251,8 +251,8 @@ describe('Database', () => {
 
 			assertEquals(messages.length, 2);
 			// SDK messages are stored chronologically
-			assertEquals(messages[0].id, 'msg-2');
-			assertEquals(messages[1].id, 'msg-1');
+			assertEquals(messages[0].id, '00000000-0000-0000-0000-000000000002');
+			assertEquals(messages[1].id, '00000000-0000-0000-0000-000000000001');
 
 			db.close();
 		});
