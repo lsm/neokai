@@ -7,9 +7,8 @@
 		"strict": true,
 		"skipLibCheck": true,
 		"allowImportingTsExtensions": true,
-		"noEmit": true,
-		"types": ["bun-types"]
+		"noEmit": true
 	},
 	"include": ["src/**/*", "tests/**/*"],
-	"exclude": ["node_modules", "dist"]
+	"exclude": ["node_modules", "dist", "src/sdk/**/*"]
 }
