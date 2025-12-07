@@ -8,61 +8,61 @@
  * 3. Generates index.html with references to hashed files
  */
 
-import { $ } from "bun";
-import { mkdirSync, writeFileSync, copyFileSync } from "fs";
-import { join } from "path";
+import { $ } from 'bun';
+import { mkdirSync, writeFileSync, copyFileSync } from 'fs';
+import { join } from 'path';
 
-const DIST_DIR = join(import.meta.dir, "dist");
+const DIST_DIR = join(import.meta.dir, 'dist');
 
-console.log("🏗️  Building Liuboer Web UI for production...\n");
+console.log('🏗️  Building Liuboer Web UI for production...\n');
 
 // Clean dist directory
-console.log("🧹 Cleaning dist directory...");
+console.log('🧹 Cleaning dist directory...');
 await $`rm -rf ${DIST_DIR}`;
 mkdirSync(DIST_DIR, { recursive: true });
 
 // Build CSS
-console.log("🎨 Building CSS with Tailwind...");
-await $`tailwindcss --input src/styles.css --output ${join(DIST_DIR, "styles.css")} --minify`;
+console.log('🎨 Building CSS with Tailwind...');
+await $`tailwindcss --input src/styles.css --output ${join(DIST_DIR, 'styles.css')} --minify`;
 
 // Build JavaScript with content hashing
-console.log("📦 Building JavaScript with content hashing...");
+console.log('📦 Building JavaScript with content hashing...');
 const buildResult = await Bun.build({
-  entrypoints: ["./src/client.tsx"],
-  outdir: DIST_DIR,
-  minify: true,
-  splitting: true,
-  naming: {
-    entry: "[dir]/[name]-[hash].[ext]",
-    chunk: "[dir]/[name]-[hash].[ext]",
-    asset: "[dir]/[name]-[hash].[ext]",
-  },
-  sourcemap: "external",
+	entrypoints: ['./src/client.tsx'],
+	outdir: DIST_DIR,
+	minify: true,
+	splitting: true,
+	naming: {
+		entry: '[dir]/[name]-[hash].[ext]',
+		chunk: '[dir]/[name]-[hash].[ext]',
+		asset: '[dir]/[name]-[hash].[ext]',
+	},
+	sourcemap: 'external',
 });
 
 if (!buildResult.success) {
-  console.error("❌ Build failed:");
-  for (const log of buildResult.logs) {
-    console.error(log);
-  }
-  process.exit(1);
+	console.error('❌ Build failed:');
+	for (const log of buildResult.logs) {
+		console.error(log);
+	}
+	process.exit(1);
 }
 
 // Extract the hashed filename for the main bundle
-const mainBundle = buildResult.outputs.find((output) =>
-  output.path.includes("client") && output.path.endsWith(".js")
+const mainBundle = buildResult.outputs.find(
+	(output) => output.path.includes('client') && output.path.endsWith('.js')
 );
 
 if (!mainBundle) {
-  console.error("❌ Could not find main bundle output");
-  process.exit(1);
+	console.error('❌ Could not find main bundle output');
+	process.exit(1);
 }
 
-const mainBundleName = mainBundle.path.split("/").pop();
+const mainBundleName = mainBundle.path.split('/').pop();
 console.log(`✅ Main bundle: ${mainBundleName}`);
 
 // Generate index.html with hashed references
-console.log("📄 Generating index.html...");
+console.log('📄 Generating index.html...');
 const indexHtml = `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -83,9 +83,9 @@ const indexHtml = `<!DOCTYPE html>
   </body>
 </html>`;
 
-writeFileSync(join(DIST_DIR, "index.html"), indexHtml);
+writeFileSync(join(DIST_DIR, 'index.html'), indexHtml);
 
-console.log("\n✨ Build complete!");
+console.log('\n✨ Build complete!');
 console.log(`📂 Output: ${DIST_DIR}`);
 console.log(`📊 Bundle size: ${(mainBundle.size / 1024).toFixed(2)} KB`);
 console.log("\n🚀 Run 'bun run start' to serve the production build");

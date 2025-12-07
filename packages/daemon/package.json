@@ -1,27 +1,27 @@
 {
-  "name": "@liuboer/daemon",
-  "version": "0.1.0",
-  "type": "module",
-  "main": "main.ts",
-  "exports": {
-    ".": "./main.ts",
-    "./app": "./src/app.ts",
-    "./config": "./src/config.ts"
-  },
-  "scripts": {
-    "dev": "bun run --watch main.ts",
-    "start": "NODE_ENV=production bun run main.ts",
-    "test": "bun test",
-    "test:watch": "bun test --watch"
-  },
-  "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.1.60",
-    "@elysiajs/cors": "1.4.0",
-    "@liuboer/shared": "workspace:*",
-    "dotenv": "17.2.3",
-    "elysia": "1.4.18"
-  },
-  "devDependencies": {
-    "@types/bun": "latest"
-  }
+	"name": "@liuboer/daemon",
+	"version": "0.1.0",
+	"type": "module",
+	"main": "main.ts",
+	"exports": {
+		".": "./main.ts",
+		"./app": "./src/app.ts",
+		"./config": "./src/config.ts"
+	},
+	"scripts": {
+		"dev": "bun run --watch main.ts",
+		"start": "NODE_ENV=production bun run main.ts",
+		"test": "bun test",
+		"test:watch": "bun test --watch"
+	},
+	"dependencies": {
+		"@anthropic-ai/claude-agent-sdk": "0.1.60",
+		"@elysiajs/cors": "1.4.0",
+		"@liuboer/shared": "workspace:*",
+		"dotenv": "17.2.3",
+		"elysia": "1.4.18"
+	},
+	"devDependencies": {
+		"@types/bun": "latest"
+	}
 }

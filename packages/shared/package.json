@@ -1,10 +1,10 @@
 {
-  "name": "@liuboer/shared",
-  "version": "0.1.0",
-  "type": "module",
-  "main": "src/mod.ts",
-  "exports": {
-    ".": "./src/mod.ts",
-    "./state-types": "./src/state-types.ts"
-  }
+	"name": "@liuboer/shared",
+	"version": "0.1.0",
+	"type": "module",
+	"main": "src/mod.ts",
+	"exports": {
+		".": "./src/mod.ts",
+		"./state-types": "./src/state-types.ts"
+	}
 }

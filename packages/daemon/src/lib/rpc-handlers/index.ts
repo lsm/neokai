@@ -5,33 +5,33 @@
  * Organized by domain for better maintainability.
  */
 
-import type { MessageHub } from "@liuboer/shared";
-import type { SessionManager } from "../session-manager";
-import type { AuthManager } from "../auth-manager";
-import type { Config } from "../../config";
+import type { MessageHub } from '@liuboer/shared';
+import type { SessionManager } from '../session-manager';
+import type { AuthManager } from '../auth-manager';
+import type { Config } from '../../config';
 
-import { setupSessionHandlers } from "./session-handlers";
-import { setupMessageHandlers } from "./message-handlers";
-import { setupFileHandlers } from "./file-handlers";
-import { setupSystemHandlers } from "./system-handlers";
-import { setupAuthHandlers } from "./auth-handlers";
-import { setupCommandHandlers } from "./command-handlers";
+import { setupSessionHandlers } from './session-handlers';
+import { setupMessageHandlers } from './message-handlers';
+import { setupFileHandlers } from './file-handlers';
+import { setupSystemHandlers } from './system-handlers';
+import { setupAuthHandlers } from './auth-handlers';
+import { setupCommandHandlers } from './command-handlers';
 
 export interface RPCHandlerDependencies {
-  messageHub: MessageHub;
-  sessionManager: SessionManager;
-  authManager: AuthManager;
-  config: Config;
+	messageHub: MessageHub;
+	sessionManager: SessionManager;
+	authManager: AuthManager;
+	config: Config;
 }
 
 /**
  * Register all RPC handlers on MessageHub
  */
 export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
-  setupSessionHandlers(deps.messageHub, deps.sessionManager);
-  setupMessageHandlers(deps.messageHub, deps.sessionManager);
-  setupCommandHandlers(deps.messageHub, deps.sessionManager);
-  setupFileHandlers(deps.messageHub, deps.sessionManager);
-  setupSystemHandlers(deps.messageHub, deps.sessionManager, deps.authManager, deps.config);
-  setupAuthHandlers(deps.messageHub, deps.authManager);
+	setupSessionHandlers(deps.messageHub, deps.sessionManager);
+	setupMessageHandlers(deps.messageHub, deps.sessionManager);
+	setupCommandHandlers(deps.messageHub, deps.sessionManager);
+	setupFileHandlers(deps.messageHub, deps.sessionManager);
+	setupSystemHandlers(deps.messageHub, deps.sessionManager, deps.authManager, deps.config);
+	setupAuthHandlers(deps.messageHub, deps.authManager);
 }

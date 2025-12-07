@@ -3,6 +3,7 @@
 This document lists all the `data-testid` attributes used in the application for E2E testing.
 
 ## Sidebar Component (`/packages/web/src/islands/Sidebar.tsx`)
+
 - `data-testid="session-card"` - Each session card in the sidebar
 - `data-session-id="[sessionId]"` - Session ID attribute for each card
 - `data-testid="new-session-btn"` - New Session button
@@ -10,6 +11,7 @@ This document lists all the `data-testid` attributes used in the application for
 - `data-testid="settings-btn"` - Settings button in footer
 
 ## Chat Container (`/packages/web/src/islands/ChatContainer.tsx`)
+
 - `data-testid="confirm-delete-session"` - Confirm delete button in modal
 - `data-testid="message-input"` - Message input textarea
 - `data-testid="send-btn"` - Send message button
@@ -18,15 +20,18 @@ This document lists all the `data-testid` attributes used in the application for
 - `data-message-role="[user|assistant]"` - Role attribute for messages
 
 ## Main Content (`/packages/web/src/islands/MainContent.tsx`)
+
 - `data-testid="welcome-screen"` - Welcome/home screen container
 - `data-testid="chat-container"` - Chat container wrapper
 
 ## Status Indicator
+
 - `data-testid="status-indicator"` - Status indicator container
 - `data-testid="connection-status"` - Connection status text
 - `data-testid="processing-status"` - Processing status text
 
 ## Messages
+
 - `data-testid="message"` - Individual message container
 - `data-testid="user-message"` - User message
 - `data-testid="assistant-message"` - Assistant message
@@ -34,24 +39,29 @@ This document lists all the `data-testid` attributes used in the application for
 - `data-testid="tool-call"` - Tool call display
 
 ## Modals
+
 - `data-testid="modal-backdrop"` - Modal backdrop
 - `data-testid="modal-content"` - Modal content container
 - `data-testid="modal-close"` - Modal close button
 
 ## Forms
+
 - `data-testid="auth-form"` - Authentication form
 - `data-testid="api-key-input"` - API key input field
 - `data-testid="save-auth-btn"` - Save authentication button
 
 ## Loading States
+
 - `data-testid="skeleton-loader"` - Skeleton loader component
 - `data-testid="spinner"` - Loading spinner
 
 ## Navigation
+
 - `data-testid="hamburger-menu"` - Mobile menu button
 - `data-testid="close-sidebar"` - Close sidebar button (mobile)
 
 ## State Attributes
+
 These attributes help with waiting for specific states:
 
 - `data-messagehub-connected="true|false"` - MessageHub connection state

@@ -1,20 +1,20 @@
 {
-  "compilerOptions": {
-    "lib": ["ESNext"],
-    "module": "ESNext",
-    "target": "ESNext",
-    "moduleResolution": "bundler",
-    "strict": true,
-    "skipLibCheck": true,
-    "allowImportingTsExtensions": true,
-    "noEmit": true,
-    "types": ["bun-types"],
-    "paths": {
-      "@/*": ["./src/*"],
-      "@liuboer/shared": ["../shared/src/mod.ts"],
-      "@liuboer/shared/*": ["../shared/src/*"]
-    }
-  },
-  "include": ["src/**/*", "main.ts", "tests/**/*", "test-*.ts", "../shared/src/**/*"],
-  "exclude": ["node_modules", "dist"]
+	"compilerOptions": {
+		"lib": ["ESNext"],
+		"module": "ESNext",
+		"target": "ESNext",
+		"moduleResolution": "bundler",
+		"strict": true,
+		"skipLibCheck": true,
+		"allowImportingTsExtensions": true,
+		"noEmit": true,
+		"types": ["bun-types"],
+		"paths": {
+			"@/*": ["./src/*"],
+			"@liuboer/shared": ["../shared/src/mod.ts"],
+			"@liuboer/shared/*": ["../shared/src/*"]
+		}
+	},
+	"include": ["src/**/*", "main.ts", "tests/**/*", "test-*.ts", "../shared/src/**/*"],
+	"exclude": ["node_modules", "dist"]
 }

@@ -1,106 +1,106 @@
-import { describe, test, expect } from "bun:test";
-import { MessageHub } from "@liuboer/shared";
-import { setupRPCHandlers } from "../src/lib/rpc-handlers";
-import { getConfig } from "../src/config";
-import { Database } from "../src/storage/database";
-import { AuthManager } from "../src/lib/auth-manager";
-import { SessionManager } from "../src/lib/session-manager";
+import { describe, test, expect } from 'bun:test';
+import { MessageHub } from '@liuboer/shared';
+import { setupRPCHandlers } from '../src/lib/rpc-handlers';
+import { getConfig } from '../src/config';
+import { Database } from '../src/storage/database';
+import { AuthManager } from '../src/lib/auth-manager';
+import { SessionManager } from '../src/lib/session-manager';
 
-describe("setupRPCHandlers - Handler Registration", () => {
-  test("should register all RPC handlers without needing a class", async () => {
-    // Setup minimal dependencies
-    const config = getConfig();
-    const db = new Database(":memory:");
-    await db.initialize();
+describe('setupRPCHandlers - Handler Registration', () => {
+	test('should register all RPC handlers without needing a class', async () => {
+		// Setup minimal dependencies
+		const config = getConfig();
+		const db = new Database(':memory:');
+		await db.initialize();
 
-    const authManager = new AuthManager(db, config);
-    await authManager.initialize();
+		const authManager = new AuthManager(db, config);
+		await authManager.initialize();
 
-    const messageHub = new MessageHub({ defaultSessionId: "global" });
+		const messageHub = new MessageHub({ defaultSessionId: 'global' });
 
-    const sessionManager = new SessionManager(db, messageHub, authManager, {
-      defaultModel: config.defaultModel,
-      maxTokens: config.maxTokens,
-      temperature: config.temperature,
-      workspaceRoot: config.workspaceRoot,
-    });
+		const sessionManager = new SessionManager(db, messageHub, authManager, {
+			defaultModel: config.defaultModel,
+			maxTokens: config.maxTokens,
+			temperature: config.temperature,
+			workspaceRoot: config.workspaceRoot,
+		});
 
-    // Get initial handler count
-    const initialHandlers = (messageHub as any).rpcHandlers.size;
+		// Get initial handler count
+		const initialHandlers = (messageHub as any).rpcHandlers.size;
 
-    // Setup handlers - FUNCTIONAL APPROACH (no class instantiation!)
-    setupRPCHandlers({
-      messageHub,
-      sessionManager,
-      authManager,
-      config,
-    });
+		// Setup handlers - FUNCTIONAL APPROACH (no class instantiation!)
+		setupRPCHandlers({
+			messageHub,
+			sessionManager,
+			authManager,
+			config,
+		});
 
-    // Verify handlers were registered
-    const finalHandlers = (messageHub as any).rpcHandlers.size;
-    expect(finalHandlers).toBeGreaterThan(initialHandlers);
+		// Verify handlers were registered
+		const finalHandlers = (messageHub as any).rpcHandlers.size;
+		expect(finalHandlers).toBeGreaterThan(initialHandlers);
 
-    // Should have at least 14 handlers
-    expect(finalHandlers).toBeGreaterThanOrEqual(14);
+		// Should have at least 14 handlers
+		expect(finalHandlers).toBeGreaterThanOrEqual(14);
 
-    // Cleanup
-    db.close();
-  });
+		// Cleanup
+		db.close();
+	});
 
-  test("should register expected handler methods", async () => {
-    const config = getConfig();
-    const db = new Database(":memory:");
-    await db.initialize();
+	test('should register expected handler methods', async () => {
+		const config = getConfig();
+		const db = new Database(':memory:');
+		await db.initialize();
 
-    const authManager = new AuthManager(db, config);
-    await authManager.initialize();
+		const authManager = new AuthManager(db, config);
+		await authManager.initialize();
 
-    const messageHub = new MessageHub({ defaultSessionId: "global" });
+		const messageHub = new MessageHub({ defaultSessionId: 'global' });
 
-    const sessionManager = new SessionManager(db, messageHub, authManager, {
-      defaultModel: config.defaultModel,
-      maxTokens: config.maxTokens,
-      temperature: config.temperature,
-      workspaceRoot: config.workspaceRoot,
-    });
+		const sessionManager = new SessionManager(db, messageHub, authManager, {
+			defaultModel: config.defaultModel,
+			maxTokens: config.maxTokens,
+			temperature: config.temperature,
+			workspaceRoot: config.workspaceRoot,
+		});
 
-    // Setup handlers
-    setupRPCHandlers({
-      messageHub,
-      sessionManager,
-      authManager,
-      config,
-    });
+		// Setup handlers
+		setupRPCHandlers({
+			messageHub,
+			sessionManager,
+			authManager,
+			config,
+		});
 
-    const handlers = (messageHub as any).rpcHandlers;
+		const handlers = (messageHub as any).rpcHandlers;
 
-    // Session handlers
-    expect(handlers.has("session.create")).toBe(true);
-    expect(handlers.has("session.list")).toBe(true);
-    expect(handlers.has("session.get")).toBe(true);
-    expect(handlers.has("session.update")).toBe(true);
-    expect(handlers.has("session.delete")).toBe(true);
+		// Session handlers
+		expect(handlers.has('session.create')).toBe(true);
+		expect(handlers.has('session.list')).toBe(true);
+		expect(handlers.has('session.get')).toBe(true);
+		expect(handlers.has('session.update')).toBe(true);
+		expect(handlers.has('session.delete')).toBe(true);
 
-    // Message handlers
-    expect(handlers.has("message.list")).toBe(true);
-    expect(handlers.has("message.sdkMessages")).toBe(true);
+		// Message handlers
+		expect(handlers.has('message.list')).toBe(true);
+		expect(handlers.has('message.sdkMessages')).toBe(true);
 
-    // Command handlers
-    expect(handlers.has("commands.list")).toBe(true);
+		// Command handlers
+		expect(handlers.has('commands.list')).toBe(true);
 
-    // File handlers
-    expect(handlers.has("file.read")).toBe(true);
-    expect(handlers.has("file.list")).toBe(true);
-    expect(handlers.has("file.tree")).toBe(true);
+		// File handlers
+		expect(handlers.has('file.read')).toBe(true);
+		expect(handlers.has('file.list')).toBe(true);
+		expect(handlers.has('file.tree')).toBe(true);
 
-    // System handlers
-    expect(handlers.has("system.health")).toBe(true);
-    expect(handlers.has("system.config")).toBe(true);
+		// System handlers
+		expect(handlers.has('system.health')).toBe(true);
+		expect(handlers.has('system.config')).toBe(true);
 
-    // Auth handlers
-    expect(handlers.has("auth.status")).toBe(true);
+		// Auth handlers
+		expect(handlers.has('auth.status')).toBe(true);
 
-    // Cleanup
-    db.close();
-  });
+		// Cleanup
+		db.close();
+	});
 });

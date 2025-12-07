@@ -1,40 +1,40 @@
-import { Database as BunDatabase } from "bun:sqlite";
-import { dirname } from "node:path";
-import { mkdirSync, existsSync } from "node:fs";
-import type { AuthMethod, Message, OAuthTokens, Session, ToolCall } from "@liuboer/shared";
-import type { SDKMessage } from "@liuboer/shared/sdk";
-import { generateUUID } from "@liuboer/shared";
+import { Database as BunDatabase } from 'bun:sqlite';
+import { dirname } from 'node:path';
+import { mkdirSync, existsSync } from 'node:fs';
+import type { AuthMethod, Message, OAuthTokens, Session, ToolCall } from '@liuboer/shared';
+import type { SDKMessage } from '@liuboer/shared/sdk';
+import { generateUUID } from '@liuboer/shared';
 
 export class Database {
-  private db: BunDatabase;
+	private db: BunDatabase;
 
-  constructor(private dbPath: string) {
-    this.db = null as unknown as BunDatabase;
-  }
+	constructor(private dbPath: string) {
+		this.db = null as unknown as BunDatabase;
+	}
 
-  async initialize() {
-    // Ensure directory exists
-    const dir = dirname(this.dbPath);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
+	async initialize() {
+		// Ensure directory exists
+		const dir = dirname(this.dbPath);
+		if (!existsSync(dir)) {
+			mkdirSync(dir, { recursive: true });
+		}
 
-    // Open database
-    this.db = new BunDatabase(this.dbPath);
+		// Open database
+		this.db = new BunDatabase(this.dbPath);
 
-    // Enable foreign key constraints (required for CASCADE deletes)
-    this.db.exec("PRAGMA foreign_keys = ON");
+		// Enable foreign key constraints (required for CASCADE deletes)
+		this.db.exec('PRAGMA foreign_keys = ON');
 
-    // Create tables
-    this.createTables();
+		// Create tables
+		this.createTables();
 
-    // Run migrations
-    this.runMigrations();
-  }
+		// Run migrations
+		this.runMigrations();
+	}
 
-  private createTables() {
-    // Sessions table
-    this.db.exec(`
+	private createTables() {
+		// Sessions table
+		this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
@@ -47,11 +47,11 @@ export class Database {
       )
     `);
 
-    // Messages and tool_calls tables removed - we now only use sdk_messages table
-    // This provides a cleaner design with single source of truth
+		// Messages and tool_calls tables removed - we now only use sdk_messages table
+		// This provides a cleaner design with single source of truth
 
-    // Events table
-    this.db.exec(`
+		// Events table
+		this.db.exec(`
       CREATE TABLE IF NOT EXISTS events (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -62,8 +62,8 @@ export class Database {
       )
     `);
 
-    // Authentication configuration table (stores current auth method and credentials)
-    this.db.exec(`
+		// Authentication configuration table (stores current auth method and credentials)
+		this.db.exec(`
       CREATE TABLE IF NOT EXISTS auth_config (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         auth_method TEXT NOT NULL CHECK(auth_method IN ('oauth', 'oauth_token', 'api_key', 'none')),
@@ -74,11 +74,11 @@ export class Database {
       )
     `);
 
-    // OAuth state table removed - web-based OAuth flow is no longer supported
-    // Authentication is now handled via environment variables only
+		// OAuth state table removed - web-based OAuth flow is no longer supported
+		// Authentication is now handled via environment variables only
 
-    // SDK Messages table (stores full SDK messages with all metadata)
-    this.db.exec(`
+		// SDK Messages table (stores full SDK messages with all metadata)
+		this.db.exec(`
       CREATE TABLE IF NOT EXISTS sdk_messages (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -90,498 +90,471 @@ export class Database {
       )
     `);
 
-    // Initialize auth_config with default values if not exists
-    this.db.exec(`
+		// Initialize auth_config with default values if not exists
+		this.db.exec(`
       INSERT OR IGNORE INTO auth_config (id, auth_method, updated_at)
       VALUES (1, 'none', datetime('now'))
     `);
 
-    // Create indexes
-    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_events_session
+		// Create indexes
+		this.db.exec(`CREATE INDEX IF NOT EXISTS idx_events_session
       ON events(session_id, timestamp)`);
-    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session
+		this.db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session
       ON sdk_messages(session_id, timestamp)`);
-    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_type
+		this.db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_type
       ON sdk_messages(message_type, message_subtype)`);
-  }
+	}
 
-  /**
-   * Run database migrations for schema changes
-   */
-  private runMigrations() {
-    // Migration 1: Add oauth_token_encrypted column if it doesn't exist
-    try {
-      // Check if column exists by trying to query it
-      this.db.prepare(`SELECT oauth_token_encrypted FROM auth_config LIMIT 1`).all();
-    } catch (_error) {
-      // Column doesn't exist, add it
-      console.log("🔧 Running migration: Adding oauth_token_encrypted column");
-      this.db.exec(`ALTER TABLE auth_config ADD COLUMN oauth_token_encrypted TEXT`);
-    }
+	/**
+	 * Run database migrations for schema changes
+	 */
+	private runMigrations() {
+		// Migration 1: Add oauth_token_encrypted column if it doesn't exist
+		try {
+			// Check if column exists by trying to query it
+			this.db.prepare(`SELECT oauth_token_encrypted FROM auth_config LIMIT 1`).all();
+		} catch (_error) {
+			// Column doesn't exist, add it
+			console.log('🔧 Running migration: Adding oauth_token_encrypted column');
+			this.db.exec(`ALTER TABLE auth_config ADD COLUMN oauth_token_encrypted TEXT`);
+		}
 
-    // Migration 2: Remove messages and tool_calls tables (replaced by sdk_messages)
-    try {
-      // Check if messages table exists
-      this.db.prepare(`SELECT 1 FROM messages LIMIT 1`).all();
-      // Table exists, drop it
-      console.log("🔧 Running migration: Dropping messages and tool_calls tables");
-      this.db.exec(`DROP TABLE IF EXISTS tool_calls`);
-      this.db.exec(`DROP TABLE IF EXISTS messages`);
-      this.db.exec(`DROP INDEX IF EXISTS idx_messages_session`);
-      this.db.exec(`DROP INDEX IF EXISTS idx_tool_calls_message`);
-    } catch (_error) {
-      // Tables don't exist, migration already complete
-    }
-  }
+		// Migration 2: Remove messages and tool_calls tables (replaced by sdk_messages)
+		try {
+			// Check if messages table exists
+			this.db.prepare(`SELECT 1 FROM messages LIMIT 1`).all();
+			// Table exists, drop it
+			console.log('🔧 Running migration: Dropping messages and tool_calls tables');
+			this.db.exec(`DROP TABLE IF EXISTS tool_calls`);
+			this.db.exec(`DROP TABLE IF EXISTS messages`);
+			this.db.exec(`DROP INDEX IF EXISTS idx_messages_session`);
+			this.db.exec(`DROP INDEX IF EXISTS idx_tool_calls_message`);
+		} catch (_error) {
+			// Tables don't exist, migration already complete
+		}
+	}
 
-  // Session operations
-  createSession(session: Session): void {
-    const stmt = this.db.prepare(
-      `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
+	// Session operations
+	createSession(session: Session): void {
+		const stmt = this.db.prepare(
+			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    );
-    stmt.run(
-      session.id,
-      session.title,
-      session.workspacePath,
-      session.createdAt,
-      session.lastActiveAt,
-      session.status,
-      JSON.stringify(session.config),
-      JSON.stringify(session.metadata),
-    );
-  }
+		);
+		stmt.run(
+			session.id,
+			session.title,
+			session.workspacePath,
+			session.createdAt,
+			session.lastActiveAt,
+			session.status,
+			JSON.stringify(session.config),
+			JSON.stringify(session.metadata)
+		);
+	}
 
-  getSession(id: string): Session | null {
-    const stmt = this.db.prepare(`SELECT * FROM sessions WHERE id = ?`);
-    const row = stmt.get(id) as Record<string, unknown> | undefined;
+	getSession(id: string): Session | null {
+		const stmt = this.db.prepare(`SELECT * FROM sessions WHERE id = ?`);
+		const row = stmt.get(id) as Record<string, unknown> | undefined;
 
-    if (!row) return null;
+		if (!row) return null;
 
-    return {
-      id: row.id as string,
-      title: row.title as string,
-      workspacePath: row.workspace_path as string,
-      createdAt: row.created_at as string,
-      lastActiveAt: row.last_active_at as string,
-      status: row.status as "active" | "paused" | "ended",
-      config: JSON.parse(row.config as string),
-      metadata: JSON.parse(row.metadata as string),
-    };
-  }
+		return {
+			id: row.id as string,
+			title: row.title as string,
+			workspacePath: row.workspace_path as string,
+			createdAt: row.created_at as string,
+			lastActiveAt: row.last_active_at as string,
+			status: row.status as 'active' | 'paused' | 'ended',
+			config: JSON.parse(row.config as string),
+			metadata: JSON.parse(row.metadata as string),
+		};
+	}
 
-  listSessions(): Session[] {
-    const stmt = this.db.prepare(`SELECT * FROM sessions ORDER BY last_active_at DESC`);
-    const rows = stmt.all() as Record<string, unknown>[];
+	listSessions(): Session[] {
+		const stmt = this.db.prepare(`SELECT * FROM sessions ORDER BY last_active_at DESC`);
+		const rows = stmt.all() as Record<string, unknown>[];
 
-    return rows.map((r) => {
-      return {
-        id: r.id as string,
-        title: r.title as string,
-        workspacePath: r.workspace_path as string,
-        createdAt: r.created_at as string,
-        lastActiveAt: r.last_active_at as string,
-        status: r.status as "active" | "paused" | "ended",
-        config: JSON.parse(r.config as string),
-        metadata: JSON.parse(r.metadata as string),
-      };
-    });
-  }
+		return rows.map((r) => {
+			return {
+				id: r.id as string,
+				title: r.title as string,
+				workspacePath: r.workspace_path as string,
+				createdAt: r.created_at as string,
+				lastActiveAt: r.last_active_at as string,
+				status: r.status as 'active' | 'paused' | 'ended',
+				config: JSON.parse(r.config as string),
+				metadata: JSON.parse(r.metadata as string),
+			};
+		});
+	}
 
-  updateSession(id: string, updates: Partial<Session>): void {
-    const fields: string[] = [];
-    const values: any[] = [];
+	updateSession(id: string, updates: Partial<Session>): void {
+		const fields: string[] = [];
+		const values: any[] = [];
 
-    if (updates.title) {
-      fields.push("title = ?");
-      values.push(updates.title);
-    }
-    if (updates.workspacePath) {
-      fields.push("workspace_path = ?");
-      values.push(updates.workspacePath);
-    }
-    if (updates.status) {
-      fields.push("status = ?");
-      values.push(updates.status);
-    }
-    if (updates.lastActiveAt) {
-      fields.push("last_active_at = ?");
-      values.push(updates.lastActiveAt);
-    }
-    if (updates.metadata) {
-      fields.push("metadata = ?");
-      values.push(JSON.stringify(updates.metadata));
-    }
+		if (updates.title) {
+			fields.push('title = ?');
+			values.push(updates.title);
+		}
+		if (updates.workspacePath) {
+			fields.push('workspace_path = ?');
+			values.push(updates.workspacePath);
+		}
+		if (updates.status) {
+			fields.push('status = ?');
+			values.push(updates.status);
+		}
+		if (updates.lastActiveAt) {
+			fields.push('last_active_at = ?');
+			values.push(updates.lastActiveAt);
+		}
+		if (updates.metadata) {
+			fields.push('metadata = ?');
+			values.push(JSON.stringify(updates.metadata));
+		}
 
-    if (fields.length > 0) {
-      values.push(id);
-      const stmt = this.db.prepare(`UPDATE sessions SET ${fields.join(", ")} WHERE id = ?`);
-      stmt.run(...values);
-    }
-  }
+		if (fields.length > 0) {
+			values.push(id);
+			const stmt = this.db.prepare(`UPDATE sessions SET ${fields.join(', ')} WHERE id = ?`);
+			stmt.run(...values);
+		}
+	}
 
-  deleteSession(id: string): void {
-    const stmt = this.db.prepare(`DELETE FROM sessions WHERE id = ?`);
-    stmt.run(id);
-  }
+	deleteSession(id: string): void {
+		const stmt = this.db.prepare(`DELETE FROM sessions WHERE id = ?`);
+		stmt.run(id);
+	}
 
-  // Message operations - now using sdk_messages table as single source of truth
+	// Message operations - now using sdk_messages table as single source of truth
 
-  /**
-   * Get messages for a session by extracting from SDK messages
-   * Returns simplified Message format for conversation history
-   */
-  getMessages(sessionId: string, limit = 100, offset = 0): Message[] {
-    const sdkMessages = this.getSDKMessages(sessionId, limit, offset);
-    const messages: Message[] = [];
+	/**
+	 * Get messages for a session by extracting from SDK messages
+	 * Returns simplified Message format for conversation history
+	 */
+	getMessages(sessionId: string, limit = 100, offset = 0): Message[] {
+		const sdkMessages = this.getSDKMessages(sessionId, limit, offset);
+		const messages: Message[] = [];
 
-    for (const sdkMsg of sdkMessages) {
-      // Convert user messages
-      if (sdkMsg.type === 'user') {
-        const userContent = sdkMsg.message.content;
-        const contentText = Array.isArray(userContent)
-          ? userContent.map(block => block.type === 'text' ? block.text : '').join('\n')
-          : userContent;
+		for (const sdkMsg of sdkMessages) {
+			// Convert user messages
+			if (sdkMsg.type === 'user') {
+				const userContent = sdkMsg.message.content;
+				const contentText = Array.isArray(userContent)
+					? userContent.map((block) => (block.type === 'text' ? block.text : '')).join('\n')
+					: userContent;
 
-        messages.push({
-          id: sdkMsg.uuid || generateUUID(),
-          sessionId: sdkMsg.session_id,
-          role: 'user',
-          content: contentText,
-          timestamp: new Date().toISOString(), // SDK messages have timestamp in parent row
-        });
-      }
-      // Convert assistant messages
-      else if (sdkMsg.type === 'assistant') {
-        const content = sdkMsg.message.content;
-        let textContent = '';
-        const toolCalls: ToolCall[] = [];
+				messages.push({
+					id: sdkMsg.uuid || generateUUID(),
+					sessionId: sdkMsg.session_id,
+					role: 'user',
+					content: contentText,
+					timestamp: new Date().toISOString(), // SDK messages have timestamp in parent row
+				});
+			}
+			// Convert assistant messages
+			else if (sdkMsg.type === 'assistant') {
+				const content = sdkMsg.message.content;
+				let textContent = '';
+				const toolCalls: ToolCall[] = [];
 
-        for (const block of content) {
-          if (block.type === 'text') {
-            textContent += block.text;
-          } else if (block.type === 'tool_use') {
-            toolCalls.push({
-              id: block.id,
-              messageId: sdkMsg.uuid,
-              tool: block.name,
-              input: block.input,
-              status: 'success',
-              timestamp: new Date().toISOString(),
-            });
-          }
-        }
+				for (const block of content) {
+					if (block.type === 'text') {
+						textContent += block.text;
+					} else if (block.type === 'tool_use') {
+						toolCalls.push({
+							id: block.id,
+							messageId: sdkMsg.uuid,
+							tool: block.name,
+							input: block.input,
+							status: 'success',
+							timestamp: new Date().toISOString(),
+						});
+					}
+				}
 
-        messages.push({
-          id: sdkMsg.uuid,
-          sessionId: sdkMsg.session_id,
-          role: 'assistant',
-          content: textContent,
-          timestamp: new Date().toISOString(),
-          toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-        });
-      }
-    }
+				messages.push({
+					id: sdkMsg.uuid,
+					sessionId: sdkMsg.session_id,
+					role: 'assistant',
+					content: textContent,
+					timestamp: new Date().toISOString(),
+					toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+				});
+			}
+		}
 
-    return messages;
-  }
+		return messages;
+	}
 
+	// Authentication operations
 
+	/**
+	 * Simple encryption using AES-GCM
+	 * Note: For production, consider using a proper key derivation function
+	 */
+	private async encryptData(data: string): Promise<string> {
+		const encoder = new TextEncoder();
+		const dataBuffer = encoder.encode(data);
 
-  // Authentication operations
+		// Generate a random encryption key (in production, derive from a master key)
+		const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, [
+			'encrypt',
+			'decrypt',
+		]);
 
-  /**
-   * Simple encryption using AES-GCM
-   * Note: For production, consider using a proper key derivation function
-   */
-  private async encryptData(data: string): Promise<string> {
-    const encoder = new TextEncoder();
-    const dataBuffer = encoder.encode(data);
+		// Generate IV
+		const iv = crypto.getRandomValues(new Uint8Array(12));
 
-    // Generate a random encryption key (in production, derive from a master key)
-    const key = await crypto.subtle.generateKey(
-      { name: "AES-GCM", length: 256 },
-      true,
-      ["encrypt", "decrypt"]
-    );
+		// Encrypt
+		const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, dataBuffer);
 
-    // Generate IV
-    const iv = crypto.getRandomValues(new Uint8Array(12));
+		// Export key
+		const exportedKey = await crypto.subtle.exportKey('raw', key);
 
-    // Encrypt
-    const encrypted = await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv },
-      key,
-      dataBuffer
-    );
+		// Combine key + iv + encrypted data
+		const combined = new Uint8Array(exportedKey.byteLength + iv.byteLength + encrypted.byteLength);
+		combined.set(new Uint8Array(exportedKey), 0);
+		combined.set(iv, exportedKey.byteLength);
+		combined.set(new Uint8Array(encrypted), exportedKey.byteLength + iv.byteLength);
 
-    // Export key
-    const exportedKey = await crypto.subtle.exportKey("raw", key);
+		// Return as base64
+		return btoa(String.fromCharCode(...combined));
+	}
 
-    // Combine key + iv + encrypted data
-    const combined = new Uint8Array(
-      exportedKey.byteLength + iv.byteLength + encrypted.byteLength
-    );
-    combined.set(new Uint8Array(exportedKey), 0);
-    combined.set(iv, exportedKey.byteLength);
-    combined.set(new Uint8Array(encrypted), exportedKey.byteLength + iv.byteLength);
+	/**
+	 * Decrypt data encrypted with encryptData
+	 */
+	private async decryptData(encrypted: string): Promise<string> {
+		// Decode from base64
+		const combined = Uint8Array.from(atob(encrypted), (c) => c.charCodeAt(0));
 
-    // Return as base64
-    return btoa(String.fromCharCode(...combined));
-  }
+		// Extract key, IV, and encrypted data
+		const keyData = combined.slice(0, 32);
+		const iv = combined.slice(32, 44);
+		const encryptedData = combined.slice(44);
 
-  /**
-   * Decrypt data encrypted with encryptData
-   */
-  private async decryptData(encrypted: string): Promise<string> {
-    // Decode from base64
-    const combined = Uint8Array.from(atob(encrypted), c => c.charCodeAt(0));
+		// Import key
+		const key = await crypto.subtle.importKey(
+			'raw',
+			keyData,
+			{ name: 'AES-GCM', length: 256 },
+			false,
+			['decrypt']
+		);
 
-    // Extract key, IV, and encrypted data
-    const keyData = combined.slice(0, 32);
-    const iv = combined.slice(32, 44);
-    const encryptedData = combined.slice(44);
+		// Decrypt
+		const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, encryptedData);
 
-    // Import key
-    const key = await crypto.subtle.importKey(
-      "raw",
-      keyData,
-      { name: "AES-GCM", length: 256 },
-      false,
-      ["decrypt"]
-    );
+		// Convert back to string
+		const decoder = new TextDecoder();
+		return decoder.decode(decrypted);
+	}
 
-    // Decrypt
-    const decrypted = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv },
-      key,
-      encryptedData
-    );
+	// ============================================================================
+	// DEPRECATED: The following methods are deprecated and should not be used.
+	// Authentication credentials must be provided via environment variables only.
+	// These methods remain only for backward compatibility with existing tests.
+	// ============================================================================
 
-    // Convert back to string
-    const decoder = new TextDecoder();
-    return decoder.decode(decrypted);
-  }
+	/**
+	 * @deprecated Authentication is now managed via environment variables only.
+	 * Get current authentication method
+	 */
+	getAuthMethod(): AuthMethod {
+		const stmt = this.db.prepare(`SELECT auth_method FROM auth_config WHERE id = 1`);
+		const row = stmt.get() as Record<string, unknown> | undefined;
+		if (!row) return 'none';
+		return row.auth_method as AuthMethod;
+	}
 
-  // ============================================================================
-  // DEPRECATED: The following methods are deprecated and should not be used.
-  // Authentication credentials must be provided via environment variables only.
-  // These methods remain only for backward compatibility with existing tests.
-  // ============================================================================
+	/**
+	 * @deprecated Authentication is now managed via environment variables only.
+	 * Save OAuth tokens (encrypted)
+	 */
+	async saveOAuthTokens(tokens: OAuthTokens): Promise<void> {
+		const encrypted = await this.encryptData(JSON.stringify(tokens));
+		const stmt = this.db.prepare(
+			`UPDATE auth_config SET auth_method = 'oauth', oauth_tokens_encrypted = ?, api_key_encrypted = NULL, updated_at = datetime('now') WHERE id = 1`
+		);
+		stmt.run(encrypted);
+	}
 
-  /**
-   * @deprecated Authentication is now managed via environment variables only.
-   * Get current authentication method
-   */
-  getAuthMethod(): AuthMethod {
-    const stmt = this.db.prepare(`SELECT auth_method FROM auth_config WHERE id = 1`);
-    const row = stmt.get() as Record<string, unknown> | undefined;
-    if (!row) return "none";
-    return row.auth_method as AuthMethod;
-  }
+	/**
+	 * @deprecated Authentication is now managed via environment variables only.
+	 * Get OAuth tokens (decrypted)
+	 */
+	async getOAuthTokens(): Promise<OAuthTokens | null> {
+		const stmt = this.db.prepare(`SELECT oauth_tokens_encrypted FROM auth_config WHERE id = 1`);
+		const row = stmt.get() as Record<string, unknown> | undefined;
+		if (!row) return null;
 
-  /**
-   * @deprecated Authentication is now managed via environment variables only.
-   * Save OAuth tokens (encrypted)
-   */
-  async saveOAuthTokens(tokens: OAuthTokens): Promise<void> {
-    const encrypted = await this.encryptData(JSON.stringify(tokens));
-    const stmt = this.db.prepare(
-      `UPDATE auth_config SET auth_method = 'oauth', oauth_tokens_encrypted = ?, api_key_encrypted = NULL, updated_at = datetime('now') WHERE id = 1`
-    );
-    stmt.run(encrypted);
-  }
+		const encrypted = row.oauth_tokens_encrypted as string | null;
+		if (!encrypted) return null;
 
-  /**
-   * @deprecated Authentication is now managed via environment variables only.
-   * Get OAuth tokens (decrypted)
-   */
-  async getOAuthTokens(): Promise<OAuthTokens | null> {
-    const stmt = this.db.prepare(`SELECT oauth_tokens_encrypted FROM auth_config WHERE id = 1`);
-    const row = stmt.get() as Record<string, unknown> | undefined;
-    if (!row) return null;
+		const decrypted = await this.decryptData(encrypted);
+		return JSON.parse(decrypted) as OAuthTokens;
+	}
 
-    const encrypted = row.oauth_tokens_encrypted as string | null;
-    if (!encrypted) return null;
+	/**
+	 * @deprecated Authentication is now managed via environment variables only.
+	 * Save API key (encrypted)
+	 */
+	async saveApiKey(apiKey: string): Promise<void> {
+		const encrypted = await this.encryptData(apiKey);
+		const stmt = this.db.prepare(
+			`UPDATE auth_config SET auth_method = 'api_key', api_key_encrypted = ?, oauth_tokens_encrypted = NULL, updated_at = datetime('now') WHERE id = 1`
+		);
+		stmt.run(encrypted);
+	}
 
-    const decrypted = await this.decryptData(encrypted);
-    return JSON.parse(decrypted) as OAuthTokens;
-  }
+	/**
+	 * @deprecated Authentication is now managed via environment variables only.
+	 * Get API key (decrypted)
+	 */
+	async getApiKey(): Promise<string | null> {
+		const stmt = this.db.prepare(`SELECT api_key_encrypted FROM auth_config WHERE id = 1`);
+		const row = stmt.get() as Record<string, unknown> | undefined;
+		if (!row) return null;
 
-  /**
-   * @deprecated Authentication is now managed via environment variables only.
-   * Save API key (encrypted)
-   */
-  async saveApiKey(apiKey: string): Promise<void> {
-    const encrypted = await this.encryptData(apiKey);
-    const stmt = this.db.prepare(
-      `UPDATE auth_config SET auth_method = 'api_key', api_key_encrypted = ?, oauth_tokens_encrypted = NULL, updated_at = datetime('now') WHERE id = 1`
-    );
-    stmt.run(encrypted);
-  }
+		const encrypted = row.api_key_encrypted as string | null;
+		if (!encrypted) return null;
 
-  /**
-   * @deprecated Authentication is now managed via environment variables only.
-   * Get API key (decrypted)
-   */
-  async getApiKey(): Promise<string | null> {
-    const stmt = this.db.prepare(`SELECT api_key_encrypted FROM auth_config WHERE id = 1`);
-    const row = stmt.get() as Record<string, unknown> | undefined;
-    if (!row) return null;
+		return await this.decryptData(encrypted);
+	}
 
-    const encrypted = row.api_key_encrypted as string | null;
-    if (!encrypted) return null;
+	/**
+	 * @deprecated Authentication is now managed via environment variables only.
+	 * Save long-lived OAuth token (from claude setup-token)
+	 */
+	async saveOAuthLongLivedToken(token: string): Promise<void> {
+		const encrypted = await this.encryptData(token);
+		const stmt = this.db.prepare(
+			`UPDATE auth_config SET auth_method = 'oauth_token', oauth_token_encrypted = ?, api_key_encrypted = NULL, oauth_tokens_encrypted = NULL, updated_at = datetime('now') WHERE id = 1`
+		);
+		stmt.run(encrypted);
+	}
 
-    return await this.decryptData(encrypted);
-  }
+	/**
+	 * @deprecated Authentication is now managed via environment variables only.
+	 * Get long-lived OAuth token (decrypted)
+	 */
+	async getOAuthLongLivedToken(): Promise<string | null> {
+		const stmt = this.db.prepare(`SELECT oauth_token_encrypted FROM auth_config WHERE id = 1`);
+		const row = stmt.get() as Record<string, unknown> | undefined;
+		if (!row) return null;
 
-  /**
-   * @deprecated Authentication is now managed via environment variables only.
-   * Save long-lived OAuth token (from claude setup-token)
-   */
-  async saveOAuthLongLivedToken(token: string): Promise<void> {
-    const encrypted = await this.encryptData(token);
-    const stmt = this.db.prepare(
-      `UPDATE auth_config SET auth_method = 'oauth_token', oauth_token_encrypted = ?, api_key_encrypted = NULL, oauth_tokens_encrypted = NULL, updated_at = datetime('now') WHERE id = 1`
-    );
-    stmt.run(encrypted);
-  }
+		const encrypted = row.oauth_token_encrypted as string | null;
+		if (!encrypted) return null;
 
-  /**
-   * @deprecated Authentication is now managed via environment variables only.
-   * Get long-lived OAuth token (decrypted)
-   */
-  async getOAuthLongLivedToken(): Promise<string | null> {
-    const stmt = this.db.prepare(`SELECT oauth_token_encrypted FROM auth_config WHERE id = 1`);
-    const row = stmt.get() as Record<string, unknown> | undefined;
-    if (!row) return null;
+		return await this.decryptData(encrypted);
+	}
 
-    const encrypted = row.oauth_token_encrypted as string | null;
-    if (!encrypted) return null;
+	/**
+	 * @deprecated Authentication is now managed via environment variables only.
+	 * Clear all authentication
+	 */
+	clearAuth(): void {
+		const stmt = this.db.prepare(
+			`UPDATE auth_config SET auth_method = 'none', api_key_encrypted = NULL, oauth_tokens_encrypted = NULL, oauth_token_encrypted = NULL, updated_at = datetime('now') WHERE id = 1`
+		);
+		stmt.run();
+	}
 
-    return await this.decryptData(encrypted);
-  }
+	// OAuth web flow methods removed - no longer supported
+	// Authentication is now managed via environment variables only:
+	// - ANTHROPIC_API_KEY for API key authentication
+	// - CLAUDE_CODE_OAUTH_TOKEN for long-lived OAuth token authentication
 
-  /**
-   * @deprecated Authentication is now managed via environment variables only.
-   * Clear all authentication
-   */
-  clearAuth(): void {
-    const stmt = this.db.prepare(
-      `UPDATE auth_config SET auth_method = 'none', api_key_encrypted = NULL, oauth_tokens_encrypted = NULL, oauth_token_encrypted = NULL, updated_at = datetime('now') WHERE id = 1`
-    );
-    stmt.run();
-  }
+	// ============================================================================
+	// SDK Message operations
+	// ============================================================================
 
-  // OAuth web flow methods removed - no longer supported
-  // Authentication is now managed via environment variables only:
-  // - ANTHROPIC_API_KEY for API key authentication
-  // - CLAUDE_CODE_OAUTH_TOKEN for long-lived OAuth token authentication
+	/**
+	 * Save a full SDK message to the database
+	 */
+	saveSDKMessage(sessionId: string, message: SDKMessage): void {
+		const id = generateUUID();
+		const messageType = message.type;
+		const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
+		const timestamp = new Date().toISOString();
 
-  // ============================================================================
-  // SDK Message operations
-  // ============================================================================
-
-  /**
-   * Save a full SDK message to the database
-   */
-  saveSDKMessage(sessionId: string, message: SDKMessage): void {
-    const id = generateUUID();
-    const messageType = message.type;
-    const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
-    const timestamp = new Date().toISOString();
-
-    const stmt = this.db.prepare(
-      `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
+		const stmt = this.db.prepare(
+			`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
        VALUES (?, ?, ?, ?, ?, ?)`
-    );
+		);
 
-    stmt.run(
-      id,
-      sessionId,
-      messageType,
-      messageSubtype,
-      JSON.stringify(message),
-      timestamp
-    );
-  }
+		stmt.run(id, sessionId, messageType, messageSubtype, JSON.stringify(message), timestamp);
+	}
 
-  /**
-   * Get SDK messages for a session
-   */
-  getSDKMessages(
-    sessionId: string,
-    limit = 100,
-    offset = 0,
-    since?: number
-  ): SDKMessage[] {
-    let query = `SELECT sdk_message, timestamp FROM sdk_messages WHERE session_id = ?`;
-    const params: any[] = [sessionId];
+	/**
+	 * Get SDK messages for a session
+	 */
+	getSDKMessages(sessionId: string, limit = 100, offset = 0, since?: number): SDKMessage[] {
+		let query = `SELECT sdk_message, timestamp FROM sdk_messages WHERE session_id = ?`;
+		const params: any[] = [sessionId];
 
-    // Add timestamp filter if 'since' is provided
-    // 'since' is a JavaScript millisecond timestamp, convert to ISO string for comparison
-    if (since !== undefined && since > 0) {
-      query += ` AND timestamp > ?`;
-      params.push(new Date(since).toISOString());
-    }
+		// Add timestamp filter if 'since' is provided
+		// 'since' is a JavaScript millisecond timestamp, convert to ISO string for comparison
+		if (since !== undefined && since > 0) {
+			query += ` AND timestamp > ?`;
+			params.push(new Date(since).toISOString());
+		}
 
-    // Order ASC to get messages in chronological order (oldest to newest)
-    // This provides consistent pagination behavior
-    query += ` ORDER BY timestamp ASC LIMIT ? OFFSET ?`;
-    params.push(limit, offset);
+		// Order ASC to get messages in chronological order (oldest to newest)
+		// This provides consistent pagination behavior
+		query += ` ORDER BY timestamp ASC LIMIT ? OFFSET ?`;
+		params.push(limit, offset);
 
-    const stmt = this.db.prepare(query);
-    const rows = stmt.all(...params) as Record<string, unknown>[];
+		const stmt = this.db.prepare(query);
+		const rows = stmt.all(...params) as Record<string, unknown>[];
 
-    // Parse SDK message and inject the timestamp from the database row
-    const messages = rows.map((r) => {
-      const sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
-      const timestamp = new Date(r.timestamp as string).getTime();
-      // Inject timestamp into SDK message object for client-side filtering
-      return { ...sdkMessage, timestamp } as SDKMessage & { timestamp: number };
-    });
+		// Parse SDK message and inject the timestamp from the database row
+		const messages = rows.map((r) => {
+			const sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
+			const timestamp = new Date(r.timestamp as string).getTime();
+			// Inject timestamp into SDK message object for client-side filtering
+			return { ...sdkMessage, timestamp } as SDKMessage & { timestamp: number };
+		});
 
-    return messages;
-  }
+		return messages;
+	}
 
-  /**
-   * Get SDK messages by type
-   */
-  getSDKMessagesByType(
-    sessionId: string,
-    messageType: string,
-    messageSubtype?: string,
-    limit = 100
-  ): SDKMessage[] {
-    let query = `SELECT sdk_message FROM sdk_messages WHERE session_id = ? AND message_type = ?`;
-    const params: any[] = [sessionId, messageType];
+	/**
+	 * Get SDK messages by type
+	 */
+	getSDKMessagesByType(
+		sessionId: string,
+		messageType: string,
+		messageSubtype?: string,
+		limit = 100
+	): SDKMessage[] {
+		let query = `SELECT sdk_message FROM sdk_messages WHERE session_id = ? AND message_type = ?`;
+		const params: any[] = [sessionId, messageType];
 
-    if (messageSubtype) {
-      query += ` AND message_subtype = ?`;
-      params.push(messageSubtype);
-    }
+		if (messageSubtype) {
+			query += ` AND message_subtype = ?`;
+			params.push(messageSubtype);
+		}
 
-    query += ` ORDER BY timestamp ASC LIMIT ?`;
-    params.push(limit);
+		query += ` ORDER BY timestamp ASC LIMIT ?`;
+		params.push(limit);
 
-    const stmt = this.db.prepare(query);
-    const rows = stmt.all(...params) as Record<string, unknown>[];
+		const stmt = this.db.prepare(query);
+		const rows = stmt.all(...params) as Record<string, unknown>[];
 
-    return rows.map((r) => JSON.parse(r.sdk_message as string) as SDKMessage);
-  }
+		return rows.map((r) => JSON.parse(r.sdk_message as string) as SDKMessage);
+	}
 
+	/**
+	 * Get the count of SDK messages for a session
+	 */
+	getSDKMessageCount(sessionId: string): number {
+		const stmt = this.db.prepare(`SELECT COUNT(*) as count FROM sdk_messages WHERE session_id = ?`);
+		const result = stmt.get(sessionId) as { count: number };
+		return result.count;
+	}
 
-
-  /**
-   * Get the count of SDK messages for a session
-   */
-  getSDKMessageCount(sessionId: string): number {
-    const stmt = this.db.prepare(`SELECT COUNT(*) as count FROM sdk_messages WHERE session_id = ?`);
-    const result = stmt.get(sessionId) as { count: number };
-    return result.count;
-  }
-
-  close() {
-    this.db.close();
-  }
+	close() {
+		this.db.close();
+	}
 }

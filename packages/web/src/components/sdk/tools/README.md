@@ -19,6 +19,7 @@ The tool components system provides a unified interface for displaying different
 ### Registry System
 
 The **tool-registry.ts** file maintains configuration for all tool types:
+
 - Display names
 - Categories (file, search, terminal, agent, web, todo, mcp, system)
 - Summary extractors
@@ -28,6 +29,7 @@ The **tool-registry.ts** file maintains configuration for all tool types:
 ### Utilities
 
 **tool-utils.ts** provides helper functions:
+
 - `getToolSummary()` - Extract summary from tool input
 - `getToolColors()` - Get category-based colors
 - `formatElapsedTime()` - Format duration display
@@ -41,12 +43,12 @@ The **tool-registry.ts** file maintains configuration for all tool types:
 import { ToolProgressCard } from './tools';
 
 <ToolProgressCard
-  toolName="Read"
-  toolInput={{ file_path: "/path/to/file.ts" }}
-  elapsedTime={1.5}
-  toolUseId="tool_abc123"
-  variant="default"
-/>
+	toolName="Read"
+	toolInput={{ file_path: '/path/to/file.ts' }}
+	elapsedTime={1.5}
+	toolUseId="tool_abc123"
+	variant="default"
+/>;
 ```
 
 ### Tool Result Display
@@ -55,13 +57,13 @@ import { ToolProgressCard } from './tools';
 import { ToolResultCard } from './tools';
 
 <ToolResultCard
-  toolName="Write"
-  toolId="tool_xyz789"
-  input={{ file_path: "/path/to/file.ts", content: "..." }}
-  output={{ success: true }}
-  isError={false}
-  variant="default"
-/>
+	toolName="Write"
+	toolId="tool_xyz789"
+	input={{ file_path: '/path/to/file.ts', content: '...' }}
+	output={{ success: true }}
+	isError={false}
+	variant="default"
+/>;
 ```
 
 ### Custom Tool Registration
@@ -70,15 +72,15 @@ import { ToolResultCard } from './tools';
 import { registerTool } from './tools';
 
 registerTool('MyCustomTool', {
-  displayName: 'My Tool',
-  category: 'file',
-  summaryExtractor: (input) => input.target,
-  colors: {
-    bg: 'bg-emerald-50',
-    text: 'text-emerald-900',
-    border: 'border-emerald-200',
-    iconColor: 'text-emerald-600',
-  },
+	displayName: 'My Tool',
+	category: 'file',
+	summaryExtractor: (input) => input.target,
+	colors: {
+		bg: 'bg-emerald-50',
+		text: 'text-emerald-900',
+		border: 'border-emerald-200',
+		iconColor: 'text-emerald-600',
+	},
 });
 ```
 
@@ -87,25 +89,33 @@ registerTool('MyCustomTool', {
 All card components support multiple display variants:
 
 ### `compact`
+
 Minimal single-line display, ideal for mobile:
+
 ```tsx
 <ToolProgressCard variant="compact" {...props} />
 ```
 
 ### `default`
+
 Standard display with icon, summary, and metadata:
+
 ```tsx
 <ToolProgressCard variant="default" {...props} />
 ```
 
 ### `detailed`
+
 Full information including tool IDs and extra metadata:
+
 ```tsx
 <ToolResultCard variant="detailed" {...props} />
 ```
 
 ### `inline`
+
 Inline display for text flow:
+
 ```tsx
 <ToolProgressCard variant="inline" {...props} />
 ```
@@ -140,12 +150,12 @@ For tools requiring special rendering, register a custom renderer:
 
 ```tsx
 registerTool('BashOutput', {
-  category: 'terminal',
-  customRenderer: (props) => (
-    <div class="font-mono">
-      <TerminalOutput content={props.output} />
-    </div>
-  ),
+	category: 'terminal',
+	customRenderer: (props) => (
+		<div class="font-mono">
+			<TerminalOutput content={props.output} />
+		</div>
+	),
 });
 ```
 
@@ -171,9 +181,9 @@ MyTool: {
 import { registerTool } from './tools';
 
 registerTool('MyTool', {
-  displayName: 'My Tool',
-  category: 'web',
-  summaryExtractor: (input) => truncate(input.url, 50),
+	displayName: 'My Tool',
+	category: 'web',
+	summaryExtractor: (input) => truncate(input.url, 50),
 });
 ```
 
@@ -182,14 +192,17 @@ registerTool('MyTool', {
 Old components have been refactored:
 
 ### SDKToolProgressMessage
+
 **Before:** Custom implementation with hardcoded icons/summaries
 **After:** Uses `ToolProgressCard`
 
 ### ToolUseBlock (in SDKAssistantMessage)
+
 **Before:** Inline component with duplicated logic
 **After:** Uses `ToolResultCard`
 
 ### Auth Status (in SDKMessageRenderer)
+
 **Before:** Inline JSX
 **After:** Uses `AuthStatusCard`
 
@@ -202,42 +215,42 @@ Use the `compact` variant for mobile displays:
 ```tsx
 const isMobile = window.innerWidth < 768;
 
-<ToolProgressCard
-  variant={isMobile ? 'compact' : 'default'}
-  {...props}
-/>
+<ToolProgressCard variant={isMobile ? 'compact' : 'default'} {...props} />;
 ```
 
 ## Examples
 
 ### File Operation Progress
+
 ```tsx
 <ToolProgressCard
-  toolName="Write"
-  toolInput={{ file_path: "/src/App.tsx" }}
-  elapsedTime={0.8}
-  toolUseId="tool_123"
+	toolName="Write"
+	toolInput={{ file_path: '/src/App.tsx' }}
+	elapsedTime={0.8}
+	toolUseId="tool_123"
 />
 ```
 
 ### Search Result
+
 ```tsx
 <ToolResultCard
-  toolName="Grep"
-  toolId="tool_456"
-  input={{ pattern: "useState", glob: "*.tsx" }}
-  output="Found 42 matches in 15 files"
-  variant="default"
+	toolName="Grep"
+	toolId="tool_456"
+	input={{ pattern: 'useState', glob: '*.tsx' }}
+	output="Found 42 matches in 15 files"
+	variant="default"
 />
 ```
 
 ### MCP Tool
+
 ```tsx
 <ToolProgressCard
-  toolName="mcp__chrome-devtools__click"
-  toolInput={{ uid: "button_123" }}
-  elapsedTime={0.3}
-  toolUseId="tool_789"
+	toolName="mcp__chrome-devtools__click"
+	toolInput={{ uid: 'button_123' }}
+	elapsedTime={0.3}
+	toolUseId="tool_789"
 />
 ```
 
@@ -245,28 +258,28 @@ const isMobile = window.innerWidth < 768;
 
 ### ToolProgressCard Props
 
-| Prop | Type | Description |
-|------|------|-------------|
-| `toolName` | `string` | Name of the tool |
-| `toolInput` | `any` | Tool input parameters |
-| `elapsedTime` | `number` | Elapsed time in seconds |
-| `toolUseId` | `string` | Unique tool execution ID |
-| `parentToolUseId` | `string?` | Parent tool ID (for sub-agents) |
-| `variant` | `ToolCardVariant` | Display variant |
-| `className` | `string?` | Additional CSS classes |
+| Prop              | Type              | Description                     |
+| ----------------- | ----------------- | ------------------------------- |
+| `toolName`        | `string`          | Name of the tool                |
+| `toolInput`       | `any`             | Tool input parameters           |
+| `elapsedTime`     | `number`          | Elapsed time in seconds         |
+| `toolUseId`       | `string`          | Unique tool execution ID        |
+| `parentToolUseId` | `string?`         | Parent tool ID (for sub-agents) |
+| `variant`         | `ToolCardVariant` | Display variant                 |
+| `className`       | `string?`         | Additional CSS classes          |
 
 ### ToolResultCard Props
 
-| Prop | Type | Description |
-|------|------|-------------|
-| `toolName` | `string` | Name of the tool |
-| `toolId` | `string` | Unique tool execution ID |
-| `input` | `any` | Tool input parameters |
-| `output` | `any?` | Tool output/result |
-| `isError` | `boolean` | Whether execution failed |
-| `variant` | `ToolCardVariant` | Display variant |
-| `defaultExpanded` | `boolean?` | Initial expanded state |
-| `className` | `string?` | Additional CSS classes |
+| Prop              | Type              | Description              |
+| ----------------- | ----------------- | ------------------------ |
+| `toolName`        | `string`          | Name of the tool         |
+| `toolId`          | `string`          | Unique tool execution ID |
+| `input`           | `any`             | Tool input parameters    |
+| `output`          | `any?`            | Tool output/result       |
+| `isError`         | `boolean`         | Whether execution failed |
+| `variant`         | `ToolCardVariant` | Display variant          |
+| `defaultExpanded` | `boolean?`        | Initial expanded state   |
+| `className`       | `string?`         | Additional CSS classes   |
 
 ## Benefits
 

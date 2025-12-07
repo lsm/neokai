@@ -1,22 +1,22 @@
 {
-  "name": "@liuboer/cli",
-  "version": "0.1.0",
-  "type": "module",
-  "bin": {
-    "liuboer": "./main.ts"
-  },
-  "scripts": {
-    "dev": "bun run main.ts",
-    "start": "NODE_ENV=production bun run main.ts"
-  },
-  "dependencies": {
-    "@liuboer/daemon": "workspace:*",
-    "@liuboer/shared": "workspace:*",
-    "@elysiajs/static": "^1.4.7",
-    "elysia": "1.4.16",
-    "vite": "^7.2.6"
-  },
-  "devDependencies": {
-    "@types/bun": "latest"
-  }
+	"name": "@liuboer/cli",
+	"version": "0.1.0",
+	"type": "module",
+	"bin": {
+		"liuboer": "./main.ts"
+	},
+	"scripts": {
+		"dev": "bun run main.ts",
+		"start": "NODE_ENV=production bun run main.ts"
+	},
+	"dependencies": {
+		"@liuboer/daemon": "workspace:*",
+		"@liuboer/shared": "workspace:*",
+		"@elysiajs/static": "^1.4.7",
+		"elysia": "1.4.16",
+		"vite": "^7.2.6"
+	},
+	"devDependencies": {
+		"@types/bun": "latest"
+	}
 }

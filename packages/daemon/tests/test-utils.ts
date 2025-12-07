@@ -2,288 +2,285 @@
  * Test utilities for Bun+Elysia integration tests
  */
 
-import { Elysia } from "elysia";
-import { cors } from "@elysiajs/cors";
-import { config as dotenvConfig } from "dotenv";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { Elysia } from 'elysia';
+import { cors } from '@elysiajs/cors';
+import { config as dotenvConfig } from 'dotenv';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Load .env from daemon package directory
 const __dirname = dirname(fileURLToPath(import.meta.url));
-dotenvConfig({ path: join(__dirname, "../.env") });
-import { Database } from "../src/storage/database";
-import { SessionManager } from "../src/lib/session-manager";
-import { AuthManager } from "../src/lib/auth-manager";
-import { StateManager } from "../src/lib/state-manager";
-import { SubscriptionManager } from "../src/lib/subscription-manager";
-import { MessageHub, MessageHubRouter } from "@liuboer/shared";
-import { setupRPCHandlers } from "../src/lib/rpc-handlers";
-import { WebSocketServerTransport } from "../src/lib/websocket-server-transport";
-import { setupMessageHubWebSocket } from "../src/routes/setup-websocket";
-import type { Config } from "../src/config";
+dotenvConfig({ path: join(__dirname, '../.env') });
+import { Database } from '../src/storage/database';
+import { SessionManager } from '../src/lib/session-manager';
+import { AuthManager } from '../src/lib/auth-manager';
+import { StateManager } from '../src/lib/state-manager';
+import { SubscriptionManager } from '../src/lib/subscription-manager';
+import { MessageHub, MessageHubRouter } from '@liuboer/shared';
+import { setupRPCHandlers } from '../src/lib/rpc-handlers';
+import { WebSocketServerTransport } from '../src/lib/websocket-server-transport';
+import { setupMessageHubWebSocket } from '../src/routes/setup-websocket';
+import type { Config } from '../src/config';
 
 export interface TestContext {
-  app: Elysia<any>;
-  db: Database;
-  sessionManager: SessionManager;
-  messageHub: MessageHub;
-  transport: WebSocketServerTransport;
-  stateManager: StateManager;
-  subscriptionManager: SubscriptionManager;
-  authManager: AuthManager;
-  baseUrl: string;
-  config: Config;
-  cleanup: () => Promise<void>;
+	app: Elysia<any>;
+	db: Database;
+	sessionManager: SessionManager;
+	messageHub: MessageHub;
+	transport: WebSocketServerTransport;
+	stateManager: StateManager;
+	subscriptionManager: SubscriptionManager;
+	authManager: AuthManager;
+	baseUrl: string;
+	config: Config;
+	cleanup: () => Promise<void>;
 }
 
 /**
  * Create a test application instance with in-memory database
  */
 export async function createTestApp(): Promise<TestContext> {
-  // Use in-memory database for tests
-  const dbPath = `:memory:`;
-  const db = new Database(dbPath);
-  await db.initialize();
+	// Use in-memory database for tests
+	const dbPath = `:memory:`;
+	const db = new Database(dbPath);
+	await db.initialize();
 
-  // Test config - use temp directory for workspace root
-  const tmpDir = process.env.TMPDIR || "/tmp";
-  const testWorkspaceRoot = `${tmpDir}/liuboer-test-${Date.now()}`;
+	// Test config - use temp directory for workspace root
+	const tmpDir = process.env.TMPDIR || '/tmp';
+	const testWorkspaceRoot = `${tmpDir}/liuboer-test-${Date.now()}`;
 
-  const config: Config = {
-    host: "localhost",
-    port: 0, // Will be assigned randomly
-    defaultModel: "claude-sonnet-4-5-20250929",
-    maxTokens: 8192,
-    temperature: 1.0,
-    anthropicApiKey: process.env.ANTHROPIC_API_KEY || "",
-    claudeCodeOAuthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN,
-    dbPath,
-    maxSessions: 10,
-    nodeEnv: "test",
-    workspaceRoot: testWorkspaceRoot,
-  };
+	const config: Config = {
+		host: 'localhost',
+		port: 0, // Will be assigned randomly
+		defaultModel: 'claude-sonnet-4-5-20250929',
+		maxTokens: 8192,
+		temperature: 1.0,
+		anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
+		claudeCodeOAuthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN,
+		dbPath,
+		maxSessions: 10,
+		nodeEnv: 'test',
+		workspaceRoot: testWorkspaceRoot,
+	};
 
-  // Initialize authentication manager
-  // Note: Credentials are read from environment variables, not set in database
-  const authManager = new AuthManager(db, config);
-  await authManager.initialize();
+	// Initialize authentication manager
+	// Note: Credentials are read from environment variables, not set in database
+	const authManager = new AuthManager(db, config);
+	await authManager.initialize();
 
-  // Check authentication status
-  const authStatus = await authManager.getAuthStatus();
-  console.log("[TEST] Auth status:", authStatus.isAuthenticated ? `Authenticated via ${authStatus.method}` : "Not authenticated");
-  if (!authStatus.isAuthenticated) {
-    console.log("[TEST] WARNING: No authentication configured! Tests requiring API calls will be skipped.");
-  }
+	// Check authentication status
+	const authStatus = await authManager.getAuthStatus();
+	console.log(
+		'[TEST] Auth status:',
+		authStatus.isAuthenticated ? `Authenticated via ${authStatus.method}` : 'Not authenticated'
+	);
+	if (!authStatus.isAuthenticated) {
+		console.log(
+			'[TEST] WARNING: No authentication configured! Tests requiring API calls will be skipped.'
+		);
+	}
 
-  // Initialize MessageHub architecture
-  const router = new MessageHubRouter({
-    logger: console,
-    debug: false,
-  });
+	// Initialize MessageHub architecture
+	const router = new MessageHubRouter({
+		logger: console,
+		debug: false,
+	});
 
-  const messageHub = new MessageHub({
-    defaultSessionId: "global",
-    debug: false,
-  });
+	const messageHub = new MessageHub({
+		defaultSessionId: 'global',
+		debug: false,
+	});
 
-  messageHub.registerRouter(router);
+	messageHub.registerRouter(router);
 
-  const transport = new WebSocketServerTransport({
-    name: "test-ws",
-    debug: false,
-    router,
-  });
+	const transport = new WebSocketServerTransport({
+		name: 'test-ws',
+		debug: false,
+		router,
+	});
 
-  messageHub.registerTransport(transport);
+	messageHub.registerTransport(transport);
 
-  // Initialize EventBus (breaks circular dependency!)
-  const { EventBus } = await import("@liuboer/shared");
-  const eventBus = new EventBus({
-    debug: false,
-  });
+	// Initialize EventBus (breaks circular dependency!)
+	const { EventBus } = await import('@liuboer/shared');
+	const eventBus = new EventBus({
+		debug: false,
+	});
 
-  // Create session manager with EventBus
-  const sessionManager = new SessionManager(
-    db,
-    messageHub,
-    authManager,
-    eventBus, // Pass EventBus instead of StateManager
-    {
-      defaultModel: config.defaultModel,
-      maxTokens: config.maxTokens,
-      temperature: config.temperature,
-      workspaceRoot: config.workspaceRoot,
-    },
-  );
+	// Create session manager with EventBus
+	const sessionManager = new SessionManager(
+		db,
+		messageHub,
+		authManager,
+		eventBus, // Pass EventBus instead of StateManager
+		{
+			defaultModel: config.defaultModel,
+			maxTokens: config.maxTokens,
+			temperature: config.temperature,
+			workspaceRoot: config.workspaceRoot,
+		}
+	);
 
-  // Initialize State Manager (listens to EventBus)
-  const stateManager = new StateManager(
-    messageHub,
-    sessionManager,
-    authManager,
-    config,
-    eventBus,
-  );
+	// Initialize State Manager (listens to EventBus)
+	const stateManager = new StateManager(messageHub, sessionManager, authManager, config, eventBus);
 
-  // Setup RPC handlers
-  setupRPCHandlers({
-    messageHub,
-    sessionManager,
-    authManager,
-    config,
-  });
+	// Setup RPC handlers
+	setupRPCHandlers({
+		messageHub,
+		sessionManager,
+		authManager,
+		config,
+	});
 
-  // Initialize Subscription Manager
-  const subscriptionManager = new SubscriptionManager(messageHub);
+	// Initialize Subscription Manager
+	const subscriptionManager = new SubscriptionManager(messageHub);
 
-  // Create application
-  const app = new Elysia()
-    .use(
-      cors({
-        origin: "*",
-        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allowedHeaders: ["Content-Type"],
-      }),
-    )
-    .onError(({ error, set }) => {
-      console.error("Test app error:", error);
-      set.status = 500;
-      return {
-        error: "Internal server error",
-        message: error instanceof Error ? error.message : String(error),
-      };
-    })
-    .get("/", () => ({
-      name: "Liuboer Test Daemon",
-      version: "0.1.0",
-      status: "running",
-    }));
+	// Create application
+	const app = new Elysia()
+		.use(
+			cors({
+				origin: '*',
+				methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+				allowedHeaders: ['Content-Type'],
+			})
+		)
+		.onError(({ error, set }) => {
+			console.error('Test app error:', error);
+			set.status = 500;
+			return {
+				error: 'Internal server error',
+				message: error instanceof Error ? error.message : String(error),
+			};
+		})
+		.get('/', () => ({
+			name: 'Liuboer Test Daemon',
+			version: '0.1.0',
+			status: 'running',
+		}));
 
-  // Mount MessageHub WebSocket routes
-  // @ts-expect-error - Elysia type compatibility issue with newer versions
-  setupMessageHubWebSocket(app, transport, sessionManager, subscriptionManager);
+	// Mount MessageHub WebSocket routes
+	// @ts-expect-error - Elysia type compatibility issue with newer versions
+	setupMessageHubWebSocket(app, transport, sessionManager, subscriptionManager);
 
-  // Start server on random available port (0 = OS assigns free port)
-  app.listen({
-    hostname: "localhost",
-    port: 0,
-  });
+	// Start server on random available port (0 = OS assigns free port)
+	app.listen({
+		hostname: 'localhost',
+		port: 0,
+	});
 
-  // Wait for server to actually be listening
-  await Bun.sleep(200);
+	// Wait for server to actually be listening
+	await Bun.sleep(200);
 
-  // Get the actual port assigned by OS (Elysia exposes via app.server)
-  if (!app.server) {
-    throw new Error("Server failed to start");
-  }
-  const port = app.server.port;
-  const baseUrl = `http://localhost:${port}`;
+	// Get the actual port assigned by OS (Elysia exposes via app.server)
+	if (!app.server) {
+		throw new Error('Server failed to start');
+	}
+	const port = app.server.port;
+	const baseUrl = `http://localhost:${port}`;
 
-  // Verify server is ready by making a test request
-  let retries = 5;
-  while (retries > 0) {
-    try {
-      const response = await fetch(baseUrl);
-      if (response.ok) break;
-    } catch (error) {
-      retries--;
-      if (retries === 0) {
-        throw new Error(`Server failed to start at ${baseUrl}: ${error}`);
-      }
-      await Bun.sleep(100);
-    }
-  }
+	// Verify server is ready by making a test request
+	let retries = 5;
+	while (retries > 0) {
+		try {
+			const response = await fetch(baseUrl);
+			if (response.ok) break;
+		} catch (error) {
+			retries--;
+			if (retries === 0) {
+				throw new Error(`Server failed to start at ${baseUrl}: ${error}`);
+			}
+			await Bun.sleep(100);
+		}
+	}
 
-  return {
-    app: app as any,
-    db,
-    sessionManager,
-    messageHub,
-    transport,
-    stateManager,
-    subscriptionManager,
-    authManager,
-    baseUrl,
-    config,
-    cleanup: async () => {
-      messageHub.cleanup();
-      await sessionManager.cleanup();
-      db.close();
-      app.stop();
-    },
-  };
+	return {
+		app: app as any,
+		db,
+		sessionManager,
+		messageHub,
+		transport,
+		stateManager,
+		subscriptionManager,
+		authManager,
+		baseUrl,
+		config,
+		cleanup: async () => {
+			messageHub.cleanup();
+			await sessionManager.cleanup();
+			db.close();
+			app.stop();
+		},
+	};
 }
 
 /**
  * Make HTTP request to test server
  */
 export async function request(
-  baseUrl: string,
-  method: string,
-  path: string,
-  body?: unknown,
-  headers?: Record<string, string>,
+	baseUrl: string,
+	method: string,
+	path: string,
+	body?: unknown,
+	headers?: Record<string, string>
 ): Promise<Response> {
-  const url = `${baseUrl}${path}`;
-  const options: RequestInit = {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      ...headers,
-    },
-  };
+	const url = `${baseUrl}${path}`;
+	const options: RequestInit = {
+		method,
+		headers: {
+			'Content-Type': 'application/json',
+			...headers,
+		},
+	};
 
-  if (body) {
-    options.body = JSON.stringify(body);
-  }
+	if (body) {
+		options.body = JSON.stringify(body);
+	}
 
-  return await fetch(url, options);
+	return await fetch(url, options);
 }
 
 /**
  * Assert response is successful and return JSON body
  */
 export async function assertSuccessResponse<T>(
-  response: Response,
-  expectedStatus = 200,
+	response: Response,
+	expectedStatus = 200
 ): Promise<T> {
-  if (response.status !== expectedStatus) {
-    const text = await response.text();
-    throw new Error(
-      `Expected status ${expectedStatus}, got ${response.status}. Body: ${text}`,
-    );
-  }
+	if (response.status !== expectedStatus) {
+		const text = await response.text();
+		throw new Error(`Expected status ${expectedStatus}, got ${response.status}. Body: ${text}`);
+	}
 
-  const body = await response.json();
-  if (!body) {
-    throw new Error("Response body is empty");
-  }
-  return body as T;
+	const body = await response.json();
+	if (!body) {
+		throw new Error('Response body is empty');
+	}
+	return body as T;
 }
 
 /**
  * Assert response is an error
  */
 export async function assertErrorResponse(
-  response: Response,
-  expectedStatus: number,
+	response: Response,
+	expectedStatus: number
 ): Promise<{ error: string; message?: string }> {
-  if (response.status !== expectedStatus) {
-    const text = await response.text();
-    throw new Error(
-      `Expected error status ${expectedStatus}, got ${response.status}. Body: ${text}`,
-    );
-  }
+	if (response.status !== expectedStatus) {
+		const text = await response.text();
+		throw new Error(
+			`Expected error status ${expectedStatus}, got ${response.status}. Body: ${text}`
+		);
+	}
 
-  const body = await response.json();
-  if (!body) {
-    throw new Error("Error response body is empty");
-  }
-  // @ts-expect-error - body is typed as unknown, but we check it at runtime
-  if (!body.error) {
-    throw new Error("Error response should have 'error' field");
-  }
-  return body as { error: string; message?: string };
+	const body = await response.json();
+	if (!body) {
+		throw new Error('Error response body is empty');
+	}
+	// @ts-expect-error - body is typed as unknown, but we check it at runtime
+	if (!body.error) {
+		throw new Error("Error response should have 'error' field");
+	}
+	return body as { error: string; message?: string };
 }
 
 /**
@@ -291,231 +288,222 @@ export async function assertErrorResponse(
  * Note: Uses unified /ws endpoint - sessionId is passed in message payloads, not URL
  */
 export function createWebSocketWithFirstMessage(
-  baseUrl: string,
-  sessionId: string,
-  timeout = 5000,
+	baseUrl: string,
+	sessionId: string,
+	timeout = 5000
 ): { ws: WebSocket; firstMessagePromise: Promise<any> } {
-  const wsUrl = baseUrl.replace("http://", "ws://");
-  const ws = new WebSocket(`${wsUrl}/ws`);
+	const wsUrl = baseUrl.replace('http://', 'ws://');
+	const ws = new WebSocket(`${wsUrl}/ws`);
 
-  // Set up message listener IMMEDIATELY (synchronously)
-  const firstMessagePromise = new Promise((resolve, reject) => {
-    const messageHandler = (event: MessageEvent) => {
-      clearTimeout(timer);
-      ws.removeEventListener("message", messageHandler);
-      ws.removeEventListener("error", errorHandler);
-      try {
-        const data = JSON.parse(event.data as string);
-        resolve(data);
-      } catch (error) {
-        reject(new Error("Failed to parse WebSocket message"));
-      }
-    };
+	// Set up message listener IMMEDIATELY (synchronously)
+	const firstMessagePromise = new Promise((resolve, reject) => {
+		const messageHandler = (event: MessageEvent) => {
+			clearTimeout(timer);
+			ws.removeEventListener('message', messageHandler);
+			ws.removeEventListener('error', errorHandler);
+			try {
+				const data = JSON.parse(event.data as string);
+				resolve(data);
+			} catch (error) {
+				reject(new Error('Failed to parse WebSocket message'));
+			}
+		};
 
-    const errorHandler = (error: Event) => {
-      clearTimeout(timer);
-      ws.removeEventListener("message", messageHandler);
-      ws.removeEventListener("error", errorHandler);
-      reject(error);
-    };
+		const errorHandler = (error: Event) => {
+			clearTimeout(timer);
+			ws.removeEventListener('message', messageHandler);
+			ws.removeEventListener('error', errorHandler);
+			reject(error);
+		};
 
-    ws.addEventListener("message", messageHandler);
-    ws.addEventListener("error", errorHandler);
+		ws.addEventListener('message', messageHandler);
+		ws.addEventListener('error', errorHandler);
 
-    const timer = setTimeout(() => {
-      ws.removeEventListener("message", messageHandler);
-      ws.removeEventListener("error", errorHandler);
-      reject(new Error(`No WebSocket message received within ${timeout}ms`));
-    }, timeout);
-  });
+		const timer = setTimeout(() => {
+			ws.removeEventListener('message', messageHandler);
+			ws.removeEventListener('error', errorHandler);
+			reject(new Error(`No WebSocket message received within ${timeout}ms`));
+		}, timeout);
+	});
 
-  return { ws, firstMessagePromise };
+	return { ws, firstMessagePromise };
 }
 
 /**
  * Create WebSocket connection to test server (legacy, for backward compatibility)
  * Note: Uses unified /ws endpoint - sessionId is passed in message payloads, not URL
  */
-export function createWebSocket(
-  baseUrl: string,
-  sessionId: string,
-): WebSocket {
-  const wsUrl = baseUrl.replace("http://", "ws://");
-  const ws = new WebSocket(`${wsUrl}/ws`);
+export function createWebSocket(baseUrl: string, sessionId: string): WebSocket {
+	const wsUrl = baseUrl.replace('http://', 'ws://');
+	const ws = new WebSocket(`${wsUrl}/ws`);
 
-  // Set up error handler immediately to catch early errors
-  ws.addEventListener("error", (error) => {
-    console.error("WebSocket error in test:", error);
-  });
+	// Set up error handler immediately to catch early errors
+	ws.addEventListener('error', (error) => {
+		console.error('WebSocket error in test:', error);
+	});
 
-  return ws;
+	return ws;
 }
 
 /**
  * Wait for WebSocket to be in a specific state
  */
 export async function waitForWebSocketState(
-  ws: WebSocket,
-  state: number,
-  timeout = 5000,
+	ws: WebSocket,
+	state: number,
+	timeout = 5000
 ): Promise<void> {
-  const startTime = Date.now();
-  while (ws.readyState !== state) {
-    if (Date.now() - startTime > timeout) {
-      throw new Error(
-        `WebSocket did not reach state ${state} within ${timeout}ms`,
-      );
-    }
-    await Bun.sleep(10);
-  }
+	const startTime = Date.now();
+	while (ws.readyState !== state) {
+		if (Date.now() - startTime > timeout) {
+			throw new Error(`WebSocket did not reach state ${state} within ${timeout}ms`);
+		}
+		await Bun.sleep(10);
+	}
 }
 
 /**
  * Wait for WebSocket message
  * Sets up listener immediately to avoid race conditions
  */
-export async function waitForWebSocketMessage(
-  ws: WebSocket,
-  timeout = 5000,
-): Promise<any> {
-  return new Promise((resolve, reject) => {
-    // Set up handlers first, before any timing checks
-    const messageHandler = (event: MessageEvent) => {
-      clearTimeout(timer);
-      ws.removeEventListener("message", messageHandler);
-      ws.removeEventListener("error", errorHandler);
-      try {
-        const data = JSON.parse(event.data as string);
-        resolve(data);
-      } catch (error) {
-        reject(new Error("Failed to parse WebSocket message"));
-      }
-    };
+export async function waitForWebSocketMessage(ws: WebSocket, timeout = 5000): Promise<any> {
+	return new Promise((resolve, reject) => {
+		// Set up handlers first, before any timing checks
+		const messageHandler = (event: MessageEvent) => {
+			clearTimeout(timer);
+			ws.removeEventListener('message', messageHandler);
+			ws.removeEventListener('error', errorHandler);
+			try {
+				const data = JSON.parse(event.data as string);
+				resolve(data);
+			} catch (error) {
+				reject(new Error('Failed to parse WebSocket message'));
+			}
+		};
 
-    const errorHandler = (error: Event) => {
-      clearTimeout(timer);
-      ws.removeEventListener("message", messageHandler);
-      ws.removeEventListener("error", errorHandler);
-      reject(error);
-    };
+		const errorHandler = (error: Event) => {
+			clearTimeout(timer);
+			ws.removeEventListener('message', messageHandler);
+			ws.removeEventListener('error', errorHandler);
+			reject(error);
+		};
 
-    // Add listeners immediately
-    ws.addEventListener("message", messageHandler);
-    ws.addEventListener("error", errorHandler);
+		// Add listeners immediately
+		ws.addEventListener('message', messageHandler);
+		ws.addEventListener('error', errorHandler);
 
-    // Then set timeout
-    const timer = setTimeout(() => {
-      ws.removeEventListener("message", messageHandler);
-      ws.removeEventListener("error", errorHandler);
-      reject(new Error(`No WebSocket message received within ${timeout}ms (readyState: ${ws.readyState})`));
-    }, timeout);
-  });
+		// Then set timeout
+		const timer = setTimeout(() => {
+			ws.removeEventListener('message', messageHandler);
+			ws.removeEventListener('error', errorHandler);
+			reject(
+				new Error(
+					`No WebSocket message received within ${timeout}ms (readyState: ${ws.readyState})`
+				)
+			);
+		}, timeout);
+	});
 }
 
 /**
  * Wait for WebSocket to open and receive the first message
  * This avoids race conditions by setting up the message listener before waiting for OPEN
  */
-export async function waitForWebSocketOpenAndMessage(
-  ws: WebSocket,
-  timeout = 5000,
-): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const startTime = Date.now();
+export async function waitForWebSocketOpenAndMessage(ws: WebSocket, timeout = 5000): Promise<any> {
+	return new Promise((resolve, reject) => {
+		const startTime = Date.now();
 
-    const messageHandler = (event: MessageEvent) => {
-      clearTimeout(timer);
-      ws.removeEventListener("message", messageHandler);
-      ws.removeEventListener("error", errorHandler);
-      ws.removeEventListener("open", openHandler);
-      try {
-        const data = JSON.parse(event.data as string);
-        resolve(data);
-      } catch (error) {
-        reject(new Error("Failed to parse WebSocket message"));
-      }
-    };
+		const messageHandler = (event: MessageEvent) => {
+			clearTimeout(timer);
+			ws.removeEventListener('message', messageHandler);
+			ws.removeEventListener('error', errorHandler);
+			ws.removeEventListener('open', openHandler);
+			try {
+				const data = JSON.parse(event.data as string);
+				resolve(data);
+			} catch (error) {
+				reject(new Error('Failed to parse WebSocket message'));
+			}
+		};
 
-    const errorHandler = (error: Event) => {
-      clearTimeout(timer);
-      ws.removeEventListener("message", messageHandler);
-      ws.removeEventListener("error", errorHandler);
-      ws.removeEventListener("open", openHandler);
-      reject(error);
-    };
+		const errorHandler = (error: Event) => {
+			clearTimeout(timer);
+			ws.removeEventListener('message', messageHandler);
+			ws.removeEventListener('error', errorHandler);
+			ws.removeEventListener('open', openHandler);
+			reject(error);
+		};
 
-    const openHandler = () => {
-      console.log(`WebSocket opened on client side, waiting for message...`);
-    };
+		const openHandler = () => {
+			console.log(`WebSocket opened on client side, waiting for message...`);
+		};
 
-    // Add all listeners immediately when WebSocket is created
-    ws.addEventListener("message", messageHandler);
-    ws.addEventListener("error", errorHandler);
-    ws.addEventListener("open", openHandler);
+		// Add all listeners immediately when WebSocket is created
+		ws.addEventListener('message', messageHandler);
+		ws.addEventListener('error', errorHandler);
+		ws.addEventListener('open', openHandler);
 
-    const timer = setTimeout(() => {
-      ws.removeEventListener("message", messageHandler);
-      ws.removeEventListener("error", errorHandler);
-      ws.removeEventListener("open", openHandler);
-      reject(new Error(`No WebSocket message received within ${timeout}ms (readyState: ${ws.readyState}, elapsed: ${Date.now() - startTime}ms)`));
-    }, timeout);
-  });
+		const timer = setTimeout(() => {
+			ws.removeEventListener('message', messageHandler);
+			ws.removeEventListener('error', errorHandler);
+			ws.removeEventListener('open', openHandler);
+			reject(
+				new Error(
+					`No WebSocket message received within ${timeout}ms (readyState: ${ws.readyState}, elapsed: ${Date.now() - startTime}ms)`
+				)
+			);
+		}, timeout);
+	});
 }
 
 /**
  * Assertions
  */
 export function assertEquals<T>(actual: T, expected: T, message?: string) {
-  if (actual !== expected) {
-    throw new Error(
-      message ||
-        `Assertion failed: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
-    );
-  }
+	if (actual !== expected) {
+		throw new Error(
+			message ||
+				`Assertion failed: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`
+		);
+	}
 }
 
 export function assertExists<T>(value: T, message?: string): asserts value {
-  if (value === null || value === undefined) {
-    throw new Error(message || "Assertion failed: value does not exist");
-  }
+	if (value === null || value === undefined) {
+		throw new Error(message || 'Assertion failed: value does not exist');
+	}
 }
 
 export function assertNotEquals<T>(actual: T, expected: T, message?: string) {
-  if (actual === expected) {
-    throw new Error(
-      message ||
-        `Assertion failed: expected not to equal ${JSON.stringify(expected)}`,
-    );
-  }
+	if (actual === expected) {
+		throw new Error(
+			message || `Assertion failed: expected not to equal ${JSON.stringify(expected)}`
+		);
+	}
 }
 
 export function assertTrue(value: boolean, message?: string) {
-  if (!value) {
-    throw new Error(message || "Assertion failed: expected true");
-  }
+	if (!value) {
+		throw new Error(message || 'Assertion failed: expected true');
+	}
 }
 
 export function assertFalse(value: boolean, message?: string) {
-  if (value) {
-    throw new Error(message || "Assertion failed: expected false");
-  }
+	if (value) {
+		throw new Error(message || 'Assertion failed: expected false');
+	}
 }
 
 export function assertGreaterThan(actual: number, expected: number, message?: string) {
-  if (actual <= expected) {
-    throw new Error(
-      message || `Assertion failed: ${actual} is not greater than ${expected}`,
-    );
-  }
+	if (actual <= expected) {
+		throw new Error(message || `Assertion failed: ${actual} is not greater than ${expected}`);
+	}
 }
 
 export function assertContains<T>(array: T[], item: T, message?: string) {
-  if (!array.includes(item)) {
-    throw new Error(
-      message ||
-        `Assertion failed: array does not contain ${JSON.stringify(item)}`,
-    );
-  }
+	if (!array.includes(item)) {
+		throw new Error(message || `Assertion failed: array does not contain ${JSON.stringify(item)}`);
+	}
 }
 
 /**
@@ -533,48 +521,48 @@ export function assertContains<T>(array: T[], item: T, message?: string) {
  * Check if API key is available in test environment
  */
 export function hasApiKey(): boolean {
-  return !!process.env.ANTHROPIC_API_KEY;
+	return !!process.env.ANTHROPIC_API_KEY;
 }
 
 /**
  * Check if OAuth token is available in test environment
  */
 export function hasOAuthToken(): boolean {
-  return !!process.env.CLAUDE_CODE_OAUTH_TOKEN;
+	return !!process.env.CLAUDE_CODE_OAUTH_TOKEN;
 }
 
 /**
  * Check if any authentication credentials are available
  */
 export function hasAnyCredentials(): boolean {
-  return hasApiKey() || hasOAuthToken();
+	return hasApiKey() || hasOAuthToken();
 }
 
 /**
  * Skip test if no API key is available
  */
 export function requiresApiKey(test: any) {
-  if (!hasApiKey()) {
-    test.skip();
-  }
+	if (!hasApiKey()) {
+		test.skip();
+	}
 }
 
 /**
  * Skip test if no OAuth token is available
  */
 export function requiresOAuthToken(test: any) {
-  if (!hasOAuthToken()) {
-    test.skip();
-  }
+	if (!hasOAuthToken()) {
+		test.skip();
+	}
 }
 
 /**
  * Skip test if no credentials are available
  */
 export function requiresCredentials(test: any) {
-  if (!hasAnyCredentials()) {
-    test.skip();
-  }
+	if (!hasAnyCredentials()) {
+		test.skip();
+	}
 }
 
 /**
@@ -582,17 +570,17 @@ export function requiresCredentials(test: any) {
  * Bypasses transport layer to test handlers directly
  */
 export async function callRPCHandler<T = any>(
-  messageHub: MessageHub,
-  method: string,
-  data: any = {},
+	messageHub: MessageHub,
+	method: string,
+	data: any = {}
 ): Promise<T> {
-  // Access the handler directly from MessageHub's internal handlers map
-  const handler = (messageHub as any).rpcHandlers.get(method);
-  if (!handler) {
-    throw new Error(`RPC handler not found: ${method}`);
-  }
+	// Access the handler directly from MessageHub's internal handlers map
+	const handler = (messageHub as any).rpcHandlers.get(method);
+	if (!handler) {
+		throw new Error(`RPC handler not found: ${method}`);
+	}
 
-  // Call handler with data and empty context
-  const result = await handler(data, {});
-  return result as T;
+	// Call handler with data and empty context
+	const result = await handler(data, {});
+	return result as T;
 }

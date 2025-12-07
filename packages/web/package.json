@@ -1,33 +1,33 @@
 {
-  "name": "@liuboer/web",
-  "version": "0.1.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
-    "dev:old": "bun run css:build && bun run --bun css:watch & bun run server:dev",
-    "css:build": "tailwindcss --input src/styles.css --output src/styles.out.css",
-    "css:watch": "tailwindcss --input src/styles.css --output src/styles.out.css --watch",
-    "server:dev": "bun --watch src/index.ts",
-    "build:old": "bun run build.ts",
-    "start": "NODE_ENV=production bun src/server-prod.ts",
-    "typecheck": "tsc --build"
-  },
-  "dependencies": {
-    "preact": "10.28.0",
-    "@preact/signals": "2.5.1",
-    "marked": "17.0.1",
-    "highlight.js": "11.11.1",
-    "clsx": "2.1.1",
-    "date-fns": "4.1.0"
-  },
-  "devDependencies": {
-    "@preact/preset-vite": "^2.10.2",
-    "@tailwindcss/vite": "^4.1.17",
-    "bun-types": "latest",
-    "tailwindcss": "^4.1.17",
-    "typescript": "^5.9.3",
-    "vite": "^7.2.6"
-  }
+	"name": "@liuboer/web",
+	"version": "0.1.0",
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "vite build",
+		"preview": "vite preview",
+		"dev:old": "bun run css:build && bun run --bun css:watch & bun run server:dev",
+		"css:build": "tailwindcss --input src/styles.css --output src/styles.out.css",
+		"css:watch": "tailwindcss --input src/styles.css --output src/styles.out.css --watch",
+		"server:dev": "bun --watch src/index.ts",
+		"build:old": "bun run build.ts",
+		"start": "NODE_ENV=production bun src/server-prod.ts",
+		"typecheck": "tsc --build"
+	},
+	"dependencies": {
+		"preact": "10.28.0",
+		"@preact/signals": "2.5.1",
+		"marked": "17.0.1",
+		"highlight.js": "11.11.1",
+		"clsx": "2.1.1",
+		"date-fns": "4.1.0"
+	},
+	"devDependencies": {
+		"@preact/preset-vite": "^2.10.2",
+		"@tailwindcss/vite": "^4.1.17",
+		"bun-types": "latest",
+		"tailwindcss": "^4.1.17",
+		"typescript": "^5.9.3",
+		"vite": "^7.2.6"
+	}
 }

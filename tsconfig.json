@@ -1,10 +1,10 @@
 {
-  "files": [],
-  "references": [
-    { "path": "./packages/daemon" },
-    { "path": "./packages/shared" },
-    { "path": "./packages/web" },
-    { "path": "./packages/e2e" }
-  ],
-  "exclude": ["node_modules", "tmp", "dist"]
+	"files": [],
+	"references": [
+		{ "path": "./packages/daemon" },
+		{ "path": "./packages/shared" },
+		{ "path": "./packages/web" },
+		{ "path": "./packages/e2e" }
+	],
+	"exclude": ["node_modules", "tmp", "dist"]
 }

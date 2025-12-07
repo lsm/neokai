@@ -5,149 +5,151 @@
  * Following MessageHub architectural principle: "sessionId in message, not URL"
  */
 
-import type { Elysia } from "elysia";
-import { createEventMessage, createErrorMessage, MessageType, generateUUID } from "@liuboer/shared";
-import type { WebSocketServerTransport } from "../lib/websocket-server-transport";
-import type { SessionManager } from "../lib/session-manager";
-import type { SubscriptionManager } from "../lib/subscription-manager";
+import type { Elysia } from 'elysia';
+import { createEventMessage, createErrorMessage, MessageType, generateUUID } from '@liuboer/shared';
+import type { WebSocketServerTransport } from '../lib/websocket-server-transport';
+import type { SessionManager } from '../lib/session-manager';
+import type { SubscriptionManager } from '../lib/subscription-manager';
 
-const GLOBAL_SESSION_ID = "global";
+const GLOBAL_SESSION_ID = 'global';
 
 // FIX P1.1: Message size validation constants (DoS prevention)
 const MAX_MESSAGE_SIZE = 10 * 1024 * 1024; // 10MB max message size
 const MAX_MESSAGE_SIZE_MB = MAX_MESSAGE_SIZE / (1024 * 1024);
 
 export function setupMessageHubWebSocket(
-  app: Elysia<any>,
-  transport: WebSocketServerTransport,
-  sessionManager: SessionManager,
-  subscriptionManager: SubscriptionManager,
+	app: Elysia<any>,
+	transport: WebSocketServerTransport,
+	sessionManager: SessionManager,
+	subscriptionManager: SubscriptionManager
 ) {
-  // UNIFIED WebSocket endpoint - single connection handles all sessions
-  // Session routing is done via message.sessionId field, not URL
-  return app.ws("/ws", {
-    open(ws: any) {
-      console.log("WebSocket connection established");
+	// UNIFIED WebSocket endpoint - single connection handles all sessions
+	// Session routing is done via message.sessionId field, not URL
+	return app.ws('/ws', {
+		open(ws: any) {
+			console.log('WebSocket connection established');
 
-      // Register client with transport (starts in global session)
-      const clientId = transport.registerClient(ws.raw as any, GLOBAL_SESSION_ID);
+			// Register client with transport (starts in global session)
+			const clientId = transport.registerClient(ws.raw as any, GLOBAL_SESSION_ID);
 
-      // Store clientId on websocket for cleanup and message handling
-      (ws.raw as any).__clientId = clientId;
+			// Store clientId on websocket for cleanup and message handling
+			(ws.raw as any).__clientId = clientId;
 
-      // NOTE: We don't auto-subscribe clients to events anymore.
-      // Clients will subscribe themselves by sending SUBSCRIBE messages.
-      // This prevents the server-side subscription timeout issue.
+			// NOTE: We don't auto-subscribe clients to events anymore.
+			// Clients will subscribe themselves by sending SUBSCRIBE messages.
+			// This prevents the server-side subscription timeout issue.
 
-      // Send connection confirmation as a proper EVENT message
-      const connectionEvent = createEventMessage({
-        method: "connection.established",
-        sessionId: GLOBAL_SESSION_ID,
-        data: {
-          message: "WebSocket connection established",
-          protocol: "MessageHub",
-          version: "1.0.0",
-        },
-      });
-      ws.send(JSON.stringify(connectionEvent));
-    },
+			// Send connection confirmation as a proper EVENT message
+			const connectionEvent = createEventMessage({
+				method: 'connection.established',
+				sessionId: GLOBAL_SESSION_ID,
+				data: {
+					message: 'WebSocket connection established',
+					protocol: 'MessageHub',
+					version: '1.0.0',
+				},
+			});
+			ws.send(JSON.stringify(connectionEvent));
+		},
 
-    async message(ws: any, message: any) {
-      try {
-        // FIX P1.1: Validate message size before parsing (DoS prevention)
-        const messageStr = typeof message === "string" ? message : JSON.stringify(message);
-        const messageSize = new TextEncoder().encode(messageStr).length;
+		async message(ws: any, message: any) {
+			try {
+				// FIX P1.1: Validate message size before parsing (DoS prevention)
+				const messageStr = typeof message === 'string' ? message : JSON.stringify(message);
+				const messageSize = new TextEncoder().encode(messageStr).length;
 
-        if (messageSize > MAX_MESSAGE_SIZE) {
-          console.error(`Message rejected: size ${(messageSize / (1024 * 1024)).toFixed(2)}MB exceeds limit ${MAX_MESSAGE_SIZE_MB}MB`);
-          const errorMsg = createErrorMessage({
-            method: "message.process",
-            error: {
-              code: "MESSAGE_TOO_LARGE",
-              message: `Message size ${(messageSize / (1024 * 1024)).toFixed(2)}MB exceeds maximum ${MAX_MESSAGE_SIZE_MB}MB`,
-            },
-            sessionId: GLOBAL_SESSION_ID,
-          });
-          ws.send(JSON.stringify(errorMsg));
-          return;
-        }
+				if (messageSize > MAX_MESSAGE_SIZE) {
+					console.error(
+						`Message rejected: size ${(messageSize / (1024 * 1024)).toFixed(2)}MB exceeds limit ${MAX_MESSAGE_SIZE_MB}MB`
+					);
+					const errorMsg = createErrorMessage({
+						method: 'message.process',
+						error: {
+							code: 'MESSAGE_TOO_LARGE',
+							message: `Message size ${(messageSize / (1024 * 1024)).toFixed(2)}MB exceeds maximum ${MAX_MESSAGE_SIZE_MB}MB`,
+						},
+						sessionId: GLOBAL_SESSION_ID,
+					});
+					ws.send(JSON.stringify(errorMsg));
+					return;
+				}
 
-        const data = typeof message === "string" ? JSON.parse(message) : message;
+				const data = typeof message === 'string' ? JSON.parse(message) : message;
 
-        // Handle ping/pong
-        if (data.type === "ping" || data.type === "PING") {
-          const pongMsg = {
-            id: generateUUID(),
-            type: MessageType.PONG,
-            sessionId: data.sessionId || GLOBAL_SESSION_ID,
-            method: "heartbeat",
-            timestamp: new Date().toISOString(),
-            requestId: data.id,
-          };
-          ws.send(JSON.stringify(pongMsg));
-          return;
-        }
+				// Handle ping/pong
+				if (data.type === 'ping' || data.type === 'PING') {
+					const pongMsg = {
+						id: generateUUID(),
+						type: MessageType.PONG,
+						sessionId: data.sessionId || GLOBAL_SESSION_ID,
+						method: 'heartbeat',
+						timestamp: new Date().toISOString(),
+						requestId: data.id,
+					};
+					ws.send(JSON.stringify(pongMsg));
+					return;
+				}
 
-        // Get client ID for subscription tracking
-        const clientId = (ws.raw as any).__clientId;
+				// Get client ID for subscription tracking
+				const clientId = (ws.raw as any).__clientId;
 
-        // Validate sessionId exists in message
-        if (!data.sessionId) {
-          console.warn("Message without sessionId, defaulting to global");
-          data.sessionId = GLOBAL_SESSION_ID;
-        }
+				// Validate sessionId exists in message
+				if (!data.sessionId) {
+					console.warn('Message without sessionId, defaulting to global');
+					data.sessionId = GLOBAL_SESSION_ID;
+				}
 
-        // For session-specific messages, verify session exists (except for global)
-        // SUBSCRIBE/UNSUBSCRIBE are protocol-level and don't require session validation
-        const isProtocolMessage = data.type === "SUBSCRIBE" || data.type === "UNSUBSCRIBE";
-        if (data.sessionId !== GLOBAL_SESSION_ID && !isProtocolMessage) {
-          const session = await sessionManager.getSessionAsync(data.sessionId);
-          if (!session) {
-            const errorMsg = createErrorMessage({
-              method: data.method || "unknown.method",
-              error: {
-                code: "SESSION_NOT_FOUND",
-                message: `Session not found: ${data.sessionId}`,
-              },
-              sessionId: data.sessionId,
-              requestId: data.id,
-            });
-            ws.send(JSON.stringify(errorMsg));
-            return;
-          }
-        }
+				// For session-specific messages, verify session exists (except for global)
+				// SUBSCRIBE/UNSUBSCRIBE are protocol-level and don't require session validation
+				const isProtocolMessage = data.type === 'SUBSCRIBE' || data.type === 'UNSUBSCRIBE';
+				if (data.sessionId !== GLOBAL_SESSION_ID && !isProtocolMessage) {
+					const session = await sessionManager.getSessionAsync(data.sessionId);
+					if (!session) {
+						const errorMsg = createErrorMessage({
+							method: data.method || 'unknown.method',
+							error: {
+								code: 'SESSION_NOT_FOUND',
+								message: `Session not found: ${data.sessionId}`,
+							},
+							sessionId: data.sessionId,
+							requestId: data.id,
+						});
+						ws.send(JSON.stringify(errorMsg));
+						return;
+					}
+				}
 
-        // Pass to transport which will notify MessageHub
-        // Message routing is handled by sessionId field, not connection
-        transport.handleClientMessage(data, clientId);
-      } catch (error) {
-        console.error("Error processing WebSocket message:", error);
-        const errorMsg = createErrorMessage({
-          method: "message.process",
-          error: {
-            code: "INVALID_MESSAGE",
-            message: error instanceof Error ? error.message : "Invalid message format",
-          },
-          sessionId: GLOBAL_SESSION_ID,
-        });
-        ws.send(JSON.stringify(errorMsg));
-      }
-    },
+				// Pass to transport which will notify MessageHub
+				// Message routing is handled by sessionId field, not connection
+				transport.handleClientMessage(data, clientId);
+			} catch (error) {
+				console.error('Error processing WebSocket message:', error);
+				const errorMsg = createErrorMessage({
+					method: 'message.process',
+					error: {
+						code: 'INVALID_MESSAGE',
+						message: error instanceof Error ? error.message : 'Invalid message format',
+					},
+					sessionId: GLOBAL_SESSION_ID,
+				});
+				ws.send(JSON.stringify(errorMsg));
+			}
+		},
 
-    close(ws: any) {
-      console.log("WebSocket disconnected");
-      const clientId = (ws.raw as any).__clientId;
-      if (clientId) {
-        transport.unregisterClient(clientId);
-      }
-    },
+		close(ws: any) {
+			console.log('WebSocket disconnected');
+			const clientId = (ws.raw as any).__clientId;
+			if (clientId) {
+				transport.unregisterClient(clientId);
+			}
+		},
 
-    error(ws: any, error: any) {
-      console.error("WebSocket error:", error);
-      const clientId = (ws.raw as any).__clientId;
-      if (clientId) {
-        transport.unregisterClient(clientId);
-      }
-    },
-  });
+		error(ws: any, error: any) {
+			console.error('WebSocket error:', error);
+			const clientId = (ws.raw as any).__clientId;
+			if (clientId) {
+				transport.unregisterClient(clientId);
+			}
+		},
+	});
 }

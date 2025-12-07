@@ -5,7 +5,9 @@ This directory contains comprehensive integration tests for the Liuboer daemon. 
 ## Test Files
 
 ### 1. `session-rpc.test.ts` - Session Management RPC Integration
+
 Tests all session-related RPC handlers:
+
 - `session.create` - Creating sessions with default and custom config
 - `session.list` - Listing all sessions
 - `session.get` - Retrieving session details
@@ -14,7 +16,9 @@ Tests all session-related RPC handlers:
 - EventBus integration - Verifies events are emitted correctly
 
 ### 2. `state-sync.test.ts` - State Synchronization Integration
+
 Tests state management and broadcasting:
+
 - Global state snapshots (sessions, auth, config, health)
 - Session-specific state snapshots
 - EventBus → StateManager → MessageHub flow
@@ -23,7 +27,9 @@ Tests state management and broadcasting:
 - State channel subscriptions
 
 ### 3. `websocket-messagehub.test.ts` - WebSocket Transport Integration
+
 Tests full WebSocket stack:
+
 - WebSocket connection establishment
 - RPC calls over WebSocket
 - Error handling over WebSocket
@@ -33,7 +39,9 @@ Tests full WebSocket stack:
 - Client disconnection handling
 
 ### 4. `auth.test.ts` - Authentication Integration
+
 Tests authentication system:
+
 - Auth status reporting
 - Authentication method detection (API key vs OAuth)
 - Auth state broadcasting
@@ -41,7 +49,9 @@ Tests authentication system:
 - Auth manager initialization
 
 ### 5. `e2e-workflow.test.ts` - End-to-End Workflows
+
 Tests complete user workflows:
+
 - Full session lifecycle (create → message → update → delete)
 - Multi-session independence and isolation
 - Multi-tab state synchronization
@@ -62,6 +72,7 @@ These integration tests focus on:
 ## Test Utilities
 
 The `test-utils.ts` file provides:
+
 - `createTestApp()` - Creates a full daemon instance with in-memory database
 - `callRPCHandler()` - Directly invokes RPC handlers for testing
 - `createWebSocket()` - Helper for WebSocket connection creation

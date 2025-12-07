@@ -1,4 +1,4 @@
-.PHONY: dev start daemon web self restart sync-sdk-types clean-cache clean-all build-prod test test-daemon e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self
+.PHONY: dev start daemon web self restart sync-sdk-types clean-cache clean-all build-prod test test-daemon e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self lint lint-fix format
 
 # Unified server (daemon + web in single process) - RECOMMENDED
 dev:
@@ -135,3 +135,16 @@ docker-self: docker-build docker-up
 	@echo "   Access at: http://localhost:9983"
 	@echo "   View logs: make docker-logs"
 	@echo "   Stop: make docker-down"
+
+# Linting and Formatting
+lint:
+	@echo "🔍 Running linter..."
+	@bun run lint
+
+lint-fix:
+	@echo "🔧 Running linter with auto-fix..."
+	@bun run lint:fix
+
+format:
+	@echo "✨ Formatting code..."
+	@bun run format

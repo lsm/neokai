@@ -1,56 +1,53 @@
-import { serve } from "bun";
-import index from "./index.html";
+import { serve } from 'bun';
+import index from './index.html';
 
-const DAEMON_URL = process.env.DAEMON_URL || "http://localhost:8283";
+const DAEMON_URL = process.env.DAEMON_URL || 'http://localhost:8283';
 const PORT = process.env.PORT || 9283;
-const isDev = process.env.NODE_ENV !== "production";
+const isDev = process.env.NODE_ENV !== 'production';
 
 const server = serve({
-  port: PORT,
+	port: PORT,
 
-  async fetch(req: Request, server: any) {
-    const url = new URL(req.url);
+	async fetch(req: Request, server: any) {
+		const url = new URL(req.url);
 
-    // API proxy to daemon - forward all /api requests
-    if (url.pathname.startsWith("/api/")) {
-      const daemonUrl = `${DAEMON_URL}${url.pathname}${url.search}`;
+		// API proxy to daemon - forward all /api requests
+		if (url.pathname.startsWith('/api/')) {
+			const daemonUrl = `${DAEMON_URL}${url.pathname}${url.search}`;
 
-      try {
-        const response = await fetch(daemonUrl, {
-          method: req.method,
-          headers: req.headers,
-          body: req.body,
-        });
+			try {
+				const response = await fetch(daemonUrl, {
+					method: req.method,
+					headers: req.headers,
+					body: req.body,
+				});
 
-        return response;
-      } catch (error) {
-        console.error("API proxy error:", error);
-        return new Response(
-          JSON.stringify({ error: "Failed to connect to daemon" }),
-          {
-            status: 502,
-            headers: { "Content-Type": "application/json" },
-          }
-        );
-      }
-    }
+				return response;
+			} catch (error) {
+				console.error('API proxy error:', error);
+				return new Response(JSON.stringify({ error: 'Failed to connect to daemon' }), {
+					status: 502,
+					headers: { 'Content-Type': 'application/json' },
+				});
+			}
+		}
 
-    // Let Bun's development server handle static files (JS, CSS, etc.)
-    // This is important for proper MIME types and module serving
-    return null as any;
-  },
+		// Let Bun's development server handle static files (JS, CSS, etc.)
+		// This is important for proper MIME types and module serving
+		return null as any;
+	},
 
-  routes: {
-    // SPA - serve index.html for all routes (client-side handling)
-    "/*": index,
-  },
+	routes: {
+		// SPA - serve index.html for all routes (client-side handling)
+		'/*': index,
+	},
 
-  development: isDev && {
-    hmr: true, // Hot module replacement
-    console: true, // Stream browser console to terminal
-  },
+	development: isDev && {
+		hmr: true, // Hot module replacement
+		console: true, // Stream browser console to terminal
+	},
 } as any);
 
 console.log(`🚀 Liuboer Web UI running on ${server.url}`);
 console.log(`📡 Proxying API requests to ${DAEMON_URL}`);
-console.log(`⚡ HMR: ${isDev ? "enabled" : "disabled"}`);
+console.log(`⚡ HMR: ${isDev ? 'enabled' : 'disabled'}`);

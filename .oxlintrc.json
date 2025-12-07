@@ -1,19 +1,19 @@
 {
-  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
-  "rules": {
-    "typescript/no-explicit-any": "warn",
-    "typescript/no-unused-vars": "warn"
-  },
-  "ignorePatterns": [
-    "**/node_modules",
-    "**/dist",
-    "**/build",
-    "**/.turbo",
-    "**/coverage",
-    "**/playwright-report",
-    "**/test-results",
-    "**/tmp",
-    "**/*.config.js",
-    "**/*.config.ts"
-  ]
+	"$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
+	"rules": {
+		"typescript/no-explicit-any": "warn",
+		"typescript/no-unused-vars": "warn"
+	},
+	"ignorePatterns": [
+		"**/node_modules",
+		"**/dist",
+		"**/build",
+		"**/.turbo",
+		"**/coverage",
+		"**/playwright-report",
+		"**/test-results",
+		"**/tmp",
+		"**/*.config.js",
+		"**/*.config.ts"
+	]
 }
