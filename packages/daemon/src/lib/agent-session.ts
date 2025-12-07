@@ -1,5 +1,5 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import type { Message, MessageContent, Session, ToolCall, ContextInfo } from "@liuboer/shared";
+import type { Message, MessageContent, Session, ToolCall, ContextInfo, AgentProcessingState } from "@liuboer/shared";
 import type { MessageHub } from "@liuboer/shared";
 import type { SDKUserMessage } from "@liuboer/shared/sdk/sdk.d.ts";
 import { generateUUID, isValidModel, resolveModelAlias, getModelInfo } from "@liuboer/shared";
@@ -17,16 +17,6 @@ interface QueuedMessage {
   reject: (error: Error) => void;
   internal?: boolean; // If true, don't save to DB or emit to client
 }
-
-/**
- * Agent processing state
- * Tracks what the agent is currently doing
- */
-export type AgentProcessingState =
-  | { status: 'idle' }
-  | { status: 'queued'; messageId: string }
-  | { status: 'processing'; messageId: string }
-  | { status: 'interrupted' };
 
 /**
  * Agent Session - wraps a single session with Claude using Claude Agent SDK

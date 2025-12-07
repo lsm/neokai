@@ -50,35 +50,56 @@ export interface SystemState {
  * These use sessionId: <session-id> for routing
  */
 
-// State channel: {sessionId}:state.session
-export interface SessionMetaState {
+/**
+ * Agent processing state
+ * Tracks what the agent is currently doing
+ * Moved from daemon/agent-session.ts to shared for type consistency
+ */
+export type AgentProcessingState =
+  | { status: 'idle' }
+  | { status: 'queued'; messageId: string }
+  | { status: 'processing'; messageId: string }
+  | { status: 'interrupted' };
+
+/**
+ * Commands data structure
+ */
+export interface CommandsData {
+  availableCommands: string[];
+}
+
+/**
+ * UNIFIED Session State
+ * Combines all session-specific state (metadata, agent, commands, context)
+ * into a single state channel for simpler synchronization
+ *
+ * State channel: {sessionId}:state.session
+ *
+ * This replaces the old fragmented approach of:
+ * - state.session (metadata only)
+ * - agent.state event (agent state)
+ * - session.commands-updated event (commands)
+ * - state.context (context info)
+ */
+export interface SessionState {
+  // Session metadata
   session: Session;
+
+  // Agent processing state
+  agent: AgentProcessingState;
+
+  // Available slash commands
+  commands: CommandsData;
+
+  // Context information (placeholder - will implement later)
+  context: ContextInfo | null;
+
   timestamp: number;
 }
 
 // State channel: {sessionId}:state.sdkMessages
 export interface SDKMessagesState {
   sdkMessages: SDKMessage[];
-  timestamp: number;
-}
-
-// State channel: {sessionId}:state.agent
-export interface AgentState {
-  isProcessing: boolean;
-  currentTask: string | null;
-  status: 'idle' | 'working' | 'waiting' | 'error';
-  timestamp: number;
-}
-
-// State channel: {sessionId}:state.context
-export interface ContextState {
-  contextInfo: ContextInfo | null;
-  timestamp: number;
-}
-
-// State channel: {sessionId}:state.commands
-export interface CommandsState {
-  availableCommands: string[];
   timestamp: number;
 }
 
@@ -102,11 +123,10 @@ export interface GlobalStateSnapshot {
 }
 
 export interface SessionStateSnapshot {
-  session: SessionMetaState;
+  // Unified session state (metadata, agent, commands, context)
+  session: SessionState;
+  // SDK messages (kept separate due to different update pattern)
   sdkMessages: SDKMessagesState;
-  agent: AgentState;
-  context: ContextState;
-  commands: CommandsState;
   meta: StateChannelMeta;
 }
 
@@ -139,11 +159,8 @@ export const STATE_CHANNELS = {
   GLOBAL_SNAPSHOT: 'state.global.snapshot',
 
   // Session channels (prefix with sessionId:)
-  SESSION_META: 'state.session',
+  SESSION: 'state.session', // Unified session state (metadata + agent + commands + context)
   SESSION_SDK_MESSAGES: 'state.sdkMessages',
-  SESSION_AGENT: 'state.agent',
-  SESSION_CONTEXT: 'state.context',
-  SESSION_COMMANDS: 'state.commands',
   SESSION_SNAPSHOT: 'state.session.snapshot',
 } as const;
 

@@ -17,11 +17,9 @@ import type {
   SystemState,
   GlobalStateSnapshot,
   SessionStateSnapshot,
-  SessionMetaState,
+  SessionState,
   SDKMessagesState,
-  AgentState,
-  ContextState,
-  CommandsState,
+  AgentProcessingState,
   SessionsUpdate,
   SDKMessagesUpdate,
 } from "@liuboer/shared";
@@ -75,8 +73,8 @@ export class StateManager {
     });
 
     this.eventBus.on('session:updated', async (data) => {
-      // Broadcast session meta change
-      await this.broadcastSessionMetaChange(data.sessionId);
+      // Broadcast unified session state
+      await this.broadcastSessionStateChange(data.sessionId);
 
       // Also update global sessions list
       const updatedSession = this.sessionManager.listSessions().find(
@@ -145,29 +143,14 @@ export class StateManager {
     });
 
     // Session-specific channel requests
-    this.messageHub.handle(STATE_CHANNELS.SESSION_META, async (data) => {
+    this.messageHub.handle(STATE_CHANNELS.SESSION, async (data) => {
       const { sessionId } = data as { sessionId: string };
-      return await this.getSessionMetaState(sessionId);
+      return await this.getSessionState(sessionId);
     });
 
     this.messageHub.handle(STATE_CHANNELS.SESSION_SDK_MESSAGES, async (data) => {
       const { sessionId } = data as { sessionId: string };
       return await this.getSDKMessagesState(sessionId);
-    });
-
-    this.messageHub.handle(STATE_CHANNELS.SESSION_AGENT, async (data) => {
-      const { sessionId } = data as { sessionId: string };
-      return await this.getAgentState(sessionId);
-    });
-
-    this.messageHub.handle(STATE_CHANNELS.SESSION_CONTEXT, async (data) => {
-      const { sessionId } = data as { sessionId: string };
-      return await this.getContextState(sessionId);
-    });
-
-    this.messageHub.handle(STATE_CHANNELS.SESSION_COMMANDS, async (data) => {
-      const { sessionId } = data as { sessionId: string };
-      return await this.getCommandsState(sessionId);
     });
   }
 
@@ -247,27 +230,46 @@ export class StateManager {
    * Get full session state snapshot
    */
   async getSessionSnapshot(sessionId: string): Promise<SessionStateSnapshot> {
-    const [session, sdkMessages, agent, context, commands] =
-      await Promise.all([
-        this.getSessionMetaState(sessionId),
-        this.getSDKMessagesState(sessionId),
-        this.getAgentState(sessionId),
-        this.getContextState(sessionId),
-        this.getCommandsState(sessionId),
-      ]);
+    const [session, sdkMessages] = await Promise.all([
+      this.getSessionState(sessionId),
+      this.getSDKMessagesState(sessionId),
+    ]);
 
     return {
       session,
       sdkMessages,
-      agent,
-      context,
-      commands,
       meta: {
         channel: "session",
         sessionId,
         lastUpdate: Date.now(),
         version: this.channelVersions.get(`session:${sessionId}`) || 0,
       },
+    };
+  }
+
+  /**
+   * Get unified session state (metadata + agent + commands + context)
+   * NEW: Replaces getSessionMetaState/getAgentState/getCommandsState/getContextState
+   */
+  private async getSessionState(sessionId: string): Promise<SessionState> {
+    const agentSession = await this.sessionManager.getSessionAsync(sessionId);
+    if (!agentSession) {
+      throw new Error("Session not found");
+    }
+
+    // Get all session state in one place
+    const sessionData = agentSession.getSessionData();
+    const agentState = agentSession.getProcessingState();
+    const commands = await agentSession.getSlashCommands();
+
+    return {
+      session: sessionData,
+      agent: agentState,
+      commands: {
+        availableCommands: commands,
+      },
+      context: null, // TODO: Implement context info later
+      timestamp: Date.now(),
     };
   }
 
@@ -400,19 +402,17 @@ export class StateManager {
   }
 
   /**
-   * Broadcast session metadata change
+   * Broadcast unified session state change (metadata + agent + commands + context)
+   * NEW: Replaces broadcastSessionMetaChange/broadcastAgentStateChange/broadcastCommandsChange/broadcastContextChange
    * FIX: Uses per-channel versioning
    */
-  async broadcastSessionMetaChange(sessionId: string): Promise<void> {
-    const version = this.incrementVersion(`${STATE_CHANNELS.SESSION_META}:${sessionId}`);
-    const state = { ...await this.getSessionMetaState(sessionId), version };
+  async broadcastSessionStateChange(sessionId: string): Promise<void> {
+    const version = this.incrementVersion(`${STATE_CHANNELS.SESSION}:${sessionId}`);
+    const state = { ...await this.getSessionState(sessionId), version };
 
-    await this.messageHub.publish(STATE_CHANNELS.SESSION_META, state, {
+    await this.messageHub.publish(STATE_CHANNELS.SESSION, state, {
       sessionId,
     });
-
-    // Also update global sessions list
-    await this.broadcastSessionsChange();
   }
 
   /**
