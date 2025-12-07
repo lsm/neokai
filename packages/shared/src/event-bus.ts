@@ -13,6 +13,10 @@
  * Events are typed for safety and IDE autocomplete.
  */
 
+import type { Session, Message, AuthMethod } from './types.ts';
+import type { SDKMessage } from './sdk/sdk.d.ts';
+import type { AgentProcessingState } from './state-types.ts';
+
 export type UnsubscribeFn = () => void;
 
 /**
@@ -25,21 +29,24 @@ export type EventHandler<T = unknown> = (data: T) => void | Promise<void>;
  */
 export interface EventMap {
 	// Session lifecycle events
-	'session:created': { session: any };
-	'session:updated': { sessionId: string; updates: Partial<any> };
+	'session:created': { session: Session };
+	'session:updated': { sessionId: string; updates: Partial<Session> };
 	'session:deleted': { sessionId: string };
 
 	// Message events
-	'message:created': { sessionId: string; message: any };
+	'message:created': { sessionId: string; message: Message };
 
 	// SDK events
-	'sdk:message': { sessionId: string; message: any };
+	'sdk:message': { sessionId: string; message: SDKMessage };
 
 	// Auth events
-	'auth:changed': { method: string; isAuthenticated: boolean };
+	'auth:changed': { method: AuthMethod; isAuthenticated: boolean };
 
-	// Generic fallback
-	[key: string]: any;
+	// Agent state events
+	'agent-state:changed': { sessionId: string; state: AgentProcessingState };
+
+	// Commands events
+	'commands:updated': { sessionId: string; commands: string[] };
 }
 
 /**
