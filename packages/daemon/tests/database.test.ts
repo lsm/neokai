@@ -165,7 +165,7 @@ describe('Database', () => {
 					content: 'Hello, world!',
 				},
 				parent_tool_use_id: null,
-				uuid: 'msg-1',
+				uuid: '00000000-0000-0000-0000-000000000001' as const,
 				session_id: 'session-1',
 			};
 
@@ -201,7 +201,7 @@ describe('Database', () => {
 					],
 				},
 				parent_tool_use_id: null,
-				uuid: 'msg-1',
+				uuid: '00000000-0000-0000-0000-000000000001' as const,
 				session_id: 'session-1',
 			};
 
@@ -229,7 +229,7 @@ describe('Database', () => {
 					content: 'First',
 				},
 				parent_tool_use_id: null,
-				uuid: 'msg-1',
+				uuid: '00000000-0000-0000-0000-000000000001' as const,
 				session_id: 'session-1',
 			};
 
@@ -240,7 +240,7 @@ describe('Database', () => {
 					content: [{ type: 'text' as const, text: 'Second' }],
 				},
 				parent_tool_use_id: null,
-				uuid: 'msg-2',
+				uuid: '00000000-0000-0000-0000-000000000002' as const,
 				session_id: 'session-1',
 			};
 
@@ -320,7 +320,7 @@ describe('Database', () => {
 					],
 				},
 				parent_tool_use_id: null,
-				uuid: 'msg-1',
+				uuid: '00000000-0000-0000-0000-000000000001' as const,
 				session_id: 'session-1',
 			};
 
@@ -364,7 +364,7 @@ describe('Database', () => {
 					],
 				},
 				parent_tool_use_id: null,
-				uuid: 'msg-1',
+				uuid: '00000000-0000-0000-0000-000000000001' as const,
 				session_id: 'session-1',
 			};
 
@@ -394,7 +394,7 @@ describe('Database', () => {
 					content: 'Test',
 				},
 				parent_tool_use_id: null,
-				uuid: 'msg-1',
+				uuid: '00000000-0000-0000-0000-000000000001' as const,
 				session_id: 'session-1',
 			};
 			db.saveSDKMessage('session-1', sdkMsg);
@@ -428,7 +428,7 @@ describe('Database', () => {
 					content: 'Session 1 message',
 				},
 				parent_tool_use_id: null,
-				uuid: 'msg-1',
+				uuid: '00000000-0000-0000-0000-000000000001' as const,
 				session_id: 'session-1',
 			};
 
@@ -439,7 +439,7 @@ describe('Database', () => {
 					content: 'Session 2 message',
 				},
 				parent_tool_use_id: null,
-				uuid: 'msg-2',
+				uuid: '00000000-0000-0000-0000-000000000002' as const,
 				session_id: 'session-2',
 			};
 

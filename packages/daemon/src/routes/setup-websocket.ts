@@ -18,14 +18,14 @@ const MAX_MESSAGE_SIZE = 10 * 1024 * 1024; // 10MB max message size
 const MAX_MESSAGE_SIZE_MB = MAX_MESSAGE_SIZE / (1024 * 1024);
 
 export function setupMessageHubWebSocket(
-	app: Elysia<any>,
+	app: Elysia,
 	transport: WebSocketServerTransport,
 	sessionManager: SessionManager,
-	subscriptionManager: SubscriptionManager
+	_subscriptionManager: SubscriptionManager
 ) {
 	// UNIFIED WebSocket endpoint - single connection handles all sessions
 	// Session routing is done via message.sessionId field, not URL
-	return app.ws('/ws', {
+	return app.ws('/ws', ({
 		open(ws: any) {
 			console.log('WebSocket connection established');
 
@@ -151,5 +151,5 @@ export function setupMessageHubWebSocket(
 				transport.unregisterClient(clientId);
 			}
 		},
-	});
+	} as any));
 }

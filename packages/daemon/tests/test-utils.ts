@@ -23,7 +23,7 @@ import { setupMessageHubWebSocket } from '../src/routes/setup-websocket';
 import type { Config } from '../src/config';
 
 export interface TestContext {
-	app: Elysia<any>;
+	app: Elysia;
 	db: Database;
 	sessionManager: SessionManager;
 	messageHub: MessageHub;
@@ -194,7 +194,7 @@ export async function createTestApp(): Promise<TestContext> {
 	}
 
 	return {
-		app: app as any,
+		app,
 		db,
 		sessionManager,
 		messageHub,
@@ -289,9 +289,9 @@ export async function assertErrorResponse(
  */
 export function createWebSocketWithFirstMessage(
 	baseUrl: string,
-	sessionId: string,
+	_sessionId: string,
 	timeout = 5000
-): { ws: WebSocket; firstMessagePromise: Promise<any> } {
+): { ws: WebSocket; firstMessagePromise: Promise<unknown> } {
 	const wsUrl = baseUrl.replace('http://', 'ws://');
 	const ws = new WebSocket(`${wsUrl}/ws`);
 
@@ -304,7 +304,7 @@ export function createWebSocketWithFirstMessage(
 			try {
 				const data = JSON.parse(event.data as string);
 				resolve(data);
-			} catch (error) {
+			} catch {
 				reject(new Error('Failed to parse WebSocket message'));
 			}
 		};
@@ -333,7 +333,7 @@ export function createWebSocketWithFirstMessage(
  * Create WebSocket connection to test server (legacy, for backward compatibility)
  * Note: Uses unified /ws endpoint - sessionId is passed in message payloads, not URL
  */
-export function createWebSocket(baseUrl: string, sessionId: string): WebSocket {
+export function createWebSocket(baseUrl: string, _sessionId: string): WebSocket {
 	const wsUrl = baseUrl.replace('http://', 'ws://');
 	const ws = new WebSocket(`${wsUrl}/ws`);
 
@@ -366,7 +366,7 @@ export async function waitForWebSocketState(
  * Wait for WebSocket message
  * Sets up listener immediately to avoid race conditions
  */
-export async function waitForWebSocketMessage(ws: WebSocket, timeout = 5000): Promise<any> {
+export async function waitForWebSocketMessage(ws: WebSocket, timeout = 5000): Promise<unknown> {
 	return new Promise((resolve, reject) => {
 		// Set up handlers first, before any timing checks
 		const messageHandler = (event: MessageEvent) => {
@@ -376,7 +376,7 @@ export async function waitForWebSocketMessage(ws: WebSocket, timeout = 5000): Pr
 			try {
 				const data = JSON.parse(event.data as string);
 				resolve(data);
-			} catch (error) {
+			} catch {
 				reject(new Error('Failed to parse WebSocket message'));
 			}
 		};
@@ -409,7 +409,7 @@ export async function waitForWebSocketMessage(ws: WebSocket, timeout = 5000): Pr
  * Wait for WebSocket to open and receive the first message
  * This avoids race conditions by setting up the message listener before waiting for OPEN
  */
-export async function waitForWebSocketOpenAndMessage(ws: WebSocket, timeout = 5000): Promise<any> {
+export async function waitForWebSocketOpenAndMessage(ws: WebSocket, timeout = 5000): Promise<unknown> {
 	return new Promise((resolve, reject) => {
 		const startTime = Date.now();
 
@@ -421,7 +421,7 @@ export async function waitForWebSocketOpenAndMessage(ws: WebSocket, timeout = 50
 			try {
 				const data = JSON.parse(event.data as string);
 				resolve(data);
-			} catch (error) {
+			} catch {
 				reject(new Error('Failed to parse WebSocket message'));
 			}
 		};
@@ -541,7 +541,7 @@ export function hasAnyCredentials(): boolean {
 /**
  * Skip test if no API key is available
  */
-export function requiresApiKey(test: any) {
+export function requiresApiKey(test: { skip: () => void }) {
 	if (!hasApiKey()) {
 		test.skip();
 	}
@@ -550,7 +550,7 @@ export function requiresApiKey(test: any) {
 /**
  * Skip test if no OAuth token is available
  */
-export function requiresOAuthToken(test: any) {
+export function requiresOAuthToken(test: { skip: () => void }) {
 	if (!hasOAuthToken()) {
 		test.skip();
 	}
@@ -559,7 +559,7 @@ export function requiresOAuthToken(test: any) {
 /**
  * Skip test if no credentials are available
  */
-export function requiresCredentials(test: any) {
+export function requiresCredentials(test: { skip: () => void }) {
 	if (!hasAnyCredentials()) {
 		test.skip();
 	}
@@ -569,18 +569,18 @@ export function requiresCredentials(test: any) {
  * Call RPC handler directly (for integration tests)
  * Bypasses transport layer to test handlers directly
  */
-export async function callRPCHandler<T = any>(
+export async function callRPCHandler<T = unknown>(
 	messageHub: MessageHub,
 	method: string,
-	data: any = {}
+	data: Record<string, unknown> = {}
 ): Promise<T> {
 	// Access the handler directly from MessageHub's internal handlers map
-	const handler = (messageHub as any).rpcHandlers.get(method);
+	const handler = (messageHub as { rpcHandlers: Map<string, (data: unknown) => Promise<unknown>> }).rpcHandlers.get(method);
 	if (!handler) {
 		throw new Error(`RPC handler not found: ${method}`);
 	}
 
-	// Call handler with data and empty context
-	const result = await handler(data, {});
+	// Call handler with data
+	const result = await handler(data);
 	return result as T;
 }
