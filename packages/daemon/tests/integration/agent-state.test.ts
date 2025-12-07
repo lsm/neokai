@@ -1,15 +1,13 @@
 /**
  * Agent State Integration Tests
  *
- * Tests the agent.state event broadcasting mechanism that tracks real-time
- * processing state transitions. This is distinct from state.agent snapshot channel.
+ * DEPRECATED: These tests were written for the old agent.state event pattern.
+ * Agent state is now part of the unified state.session channel.
  *
- * State Transitions:
- * - idle → queued → processing → idle (normal message flow)
- * - processing → interrupted → idle (user interruption)
- * - queued → interrupted → idle (interrupting queued message)
+ * See state-sync.test.ts for tests covering the unified state.session channel.
  *
- * The agent.state mechanism uses push-based events, not pull-based snapshots.
+ * TODO: Remove this file or rewrite tests to use state.session channel.
+ * For now, all tests are skipped.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
@@ -27,7 +25,7 @@ import { MessageType } from "@liuboer/shared";
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || "/tmp";
 
-describe("Agent State Event Broadcasting", () => {
+describe.skip("Agent State Event Broadcasting (DEPRECATED)", () => {
   let ctx: TestContext;
 
   beforeEach(async () => {

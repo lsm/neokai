@@ -76,18 +76,6 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       // Only subscribe if component is still mounted
       if (!isMounted) return;
 
-      // Subscribe to commands updates
-      const unsubCommands = await hub.subscribe<{ availableCommands: string[] }>(
-        'session.commands-updated',
-        (data) => {
-          console.log("Received commands update:", data.availableCommands);
-          slashCommandsSignal.value = data.availableCommands;
-        },
-        { sessionId }
-      );
-      if (!isMounted) return;
-      cleanupFunctions.push(unsubCommands);
-
       // SDK message events - PRIMARY EVENT HANDLER
       const unsubSDKMessage = await hub.subscribe<SDKMessage>(
         'sdk.message',
@@ -209,13 +197,22 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
       if (!isMounted) return;
       cleanupFunctions.push(unsubSessionError);
 
-      // Subscribe to agent state updates (replaces message.queued/processing)
-      const unsubAgentState = await hub.subscribe<{ state: any; timestamp: number }>('agent.state', (data) => {
-        const { state } = data;
-        console.log("Agent state updated:", state);
+      // Subscribe to unified session state (includes agent state and commands)
+      const unsubSessionState = await hub.subscribe<{
+        session: any;
+        agent: { status: 'idle' | 'queued' | 'processing' | 'interrupted'; messageId?: string };
+        commands: { availableCommands: string[] };
+        context: any;
+      }>('state.session', (data) => {
+        console.log("Received unified session state:", data);
 
-        // Update UI based on server's authoritative state
-        switch (state.status) {
+        // Update commands
+        if (data.commands?.availableCommands) {
+          slashCommandsSignal.value = data.commands.availableCommands;
+        }
+
+        // Update UI based on agent state
+        switch (data.agent.status) {
           case 'idle':
             setSending(false);
             setStreamingEvents([]);
@@ -239,17 +236,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
         }
       }, { sessionId });
       if (!isMounted) return;
-      cleanupFunctions.push(unsubAgentState);
-
-      // FIX: After subscribing, request current state snapshot
-      // This ensures we get the current state even if we missed events during disconnection
-      try {
-        await hub.call('agent.getState', { sessionId });
-        console.log("Received initial agent state snapshot");
-      } catch (error) {
-        console.warn("Failed to get initial agent state:", error);
-        // Don't fail - we'll get updates from future state changes
-      }
+      cleanupFunctions.push(unsubSessionState);
     }).catch(error => {
       console.error("[ChatContainer] Failed to set up subscriptions:", error);
       setError("Failed to connect to daemon");

@@ -86,16 +86,10 @@ export class SubscriptionManager {
       "session.error", // Session errors
       "session.interrupted", // Agent interrupted
 
-      // Agent processing state (push-based, replaces message.queued/processing)
-      "agent.state", // Current processing state (queued/processing/idle/interrupted)
-
       // State channel events for this session
-      "state.session", // Session metadata
+      "state.session", // Unified session state (metadata + agent + commands + context)
       "state.sdkMessages", // SDK-level messages
       "state.sdkMessages.delta", // SDK message deltas
-      "state.agent", // Agent status
-      "state.context", // Context/token info
-      "state.commands", // Available slash commands
     ];
 
     // Subscribe to each event for this specific session
@@ -157,13 +151,9 @@ export class SubscriptionManager {
       "context.updated",
       "session.error",
       "session.interrupted",
-      "agent.state",
       "state.session",
       "state.sdkMessages",
       "state.sdkMessages.delta",
-      "state.agent",
-      "state.context",
-      "state.commands",
     ];
   }
 }
