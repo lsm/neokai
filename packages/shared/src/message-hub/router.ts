@@ -572,16 +572,6 @@ export class MessageHubRouter {
 	}
 
 	/**
-	 * Handle incoming message from a client
-	 * This allows the router to process messages directly
-	 */
-	handleMessage(message: HubMessage, clientId: string): void {
-		// Router can intercept and process certain message types
-		// For now, this is a placeholder for future functionality
-		this.log(`Received message from client ${clientId}: ${message.type} ${message.method}`);
-	}
-
-	/**
 	 * Get all connected client IDs
 	 */
 	getClientIds(): string[] {

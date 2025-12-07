@@ -578,24 +578,6 @@ describe('MessageHubRouter', () => {
 			});
 		});
 
-		describe('handleMessage', () => {
-			test('should handle incoming message from client (placeholder functionality)', () => {
-				const conn1 = createMockConnection(mockWs1);
-				const clientId = router.registerConnection(conn1);
-
-				const message = createCallMessage({
-					method: 'test.method',
-					data: { foo: 'bar' },
-					sessionId: 'session1',
-				});
-
-				// Should not throw - this is a placeholder method for future functionality
-				expect(() => {
-					router.handleMessage(message, clientId);
-				}).not.toThrow();
-			});
-		});
-
 		describe('getClientIds', () => {
 			test('should return all connected client IDs', () => {
 				const conn1 = createMockConnection(mockWs1);
