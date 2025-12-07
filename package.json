@@ -9,7 +9,10 @@
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
 		"typecheck": "tsc --build",
-		"check": "bun run lint && bun run typecheck"
+		"check": "bun run lint && bun run typecheck",
+		"test": "bun test",
+		"test:coverage": "bun test --coverage",
+		"test:coverage:lcov": "bun test --coverage --coverage-reporter=lcov"
 	},
 	"devDependencies": {
 		"oxlint": "1.31.0",

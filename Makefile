@@ -1,4 +1,4 @@
-.PHONY: dev start daemon web self restart sync-sdk-types clean-cache clean-all build-prod test test-daemon e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self lint lint-fix format
+.PHONY: dev start daemon web self restart sync-sdk-types clean-cache clean-all build-prod test test-daemon test-coverage test-coverage-lcov e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self lint lint-fix format
 
 # Unified server (daemon + web in single process) - RECOMMENDED
 dev:
@@ -90,6 +90,16 @@ test:
 test-daemon:
 	@echo "🧪 Running daemon tests..."
 	@cd packages/daemon && bun test
+
+test-coverage:
+	@echo "📊 Running tests with coverage..."
+	@bun test --coverage
+
+test-coverage-lcov:
+	@echo "📊 Generating LCOV coverage report..."
+	@bun test --coverage --coverage-reporter=lcov
+	@echo "✅ Coverage report generated at coverage/lcov.info"
+	@echo "💡 Tip: Use an IDE extension (like Coverage Gutters for VS Code) to visualize coverage"
 
 # E2E Testing with Playwright
 e2e:
