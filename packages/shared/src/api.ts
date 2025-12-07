@@ -5,7 +5,6 @@ import type {
 	FileTree,
 	HealthStatus,
 	Message,
-	OAuthTokens,
 	Session,
 	SessionConfig,
 	Tool,

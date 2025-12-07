@@ -360,7 +360,7 @@ export const recentSessions = computed<Session[]>(() => {
  * Global WebSocket connection state
  * Single source of truth for the entire app
  */
-export type ConnectionState = 'connecting' | 'connected' | 'disconnected';
+export type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'error' | 'reconnecting';
 export const connectionState = signal<ConnectionState>('connecting');
 
 /**

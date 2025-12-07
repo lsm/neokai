@@ -78,7 +78,7 @@ export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo, isRepla
 
 	// Check if this is a compact summary (replay message with long text content)
 	const isCompactSummary = (): boolean => {
-		return isReplay && !commandOutput && textContent.length > 200;
+		return (isReplay ?? false) && !commandOutput && textContent.length > 200;
 	};
 
 	const handleCopy = async () => {

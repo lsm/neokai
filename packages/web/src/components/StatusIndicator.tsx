@@ -13,7 +13,7 @@ import { useState, useRef, useEffect } from 'preact/hooks';
 import type { ContextInfo } from '@liuboer/shared';
 
 interface StatusIndicatorProps {
-	connectionState: 'connecting' | 'connected' | 'disconnected';
+	connectionState: 'connecting' | 'connected' | 'disconnected' | 'error' | 'reconnecting';
 	isProcessing: boolean;
 	currentAction?: string;
 	contextUsage?: ContextInfo;

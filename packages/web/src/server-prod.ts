@@ -16,7 +16,7 @@ const server = serve({
 				const response = await fetch(daemonUrl, {
 					method: req.method,
 					headers: req.headers,
-					body: req.body,
+					...(req.method !== 'GET' && req.method !== 'HEAD' ? { body: req.body } : {}),
 				});
 
 				return response;

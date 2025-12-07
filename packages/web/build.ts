@@ -9,7 +9,7 @@
  */
 
 import { $ } from 'bun';
-import { mkdirSync, writeFileSync, copyFileSync } from 'fs';
+import { mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 const DIST_DIR = join(import.meta.dir, 'dist');

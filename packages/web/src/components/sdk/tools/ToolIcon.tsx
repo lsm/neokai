@@ -242,7 +242,7 @@ export function ToolIcon({
 	size = 'md',
 	className,
 	animated = false,
-	category,
+	category: _category,
 }: ToolIconProps) {
 	const config = getToolConfig(toolName);
 	const colors = getToolColors(toolName);
