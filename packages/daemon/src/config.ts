@@ -52,7 +52,7 @@ export function getConfig(overrides?: ConfigOverrides): Config {
 		dbPath: overrides?.dbPath ?? (process.env.DB_PATH || './data/daemon.db'),
 		anthropicApiKey: process.env.ANTHROPIC_API_KEY,
 		claudeCodeOAuthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN,
-		defaultModel: process.env.DEFAULT_MODEL || 'claude-sonnet-4-5-20241022',
+		defaultModel: process.env.DEFAULT_MODEL || 'claude-sonnet-4-5-20250929',
 		maxTokens: parseInt(process.env.MAX_TOKENS || '8192'),
 		temperature: parseFloat(process.env.TEMPERATURE || '1.0'),
 		maxSessions: parseInt(process.env.MAX_SESSIONS || '10'),
