@@ -1,4 +1,4 @@
-import { test, expect, Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 
 /**
  * E2E tests for WebSocket connection state tracking
@@ -67,7 +67,7 @@ test.describe('Connection State Tracking', () => {
 
 		// Simulate disconnection using exposed method
 		await page.evaluate(() => {
-			(window as any).connectionManager.simulateDisconnect();
+			(window as unknown as { connectionManager: { simulateDisconnect: () => void } }).connectionManager.simulateDisconnect();
 		});
 
 		// Wait for disconnection to be detected (use .first() to handle multiple instances)
@@ -86,7 +86,7 @@ test.describe('Connection State Tracking', () => {
 
 		// Simulate disconnection
 		await page.evaluate(() => {
-			(window as any).connectionManager.simulateDisconnect();
+			(window as unknown as { connectionManager: { simulateDisconnect: () => void } }).connectionManager.simulateDisconnect();
 		});
 
 		// Wait for offline status (use .first() to handle multiple instances)
@@ -118,7 +118,7 @@ test.describe('Connection State Tracking', () => {
 
 		// Simulate disconnection
 		await page.evaluate(() => {
-			(window as any).connectionManager.simulateDisconnect();
+			(window as unknown as { connectionManager: { simulateDisconnect: () => void } }).connectionManager.simulateDisconnect();
 		});
 
 		// Wait for offline (use .first() to handle multiple instances)
@@ -148,7 +148,7 @@ test.describe('Connection State Tracking', () => {
 
 		// Simulate disconnection
 		await page.evaluate(() => {
-			(window as any).connectionManager.simulateDisconnect();
+			(window as unknown as { connectionManager: { simulateDisconnect: () => void } }).connectionManager.simulateDisconnect();
 		});
 
 		// Should show offline
@@ -156,11 +156,11 @@ test.describe('Connection State Tracking', () => {
 		await expect(sidebar.locator('.bg-gray-500')).toBeVisible();
 
 		// Try to catch connecting state (may be too fast to see)
-		const connectingVisible = await sidebar
+		await sidebar
 			.locator('text=Connecting...')
 			.isVisible()
 			.catch(() => false);
-		const yellowDotVisible = await sidebar
+		await sidebar
 			.locator('.bg-yellow-500')
 			.isVisible()
 			.catch(() => false);
@@ -184,7 +184,7 @@ test.describe('Connection State Tracking', () => {
 
 		// Simulate disconnection
 		await page.evaluate(() => {
-			(window as any).connectionManager.simulateDisconnect();
+			(window as unknown as { connectionManager: { simulateDisconnect: () => void } }).connectionManager.simulateDisconnect();
 		});
 
 		// Both should show "Offline"

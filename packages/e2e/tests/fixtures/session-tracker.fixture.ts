@@ -40,15 +40,15 @@ async function cleanupSessionDirect(page: Page, sessionId: string): Promise<bool
 	try {
 		const result = await page.evaluate(async (sid) => {
 			try {
-				const hub = (window as any).__messageHub || (window as any).appState?.messageHub;
+				const hub = (window as unknown as { __messageHub?: unknown; appState?: { messageHub?: unknown } }).__messageHub || (window as unknown as { __messageHub?: unknown; appState?: { messageHub?: unknown } }).appState?.messageHub;
 				if (!hub || !hub.call) {
 					return { success: false, error: 'MessageHub not available' };
 				}
 
 				await hub.call('session.delete', { sessionId: sid }, { timeout: 5000 });
 				return { success: true };
-			} catch (error: any) {
-				return { success: false, error: error?.message || String(error) };
+			} catch (error: unknown) {
+				return { success: false, error: (error as Error)?.message || String(error) };
 			}
 		}, sessionId);
 

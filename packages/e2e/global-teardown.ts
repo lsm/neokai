@@ -26,14 +26,14 @@ async function globalTeardown(config: FullConfig) {
 		// Get list of all sessions via RPC
 		const sessions = await page.evaluate(async () => {
 			try {
-				const hub = (window as any).__messageHub || (window as any).appState?.messageHub;
+				const hub = (window as unknown as { __messageHub?: unknown; appState?: { messageHub?: unknown } }).__messageHub || (window as unknown as { __messageHub?: unknown; appState?: { messageHub?: unknown } }).appState?.messageHub;
 				if (!hub || !hub.call) {
 					return { success: false, sessions: [] };
 				}
 
 				const result = await hub.call('session.list', {}, { timeout: 5000 });
 				return { success: true, sessions: result?.sessions || [] };
-			} catch (error: any) {
+			} catch (error: unknown) {
 				console.error('Failed to fetch sessions:', error);
 				return { success: false, sessions: [] };
 			}
@@ -49,7 +49,7 @@ async function globalTeardown(config: FullConfig) {
 
 		// Only clean up test sessions (created in the last hour)
 		const oneHourAgo = Date.now() - 60 * 60 * 1000;
-		const testSessions = sessions.sessions.filter((s: any) => {
+		const testSessions = sessions.sessions.filter((s: { createdAt: string; id: string }) => {
 			const createdAt = new Date(s.createdAt).getTime();
 			return createdAt > oneHourAgo;
 		});
@@ -68,15 +68,15 @@ async function globalTeardown(config: FullConfig) {
 		for (const session of testSessions) {
 			const result = await page.evaluate(async (sid) => {
 				try {
-					const hub = (window as any).__messageHub || (window as any).appState?.messageHub;
+					const hub = (window as unknown as { __messageHub?: unknown; appState?: { messageHub?: unknown } }).__messageHub || (window as unknown as { __messageHub?: unknown; appState?: { messageHub?: unknown } }).appState?.messageHub;
 					if (!hub || !hub.call) {
 						return { success: false };
 					}
 
 					await hub.call('session.delete', { sessionId: sid }, { timeout: 5000 });
 					return { success: true };
-				} catch (error: any) {
-					return { success: false, error: error?.message };
+				} catch (error: unknown) {
+					return { success: false, error: (error as Error)?.message };
 				}
 			}, session.id);
 

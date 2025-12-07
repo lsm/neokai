@@ -10,11 +10,6 @@ test.describe('UI Components', () => {
 		test('should have hover effects on interactive elements', async ({ page }) => {
 			const newSessionButton = page.locator("button:has-text('New Session')");
 
-			// Get initial styles
-			const initialColor = await newSessionButton.evaluate(
-				(el) => (globalThis as any).getComputedStyle(el).backgroundColor
-			);
-
 			// Hover over button
 			await newSessionButton.hover();
 

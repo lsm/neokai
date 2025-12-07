@@ -14,7 +14,6 @@ import type { Page } from '@playwright/test';
 import {
 	setupMessageHubTesting,
 	waitForSessionCreated,
-	waitForMessageProcessed,
 	waitForElement,
 	cleanupTestSession,
 } from './helpers/wait-helpers';
@@ -61,7 +60,7 @@ test.describe.skip('Session Interruption', () => {
 		);
 
 		// Start sending
-		const sendPromise = page.click('button[type="submit"]');
+		void page.click('button[type="submit"]');
 
 		// Wait for processing to start
 		await page.waitForSelector('text=/Sending|Processing|Queued/i', { timeout: 3000 });
@@ -118,10 +117,10 @@ test.describe.skip('Session Interruption', () => {
 
 		// Immediately queue more messages (while first is processing)
 		await messageInput.fill('Second message in queue');
-		const send2Promise = page.click('button[type="submit"]');
+		void page.click('button[type="submit"]');
 
 		await messageInput.fill('Third message in queue');
-		const send3Promise = page.click('button[type="submit"]');
+		void page.click('button[type="submit"]');
 
 		// Trigger interrupt
 		await page.evaluate((sid) => {
@@ -238,7 +237,7 @@ test.describe('Error Handling', () => {
 		// Should show connection error
 		await page.waitForTimeout(2000);
 
-		const hasError = await page
+		await page
 			.locator('text=/connection|network|offline/i')
 			.isVisible({ timeout: 3000 })
 			.catch(() => false);
@@ -336,7 +335,6 @@ test.describe('Error Handling', () => {
 		});
 
 		// Should have disconnected and reconnected
-		const hasDisconnect = states.includes('disconnected');
 		const hasReconnect = states.includes('connected');
 
 		// Connection indicator should show connected - be more specific
