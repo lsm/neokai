@@ -409,7 +409,10 @@ export async function waitForWebSocketMessage(ws: WebSocket, timeout = 5000): Pr
  * Wait for WebSocket to open and receive the first message
  * This avoids race conditions by setting up the message listener before waiting for OPEN
  */
-export async function waitForWebSocketOpenAndMessage(ws: WebSocket, timeout = 5000): Promise<unknown> {
+export async function waitForWebSocketOpenAndMessage(
+	ws: WebSocket,
+	timeout = 5000
+): Promise<unknown> {
 	return new Promise((resolve, reject) => {
 		const startTime = Date.now();
 
@@ -575,7 +578,9 @@ export async function callRPCHandler<T = unknown>(
 	data: Record<string, unknown> = {}
 ): Promise<T> {
 	// Access the handler directly from MessageHub's internal handlers map
-	const handler = (messageHub as { rpcHandlers: Map<string, (data: unknown) => Promise<unknown>> }).rpcHandlers.get(method);
+	const handler = (
+		messageHub as { rpcHandlers: Map<string, (data: unknown) => Promise<unknown>> }
+	).rpcHandlers.get(method);
 	if (!handler) {
 		throw new Error(`RPC handler not found: ${method}`);
 	}

@@ -67,7 +67,9 @@ test.describe('Connection State Tracking', () => {
 
 		// Simulate disconnection using exposed method
 		await page.evaluate(() => {
-			(window as unknown as { connectionManager: { simulateDisconnect: () => void } }).connectionManager.simulateDisconnect();
+			(
+				window as unknown as { connectionManager: { simulateDisconnect: () => void } }
+			).connectionManager.simulateDisconnect();
 		});
 
 		// Wait for disconnection to be detected (use .first() to handle multiple instances)
@@ -86,7 +88,9 @@ test.describe('Connection State Tracking', () => {
 
 		// Simulate disconnection
 		await page.evaluate(() => {
-			(window as unknown as { connectionManager: { simulateDisconnect: () => void } }).connectionManager.simulateDisconnect();
+			(
+				window as unknown as { connectionManager: { simulateDisconnect: () => void } }
+			).connectionManager.simulateDisconnect();
 		});
 
 		// Wait for offline status (use .first() to handle multiple instances)
@@ -118,7 +122,9 @@ test.describe('Connection State Tracking', () => {
 
 		// Simulate disconnection
 		await page.evaluate(() => {
-			(window as unknown as { connectionManager: { simulateDisconnect: () => void } }).connectionManager.simulateDisconnect();
+			(
+				window as unknown as { connectionManager: { simulateDisconnect: () => void } }
+			).connectionManager.simulateDisconnect();
 		});
 
 		// Wait for offline (use .first() to handle multiple instances)
@@ -148,7 +154,9 @@ test.describe('Connection State Tracking', () => {
 
 		// Simulate disconnection
 		await page.evaluate(() => {
-			(window as unknown as { connectionManager: { simulateDisconnect: () => void } }).connectionManager.simulateDisconnect();
+			(
+				window as unknown as { connectionManager: { simulateDisconnect: () => void } }
+			).connectionManager.simulateDisconnect();
 		});
 
 		// Should show offline
@@ -184,7 +192,9 @@ test.describe('Connection State Tracking', () => {
 
 		// Simulate disconnection
 		await page.evaluate(() => {
-			(window as unknown as { connectionManager: { simulateDisconnect: () => void } }).connectionManager.simulateDisconnect();
+			(
+				window as unknown as { connectionManager: { simulateDisconnect: () => void } }
+			).connectionManager.simulateDisconnect();
 		});
 
 		// Both should show "Offline"

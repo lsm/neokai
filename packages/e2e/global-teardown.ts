@@ -26,7 +26,11 @@ async function globalTeardown(config: FullConfig) {
 		// Get list of all sessions via RPC
 		const sessions = await page.evaluate(async () => {
 			try {
-				const hub = (window as unknown as { __messageHub?: unknown; appState?: { messageHub?: unknown } }).__messageHub || (window as unknown as { __messageHub?: unknown; appState?: { messageHub?: unknown } }).appState?.messageHub;
+				const hub =
+					(window as unknown as { __messageHub?: unknown; appState?: { messageHub?: unknown } })
+						.__messageHub ||
+					(window as unknown as { __messageHub?: unknown; appState?: { messageHub?: unknown } })
+						.appState?.messageHub;
 				if (!hub || !hub.call) {
 					return { success: false, sessions: [] };
 				}
@@ -68,7 +72,11 @@ async function globalTeardown(config: FullConfig) {
 		for (const session of testSessions) {
 			const result = await page.evaluate(async (sid) => {
 				try {
-					const hub = (window as unknown as { __messageHub?: unknown; appState?: { messageHub?: unknown } }).__messageHub || (window as unknown as { __messageHub?: unknown; appState?: { messageHub?: unknown } }).appState?.messageHub;
+					const hub =
+						(window as unknown as { __messageHub?: unknown; appState?: { messageHub?: unknown } })
+							.__messageHub ||
+						(window as unknown as { __messageHub?: unknown; appState?: { messageHub?: unknown } })
+							.appState?.messageHub;
 					if (!hub || !hub.call) {
 						return { success: false };
 					}

@@ -531,7 +531,9 @@ export class AgentSession {
 
 		// Track tool calls
 		if (message.type === 'assistant' && Array.isArray(message.message?.content)) {
-			const toolCalls = message.message.content.filter((block: unknown) => block.type === 'tool_use');
+			const toolCalls = message.message.content.filter(
+				(block: unknown) => block.type === 'tool_use'
+			);
 			if (toolCalls.length > 0) {
 				this.session.metadata = {
 					...this.session.metadata,

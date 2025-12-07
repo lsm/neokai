@@ -162,7 +162,6 @@ export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
 	);
 }
 
-
 /**
  * Tool Use Block Component
  * Now uses the new ToolResultCard component

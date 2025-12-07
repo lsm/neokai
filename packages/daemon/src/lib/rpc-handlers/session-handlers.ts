@@ -5,11 +5,7 @@
 import type { MessageHub, MessageImage } from '@liuboer/shared';
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@liuboer/shared';
-import {
-	clearModelCache,
-	fetchAvailableModels,
-	getCachedAvailableModels,
-} from '@liuboer/shared';
+import { clearModelCache, fetchAvailableModels, getCachedAvailableModels } from '@liuboer/shared';
 
 export function setupSessionHandlers(messageHub: MessageHub, sessionManager: SessionManager): void {
 	messageHub.handle('session.create', async (data) => {

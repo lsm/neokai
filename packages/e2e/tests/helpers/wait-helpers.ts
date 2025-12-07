@@ -207,7 +207,9 @@ export async function waitForStateChannel(
 				const globalValue = state.global?.value as Record<string, { $?: unknown }> | undefined;
 				return globalValue?.[chan]?.$ !== undefined;
 			} else {
-				const sessionState = state.sessions?.get(sid) as Record<string, { $?: unknown }> | undefined;
+				const sessionState = state.sessions?.get(sid) as
+					| Record<string, { $?: unknown }>
+					| undefined;
 				return sessionState?.[chan]?.$ !== undefined;
 			}
 		},
@@ -392,7 +394,10 @@ export async function waitForSlashCommands(page: Page, sessionId: string): Promi
 			const commands = window.appState?.sessions?.get(sid)?.commands?.$.value;
 			// Check if availableCommands exists (it's on CommandsState)
 			const commandsWithAvailable = commands as { availableCommands?: unknown[] } | undefined;
-			return commandsWithAvailable?.availableCommands && commandsWithAvailable.availableCommands.length > 0;
+			return (
+				commandsWithAvailable?.availableCommands &&
+				commandsWithAvailable.availableCommands.length > 0
+			);
 		},
 		sessionId,
 		{ timeout: 10000 }
@@ -418,7 +423,9 @@ export async function setupMessageHubTesting(page: Page): Promise<void> {
 				await hub.subscribe(
 					'sdk.message',
 					(msg: unknown) => {
-						window.__sdkMessages?.push(msg as Parameters<NonNullable<typeof window.__sdkMessages>['push']>[0]);
+						window.__sdkMessages?.push(
+							msg as Parameters<NonNullable<typeof window.__sdkMessages>['push']>[0]
+						);
 					},
 					{ sessionId: 'global' }
 				);

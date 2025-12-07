@@ -22,7 +22,12 @@ import {
 import { generateUUID } from '@liuboer/shared';
 
 // Helper to send RPC call via WebSocket
-function sendRPCCall(ws: WebSocket, method: string, data: unknown = {}, sessionId = 'global'): string {
+function sendRPCCall(
+	ws: WebSocket,
+	method: string,
+	data: unknown = {},
+	sessionId = 'global'
+): string {
 	const messageId = generateUUID();
 	ws.send(
 		JSON.stringify({
