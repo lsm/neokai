@@ -138,7 +138,7 @@ export class Database {
 			this.db.exec(`DROP TABLE IF EXISTS messages`);
 			this.db.exec(`DROP INDEX IF EXISTS idx_messages_session`);
 			this.db.exec(`DROP INDEX IF EXISTS idx_tool_calls_message`);
-		} catch {
+		} catch (_error) {
 			// Tables don't exist, migration already complete
 		}
 	}

@@ -41,7 +41,7 @@ export default function StatusIndicator({
 			const dropdownHeight = dropdownRef.current.offsetHeight;
 
 			// Calculate space needed: height of dropdown + some padding (16px)
-			const _spaceNeeded = dropdownHeight + 16;
+			const spaceNeeded = dropdownHeight + 16;
 
 			// Position dropdown above the indicator with proper spacing
 			const bottomPosition = window.innerHeight - indicatorRect.top + 8;

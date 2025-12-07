@@ -184,7 +184,7 @@ export function createCacheKey(method: string, sessionId: string, data: unknown)
 		// Otherwise use hash
 		const dataHash = fastHash(dataStr);
 		return `${method}:${sessionId}:hash:${dataHash}`;
-	} catch {
+	} catch (error) {
 		// Circular reference or other error - use timestamp as fallback
 		return `${method}:${sessionId}:error:${Date.now()}`;
 	}

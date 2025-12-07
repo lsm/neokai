@@ -89,7 +89,7 @@ export function CodeViewer({
 				try {
 					const highlighted = hljs.highlight(code, { language: detectedLanguage });
 					highlightedCode = highlighted.value;
-				} catch {
+				} catch (e) {
 					// If language detection fails, try auto-detect
 					const highlighted = hljs.highlightAuto(code);
 					highlightedCode = highlighted.value;

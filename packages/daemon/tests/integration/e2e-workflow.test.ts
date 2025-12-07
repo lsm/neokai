@@ -15,9 +15,6 @@ import type { TestContext } from '../test-utils';
 import {
 	createTestApp,
 	callRPCHandler,
-	createWebSocket,
-	waitForWebSocketState,
-	waitForWebSocketMessage,
 } from '../test-utils';
 import { STATE_CHANNELS } from '@liuboer/shared';
 

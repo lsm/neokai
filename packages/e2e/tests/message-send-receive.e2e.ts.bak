@@ -178,7 +178,7 @@ test.describe('Message Send and Receive', () => {
 		// Cleanup (may fail due to disconnection)
 		try {
 			await cleanupTestSession(page, sessionId);
-		} catch {
+		} catch (e) {
 			// Expected to fail - session cleanup requires connection
 			console.log('Cleanup skipped due to disconnection');
 		}

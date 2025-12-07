@@ -36,8 +36,8 @@ export function SDKToolProgressMessage({ message, toolInput }: Props) {
  * @deprecated Legacy icon function - now handled by ToolIcon component
  * Get icon SVG for a specific tool type
  */
-function getToolIcon_LEGACY(toolName: string) {
-	switch (toolName) {
+function _getToolIcon_LEGACY(_toolName: string) {
+	switch (_toolName) {
 		// File operations
 		case 'Write':
 			return (
@@ -210,7 +210,7 @@ function getToolIcon_LEGACY(toolName: string) {
 /**
  * @deprecated Legacy summary extractor - now handled by ToolSummary component
  */
-function getToolSummary_LEGACY() {
+function _getToolSummary_LEGACY() {
 	// This function has been moved to tool-registry.ts as summaryExtractor functions
 	// Can be removed after testing
 }

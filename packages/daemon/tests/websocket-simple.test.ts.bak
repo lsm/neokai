@@ -20,7 +20,7 @@ describe('Simple WebSocket Test', () => {
 					console.log('Server: Received message:', message);
 					ws.send(`Echo: ${message}`);
 				},
-				close(_ws) {
+				close(ws) {
 					console.log('Server: WebSocket closed');
 				},
 			})

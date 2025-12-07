@@ -26,7 +26,7 @@ interface Props {
 	isReplay?: boolean; // Whether this is a replay message (slash command response)
 }
 
-export function SDKUserMessage({ message, _onEdit, _onDelete, sessionInfo, isReplay }: Props) {
+export function SDKUserMessage({ message, onEdit, onDelete, sessionInfo, isReplay }: Props) {
 	const { message: apiMessage } = message;
 
 	// Check if this is a tool result message (should not be rendered as user message)

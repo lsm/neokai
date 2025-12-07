@@ -744,7 +744,7 @@ describe('MessageHub', () => {
 	describe('Cleanup and Disposal', () => {
 		test('should cleanup pending calls on cleanup', async () => {
 			const _call1 = messageHub.call('test.method1', {}).catch(() => {}); // Ignore rejection
-			const _call2 = messageHub.call('test.method2', {}).catch(() => {}); // Ignore rejection
+			const call2 = messageHub.call('test.method2', {}).catch(() => {}); // Ignore rejection
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 

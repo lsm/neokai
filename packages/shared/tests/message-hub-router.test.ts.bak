@@ -186,7 +186,7 @@ describe('MessageHubRouter', () => {
 			const conn1 = createMockConnection(mockWs1);
 			const conn2 = createMockConnection(mockWs2);
 			const clientId1 = router.registerConnection(conn1);
-			const _clientId2 = router.registerConnection(conn2);
+			const clientId2 = router.registerConnection(conn2);
 
 			router.subscribe('session1', 'user.created', clientId1);
 			// clientId2 is not subscribed

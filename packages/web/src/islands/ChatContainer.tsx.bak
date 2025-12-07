@@ -11,7 +11,7 @@ import {
 	listSessions,
 } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
-// import { generateUUID } from '../lib/utils.ts';
+import { generateUUID } from '../lib/utils.ts';
 import {
 	currentSessionIdSignal,
 	sessionsSignal,

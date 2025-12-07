@@ -4,7 +4,7 @@
  * Fine-grained state channels - each property has its own channel
  */
 
-import type { AuthStatus, Session, HealthStatus, ContextInfo } from './types.ts';
+import type { AuthStatus, Session, DaemonConfig, HealthStatus, ContextInfo } from './types.ts';
 import type { SDKMessage } from './sdk/sdk.d.ts';
 
 /**

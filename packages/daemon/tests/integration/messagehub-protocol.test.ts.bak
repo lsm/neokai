@@ -447,7 +447,7 @@ describe('Multi-Client Event Routing', () => {
 		await subscribeToEvent(ws2, 'session.created', 'global');
 
 		// Create a session from client 1
-		const _callId = sendRPCCall(ws1, 'session.create', { workspacePath: '/tmp/test-workspace' });
+		const callId = sendRPCCall(ws1, 'session.create', { workspacePath: '/tmp/test-workspace' });
 
 		// ws1 will receive:  RESULT (create response) + EVENT (session.created)
 		// ws2 will receive: EVENT (session.created)

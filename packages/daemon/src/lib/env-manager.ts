@@ -5,8 +5,8 @@
  * from environment variables. Does NOT support runtime modification.
  */
 export class EnvManager {
-	constructor(envPath?: string) {
-		// envPath is kept for backward compatibility with tests but not used
+	constructor(_envPath?: string) {
+		// _envPath is kept for backward compatibility with tests but not used
 		// All credentials are read from process.env only
 	}
 

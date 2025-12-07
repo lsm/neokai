@@ -593,7 +593,7 @@ test.describe('Recovery Mechanisms', () => {
 		await page.waitForTimeout(3000);
 
 		// Try to wait for textarea or any session UI
-		const _textareaOrSessionUI = await page
+		const textareaOrSessionUI = await page
 			.locator('textarea, [data-session-id]')
 			.first()
 			.waitFor({ state: 'visible', timeout: 10000 })

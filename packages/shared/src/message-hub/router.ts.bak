@@ -20,7 +20,7 @@
 // import { generateUUID } from '../utils.ts';
 import type { HubMessage } from './protocol.ts';
 import { isEventMessage } from './protocol.ts';
-import type { RouterSubscriptions } from './types.ts';
+import type { UnsubscribeFn, MethodSubscribers, RouterSubscriptions } from './types.ts';
 
 /**
  * Abstract connection interface

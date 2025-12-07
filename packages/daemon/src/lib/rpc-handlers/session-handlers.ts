@@ -8,7 +8,6 @@ import type { CreateSessionRequest, UpdateSessionRequest } from '@liuboer/shared
 import {
 	clearModelCache,
 	fetchAvailableModels,
-	getAllAvailableModels,
 	getCachedAvailableModels,
 } from '@liuboer/shared';
 
@@ -55,7 +54,7 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 		};
 	});
 
-	messageHub.handle('session.update', async (data, ctx) => {
+	messageHub.handle('session.update', async (data, _ctx) => {
 		const { sessionId: targetSessionId, ...updates } = data as UpdateSessionRequest & {
 			sessionId: string;
 		};
@@ -70,7 +69,7 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 		return { success: true };
 	});
 
-	messageHub.handle('session.delete', async (data, ctx) => {
+	messageHub.handle('session.delete', async (data, _ctx) => {
 		const { sessionId: targetSessionId } = data as { sessionId: string };
 		await sessionManager.deleteSession(targetSessionId);
 

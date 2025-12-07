@@ -393,7 +393,7 @@ test.describe('Multi-Session Concurrent Operations', () => {
 			}
 
 			// Get initial session count in all tabs
-			const _initialCounts = await Promise.all(
+			const initialCounts = await Promise.all(
 				pages.map((page) => page.locator('[data-testid="session-card"]').count())
 			);
 

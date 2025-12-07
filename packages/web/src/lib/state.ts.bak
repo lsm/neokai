@@ -24,7 +24,7 @@ import type {
 	SDKMessagesUpdate,
 } from '@liuboer/shared';
 import { STATE_CHANNELS } from '@liuboer/shared';
-import { StateChannel, DeltaMergers } from './state-channel';
+import { StateChannel, ComputedStateChannel, DeltaMergers } from './state-channel';
 
 /**
  * Global State Channels

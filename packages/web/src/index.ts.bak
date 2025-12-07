@@ -16,17 +16,11 @@ const server = serve({
 			const daemonUrl = `${DAEMON_URL}${url.pathname}${url.search}`;
 
 			try {
-				const fetchOptions: RequestInit = {
+				const response = await fetch(daemonUrl, {
 					method: req.method,
 					headers: req.headers,
-				};
-
-				// Only include body for non-GET/HEAD requests
-				if (req.method !== 'GET' && req.method !== 'HEAD') {
-					fetchOptions.body = req.body;
-				}
-
-				const response = await fetch(daemonUrl, fetchOptions);
+					body: req.body,
+				});
 
 				return response;
 			} catch (error) {

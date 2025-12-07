@@ -5,10 +5,6 @@ import ToastContainer from './islands/ToastContainer.tsx';
 import { connectionManager } from './lib/connection-manager.ts';
 import {
 	initializeApplicationState,
-	appState,
-	sessions,
-	authStatus,
-	currentSession,
 } from './lib/state.ts';
 import { currentSessionIdSignal } from './lib/signals.ts';
 

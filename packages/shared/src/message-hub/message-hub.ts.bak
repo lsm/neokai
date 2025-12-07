@@ -1191,7 +1191,7 @@ export class MessageHub {
 		this.pendingCalls.clear();
 
 		// Reject all pending subscription operations
-		for (const [_requestId, pending] of this.pendingSubscribes) {
+		for (const [requestId, pending] of this.pendingSubscribes) {
 			clearTimeout(pending.timer);
 			pending.reject(new Error('MessageHub cleanup'));
 		}

@@ -121,7 +121,7 @@ export function DiffViewer({
 	oldText,
 	newText,
 	filePath,
-	_mode = 'unified',
+	mode = 'unified',
 	className,
 }: DiffViewerProps) {
 	const diff = generateDiff(oldText, newText);

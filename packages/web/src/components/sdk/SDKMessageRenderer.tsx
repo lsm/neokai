@@ -8,7 +8,6 @@ import {
 	isSDKResultMessage,
 	isSDKSystemMessage,
 	isSDKSystemInit,
-	isSDKStreamEvent,
 	isSDKToolProgressMessage,
 	isSDKAuthStatusMessage,
 	isSDKUserMessage,

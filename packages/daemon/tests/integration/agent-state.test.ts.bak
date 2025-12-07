@@ -210,7 +210,7 @@ describe.skip('Agent State Event Broadcasting (DEPRECATED)', () => {
 								break; // Done processing
 							}
 						}
-					} catch {
+					} catch (error) {
 						// Timeout - stop collecting
 						break;
 					}
