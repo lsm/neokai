@@ -165,6 +165,7 @@ export function setupMessageHubWebSocket(
 
 	// UNIFIED WebSocket endpoint - single connection handles all sessions
 	// Session routing is done via message.sessionId field, not URL
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Elysia's ws() types are incomplete
-	return app.ws('/ws', handlers as any);
+	// Type assertion needed: Elysia's ws() generic types don't match our WebSocketHandlers interface
+	// This is safe because our handlers match Elysia's runtime requirements
+	return app.ws('/ws', handlers as Parameters<typeof app.ws>[1]);
 }

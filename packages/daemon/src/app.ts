@@ -28,8 +28,10 @@ export interface CreateDaemonAppOptions {
 }
 
 export interface DaemonAppContext {
+	// Using Elysia<any> due to Elysia's complex generic types that change during composition
+	// The app instance is fully typed at runtime, this is just for the context interface
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	app: any;
+	app: Elysia<any>;
 	db: Database;
 	messageHub: MessageHub;
 	sessionManager: SessionManager;
@@ -196,6 +198,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	}
 
 	// Mount MessageHub WebSocket routes (setupMessageHubWebSocket modifies app in-place)
+	// Type assertion needed for Elysia's complex generic types
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	setupMessageHubWebSocket(app as any, transport, sessionManager, subscriptionManager);
 
@@ -206,15 +209,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 		// Wait for pending RPC calls (with 5s timeout)
 		log('   2/5 Waiting for pending RPC calls...');
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const pendingCallsCount = (messageHub as any).pendingCalls?.size || 0;
+		const pendingCallsCount = messageHub.getPendingCallCount();
 		if (pendingCallsCount > 0) {
 			log(`       ${pendingCallsCount} pending calls detected`);
 			await Promise.race([
 				new Promise((resolve) => {
 					const checkInterval = setInterval(() => {
-						// eslint-disable-next-line @typescript-eslint/no-explicit-any
-						const remaining = (messageHub as any).pendingCalls?.size || 0;
+						const remaining = messageHub.getPendingCallCount();
 						if (remaining === 0) {
 							clearInterval(checkInterval);
 							resolve(null);
@@ -223,8 +224,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				}),
 				new Promise((resolve) => setTimeout(resolve, 5000)),
 			]);
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			const remaining = (messageHub as any).pendingCalls?.size || 0;
+			const remaining = messageHub.getPendingCallCount();
 			if (remaining > 0) {
 				log(`       ⚠️  Timeout: ${remaining} calls still pending`);
 			} else {
@@ -248,7 +248,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	};
 
 	return {
-		app,
+		// Cast app to Elysia<any> due to Elysia's complex generics that change during composition
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		app: app as Elysia<any>,
 		db,
 		messageHub,
 		sessionManager,

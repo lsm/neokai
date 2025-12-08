@@ -7,7 +7,12 @@ import type {
 	Session,
 } from '@liuboer/shared';
 import type { EventBus, MessageHub } from '@liuboer/shared';
-import type { SDKUserMessage } from '@liuboer/shared/sdk/sdk.d.ts';
+import type { Query, SDKMessage, SDKUserMessage, SlashCommand } from '@liuboer/shared/sdk';
+import {
+	isSDKResultSuccess,
+	isSDKAssistantMessage,
+	isToolUseBlock,
+} from '@liuboer/shared/sdk/type-guards';
 import type { UUID } from 'crypto';
 import {
 	type CurrentModelInfo,
@@ -34,9 +39,7 @@ interface QueuedMessage {
 /**
  * SDK query object with control methods
  */
-type SDKQueryObject =
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	(AsyncIterable<any> & { supportedCommands?: () => Promise<Array<{ name: string }>> }) | null;
+type SDKQueryObject = Query | null;
 
 /**
  * Agent Session - wraps a single session with Claude using Claude Agent SDK
@@ -147,6 +150,36 @@ export class AgentSession {
 	 */
 	getProcessingState(): AgentProcessingState {
 		return this.processingState;
+	}
+
+	/**
+	 * Fetch and cache slash commands from SDK
+	 * Used internally to update slash commands after query creation
+	 */
+	private async fetchAndCacheSlashCommands(): Promise<void> {
+		if (!this.queryObject || typeof this.queryObject.supportedCommands !== 'function') {
+			return;
+		}
+
+		try {
+			const commands = await this.queryObject.supportedCommands();
+			this.slashCommands = commands.map((cmd: SlashCommand) => cmd.name);
+
+			// Add built-in commands that the SDK supports but doesn't advertise
+			// These commands work but aren't returned by supportedCommands()
+			const builtInCommands = ['clear', 'help'];
+			this.slashCommands = [...new Set([...this.slashCommands, ...builtInCommands])];
+
+			console.log(`[AgentSession ${this.session.id}] Fetched slash commands:`, this.slashCommands);
+
+			// Emit event via EventBus (StateManager will broadcast unified session state)
+			await this.eventBus.emit('commands:updated', {
+				sessionId: this.session.id,
+				commands: this.slashCommands,
+			});
+		} catch (error) {
+			console.warn(`[AgentSession ${this.session.id}] Failed to fetch slash commands:`, error);
+		}
 	}
 
 	/**
@@ -291,8 +324,7 @@ export class AgentSession {
 					},
 				};
 
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				this.db.saveSDKMessage(this.session.id, sdkUserMessage as any);
+				this.db.saveSDKMessage(this.session.id, sdkUserMessage);
 
 				// Emit user message
 				await this.messageHub.publish('sdk.message', sdkUserMessage, {
@@ -423,31 +455,7 @@ export class AgentSession {
 			});
 
 			// Fetch and cache slash commands
-			try {
-				if (this.queryObject && typeof this.queryObject.supportedCommands === 'function') {
-					const commands = await this.queryObject.supportedCommands();
-					// eslint-disable-next-line @typescript-eslint/no-explicit-any
-					this.slashCommands = commands.map((cmd: any) => cmd.name);
-
-					// Add built-in commands that the SDK supports but doesn't advertise
-					// These commands work but aren't returned by supportedCommands()
-					const builtInCommands = ['clear', 'help'];
-					this.slashCommands = [...new Set([...this.slashCommands, ...builtInCommands])];
-
-					console.log(
-						`[AgentSession ${this.session.id}] Fetched slash commands:`,
-						this.slashCommands
-					);
-
-					// Emit event via EventBus (StateManager will broadcast unified session state)
-					await this.eventBus.emit('commands:updated', {
-						sessionId: this.session.id,
-						commands: this.slashCommands,
-					});
-				}
-			} catch (error) {
-				console.warn(`[AgentSession ${this.session.id}] Failed to fetch slash commands:`, error);
-			}
+			await this.fetchAndCacheSlashCommands();
 
 			// Process SDK messages
 			console.log(`[AgentSession ${this.session.id}] Processing SDK stream...`);
@@ -496,18 +504,20 @@ export class AgentSession {
 	 * Handle incoming SDK messages
 	 */
 	private async handleSDKMessage(message: unknown): Promise<void> {
+		// Cast unknown to SDKMessage - messages come from SDK which provides proper typing
+		const sdkMessage = message as SDKMessage;
+
 		// Emit and save message
-		await this.messageHub.publish('sdk.message', message, { sessionId: this.session.id });
+		await this.messageHub.publish('sdk.message', sdkMessage, { sessionId: this.session.id });
 
 		// Save to DB
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		this.db.saveSDKMessage(this.session.id, message as any);
+		this.db.saveSDKMessage(this.session.id, sdkMessage);
 
 		// Broadcast SDK message delta
 		await this.messageHub.publish(
 			'state.sdkMessages.delta',
 			{
-				added: [message],
+				added: [sdkMessage],
 				timestamp: Date.now(),
 				version: ++this.sdkMessageDeltaVersion,
 			},
@@ -515,16 +525,14 @@ export class AgentSession {
 		);
 
 		// Handle specific message types
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const msg = message as any;
-		if (msg?.type === 'result' && msg?.subtype === 'success') {
+		if (isSDKResultSuccess(sdkMessage)) {
 			// FIX: Set state back to 'idle' when result received
 			await this.setProcessingState({ status: 'idle' });
 
 			// Update session metadata with token usage and costs
-			const usage = msg.usage;
+			const usage = sdkMessage.usage;
 			const totalTokens = usage.input_tokens + usage.output_tokens;
-			const cost = msg.total_cost_usd || 0;
+			const cost = sdkMessage.total_cost_usd || 0;
 
 			this.session.lastActiveAt = new Date().toISOString();
 			this.session.metadata = {
@@ -543,9 +551,8 @@ export class AgentSession {
 		}
 
 		// Track tool calls
-		if (msg?.type === 'assistant' && Array.isArray(msg?.message?.content)) {
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			const toolCalls = msg.message.content.filter((block: any) => block?.type === 'tool_use');
+		if (isSDKAssistantMessage(sdkMessage)) {
+			const toolCalls = sdkMessage.message.content.filter(isToolUseBlock);
 			if (toolCalls.length > 0) {
 				this.session.metadata = {
 					...this.session.metadata,
@@ -840,23 +847,12 @@ export class AgentSession {
 	 */
 	async getSlashCommands(): Promise<string[]> {
 		// Return cached if available
-		if (this.slashCommands) {
+		if (this.slashCommands.length > 0) {
 			return this.slashCommands;
 		}
 
 		// Try to fetch from SDK query object
-		if (this.queryObject && typeof this.queryObject.supportedCommands === 'function') {
-			try {
-				const commands = await this.queryObject.supportedCommands();
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				this.slashCommands = commands.map((cmd: any) => cmd.name);
-				return this.slashCommands;
-			} catch (error) {
-				console.warn(`[AgentSession ${this.session.id}] Failed to fetch slash commands:`, error);
-				return [];
-			}
-		}
-
-		return [];
+		await this.fetchAndCacheSlashCommands();
+		return this.slashCommands;
 	}
 }

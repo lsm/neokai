@@ -274,6 +274,18 @@ export function isSubscriptionResponseMessage(
 }
 
 /**
+ * HubMessage with internal metadata added by transport layer
+ * This extends the protocol message with server-side routing metadata
+ */
+export interface HubMessageWithMetadata extends HubMessage {
+	/**
+	 * Client ID added by server-side transport for subscription tracking and routing.
+	 * Not part of the wire protocol - added internally during message processing.
+	 */
+	clientId?: string;
+}
+
+/**
  * Session ID constants
  */
 export const GLOBAL_SESSION_ID = 'global';
@@ -587,9 +599,8 @@ export function isValidMessage(msg: unknown): msg is HubMessage {
 		return false;
 	}
 
-	// Type assertion after basic check
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const m = msg as any;
+	// Type assertion after basic check - we know it's an object now
+	const m = msg as Record<string, unknown>;
 
 	// Check required fields
 	if (typeof m.id !== 'string' || m.id.length === 0) {

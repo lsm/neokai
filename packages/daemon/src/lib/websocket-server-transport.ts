@@ -10,6 +10,7 @@
 
 import type { ServerWebSocket } from 'bun';
 import type { HubMessage, IMessageTransport, ConnectionState } from '@liuboer/shared';
+import type { HubMessageWithMetadata } from '@liuboer/shared/message-hub/protocol';
 import type { MessageHubRouter, ClientConnection } from '@liuboer/shared';
 import { generateUUID } from '@liuboer/shared';
 
@@ -172,8 +173,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 		// Add clientId to message metadata for SUBSCRIBE/UNSUBSCRIBE handling
 		// MessageHub needs this to track which client subscribed
 		if (clientId) {
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(message as any).clientId = clientId;
+			(message as HubMessageWithMetadata).clientId = clientId;
 		}
 
 		// Notify all message handlers (MessageHub will process)
