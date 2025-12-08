@@ -67,6 +67,9 @@ jobs:
       - name: Run unit tests
         working-directory: packages/daemon
         run: bun test
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
   test-shared:
     name: Test Shared
