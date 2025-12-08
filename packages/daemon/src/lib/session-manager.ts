@@ -10,6 +10,7 @@ export class SessionManager {
 
 	// FIX: Session lazy-loading race condition
 	private sessionLoadLocks = new Map<string, Promise<AgentSession | null>>();
+	private debug: boolean;
 
 	constructor(
 		private db: Database,
@@ -22,7 +23,22 @@ export class SessionManager {
 			temperature: number;
 			workspaceRoot: string;
 		}
-	) {}
+	) {
+		// Only enable debug logs in development mode, not in test mode
+		this.debug = process.env.NODE_ENV === 'development';
+	}
+
+	private log(...args: unknown[]): void {
+		if (this.debug) {
+			console.log(...args);
+		}
+	}
+
+	private error(...args: unknown[]): void {
+		if (this.debug) {
+			console.error(...args);
+		}
+	}
 
 	async createSession(params: {
 		workspacePath?: string;
@@ -66,9 +82,9 @@ export class SessionManager {
 		this.sessions.set(sessionId, agentSession);
 
 		// Emit event via EventBus (StateManager will handle publishing to MessageHub)
-		console.log('[SessionManager] Emitting session:created event for session:', sessionId);
+		this.log('[SessionManager] Emitting session:created event for session:', sessionId);
 		await this.eventBus.emit('session:created', { session });
-		console.log('[SessionManager] Event emitted, returning sessionId:', sessionId);
+		this.log('[SessionManager] Event emitted, returning sessionId:', sessionId);
 
 		return sessionId;
 	}
@@ -199,18 +215,18 @@ export class SessionManager {
 				// FIX: Emit event via EventBus
 				await this.eventBus.emit('session:deleted', { sessionId });
 			} catch (error) {
-				console.error('[SessionManager] Failed to broadcast deletion:', error);
+				this.error('[SessionManager] Failed to broadcast deletion:', error);
 				// Don't rollback - session is already deleted
 			}
 		} catch (error) {
 			// Rollback if DB delete failed
 			if (!dbDeleted) {
-				console.error('[SessionManager] Session deletion failed:', error);
+				this.error('[SessionManager] Session deletion failed:', error);
 				throw error;
 			}
 
 			// If cleanup failed but DB delete succeeded, log but don't rollback
-			console.error('[SessionManager] Session deleted but cleanup failed:', error);
+			this.error('[SessionManager] Session deleted but cleanup failed:', error);
 		}
 	}
 
@@ -226,19 +242,19 @@ export class SessionManager {
 	 * Cleanup all sessions (called during shutdown)
 	 */
 	async cleanup(): Promise<void> {
-		console.log(`[SessionManager] Cleaning up ${this.sessions.size} active sessions...`);
+		this.log(`[SessionManager] Cleaning up ${this.sessions.size} active sessions...`);
 
 		// Cleanup all in-memory sessions
 		for (const [sessionId, agentSession] of this.sessions) {
 			try {
 				agentSession.cleanup();
 			} catch (error) {
-				console.error(`[SessionManager] Error cleaning up session ${sessionId}:`, error);
+				this.error(`[SessionManager] Error cleaning up session ${sessionId}:`, error);
 			}
 		}
 
 		// Clear session map
 		this.sessions.clear();
-		console.log(`[SessionManager] All sessions cleaned up`);
+		this.log(`[SessionManager] All sessions cleaned up`);
 	}
 }

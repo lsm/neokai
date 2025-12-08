@@ -31,7 +31,18 @@ export interface StructuredError {
 }
 
 export class ErrorManager {
-	constructor(private messageHub: MessageHub) {}
+	private debug: boolean;
+
+	constructor(private messageHub: MessageHub) {
+		// Only enable debug logs in development mode, not in test mode
+		this.debug = process.env.NODE_ENV === 'development';
+	}
+
+	private error(...args: unknown[]): void {
+		if (this.debug) {
+			console.error(...args);
+		}
+	}
 
 	/**
 	 * Create a structured error from various error types
@@ -225,7 +236,7 @@ export class ErrorManager {
 		const structuredError = this.createError(error, category, userMessage);
 
 		// Log for debugging
-		console.error(`[ErrorManager] ${category}:`, {
+		this.error(`[ErrorManager] ${category}:`, {
 			code: structuredError.code,
 			message: structuredError.message,
 			sessionId,

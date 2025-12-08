@@ -21,6 +21,9 @@ import {
 } from '../test-utils';
 import { generateUUID } from '@liuboer/shared';
 
+const verbose = !!process.env.TEST_VERBOSE;
+const log = verbose ? console.log : () => {};
+
 // Helper to send RPC call via WebSocket
 function sendRPCCall(
 	ws: WebSocket,
@@ -463,14 +466,14 @@ describe('Multi-Client Event Routing', () => {
 		const ws1Event = await waitForWebSocketMessage(ws1, 5000);
 
 		// Debug: log what we received
-		console.log(
+		log(
 			'ws1 received:',
 			ws1Result.type,
 			ws1Result.method || '',
 			ws1Event.type,
 			ws1Event.method || ''
 		);
-		console.log('ws2 received:', ws2Event.type, ws2Event.method || '');
+		log('ws2 received:', ws2Event.type, ws2Event.method || '');
 
 		// ws2 should have received session.created event
 		expect(ws2Event.type).toBe('EVENT');

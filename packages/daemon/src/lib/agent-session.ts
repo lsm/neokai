@@ -23,6 +23,7 @@ import {
 } from '@liuboer/shared';
 import { Database } from '../storage/database';
 import { ErrorCategory, ErrorManager } from './error-manager';
+import { Logger } from './logger';
 
 /**
  * Queued message waiting to be sent to Claude
@@ -79,6 +80,7 @@ export class AgentSession {
 
 	// FIX: Agent processing state (server-side state for push-based sync)
 	private processingState: AgentProcessingState = { status: 'idle' };
+	private logger: Logger;
 
 	constructor(
 		private session: Session,
@@ -87,8 +89,9 @@ export class AgentSession {
 		private eventBus: EventBus, // EventBus for state change notifications
 		private getApiKey: () => Promise<string | null> // Function to get current API key
 	) {
-		// Initialize error manager
+		// Initialize error manager and logger
 		this.errorManager = new ErrorManager(this.messageHub);
+		this.logger = new Logger(`AgentSession ${session.id}`);
 
 		// Load existing messages into conversation history
 		this.loadConversationHistory();
@@ -98,7 +101,7 @@ export class AgentSession {
 
 		// Start the streaming query immediately
 		this.startStreamingQuery().catch(async (error) => {
-			console.error(`[AgentSession ${this.session.id}] Failed to start streaming query:`, error);
+			this.logger.error(`Failed to start streaming query:`, error);
 			await this.errorManager.handleError(
 				this.session.id,
 				error as Error,
@@ -141,7 +144,7 @@ export class AgentSession {
 			state: newState,
 		});
 
-		console.log(`[AgentSession ${this.session.id}] Agent state changed:`, newState);
+		this.logger.log(`Agent state changed:`, newState);
 	}
 
 	/**
@@ -170,7 +173,7 @@ export class AgentSession {
 			const builtInCommands = ['clear', 'help'];
 			this.slashCommands = [...new Set([...this.slashCommands, ...builtInCommands])];
 
-			console.log(`[AgentSession ${this.session.id}] Fetched slash commands:`, this.slashCommands);
+			this.logger.log(`Fetched slash commands:`, this.slashCommands);
 
 			// Emit event via EventBus (StateManager will broadcast unified session state)
 			await this.eventBus.emit('commands:updated', {
@@ -178,7 +181,7 @@ export class AgentSession {
 				commands: this.slashCommands,
 			});
 		} catch (error) {
-			console.warn(`[AgentSession ${this.session.id}] Failed to fetch slash commands:`, error);
+			this.logger.warn(`Failed to fetch slash commands:`, error);
 		}
 	}
 
@@ -257,7 +260,7 @@ export class AgentSession {
 
 			return { messageId };
 		} catch (error) {
-			console.error(`[AgentSession ${this.session.id}] Error handling message.send:`, error);
+			this.logger.error(`Error handling message.send:`, error);
 			await this.errorManager.handleError(
 				this.session.id,
 				error as Error,
@@ -281,14 +284,14 @@ export class AgentSession {
 	 * Conversation history is kept in the database for display purposes only.
 	 */
 	private async *messageGenerator(): AsyncGenerator<SDKUserMessage> {
-		console.log(`[AgentSession ${this.session.id}] Message generator started`);
+		this.logger.log(`Message generator started`);
 
 		// FIX: Do NOT replay conversation history!
 		// History is loaded from DB for display only, not to be re-sent to SDK.
 		// If we re-send history, SDK will process all user messages again as NEW messages.
 		if (this.conversationHistory.length > 0) {
-			console.log(
-				`[AgentSession ${this.session.id}] Loaded ${this.conversationHistory.length} historical messages from DB (for display only, NOT replaying to SDK)`
+			this.logger.log(
+				`Loaded ${this.conversationHistory.length} historical messages from DB (for display only, NOT replaying to SDK)`
 			);
 		}
 
@@ -297,14 +300,12 @@ export class AgentSession {
 			const queuedMessage = await this.waitForNextMessage();
 
 			if (!queuedMessage) {
-				console.log(`[AgentSession ${this.session.id}] No more messages, stopping generator`);
+				this.logger.log(`No more messages, stopping generator`);
 				break;
 			}
 
-			console.log(
-				`[AgentSession ${this.session.id}] Yielding queued message: ${queuedMessage.id}${
-					queuedMessage.internal ? ' (internal)' : ''
-				}`
+			this.logger.log(
+				`Yielding queued message: ${queuedMessage.id}${queuedMessage.internal ? ' (internal)' : ''}`
 			);
 
 			// Only save and emit if NOT internal (reserved for future use)
@@ -378,7 +379,7 @@ export class AgentSession {
 			queuedMessage.resolve(queuedMessage.id);
 		}
 
-		console.log(`[AgentSession ${this.session.id}] Message generator ended`);
+		this.logger.log(`Message generator ended`);
 	}
 
 	/**
@@ -404,11 +405,11 @@ export class AgentSession {
 	 */
 	private async startStreamingQuery(): Promise<void> {
 		if (this.queryRunning) {
-			console.log(`[AgentSession ${this.session.id}] Query already running, skipping start`);
+			this.logger.log(`Query already running, skipping start`);
 			return;
 		}
 
-		console.log(`[AgentSession ${this.session.id}] Starting streaming query...`);
+		this.logger.log(`Starting streaming query...`);
 		this.queryRunning = true;
 		this.abortController = new AbortController();
 
@@ -439,7 +440,7 @@ export class AgentSession {
 			const fs = await import('fs/promises');
 			await fs.mkdir(this.session.workspacePath, { recursive: true });
 
-			console.log(`[AgentSession ${this.session.id}] Creating streaming query with AsyncGenerator`);
+			this.logger.log(`Creating streaming query with AsyncGenerator`);
 
 			// Create query with AsyncGenerator!
 			this.queryObject = query({
@@ -458,14 +459,14 @@ export class AgentSession {
 			await this.fetchAndCacheSlashCommands();
 
 			// Process SDK messages
-			console.log(`[AgentSession ${this.session.id}] Processing SDK stream...`);
+			this.logger.log(`Processing SDK stream...`);
 			for await (const message of this.queryObject) {
 				await this.handleSDKMessage(message);
 			}
 
-			console.log(`[AgentSession ${this.session.id}] SDK stream ended`);
+			this.logger.log(`SDK stream ended`);
 		} catch (error) {
-			console.error(`[AgentSession ${this.session.id}] Streaming query error:`, error);
+			this.logger.error(`Streaming query error:`, error);
 
 			// Reject all pending messages
 			for (const msg of this.messageQueue) {
@@ -496,7 +497,7 @@ export class AgentSession {
 			await this.errorManager.handleError(this.session.id, error as Error, category);
 		} finally {
 			this.queryRunning = false;
-			console.log(`[AgentSession ${this.session.id}] Streaming query stopped`);
+			this.logger.log(`Streaming query stopped`);
 		}
 	}
 
@@ -570,7 +571,7 @@ export class AgentSession {
 	 * Called by RPC handler in session-handlers.ts
 	 */
 	async handleInterrupt(): Promise<void> {
-		console.log(`[AgentSession ${this.session.id}] Handling interrupt...`);
+		this.logger.log(`Handling interrupt...`);
 
 		// FIX: Set state to 'interrupted'
 		await this.setProcessingState({ status: 'interrupted' });
@@ -616,13 +617,13 @@ export class AgentSession {
 	async handleModelSwitch(
 		newModel: string
 	): Promise<{ success: boolean; model: string; error?: string }> {
-		console.log(`[AgentSession ${this.session.id}] Handling model switch to: ${newModel}`);
+		this.logger.log(`Handling model switch to: ${newModel}`);
 
 		try {
 			// Validate the model
 			if (!isValidModel(newModel)) {
 				const error = `Invalid model: ${newModel}. Use a valid model ID or alias.`;
-				console.error(`[AgentSession ${this.session.id}] ${error}`);
+				this.logger.error(`${error}`);
 				return { success: false, model: this.session.config.model, error };
 			}
 
@@ -632,7 +633,7 @@ export class AgentSession {
 
 			// Check if already using this model
 			if (this.session.config.model === resolvedModel) {
-				console.log(`[AgentSession ${this.session.id}] Already using model: ${resolvedModel}`);
+				this.logger.log(`Already using model: ${resolvedModel}`);
 				return {
 					success: true,
 					model: resolvedModel,
@@ -653,7 +654,7 @@ export class AgentSession {
 			);
 
 			// Step 1: Stop the current query gracefully
-			console.log(`[AgentSession ${this.session.id}] Stopping current query...`);
+			this.logger.log(`Stopping current query...`);
 			this.queryRunning = false;
 
 			// Abort current query
@@ -670,7 +671,7 @@ export class AgentSession {
 						new Promise((resolve) => setTimeout(resolve, 3000)), // 3s timeout
 					]);
 				} catch (error) {
-					console.warn(`[AgentSession ${this.session.id}] Query cleanup warning:`, error);
+					this.logger.warn(`Query cleanup warning:`, error);
 				}
 				this.queryPromise = null;
 			}
@@ -681,10 +682,10 @@ export class AgentSession {
 				config: this.session.config,
 			});
 
-			console.log(`[AgentSession ${this.session.id}] Updated config to model: ${resolvedModel}`);
+			this.logger.log(`Updated config to model: ${resolvedModel}`);
 
 			// Step 3: Restart the streaming query with new model
-			console.log(`[AgentSession ${this.session.id}] Restarting query with new model...`);
+			this.logger.log(`Restarting query with new model...`);
 			await this.startStreamingQuery();
 
 			// Emit success event
@@ -698,9 +699,7 @@ export class AgentSession {
 				{ sessionId: this.session.id }
 			);
 
-			console.log(
-				`[AgentSession ${this.session.id}] Model switched successfully to: ${resolvedModel}`
-			);
+			this.logger.log(`Model switched successfully to: ${resolvedModel}`);
 
 			return {
 				success: true,
@@ -708,7 +707,7 @@ export class AgentSession {
 			};
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
-			console.error(`[AgentSession ${this.session.id}] Model switch failed:`, error);
+			this.logger.error(`Model switch failed:`, error);
 
 			await this.errorManager.handleError(
 				this.session.id,
@@ -799,14 +798,14 @@ export class AgentSession {
 	 * PHASE 3 FIX: Unsubscribe from all MessageHub subscriptions to prevent memory leaks
 	 */
 	async cleanup(): Promise<void> {
-		console.log(`[AgentSession ${this.session.id}] Cleaning up resources...`);
+		this.logger.log(`Cleaning up resources...`);
 
 		// Unsubscribe from all MessageHub events
 		for (const unsubscribe of this.unsubscribers) {
 			try {
 				unsubscribe();
 			} catch (error) {
-				console.error(`[AgentSession ${this.session.id}] Error during unsubscribe:`, error);
+				this.logger.error(`Error during unsubscribe:`, error);
 			}
 		}
 		this.unsubscribers = [];
@@ -829,7 +828,7 @@ export class AgentSession {
 				]);
 			} catch (error) {
 				// Ignore errors during cleanup
-				console.warn(`[AgentSession ${this.session.id}] Query cleanup error:`, error);
+				this.logger.warn(`Query cleanup error:`, error);
 			}
 			this.queryPromise = null;
 		}
@@ -838,7 +837,7 @@ export class AgentSession {
 		this.messageQueue = [];
 		this.messageWaiters = [];
 
-		console.log(`[AgentSession ${this.session.id}] Cleanup complete`);
+		this.logger.log(`Cleanup complete`);
 	}
 
 	/**

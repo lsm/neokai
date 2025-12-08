@@ -21,7 +21,18 @@ import type { MessageHub } from '@liuboer/shared';
  * When clients connect, this manager subscribes them to relevant events.
  */
 export class SubscriptionManager {
-	constructor(private messageHub: MessageHub) {}
+	private debug: boolean;
+
+	constructor(private messageHub: MessageHub) {
+		// Only enable debug logs in development mode, not in test mode
+		this.debug = process.env.NODE_ENV === 'development';
+	}
+
+	private log(...args: unknown[]): void {
+		if (this.debug) {
+			console.log(...args);
+		}
+	}
 
 	/**
 	 * Subscribe client to global events
@@ -30,7 +41,7 @@ export class SubscriptionManager {
 	 * These are application-wide events that all clients should receive.
 	 */
 	async subscribeToGlobalEvents(clientId: string): Promise<void> {
-		console.log(`[SubscriptionManager] Subscribing client ${clientId} to global events`);
+		this.log(`[SubscriptionManager] Subscribing client ${clientId} to global events`);
 
 		// Define global subscription patterns
 		// These are APPLICATION-SPECIFIC events defined by our business logic
@@ -60,7 +71,7 @@ export class SubscriptionManager {
 			);
 		}
 
-		console.log(
+		this.log(
 			`[SubscriptionManager] Client ${clientId} subscribed to ${globalEvents.length} global events`
 		);
 	}
@@ -72,9 +83,7 @@ export class SubscriptionManager {
 	 * These events are scoped to a particular agent session.
 	 */
 	async subscribeToSessionEvents(clientId: string, sessionId: string): Promise<void> {
-		console.log(
-			`[SubscriptionManager] Subscribing client ${clientId} to session ${sessionId} events`
-		);
+		this.log(`[SubscriptionManager] Subscribing client ${clientId} to session ${sessionId} events`);
 
 		// Define session subscription patterns
 		// These are APPLICATION-SPECIFIC events for agent sessions
@@ -103,7 +112,7 @@ export class SubscriptionManager {
 			);
 		}
 
-		console.log(
+		this.log(
 			`[SubscriptionManager] Client ${clientId} subscribed to ${sessionEvents.length} events for session ${sessionId}`
 		);
 	}
@@ -115,7 +124,7 @@ export class SubscriptionManager {
 	 * Clean up subscriptions to prevent memory leaks.
 	 */
 	async unsubscribeFromSession(clientId: string, sessionId: string): Promise<void> {
-		console.log(`[SubscriptionManager] Client ${clientId} leaving session ${sessionId}`);
+		this.log(`[SubscriptionManager] Client ${clientId} leaving session ${sessionId}`);
 
 		// Note: Actual unsubscribe is handled by MessageHub.unsubscribe()
 		// which sends UNSUBSCRIBE messages and removes from Router.

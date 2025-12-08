@@ -9,11 +9,14 @@ import 'dotenv/config';
 import { hasAnyCredentials } from './test-utils';
 
 describe('Daemon-style SDK Usage', () => {
+	const verbose = !!process.env.TEST_VERBOSE;
+	const log = verbose ? console.log : () => {};
+
 	test.skipIf(!hasAnyCredentials())(
 		'should work with cwd option (like daemon does)',
 		async () => {
-			console.log('\n[TEST] Testing with cwd option...');
-			console.log('[TEST] Current working directory:', process.cwd());
+			log('\n[TEST] Testing with cwd option...');
+			log('[TEST] Current working directory:', process.cwd());
 
 			const queryStream = query({
 				prompt: 'What is 2+2? Answer with just the number.',
@@ -26,30 +29,30 @@ describe('Daemon-style SDK Usage', () => {
 				},
 			});
 
-			console.log('[TEST] Query stream created, processing...');
+			log('[TEST] Query stream created, processing...');
 			let assistantResponse = '';
 			let messageCount = 0;
 
 			for await (const message of queryStream) {
 				messageCount++;
-				console.log(`[TEST] Received message #${messageCount}, type: ${message.type}`);
+				log(`[TEST] Received message #${messageCount}, type: ${message.type}`);
 
 				if (message.type === 'assistant') {
 					for (const block of message.message.content) {
 						if (block.type === 'text') {
 							assistantResponse += block.text;
-							console.log('[TEST] Response:', block.text);
+							log('[TEST] Response:', block.text);
 						}
 					}
 				}
 			}
 
-			console.log('[TEST] Final response:', assistantResponse);
-			console.log('[TEST] Total messages:', messageCount);
+			log('[TEST] Final response:', assistantResponse);
+			log('[TEST] Total messages:', messageCount);
 
 			expect(assistantResponse.length).toBeGreaterThan(0);
 			expect(messageCount).toBeGreaterThan(0);
-			console.log('[TEST] Success!');
+			log('[TEST] Success!');
 		},
 		60000 // 60 second timeout
 	);
@@ -57,7 +60,7 @@ describe('Daemon-style SDK Usage', () => {
 	test.skipIf(!hasAnyCredentials())(
 		'should work WITHOUT cwd option (like original test)',
 		async () => {
-			console.log('\n[TEST] Testing WITHOUT cwd option...');
+			log('\n[TEST] Testing WITHOUT cwd option...');
 
 			const queryStream = query({
 				prompt: 'What is 2+2? Answer with just the number.',
@@ -70,13 +73,13 @@ describe('Daemon-style SDK Usage', () => {
 				},
 			});
 
-			console.log('[TEST] Query stream created, processing...');
+			log('[TEST] Query stream created, processing...');
 			let assistantResponse = '';
 			let messageCount = 0;
 
 			for await (const message of queryStream) {
 				messageCount++;
-				console.log(`[TEST] Received message #${messageCount}, type: ${message.type}`);
+				log(`[TEST] Received message #${messageCount}, type: ${message.type}`);
 
 				if (message.type === 'assistant') {
 					for (const block of message.message.content) {
@@ -87,12 +90,12 @@ describe('Daemon-style SDK Usage', () => {
 				}
 			}
 
-			console.log('[TEST] Final response:', assistantResponse);
-			console.log('[TEST] Total messages:', messageCount);
+			log('[TEST] Final response:', assistantResponse);
+			log('[TEST] Total messages:', messageCount);
 
 			expect(assistantResponse.length).toBeGreaterThan(0);
 			expect(messageCount).toBeGreaterThan(0);
-			console.log('[TEST] Success!');
+			log('[TEST] Success!');
 		},
 		60000
 	);

@@ -12,6 +12,7 @@ import type { MessageHub, EventBus } from '@liuboer/shared';
 import type { SessionManager } from './session-manager';
 import type { AuthManager } from './auth-manager';
 import type { Config } from '../config';
+import { Logger } from './logger';
 import type {
 	SessionsState,
 	SystemState,
@@ -33,6 +34,7 @@ const startTime = Date.now();
 export class StateManager {
 	// FIX: Per-channel versioning instead of global version
 	private channelVersions = new Map<string, number>();
+	private logger = new Logger('StateManager');
 
 	constructor(
 		private messageHub: MessageHub,
@@ -55,11 +57,11 @@ export class StateManager {
 	private setupEventListeners(): void {
 		// Session lifecycle events
 		this.eventBus.on('session:created', async (data) => {
-			console.log(
-				'[StateManager] Received session:created event, broadcasting delta for session:',
+			this.logger.log(
+				'Received session:created event, broadcasting delta for session:',
 				data.session.id
 			);
-			console.log('[StateManager] Session data:', JSON.stringify(data.session, null, 2));
+			this.logger.log('Session data:', JSON.stringify(data.session, null, 2));
 
 			// Broadcast state channel delta
 			await this.broadcastSessionsDelta({
@@ -68,7 +70,7 @@ export class StateManager {
 			});
 
 			// Publish session.created event for subscribers
-			console.log('[StateManager] Publishing session.created event with data:', {
+			this.logger.log(' Publishing session.created event with data:', {
 				sessionId: data.session.id,
 			});
 			await this.messageHub.publish(
@@ -76,9 +78,9 @@ export class StateManager {
 				{ sessionId: data.session.id },
 				{ sessionId: 'global' }
 			);
-			console.log('[StateManager] session.created event published');
+			this.logger.log(' session.created event published');
 
-			console.log('[StateManager] Delta broadcasted for session:', data.session.id);
+			this.logger.log(' Delta broadcasted for session:', data.session.id);
 		});
 
 		this.eventBus.on('session:updated', async (data) => {
@@ -344,10 +346,10 @@ export class StateManager {
 	async broadcastSessionsDelta(update: SessionsUpdate): Promise<void> {
 		const version = this.incrementVersion(`${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`);
 		const channel = `${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`;
-		console.log('[StateManager] Broadcasting to channel:', channel);
-		console.log('[StateManager] Delta payload:', JSON.stringify({ ...update, version }, null, 2));
+		this.logger.log(' Broadcasting to channel:', channel);
+		this.logger.log(' Delta payload:', JSON.stringify({ ...update, version }, null, 2));
 		await this.messageHub.publish(channel, { ...update, version }, { sessionId: 'global' });
-		console.log('[StateManager] Delta published successfully to:', channel);
+		this.logger.log(' Delta published successfully to:', channel);
 	}
 
 	/**

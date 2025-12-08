@@ -4,6 +4,9 @@
 
 import { describe, test, expect } from 'bun:test';
 
+const verbose = !!process.env.TEST_VERBOSE;
+const log = verbose ? console.log : () => {};
+
 describe('Simple WebSocket Test', () => {
 	test('should send and receive message', async () => {
 		// Create minimal Bun server with WebSocket
@@ -20,17 +23,17 @@ describe('Simple WebSocket Test', () => {
 
 			websocket: {
 				open(ws) {
-					console.log('Server: WebSocket opened');
+					log('Server: WebSocket opened');
 					// Send message immediately
 					ws.send('Hello from server');
-					console.log('Server: Message sent');
+					log('Server: Message sent');
 				},
 				message(ws, message) {
-					console.log('Server: Received message:', message);
+					log('Server: Received message:', message);
 					ws.send(`Echo: ${message}`);
 				},
 				close(_ws) {
-					console.log('Server: WebSocket closed');
+					log('Server: WebSocket closed');
 				},
 			},
 		});
@@ -39,7 +42,7 @@ describe('Simple WebSocket Test', () => {
 		await Bun.sleep(100);
 
 		const port = server.port;
-		console.log(`Server started on port ${port}`);
+		log(`Server started on port ${port}`);
 
 		// Create WebSocket client
 		const ws = new WebSocket(`ws://localhost:${port}/`);
@@ -51,19 +54,19 @@ describe('Simple WebSocket Test', () => {
 			}, 2000);
 
 			ws.addEventListener('message', (event) => {
-				console.log('Client: Received message:', event.data);
+				log('Client: Received message:', event.data);
 				clearTimeout(timeout);
 				resolve(event.data);
 			});
 
 			ws.addEventListener('error', (error) => {
-				console.error('Client: WebSocket error:', error);
+				if (verbose) console.error('Client: WebSocket error:', error);
 				clearTimeout(timeout);
 				reject(error);
 			});
 
 			ws.addEventListener('open', () => {
-				console.log('Client: WebSocket opened');
+				log('Client: WebSocket opened');
 			});
 		});
 
@@ -89,7 +92,7 @@ describe('Simple WebSocket Test', () => {
 
 			websocket: {
 				message(ws, message) {
-					console.log('Server echo received:', message);
+					log('Server echo received:', message);
 					ws.send(`Echo: ${message}`);
 				},
 			},
@@ -105,12 +108,12 @@ describe('Simple WebSocket Test', () => {
 			ws.addEventListener('open', resolve);
 		});
 
-		console.log('Client: Connection open, sending message');
+		log('Client: Connection open, sending message');
 
 		// Set up response listener
 		const responsePromise = new Promise((resolve) => {
 			ws.addEventListener('message', (event) => {
-				console.log('Client: Received echo:', event.data);
+				log('Client: Received echo:', event.data);
 				resolve(event.data);
 			});
 		});

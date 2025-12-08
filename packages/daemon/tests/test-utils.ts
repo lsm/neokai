@@ -69,14 +69,17 @@ export async function createTestApp(): Promise<TestContext> {
 
 	// Check authentication status
 	const authStatus = await authManager.getAuthStatus();
-	console.log(
-		'[TEST] Auth status:',
-		authStatus.isAuthenticated ? `Authenticated via ${authStatus.method}` : 'Not authenticated'
-	);
-	if (!authStatus.isAuthenticated) {
+	// Only log auth status if TEST_VERBOSE is set
+	if (process.env.TEST_VERBOSE) {
 		console.log(
-			'[TEST] WARNING: No authentication configured! Tests requiring API calls will be skipped.'
+			'[TEST] Auth status:',
+			authStatus.isAuthenticated ? `Authenticated via ${authStatus.method}` : 'Not authenticated'
 		);
+		if (!authStatus.isAuthenticated) {
+			console.log(
+				'[TEST] WARNING: No authentication configured! Tests requiring API calls will be skipped.'
+			);
+		}
 	}
 
 	// Initialize MessageHub architecture
@@ -195,7 +198,9 @@ export async function createTestApp(): Promise<TestContext> {
 		websocket: wsHandlers,
 
 		error(error) {
-			console.error('Test app error:', error);
+			if (process.env.TEST_VERBOSE) {
+				console.error('Test app error:', error);
+			}
 			return new Response(
 				JSON.stringify({
 					error: 'Internal server error',
@@ -379,7 +384,9 @@ export function createWebSocket(baseUrl: string, _sessionId: string): WebSocket 
 
 	// Set up error handler immediately to catch early errors
 	ws.addEventListener('error', (error) => {
-		console.error('WebSocket error in test:', error);
+		if (process.env.TEST_VERBOSE) {
+			console.error('WebSocket error in test:', error);
+		}
 	});
 
 	return ws;
@@ -478,7 +485,9 @@ export async function waitForWebSocketOpenAndMessage(
 		};
 
 		const openHandler = () => {
-			console.log(`WebSocket opened on client side, waiting for message...`);
+			if (process.env.TEST_VERBOSE) {
+				console.log(`WebSocket opened on client side, waiting for message...`);
+			}
 		};
 
 		// Add all listeners immediately when WebSocket is created
