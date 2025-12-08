@@ -250,11 +250,17 @@ export async function createTestApp(): Promise<TestContext> {
 		baseUrl,
 		config,
 		cleanup: async () => {
-			messageHub.cleanup();
+			// First cleanup session resources
 			await sessionManager.cleanup();
-			// Wait for any pending async EventBus handlers to complete
-			// before closing the database to prevent "closed database" errors
-			await Bun.sleep(50);
+
+			// Wait for any pending async EventBus handlers and RPC calls to complete
+			// before removing handlers and closing database
+			await Bun.sleep(100);
+
+			// Now cleanup MessageHub (removes RPC handlers)
+			messageHub.cleanup();
+
+			// Close database and stop server
 			db.close();
 			server.stop();
 		},

@@ -361,8 +361,17 @@ describe('State Synchronization Integration', () => {
 				})
 			);
 
-			// Wait for subscription acknowledgment
-			const subAck = await waitForWebSocketMessage(ws);
+			// Wait for subscription acknowledgment, draining any events that arrived first
+			let subAck;
+			for (let i = 0; i < 5; i++) {
+				const msg = await waitForWebSocketMessage(ws);
+				if (msg.type === MessageType.SUBSCRIBED) {
+					subAck = msg;
+					break;
+				}
+				// Drain any EVENT messages that arrived before SUBSCRIBED
+			}
+			expect(subAck).toBeDefined();
 			expect(subAck.type).toBe(MessageType.SUBSCRIBED);
 
 			// Use callRPCHandler instead of WebSocket to avoid RPC routing issues
