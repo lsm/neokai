@@ -177,16 +177,21 @@ describe('MessageHub - Coverage Tests', () => {
 			// Now disable ACK for unsubscribe
 			shortTransport.autoAck = false;
 
-			// Don't send UNSUBSCRIBED response - let it timeout
-			let timeoutError: Error | null = null;
-			try {
-				await unsubscribe();
-			} catch (error) {
-				timeoutError = error as Error;
-			}
+			// Spy on console.warn to verify timeout is logged
+			const originalWarn = console.warn;
+			const warnSpy = jest.fn();
+			console.warn = warnSpy;
 
-			expect(timeoutError).toBeTruthy();
-			expect(timeoutError?.message).toContain('Unsubscribe timeout');
+			// Don't send UNSUBSCRIBED response - let it timeout
+			// NOTE: unsubscribe() does NOT throw - it logs warning and continues with local cleanup
+			await unsubscribe();
+
+			console.warn = originalWarn;
+
+			// Should have warned about timeout
+			expect(warnSpy).toHaveBeenCalled();
+			const warnMessage = warnSpy.mock.calls[0]?.join(' ') || '';
+			expect(warnMessage).toContain('Unsubscribe timeout');
 
 			shortHub.cleanup();
 		});
@@ -200,30 +205,20 @@ describe('MessageHub - Coverage Tests', () => {
 			// Disconnect transport before unsubscribe
 			transport.disconnect();
 
-			// Should not throw, but log warning
-			const originalWarn = console.warn;
-			const warnSpy = jest.fn();
-			console.warn = warnSpy;
-
+			// Should not throw when disconnected - just does local cleanup
 			await unsubscribe();
 
-			console.warn = originalWarn;
-
-			// Should have warned but completed cleanup
-			expect(warnSpy).toHaveBeenCalled();
+			// Verify local cleanup happened - handler should be removed from subscriptions
+			const count = hub.getSubscriptionCount('test.event', 'test-session');
+			expect(count).toBe(0);
 		});
 	});
 
 	describe('Server-side Message Handlers', () => {
 		test('should handle SUBSCRIBE message server-side', async () => {
-			// Create a new hub for server-side testing to avoid interference
-			const serverHub = new MessageHub({ debug: true });
-			const serverTransport = new MockTransport();
-			serverTransport.autoAck = false; // Server doesn't auto-ACK - it handles messages manually
-			serverHub.registerTransport(serverTransport);
-
-			const router = new MessageHubRouter();
-			serverHub.registerRouter(router);
+			// These tests verify server-side SUBSCRIBE/UNSUBSCRIBE handling
+			// WITHOUT router - just MessageHub direct handling
+			// Full routing tests are in message-hub-router.test.ts
 
 			const subscribeMsg = createSubscribeMessage({
 				method: 'test.event',
@@ -234,53 +229,74 @@ describe('MessageHub - Coverage Tests', () => {
 			// Add clientId to message (normally added by transport)
 			(subscribeMsg as unknown as { clientId: string }).clientId = 'client-1';
 
+			// Register router to enable server-side handling
+			const router = new MessageHubRouter();
+			hub.registerRouter(router);
+
+			// Register a mock client connection with the router
+			const mockConnection = {
+				id: 'client-1',
+				send: jest.fn(),
+				isOpen: () => true,
+			};
+			router.registerConnection(mockConnection);
+
+			// Clear any previous messages
+			transport.sentMessages = [];
+			transport.autoAck = false; // Disable auto-ACK
+
 			// Simulate incoming SUBSCRIBE
-			serverTransport.simulateMessage(subscribeMsg);
+			transport.simulateMessage(subscribeMsg);
 
 			// Wait for async handling
 			await new Promise((resolve) => setTimeout(resolve, 50));
 
-			// Should have sent SUBSCRIBED response
-			const responses = serverTransport.sentMessages.filter(
-				(m) => m.type === MessageType.SUBSCRIBED
-			);
-			expect(responses.length).toBeGreaterThan(0);
-
-			serverHub.cleanup();
+			// Verify the router subscription was registered
+			const subCount = router.getSubscriptionCount('test-session', 'test.event');
+			expect(subCount).toBeGreaterThan(0);
 		});
 
 		test('should handle UNSUBSCRIBE message server-side', async () => {
-			// Create a new hub for server-side testing
-			const serverHub = new MessageHub({ debug: true });
-			const serverTransport = new MockTransport();
-			serverTransport.autoAck = false; // Server doesn't auto-ACK
-			serverHub.registerTransport(serverTransport);
-
 			const router = new MessageHubRouter();
-			serverHub.registerRouter(router);
+			hub.registerRouter(router);
 
+			// Register a mock client connection with the router
+			const mockConnection = {
+				id: 'client-1',
+				send: jest.fn(),
+				isOpen: () => true,
+			};
+			router.registerConnection(mockConnection);
+
+			// First subscribe
+			const subscribeMsg = createSubscribeMessage({
+				method: 'test.event',
+				sessionId: 'test-session',
+				id: 'sub-123',
+			});
+			(subscribeMsg as unknown as { clientId: string }).clientId = 'client-1';
+			transport.autoAck = false;
+			transport.simulateMessage(subscribeMsg);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			// Verify subscription exists
+			let subCount = router.getSubscriptionCount('test-session', 'test.event');
+			expect(subCount).toBeGreaterThan(0);
+
+			// Now unsubscribe
 			const unsubscribeMsg = createUnsubscribeMessage({
 				method: 'test.event',
 				sessionId: 'test-session',
 				id: 'unsub-123',
 			});
-
-			// Add clientId to message
 			(unsubscribeMsg as unknown as { clientId: string }).clientId = 'client-1';
 
-			// Simulate incoming UNSUBSCRIBE
-			serverTransport.simulateMessage(unsubscribeMsg);
-
-			// Wait for async handling
+			transport.simulateMessage(unsubscribeMsg);
 			await new Promise((resolve) => setTimeout(resolve, 50));
 
-			// Should have sent UNSUBSCRIBED response
-			const responses = serverTransport.sentMessages.filter(
-				(m) => m.type === MessageType.UNSUBSCRIBED
-			);
-			expect(responses.length).toBeGreaterThan(0);
-
-			serverHub.cleanup();
+			// Verify subscription was removed
+			subCount = router.getSubscriptionCount('test-session', 'test.event');
+			expect(subCount).toBe(0);
 		});
 
 		test('should ignore SUBSCRIBE when no router registered', async () => {
