@@ -109,10 +109,7 @@ describe('ErrorManager', () => {
 		});
 
 		it('should extract HOST_UNREACHABLE code', () => {
-			const structured = errorManager.createError(
-				new Error('ENOTFOUND'),
-				ErrorCategory.CONNECTION
-			);
+			const structured = errorManager.createError(new Error('ENOTFOUND'), ErrorCategory.CONNECTION);
 			expect(structured.code).toBe('HOST_UNREACHABLE');
 		});
 
@@ -208,7 +205,9 @@ describe('ErrorManager', () => {
 				new Error('validation failed'),
 				ErrorCategory.VALIDATION
 			);
-			expect(structured.userMessage).toBe('Invalid request. Please check your input and try again.');
+			expect(structured.userMessage).toBe(
+				'Invalid request. Please check your input and try again.'
+			);
 		});
 
 		it('should provide friendly message for permission errors', () => {
@@ -331,7 +330,11 @@ describe('ErrorManager', () => {
 
 		it('should handle string errors', async () => {
 			const sessionId = 'test-session-abc';
-			const result = await errorManager.handleError(sessionId, 'String error', ErrorCategory.SYSTEM);
+			const result = await errorManager.handleError(
+				sessionId,
+				'String error',
+				ErrorCategory.SYSTEM
+			);
 
 			expect(result.message).toBe('String error');
 			expect(publishSpy).toHaveBeenCalledTimes(1);

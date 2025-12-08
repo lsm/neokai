@@ -7,8 +7,12 @@ import { setupMessageHandlers } from '../src/lib/rpc-handlers/message-handlers';
 
 describe('Message RPC Handlers', () => {
 	let handlers: Map<string, Function>;
-	let mockMessageHub: any;
-	let mockSessionManager: any;
+	let mockMessageHub: {
+		handle: ReturnType<typeof mock>;
+	};
+	let mockSessionManager: {
+		getSessionAsync: ReturnType<typeof mock>;
+	};
 
 	beforeAll(() => {
 		handlers = new Map();
@@ -32,8 +36,10 @@ describe('Message RPC Handlers', () => {
 			getSessionAsync: mock(async (sessionId: string) => {
 				if (sessionId === 'valid-session') {
 					return {
-						getMessages: mock((limit?: number, offset?: number) => mockMessages),
-						getSDKMessages: mock((limit?: number, offset?: number, since?: number) => mockSDKMessages),
+						getMessages: mock((_limit?: number, _offset?: number) => mockMessages),
+						getSDKMessages: mock(
+							(_limit?: number, _offset?: number, _since?: number) => mockSDKMessages
+						),
 					};
 				}
 				return null;

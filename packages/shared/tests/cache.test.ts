@@ -101,9 +101,7 @@ describe('LRUCache', () => {
 				expect(shortCache.size).toBe(0); // Should be cleaned up
 
 				// Verify cleanup message was logged
-				expect(logSpy).toHaveBeenCalledWith(
-					'[LRUCache] Cleaned up 2 expired entries'
-				);
+				expect(logSpy).toHaveBeenCalledWith('[LRUCache] Cleaned up 2 expired entries');
 
 				console.log = originalLog;
 				shortCache.destroy();
@@ -122,8 +120,8 @@ describe('LRUCache', () => {
 		// Mock setInterval to capture the callback
 		global.setInterval = ((cb: () => void, _interval: number) => {
 			timerCallback = cb;
-			return 999 as any; // Return a fake timer ID
-		}) as any;
+			return 999 as unknown as NodeJS.Timeout; // Return a fake timer ID
+		}) as typeof setInterval;
 
 		// Spy on console.error
 		const originalError = console.error;

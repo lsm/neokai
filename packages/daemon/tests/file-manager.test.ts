@@ -162,7 +162,9 @@ describe('FileManager', () => {
 		});
 
 		it('should throw error when trying to list a file', async () => {
-			await expect(fileManager.listDirectory('file1.txt')).rejects.toThrow('Path is not a directory');
+			await expect(fileManager.listDirectory('file1.txt')).rejects.toThrow(
+				'Path is not a directory'
+			);
 		});
 
 		it('should list recursively when recursive=true', async () => {

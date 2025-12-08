@@ -9,9 +9,6 @@ import { MessageHubRouter } from '../src/message-hub/router.ts';
 import type { IMessageTransport, ConnectionState } from '../src/message-hub/types.ts';
 import {
 	MessageType,
-	createCallMessage,
-	createResultMessage,
-	createErrorMessage,
 	createEventMessage,
 	createSubscribeMessage,
 	createUnsubscribeMessage,
@@ -19,7 +16,6 @@ import {
 	createUnsubscribedMessage,
 	type HubMessage,
 } from '../src/message-hub/protocol.ts';
-import { generateUUID } from '../src/utils.ts';
 
 // Mock transport
 class MockTransport implements IMessageTransport {
@@ -139,9 +135,7 @@ describe('MessageHub - Coverage Tests', () => {
 
 			console.warn = originalWarn;
 
-			expect(warnSpy).toHaveBeenCalledWith(
-				'[MessageHub] Router already registered, replacing...'
-			);
+			expect(warnSpy).toHaveBeenCalledWith('[MessageHub] Router already registered, replacing...');
 		});
 
 		test('should return registered router', () => {

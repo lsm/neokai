@@ -7,8 +7,12 @@ import { setupCommandHandlers } from '../src/lib/rpc-handlers/command-handlers';
 
 describe('Command RPC Handlers', () => {
 	let handlers: Map<string, Function>;
-	let mockMessageHub: any;
-	let mockSessionManager: any;
+	let mockMessageHub: {
+		handle: ReturnType<typeof mock>;
+	};
+	let mockSessionManager: {
+		getSessionAsync: ReturnType<typeof mock>;
+	};
 
 	beforeAll(() => {
 		handlers = new Map();

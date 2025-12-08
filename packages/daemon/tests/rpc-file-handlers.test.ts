@@ -11,8 +11,12 @@ import { tmpdir } from 'node:os';
 describe('File RPC Handlers', () => {
 	let testWorkspace: string;
 	let handlers: Map<string, Function>;
-	let mockSessionManager: any;
-	let mockMessageHub: any;
+	let mockSessionManager: {
+		getSessionAsync: ReturnType<typeof mock>;
+	};
+	let mockMessageHub: {
+		handle: ReturnType<typeof mock>;
+	};
 
 	beforeAll(async () => {
 		// Create test workspace

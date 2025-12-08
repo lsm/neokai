@@ -7,10 +7,21 @@ import { setupSystemHandlers } from '../src/lib/rpc-handlers/system-handlers';
 
 describe('System RPC Handlers', () => {
 	let handlers: Map<string, Function>;
-	let mockMessageHub: any;
-	let mockSessionManager: any;
-	let mockAuthManager: any;
-	let mockConfig: any;
+	let mockMessageHub: {
+		handle: ReturnType<typeof mock>;
+	};
+	let mockSessionManager: {
+		getActiveSessions: ReturnType<typeof mock>;
+		getTotalSessions: ReturnType<typeof mock>;
+	};
+	let mockAuthManager: {
+		getAuthStatus: ReturnType<typeof mock>;
+	};
+	let mockConfig: {
+		defaultModel: string;
+		maxSessions: number;
+		dbPath: string;
+	};
 
 	beforeAll(() => {
 		handlers = new Map();
