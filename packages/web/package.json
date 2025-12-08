@@ -23,11 +23,11 @@
 		"date-fns": "4.1.0"
 	},
 	"devDependencies": {
-		"@preact/preset-vite": "^2.10.2",
-		"@tailwindcss/vite": "^4.1.17",
+		"@preact/preset-vite": "2.10.2",
+		"@tailwindcss/vite": "4.1.17",
 		"bun-types": "latest",
-		"tailwindcss": "^4.1.17",
-		"typescript": "^5.9.3",
-		"vite": "^7.2.6"
+		"tailwindcss": "4.1.17",
+		"typescript": "5.9.3",
+		"vite": "7.2.6"
 	}
 }

@@ -4,10 +4,8 @@ import { cn } from '../../lib/utils.ts';
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
 export type ButtonSize = 'sm' | 'md' | 'lg';
 
-export interface ButtonProps extends Omit<
-	JSX.HTMLAttributes<HTMLButtonElement>,
-	'size' | 'loading' | 'icon'
-> {
+export interface ButtonProps
+	extends Omit<JSX.HTMLAttributes<HTMLButtonElement>, 'size' | 'loading' | 'icon'> {
 	children: ComponentChildren;
 	variant?: ButtonVariant;
 	size?: ButtonSize;

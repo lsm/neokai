@@ -1,4 +1,4 @@
-.PHONY: dev start daemon web self restart sync-sdk-types clean-cache clean-all build-prod test test-daemon test-coverage test-coverage-lcov e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self lint lint-fix format
+.PHONY: dev start daemon web self restart sync-sdk-types clean-cache clean-all build-prod test test-daemon test-coverage test-coverage-lcov e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self lint lint-fix format typecheck
 
 # Unified server (daemon + web in single process) - RECOMMENDED
 dev:
@@ -158,3 +158,6 @@ lint-fix:
 format:
 	@echo "✨ Formatting code..."
 	@bun run format
+
+typecheck:
+	@bun run typecheck

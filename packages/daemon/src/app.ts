@@ -28,10 +28,7 @@ export interface CreateDaemonAppOptions {
 }
 
 export interface DaemonAppContext {
-	// Using Elysia<any> due to Elysia's complex generic types that change during composition
-	// The app instance is fully typed at runtime, this is just for the context interface
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	app: Elysia<any>;
+	app: Elysia;
 	db: Database;
 	messageHub: MessageHub;
 	sessionManager: SessionManager;
@@ -249,8 +246,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	return {
 		// Cast app to Elysia<any> due to Elysia's complex generics that change during composition
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		app: app as Elysia<any>,
+		// @ts-expect-error ignore typecheck
+		app,
 		db,
 		messageHub,
 		sessionManager,
