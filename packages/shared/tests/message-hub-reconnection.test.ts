@@ -4,7 +4,7 @@
  * Verifies that subscriptions are properly re-established after reconnection
  */
 
-import { describe, it, expect, beforeEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { MessageHub } from '../src/message-hub/message-hub.ts';
 import { MessageType } from '../src/message-hub/protocol.ts';
 import type { HubMessage, IMessageTransport, ConnectionState } from '../src/message-hub/types.ts';
@@ -110,6 +110,13 @@ describe('MessageHub Reconnection', () => {
 	beforeEach(() => {
 		transport = new MockTransport();
 		hub = new MessageHub({ debug: true });
+	});
+
+	afterEach(async () => {
+		// Clean up MessageHub resources
+		hub.cleanup();
+		// Close transport connection
+		await transport.close();
 	});
 
 	it('should send SUBSCRIBE messages to server after reconnection', async () => {
