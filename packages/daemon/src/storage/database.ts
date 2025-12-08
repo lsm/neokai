@@ -221,6 +221,10 @@ export class Database {
 			fields.push('metadata = ?');
 			values.push(JSON.stringify(updates.metadata));
 		}
+		if (updates.config) {
+			fields.push('config = ?');
+			values.push(JSON.stringify(updates.config));
+		}
 
 		if (fields.length > 0) {
 			values.push(id);

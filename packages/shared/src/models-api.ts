@@ -66,13 +66,14 @@ export interface ListModelsOptions {
 export async function fetchAvailableModels(
 	options: ListModelsOptions = {}
 ): Promise<ListModelsResponse> {
-	// Get API key from options or environment
-	const apiKey =
-		options.apiKey || process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN;
+	// Get credentials from options or environment
+	// Priority: explicit apiKey option > ANTHROPIC_API_KEY env > CLAUDE_CODE_OAUTH_TOKEN env
+	const apiKey = options.apiKey || process.env.ANTHROPIC_API_KEY;
+	const oauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
 
-	if (!apiKey) {
+	if (!apiKey && !oauthToken) {
 		throw new Error(
-			'API key required. Set ANTHROPIC_API_KEY environment variable or pass apiKey option.'
+			'API key required. Set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN environment variable, or pass apiKey option.'
 		);
 	}
 
@@ -85,11 +86,18 @@ export async function fetchAvailableModels(
 	const queryString = params.toString();
 	const url = `https://api.anthropic.com/v1/models${queryString ? `?${queryString}` : ''}`;
 
-	// Build headers
+	// Build headers - use appropriate auth method
 	const headers: Record<string, string> = {
-		'x-api-key': apiKey,
 		'anthropic-version': '2023-06-01',
 	};
+
+	if (apiKey) {
+		// Use x-api-key for API key authentication
+		headers['x-api-key'] = apiKey;
+	} else if (oauthToken) {
+		// Use Authorization Bearer for OAuth token authentication
+		headers['Authorization'] = `Bearer ${oauthToken}`;
+	}
 
 	if (options.beta) {
 		headers['anthropic-beta'] = options.beta;
