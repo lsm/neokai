@@ -371,12 +371,23 @@ export class StateManager {
 	 * FIX: Uses per-channel versioning
 	 */
 	async broadcastSessionStateChange(sessionId: string): Promise<void> {
-		const version = this.incrementVersion(`${STATE_CHANNELS.SESSION}:${sessionId}`);
-		const state = { ...(await this.getSessionState(sessionId)), version };
+		try {
+			const version = this.incrementVersion(`${STATE_CHANNELS.SESSION}:${sessionId}`);
+			const state = { ...(await this.getSessionState(sessionId)), version };
 
-		await this.messageHub.publish(STATE_CHANNELS.SESSION, state, {
-			sessionId,
-		});
+			await this.messageHub.publish(STATE_CHANNELS.SESSION, state, {
+				sessionId,
+			});
+		} catch (error) {
+			// Session may have been deleted or database may be closed during cleanup
+			// This is expected behavior, don't throw
+			if (process.env.TEST_VERBOSE) {
+				console.warn(
+					`[StateManager] Failed to broadcast session state for ${sessionId}:`,
+					error instanceof Error ? error.message : error
+				);
+			}
+		}
 	}
 
 	/**

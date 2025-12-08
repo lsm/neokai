@@ -252,6 +252,9 @@ export async function createTestApp(): Promise<TestContext> {
 		cleanup: async () => {
 			messageHub.cleanup();
 			await sessionManager.cleanup();
+			// Wait for any pending async EventBus handlers to complete
+			// before closing the database to prevent "closed database" errors
+			await Bun.sleep(50);
 			db.close();
 			server.stop();
 		},
