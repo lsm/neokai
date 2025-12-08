@@ -99,16 +99,8 @@ export class AgentSession {
 		// Setup event listeners for incoming messages
 		this.setupEventListeners();
 
-		// Start the streaming query immediately
-		this.startStreamingQuery().catch(async (error) => {
-			this.logger.error(`Failed to start streaming query:`, error);
-			await this.errorManager.handleError(
-				this.session.id,
-				error as Error,
-				ErrorCategory.SESSION,
-				'Failed to initialize session. Please try again.'
-			);
-		});
+		// LAZY START: Don't start the streaming query here.
+		// Query will be started on first message send via ensureQueryStarted()
 	}
 
 	/**
@@ -246,11 +238,27 @@ export class AgentSession {
 	 * Handle message.send RPC call
 	 * Called by RPC handler in session-handlers.ts
 	 */
+	/**
+	 * Ensure the streaming query is started (lazy initialization)
+	 * Called on first message send to avoid connecting to SDK until needed
+	 */
+	private async ensureQueryStarted(): Promise<void> {
+		if (this.queryRunning || this.queryPromise) {
+			return; // Already started
+		}
+
+		this.logger.log(`Lazy-starting streaming query...`);
+		await this.startStreamingQuery();
+	}
+
 	async handleMessageSend(data: {
 		content: string;
 		images?: MessageImage[];
 	}): Promise<{ messageId: string }> {
 		try {
+			// LAZY START: Start the query on first message
+			await this.ensureQueryStarted();
+
 			const { content, images } = data;
 			const messageContent = this.buildMessageContent(content, images);
 			const messageId = await this.enqueueMessage(messageContent);
@@ -798,10 +806,7 @@ export class AgentSession {
 	 * PHASE 3 FIX: Unsubscribe from all MessageHub subscriptions to prevent memory leaks
 	 */
 	async cleanup(): Promise<void> {
-		const startTime = Date.now();
-		this.logger.log(
-			`Cleaning up resources... (queryPromise: ${!!this.queryPromise}, queryRunning: ${this.queryRunning})`
-		);
+		this.logger.log(`Cleaning up resources...`);
 
 		// Unsubscribe from all MessageHub events
 		for (const unsubscribe of this.unsubscribers) {
@@ -812,7 +817,6 @@ export class AgentSession {
 			}
 		}
 		this.unsubscribers = [];
-		this.logger.log(`Unsubscribed in ${Date.now() - startTime}ms`);
 
 		// Signal query to stop
 		this.queryRunning = false;
@@ -822,11 +826,9 @@ export class AgentSession {
 			this.abortController.abort();
 			this.abortController = undefined;
 		}
-		this.logger.log(`Aborted in ${Date.now() - startTime}ms`);
 
-		// FIX: Wait for query to fully stop (with timeout)
+		// Wait for query to fully stop (with timeout)
 		if (this.queryPromise) {
-			this.logger.log(`Waiting for queryPromise to complete...`);
 			try {
 				await Promise.race([
 					this.queryPromise,
@@ -837,14 +839,13 @@ export class AgentSession {
 				this.logger.warn(`Query cleanup error:`, error);
 			}
 			this.queryPromise = null;
-			this.logger.log(`QueryPromise cleanup took ${Date.now() - startTime}ms`);
 		}
 
 		// Clear state
 		this.messageQueue = [];
 		this.messageWaiters = [];
 
-		this.logger.log(`Cleanup complete in ${Date.now() - startTime}ms`);
+		this.logger.log(`Cleanup complete`);
 	}
 
 	/**

@@ -187,7 +187,7 @@ export class SessionManager {
 	}
 
 	async deleteSession(sessionId: string): Promise<void> {
-		// FIX: Transaction-like cleanup with proper error handling
+		// Transaction-like cleanup with proper error handling
 		const agentSession = this.sessions.get(sessionId);
 		let dbDeleted = false;
 
@@ -212,7 +212,7 @@ export class SessionManager {
 					{ sessionId: 'global' }
 				);
 
-				// FIX: Emit event via EventBus
+				// Emit event via EventBus
 				await this.eventBus.emit('session:deleted', { sessionId });
 			} catch (error) {
 				this.error('[SessionManager] Failed to broadcast deletion:', error);
