@@ -26,6 +26,14 @@ class MockTransport implements IMessageTransport {
 	public sentMessages: HubMessage[] = [];
 	public autoAck: boolean = true; // Can be disabled for timeout tests
 
+	async initialize(): Promise<void> {
+		// Mock implementation - transport is immediately ready
+	}
+
+	async close(): Promise<void> {
+		this._state = 'disconnected';
+	}
+
 	send(message: HubMessage): Promise<void> {
 		this.sentMessages.push(message);
 
