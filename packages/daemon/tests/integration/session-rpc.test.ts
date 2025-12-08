@@ -195,25 +195,39 @@ describe('Session RPC Integration', () => {
 		}, 15000);
 
 		test('should emit session:deleted event via EventBus', async () => {
+			console.log('[TEST] Creating session...');
 			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-workspace`,
 			});
+			console.log('[TEST] Session created:', created.sessionId);
 
 			let deletedSessionId = null;
-			const eventPromise = new Promise((resolve) => {
+			console.log('[TEST] Setting up event listener...');
+			const eventPromise = new Promise((resolve, reject) => {
+				const timeout = setTimeout(() => {
+					reject(new Error('Event listener timed out after 10s'));
+				}, 10000);
+
 				(ctx.stateManager as unknown).eventBus.on('session:deleted', (data: unknown) => {
+					console.log('[TEST] Received session:deleted event:', data);
+					clearTimeout(timeout);
 					deletedSessionId = data.sessionId;
 					resolve(data);
 				});
 			});
 
+			console.log('[TEST] Calling session.delete...');
+			const deleteStart = Date.now();
 			await callRPCHandler(ctx.messageHub, 'session.delete', {
 				sessionId: created.sessionId,
 			});
+			console.log(`[TEST] session.delete completed in ${Date.now() - deleteStart}ms`);
 
+			console.log('[TEST] Waiting for event...');
 			await eventPromise;
+			console.log('[TEST] Event received!');
 			expect(deletedSessionId).toBe(created.sessionId);
-		});
+		}, 15000);
 
 		test('should cascade delete SDK messages', async () => {
 			const created = await callRPCHandler(ctx.messageHub, 'session.create', {

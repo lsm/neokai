@@ -798,7 +798,10 @@ export class AgentSession {
 	 * PHASE 3 FIX: Unsubscribe from all MessageHub subscriptions to prevent memory leaks
 	 */
 	async cleanup(): Promise<void> {
-		this.logger.log(`Cleaning up resources...`);
+		const startTime = Date.now();
+		this.logger.log(
+			`Cleaning up resources... (queryPromise: ${!!this.queryPromise}, queryRunning: ${this.queryRunning})`
+		);
 
 		// Unsubscribe from all MessageHub events
 		for (const unsubscribe of this.unsubscribers) {
@@ -809,6 +812,7 @@ export class AgentSession {
 			}
 		}
 		this.unsubscribers = [];
+		this.logger.log(`Unsubscribed in ${Date.now() - startTime}ms`);
 
 		// Signal query to stop
 		this.queryRunning = false;
@@ -818,9 +822,11 @@ export class AgentSession {
 			this.abortController.abort();
 			this.abortController = undefined;
 		}
+		this.logger.log(`Aborted in ${Date.now() - startTime}ms`);
 
 		// FIX: Wait for query to fully stop (with timeout)
 		if (this.queryPromise) {
+			this.logger.log(`Waiting for queryPromise to complete...`);
 			try {
 				await Promise.race([
 					this.queryPromise,
@@ -831,13 +837,14 @@ export class AgentSession {
 				this.logger.warn(`Query cleanup error:`, error);
 			}
 			this.queryPromise = null;
+			this.logger.log(`QueryPromise cleanup took ${Date.now() - startTime}ms`);
 		}
 
 		// Clear state
 		this.messageQueue = [];
 		this.messageWaiters = [];
 
-		this.logger.log(`Cleanup complete`);
+		this.logger.log(`Cleanup complete in ${Date.now() - startTime}ms`);
 	}
 
 	/**
