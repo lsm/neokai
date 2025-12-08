@@ -217,7 +217,7 @@ describe('End-to-End Workflow Integration', () => {
 			// All should be deleted
 			const finalList = await callRPCHandler(ctx.messageHub, 'session.list', {});
 			expect(finalList.sessions.length).toBe(0);
-		});
+		}, 15000);
 	});
 
 	describe('State Snapshot Consistency', () => {

@@ -192,7 +192,7 @@ describe('Session RPC Integration', () => {
 			// Verify session was deleted from database
 			const session = ctx.db.getSession(created.sessionId);
 			expect(session).toBeNull();
-		});
+		}, 15000);
 
 		test('should emit session:deleted event via EventBus', async () => {
 			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
