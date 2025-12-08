@@ -82,6 +82,8 @@ export class WebSocketServerTransport implements IMessageTransport {
 	/**
 	 * Register a WebSocket client
 	 * Creates a ClientConnection and registers with router
+	 * @param ws Bun ServerWebSocket with any data type
+	 * @param connectionSessionId Initial session ID for the connection
 	 */
 	registerClient(ws: ServerWebSocket<unknown>, connectionSessionId: string): string {
 		// Generate client ID first (no mutation needed)

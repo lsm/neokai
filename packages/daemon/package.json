@@ -6,7 +6,8 @@
 	"exports": {
 		".": "./main.ts",
 		"./app": "./src/app.ts",
-		"./config": "./src/config.ts"
+		"./config": "./src/config.ts",
+		"./routes/setup-websocket": "./src/routes/setup-websocket.ts"
 	},
 	"scripts": {
 		"dev": "bun run --watch main.ts",
@@ -18,10 +19,8 @@
 	},
 	"dependencies": {
 		"@anthropic-ai/claude-agent-sdk": "0.1.61",
-		"@elysiajs/cors": "1.4.0",
 		"@liuboer/shared": "workspace:*",
-		"dotenv": "17.2.3",
-		"elysia": "1.4.18"
+		"dotenv": "17.2.3"
 	},
 	"devDependencies": {
 		"@types/bun": "latest"

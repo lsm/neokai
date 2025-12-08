@@ -12,8 +12,6 @@
 	"dependencies": {
 		"@liuboer/daemon": "workspace:*",
 		"@liuboer/shared": "workspace:*",
-		"@elysiajs/static": "^1.4.7",
-		"elysia": "1.4.16",
 		"vite": "^7.2.6"
 	},
 	"devDependencies": {

@@ -1,9 +1,8 @@
 /**
- * Test utilities for Bun+Elysia integration tests
+ * Test utilities for Bun native server integration tests
  */
 
-import { Elysia } from 'elysia';
-import { cors } from '@elysiajs/cors';
+import type { Server } from 'bun';
 import { config as dotenvConfig } from 'dotenv';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,11 +18,11 @@ import { SubscriptionManager } from '../src/lib/subscription-manager';
 import { MessageHub, MessageHubRouter } from '@liuboer/shared';
 import { setupRPCHandlers } from '../src/lib/rpc-handlers';
 import { WebSocketServerTransport } from '../src/lib/websocket-server-transport';
-import { setupMessageHubWebSocket } from '../src/routes/setup-websocket';
+import { createWebSocketHandlers } from '../src/routes/setup-websocket';
 import type { Config } from '../src/config';
 
 export interface TestContext {
-	app: Elysia;
+	server: Server;
 	db: Database;
 	sessionManager: SessionManager;
 	messageHub: MessageHub;
@@ -135,47 +134,88 @@ export async function createTestApp(): Promise<TestContext> {
 	// Initialize Subscription Manager
 	const subscriptionManager = new SubscriptionManager(messageHub);
 
-	// Create application
-	const app = new Elysia()
-		.use(
-			cors({
-				origin: '*',
-				methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-				allowedHeaders: ['Content-Type'],
-			})
-		)
-		.onError(({ error, set }) => {
-			console.error('Test app error:', error);
-			set.status = 500;
-			return {
-				error: 'Internal server error',
-				message: error instanceof Error ? error.message : String(error),
-			};
-		})
-		.get('/', () => ({
-			name: 'Liuboer Test Daemon',
-			version: '0.1.0',
-			status: 'running',
-		}));
+	// Create WebSocket handlers
+	const wsHandlers = createWebSocketHandlers(transport, sessionManager, subscriptionManager);
 
-	// Mount MessageHub WebSocket routes
-	// @ts-expect-error - Elysia type compatibility issue with newer versions
-	setupMessageHubWebSocket(app, transport, sessionManager, subscriptionManager);
-
-	// Start server on random available port (0 = OS assigns free port)
-	app.listen({
+	// Create Bun server with native WebSocket support
+	const server = Bun.serve({
 		hostname: 'localhost',
-		port: 0,
+		port: 0, // OS assigns free port
+
+		fetch(req, server) {
+			const url = new URL(req.url);
+
+			// CORS preflight
+			if (req.method === 'OPTIONS') {
+				return new Response(null, {
+					headers: {
+						'Access-Control-Allow-Origin': '*',
+						'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+						'Access-Control-Allow-Headers': 'Content-Type',
+					},
+				});
+			}
+
+			// WebSocket upgrade at /ws
+			if (url.pathname === '/ws') {
+				const upgraded = server.upgrade(req, {
+					data: {
+						connectionSessionId: 'global',
+					},
+				});
+
+				if (upgraded) {
+					return; // WebSocket upgrade successful
+				}
+
+				return new Response('WebSocket upgrade failed', { status: 500 });
+			}
+
+			// Root info route
+			if (url.pathname === '/') {
+				return Response.json(
+					{
+						name: 'Liuboer Test Daemon',
+						version: '0.1.0',
+						status: 'running',
+					},
+					{
+						headers: { 'Access-Control-Allow-Origin': '*' },
+					}
+				);
+			}
+
+			// 404 for unknown routes
+			return new Response('Not found', {
+				status: 404,
+				headers: { 'Access-Control-Allow-Origin': '*' },
+			});
+		},
+
+		websocket: wsHandlers,
+
+		error(error) {
+			console.error('Test app error:', error);
+			return new Response(
+				JSON.stringify({
+					error: 'Internal server error',
+					message: error instanceof Error ? error.message : String(error),
+				}),
+				{
+					status: 500,
+					headers: {
+						'Content-Type': 'application/json',
+						'Access-Control-Allow-Origin': '*',
+					},
+				}
+			);
+		},
 	});
 
 	// Wait for server to actually be listening
 	await Bun.sleep(200);
 
-	// Get the actual port assigned by OS (Elysia exposes via app.server)
-	if (!app.server) {
-		throw new Error('Server failed to start');
-	}
-	const port = app.server.port;
+	const port = server.port;
 	const baseUrl = `http://localhost:${port}`;
 
 	// Verify server is ready by making a test request
@@ -194,7 +234,7 @@ export async function createTestApp(): Promise<TestContext> {
 	}
 
 	return {
-		app,
+		server,
 		db,
 		sessionManager,
 		messageHub,
@@ -208,7 +248,7 @@ export async function createTestApp(): Promise<TestContext> {
 			messageHub.cleanup();
 			await sessionManager.cleanup();
 			db.close();
-			app.stop();
+			server.stop();
 		},
 	};
 }

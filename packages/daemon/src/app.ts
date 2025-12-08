@@ -1,6 +1,6 @@
-import { Elysia } from 'elysia';
-import { cors } from '@elysiajs/cors';
+import type { Server } from 'bun';
 import type { Config } from './config';
+import type { WebSocketData } from './types/websocket';
 import { Database } from './storage/database';
 import { SessionManager } from './lib/session-manager';
 import { AuthManager } from './lib/auth-manager';
@@ -9,7 +9,7 @@ import { SubscriptionManager } from './lib/subscription-manager';
 import { MessageHub, MessageHubRouter, EventBus } from '@liuboer/shared';
 import { setupRPCHandlers } from './lib/rpc-handlers';
 import { WebSocketServerTransport } from './lib/websocket-server-transport';
-import { setupMessageHubWebSocket } from './routes/setup-websocket';
+import { createWebSocketHandlers } from './routes/setup-websocket';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -28,7 +28,7 @@ export interface CreateDaemonAppOptions {
 }
 
 export interface DaemonAppContext {
-	app: Elysia;
+	server: Server<WebSocketData>;
 	db: Database;
 	messageHub: MessageHub;
 	sessionManager: SessionManager;
@@ -55,7 +55,7 @@ export interface DaemonAppContext {
  * - RPC handlers
  *
  * @param options Configuration and options
- * @returns Initialized Elysia app and context for management
+ * @returns Initialized Bun server and context for management
  */
 export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<DaemonAppContext> {
 	const { config, verbose = true, standalone = false } = options;
@@ -162,47 +162,96 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const subscriptionManager = new SubscriptionManager(messageHub);
 	log('✅ Subscription manager initialized (application-level subscription patterns)');
 
-	// Create application
-	const app = new Elysia()
-		.use(
-			cors({
-				origin: '*',
-				methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-				allowedHeaders: ['Content-Type'],
-			})
-		)
-		.onError(({ error, set }) => {
-			console.error('Error:', error);
-			set.status = 500;
-			return {
-				error: 'Internal server error',
-				message: error instanceof Error ? error.message : String(error),
-			};
-		});
+	// Create WebSocket handlers
+	const wsHandlers = createWebSocketHandlers(transport, sessionManager, subscriptionManager);
 
-	// Only add root info route in standalone mode
-	if (standalone) {
-		app.get('/', () => ({
-			name: 'Liuboer Daemon',
-			version: '0.1.0',
-			status: 'running',
-			protocol: 'WebSocket-only (MessageHub RPC + Pub/Sub)',
-			endpoints: {
-				webSocket: '/ws',
-			},
-			note: 'All operations use MessageHub protocol with bidirectional RPC and Pub/Sub. Session routing via message.sessionId field. REST API has been removed.',
-		}));
-	}
+	// Create Bun server with native WebSocket support
+	const server = Bun.serve({
+		hostname: config.host,
+		port: config.port,
 
-	// Mount MessageHub WebSocket routes (setupMessageHubWebSocket modifies app in-place)
-	// Type assertion needed for Elysia's complex generic types
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	setupMessageHubWebSocket(app as any, transport, sessionManager, subscriptionManager);
+		fetch(req, server) {
+			const url = new URL(req.url);
+
+			// CORS preflight
+			if (req.method === 'OPTIONS') {
+				return new Response(null, {
+					headers: {
+						'Access-Control-Allow-Origin': '*',
+						'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+						'Access-Control-Allow-Headers': 'Content-Type',
+					},
+				});
+			}
+
+			// WebSocket upgrade at /ws
+			if (url.pathname === '/ws') {
+				const upgraded = server.upgrade(req, {
+					data: {
+						// Initial connection session is 'global'
+						connectionSessionId: 'global',
+					},
+				});
+
+				if (upgraded) {
+					return; // WebSocket upgrade successful
+				}
+
+				return new Response('WebSocket upgrade failed', { status: 500 });
+			}
+
+			// Root info route (only in standalone mode)
+			if (standalone && url.pathname === '/') {
+				return Response.json(
+					{
+						name: 'Liuboer Daemon',
+						version: '0.1.0',
+						status: 'running',
+						protocol: 'WebSocket-only (MessageHub RPC + Pub/Sub)',
+						endpoints: {
+							webSocket: '/ws',
+						},
+						note: 'All operations use MessageHub protocol with bidirectional RPC and Pub/Sub. Session routing via message.sessionId field. REST API has been removed.',
+					},
+					{
+						headers: { 'Access-Control-Allow-Origin': '*' },
+					}
+				);
+			}
+
+			// 404 for unknown routes
+			return new Response('Not found', {
+				status: 404,
+				headers: { 'Access-Control-Allow-Origin': '*' },
+			});
+		},
+
+		websocket: wsHandlers,
+
+		error(error) {
+			console.error('Server error:', error);
+			return new Response(
+				JSON.stringify({
+					error: 'Internal server error',
+					message: error instanceof Error ? error.message : String(error),
+				}),
+				{
+					status: 500,
+					headers: {
+						'Content-Type': 'application/json',
+						'Access-Control-Allow-Origin': '*',
+					},
+				}
+			);
+		},
+	});
+
+	log(`✅ Bun server listening on ${config.host}:${config.port}`);
 
 	// Cleanup function for graceful shutdown
 	const cleanup = async () => {
 		log('   1/5 Stopping server...');
-		app.stop();
+		server.stop();
 
 		// Wait for pending RPC calls (with 5s timeout)
 		log('   2/5 Waiting for pending RPC calls...');
@@ -245,9 +294,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	};
 
 	return {
-		// Cast app to Elysia<any> due to Elysia's complex generics that change during composition
-		// @ts-expect-error ignore typecheck
-		app,
+		server,
 		db,
 		messageHub,
 		sessionManager,

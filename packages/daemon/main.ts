@@ -4,24 +4,18 @@ import { getConfig } from './src/config';
 const config = getConfig();
 
 // Create daemon app in standalone mode
-const { app, cleanup } = await createDaemonApp({
+const { server, cleanup } = await createDaemonApp({
 	config,
 	verbose: true,
 	standalone: true, // Show root info route in standalone mode
 });
 
-// Start server
-console.log(`\n🚀 Liuboer Daemon starting...`);
-console.log(`   Host: ${config.host}`);
-console.log(`   Port: ${config.port}`);
+// Server is already listening
+console.log(`\n🚀 Liuboer Daemon started!`);
+console.log(`   Host: ${server.hostname}`);
+console.log(`   Port: ${server.port}`);
 console.log(`   Model: ${config.defaultModel}`);
-
-app.listen({
-	hostname: config.host,
-	port: config.port,
-});
-
-console.log(`\n📡 WebSocket: ws://${app.server?.hostname}:${app.server?.port}/ws`);
+console.log(`\n📡 WebSocket: ws://${server.hostname}:${server.port}/ws`);
 console.log(`\n✨ MessageHub mode! Unified RPC + Pub/Sub over WebSocket.`);
 console.log(`   Session routing via message.sessionId field.\n`);
 

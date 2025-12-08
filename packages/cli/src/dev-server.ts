@@ -1,4 +1,3 @@
-import { Elysia } from 'elysia';
 import { createDaemonApp } from '@liuboer/daemon/app';
 import type { Config } from '@liuboer/daemon/config';
 import { createServer as createViteServer } from 'vite';
@@ -13,7 +12,9 @@ export async function startDevServer(config: Config) {
 		verbose: true,
 		standalone: false, // Skip root info route in embedded mode
 	});
-	const { app: daemonApp } = daemonContext;
+
+	// Stop the daemon's internal server (we'll create a unified one)
+	daemonContext.server.stop();
 
 	// Create Vite dev server on a different internal port
 	console.log('📦 Starting Vite dev server...');
@@ -34,38 +35,54 @@ export async function startDevServer(config: Config) {
 	await vite.listen();
 	console.log(`✅ Vite dev server running on port ${vitePort}`);
 
-	// Create main Elysia app that combines both
-	const app = new Elysia()
-		// First: Proxy non-daemon requests to Vite dev server
-		.get('/', async ({ request }) => {
-			// Proxy root to Vite
-			try {
-				const viteResponse = await fetch(`http://localhost:${vitePort}/`, {
-					method: request.method,
-					headers: request.headers,
-				});
+	// Get WebSocket handlers from daemon
+	const { createWebSocketHandlers } = await import('@liuboer/daemon/routes/setup-websocket');
+	const wsHandlers = createWebSocketHandlers(
+		daemonContext.transport,
+		daemonContext.sessionManager,
+		daemonContext.subscriptionManager
+	);
 
-				return new Response(viteResponse.body, {
-					status: viteResponse.status,
-					headers: viteResponse.headers,
+	// Create unified Bun server that combines daemon + Vite proxy
+	const server = Bun.serve({
+		hostname: config.host,
+		port: config.port,
+
+		async fetch(req, server) {
+			const url = new URL(req.url);
+
+			// CORS preflight
+			if (req.method === 'OPTIONS') {
+				return new Response(null, {
+					headers: {
+						'Access-Control-Allow-Origin': '*',
+						'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+						'Access-Control-Allow-Headers': 'Content-Type',
+					},
 				});
-			} catch (error) {
-				console.error('Vite proxy error:', error);
-				return new Response('Failed to proxy to Vite', { status: 502 });
 			}
-		})
-		// Then: Mount daemon routes (includes WebSocket at /ws)
-		.use(daemonApp)
-		// Finally: Catch-all proxy for assets, HMR, etc.
-		.get('*', async ({ request }) => {
-			const url = new URL(request.url);
 
-			// Proxy to Vite dev server
+			// WebSocket upgrade at /ws (daemon WebSocket)
+			if (url.pathname === '/ws') {
+				const upgraded = server.upgrade(req, {
+					data: {
+						connectionSessionId: 'global',
+					},
+				});
+
+				if (upgraded) {
+					return; // WebSocket upgrade successful
+				}
+
+				return new Response('WebSocket upgrade failed', { status: 500 });
+			}
+
+			// Proxy all other requests to Vite dev server
 			try {
 				const viteUrl = `http://localhost:${vitePort}${url.pathname}${url.search}`;
 				const viteResponse = await fetch(viteUrl, {
-					method: request.method,
-					headers: request.headers,
+					method: req.method,
+					headers: req.headers,
 				});
 
 				return new Response(viteResponse.body, {
@@ -76,20 +93,30 @@ export async function startDevServer(config: Config) {
 				console.error('Vite proxy error:', error);
 				return new Response('Failed to proxy to Vite', { status: 502 });
 			}
-		})
-		.onStop(async () => {
-			console.log('🛑 Stopping Vite dev server...');
-			await vite.close();
-			console.log('🛑 Stopping daemon...');
-			await daemonContext.cleanup();
-		});
+		},
 
-	const port = config.port;
-	app.listen({ hostname: config.host, port });
+		websocket: wsHandlers,
+
+		error(error) {
+			console.error('Server error:', error);
+			return new Response(
+				JSON.stringify({
+					error: 'Internal server error',
+					message: error instanceof Error ? error.message : String(error),
+				}),
+				{
+					status: 500,
+					headers: {
+						'Content-Type': 'application/json',
+					},
+				}
+			);
+		},
+	});
 
 	console.log(`\n✨ Unified development server running!`);
-	console.log(`   🌐 Frontend: http://localhost:${port}`);
-	console.log(`   🔌 WebSocket: ws://localhost:${port}/ws`);
+	console.log(`   🌐 Frontend: http://localhost:${config.port}`);
+	console.log(`   🔌 WebSocket: ws://localhost:${config.port}/ws`);
 	console.log(`   🔥 HMR enabled (Vite on port ${vitePort}, proxied)`);
 	console.log(`\n📝 Press Ctrl+C to stop\n`);
 
@@ -97,7 +124,11 @@ export async function startDevServer(config: Config) {
 	const shutdown = async (signal: string) => {
 		console.log(`\n👋 Received ${signal}, shutting down gracefully...`);
 		try {
-			app.stop();
+			server.stop();
+			console.log('🛑 Stopping Vite dev server...');
+			await vite.close();
+			console.log('🛑 Stopping daemon...');
+			await daemonContext.cleanup();
 			process.exit(0);
 		} catch (error) {
 			console.error('❌ Error during shutdown:', error);
