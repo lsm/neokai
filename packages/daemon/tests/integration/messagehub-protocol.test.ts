@@ -457,32 +457,59 @@ describe('Multi-Client Event Routing', () => {
 		// Create a session from client 1
 		const _callId = sendRPCCall(ws1, 'session.create', { workspacePath: '/tmp/test-workspace' });
 
-		// ws1 will receive:  RESULT (create response) + EVENT (session.created)
+		// ws1 will receive: RESULT (create response) + EVENT (session.created)
 		// ws2 will receive: EVENT (session.created)
+		// Order of messages is not guaranteed, so collect them in parallel
 
-		// Collect messages sequentially to avoid race conditions
-		const ws1Result = await waitForWebSocketMessage(ws1, 5000);
-		const ws2Event = await waitForWebSocketMessage(ws2, 5000);
-		const ws1Event = await waitForWebSocketMessage(ws1, 5000);
+		// Helper to collect N messages from a websocket
+		const collectMessages = async (ws: WebSocket, count: number): Promise<unknown[]> => {
+			const messages: unknown[] = [];
+			for (let i = 0; i < count; i++) {
+				messages.push(await waitForWebSocketMessage(ws, 5000));
+			}
+			return messages;
+		};
+
+		// Collect messages in parallel - ws1 expects 2, ws2 expects 1
+		const [ws1Messages, ws2Messages] = await Promise.all([
+			collectMessages(ws1, 2),
+			collectMessages(ws2, 1),
+		]);
 
 		// Debug: log what we received
 		log(
 			'ws1 received:',
-			ws1Result.type,
-			ws1Result.method || '',
-			ws1Event.type,
-			ws1Event.method || ''
+			ws1Messages
+				.map(
+					(m: unknown) =>
+						`${(m as { type: string }).type}:${(m as { method?: string }).method || ''}`
+				)
+				.join(', ')
 		);
-		log('ws2 received:', ws2Event.type, ws2Event.method || '');
+		log(
+			'ws2 received:',
+			ws2Messages
+				.map(
+					(m: unknown) =>
+						`${(m as { type: string }).type}:${(m as { method?: string }).method || ''}`
+				)
+				.join(', ')
+		);
 
 		// ws2 should have received session.created event
+		const ws2Event = ws2Messages[0] as { type: string; method: string };
 		expect(ws2Event.type).toBe('EVENT');
 		expect(ws2Event.method).toBe('session.created');
 
 		// ws1 should have received RESULT and EVENT (order may vary)
-		const messages = [ws1Result, ws1Event];
-		const result = messages.find((m) => m.type === 'RESULT');
-		const event = messages.find((m) => m.type === 'EVENT' && m.method === 'session.created');
+		const result = ws1Messages.find((m) => (m as { type: string }).type === 'RESULT') as
+			| { type: string; data: { sessionId: string } }
+			| undefined;
+		const event = ws1Messages.find(
+			(m) =>
+				(m as { type: string; method?: string }).type === 'EVENT' &&
+				(m as { method?: string }).method === 'session.created'
+		);
 
 		expect(result).toBeDefined();
 		if (result) {
