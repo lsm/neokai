@@ -587,62 +587,63 @@ export function isValidMessage(msg: unknown): msg is HubMessage {
 		return false;
 	}
 
+	// Type assertion after basic check
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const m = msg as any;
+
 	// Check required fields
-	if (typeof msg.id !== 'string' || msg.id.length === 0) {
+	if (typeof m.id !== 'string' || m.id.length === 0) {
 		return false;
 	}
 
-	if (
-		typeof msg.type !== 'string' ||
-		!Object.values(MessageType).includes(msg.type as MessageType)
-	) {
+	if (typeof m.type !== 'string' || !Object.values(MessageType).includes(m.type as MessageType)) {
 		return false;
 	}
 
-	if (typeof msg.sessionId !== 'string' || msg.sessionId.length === 0) {
+	if (typeof m.sessionId !== 'string' || m.sessionId.length === 0) {
 		return false;
 	}
 
-	if (typeof msg.method !== 'string' || msg.method.length === 0) {
+	if (typeof m.method !== 'string' || m.method.length === 0) {
 		return false;
 	}
 
-	if (typeof msg.timestamp !== 'string') {
+	if (typeof m.timestamp !== 'string') {
 		return false;
 	}
 
 	// FIX P2.3: Validate protocol version if present (warn on mismatch, but don't reject)
-	if (msg.version !== undefined) {
-		if (typeof msg.version !== 'string') {
+	if (m.version !== undefined) {
+		if (typeof m.version !== 'string') {
 			return false;
 		}
 
 		// Warn if version doesn't match (but allow for backward/forward compatibility)
-		if (msg.version !== PROTOCOL_VERSION) {
+		if (m.version !== PROTOCOL_VERSION) {
 			console.warn(
-				`[MessageHub Protocol] Version mismatch: received ${msg.version}, expected ${PROTOCOL_VERSION}. ` +
+				`[MessageHub Protocol] Version mismatch: received ${m.version}, expected ${PROTOCOL_VERSION}. ` +
 					`Message will be processed but may have compatibility issues.`
 			);
 		}
 	}
 
 	// Validate method format (except for PING/PONG which don't need method validation)
-	if (msg.type !== MessageType.PING && msg.type !== MessageType.PONG) {
-		if (!validateMethod(msg.method)) {
+	if (m.type !== MessageType.PING && m.type !== MessageType.PONG) {
+		if (!validateMethod(m.method)) {
 			return false;
 		}
 	}
 
 	// Response messages must have requestId
 	if (
-		(msg.type === MessageType.RESULT || msg.type === MessageType.ERROR) &&
-		typeof msg.requestId !== 'string'
+		(m.type === MessageType.RESULT || m.type === MessageType.ERROR) &&
+		typeof m.requestId !== 'string'
 	) {
 		return false;
 	}
 
 	// ERROR messages must have error field
-	if (msg.type === MessageType.ERROR && typeof msg.error !== 'string') {
+	if (m.type === MessageType.ERROR && typeof m.error !== 'string') {
 		return false;
 	}
 

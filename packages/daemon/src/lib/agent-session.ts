@@ -8,6 +8,7 @@ import type {
 } from '@liuboer/shared';
 import type { EventBus, MessageHub } from '@liuboer/shared';
 import type { SDKUserMessage } from '@liuboer/shared/sdk/sdk.d.ts';
+import type { UUID } from 'crypto';
 import {
 	type CurrentModelInfo,
 	generateUUID,
@@ -31,6 +32,13 @@ interface QueuedMessage {
 }
 
 /**
+ * SDK query object with control methods
+ */
+type SDKQueryObject =
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	(AsyncIterable<any> & { supportedCommands?: () => Promise<Array<{ name: string }>> }) | null;
+
+/**
  * Agent Session - wraps a single session with Claude using Claude Agent SDK
  *
  * Uses STREAMING INPUT mode - a single persistent SDK query with AsyncGenerator
@@ -50,7 +58,7 @@ export class AgentSession {
 	private messageWaiters: Array<() => void> = [];
 
 	// SDK query object with control methods
-	private queryObject: unknown | null = null;
+	private queryObject: SDKQueryObject = null;
 	private slashCommands: string[] = [];
 
 	// PHASE 3 FIX: Store unsubscribe functions to prevent memory leaks
@@ -271,7 +279,7 @@ export class AgentSession {
 				// Save user message to DB
 				const sdkUserMessage: SDKUserMessage = {
 					type: 'user' as const,
-					uuid: queuedMessage.id as unknown,
+					uuid: queuedMessage.id as UUID,
 					session_id: this.session.id,
 					parent_tool_use_id: null,
 					message: {
@@ -283,7 +291,8 @@ export class AgentSession {
 					},
 				};
 
-				this.db.saveSDKMessage(this.session.id, sdkUserMessage as unknown);
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				this.db.saveSDKMessage(this.session.id, sdkUserMessage as any);
 
 				// Emit user message
 				await this.messageHub.publish('sdk.message', sdkUserMessage, {
@@ -324,7 +333,7 @@ export class AgentSession {
 			// Yield to SDK
 			yield {
 				type: 'user' as const,
-				uuid: queuedMessage.id as unknown,
+				uuid: queuedMessage.id as UUID,
 				session_id: this.session.id,
 				parent_tool_use_id: null,
 				message: {
@@ -417,7 +426,8 @@ export class AgentSession {
 			try {
 				if (this.queryObject && typeof this.queryObject.supportedCommands === 'function') {
 					const commands = await this.queryObject.supportedCommands();
-					this.slashCommands = commands.map((cmd: unknown) => cmd.name);
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any
+					this.slashCommands = commands.map((cmd: any) => cmd.name);
 
 					// Add built-in commands that the SDK supports but doesn't advertise
 					// These commands work but aren't returned by supportedCommands()
@@ -490,7 +500,8 @@ export class AgentSession {
 		await this.messageHub.publish('sdk.message', message, { sessionId: this.session.id });
 
 		// Save to DB
-		this.db.saveSDKMessage(this.session.id, message);
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		this.db.saveSDKMessage(this.session.id, message as any);
 
 		// Broadcast SDK message delta
 		await this.messageHub.publish(
@@ -504,14 +515,16 @@ export class AgentSession {
 		);
 
 		// Handle specific message types
-		if (message.type === 'result' && message.subtype === 'success') {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const msg = message as any;
+		if (msg?.type === 'result' && msg?.subtype === 'success') {
 			// FIX: Set state back to 'idle' when result received
 			await this.setProcessingState({ status: 'idle' });
 
 			// Update session metadata with token usage and costs
-			const usage = message.usage;
+			const usage = msg.usage;
 			const totalTokens = usage.input_tokens + usage.output_tokens;
-			const cost = message.total_cost_usd || 0;
+			const cost = msg.total_cost_usd || 0;
 
 			this.session.lastActiveAt = new Date().toISOString();
 			this.session.metadata = {
@@ -530,10 +543,9 @@ export class AgentSession {
 		}
 
 		// Track tool calls
-		if (message.type === 'assistant' && Array.isArray(message.message?.content)) {
-			const toolCalls = message.message.content.filter(
-				(block: unknown) => block.type === 'tool_use'
-			);
+		if (msg?.type === 'assistant' && Array.isArray(msg?.message?.content)) {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const toolCalls = msg.message.content.filter((block: any) => block?.type === 'tool_use');
 			if (toolCalls.length > 0) {
 				this.session.metadata = {
 					...this.session.metadata,
@@ -836,7 +848,8 @@ export class AgentSession {
 		if (this.queryObject && typeof this.queryObject.supportedCommands === 'function') {
 			try {
 				const commands = await this.queryObject.supportedCommands();
-				this.slashCommands = commands.map((cmd: unknown) => cmd.name);
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				this.slashCommands = commands.map((cmd: any) => cmd.name);
 				return this.slashCommands;
 			} catch (error) {
 				console.warn(`[AgentSession ${this.session.id}] Failed to fetch slash commands:`, error);

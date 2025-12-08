@@ -677,7 +677,8 @@ export class MessageHub {
 	 */
 	private async handleIncomingCall(message: HubMessage): Promise<void> {
 		const handler = this.rpcHandlers.get(message.method);
-		const clientId = (message as unknown).clientId; // Added by transport
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const clientId = (message as any).clientId; // Added by transport
 
 		if (!handler) {
 			// No handler - send error response

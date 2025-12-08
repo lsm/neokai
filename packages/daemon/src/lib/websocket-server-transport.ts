@@ -172,7 +172,8 @@ export class WebSocketServerTransport implements IMessageTransport {
 		// Add clientId to message metadata for SUBSCRIBE/UNSUBSCRIBE handling
 		// MessageHub needs this to track which client subscribed
 		if (clientId) {
-			(message as unknown).clientId = clientId;
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(message as any).clientId = clientId;
 		}
 
 		// Notify all message handlers (MessageHub will process)
