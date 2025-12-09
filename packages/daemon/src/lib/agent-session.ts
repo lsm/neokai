@@ -516,7 +516,16 @@ export class AgentSession {
 			// Process SDK messages
 			this.logger.log(`Processing SDK stream...`);
 			for await (const message of this.queryObject) {
-				await this.handleSDKMessage(message);
+				try {
+					await this.handleSDKMessage(message);
+				} catch (error) {
+					// FIX: Catch individual message handling errors to prevent stream death
+					this.logger.error(`Error handling SDK message:`, error);
+					this.logger.error(`Message type:`, (message as SDKMessage).type);
+
+					// Continue processing other messages - don't let one error kill the stream
+					// This ensures messages continue to be saved even if one fails
+				}
 			}
 
 			this.logger.log(`SDK stream ended`);
@@ -607,11 +616,20 @@ export class AgentSession {
 			}
 		}
 
-		// Emit and save message
-		await this.messageHub.publish('sdk.message', sdkMessage, { sessionId: this.session.id });
+		// FIX: Save to DB FIRST before broadcasting to clients
+		// This ensures we only broadcast messages that are successfully persisted
+		const savedSuccessfully = this.db.saveSDKMessage(this.session.id, sdkMessage);
 
-		// Save to DB
-		this.db.saveSDKMessage(this.session.id, sdkMessage);
+		if (!savedSuccessfully) {
+			// Log warning but continue - message is already in SDK's memory
+			this.logger.warn(`Failed to save message to DB (type: ${sdkMessage.type})`);
+			// Don't broadcast to clients if DB save failed
+			// This prevents UI from showing messages that won't survive a refresh
+			return;
+		}
+
+		// Only broadcast if successfully saved to DB
+		await this.messageHub.publish('sdk.message', sdkMessage, { sessionId: this.session.id });
 
 		// Broadcast SDK message delta
 		await this.messageHub.publish(

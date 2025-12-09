@@ -31,6 +31,18 @@ export class Database {
 		// Open database
 		this.db = new BunDatabase(this.dbPath);
 
+		// Enable WAL mode for better concurrency and crash recovery
+		// WAL mode provides:
+		// - Better performance for concurrent reads/writes
+		// - Atomic commits (prevents partial writes)
+		// - Better crash recovery (no data loss on unexpected shutdown)
+		this.db.exec('PRAGMA journal_mode = WAL');
+
+		// Set synchronous mode to NORMAL for durability with good performance
+		// NORMAL = fsync only at critical moments (WAL checkpoints)
+		// This ensures durability while maintaining performance
+		this.db.exec('PRAGMA synchronous = NORMAL');
+
 		// Enable foreign key constraints (required for CASCADE deletes)
 		this.db.exec('PRAGMA foreign_keys = ON');
 
@@ -484,19 +496,30 @@ export class Database {
 
 	/**
 	 * Save a full SDK message to the database
+	 *
+	 * FIX: Enhanced with proper error handling and logging
+	 * Returns true on success, false on failure
 	 */
-	saveSDKMessage(sessionId: string, message: SDKMessage): void {
-		const id = generateUUID();
-		const messageType = message.type;
-		const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
-		const timestamp = new Date().toISOString();
+	saveSDKMessage(sessionId: string, message: SDKMessage): boolean {
+		try {
+			const id = generateUUID();
+			const messageType = message.type;
+			const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
+			const timestamp = new Date().toISOString();
 
-		const stmt = this.db.prepare(
-			`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
-       VALUES (?, ?, ?, ?, ?, ?)`
-		);
+			const stmt = this.db.prepare(
+				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
+         VALUES (?, ?, ?, ?, ?, ?)`
+			);
 
-		stmt.run(id, sessionId, messageType, messageSubtype, JSON.stringify(message), timestamp);
+			stmt.run(id, sessionId, messageType, messageSubtype, JSON.stringify(message), timestamp);
+			return true;
+		} catch (error) {
+			// Log error but don't throw - prevents stream from dying
+			console.error('[Database] Failed to save SDK message:', error);
+			console.error('[Database] Message type:', message.type, 'Session:', sessionId);
+			return false;
+		}
 	}
 
 	/**

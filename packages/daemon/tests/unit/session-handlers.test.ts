@@ -19,6 +19,7 @@ import {
 	waitForWebSocketMessage,
 	createWebSocketWithFirstMessage,
 	hasApiKey,
+	hasAnyCredentials,
 } from '../test-utils';
 
 describe('Session RPC Handlers', () => {
@@ -66,10 +67,11 @@ describe('Session RPC Handlers', () => {
 			ws.close();
 		});
 
-		// Note: This test requires API key (not just OAuth) because message.send uses Claude SDK
-		test.skipIf(!hasApiKey())('should accept message for existing session', async () => {
+		// Note: This test requires authentication (API key or OAuth) because message.send uses Claude SDK
+		test.skipIf(!hasAnyCredentials())('should accept message for existing session', async () => {
+			const tmpDir = process.env.TMPDIR || '/tmp';
 			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: '/test/message-send',
+				workspacePath: `${tmpDir}/liuboer-test-message-send-${Date.now()}`,
 			});
 
 			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
@@ -95,6 +97,9 @@ describe('Session RPC Handlers', () => {
 
 			const response = await responsePromise;
 
+			if (response.type === 'ERROR') {
+				console.error('Error response:', response.error);
+			}
 			expect(response.type).toBe('RESULT');
 			expect(response.data.messageId).toBeString();
 

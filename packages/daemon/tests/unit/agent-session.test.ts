@@ -13,7 +13,7 @@ import {
 	waitForWebSocketState,
 	waitForWebSocketMessage,
 	createWebSocketWithFirstMessage,
-	hasApiKey,
+	hasAnyCredentials,
 } from '../test-utils';
 
 describe('AgentSession', () => {
@@ -319,8 +319,8 @@ describe('AgentSession', () => {
 	});
 
 	describe('enqueueMessage and sendMessage', () => {
-		// Note: This test requires API key (not just OAuth) because it uses Claude SDK
-		test.skipIf(!hasApiKey())('should enqueue message for processing', async () => {
+		// Note: This test requires authentication (API key or OAuth) because it uses Claude SDK
+		test.skipIf(!hasAnyCredentials())('should enqueue message for processing', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: '/test/agent-session',
 			});
@@ -336,10 +336,11 @@ describe('AgentSession', () => {
 	});
 
 	describe('handleMessageSend', () => {
-		// Note: This test requires API key (not just OAuth) because it uses Claude SDK
-		test.skipIf(!hasApiKey())('should handle message send with images', async () => {
+		// Note: This test requires authentication (API key or OAuth) because it uses Claude SDK
+		test.skipIf(!hasAnyCredentials())('should handle message send with images', async () => {
+			const tmpDir = process.env.TMPDIR || '/tmp';
 			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: '/test/agent-session',
+				workspacePath: `${tmpDir}/liuboer-test-agent-session-${Date.now()}`,
 			});
 
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
