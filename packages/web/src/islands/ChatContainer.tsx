@@ -254,10 +254,20 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 							case 'queued':
 								setSending(true);
 								setCurrentAction('Queued...');
+								// Clear send timeout when message is successfully queued
+								if (sendTimeoutRef.current) {
+									clearTimeout(sendTimeoutRef.current);
+									sendTimeoutRef.current = null;
+								}
 								break;
 							case 'processing':
 								setSending(true);
 								setCurrentAction('Processing...');
+								// Clear send timeout when processing starts
+								if (sendTimeoutRef.current) {
+									clearTimeout(sendTimeoutRef.current);
+									sendTimeoutRef.current = null;
+								}
 								break;
 							case 'interrupted':
 								setSending(false);
@@ -441,14 +451,15 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			setCurrentAction('Sending...');
 
 			// Set a timeout to prevent getting stuck in "sending" state
-			// If we don't get any response in 10 seconds, clear the sending state
+			// If we don't get any response in 15 seconds, clear the sending state
+			// This timeout should only fire if the RPC call hangs or the state event never arrives
 			sendTimeoutRef.current = setTimeout(() => {
 				console.warn('Send timeout - no response from server');
 				setSending(false);
 				setCurrentAction(undefined);
 				setError('Message send timed out. Please try again.');
 				toast.error('Message send timed out. Please try again.');
-			}, 10000);
+			}, 15000);
 
 			// Send via MessageHub RPC (streaming input mode!)
 			// The daemon will queue the message and yield it to the SDK AsyncGenerator
