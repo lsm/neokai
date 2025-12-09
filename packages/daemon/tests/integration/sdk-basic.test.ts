@@ -25,7 +25,7 @@
 import { describe, test, expect, beforeAll, mock } from 'bun:test';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import 'dotenv/config';
-import { hasAnyCredentials } from './test-utils';
+import { hasAnyCredentials } from '../test-utils';
 
 /**
  * CRITICAL: Restore any mocks before running these tests.
