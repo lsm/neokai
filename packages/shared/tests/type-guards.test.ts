@@ -514,7 +514,7 @@ describe('getMessageTypeDescription', () => {
 			subtype: 'status',
 			status: 'compacting',
 		};
-		expect(getMessageTypeDescription(msg as unknown as SDKMessage)).toBe('Status: thinking');
+		expect(getMessageTypeDescription(msg as unknown as SDKMessage)).toBe('Status: compacting');
 	});
 
 	test('should describe hook_response message', () => {
@@ -672,7 +672,7 @@ describe('isUserVisibleMessage', () => {
 			...baseProps,
 			type: 'system',
 			subtype: 'status',
-			status: 'compacting',
+			status: 'thinking',
 		};
 		expect(isUserVisibleMessage(msg as unknown as SDKMessage)).toBe(true);
 	});
