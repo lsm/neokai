@@ -5,7 +5,72 @@
 import type { MessageHub, MessageImage } from '@liuboer/shared';
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@liuboer/shared';
-import { clearModelCache, fetchAvailableModels, getCachedAvailableModels } from '@liuboer/shared';
+import { query } from '@anthropic-ai/claude-agent-sdk';
+import type { ModelInfo } from '@liuboer/shared/sdk';
+
+/**
+ * Cache for supported models to avoid repeated SDK queries
+ */
+let modelsCacheData: {
+	models: ModelInfo[];
+	timestamp: number;
+} | null = null;
+
+const MODELS_CACHE_DURATION = 60 * 60 * 1000; // 1 hour
+
+/**
+ * Get supported models from Claude Agent SDK
+ * Uses a temporary query object and caches results for 1 hour
+ */
+async function getSupportedModels(forceRefresh = false): Promise<ModelInfo[]> {
+	const now = Date.now();
+
+	// Return cached data if valid
+	if (!forceRefresh && modelsCacheData && now - modelsCacheData.timestamp < MODELS_CACHE_DURATION) {
+		return modelsCacheData.models;
+	}
+
+	// Create a temporary query to fetch models
+	// We use a simple prompt since we just need the query object
+	const tmpQuery = query({
+		prompt: 'list models',
+		options: {
+			cwd: process.cwd(),
+			maxTurns: 1,
+		},
+	});
+
+	try {
+		// Get supported models from SDK
+		const models = await tmpQuery.supportedModels();
+
+		// Update cache
+		modelsCacheData = {
+			models,
+			timestamp: now,
+		};
+
+		// Interrupt the query since we don't need it to run
+		await tmpQuery.interrupt();
+
+		return models;
+	} catch (error) {
+		// Clean up query on error
+		try {
+			await tmpQuery.interrupt();
+		} catch {
+			// Ignore interrupt errors
+		}
+		throw error;
+	}
+}
+
+/**
+ * Clear the models cache
+ */
+function clearModelsCache(): void {
+	modelsCacheData = null;
+}
 
 export function setupSessionHandlers(messageHub: MessageHub, sessionManager: SessionManager): void {
 	messageHub.handle('session.create', async (data) => {
@@ -156,7 +221,7 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 		return result;
 	});
 
-	// Handle listing available models from Anthropic API
+	// Handle listing available models using Claude Agent SDK
 	messageHub.handle('models.list', async (data) => {
 		const { useCache = true, forceRefresh = false } = data as {
 			useCache?: boolean;
@@ -164,20 +229,22 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 		};
 
 		try {
-			if (useCache) {
-				const models = await getCachedAvailableModels({}, forceRefresh);
-				return {
-					models,
-					cached: !forceRefresh,
-				};
-			} else {
-				const response = await fetchAvailableModels({});
-				return {
-					models: response.data,
-					cached: false,
-					hasMore: response.has_more,
-				};
-			}
+			// Get models from SDK (with caching)
+			const shouldRefresh = !useCache || forceRefresh;
+			const models = await getSupportedModels(shouldRefresh);
+
+			// Convert SDK ModelInfo format to match expected API response
+			// SDK returns: { value, displayName, description }
+			// We return it as-is, which is cleaner than the old API format
+			return {
+				models: models.map((m) => ({
+					id: m.value,
+					display_name: m.displayName,
+					description: m.description,
+					type: 'model' as const,
+				})),
+				cached: !shouldRefresh,
+			};
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
 			console.error('[RPC] Failed to list models:', errorMessage);
@@ -187,7 +254,7 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 
 	// Handle clearing the model cache
 	messageHub.handle('models.clearCache', async () => {
-		clearModelCache();
+		clearModelsCache();
 		return { success: true };
 	});
 

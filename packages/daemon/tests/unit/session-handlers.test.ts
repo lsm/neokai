@@ -18,7 +18,6 @@ import {
 	waitForWebSocketState,
 	waitForWebSocketMessage,
 	createWebSocketWithFirstMessage,
-	hasApiKey,
 	hasAnyCredentials,
 } from '../test-utils';
 
@@ -349,8 +348,8 @@ describe('Session RPC Handlers', () => {
 	});
 
 	describe('models.list', () => {
-		// Note: Models API doesn't support OAuth, only API key
-		test.skipIf(!hasApiKey())('should return list of models with cache', async () => {
+		// Note: Now using Agent SDK's supportedModels() which supports both API key and OAuth
+		test.skipIf(!hasAnyCredentials())('should return list of models with cache', async () => {
 			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
 			await waitForWebSocketState(ws, WebSocket.OPEN);
 			await firstMessagePromise;
@@ -380,7 +379,7 @@ describe('Session RPC Handlers', () => {
 			ws.close();
 		});
 
-		test.skipIf(!hasApiKey())('should return list of models without cache', async () => {
+		test.skipIf(!hasAnyCredentials())('should return list of models without cache', async () => {
 			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
 			await waitForWebSocketState(ws, WebSocket.OPEN);
 			await firstMessagePromise;
@@ -410,7 +409,7 @@ describe('Session RPC Handlers', () => {
 			ws.close();
 		});
 
-		test.skipIf(!hasApiKey())('should force refresh cache', async () => {
+		test.skipIf(!hasAnyCredentials())('should force refresh cache', async () => {
 			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
 			await waitForWebSocketState(ws, WebSocket.OPEN);
 			await firstMessagePromise;
