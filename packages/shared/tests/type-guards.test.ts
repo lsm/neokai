@@ -37,9 +37,10 @@ const baseProps = {
 
 describe('isSDKAssistantMessage', () => {
 	test('should return true for assistant message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'assistant',
+			parent_tool_use_id: null,
 			message: {
 				role: 'assistant',
 				content: [{ type: 'text', text: 'Hello' }],
@@ -49,43 +50,47 @@ describe('isSDKAssistantMessage', () => {
 				usage: { input_tokens: 100, output_tokens: 50 },
 			},
 		};
-		expect(isSDKAssistantMessage(msg)).toBe(true);
+		expect(isSDKAssistantMessage(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return false for non-assistant message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'user',
+			parent_tool_use_id: null,
 			message: { role: 'user', content: 'Hello' },
 		};
-		expect(isSDKAssistantMessage(msg)).toBe(false);
+		expect(isSDKAssistantMessage(msg as unknown as SDKMessage)).toBe(false);
 	});
 });
 
 describe('isSDKUserMessage', () => {
 	test('should return true for user message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'user',
+			parent_tool_use_id: null,
 			message: { role: 'user', content: 'Hello' },
 		};
-		expect(isSDKUserMessage(msg)).toBe(true);
+		expect(isSDKUserMessage(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return false for user replay message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'user',
+			parent_tool_use_id: null,
 			isReplay: true,
 			message: { role: 'user', content: 'Hello' },
 		};
-		expect(isSDKUserMessage(msg)).toBe(false);
+		expect(isSDKUserMessage(msg as unknown as SDKMessage)).toBe(false);
 	});
 
 	test('should return false for assistant message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'assistant',
+			parent_tool_use_id: null,
 			message: {
 				role: 'assistant',
 				content: [{ type: 'text', text: 'Hello' }],
@@ -95,288 +100,289 @@ describe('isSDKUserMessage', () => {
 				usage: { input_tokens: 100, output_tokens: 50 },
 			},
 		};
-		expect(isSDKUserMessage(msg)).toBe(false);
+		expect(isSDKUserMessage(msg as unknown as SDKMessage)).toBe(false);
 	});
 });
 
 describe('isSDKUserMessageReplay', () => {
 	test('should return true for user replay message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'user',
+			parent_tool_use_id: null,
 			isReplay: true,
 			message: { role: 'user', content: 'Hello' },
 		};
-		expect(isSDKUserMessageReplay(msg)).toBe(true);
+		expect(isSDKUserMessageReplay(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return false for regular user message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'user',
+			parent_tool_use_id: null,
 			message: { role: 'user', content: 'Hello' },
 		};
-		expect(isSDKUserMessageReplay(msg)).toBe(false);
+		expect(isSDKUserMessageReplay(msg as unknown as SDKMessage)).toBe(false);
 	});
 });
 
 describe('isSDKResultMessage', () => {
 	test('should return true for result message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'result',
 			subtype: 'success',
 			is_error: false,
 			num_turns: 1,
-			subagent_results: [],
 		};
-		expect(isSDKResultMessage(msg)).toBe(true);
+		expect(isSDKResultMessage(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return false for non-result message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'user',
+			parent_tool_use_id: null,
 			message: { role: 'user', content: 'Hello' },
 		};
-		expect(isSDKResultMessage(msg)).toBe(false);
+		expect(isSDKResultMessage(msg as unknown as SDKMessage)).toBe(false);
 	});
 });
 
 describe('isSDKResultSuccess', () => {
 	test('should return true for success result', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'result',
 			subtype: 'success',
 			is_error: false,
 			num_turns: 1,
-			subagent_results: [],
 		};
-		expect(isSDKResultSuccess(msg)).toBe(true);
+		expect(isSDKResultSuccess(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return false for error result', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'result',
 			subtype: 'error_during_execution',
 			is_error: true,
 			num_turns: 1,
-			subagent_results: [],
 			error: 'Something went wrong',
 		};
-		expect(isSDKResultSuccess(msg)).toBe(false);
+		expect(isSDKResultSuccess(msg as unknown as SDKMessage)).toBe(false);
 	});
 });
 
 describe('isSDKResultError', () => {
 	test('should return true for error result', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'result',
 			subtype: 'error_during_execution',
 			is_error: true,
 			num_turns: 1,
-			subagent_results: [],
 			error: 'Something went wrong',
 		};
-		expect(isSDKResultError(msg)).toBe(true);
+		expect(isSDKResultError(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return true for max_turns error', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'result',
 			subtype: 'error_max_turns',
 			is_error: true,
 			num_turns: 10,
-			subagent_results: [],
 		};
-		expect(isSDKResultError(msg)).toBe(true);
+		expect(isSDKResultError(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return false for success result', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'result',
 			subtype: 'success',
 			is_error: false,
 			num_turns: 1,
-			subagent_results: [],
 		};
-		expect(isSDKResultError(msg)).toBe(false);
+		expect(isSDKResultError(msg as unknown as SDKMessage)).toBe(false);
 	});
 });
 
 describe('isSDKSystemMessage', () => {
 	test('should return true for system message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'system',
 			subtype: 'init',
 			cwd: '/test',
 		};
-		expect(isSDKSystemMessage(msg)).toBe(true);
+		expect(isSDKSystemMessage(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return false for non-system message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'user',
+			parent_tool_use_id: null,
 			message: { role: 'user', content: 'Hello' },
 		};
-		expect(isSDKSystemMessage(msg)).toBe(false);
+		expect(isSDKSystemMessage(msg as unknown as SDKMessage)).toBe(false);
 	});
 });
 
 describe('isSDKSystemInit', () => {
 	test('should return true for init system message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'system',
 			subtype: 'init',
 			cwd: '/test',
 		};
-		expect(isSDKSystemInit(msg)).toBe(true);
+		expect(isSDKSystemInit(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return false for other system message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'system',
 			subtype: 'status',
-			status: 'idle',
+			status: null,
 		};
-		expect(isSDKSystemInit(msg)).toBe(false);
+		expect(isSDKSystemInit(msg as unknown as SDKMessage)).toBe(false);
 	});
 });
 
 describe('isSDKCompactBoundary', () => {
 	test('should return true for compact_boundary message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'system',
 			subtype: 'compact_boundary',
 		};
-		expect(isSDKCompactBoundary(msg)).toBe(true);
+		expect(isSDKCompactBoundary(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return false for other system message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'system',
 			subtype: 'init',
 			cwd: '/test',
 		};
-		expect(isSDKCompactBoundary(msg)).toBe(false);
+		expect(isSDKCompactBoundary(msg as unknown as SDKMessage)).toBe(false);
 	});
 });
 
 describe('isSDKStatusMessage', () => {
 	test('should return true for status message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'system',
 			subtype: 'status',
-			status: 'thinking',
+			status: 'compacting',
 		};
-		expect(isSDKStatusMessage(msg)).toBe(true);
+		expect(isSDKStatusMessage(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return false for other system message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'system',
 			subtype: 'init',
 			cwd: '/test',
 		};
-		expect(isSDKStatusMessage(msg)).toBe(false);
+		expect(isSDKStatusMessage(msg as unknown as SDKMessage)).toBe(false);
 	});
 });
 
 describe('isSDKHookResponse', () => {
 	test('should return true for hook_response message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'system',
 			subtype: 'hook_response',
 			hook_name: 'test-hook',
 			blocked: false,
 		};
-		expect(isSDKHookResponse(msg)).toBe(true);
+		expect(isSDKHookResponse(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return false for other system message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'system',
 			subtype: 'status',
-			status: 'idle',
+			status: null,
 		};
-		expect(isSDKHookResponse(msg)).toBe(false);
+		expect(isSDKHookResponse(msg as unknown as SDKMessage)).toBe(false);
 	});
 });
 
 describe('isSDKStreamEvent', () => {
 	test('should return true for stream_event message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'stream_event',
 			event: { type: 'content_block_delta', index: 0 },
 		};
-		expect(isSDKStreamEvent(msg)).toBe(true);
+		expect(isSDKStreamEvent(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return false for non-stream message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'user',
+			parent_tool_use_id: null,
 			message: { role: 'user', content: 'Hello' },
 		};
-		expect(isSDKStreamEvent(msg)).toBe(false);
+		expect(isSDKStreamEvent(msg as unknown as SDKMessage)).toBe(false);
 	});
 });
 
 describe('isSDKToolProgressMessage', () => {
 	test('should return true for tool_progress message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'tool_progress',
 			tool_name: 'Read',
 			data: {},
 		};
-		expect(isSDKToolProgressMessage(msg)).toBe(true);
+		expect(isSDKToolProgressMessage(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return false for non-tool_progress message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'user',
+			parent_tool_use_id: null,
 			message: { role: 'user', content: 'Hello' },
 		};
-		expect(isSDKToolProgressMessage(msg)).toBe(false);
+		expect(isSDKToolProgressMessage(msg as unknown as SDKMessage)).toBe(false);
 	});
 });
 
 describe('isSDKAuthStatusMessage', () => {
 	test('should return true for auth_status message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'auth_status',
 			has_api_key: true,
 			has_oauth: false,
 		};
-		expect(isSDKAuthStatusMessage(msg)).toBe(true);
+		expect(isSDKAuthStatusMessage(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return false for non-auth_status message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'user',
+			parent_tool_use_id: null,
 			message: { role: 'user', content: 'Hello' },
 		};
-		expect(isSDKAuthStatusMessage(msg)).toBe(false);
+		expect(isSDKAuthStatusMessage(msg as unknown as SDKMessage)).toBe(false);
 	});
 });
 
@@ -420,9 +426,10 @@ describe('Content Block Type Guards', () => {
 
 describe('getMessageTypeDescription', () => {
 	test('should describe assistant message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'assistant',
+			parent_tool_use_id: null,
 			message: {
 				role: 'assistant',
 				content: [{ type: 'text', text: 'Hello' }],
@@ -432,120 +439,124 @@ describe('getMessageTypeDescription', () => {
 				usage: { input_tokens: 100, output_tokens: 50 },
 			},
 		};
-		expect(getMessageTypeDescription(msg)).toBe('Assistant Response');
+		expect(getMessageTypeDescription(msg as unknown as SDKMessage)).toBe('Assistant Response');
 	});
 
 	test('should describe user message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'user',
+			parent_tool_use_id: null,
 			message: { role: 'user', content: 'Hello' },
 		};
-		expect(getMessageTypeDescription(msg)).toBe('User Message');
+		expect(getMessageTypeDescription(msg as unknown as SDKMessage)).toBe('User Message');
 	});
 
 	test('should describe user replay message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'user',
+			parent_tool_use_id: null,
 			isReplay: true,
 			message: { role: 'user', content: 'Hello' },
 		};
-		expect(getMessageTypeDescription(msg)).toBe('User Message (Replay)');
+		expect(getMessageTypeDescription(msg as unknown as SDKMessage)).toBe('User Message (Replay)');
 	});
 
 	test('should describe success result', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'result',
 			subtype: 'success',
 			is_error: false,
 			num_turns: 1,
-			subagent_results: [],
 		};
-		expect(getMessageTypeDescription(msg)).toBe('Query Success');
+		expect(getMessageTypeDescription(msg as unknown as SDKMessage)).toBe('Query Success');
 	});
 
 	test('should describe error result', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'result',
 			subtype: 'error_during_execution',
 			is_error: true,
 			num_turns: 1,
-			subagent_results: [],
 			error: 'Error',
 		};
-		expect(getMessageTypeDescription(msg)).toBe('Query Error: during_execution');
+		expect(getMessageTypeDescription(msg as unknown as SDKMessage)).toBe(
+			'Query Error: during_execution'
+		);
 	});
 
 	test('should describe init message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'system',
 			subtype: 'init',
 			cwd: '/test',
 		};
-		expect(getMessageTypeDescription(msg)).toBe('Session Initialized');
+		expect(getMessageTypeDescription(msg as unknown as SDKMessage)).toBe('Session Initialized');
 	});
 
 	test('should describe compact_boundary message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'system',
 			subtype: 'compact_boundary',
 		};
-		expect(getMessageTypeDescription(msg)).toBe('Compaction Boundary');
+		expect(getMessageTypeDescription(msg as unknown as SDKMessage)).toBe('Compaction Boundary');
 	});
 
 	test('should describe status message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'system',
 			subtype: 'status',
-			status: 'thinking',
+			status: 'compacting',
 		};
-		expect(getMessageTypeDescription(msg)).toBe('Status: thinking');
+		expect(getMessageTypeDescription(msg as unknown as SDKMessage)).toBe('Status: thinking');
 	});
 
 	test('should describe hook_response message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'system',
 			subtype: 'hook_response',
 			hook_name: 'test-hook',
 			blocked: false,
 		};
-		expect(getMessageTypeDescription(msg)).toBe('Hook Response: test-hook');
+		expect(getMessageTypeDescription(msg as unknown as SDKMessage)).toBe(
+			'Hook Response: test-hook'
+		);
 	});
 
 	test('should describe stream_event message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'stream_event',
 			event: { type: 'content_block_delta', index: 0 },
 		};
-		expect(getMessageTypeDescription(msg)).toBe('Streaming Event');
+		expect(getMessageTypeDescription(msg as unknown as SDKMessage)).toBe('Streaming Event');
 	});
 
 	test('should describe tool_progress message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'tool_progress',
 			tool_name: 'Read',
 			data: {},
 		};
-		expect(getMessageTypeDescription(msg)).toBe('Tool Progress: Read');
+		expect(getMessageTypeDescription(msg as unknown as SDKMessage)).toBe('Tool Progress: Read');
 	});
 
 	test('should describe auth_status message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'auth_status',
 			has_api_key: true,
 			has_oauth: false,
 		};
-		expect(getMessageTypeDescription(msg)).toBe('Authentication Status');
+		expect(getMessageTypeDescription(msg as unknown as SDKMessage)).toBe('Authentication Status');
 	});
 
 	test('should return Unknown Message for unrecognized type', () => {
@@ -554,43 +565,44 @@ describe('getMessageTypeDescription', () => {
 			...baseProps,
 			type: 'unknown_type',
 		} as unknown as SDKMessage;
-		expect(getMessageTypeDescription(msg)).toBe('Unknown Message');
+		expect(getMessageTypeDescription(msg as unknown as SDKMessage)).toBe('Unknown Message');
 	});
 });
 
 describe('isUserVisibleMessage', () => {
 	test('should return false for stream_event', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'stream_event',
 			event: { type: 'content_block_delta', index: 0 },
 		};
-		expect(isUserVisibleMessage(msg)).toBe(false);
+		expect(isUserVisibleMessage(msg as unknown as SDKMessage)).toBe(false);
 	});
 
 	test('should return false for compact_boundary', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'system',
 			subtype: 'compact_boundary',
 		};
-		expect(isUserVisibleMessage(msg)).toBe(false);
+		expect(isUserVisibleMessage(msg as unknown as SDKMessage)).toBe(false);
 	});
 
 	test('should return false for compacting status', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'system',
 			subtype: 'status',
 			status: 'compacting',
 		};
-		expect(isUserVisibleMessage(msg)).toBe(false);
+		expect(isUserVisibleMessage(msg as unknown as SDKMessage)).toBe(false);
 	});
 
 	test('should return true for assistant message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'assistant',
+			parent_tool_use_id: null,
 			message: {
 				role: 'assistant',
 				content: [{ type: 'text', text: 'Hello' }],
@@ -600,67 +612,68 @@ describe('isUserVisibleMessage', () => {
 				usage: { input_tokens: 100, output_tokens: 50 },
 			},
 		};
-		expect(isUserVisibleMessage(msg)).toBe(true);
+		expect(isUserVisibleMessage(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return true for user message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'user',
+			parent_tool_use_id: null,
 			message: { role: 'user', content: 'Hello' },
 		};
-		expect(isUserVisibleMessage(msg)).toBe(true);
+		expect(isUserVisibleMessage(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return true for user replay message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'user',
+			parent_tool_use_id: null,
 			isReplay: true,
 			message: { role: 'user', content: 'Hello' },
 		};
-		expect(isUserVisibleMessage(msg)).toBe(true);
+		expect(isUserVisibleMessage(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return true for result message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'result',
 			subtype: 'success',
 			is_error: false,
 			num_turns: 1,
-			subagent_results: [],
 		};
-		expect(isUserVisibleMessage(msg)).toBe(true);
+		expect(isUserVisibleMessage(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return true for tool_progress message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'tool_progress',
 			tool_name: 'Read',
 			data: {},
 		};
-		expect(isUserVisibleMessage(msg)).toBe(true);
+		expect(isUserVisibleMessage(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return true for auth_status message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'auth_status',
 			has_api_key: true,
 			has_oauth: false,
 		};
-		expect(isUserVisibleMessage(msg)).toBe(true);
+		expect(isUserVisibleMessage(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return true for non-compacting status message', () => {
-		const msg: SDKMessage = {
+		const msg = {
 			...baseProps,
 			type: 'system',
 			subtype: 'status',
-			status: 'thinking',
+			status: 'compacting',
 		};
-		expect(isUserVisibleMessage(msg)).toBe(true);
+		expect(isUserVisibleMessage(msg as unknown as SDKMessage)).toBe(true);
 	});
 });

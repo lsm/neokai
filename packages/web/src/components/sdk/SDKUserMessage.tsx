@@ -26,13 +26,21 @@ interface Props {
 	isReplay?: boolean; // Whether this is a replay message (slash command response)
 }
 
-export function SDKUserMessage({ message, _onEdit, _onDelete, sessionInfo, isReplay }: Props) {
+export function SDKUserMessage({
+	message,
+	onEdit: _onEdit,
+	onDelete: _onDelete,
+	sessionInfo,
+	isReplay,
+}: Props) {
 	const { message: apiMessage } = message;
 
 	// Check if this is a tool result message (should not be rendered as user message)
 	const isToolResultMessage = (): boolean => {
 		if (Array.isArray(apiMessage.content)) {
-			return apiMessage.content.some((block) => block.type === 'tool_result');
+			return apiMessage.content.some(
+				(block: unknown) => (block as Record<string, unknown>).type === 'tool_result'
+			);
 		}
 		return false;
 	};
@@ -46,10 +54,11 @@ export function SDKUserMessage({ message, _onEdit, _onDelete, sessionInfo, isRep
 	const getTextContent = (): string => {
 		if (Array.isArray(apiMessage.content)) {
 			return apiMessage.content
-				.map((block) => {
+				.map((block: unknown) => {
+					const b = block as Record<string, unknown>;
 					// Text blocks
-					if (block.type === 'text') {
-						return block.text;
+					if (b.type === 'text') {
+						return b.text as string;
 					}
 					// Image blocks or other types - skip or show type
 					return '';

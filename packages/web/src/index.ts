@@ -40,7 +40,7 @@ const server = serve({
 
 		// Let Bun's development server handle static files (JS, CSS, etc.)
 		// This is important for proper MIME types and module serving
-		return null as unknown;
+		return null as unknown as Response;
 	},
 
 	routes: {
@@ -52,7 +52,7 @@ const server = serve({
 		hmr: true, // Hot module replacement
 		console: true, // Stream browser console to terminal
 	},
-} as unknown);
+});
 
 console.log(`🚀 Liuboer Web UI running on ${server.url}`);
 console.log(`📡 Proxying API requests to ${DAEMON_URL}`);

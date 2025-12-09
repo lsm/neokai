@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { Session, ContextInfo } from '@liuboer/shared';
-import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
+import type {
+	Session,
+	ContextInfo,
+	ContextCategoryBreakdown,
+	ContextSlashCommandTool,
+} from '@liuboer/shared';
+import type { SDKMessage, SDKSystemMessage } from '@liuboer/shared/sdk/sdk.d.ts';
 import { isSDKStreamEvent } from '@liuboer/shared/sdk/type-guards';
 import { connectionManager } from '../lib/connection-manager.ts';
 import {
@@ -107,7 +112,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 						// Extract slash commands from SDK init message
 						if (sdkMessage.type === 'system' && sdkMessage.subtype === 'init') {
-							const initMessage = sdkMessage as unknown;
+							const initMessage = sdkMessage as Record<string, unknown> as Record<string, unknown>;
 							if (initMessage.slash_commands && Array.isArray(initMessage.slash_commands)) {
 								console.log('Extracted slash commands from SDK:', initMessage.slash_commands);
 								slashCommandsSignal.value = initMessage.slash_commands;
@@ -178,21 +183,22 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				const unsubContextUpdated = await hub.subscribe<unknown>(
 					'context.updated',
 					(data) => {
-						console.log(`Context updated:`, data);
-						if (data.totalUsed !== undefined) {
+						const ctx = data as Record<string, unknown>;
+						console.log(`Context updated:`, ctx);
+						if (ctx.totalUsed !== undefined) {
 							console.log(`Received accurate context info:`, {
-								totalUsed: data.totalUsed,
-								totalCapacity: data.totalCapacity,
-								percentUsed: data.percentUsed,
-								breakdown: data.breakdown,
+								totalUsed: ctx.totalUsed as number,
+								totalCapacity: ctx.totalCapacity as number,
+								percentUsed: ctx.percentUsed as number,
+								breakdown: ctx.breakdown as Record<string, ContextCategoryBreakdown>,
 							});
 							setContextUsage({
-								totalUsed: data.totalUsed,
-								totalCapacity: data.totalCapacity,
-								percentUsed: data.percentUsed,
-								breakdown: data.breakdown,
-								model: data.model,
-								slashCommandTool: data.slashCommandTool,
+								totalUsed: ctx.totalUsed as number,
+								totalCapacity: ctx.totalCapacity as number,
+								percentUsed: ctx.percentUsed as number,
+								breakdown: ctx.breakdown as Record<string, ContextCategoryBreakdown>,
+								model: ctx.model as string | null,
+								slashCommandTool: ctx.slashCommandTool as ContextSlashCommandTool | undefined,
 							});
 						}
 					},
@@ -392,7 +398,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 			// Load most recent 100 SDK messages (reverse pagination)
 			const sdkResponse = await getSDKMessages(sessionId, { limit: 100, offset: 0 });
-			setMessages(sdkResponse.sdkMessages);
+			setMessages(sdkResponse.sdkMessages as SDKMessage[]);
 
 			// Check if there are more messages to load
 			setHasMoreMessages(sdkResponse.sdkMessages.length === 100);
@@ -454,7 +460,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			}
 
 			// Prepend older messages to the beginning of the array
-			setMessages((prev) => [...sdkResponse.sdkMessages, ...prev]);
+			setMessages((prev) => [...(sdkResponse.sdkMessages as SDKMessage[]), ...prev]);
 
 			// Check if there are more messages
 			setHasMoreMessages(sdkResponse.sdkMessages.length === 100);
@@ -672,8 +678,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	messages.forEach((msg) => {
 		if (msg.type === 'user' && Array.isArray(msg.message.content)) {
 			msg.message.content.forEach((block: unknown) => {
-				if (block.type === 'tool_result') {
-					toolResultsMap.set(block.tool_use_id, block);
+				if ((block as Record<string, unknown>).type === 'tool_result') {
+					toolResultsMap.set((block as Record<string, unknown>).tool_use_id as string, block);
 				}
 			});
 		}
@@ -684,8 +690,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	messages.forEach((msg) => {
 		if (msg.type === 'assistant' && Array.isArray(msg.message.content)) {
 			msg.message.content.forEach((block: unknown) => {
-				if (block.type === 'tool_use') {
-					toolInputsMap.set(block.id, block.input);
+				if ((block as Record<string, unknown>).type === 'tool_use') {
+					toolInputsMap.set(
+						(block as Record<string, unknown>).id as string,
+						(block as Record<string, unknown>).input
+					);
 				}
 			});
 		}
@@ -837,7 +846,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 								message={msg}
 								toolResultsMap={toolResultsMap}
 								toolInputsMap={toolInputsMap}
-								sessionInfo={msg.uuid ? sessionInfoMap.get(msg.uuid) : undefined}
+								sessionInfo={
+									msg.uuid
+										? (sessionInfoMap.get(msg.uuid) as SDKSystemMessage | undefined)
+										: undefined
+								}
 							/>
 						))}
 

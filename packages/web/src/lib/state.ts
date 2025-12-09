@@ -41,15 +41,16 @@ class GlobalStateChannels {
 		this.sessions = new StateChannel<SessionsState>(hub, STATE_CHANNELS.GLOBAL_SESSIONS, {
 			sessionId: 'global',
 			enableDeltas: true,
-			mergeDelta: (current, delta: SessionsUpdate) => {
+			mergeDelta: (current, delta) => {
+				const typedDelta = delta as SessionsUpdate;
 				console.log('[State] Merging sessions delta:', {
 					currentCount: current.sessions.length,
-					delta: delta,
+					delta: typedDelta,
 				});
 				const merged = {
 					...current,
-					sessions: DeltaMergers.array(current.sessions, delta),
-					timestamp: delta.timestamp,
+					sessions: DeltaMergers.array(current.sessions, typedDelta),
+					timestamp: typedDelta.timestamp,
 				};
 				console.log('[State] After merge, sessions count:', merged.sessions.length);
 				return merged;
@@ -110,11 +111,12 @@ class SessionStateChannels {
 			{
 				sessionId,
 				enableDeltas: true,
-				mergeDelta: (current, delta: SDKMessagesUpdate) => {
+				mergeDelta: (current, delta) => {
+					const typedDelta = delta as SDKMessagesUpdate;
 					return {
 						...current,
-						sdkMessages: DeltaMergers.append(current.sdkMessages, delta),
-						timestamp: delta.timestamp,
+						sdkMessages: DeltaMergers.append(current.sdkMessages, typedDelta),
+						timestamp: typedDelta.timestamp,
 					};
 				},
 				debug: false,

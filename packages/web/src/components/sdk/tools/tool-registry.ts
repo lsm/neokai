@@ -10,6 +10,23 @@ import type { ToolConfig, ToolCategory } from './tool-types.ts';
 import { TodoViewer } from './TodoViewer.tsx';
 
 /**
+ * Helper to safely get a property from unknown input as string
+ */
+const getProp = (input: unknown, key: string): string | undefined => {
+	const obj = input as Record<string, unknown>;
+	const value = obj?.[key];
+	return typeof value === 'string' ? value : undefined;
+};
+
+/**
+ * Helper to safely get a property from unknown input as any type
+ */
+const getPropAny = (input: unknown, key: string): unknown => {
+	const obj = input as Record<string, unknown>;
+	return obj?.[key];
+};
+
+/**
  * Default tool configurations
  */
 const defaultToolConfigs: Record<string, ToolConfig> = {
@@ -17,28 +34,28 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
 	Write: {
 		displayName: 'Write',
 		category: 'file',
-		summaryExtractor: (input) => extractFileName(input?.file_path),
+		summaryExtractor: (input) => extractFileName(getProp(input, 'file_path')),
 		hasLongOutput: false,
 		defaultExpanded: false,
 	},
 	Edit: {
 		displayName: 'Edit',
 		category: 'file',
-		summaryExtractor: (input) => extractFileName(input?.file_path),
+		summaryExtractor: (input) => extractFileName(getProp(input, 'file_path')),
 		hasLongOutput: false,
 		defaultExpanded: false,
 	},
 	Read: {
 		displayName: 'Read',
 		category: 'file',
-		summaryExtractor: (input) => extractFileName(input?.file_path),
+		summaryExtractor: (input) => extractFileName(getProp(input, 'file_path')),
 		hasLongOutput: true,
 		defaultExpanded: false,
 	},
 	NotebookEdit: {
 		displayName: 'Notebook Edit',
 		category: 'file',
-		summaryExtractor: (input) => extractFileName(input?.notebook_path),
+		summaryExtractor: (input) => extractFileName(getProp(input, 'notebook_path')),
 		hasLongOutput: false,
 		defaultExpanded: false,
 	},
@@ -47,14 +64,14 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
 	Glob: {
 		displayName: 'Glob',
 		category: 'search',
-		summaryExtractor: (input) => truncateString(input?.pattern, 50),
+		summaryExtractor: (input) => truncateString(getProp(input, 'pattern'), 50),
 		hasLongOutput: true,
 		defaultExpanded: false,
 	},
 	Grep: {
 		displayName: 'Grep',
 		category: 'search',
-		summaryExtractor: (input) => truncateString(input?.pattern, 50),
+		summaryExtractor: (input) => truncateString(getProp(input, 'pattern'), 50),
 		hasLongOutput: true,
 		defaultExpanded: false,
 	},
@@ -63,21 +80,21 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
 	Bash: {
 		displayName: 'Bash',
 		category: 'terminal',
-		summaryExtractor: (input) => truncateString(input?.command, 50),
+		summaryExtractor: (input) => truncateString(getProp(input, 'command'), 50),
 		hasLongOutput: true,
 		defaultExpanded: false,
 	},
 	BashOutput: {
 		displayName: 'Bash Output',
 		category: 'terminal',
-		summaryExtractor: (input) => `Shell: ${input?.bash_id?.slice(0, 8) || 'unknown'}`,
+		summaryExtractor: (input) => `Shell: ${getProp(input, 'bash_id')?.slice(0, 8) || 'unknown'}`,
 		hasLongOutput: true,
 		defaultExpanded: false,
 	},
 	KillShell: {
 		displayName: 'Kill Shell',
 		category: 'terminal',
-		summaryExtractor: (input) => `Shell: ${input?.shell_id?.slice(0, 8) || 'unknown'}`,
+		summaryExtractor: (input) => `Shell: ${getProp(input, 'shell_id')?.slice(0, 8) || 'unknown'}`,
 		hasLongOutput: false,
 		defaultExpanded: false,
 	},
@@ -86,14 +103,14 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
 	Task: {
 		displayName: 'Task',
 		category: 'agent',
-		summaryExtractor: (input) => input?.description || 'Task execution',
+		summaryExtractor: (input) => getProp(input, 'description') || 'Task execution',
 		hasLongOutput: true,
 		defaultExpanded: false,
 	},
 	Agent: {
 		displayName: 'Agent',
 		category: 'agent',
-		summaryExtractor: (input) => input?.description || 'Agent execution',
+		summaryExtractor: (input) => getProp(input, 'description') || 'Agent execution',
 		hasLongOutput: true,
 		defaultExpanded: false,
 	},
@@ -102,14 +119,14 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
 	WebFetch: {
 		displayName: 'Web Fetch',
 		category: 'web',
-		summaryExtractor: (input) => truncateString(input?.url, 50),
+		summaryExtractor: (input) => truncateString(getProp(input, 'url'), 50),
 		hasLongOutput: true,
 		defaultExpanded: false,
 	},
 	WebSearch: {
 		displayName: 'Web Search',
 		category: 'web',
-		summaryExtractor: (input) => truncateString(input?.query, 50),
+		summaryExtractor: (input) => truncateString(getProp(input, 'query'), 50),
 		hasLongOutput: true,
 		defaultExpanded: false,
 	},
@@ -119,12 +136,14 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
 		displayName: 'Todo',
 		category: 'todo',
 		summaryExtractor: (input) => {
-			const count = input?.todos?.length;
+			const todos = getPropAny(input, 'todos');
+			const count = Array.isArray(todos) ? todos.length : 0;
 			return count ? `${count} todo${count !== 1 ? 's' : ''}` : 'Update todos';
 		},
 		customRenderer: ({ input }) => {
-			if (input?.todos && Array.isArray(input.todos)) {
-				return h(TodoViewer, { todos: input.todos });
+			const todos = getPropAny(input, 'todos');
+			if (todos && Array.isArray(todos)) {
+				return h(TodoViewer, { todos });
 			}
 			return null;
 		},
@@ -136,14 +155,14 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
 	ListMcpResourcesTool: {
 		displayName: 'List MCP Resources',
 		category: 'mcp',
-		summaryExtractor: (input) => input?.server || 'All servers',
+		summaryExtractor: (input) => getProp(input, 'server') || 'All servers',
 		hasLongOutput: true,
 		defaultExpanded: false,
 	},
 	ReadMcpResourceTool: {
 		displayName: 'Read MCP Resource',
 		category: 'mcp',
-		summaryExtractor: (input) => truncateString(input?.uri, 50),
+		summaryExtractor: (input) => truncateString(getProp(input, 'uri'), 50),
 		hasLongOutput: true,
 		defaultExpanded: false,
 	},
@@ -159,7 +178,7 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
 	TimeMachine: {
 		displayName: 'Time Machine',
 		category: 'system',
-		summaryExtractor: (input) => truncateString(input?.message_prefix, 40),
+		summaryExtractor: (input) => truncateString(getProp(input, 'message_prefix'), 40),
 		hasLongOutput: false,
 		defaultExpanded: false,
 	},
@@ -323,10 +342,11 @@ export function getToolConfig(toolName: string): ToolConfig {
 		summaryExtractor: (input) => {
 			// Try to extract something meaningful from input
 			if (input && typeof input === 'object') {
-				const keys = Object.keys(input);
+				const obj = input as Record<string, unknown>;
+				const keys = Object.keys(obj);
 				if (keys.length > 0) {
 					const firstKey = keys[0];
-					const value = input[firstKey];
+					const value = obj[firstKey];
 					if (typeof value === 'string') {
 						return truncateString(value, 40);
 					}

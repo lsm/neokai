@@ -215,7 +215,11 @@ describe('MessageHub', () => {
 
 			messageHub.handle('test.method', handler);
 
-			expect((messageHub as unknown as { rpcHandlers: Map<string, unknown> }).rpcHandlers.has('test.method')).toBe(true);
+			expect(
+				(messageHub as unknown as { rpcHandlers: Map<string, unknown> }).rpcHandlers.has(
+					'test.method'
+				)
+			).toBe(true);
 		});
 
 		test('should execute RPC handler when call message received', async () => {
@@ -285,10 +289,18 @@ describe('MessageHub', () => {
 			const handler = mock(async () => ({}));
 
 			const unregister = messageHub.handle('test.method', handler);
-			expect((messageHub as unknown as { rpcHandlers: Map<string, unknown> }).rpcHandlers.has('test.method')).toBe(true);
+			expect(
+				(messageHub as unknown as { rpcHandlers: Map<string, unknown> }).rpcHandlers.has(
+					'test.method'
+				)
+			).toBe(true);
 
 			unregister();
-			expect((messageHub as unknown as { rpcHandlers: Map<string, unknown> }).rpcHandlers.has('test.method')).toBe(false);
+			expect(
+				(messageHub as unknown as { rpcHandlers: Map<string, unknown> }).rpcHandlers.has(
+					'test.method'
+				)
+			).toBe(false);
 		});
 	});
 
@@ -425,7 +437,9 @@ describe('MessageHub', () => {
 
 			await messageHub.subscribe('user.created', handler, { sessionId: 'test-session' });
 
-			const sessionSubs = (messageHub as unknown as { subscriptions: Map<string, Map<string, unknown>> }).subscriptions.get('test-session');
+			const sessionSubs = (
+				messageHub as unknown as { subscriptions: Map<string, Map<string, unknown>> }
+			).subscriptions.get('test-session');
 			expect(sessionSubs).toBeDefined();
 			expect(sessionSubs?.has('user.created')).toBe(true);
 		});
@@ -499,7 +513,9 @@ describe('MessageHub', () => {
 			const handler = mock(() => {});
 			await messageHub.subscribe('user.created', handler, { sessionId: 'test-session' });
 
-			const sessionSubs = (messageHub as unknown as { subscriptions: Map<string, Map<string, unknown>> }).subscriptions.get('test-session');
+			const sessionSubs = (
+				messageHub as unknown as { subscriptions: Map<string, Map<string, unknown>> }
+			).subscriptions.get('test-session');
 			expect(sessionSubs).toBeDefined();
 			expect(sessionSubs?.has('user.created')).toBe(true);
 		});
@@ -511,13 +527,17 @@ describe('MessageHub', () => {
 			});
 
 			// Verify subscription exists first
-			let sessionSubs = (messageHub as unknown as { subscriptions: Map<string, Map<string, unknown>> }).subscriptions.get('test-session');
+			let sessionSubs = (
+				messageHub as unknown as { subscriptions: Map<string, Map<string, unknown>> }
+			).subscriptions.get('test-session');
 			expect(sessionSubs?.has('user.created')).toBe(true);
 
 			await unsubscribe();
 
 			// After unsubscribe, the method should be removed from the set
-			sessionSubs = (messageHub as unknown as { subscriptions: Map<string, Map<string, unknown>> }).subscriptions.get('test-session');
+			sessionSubs = (
+				messageHub as unknown as { subscriptions: Map<string, Map<string, unknown>> }
+			).subscriptions.get('test-session');
 			const handlers = sessionSubs?.get('user.created') as Set<unknown> | undefined;
 			expect(!handlers || handlers.size === 0).toBe(true);
 		});
@@ -750,7 +770,9 @@ describe('MessageHub', () => {
 
 			messageHub.cleanup();
 
-			expect((messageHub as unknown as { pendingCalls: Map<string, unknown> }).pendingCalls.size).toBe(0);
+			expect(
+				(messageHub as unknown as { pendingCalls: Map<string, unknown> }).pendingCalls.size
+			).toBe(0);
 		});
 
 		test('should clear all handlers on cleanup', async () => {
@@ -759,8 +781,12 @@ describe('MessageHub', () => {
 
 			messageHub.cleanup();
 
-			expect((messageHub as unknown as { rpcHandlers: Map<string, unknown> }).rpcHandlers.size).toBe(0);
-			expect((messageHub as unknown as { subscriptions: Map<string, unknown> }).subscriptions.size).toBe(0);
+			expect(
+				(messageHub as unknown as { rpcHandlers: Map<string, unknown> }).rpcHandlers.size
+			).toBe(0);
+			expect(
+				(messageHub as unknown as { subscriptions: Map<string, unknown> }).subscriptions.size
+			).toBe(0);
 		});
 
 		test('should remove connection state handlers on cleanup', () => {
@@ -768,7 +794,10 @@ describe('MessageHub', () => {
 
 			messageHub.cleanup();
 
-			expect((messageHub as unknown as { connectionStateHandlers: Set<unknown> }).connectionStateHandlers.size).toBe(0);
+			expect(
+				(messageHub as unknown as { connectionStateHandlers: Set<unknown> }).connectionStateHandlers
+					.size
+			).toBe(0);
 		});
 
 		test('should clear message inspection handlers on cleanup', () => {
@@ -776,7 +805,9 @@ describe('MessageHub', () => {
 
 			messageHub.cleanup();
 
-			expect((messageHub as unknown as { messageHandlers: Set<unknown> }).messageHandlers.size).toBe(0);
+			expect(
+				(messageHub as unknown as { messageHandlers: Set<unknown> }).messageHandlers.size
+			).toBe(0);
 		});
 	});
 

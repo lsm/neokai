@@ -29,7 +29,7 @@ export default function StatusIndicator({
 	streamingPhase,
 	contextUsage,
 	maxContextTokens = 200000, // Default to Sonnet 4.5's 200k context window
-	_onSendMessage,
+	onSendMessage: _onSendMessage,
 }: StatusIndicatorProps) {
 	const [showContextDetails, setShowContextDetails] = useState(false);
 	const [dropdownBottom, setDropdownBottom] = useState(96); // Default 24*4px = 96px

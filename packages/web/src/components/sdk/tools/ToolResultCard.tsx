@@ -46,6 +46,10 @@ export function ToolResultCard({
 	defaultExpanded,
 	className,
 }: ToolResultCardProps) {
+	// Type-safe access to input/output properties
+	const inputRecord = input as Record<string, unknown>;
+	const outputRecord = output as Record<string, unknown>;
+
 	const colors = getToolColors(toolName);
 	const displayName = getToolDisplayName(toolName);
 	const shouldExpand =
@@ -155,11 +159,11 @@ export function ToolResultCard({
 					{customRenderer ? (
 						customRenderer({ toolName, input, output, isError, variant })
 					) : /* Special handling for Edit tool - show diff view */
-					toolName === 'Edit' && input?.old_string && input?.new_string ? (
+					toolName === 'Edit' && inputRecord?.old_string && inputRecord?.new_string ? (
 						<DiffViewer
-							oldText={input.old_string}
-							newText={input.new_string}
-							filePath={input.file_path}
+							oldText={inputRecord.old_string as string}
+							newText={inputRecord.new_string as string}
+							filePath={inputRecord.file_path as string | undefined}
 						/>
 					) : /* Special handling for Read tool - show syntax-highlighted code */
 					toolName === 'Read' &&
@@ -167,16 +171,20 @@ export function ToolResultCard({
 					  (typeof output === 'string' ||
 							(typeof output === 'object' &&
 								'content' in output &&
-								typeof output.content === 'string')) ? (
+								typeof outputRecord.content === 'string')) ? (
 						<CodeViewer
-							code={stripLineNumbers(typeof output === 'string' ? output : output.content)}
-							filePath={input?.file_path}
+							code={stripLineNumbers(
+								typeof output === 'string' ? output : (outputRecord.content as string)
+							)}
+							filePath={inputRecord?.file_path as string | undefined}
 							showLineNumbers={true}
 							showHeader={true}
 							maxHeight="none"
 						/>
 					) : /* Special handling for Write tool - show syntax-highlighted code */
-					toolName === 'Write' && input?.content && typeof input.content === 'string' ? (
+					toolName === 'Write' &&
+					  inputRecord?.content &&
+					  typeof inputRecord.content === 'string' ? (
 						<div>
 							{variant === 'detailed' && (
 								<div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
@@ -184,8 +192,8 @@ export function ToolResultCard({
 								</div>
 							)}
 							<CodeViewer
-								code={input.content}
-								filePath={input.file_path}
+								code={inputRecord.content as string}
+								filePath={inputRecord.file_path as string | undefined}
 								showLineNumbers={true}
 								showHeader={true}
 								maxHeight="none"
