@@ -28,9 +28,17 @@ describe('EventBus', () => {
 					workspacePath: '/test',
 					status: 'active',
 					config: { model: 'claude-sonnet-4-20250514', maxTokens: 8192, temperature: 1 },
-					metadata: {},
+					metadata: {
+						messageCount: 0,
+						totalTokens: 0,
+						inputTokens: 0,
+						outputTokens: 0,
+						totalCost: 0,
+						toolCallCount: 0,
+					},
 					createdAt: new Date().toISOString(),
-					updatedAt: new Date().toISOString(),
+					title: 'Test Session',
+					lastActiveAt: new Date().toISOString(),
 				},
 			});
 
@@ -72,9 +80,17 @@ describe('EventBus', () => {
 					workspacePath: '/test',
 					status: 'active',
 					config: { model: 'claude-sonnet-4-20250514', maxTokens: 8192, temperature: 1 },
-					metadata: {},
+					metadata: {
+						messageCount: 0,
+						totalTokens: 0,
+						inputTokens: 0,
+						outputTokens: 0,
+						totalCost: 0,
+						toolCallCount: 0,
+					},
 					createdAt: new Date().toISOString(),
-					updatedAt: new Date().toISOString(),
+					title: 'Test Session',
+					lastActiveAt: new Date().toISOString(),
 				},
 			});
 
@@ -168,8 +184,12 @@ describe('EventBus', () => {
 		test('should remove all handlers for an event', async () => {
 			let callCount = 0;
 
-			eventBus.on('session:deleted', () => callCount++);
-			eventBus.on('session:deleted', () => callCount++);
+			eventBus.on('session:deleted', () => {
+				callCount++;
+			});
+			eventBus.on('session:deleted', () => {
+				callCount++;
+			});
 
 			eventBus.off('session:deleted');
 
@@ -194,8 +214,12 @@ describe('EventBus', () => {
 		test('should remove all handlers', async () => {
 			let callCount = 0;
 
-			eventBus.on('session:deleted', () => callCount++);
-			eventBus.on('session:created', () => callCount++);
+			eventBus.on('session:deleted', () => {
+				callCount++;
+			});
+			eventBus.on('session:created', () => {
+				callCount++;
+			});
 
 			eventBus.clear();
 
@@ -206,9 +230,17 @@ describe('EventBus', () => {
 					workspacePath: '/test',
 					status: 'active',
 					config: { model: 'claude-sonnet-4-20250514', maxTokens: 8192, temperature: 1 },
-					metadata: {},
+					metadata: {
+						messageCount: 0,
+						totalTokens: 0,
+						inputTokens: 0,
+						outputTokens: 0,
+						totalCost: 0,
+						toolCallCount: 0,
+					},
 					createdAt: new Date().toISOString(),
-					updatedAt: new Date().toISOString(),
+					title: 'Test Session',
+					lastActiveAt: new Date().toISOString(),
 				},
 			});
 

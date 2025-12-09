@@ -143,7 +143,8 @@ describe('LRUCache', () => {
 		// Now invoke the captured timer callback, which should catch the error
 		expect(timerCallback).not.toBeNull();
 		if (timerCallback) {
-			timerCallback(); // This should trigger the try-catch in the timer callback
+			const callback: () => void = timerCallback;
+			callback(); // This should trigger the try-catch in the timer callback
 		}
 
 		// Restore
