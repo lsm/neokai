@@ -24,50 +24,100 @@ import 'dotenv/config';
 import { hasAnyCredentials } from './test-utils';
 
 describe('Daemon-style SDK Usage', () => {
-	const verbose = !!process.env.TEST_VERBOSE;
-	const log = verbose ? console.log : () => {};
-
 	test.skipIf(!hasAnyCredentials())(
 		'should work with cwd option (like daemon does)',
 		async () => {
-			log('\n[TEST] Testing with cwd option...');
-			log('[TEST] Current working directory:', process.cwd());
-
-			const queryStream = query({
-				prompt: 'What is 2+2? Answer with just the number.',
-				options: {
-					model: 'claude-sonnet-4-5-20250929',
-					cwd: process.cwd(), // DAEMON SETS THIS
-					permissionMode: 'bypassPermissions',
-					allowDangerouslySkipPermissions: true,
-					maxTurns: 1,
-				},
+			// ENHANCED DEBUG LOGGING
+			console.log('\n========================================');
+			console.log('[TEST] Environment:', {
+				CI: process.env.CI,
+				NODE_ENV: process.env.NODE_ENV,
+				hasApiKey: !!process.env.ANTHROPIC_API_KEY,
+				hasOAuthToken: !!process.env.CLAUDE_CODE_OAUTH_TOKEN,
+				apiKeyPrefix: process.env.ANTHROPIC_API_KEY?.substring(0, 10) + '...',
+				oauthTokenPrefix: process.env.CLAUDE_CODE_OAUTH_TOKEN?.substring(0, 10) + '...',
 			});
+			console.log('[TEST] Current working directory:', process.cwd());
+			console.log('[TEST] Starting test at:', new Date().toISOString());
+			console.log('========================================\n');
 
-			log('[TEST] Query stream created, processing...');
+			const startTime = Date.now();
+			let queryStream;
+
+			try {
+				console.log('[TEST] Creating query stream...');
+				queryStream = query({
+					prompt: 'What is 2+2? Answer with just the number.',
+					options: {
+						model: 'claude-sonnet-4-5-20250929',
+						cwd: process.cwd(), // DAEMON SETS THIS
+						permissionMode: 'bypassPermissions',
+						allowDangerouslySkipPermissions: true,
+						maxTurns: 1,
+					},
+				});
+				console.log('[TEST] Query stream created successfully');
+			} catch (error) {
+				console.error('[TEST] FAILED to create query stream:', error);
+				throw error;
+			}
+
+			console.log('[TEST] Query stream created, processing messages...');
 			let assistantResponse = '';
 			let messageCount = 0;
+			let lastMessageTime = Date.now();
+			const messageTypes: string[] = [];
 
-			for await (const message of queryStream) {
-				messageCount++;
-				log(`[TEST] Received message #${messageCount}, type: ${message.type}`);
+			try {
+				for await (const message of queryStream) {
+					const timeSinceLastMessage = Date.now() - lastMessageTime;
+					lastMessageTime = Date.now();
+					messageCount++;
+					messageTypes.push(message.type);
 
-				if (message.type === 'assistant') {
-					for (const block of message.message.content) {
-						if (block.type === 'text') {
-							assistantResponse += block.text;
-							log('[TEST] Response:', block.text);
+					console.log(`[TEST] Message #${messageCount} (${timeSinceLastMessage}ms since last):`, {
+						type: message.type,
+						hasContent: 'message' in message && 'content' in message.message,
+						contentBlocks:
+							'message' in message && 'content' in message.message
+								? message.message.content.length
+								: 0,
+					});
+
+					if (message.type === 'assistant') {
+						for (const block of message.message.content) {
+							console.log('[TEST]   Content block:', {
+								type: block.type,
+								hasText: 'text' in block,
+								textLength: 'text' in block ? block.text.length : 0,
+							});
+							if (block.type === 'text') {
+								assistantResponse += block.text;
+								console.log('[TEST]   Text content:', block.text);
+							}
 						}
 					}
 				}
+			} catch (error) {
+				console.error('[TEST] ERROR during message iteration:', error);
+				console.error('[TEST] Error stack:', error instanceof Error ? error.stack : 'No stack');
+				throw error;
 			}
 
-			log('[TEST] Final response:', assistantResponse);
-			log('[TEST] Total messages:', messageCount);
+			const totalTime = Date.now() - startTime;
+			console.log('\n========================================');
+			console.log('[TEST] Test completed:', {
+				totalTime: `${totalTime}ms`,
+				messageCount,
+				messageTypes,
+				responseLength: assistantResponse.length,
+				response: assistantResponse,
+			});
+			console.log('========================================\n');
 
 			expect(assistantResponse.length).toBeGreaterThan(0);
 			expect(messageCount).toBeGreaterThan(0);
-			log('[TEST] Success!');
+			console.log('[TEST] ✓ All assertions passed');
 		},
 		60000 // 60 second timeout
 	);
@@ -75,42 +125,89 @@ describe('Daemon-style SDK Usage', () => {
 	test.skipIf(!hasAnyCredentials())(
 		'should work WITHOUT cwd option (like original test)',
 		async () => {
-			log('\n[TEST] Testing WITHOUT cwd option...');
+			// ENHANCED DEBUG LOGGING
+			console.log('\n========================================');
+			console.log('[TEST] Testing WITHOUT cwd option');
+			console.log('[TEST] Starting test at:', new Date().toISOString());
+			console.log('========================================\n');
 
-			const queryStream = query({
-				prompt: 'What is 2+2? Answer with just the number.',
-				options: {
-					model: 'claude-sonnet-4-5-20250929',
-					// NO cwd option
-					permissionMode: 'bypassPermissions',
-					allowDangerouslySkipPermissions: true,
-					maxTurns: 1,
-				},
-			});
+			const startTime = Date.now();
+			let queryStream;
 
-			log('[TEST] Query stream created, processing...');
+			try {
+				console.log('[TEST] Creating query stream WITHOUT cwd...');
+				queryStream = query({
+					prompt: 'What is 2+2? Answer with just the number.',
+					options: {
+						model: 'claude-sonnet-4-5-20250929',
+						// NO cwd option
+						permissionMode: 'bypassPermissions',
+						allowDangerouslySkipPermissions: true,
+						maxTurns: 1,
+					},
+				});
+				console.log('[TEST] Query stream created successfully');
+			} catch (error) {
+				console.error('[TEST] FAILED to create query stream:', error);
+				throw error;
+			}
+
+			console.log('[TEST] Query stream created, processing messages...');
 			let assistantResponse = '';
 			let messageCount = 0;
+			let lastMessageTime = Date.now();
+			const messageTypes: string[] = [];
 
-			for await (const message of queryStream) {
-				messageCount++;
-				log(`[TEST] Received message #${messageCount}, type: ${message.type}`);
+			try {
+				for await (const message of queryStream) {
+					const timeSinceLastMessage = Date.now() - lastMessageTime;
+					lastMessageTime = Date.now();
+					messageCount++;
+					messageTypes.push(message.type);
 
-				if (message.type === 'assistant') {
-					for (const block of message.message.content) {
-						if (block.type === 'text') {
-							assistantResponse += block.text;
+					console.log(`[TEST] Message #${messageCount} (${timeSinceLastMessage}ms since last):`, {
+						type: message.type,
+						hasContent: 'message' in message && 'content' in message.message,
+						contentBlocks:
+							'message' in message && 'content' in message.message
+								? message.message.content.length
+								: 0,
+					});
+
+					if (message.type === 'assistant') {
+						for (const block of message.message.content) {
+							console.log('[TEST]   Content block:', {
+								type: block.type,
+								hasText: 'text' in block,
+								textLength: 'text' in block ? block.text.length : 0,
+							});
+							if (block.type === 'text') {
+								assistantResponse += block.text;
+								console.log('[TEST]   Text content:', block.text);
+							}
 						}
 					}
 				}
+			} catch (error) {
+				console.error('[TEST] ERROR during message iteration:', error);
+				console.error('[TEST] Error stack:', error instanceof Error ? error.stack : 'No stack');
+				throw error;
 			}
 
-			log('[TEST] Final response:', assistantResponse);
-			log('[TEST] Total messages:', messageCount);
+			const totalTime = Date.now() - startTime;
+			console.log('\n========================================');
+			console.log('[TEST] Test completed:', {
+				totalTime: `${totalTime}ms`,
+				messageCount,
+				messageTypes,
+				responseLength: assistantResponse.length,
+				response: assistantResponse,
+			});
+			console.log('========================================\n');
 
 			expect(assistantResponse.length).toBeGreaterThan(0);
 			expect(messageCount).toBeGreaterThan(0);
-			log('[TEST] Success!');
+			console.log('[TEST] ✓ All assertions passed');
 		},
 		60000
 	);

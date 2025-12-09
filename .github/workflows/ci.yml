@@ -61,7 +61,6 @@ jobs:
           bun-version: latest
 
       - name: Install dependencies
-        working-directory: packages/daemon
         run: bun install
 
       - name: Run unit tests
@@ -85,7 +84,6 @@ jobs:
           bun-version: latest
 
       - name: Install dependencies
-        working-directory: packages/shared
         run: bun install
 
       - name: Run unit tests
