@@ -210,6 +210,31 @@ describe('AgentSession with Mocked SDK', () => {
 		});
 	});
 
+	describe('sendMessage (deprecated)', () => {
+		test('should delegate to enqueueMessage', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: process.cwd(),
+			});
+
+			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+
+			// First trigger the query to start via handleMessageSend
+			await agentSession!.handleMessageSend({ content: 'Start query' });
+
+			// Use deprecated sendMessage method
+			const messageIdPromise = agentSession!.sendMessage('Test message via deprecated method');
+
+			// The promise should resolve with a message ID
+			const messageId = await Promise.race([
+				messageIdPromise,
+				new Promise<string>((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000)),
+			]);
+
+			expect(messageId).toBeString();
+			expect(messageId.length).toBeGreaterThan(0);
+		});
+	});
+
 	describe('getSlashCommands', () => {
 		test('should return slash commands from mocked SDK', async () => {
 			const sessionId = await ctx.sessionManager.createSession({

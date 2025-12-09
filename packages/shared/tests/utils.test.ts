@@ -21,11 +21,11 @@ describe('generateUUID', () => {
 	});
 
 	test('fallback works when crypto.randomUUID is not available', () => {
-		// Temporarily remove crypto.randomUUID
+		// Temporarily set crypto.randomUUID to undefined (delete doesn't work in Bun)
 		const original = globalThis.crypto?.randomUUID;
 		if (globalThis.crypto) {
-			// @ts-expect-error - Intentionally deleting for test
-			delete globalThis.crypto.randomUUID;
+			// @ts-expect-error - Intentionally setting to undefined for test
+			globalThis.crypto.randomUUID = undefined;
 		}
 
 		const uuid = generateUUID();
@@ -38,11 +38,11 @@ describe('generateUUID', () => {
 	});
 
 	test('fallback generates valid v4 UUID', () => {
-		// Temporarily remove crypto.randomUUID to force fallback
+		// Temporarily set crypto.randomUUID to undefined to force fallback
 		const original = globalThis.crypto?.randomUUID;
 		if (globalThis.crypto) {
-			// @ts-expect-error - Intentionally deleting for test
-			delete globalThis.crypto.randomUUID;
+			// @ts-expect-error - Intentionally setting to undefined for test
+			globalThis.crypto.randomUUID = undefined;
 		}
 
 		const uuid = generateUUID();
@@ -62,8 +62,8 @@ describe('generateUUID', () => {
 	test('generates multiple unique UUIDs in fallback mode', () => {
 		const original = globalThis.crypto?.randomUUID;
 		if (globalThis.crypto) {
-			// @ts-expect-error - Intentionally deleting for test
-			delete globalThis.crypto.randomUUID;
+			// @ts-expect-error - Intentionally setting to undefined for test
+			globalThis.crypto.randomUUID = undefined;
 		}
 
 		const uuids = new Set();
