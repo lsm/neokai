@@ -5,7 +5,7 @@
  * without requiring actual API credentials.
  */
 
-import { describe, test, expect, beforeEach, afterEach, beforeAll, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll, mock } from 'bun:test';
 import type { TestContext } from './test-utils';
 import {
 	createTestApp,
@@ -401,4 +401,9 @@ describe('AgentSession state transitions with Mocked SDK', () => {
 		expect(results[1].messageId).toBeString();
 		expect(results[0].messageId).not.toBe(results[1].messageId);
 	});
+});
+
+// Restore the real SDK module after all tests
+afterAll(() => {
+	mock.restore();
 });

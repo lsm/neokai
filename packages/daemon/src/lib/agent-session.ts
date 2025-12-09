@@ -482,27 +482,32 @@ export class AgentSession {
 			}
 			this.messageQueue = [];
 
-			// Determine error category based on error message
-			let category = ErrorCategory.SYSTEM;
+			// Don't broadcast AbortError to clients - it's an intentional cleanup/interruption
 			const errorMessage = error instanceof Error ? error.message : String(error);
+			const isAbortError = error instanceof Error && error.name === 'AbortError';
 
-			if (
-				errorMessage.includes('401') ||
-				errorMessage.includes('unauthorized') ||
-				errorMessage.includes('invalid_api_key')
-			) {
-				category = ErrorCategory.AUTHENTICATION;
-			} else if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND')) {
-				category = ErrorCategory.CONNECTION;
-			} else if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
-				category = ErrorCategory.RATE_LIMIT;
-			} else if (errorMessage.includes('timeout')) {
-				category = ErrorCategory.TIMEOUT;
-			} else if (errorMessage.includes('model_not_found')) {
-				category = ErrorCategory.MODEL;
+			if (!isAbortError) {
+				// Determine error category based on error message
+				let category = ErrorCategory.SYSTEM;
+
+				if (
+					errorMessage.includes('401') ||
+					errorMessage.includes('unauthorized') ||
+					errorMessage.includes('invalid_api_key')
+				) {
+					category = ErrorCategory.AUTHENTICATION;
+				} else if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND')) {
+					category = ErrorCategory.CONNECTION;
+				} else if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
+					category = ErrorCategory.RATE_LIMIT;
+				} else if (errorMessage.includes('timeout')) {
+					category = ErrorCategory.TIMEOUT;
+				} else if (errorMessage.includes('model_not_found')) {
+					category = ErrorCategory.MODEL;
+				}
+
+				await this.errorManager.handleError(this.session.id, error as Error, category);
 			}
-
-			await this.errorManager.handleError(this.session.id, error as Error, category);
 		} finally {
 			this.queryRunning = false;
 			this.logger.log(`Streaming query stopped`);
