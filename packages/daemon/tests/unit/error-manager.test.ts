@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
-import { ErrorManager, ErrorCategory } from '../src/lib/error-manager';
+import { ErrorManager, ErrorCategory } from '../../src/lib/error-manager';
 import { MessageHub } from '@liuboer/shared';
 
 describe('ErrorManager', () => {

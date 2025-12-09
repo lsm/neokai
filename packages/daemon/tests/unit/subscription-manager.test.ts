@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
-import { SubscriptionManager } from '../src/lib/subscription-manager';
+import { SubscriptionManager } from '../../src/lib/subscription-manager';
 import { MessageHub } from '@liuboer/shared';
 
 describe('SubscriptionManager', () => {

@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { EnvManager } from '../src/lib/env-manager';
+import { EnvManager } from '../../src/lib/env-manager';
 
 describe('EnvManager', () => {
 	let envManager: EnvManager;

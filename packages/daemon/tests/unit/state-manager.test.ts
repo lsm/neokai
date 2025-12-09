@@ -5,13 +5,13 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { TestContext } from './test-utils';
+import type { TestContext } from '../test-utils';
 import {
 	createTestApp,
 	waitForWebSocketState,
 	waitForWebSocketMessage,
 	createWebSocketWithFirstMessage,
-} from './test-utils';
+} from '../test-utils';
 import { STATE_CHANNELS } from '@liuboer/shared';
 
 describe('StateManager', () => {

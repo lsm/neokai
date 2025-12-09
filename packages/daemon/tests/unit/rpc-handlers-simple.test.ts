@@ -1,10 +1,10 @@
 import { describe, test, expect } from 'bun:test';
 import { MessageHub } from '@liuboer/shared';
-import { setupRPCHandlers } from '../src/lib/rpc-handlers';
-import { getConfig } from '../src/config';
-import { Database } from '../src/storage/database';
-import { AuthManager } from '../src/lib/auth-manager';
-import { SessionManager } from '../src/lib/session-manager';
+import { setupRPCHandlers } from '../../src/lib/rpc-handlers';
+import { getConfig } from '../../src/config';
+import { Database } from '../../src/storage/database';
+import { AuthManager } from '../../src/lib/auth-manager';
+import { SessionManager } from '../../src/lib/session-manager';
 
 describe('setupRPCHandlers - Handler Registration', () => {
 	test('should register all RPC handlers without needing a class', async () => {

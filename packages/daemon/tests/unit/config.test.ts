@@ -5,7 +5,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { getConfig } from '../src/config';
+import { getConfig } from '../../src/config';
 
 describe('getConfig', () => {
 	let originalEnv: NodeJS.ProcessEnv;

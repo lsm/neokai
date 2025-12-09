@@ -6,8 +6,8 @@
 
 import { describe, test } from 'bun:test';
 import type { Session } from '@liuboer/shared';
-import { Database } from '../src/storage/database';
-import { assertEquals, assertExists } from './test-utils';
+import { Database } from '../../src/storage/database';
+import { assertEquals, assertExists } from '../test-utils';
 
 async function createTestDb(): Promise<Database> {
 	const db = new Database(':memory:');

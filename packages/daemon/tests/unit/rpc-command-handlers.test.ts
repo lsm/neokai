@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it, beforeAll, mock } from 'bun:test';
-import { setupCommandHandlers } from '../src/lib/rpc-handlers/command-handlers';
+import { setupCommandHandlers } from '../../src/lib/rpc-handlers/command-handlers';
 
 describe('Command RPC Handlers', () => {
 	let handlers: Map<string, Function>;

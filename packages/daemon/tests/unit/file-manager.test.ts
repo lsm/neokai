@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it, beforeAll, afterAll } from 'bun:test';
-import { FileManager } from '../src/lib/file-manager';
+import { FileManager } from '../../src/lib/file-manager';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

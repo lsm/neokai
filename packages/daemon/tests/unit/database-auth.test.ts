@@ -7,7 +7,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import type { Session } from '@liuboer/shared';
-import { Database } from '../src/storage/database';
+import { Database } from '../../src/storage/database';
 
 async function createTestDb(): Promise<Database> {
 	const db = new Database(':memory:');

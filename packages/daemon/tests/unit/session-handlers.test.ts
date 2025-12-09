@@ -12,14 +12,14 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { TestContext } from './test-utils';
+import type { TestContext } from '../test-utils';
 import {
 	createTestApp,
 	waitForWebSocketState,
 	waitForWebSocketMessage,
 	createWebSocketWithFirstMessage,
 	hasApiKey,
-} from './test-utils';
+} from '../test-utils';
 
 describe('Session RPC Handlers', () => {
 	let ctx: TestContext;

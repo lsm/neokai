@@ -6,7 +6,7 @@
 
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { MessageHubRouter } from '@liuboer/shared';
-import { WebSocketServerTransport } from '../src/lib/websocket-server-transport';
+import { WebSocketServerTransport } from '../../src/lib/websocket-server-transport';
 import type { ServerWebSocket } from 'bun';
 
 function createMockRouter() {

@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it, beforeAll, mock } from 'bun:test';
-import { setupSystemHandlers } from '../src/lib/rpc-handlers/system-handlers';
+import { setupSystemHandlers } from '../../src/lib/rpc-handlers/system-handlers';
 
 describe('System RPC Handlers', () => {
 	let handlers: Map<string, Function>;

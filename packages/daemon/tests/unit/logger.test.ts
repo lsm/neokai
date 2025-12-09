@@ -3,7 +3,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import { Logger } from '../src/lib/logger';
+import { Logger } from '../../src/lib/logger';
 
 describe('Logger', () => {
 	const originalNodeEnv = process.env.NODE_ENV;

@@ -8,9 +8,9 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import { SessionManager } from '../src/lib/session-manager';
-import { Database } from '../src/storage/database';
-import { AuthManager } from '../src/lib/auth-manager';
+import { SessionManager } from '../../src/lib/session-manager';
+import { Database } from '../../src/storage/database';
+import { AuthManager } from '../../src/lib/auth-manager';
 import { MessageHub, MessageHubRouter, EventBus } from '@liuboer/shared';
 
 describe('SessionManager', () => {

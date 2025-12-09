@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it, beforeAll, afterAll, mock } from 'bun:test';
-import { setupFileHandlers } from '../src/lib/rpc-handlers/file-handlers';
+import { setupFileHandlers } from '../../src/lib/rpc-handlers/file-handlers';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

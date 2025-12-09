@@ -7,11 +7,11 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { MessageHub, EventBus, clearModelCache } from '@liuboer/shared';
-import { setupRPCHandlers } from '../src/lib/rpc-handlers';
-import { getConfig } from '../src/config';
-import { Database } from '../src/storage/database';
-import { AuthManager } from '../src/lib/auth-manager';
-import { SessionManager } from '../src/lib/session-manager';
+import { setupRPCHandlers } from '../../src/lib/rpc-handlers';
+import { getConfig } from '../../src/config';
+import { Database } from '../../src/storage/database';
+import { AuthManager } from '../../src/lib/auth-manager';
+import { SessionManager } from '../../src/lib/session-manager';
 
 // Mock response data
 const mockModels = [
