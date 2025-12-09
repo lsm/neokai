@@ -16,12 +16,30 @@
  * - Requires ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
  * - Tests are skipped if credentials are not available
  * - Makes real API calls (costs money, uses rate limits)
+ *
+ * MOCK LEAK PREVENTION:
+ * - Explicitly restores any mocks before running these tests
+ * - This prevents mock leakage from agent-session-mocked.test.ts
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeAll, mock } from 'bun:test';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import 'dotenv/config';
 import { hasAnyCredentials } from './test-utils';
+
+/**
+ * CRITICAL: Restore any mocks before running these tests.
+ *
+ * In CI, agent-session-mocked.test.ts runs before this file and mocks
+ * the Claude Agent SDK. Even though it calls mock.restore() in afterAll(),
+ * there appears to be a race condition or Bun bug where the mock is still
+ * active when this test file runs.
+ *
+ * Explicitly restoring here ensures we get the real SDK.
+ */
+beforeAll(() => {
+	mock.restore();
+});
 
 describe('Daemon-style SDK Usage', () => {
 	test.skipIf(!hasAnyCredentials())(
