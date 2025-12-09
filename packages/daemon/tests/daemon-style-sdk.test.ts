@@ -6,13 +6,13 @@
 import { describe, test, expect } from 'bun:test';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import 'dotenv/config';
-import { hasAnyCredentials } from './test-utils';
+import { hasApiKey } from './test-utils';
 
 describe('Daemon-style SDK Usage', () => {
 	const verbose = !!process.env.TEST_VERBOSE;
 	const log = verbose ? console.log : () => {};
 
-	test.skipIf(!hasAnyCredentials())(
+	test.skipIf(!hasApiKey())(
 		'should work with cwd option (like daemon does)',
 		async () => {
 			log('\n[TEST] Testing with cwd option...');
@@ -57,7 +57,7 @@ describe('Daemon-style SDK Usage', () => {
 		60000 // 60 second timeout
 	);
 
-	test.skipIf(!hasAnyCredentials())(
+	test.skipIf(!hasApiKey())(
 		'should work WITHOUT cwd option (like original test)',
 		async () => {
 			log('\n[TEST] Testing WITHOUT cwd option...');
