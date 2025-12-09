@@ -16,6 +16,7 @@ interface StatusIndicatorProps {
 	connectionState: 'connecting' | 'connected' | 'disconnected' | 'error' | 'reconnecting';
 	isProcessing: boolean;
 	currentAction?: string;
+	streamingPhase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing' | null;
 	contextUsage?: ContextInfo;
 	maxContextTokens?: number;
 	onSendMessage?: (message: string) => void;
@@ -25,6 +26,7 @@ export default function StatusIndicator({
 	connectionState,
 	isProcessing,
 	currentAction,
+	streamingPhase,
 	contextUsage,
 	maxContextTokens = 200000, // Default to Sonnet 4.5's 200k context window
 	_onSendMessage,
@@ -51,12 +53,37 @@ export default function StatusIndicator({
 	}, [showContextDetails]);
 
 	const getStatus = () => {
-		// Processing state takes priority
+		// Processing state takes priority with phase-specific colors
 		if (isProcessing && currentAction) {
+			// Phase-specific color coding
+			let dotClass = 'bg-purple-500 animate-pulse';
+			let textClass = 'text-purple-400';
+
+			if (streamingPhase) {
+				switch (streamingPhase) {
+					case 'initializing':
+						dotClass = 'bg-yellow-500 animate-pulse';
+						textClass = 'text-yellow-400';
+						break;
+					case 'thinking':
+						dotClass = 'bg-blue-500 animate-pulse';
+						textClass = 'text-blue-400';
+						break;
+					case 'streaming':
+						dotClass = 'bg-green-500 animate-pulse';
+						textClass = 'text-green-400';
+						break;
+					case 'finalizing':
+						dotClass = 'bg-purple-500 animate-pulse';
+						textClass = 'text-purple-400';
+						break;
+				}
+			}
+
 			return {
-				dotClass: 'bg-purple-500 animate-pulse',
+				dotClass,
 				text: currentAction,
-				textClass: 'text-purple-400',
+				textClass,
 			};
 		}
 

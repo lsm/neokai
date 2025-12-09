@@ -46,13 +46,18 @@ export interface SystemState {
 
 /**
  * Agent processing state
- * Tracks what the agent is currently doing
+ * Tracks what the agent is currently doing with fine-grained phase information
  * Moved from daemon/agent-session.ts to shared for type consistency
  */
 export type AgentProcessingState =
 	| { status: 'idle' }
 	| { status: 'queued'; messageId: string }
-	| { status: 'processing'; messageId: string }
+	| {
+			status: 'processing';
+			messageId: string;
+			phase: 'initializing' | 'thinking' | 'streaming' | 'finalizing';
+			streamingStartedAt?: number; // Timestamp when streaming began
+	  }
 	| { status: 'interrupted' };
 
 /**

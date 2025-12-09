@@ -80,6 +80,11 @@ export class AgentSession {
 
 	// FIX: Agent processing state (server-side state for push-based sync)
 	private processingState: AgentProcessingState = { status: 'idle' };
+
+	// Streaming phase tracking
+	private streamingPhase: 'initializing' | 'thinking' | 'streaming' | 'finalizing' = 'initializing';
+	private streamingStartedAt: number | null = null;
+
 	private logger: Logger;
 
 	constructor(
@@ -126,8 +131,15 @@ export class AgentSession {
 	/**
 	 * Update and broadcast the agent processing state
 	 * NEW: Uses EventBus to notify StateManager, which broadcasts unified session state
+	 * Enhanced with streaming phase tracking
 	 */
 	private async setProcessingState(newState: AgentProcessingState): Promise<void> {
+		// If transitioning to idle or interrupted, reset phase tracking
+		if (newState.status === 'idle' || newState.status === 'interrupted') {
+			this.streamingPhase = 'initializing';
+			this.streamingStartedAt = null;
+		}
+
 		this.processingState = newState;
 
 		// Emit event via EventBus (StateManager will broadcast unified session state)
@@ -137,6 +149,39 @@ export class AgentSession {
 		});
 
 		this.logger.log(`Agent state changed:`, newState);
+	}
+
+	/**
+	 * Update the streaming phase and broadcast state change
+	 * This allows fine-grained tracking of query execution progress
+	 */
+	private async updateStreamingPhase(
+		phase: 'initializing' | 'thinking' | 'streaming' | 'finalizing'
+	): Promise<void> {
+		this.streamingPhase = phase;
+
+		// Track when streaming actually started
+		if (phase === 'streaming' && !this.streamingStartedAt) {
+			this.streamingStartedAt = Date.now();
+		}
+
+		// Update state if currently processing
+		if (this.processingState.status === 'processing') {
+			this.processingState = {
+				status: 'processing',
+				messageId: this.processingState.messageId,
+				phase: this.streamingPhase,
+				streamingStartedAt: this.streamingStartedAt ?? undefined,
+			};
+
+			// Broadcast updated state
+			await this.eventBus.emit('agent-state:changed', {
+				sessionId: this.session.id,
+				state: this.processingState,
+			});
+
+			this.logger.log(`Streaming phase changed to: ${phase}`);
+		}
 	}
 
 	/**
@@ -341,9 +386,11 @@ export class AgentSession {
 				});
 
 				// Update state to 'processing' (broadcasts agent.state event)
+				// Start in 'initializing' phase
 				await this.setProcessingState({
 					status: 'processing',
 					messageId: queuedMessage.id,
+					phase: 'initializing',
 				});
 
 				// Add to conversation history
@@ -516,10 +563,49 @@ export class AgentSession {
 
 	/**
 	 * Handle incoming SDK messages
+	 * Enhanced with automatic phase detection for streaming state tracking
 	 */
 	private async handleSDKMessage(message: unknown): Promise<void> {
 		// Cast unknown to SDKMessage - messages come from SDK which provides proper typing
 		const sdkMessage = message as SDKMessage;
+
+		// PHASE DETECTION LOGIC
+		// Automatically update streaming phase based on message type
+		if (this.processingState.status === 'processing') {
+			if (sdkMessage.type === 'stream_event') {
+				// We're actively streaming content deltas
+				if (this.streamingPhase !== 'streaming') {
+					await this.updateStreamingPhase('streaming');
+				}
+			} else if (isSDKAssistantMessage(sdkMessage)) {
+				// Assistant message indicates thinking/tool use phase
+				const hasToolUse = sdkMessage.message.content.some(isToolUseBlock);
+
+				if (hasToolUse && this.streamingPhase === 'initializing') {
+					// Transition from initializing to thinking when we see tool use
+					await this.updateStreamingPhase('thinking');
+				} else if (
+					!hasToolUse &&
+					this.streamingPhase === 'initializing' &&
+					sdkMessage.message.content.some(
+						(block: unknown) =>
+							typeof block === 'object' &&
+							block !== null &&
+							'type' in block &&
+							block.type === 'text'
+					)
+				) {
+					// If we get a text response without tool use, we're likely about to stream
+					// (or this is a short response that won't stream)
+					await this.updateStreamingPhase('thinking');
+				}
+			} else if (sdkMessage.type === 'result') {
+				// Final result - move to finalizing phase briefly before idle
+				if (this.streamingPhase !== 'finalizing') {
+					await this.updateStreamingPhase('finalizing');
+				}
+			}
+		}
 
 		// Emit and save message
 		await this.messageHub.publish('sdk.message', sdkMessage, { sessionId: this.session.id });

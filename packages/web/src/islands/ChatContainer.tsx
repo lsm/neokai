@@ -53,6 +53,13 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const [isInitialLoad, setIsInitialLoad] = useState(true);
 
 	/**
+	 * Streaming phase tracking for fine-grained UI feedback
+	 */
+	const [streamingPhase, setStreamingPhase] = useState<
+		'initializing' | 'thinking' | 'streaming' | 'finalizing' | null
+	>(null);
+
+	/**
 	 * Context usage from accurate SDK context info
 	 */
 	const [contextUsage, setContextUsage] = useState<ContextInfo | undefined>(undefined);
@@ -67,6 +74,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		setError(null);
 		setCurrentAction(undefined);
 		setStreamingEvents([]);
+		setStreamingPhase(null);
 
 		// Clear any pending timeouts from previous session
 		if (sendTimeoutRef.current) {
@@ -231,7 +239,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				// Subscribe to unified session state (includes agent state and commands)
 				const unsubSessionState = await hub.subscribe<{
 					session: unknown;
-					agent: { status: 'idle' | 'queued' | 'processing' | 'interrupted'; messageId?: string };
+					agent: {
+						status: 'idle' | 'queued' | 'processing' | 'interrupted';
+						messageId?: string;
+						phase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing';
+						streamingStartedAt?: number;
+					};
 					commands: { availableCommands: string[] };
 					context: unknown;
 				}>(
@@ -250,10 +263,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 								setSending(false);
 								setStreamingEvents([]);
 								setCurrentAction(undefined);
+								setStreamingPhase(null);
 								break;
 							case 'queued':
 								setSending(true);
 								setCurrentAction('Queued...');
+								setStreamingPhase(null);
 								// Clear send timeout when message is successfully queued
 								if (sendTimeoutRef.current) {
 									clearTimeout(sendTimeoutRef.current);
@@ -262,7 +277,30 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 								break;
 							case 'processing':
 								setSending(true);
-								setCurrentAction('Processing...');
+
+								// Phase-specific UI feedback
+								const phase = data.agent.phase || 'initializing';
+								setStreamingPhase(phase);
+
+								switch (phase) {
+									case 'initializing':
+										setCurrentAction('Starting...');
+										break;
+									case 'thinking':
+										setCurrentAction('Thinking...');
+										break;
+									case 'streaming':
+										// Calculate streaming duration
+										const duration = data.agent.streamingStartedAt
+											? Math.floor((Date.now() - data.agent.streamingStartedAt) / 1000)
+											: 0;
+										setCurrentAction(duration > 0 ? `Streaming (${duration}s)...` : 'Streaming...');
+										break;
+									case 'finalizing':
+										setCurrentAction('Finalizing...');
+										break;
+								}
+
 								// Clear send timeout when processing starts
 								if (sendTimeoutRef.current) {
 									clearTimeout(sendTimeoutRef.current);
@@ -273,6 +311,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 								setSending(false);
 								setStreamingEvents([]);
 								setCurrentAction('Interrupted');
+								setStreamingPhase(null);
 								// Clear interrupted status after brief delay
 								setTimeout(() => setCurrentAction(undefined), 2000);
 								break;
@@ -858,6 +897,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				connectionState={connectionState.value}
 				isProcessing={sending || streamingEvents.length > 0}
 				currentAction={currentAction}
+				streamingPhase={streamingPhase}
 				contextUsage={contextUsage}
 				maxContextTokens={200000}
 				onSendMessage={handleSendMessage}
