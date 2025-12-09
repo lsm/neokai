@@ -1,6 +1,21 @@
 /**
- * Test to replicate daemon's exact SDK usage
- * This helps us debug why the daemon hangs but tests pass
+ * Real SDK Integration Tests
+ *
+ * WHY NO MOCKS HERE:
+ * ------------------
+ * These tests use the REAL Claude Agent SDK with actual credentials to verify:
+ * 1. The SDK query() function works correctly with both cwd and without
+ * 2. Our daemon usage pattern matches the SDK's expected behavior
+ * 3. OAuth tokens work correctly with the SDK (officially supported)
+ * 4. Network, API, and authentication integration is working end-to-end
+ *
+ * This complements agent-session-mocked.test.ts which tests AgentSession
+ * logic in isolation using mocks.
+ *
+ * REQUIREMENTS:
+ * - Requires ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
+ * - Tests are skipped if credentials are not available
+ * - Makes real API calls (costs money, uses rate limits)
  */
 
 import { describe, test, expect } from 'bun:test';
@@ -12,11 +27,7 @@ describe('Daemon-style SDK Usage', () => {
 	const verbose = !!process.env.TEST_VERBOSE;
 	const log = verbose ? console.log : () => {};
 
-	// Skip in CI as these tests can be flaky with OAuth tokens
-	const skipInCI = process.env.CI === 'true';
-	const shouldSkip = !hasAnyCredentials() || skipInCI;
-
-	test.skipIf(shouldSkip)(
+	test.skipIf(!hasAnyCredentials())(
 		'should work with cwd option (like daemon does)',
 		async () => {
 			log('\n[TEST] Testing with cwd option...');
@@ -61,7 +72,7 @@ describe('Daemon-style SDK Usage', () => {
 		60000 // 60 second timeout
 	);
 
-	test.skipIf(shouldSkip)(
+	test.skipIf(!hasAnyCredentials())(
 		'should work WITHOUT cwd option (like original test)',
 		async () => {
 			log('\n[TEST] Testing WITHOUT cwd option...');

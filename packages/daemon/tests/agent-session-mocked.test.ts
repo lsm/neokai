@@ -1,8 +1,19 @@
 /**
  * AgentSession Tests with Mocked SDK
  *
- * These tests use a mocked Claude Agent SDK to test AgentSession functionality
- * without requiring actual API credentials.
+ * WHY WE USE A MOCK HERE:
+ * -----------------------
+ * These tests focus on AgentSession's message queuing, state management, and
+ * WebSocket communication logic - NOT the actual Claude API integration.
+ *
+ * Using a mock allows us to:
+ * 1. Test without requiring API credentials (enables testing in CI/CD)
+ * 2. Test edge cases (abort, interrupts) without API rate limits
+ * 3. Run tests quickly without network calls
+ * 4. Focus on AgentSession behavior, not SDK behavior
+ *
+ * IMPORTANT: Real SDK integration is tested in daemon-style-sdk.test.ts
+ * which uses actual credentials and makes real API calls.
  */
 
 import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll, mock } from 'bun:test';
@@ -14,9 +25,14 @@ import {
 	waitForWebSocketMessage,
 } from './test-utils';
 
-// Install SDK mock before any imports that might use it
+/**
+ * Mock the Claude Agent SDK to avoid requiring API credentials.
+ *
+ * CRITICAL: Bun's mock.module() is GLOBAL across all test files in a test run.
+ * We MUST call mock.restore() in afterAll() to prevent leaking this mock to
+ * other test files (especially daemon-style-sdk.test.ts which needs the real SDK).
+ */
 beforeAll(async () => {
-	// Mock the claude-agent-sdk module
 	mock.module('@anthropic-ai/claude-agent-sdk', () => {
 		return {
 			query: mock(
@@ -403,7 +419,15 @@ describe('AgentSession state transitions with Mocked SDK', () => {
 	});
 });
 
-// Restore the real SDK module after all tests
+/**
+ * CRITICAL CLEANUP: Restore the real Claude Agent SDK module.
+ *
+ * Without this, the mock leaks to subsequent test files because Bun's
+ * mock.module() is global. This caused daemon-style-sdk.test.ts to fail
+ * because it received the mocked SDK instead of the real one.
+ *
+ * See commit: "fix(test): restore SDK mock after agent-session-mocked tests"
+ */
 afterAll(() => {
 	mock.restore();
 });
