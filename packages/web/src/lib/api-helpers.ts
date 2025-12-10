@@ -11,7 +11,6 @@ import type {
 	GetSessionResponse,
 	ListSessionsResponse,
 	UpdateSessionRequest,
-	ListMessagesResponse,
 	ReadFileRequest,
 	ReadFileResponse,
 	ListFilesRequest,
@@ -55,28 +54,12 @@ export async function deleteSession(sessionId: string): Promise<void> {
 
 // ==================== Message Operations ====================
 
-export async function listMessages(
-	sessionId: string,
-	params?: {
-		limit?: number;
-		offset?: number;
-		before?: string;
-		after?: string;
-	}
-): Promise<ListMessagesResponse> {
-	const hub = await connectionManager.getHub();
-	return await hub.call<ListMessagesResponse>('message.list', {
-		sessionId,
-		...params,
-	});
-}
-
 export async function getSDKMessages(
 	sessionId: string,
 	params?: {
 		limit?: number;
-		offset?: number;
-		since?: number;
+		before?: number; // Cursor: get messages older than this timestamp (ms)
+		since?: number; // Get messages newer than this timestamp (ms)
 	}
 ): Promise<{ sdkMessages: unknown[] }> {
 	const hub = await connectionManager.getHub();
@@ -84,6 +67,11 @@ export async function getSDKMessages(
 		sessionId,
 		...params,
 	});
+}
+
+export async function getMessageCount(sessionId: string): Promise<{ count: number }> {
+	const hub = await connectionManager.getHub();
+	return await hub.call<{ count: number }>('message.count', { sessionId });
 }
 
 // ==================== Command Operations ====================

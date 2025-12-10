@@ -11,6 +11,7 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import {
 	getSession,
 	getSDKMessages,
+	getMessageCount,
 	getSlashCommands,
 	deleteSession,
 	listSessions,
@@ -406,12 +407,15 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			// Load auto-scroll setting from session config (defaults to false)
 			setAutoScroll(response.session.config.autoScroll ?? false);
 
-			// Load most recent 100 SDK messages (reverse pagination)
-			const sdkResponse = await getSDKMessages(sessionId, { limit: 100, offset: 0 });
+			// Load most recent 100 SDK messages and get total count
+			const [sdkResponse, countResponse] = await Promise.all([
+				getSDKMessages(sessionId, { limit: 100 }),
+				getMessageCount(sessionId),
+			]);
 			setMessages(sdkResponse.sdkMessages as SDKMessage[]);
 
-			// Check if there are more messages to load
-			setHasMoreMessages(sdkResponse.sdkMessages.length === 100);
+			// Use actual count to determine if there are more messages
+			setHasMoreMessages(sdkResponse.sdkMessages.length < countResponse.count);
 
 			// Load slash commands for this session
 			try {
@@ -450,7 +454,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	};
 
 	const loadOlderMessages = async () => {
-		if (loadingOlder || !hasMoreMessages) return;
+		if (loadingOlder || !hasMoreMessages || messages.length === 0) return;
 
 		try {
 			setLoadingOlder(true);
@@ -460,9 +464,21 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			const oldScrollHeight = container?.scrollHeight || 0;
 			const oldScrollTop = container?.scrollTop || 0;
 
-			// Load next batch of older messages
-			const offset = messages.length;
-			const sdkResponse = await getSDKMessages(sessionId, { limit: 100, offset });
+			// Get the oldest message's timestamp as cursor
+			const oldestMessage = messages[0] as SDKMessage & { timestamp?: number };
+			const beforeTimestamp = oldestMessage?.timestamp;
+
+			if (!beforeTimestamp) {
+				console.warn('No timestamp on oldest message, cannot load older messages');
+				setHasMoreMessages(false);
+				return;
+			}
+
+			// Load messages older than the current oldest
+			const sdkResponse = await getSDKMessages(sessionId, {
+				limit: 100,
+				before: beforeTimestamp,
+			});
 
 			if (sdkResponse.sdkMessages.length === 0) {
 				setHasMoreMessages(false);
@@ -476,13 +492,14 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			setHasMoreMessages(sdkResponse.sdkMessages.length === 100);
 
 			// Restore scroll position after new messages are rendered
-			setTimeout(() => {
+			// Use requestAnimationFrame to ensure DOM has updated
+			requestAnimationFrame(() => {
 				if (container) {
 					const newScrollHeight = container.scrollHeight;
 					const scrollDiff = newScrollHeight - oldScrollHeight;
 					container.scrollTop = oldScrollTop + scrollDiff;
 				}
-			}, 0);
+			});
 		} catch (err) {
 			console.error('Failed to load older messages:', err);
 			toast.error('Failed to load older messages');

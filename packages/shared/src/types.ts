@@ -28,26 +28,6 @@ export interface SessionMetadata {
 	toolCallCount: number;
 }
 
-// Message types
-export interface Message {
-	id: string;
-	sessionId: string;
-	role: MessageRole;
-	content: string;
-	timestamp: string;
-	toolCalls?: ToolCall[];
-	artifacts?: Artifact[];
-	thinking?: string;
-	metadata?: MessageMetadata;
-}
-
-export type MessageRole = 'user' | 'assistant' | 'system';
-
-export interface MessageMetadata {
-	tokens?: number;
-	duration?: number;
-}
-
 // Message content types for streaming input (supports images)
 export type MessageContent = TextContent | ImageContent;
 
@@ -82,20 +62,6 @@ export interface MessageImage {
 }
 
 // Tool types
-export interface ToolCall {
-	id: string;
-	messageId: string;
-	tool: string;
-	input: unknown;
-	output?: unknown;
-	status: ToolCallStatus;
-	error?: string;
-	duration?: number;
-	timestamp: string;
-}
-
-export type ToolCallStatus = 'pending' | 'success' | 'error';
-
 export interface Tool {
 	name: string;
 	description: string;
@@ -108,18 +74,6 @@ export interface ToolBundle {
 	tools: string[];
 	description: string;
 }
-
-// Artifact types
-export interface Artifact {
-	id: string;
-	type: ArtifactType;
-	title: string;
-	content: string;
-	language?: string;
-	metadata?: Record<string, unknown>;
-}
-
-export type ArtifactType = 'code' | 'image' | 'file' | 'diff';
 
 // Event types
 export interface Event {

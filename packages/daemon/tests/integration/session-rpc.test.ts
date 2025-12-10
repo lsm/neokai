@@ -122,7 +122,6 @@ describe('Session RPC Integration', () => {
 			expect(result.session).toBeDefined();
 			expect(result.session.id).toBe(created.sessionId);
 			expect(result.session.workspacePath).toBe(`${TMP_DIR}/test-workspace`);
-			expect(result.messages).toBeArray();
 			expect(result.context).toBeDefined();
 		});
 

@@ -82,8 +82,8 @@ describe('setupRPCHandlers - Handler Registration', () => {
 		expect(handlers.has('session.delete')).toBe(true);
 
 		// Message handlers
-		expect(handlers.has('message.list')).toBe(true);
 		expect(handlers.has('message.sdkMessages')).toBe(true);
+		expect(handlers.has('message.count')).toBe(true);
 
 		// Command handlers
 		expect(handlers.has('commands.list')).toBe(true);

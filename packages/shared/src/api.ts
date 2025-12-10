@@ -4,7 +4,6 @@ import type {
 	FileInfo,
 	FileTree,
 	HealthStatus,
-	Message,
 	Session,
 	SessionConfig,
 	Tool,
@@ -29,7 +28,6 @@ export interface ListSessionsResponse {
 
 export interface GetSessionResponse {
 	session: Session;
-	messages: Message[];
 	activeTools: string[];
 	context: {
 		files: string[];
@@ -55,10 +53,6 @@ export interface SendMessageRequest {
 export interface SendMessageResponse {
 	messageId: string;
 	status: 'processing';
-}
-
-export interface ListMessagesResponse {
-	messages: Message[];
 }
 
 export interface ReadFileRequest {
@@ -164,15 +158,6 @@ export interface APIClient {
 
 	// Messages
 	sendMessage(sessionId: string, req: SendMessageRequest): Promise<SendMessageResponse>;
-	listMessages(
-		sessionId: string,
-		params?: {
-			limit?: number;
-			offset?: number;
-			before?: string;
-			after?: string;
-		}
-	): Promise<ListMessagesResponse>;
 	clearMessages(sessionId: string): Promise<void>;
 
 	// Files

@@ -55,31 +55,6 @@ describe('AgentSession', () => {
 		});
 	});
 
-	describe('getMessages', () => {
-		test('should return empty array for new session', async () => {
-			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: '/test/agent-session',
-			});
-
-			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-			const messages = agentSession!.getMessages();
-
-			expect(messages).toBeArray();
-			expect(messages.length).toBe(0);
-		});
-
-		test('should support pagination', async () => {
-			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: '/test/agent-session',
-			});
-
-			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-			const messages = agentSession!.getMessages(10, 0);
-
-			expect(messages).toBeArray();
-		});
-	});
-
 	describe('getSDKMessages', () => {
 		test('should return empty array for new session', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
@@ -183,38 +158,6 @@ describe('AgentSession', () => {
 			const sessionData = agentSession!.getSessionData();
 			expect(sessionData.metadata?.messageCount).toBe(5);
 			expect(sessionData.metadata?.totalTokens).toBe(1000);
-		});
-	});
-
-	describe('clearHistory', () => {
-		test('should clear conversation history', async () => {
-			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: '/test/agent-session',
-			});
-
-			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-
-			// Clear history
-			agentSession!.clearHistory();
-
-			// Internal history should be empty
-			// (We can't directly check this, but getMessages will still show DB messages)
-		});
-	});
-
-	describe('reloadHistory', () => {
-		test('should reload history from database', async () => {
-			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: '/test/agent-session',
-			});
-
-			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-
-			// Clear and reload
-			agentSession!.clearHistory();
-			agentSession!.reloadHistory();
-
-			// Should not throw
 		});
 	});
 

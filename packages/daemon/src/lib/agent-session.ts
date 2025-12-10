@@ -1,11 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type {
-	AgentProcessingState,
-	Message,
-	MessageContent,
-	MessageImage,
-	Session,
-} from '@liuboer/shared';
+import type { AgentProcessingState, MessageContent, MessageImage, Session } from '@liuboer/shared';
 import type { EventBus, MessageHub } from '@liuboer/shared';
 import type { Query, SDKMessage, SDKUserMessage, SlashCommand } from '@liuboer/shared/sdk';
 import {
@@ -53,7 +47,6 @@ type SDKQueryObject = Query | null;
  * - Proper interruption handling
  */
 export class AgentSession {
-	private conversationHistory: Message[] = [];
 	private abortController: AbortController | undefined = undefined;
 
 	// Message queue for streaming input
@@ -75,7 +68,6 @@ export class AgentSession {
 	private errorManager: ErrorManager;
 
 	// Delta versioning for state channels
-	private messageDeltaVersion: number = 0;
 	private sdkMessageDeltaVersion: number = 0;
 
 	// FIX: Agent processing state (server-side state for push-based sync)
@@ -98,22 +90,11 @@ export class AgentSession {
 		this.errorManager = new ErrorManager(this.messageHub);
 		this.logger = new Logger(`AgentSession ${session.id}`);
 
-		// Load existing messages into conversation history
-		this.loadConversationHistory();
-
 		// Setup event listeners for incoming messages
 		this.setupEventListeners();
 
 		// LAZY START: Don't start the streaming query here.
 		// Query will be started on first message send via ensureQueryStarted()
-	}
-
-	/**
-	 * Load existing messages from database into conversation history
-	 */
-	private loadConversationHistory(): void {
-		const messages = this.db.getMessages(this.session.id);
-		this.conversationHistory = messages;
 	}
 
 	/**
@@ -339,15 +320,6 @@ export class AgentSession {
 	private async *messageGenerator(): AsyncGenerator<SDKUserMessage> {
 		this.logger.log(`Message generator started`);
 
-		// FIX: Do NOT replay conversation history!
-		// History is loaded from DB for display only, not to be re-sent to SDK.
-		// If we re-send history, SDK will process all user messages again as NEW messages.
-		if (this.conversationHistory.length > 0) {
-			this.logger.log(
-				`Loaded ${this.conversationHistory.length} historical messages from DB (for display only, NOT replaying to SDK)`
-			);
-		}
-
 		// Continuously yield new messages from queue
 		while (this.queryRunning) {
 			const queuedMessage = await this.waitForNextMessage();
@@ -380,7 +352,7 @@ export class AgentSession {
 
 				this.db.saveSDKMessage(this.session.id, sdkUserMessage);
 
-				// Emit user message
+				// Emit user message as SDK message event
 				await this.messageHub.publish('sdk.message', sdkUserMessage, {
 					sessionId: this.session.id,
 				});
@@ -392,30 +364,6 @@ export class AgentSession {
 					messageId: queuedMessage.id,
 					phase: 'initializing',
 				});
-
-				// Add to conversation history
-				const userMessage: Message = {
-					id: queuedMessage.id,
-					sessionId: this.session.id,
-					role: 'user',
-					content:
-						typeof queuedMessage.content === 'string'
-							? queuedMessage.content
-							: JSON.stringify(queuedMessage.content),
-					timestamp: queuedMessage.timestamp,
-				};
-				this.conversationHistory.push(userMessage);
-
-				// Broadcast message delta for user message
-				await this.messageHub.publish(
-					'state.messages.delta',
-					{
-						added: [userMessage],
-						timestamp: Date.now(),
-						version: ++this.messageDeltaVersion,
-					},
-					{ sessionId: this.session.id }
-				);
 			}
 
 			// Yield to SDK
@@ -852,17 +800,21 @@ export class AgentSession {
 	}
 
 	/**
-	 * Get messages for this session
+	 * Get SDK messages for this session
+	 *
+	 * @param limit - Maximum number of messages to return
+	 * @param before - Cursor: get messages older than this timestamp (milliseconds)
+	 * @param since - Get messages newer than this timestamp (milliseconds)
 	 */
-	getMessages(limit?: number, offset?: number): Message[] {
-		return this.db.getMessages(this.session.id, limit, offset);
+	getSDKMessages(limit?: number, before?: number, since?: number) {
+		return this.db.getSDKMessages(this.session.id, limit, before, since);
 	}
 
 	/**
-	 * Get SDK messages for this session
+	 * Get the total count of SDK messages for this session
 	 */
-	getSDKMessages(limit?: number, offset?: number, since?: number) {
-		return this.db.getSDKMessages(this.session.id, limit, offset, since);
+	getSDKMessageCount(): number {
+		return this.db.getSDKMessageCount(this.session.id);
 	}
 
 	/**
@@ -887,21 +839,6 @@ export class AgentSession {
 		}
 
 		this.db.updateSession(this.session.id, updates);
-	}
-
-	/**
-	 * Clear conversation history (for testing or reset)
-	 */
-	clearHistory(): void {
-		this.conversationHistory = [];
-	}
-
-	/**
-	 * Reload conversation history from database
-	 * Useful after clearing messages or external updates
-	 */
-	reloadHistory(): void {
-		this.loadConversationHistory();
 	}
 
 	/**

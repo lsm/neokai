@@ -228,13 +228,13 @@ describe('Database', () => {
 
 			db.saveSDKMessage('session-1', sdkMessage);
 
-			// getMessages extracts from SDK messages
-			const messages = db.getMessages('session-1');
+			// Get SDK messages directly
+			const messages = db.getSDKMessages('session-1');
 
 			assertEquals(messages.length, 1);
-			assertEquals(messages[0].id, '00000000-0000-0000-0000-000000000001');
-			assertEquals(messages[0].content, 'Hello, world!');
-			assertEquals(messages[0].role, 'user');
+			assertEquals(messages[0].uuid, '00000000-0000-0000-0000-000000000001');
+			assertEquals(messages[0].message.content, 'Hello, world!');
+			assertEquals(messages[0].type, 'user');
 
 			db.close();
 		});
@@ -264,11 +264,11 @@ describe('Database', () => {
 
 			db.saveSDKMessage('session-1', sdkMessage);
 
-			const messages = db.getMessages('session-1');
+			const messages = db.getSDKMessages('session-1');
 
 			assertEquals(messages.length, 1);
-			assertEquals(messages[0].content, 'The answer is 42');
-			assertEquals(messages[0].role, 'assistant');
+			assertEquals(messages[0].message.content[0].text, 'The answer is 42');
+			assertEquals(messages[0].type, 'assistant');
 
 			db.close();
 		});
@@ -304,23 +304,23 @@ describe('Database', () => {
 			db.saveSDKMessage('session-1', sdkMsg2); // Save in reverse order
 			db.saveSDKMessage('session-1', sdkMsg1);
 
-			const messages = db.getMessages('session-1');
+			const messages = db.getSDKMessages('session-1');
 
 			assertEquals(messages.length, 2);
 			// SDK messages are stored chronologically
-			assertEquals(messages[0].id, '00000000-0000-0000-0000-000000000002');
-			assertEquals(messages[1].id, '00000000-0000-0000-0000-000000000001');
+			assertEquals(messages[0].uuid, '00000000-0000-0000-0000-000000000002');
+			assertEquals(messages[1].uuid, '00000000-0000-0000-0000-000000000001');
 
 			db.close();
 		});
 
-		test('should support message pagination', async () => {
+		test('should support cursor-based pagination for SDK messages', async () => {
 			const db = await createTestDb();
 
 			const session = createTestSession('session-1');
 			db.createSession(session);
 
-			// Create 10 SDK messages
+			// Create 10 SDK messages with small delays to ensure distinct timestamps
 			for (let i = 0; i < 10; i++) {
 				const sdkMsg = {
 					type: 'user' as const,
@@ -333,20 +333,28 @@ describe('Database', () => {
 					session_id: 'session-1',
 				};
 				db.saveSDKMessage('session-1', sdkMsg);
+				// Small delay to ensure different timestamps
+				await new Promise((resolve) => setTimeout(resolve, 10));
 			}
 
-			// Pagination now returns NEWEST messages first (for "load older" UX)
-			// offset=0 returns newest 5 messages in chronological order
-			const page1 = db.getMessages('session-1', 5, 0);
+			// Initial load: get newest 5 messages (no cursor)
+			const page1 = db.getSDKMessages('session-1', 5);
 			assertEquals(page1.length, 5);
-			assertEquals(page1[0].id, 'msg-5'); // Oldest of the newest 5
-			assertEquals(page1[4].id, 'msg-9'); // Newest message
+			assertEquals(page1[0].uuid, 'msg-5'); // Oldest of the newest 5
+			assertEquals(page1[4].uuid, 'msg-9'); // Newest message
 
-			// offset=5 returns older 5 messages in chronological order
-			const page2 = db.getMessages('session-1', 5, 5);
+			// Get the timestamp of the oldest message in page1 for cursor
+			const oldestInPage1 = page1[0] as { timestamp: number };
+			const cursor = oldestInPage1.timestamp;
+
+			// Load older: get messages before the cursor
+			const page2 = db.getSDKMessages('session-1', 5, cursor);
 			assertEquals(page2.length, 5);
-			assertEquals(page2[0].id, 'msg-0'); // Oldest message
-			assertEquals(page2[4].id, 'msg-4');
+			assertEquals(page2[0].uuid, 'msg-0'); // Oldest message
+			assertEquals(page2[4].uuid, 'msg-4'); // Just before cursor
+
+			// Verify count
+			assertEquals(db.getSDKMessageCount('session-1'), 10);
 
 			db.close();
 		});
@@ -384,13 +392,12 @@ describe('Database', () => {
 
 			db.saveSDKMessage('session-1', sdkMessage);
 
-			const messages = db.getMessages('session-1');
+			const messages = db.getSDKMessages('session-1');
 
 			assertEquals(messages.length, 1);
-			assertExists(messages[0].toolCalls);
-			assertEquals(messages[0].toolCalls!.length, 1);
-			assertEquals(messages[0].toolCalls![0].tool, 'read_file');
-			assertEquals(messages[0].toolCalls![0].status, 'success');
+			// Tool uses are in the SDK message content
+			assertEquals(messages[0].message.content.length, 2);
+			assertEquals(messages[0].message.content[1].name, 'read_file');
 
 			db.close();
 		});
@@ -428,11 +435,11 @@ describe('Database', () => {
 
 			db.saveSDKMessage('session-1', sdkMessage);
 
-			const messages = db.getMessages('session-1');
+			const messages = db.getSDKMessages('session-1');
 
-			assertEquals(messages[0].toolCalls!.length, 2);
-			assertEquals(messages[0].toolCalls![0].tool, 'read_file');
-			assertEquals(messages[0].toolCalls![1].tool, 'write_file');
+			assertEquals(messages[0].message.content.length, 2);
+			assertEquals(messages[0].message.content[0].name, 'read_file');
+			assertEquals(messages[0].message.content[1].name, 'write_file');
 
 			db.close();
 		});
@@ -457,7 +464,6 @@ describe('Database', () => {
 			};
 			db.saveSDKMessage('session-1', sdkMsg);
 
-			assertEquals(db.getMessages('session-1').length, 1);
 			assertEquals(db.getSDKMessages('session-1').length, 1);
 
 			// Delete session should cascade delete SDK messages
@@ -504,14 +510,14 @@ describe('Database', () => {
 			db.saveSDKMessage('session-1', sdkMsg1);
 			db.saveSDKMessage('session-2', sdkMsg2);
 
-			const messages1 = db.getMessages('session-1');
-			const messages2 = db.getMessages('session-2');
+			const messages1 = db.getSDKMessages('session-1');
+			const messages2 = db.getSDKMessages('session-2');
 
 			assertEquals(messages1.length, 1);
-			assertEquals(messages1[0].content, 'Session 1 message');
+			assertEquals(messages1[0].message.content, 'Session 1 message');
 
 			assertEquals(messages2.length, 1);
-			assertEquals(messages2[0].content, 'Session 2 message');
+			assertEquals(messages2[0].message.content, 'Session 2 message');
 
 			db.close();
 		});

@@ -1,7 +1,7 @@
 import { Database as BunDatabase } from 'bun:sqlite';
 import { dirname } from 'node:path';
 import { mkdirSync, existsSync } from 'node:fs';
-import type { AuthMethod, Message, OAuthTokens, Session, ToolCall } from '@liuboer/shared';
+import type { AuthMethod, OAuthTokens, Session } from '@liuboer/shared';
 import type { SDKMessage } from '@liuboer/shared/sdk';
 import { generateUUID } from '@liuboer/shared';
 
@@ -253,67 +253,6 @@ export class Database {
 		stmt.run(id);
 	}
 
-	// Message operations - now using sdk_messages table as single source of truth
-
-	/**
-	 * Get messages for a session by extracting from SDK messages
-	 * Returns simplified Message format for conversation history
-	 */
-	getMessages(sessionId: string, limit = 100, offset = 0): Message[] {
-		const sdkMessages = this.getSDKMessages(sessionId, limit, offset);
-		const messages: Message[] = [];
-
-		for (const sdkMsg of sdkMessages) {
-			// Convert user messages
-			if (sdkMsg.type === 'user') {
-				const userContent = sdkMsg.message.content;
-				const contentText = Array.isArray(userContent)
-					? userContent.map((block) => (block.type === 'text' ? block.text : '')).join('\n')
-					: userContent;
-
-				messages.push({
-					id: sdkMsg.uuid || generateUUID(),
-					sessionId: sdkMsg.session_id,
-					role: 'user',
-					content: contentText,
-					timestamp: new Date().toISOString(), // SDK messages have timestamp in parent row
-				});
-			}
-			// Convert assistant messages
-			else if (sdkMsg.type === 'assistant') {
-				const content = sdkMsg.message.content;
-				let textContent = '';
-				const toolCalls: ToolCall[] = [];
-
-				for (const block of content) {
-					if (block.type === 'text') {
-						textContent += block.text;
-					} else if (block.type === 'tool_use') {
-						toolCalls.push({
-							id: block.id,
-							messageId: sdkMsg.uuid,
-							tool: block.name,
-							input: block.input,
-							status: 'success',
-							timestamp: new Date().toISOString(),
-						});
-					}
-				}
-
-				messages.push({
-					id: sdkMsg.uuid,
-					sessionId: sdkMsg.session_id,
-					role: 'assistant',
-					content: textContent,
-					timestamp: new Date().toISOString(),
-					toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-				});
-			}
-		}
-
-		return messages;
-	}
-
 	// Authentication operations
 
 	/**
@@ -529,27 +468,36 @@ export class Database {
 	 * Get SDK messages for a session
 	 *
 	 * Returns messages in chronological order (oldest to newest).
-	 * Uses DESC ordering with offset to enable "load more" pagination from newest to oldest:
-	 * - offset=0: returns the NEWEST `limit` messages
-	 * - offset=100: returns the next older batch of messages
 	 *
-	 * This ensures users always see the most recent messages first on load.
+	 * Pagination modes:
+	 * 1. Initial load (no before): Returns the NEWEST `limit` messages
+	 * 2. Load older (with before): Returns messages BEFORE the given timestamp
+	 * 3. Load newer (with since): Returns messages AFTER the given timestamp
+	 *
+	 * @param sessionId - The session ID to get messages for
+	 * @param limit - Maximum number of messages to return (default: 100)
+	 * @param before - Cursor: get messages older than this timestamp (milliseconds)
+	 * @param since - Get messages newer than this timestamp (milliseconds)
 	 */
-	getSDKMessages(sessionId: string, limit = 100, offset = 0, since?: number): SDKMessage[] {
+	getSDKMessages(sessionId: string, limit = 100, before?: number, since?: number): SDKMessage[] {
 		let query = `SELECT sdk_message, timestamp FROM sdk_messages WHERE session_id = ?`;
 		const params: SQLiteValue[] = [sessionId];
 
-		// Add timestamp filter if 'since' is provided
-		// 'since' is a JavaScript millisecond timestamp, convert to ISO string for comparison
+		// Cursor-based pagination: get messages BEFORE a timestamp (for loading older)
+		if (before !== undefined && before > 0) {
+			query += ` AND timestamp < ?`;
+			params.push(new Date(before).toISOString());
+		}
+
+		// Get messages AFTER a timestamp (for loading newer / real-time updates)
 		if (since !== undefined && since > 0) {
 			query += ` AND timestamp > ?`;
 			params.push(new Date(since).toISOString());
 		}
 
 		// Order DESC to get newest messages first, then reverse for chronological display
-		// This enables proper "load older" pagination where offset=0 gets newest messages
-		query += ` ORDER BY timestamp DESC LIMIT ? OFFSET ?`;
-		params.push(limit, offset);
+		query += ` ORDER BY timestamp DESC LIMIT ?`;
+		params.push(limit);
 
 		const stmt = this.db.prepare(query);
 		const rows = stmt.all(...params) as Record<string, unknown>[];

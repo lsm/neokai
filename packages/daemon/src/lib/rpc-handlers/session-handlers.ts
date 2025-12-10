@@ -102,11 +102,9 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 		}
 
 		const session = agentSession.getSessionData();
-		const messages = agentSession.getMessages();
 
 		return {
 			session,
-			messages,
 			activeTools: [],
 			context: {
 				files: [],

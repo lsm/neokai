@@ -44,8 +44,6 @@ describe('End-to-End Workflow Integration', () => {
 			});
 
 			expect(retrieved.session.id).toBe(created.sessionId);
-			expect(retrieved.messages).toBeArray();
-			expect(retrieved.messages.length).toBe(0);
 
 			// 3. Add a test message to database (simulating message flow)
 			ctx.db.saveSDKMessage(created.sessionId, {
@@ -59,13 +57,13 @@ describe('End-to-End Workflow Integration', () => {
 				session_id: created.sessionId,
 			});
 
-			// 4. Get messages
-			const messages = await callRPCHandler(ctx.messageHub, 'message.list', {
+			// 4. Get SDK messages
+			const messages = await callRPCHandler(ctx.messageHub, 'message.sdkMessages', {
 				sessionId: created.sessionId,
 			});
 
-			expect(messages.messages.length).toBe(1);
-			expect(messages.messages[0].content).toBe('Hello, world!');
+			expect(messages.sdkMessages.length).toBe(1);
+			expect(messages.sdkMessages[0].message.content).toBe('Hello, world!');
 
 			// 5. Update session
 			await callRPCHandler(ctx.messageHub, 'session.update', {
@@ -119,24 +117,24 @@ describe('End-to-End Workflow Integration', () => {
 				session_id: session2.sessionId,
 			});
 
-			// Verify isolation
-			const msgs1 = await callRPCHandler(ctx.messageHub, 'message.list', {
+			// Verify isolation using SDK messages
+			const msgs1 = await callRPCHandler(ctx.messageHub, 'message.sdkMessages', {
 				sessionId: session1.sessionId,
 			});
-			const msgs2 = await callRPCHandler(ctx.messageHub, 'message.list', {
+			const msgs2 = await callRPCHandler(ctx.messageHub, 'message.sdkMessages', {
 				sessionId: session2.sessionId,
 			});
-			const msgs3 = await callRPCHandler(ctx.messageHub, 'message.list', {
+			const msgs3 = await callRPCHandler(ctx.messageHub, 'message.sdkMessages', {
 				sessionId: session3.sessionId,
 			});
 
-			expect(msgs1.messages.length).toBe(1);
-			expect(msgs1.messages[0].content).toBe('Message 1');
+			expect(msgs1.sdkMessages.length).toBe(1);
+			expect(msgs1.sdkMessages[0].message.content).toBe('Message 1');
 
-			expect(msgs2.messages.length).toBe(1);
-			expect(msgs2.messages[0].content).toBe('Message 2');
+			expect(msgs2.sdkMessages.length).toBe(1);
+			expect(msgs2.sdkMessages[0].message.content).toBe('Message 2');
 
-			expect(msgs3.messages.length).toBe(0);
+			expect(msgs3.sdkMessages.length).toBe(0);
 
 			// Delete one session
 			await callRPCHandler(ctx.messageHub, 'session.delete', {

@@ -13,7 +13,7 @@
  * Events are typed for safety and IDE autocomplete.
  */
 
-import type { Session, Message, AuthMethod } from './types.ts';
+import type { Session, AuthMethod } from './types.ts';
 import type { SDKMessage } from './sdk/sdk.d.ts';
 import type { AgentProcessingState } from './state-types.ts';
 
@@ -32,9 +32,6 @@ export interface EventMap {
 	'session:created': { session: Session };
 	'session:updated': { sessionId: string; updates: Partial<Session> };
 	'session:deleted': { sessionId: string };
-
-	// Message events
-	'message:created': { sessionId: string; message: Message };
 
 	// SDK events
 	'sdk:message': { sessionId: string; message: SDKMessage };

@@ -137,8 +137,8 @@ describe('AgentSession SDK Integration', () => {
 				// Wait for second message to process
 				await Bun.sleep(5000);
 
-				// Verify both messages were processed
-				const messages = agentSession!.getMessages();
+				// Verify both messages were processed (use SDK messages now)
+				const messages = agentSession!.getSDKMessages();
 				expect(messages.length).toBeGreaterThanOrEqual(2);
 			},
 			40000
@@ -274,8 +274,8 @@ describe('AgentSession SDK Integration', () => {
 				// Wait for processing to complete
 				await Bun.sleep(8000);
 
-				// Should have messages from both interactions
-				const messages = agentSession!.getMessages();
+				// Should have messages from both interactions (use SDK messages now)
+				const messages = agentSession!.getSDKMessages();
 				expect(messages.length).toBeGreaterThanOrEqual(2);
 			},
 			30000

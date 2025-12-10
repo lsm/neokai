@@ -22,11 +22,6 @@ describe('Message RPC Handlers', () => {
 			}),
 		};
 
-		const mockMessages = [
-			{ id: '1', role: 'user', content: 'Hello' },
-			{ id: '2', role: 'assistant', content: 'Hi there!' },
-		];
-
 		const mockSDKMessages = [
 			{ type: 'user', message: { role: 'user', content: 'Hello' } },
 			{ type: 'assistant', message: { role: 'assistant', content: 'Hi!' } },
@@ -36,10 +31,10 @@ describe('Message RPC Handlers', () => {
 			getSessionAsync: mock(async (sessionId: string) => {
 				if (sessionId === 'valid-session') {
 					return {
-						getMessages: mock((_limit?: number, _offset?: number) => mockMessages),
 						getSDKMessages: mock(
-							(_limit?: number, _offset?: number, _since?: number) => mockSDKMessages
+							(_limit?: number, _before?: number, _since?: number) => mockSDKMessages
 						),
+						getSDKMessageCount: mock(() => mockSDKMessages.length),
 					};
 				}
 				return null;
@@ -47,32 +42,6 @@ describe('Message RPC Handlers', () => {
 		};
 
 		setupMessageHandlers(mockMessageHub, mockSessionManager);
-	});
-
-	describe('message.list', () => {
-		it('should register handler', () => {
-			expect(handlers.has('message.list')).toBe(true);
-		});
-
-		it('should list messages for session', async () => {
-			const handler = handlers.get('message.list')!;
-			const result = await handler({
-				sessionId: 'valid-session',
-			});
-
-			expect(result.messages).toBeDefined();
-			expect(Array.isArray(result.messages)).toBe(true);
-			expect(result.messages).toHaveLength(2);
-		});
-
-		it('should throw for invalid session', async () => {
-			const handler = handlers.get('message.list')!;
-			await expect(
-				handler({
-					sessionId: 'invalid',
-				})
-			).rejects.toThrow('Session not found');
-		});
 	});
 
 	describe('message.sdkMessages', () => {
@@ -101,11 +70,11 @@ describe('Message RPC Handlers', () => {
 			expect(result.sdkMessages).toBeDefined();
 		});
 
-		it('should support offset parameter', async () => {
+		it('should support before parameter for cursor-based pagination', async () => {
 			const handler = handlers.get('message.sdkMessages')!;
 			const result = await handler({
 				sessionId: 'valid-session',
-				offset: 5,
+				before: Date.now(),
 			});
 
 			expect(result.sdkMessages).toBeDefined();
@@ -126,8 +95,8 @@ describe('Message RPC Handlers', () => {
 			const result = await handler({
 				sessionId: 'valid-session',
 				limit: 5,
-				offset: 0,
-				since: Date.now(),
+				before: Date.now(),
+				since: Date.now() - 10000,
 			});
 
 			expect(result.sdkMessages).toBeDefined();
@@ -135,6 +104,31 @@ describe('Message RPC Handlers', () => {
 
 		it('should throw for invalid session', async () => {
 			const handler = handlers.get('message.sdkMessages')!;
+			await expect(
+				handler({
+					sessionId: 'invalid',
+				})
+			).rejects.toThrow('Session not found');
+		});
+	});
+
+	describe('message.count', () => {
+		it('should register handler', () => {
+			expect(handlers.has('message.count')).toBe(true);
+		});
+
+		it('should get message count', async () => {
+			const handler = handlers.get('message.count')!;
+			const result = await handler({
+				sessionId: 'valid-session',
+			});
+
+			expect(result.count).toBeDefined();
+			expect(result.count).toBe(2);
+		});
+
+		it('should throw for invalid session', async () => {
+			const handler = handlers.get('message.count')!;
 			await expect(
 				handler({
 					sessionId: 'invalid',
