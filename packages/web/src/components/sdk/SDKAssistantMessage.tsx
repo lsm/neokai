@@ -4,7 +4,7 @@
  * Renders assistant messages with proper content array parsing:
  * - Text blocks (markdown)
  * - Tool use blocks (expandable with input/output)
- * - Thinking blocks (collapsible)
+ * - Thinking blocks (visible by default, expandable for long content)
  */
 
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
@@ -22,6 +22,7 @@ import { toast } from '../../lib/toast.ts';
 import { messageSpacing, messageColors, borderRadius } from '../../lib/design-tokens.ts';
 import { cn } from '../../lib/utils.ts';
 import { ToolResultCard } from './tools/index.ts';
+import { ThinkingBlock } from './ThinkingBlock.tsx';
 
 type AssistantMessage = Extract<SDKMessage, { type: 'assistant' }>;
 
@@ -91,17 +92,9 @@ export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
 				return <ToolUseBlock key={`tool-${idx}`} block={block} toolResult={toolResult} />;
 			})}
 
-			{/* Thinking blocks - treated as tool blocks for unified UI */}
+			{/* Thinking blocks - visible by default with expand/collapse for long content */}
 			{thinkingBlocks.map((block: Extract<ContentBlock, { type: 'thinking' }>, idx: number) => (
-				<ToolResultCard
-					key={`thinking-${idx}`}
-					toolName="Thinking"
-					toolId={`thinking-${idx}`}
-					input={block.thinking}
-					output={null}
-					isError={false}
-					variant="default"
-				/>
+				<ThinkingBlock key={`thinking-${idx}`} content={block.thinking} />
 			))}
 
 			{/* Text blocks - full width like tool results */}
