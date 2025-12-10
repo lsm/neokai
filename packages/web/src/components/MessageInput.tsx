@@ -6,9 +6,16 @@ import CommandAutocomplete from './CommandAutocomplete.tsx';
 interface MessageInputProps {
 	onSend: (content: string) => void;
 	disabled?: boolean;
+	autoScroll?: boolean;
+	onAutoScrollChange?: (autoScroll: boolean) => void;
 }
 
-export default function MessageInput({ onSend, disabled }: MessageInputProps) {
+export default function MessageInput({
+	onSend,
+	disabled,
+	autoScroll,
+	onAutoScrollChange,
+}: MessageInputProps) {
 	const [content, setContent] = useState('');
 	const [showCommandAutocomplete, setShowCommandAutocomplete] = useState(false);
 	const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
@@ -165,6 +172,39 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
 									stroke-linejoin="round"
 									stroke-width={2}
 									d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
+								/>
+							</svg>
+						</button>
+
+						{/* Auto-scroll Toggle Button */}
+						<button
+							type="button"
+							onClick={() => onAutoScrollChange?.(!autoScroll)}
+							class={cn(
+								'p-2 rounded-lg transition-all',
+								autoScroll
+									? 'text-blue-400 bg-blue-500/20 hover:bg-blue-500/30'
+									: 'text-gray-400 hover:text-gray-300 hover:bg-dark-700/50'
+							)}
+							title={
+								autoScroll
+									? 'Auto-scroll enabled (click to disable)'
+									: 'Auto-scroll disabled (click to enable)'
+							}
+						>
+							<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M19 14l-7 7m0 0l-7-7m7 7V3"
+								/>
+								{/* Horizontal line under the arrow */}
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M5 21h14"
 								/>
 							</svg>
 						</button>

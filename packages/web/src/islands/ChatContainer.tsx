@@ -14,6 +14,7 @@ import {
 	getSlashCommands,
 	deleteSession,
 	listSessions,
+	updateSession,
 } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
 // import { generateUUID } from '../lib/utils.ts';
@@ -56,6 +57,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const [loadingOlder, setLoadingOlder] = useState(false);
 	const [hasMoreMessages, setHasMoreMessages] = useState(true);
 	const [isInitialLoad, setIsInitialLoad] = useState(true);
+	const [autoScroll, setAutoScroll] = useState(false);
 
 	/**
 	 * Streaming phase tracking for fine-grained UI feedback
@@ -360,11 +362,16 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	}, [sessionId]);
 
 	useEffect(() => {
-		// Only auto-scroll on initial load or when new messages arrive (not when loading older)
-		if (isInitialLoad || !loadingOlder) {
+		// Auto-scroll behavior:
+		// - Always scroll on initial load to show latest messages
+		// - Only scroll on new messages if autoScroll is enabled
+		// - Never scroll when loading older messages (loadingOlder prevents unwanted scroll)
+		if (isInitialLoad) {
+			scrollToBottom();
+		} else if (autoScroll && !loadingOlder) {
 			scrollToBottom();
 		}
-	}, [messages, streamingEvents, isInitialLoad, loadingOlder]);
+	}, [messages, streamingEvents, isInitialLoad, loadingOlder, autoScroll]);
 
 	// Detect scroll position and load older messages when scrolling to top
 	useEffect(() => {
@@ -395,6 +402,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			setIsInitialLoad(true);
 			const response = await getSession(sessionId);
 			setSession(response.session);
+
+			// Load auto-scroll setting from session config (defaults to false)
+			setAutoScroll(response.session.config.autoScroll ?? false);
 
 			// Load most recent 100 SDK messages (reverse pagination)
 			const sdkResponse = await getSDKMessages(sessionId, { limit: 100, offset: 0 });
@@ -561,6 +571,21 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 	const handleMenuClick = () => {
 		sidebarOpenSignal.value = true;
+	};
+
+	const handleAutoScrollChange = async (newAutoScroll: boolean) => {
+		// Update local state immediately for responsive UI
+		setAutoScroll(newAutoScroll);
+
+		// Persist to database
+		try {
+			await updateSession(sessionId, { config: { autoScroll: newAutoScroll } });
+		} catch (err) {
+			// Revert on error
+			setAutoScroll(!newAutoScroll);
+			toast.error('Failed to save auto-scroll setting');
+			console.error('Failed to update autoScroll:', err);
+		}
 	};
 
 	const getHeaderActions = () => [
@@ -920,6 +945,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			<MessageInput
 				onSend={handleSendMessage}
 				disabled={sending || connectionState.value !== 'connected'}
+				autoScroll={autoScroll}
+				onAutoScrollChange={handleAutoScrollChange}
 			/>
 
 			{/* Delete Chat Modal */}

@@ -40,6 +40,7 @@ export interface GetSessionResponse {
 export interface UpdateSessionRequest {
 	title?: string;
 	workspacePath?: string;
+	config?: Partial<SessionConfig>;
 }
 
 export interface SendMessageRequest {

@@ -234,8 +234,11 @@ export class Database {
 			values.push(JSON.stringify(updates.metadata));
 		}
 		if (updates.config) {
+			// Merge partial config updates with existing config
+			const existing = this.getSession(id);
+			const mergedConfig = existing ? { ...existing.config, ...updates.config } : updates.config;
 			fields.push('config = ?');
-			values.push(JSON.stringify(updates.config));
+			values.push(JSON.stringify(mergedConfig));
 		}
 
 		if (fields.length > 0) {
@@ -524,6 +527,13 @@ export class Database {
 
 	/**
 	 * Get SDK messages for a session
+	 *
+	 * Returns messages in chronological order (oldest to newest).
+	 * Uses DESC ordering with offset to enable "load more" pagination from newest to oldest:
+	 * - offset=0: returns the NEWEST `limit` messages
+	 * - offset=100: returns the next older batch of messages
+	 *
+	 * This ensures users always see the most recent messages first on load.
 	 */
 	getSDKMessages(sessionId: string, limit = 100, offset = 0, since?: number): SDKMessage[] {
 		let query = `SELECT sdk_message, timestamp FROM sdk_messages WHERE session_id = ?`;
@@ -536,9 +546,9 @@ export class Database {
 			params.push(new Date(since).toISOString());
 		}
 
-		// Order ASC to get messages in chronological order (oldest to newest)
-		// This provides consistent pagination behavior
-		query += ` ORDER BY timestamp ASC LIMIT ? OFFSET ?`;
+		// Order DESC to get newest messages first, then reverse for chronological display
+		// This enables proper "load older" pagination where offset=0 gets newest messages
+		query += ` ORDER BY timestamp DESC LIMIT ? OFFSET ?`;
 		params.push(limit, offset);
 
 		const stmt = this.db.prepare(query);
@@ -552,7 +562,8 @@ export class Database {
 			return { ...sdkMessage, timestamp } as SDKMessage & { timestamp: number };
 		});
 
-		return messages;
+		// Reverse to get chronological order (oldest to newest) for display
+		return messages.reverse();
 	}
 
 	/**

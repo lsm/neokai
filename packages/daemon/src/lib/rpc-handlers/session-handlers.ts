@@ -2,7 +2,7 @@
  * Session RPC Handlers
  */
 
-import type { MessageHub, MessageImage } from '@liuboer/shared';
+import type { MessageHub, MessageImage, Session } from '@liuboer/shared';
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@liuboer/shared';
 import { query } from '@anthropic-ai/claude-agent-sdk';
@@ -120,7 +120,10 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 			sessionId: string;
 		};
 
-		await sessionManager.updateSession(targetSessionId, updates);
+		// Convert UpdateSessionRequest to Partial<Session>
+		// config in UpdateSessionRequest is Partial<SessionConfig>, which is handled by
+		// database.updateSession merging with existing config
+		await sessionManager.updateSession(targetSessionId, updates as Partial<Session>);
 
 		// Broadcast update event to all clients
 		await messageHub.publish('session.updated', updates, {

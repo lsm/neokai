@@ -278,17 +278,18 @@ describe('Database', () => {
 				db.saveSDKMessage('session-1', sdkMsg);
 			}
 
-			// Get first 5
+			// Pagination now returns NEWEST messages first (for "load older" UX)
+			// offset=0 returns newest 5 messages in chronological order
 			const page1 = db.getMessages('session-1', 5, 0);
 			assertEquals(page1.length, 5);
-			assertEquals(page1[0].id, 'msg-0');
-			assertEquals(page1[4].id, 'msg-4');
+			assertEquals(page1[0].id, 'msg-5'); // Oldest of the newest 5
+			assertEquals(page1[4].id, 'msg-9'); // Newest message
 
-			// Get next 5
+			// offset=5 returns older 5 messages in chronological order
 			const page2 = db.getMessages('session-1', 5, 5);
 			assertEquals(page2.length, 5);
-			assertEquals(page2[0].id, 'msg-5');
-			assertEquals(page2[4].id, 'msg-9');
+			assertEquals(page2[0].id, 'msg-0'); // Oldest message
+			assertEquals(page2[4].id, 'msg-4');
 
 			db.close();
 		});

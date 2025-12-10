@@ -882,6 +882,9 @@ export class AgentSession {
 		}
 		if (updates.status) this.session.status = updates.status;
 		if (updates.metadata) this.session.metadata = updates.metadata;
+		if (updates.config) {
+			this.session.config = { ...this.session.config, ...updates.config };
+		}
 
 		this.db.updateSession(this.session.id, updates);
 	}

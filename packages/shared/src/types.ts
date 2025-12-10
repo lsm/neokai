@@ -16,6 +16,7 @@ export interface SessionConfig {
 	model: string;
 	maxTokens: number;
 	temperature: number;
+	autoScroll?: boolean;
 }
 
 export interface SessionMetadata {
