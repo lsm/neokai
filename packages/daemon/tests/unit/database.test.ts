@@ -133,6 +133,63 @@ describe('Database', () => {
 			db.close();
 		});
 
+		test('should update session config with autoScroll', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			db.createSession(session);
+
+			// Verify autoScroll is undefined by default
+			const initial = db.getSession('session-1');
+			assertExists(initial);
+			assertEquals(initial.config.autoScroll, undefined);
+
+			// Update config with autoScroll enabled
+			db.updateSession('session-1', {
+				config: { autoScroll: true },
+			});
+
+			const updated = db.getSession('session-1');
+			assertExists(updated);
+			assertEquals(updated.config.autoScroll, true);
+			// Original config values should be preserved
+			assertEquals(updated.config.model, 'claude-sonnet-4-5-20250929');
+			assertEquals(updated.config.maxTokens, 8192);
+			assertEquals(updated.config.temperature, 1.0);
+
+			db.close();
+		});
+
+		test('should merge partial config updates without overwriting other fields', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			session.config.autoScroll = false;
+			db.createSession(session);
+
+			// Update only autoScroll
+			db.updateSession('session-1', {
+				config: { autoScroll: true },
+			});
+
+			let updated = db.getSession('session-1');
+			assertExists(updated);
+			assertEquals(updated.config.autoScroll, true);
+			assertEquals(updated.config.model, 'claude-sonnet-4-5-20250929');
+
+			// Update only model, autoScroll should remain
+			db.updateSession('session-1', {
+				config: { model: 'claude-opus-4-20250514' },
+			});
+
+			updated = db.getSession('session-1');
+			assertExists(updated);
+			assertEquals(updated.config.autoScroll, true);
+			assertEquals(updated.config.model, 'claude-opus-4-20250514');
+
+			db.close();
+		});
+
 		test('should delete session', async () => {
 			const db = await createTestDb();
 

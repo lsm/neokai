@@ -175,6 +175,55 @@ describe('Session RPC Integration', () => {
 			await eventPromise;
 			expect(eventReceived).toBe(true);
 		});
+
+		test('should update session config with autoScroll setting', async () => {
+			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
+				workspacePath: `${TMP_DIR}/test-workspace`,
+			});
+
+			// Verify autoScroll is undefined initially
+			let session = ctx.db.getSession(created.sessionId);
+			expect(session?.config.autoScroll).toBeUndefined();
+
+			// Update config with autoScroll enabled
+			const result = await callRPCHandler(ctx.messageHub, 'session.update', {
+				sessionId: created.sessionId,
+				config: { autoScroll: true },
+			});
+
+			expect(result.success).toBe(true);
+
+			// Verify autoScroll was saved
+			session = ctx.db.getSession(created.sessionId);
+			expect(session?.config.autoScroll).toBe(true);
+			// Other config values should be preserved
+			expect(session?.config.model).toBeDefined();
+			expect(session?.config.maxTokens).toBeDefined();
+		});
+
+		test('should toggle autoScroll setting', async () => {
+			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
+				workspacePath: `${TMP_DIR}/test-workspace`,
+			});
+
+			// Enable autoScroll
+			await callRPCHandler(ctx.messageHub, 'session.update', {
+				sessionId: created.sessionId,
+				config: { autoScroll: true },
+			});
+
+			let session = ctx.db.getSession(created.sessionId);
+			expect(session?.config.autoScroll).toBe(true);
+
+			// Disable autoScroll
+			await callRPCHandler(ctx.messageHub, 'session.update', {
+				sessionId: created.sessionId,
+				config: { autoScroll: false },
+			});
+
+			session = ctx.db.getSession(created.sessionId);
+			expect(session?.config.autoScroll).toBe(false);
+		});
 	});
 
 	describe('session.delete', () => {
