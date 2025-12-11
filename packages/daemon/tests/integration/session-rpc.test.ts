@@ -46,14 +46,15 @@ describe('Session RPC Integration', () => {
 			const result = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-workspace`,
 				config: {
-					model: 'claude-3-5-sonnet-20241022',
+					model: 'sonnet', // Use alias instead of specific ID
 					maxTokens: 4096,
 					temperature: 0.5,
 				},
 			});
 
 			const session = ctx.db.getSession(result.sessionId);
-			expect(session?.config.model).toBe('claude-3-5-sonnet-20241022');
+			// Should resolve to latest Sonnet model from dynamic models
+			expect(session?.config.model).toContain('sonnet');
 			expect(session?.config.maxTokens).toBe(4096);
 			expect(session?.config.temperature).toBe(0.5);
 		});

@@ -20,6 +20,23 @@ import type { Query } from '@liuboer/shared/sdk';
 const modelsCache = new Map<string, SDKModelInfo[]>();
 
 /**
+ * Timestamp tracking for cache freshness
+ * Key: unique cache key
+ * Value: timestamp (ms) when models were loaded
+ */
+const cacheTimestamps = new Map<string, number>();
+
+/**
+ * Cache TTL in milliseconds (4 hours)
+ */
+const CACHE_TTL = 4 * 60 * 60 * 1000;
+
+/**
+ * Track if a background refresh is in progress for a given cache key
+ */
+const refreshInProgress = new Map<string, Promise<void>>();
+
+/**
  * Get supported models from an existing Claude SDK query object
  * This is the preferred method - uses an active query to fetch models
  *
@@ -40,8 +57,9 @@ export async function getSupportedModelsFromQuery(
 	if (queryObject && typeof queryObject.supportedModels === 'function') {
 		try {
 			const models = await queryObject.supportedModels();
-			// Cache the result
+			// Cache the result with timestamp
 			modelsCache.set(cacheKey, models);
+			cacheTimestamps.set(cacheKey, Date.now());
 			return models;
 		} catch (error) {
 			// Failed to get models from SDK, will fall back to static
@@ -87,8 +105,68 @@ function convertSDKModelToModelInfo(sdkModel: SDKModelInfo): ModelInfo {
 }
 
 /**
+ * Trigger background refresh of models if cache is stale
+ * Does not block - runs asynchronously
+ */
+async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
+	// Check if refresh already in progress
+	if (refreshInProgress.has(cacheKey)) {
+		return;
+	}
+
+	// Start background refresh
+	const refreshPromise = (async () => {
+		try {
+			const { query } = await import('@anthropic-ai/claude-agent-sdk');
+
+			// Create a temporary query to fetch models
+			const tmpQuery = query({
+				prompt: '',
+				options: {
+					model: 'claude-sonnet-4-5-20250929', // Use default model
+					cwd: process.cwd(),
+					maxTurns: 0,
+				},
+			});
+
+			try {
+				const models = await tmpQuery.supportedModels();
+				if (models && models.length > 0) {
+					modelsCache.set(cacheKey, models);
+					cacheTimestamps.set(cacheKey, Date.now());
+					console.log(
+						`[model-service] Background refresh complete: ${models.length} models loaded`
+					);
+				}
+			} finally {
+				try {
+					await tmpQuery.interrupt();
+				} catch {
+					// Ignore cleanup errors
+				}
+			}
+		} catch (error) {
+			console.warn('[model-service] Background refresh failed:', error);
+		} finally {
+			refreshInProgress.delete(cacheKey);
+		}
+	})();
+
+	refreshInProgress.set(cacheKey, refreshPromise);
+}
+
+/**
+ * Check if cache is stale (older than CACHE_TTL)
+ */
+function isCacheStale(cacheKey: string): boolean {
+	const timestamp = cacheTimestamps.get(cacheKey);
+	if (!timestamp) return true;
+	return Date.now() - timestamp > CACHE_TTL;
+}
+
+/**
  * Get all available models (dynamic + static fallback)
- * Tries to use cached dynamic models first, falls back to static
+ * Implements lazy refresh: returns cache immediately, triggers background refresh if stale
  *
  * @param cacheKey - Cache key to look up dynamic models
  * @returns Array of ModelInfo
@@ -96,7 +174,17 @@ function convertSDKModelToModelInfo(sdkModel: SDKModelInfo): ModelInfo {
 export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
 	// Try to get dynamic models from cache
 	const dynamicModels = modelsCache.get(cacheKey);
+
+	// If cache exists, check if it's stale and trigger background refresh
 	if (dynamicModels && dynamicModels.length > 0) {
+		// Trigger background refresh if stale (non-blocking)
+		if (isCacheStale(cacheKey)) {
+			// Don't await - let it run in background
+			triggerBackgroundRefresh(cacheKey).catch(() => {
+				// Ignore errors - we already have cached data
+			});
+		}
+
 		// Convert SDK models to our format and filter to latest versions only
 		const converted = dynamicModels.map(convertSDKModelToModelInfo);
 
@@ -118,13 +206,71 @@ export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
 }
 
 /**
+ * Initialize models on app startup
+ * Loads models into the global cache to serve as fallback
+ * This is the ultimate fallback when static models are removed
+ *
+ * @returns Promise that resolves when models are loaded (or fails gracefully)
+ */
+export async function initializeModels(): Promise<void> {
+	const cacheKey = 'global';
+
+	// Skip if already initialized
+	if (modelsCache.has(cacheKey)) {
+		console.log('[model-service] Models already initialized, skipping');
+		return;
+	}
+
+	console.log('[model-service] Loading models on app startup...');
+
+	try {
+		const { query } = await import('@anthropic-ai/claude-agent-sdk');
+
+		// Create a temporary query to fetch models
+		const tmpQuery = query({
+			prompt: '',
+			options: {
+				model: 'claude-sonnet-4-5-20250929', // Use default model
+				cwd: process.cwd(),
+				maxTurns: 0,
+			},
+		});
+
+		try {
+			const models = await tmpQuery.supportedModels();
+			if (models && models.length > 0) {
+				modelsCache.set(cacheKey, models);
+				cacheTimestamps.set(cacheKey, Date.now());
+				console.log(
+					`[model-service] Startup initialization complete: ${models.length} models loaded`
+				);
+			} else {
+				console.warn('[model-service] No models returned from SDK on startup');
+			}
+		} finally {
+			try {
+				await tmpQuery.interrupt();
+			} catch {
+				// Ignore cleanup errors
+			}
+		}
+	} catch (error) {
+		console.error('[model-service] Failed to load models on startup:', error);
+		console.warn('[model-service] Will fall back to static models');
+		// Don't throw - allow app to continue with static fallback
+	}
+}
+
+/**
  * Clear the models cache for a specific key or all
  */
 export function clearModelsCache(cacheKey?: string): void {
 	if (cacheKey) {
 		modelsCache.delete(cacheKey);
+		cacheTimestamps.delete(cacheKey);
 	} else {
 		modelsCache.clear();
+		cacheTimestamps.clear();
 	}
 }
 

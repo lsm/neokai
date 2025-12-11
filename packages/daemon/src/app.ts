@@ -88,6 +88,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		throw new Error('Authentication required');
 	}
 
+	// Initialize dynamic models on app startup (global cache fallback)
+	log('Loading dynamic models from Claude SDK...');
+	const { initializeModels } = await import('./lib/model-service');
+	await initializeModels();
+	log('✅ Model service initialized');
+
 	// PHASE 3 ARCHITECTURE (FIXED): MessageHub owns Router, Transport is pure I/O
 	// 1. Initialize MessageHubRouter (routing layer - pure routing, no app logic)
 	const router = new MessageHubRouter({
