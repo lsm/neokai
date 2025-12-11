@@ -37,9 +37,9 @@ export interface CurrentModelInfo {
 
 /**
  * Available Claude models
- * Ordered by family and release date (newest first)
+ * Only includes the most recent version of each model family
  *
- * Last updated: 2025-12-07
+ * Last updated: 2025-12-11
  * Source: https://platform.claude.com/docs/en/about-claude/models/overview
  */
 export const CLAUDE_MODELS: ModelInfo[] = [
@@ -66,26 +66,6 @@ export const CLAUDE_MODELS: ModelInfo[] = [
 		releaseDate: '2025-09-29',
 		available: true,
 	},
-	{
-		id: 'claude-sonnet-4-5-20241022',
-		name: 'Claude Sonnet 4.5 (Legacy)',
-		alias: 'sonnet-legacy',
-		family: 'sonnet',
-		contextWindow: 200000,
-		description: 'Previous Sonnet 4.5 version',
-		releaseDate: '2024-10-22',
-		available: true,
-	},
-	{
-		id: 'claude-3-5-sonnet-20241022',
-		name: 'Claude 3.5 Sonnet',
-		alias: 'sonnet-3.5',
-		family: 'sonnet',
-		contextWindow: 200000,
-		description: 'Previous generation Sonnet',
-		releaseDate: '2024-10-22',
-		available: true,
-	},
 
 	// Haiku models - Fast and efficient
 	{
@@ -96,16 +76,6 @@ export const CLAUDE_MODELS: ModelInfo[] = [
 		contextWindow: 200000,
 		description: 'Fast, efficient model optimized for low latency and cost',
 		releaseDate: '2025-10-01',
-		available: true,
-	},
-	{
-		id: 'claude-3-5-haiku-20241022',
-		name: 'Claude 3.5 Haiku',
-		alias: 'haiku-3.5',
-		family: 'haiku',
-		contextWindow: 200000,
-		description: 'Previous generation Haiku',
-		releaseDate: '2024-10-22',
 		available: true,
 	},
 ];
