@@ -12,6 +12,10 @@ export class SessionManager {
 	private sessionLoadLocks = new Map<string, Promise<AgentSession | null>>();
 	private debug: boolean;
 
+	// Cache for dynamic model loading (global, shared across all sessions)
+	private static modelLoadingPromise: Promise<void> | null = null;
+	private static modelsLoaded = false;
+
 	constructor(
 		private db: Database,
 		private messageHub: MessageHub,
@@ -49,6 +53,9 @@ export class SessionManager {
 
 		const sessionWorkspacePath = params.workspacePath || this.config.workspaceRoot;
 
+		// Load dynamic models and pick a validated model ID
+		const modelId = await this.getValidatedModelId(params.config?.model);
+
 		const session: Session = {
 			id: sessionId,
 			title: `Session ${new Date().toLocaleString()}`,
@@ -57,7 +64,7 @@ export class SessionManager {
 			lastActiveAt: new Date().toISOString(),
 			status: 'active',
 			config: {
-				model: params.config?.model || this.config.defaultModel,
+				model: modelId, // Use validated model ID from SDK
 				maxTokens: params.config?.maxTokens || this.config.maxTokens,
 				temperature: params.config?.temperature || this.config.temperature,
 			},
@@ -87,6 +94,118 @@ export class SessionManager {
 		this.log('[SessionManager] Event emitted, returning sessionId:', sessionId);
 
 		return sessionId;
+	}
+
+	/**
+	 * Ensure dynamic models are loaded globally (one-time operation)
+	 */
+	private async ensureModelsLoaded(): Promise<void> {
+		// Already loaded
+		if (SessionManager.modelsLoaded) {
+			return;
+		}
+
+		// Loading in progress, wait for it
+		if (SessionManager.modelLoadingPromise) {
+			await SessionManager.modelLoadingPromise;
+			return;
+		}
+
+		// Start loading
+		SessionManager.modelLoadingPromise = this.loadDynamicModels();
+
+		try {
+			await SessionManager.modelLoadingPromise;
+			SessionManager.modelsLoaded = true;
+		} catch (error) {
+			this.log('[SessionManager] Failed to load dynamic models:', error);
+			// Reset so it can be retried
+			SessionManager.modelLoadingPromise = null;
+		}
+	}
+
+	/**
+	 * Load dynamic models from SDK (one-time operation for app lifecycle)
+	 */
+	private async loadDynamicModels(): Promise<void> {
+		const { query } = await import('@anthropic-ai/claude-agent-sdk');
+		const { getSupportedModelsFromQuery } = await import('./model-service');
+
+		this.log('[SessionManager] Loading dynamic models from SDK...');
+
+		// Create a temporary query to fetch models
+		const tmpQuery = query({
+			prompt: '',
+			options: {
+				model: this.config.defaultModel,
+				cwd: this.config.workspaceRoot,
+				maxTurns: 0,
+			},
+		});
+
+		try {
+			// Get models from SDK and cache globally
+			await getSupportedModelsFromQuery(tmpQuery, 'global');
+			this.log('[SessionManager] Dynamic models loaded successfully');
+		} finally {
+			// Always cleanup
+			try {
+				await tmpQuery.interrupt();
+			} catch {
+				// Ignore
+			}
+		}
+	}
+
+	/**
+	 * Get a validated model ID by using cached dynamic models
+	 * Falls back to static model if dynamic loading failed or is unavailable
+	 */
+	private async getValidatedModelId(requestedModel?: string): Promise<string> {
+		// Try to ensure models are loaded (with timeout)
+		try {
+			await Promise.race([
+				this.ensureModelsLoaded(),
+				new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000)),
+			]);
+		} catch {
+			this.log('[SessionManager] Model loading timeout or failed, using static fallback');
+		}
+
+		// Try to get from dynamic models
+		try {
+			const { getAvailableModels } = await import('./model-service');
+			const availableModels = getAvailableModels('global');
+
+			if (availableModels.length > 0) {
+				// If a specific model was requested, validate it
+				if (requestedModel) {
+					const found = availableModels.find(
+						(m) => m.id === requestedModel || m.alias === requestedModel
+					);
+					if (found) {
+						this.log(`[SessionManager] Using requested model: ${found.id}`);
+						return found.id;
+					}
+				}
+
+				// Find default model (prefer Sonnet)
+				const defaultModel =
+					availableModels.find((m) => m.family === 'sonnet') || availableModels[0];
+
+				if (defaultModel) {
+					this.log(`[SessionManager] Using default model from SDK: ${defaultModel.id}`);
+					return defaultModel.id;
+				}
+			}
+		} catch (error) {
+			this.log('[SessionManager] Error getting dynamic models:', error);
+		}
+
+		// Fallback to static model
+		const fallbackModel = requestedModel || this.config.defaultModel;
+		this.log(`[SessionManager] Using static fallback model: ${fallbackModel}`);
+		return fallbackModel;
 	}
 
 	/**
