@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { MessageHub } from '@liuboer/shared';
+import { MessageHub, EventBus } from '@liuboer/shared';
 import { setupRPCHandlers } from '../../src/lib/rpc-handlers';
 import { getConfig } from '../../src/config';
 import { Database } from '../../src/storage/database';
@@ -17,8 +17,9 @@ describe('setupRPCHandlers - Handler Registration', () => {
 		await authManager.initialize();
 
 		const messageHub = new MessageHub({ defaultSessionId: 'global' });
+		const eventBus = new EventBus({ debug: false });
 
-		const sessionManager = new SessionManager(db, messageHub, authManager, {
+		const sessionManager = new SessionManager(db, messageHub, authManager, eventBus, {
 			defaultModel: config.defaultModel,
 			maxTokens: config.maxTokens,
 			temperature: config.temperature,
@@ -56,8 +57,9 @@ describe('setupRPCHandlers - Handler Registration', () => {
 		await authManager.initialize();
 
 		const messageHub = new MessageHub({ defaultSessionId: 'global' });
+		const eventBus = new EventBus({ debug: false });
 
-		const sessionManager = new SessionManager(db, messageHub, authManager, {
+		const sessionManager = new SessionManager(db, messageHub, authManager, eventBus, {
 			defaultModel: config.defaultModel,
 			maxTokens: config.maxTokens,
 			temperature: config.temperature,

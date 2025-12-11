@@ -475,6 +475,8 @@ export class AgentSession {
 					permissionMode: 'bypassPermissions',
 					allowDangerouslySkipPermissions: true,
 					maxTurns: Infinity, // Run forever!
+					// Load project-level settings from .claude/settings.json and .claude/settings.local.json
+					settingSources: ['project', 'local'],
 				},
 			});
 
