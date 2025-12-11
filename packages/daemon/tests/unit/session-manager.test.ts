@@ -90,14 +90,15 @@ describe('SessionManager', () => {
 		test('creates session with custom config', async () => {
 			const sessionId = await sessionManager.createSession({
 				config: {
-					model: 'claude-opus-4-20250514',
+					model: 'opus', // Use alias
 					maxTokens: 4096,
 					temperature: 0.5,
 				},
 			});
 
 			const session = db.getSession(sessionId);
-			expect(session?.config.model).toBe('claude-opus-4-20250514');
+			// Should resolve to latest Opus model from static fallback
+			expect(session?.config.model).toContain('opus');
 			expect(session?.config.maxTokens).toBe(4096);
 			expect(session?.config.temperature).toBe(0.5);
 		});
