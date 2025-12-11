@@ -164,10 +164,13 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 	});
 
 	// Handle listing available models - uses hardcoded model list
-	messageHub.handle('models.list', async (_data) => {
+	messageHub.handle('models.list', async (data) => {
 		try {
 			// Import hardcoded models from shared package
 			const { CLAUDE_MODELS } = await import('@liuboer/shared');
+
+			// Check if forceRefresh is requested
+			const forceRefresh = (data as { forceRefresh?: boolean })?.forceRefresh ?? false;
 
 			// Return hardcoded models in the expected format
 			// This is reliable, fast, and doesn't require API calls
@@ -178,7 +181,9 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 					description: m.description,
 					type: 'model' as const,
 				})),
-				cached: true, // Hardcoded models are always "cached"
+				// If forceRefresh is true, indicate that this is a fresh fetch
+				// even though we're using hardcoded models
+				cached: !forceRefresh,
 			};
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
