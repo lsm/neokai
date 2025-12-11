@@ -555,6 +555,12 @@ test.describe('Model Switcher UI', () => {
 		await page.reload();
 		await waitForWebSocketConnected(page);
 
+		// After reload, need to navigate back to the session
+		// Click on the session in the sidebar to re-load it
+		const sessionLink = page.locator(`[data-session-id="${sessionId}"]`).first();
+		await sessionLink.click();
+		await page.waitForTimeout(1000); // Wait for session to load
+
 		// Wait for model switcher and model to load
 		await waitForModelSwitcher(page);
 

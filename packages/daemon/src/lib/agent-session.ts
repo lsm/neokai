@@ -721,6 +721,12 @@ export class AgentSession {
 				this.db.updateSession(this.session.id, {
 					config: this.session.config,
 				});
+
+				// Emit session:updated event so StateManager broadcasts the change
+				await this.eventBus.emit('session:updated', {
+					sessionId: this.session.id,
+					updates: { config: this.session.config },
+				});
 			} else {
 				// Use SDK's native setModel() method (only available in streaming input mode)
 				this.logger.log(`Using SDK setModel() to switch to: ${resolvedModel}`);
@@ -730,6 +736,12 @@ export class AgentSession {
 				this.session.config.model = resolvedModel;
 				this.db.updateSession(this.session.id, {
 					config: this.session.config,
+				});
+
+				// Emit session:updated event so StateManager broadcasts the change
+				await this.eventBus.emit('session:updated', {
+					sessionId: this.session.id,
+					updates: { config: this.session.config },
 				});
 
 				this.logger.log(`Model switched via SDK to: ${resolvedModel}`);
