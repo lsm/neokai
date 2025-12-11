@@ -476,7 +476,13 @@ export class AgentSession {
 					allowDangerouslySkipPermissions: true,
 					maxTurns: Infinity, // Run forever!
 					// Load project-level settings from .claude/settings.json and .claude/settings.local.json
+					// Also loads CLAUDE.md files when using the claude_code system prompt preset
 					settingSources: ['project', 'local'],
+					// Use Claude Code's system prompt to enable CLAUDE.md project instructions
+					systemPrompt: {
+						type: 'preset',
+						preset: 'claude_code',
+					},
 				},
 			});
 
