@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
 import { slashCommandsSignal } from '../lib/signals.ts';
 import CommandAutocomplete from './CommandAutocomplete.tsx';
+import { ModelSwitcher } from './ModelSwitcher.tsx';
 
 interface MessageInputProps {
+	sessionId: string;
 	onSend: (content: string) => void;
 	disabled?: boolean;
 	autoScroll?: boolean;
@@ -11,6 +13,7 @@ interface MessageInputProps {
 }
 
 export default function MessageInput({
+	sessionId,
 	onSend,
 	disabled,
 	autoScroll,
@@ -175,6 +178,9 @@ export default function MessageInput({
 								/>
 							</svg>
 						</button>
+
+						{/* Model Switcher */}
+						<ModelSwitcher sessionId={sessionId} disabled={disabled} />
 
 						{/* Auto-scroll Toggle Button */}
 						<button

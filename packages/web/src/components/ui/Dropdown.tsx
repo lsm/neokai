@@ -22,6 +22,8 @@ export interface DropdownProps {
 	position?: 'left' | 'right';
 	class?: string;
 	customContent?: ComponentChildren; // Optional custom content instead of menu items
+	isOpen?: boolean; // Controlled open state
+	onOpenChange?: (open: boolean) => void; // Callback when open state changes
 }
 
 export function Dropdown({
@@ -30,10 +32,29 @@ export function Dropdown({
 	position = 'right',
 	class: className,
 	customContent,
+	isOpen: controlledIsOpen,
+	onOpenChange,
 }: DropdownProps) {
-	const [isOpen, setIsOpen] = useState(false);
-	const [menuPosition, setMenuPosition] = useState<{ top: number; left?: number; right?: number }>({
-		top: 0,
+	const [internalIsOpen, setInternalIsOpen] = useState(false);
+
+	// Use controlled state if provided, otherwise use internal state
+	const isOpen = controlledIsOpen !== undefined ? controlledIsOpen : internalIsOpen;
+	const setIsOpen = (open: boolean) => {
+		if (controlledIsOpen === undefined) {
+			setInternalIsOpen(open);
+		}
+		onOpenChange?.(open);
+	};
+	const [menuStyle, setMenuStyle] = useState<{
+		top: string;
+		bottom: string;
+		left: string;
+		right: string;
+	}>({
+		top: 'auto',
+		bottom: 'auto',
+		left: 'auto',
+		right: 'auto',
 	});
 	const dropdownRef = useRef<HTMLDivElement>(null);
 	const triggerRef = useRef<HTMLDivElement>(null);
@@ -42,32 +63,76 @@ export function Dropdown({
 	// Calculate and update menu position when opened
 	useEffect(() => {
 		if (isOpen && triggerRef.current) {
-			const triggerRect = triggerRef.current.getBoundingClientRect();
-			const viewportWidth = window.innerWidth;
-			const viewportHeight = window.innerHeight;
+			const updatePosition = () => {
+				if (!triggerRef.current || !menuRef.current) return;
 
-			// Start with position below the trigger
-			let top = triggerRect.bottom + 8; // 8px spacing (mt-2)
+				const triggerRect = triggerRef.current.getBoundingClientRect();
+				const viewportWidth = window.innerWidth;
+				const viewportHeight = window.innerHeight;
 
-			// Check if there's enough space below, otherwise position above
-			const estimatedMenuHeight = 400; // Approximate max height
-			if (top + estimatedMenuHeight > viewportHeight && triggerRect.top > estimatedMenuHeight) {
-				top = triggerRect.top - estimatedMenuHeight - 8;
-			}
+				// Get actual menu dimensions - offsetHeight is more reliable
+				const menuHeight = menuRef.current.offsetHeight || 200;
+				const menuWidth = menuRef.current.offsetWidth || 220;
 
-			// Calculate horizontal position
-			const newPosition: { top: number; left?: number; right?: number } = { top };
+				// Calculate space above and below the trigger
+				const spaceBelow = viewportHeight - triggerRect.bottom - 8;
+				const spaceAbove = triggerRect.top - 8;
 
-			if (position === 'right') {
-				// Align to right edge of trigger
-				const right = viewportWidth - triggerRect.right;
-				newPosition.right = right;
-			} else {
-				// Align to left edge of trigger
-				newPosition.left = triggerRect.left;
-			}
+				// Decide whether to position above or below
+				const shouldPositionAbove = spaceBelow < menuHeight && spaceAbove > spaceBelow;
 
-			setMenuPosition(newPosition);
+				const newStyle: {
+					top: string;
+					bottom: string;
+					left: string;
+					right: string;
+				} = {
+					top: 'auto',
+					bottom: 'auto',
+					left: 'auto',
+					right: 'auto',
+				};
+
+				if (shouldPositionAbove) {
+					// Position above - use bottom anchor relative to viewport
+					// bottom = viewport height - trigger top + gap
+					newStyle.bottom = `${viewportHeight - triggerRect.top + 4}px`;
+				} else {
+					// Position below - use top anchor
+					newStyle.top = `${triggerRect.bottom + 4}px`;
+				}
+
+				// Calculate horizontal position
+				if (position === 'right') {
+					// Align to right edge of trigger
+					const right = viewportWidth - triggerRect.right;
+					// Ensure menu doesn't go off-screen to the left
+					const maxRight = viewportWidth - menuWidth - 8;
+					newStyle.right = `${Math.max(8, Math.min(right, maxRight))}px`;
+				} else {
+					// Align to left edge of trigger
+					let left = triggerRect.left;
+					// Ensure menu doesn't go off-screen to the right
+					if (left + menuWidth > viewportWidth - 8) {
+						left = viewportWidth - menuWidth - 8;
+					}
+					newStyle.left = `${Math.max(8, left)}px`;
+				}
+
+				setMenuStyle(newStyle);
+			};
+
+			// Initial positioning
+			updatePosition();
+
+			// Update again after layout to get accurate dimensions
+			const rafId = requestAnimationFrame(() => {
+				updatePosition();
+			});
+
+			return () => {
+				cancelAnimationFrame(rafId);
+			};
 		}
 	}, [isOpen, position]);
 
@@ -92,9 +157,17 @@ export function Dropdown({
 		};
 
 		if (isOpen) {
-			// Use 'click' instead of 'mousedown' to allow onClick handlers to fire first
-			document.addEventListener('click', handleClickOutside);
-			document.addEventListener('keydown', handleEscape);
+			// Delay adding the click listener to avoid closing immediately from the same click that opened it
+			const timeoutId = setTimeout(() => {
+				document.addEventListener('click', handleClickOutside);
+				document.addEventListener('keydown', handleEscape);
+			}, 0);
+
+			return () => {
+				clearTimeout(timeoutId);
+				document.removeEventListener('click', handleClickOutside);
+				document.removeEventListener('keydown', handleEscape);
+			};
 		}
 
 		return () => {
@@ -152,9 +225,11 @@ export function Dropdown({
 					ref={menuRef}
 					style={{
 						position: 'fixed',
-						top: `${menuPosition.top}px`,
-						...(menuPosition.left !== undefined ? { left: `${menuPosition.left}px` } : {}),
-						...(menuPosition.right !== undefined ? { right: `${menuPosition.right}px` } : {}),
+						top: menuStyle.top,
+						bottom: menuStyle.bottom,
+						left: menuStyle.left,
+						right: menuStyle.right,
+						maxHeight: 'calc(100vh - 32px)',
 					}}
 					class={cn(
 						'shadow-xl z-[100] animate-slideIn',

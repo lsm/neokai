@@ -76,6 +76,7 @@ export default defineConfig({
 				'**/tests/multi-tab.e2e.ts',
 				'**/session-management.e2e.ts', // Will add cleanup
 				'**/chat-flow.e2e.ts', // Will add cleanup
+				'**/model-switcher.e2e.ts', // Model switcher UI tests
 			],
 			use: { ...devices['Desktop Chrome'] },
 		},

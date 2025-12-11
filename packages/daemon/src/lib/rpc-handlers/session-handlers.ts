@@ -5,72 +5,7 @@
 import type { MessageHub, MessageImage, Session } from '@liuboer/shared';
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@liuboer/shared';
-import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { ModelInfo } from '@liuboer/shared/sdk';
-
-/**
- * Cache for supported models to avoid repeated SDK queries
- */
-let modelsCacheData: {
-	models: ModelInfo[];
-	timestamp: number;
-} | null = null;
-
-const MODELS_CACHE_DURATION = 60 * 60 * 1000; // 1 hour
-
-/**
- * Get supported models from Claude Agent SDK
- * Uses a temporary query object and caches results for 1 hour
- */
-async function getSupportedModels(forceRefresh = false): Promise<ModelInfo[]> {
-	const now = Date.now();
-
-	// Return cached data if valid
-	if (!forceRefresh && modelsCacheData && now - modelsCacheData.timestamp < MODELS_CACHE_DURATION) {
-		return modelsCacheData.models;
-	}
-
-	// Create a temporary query to fetch models
-	// We use a simple prompt since we just need the query object
-	const tmpQuery = query({
-		prompt: 'list models',
-		options: {
-			cwd: process.cwd(),
-			maxTurns: 1,
-		},
-	});
-
-	try {
-		// Get supported models from SDK
-		const models = await tmpQuery.supportedModels();
-
-		// Update cache
-		modelsCacheData = {
-			models,
-			timestamp: now,
-		};
-
-		// Interrupt the query since we don't need it to run
-		await tmpQuery.interrupt();
-
-		return models;
-	} catch (error) {
-		// Clean up query on error
-		try {
-			await tmpQuery.interrupt();
-		} catch {
-			// Ignore interrupt errors
-		}
-		throw error;
-	}
-}
-
-/**
- * Clear the models cache
- */
-function clearModelsCache(): void {
-	modelsCacheData = null;
-}
+import { clearModelsCache } from '../model-service';
 
 export function setupSessionHandlers(messageHub: MessageHub, sessionManager: SessionManager): void {
 	messageHub.handle('session.create', async (data) => {
@@ -189,10 +124,16 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 			throw new Error('Session not found');
 		}
 
-		const modelInfo = agentSession.getCurrentModel();
+		// Get current model ID
+		const currentModelId = agentSession.getCurrentModel().id;
+
+		// Fetch full model info from SDK asynchronously
+		const { getModelInfo } = await import('../model-service');
+		const modelInfo = await getModelInfo(currentModelId);
+
 		return {
-			currentModel: modelInfo.id,
-			modelInfo: modelInfo.info,
+			currentModel: currentModelId,
+			modelInfo,
 		};
 	});
 
@@ -222,29 +163,22 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 		return result;
 	});
 
-	// Handle listing available models using Claude Agent SDK
-	messageHub.handle('models.list', async (data) => {
-		const { useCache = true, forceRefresh = false } = data as {
-			useCache?: boolean;
-			forceRefresh?: boolean;
-		};
-
+	// Handle listing available models - uses hardcoded model list
+	messageHub.handle('models.list', async (_data) => {
 		try {
-			// Get models from SDK (with caching)
-			const shouldRefresh = !useCache || forceRefresh;
-			const models = await getSupportedModels(shouldRefresh);
+			// Import hardcoded models from shared package
+			const { CLAUDE_MODELS } = await import('@liuboer/shared');
 
-			// Convert SDK ModelInfo format to match expected API response
-			// SDK returns: { value, displayName, description }
-			// We return it as-is, which is cleaner than the old API format
+			// Return hardcoded models in the expected format
+			// This is reliable, fast, and doesn't require API calls
 			return {
-				models: models.map((m) => ({
-					id: m.value,
-					display_name: m.displayName,
+				models: CLAUDE_MODELS.map((m) => ({
+					id: m.id,
+					display_name: m.name,
 					description: m.description,
 					type: 'model' as const,
 				})),
-				cached: !shouldRefresh,
+				cached: true, // Hardcoded models are always "cached"
 			};
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);

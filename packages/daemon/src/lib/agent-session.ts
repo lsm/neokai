@@ -8,16 +8,11 @@ import {
 	isToolUseBlock,
 } from '@liuboer/shared/sdk/type-guards';
 import type { UUID } from 'crypto';
-import {
-	type CurrentModelInfo,
-	generateUUID,
-	getModelInfo,
-	isValidModel,
-	resolveModelAlias,
-} from '@liuboer/shared';
+import { generateUUID, type CurrentModelInfo } from '@liuboer/shared';
 import { Database } from '../storage/database';
 import { ErrorCategory, ErrorManager } from './error-manager';
 import { Logger } from './logger';
+import { isValidModel, resolveModelAlias, getModelInfo } from './model-service';
 
 /**
  * Queued message waiting to be sent to Claude
@@ -669,15 +664,14 @@ export class AgentSession {
 	 * Switch to a different Claude model mid-session
 	 * Called by RPC handler in session-handlers.ts
 	 *
+	 * Uses Claude Agent SDK's native setModel() method for seamless model switching
+	 * without interrupting the streaming query or losing state.
+	 *
 	 * This will:
 	 * 1. Validate the new model
-	 * 2. Stop the current query
-	 * 3. Update session config
-	 * 4. Restart query with new model
-	 * 5. Preserve conversation history (displayed to user, but NOT replayed to SDK)
-	 *
-	 * ⚠️ WARNING: Switching models increases token consumption because
-	 * the new model must process the entire conversation history.
+	 * 2. Use SDK's setModel() to switch models (streaming input mode only)
+	 * 3. Update session config in database
+	 * 4. Preserve all query state and conversation history
 	 */
 	async handleModelSwitch(
 		newModel: string
@@ -685,16 +679,17 @@ export class AgentSession {
 		this.logger.log(`Handling model switch to: ${newModel}`);
 
 		try {
-			// Validate the model
-			if (!isValidModel(newModel)) {
+			// Validate the model (async - checks against SDK models)
+			const isValid = await isValidModel(newModel);
+			if (!isValid) {
 				const error = `Invalid model: ${newModel}. Use a valid model ID or alias.`;
 				this.logger.error(`${error}`);
 				return { success: false, model: this.session.config.model, error };
 			}
 
-			// Resolve alias to full model ID
-			const resolvedModel = resolveModelAlias(newModel);
-			const modelInfo = getModelInfo(resolvedModel);
+			// Resolve alias to full model ID (async - uses SDK models)
+			const resolvedModel = await resolveModelAlias(newModel);
+			const modelInfo = await getModelInfo(resolvedModel);
 
 			// Check if already using this model
 			if (this.session.config.model === resolvedModel) {
@@ -718,40 +713,27 @@ export class AgentSession {
 				{ sessionId: this.session.id }
 			);
 
-			// Step 1: Stop the current query gracefully
-			this.logger.log(`Stopping current query...`);
-			this.queryRunning = false;
+			// Check if query is running
+			if (!this.queryObject) {
+				// Query not started yet - just update config
+				this.logger.log(`Query not started yet, updating config only`);
+				this.session.config.model = resolvedModel;
+				this.db.updateSession(this.session.id, {
+					config: this.session.config,
+				});
+			} else {
+				// Use SDK's native setModel() method (only available in streaming input mode)
+				this.logger.log(`Using SDK setModel() to switch to: ${resolvedModel}`);
+				await this.queryObject.setModel(resolvedModel);
 
-			// Abort current query
-			if (this.abortController) {
-				this.abortController.abort();
-				this.abortController = undefined;
+				// Update session config in database
+				this.session.config.model = resolvedModel;
+				this.db.updateSession(this.session.id, {
+					config: this.session.config,
+				});
+
+				this.logger.log(`Model switched via SDK to: ${resolvedModel}`);
 			}
-
-			// Wait for query to fully stop (with timeout)
-			if (this.queryPromise) {
-				try {
-					await Promise.race([
-						this.queryPromise,
-						new Promise((resolve) => setTimeout(resolve, 3000)), // 3s timeout
-					]);
-				} catch (error) {
-					this.logger.warn(`Query cleanup warning:`, error);
-				}
-				this.queryPromise = null;
-			}
-
-			// Step 2: Update session config with new model
-			this.session.config.model = resolvedModel;
-			this.db.updateSession(this.session.id, {
-				config: this.session.config,
-			});
-
-			this.logger.log(`Updated config to model: ${resolvedModel}`);
-
-			// Step 3: Restart the streaming query with new model
-			this.logger.log(`Restarting query with new model...`);
-			await this.startStreamingQuery();
 
 			// Emit success event
 			await this.messageHub.publish(
@@ -792,10 +774,15 @@ export class AgentSession {
 	/**
 	 * Get current model information
 	 */
+	/**
+	 * Get current model ID for this session
+	 * Note: This returns the model ID synchronously. To get full model info,
+	 * use the model-service.getModelInfo() function asynchronously.
+	 */
 	getCurrentModel(): CurrentModelInfo {
 		return {
 			id: this.session.config.model,
-			info: getModelInfo(this.session.config.model) || null,
+			info: null, // Model info is fetched asynchronously by RPC handler
 		};
 	}
 

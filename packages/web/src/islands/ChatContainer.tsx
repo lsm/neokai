@@ -960,6 +960,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 			{/* Input */}
 			<MessageInput
+				sessionId={sessionId}
 				onSend={handleSendMessage}
 				disabled={sending || connectionState.value !== 'connected'}
 				autoScroll={autoScroll}
