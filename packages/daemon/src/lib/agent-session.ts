@@ -199,6 +199,31 @@ export class AgentSession {
 	}
 
 	/**
+	 * Fetch and cache available models from SDK
+	 * Used internally to update model list after query creation
+	 * Models are cached per session for the session lifetime
+	 */
+	private async fetchAndCacheModels(): Promise<void> {
+		if (!this.queryObject) {
+			return;
+		}
+
+		try {
+			const { getSupportedModelsFromQuery } = await import('./model-service');
+			const models = await getSupportedModelsFromQuery(this.queryObject, this.session.id);
+
+			if (models.length > 0) {
+				this.logger.log(`Fetched ${models.length} models from SDK for session ${this.session.id}`);
+			} else {
+				this.logger.log(`No models fetched from SDK, will use static fallback`);
+			}
+		} catch (error) {
+			this.logger.warn(`Failed to fetch models from SDK:`, error);
+			// Not critical - will fall back to static models
+		}
+	}
+
+	/**
 	 * Build message content with text and optional images
 	 */
 	private buildMessageContent(text: string, images?: MessageImage[]): string | MessageContent[] {
@@ -455,6 +480,9 @@ export class AgentSession {
 
 			// Fetch and cache slash commands
 			await this.fetchAndCacheSlashCommands();
+
+			// Fetch and cache available models from SDK
+			await this.fetchAndCacheModels();
 
 			// Process SDK messages
 			this.logger.log(`Processing SDK stream...`);
@@ -865,6 +893,14 @@ export class AgentSession {
 			}
 		}
 		this.unsubscribers = [];
+
+		// Clear models cache for this session
+		try {
+			const { clearModelsCache } = await import('./model-service');
+			clearModelsCache(this.session.id);
+		} catch {
+			// Ignore - not critical
+		}
 
 		// Signal query to stop
 		this.queryRunning = false;

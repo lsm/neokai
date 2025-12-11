@@ -166,23 +166,25 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 	// Handle listing available models - uses hardcoded model list
 	messageHub.handle('models.list', async (data) => {
 		try {
-			// Import hardcoded models from shared package
-			const { CLAUDE_MODELS } = await import('@liuboer/shared');
+			// Import model service for dynamic models (with static fallback)
+			const { getAvailableModels } = await import('../model-service');
 
 			// Check if forceRefresh is requested
 			const forceRefresh = (data as { forceRefresh?: boolean })?.forceRefresh ?? false;
 
-			// Return hardcoded models in the expected format
-			// This is reliable, fast, and doesn't require API calls
+			// Get models from cache (uses 'global' cache key)
+			// This will return dynamic models if they were loaded, otherwise static fallback
+			const availableModels = getAvailableModels('global');
+
+			// Return models in the expected format
 			return {
-				models: CLAUDE_MODELS.map((m) => ({
+				models: availableModels.map((m) => ({
 					id: m.id,
 					display_name: m.name,
 					description: m.description,
 					type: 'model' as const,
 				})),
 				// If forceRefresh is true, indicate that this is a fresh fetch
-				// even though we're using hardcoded models
 				cached: !forceRefresh,
 			};
 		} catch (error) {
