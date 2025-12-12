@@ -23,6 +23,8 @@ import { messageSpacing, messageColors, borderRadius } from '../../lib/design-to
 import { cn } from '../../lib/utils.ts';
 import { ToolResultCard } from './tools/index.ts';
 import { ThinkingBlock } from './ThinkingBlock.tsx';
+import { SubagentBlock } from './SubagentBlock.tsx';
+import type { AgentInput } from '@liuboer/shared/sdk/sdk-tools.d.ts';
 
 type AssistantMessage = Extract<SDKMessage, { type: 'assistant' }>;
 
@@ -157,7 +159,7 @@ export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
 
 /**
  * Tool Use Block Component
- * Now uses the new ToolResultCard component
+ * Uses SubagentBlock for Task tool, ToolResultCard for others
  */
 function ToolUseBlock({
 	block,
@@ -166,6 +168,18 @@ function ToolUseBlock({
 	block: Extract<ContentBlock, { type: 'tool_use' }>;
 	toolResult?: unknown;
 }) {
+	// Use SubagentBlock for Task tool
+	if (block.name === 'Task') {
+		return (
+			<SubagentBlock
+				input={block.input as unknown as AgentInput}
+				output={toolResult}
+				isError={((toolResult as Record<string, unknown>)?.is_error as boolean) || false}
+				toolId={block.id}
+			/>
+		);
+	}
+
 	return (
 		<ToolResultCard
 			toolName={block.name}

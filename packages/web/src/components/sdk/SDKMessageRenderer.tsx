@@ -33,6 +33,15 @@ interface Props {
 }
 
 /**
+ * Check if message is a sub-agent message (has parent_tool_use_id)
+ * Sub-agent messages are shown inside SubagentBlock, not as separate messages
+ */
+function isSubagentMessage(message: SDKMessage): boolean {
+	const msgWithParent = message as SDKMessage & { parent_tool_use_id?: string | null };
+	return !!msgWithParent.parent_tool_use_id;
+}
+
+/**
  * Main SDK message renderer - routes to appropriate sub-renderer
  */
 export function SDKMessageRenderer({ message, toolResultsMap, toolInputsMap, sessionInfo }: Props) {
@@ -43,6 +52,11 @@ export function SDKMessageRenderer({ message, toolResultsMap, toolInputsMap, ses
 
 	// Skip session init messages - they're now shown as indicators attached to user messages
 	if (isSDKSystemInit(message)) {
+		return null;
+	}
+
+	// Skip sub-agent messages - they're now shown inside SubagentBlock
+	if (isSubagentMessage(message)) {
 		return null;
 	}
 
