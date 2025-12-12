@@ -92,6 +92,7 @@ export default function Sidebar() {
         flex flex-col
         z-50
         transition-transform duration-300 ease-in-out
+        left-0 md:left-auto
         ${sidebarOpenSignal.value ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
       `}
 			>

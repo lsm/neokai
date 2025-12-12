@@ -27,7 +27,7 @@ export function App() {
 
 	return (
 		<>
-			<div class="flex h-screen overflow-hidden bg-dark-950">
+			<div class="flex h-screen overflow-hidden bg-dark-950 relative">
 				{/* Sidebar */}
 				<Sidebar />
 

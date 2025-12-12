@@ -5,6 +5,7 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import CommandAutocomplete from './CommandAutocomplete.tsx';
 import type { ModelInfo } from '@liuboer/shared';
+import { isAgentWorking } from '../lib/state.ts';
 
 interface MessageInputProps {
 	sessionId: string;
@@ -49,6 +50,9 @@ export default function MessageInput({
 	const plusButtonRef = useRef<HTMLButtonElement>(null);
 	const maxChars = 10000;
 
+	// Track interrupting state
+	const [interrupting, setInterrupting] = useState(false);
+
 	// Auto-resize textarea - starts at 40px (h-10), expands up to 200px
 	useEffect(() => {
 		const textarea = textareaRef.current;
@@ -61,10 +65,12 @@ export default function MessageInput({
 		}
 	}, [content]);
 
-	// Focus on mount
+	// Focus on mount and reset interrupting state on session change
 	useEffect(() => {
 		textareaRef.current?.focus();
-	}, []);
+		// Reset interrupting state when switching sessions
+		setInterrupting(false);
+	}, [sessionId]);
 
 	// Load model info
 	useEffect(() => {
@@ -213,9 +219,29 @@ export default function MessageInput({
 
 	const handleSubmit = (e: Event) => {
 		e.preventDefault();
-		if (content.trim() && !disabled) {
+		// Check agent working state at time of submit
+		if (content.trim() && !disabled && !isAgentWorking.value) {
 			onSend(content);
 			setContent('');
+		}
+	};
+
+	const handleInterrupt = async () => {
+		// Prevent multiple rapid interrupts
+		if (interrupting) return;
+
+		try {
+			setInterrupting(true);
+			const hub = await connectionManager.getHub();
+			await hub.call('client.interrupt', { sessionId });
+			// Don't show toast - the state change provides feedback
+		} catch (error) {
+			console.error('Interrupt error:', error);
+			toast.error('Failed to stop generation');
+		} finally {
+			// Keep interrupting state until agent state changes to idle
+			// This prevents UI flicker
+			setTimeout(() => setInterrupting(false), 500);
 		}
 	};
 
@@ -254,14 +280,22 @@ export default function MessageInput({
 			e.preventDefault();
 			handleSubmit(e);
 		} else if (e.key === 'Escape') {
-			setContent('');
-			textareaRef.current?.blur();
+			// Escape key: interrupt if processing, otherwise clear content
+			if (isAgentWorking.value && !interrupting) {
+				e.preventDefault();
+				handleInterrupt();
+			} else if (!isAgentWorking.value) {
+				setContent('');
+				textareaRef.current?.blur();
+			}
 		}
 	};
 
 	const charCount = content.length;
 	const showCharCount = charCount > maxChars * 0.8;
 	const hasContent = content.trim().length > 0;
+	// Use signal value in render to make component reactive
+	const agentWorking = isAgentWorking.value;
 
 	// Sort models by family order
 	const familyOrder = { opus: 0, sonnet: 1, haiku: 2 };
@@ -285,7 +319,7 @@ export default function MessageInput({
 							}}
 							disabled={disabled}
 							class={cn(
-								'w-10 h-10 rounded-full flex items-center justify-center transition-all',
+								'w-11 h-11 rounded-full flex items-center justify-center transition-all',
 								'bg-dark-700/80 border border-dark-600/50',
 								disabled
 									? 'text-gray-600 cursor-not-allowed'
@@ -510,7 +544,8 @@ export default function MessageInput({
 								rows={1}
 								class={cn(
 									'block w-full px-5 py-2.5 text-gray-100 resize-none bg-transparent',
-									'placeholder:text-gray-500 text-[15px] leading-normal',
+									// Use 16px to prevent iOS Safari auto-zoom on focus (< 16px triggers zoom)
+									'placeholder:text-gray-500 text-base leading-normal',
 									'focus:outline-none',
 									'disabled:opacity-50 disabled:cursor-not-allowed'
 								)}
@@ -532,33 +567,61 @@ export default function MessageInput({
 								</div>
 							)}
 
-							{/* Send Button - always visible, grayed when no content */}
-							<button
-								type="submit"
-								disabled={disabled || !hasContent}
-								title="Send message (⌘+Enter)"
-								class={cn(
-									'absolute right-1.5 top-1/2 -translate-y-1/2',
-									'w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200',
-									hasContent && !disabled
-										? 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95'
-										: 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
-								)}
-							>
-								<svg
-									class="w-4 h-4"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke="currentColor"
-									stroke-width={2.5}
+							{/* Send/Stop Button - shows stop when processing, send otherwise */}
+							{agentWorking ? (
+								<button
+									type="button"
+									onClick={handleInterrupt}
+									disabled={disabled || interrupting}
+									title="Stop generation"
+									aria-label="Stop generation"
+									data-testid="stop-button"
+									class={cn(
+										'absolute right-1.5 top-1/2 -translate-y-1/2',
+										'w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200',
+										disabled || interrupting
+											? 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
+											: 'bg-red-500 text-white hover:bg-red-600 active:scale-95'
+									)}
 								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										d="M5 10l7-7m0 0l7 7m-7-7v18"
-									/>
-								</svg>
-							</button>
+									{interrupting ? (
+										<div class="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+									) : (
+										<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+											<rect x="6" y="6" width="12" height="12" rx="1" />
+										</svg>
+									)}
+								</button>
+							) : (
+								<button
+									type="submit"
+									disabled={disabled || !hasContent}
+									title="Send message (⌘+Enter)"
+									aria-label="Send message"
+									data-testid="send-button"
+									class={cn(
+										'absolute right-1.5 top-1/2 -translate-y-1/2',
+										'w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200',
+										hasContent && !disabled
+											? 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95'
+											: 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
+									)}
+								>
+									<svg
+										class="w-4 h-4"
+										fill="none"
+										viewBox="0 0 24 24"
+										stroke="currentColor"
+										stroke-width={2.5}
+									>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											d="M5 10l7-7m0 0l7 7m-7-7v18"
+										/>
+									</svg>
+								</button>
+							)}
 						</div>
 					</div>
 				</div>
