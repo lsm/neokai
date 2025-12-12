@@ -282,12 +282,13 @@ export async function initializeModels(): Promise<void> {
 		});
 
 		try {
-			const models = await tmpQuery.supportedModels();
-			if (models && models.length > 0) {
-				modelsCache.set(cacheKey, models);
+			const sdkModels = await tmpQuery.supportedModels();
+			if (sdkModels && sdkModels.length > 0) {
+				// Cache the raw SDK models (will be converted to ModelInfo when retrieved)
+				modelsCache.set(cacheKey, sdkModels);
 				cacheTimestamps.set(cacheKey, Date.now());
 				console.log(
-					`[model-service] Startup initialization complete: ${models.length} models loaded`
+					`[model-service] Startup initialization complete: ${sdkModels.length} models loaded`
 				);
 			} else {
 				throw new Error('No models returned from SDK');

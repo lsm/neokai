@@ -102,6 +102,10 @@ export class SessionManager {
 			const { getAvailableModels } = await import('./model-service');
 			const availableModels = getAvailableModels('global');
 
+			console.log(
+				`[SessionManager DEBUG] getValidatedModelId called with requestedModel="${requestedModel}", found ${availableModels.length} models in cache`
+			);
+
 			if (availableModels.length > 0) {
 				// If a specific model was requested, validate it
 				if (requestedModel) {
@@ -109,9 +113,14 @@ export class SessionManager {
 						(m) => m.id === requestedModel || m.alias === requestedModel
 					);
 					if (found) {
-						this.log(`[SessionManager] Using requested model: ${found.id}`);
+						console.log(`[SessionManager] Using requested model: ${found.id}`);
 						return found.id;
 					}
+					// Model not found - log warning but continue to try default
+					console.log(
+						`[SessionManager] Requested model "${requestedModel}" not found in available models:`,
+						availableModels.map((m) => m.id)
+					);
 				}
 
 				// Find default model (prefer Sonnet)
@@ -119,17 +128,20 @@ export class SessionManager {
 					availableModels.find((m) => m.family === 'sonnet') || availableModels[0];
 
 				if (defaultModel) {
-					this.log(`[SessionManager] Using default model: ${defaultModel.id}`);
+					console.log(`[SessionManager] Using default model: ${defaultModel.id}`);
 					return defaultModel.id;
 				}
+			} else {
+				console.log('[SessionManager] No available models loaded from cache');
 			}
 		} catch (error) {
-			this.log('[SessionManager] Error getting models:', error);
+			console.log('[SessionManager] Error getting models:', error);
 		}
 
-		// Fallback to config default model
+		// Fallback to config default model or requested model
+		// IMPORTANT: Always return full model ID, never aliases
 		const fallbackModel = requestedModel || this.config.defaultModel;
-		this.log(`[SessionManager] Using fallback model: ${fallbackModel}`);
+		console.log(`[SessionManager] Using fallback model: ${fallbackModel}`);
 		return fallbackModel;
 	}
 
