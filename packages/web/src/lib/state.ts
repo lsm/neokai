@@ -406,10 +406,10 @@ export async function createSessionOptimistic(workspacePath?: string): Promise<s
 		},
 	};
 
-	// Optimistic update
+	// Optimistic update (prepend to show newest first)
 	global.sessions.updateOptimistic(tempId, (current) => ({
 		...current,
-		sessions: [...current.sessions, tempSession],
+		sessions: [tempSession, ...current.sessions],
 		timestamp: Date.now(),
 	}));
 

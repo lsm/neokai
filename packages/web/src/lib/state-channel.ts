@@ -484,9 +484,9 @@ export const DeltaMergers = {
 			});
 		}
 
-		// Add items
+		// Add items (prepend to show newest first)
 		if (delta.added) {
-			result.push(...delta.added);
+			result.unshift(...delta.added);
 		}
 
 		return result;
