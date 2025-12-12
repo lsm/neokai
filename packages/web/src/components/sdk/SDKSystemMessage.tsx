@@ -258,90 +258,102 @@ function CompactBoundaryMessage({
 	};
 
 	return (
-		<div class={`border rounded-lg overflow-hidden ${colors.bg} ${colors.border}`}>
-			{/* Header */}
-			<div class={`flex items-center gap-2 px-3 py-2 ${colors.bg}`}>
-				{/* Compact icon */}
-				<svg
-					class={`w-4 h-4 flex-shrink-0 ${colors.iconColor}`}
-					fill="none"
-					stroke="currentColor"
-					viewBox="0 0 24 24"
-				>
-					<path
-						strokeLinecap="round"
-						strokeLinejoin="round"
-						strokeWidth={2}
-						d="M4 7h16M4 12h16M4 17h16"
-					/>
-				</svg>
-				<span class={`text-sm font-semibold ${colors.text}`}>Messages Compacted</span>
-				<span class={`text-xs ${colors.lightText}`}>
-					• {trigger} trigger • {preTokens} tokens before compaction
-				</span>
-			</div>
-
-			{/* Content area - only show if there's synthetic content */}
-			{syntheticContent && (
-				<div class={`relative border-t ${colors.border}`}>
-					<div
-						class={`p-3 bg-white dark:bg-gray-900 ${!isExpanded && needsTruncation ? 'overflow-hidden' : ''}`}
-						style={
-							!isExpanded && needsTruncation ? { maxHeight: `${PREVIEW_MAX_HEIGHT + 24}px` } : {}
-						}
+		<div class="my-4">
+			<div class={`border rounded-lg overflow-hidden ${colors.bg} ${colors.border}`}>
+				{/* Header */}
+				<div class={`flex items-center gap-2 px-3 py-2 ${colors.bg}`}>
+					{/* Compact icon */}
+					<svg
+						class={`w-4 h-4 flex-shrink-0 ${colors.iconColor}`}
+						fill="none"
+						stroke="currentColor"
+						viewBox="0 0 24 24"
 					>
-						<div ref={contentRef} class={`text-sm whitespace-pre-wrap ${colors.text}`}>
-							{syntheticContent}
-						</div>
-					</div>
-
-					{/* Gradient fade overlay when truncated and not expanded */}
-					{needsTruncation && !isExpanded && (
-						<div
-							class="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-white dark:from-gray-900 to-transparent pointer-events-none"
-							aria-hidden="true"
+						<path
+							strokeLinecap="round"
+							strokeLinejoin="round"
+							strokeWidth={2}
+							d="M4 7h16M4 12h16M4 17h16"
 						/>
-					)}
-
-					{/* Expand/Collapse button at bottom edge */}
-					{needsTruncation && (
-						<div
-							class={`flex justify-center py-2 border-t bg-white dark:bg-gray-900 ${colors.border}`}
-						>
-							<button
-								onClick={() => setIsExpanded(!isExpanded)}
-								class={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors hover:bg-blue-100 dark:hover:bg-blue-900/40 ${colors.text}`}
-							>
-								{isExpanded ? (
-									<>
-										<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-											<path
-												strokeLinecap="round"
-												strokeLinejoin="round"
-												strokeWidth={2}
-												d="M5 15l7-7 7 7"
-											/>
-										</svg>
-										Show less
-									</>
-								) : (
-									<>
-										<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-											<path
-												strokeLinecap="round"
-												strokeLinejoin="round"
-												strokeWidth={2}
-												d="M19 9l-7 7-7-7"
-											/>
-										</svg>
-										Show more
-									</>
-								)}
-							</button>
-						</div>
-					)}
+					</svg>
+					<span class={`text-sm font-semibold ${colors.text}`}>Messages Compacted</span>
+					<span class={`text-xs ${colors.lightText}`}>
+						• {trigger} trigger • {preTokens} tokens before compaction
+					</span>
 				</div>
-			)}
+
+				{/* Content area - only show if there's synthetic content */}
+				{syntheticContent && (
+					<div class={`relative border-t ${colors.border}`}>
+						<div
+							class={`p-3 bg-white dark:bg-gray-900 ${!isExpanded && needsTruncation ? 'overflow-hidden' : ''}`}
+							style={
+								!isExpanded && needsTruncation ? { maxHeight: `${PREVIEW_MAX_HEIGHT + 24}px` } : {}
+							}
+						>
+							<div ref={contentRef} class={`text-sm whitespace-pre-wrap ${colors.text}`}>
+								{syntheticContent}
+							</div>
+						</div>
+
+						{/* Gradient fade overlay when truncated and not expanded */}
+						{needsTruncation && !isExpanded && (
+							<div
+								class="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-white dark:from-gray-900 to-transparent pointer-events-none"
+								aria-hidden="true"
+							/>
+						)}
+
+						{/* Expand/Collapse button at bottom edge */}
+						{needsTruncation && (
+							<div
+								class={`flex justify-center py-2 border-t bg-white dark:bg-gray-900 ${colors.border}`}
+							>
+								<button
+									onClick={() => setIsExpanded(!isExpanded)}
+									class={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors hover:bg-blue-100 dark:hover:bg-blue-900/40 ${colors.text}`}
+								>
+									{isExpanded ? (
+										<>
+											<svg
+												class="w-3.5 h-3.5"
+												fill="none"
+												viewBox="0 0 24 24"
+												stroke="currentColor"
+											>
+												<path
+													strokeLinecap="round"
+													strokeLinejoin="round"
+													strokeWidth={2}
+													d="M5 15l7-7 7 7"
+												/>
+											</svg>
+											Show less
+										</>
+									) : (
+										<>
+											<svg
+												class="w-3.5 h-3.5"
+												fill="none"
+												viewBox="0 0 24 24"
+												stroke="currentColor"
+											>
+												<path
+													strokeLinecap="round"
+													strokeLinejoin="round"
+													strokeWidth={2}
+													d="M19 9l-7 7-7-7"
+												/>
+											</svg>
+											Show more
+										</>
+									)}
+								</button>
+							</div>
+						)}
+					</div>
+				)}
+			</div>
 		</div>
 	);
 }

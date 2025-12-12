@@ -70,8 +70,9 @@ export function SDKMessageRenderer({
 	}
 
 	// Skip synthetic messages that are attached to compact boundaries
-	const msgWithSynthetic = message as SDKMessage & { isSynthetic?: boolean };
-	if (skipSynthetic && msgWithSynthetic.isSynthetic) {
+	// The skipSynthetic flag is set by ChatContainer when this message's UUID
+	// is in skipSyntheticSet (determined by isSynthetic flag OR content pattern)
+	if (skipSynthetic) {
 		return null;
 	}
 

@@ -14,6 +14,7 @@ import { cn } from '../../lib/utils.ts';
 import { SessionIndicator } from './SessionIndicator.tsx';
 import { messageSpacing, messageColors, borderRadius } from '../../lib/design-tokens.ts';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
+import { SlashCommandOutput, isHiddenCommandOutput } from './SlashCommandOutput.tsx';
 
 type UserMessage = Extract<SDKMessage, { type: 'user' }>;
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
@@ -50,10 +51,10 @@ export function SDKUserMessage({
 		return null;
 	}
 
-	// Don't render "Compacted" replay messages - they're redundant with compact boundary messages
+	// Don't render hidden command outputs (e.g., "Compacted" is shown in CompactBoundaryMessage)
 	if (isReplay) {
 		const content = typeof apiMessage.content === 'string' ? apiMessage.content : '';
-		if (content.trim() === 'Compacted') {
+		if (isHiddenCommandOutput(content)) {
 			return null;
 		}
 	}
@@ -124,19 +125,15 @@ export function SDKUserMessage({
 
 	const syntheticContentBlocks = getSyntheticContentBlocks();
 
-	// Extract and parse slash command output (for replay messages)
-	const getCommandOutput = (): string | null => {
-		if (!isReplay) return null;
-
-		const match = textContent.match(/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/);
-		return match ? match[1].trim() : null;
+	// Check if this is a slash command output (has <local-command-stdout> tags)
+	const hasCommandOutput = (): boolean => {
+		if (!isReplay) return false;
+		return /<local-command-stdout>[\s\S]*?<\/local-command-stdout>/.test(textContent);
 	};
 
-	const commandOutput = getCommandOutput();
-
-	// Check if this is a compact summary (replay message with long text content)
+	// Check if this is a compact summary (replay message with long text content, no command tags)
 	const isCompactSummary = (): boolean => {
-		return (isReplay ?? false) && !commandOutput && textContent.length > 200;
+		return (isReplay ?? false) && !hasCommandOutput() && textContent.length > 200;
 	};
 
 	const handleCopy = async () => {
@@ -170,22 +167,28 @@ export function SDKUserMessage({
 		return date.toLocaleString();
 	};
 
-	// If this is a replay message with command output or compact summary, render it as assistant-style with markdown
-	if (isReplay && (commandOutput || isCompactSummary())) {
-		const contentToRender = commandOutput || textContent;
-		const label = commandOutput ? 'command output' : 'conversation summary';
+	// If this is a replay message with command output, use SlashCommandOutput component
+	if (isReplay && hasCommandOutput()) {
+		return (
+			<div class={cn(messageSpacing.assistant.container.combined)}>
+				<SlashCommandOutput content={textContent} />
+			</div>
+		);
+	}
 
+	// If this is a compact summary (replay without command tags), render as markdown
+	if (isCompactSummary()) {
 		return (
 			<div class={cn(messageSpacing.assistant.container.combined)}>
 				<div class="max-w-full">
-					{/* Command output or compact summary card */}
+					{/* Compact summary card */}
 					<div
 						class={cn(
 							'bg-dark-800/60 border border-dark-700/50 rounded-lg p-4',
 							'prose prose-invert max-w-none'
 						)}
 					>
-						<MarkdownRenderer content={contentToRender} class="text-sm" />
+						<MarkdownRenderer content={textContent} class="text-sm" />
 					</div>
 
 					{/* Actions and timestamp */}
@@ -201,7 +204,9 @@ export function SDKUserMessage({
 							<span class="text-xs text-gray-500">{getTimestamp()}</span>
 						</Tooltip>
 
-						<span class="text-xs px-2 py-0.5 bg-blue-500/20 text-blue-300 rounded">{label}</span>
+						<span class="text-xs px-2 py-0.5 bg-blue-500/20 text-blue-300 rounded">
+							conversation summary
+						</span>
 
 						<IconButton size="md" onClick={handleCopy} title="Copy message">
 							<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

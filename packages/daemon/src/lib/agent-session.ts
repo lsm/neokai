@@ -932,6 +932,13 @@ export class AgentSession {
 			}
 		}
 
+		// Mark all user messages from SDK as synthetic
+		// Real user messages are saved in the message generator, not here
+		// SDK only emits user messages for synthetic purposes (compaction, subagent context, etc.)
+		if (sdkMessage.type === 'user') {
+			(sdkMessage as SDKMessage & { isSynthetic: boolean }).isSynthetic = true;
+		}
+
 		// FIX: Save to DB FIRST before broadcasting to clients
 		// This ensures we only broadcast messages that are successfully persisted
 		const savedSuccessfully = this.db.saveSDKMessage(this.session.id, sdkMessage);

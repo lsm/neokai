@@ -809,13 +809,13 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		return '';
 	};
 
-	// Helper to check if a message is synthetic (by flag or content pattern)
+	// Helper to check if a message is synthetic
 	const isSyntheticMessage = (msg: SDKMessage): boolean => {
 		if (msg.type !== 'user') return false;
 		const msgWithSynthetic = msg as SDKMessage & { isSynthetic?: boolean };
-		// Check isSynthetic flag first
+		// Check isSynthetic flag - all SDK-emitted user messages are marked synthetic by daemon
 		if (msgWithSynthetic.isSynthetic) return true;
-		// Fallback: check content pattern for compaction summaries
+		// Backward compatibility: check content pattern for legacy messages without flag
 		const text = extractUserMessageText(msg);
 		return text.startsWith('This session is being continued from a previous conversation');
 	};
