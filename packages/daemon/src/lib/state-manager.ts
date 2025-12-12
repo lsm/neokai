@@ -24,7 +24,7 @@ import type {
 	SessionsUpdate,
 	SDKMessagesUpdate,
 } from '@liuboer/shared';
-import type { Session } from '@liuboer/shared';
+import type { Session, ContextInfo } from '@liuboer/shared';
 import { STATE_CHANNELS } from '@liuboer/shared';
 
 const VERSION = '0.1.0';
@@ -138,6 +138,50 @@ export class StateManager {
 			'commands:updated',
 			async (data: { sessionId: string; commands: string[] }) => {
 				await this.broadcastSessionStateChange(data.sessionId);
+			}
+		);
+
+		// Context events - broadcast context updates AND unified session state
+		// This enables real-time context tracking during streaming
+		this.eventBus.on(
+			'context:updated',
+			async (data: { sessionId: string; contextInfo: ContextInfo }) => {
+				// Publish dedicated context.updated event for clients
+				// This is the primary channel for real-time context updates
+				await this.messageHub.publish('context.updated', data.contextInfo, {
+					sessionId: data.sessionId,
+				});
+
+				// Also update unified session state (for clients using state channels)
+				await this.broadcastSessionStateChange(data.sessionId);
+			}
+		);
+
+		// Compaction events - notify UI when auto-compaction starts/finishes
+		// This allows the UI to lock the input and show progress
+		this.eventBus.on(
+			'context:compacting',
+			async (data: { sessionId: string; trigger: 'manual' | 'auto' }) => {
+				this.logger.log(`Context compacting (${data.trigger}) for session: ${data.sessionId}`);
+				await this.messageHub.publish(
+					'context.compacting',
+					{ trigger: data.trigger },
+					{ sessionId: data.sessionId }
+				);
+			}
+		);
+
+		this.eventBus.on(
+			'context:compacted',
+			async (data: { sessionId: string; trigger: 'manual' | 'auto'; preTokens: number }) => {
+				this.logger.log(
+					`Context compacted (${data.trigger}) for session: ${data.sessionId}, pre-tokens: ${data.preTokens}`
+				);
+				await this.messageHub.publish(
+					'context.compacted',
+					{ trigger: data.trigger, preTokens: data.preTokens },
+					{ sessionId: data.sessionId }
+				);
 			}
 		);
 	}
@@ -282,6 +326,9 @@ export class StateManager {
 	/**
 	 * Get unified session state (metadata + agent + commands + context)
 	 * NEW: Replaces getSessionMetaState/getAgentState/getCommandsState/getContextState
+	 *
+	 * Context info is now populated with real-time token usage data from streaming.
+	 * During streaming, input_tokens from message_start represents total context consumption.
 	 */
 	private async getSessionState(sessionId: string): Promise<SessionState> {
 		const agentSession = await this.sessionManager.getSessionAsync(sessionId);
@@ -294,13 +341,16 @@ export class StateManager {
 		const agentState = agentSession.getProcessingState();
 		const commands = await agentSession.getSlashCommands();
 
+		// Get context info (populated during streaming, null before first message)
+		const contextInfo = agentSession.getContextInfo();
+
 		return {
 			session: sessionData,
 			agent: agentState,
 			commands: {
 				availableCommands: commands,
 			},
-			context: null, // TODO: Implement context info later
+			context: contextInfo,
 			timestamp: Date.now(),
 		};
 	}

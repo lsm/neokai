@@ -71,6 +71,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	 * Context usage from accurate SDK context info
 	 */
 	const [contextUsage, setContextUsage] = useState<ContextInfo | undefined>(undefined);
+
+	/**
+	 * Compaction state - locks input when context is being compacted
+	 */
+	const [isCompacting, setIsCompacting] = useState(false);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
 	const sendTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -83,6 +88,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		setCurrentAction(undefined);
 		setStreamingEvents([]);
 		setStreamingPhase(null);
+		setIsCompacting(false);
 
 		// Clear any pending timeouts from previous session
 		if (sendTimeoutRef.current) {
@@ -210,11 +216,31 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				if (!isMounted) return;
 				cleanupFunctions.push(unsubContextUpdated);
 
-				const unsubContextCompacted = await hub.subscribe<{ before: number; after: number }>(
+				// Subscribe to compaction start - lock input and show toast
+				const unsubContextCompacting = await hub.subscribe<{ trigger: 'manual' | 'auto' }>(
+					'context.compacting',
+					(data) => {
+						const triggerText = data.trigger === 'auto' ? 'Auto-compacting' : 'Compacting';
+						setIsCompacting(true);
+						setCurrentAction(`${triggerText} context...`);
+						toast.info(`${triggerText} context to free up space...`);
+					},
+					{ sessionId }
+				);
+				if (!isMounted) return;
+				cleanupFunctions.push(unsubContextCompacting);
+
+				// Subscribe to compaction complete - unlock input and show result
+				const unsubContextCompacted = await hub.subscribe<{
+					trigger: 'manual' | 'auto';
+					preTokens: number;
+				}>(
 					'context.compacted',
 					(data) => {
-						const { before, after } = data;
-						toast.info(`Context compacted: ${before} → ${after} tokens`);
+						setIsCompacting(false);
+						setCurrentAction(undefined);
+						const savedTokens = Math.round(data.preTokens * 0.5); // Estimate ~50% reduction
+						toast.success(`Context compacted! Freed ~${savedTokens.toLocaleString()} tokens`);
 					},
 					{ sessionId }
 				);
@@ -962,7 +988,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			<MessageInput
 				sessionId={sessionId}
 				onSend={handleSendMessage}
-				disabled={sending || connectionState.value !== 'connected'}
+				disabled={sending || isCompacting || connectionState.value !== 'connected'}
 				autoScroll={autoScroll}
 				onAutoScrollChange={handleAutoScrollChange}
 			/>

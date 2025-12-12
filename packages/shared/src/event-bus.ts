@@ -13,7 +13,7 @@
  * Events are typed for safety and IDE autocomplete.
  */
 
-import type { Session, AuthMethod } from './types.ts';
+import type { Session, AuthMethod, ContextInfo } from './types.ts';
 import type { SDKMessage } from './sdk/sdk.d.ts';
 import type { AgentProcessingState } from './state-types.ts';
 
@@ -23,6 +23,11 @@ export type UnsubscribeFn = () => void;
  * Event handler function
  */
 export type EventHandler<T = unknown> = (data: T) => void | Promise<void>;
+
+/**
+ * Compaction trigger type
+ */
+export type CompactionTrigger = 'manual' | 'auto';
 
 /**
  * Event types for type safety
@@ -44,6 +49,17 @@ export interface EventMap {
 
 	// Commands events
 	'commands:updated': { sessionId: string; commands: string[] };
+
+	// Context events - real-time context window usage tracking
+	'context:updated': { sessionId: string; contextInfo: ContextInfo };
+
+	// Compaction events - emitted when SDK auto-compacts or user triggers /compact
+	'context:compacting': { sessionId: string; trigger: CompactionTrigger };
+	'context:compacted': {
+		sessionId: string;
+		trigger: CompactionTrigger;
+		preTokens: number;
+	};
 }
 
 /**

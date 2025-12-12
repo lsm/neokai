@@ -88,7 +88,8 @@ export type EventType =
 	// Server → Client events (broadcasts)
 	| 'sdk.message'
 	| 'context.updated'
-	| 'context.compacted'
+	| 'context.compacting' // Compaction started (lock UI)
+	| 'context.compacted' // Compaction finished (unlock UI)
 	| 'tools.loaded'
 	| 'tools.unloaded'
 	| 'session.created'

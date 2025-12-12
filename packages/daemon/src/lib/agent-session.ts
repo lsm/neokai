@@ -1,11 +1,27 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { AgentProcessingState, MessageContent, MessageImage, Session } from '@liuboer/shared';
+import type {
+	AgentProcessingState,
+	MessageContent,
+	MessageImage,
+	Session,
+	ContextInfo,
+	ContextCategoryBreakdown,
+	ContextAPIUsage,
+} from '@liuboer/shared';
 import type { EventBus, MessageHub } from '@liuboer/shared';
-import type { Query, SDKMessage, SDKUserMessage, SlashCommand } from '@liuboer/shared/sdk';
+import type {
+	Query,
+	SDKMessage,
+	SDKUserMessage,
+	SlashCommand,
+	ModelUsage,
+} from '@liuboer/shared/sdk';
 import {
 	isSDKResultSuccess,
 	isSDKAssistantMessage,
 	isToolUseBlock,
+	isSDKStatusMessage,
+	isSDKCompactBoundary,
 } from '@liuboer/shared/sdk/type-guards';
 import type { UUID } from 'crypto';
 import { generateUUID, type CurrentModelInfo } from '@liuboer/shared';
@@ -71,6 +87,64 @@ export class AgentSession {
 	// Streaming phase tracking
 	private streamingPhase: 'initializing' | 'thinking' | 'streaming' | 'finalizing' = 'initializing';
 	private streamingStartedAt: number | null = null;
+
+	// ========================================
+	// Context Tracking State
+	// ========================================
+	// Tracks real-time context window usage during streaming
+	// Updated on message_start (input tokens) and message_delta (output tokens)
+
+	/**
+	 * Current context info - the latest snapshot of context window usage
+	 * Updated in real-time during streaming for live UI updates
+	 */
+	private currentContextInfo: ContextInfo | null = null;
+
+	/**
+	 * Context window size for the current model (in tokens)
+	 * Set from SDK's modelUsage when available, defaults to 200K
+	 */
+	private contextWindowSize: number = 200000; // Default for Claude models
+
+	/**
+	 * Current turn's input tokens (from message_start)
+	 * This represents TOTAL context being sent to Claude for this turn:
+	 * system prompt + tools + conversation history + current input
+	 */
+	private currentTurnInputTokens: number = 0;
+
+	/**
+	 * Current turn's output tokens (from message_delta, cumulative)
+	 * Updated during streaming
+	 */
+	private currentTurnOutputTokens: number = 0;
+
+	/**
+	 * Estimated system prompt tokens (relatively stable per session)
+	 * Will be refined based on SDK data when available
+	 */
+	private estimatedSystemPromptTokens: number = 3000; // Reasonable default for Claude Code
+
+	/**
+	 * Estimated tool definitions tokens
+	 * Will be refined based on SDK data when available
+	 */
+	private estimatedToolsTokens: number = 15000; // Claude Code has many tools
+
+	/**
+	 * Baseline tokens captured from first message
+	 * This gives us a more accurate system+tools estimate
+	 * Formula: first_turn_input_tokens - estimated_first_message_tokens ≈ system + tools
+	 */
+	private baselineTokensCaptured: boolean = false;
+	private baselineSystemToolsTokens: number | null = null;
+
+	/**
+	 * Throttle interval for context updates during streaming (ms)
+	 * Prevents flooding clients with updates
+	 */
+	private contextUpdateThrottleMs: number = 250;
+	private lastContextUpdateTime: number = 0;
 
 	private logger: Logger;
 
@@ -166,6 +240,258 @@ export class AgentSession {
 	 */
 	getProcessingState(): AgentProcessingState {
 		return this.processingState;
+	}
+
+	// ========================================
+	// Context Tracking Methods
+	// ========================================
+
+	/**
+	 * Get current context info
+	 * Used when clients subscribe/reconnect to get immediate snapshot
+	 */
+	getContextInfo(): ContextInfo | null {
+		return this.currentContextInfo;
+	}
+
+	/**
+	 * Handle message_start stream event
+	 * This contains the TOTAL input tokens for this turn (system + tools + history + current)
+	 * This is THE key insight - input_tokens at message_start = total context being consumed
+	 */
+	private async handleMessageStartUsage(usage: {
+		input_tokens: number;
+		output_tokens: number;
+	}): Promise<void> {
+		this.currentTurnInputTokens = usage.input_tokens;
+		this.currentTurnOutputTokens = usage.output_tokens; // Usually 1 at start
+
+		// Capture baseline from first message for better system+tools estimation
+		// On first message: input_tokens ≈ system + tools + first_user_message
+		// We estimate user message at ~100-500 tokens, so system+tools ≈ input_tokens - 300
+		if (!this.baselineTokensCaptured && usage.input_tokens > 0) {
+			// Estimate: first user message is typically 100-500 tokens
+			// Subtract a conservative estimate to get system+tools baseline
+			const estimatedFirstMessageTokens = 300;
+			this.baselineSystemToolsTokens = Math.max(
+				0,
+				usage.input_tokens - estimatedFirstMessageTokens
+			);
+
+			// Update our estimates based on captured baseline
+			// Split baseline 15:85 between system and tools (Claude Code has many tools)
+			if (this.baselineSystemToolsTokens > 1000) {
+				this.estimatedSystemPromptTokens = Math.round(this.baselineSystemToolsTokens * 0.15);
+				this.estimatedToolsTokens = Math.round(this.baselineSystemToolsTokens * 0.85);
+				this.logger.log(
+					`Captured baseline tokens: ${this.baselineSystemToolsTokens} ` +
+						`(system: ~${this.estimatedSystemPromptTokens}, tools: ~${this.estimatedToolsTokens})`
+				);
+			}
+
+			this.baselineTokensCaptured = true;
+		}
+
+		// Build and broadcast initial context info for this turn
+		await this.buildAndBroadcastContextInfo('message_start');
+	}
+
+	/**
+	 * Handle message_delta stream event
+	 * This contains the cumulative output tokens for this turn
+	 */
+	private async handleMessageDeltaUsage(usage: { output_tokens: number }): Promise<void> {
+		this.currentTurnOutputTokens = usage.output_tokens; // Cumulative
+
+		// Throttled broadcast to avoid flooding
+		await this.buildAndBroadcastContextInfo('message_delta', true);
+	}
+
+	/**
+	 * Handle result message with complete token usage
+	 * This is the authoritative source - use it to calibrate our estimates
+	 */
+	private async handleResultUsage(
+		usage: {
+			input_tokens: number;
+			output_tokens: number;
+			cache_read_input_tokens?: number;
+			cache_creation_input_tokens?: number;
+		},
+		modelUsage?: Record<string, ModelUsage>
+	): Promise<void> {
+		// Update context window size if SDK provides it
+		if (modelUsage) {
+			const modelName = Object.keys(modelUsage)[0];
+			if (modelName && modelUsage[modelName]?.contextWindow) {
+				this.contextWindowSize = modelUsage[modelName].contextWindow;
+				this.logger.log(`Updated context window size from SDK: ${this.contextWindowSize}`);
+			}
+		}
+
+		// Store accurate final values for this turn
+		this.currentTurnInputTokens = usage.input_tokens;
+		this.currentTurnOutputTokens = usage.output_tokens;
+
+		// Build context info with cache information
+		const apiUsage: ContextAPIUsage = {
+			inputTokens: usage.input_tokens,
+			outputTokens: usage.output_tokens,
+			cacheReadTokens: usage.cache_read_input_tokens || 0,
+			cacheCreationTokens: usage.cache_creation_input_tokens || 0,
+		};
+
+		// Force broadcast (not throttled) since this is the final accurate data
+		await this.buildAndBroadcastContextInfo('result', false, apiUsage);
+	}
+
+	/**
+	 * Build ContextInfo and broadcast to clients
+	 *
+	 * KEY INSIGHT: At message_start, input_tokens represents the TOTAL tokens
+	 * being sent to Claude for this turn. This includes:
+	 * - System prompt
+	 * - Tool definitions
+	 * - Complete conversation history
+	 * - Current user input
+	 *
+	 * This is exactly what we need to calculate context window usage!
+	 */
+	private async buildAndBroadcastContextInfo(
+		source: 'message_start' | 'message_delta' | 'result',
+		throttle: boolean = false,
+		apiUsage?: ContextAPIUsage
+	): Promise<void> {
+		// Throttle check
+		if (throttle) {
+			const now = Date.now();
+			if (now - this.lastContextUpdateTime < this.contextUpdateThrottleMs) {
+				return; // Skip this update, too soon
+			}
+			this.lastContextUpdateTime = now;
+		}
+
+		// Calculate total tokens in use
+		// input_tokens = everything being sent to Claude
+		// output_tokens = Claude's response (cumulative during streaming)
+		const totalUsed = this.currentTurnInputTokens + this.currentTurnOutputTokens;
+		const percentUsed = (totalUsed / this.contextWindowSize) * 100;
+
+		// Build breakdown
+		// Since we can't perfectly separate categories without the countTokens API,
+		// we use intelligent estimation based on the data we have
+		const breakdown = this.calculateBreakdown(totalUsed);
+
+		// Create context info
+		this.currentContextInfo = {
+			model: this.session.config.model,
+			totalUsed,
+			totalCapacity: this.contextWindowSize,
+			percentUsed: Math.min(percentUsed, 100), // Cap at 100%
+			breakdown,
+			apiUsage,
+		};
+
+		// Emit context update event via EventBus
+		await this.eventBus.emit('context:updated', {
+			sessionId: this.session.id,
+			contextInfo: this.currentContextInfo,
+		});
+
+		// Log for debugging (only on result or significant changes)
+		if (source === 'result' || (source === 'message_start' && this.currentTurnInputTokens > 0)) {
+			this.logger.log(
+				`Context updated (${source}): ${totalUsed}/${this.contextWindowSize} tokens (${percentUsed.toFixed(1)}%)`
+			);
+		}
+	}
+
+	/**
+	 * Calculate category breakdown for context usage
+	 *
+	 * This provides a Claude Code /context-like breakdown:
+	 * - System Prompt: Estimated tokens for system prompt
+	 * - System Tools: Estimated tokens for tool definitions
+	 * - Messages: Conversation history tokens
+	 * - Current Response: Current output tokens
+	 * - Free Space: Remaining context window
+	 *
+	 * IMPROVED: Uses baseline captured from first message for better accuracy.
+	 * On first message, we capture total input_tokens and use it to refine
+	 * system+tools estimates (instead of hardcoded values).
+	 */
+	private calculateBreakdown(totalUsed: number): Record<string, ContextCategoryBreakdown> {
+		const freeSpace = this.contextWindowSize - totalUsed;
+
+		// Use refined estimates if baseline was captured, otherwise use defaults
+		const systemPromptTokens = this.estimatedSystemPromptTokens;
+		const toolsTokens = this.estimatedToolsTokens;
+		const systemToolsTotal = systemPromptTokens + toolsTokens;
+
+		// Messages = input - system - tools (but not less than 0)
+		const messagesTokens = Math.max(0, this.currentTurnInputTokens - systemToolsTotal);
+
+		// Current response
+		const responseTokens = this.currentTurnOutputTokens;
+
+		// Calculate percentages relative to capacity
+		const calcPercent = (tokens: number) => (tokens / this.contextWindowSize) * 100;
+
+		// Label indicates whether estimate is from baseline or default
+		const estimateLabel = this.baselineTokensCaptured ? '' : ' (est)';
+
+		return {
+			[`System Prompt${estimateLabel}`]: {
+				tokens: systemPromptTokens,
+				percent: calcPercent(systemPromptTokens),
+			},
+			[`System Tools${estimateLabel}`]: {
+				tokens: toolsTokens,
+				percent: calcPercent(toolsTokens),
+			},
+			Messages: {
+				tokens: messagesTokens,
+				percent: calcPercent(messagesTokens),
+			},
+			'Current Response': {
+				tokens: responseTokens,
+				percent: calcPercent(responseTokens),
+			},
+			'Free Space': {
+				tokens: Math.max(0, freeSpace),
+				percent: Math.max(0, calcPercent(freeSpace)),
+			},
+		};
+	}
+
+	/**
+	 * Extract usage from RawMessageStreamEvent
+	 * Handles the different event types from Anthropic's streaming API
+	 */
+	private async processStreamEventForContext(event: unknown): Promise<void> {
+		// Type guard for the event structure
+		const streamEvent = event as {
+			type: string;
+			message?: {
+				usage?: { input_tokens: number; output_tokens: number };
+			};
+			usage?: { output_tokens: number };
+		};
+
+		try {
+			// message_start: Contains initial input_tokens (total context)
+			if (streamEvent.type === 'message_start' && streamEvent.message?.usage) {
+				await this.handleMessageStartUsage(streamEvent.message.usage);
+			}
+
+			// message_delta: Contains cumulative output_tokens
+			if (streamEvent.type === 'message_delta' && streamEvent.usage) {
+				await this.handleMessageDeltaUsage(streamEvent.usage);
+			}
+		} catch (error) {
+			// Don't let context tracking errors break the main flow
+			this.logger.warn('Error processing stream event for context:', error);
+		}
 	}
 
 	/**
@@ -557,6 +883,17 @@ export class AgentSession {
 		// Cast unknown to SDKMessage - messages come from SDK which provides proper typing
 		const sdkMessage = message as SDKMessage;
 
+		// ========================================
+		// CONTEXT TRACKING: Extract usage from stream events
+		// ========================================
+		// Process stream events for real-time context tracking
+		// This extracts token counts from message_start and message_delta events
+		if (sdkMessage.type === 'stream_event') {
+			// Extract the raw stream event and process for context info
+			const streamEventMessage = sdkMessage as { event: unknown };
+			await this.processStreamEventForContext(streamEventMessage.event);
+		}
+
 		// PHASE DETECTION LOGIC
 		// Automatically update streaming phase based on message type
 		if (this.processingState.status === 'processing') {
@@ -645,6 +982,21 @@ export class AgentSession {
 				lastActiveAt: this.session.lastActiveAt,
 				metadata: this.session.metadata,
 			});
+
+			// ========================================
+			// CONTEXT TRACKING: Final accurate update from result
+			// ========================================
+			// Use the authoritative usage data from result message
+			// This includes modelUsage which has the context window size
+			await this.handleResultUsage(
+				{
+					input_tokens: usage.input_tokens,
+					output_tokens: usage.output_tokens,
+					cache_read_input_tokens: usage.cache_read_input_tokens,
+					cache_creation_input_tokens: usage.cache_creation_input_tokens,
+				},
+				sdkMessage.modelUsage
+			);
 		}
 
 		// Track tool calls
@@ -659,6 +1011,40 @@ export class AgentSession {
 					metadata: this.session.metadata,
 				});
 			}
+		}
+
+		// ========================================
+		// COMPACTION EVENTS: Detect and emit compaction start/end
+		// ========================================
+		// Status message with status='compacting' indicates compaction is in progress
+		if (isSDKStatusMessage(sdkMessage)) {
+			const statusMsg = sdkMessage as { status: string | null };
+			if (statusMsg.status === 'compacting') {
+				this.logger.log('Context compaction started (auto)');
+				await this.eventBus.emit('context:compacting', {
+					sessionId: this.session.id,
+					trigger: 'auto' as const, // Status messages are from auto-compaction
+				});
+			}
+		}
+
+		// Compact boundary message indicates compaction completed
+		if (isSDKCompactBoundary(sdkMessage)) {
+			const compactMsg = sdkMessage as {
+				compact_metadata: {
+					trigger: 'manual' | 'auto';
+					pre_tokens: number;
+				};
+			};
+			this.logger.log(
+				`Context compaction completed (${compactMsg.compact_metadata.trigger}), ` +
+					`pre-tokens: ${compactMsg.compact_metadata.pre_tokens}`
+			);
+			await this.eventBus.emit('context:compacted', {
+				sessionId: this.session.id,
+				trigger: compactMsg.compact_metadata.trigger,
+				preTokens: compactMsg.compact_metadata.pre_tokens,
+			});
 		}
 	}
 
