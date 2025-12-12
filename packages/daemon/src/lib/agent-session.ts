@@ -29,6 +29,7 @@ import { Database } from '../storage/database';
 import { ErrorCategory, ErrorManager } from './error-manager';
 import { Logger } from './logger';
 import { isValidModel, resolveModelAlias, getModelInfo } from './model-service';
+import { generateTitle } from './title-generator';
 
 /**
  * Queued message waiting to be sent to Claude
@@ -1001,6 +1002,44 @@ export class AgentSession {
 				},
 				sdkMessage.modelUsage
 			);
+
+			// ========================================
+			// AUTO-GENERATE TITLE: After first message exchange
+			// ========================================
+			// Generate a title using Haiku after the first user-assistant exchange
+			if (this.session.metadata.messageCount === 1 && this.session.title === 'New Session') {
+				this.logger.log('First message exchange complete, generating title...');
+
+				// Get messages to find first user and assistant messages
+				const messages = this.db.getSDKMessages(this.session.id, 10);
+				const firstUserMsg = messages.find((m) => m.type === 'user');
+				const firstAssistantMsg = messages.find((m) => isSDKAssistantMessage(m));
+
+				if (firstUserMsg && firstAssistantMsg) {
+					try {
+						const apiKey = await this.getApiKey();
+						if (apiKey) {
+							const generatedTitle = await generateTitle(firstUserMsg, firstAssistantMsg, apiKey);
+							if (generatedTitle) {
+								// Update session title in memory and database
+								this.session.title = generatedTitle;
+								this.db.updateSession(this.session.id, { title: generatedTitle });
+
+								// Emit session:updated event so StateManager broadcasts the change
+								await this.eventBus.emit('session:updated', {
+									sessionId: this.session.id,
+									updates: { title: generatedTitle },
+								});
+
+								this.logger.log(`Session title updated to: "${generatedTitle}"`);
+							}
+						}
+					} catch (error) {
+						// Don't throw - title generation is non-critical
+						this.logger.warn('Failed to generate session title:', error);
+					}
+				}
+			}
 		}
 
 		// Track tool calls
