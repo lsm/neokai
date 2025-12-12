@@ -217,6 +217,19 @@ export async function createTestApp(): Promise<TestContext> {
 		},
 	});
 
+	// Initialize model service if authentication is available
+	if (authStatus.isAuthenticated) {
+		try {
+			const { initializeModels } = await import('../src/lib/model-service');
+			await initializeModels();
+		} catch (error) {
+			// Silently fail - tests will handle missing models gracefully
+			if (process.env.TEST_VERBOSE) {
+				console.log('[TEST] Model initialization skipped:', error);
+			}
+		}
+	}
+
 	// Wait for server to actually be listening
 	await Bun.sleep(200);
 
@@ -259,6 +272,14 @@ export async function createTestApp(): Promise<TestContext> {
 
 			// Now cleanup MessageHub (removes RPC handlers)
 			messageHub.cleanup();
+
+			// Clear models cache for this test
+			try {
+				const { clearModelsCache } = await import('../src/lib/model-service');
+				clearModelsCache();
+			} catch {
+				// Ignore if model service wasn't loaded
+			}
 
 			// Close database and stop server
 			db.close();

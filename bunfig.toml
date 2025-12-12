@@ -1,0 +1,8 @@
+[test]
+# Exclude temp workspace files from test discovery
+exclude = [
+  "tmp/**",
+  "**/node_modules/**",
+  "**/dist/**",
+  "**/.next/**"
+]

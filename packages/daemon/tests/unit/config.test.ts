@@ -36,7 +36,8 @@ describe('getConfig', () => {
 		expect(config.port).toBe(9283);
 		expect(config.host).toBe('0.0.0.0');
 		expect(config.dbPath).toBe('./data/daemon.db');
-		expect(config.defaultModel).toBe('claude-sonnet-4-5-20250929');
+		// 'default' maps to Sonnet 4.5 in the SDK
+		expect(config.defaultModel).toBe('default');
 		expect(config.maxTokens).toBe(8192);
 		expect(config.temperature).toBe(1.0);
 		expect(config.maxSessions).toBe(10);
