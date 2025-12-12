@@ -46,7 +46,7 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-model-info`,
 				config: {
-					model: 'claude-sonnet-4-5-20250929',
+					model: 'default', // SDK uses 'default' for Sonnet
 				},
 			});
 
@@ -55,9 +55,9 @@ describe('Model Switching Integration', () => {
 				sessionId,
 			});
 
-			expect(result.currentModel).toBe('claude-sonnet-4-5-20250929');
+			expect(result.currentModel).toBe('default'); // SDK alias
 			if (result.modelInfo) {
-				expect(result.modelInfo.id).toBe('claude-sonnet-4-5-20250929');
+				expect(result.modelInfo.id).toBe('default'); // SDK alias
 				expect(result.modelInfo.name).toBeString();
 				expect(result.modelInfo.family).toBeOneOf(['opus', 'sonnet', 'haiku']);
 			}
@@ -73,41 +73,41 @@ describe('Model Switching Integration', () => {
 	});
 
 	describe('session.model.switch', () => {
-		test('should switch model by full ID', async () => {
+		test('should switch model by alias', async () => {
 			// Create session
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-id`,
 				config: {
-					model: 'claude-sonnet-4-5-20250929',
+					model: 'default', // SDK alias for Sonnet
 				},
 			});
 
 			// Switch to Haiku
 			const result = await callRPCHandler(ctx.messageHub, 'session.model.switch', {
 				sessionId,
-				model: 'claude-haiku-4-5-20251001',
+				model: 'haiku', // SDK alias
 			});
 
 			expect(result.success).toBe(true);
-			expect(result.model).toBe('claude-haiku-4-5-20251001');
+			expect(result.model).toBe('haiku'); // SDK alias
 			expect(result.error).toBeUndefined();
 
 			// Verify model was updated in session
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
 			const sessionData = agentSession!.getSessionData();
-			expect(sessionData.config.model).toBe('claude-haiku-4-5-20251001');
+			expect(sessionData.config.model).toBe('haiku');
 
 			// Verify model was updated in database
 			const dbSession = ctx.db.getSession(sessionId);
-			expect(dbSession?.config.model).toBe('claude-haiku-4-5-20251001');
+			expect(dbSession?.config.model).toBe('haiku');
 		});
 
-		test('should switch model by alias', async () => {
+		test('should switch between model families', async () => {
 			// Create session
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-alias`,
 				config: {
-					model: 'sonnet',
+					model: 'default', // SDK alias for Sonnet
 				},
 			});
 
@@ -118,7 +118,7 @@ describe('Model Switching Integration', () => {
 			});
 
 			expect(result.success).toBe(true);
-			expect(result.model).toBe('claude-opus-4-5-20251101'); // Resolved from alias
+			expect(result.model).toBe('opus'); // SDK alias
 			expect(result.error).toBeUndefined();
 		});
 
@@ -127,18 +127,18 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-same`,
 				config: {
-					model: 'claude-sonnet-4-5-20250929',
+					model: 'default', // SDK alias for Sonnet
 				},
 			});
 
 			// Switch to same model
 			const result = await callRPCHandler(ctx.messageHub, 'session.model.switch', {
 				sessionId,
-				model: 'claude-sonnet-4-5-20250929',
+				model: 'default',
 			});
 
 			expect(result.success).toBe(true);
-			expect(result.model).toBe('claude-sonnet-4-5-20250929');
+			expect(result.model).toBe('default');
 			expect(result.error).toBeDefined(); // Should have message about already using model
 		});
 
@@ -195,7 +195,7 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-families`,
 				config: {
-					model: 'sonnet',
+					model: 'default', // SDK alias for Sonnet
 				},
 			});
 
@@ -205,7 +205,7 @@ describe('Model Switching Integration', () => {
 				model: 'opus',
 			});
 			expect(result.success).toBe(true);
-			expect(result.model).toContain('opus');
+			expect(result.model).toBe('opus');
 
 			// Switch to Haiku
 			result = await callRPCHandler(ctx.messageHub, 'session.model.switch', {
@@ -213,15 +213,15 @@ describe('Model Switching Integration', () => {
 				model: 'haiku',
 			});
 			expect(result.success).toBe(true);
-			expect(result.model).toContain('haiku');
+			expect(result.model).toBe('haiku');
 
 			// Switch back to Sonnet
 			result = await callRPCHandler(ctx.messageHub, 'session.model.switch', {
 				sessionId,
-				model: 'sonnet',
+				model: 'default',
 			});
 			expect(result.success).toBe(true);
-			expect(result.model).toContain('sonnet');
+			expect(result.model).toBe('default');
 		});
 
 		test('should preserve session state during model switch', async () => {
@@ -229,7 +229,7 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-state`,
 				config: {
-					model: 'sonnet',
+					model: 'default', // SDK alias for Sonnet
 				},
 			});
 
@@ -260,7 +260,7 @@ describe('Model Switching Integration', () => {
 
 			// Only model should change
 			expect(sessionDataAfter.config.model).not.toBe(modelBefore);
-			expect(sessionDataAfter.config.model).toBe('claude-haiku-4-5-20251001');
+			expect(sessionDataAfter.config.model).toBe('haiku');
 		});
 
 		test('should update database immediately on switch', async () => {
@@ -268,7 +268,7 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-db`,
 				config: {
-					model: 'sonnet',
+					model: 'default', // SDK alias for Sonnet
 				},
 			});
 
@@ -281,7 +281,7 @@ describe('Model Switching Integration', () => {
 			// Verify database was updated
 			const dbSession = ctx.db.getSession(sessionId);
 			expect(dbSession).toBeDefined();
-			expect(dbSession?.config.model).toBe('claude-opus-4-5-20251101');
+			expect(dbSession?.config.model).toBe('opus');
 		});
 	});
 
@@ -350,14 +350,14 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-agent-session-model`,
 				config: {
-					model: 'claude-sonnet-4-5-20250929',
+					model: 'default', // SDK alias for Sonnet
 				},
 			});
 
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
 			const modelInfo = agentSession!.getCurrentModel();
 
-			expect(modelInfo.id).toBe('claude-sonnet-4-5-20250929');
+			expect(modelInfo.id).toBe('default');
 			if (modelInfo.info) {
 				expect(modelInfo.info.name).toBeString();
 				expect(modelInfo.info.family).toBe('sonnet');
@@ -369,14 +369,14 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-agent-session-model-switch`,
 				config: {
-					model: 'sonnet',
+					model: 'default', // SDK alias for Sonnet
 				},
 			});
 
 			// Get initial model
 			let agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
 			let modelInfo = agentSession!.getCurrentModel();
-			expect(modelInfo.id).toContain('sonnet');
+			expect(modelInfo.id).toBe('default');
 
 			// Switch model
 			await callRPCHandler(ctx.messageHub, 'session.model.switch', {
@@ -387,7 +387,7 @@ describe('Model Switching Integration', () => {
 			// Verify model changed
 			agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
 			modelInfo = agentSession!.getCurrentModel();
-			expect(modelInfo.id).toContain('haiku');
+			expect(modelInfo.id).toBe('haiku');
 		});
 	});
 
@@ -397,7 +397,7 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-rapid-switches`,
 				config: {
-					model: 'sonnet',
+					model: 'default', // SDK alias for Sonnet
 				},
 			});
 
@@ -405,7 +405,7 @@ describe('Model Switching Integration', () => {
 			const switches = [
 				{ model: 'opus' },
 				{ model: 'haiku' },
-				{ model: 'sonnet' },
+				{ model: 'default' },
 				{ model: 'opus' },
 			];
 
@@ -426,7 +426,7 @@ describe('Model Switching Integration', () => {
 			// Final model should be opus
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
 			const modelInfo = agentSession!.getCurrentModel();
-			expect(modelInfo.id).toContain('opus');
+			expect(modelInfo.id).toBe('opus');
 		});
 
 		test('should handle model switch before query starts', async () => {
@@ -434,7 +434,7 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-pre-query-switch`,
 				config: {
-					model: 'sonnet',
+					model: 'default', // SDK alias for Sonnet
 				},
 			});
 
@@ -445,12 +445,12 @@ describe('Model Switching Integration', () => {
 			});
 
 			expect(result.success).toBe(true);
-			expect(result.model).toContain('haiku');
+			expect(result.model).toBe('haiku');
 
 			// Verify config was updated
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
 			const sessionData = agentSession!.getSessionData();
-			expect(sessionData.config.model).toContain('haiku');
+			expect(sessionData.config.model).toBe('haiku');
 		});
 
 		test('should preserve conversation history after model switch', async () => {
@@ -458,7 +458,7 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-history-preservation`,
 				config: {
-					model: 'sonnet',
+					model: 'default', // SDK alias for Sonnet
 				},
 			});
 
