@@ -2,16 +2,19 @@
 
 ## Overview
 
-This document describes the hybrid dynamic/static model loading system with TTL-based lazy cache refresh implemented in the Liuboer daemon.
+This document describes the dynamic model loading system with TTL-based lazy cache refresh implemented in the Liuboer daemon.
+
+**Important:** The model list is solely sourced from the SDK's `supportedModels()` API. There is no static model fallback.
 
 ## Architecture
 
-### 1. Multi-Level Caching Strategy
+### 1. Model Loading Strategy
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     Application Startup                      │
 │  initializeModels() → Loads models from SDK → Global Cache   │
+│  ⚠️  App fails to start if SDK models cannot be loaded       │
 └─────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -30,18 +33,35 @@ This document describes the hybrid dynamic/static model loading system with TTL-
 │     - Continue returning stale cache                         │
 │  3. Background refresh updates cache when complete           │
 └─────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────┐
-│                    Static Model Fallback                     │
-│  - Used when:                                                │
-│    * SDK loading fails                                       │
-│    * Cache is empty                                          │
-│    * Network issues                                          │
-│  - Contains: Hardcoded latest models (Opus, Sonnet, Haiku)   │
-└─────────────────────────────────────────────────────────────┘
 ```
 
-### 2. Key Components
+### 2. SDK Model Format
+
+The SDK returns models with short identifiers:
+
+| SDK ID    | Display Name          | Family |
+| --------- | --------------------- | ------ |
+| `default` | Default (recommended) | sonnet |
+| `opus`    | Opus                  | opus   |
+| `haiku`   | Haiku                 | haiku  |
+
+### 3. Legacy Model ID Support
+
+For backward compatibility with existing sessions, the service maps legacy model IDs to current SDK IDs:
+
+```typescript
+const LEGACY_MODEL_MAPPINGS = {
+	// Old alias
+	sonnet: 'default',
+	// Full model IDs
+	'claude-sonnet-4-5-20250929': 'default',
+	'claude-opus-4-5-20251101': 'opus',
+	'claude-haiku-4-5-20251001': 'haiku',
+	// ... more mappings
+};
+```
+
+### 4. Key Components
 
 #### `model-service.ts`
 
@@ -55,26 +75,17 @@ This document describes the hybrid dynamic/static model loading system with TTL-
 **Functions:**
 
 ```typescript
-// Initialize models on app startup (called once)
+// Initialize models on app startup (REQUIRED - called once)
 export async function initializeModels(): Promise<void>;
 
 // Get available models with lazy refresh
 export function getAvailableModels(cacheKey = 'global'): ModelInfo[];
 
-// Load models from SDK query object
-export async function getSupportedModelsFromQuery(
-	queryObject: Query | null,
-	cacheKey: string = 'global'
-): Promise<SDKModelInfo[]>;
+// Get model info by ID (supports legacy IDs via mapping)
+export async function getModelInfo(idOrAlias: string): Promise<ModelInfo | null>;
 
 // Clear cache (for testing or manual refresh)
 export function clearModelsCache(cacheKey?: string): void;
-
-// Background refresh (internal, triggered by getAvailableModels)
-async function triggerBackgroundRefresh(cacheKey: string): Promise<void>;
-
-// Check if cache is stale (internal)
-function isCacheStale(cacheKey: string): boolean;
 ```
 
 #### `app.ts`
@@ -82,39 +93,20 @@ function isCacheStale(cacheKey: string): boolean;
 Models are loaded during app initialization:
 
 ```typescript
-// Initialize dynamic models on app startup (global cache fallback)
+// Initialize dynamic models on app startup
 log('Loading dynamic models from Claude SDK...');
 const { initializeModels } = await import('./lib/model-service');
-await initializeModels();
+await initializeModels(); // Throws if SDK fails
 log('✅ Model service initialized');
 ```
 
-#### `session-manager.ts`
-
-Session creation validates models against the cache:
-
-```typescript
-async createSession(params) {
-  // Validate and resolve model ID using cached models
-  const modelId = await this.getValidatedModelId(params.config?.model);
-
-  const session: Session = {
-    config: {
-      model: modelId, // Use validated model ID
-      ...
-    },
-    ...
-  };
-}
-```
-
-### 3. Cache Refresh Flow
+### 5. Cache Refresh Flow
 
 ```
 User Request → getAvailableModels()
                      │
                      ├─→ Check cache exists?
-                     │   ├─→ NO → Return static fallback
+                     │   ├─→ NO → Return empty (error logged)
                      │   └─→ YES → Continue
                      │
                      ├─→ Check cache stale (>4 hours)?
@@ -137,13 +129,13 @@ Background Refresh:
   7. Remove refresh lock
 ```
 
-### 4. Error Handling
+### 6. Error Handling
 
 **Initialization Errors:**
 
-- If `initializeModels()` fails, log error and continue
-- App will fall back to static models
-- Next call to `getAvailableModels()` will retry loading
+- If `initializeModels()` fails, the error is thrown
+- App startup will fail - models are required
+- User must fix authentication/network issues
 
 **Background Refresh Errors:**
 
@@ -151,12 +143,7 @@ Background Refresh:
 - Existing cache continues to be served
 - Next call after TTL will retry refresh
 
-**Query Creation Errors:**
-
-- Temporary query cleanup is always executed in finally block
-- Errors during cleanup are silently ignored
-
-### 5. Performance Characteristics
+### 7. Performance Characteristics
 
 **Cache Hit (Typical Case):**
 
@@ -176,61 +163,16 @@ Background Refresh:
 - Background task: ~2-3 seconds
 - Transparent to users
 
-### 6. Testing
-
-**Integration Tests:**
-
-- `tests/integration/session-rpc.test.ts` - Validates model IDs
-- `tests/integration/model-switching.test.ts` - Tests model switching
-
-**E2E Tests:**
-
-- `packages/e2e/tests/model-switcher.e2e.ts` - 27 tests covering:
-  - UI interactions
-  - Model persistence
-  - State synchronization
-  - Visual regression
-
-**Manual Testing:**
-
-- `tests/manual/test-model-cache.ts` - Cache behavior verification
-
-## Migration Notes
-
-### Removed Components
-
-1. **Per-session model loading:**
-   - Previously: Each session loaded models on creation
-   - Now: Global cache loaded once on app startup
-
-2. **Static-first approach:**
-   - Previously: Static models used first, dynamic loading optional
-   - Now: Dynamic loading on startup, static as fallback only
-
-3. **Synchronous model loading:**
-   - Previously: `ensureModelsLoaded()` with race timeout
-   - Now: App startup loading with graceful failure
-
-### Benefits
-
-1. **Faster session creation:**
-   - No more 2-3 second delay when creating sessions
-   - Models pre-loaded and cached
-
-2. **Always up-to-date:**
-   - Background refresh keeps models current
-   - 4-hour TTL ensures recent model list
-
-3. **Zero user impact:**
-   - Lazy refresh is non-blocking
-   - Stale cache served instantly
-
-4. **Resilient:**
-   - Static fallback for network issues
-   - Graceful error handling
-   - Automatic retry after TTL
-
 ## Configuration
+
+**Default Model:**
+
+The config default model is `'default'` which maps to Sonnet in the SDK:
+
+```typescript
+// In config.ts
+defaultModel: process.env.DEFAULT_MODEL || 'default',
+```
 
 **Cache TTL:**
 
@@ -238,12 +180,6 @@ Background Refresh:
 // In model-service.ts
 const CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
 ```
-
-To change the TTL, modify this constant. Recommended values:
-
-- Development: 1 hour (faster refresh for testing)
-- Production: 4 hours (balance between freshness and API calls)
-- Enterprise: 24 hours (minimal API usage)
 
 ## Monitoring
 
@@ -266,26 +202,18 @@ Loading dynamic models from Claude SDK...
 
 ```
 [model-service] Failed to load models on startup: [error]
-[model-service] Will fall back to static models
+// App will fail to start
 ```
 
-## Future Improvements
+## Testing
 
-1. **Configurable TTL:**
-   - Move TTL to config file
-   - Allow per-environment configuration
+**Manual Testing:**
 
-2. **Metrics:**
-   - Track cache hit/miss rates
-   - Monitor background refresh success rate
-   - Alert on repeated failures
+```bash
+bun run packages/daemon/tests/manual/test-model-cache.ts
+```
 
-3. **Smarter Refresh:**
-   - Exponential backoff on failures
-   - Header-based cache validation (ETag, Last-Modified)
-   - Conditional refresh based on SDK version changes
+**Integration Tests:**
 
-4. **Admin API:**
-   - Manual cache invalidation endpoint
-   - Cache stats endpoint
-   - Force refresh endpoint
+- `tests/integration/session-rpc.test.ts` - Validates model IDs
+- `tests/integration/model-switching.test.ts` - Tests model switching

@@ -169,8 +169,9 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 			// Import model service for dynamic models (with static fallback)
 			const { getAvailableModels } = await import('../model-service');
 
-			// Check if forceRefresh is requested
-			const forceRefresh = (data as { forceRefresh?: boolean })?.forceRefresh ?? false;
+			// Check if forceRefresh is requested or useCache is disabled
+			const params = data as { forceRefresh?: boolean; useCache?: boolean };
+			const forceRefresh = params?.forceRefresh ?? params?.useCache === false;
 
 			// Get models from cache (uses 'global' cache key)
 			// This will return dynamic models if they were loaded, otherwise static fallback

@@ -1,16 +1,37 @@
 /**
- * Model Service - Hybrid model management with dynamic loading and static fallback
+ * Model Service - Dynamic model loading from SDK
  *
  * This service manages model information by:
- * 1. Dynamically loading models from SDK query objects (when available)
- * 2. Caching loaded models per session
- * 3. Falling back to hardcoded models when SDK is unavailable
+ * 1. Loading models from SDK on app startup
+ * 2. Caching models with 4-hour TTL
+ * 3. Lazy background refresh when cache is stale
+ *
+ * The model list is solely sourced from SDK's supportedModels() API.
  */
 
 import type { ModelInfo as SDKModelInfo } from '@liuboer/shared/sdk';
 import type { ModelInfo } from '@liuboer/shared';
-import { CLAUDE_MODELS, MODEL_ALIASES } from '@liuboer/shared';
 import type { Query } from '@liuboer/shared/sdk';
+
+/**
+ * Legacy model ID mappings to SDK model IDs
+ * Maps old-style full IDs and aliases to current SDK identifiers
+ * This is needed for backward compatibility with existing sessions
+ */
+const LEGACY_MODEL_MAPPINGS: Record<string, string> = {
+	// Old alias mappings
+	sonnet: 'default', // SDK uses 'default' for Sonnet
+	// Full model IDs (any sonnet variant maps to default)
+	'claude-sonnet-4-5-20250929': 'default',
+	'claude-sonnet-4-20241022': 'default',
+	'claude-3-5-sonnet-20241022': 'default',
+	// Opus - SDK uses 'opus'
+	'claude-opus-4-5-20251101': 'opus',
+	'claude-opus-4-20250514': 'opus',
+	// Haiku - SDK uses 'haiku'
+	'claude-haiku-4-5-20251001': 'haiku',
+	'claude-3-5-haiku-20241022': 'haiku',
+};
 
 /**
  * In-memory cache of dynamically loaded models
@@ -62,13 +83,29 @@ export async function getSupportedModelsFromQuery(
 			cacheTimestamps.set(cacheKey, Date.now());
 			return models;
 		} catch (error) {
-			// Failed to get models from SDK, will fall back to static
 			console.warn('Failed to load models from SDK:', error);
 		}
 	}
 
-	// Return empty array - caller should use static fallback
 	return [];
+}
+
+/**
+ * Extract model name with version from SDK description
+ * SDK description format: "Sonnet 4.5 · Best for everyday tasks"
+ * Returns the part before " · " (e.g., "Sonnet 4.5")
+ */
+function extractDisplayName(sdkModel: SDKModelInfo): string {
+	const description = sdkModel.description || '';
+
+	// Try to extract "Model X.Y" from description (format: "Model X.Y · description")
+	const separatorIndex = description.indexOf(' · ');
+	if (separatorIndex > 0) {
+		return description.substring(0, separatorIndex);
+	}
+
+	// Fallback to SDK's displayName or model ID
+	return sdkModel.displayName || sdkModel.value;
 }
 
 /**
@@ -78,24 +115,22 @@ function convertSDKModelToModelInfo(sdkModel: SDKModelInfo): ModelInfo {
 	// SDK ModelInfo has: value, displayName, description
 	const modelId = sdkModel.value;
 
-	// Determine family from model ID
-	let family: 'opus' | 'sonnet' | 'haiku' = 'sonnet';
-	if (modelId.includes('opus')) family = 'opus';
-	else if (modelId.includes('haiku')) family = 'haiku';
+	// Extract display name dynamically from description (e.g., "Sonnet 4.5")
+	const displayName = extractDisplayName(sdkModel);
 
-	// Determine alias (use existing alias or extract from ID)
-	let alias = modelId;
-	for (const [aliasKey, existingModelId] of MODEL_ALIASES.entries()) {
-		if (existingModelId === modelId) {
-			alias = aliasKey;
-			break;
-		}
+	// Determine family from model ID or display name
+	let family: 'opus' | 'sonnet' | 'haiku' = 'sonnet';
+	const nameLower = displayName.toLowerCase();
+	if (nameLower.includes('opus')) {
+		family = 'opus';
+	} else if (nameLower.includes('haiku')) {
+		family = 'haiku';
 	}
 
 	return {
 		id: modelId,
-		name: sdkModel.displayName || modelId,
-		alias,
+		name: displayName,
+		alias: modelId, // Use the model ID as alias (SDK uses short IDs like 'opus', 'default')
 		family,
 		contextWindow: 200000, // Default context window
 		description: sdkModel.description || '',
@@ -120,10 +155,11 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 			const { query } = await import('@anthropic-ai/claude-agent-sdk');
 
 			// Create a temporary query to fetch models
+			// Use 'default' as the model since SDK uses this for Sonnet
 			const tmpQuery = query({
 				prompt: '',
 				options: {
-					model: 'claude-sonnet-4-5-20250929', // Use default model
+					model: 'default',
 					cwd: process.cwd(),
 					maxTurns: 0,
 				},
@@ -165,52 +201,60 @@ function isCacheStale(cacheKey: string): boolean {
 }
 
 /**
- * Get all available models (dynamic + static fallback)
+ * Get all available models from SDK cache
  * Implements lazy refresh: returns cache immediately, triggers background refresh if stale
  *
+ * Filtering logic:
+ * 1. Exclude "Custom model" entries (these are for explicit model ID selection)
+ * 2. Keep only the recommended models (default, opus, haiku)
+ * 3. One model per family
+ *
  * @param cacheKey - Cache key to look up dynamic models
- * @returns Array of ModelInfo
+ * @returns Array of ModelInfo from SDK
+ * @throws Error if models have not been initialized
  */
 export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
-	// Try to get dynamic models from cache
 	const dynamicModels = modelsCache.get(cacheKey);
 
-	// If cache exists, check if it's stale and trigger background refresh
-	if (dynamicModels && dynamicModels.length > 0) {
-		// Trigger background refresh if stale (non-blocking)
-		if (isCacheStale(cacheKey)) {
-			// Don't await - let it run in background
-			triggerBackgroundRefresh(cacheKey).catch(() => {
-				// Ignore errors - we already have cached data
-			});
-		}
-
-		// Convert SDK models to our format and filter to latest versions only
-		const converted = dynamicModels.map(convertSDKModelToModelInfo);
-
-		// Keep only the latest version of each family
-		const latestByFamily = new Map<string, ModelInfo>();
-		for (const model of converted) {
-			const existing = latestByFamily.get(model.family);
-			if (!existing || model.id > existing.id) {
-				// Newer models have later dates in their ID
-				latestByFamily.set(model.family, model);
-			}
-		}
-
-		return Array.from(latestByFamily.values());
+	if (!dynamicModels || dynamicModels.length === 0) {
+		// Models not loaded - this should not happen if initializeModels() was called
+		console.error('[model-service] Models cache is empty. Was initializeModels() called?');
+		return [];
 	}
 
-	// Fallback to static hardcoded models
-	return CLAUDE_MODELS;
+	// Trigger background refresh if stale (non-blocking)
+	if (isCacheStale(cacheKey)) {
+		triggerBackgroundRefresh(cacheKey).catch(() => {
+			// Ignore errors - we already have cached data
+		});
+	}
+
+	// Filter out "Custom model" entries - these are for explicit model ID selection
+	// Keep only the recommended models with proper descriptions
+	const recommendedModels = dynamicModels.filter(
+		(m) => m.description && !m.description.toLowerCase().includes('custom model')
+	);
+
+	// Convert SDK models to our format
+	const converted = recommendedModels.map(convertSDKModelToModelInfo);
+
+	// Keep only one model per family (shouldn't have duplicates after filtering, but just in case)
+	const byFamily = new Map<string, ModelInfo>();
+	for (const model of converted) {
+		if (!byFamily.has(model.family)) {
+			byFamily.set(model.family, model);
+		}
+	}
+
+	return Array.from(byFamily.values());
 }
 
 /**
  * Initialize models on app startup
- * Loads models into the global cache to serve as fallback
- * This is the ultimate fallback when static models are removed
+ * MUST be called before any other model functions
  *
- * @returns Promise that resolves when models are loaded (or fails gracefully)
+ * @returns Promise that resolves when models are loaded
+ * @throws Error if SDK fails to load models
  */
 export async function initializeModels(): Promise<void> {
 	const cacheKey = 'global';
@@ -227,10 +271,11 @@ export async function initializeModels(): Promise<void> {
 		const { query } = await import('@anthropic-ai/claude-agent-sdk');
 
 		// Create a temporary query to fetch models
+		// Use 'default' as the model since SDK uses this for Sonnet
 		const tmpQuery = query({
 			prompt: '',
 			options: {
-				model: 'claude-sonnet-4-5-20250929', // Use default model
+				model: 'default',
 				cwd: process.cwd(),
 				maxTurns: 0,
 			},
@@ -245,7 +290,7 @@ export async function initializeModels(): Promise<void> {
 					`[model-service] Startup initialization complete: ${models.length} models loaded`
 				);
 			} else {
-				console.warn('[model-service] No models returned from SDK on startup');
+				throw new Error('No models returned from SDK');
 			}
 		} finally {
 			try {
@@ -256,8 +301,7 @@ export async function initializeModels(): Promise<void> {
 		}
 	} catch (error) {
 		console.error('[model-service] Failed to load models on startup:', error);
-		console.warn('[model-service] Will fall back to static models');
-		// Don't throw - allow app to continue with static fallback
+		throw error; // Re-throw - models are required
 	}
 }
 
@@ -276,27 +320,28 @@ export function clearModelsCache(cacheKey?: string): void {
 
 /**
  * Get model info by ID or alias
- * Checks dynamic models first, then falls back to hardcoded models
+ * Searches SDK models with support for legacy model IDs
  */
 export async function getModelInfo(
 	idOrAlias: string,
 	cacheKey: string = 'global'
 ): Promise<ModelInfo | null> {
-	// Try to get from dynamic models first
 	const availableModels = getAvailableModels(cacheKey);
 
-	// Check if it's an alias
-	const aliasModelId = MODEL_ALIASES.get(idOrAlias);
-	const searchId = aliasModelId || idOrAlias;
+	// 1. Try exact ID match first (works for SDK's short IDs like 'opus', 'default')
+	let model = availableModels.find((m) => m.id === idOrAlias);
 
-	// Try exact ID match
-	let model = availableModels.find((m) => m.id === searchId);
+	// 2. Try alias match in model's alias field
+	if (!model) {
+		model = availableModels.find((m) => m.alias === idOrAlias);
+	}
 
-	// Try alias match if not found
-	if (!model && !aliasModelId) {
-		const modelIdFromAlias = MODEL_ALIASES.get(idOrAlias);
-		if (modelIdFromAlias) {
-			model = availableModels.find((m) => m.id === modelIdFromAlias);
+	// 3. Try legacy model mapping (maps old full IDs to SDK short IDs)
+	// This handles existing sessions with legacy model IDs like 'claude-sonnet-4-5-20250929'
+	if (!model) {
+		const legacyMappedId = LEGACY_MODEL_MAPPINGS[idOrAlias];
+		if (legacyMappedId) {
+			model = availableModels.find((m) => m.id === legacyMappedId);
 		}
 	}
 
@@ -305,7 +350,6 @@ export async function getModelInfo(
 
 /**
  * Validate if a model ID or alias is valid
- * Checks both dynamic SDK models and hardcoded aliases
  */
 export async function isValidModel(
 	idOrAlias: string,
@@ -316,26 +360,21 @@ export async function isValidModel(
 }
 
 /**
- * Resolve a model alias to its full ID
- * Checks aliases first, then verifies against available models
+ * Resolve a model alias to its actual ID in the available models
+ * Returns the model ID as it exists in the SDK/cache
  */
 export async function resolveModelAlias(
 	idOrAlias: string,
 	cacheKey: string = 'global'
 ): Promise<string> {
-	// Check if it's a known alias
-	const aliasModelId = MODEL_ALIASES.get(idOrAlias);
-	if (aliasModelId) {
-		// Verify the aliased model exists
-		const modelInfo = await getModelInfo(aliasModelId, cacheKey);
-		if (modelInfo) {
-			return aliasModelId;
-		}
+	// Try to find the model directly
+	const modelInfo = await getModelInfo(idOrAlias, cacheKey);
+	if (modelInfo) {
+		return modelInfo.id;
 	}
 
-	// Not an alias, return as-is if it's valid
-	const modelInfo = await getModelInfo(idOrAlias, cacheKey);
-	return modelInfo?.id || idOrAlias;
+	// Return as-is if nothing found
+	return idOrAlias;
 }
 
 /**

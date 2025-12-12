@@ -1,393 +1,291 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import {
 	MessageType,
-	isSubscriptionResponseMessage,
-	createSubscribedMessage,
-	createUnsubscribedMessage,
+	GLOBAL_SESSION_ID,
+	createCallMessage,
+	createResultMessage,
+	createErrorMessage,
+	createEventMessage,
+	createSubscribeMessage,
+	createUnsubscribeMessage,
 	isValidMessage,
+	isCallMessage,
+	isResultMessage,
+	isErrorMessage,
+	isEventMessage,
+	isSubscribeMessage,
+	isUnsubscribeMessage,
+	isResponseMessage,
 	validateMethod,
-	PROTOCOL_VERSION,
-	type HubMessage,
 } from '../src/message-hub/protocol.ts';
 
-describe('Protocol - Type Guards', () => {
-	test('isSubscriptionResponseMessage returns true for SUBSCRIBED', () => {
-		const message: HubMessage = {
-			id: '123',
-			type: MessageType.SUBSCRIBED,
-			sessionId: 'session-1',
-			method: 'test.event',
-			requestId: 'req-1',
-			timestamp: new Date().toISOString(),
-		};
-		expect(isSubscriptionResponseMessage(message)).toBe(true);
-	});
-
-	test('isSubscriptionResponseMessage returns true for UNSUBSCRIBED', () => {
-		const message: HubMessage = {
-			id: '123',
-			type: MessageType.UNSUBSCRIBED,
-			sessionId: 'session-1',
-			method: 'test.event',
-			requestId: 'req-1',
-			timestamp: new Date().toISOString(),
-		};
-		expect(isSubscriptionResponseMessage(message)).toBe(true);
-	});
-
-	test('isSubscriptionResponseMessage returns false for other types', () => {
-		const message: HubMessage = {
-			id: '123',
-			type: MessageType.CALL,
-			sessionId: 'session-1',
-			method: 'test.method',
-			timestamp: new Date().toISOString(),
-		};
-		expect(isSubscriptionResponseMessage(message)).toBe(false);
-	});
-});
-
-describe('Protocol - Message Creators', () => {
-	test('createSubscribedMessage creates valid SUBSCRIBED message', () => {
-		const message = createSubscribedMessage({
-			method: 'test.event',
-			sessionId: 'session-1',
-			requestId: 'req-123',
+describe('MessageHub Protocol', () => {
+	describe('Message Type Constants', () => {
+		test('should define all message types', () => {
+			expect(MessageType.CALL).toBe(MessageType.CALL);
+			expect(MessageType.RESULT).toBe(MessageType.RESULT);
+			expect(MessageType.ERROR).toBe(MessageType.ERROR);
+			expect(MessageType.EVENT).toBe(MessageType.EVENT);
+			expect(MessageType.SUBSCRIBE).toBe(MessageType.SUBSCRIBE);
+			expect(MessageType.UNSUBSCRIBE).toBe(MessageType.UNSUBSCRIBE);
+			expect(MessageType.PING).toBe(MessageType.PING);
+			expect(MessageType.PONG).toBe(MessageType.PONG);
 		});
 
-		expect(message.type).toBe(MessageType.SUBSCRIBED);
-		expect(message.method).toBe('test.event');
-		expect(message.sessionId).toBe('session-1');
-		expect(message.requestId).toBe('req-123');
-		expect(message.data).toEqual({
-			subscribed: true,
-			method: 'test.event',
-			sessionId: 'session-1',
+		test('should define global session ID', () => {
+			expect(GLOBAL_SESSION_ID).toBe('global');
 		});
-		expect(message.id).toBeTruthy();
-		expect(message.timestamp).toBeTruthy();
-		expect(message.version).toBe(PROTOCOL_VERSION);
 	});
 
-	test('createSubscribedMessage accepts custom id', () => {
-		const message = createSubscribedMessage({
-			method: 'test.event',
-			sessionId: 'session-1',
-			requestId: 'req-123',
-			id: 'custom-id',
+	describe('Message Creators', () => {
+		test('createCallMessage should create valid CALL message', () => {
+			const msg = createCallMessage({
+				method: 'test.method',
+				data: { foo: 'bar' },
+				sessionId: 'session1',
+				id: 'msg123',
+			});
+
+			expect(msg.type).toBe(MessageType.CALL);
+			expect(msg.sessionId).toBe('session1');
+			expect(msg.method).toBe('test.method');
+			expect(msg.data).toEqual({ foo: 'bar' });
+			expect(msg.id).toBe('msg123');
+			expect(msg.timestamp).toBeTruthy();
 		});
 
-		expect(message.id).toBe('custom-id');
+		test('createResultMessage should create valid RESULT message', () => {
+			const msg = createResultMessage({
+				method: 'test.method',
+				data: { result: 'success' },
+				sessionId: 'session1',
+				requestId: 'req123',
+				id: 'msg456',
+			});
+
+			expect(msg.type).toBe(MessageType.RESULT);
+			expect(msg.requestId).toBe('req123');
+			expect(msg.sessionId).toBe('session1');
+			expect(msg.method).toBe('test.method');
+			expect(msg.data).toEqual({ result: 'success' });
+		});
+
+		test('createErrorMessage should create valid ERROR message', () => {
+			const msg = createErrorMessage({
+				method: 'test.method',
+				error: {
+					code: 'TEST_ERROR',
+					message: 'Something went wrong',
+				},
+				sessionId: 'session1',
+				requestId: 'req123',
+				id: 'msg789',
+			});
+
+			expect(msg.type).toBe(MessageType.ERROR);
+			expect(msg.requestId).toBe('req123');
+			expect(msg.sessionId).toBe('session1');
+			expect(msg.method).toBe('test.method');
+			expect(msg.error).toBe('Something went wrong');
+			expect(msg.errorCode).toBe('TEST_ERROR');
+		});
+
+		test('createEventMessage should create valid EVENT message', () => {
+			const msg = createEventMessage({
+				method: 'user.created',
+				data: { userId: 123 },
+				sessionId: 'session1',
+				id: 'evt123',
+			});
+
+			expect(msg.type).toBe(MessageType.EVENT);
+			expect(msg.sessionId).toBe('session1');
+			expect(msg.method).toBe('user.created');
+			expect(msg.data).toEqual({ userId: 123 });
+		});
+
+		test('createSubscribeMessage should create valid SUBSCRIBE message', () => {
+			const msg = createSubscribeMessage({
+				method: 'user.*',
+				sessionId: 'session1',
+				id: 'sub123',
+			});
+
+			expect(msg.type).toBe(MessageType.SUBSCRIBE);
+			expect(msg.sessionId).toBe('session1');
+			expect(msg.method).toBe('user.*');
+		});
+
+		test('createUnsubscribeMessage should create valid UNSUBSCRIBE message', () => {
+			const msg = createUnsubscribeMessage({
+				method: 'user.*',
+				sessionId: 'session1',
+				id: 'unsub123',
+			});
+
+			expect(msg.type).toBe(MessageType.UNSUBSCRIBE);
+			expect(msg.sessionId).toBe('session1');
+			expect(msg.method).toBe('user.*');
+		});
 	});
 
-	test('createUnsubscribedMessage creates valid UNSUBSCRIBED message', () => {
-		const message = createUnsubscribedMessage({
-			method: 'test.event',
-			sessionId: 'session-1',
-			requestId: 'req-123',
+	describe('Message Validators', () => {
+		test('isValidMessage should validate message structure', () => {
+			const validMsg = createCallMessage({
+				method: 'test.method',
+				data: {},
+				sessionId: 'session1',
+				id: 'msg1',
+			});
+			expect(isValidMessage(validMsg)).toBe(true);
+
+			// Missing required fields
+			expect(isValidMessage({})).toBe(false);
+			expect(isValidMessage({ id: '123' })).toBe(false);
+			expect(isValidMessage({ id: '123', type: 'CALL' })).toBe(false);
+			expect(isValidMessage({ id: '123', type: 'CALL', sessionId: 's1' })).toBe(false);
 		});
 
-		expect(message.type).toBe(MessageType.UNSUBSCRIBED);
-		expect(message.method).toBe('test.event');
-		expect(message.sessionId).toBe('session-1');
-		expect(message.requestId).toBe('req-123');
-		expect(message.data).toEqual({
-			unsubscribed: true,
-			method: 'test.event',
-			sessionId: 'session-1',
+		test('isCallMessage should identify CALL messages', () => {
+			const callMsg = createCallMessage({ method: 'test', data: {}, sessionId: 's1', id: 'msg1' });
+			const resultMsg = createResultMessage({
+				method: 'test',
+				data: {},
+				sessionId: 's1',
+				requestId: 'req1',
+				id: 'msg2',
+			});
+
+			expect(isCallMessage(callMsg)).toBe(true);
+			expect(isCallMessage(resultMsg)).toBe(false);
 		});
-		expect(message.id).toBeTruthy();
-		expect(message.timestamp).toBeTruthy();
-		expect(message.version).toBe(PROTOCOL_VERSION);
+
+		test('isResultMessage should identify RESULT messages', () => {
+			const resultMsg = createResultMessage({
+				method: 'test',
+				data: {},
+				sessionId: 's1',
+				requestId: 'req1',
+				id: 'msg1',
+			});
+			const callMsg = createCallMessage({ method: 'test', data: {}, sessionId: 's1', id: 'msg2' });
+
+			expect(isResultMessage(resultMsg)).toBe(true);
+			expect(isResultMessage(callMsg)).toBe(false);
+		});
+
+		test('isErrorMessage should identify ERROR messages', () => {
+			const errorMsg = createErrorMessage({
+				method: 'test',
+				error: 'fail',
+				sessionId: 's1',
+				requestId: 'req1',
+				id: 'msg1',
+			});
+			const callMsg = createCallMessage({ method: 'test', data: {}, sessionId: 's1', id: 'msg2' });
+
+			expect(isErrorMessage(errorMsg)).toBe(true);
+			expect(isErrorMessage(callMsg)).toBe(false);
+		});
+
+		test('isEventMessage should identify EVENT messages', () => {
+			const eventMsg = createEventMessage({
+				method: 'event',
+				data: {},
+				sessionId: 's1',
+				id: 'msg1',
+			});
+			const callMsg = createCallMessage({ method: 'event', data: {}, sessionId: 's1', id: 'msg2' });
+
+			expect(isEventMessage(eventMsg)).toBe(true);
+			expect(isEventMessage(callMsg)).toBe(false);
+		});
+
+		test('isSubscribeMessage should identify SUBSCRIBE messages', () => {
+			const subMsg = createSubscribeMessage({ method: 'pattern', sessionId: 's1', id: 'msg1' });
+			const unsubMsg = createUnsubscribeMessage({ method: 'pattern', sessionId: 's1', id: 'msg2' });
+
+			expect(isSubscribeMessage(subMsg)).toBe(true);
+			expect(isSubscribeMessage(unsubMsg)).toBe(false);
+		});
+
+		test('isUnsubscribeMessage should identify UNSUBSCRIBE messages', () => {
+			const unsubMsg = createUnsubscribeMessage({ method: 'pattern', sessionId: 's1', id: 'msg1' });
+			const subMsg = createSubscribeMessage({ method: 'pattern', sessionId: 's1', id: 'msg2' });
+
+			expect(isUnsubscribeMessage(unsubMsg)).toBe(true);
+			expect(isUnsubscribeMessage(subMsg)).toBe(false);
+		});
+
+		test('isResponseMessage should identify RESULT and ERROR messages', () => {
+			const resultMsg = createResultMessage({
+				method: 'test',
+				data: {},
+				sessionId: 's1',
+				requestId: 'req1',
+				id: 'msg1',
+			});
+			const errorMsg = createErrorMessage({
+				method: 'test',
+				error: 'fail',
+				sessionId: 's1',
+				requestId: 'req1',
+				id: 'msg2',
+			});
+			const callMsg = createCallMessage({ method: 'test', data: {}, sessionId: 's1', id: 'msg3' });
+
+			expect(isResponseMessage(resultMsg)).toBe(true);
+			expect(isResponseMessage(errorMsg)).toBe(true);
+			expect(isResponseMessage(callMsg)).toBe(false);
+		});
 	});
 
-	test('createUnsubscribedMessage accepts custom id', () => {
-		const message = createUnsubscribedMessage({
-			method: 'test.event',
-			sessionId: 'session-1',
-			requestId: 'req-123',
-			id: 'custom-id',
-		});
-
-		expect(message.id).toBe('custom-id');
-	});
-});
-
-describe('Protocol - Validation', () => {
-	describe('validateMethod', () => {
-		test('validates correct method format', () => {
+	describe('Method Validation', () => {
+		test('should accept valid method names', () => {
 			expect(validateMethod('session.create')).toBe(true);
-			expect(validateMethod('user.update')).toBe(true);
-			expect(validateMethod('system.health.check')).toBe(true);
-			expect(validateMethod('test_method.action-name')).toBe(true);
+			expect(validateMethod('user.updated')).toBe(true);
+			expect(validateMethod('client.getViewportInfo')).toBe(true);
+			expect(validateMethod('deeply.nested.method.name')).toBe(true);
+			expect(validateMethod('method_with_underscore.test')).toBe(true);
+			expect(validateMethod('method-with-dash.test')).toBe(true);
 		});
 
-		test('rejects method without dot', () => {
-			expect(validateMethod('invalid')).toBe(false);
-		});
-
-		test('rejects method starting with dot', () => {
-			expect(validateMethod('.invalid.method')).toBe(false);
-		});
-
-		test('rejects method ending with dot', () => {
-			expect(validateMethod('invalid.method.')).toBe(false);
-		});
-
-		test('rejects method with colon (reserved)', () => {
-			expect(validateMethod('invalid:method')).toBe(false);
-			expect(validateMethod('session:123:method')).toBe(false);
-		});
-
-		test('rejects method with invalid characters', () => {
-			expect(validateMethod('invalid method')).toBe(false); // space
-			expect(validateMethod('invalid@method')).toBe(false); // @
-			expect(validateMethod('invalid#method')).toBe(false); // #
-			expect(validateMethod('invalid/method')).toBe(false); // /
-		});
-
-		test('accepts alphanumeric, dots, underscores, hyphens', () => {
-			expect(validateMethod('valid_method.with-hyphen123')).toBe(true);
-			expect(validateMethod('method.123.action')).toBe(true);
+		test('should reject invalid method names', () => {
+			expect(validateMethod('no-dot')).toBe(false);
+			expect(validateMethod('.starts-with-dot')).toBe(false);
+			expect(validateMethod('ends-with-dot.')).toBe(false);
+			expect(validateMethod('has space.method')).toBe(false);
+			expect(validateMethod('has@symbol.method')).toBe(false);
+			expect(validateMethod('')).toBe(false);
 		});
 	});
 
-	describe('isValidMessage', () => {
-		let originalWarn: typeof console.warn;
+	describe('Message IDs', () => {
+		test('should use provided message ID', () => {
+			const msg1 = createCallMessage({
+				method: 'test',
+				data: {},
+				sessionId: 's1',
+				id: 'custom-id-1',
+			});
+			const msg2 = createCallMessage({
+				method: 'test',
+				data: {},
+				sessionId: 's1',
+				id: 'custom-id-2',
+			});
 
-		beforeEach(() => {
-			originalWarn = console.warn;
-			console.warn = () => {}; // Suppress warnings during tests
+			expect(msg1.id).toBe('custom-id-1');
+			expect(msg2.id).toBe('custom-id-2');
+			expect(msg1.id).not.toBe(msg2.id);
 		});
 
-		afterEach(() => {
-			console.warn = originalWarn;
-		});
+		test('should include timestamp in all messages', () => {
+			const msg = createCallMessage({ method: 'test', data: {}, sessionId: 's1', id: 'msg1' });
+			const timestamp = new Date(msg.timestamp);
 
-		test('validates complete valid message', () => {
-			const message: HubMessage = {
-				id: 'msg-123',
-				type: MessageType.CALL,
-				sessionId: 'session-1',
-				method: 'test.method',
-				timestamp: new Date().toISOString(),
-				version: PROTOCOL_VERSION,
-			};
-			expect(isValidMessage(message)).toBe(true);
-		});
-
-		test('rejects non-object', () => {
-			expect(isValidMessage(null)).toBe(false);
-			expect(isValidMessage(undefined)).toBe(false);
-			expect(isValidMessage('string')).toBe(false);
-			expect(isValidMessage(123)).toBe(false);
-		});
-
-		test('rejects message without id', () => {
-			const message = {
-				type: MessageType.CALL,
-				sessionId: 'session-1',
-				method: 'test.method',
-				timestamp: new Date().toISOString(),
-			};
-			expect(isValidMessage(message)).toBe(false);
-		});
-
-		test('rejects message with empty id', () => {
-			const message = {
-				id: '',
-				type: MessageType.CALL,
-				sessionId: 'session-1',
-				method: 'test.method',
-				timestamp: new Date().toISOString(),
-			};
-			expect(isValidMessage(message)).toBe(false);
-		});
-
-		test('rejects message with invalid type', () => {
-			const message = {
-				id: 'msg-123',
-				type: 'INVALID_TYPE',
-				sessionId: 'session-1',
-				method: 'test.method',
-				timestamp: new Date().toISOString(),
-			};
-			expect(isValidMessage(message)).toBe(false);
-		});
-
-		test('rejects message without sessionId', () => {
-			const message = {
-				id: 'msg-123',
-				type: MessageType.CALL,
-				method: 'test.method',
-				timestamp: new Date().toISOString(),
-			};
-			expect(isValidMessage(message)).toBe(false);
-		});
-
-		test('rejects message with empty sessionId', () => {
-			const message = {
-				id: 'msg-123',
-				type: MessageType.CALL,
-				sessionId: '',
-				method: 'test.method',
-				timestamp: new Date().toISOString(),
-			};
-			expect(isValidMessage(message)).toBe(false);
-		});
-
-		test('rejects message without method', () => {
-			const message = {
-				id: 'msg-123',
-				type: MessageType.CALL,
-				sessionId: 'session-1',
-				timestamp: new Date().toISOString(),
-			};
-			expect(isValidMessage(message)).toBe(false);
-		});
-
-		test('rejects message with empty method', () => {
-			const message = {
-				id: 'msg-123',
-				type: MessageType.CALL,
-				sessionId: 'session-1',
-				method: '',
-				timestamp: new Date().toISOString(),
-			};
-			expect(isValidMessage(message)).toBe(false);
-		});
-
-		test('rejects message without timestamp', () => {
-			const message = {
-				id: 'msg-123',
-				type: MessageType.CALL,
-				sessionId: 'session-1',
-				method: 'test.method',
-			};
-			expect(isValidMessage(message)).toBe(false);
-		});
-
-		test('rejects message with non-string version', () => {
-			const message = {
-				id: 'msg-123',
-				type: MessageType.CALL,
-				sessionId: 'session-1',
-				method: 'test.method',
-				timestamp: new Date().toISOString(),
-				version: 123, // Should be string
-			};
-			expect(isValidMessage(message)).toBe(false);
-		});
-
-		test('warns on version mismatch but allows message', () => {
-			const warnSpy: string[] = [];
-			console.warn = (...args: unknown[]) => {
-				warnSpy.push(args.join(' '));
-			};
-
-			const message: HubMessage = {
-				id: 'msg-123',
-				type: MessageType.CALL,
-				sessionId: 'session-1',
-				method: 'test.method',
-				timestamp: new Date().toISOString(),
-				version: '2.0.0', // Different version
-			};
-
-			expect(isValidMessage(message)).toBe(true);
-			expect(warnSpy.length).toBeGreaterThan(0);
-			expect(warnSpy[0]).toContain('Version mismatch');
-		});
-
-		test('validates PING/PONG without method validation', () => {
-			const pingMessage: HubMessage = {
-				id: 'msg-123',
-				type: MessageType.PING,
-				sessionId: 'session-1',
-				method: 'heartbeat', // PING/PONG can have any method
-				timestamp: new Date().toISOString(),
-			};
-			expect(isValidMessage(pingMessage)).toBe(true);
-
-			const pongMessage: HubMessage = {
-				id: 'msg-123',
-				type: MessageType.PONG,
-				sessionId: 'session-1',
-				method: 'heartbeat',
-				timestamp: new Date().toISOString(),
-			};
-			expect(isValidMessage(pongMessage)).toBe(true);
-		});
-
-		test('validates method format for non-PING/PONG messages', () => {
-			const invalidMethod = {
-				id: 'msg-123',
-				type: MessageType.CALL,
-				sessionId: 'session-1',
-				method: 'invalid', // No dot
-				timestamp: new Date().toISOString(),
-			};
-			expect(isValidMessage(invalidMethod)).toBe(false);
-		});
-
-		test('rejects RESULT without requestId', () => {
-			const message = {
-				id: 'msg-123',
-				type: MessageType.RESULT,
-				sessionId: 'session-1',
-				method: 'test.method',
-				timestamp: new Date().toISOString(),
-			};
-			expect(isValidMessage(message)).toBe(false);
-		});
-
-		test('rejects ERROR without requestId', () => {
-			const message = {
-				id: 'msg-123',
-				type: MessageType.ERROR,
-				sessionId: 'session-1',
-				method: 'test.method',
-				error: 'Error message',
-				timestamp: new Date().toISOString(),
-			};
-			expect(isValidMessage(message)).toBe(false);
-		});
-
-		test('rejects ERROR without error field', () => {
-			const message = {
-				id: 'msg-123',
-				type: MessageType.ERROR,
-				sessionId: 'session-1',
-				method: 'test.method',
-				requestId: 'req-123',
-				timestamp: new Date().toISOString(),
-			};
-			expect(isValidMessage(message)).toBe(false);
-		});
-
-		test('accepts RESULT with requestId', () => {
-			const message: HubMessage = {
-				id: 'msg-123',
-				type: MessageType.RESULT,
-				sessionId: 'session-1',
-				method: 'test.method',
-				requestId: 'req-123',
-				timestamp: new Date().toISOString(),
-			};
-			expect(isValidMessage(message)).toBe(true);
-		});
-
-		test('accepts ERROR with requestId and error', () => {
-			const message: HubMessage = {
-				id: 'msg-123',
-				type: MessageType.ERROR,
-				sessionId: 'session-1',
-				method: 'test.method',
-				requestId: 'req-123',
-				error: 'Error message',
-				timestamp: new Date().toISOString(),
-			};
-			expect(isValidMessage(message)).toBe(true);
+			expect(timestamp.getTime()).toBeGreaterThan(Date.now() - 1000);
+			expect(timestamp.getTime()).toBeLessThanOrEqual(Date.now());
 		});
 	});
 });

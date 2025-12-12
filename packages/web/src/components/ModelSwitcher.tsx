@@ -14,18 +14,9 @@ interface ModelSwitcherProps {
  * Model family icons for visual hierarchy
  */
 const MODEL_FAMILY_ICONS = {
-	opus: '🎯',
-	sonnet: '⚡',
-	haiku: '🚀',
-} as const;
-
-/**
- * Model family descriptions
- */
-const MODEL_FAMILY_LABELS = {
-	opus: 'Opus - Most Capable',
-	sonnet: 'Sonnet - Balanced',
-	haiku: 'Haiku - Fast & Efficient',
+	opus: '🧠',
+	sonnet: '💎',
+	haiku: '⚡',
 } as const;
 
 export function ModelSwitcher({ sessionId, disabled }: ModelSwitcherProps) {
@@ -131,78 +122,60 @@ export function ModelSwitcher({ sessionId, disabled }: ModelSwitcherProps) {
 		}
 	};
 
-	// Group models by family
-	const modelsByFamily = availableModels.reduce(
-		(acc, model) => {
-			if (!acc[model.family]) {
-				acc[model.family] = [];
-			}
-			acc[model.family].push(model);
-			return acc;
-		},
-		{} as Record<string, ModelInfo[]>
+	// Sort models by family order: opus, sonnet, haiku
+	const familyOrder = { opus: 0, sonnet: 1, haiku: 2 };
+	const sortedModels = [...availableModels].sort(
+		(a, b) => familyOrder[a.family] - familyOrder[b.family]
 	);
 
-	// Build dropdown content - one model per line with checkmark for current
+	// Build dropdown content - compact list with icon + name on each line
 	const dropdownContent = (
 		<div
-			class="py-2 bg-dark-850 border border-dark-700 rounded-lg min-w-[220px] max-h-[400px] overflow-y-auto"
+			class="py-1 bg-dark-850 border border-dark-700 rounded-lg min-w-[180px] max-h-[400px] overflow-y-auto"
 			data-testid="model-switcher-dropdown"
 		>
-			{(['opus', 'sonnet', 'haiku'] as const).map((family) => {
-				const models = modelsByFamily[family];
-				if (!models || models.length === 0) return null;
+			{sortedModels.map((model) => {
+				const isCurrent = model.id === currentModel;
 
 				return (
-					<div key={family} class="mb-1 last:mb-0">
-						{/* Family header */}
-						<div class="px-3 py-1.5 text-[10px] text-gray-500 uppercase tracking-wider font-medium flex items-center gap-1.5">
-							<span>{MODEL_FAMILY_ICONS[family]}</span>
-							<span>{MODEL_FAMILY_LABELS[family]}</span>
-						</div>
-						{/* Models in this family */}
-						{models.map((model) => {
-							const isCurrent = model.id === currentModel;
-
-							return (
-								<button
-									key={model.id}
-									onClick={(e) => {
-										e.stopPropagation();
-										handleModelSwitch(model.id);
-									}}
-									disabled={switching}
-									data-testid={`model-option-${model.family}`}
-									data-model-id={model.id}
-									class={cn(
-										'w-full px-3 py-2 text-left text-sm flex items-center justify-between transition-colors',
-										isCurrent
-											? 'text-white bg-blue-600/20'
-											: 'text-gray-300 hover:bg-dark-700/50 hover:text-white',
-										switching && 'opacity-50 cursor-not-allowed'
-									)}
-								>
-									<span class="truncate">{model.name}</span>
-									{isCurrent && (
-										<svg
-											class="w-4 h-4 text-blue-400 flex-shrink-0 ml-2"
-											fill="none"
-											viewBox="0 0 24 24"
-											stroke="currentColor"
-											data-testid="current-model-checkmark"
-										>
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width={2.5}
-												d="M5 13l4 4L19 7"
-											/>
-										</svg>
-									)}
-								</button>
-							);
-						})}
-					</div>
+					<button
+						key={model.id}
+						onClick={(e) => {
+							e.stopPropagation();
+							handleModelSwitch(model.id);
+						}}
+						disabled={switching}
+						data-testid={`model-option-${model.family}`}
+						data-model-id={model.id}
+						class={cn(
+							'w-full px-3 py-2 text-left text-sm flex items-center justify-between transition-colors',
+							isCurrent
+								? 'text-white bg-blue-600/20'
+								: 'text-gray-300 hover:bg-dark-700/50 hover:text-white',
+							switching && 'opacity-50 cursor-not-allowed'
+						)}
+					>
+						<span class="flex items-center gap-2">
+							<span class="text-base leading-none">{MODEL_FAMILY_ICONS[model.family]}</span>
+							<span class="truncate">{model.name}</span>
+						</span>
+						{isCurrent && (
+							<svg
+								class="w-4 h-4 text-blue-400 flex-shrink-0 ml-2"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+								data-testid="current-model-checkmark"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2.5}
+									d="M5 13l4 4L19 7"
+								/>
+							</svg>
+						)}
+					</button>
 				);
 			})}
 		</div>
