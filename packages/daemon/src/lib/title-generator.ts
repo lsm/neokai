@@ -1,12 +1,13 @@
+import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKMessage } from '@liuboer/shared/sdk';
+import { isSDKAssistantMessage } from '@liuboer/shared/sdk/type-guards';
 import { Logger } from './logger';
 
 const logger = new Logger('TitleGenerator');
 
 export async function generateTitle(
 	firstUserMsg: SDKMessage,
-	firstAssistantMsg: SDKMessage,
-	apiKey: string
+	_firstAssistantMsg: SDKMessage
 ): Promise<string | null> {
 	try {
 		const userMessage = firstUserMsg as {
@@ -22,36 +23,33 @@ export async function generateTitle(
 
 		logger.log('Generating title with Haiku...');
 
-		const res = await fetch('https://api.anthropic.com/v1/messages', {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				'x-api-key': apiKey,
-				'anthropic-version': '2023-06-01',
-			},
-			body: JSON.stringify({
+		// Use Agent SDK with maxTurns: 1 for simple title generation
+		const result = await query({
+			prompt: `Generate a concise 3-7 word title for this conversation (no quotes): ${userText}`,
+			options: {
 				model: 'claude-haiku-4-5-20250929',
-				max_tokens: 50,
-				messages: [
-					{
-						role: 'user',
-						content: `Generate a concise 3-7 word title for this conversation (no quotes): ${userText}`,
-					},
-				],
-			}),
+				maxTurns: 1,
+				permissionMode: 'bypassPermissions',
+				allowDangerouslySkipPermissions: true,
+			},
 		});
 
-		if (!res.ok) {
-			logger.error(`Haiku API error: ${res.status}`);
-			return null;
-		}
+		// Extract title from SDK response
+		for await (const message of result) {
+			if (isSDKAssistantMessage(message)) {
+				const textBlocks = message.message.content.filter(
+					(b: { type: string }) => b.type === 'text'
+				);
+				const title = textBlocks
+					.map((b: { text?: string }) => b.text)
+					.join(' ')
+					.trim();
 
-		const data = (await res.json()) as { content: Array<{ type: string; text?: string }> };
-		const title = data.content.find((b) => b.type === 'text')?.text?.trim();
-
-		if (title) {
-			logger.log(`Generated title: "${title}"`);
-			return title;
+				if (title) {
+					logger.log(`Generated title: "${title}"`);
+					return title;
+				}
+			}
 		}
 
 		return null;

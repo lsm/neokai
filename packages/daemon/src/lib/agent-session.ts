@@ -1017,22 +1017,19 @@ export class AgentSession {
 
 				if (firstUserMsg && firstAssistantMsg) {
 					try {
-						const apiKey = await this.getApiKey();
-						if (apiKey) {
-							const generatedTitle = await generateTitle(firstUserMsg, firstAssistantMsg, apiKey);
-							if (generatedTitle) {
-								// Update session title in memory and database
-								this.session.title = generatedTitle;
-								this.db.updateSession(this.session.id, { title: generatedTitle });
+						const generatedTitle = await generateTitle(firstUserMsg, firstAssistantMsg);
+						if (generatedTitle) {
+							// Update session title in memory and database
+							this.session.title = generatedTitle;
+							this.db.updateSession(this.session.id, { title: generatedTitle });
 
-								// Emit session:updated event so StateManager broadcasts the change
-								await this.eventBus.emit('session:updated', {
-									sessionId: this.session.id,
-									updates: { title: generatedTitle },
-								});
+							// Emit session:updated event so StateManager broadcasts the change
+							await this.eventBus.emit('session:updated', {
+								sessionId: this.session.id,
+								updates: { title: generatedTitle },
+							});
 
-								this.logger.log(`Session title updated to: "${generatedTitle}"`);
-							}
+							this.logger.log(`Session title updated to: "${generatedTitle}"`);
 						}
 					} catch (error) {
 						// Don't throw - title generation is non-critical
