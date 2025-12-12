@@ -6,7 +6,7 @@ import type {
 	ContextSlashCommandTool,
 } from '@liuboer/shared';
 import type { SDKMessage, SDKSystemMessage } from '@liuboer/shared/sdk/sdk.d.ts';
-import { isSDKStreamEvent } from '@liuboer/shared/sdk/type-guards';
+import { isSDKStreamEvent, isSDKCompactBoundary } from '@liuboer/shared/sdk/type-guards';
 import { connectionManager } from '../lib/connection-manager.ts';
 import {
 	getSession,
@@ -219,11 +219,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				// Subscribe to compaction start - lock input and show toast
 				const unsubContextCompacting = await hub.subscribe<{ trigger: 'manual' | 'auto' }>(
 					'context.compacting',
-					(data) => {
-						const triggerText = data.trigger === 'auto' ? 'Auto-compacting' : 'Compacting';
+					(_data) => {
 						setIsCompacting(true);
-						setCurrentAction(`${triggerText} context...`);
-						toast.info(`${triggerText} context to free up space...`);
+						setCurrentAction('Compacting context...');
+						toast.info('Compacting context...');
 					},
 					{ sessionId }
 				);
@@ -786,6 +785,66 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		}
 	}
 
+	// Create a map of compact boundary UUIDs to their associated synthetic content
+	// Synthetic messages appear right after compact boundaries
+	const compactSyntheticMap = new Map<string, string>();
+	const skipSyntheticSet = new Set<string>();
+
+	// Helper to extract text from a user message
+	const extractUserMessageText = (msg: SDKMessage): string => {
+		if (msg.type !== 'user') return '';
+		const apiMessage = (msg as { message: { content: unknown } }).message;
+		if (Array.isArray(apiMessage.content)) {
+			return apiMessage.content
+				.map((block: unknown) => {
+					const b = block as Record<string, unknown>;
+					if (b.type === 'text') return b.text as string;
+					return '';
+				})
+				.filter(Boolean)
+				.join('\n');
+		} else if (typeof apiMessage.content === 'string') {
+			return apiMessage.content;
+		}
+		return '';
+	};
+
+	// Helper to check if a message is synthetic (by flag or content pattern)
+	const isSyntheticMessage = (msg: SDKMessage): boolean => {
+		if (msg.type !== 'user') return false;
+		const msgWithSynthetic = msg as SDKMessage & { isSynthetic?: boolean };
+		// Check isSynthetic flag first
+		if (msgWithSynthetic.isSynthetic) return true;
+		// Fallback: check content pattern for compaction summaries
+		const text = extractUserMessageText(msg);
+		return text.startsWith('This session is being continued from a previous conversation');
+	};
+
+	for (let i = 0; i < messages.length; i++) {
+		const msg = messages[i];
+		// Use proper type guard for compact boundary detection
+		if (isSDKCompactBoundary(msg) && msg.uuid) {
+			// Look for the next synthetic user message
+			for (let j = i + 1; j < messages.length; j++) {
+				const nextMsg = messages[j];
+				if (isSyntheticMessage(nextMsg)) {
+					const text = extractUserMessageText(nextMsg);
+					if (text) {
+						compactSyntheticMap.set(msg.uuid, text);
+						if (nextMsg.uuid) {
+							skipSyntheticSet.add(nextMsg.uuid);
+						}
+					}
+					break;
+				}
+				// Stop searching if we hit a non-user message that's not system
+				if (nextMsg.type !== 'user' && nextMsg.type !== 'system') {
+					break;
+				}
+			}
+		}
+	}
+
 	return (
 		<div class="flex-1 flex flex-col bg-dark-900 overflow-x-hidden">
 			{/* Header */}
@@ -923,6 +982,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 										? (sessionInfoMap.get(msg.uuid) as SDKSystemMessage | undefined)
 										: undefined
 								}
+								syntheticContent={msg.uuid ? compactSyntheticMap.get(msg.uuid) : undefined}
+								skipSynthetic={msg.uuid ? skipSyntheticSet.has(msg.uuid) : false}
 							/>
 						))}
 

@@ -50,6 +50,38 @@ export function SDKUserMessage({
 		return null;
 	}
 
+	// Don't render "Compacted" replay messages - they're redundant with compact boundary messages
+	if (isReplay) {
+		const content = typeof apiMessage.content === 'string' ? apiMessage.content : '';
+		if (content.trim() === 'Compacted') {
+			return null;
+		}
+	}
+
+	// Check if this is a synthetic compaction summary (should be rendered in CompactBoundaryMessage)
+	const isSyntheticCompactionSummary = (): boolean => {
+		if (!message.isSynthetic) return false;
+		// Check content pattern
+		const textContent = Array.isArray(apiMessage.content)
+			? apiMessage.content
+					.map((block: unknown) => {
+						const b = block as Record<string, unknown>;
+						if (b.type === 'text') return b.text as string;
+						return '';
+					})
+					.filter(Boolean)
+					.join('\n')
+			: typeof apiMessage.content === 'string'
+				? apiMessage.content
+				: '';
+		return textContent.startsWith('This session is being continued from a previous conversation');
+	};
+
+	// Skip rendering synthetic compaction summaries - they're shown in CompactBoundaryMessage
+	if (isSyntheticCompactionSummary()) {
+		return null;
+	}
+
 	// Extract text content from the message
 	const getTextContent = (): string => {
 		if (Array.isArray(apiMessage.content)) {
@@ -73,6 +105,24 @@ export function SDKUserMessage({
 	};
 
 	const textContent = getTextContent();
+
+	// For synthetic messages, extract all content blocks for detailed display
+	const getSyntheticContentBlocks = (): Array<Record<string, unknown>> | null => {
+		if (!message.isSynthetic) return null;
+
+		if (Array.isArray(apiMessage.content)) {
+			return apiMessage.content.map((block: unknown) => {
+				if (typeof block === 'object' && block !== null) {
+					return block as Record<string, unknown>;
+				}
+				return { type: 'unknown', content: block };
+			});
+		}
+
+		return null;
+	};
+
+	const syntheticContentBlocks = getSyntheticContentBlocks();
 
 	// Extract and parse slash command output (for replay messages)
 	const getCommandOutput = (): string | null => {
@@ -159,6 +209,122 @@ export function SDKUserMessage({
 									stroke-linecap="round"
 									stroke-linejoin="round"
 									stroke-width={2}
+									d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+								/>
+							</svg>
+						</IconButton>
+					</div>
+				</div>
+			</div>
+		);
+	}
+
+	// If this is a synthetic message with multiple content blocks, render them in detail
+	if (syntheticContentBlocks && syntheticContentBlocks.length > 0) {
+		return (
+			<div
+				class={cn(messageSpacing.user.container.combined, 'flex justify-end')}
+				data-testid="user-message"
+				data-message-role="user"
+			>
+				<div class="max-w-[85%] md:max-w-[70%] w-auto">
+					<div
+						class={cn(
+							'bg-purple-900/20 border border-purple-700/50 rounded-lg p-3',
+							borderRadius.message.bubble
+						)}
+					>
+						{/* Synthetic message label */}
+						<div class="flex items-center gap-2 mb-2 pb-2 border-b border-purple-700/30">
+							<svg
+								class="w-4 h-4 text-purple-400"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+							>
+								<path
+									strokeLinecap="round"
+									strokeLinejoin="round"
+									strokeWidth={2}
+									d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
+								/>
+							</svg>
+							<span class="text-xs font-semibold text-purple-300">Synthetic Message</span>
+						</div>
+
+						{/* Render each content block */}
+						<div class="space-y-2">
+							{syntheticContentBlocks.map((block, idx) => (
+								<div key={idx} class="text-sm">
+									{block.type === 'text' && (
+										<div class="text-gray-100 whitespace-pre-wrap">{block.text as string}</div>
+									)}
+									{block.type === 'image' && (
+										<div class="space-y-1">
+											<div class="text-xs text-purple-400">Image:</div>
+											<div class="font-mono text-xs text-gray-300">
+												{JSON.stringify(block, null, 2)}
+											</div>
+										</div>
+									)}
+									{block.type === 'tool_use' && (
+										<div class="space-y-1">
+											<div class="text-xs text-purple-400">Tool Use: {block.name as string}</div>
+											<div class="font-mono text-xs text-gray-300 bg-gray-900/50 p-2 rounded">
+												{JSON.stringify(block.input, null, 2)}
+											</div>
+										</div>
+									)}
+									{block.type === 'tool_result' && (
+										<div class="space-y-1">
+											<div class="text-xs text-purple-400">
+												Tool Result: {(block.tool_use_id as string).slice(0, 12)}...
+											</div>
+											<div class="font-mono text-xs text-gray-300 bg-gray-900/50 p-2 rounded max-h-48 overflow-y-auto">
+												{typeof block.content === 'string'
+													? block.content
+													: JSON.stringify(block.content, null, 2)}
+											</div>
+										</div>
+									)}
+									{!['text', 'image', 'tool_use', 'tool_result'].includes(block.type as string) && (
+										<div class="space-y-1">
+											<div class="text-xs text-purple-400">{block.type as string}:</div>
+											<div class="font-mono text-xs text-gray-300 bg-gray-900/50 p-2 rounded">
+												{JSON.stringify(block, null, 2)}
+											</div>
+										</div>
+									)}
+								</div>
+							))}
+						</div>
+					</div>
+
+					{/* Actions and timestamp */}
+					<div
+						class={cn(
+							'flex items-center justify-end',
+							messageSpacing.actions.gap,
+							messageSpacing.actions.marginTop,
+							messageSpacing.actions.padding
+						)}
+					>
+						<Tooltip content={getFullTimestamp()} position="left">
+							<span class="text-xs text-gray-500">{getTimestamp()}</span>
+						</Tooltip>
+
+						<Tooltip content="System-generated message" position="left">
+							<span class="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded">
+								synthetic
+							</span>
+						</Tooltip>
+
+						<IconButton size="md" onClick={handleCopy} title="Copy message">
+							<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path
+									strokeLinecap="round"
+									strokeLinejoin="round"
+									strokeWidth={2}
 									d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
 								/>
 							</svg>

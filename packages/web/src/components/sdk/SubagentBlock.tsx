@@ -146,8 +146,37 @@ function extractOutputText(output: unknown): string {
 		const obj = output as Record<string, unknown>;
 
 		// Check for content field (common in tool results)
-		if ('content' in obj && typeof obj.content === 'string') {
-			return obj.content;
+		if ('content' in obj) {
+			const content = obj.content;
+
+			// Handle string content
+			if (typeof content === 'string') {
+				return content;
+			}
+
+			// Handle array of content blocks (Claude API format)
+			if (Array.isArray(content)) {
+				return content
+					.map((block) => {
+						if (typeof block === 'string') {
+							return block;
+						}
+						if (typeof block === 'object' && block !== null) {
+							const blockObj = block as Record<string, unknown>;
+							// Extract text from content blocks like {type: "text", text: "..."}
+							if ('text' in blockObj && typeof blockObj.text === 'string') {
+								return blockObj.text;
+							}
+							// Handle other block types that might have content
+							if ('content' in blockObj && typeof blockObj.content === 'string') {
+								return blockObj.content;
+							}
+						}
+						return '';
+					})
+					.filter(Boolean)
+					.join('\n\n');
+			}
 		}
 
 		// Check for text field
