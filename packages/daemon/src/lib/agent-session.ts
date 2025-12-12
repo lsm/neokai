@@ -58,8 +58,6 @@ type SDKQueryObject = Query | null;
  * - Proper interruption handling
  */
 export class AgentSession {
-	private abortController: AbortController | undefined = undefined;
-
 	// Message queue for streaming input
 	private messageQueue: QueuedMessage[] = [];
 	private queryRunning: boolean = false;
@@ -760,7 +758,6 @@ export class AgentSession {
 
 		this.logger.log(`Starting streaming query...`);
 		this.queryRunning = true;
-		this.abortController = new AbortController();
 
 		// FIX: Store query promise for cleanup
 		this.queryPromise = this.runQuery();
@@ -792,12 +789,12 @@ export class AgentSession {
 			this.logger.log(`Creating streaming query with AsyncGenerator`);
 
 			// Create query with AsyncGenerator!
+			// Note: No abortController needed - SDK interrupt() method handles cancellation
 			this.queryObject = query({
 				prompt: this.messageGenerator(), // <-- AsyncGenerator!
 				options: {
 					model: this.session.config.model,
 					cwd: this.session.workspacePath,
-					abortController: this.abortController,
 					permissionMode: 'bypassPermissions',
 					allowDangerouslySkipPermissions: true,
 					maxTurns: Infinity, // Run forever!
@@ -1056,27 +1053,57 @@ export class AgentSession {
 	}
 
 	/**
-	 * Handle interrupt request - clear queue and abort
+	 * Handle interrupt request - uses official SDK interrupt() method
 	 * Called by RPC handler in session-handlers.ts
+	 *
+	 * Edge cases handled:
+	 * - Already idle: no-op, returns immediately
+	 * - Queued state: clears queue and returns to idle
+	 * - Processing state: calls SDK interrupt() and clears queue
+	 * - Multiple rapid calls: idempotent, safe to call multiple times
 	 */
 	async handleInterrupt(): Promise<void> {
-		this.logger.log(`Handling interrupt...`);
+		const currentState = this.processingState;
+		this.logger.log(`Handling interrupt (current state: ${currentState.status})...`);
 
-		// FIX: Set state to 'interrupted'
+		// Edge case: already idle or interrupted - no-op
+		if (currentState.status === 'idle' || currentState.status === 'interrupted') {
+			this.logger.log(`Already ${currentState.status}, skipping interrupt`);
+			return;
+		}
+
+		// Set state to 'interrupted' immediately for UI feedback
 		await this.setProcessingState({ status: 'interrupted' });
 
-		// Clear pending messages
-		for (const msg of this.messageQueue) {
-			msg.reject(new Error('Interrupted by user'));
-		}
-		this.messageQueue = [];
-
-		// Abort current query
-		if (this.abortController) {
-			this.abortController.abort();
-			this.abortController = undefined;
+		// Clear pending messages in queue (not yet sent to SDK)
+		const queuedCount = this.messageQueue.length;
+		if (queuedCount > 0) {
+			this.logger.log(`Clearing ${queuedCount} queued messages`);
+			for (const msg of this.messageQueue) {
+				msg.reject(new Error('Interrupted by user'));
+			}
+			this.messageQueue = [];
 		}
 
+		// Use official SDK interrupt() method if query is running
+		// This gracefully stops the current turn without killing the query
+		if (this.queryObject && typeof this.queryObject.interrupt === 'function') {
+			try {
+				this.logger.log(`Calling SDK interrupt()...`);
+				await this.queryObject.interrupt();
+				this.logger.log(`SDK interrupt() completed successfully`);
+			} catch (error) {
+				// Log error but don't throw - interrupt is best-effort
+				// SDK might have already completed when we called interrupt
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				this.logger.warn(`SDK interrupt() failed (may be expected):`, errorMessage);
+			}
+		} else {
+			// Query not started yet - just clearing queue is enough
+			this.logger.log(`No query object, interrupt complete (queue cleared)`);
+		}
+
+		// Publish interrupt event for clients
 		await this.messageHub.publish(
 			'session.interrupted',
 			{},
@@ -1085,8 +1112,9 @@ export class AgentSession {
 			}
 		);
 
-		// FIX: Set state back to 'idle' after interrupt completes
+		// Set state back to 'idle' after interrupt completes
 		await this.setProcessingState({ status: 'idle' });
+		this.logger.log(`Interrupt complete, state reset to idle`);
 	}
 
 	/**
@@ -1271,6 +1299,7 @@ export class AgentSession {
 
 	/**
 	 * Abort current query (delegates to handleInterrupt)
+	 * @deprecated Use handleInterrupt() instead
 	 */
 	abort(): void {
 		this.handleInterrupt();
@@ -1306,10 +1335,16 @@ export class AgentSession {
 		// Signal query to stop
 		this.queryRunning = false;
 
-		// Abort any running query
-		if (this.abortController) {
-			this.abortController.abort();
-			this.abortController = undefined;
+		// Interrupt query using SDK method (best-effort, don't wait)
+		if (this.queryObject && typeof this.queryObject.interrupt === 'function') {
+			try {
+				// Don't await - this is cleanup, we want it to be fast
+				this.queryObject.interrupt().catch((error) => {
+					this.logger.warn(`Interrupt during cleanup failed:`, error);
+				});
+			} catch (error) {
+				this.logger.warn(`Error calling interrupt during cleanup:`, error);
+			}
 		}
 
 		// Wait for query to fully stop (with timeout)
