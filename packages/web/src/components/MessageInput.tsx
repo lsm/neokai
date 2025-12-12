@@ -72,6 +72,19 @@ export default function MessageInput({
 		setInterrupting(false);
 	}, [sessionId]);
 
+	// Global Escape key listener for interrupt (works even when textarea is disabled)
+	useEffect(() => {
+		const handleGlobalEscape = (e: KeyboardEvent) => {
+			if (e.key === 'Escape' && isAgentWorking.value && !interrupting) {
+				e.preventDefault();
+				handleInterrupt();
+			}
+		};
+
+		document.addEventListener('keydown', handleGlobalEscape);
+		return () => document.removeEventListener('keydown', handleGlobalEscape);
+	}, [interrupting]);
+
 	// Load model info
 	useEffect(() => {
 		loadModelInfo();
@@ -572,14 +585,14 @@ export default function MessageInput({
 								<button
 									type="button"
 									onClick={handleInterrupt}
-									disabled={disabled || interrupting}
-									title="Stop generation"
+									disabled={interrupting}
+									title="Stop generation (Escape)"
 									aria-label="Stop generation"
 									data-testid="stop-button"
 									class={cn(
 										'absolute right-1.5 top-1/2 -translate-y-1/2',
 										'w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200',
-										disabled || interrupting
+										interrupting
 											? 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
 											: 'bg-red-500 text-white hover:bg-red-600 active:scale-95'
 									)}
