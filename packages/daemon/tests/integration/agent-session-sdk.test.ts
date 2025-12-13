@@ -315,4 +315,83 @@ describe('AgentSession SDK Integration', () => {
 			30000
 		);
 	});
+
+	describe('session.interrupted event', () => {
+		test.skipIf(!hasAnyCredentials())(
+			'should emit session.interrupted event when interrupting active session',
+			async () => {
+				const sessionId = await ctx.sessionManager.createSession({
+					workspacePath: process.cwd(),
+					config: { model: 'haiku' },
+				});
+
+				const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+				await waitForWebSocketState(ws, WebSocket.OPEN);
+				await firstMessagePromise; // Drain connection event
+
+				// Set up promise for subscribe confirmation
+				const subPromise = waitForWebSocketMessage(ws);
+
+				// Subscribe to session.interrupted event
+				ws.send(
+					JSON.stringify({
+						id: 'sub-1',
+						type: 'SUBSCRIBE',
+						method: 'session.interrupted',
+						sessionId,
+						timestamp: new Date().toISOString(),
+						version: '1.0.0',
+					})
+				);
+
+				// Wait for subscribe confirmation
+				await subPromise;
+
+				// Get agent session and send a message to put session in non-idle state
+				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+
+				// Send a message to put session in queued/processing state
+				// Don't await - we want to interrupt while processing
+				const messagePromise = agentSession!
+					.handleMessageSend({
+						content: 'Count to 100 slowly.',
+					})
+					.catch(() => {
+						// Message will be interrupted - this is expected
+					});
+
+				// Wait for state to change from idle before interrupting
+				const startTime = Date.now();
+				while (Date.now() - startTime < 5000) {
+					const state = agentSession!.getProcessingState();
+					if (state.status !== 'idle') {
+						break;
+					}
+					await Bun.sleep(50);
+				}
+
+				// Verify we're not in idle state
+				const stateBeforeInterrupt = agentSession!.getProcessingState();
+				expect(['queued', 'processing']).toContain(stateBeforeInterrupt.status);
+
+				// Set up promise for event BEFORE triggering interrupt
+				const eventPromise = waitForWebSocketMessage(ws, 5000);
+
+				// Trigger interrupt (should emit event because session is not idle)
+				await agentSession!.handleInterrupt();
+
+				// Should receive interrupted event
+				const event = await eventPromise;
+
+				expect(event.type).toBe('EVENT');
+				expect(event.method).toBe('session.interrupted');
+
+				// Wait for message promise to settle
+				await messagePromise;
+
+				ws.close();
+			},
+			20000
+		);
+	});
 });

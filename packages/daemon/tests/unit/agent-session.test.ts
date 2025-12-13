@@ -8,13 +8,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { TestContext } from '../test-utils';
-import {
-	createTestApp,
-	waitForWebSocketState,
-	waitForWebSocketMessage,
-	createWebSocketWithFirstMessage,
-	hasAnyCredentials,
-} from '../test-utils';
+import { createTestApp } from '../test-utils';
 
 describe('AgentSession', () => {
 	let ctx: TestContext;
@@ -174,19 +168,6 @@ describe('AgentSession', () => {
 		});
 	});
 
-	describe('abort', () => {
-		test('should abort current operation', async () => {
-			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: '/test/agent-session',
-			});
-
-			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-
-			// Abort should not throw
-			agentSession!.abort();
-		});
-	});
-
 	describe('getSlashCommands', () => {
 		test('should return empty array for new session', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
@@ -262,106 +243,6 @@ describe('AgentSession', () => {
 	});
 
 	// enqueueMessage() test removed - it's now a private method in MessageQueue
-	// Use handleMessageSend() instead (tested below)
-
-	describe('handleMessageSend', () => {
-		// Note: This test requires authentication (API key or OAuth) because it uses Claude SDK
-		test.skipIf(!hasAnyCredentials())('should handle message send with images', async () => {
-			const tmpDir = process.env.TMPDIR || '/tmp';
-			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: `${tmpDir}/liuboer-test-agent-session-${Date.now()}`,
-			});
-
-			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-
-			// This will start the query and handle the message
-			const result = await agentSession!.handleMessageSend({
-				content: 'What is in this image?',
-				images: [
-					{
-						media_type: 'image/png',
-						data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', // 1x1 pixel
-					},
-				],
-			});
-
-			expect(result.messageId).toBeString();
-		});
-	});
-});
-
-describe('AgentSession via WebSocket', () => {
-	let ctx: TestContext;
-
-	beforeEach(async () => {
-		ctx = await createTestApp();
-	});
-
-	afterEach(async () => {
-		await ctx.cleanup();
-	});
-
-	describe('session.interrupted event', () => {
-		test('should emit session.interrupted event on interrupt', async () => {
-			// Create a session
-			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: '/test/interrupt-event',
-			});
-
-			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
-			await waitForWebSocketState(ws, WebSocket.OPEN);
-			await firstMessagePromise; // Drain connection event
-
-			// Set up promise for subscribe confirmation
-			const subPromise = waitForWebSocketMessage(ws);
-
-			// Subscribe to session.interrupted event
-			ws.send(
-				JSON.stringify({
-					id: 'sub-1',
-					type: 'SUBSCRIBE',
-					method: 'session.interrupted',
-					sessionId,
-					timestamp: new Date().toISOString(),
-					version: '1.0.0',
-				})
-			);
-
-			// Wait for subscribe confirmation
-			await subPromise;
-
-			// Get agent session and send a message to put session in non-idle state
-			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-
-			// Send a message to put session in queued/processing state
-			// Don't await - we want to interrupt while processing
-			const messagePromise = agentSession!
-				.handleMessageSend({
-					content: 'Test message',
-				})
-				.catch(() => {
-					// Message will be interrupted - this is expected
-				});
-
-			// Small delay to ensure message is queued
-			await Bun.sleep(100);
-
-			// Set up promise for event BEFORE triggering interrupt
-			const eventPromise = waitForWebSocketMessage(ws, 2000);
-
-			// Trigger interrupt (should emit event because session is not idle)
-			await agentSession!.handleInterrupt();
-
-			// Should receive interrupted event
-			const event = await eventPromise;
-
-			expect(event.type).toBe('EVENT');
-			expect(event.method).toBe('session.interrupted');
-
-			// Wait for message promise to settle
-			await messagePromise;
-
-			ws.close();
-		});
-	});
+	// handleMessageSend() integration tests moved to tests/integration/agent-session-sdk.test.ts
+	// session.interrupted event test moved to tests/integration/agent-session-sdk.test.ts (requires SDK)
 });
