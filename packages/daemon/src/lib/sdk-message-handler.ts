@@ -225,7 +225,11 @@ export class SDKMessageHandler {
 
 		if (firstUserMsg && firstAssistantMsg) {
 			try {
-				const generatedTitle = await generateTitle(firstUserMsg, firstAssistantMsg);
+				const generatedTitle = await generateTitle(
+					firstUserMsg,
+					firstAssistantMsg,
+					this.session.workspacePath
+				);
 				if (generatedTitle) {
 					// Update session title and flag in memory and database
 					this.session.title = generatedTitle;
