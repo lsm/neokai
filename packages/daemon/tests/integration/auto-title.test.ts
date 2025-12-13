@@ -3,7 +3,7 @@
  *
  * These tests verify that the auto-title generation feature works correctly
  * with real SDK calls. The feature should:
- * - Generate a title after the first assistant response
+ * - Generate a title after we have MORE than 1 assistant response (at least 2)
  * - Use Haiku model for title generation
  * - Update session metadata with titleGenerated flag
  * - Only generate title once per session
@@ -63,7 +63,7 @@ describe('Auto-Title Generation', () => {
 		async () => {
 			// Create session with workspace path
 			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: ctx.testDir,
+				workspacePath: ctx.config.workspaceRoot,
 				config: { model: 'haiku' },
 			});
 
@@ -75,7 +75,20 @@ describe('Auto-Title Generation', () => {
 			expect(sessionData.title).toBe('New Session');
 			expect(sessionData.metadata.titleGenerated).toBe(false);
 
-			// Send a message that should result in a title
+			// Send first message
+			await agentSession!.handleMessageSend({
+				content: 'What is 2+2?',
+			});
+
+			// Wait for first response
+			await waitForIdle(agentSession!);
+
+			// Title should NOT be generated yet (need >1 assistant responses)
+			sessionData = agentSession!.getSessionData();
+			expect(sessionData.title).toBe('New Session');
+			expect(sessionData.metadata.titleGenerated).toBe(false);
+
+			// Send second message to trigger title generation
 			await agentSession!.handleMessageSend({
 				content: 'Write a short poem about TypeScript',
 			});
@@ -101,7 +114,7 @@ describe('Auto-Title Generation', () => {
 
 			console.log(`Generated title: "${sessionData.title}"`);
 		},
-		30000 // 30s timeout for the entire test
+		40000 // 40s timeout for the entire test (2 messages)
 	);
 
 	test.skipIf(!hasAnyCredentials())(
@@ -109,7 +122,7 @@ describe('Auto-Title Generation', () => {
 		async () => {
 			// Create session
 			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: ctx.testDir,
+				workspacePath: ctx.config.workspaceRoot,
 				config: { model: 'haiku' },
 			});
 
@@ -121,29 +134,43 @@ describe('Auto-Title Generation', () => {
 				content: 'What is 2+2?',
 			});
 
+			// Wait for first response
+			await waitForIdle(agentSession!);
+
+			// Title should NOT be generated yet (need >1 assistant responses)
+			let sessionData = agentSession!.getSessionData();
+			expect(sessionData.title).toBe('New Session');
+			expect(sessionData.metadata.titleGenerated).toBe(false);
+
+			// Send second message to trigger title generation
+			await agentSession!.handleMessageSend({
+				content: 'What is 3+3?',
+			});
+
 			// Wait for processing and title generation
 			await waitForIdle(agentSession!);
 			await Bun.sleep(2000);
 
 			// Get the generated title
-			const firstTitle = agentSession!.getSessionData().title;
+			sessionData = agentSession!.getSessionData();
+			const firstTitle = sessionData.title;
 			expect(firstTitle).not.toBe('New Session');
-			expect(agentSession!.getSessionData().metadata.titleGenerated).toBe(true);
+			expect(sessionData.metadata.titleGenerated).toBe(true);
 
-			// Send second message
+			// Send third message
 			await agentSession!.handleMessageSend({
-				content: 'What is 3+3?',
+				content: 'What is 5+5?',
 			});
 
 			// Wait for processing
 			await waitForIdle(agentSession!);
 			await Bun.sleep(1000);
 
-			// Title should remain the same
+			// Title should remain the same (not regenerated)
 			const secondTitle = agentSession!.getSessionData().title;
 			expect(secondTitle).toBe(firstTitle);
 		},
-		30000
+		40000 // 40s timeout (3 messages)
 	);
 
 	test.skipIf(!hasAnyCredentials())(
@@ -152,7 +179,7 @@ describe('Auto-Title Generation', () => {
 			// This test specifically verifies the workspace path fix
 			// Create session with explicit workspace path
 			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: ctx.testDir,
+				workspacePath: ctx.config.workspaceRoot,
 				config: { model: 'haiku' },
 			});
 
@@ -161,9 +188,17 @@ describe('Auto-Title Generation', () => {
 
 			// Verify workspace path is set
 			const sessionData = agentSession!.getSessionData();
-			expect(sessionData.workspacePath).toBe(ctx.testDir);
+			expect(sessionData.workspacePath).toBe(ctx.config.workspaceRoot);
 
-			// Send message to trigger title generation
+			// Send first message
+			await agentSession!.handleMessageSend({
+				content: 'What is 1+1?',
+			});
+
+			// Wait for first response
+			await waitForIdle(agentSession!);
+
+			// Send second message to trigger title generation
 			await agentSession!.handleMessageSend({
 				content: 'Explain the concept of recursion briefly',
 			});
@@ -179,7 +214,7 @@ describe('Auto-Title Generation', () => {
 
 			console.log(`Generated title with workspace path: "${finalSessionData.title}"`);
 		},
-		30000
+		40000 // 40s timeout (2 messages)
 	);
 
 	test.skipIf(!hasAnyCredentials())(
@@ -187,24 +222,37 @@ describe('Auto-Title Generation', () => {
 		async () => {
 			// Create session
 			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: ctx.testDir,
+				workspacePath: ctx.config.workspaceRoot,
 				config: { model: 'haiku' },
 			});
 
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
 			expect(agentSession).toBeDefined();
 
-			// Send message with minimal content (might not produce a good title)
+			// Send first message with minimal content
 			await agentSession!.handleMessageSend({
 				content: 'ok',
 			});
 
-			// Wait for processing
+			// Wait for first response
+			await waitForIdle(agentSession!);
+
+			// Title should NOT be generated yet
+			let sessionData = agentSession!.getSessionData();
+			expect(sessionData.title).toBe('New Session');
+			expect(sessionData.metadata.titleGenerated).toBe(false);
+
+			// Send second message with minimal content (might not produce a good title)
+			await agentSession!.handleMessageSend({
+				content: 'yes',
+			});
+
+			// Wait for processing and title generation
 			await waitForIdle(agentSession!);
 			await Bun.sleep(2000);
 
 			// Session should still be functional even if title generation fails
-			const sessionData = agentSession!.getSessionData();
+			sessionData = agentSession!.getSessionData();
 			// Title might be generated or might remain default - either is acceptable
 			// The key is that the session is still functional
 			expect(sessionData.metadata.titleGenerated).toBeBoolean();
@@ -219,6 +267,6 @@ describe('Auto-Title Generation', () => {
 			// Session should be idle and functional
 			expect(agentSession!.getProcessingState().status).toBe('idle');
 		},
-		30000
+		40000 // 40s timeout (3 messages)
 	);
 });
