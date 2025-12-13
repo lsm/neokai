@@ -524,6 +524,33 @@ export default function MessageInput({
 						)}
 					</div>
 
+					{/* Autoscroll Button - Always enabled */}
+					<button
+						type="button"
+						onClick={() => onAutoScrollChange?.(!autoScroll)}
+						class={cn(
+							'w-11 h-11 rounded-full flex items-center justify-center transition-all',
+							'bg-dark-700/80 border border-dark-600/50',
+							'hover:bg-dark-600 active:scale-95'
+						)}
+						title={autoScroll ? 'Disable auto-scroll' : 'Enable auto-scroll'}
+						aria-label={autoScroll ? 'Disable auto-scroll' : 'Enable auto-scroll'}
+					>
+						<svg
+							class={cn(
+								'w-5 h-5 transition-colors',
+								autoScroll ? 'text-blue-400' : 'text-gray-400'
+							)}
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							stroke-width={2}
+						>
+							<path stroke-linecap="round" stroke-linejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+							<path stroke-linecap="round" stroke-linejoin="round" d="M5 21h14" />
+						</svg>
+					</button>
+
 					{/* Input Pill */}
 					<div class="relative flex-1">
 						{/* Command Autocomplete */}
