@@ -17,6 +17,7 @@ export interface Config {
 	maxSessions: number;
 	nodeEnv: string;
 	workspaceRoot: string;
+	disableWorktrees?: boolean; // For testing - disables git worktree creation
 }
 
 export interface ConfigOverrides {

@@ -36,9 +36,28 @@ export interface TestContext {
 }
 
 /**
+ * Global model cache for tests - reused across test app instances
+ * This saves 100-200ms per test by avoiding repeated API calls to load models
+ */
+let globalModelsCache: Map<string, unknown> | null = null;
+
+/**
+ * Options for createTestApp
+ */
+export interface TestAppOptions {
+	/**
+	 * Whether to use git worktrees for session isolation.
+	 * Default: false (disabled for speed - most tests don't need worktree isolation)
+	 * Set to true in tests that specifically test worktree functionality.
+	 */
+	useWorktrees?: boolean;
+}
+
+/**
  * Create a test application instance with in-memory database
  */
-export async function createTestApp(): Promise<TestContext> {
+export async function createTestApp(options: TestAppOptions = {}): Promise<TestContext> {
+	const { useWorktrees = false } = options;
 	// Use in-memory database for tests
 	const dbPath = `:memory:`;
 	const db = new Database(dbPath);
@@ -60,6 +79,7 @@ export async function createTestApp(): Promise<TestContext> {
 		maxSessions: 10,
 		nodeEnv: 'test',
 		workspaceRoot: testWorkspaceRoot,
+		disableWorktrees: !useWorktrees, // Disable worktrees by default for speed
 	};
 
 	// Initialize authentication manager
@@ -220,8 +240,18 @@ export async function createTestApp(): Promise<TestContext> {
 	// Initialize model service if authentication is available
 	if (authStatus.isAuthenticated) {
 		try {
-			const { initializeModels } = await import('../src/lib/model-service');
-			await initializeModels();
+			const { initializeModels, setModelsCache, getModelsCache } =
+				await import('../src/lib/model-service');
+
+			// If we have a cached copy, reuse it to save 100-200ms
+			if (globalModelsCache) {
+				setModelsCache(globalModelsCache as Map<string, never>);
+			} else {
+				// First time - actually load models
+				await initializeModels();
+				// Save for future tests
+				globalModelsCache = getModelsCache();
+			}
 		} catch (error) {
 			// Silently fail - tests will handle missing models gracefully
 			if (process.env.TEST_VERBOSE) {
@@ -230,24 +260,26 @@ export async function createTestApp(): Promise<TestContext> {
 		}
 	}
 
-	// Wait for server to actually be listening
-	await Bun.sleep(200);
+	// Reduced initial wait - most servers are ready much faster
+	await Bun.sleep(50);
 
 	const port = server.port;
 	const baseUrl = `http://localhost:${port}`;
 
-	// Verify server is ready by making a test request
-	let retries = 5;
+	// Verify server is ready with optimized retry loop
+	let retries = 10; // More retries but shorter delays
 	while (retries > 0) {
 		try {
-			const response = await fetch(baseUrl);
+			const response = await fetch(baseUrl, {
+				signal: AbortSignal.timeout(100), // Add timeout to fail fast
+			});
 			if (response.ok) break;
 		} catch (error) {
 			retries--;
 			if (retries === 0) {
 				throw new Error(`Server failed to start at ${baseUrl}: ${error}`);
 			}
-			await Bun.sleep(100);
+			await Bun.sleep(20); // Reduced from 100ms
 		}
 	}
 
@@ -266,20 +298,14 @@ export async function createTestApp(): Promise<TestContext> {
 			// First cleanup session resources
 			await sessionManager.cleanup();
 
-			// Wait for any pending async EventBus handlers and RPC calls to complete
-			// before removing handlers and closing database
-			await Bun.sleep(100);
+			// Reduced wait - most async operations complete faster
+			await Bun.sleep(20);
 
 			// Now cleanup MessageHub (removes RPC handlers)
 			messageHub.cleanup();
 
-			// Clear models cache for this test
-			try {
-				const { clearModelsCache } = await import('../src/lib/model-service');
-				clearModelsCache();
-			} catch {
-				// Ignore if model service wasn't loaded
-			}
+			// Note: We don't clear globalModelsCache here - it's reused across tests
+			// Individual tests can clear it if needed for isolation
 
 			// Close database and stop server
 			db.close();

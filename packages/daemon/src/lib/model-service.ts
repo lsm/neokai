@@ -320,6 +320,28 @@ export function clearModelsCache(cacheKey?: string): void {
 }
 
 /**
+ * Get current models cache (for testing)
+ * @returns Map of cached models
+ */
+export function getModelsCache(): Map<string, SDKModelInfo[]> {
+	return new Map(modelsCache);
+}
+
+/**
+ * Set models cache (for testing - allows reusing cached models)
+ * @param cache Map of cached models to restore
+ */
+export function setModelsCache(cache: Map<string, SDKModelInfo[]>): void {
+	modelsCache.clear();
+	cacheTimestamps.clear();
+	const now = Date.now();
+	for (const [key, models] of cache.entries()) {
+		modelsCache.set(key, models);
+		cacheTimestamps.set(key, now);
+	}
+}
+
+/**
  * Get model info by ID or alias
  * Searches SDK models with support for legacy model IDs
  */

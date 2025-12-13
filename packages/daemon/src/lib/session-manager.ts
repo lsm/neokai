@@ -24,6 +24,7 @@ export class SessionManager {
 			maxTokens: number;
 			temperature: number;
 			workspaceRoot: string;
+			disableWorktrees?: boolean;
 		}
 	) {
 		// Only enable debug logs in development mode, not in test mode
@@ -58,11 +59,12 @@ export class SessionManager {
 		const modelId = await this.getValidatedModelId(params.config?.model);
 
 		// Try to create worktree if useWorktree is true (default) and we're in a git repo
+		// Also respect config.disableWorktrees flag (for testing)
 		let sessionWorkspacePath = baseWorkspacePath;
 		let worktreeMetadata;
 		let gitBranch: string | undefined;
 
-		if (params.useWorktree !== false) {
+		if (params.useWorktree !== false && !this.config.disableWorktrees) {
 			try {
 				worktreeMetadata = await this.worktreeManager.createWorktree({
 					sessionId,
