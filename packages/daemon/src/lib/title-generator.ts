@@ -25,7 +25,16 @@ export async function generateTitle(
 
 		// Use Agent SDK with maxTurns: 1 for simple title generation
 		const result = await query({
-			prompt: `Generate a concise 3-7 word title for this conversation (no quotes): ${userText}`,
+			prompt: `Generate a concise 3-7 word title for this conversation.
+
+IMPORTANT: Return ONLY the title text itself, with NO formatting whatsoever:
+- NO quotes around the title
+- NO asterisks or markdown
+- NO backticks
+- NO punctuation at the end
+- Just plain text words
+
+User's message: ${userText}`,
 			options: {
 				model: 'haiku',
 				maxTurns: 1,
@@ -40,12 +49,27 @@ export async function generateTitle(
 				const textBlocks = message.message.content.filter(
 					(b: { type: string }) => b.type === 'text'
 				);
-				const title = textBlocks
+				let title = textBlocks
 					.map((b: { text?: string }) => b.text)
 					.join(' ')
 					.trim();
 
 				if (title) {
+					// Strip any markdown formatting that might have slipped through
+					// Remove bold/italic: **text** or *text*
+					title = title.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1');
+					// Remove wrapping quotes (handles multiple layers like ""text"")
+					while (
+						(title.startsWith('"') && title.endsWith('"')) ||
+						(title.startsWith("'") && title.endsWith("'"))
+					) {
+						title = title.slice(1, -1).trim();
+					}
+					// Remove backticks
+					title = title.replace(/`/g, '');
+					// Final trim
+					title = title.trim();
+
 					logger.log(`Generated title: "${title}"`);
 					return title;
 				}

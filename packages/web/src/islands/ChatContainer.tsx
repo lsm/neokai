@@ -272,7 +272,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 				// Subscribe to unified session state (includes agent state and commands)
 				const unsubSessionState = await hub.subscribe<{
-					session: unknown;
+					session: Session;
 					agent: {
 						status: 'idle' | 'queued' | 'processing' | 'interrupted';
 						messageId?: string;
@@ -285,6 +285,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					'state.session',
 					(data) => {
 						console.log('Received unified session state:', data);
+
+						// Update session metadata (including title)
+						if (data.session) {
+							setSession(data.session);
+						}
 
 						// Update commands
 						if (data.commands?.availableCommands) {
