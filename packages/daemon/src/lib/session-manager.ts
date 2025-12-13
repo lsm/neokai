@@ -313,16 +313,31 @@ export class SessionManager {
 
 			// 2. Delete worktree if session uses one (before DB deletion)
 			if (session?.worktree) {
+				this.log(`[SessionManager] Removing worktree for session ${sessionId}`);
+
 				try {
-					this.log(`[SessionManager] Removing worktree for session ${sessionId}`);
 					await this.worktreeManager.removeWorktree(session.worktree, true);
-					this.log(`[SessionManager] Successfully removed worktree`);
+
+					// Verify worktree was actually removed
+					const stillExists = await this.worktreeManager.verifyWorktree(session.worktree);
+					if (stillExists) {
+						console.error(
+							`[SessionManager] WARNING: Worktree still exists after removal: ${session.worktree.worktreePath}`
+						);
+						// Log to a failures list that global teardown can check
+						// For now, just log - global teardown will catch these
+					} else {
+						this.log(`[SessionManager] Successfully removed worktree`);
+					}
 				} catch (error) {
+					const errorMsg = error instanceof Error ? error.message : String(error);
 					console.error(
-						'[SessionManager] Failed to remove worktree (continuing with session deletion):',
-						error
+						`[SessionManager] FAILED to remove worktree (will be cleaned by global teardown): ${errorMsg}`,
+						{ sessionId, worktreePath: session.worktree.worktreePath }
 					);
-					// Continue with session deletion even if worktree cleanup fails
+
+					// Continue with session deletion - global teardown will handle orphaned worktrees
+					// This prevents a stuck session that can't be deleted due to git issues
 				}
 			}
 

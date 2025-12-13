@@ -39,8 +39,8 @@ export function getConfig(overrides?: ConfigOverrides): Config {
 	if (overrides?.workspace) {
 		// CLI override takes precedence
 		workspaceRoot = overrides.workspace;
-	} else if (nodeEnv === 'development') {
-		// In development: use project_root/tmp/workspace
+	} else if (nodeEnv === 'development' || nodeEnv === 'test') {
+		// In development/test: use project_root/tmp/workspace
 		workspaceRoot = join(projectRoot, 'tmp', 'workspace');
 	} else {
 		// In production: use current working directory

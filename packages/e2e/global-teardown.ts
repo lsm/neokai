@@ -96,7 +96,98 @@ async function globalTeardown(config: FullConfig) {
 			}
 		}
 
-		console.log(`✅ Cleanup complete: ${cleaned} cleaned, ${failed} failed`);
+		console.log(`✅ Session cleanup complete: ${cleaned} cleaned, ${failed} failed\n`);
+
+		// ========================================
+		// Layer 2: Git-level worktree cleanup
+		// Catches any orphaned worktrees from:
+		// - Failed session deletions
+		// - Crashed daemon
+		// - Direct DB manipulation
+		// ========================================
+		console.log('🧹 Layer 2: Git-level worktree cleanup...');
+
+		try {
+			const { execSync } = await import('child_process');
+			const { join } = await import('path');
+			const { existsSync, rmSync, readdirSync } = await import('fs');
+
+			// Get project root (2 levels up from packages/e2e)
+			const projectRoot = join(__dirname, '..', '..');
+			const worktreesDir = join(projectRoot, '.worktrees');
+
+			if (!existsSync(worktreesDir)) {
+				console.log('✅ No .worktrees directory found - clean state\n');
+				await browser.close();
+				return;
+			}
+
+			// Count worktrees before cleanup
+			const worktreeDirs = readdirSync(worktreesDir);
+			console.log(`📊 Found ${worktreeDirs.length} worktree directories`);
+
+			// Step 1: Prune git worktree metadata
+			console.log('🔧 Pruning git worktree metadata...');
+			try {
+				const pruneOutput = execSync('git worktree prune -v', {
+					cwd: projectRoot,
+					encoding: 'utf-8',
+				});
+				if (pruneOutput) {
+					console.log(`   ${pruneOutput.trim()}`);
+				}
+			} catch (error) {
+				console.warn('   ⚠️  Prune failed (continuing):', error);
+			}
+
+			// Step 2: Delete all session/* branches
+			console.log('🗑️  Deleting session branches...');
+			try {
+				const branchesOutput = execSync('git branch --list "session/*"', {
+					cwd: projectRoot,
+					encoding: 'utf-8',
+				});
+
+				const branches = branchesOutput
+					.split('\n')
+					.map((b) => b.trim())
+					.filter(Boolean);
+
+				if (branches.length > 0) {
+					console.log(`   Found ${branches.length} session branches`);
+
+					for (const branch of branches) {
+						try {
+							execSync(`git branch -D ${branch}`, {
+								cwd: projectRoot,
+								encoding: 'utf-8',
+							});
+						} catch {
+							console.warn(`   ⚠️  Failed to delete branch ${branch}`);
+						}
+					}
+
+					console.log(`   ✅ Deleted ${branches.length} branches`);
+				} else {
+					console.log('   ✅ No session branches to delete');
+				}
+			} catch (error) {
+				console.warn('   ⚠️  Branch cleanup failed (continuing):', error);
+			}
+
+			// Step 3: Force remove .worktrees directory
+			console.log('📁 Removing .worktrees directory...');
+			try {
+				rmSync(worktreesDir, { recursive: true, force: true });
+				console.log(`   ✅ Removed ${worktreeDirs.length} worktree directories`);
+			} catch (error) {
+				console.error('   ❌ Failed to remove .worktrees directory:', error);
+			}
+
+			console.log('✅ Git cleanup complete\n');
+		} catch (error) {
+			console.error('❌ Git cleanup failed (non-fatal):', error);
+		}
 
 		await browser.close();
 	} catch (error) {

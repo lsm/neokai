@@ -54,6 +54,9 @@ export default defineConfig({
 		timeout: 35000,
 	},
 
+	/* Global setup - runs before ALL tests start */
+	globalSetup: './global-setup.ts',
+
 	/* Global teardown - runs after ALL tests complete */
 	globalTeardown: './global-teardown',
 
