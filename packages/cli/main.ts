@@ -1,5 +1,8 @@
 #!/usr/bin/env bun
 import { getConfig } from '@liuboer/daemon/config';
+import { join } from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 
 // Parse CLI arguments
 interface CliOptions {
@@ -67,10 +70,14 @@ Options:
   --db-path <path>          Database file path (default: ./data/daemon.db)
   -h, --help                Show this help message
 
+Environment Variables:
+  LIUBOER_WORKSPACE_PATH    Workspace root directory (overridden by --workspace flag)
+
 Examples:
   liuboer --port 9983 --workspace .
   liuboer -p 8080 -w /path/to/workspace
   liuboer --db-path /path/to/shared/daemon.db
+  LIUBOER_WORKSPACE_PATH=/my/workspace liuboer
 `);
 }
 
@@ -82,6 +89,21 @@ if (cliOptions.help) {
 }
 
 const isDev = process.env.NODE_ENV !== 'production';
+
+// Provide default workspace if not specified via CLI or LIUBOER_WORKSPACE_PATH env var
+if (!cliOptions.workspace && !process.env.LIUBOER_WORKSPACE_PATH) {
+	if (isDev) {
+		// Development: use project_root/tmp/workspace
+		const __filename = fileURLToPath(import.meta.url);
+		const __dirname = dirname(__filename);
+		const projectRoot = join(__dirname, '..', '..');
+		cliOptions.workspace = join(projectRoot, 'tmp', 'workspace');
+	} else {
+		// Production: use current working directory
+		cliOptions.workspace = process.cwd();
+	}
+}
+
 const config = getConfig(cliOptions);
 
 console.log(`\n🚀 Liuboer ${isDev ? 'Development' : 'Production'} Server`);

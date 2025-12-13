@@ -9,7 +9,7 @@ import { SessionManager } from '../../src/lib/session-manager';
 describe('setupRPCHandlers - Handler Registration', () => {
 	test('should register all RPC handlers without needing a class', async () => {
 		// Setup minimal dependencies
-		const config = getConfig();
+		const config = getConfig({ workspace: '/test/workspace' });
 		const db = new Database(':memory:');
 		await db.initialize();
 
@@ -49,7 +49,7 @@ describe('setupRPCHandlers - Handler Registration', () => {
 	});
 
 	test('should register expected handler methods', async () => {
-		const config = getConfig();
+		const config = getConfig({ workspace: '/test/workspace' });
 		const db = new Database(':memory:');
 		await db.initialize();
 
