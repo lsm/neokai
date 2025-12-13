@@ -34,6 +34,7 @@ export interface SessionMetadata {
 	outputTokens: number;
 	totalCost: number;
 	toolCallCount: number;
+	titleGenerated?: boolean; // Flag to track if title has been auto-generated
 }
 
 // Message content types for streaming input (supports images)

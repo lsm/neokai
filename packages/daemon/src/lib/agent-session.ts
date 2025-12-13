@@ -1004,11 +1004,14 @@ export class AgentSession {
 			);
 
 			// ========================================
-			// AUTO-GENERATE TITLE: After first message exchange
+			// AUTO-GENERATE TITLE: After any result response
 			// ========================================
-			// Generate a title using Haiku after the first user-assistant exchange
-			if (this.session.metadata.messageCount === 1 && this.session.title === 'New Session') {
-				this.logger.log('First message exchange complete, generating title...');
+			// Generate a title using Haiku if we haven't already and title is still default
+			const shouldGenerateTitle =
+				!this.session.metadata.titleGenerated && this.session.title === 'New Session';
+
+			if (shouldGenerateTitle) {
+				this.logger.log('Auto-generating session title...');
 
 				// Get messages to find first user and assistant messages
 				const messages = this.db.getSDKMessages(this.session.id, 10);
@@ -1017,15 +1020,16 @@ export class AgentSession {
 
 				if (firstUserMsg && firstAssistantMsg) {
 					try {
-						const generatedTitle = await generateTitle(
-							firstUserMsg,
-							firstAssistantMsg,
-							this.session.workspacePath
-						);
+						const generatedTitle = await generateTitle(firstUserMsg, firstAssistantMsg);
 						if (generatedTitle) {
-							// Update session title in memory and database
+							// Update session title and flag in memory and database
 							this.session.title = generatedTitle;
-							this.db.updateSession(this.session.id, { title: generatedTitle });
+							this.session.metadata.titleGenerated = true;
+
+							this.db.updateSession(this.session.id, {
+								title: generatedTitle,
+								metadata: this.session.metadata,
+							});
 
 							// Emit session:updated event so StateManager broadcasts the change
 							await this.eventBus.emit('session:updated', {

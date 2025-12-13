@@ -90,7 +90,7 @@ export class SessionManager {
 
 		const session: Session = {
 			id: sessionId,
-			title: `Session ${new Date().toLocaleString()}`,
+			title: 'New Session',
 			workspacePath: sessionWorkspacePath,
 			createdAt: new Date().toISOString(),
 			lastActiveAt: new Date().toISOString(),
@@ -107,6 +107,7 @@ export class SessionManager {
 				outputTokens: 0,
 				totalCost: 0,
 				toolCallCount: 0,
+				titleGenerated: false,
 			},
 			worktree: worktreeMetadata ?? undefined,
 		};
