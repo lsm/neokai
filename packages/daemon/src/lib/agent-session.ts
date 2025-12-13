@@ -1006,11 +1006,8 @@ export class AgentSession {
 			// ========================================
 			// AUTO-GENERATE TITLE: After any result response
 			// ========================================
-			// Generate a title using Haiku if we haven't already and title is still default
-			const shouldGenerateTitle =
-				!this.session.metadata.titleGenerated && this.session.title === 'New Session';
-
-			if (shouldGenerateTitle) {
+			// Generate a title using Haiku if we haven't already
+			if (!this.session.metadata.titleGenerated) {
 				this.logger.log('Auto-generating session title...');
 
 				// Get messages to find first user and assistant messages
