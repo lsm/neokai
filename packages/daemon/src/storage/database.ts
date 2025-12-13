@@ -4,6 +4,7 @@ import { mkdirSync, existsSync } from 'node:fs';
 import type { Session } from '@liuboer/shared';
 import type { SDKMessage } from '@liuboer/shared/sdk';
 import { generateUUID } from '@liuboer/shared';
+import { Logger } from '../lib/logger';
 
 /**
  * SQLite parameter value type.
@@ -13,6 +14,7 @@ type SQLiteValue = string | number | boolean | null | Buffer | Uint8Array;
 
 export class Database {
 	private db: BunDatabase;
+	private logger = new Logger('Database');
 
 	constructor(private dbPath: string) {
 		// Initialize as null until initialize() is called
@@ -136,7 +138,7 @@ export class Database {
 			this.db.prepare(`SELECT oauth_token_encrypted FROM auth_config LIMIT 1`).all();
 		} catch {
 			// Column doesn't exist, add it
-			console.log('🔧 Running migration: Adding oauth_token_encrypted column');
+			this.logger.log('🔧 Running migration: Adding oauth_token_encrypted column');
 			this.db.exec(`ALTER TABLE auth_config ADD COLUMN oauth_token_encrypted TEXT`);
 		}
 
@@ -145,7 +147,7 @@ export class Database {
 			// Check if messages table exists
 			this.db.prepare(`SELECT 1 FROM messages LIMIT 1`).all();
 			// Table exists, drop it
-			console.log('🔧 Running migration: Dropping messages and tool_calls tables');
+			this.logger.log('🔧 Running migration: Dropping messages and tool_calls tables');
 			this.db.exec(`DROP TABLE IF EXISTS tool_calls`);
 			this.db.exec(`DROP TABLE IF EXISTS messages`);
 			this.db.exec(`DROP INDEX IF EXISTS idx_messages_session`);
@@ -158,7 +160,7 @@ export class Database {
 		try {
 			this.db.prepare(`SELECT is_worktree FROM sessions LIMIT 1`).all();
 		} catch {
-			console.log('🔧 Running migration: Adding worktree columns to sessions table');
+			this.logger.log('🔧 Running migration: Adding worktree columns to sessions table');
 			this.db.exec(`ALTER TABLE sessions ADD COLUMN is_worktree INTEGER DEFAULT 0`);
 			this.db.exec(`ALTER TABLE sessions ADD COLUMN worktree_path TEXT`);
 			this.db.exec(`ALTER TABLE sessions ADD COLUMN main_repo_path TEXT`);
@@ -169,7 +171,7 @@ export class Database {
 		try {
 			this.db.prepare(`SELECT git_branch FROM sessions LIMIT 1`).all();
 		} catch {
-			console.log('🔧 Running migration: Adding git_branch column to sessions table');
+			this.logger.log('🔧 Running migration: Adding git_branch column to sessions table');
 			this.db.exec(`ALTER TABLE sessions ADD COLUMN git_branch TEXT`);
 		}
 	}
