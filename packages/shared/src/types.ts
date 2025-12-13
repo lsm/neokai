@@ -8,6 +8,14 @@ export interface Session {
 	status: SessionStatus;
 	config: SessionConfig;
 	metadata: SessionMetadata;
+	worktree?: WorktreeMetadata;
+}
+
+export interface WorktreeMetadata {
+	isWorktree: true;
+	worktreePath: string;
+	mainRepoPath: string;
+	branch: string;
 }
 
 export type SessionStatus = 'active' | 'paused' | 'ended';

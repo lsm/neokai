@@ -153,13 +153,24 @@ export class Database {
 		} catch {
 			// Tables don't exist, migration already complete
 		}
+
+		// Migration 3: Add worktree columns to sessions table
+		try {
+			this.db.prepare(`SELECT is_worktree FROM sessions LIMIT 1`).all();
+		} catch {
+			console.log('🔧 Running migration: Adding worktree columns to sessions table');
+			this.db.exec(`ALTER TABLE sessions ADD COLUMN is_worktree INTEGER DEFAULT 0`);
+			this.db.exec(`ALTER TABLE sessions ADD COLUMN worktree_path TEXT`);
+			this.db.exec(`ALTER TABLE sessions ADD COLUMN main_repo_path TEXT`);
+			this.db.exec(`ALTER TABLE sessions ADD COLUMN worktree_branch TEXT`);
+		}
 	}
 
 	// Session operations
 	createSession(session: Session): void {
 		const stmt = this.db.prepare(
-			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 		stmt.run(
 			session.id,
@@ -169,7 +180,11 @@ export class Database {
 			session.lastActiveAt,
 			session.status,
 			JSON.stringify(session.config),
-			JSON.stringify(session.metadata)
+			JSON.stringify(session.metadata),
+			session.worktree?.isWorktree ? 1 : 0,
+			session.worktree?.worktreePath ?? null,
+			session.worktree?.mainRepoPath ?? null,
+			session.worktree?.branch ?? null
 		);
 	}
 
@@ -178,6 +193,16 @@ export class Database {
 		const row = stmt.get(id) as Record<string, unknown> | undefined;
 
 		if (!row) return null;
+
+		const isWorktree = row.is_worktree === 1;
+		const worktree = isWorktree
+			? {
+					isWorktree: true as const,
+					worktreePath: row.worktree_path as string,
+					mainRepoPath: row.main_repo_path as string,
+					branch: row.worktree_branch as string,
+				}
+			: undefined;
 
 		return {
 			id: row.id as string,
@@ -188,6 +213,7 @@ export class Database {
 			status: row.status as 'active' | 'paused' | 'ended',
 			config: JSON.parse(row.config as string),
 			metadata: JSON.parse(row.metadata as string),
+			worktree,
 		};
 	}
 
@@ -196,6 +222,16 @@ export class Database {
 		const rows = stmt.all() as Record<string, unknown>[];
 
 		return rows.map((r) => {
+			const isWorktree = r.is_worktree === 1;
+			const worktree = isWorktree
+				? {
+						isWorktree: true as const,
+						worktreePath: r.worktree_path as string,
+						mainRepoPath: r.main_repo_path as string,
+						branch: r.worktree_branch as string,
+					}
+				: undefined;
+
 			return {
 				id: r.id as string,
 				title: r.title as string,
@@ -205,6 +241,7 @@ export class Database {
 				status: r.status as 'active' | 'paused' | 'ended',
 				config: JSON.parse(r.config as string),
 				metadata: JSON.parse(r.metadata as string),
+				worktree,
 			};
 		});
 	}

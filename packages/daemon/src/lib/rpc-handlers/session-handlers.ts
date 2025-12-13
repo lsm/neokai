@@ -14,6 +14,8 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 			workspacePath: req.workspacePath,
 			initialTools: req.initialTools,
 			config: req.config,
+			useWorktree: req.useWorktree,
+			worktreeBaseBranch: req.worktreeBaseBranch,
 		});
 
 		// Return the full session object so client can optimistically update
@@ -215,5 +217,17 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 
 		// Return current state (don't publish - this is just a query, not a state change)
 		return { state };
+	});
+
+	// Handle manual cleanup of orphaned worktrees
+	messageHub.handle('worktree.cleanup', async (data) => {
+		const { workspacePath } = data as { workspacePath?: string };
+		const cleanedPaths = await sessionManager.cleanupOrphanedWorktrees(workspacePath);
+
+		return {
+			success: true,
+			cleanedPaths,
+			message: `Cleaned up ${cleanedPaths.length} orphaned worktree(s)`,
+		};
 	});
 }

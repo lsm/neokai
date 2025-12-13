@@ -4,6 +4,7 @@ import { generateUUID } from '@liuboer/shared';
 import { Database } from '../storage/database';
 import { AgentSession } from './agent-session';
 import type { AuthManager } from './auth-manager';
+import { WorktreeManager } from './worktree-manager';
 
 export class SessionManager {
 	private sessions: Map<string, AgentSession> = new Map();
@@ -11,6 +12,7 @@ export class SessionManager {
 	// FIX: Session lazy-loading race condition
 	private sessionLoadLocks = new Map<string, Promise<AgentSession | null>>();
 	private debug: boolean;
+	private worktreeManager: WorktreeManager;
 
 	constructor(
 		private db: Database,
@@ -26,6 +28,7 @@ export class SessionManager {
 	) {
 		// Only enable debug logs in development mode, not in test mode
 		this.debug = process.env.NODE_ENV === 'development';
+		this.worktreeManager = new WorktreeManager();
 	}
 
 	private log(...args: unknown[]): void {
@@ -44,13 +47,46 @@ export class SessionManager {
 		workspacePath?: string;
 		initialTools?: string[];
 		config?: Partial<Session['config']>;
+		useWorktree?: boolean;
+		worktreeBaseBranch?: string;
 	}): Promise<string> {
 		const sessionId = generateUUID();
 
-		const sessionWorkspacePath = params.workspacePath || this.config.workspaceRoot;
+		const baseWorkspacePath = params.workspacePath || this.config.workspaceRoot;
 
 		// Validate and resolve model ID using cached models
 		const modelId = await this.getValidatedModelId(params.config?.model);
+
+		// Try to create worktree if useWorktree is true (default) and we're in a git repo
+		let sessionWorkspacePath = baseWorkspacePath;
+		let worktreeMetadata;
+
+		if (params.useWorktree !== false) {
+			try {
+				worktreeMetadata = await this.worktreeManager.createWorktree({
+					sessionId,
+					repoPath: baseWorkspacePath,
+					baseBranch: params.worktreeBaseBranch || 'HEAD',
+				});
+
+				if (worktreeMetadata) {
+					sessionWorkspacePath = worktreeMetadata.worktreePath;
+					this.log(
+						`[SessionManager] Created worktree for session ${sessionId} at ${worktreeMetadata.worktreePath}`
+					);
+				} else {
+					this.log(
+						`[SessionManager] Not a git repository, using shared workspace: ${baseWorkspacePath}`
+					);
+				}
+			} catch (error) {
+				console.error(
+					'[SessionManager] Failed to create worktree, falling back to shared workspace:',
+					error
+				);
+				// Fall back to shared workspace on error
+			}
+		}
 
 		const session: Session = {
 			id: sessionId,
@@ -72,6 +108,7 @@ export class SessionManager {
 				totalCost: 0,
 				toolCallCount: 0,
 			},
+			worktree: worktreeMetadata ?? undefined,
 		};
 
 		// Save to database
@@ -247,20 +284,38 @@ export class SessionManager {
 		const agentSession = this.sessions.get(sessionId);
 		let dbDeleted = false;
 
+		// Get session data for worktree cleanup
+		const session = this.db.getSession(sessionId);
+
 		try {
 			// 1. Cleanup resources (can fail)
 			if (agentSession) {
 				await agentSession.cleanup();
 			}
 
-			// 2. Delete from DB (can fail)
+			// 2. Delete worktree if session uses one (before DB deletion)
+			if (session?.worktree) {
+				try {
+					this.log(`[SessionManager] Removing worktree for session ${sessionId}`);
+					await this.worktreeManager.removeWorktree(session.worktree, true);
+					this.log(`[SessionManager] Successfully removed worktree`);
+				} catch (error) {
+					console.error(
+						'[SessionManager] Failed to remove worktree (continuing with session deletion):',
+						error
+					);
+					// Continue with session deletion even if worktree cleanup fails
+				}
+			}
+
+			// 3. Delete from DB (can fail)
 			this.db.deleteSession(sessionId);
 			dbDeleted = true;
 
-			// 3. Remove from memory (shouldn't fail)
+			// 4. Remove from memory (shouldn't fail)
 			this.sessions.delete(sessionId);
 
-			// 4. Notify clients (can fail, but don't rollback)
+			// 5. Notify clients (can fail, but don't rollback)
 			try {
 				await this.messageHub.publish(
 					`session.deleted`,
@@ -312,5 +367,15 @@ export class SessionManager {
 		// Clear session map
 		this.sessions.clear();
 		this.log(`[SessionManager] All sessions cleaned up`);
+	}
+
+	/**
+	 * Manually cleanup orphaned worktrees in a workspace
+	 * Returns array of cleaned up worktree paths
+	 */
+	async cleanupOrphanedWorktrees(workspacePath?: string): Promise<string[]> {
+		const path = workspacePath || this.config.workspaceRoot;
+		this.log(`[SessionManager] Cleaning up orphaned worktrees in ${path}`);
+		return await this.worktreeManager.cleanupOrphanedWorktrees(path);
 	}
 }
