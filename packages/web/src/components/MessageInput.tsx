@@ -53,6 +53,18 @@ export default function MessageInput({
 	// Track interrupting state
 	const [interrupting, setInterrupting] = useState(false);
 
+	// Detect if device is mobile (touch-based)
+	const isMobileDevice = useRef(false);
+
+	// Detect mobile device on mount
+	useEffect(() => {
+		// Check if primary input is touch (mobile) or fine pointer (desktop)
+		const isTouchDevice =
+			window.matchMedia('(pointer: coarse)').matches ||
+			('ontouchstart' in window && window.innerWidth < 768);
+		isMobileDevice.current = isTouchDevice;
+	}, []);
+
 	// Auto-resize textarea - starts at 40px (h-10), expands up to 200px
 	useEffect(() => {
 		const textarea = textareaRef.current;
@@ -288,10 +300,23 @@ export default function MessageInput({
 			}
 		}
 
-		// Cmd+Enter or Ctrl+Enter to send
-		if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-			e.preventDefault();
-			handleSubmit(e);
+		// Handle Enter key behavior
+		if (e.key === 'Enter') {
+			// Cmd+Enter or Ctrl+Enter always sends
+			if (e.metaKey || e.ctrlKey) {
+				e.preventDefault();
+				handleSubmit(e);
+				return;
+			}
+
+			// Desktop mode: Enter sends, Shift+Enter makes new line
+			// Mobile mode: Enter makes new line, use send button to send
+			if (!isMobileDevice.current && !e.shiftKey) {
+				// Desktop: plain Enter sends message
+				e.preventDefault();
+				handleSubmit(e);
+			}
+			// Mobile or Shift+Enter: allow default behavior (new line)
 		} else if (e.key === 'Escape') {
 			// Escape key: interrupt if processing, otherwise clear content
 			if (isAgentWorking.value && !interrupting) {
@@ -636,7 +661,9 @@ export default function MessageInput({
 								<button
 									type="submit"
 									disabled={disabled || !hasContent}
-									title="Send message (⌘+Enter)"
+									title={
+										isMobileDevice.current ? 'Send message' : 'Send message (Enter or ⌘+Enter)'
+									}
 									aria-label="Send message"
 									data-testid="send-button"
 									class={cn(
