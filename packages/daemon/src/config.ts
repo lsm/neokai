@@ -30,22 +30,22 @@ export interface ConfigOverrides {
 export function getConfig(overrides?: ConfigOverrides): Config {
 	const nodeEnv = process.env.NODE_ENV || 'development';
 
-	// Workspace root MUST be explicitly provided via CLI --workspace flag
-	// No fallback to relative paths - this ensures correct behavior in all environments
+	// Workspace root priority:
+	// 1. CLI --workspace flag (overrides parameter)
+	// 2. LIUBOER_WORKSPACE_PATH environment variable
+	// Note: No default fallback - caller (CLI package) must provide workspace path
 	let workspaceRoot: string;
 	if (overrides?.workspace) {
-		// CLI override (required for dev/production)
+		// CLI override has highest priority
 		workspaceRoot = overrides.workspace;
-	} else if (nodeEnv === 'test') {
-		// Test mode: use a temp directory that will be cleaned up
-		// This is the only case where we compute a path, as it's controlled test env
-		const projectRoot = join(__dirname, '..', '..', '..');
-		workspaceRoot = join(projectRoot, 'tmp', 'workspace');
+	} else if (process.env.LIUBOER_WORKSPACE_PATH) {
+		// Environment variable
+		workspaceRoot = process.env.LIUBOER_WORKSPACE_PATH;
 	} else {
-		// No workspace provided - this is an error in dev/production
+		// No workspace provided - this is an error
 		throw new Error(
-			'Workspace path must be explicitly provided via --workspace flag. ' +
-				'Do not rely on automatic path detection.'
+			'Workspace path must be explicitly provided via --workspace flag or LIUBOER_WORKSPACE_PATH environment variable. ' +
+				'The daemon does not provide default workspace paths.'
 		);
 	}
 
