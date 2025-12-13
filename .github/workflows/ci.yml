@@ -66,6 +66,9 @@ jobs:
       - name: Run unit tests
         working-directory: packages/daemon
         run: bun test tests/unit
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
   test-daemon-integration:
     name: Test Daemon (Integration)
