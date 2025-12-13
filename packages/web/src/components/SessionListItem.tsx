@@ -29,13 +29,28 @@ export default function SessionListItem({ session, onSessionClick }: SessionList
 		>
 			<div class="flex items-start justify-between gap-2">
 				<div class="flex-1 min-w-0">
-					<h3
-						class={`font-medium truncate text-sm mb-1 ${
-							isActive ? 'text-gray-100' : 'text-gray-200'
-						}`}
-					>
-						{session.title || 'New Session'}
-					</h3>
+					<div class="flex items-center gap-2 mb-1">
+						<h3
+							class={`font-medium truncate text-sm ${isActive ? 'text-gray-100' : 'text-gray-200'}`}
+						>
+							{session.title || 'New Session'}
+						</h3>
+						{session.worktree && (
+							<span
+								class="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-purple-500/10 text-purple-400 rounded border border-purple-500/20"
+								title={`Worktree: ${session.worktree.branch}`}
+							>
+								<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
+									/>
+								</svg>
+							</span>
+						)}
+					</div>
 					<div class="flex items-center gap-3 text-xs text-gray-500">
 						<span class="flex items-center gap-1">
 							<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
