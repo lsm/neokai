@@ -38,12 +38,40 @@ describe('AgentSession SDK Integration', () => {
 		await ctx.cleanup();
 	});
 
+	/**
+	 * Helper: Wait for agent session to return to idle state
+	 * Polls the processing state until it's idle or timeout
+	 */
+	async function waitForIdle(
+		agentSession: NonNullable<Awaited<ReturnType<typeof ctx.sessionManager.getSessionAsync>>>,
+		timeoutMs = 30000 // Increased to 30s to account for SDK query initialization time
+	): Promise<void> {
+		const startTime = Date.now();
+		let lastState: string = '';
+		while (Date.now() - startTime < timeoutMs) {
+			const state = agentSession.getProcessingState();
+			if (state.status !== lastState) {
+				console.log(`[waitForIdle] State changed: ${lastState} -> ${state.status}`);
+				lastState = state.status;
+			}
+			if (state.status === 'idle') {
+				return;
+			}
+			await Bun.sleep(100); // Poll every 100ms
+		}
+		const finalState = agentSession.getProcessingState();
+		throw new Error(
+			`Timeout waiting for idle state after ${timeoutMs}ms. Final state: ${finalState.status}, phase: ${finalState.phase}`
+		);
+	}
+
 	describe('handleMessageSend', () => {
 		test.skipIf(!hasAnyCredentials())(
 			'should send message and receive real SDK response',
 			async () => {
 				const sessionId = await ctx.sessionManager.createSession({
 					workspacePath: process.cwd(),
+					config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
 				});
 
 				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
@@ -57,8 +85,8 @@ describe('AgentSession SDK Integration', () => {
 				expect(result.messageId).toBeString();
 				expect(result.messageId.length).toBeGreaterThan(0);
 
-				// Wait a bit for processing to complete
-				await Bun.sleep(5000);
+				// Wait for processing to complete (polls state until idle)
+				await waitForIdle(agentSession!);
 
 				// Check that we received SDK messages
 				const sdkMessages = agentSession!.getSDKMessages();
@@ -76,6 +104,7 @@ describe('AgentSession SDK Integration', () => {
 			async () => {
 				const sessionId = await ctx.sessionManager.createSession({
 					workspacePath: process.cwd(),
+					config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
 				});
 
 				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
@@ -93,8 +122,8 @@ describe('AgentSession SDK Integration', () => {
 
 				expect(result.messageId).toBeString();
 
-				// Wait for processing
-				await Bun.sleep(5000);
+				// Wait for processing to complete
+				await waitForIdle(agentSession!);
 
 				// Verify we got a response
 				const sdkMessages = agentSession!.getSDKMessages();
@@ -110,6 +139,7 @@ describe('AgentSession SDK Integration', () => {
 			async () => {
 				const sessionId = await ctx.sessionManager.createSession({
 					workspacePath: process.cwd(),
+					config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
 				});
 
 				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
@@ -120,7 +150,7 @@ describe('AgentSession SDK Integration', () => {
 				});
 
 				// Wait for first message to complete
-				await Bun.sleep(5000);
+				await waitForIdle(agentSession!);
 
 				// Enqueue second message
 				const messageIdPromise = agentSession!.enqueueMessage('What is 3+3? Just the number.');
@@ -135,7 +165,7 @@ describe('AgentSession SDK Integration', () => {
 				expect(messageId.length).toBeGreaterThan(0);
 
 				// Wait for second message to process
-				await Bun.sleep(5000);
+				await waitForIdle(agentSession!);
 
 				// Verify both messages were processed (use SDK messages now)
 				const messages = agentSession!.getSDKMessages();
@@ -151,6 +181,7 @@ describe('AgentSession SDK Integration', () => {
 			async () => {
 				const sessionId = await ctx.sessionManager.createSession({
 					workspacePath: process.cwd(),
+					config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
 				});
 
 				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
@@ -178,6 +209,7 @@ describe('AgentSession SDK Integration', () => {
 			async () => {
 				const sessionId = await ctx.sessionManager.createSession({
 					workspacePath: process.cwd(),
+					config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
 				});
 
 				const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, sessionId);
@@ -224,6 +256,7 @@ describe('AgentSession SDK Integration', () => {
 			async () => {
 				const sessionId = await ctx.sessionManager.createSession({
 					workspacePath: process.cwd(),
+					config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
 				});
 
 				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
@@ -241,7 +274,7 @@ describe('AgentSession SDK Integration', () => {
 				expect(['queued', 'processing', 'idle']).toContain(stateAfterSend.status);
 
 				// Wait for completion
-				await Bun.sleep(5000);
+				await waitForIdle(agentSession!);
 
 				// Should be back to idle
 				const finalState = agentSession!.getProcessingState();
@@ -255,6 +288,7 @@ describe('AgentSession SDK Integration', () => {
 			async () => {
 				const sessionId = await ctx.sessionManager.createSession({
 					workspacePath: process.cwd(),
+					config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
 				});
 
 				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
@@ -272,7 +306,7 @@ describe('AgentSession SDK Integration', () => {
 				expect(results[0].messageId).not.toBe(results[1].messageId);
 
 				// Wait for processing to complete
-				await Bun.sleep(8000);
+				await waitForIdle(agentSession!);
 
 				// Should have messages from both interactions (use SDK messages now)
 				const messages = agentSession!.getSDKMessages();
