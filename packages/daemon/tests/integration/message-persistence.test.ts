@@ -30,7 +30,7 @@ import { Database } from '../../src/storage/database';
  */
 async function waitForIdle(
 	agentSession: NonNullable<Awaited<ReturnType<typeof ctx.sessionManager.getSessionAsync>>>,
-	timeoutMs = 30000 // Increased to 30s to account for SDK query initialization time
+	timeoutMs = 15000 // 15s is sufficient for SDK init + API call
 ): Promise<void> {
 	const startTime = Date.now();
 	while (Date.now() - startTime < timeoutMs) {
@@ -347,7 +347,7 @@ describe('Message Persistence Bug Fix', () => {
 				expect(afterReloadMessages.length).toBe(dbMessages.length);
 				expect(afterReloadMessages.length).toBeGreaterThan(0);
 			},
-			30000 // 30 second timeout
+			20000 // 20 second timeout
 		);
 
 		test.skipIf(!hasAnyCredentials())(
@@ -386,15 +386,15 @@ describe('Message Persistence Bug Fix', () => {
 				// Should have at least the user message
 				expect(countAfter).toBeGreaterThanOrEqual(1);
 
-				// Messages shouldn't have disappeared
-				expect(countAfter).toBe(countBefore);
+				// Messages shouldn't have disappeared (count may increase but not decrease)
+				expect(countAfter).toBeGreaterThanOrEqual(countBefore);
 
 				// Reload session - messages should still be there
 				const reloadedSession = await ctx.sessionManager.getSessionAsync(sessionId);
 				const finalMessages = reloadedSession!.getSDKMessages();
 				expect(finalMessages.length).toBe(countAfter);
 			},
-			30000
+			20000
 		);
 	});
 

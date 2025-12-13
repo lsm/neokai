@@ -4,7 +4,9 @@ This directory contains comprehensive integration tests for the Liuboer daemon. 
 
 ## Test Files
 
-### 1. `session-rpc.test.ts` - Session Management RPC Integration
+### Core Session & State Tests
+
+#### `session-rpc.test.ts` - Session Management RPC Integration
 
 Tests all session-related RPC handlers:
 
@@ -15,7 +17,7 @@ Tests all session-related RPC handlers:
 - `session.delete` - Deleting sessions and cascade cleanup
 - EventBus integration - Verifies events are emitted correctly
 
-### 2. `state-sync.test.ts` - State Synchronization Integration
+#### `state-sync.test.ts` - State Synchronization Integration
 
 Tests state management and broadcasting:
 
@@ -26,7 +28,9 @@ Tests state management and broadcasting:
 - Delta updates for efficient state sync
 - State channel subscriptions
 
-### 3. `websocket-messagehub.test.ts` - WebSocket Transport Integration
+### WebSocket & Protocol Tests
+
+#### `websocket-messagehub.test.ts` - WebSocket Transport Integration
 
 Tests full WebSocket stack:
 
@@ -38,7 +42,52 @@ Tests full WebSocket stack:
 - Multiple concurrent clients
 - Client disconnection handling
 
-### 4. `auth.test.ts` - Authentication Integration
+#### `messagehub-protocol.test.ts` - MessageHub Protocol Tests
+
+Tests the MessageHub protocol layer:
+
+- RPC request/response handling
+- Subscription management
+- Event publishing and routing
+- Error handling and timeouts
+
+### SDK Integration Tests (Require API Credentials)
+
+These tests require `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` and are skipped if credentials are unavailable.
+
+#### `sdk-basic.test.ts` - Basic SDK Functionality
+
+Tests raw Claude Agent SDK functionality:
+
+- Direct SDK query execution
+- Message streaming
+- Response parsing
+
+#### `agent-session-sdk.test.ts` - AgentSession + SDK Integration
+
+Tests AgentSession's integration with the real Claude Agent SDK:
+
+- Message sending and receiving
+- Session state management (idle → queued → processing → idle)
+- WebSocket SDK message event broadcasting
+- Image handling
+- Interrupt handling
+- Sequential message processing
+
+#### `message-persistence.test.ts` - Message Persistence
+
+Tests the message persistence bug fix ensuring messages survive crashes:
+
+- WAL mode configuration
+- DB write error handling (returns boolean, doesn't crash stream)
+- Persist-before-broadcast ordering
+- Message order preservation across errors
+- Session reload message recovery
+- Concurrent read/write handling
+
+### Other Tests
+
+#### `auth.test.ts` - Authentication Integration
 
 Tests authentication system:
 
@@ -46,9 +95,16 @@ Tests authentication system:
 - Authentication method detection (API key vs OAuth)
 - Auth state broadcasting
 - Environment variable credential loading
-- Auth manager initialization
 
-### 5. `e2e-workflow.test.ts` - End-to-End Workflows
+#### `model-switching.test.ts` - Model Configuration
+
+Tests model selection and switching:
+
+- Default model configuration
+- Session-specific model overrides
+- Model validation
+
+#### `e2e-workflow.test.ts` - End-to-End Workflows
 
 Tests complete user workflows:
 
@@ -59,6 +115,32 @@ Tests complete user workflows:
 - State snapshot consistency
 - Error recovery and rapid create/delete cycles
 
+## Running Tests
+
+```bash
+# Run all integration tests (from repo root)
+bun test packages/daemon/tests/integration/
+
+# Run specific test file
+bun test packages/daemon/tests/integration/session-rpc.test.ts
+
+# Run with verbose output
+bun test packages/daemon/tests/integration/ --verbose
+```
+
+**Note**: Tests should be run from the repository root, not from `packages/daemon`.
+
+## Test Utilities
+
+The `test-utils.ts` file provides:
+
+- `createTestApp()` - Creates a full daemon instance with in-memory database
+- `createWebSocket()` / `createWebSocketWithFirstMessage()` - WebSocket helpers
+- `waitForWebSocketMessage()` - Promise-based WebSocket message waiting
+- `waitForWebSocketState()` - Wait for WebSocket state changes
+- Credential checking: `hasApiKey()`, `hasOAuthToken()`, `hasAnyCredentials()`
+- `createMockMessageHub()` - Mock for unit tests
+
 ## Test Philosophy
 
 These integration tests focus on:
@@ -66,54 +148,28 @@ These integration tests focus on:
 1. **Component Integration** - Testing how multiple components work together (MessageHub + SessionManager + StateManager + Database)
 2. **Event Flow** - Verifying EventBus mediates between components correctly
 3. **State Consistency** - Ensuring state stays synchronized across all layers
-4. **No External APIs** - Tests use in-memory database and don't make real Claude API calls for speed
-5. **Real Transport** - WebSocket tests use actual WebSocket connections (not mocked)
+4. **Real Transport** - WebSocket tests use actual WebSocket connections (not mocked)
+5. **Real SDK** - SDK integration tests use real Claude API calls (when credentials available)
 
-## Test Utilities
+## Test Configuration
 
-The `test-utils.ts` file provides:
+Tests use special configuration for fast, reliable execution:
 
-- `createTestApp()` - Creates a full daemon instance with in-memory database
-- `callRPCHandler()` - Directly invokes RPC handlers for testing
-- `createWebSocket()` - Helper for WebSocket connection creation
-- `waitForWebSocketMessage()` - Promise-based WebSocket message waiting
-- Credential checking utilities (`hasApiKey()`, `hasOAuthToken()`, etc.)
+- In-memory SQLite database with WAL mode
+- Worktrees disabled by default (`disableWorktrees: true`)
+- Haiku model for SDK tests (faster, cheaper)
+- 15 second timeout for `waitForIdle()` (SDK init + API call)
+- `mock.restore()` in SDK tests to prevent mock leakage from unit tests
 
-## Current Status
-
-⚠️ **Note**: These tests need refinement in the test infrastructure:
-
-1. MessageHub's `publish()` method currently requires a connected transport
-2. For server-side testing, we need either:
-   - A local/null transport that doesn't throw
-   - MessageHub should gracefully handle no-transport scenarios
-   - Or use direct manager calls instead of going through MessageHub
-
-The test structure and coverage are comprehensive, but the execution layer needs adjustment to work without requiring WebSocket clients to be connected for pub/sub operations.
-
-## Running Tests
-
-```bash
-# Run all integration tests
-cd packages/daemon
-bun test tests/integration/
-
-# Run specific test file
-bun test tests/integration/session-rpc.test.ts
-
-# Run with verbose output
-bun test tests/integration/ --verbose
-```
-
-## Test Coverage
+## Test Coverage (108 tests)
 
 These integration tests cover:
 
 - ✅ Session CRUD operations (create, read, update, delete)
-- ✅ Message management
+- ✅ Message management and persistence
 - ✅ State channel broadcasting
 - ✅ EventBus event propagation
-- ✅ Database cascade deletes
+- ✅ Database cascade deletes and WAL mode
 - ✅ Per-channel versioning
 - ✅ WebSocket RPC calls
 - ✅ WebSocket pub/sub
@@ -121,29 +177,26 @@ These integration tests cover:
 - ✅ Concurrent operations
 - ✅ Error handling and recovery
 - ✅ Authentication status
-
-## Next Steps
-
-To make these tests fully functional:
-
-1. Add a `LocalTransport` or `NullTransport` for server-side testing
-2. Or modify `MessageHub.publish()` to not throw when no transport is connected
-3. Update `SessionManager` to handle publish failures gracefully in test mode
-4. Consider adding a test mode flag that bypasses transport requirements
+- ✅ Real SDK message streaming
+- ✅ Session state machine transitions
+- ✅ Interrupt handling
+- ✅ Model configuration
 
 ## Architecture Tested
 
 ```
-┌─────────────────────────────────────────────┐
-│           Integration Test Layer             │
-├─────────────────────────────────────────────┤
-│  WebSocket  │  MessageHub  │   EventBus     │
-├─────────────┼──────────────┼────────────────┤
-│  RPC        │  StateManager│   Session      │
-│  Handlers   │              │   Manager      │
-├─────────────┼──────────────┼────────────────┤
-│         Database (in-memory SQLite)          │
-└─────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│             Integration Test Layer              │
+├─────────────────────────────────────────────────┤
+│  WebSocket  │  MessageHub  │   EventBus         │
+├─────────────┼──────────────┼────────────────────┤
+│  RPC        │ StateManager │  SessionManager    │
+│  Handlers   │              │  AgentSession      │
+├─────────────┼──────────────┼────────────────────┤
+│   Claude Agent SDK         │    MessageQueue    │
+├─────────────┴──────────────┴────────────────────┤
+│         Database (in-memory SQLite + WAL)       │
+└─────────────────────────────────────────────────┘
 ```
 
 Each test file focuses on different horizontal or vertical slices of this architecture, ensuring all integration points work correctly.

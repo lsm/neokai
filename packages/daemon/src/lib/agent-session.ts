@@ -7,6 +7,7 @@ import type {
 	ContextInfo,
 } from '@liuboer/shared';
 import type { EventBus, MessageHub, CurrentModelInfo } from '@liuboer/shared';
+import { generateUUID } from '@liuboer/shared';
 import type { Query, SDKMessage, SlashCommand } from '@liuboer/shared/sdk';
 import { Database } from '../storage/database';
 import { ErrorCategory, ErrorManager } from './error-manager';
@@ -231,10 +232,17 @@ export class AgentSession {
 
 			const { content, images } = data;
 			const messageContent = this.buildMessageContent(content, images);
-			const messageId = await this.messageQueue.enqueue(messageContent);
 
-			// Update state to 'queued'
+			// Generate message ID before enqueuing so we can set state BEFORE the message starts processing
+			const messageId = generateUUID();
+
+			// Set state to 'queued' BEFORE enqueue, because enqueue() blocks until the message
+			// is actually sent to the SDK, by which time state should transition to 'processing'
 			await this.stateManager.setQueued(messageId);
+
+			// enqueue() waits for the message to be yielded to the SDK and onSent() called
+			// During this time, state transitions: queued -> processing -> ...
+			await this.messageQueue.enqueueWithId(messageId, messageContent);
 
 			return { messageId };
 		} catch (error) {
@@ -307,14 +315,20 @@ export class AgentSession {
 				},
 			});
 
-			// Fetch and cache slash commands
-			await this.fetchAndCacheSlashCommands();
-
-			// Fetch and cache available models from SDK
-			await this.fetchAndCacheModels();
-
-			// Process SDK messages
+			// Process SDK messages - MUST start immediately!
+			// The SDK methods (supportedCommands, supportedModels) require the query to be
+			// actively consumed, so we start processing first and fetch metadata in the background.
 			this.logger.log(`Processing SDK stream...`);
+
+			// Fire-and-forget: fetch slash commands and models in background
+			// These don't block message processing and will complete when the SDK is ready
+			this.fetchAndCacheSlashCommands().catch((e) =>
+				this.logger.warn('Background fetch of slash commands failed:', e)
+			);
+			this.fetchAndCacheModels().catch((e) =>
+				this.logger.warn('Background fetch of models failed:', e)
+			);
+
 			for await (const message of this.queryObject) {
 				try {
 					await this.handleSDKMessage(message);
@@ -388,8 +402,9 @@ export class AgentSession {
 				await this.stateManager.setProcessing(message.uuid ?? 'unknown', 'initializing');
 			}
 
-			// Yield to SDK
-			yield message.message;
+			// Yield the full SDKUserMessage to SDK (not just message.message!)
+			// The SDK expects AsyncIterable<SDKUserMessage>, which includes type, uuid, session_id, etc.
+			yield message;
 
 			// Mark as sent
 			onSent();

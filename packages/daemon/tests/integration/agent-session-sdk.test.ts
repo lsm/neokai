@@ -17,7 +17,7 @@
  * These tests run in parallel with other tests for faster CI execution.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import type { TestContext } from '../test-utils';
 import {
 	createTestApp,
@@ -27,10 +27,16 @@ import {
 	hasAnyCredentials,
 } from '../test-utils';
 
+/**
+ * CRITICAL: Restore any mocks before running these tests.
+ * This prevents mock leakage from unit tests that mock the SDK.
+ */
 describe('AgentSession SDK Integration', () => {
 	let ctx: TestContext;
 
 	beforeEach(async () => {
+		// Restore mocks to ensure we use the real SDK
+		mock.restore();
 		ctx = await createTestApp();
 	});
 
@@ -44,7 +50,7 @@ describe('AgentSession SDK Integration', () => {
 	 */
 	async function waitForIdle(
 		agentSession: NonNullable<Awaited<ReturnType<typeof ctx.sessionManager.getSessionAsync>>>,
-		timeoutMs = 30000 // Increased to 30s to account for SDK query initialization time
+		timeoutMs = 15000 // 15s is sufficient for SDK init + API call
 	): Promise<void> {
 		const startTime = Date.now();
 		let lastState: string = '';
@@ -60,8 +66,9 @@ describe('AgentSession SDK Integration', () => {
 			await Bun.sleep(100); // Poll every 100ms
 		}
 		const finalState = agentSession.getProcessingState();
+		const phase = 'phase' in finalState ? finalState.phase : 'N/A';
 		throw new Error(
-			`Timeout waiting for idle state after ${timeoutMs}ms. Final state: ${finalState.status}, phase: ${finalState.phase}`
+			`Timeout waiting for idle state after ${timeoutMs}ms. Final state: ${finalState.status}, phase: ${phase}`
 		);
 	}
 
@@ -96,7 +103,7 @@ describe('AgentSession SDK Integration', () => {
 				const state = agentSession!.getProcessingState();
 				expect(state.status).toBe('idle');
 			},
-			30000 // 30 second timeout
+			20000 // 20 second timeout
 		);
 
 		test.skipIf(!hasAnyCredentials())(
@@ -129,7 +136,7 @@ describe('AgentSession SDK Integration', () => {
 				const sdkMessages = agentSession!.getSDKMessages();
 				expect(sdkMessages.length).toBeGreaterThan(0);
 			},
-			30000
+			20000
 		);
 	});
 
@@ -152,17 +159,13 @@ describe('AgentSession SDK Integration', () => {
 				// Wait for first message to complete
 				await waitForIdle(agentSession!);
 
-				// Enqueue second message
-				const messageIdPromise = agentSession!.enqueueMessage('What is 3+3? Just the number.');
+				// Send second message
+				const result = await agentSession!.handleMessageSend({
+					content: 'What is 3+3? Just the number.',
+				});
 
-				// The promise should resolve with a message ID
-				const messageId = await Promise.race([
-					messageIdPromise,
-					new Promise<string>((_, reject) => setTimeout(() => reject(new Error('Timeout')), 10000)),
-				]);
-
-				expect(messageId).toBeString();
-				expect(messageId.length).toBeGreaterThan(0);
+				expect(result.messageId).toBeString();
+				expect(result.messageId.length).toBeGreaterThan(0);
 
 				// Wait for second message to process
 				await waitForIdle(agentSession!);
@@ -171,7 +174,7 @@ describe('AgentSession SDK Integration', () => {
 				const messages = agentSession!.getSDKMessages();
 				expect(messages.length).toBeGreaterThanOrEqual(2);
 			},
-			40000
+			30000
 		);
 	});
 
@@ -237,7 +240,7 @@ describe('AgentSession SDK Integration', () => {
 				});
 
 				// Wait for SDK message event
-				const sdkEvent = await waitForWebSocketMessage(ws, 10000);
+				const sdkEvent = (await waitForWebSocketMessage(ws, 10000)) as Record<string, unknown>;
 
 				// Should receive an sdk.message event
 				expect(sdkEvent.type).toBe('EVENT');
@@ -246,7 +249,7 @@ describe('AgentSession SDK Integration', () => {
 
 				ws.close();
 			},
-			30000
+			20000
 		);
 	});
 
@@ -280,7 +283,7 @@ describe('AgentSession SDK Integration', () => {
 				const finalState = agentSession!.getProcessingState();
 				expect(finalState.status).toBe('idle');
 			},
-			20000
+			15000
 		);
 
 		test.skipIf(!hasAnyCredentials())(
@@ -312,7 +315,7 @@ describe('AgentSession SDK Integration', () => {
 				const messages = agentSession!.getSDKMessages();
 				expect(messages.length).toBeGreaterThanOrEqual(2);
 			},
-			30000
+			25000
 		);
 	});
 
@@ -381,7 +384,7 @@ describe('AgentSession SDK Integration', () => {
 				await agentSession!.handleInterrupt();
 
 				// Should receive interrupted event
-				const event = await eventPromise;
+				const event = (await eventPromise) as Record<string, unknown>;
 
 				expect(event.type).toBe('EVENT');
 				expect(event.method).toBe('session.interrupted');

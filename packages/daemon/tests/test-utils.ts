@@ -140,6 +140,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 			maxTokens: config.maxTokens,
 			temperature: config.temperature,
 			workspaceRoot: config.workspaceRoot,
+			disableWorktrees: config.disableWorktrees, // Disable worktrees by default for tests
 		}
 	);
 

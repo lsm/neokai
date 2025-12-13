@@ -32,13 +32,25 @@ export class MessageQueue {
 	 */
 	async enqueue(content: string | MessageContent[], internal: boolean = false): Promise<string> {
 		const messageId = generateUUID();
+		await this.enqueueWithId(messageId, content, internal);
+		return messageId;
+	}
 
+	/**
+	 * Enqueue a message with a pre-generated ID
+	 * Used when caller needs the ID before the message is processed (e.g., for state tracking)
+	 */
+	async enqueueWithId(
+		messageId: string,
+		content: string | MessageContent[],
+		internal: boolean = false
+	): Promise<void> {
 		return new Promise((resolve, reject) => {
 			const queuedMessage: QueuedMessage = {
 				id: messageId,
 				content,
 				timestamp: new Date().toISOString(),
-				resolve,
+				resolve: () => resolve(),
 				reject,
 				internal,
 			};

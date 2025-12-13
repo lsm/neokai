@@ -161,10 +161,6 @@ export class SessionManager {
 			const { getAvailableModels } = await import('./model-service');
 			const availableModels = getAvailableModels('global');
 
-			console.log(
-				`[SessionManager DEBUG] getValidatedModelId called with requestedModel="${requestedModel}", found ${availableModels.length} models in cache`
-			);
-
 			if (availableModels.length > 0) {
 				// If a specific model was requested, validate it
 				if (requestedModel) {
