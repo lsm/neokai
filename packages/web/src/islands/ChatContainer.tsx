@@ -1,10 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type {
-	Session,
-	ContextInfo,
-	ContextCategoryBreakdown,
-	ContextSlashCommandTool,
-} from '@liuboer/shared';
+import type { Session, ContextInfo } from '@liuboer/shared';
 import type { SDKMessage, SDKSystemMessage } from '@liuboer/shared/sdk/sdk.d.ts';
 import { isSDKStreamEvent, isSDKCompactBoundary } from '@liuboer/shared/sdk/type-guards';
 import { connectionManager } from '../lib/connection-manager.ts';
@@ -188,33 +183,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				if (!isMounted) return;
 				cleanupFunctions.push(unsubSDKMessage);
 
-				// Context events
-				const unsubContextUpdated = await hub.subscribe<unknown>(
-					'context.updated',
-					(data) => {
-						const ctx = data as Record<string, unknown>;
-						console.log(`Context updated:`, ctx);
-						if (ctx.totalUsed !== undefined) {
-							console.log(`Received accurate context info:`, {
-								totalUsed: ctx.totalUsed as number,
-								totalCapacity: ctx.totalCapacity as number,
-								percentUsed: ctx.percentUsed as number,
-								breakdown: ctx.breakdown as Record<string, ContextCategoryBreakdown>,
-							});
-							setContextUsage({
-								totalUsed: ctx.totalUsed as number,
-								totalCapacity: ctx.totalCapacity as number,
-								percentUsed: ctx.percentUsed as number,
-								breakdown: ctx.breakdown as Record<string, ContextCategoryBreakdown>,
-								model: ctx.model as string | null,
-								slashCommandTool: ctx.slashCommandTool as ContextSlashCommandTool | undefined,
-							});
-						}
-					},
-					{ sessionId }
-				);
-				if (!isMounted) return;
-				cleanupFunctions.push(unsubContextUpdated);
+				// Context is now part of unified session state (no separate subscription needed)
 
 				// Subscribe to compaction start - lock input and show toast
 				const unsubContextCompacting = await hub.subscribe<{ trigger: 'manual' | 'auto' }>(
@@ -270,7 +239,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				if (!isMounted) return;
 				cleanupFunctions.push(unsubSessionError);
 
-				// Subscribe to unified session state (includes agent state and commands)
+				// Subscribe to unified session state (includes agent state, commands, and context)
 				const unsubSessionState = await hub.subscribe<{
 					session: Session;
 					agent: {
@@ -280,7 +249,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 						streamingStartedAt?: number;
 					};
 					commands: { availableCommands: string[] };
-					context: unknown;
+					context: ContextInfo | null;
 				}>(
 					'state.session',
 					(data) => {
@@ -294,6 +263,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 						// Update commands
 						if (data.commands?.availableCommands) {
 							slashCommandsSignal.value = data.commands.availableCommands;
+						}
+
+						// Update context info
+						if (data.context) {
+							console.log('Context info from state.session:', data.context);
+							setContextUsage(data.context);
 						}
 
 						// Update UI based on agent state
