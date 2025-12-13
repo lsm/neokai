@@ -628,14 +628,6 @@ export class AgentSession {
 	}
 
 	/**
-	 * Abort current query (delegates to handleInterrupt)
-	 * @deprecated Use handleInterrupt() instead
-	 */
-	abort(): void {
-		this.handleInterrupt();
-	}
-
-	/**
 	 * Cleanup resources when session is destroyed
 	 */
 	async cleanup(): Promise<void> {
