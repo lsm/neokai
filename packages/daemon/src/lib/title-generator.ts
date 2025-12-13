@@ -7,7 +7,8 @@ const logger = new Logger('TitleGenerator');
 
 export async function generateTitle(
 	firstUserMsg: SDKMessage,
-	_firstAssistantMsg: SDKMessage
+	_firstAssistantMsg: SDKMessage,
+	workspacePath?: string
 ): Promise<string | null> {
 	try {
 		const userMessage = firstUserMsg as {
@@ -31,6 +32,7 @@ export async function generateTitle(
 				maxTurns: 1,
 				permissionMode: 'bypassPermissions',
 				allowDangerouslySkipPermissions: true,
+				...(workspacePath && { cwd: workspacePath }),
 			},
 		});
 
