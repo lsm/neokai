@@ -109,8 +109,6 @@ export class SDKMessageHandler {
 	private async handleResultMessage(message: SDKMessage): Promise<void> {
 		// Type guard to ensure this is a successful result
 		if (!isSDKResultSuccess(message)) return;
-		// Set state back to idle
-		await this.stateManager.setIdle();
 
 		// Update session metadata with token usage and costs
 		const usage = message.usage;
@@ -144,8 +142,12 @@ export class SDKMessageHandler {
 			message.modelUsage
 		);
 
-		// Auto-generate title after first response
+		// CRITICAL: Auto-generate title BEFORE returning to idle state
+		// This ensures the title update event is processed before the client sees idle state
 		await this.triggerTitleGeneration();
+
+		// Set state back to idle AFTER title generation completes
+		await this.stateManager.setIdle();
 	}
 
 	/**
@@ -208,7 +210,7 @@ export class SDKMessageHandler {
 	}
 
 	/**
-	 * Trigger title generation (after we have more than 1 assistant response)
+	 * Trigger title generation (after first assistant response)
 	 */
 	private async triggerTitleGeneration(): Promise<void> {
 		// Skip if title already generated
@@ -221,8 +223,8 @@ export class SDKMessageHandler {
 		const assistantMessages = messages.filter((m) => isSDKAssistantMessage(m));
 		const firstUserMsg = messages.find((m) => m.type === 'user');
 
-		// Only generate title if we have MORE than 1 assistant message (i.e., at least 2)
-		if (assistantMessages.length <= 1) {
+		// Only generate title if we have at least 1 assistant message
+		if (assistantMessages.length < 1) {
 			return;
 		}
 
