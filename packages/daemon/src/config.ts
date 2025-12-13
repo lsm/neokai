@@ -30,21 +30,23 @@ export interface ConfigOverrides {
 export function getConfig(overrides?: ConfigOverrides): Config {
 	const nodeEnv = process.env.NODE_ENV || 'development';
 
-	// Find project root by going up from daemon package directory
-	// __dirname is packages/daemon/src, so we need to go up 3 levels
-	const projectRoot = join(__dirname, '..', '..', '..');
-
-	// Default workspace root
+	// Workspace root MUST be explicitly provided via CLI --workspace flag
+	// No fallback to relative paths - this ensures correct behavior in all environments
 	let workspaceRoot: string;
 	if (overrides?.workspace) {
-		// CLI override takes precedence
+		// CLI override (required for dev/production)
 		workspaceRoot = overrides.workspace;
-	} else if (nodeEnv === 'development' || nodeEnv === 'test') {
-		// In development/test: use project_root/tmp/workspace
+	} else if (nodeEnv === 'test') {
+		// Test mode: use a temp directory that will be cleaned up
+		// This is the only case where we compute a path, as it's controlled test env
+		const projectRoot = join(__dirname, '..', '..', '..');
 		workspaceRoot = join(projectRoot, 'tmp', 'workspace');
 	} else {
-		// In production: use current working directory
-		workspaceRoot = process.cwd();
+		// No workspace provided - this is an error in dev/production
+		throw new Error(
+			'Workspace path must be explicitly provided via --workspace flag. ' +
+				'Do not rely on automatic path detection.'
+		);
 	}
 
 	return {

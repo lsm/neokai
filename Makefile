@@ -3,8 +3,10 @@
 # Unified server (daemon + web in single process) - RECOMMENDED
 dev:
 	@echo "🚀 Starting unified development server..."
+	@echo "   Workspace: $(shell pwd)/tmp/workspace"
+	@mkdir -p $(shell pwd)/tmp/workspace
 	@lsof -ti:9283 | xargs kill -9 2>/dev/null || true
-	@cd packages/cli && NODE_ENV=development bun run dev
+	@NODE_ENV=development bun run packages/cli/main.ts --workspace $(shell pwd)/tmp/workspace
 
 # Self-hosting mode - use Liuboer to develop itself (production mode, no HMR)
 self:

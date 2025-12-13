@@ -298,6 +298,18 @@ export class AgentSession {
 
 			this.logger.log(`Creating streaming query with AsyncGenerator`);
 
+			// CRITICAL: Log the exact workspace path being passed to SDK
+			// This is the cwd that should be used for ALL file operations
+			this.logger.log(`SDK cwd (session.workspacePath): ${this.session.workspacePath}`);
+			if (this.session.worktree) {
+				this.logger.log(`Session uses worktree:`);
+				this.logger.log(`  - Worktree path: ${this.session.worktree.worktreePath}`);
+				this.logger.log(`  - Main repo: ${this.session.worktree.mainRepoPath}`);
+				this.logger.log(`  - Branch: ${this.session.worktree.branch}`);
+			} else {
+				this.logger.log(`Session uses shared workspace (no worktree)`);
+			}
+
 			// Create query with AsyncGenerator from MessageQueue
 			this.queryObject = query({
 				prompt: this.createMessageGeneratorWrapper(),
