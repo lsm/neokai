@@ -36,6 +36,7 @@ export interface SessionMetadata {
 	totalCost: number;
 	toolCallCount: number;
 	titleGenerated?: boolean; // Flag to track if title has been auto-generated
+	lastContextInfo?: ContextInfo | null; // Last known context info (persisted)
 }
 
 // Message content types for streaming input (supports images)

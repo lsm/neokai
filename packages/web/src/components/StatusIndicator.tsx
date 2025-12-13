@@ -140,17 +140,14 @@ export default function StatusIndicator({
 	const getCategoryColor = (category: string): { bg: string; text: string; dot: string } => {
 		const normalizedCategory = category.toLowerCase();
 
-		if (normalizedCategory.includes('system prompt')) {
-			return { bg: 'bg-purple-500', text: 'text-purple-400', dot: 'bg-purple-400' };
-		}
-		if (normalizedCategory.includes('system tools')) {
+		if (
+			normalizedCategory.includes('input context') ||
+			normalizedCategory.includes('input tokens')
+		) {
 			return { bg: 'bg-blue-500', text: 'text-blue-400', dot: 'bg-blue-400' };
 		}
-		if (normalizedCategory.includes('messages')) {
+		if (normalizedCategory.includes('output tokens') || normalizedCategory.includes('output')) {
 			return { bg: 'bg-green-500', text: 'text-green-400', dot: 'bg-green-400' };
-		}
-		if (normalizedCategory.includes('autocompact buffer')) {
-			return { bg: 'bg-amber-700', text: 'text-amber-600', dot: 'bg-amber-600' };
 		}
 		if (normalizedCategory.includes('free space')) {
 			return { bg: 'bg-gray-700', text: 'text-gray-500', dot: 'bg-gray-500' };
@@ -165,11 +162,11 @@ export default function StatusIndicator({
 	const getCategorySortOrder = (category: string): number => {
 		const normalizedCategory = category.toLowerCase();
 
-		if (normalizedCategory.includes('system prompt')) return 1;
-		if (normalizedCategory.includes('system tools')) return 2;
-		if (normalizedCategory.includes('autocompact buffer')) return 3;
-		if (normalizedCategory.includes('messages')) return 4;
-		if (normalizedCategory.includes('free space')) return 5;
+		if (normalizedCategory.includes('input context') || normalizedCategory.includes('input tokens'))
+			return 1;
+		if (normalizedCategory.includes('output tokens') || normalizedCategory.includes('output'))
+			return 2;
+		if (normalizedCategory.includes('free space')) return 3;
 
 		return 99; // Unknown categories go last
 	};
