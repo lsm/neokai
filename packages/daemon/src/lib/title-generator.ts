@@ -27,7 +27,7 @@ export async function generateTitle(
 		const result = await query({
 			prompt: `Generate a concise 3-7 word title for this conversation (no quotes): ${userText}`,
 			options: {
-				model: 'claude-haiku-4-5-20250929',
+				model: 'claude-haiku-4-5-20251001',
 				maxTurns: 1,
 				permissionMode: 'bypassPermissions',
 				allowDangerouslySkipPermissions: true,
