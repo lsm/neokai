@@ -85,7 +85,7 @@ export const messageColors = {
 	 * Using exact iMessage color #3b3b3d
 	 */
 	assistant: {
-		background: 'bg-[#3b3b3d]',
+		background: 'bg-dark-800',
 		text: 'text-white',
 	},
 } as const;
