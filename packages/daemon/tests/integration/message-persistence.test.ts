@@ -24,6 +24,25 @@ import type { TestContext } from '../test-utils';
 import { createTestApp, hasAnyCredentials } from '../test-utils';
 import { Database } from '../../src/storage/database';
 
+/**
+ * Helper: Wait for agent session to return to idle state
+ * Polls the processing state until it's idle or timeout
+ */
+async function waitForIdle(
+	agentSession: NonNullable<Awaited<ReturnType<typeof ctx.sessionManager.getSessionAsync>>>,
+	timeoutMs = 30000 // Increased to 30s to account for SDK query initialization time
+): Promise<void> {
+	const startTime = Date.now();
+	while (Date.now() - startTime < timeoutMs) {
+		const state = agentSession.getProcessingState();
+		if (state.status === 'idle') {
+			return;
+		}
+		await Bun.sleep(100); // Poll every 100ms
+	}
+	throw new Error(`Timeout waiting for idle state after ${timeoutMs}ms`);
+}
+
 // Use temp directory for test database
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
@@ -293,6 +312,7 @@ describe('Message Persistence Bug Fix', () => {
 			async () => {
 				const sessionId = await ctx.sessionManager.createSession({
 					workspacePath: process.cwd(),
+					config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
 				});
 
 				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
@@ -305,8 +325,8 @@ describe('Message Persistence Bug Fix', () => {
 
 				expect(result.messageId).toBeString();
 
-				// Wait for processing
-				await Bun.sleep(5000);
+				// Wait for processing to complete
+				await waitForIdle(agentSession!);
 
 				// Check messages were persisted to DB
 				const dbMessages = ctx.db.getSDKMessages(sessionId);
@@ -335,6 +355,7 @@ describe('Message Persistence Bug Fix', () => {
 			async () => {
 				const sessionId = await ctx.sessionManager.createSession({
 					workspacePath: process.cwd(),
+					config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
 				});
 
 				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);

@@ -1,7 +1,7 @@
 import { Database as BunDatabase } from 'bun:sqlite';
 import { dirname } from 'node:path';
 import { mkdirSync, existsSync } from 'node:fs';
-import type { AuthMethod, OAuthTokens, Session } from '@liuboer/shared';
+import type { Session } from '@liuboer/shared';
 import type { SDKMessage } from '@liuboer/shared/sdk';
 import { generateUUID } from '@liuboer/shared';
 
@@ -301,184 +301,15 @@ export class Database {
 		stmt.run(id);
 	}
 
+	// ============================================================================
 	// Authentication operations
-
-	/**
-	 * Simple encryption using AES-GCM
-	 * Note: For production, consider using a proper key derivation function
-	 */
-	private async encryptData(data: string): Promise<string> {
-		const encoder = new TextEncoder();
-		const dataBuffer = encoder.encode(data);
-
-		// Generate a random encryption key (in production, derive from a master key)
-		const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, [
-			'encrypt',
-			'decrypt',
-		]);
-
-		// Generate IV
-		const iv = crypto.getRandomValues(new Uint8Array(12));
-
-		// Encrypt
-		const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, dataBuffer);
-
-		// Export key
-		const exportedKey = await crypto.subtle.exportKey('raw', key);
-
-		// Combine key + iv + encrypted data
-		const combined = new Uint8Array(exportedKey.byteLength + iv.byteLength + encrypted.byteLength);
-		combined.set(new Uint8Array(exportedKey), 0);
-		combined.set(iv, exportedKey.byteLength);
-		combined.set(new Uint8Array(encrypted), exportedKey.byteLength + iv.byteLength);
-
-		// Return as base64
-		return btoa(String.fromCharCode(...combined));
-	}
-
-	/**
-	 * Decrypt data encrypted with encryptData
-	 */
-	private async decryptData(encrypted: string): Promise<string> {
-		// Decode from base64
-		const combined = Uint8Array.from(atob(encrypted), (c) => c.charCodeAt(0));
-
-		// Extract key, IV, and encrypted data
-		const keyData = combined.slice(0, 32);
-		const iv = combined.slice(32, 44);
-		const encryptedData = combined.slice(44);
-
-		// Import key
-		const key = await crypto.subtle.importKey(
-			'raw',
-			keyData,
-			{ name: 'AES-GCM', length: 256 },
-			false,
-			['decrypt']
-		);
-
-		// Decrypt
-		const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, encryptedData);
-
-		// Convert back to string
-		const decoder = new TextDecoder();
-		return decoder.decode(decrypted);
-	}
-
 	// ============================================================================
-	// DEPRECATED: The following methods are deprecated and should not be used.
-	// Authentication credentials must be provided via environment variables only.
-	// These methods remain only for backward compatibility with existing tests.
-	// ============================================================================
-
-	/**
-	 * @deprecated Authentication is now managed via environment variables only.
-	 * Get current authentication method
-	 */
-	getAuthMethod(): AuthMethod {
-		const stmt = this.db.prepare(`SELECT auth_method FROM auth_config WHERE id = 1`);
-		const row = stmt.get() as Record<string, unknown> | undefined;
-		if (!row) return 'none';
-		return row.auth_method as AuthMethod;
-	}
-
-	/**
-	 * @deprecated Authentication is now managed via environment variables only.
-	 * Save OAuth tokens (encrypted)
-	 */
-	async saveOAuthTokens(tokens: OAuthTokens): Promise<void> {
-		const encrypted = await this.encryptData(JSON.stringify(tokens));
-		const stmt = this.db.prepare(
-			`UPDATE auth_config SET auth_method = 'oauth', oauth_tokens_encrypted = ?, api_key_encrypted = NULL, updated_at = datetime('now') WHERE id = 1`
-		);
-		stmt.run(encrypted);
-	}
-
-	/**
-	 * @deprecated Authentication is now managed via environment variables only.
-	 * Get OAuth tokens (decrypted)
-	 */
-	async getOAuthTokens(): Promise<OAuthTokens | null> {
-		const stmt = this.db.prepare(`SELECT oauth_tokens_encrypted FROM auth_config WHERE id = 1`);
-		const row = stmt.get() as Record<string, unknown> | undefined;
-		if (!row) return null;
-
-		const encrypted = row.oauth_tokens_encrypted as string | null;
-		if (!encrypted) return null;
-
-		const decrypted = await this.decryptData(encrypted);
-		return JSON.parse(decrypted) as OAuthTokens;
-	}
-
-	/**
-	 * @deprecated Authentication is now managed via environment variables only.
-	 * Save API key (encrypted)
-	 */
-	async saveApiKey(apiKey: string): Promise<void> {
-		const encrypted = await this.encryptData(apiKey);
-		const stmt = this.db.prepare(
-			`UPDATE auth_config SET auth_method = 'api_key', api_key_encrypted = ?, oauth_tokens_encrypted = NULL, updated_at = datetime('now') WHERE id = 1`
-		);
-		stmt.run(encrypted);
-	}
-
-	/**
-	 * @deprecated Authentication is now managed via environment variables only.
-	 * Get API key (decrypted)
-	 */
-	async getApiKey(): Promise<string | null> {
-		const stmt = this.db.prepare(`SELECT api_key_encrypted FROM auth_config WHERE id = 1`);
-		const row = stmt.get() as Record<string, unknown> | undefined;
-		if (!row) return null;
-
-		const encrypted = row.api_key_encrypted as string | null;
-		if (!encrypted) return null;
-
-		return await this.decryptData(encrypted);
-	}
-
-	/**
-	 * @deprecated Authentication is now managed via environment variables only.
-	 * Save long-lived OAuth token (from claude setup-token)
-	 */
-	async saveOAuthLongLivedToken(token: string): Promise<void> {
-		const encrypted = await this.encryptData(token);
-		const stmt = this.db.prepare(
-			`UPDATE auth_config SET auth_method = 'oauth_token', oauth_token_encrypted = ?, api_key_encrypted = NULL, oauth_tokens_encrypted = NULL, updated_at = datetime('now') WHERE id = 1`
-		);
-		stmt.run(encrypted);
-	}
-
-	/**
-	 * @deprecated Authentication is now managed via environment variables only.
-	 * Get long-lived OAuth token (decrypted)
-	 */
-	async getOAuthLongLivedToken(): Promise<string | null> {
-		const stmt = this.db.prepare(`SELECT oauth_token_encrypted FROM auth_config WHERE id = 1`);
-		const row = stmt.get() as Record<string, unknown> | undefined;
-		if (!row) return null;
-
-		const encrypted = row.oauth_token_encrypted as string | null;
-		if (!encrypted) return null;
-
-		return await this.decryptData(encrypted);
-	}
-
-	/**
-	 * @deprecated Authentication is now managed via environment variables only.
-	 * Clear all authentication
-	 */
-	clearAuth(): void {
-		const stmt = this.db.prepare(
-			`UPDATE auth_config SET auth_method = 'none', api_key_encrypted = NULL, oauth_tokens_encrypted = NULL, oauth_token_encrypted = NULL, updated_at = datetime('now') WHERE id = 1`
-		);
-		stmt.run();
-	}
-
-	// OAuth web flow methods removed - no longer supported
 	// Authentication is now managed via environment variables only:
 	// - ANTHROPIC_API_KEY for API key authentication
 	// - CLAUDE_CODE_OAUTH_TOKEN for long-lived OAuth token authentication
+	//
+	// The auth_config table remains for potential future use but is not
+	// actively used by the application.
 
 	// ============================================================================
 	// SDK Message operations

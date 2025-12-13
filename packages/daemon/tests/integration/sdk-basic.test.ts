@@ -67,7 +67,7 @@ describe('Daemon-style SDK Usage', () => {
 				queryStream = query({
 					prompt: 'What is 2+2? Answer with just the number.',
 					options: {
-						model: 'claude-sonnet-4-5-20250929',
+						model: 'haiku', // Use Haiku for faster, cheaper tests
 						cwd: process.cwd(), // DAEMON SETS THIS
 						permissionMode: 'bypassPermissions',
 						allowDangerouslySkipPermissions: true,
@@ -157,7 +157,7 @@ describe('Daemon-style SDK Usage', () => {
 				queryStream = query({
 					prompt: 'What is 2+2? Answer with just the number.',
 					options: {
-						model: 'claude-sonnet-4-5-20250929',
+						model: 'haiku', // Use Haiku for faster, cheaper tests
 						// NO cwd option
 						permissionMode: 'bypassPermissions',
 						allowDangerouslySkipPermissions: true,

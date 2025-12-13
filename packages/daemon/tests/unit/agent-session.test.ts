@@ -261,22 +261,8 @@ describe('AgentSession', () => {
 		});
 	});
 
-	describe('enqueueMessage and sendMessage', () => {
-		// Note: This test requires authentication (API key or OAuth) because it uses Claude SDK
-		test.skipIf(!hasAnyCredentials())('should enqueue message for processing', async () => {
-			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: '/test/agent-session',
-			});
-
-			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-
-			// This will start the query and enqueue the message
-			const _messageIdPromise = agentSession!.enqueueMessage('Hello');
-
-			// We can't easily wait for this without real SDK, but it should not throw immediately
-			// The promise will resolve when the message is yielded to the SDK
-		});
-	});
+	// enqueueMessage() test removed - it's now a private method in MessageQueue
+	// Use handleMessageSend() instead (tested below)
 
 	describe('handleMessageSend', () => {
 		// Note: This test requires authentication (API key or OAuth) because it uses Claude SDK
@@ -344,11 +330,26 @@ describe('AgentSession via WebSocket', () => {
 			// Wait for subscribe confirmation
 			await subPromise;
 
+			// Get agent session and send a message to put session in non-idle state
+			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+
+			// Send a message to put session in queued/processing state
+			// Don't await - we want to interrupt while processing
+			const messagePromise = agentSession!
+				.handleMessageSend({
+					content: 'Test message',
+				})
+				.catch(() => {
+					// Message will be interrupted - this is expected
+				});
+
+			// Small delay to ensure message is queued
+			await Bun.sleep(100);
+
 			// Set up promise for event BEFORE triggering interrupt
 			const eventPromise = waitForWebSocketMessage(ws, 2000);
 
-			// Trigger interrupt
-			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+			// Trigger interrupt (should emit event because session is not idle)
 			await agentSession!.handleInterrupt();
 
 			// Should receive interrupted event
@@ -356,6 +357,9 @@ describe('AgentSession via WebSocket', () => {
 
 			expect(event.type).toBe('EVENT');
 			expect(event.method).toBe('session.interrupted');
+
+			// Wait for message promise to settle
+			await messagePromise;
 
 			ws.close();
 		});
