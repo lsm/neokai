@@ -208,7 +208,7 @@ export class SDKMessageHandler {
 	}
 
 	/**
-	 * Trigger title generation (after first response)
+	 * Trigger title generation (after we have more than 1 assistant response)
 	 */
 	private async triggerTitleGeneration(): Promise<void> {
 		// Skip if title already generated
@@ -216,18 +216,25 @@ export class SDKMessageHandler {
 			return;
 		}
 
-		this.logger.log('Auto-generating session title...');
-
-		// Get messages to find first user and assistant messages
-		const messages = this.db.getSDKMessages(this.session.id, 10);
+		// Get messages to count assistant messages and find first user message
+		const messages = this.db.getSDKMessages(this.session.id, 50);
+		const assistantMessages = messages.filter((m) => isSDKAssistantMessage(m));
 		const firstUserMsg = messages.find((m) => m.type === 'user');
-		const firstAssistantMsg = messages.find((m) => isSDKAssistantMessage(m));
 
-		if (firstUserMsg && firstAssistantMsg) {
+		// Only generate title if we have MORE than 1 assistant message (i.e., at least 2)
+		if (assistantMessages.length <= 1) {
+			return;
+		}
+
+		this.logger.log(
+			`Auto-generating session title (${assistantMessages.length} assistant messages)...`
+		);
+
+		if (firstUserMsg && assistantMessages.length > 0) {
 			try {
 				const generatedTitle = await generateTitle(
 					firstUserMsg,
-					firstAssistantMsg,
+					assistantMessages[0],
 					this.session.workspacePath
 				);
 				if (generatedTitle) {
