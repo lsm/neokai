@@ -60,6 +60,7 @@ export class SessionManager {
 		// Try to create worktree if useWorktree is true (default) and we're in a git repo
 		let sessionWorkspacePath = baseWorkspacePath;
 		let worktreeMetadata;
+		let gitBranch: string | undefined;
 
 		if (params.useWorktree !== false) {
 			try {
@@ -88,6 +89,23 @@ export class SessionManager {
 			}
 		}
 
+		// For non-worktree sessions, try to get the current git branch
+		if (!worktreeMetadata) {
+			try {
+				const gitRoot = await this.worktreeManager.findGitRoot(baseWorkspacePath);
+				if (gitRoot) {
+					const branch = await this.worktreeManager.getCurrentBranch(gitRoot);
+					gitBranch = branch ?? undefined;
+					if (gitBranch) {
+						this.log(`[SessionManager] Detected git branch: ${gitBranch}`);
+					}
+				}
+			} catch (error) {
+				// Not a git repo or can't detect branch - that's fine
+				this.log('[SessionManager] Could not detect git branch:', error);
+			}
+		}
+
 		const session: Session = {
 			id: sessionId,
 			title: 'New Session',
@@ -110,6 +128,7 @@ export class SessionManager {
 				titleGenerated: false,
 			},
 			worktree: worktreeMetadata ?? undefined,
+			gitBranch: gitBranch ?? undefined,
 		};
 
 		// Save to database

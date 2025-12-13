@@ -9,6 +9,7 @@ export interface Session {
 	config: SessionConfig;
 	metadata: SessionMetadata;
 	worktree?: WorktreeMetadata;
+	gitBranch?: string; // Current git branch for non-worktree sessions in git repos
 }
 
 export interface WorktreeMetadata {

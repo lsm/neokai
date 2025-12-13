@@ -38,3 +38,6 @@ data/
 test-results/
 playwright-report/
 *.tsbuildinfo
+
+# Git worktrees
+.worktrees/

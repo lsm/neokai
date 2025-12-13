@@ -164,13 +164,21 @@ export class Database {
 			this.db.exec(`ALTER TABLE sessions ADD COLUMN main_repo_path TEXT`);
 			this.db.exec(`ALTER TABLE sessions ADD COLUMN worktree_branch TEXT`);
 		}
+
+		// Migration 4: Add git_branch column for non-worktree git sessions
+		try {
+			this.db.prepare(`SELECT git_branch FROM sessions LIMIT 1`).all();
+		} catch {
+			console.log('🔧 Running migration: Adding git_branch column to sessions table');
+			this.db.exec(`ALTER TABLE sessions ADD COLUMN git_branch TEXT`);
+		}
 	}
 
 	// Session operations
 	createSession(session: Session): void {
 		const stmt = this.db.prepare(
-			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 		stmt.run(
 			session.id,
@@ -184,7 +192,8 @@ export class Database {
 			session.worktree?.isWorktree ? 1 : 0,
 			session.worktree?.worktreePath ?? null,
 			session.worktree?.mainRepoPath ?? null,
-			session.worktree?.branch ?? null
+			session.worktree?.branch ?? null,
+			session.gitBranch ?? null
 		);
 	}
 
@@ -214,6 +223,7 @@ export class Database {
 			config: JSON.parse(row.config as string),
 			metadata: JSON.parse(row.metadata as string),
 			worktree,
+			gitBranch: (row.git_branch as string | null) ?? undefined,
 		};
 	}
 
@@ -242,6 +252,7 @@ export class Database {
 				config: JSON.parse(r.config as string),
 				metadata: JSON.parse(r.metadata as string),
 				worktree,
+				gitBranch: (r.git_branch as string | null) ?? undefined,
 			};
 		});
 	}
