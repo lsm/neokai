@@ -41,6 +41,7 @@ web:
 sync-sdk-types:
 	@echo "Syncing Claude SDK type definitions..."
 	@mkdir -p packages/shared/src/sdk
+	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/entrypoints/agentSdkTypes.d.ts packages/shared/src/sdk/entrypoints
 	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts packages/shared/src/sdk/
 	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk-tools.d.ts packages/shared/src/sdk/
 	@echo "✓ SDK types synced to packages/shared/src/sdk/"
