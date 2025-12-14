@@ -99,6 +99,13 @@ export class AgentSession {
 			this.contextTracker
 		);
 
+		// Set queue callback for automatic /context fetching
+		this.messageHandler.setQueueMessageCallback(
+			async (content: string, internal: boolean) => {
+				await this.messageQueue.enqueue(content, internal);
+			}
+		);
+
 		// Restore persisted context info from session metadata (if available)
 		if (session.metadata?.lastContextInfo) {
 			this.contextTracker.restoreFromMetadata(session.metadata.lastContextInfo);

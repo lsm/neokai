@@ -313,4 +313,7 @@ export interface ContextInfo {
 	// Optional additional info
 	slashCommandTool?: ContextSlashCommandTool;
 	apiUsage?: ContextAPIUsage;
+	// Metadata
+	lastUpdated?: number; // Timestamp of last update
+	source?: 'stream' | 'context-command' | 'merged'; // Source of context data
 }

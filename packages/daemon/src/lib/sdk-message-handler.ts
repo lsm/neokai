@@ -24,11 +24,20 @@ import { Database } from '../storage/database';
 import { Logger } from './logger';
 import { ProcessingStateManager } from './processing-state-manager';
 import { ContextTracker } from './context-tracker';
+import { ContextFetcher } from './context-fetcher';
 import { generateTitle } from './title-generator';
 
 export class SDKMessageHandler {
 	private sdkMessageDeltaVersion: number = 0;
 	private logger: Logger;
+	private contextFetcher: ContextFetcher;
+
+	// Track whether we just processed a context response to prevent infinite loop
+	// When true, we skip queuing /context for the next result message
+	private lastMessageWasContextResponse: boolean = false;
+
+	// Callback to queue messages (will be set by AgentSession)
+	private queueMessage?: (content: string, internal: boolean) => Promise<void>;
 
 	constructor(
 		private session: Session,
@@ -39,6 +48,15 @@ export class SDKMessageHandler {
 		private contextTracker: ContextTracker
 	) {
 		this.logger = new Logger(`SDKMessageHandler ${session.id}`);
+		this.contextFetcher = new ContextFetcher(session.id);
+	}
+
+	/**
+	 * Set the message queue callback
+	 * Called by AgentSession to enable automatic context fetching
+	 */
+	setQueueMessageCallback(callback: (content: string, internal: boolean) => Promise<void>): void {
+		this.queueMessage = callback;
 	}
 
 	/**
@@ -52,6 +70,15 @@ export class SDKMessageHandler {
 		if (message.type === 'stream_event') {
 			const streamEventMessage = message as { event: unknown };
 			await this.contextTracker.processStreamEvent(streamEventMessage.event);
+		}
+
+		// Check if this is a /context response BEFORE marking as synthetic
+		// This allows us to parse the context breakdown and merge with stream-based tracking
+		const isContextResponse = this.contextFetcher.isContextResponse(message);
+		if (isContextResponse) {
+			await this.handleContextResponse(message);
+			// Set flag to skip queuing another /context for the next result
+			this.lastMessageWasContextResponse = true;
 		}
 
 		// Mark all user messages from SDK as synthetic
@@ -174,6 +201,23 @@ export class SDKMessageHandler {
 			message.modelUsage
 		);
 
+		// Queue /context command to get detailed breakdown (unless we just got one)
+		// CRITICAL: Check flag to prevent infinite loop!
+		// /context produces its own result message, so we must skip queuing another
+		if (!this.lastMessageWasContextResponse && this.queueMessage) {
+			try {
+				// Queue as internal message (won't be saved to DB or broadcast as user message)
+				await this.queueMessage('/context', true);
+				this.logger.log('Queued /context for detailed breakdown');
+			} catch (error) {
+				// Non-critical - just log the error
+				this.logger.warn('Failed to queue /context:', error);
+			}
+		} else if (this.lastMessageWasContextResponse) {
+			// Reset flag for next normal conversation turn
+			this.lastMessageWasContextResponse = false;
+		}
+
 		// CRITICAL: Auto-generate title BEFORE returning to idle state
 		// This ensures the title update event is processed before the client sees idle state
 		await this.triggerTitleGeneration();
@@ -294,5 +338,44 @@ export class SDKMessageHandler {
 				this.logger.warn('Failed to generate session title:', error);
 			}
 		}
+	}
+
+	/**
+	 * Handle /context response
+	 * Parse the detailed breakdown and merge with stream-based context tracking
+	 */
+	private async handleContextResponse(message: SDKMessage): Promise<void> {
+		this.logger.log('Processing /context response...');
+
+		const parsedContext = this.contextFetcher.parseContextResponse(message);
+		if (!parsedContext) {
+			this.logger.warn('Failed to parse /context response');
+			return;
+		}
+
+		// Merge with stream-based context
+		const streamContext = this.contextTracker.getContextInfo();
+		const mergedContext = this.contextFetcher.mergeWithStreamContext(
+			parsedContext,
+			streamContext
+		);
+
+		// Persist to session metadata
+		this.session.metadata.lastContextInfo = mergedContext;
+		this.db.updateSession(this.session.id, {
+			metadata: this.session.metadata,
+		});
+
+		// Emit context update event via EventBus
+		// StateManager will broadcast this via state.session channel
+		await this.eventBus.emit('context:updated', {
+			sessionId: this.session.id,
+			contextInfo: mergedContext,
+		});
+
+		this.logger.log(
+			`Context breakdown updated: ${parsedContext.totalUsed}/${parsedContext.totalCapacity} tokens ` +
+				`(${parsedContext.percentUsed}%) with ${Object.keys(parsedContext.breakdown).length} categories`
+		);
 	}
 }
