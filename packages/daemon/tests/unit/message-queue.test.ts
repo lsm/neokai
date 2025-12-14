@@ -237,4 +237,88 @@ describe('MessageQueue', () => {
 			await promise2.catch(() => {});
 		});
 	});
+
+	describe('internal flag propagation', () => {
+		it('should propagate internal flag from queued message to SDK message', async () => {
+			queue.start();
+
+			// Enqueue an internal message
+			const messagePromise = queue.enqueue('Internal test message', true);
+
+			// Start generator
+			const generator = queue.messageGenerator(testSessionId);
+
+			// Get first message
+			const result = await generator.next();
+
+			expect(result.done).toBe(false);
+			expect(result.value).toBeDefined();
+			expect(result.value.message.internal).toBe(true);
+
+			// Call onSent callback
+			result.value.onSent();
+			await messagePromise;
+
+			queue.stop();
+		});
+
+		it('should have false internal flag when not set', async () => {
+			queue.start();
+
+			// Enqueue a regular message (no internal flag)
+			const messagePromise = queue.enqueue('Regular message');
+
+			// Start generator
+			const generator = queue.messageGenerator(testSessionId);
+
+			// Get first message
+			const result = await generator.next();
+
+			expect(result.done).toBe(false);
+			expect(result.value).toBeDefined();
+			expect(result.value.message.internal).toBe(false);
+
+			// Call onSent callback
+			result.value.onSent();
+			await messagePromise;
+
+			queue.stop();
+		});
+
+		it('should handle internal flag for multiple messages', async () => {
+			queue.start();
+
+			// Enqueue mix of internal and regular messages
+			const promise1 = queue.enqueue('Regular 1', false);
+			const promise2 = queue.enqueue('Internal 1', true);
+			const promise3 = queue.enqueue('Regular 2');
+			const promise4 = queue.enqueue('Internal 2', true);
+
+			// Start generator
+			const generator = queue.messageGenerator(testSessionId);
+
+			// Get messages and verify internal flags
+			const result1 = await generator.next();
+			expect(result1.value.message.internal).toBe(false);
+			result1.value.onSent();
+			await promise1;
+
+			const result2 = await generator.next();
+			expect(result2.value.message.internal).toBe(true);
+			result2.value.onSent();
+			await promise2;
+
+			const result3 = await generator.next();
+			expect(result3.value.message.internal).toBe(false);
+			result3.value.onSent();
+			await promise3;
+
+			const result4 = await generator.next();
+			expect(result4.value.message.internal).toBe(true);
+			result4.value.onSent();
+			await promise4;
+
+			queue.stop();
+		});
+	});
 });

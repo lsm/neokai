@@ -123,7 +123,7 @@ export class MessageQueue {
 			}
 
 			// Prepare the SDK user message
-			const sdkUserMessage: SDKUserMessage = {
+			const sdkUserMessage: SDKUserMessage & { internal?: boolean } = {
 				type: 'user' as const,
 				uuid: queuedMessage.id as UUID,
 				session_id: sessionId,
@@ -135,6 +135,7 @@ export class MessageQueue {
 							? [{ type: 'text' as const, text: queuedMessage.content }]
 							: queuedMessage.content,
 				},
+				internal: queuedMessage.internal,
 			};
 
 			// Yield message with callback
