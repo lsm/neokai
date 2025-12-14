@@ -36,8 +36,12 @@ export class SDKMessageHandler {
 	// When true, we skip queuing /context for the next result message
 	private lastMessageWasContextResponse: boolean = false;
 
+	// Track UUIDs of internal /context commands to skip their result messages
+	private internalContextCommandIds: Set<string> = new Set();
+
 	// Callback to queue messages (will be set by AgentSession)
-	private queueMessage?: (content: string, internal: boolean) => Promise<void>;
+	// Returns the message UUID so we can track internal commands
+	private queueMessage?: (content: string, internal: boolean) => Promise<string>;
 
 	constructor(
 		private session: Session,
@@ -55,7 +59,7 @@ export class SDKMessageHandler {
 	 * Set the message queue callback
 	 * Called by AgentSession to enable automatic context fetching
 	 */
-	setQueueMessageCallback(callback: (content: string, internal: boolean) => Promise<void>): void {
+	setQueueMessageCallback(callback: (content: string, internal: boolean) => Promise<string>): void {
 		this.queueMessage = callback;
 	}
 
@@ -77,10 +81,29 @@ export class SDKMessageHandler {
 		const isContextResponse = this.contextFetcher.isContextResponse(message);
 		if (isContextResponse) {
 			await this.handleContextResponse(message);
-			// Set flag to skip queuing another /context for the next result
+			// Set flag to skip:
+			// 1. Queuing another /context for the next result
+			// 2. Saving the result message that follows this context response
 			this.lastMessageWasContextResponse = true;
+
+			// Clean up the tracked ID if this is the response
+			const userMsg = message as { uuid?: string };
+			if (userMsg.uuid && this.internalContextCommandIds.has(userMsg.uuid)) {
+				this.internalContextCommandIds.delete(userMsg.uuid);
+			}
+
 			// IMPORTANT: Return early to skip saving and emitting this message
 			// It's already been processed for context tracking
+			return;
+		}
+
+		// Check if this is a result message immediately following a /context response
+		// Skip saving/broadcasting these result messages
+		if (message.type === 'result' && this.lastMessageWasContextResponse) {
+			this.logger.log('Skipping result message for internal /context command');
+			// Reset the flag - we've now handled both the context response AND its result
+			this.lastMessageWasContextResponse = false;
+			// Return early - don't save or broadcast this result
 			return;
 		}
 
@@ -217,18 +240,18 @@ export class SDKMessageHandler {
 		// Queue /context command to get detailed breakdown (unless we just got one)
 		// CRITICAL: Check flag to prevent infinite loop!
 		// /context produces its own result message, so we must skip queuing another
+		// Note: flag is reset when we process the result message (see early return above)
 		if (!this.lastMessageWasContextResponse && this.queueMessage) {
 			try {
 				// Queue as internal message (won't be saved to DB or broadcast as user message)
-				await this.queueMessage('/context', true);
-				this.logger.log('Queued /context for detailed breakdown');
+				const messageId = await this.queueMessage('/context', true);
+				// Track this ID so we can skip the result message
+				this.internalContextCommandIds.add(messageId);
+				this.logger.log(`Queued /context for detailed breakdown (ID: ${messageId})`);
 			} catch (error) {
 				// Non-critical - just log the error
 				this.logger.warn('Failed to queue /context:', error);
 			}
-		} else if (this.lastMessageWasContextResponse) {
-			// Reset flag for next normal conversation turn
-			this.lastMessageWasContextResponse = false;
 		}
 
 		// CRITICAL: Auto-generate title BEFORE returning to idle state

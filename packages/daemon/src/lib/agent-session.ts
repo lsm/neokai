@@ -102,7 +102,7 @@ export class AgentSession {
 
 		// Set queue callback for automatic /context fetching
 		this.messageHandler.setQueueMessageCallback(async (content: string, internal: boolean) => {
-			await this.messageQueue.enqueue(content, internal);
+			return await this.messageQueue.enqueue(content, internal);
 		});
 
 		// Restore persisted context info from session metadata (if available)
