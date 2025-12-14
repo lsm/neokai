@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { Session, ContextInfo } from '@liuboer/shared';
+import type { Session, ContextInfo, SessionState } from '@liuboer/shared';
+import { STATE_CHANNELS } from '@liuboer/shared';
 import type { SDKMessage, SDKSystemMessage } from '@liuboer/shared/sdk/sdk.d.ts';
 import { isSDKStreamEvent, isSDKCompactBoundary } from '@liuboer/shared/sdk/type-guards';
 import { connectionManager } from '../lib/connection-manager.ts';
@@ -416,20 +417,47 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			// Use actual count to determine if there are more messages
 			setHasMoreMessages(sdkResponse.sdkMessages.length < countResponse.count);
 
-			// Load slash commands for this session
+			// Load initial session state (includes context info and commands)
 			try {
-				const commandsResponse = await getSlashCommands(sessionId);
-				if (commandsResponse.commands && commandsResponse.commands.length > 0) {
-					console.log('Loaded slash commands:', commandsResponse.commands);
-					slashCommandsSignal.value = commandsResponse.commands;
-				}
-			} catch (cmdError) {
-				// Slash commands might not be available yet (needs first message)
-				console.log('Slash commands not yet available:', cmdError);
-			}
+				const hub = await connectionManager.getHub();
 
-			// Context usage will be populated from context.updated events
-			// No need to calculate from API response messages
+				// Fetch state.session snapshot to get initial context info
+				// This includes: session, agent state, commands, and context info
+				const sessionState = await hub.call<SessionState>(
+					STATE_CHANNELS.SESSION,
+					{ sessionId },
+					{ sessionId: 'global' } // RPC handlers are registered globally
+				);
+
+				// Set context info from snapshot (may be null for new sessions)
+				if (sessionState?.context) {
+					console.log('Loaded initial context info:', sessionState.context);
+					setContextUsage(sessionState.context);
+				}
+
+				// Set slash commands from snapshot
+				if (sessionState?.commands?.availableCommands?.length > 0) {
+					console.log(
+						'Loaded slash commands from snapshot:',
+						sessionState.commands.availableCommands
+					);
+					slashCommandsSignal.value = sessionState.commands.availableCommands;
+				}
+			} catch (stateError) {
+				// State might not be available yet - will be populated from events
+				console.log('Initial state not yet available:', stateError);
+
+				// Fallback: try to load slash commands separately
+				try {
+					const commandsResponse = await getSlashCommands(sessionId);
+					if (commandsResponse.commands && commandsResponse.commands.length > 0) {
+						console.log('Loaded slash commands (fallback):', commandsResponse.commands);
+						slashCommandsSignal.value = commandsResponse.commands;
+					}
+				} catch (cmdError) {
+					console.log('Slash commands not yet available:', cmdError);
+				}
+			}
 
 			// Mark initial load complete after a short delay to ensure scroll happens
 			setTimeout(() => setIsInitialLoad(false), 100);

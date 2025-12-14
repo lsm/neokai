@@ -119,6 +119,16 @@ export default function StatusIndicator({
 	const contextCapacity = contextUsage?.totalCapacity || maxContextTokens;
 	const contextPercentage = contextUsage?.percentUsed || 0;
 
+	/**
+	 * Format percentage for display
+	 * Shows "<0.1%" for very small values to avoid misleading "0.0%"
+	 */
+	const formatPercentage = (pct: number): string => {
+		if (pct === 0) return '0.0%';
+		if (pct > 0 && pct < 0.1) return '<0.1%';
+		return `${pct.toFixed(1)}%`;
+	};
+
 	// Determine color based on usage - green for lower usage
 	const getContextColor = () => {
 		if (contextPercentage >= 90) return 'text-red-400';
@@ -188,7 +198,7 @@ export default function StatusIndicator({
 						title={totalTokens > 0 ? 'Click for context details' : 'Context data loading...'}
 					>
 						<span class={`text-xs font-medium ${getContextColor()}`}>
-							{contextPercentage.toFixed(1)}%
+							{formatPercentage(contextPercentage)}
 						</span>
 						<div class="w-24 sm:w-32 h-2 bg-dark-700 rounded-full overflow-hidden">
 							<div
@@ -242,7 +252,7 @@ export default function StatusIndicator({
 											<div class="flex justify-between items-center mb-1.5">
 												<span class="text-xs text-gray-400">Context Window</span>
 												<span class={`text-xs font-semibold ${getContextColor()}`}>
-													{contextPercentage.toFixed(1)}%
+													{formatPercentage(contextPercentage)}
 												</span>
 											</div>
 											<div class="w-full h-2.5 bg-dark-600 rounded-full overflow-hidden">

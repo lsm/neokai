@@ -39,14 +39,18 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 		}
 
 		const session = agentSession.getSessionData();
+		const contextInfo = agentSession.getContextInfo();
 
 		return {
 			session,
 			activeTools: [],
+			// File/workspace context (for display purposes)
 			context: {
 				files: [],
 				workingDirectory: session.workspacePath,
 			},
+			// Token usage context info (for StatusIndicator)
+			contextInfo,
 		};
 	});
 
