@@ -302,6 +302,183 @@ describe('Database', () => {
 
 			db.close();
 		});
+
+		test('should persist and retrieve processing state', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			session.processingState = JSON.stringify({
+				status: 'processing',
+				messageId: 'msg-123',
+				phase: 'streaming',
+			});
+			db.createSession(session);
+
+			const retrieved = db.getSession('session-1');
+
+			assertExists(retrieved);
+			assertEquals(retrieved.processingState, session.processingState);
+
+			// Verify it's valid JSON
+			const parsed = JSON.parse(retrieved.processingState as string);
+			assertEquals(parsed.status, 'processing');
+			assertEquals(parsed.messageId, 'msg-123');
+			assertEquals(parsed.phase, 'streaming');
+
+			db.close();
+		});
+
+		test('should update processing state', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			db.createSession(session);
+
+			// Verify no processing state initially
+			let retrieved = db.getSession('session-1');
+			assertExists(retrieved);
+			assertEquals(retrieved.processingState, undefined);
+
+			// Update with processing state
+			db.updateSession('session-1', {
+				processingState: JSON.stringify({
+					status: 'queued',
+					messageId: 'msg-456',
+				}),
+			});
+
+			retrieved = db.getSession('session-1');
+			assertExists(retrieved);
+			const parsed = JSON.parse(retrieved.processingState as string);
+			assertEquals(parsed.status, 'queued');
+			assertEquals(parsed.messageId, 'msg-456');
+
+			db.close();
+		});
+
+		test('should persist and retrieve available commands', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			session.availableCommands = ['/help', '/clear', '/context'];
+			db.createSession(session);
+
+			const retrieved = db.getSession('session-1');
+
+			assertExists(retrieved);
+			assertExists(retrieved.availableCommands);
+			assertEquals(retrieved.availableCommands.length, 3);
+			assertEquals(retrieved.availableCommands[0], '/help');
+			assertEquals(retrieved.availableCommands[1], '/clear');
+			assertEquals(retrieved.availableCommands[2], '/context');
+
+			db.close();
+		});
+
+		test('should update available commands', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			db.createSession(session);
+
+			// Verify no available commands initially
+			let retrieved = db.getSession('session-1');
+			assertExists(retrieved);
+			assertEquals(retrieved.availableCommands, undefined);
+
+			// Update with available commands
+			db.updateSession('session-1', {
+				availableCommands: ['/new', '/test', '/debug'],
+			});
+
+			retrieved = db.getSession('session-1');
+			assertExists(retrieved);
+			assertExists(retrieved.availableCommands);
+			assertEquals(retrieved.availableCommands.length, 3);
+			assertEquals(retrieved.availableCommands[0], '/new');
+			assertEquals(retrieved.availableCommands[1], '/test');
+			assertEquals(retrieved.availableCommands[2], '/debug');
+
+			db.close();
+		});
+
+		test('should handle null/undefined for processing state', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			session.processingState = JSON.stringify({ status: 'idle' });
+			db.createSession(session);
+
+			// Update to null (clearing the state)
+			db.updateSession('session-1', {
+				processingState: null,
+			});
+
+			const retrieved = db.getSession('session-1');
+			assertExists(retrieved);
+			// Database converts null to undefined when retrieving
+			assertEquals(retrieved.processingState, undefined);
+
+			db.close();
+		});
+
+		test('should handle empty array for available commands', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			session.availableCommands = [];
+			db.createSession(session);
+
+			const retrieved = db.getSession('session-1');
+			assertExists(retrieved);
+			assertExists(retrieved.availableCommands);
+			assertEquals(retrieved.availableCommands.length, 0);
+
+			db.close();
+		});
+
+		test('should list sessions with processing state and available commands', async () => {
+			const db = await createTestDb();
+
+			const session1 = createTestSession('session-1');
+			session1.processingState = JSON.stringify({ status: 'processing' });
+			session1.availableCommands = ['/help'];
+			db.createSession(session1);
+
+			const session2 = createTestSession('session-2');
+			// No processing state or commands
+			db.createSession(session2);
+
+			const session3 = createTestSession('session-3');
+			session3.processingState = JSON.stringify({ status: 'idle' });
+			session3.availableCommands = ['/test', '/debug'];
+			db.createSession(session3);
+
+			const sessions = db.listSessions();
+
+			assertEquals(sessions.length, 3);
+
+			// Find each session and verify
+			const s1 = sessions.find((s) => s.id === 'session-1');
+			assertExists(s1);
+			assertExists(s1.processingState);
+			assertEquals(JSON.parse(s1.processingState).status, 'processing');
+			assertExists(s1.availableCommands);
+			assertEquals(s1.availableCommands.length, 1);
+
+			const s2 = sessions.find((s) => s.id === 'session-2');
+			assertExists(s2);
+			assertEquals(s2.processingState, undefined);
+			assertEquals(s2.availableCommands, undefined);
+
+			const s3 = sessions.find((s) => s.id === 'session-3');
+			assertExists(s3);
+			assertExists(s3.processingState);
+			assertExists(s3.availableCommands);
+			assertEquals(s3.availableCommands.length, 2);
+
+			db.close();
+		});
 	});
 
 	describe('Message Management', () => {

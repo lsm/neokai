@@ -52,6 +52,7 @@ export class AgentSession {
 	// SDK query object with control methods
 	private queryObject: SDKQueryObject = null;
 	private slashCommands: string[] = [];
+	private commandsFetchedFromSDK = false; // Track if we've fetched from SDK to avoid duplicates
 
 	// Unsubscribe functions to prevent memory leaks
 	private unsubscribers: Array<() => void> = [];
@@ -77,7 +78,7 @@ export class AgentSession {
 
 		// Initialize extracted components
 		this.messageQueue = new MessageQueue();
-		this.stateManager = new ProcessingStateManager(session.id, eventBus);
+		this.stateManager = new ProcessingStateManager(session.id, eventBus, db);
 		this.contextTracker = new ContextTracker(
 			session.id,
 			session.config.model,
@@ -100,17 +101,25 @@ export class AgentSession {
 		);
 
 		// Set queue callback for automatic /context fetching
-		this.messageHandler.setQueueMessageCallback(
-			async (content: string, internal: boolean) => {
-				await this.messageQueue.enqueue(content, internal);
-			}
-		);
+		this.messageHandler.setQueueMessageCallback(async (content: string, internal: boolean) => {
+			await this.messageQueue.enqueue(content, internal);
+		});
 
 		// Restore persisted context info from session metadata (if available)
 		if (session.metadata?.lastContextInfo) {
 			this.contextTracker.restoreFromMetadata(session.metadata.lastContextInfo);
 			this.logger.log('Restored context info from session metadata');
 		}
+
+		// Restore persisted slash commands from session (if available)
+		// These are used as initial cache until SDK query is available
+		if (session.availableCommands && session.availableCommands.length > 0) {
+			this.slashCommands = session.availableCommands;
+			this.logger.log(`Restored ${this.slashCommands.length} slash commands from session data`);
+		}
+
+		// Restore persisted processing state from database (if available)
+		this.stateManager.restoreFromDatabase();
 
 		// LAZY START: Don't start the streaming query here.
 		// Query will be started on first message send via ensureQueryStarted()
@@ -135,23 +144,39 @@ export class AgentSession {
 	/**
 	 * Fetch and cache slash commands from SDK
 	 * Used internally to update slash commands after query creation
+	 *
+	 * DB-FIRST PATTERN: Save to DB, then broadcast via EventBus
 	 */
 	private async fetchAndCacheSlashCommands(): Promise<void> {
 		if (!this.queryObject || typeof this.queryObject.supportedCommands !== 'function') {
 			return;
 		}
 
+		// Skip if we've already fetched from SDK
+		if (this.commandsFetchedFromSDK) {
+			return;
+		}
+
 		try {
 			const commands = await this.queryObject.supportedCommands();
-			this.slashCommands = commands.map((cmd: SlashCommand) => cmd.name);
+			const commandNames = commands.map((cmd: SlashCommand) => cmd.name);
 
 			// Add built-in commands that the SDK supports but doesn't advertise
 			const builtInCommands = ['clear', 'help'];
-			this.slashCommands = [...new Set([...this.slashCommands, ...builtInCommands])];
+			const allCommands = [...new Set([...commandNames, ...builtInCommands])];
 
-			this.logger.log(`Fetched slash commands:`, this.slashCommands);
+			this.slashCommands = allCommands;
+			this.commandsFetchedFromSDK = true;
 
-			// Emit event via EventBus (StateManager will broadcast unified session state)
+			this.logger.log(`Fetched ${this.slashCommands.length} slash commands from SDK`);
+
+			// DB-FIRST: Save to database FIRST
+			this.session.availableCommands = this.slashCommands;
+			this.db.updateSession(this.session.id, {
+				availableCommands: this.slashCommands,
+			});
+
+			// THEN emit event via EventBus (StateManager will broadcast unified session state)
 			await this.eventBus.emit('commands:updated', {
 				sessionId: this.session.id,
 				commands: this.slashCommands,
@@ -734,14 +759,21 @@ export class AgentSession {
 
 	/**
 	 * Get available slash commands for this session
+	 * Returns DB-persisted commands immediately, refreshes from SDK if available
 	 */
 	async getSlashCommands(): Promise<string[]> {
-		// Return cached if available
+		// Return cached/DB-persisted commands if available
 		if (this.slashCommands.length > 0) {
+			// Fire-and-forget: refresh from SDK in background if not yet fetched
+			if (!this.commandsFetchedFromSDK && this.queryObject) {
+				this.fetchAndCacheSlashCommands().catch((e) =>
+					this.logger.warn('Background refresh of slash commands failed:', e)
+				);
+			}
 			return this.slashCommands;
 		}
 
-		// Try to fetch from SDK query object
+		// No cached commands - try to fetch from SDK query object
 		await this.fetchAndCacheSlashCommands();
 		return this.slashCommands;
 	}

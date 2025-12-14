@@ -182,13 +182,29 @@ export class Database {
 			this.logger.log('🔧 Running migration: Adding sdk_session_id column to sessions table');
 			this.db.exec(`ALTER TABLE sessions ADD COLUMN sdk_session_id TEXT`);
 		}
+
+		// Migration 6: Add available_commands column for slash commands persistence
+		try {
+			this.db.prepare(`SELECT available_commands FROM sessions LIMIT 1`).all();
+		} catch {
+			this.logger.log('🔧 Running migration: Adding available_commands column to sessions table');
+			this.db.exec(`ALTER TABLE sessions ADD COLUMN available_commands TEXT`);
+		}
+
+		// Migration 7: Add processing_state column for agent state persistence
+		try {
+			this.db.prepare(`SELECT processing_state FROM sessions LIMIT 1`).all();
+		} catch {
+			this.logger.log('🔧 Running migration: Adding processing_state column to sessions table');
+			this.db.exec(`ALTER TABLE sessions ADD COLUMN processing_state TEXT`);
+		}
 	}
 
 	// Session operations
 	createSession(session: Session): void {
 		const stmt = this.db.prepare(
-			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 		stmt.run(
 			session.id,
@@ -204,7 +220,9 @@ export class Database {
 			session.worktree?.mainRepoPath ?? null,
 			session.worktree?.branch ?? null,
 			session.gitBranch ?? null,
-			session.sdkSessionId ?? null
+			session.sdkSessionId ?? null,
+			session.availableCommands ? JSON.stringify(session.availableCommands) : null,
+			session.processingState ?? null
 		);
 	}
 
@@ -224,6 +242,11 @@ export class Database {
 				}
 			: undefined;
 
+		const availableCommands =
+			row.available_commands && typeof row.available_commands === 'string'
+				? (JSON.parse(row.available_commands) as string[])
+				: undefined;
+
 		return {
 			id: row.id as string,
 			title: row.title as string,
@@ -236,6 +259,8 @@ export class Database {
 			worktree,
 			gitBranch: (row.git_branch as string | null) ?? undefined,
 			sdkSessionId: (row.sdk_session_id as string | null) ?? undefined,
+			availableCommands,
+			processingState: (row.processing_state as string | null) ?? undefined,
 		};
 	}
 
@@ -254,6 +279,11 @@ export class Database {
 					}
 				: undefined;
 
+			const availableCommands =
+				r.available_commands && typeof r.available_commands === 'string'
+					? (JSON.parse(r.available_commands) as string[])
+					: undefined;
+
 			return {
 				id: r.id as string,
 				title: r.title as string,
@@ -266,6 +296,8 @@ export class Database {
 				worktree,
 				gitBranch: (r.git_branch as string | null) ?? undefined,
 				sdkSessionId: (r.sdk_session_id as string | null) ?? undefined,
+				availableCommands,
+				processingState: (r.processing_state as string | null) ?? undefined,
 			};
 		});
 	}
@@ -304,6 +336,14 @@ export class Database {
 		if (updates.sdkSessionId !== undefined) {
 			fields.push('sdk_session_id = ?');
 			values.push(updates.sdkSessionId ?? null);
+		}
+		if (updates.availableCommands !== undefined) {
+			fields.push('available_commands = ?');
+			values.push(updates.availableCommands ? JSON.stringify(updates.availableCommands) : null);
+		}
+		if (updates.processingState !== undefined) {
+			fields.push('processing_state = ?');
+			values.push(updates.processingState ?? null);
 		}
 
 		if (fields.length > 0) {

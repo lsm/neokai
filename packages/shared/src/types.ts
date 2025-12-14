@@ -11,6 +11,8 @@ export interface Session {
 	worktree?: WorktreeMetadata;
 	gitBranch?: string; // Current git branch for non-worktree sessions in git repos
 	sdkSessionId?: string; // SDK's internal session ID for resuming conversations
+	availableCommands?: string[]; // Available slash commands for this session (persisted)
+	processingState?: string; // Persisted agent processing state (JSON serialized AgentProcessingState)
 }
 
 export interface WorktreeMetadata {
