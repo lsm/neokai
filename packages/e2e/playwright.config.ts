@@ -77,6 +77,7 @@ export default defineConfig({
 				'**/message-send-receive.e2e.ts',
 				'**/tests/state-sync.e2e.ts',
 				'**/tests/multi-tab.e2e.ts',
+				'**/tests/page-refresh.e2e.ts', // Page refresh persistence tests
 				'**/session-management.e2e.ts', // Will add cleanup
 				'**/chat-flow.e2e.ts', // Will add cleanup
 				'**/model-switcher.e2e.ts', // Model switcher UI tests
