@@ -72,13 +72,16 @@ export class SDKMessageHandler {
 			await this.contextTracker.processStreamEvent(streamEventMessage.event);
 		}
 
-		// Check if this is a /context response BEFORE marking as synthetic
-		// This allows us to parse the context breakdown and merge with stream-based tracking
+		// Check if this is a /context response BEFORE saving/emitting
+		// /context responses should be processed for context tracking but NOT saved to DB or shown in UI
 		const isContextResponse = this.contextFetcher.isContextResponse(message);
 		if (isContextResponse) {
 			await this.handleContextResponse(message);
 			// Set flag to skip queuing another /context for the next result
 			this.lastMessageWasContextResponse = true;
+			// IMPORTANT: Return early to skip saving and emitting this message
+			// It's already been processed for context tracking
+			return;
 		}
 
 		// Mark all user messages from SDK as synthetic
@@ -190,16 +193,26 @@ export class SDKMessageHandler {
 			metadata: this.session.metadata,
 		});
 
+		// Emit session:updated event so StateManager broadcasts the change
+		await this.eventBus.emit('session:updated', {
+			sessionId: this.session.id,
+			updates: { lastActiveAt: this.session.lastActiveAt, metadata: this.session.metadata },
+		});
+
 		// Update context tracker with final accurate usage
-		await this.contextTracker.handleResultUsage(
-			{
-				input_tokens: usage.input_tokens,
-				output_tokens: usage.output_tokens,
-				cache_read_input_tokens: usage.cache_read_input_tokens,
-				cache_creation_input_tokens: usage.cache_creation_input_tokens,
-			},
-			message.modelUsage
-		);
+		// SKIP for /context command's result - /context doesn't call the API, so it has 0 tokens
+		// We already have the correct context from parsing the /context response
+		if (!this.lastMessageWasContextResponse) {
+			await this.contextTracker.handleResultUsage(
+				{
+					input_tokens: usage.input_tokens,
+					output_tokens: usage.output_tokens,
+					cache_read_input_tokens: usage.cache_read_input_tokens,
+					cache_creation_input_tokens: usage.cache_creation_input_tokens,
+				},
+				message.modelUsage
+			);
+		}
 
 		// Queue /context command to get detailed breakdown (unless we just got one)
 		// CRITICAL: Check flag to prevent infinite loop!
@@ -240,6 +253,12 @@ export class SDKMessageHandler {
 			};
 			this.db.updateSession(this.session.id, {
 				metadata: this.session.metadata,
+			});
+
+			// Emit session:updated event so StateManager broadcasts the change
+			await this.eventBus.emit('session:updated', {
+				sessionId: this.session.id,
+				updates: { metadata: this.session.metadata },
 			});
 		}
 	}
@@ -355,16 +374,12 @@ export class SDKMessageHandler {
 
 		// Merge with stream-based context
 		const streamContext = this.contextTracker.getContextInfo();
-		const mergedContext = this.contextFetcher.mergeWithStreamContext(
-			parsedContext,
-			streamContext
-		);
+		const mergedContext = this.contextFetcher.mergeWithStreamContext(parsedContext, streamContext);
 
-		// Persist to session metadata
-		this.session.metadata.lastContextInfo = mergedContext;
-		this.db.updateSession(this.session.id, {
-			metadata: this.session.metadata,
-		});
+		// Update ContextTracker with merged data
+		// This makes it the source of truth for context info
+		// The tracker will persist to session metadata and emit the context:updated event
+		this.contextTracker.updateWithDetailedBreakdown(mergedContext);
 
 		// Emit context update event via EventBus
 		// StateManager will broadcast this via state.session channel
@@ -372,10 +387,5 @@ export class SDKMessageHandler {
 			sessionId: this.session.id,
 			contextInfo: mergedContext,
 		});
-
-		this.logger.log(
-			`Context breakdown updated: ${parsedContext.totalUsed}/${parsedContext.totalCapacity} tokens ` +
-				`(${parsedContext.percentUsed}%) with ${Object.keys(parsedContext.breakdown).length} categories`
-		);
 	}
 }
