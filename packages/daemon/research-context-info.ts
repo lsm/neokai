@@ -54,7 +54,7 @@ async function main() {
 			prompt: messageGenerator(),
 			options: {
 				model: 'claude-sonnet-4-5-20250929',
-				maxTokens: 1024,
+				maxTurns: 1,
 				cwd: process.cwd(),
 				systemPrompt: {
 					type: 'preset',
