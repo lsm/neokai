@@ -294,6 +294,7 @@ export interface ContextAPIUsage {
 	outputTokens: number;
 	cacheReadTokens: number;
 	cacheCreationTokens: number;
+	webSearchRequests?: number; // SDK 0.1.69+
 }
 
 /**

@@ -136,12 +136,22 @@ export class ContextTracker {
 		usage: UsageData,
 		modelUsage?: Record<string, ModelUsage>
 	): Promise<void> {
+		// Track web search requests from SDK (SDK 0.1.69+)
+		let webSearchRequests: number | undefined;
+
 		// Update context window size if SDK provides it
 		if (modelUsage) {
 			const modelName = Object.keys(modelUsage)[0];
-			if (modelName && modelUsage[modelName]?.contextWindow) {
-				this.contextWindowSize = modelUsage[modelName].contextWindow;
-				this.logger.log(`Updated context window size from SDK: ${this.contextWindowSize}`);
+			if (modelName) {
+				const modelData = modelUsage[modelName];
+				if (modelData?.contextWindow) {
+					this.contextWindowSize = modelData.contextWindow;
+					this.logger.log(`Updated context window size from SDK: ${this.contextWindowSize}`);
+				}
+				// SDK 0.1.69+ provides webSearchRequests
+				if (typeof modelData?.webSearchRequests === 'number') {
+					webSearchRequests = modelData.webSearchRequests;
+				}
 			}
 		}
 
@@ -155,6 +165,7 @@ export class ContextTracker {
 			outputTokens: usage.output_tokens,
 			cacheReadTokens: usage.cache_read_input_tokens || 0,
 			cacheCreationTokens: usage.cache_creation_input_tokens || 0,
+			webSearchRequests,
 		};
 
 		// Force broadcast (not throttled) since this is the final accurate data

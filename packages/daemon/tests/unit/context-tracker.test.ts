@@ -212,20 +212,43 @@ describe('ContextTracker', () => {
 				},
 				{
 					'claude-sonnet-4-5-20250929': {
+						// SDK 0.1.69+ ModelUsage type
+						inputTokens: 10000,
+						outputTokens: 500,
+						cacheReadInputTokens: 0,
+						cacheCreationInputTokens: 0,
+						webSearchRequests: 0,
+						costUSD: 0.05,
 						contextWindow: 300000, // Updated context window
-						maxOutputTokens: 8192,
-						pricing: {
-							inputPricePerToken: 0.000003,
-							outputPricePerToken: 0.000015,
-							cacheReadPricePerToken: 0.0000003,
-							cacheCreationPricePerToken: 0.0000045,
-						},
 					},
 				}
 			);
 
 			const contextInfo = tracker.getContextInfo();
 			expect(contextInfo?.totalCapacity).toBe(300000);
+		});
+
+		it('should track web search requests from model usage', async () => {
+			await tracker.handleResultUsage(
+				{
+					input_tokens: 10000,
+					output_tokens: 500,
+				},
+				{
+					'claude-sonnet-4-5-20250929': {
+						inputTokens: 10000,
+						outputTokens: 500,
+						cacheReadInputTokens: 0,
+						cacheCreationInputTokens: 0,
+						webSearchRequests: 3,
+						costUSD: 0.05,
+						contextWindow: 200000,
+					},
+				}
+			);
+
+			const contextInfo = tracker.getContextInfo();
+			expect(contextInfo?.apiUsage?.webSearchRequests).toBe(3);
 		});
 
 		it('should not throttle result updates', async () => {

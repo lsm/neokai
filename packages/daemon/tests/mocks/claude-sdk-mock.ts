@@ -53,7 +53,50 @@ export interface MockSDKResultMessage {
 	subagent_results: unknown[];
 }
 
-export type MockSDKMessage = MockSDKUserMessage | MockSDKAssistantMessage | MockSDKResultMessage;
+/**
+ * SDK 0.1.69+ tool progress message
+ */
+export interface MockSDKToolProgressMessage {
+	type: 'tool_progress';
+	tool_use_id: string;
+	tool_name: string;
+	parent_tool_use_id: string | null;
+	elapsed_time_seconds: number;
+	uuid: UUID;
+	session_id: string;
+}
+
+/**
+ * SDK 0.1.69+ auth status message
+ */
+export interface MockSDKAuthStatusMessage {
+	type: 'auth_status';
+	isAuthenticating: boolean;
+	output: string[];
+	error?: string;
+	uuid: UUID;
+	session_id: string;
+}
+
+/**
+ * SDK 0.1.69+ ModelUsage type
+ */
+export interface MockModelUsage {
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadInputTokens: number;
+	cacheCreationInputTokens: number;
+	webSearchRequests: number;
+	costUSD: number;
+	contextWindow: number;
+}
+
+export type MockSDKMessage =
+	| MockSDKUserMessage
+	| MockSDKAssistantMessage
+	| MockSDKResultMessage
+	| MockSDKToolProgressMessage
+	| MockSDKAuthStatusMessage;
 
 /**
  * Mock Query object that simulates SDK behavior
