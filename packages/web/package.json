@@ -24,10 +24,10 @@
 	},
 	"devDependencies": {
 		"@preact/preset-vite": "2.10.2",
-		"@tailwindcss/vite": "4.1.17",
+		"@tailwindcss/vite": "4.1.18",
 		"@types/bun": "latest",
-		"tailwindcss": "4.1.17",
+		"tailwindcss": "4.1.18",
 		"typescript": "5.9.3",
-		"vite": "7.2.6"
+		"vite": "7.2.7"
 	}
 }
