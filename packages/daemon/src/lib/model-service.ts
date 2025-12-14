@@ -294,11 +294,9 @@ export async function initializeModels(): Promise<void> {
 				throw new Error('No models returned from SDK');
 			}
 		} finally {
-			try {
-				await tmpQuery.interrupt();
-			} catch {
-				// Ignore cleanup errors
-			}
+			// Don't await - fire and forget since Query AsyncGenerator cleanup
+			// can hang if not actively consumed (SDK 0.1.69 behavior)
+			tmpQuery.interrupt().catch(() => {});
 		}
 	} catch (error) {
 		console.error('[model-service] Failed to load models on startup:', error);
