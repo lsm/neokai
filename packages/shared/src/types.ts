@@ -10,6 +10,7 @@ export interface Session {
 	metadata: SessionMetadata;
 	worktree?: WorktreeMetadata;
 	gitBranch?: string; // Current git branch for non-worktree sessions in git repos
+	sdkSessionId?: string; // SDK's internal session ID for resuming conversations
 }
 
 export interface WorktreeMetadata {

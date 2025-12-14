@@ -11,7 +11,7 @@
 
 import type { ModelInfo as SDKModelInfo } from '@liuboer/shared/sdk';
 import type { ModelInfo } from '@liuboer/shared';
-import type { Query } from '@liuboer/shared/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
 
 /**
  * Legacy model ID mappings to SDK model IDs

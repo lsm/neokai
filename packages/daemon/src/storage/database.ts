@@ -174,13 +174,21 @@ export class Database {
 			this.logger.log('🔧 Running migration: Adding git_branch column to sessions table');
 			this.db.exec(`ALTER TABLE sessions ADD COLUMN git_branch TEXT`);
 		}
+
+		// Migration 5: Add sdk_session_id column for session resumption
+		try {
+			this.db.prepare(`SELECT sdk_session_id FROM sessions LIMIT 1`).all();
+		} catch {
+			this.logger.log('🔧 Running migration: Adding sdk_session_id column to sessions table');
+			this.db.exec(`ALTER TABLE sessions ADD COLUMN sdk_session_id TEXT`);
+		}
 	}
 
 	// Session operations
 	createSession(session: Session): void {
 		const stmt = this.db.prepare(
-			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 		stmt.run(
 			session.id,
@@ -195,7 +203,8 @@ export class Database {
 			session.worktree?.worktreePath ?? null,
 			session.worktree?.mainRepoPath ?? null,
 			session.worktree?.branch ?? null,
-			session.gitBranch ?? null
+			session.gitBranch ?? null,
+			session.sdkSessionId ?? null
 		);
 	}
 
@@ -226,6 +235,7 @@ export class Database {
 			metadata: JSON.parse(row.metadata as string),
 			worktree,
 			gitBranch: (row.git_branch as string | null) ?? undefined,
+			sdkSessionId: (row.sdk_session_id as string | null) ?? undefined,
 		};
 	}
 
@@ -255,6 +265,7 @@ export class Database {
 				metadata: JSON.parse(r.metadata as string),
 				worktree,
 				gitBranch: (r.git_branch as string | null) ?? undefined,
+				sdkSessionId: (r.sdk_session_id as string | null) ?? undefined,
 			};
 		});
 	}
@@ -289,6 +300,10 @@ export class Database {
 			const mergedConfig = existing ? { ...existing.config, ...updates.config } : updates.config;
 			fields.push('config = ?');
 			values.push(JSON.stringify(mergedConfig));
+		}
+		if (updates.sdkSessionId !== undefined) {
+			fields.push('sdk_session_id = ?');
+			values.push(updates.sdkSessionId ?? null);
 		}
 
 		if (fields.length > 0) {

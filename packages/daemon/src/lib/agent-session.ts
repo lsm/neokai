@@ -1,4 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, Query } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type {
 	AgentProcessingState,
 	MessageContent,
@@ -8,7 +9,7 @@ import type {
 } from '@liuboer/shared';
 import type { EventBus, MessageHub, CurrentModelInfo } from '@liuboer/shared';
 import { generateUUID } from '@liuboer/shared';
-import type { Query, SDKMessage, SlashCommand } from '@liuboer/shared/sdk';
+import type { SDKMessage, SlashCommand } from '@liuboer/shared/sdk';
 import { Database } from '../storage/database';
 import { ErrorCategory, ErrorManager } from './error-manager';
 import { Logger } from './logger';
@@ -310,21 +311,32 @@ export class AgentSession {
 				this.logger.log(`Session uses shared workspace (no worktree)`);
 			}
 
+			// Build query options
+			const queryOptions: Options = {
+				model: this.session.config.model,
+				cwd: this.session.workspacePath,
+				permissionMode: 'bypassPermissions',
+				allowDangerouslySkipPermissions: true,
+				maxTurns: Infinity,
+				settingSources: ['project', 'local'],
+				systemPrompt: {
+					type: 'preset',
+					preset: 'claude_code',
+				},
+			};
+
+			// Add resume parameter if SDK session ID exists (session resumption)
+			if (this.session.sdkSessionId) {
+				queryOptions.resume = this.session.sdkSessionId;
+				this.logger.log(`Resuming SDK session: ${this.session.sdkSessionId}`);
+			} else {
+				this.logger.log(`Starting new SDK session`);
+			}
+
 			// Create query with AsyncGenerator from MessageQueue
 			this.queryObject = query({
 				prompt: this.createMessageGeneratorWrapper(),
-				options: {
-					model: this.session.config.model,
-					cwd: this.session.workspacePath,
-					permissionMode: 'bypassPermissions',
-					allowDangerouslySkipPermissions: true,
-					maxTurns: Infinity,
-					settingSources: ['project', 'local'],
-					systemPrompt: {
-						type: 'preset',
-						preset: 'claude_code',
-					},
-				},
+				options: queryOptions,
 			});
 
 			// Process SDK messages - MUST start immediately!
@@ -340,6 +352,11 @@ export class AgentSession {
 			this.fetchAndCacheModels().catch((e) =>
 				this.logger.warn('Background fetch of models failed:', e)
 			);
+
+			// TypeScript safety: ensure queryObject is not null
+			if (!this.queryObject) {
+				throw new Error('Query object is null after initialization');
+			}
 
 			for await (const message of this.queryObject) {
 				try {

@@ -18,6 +18,7 @@ import {
 	isToolUseBlock,
 	isSDKStatusMessage,
 	isSDKCompactBoundary,
+	isSDKSystemMessage,
 } from '@liuboer/shared/sdk/type-guards';
 import { Database } from '../storage/database';
 import { Logger } from './logger';
@@ -86,6 +87,10 @@ export class SDKMessageHandler {
 		);
 
 		// Handle specific message types
+		if (isSDKSystemMessage(message)) {
+			await this.handleSystemMessage(message);
+		}
+
 		if (isSDKResultSuccess(message)) {
 			await this.handleResultMessage(message);
 		}
@@ -100,6 +105,33 @@ export class SDKMessageHandler {
 
 		if (isSDKCompactBoundary(message)) {
 			await this.handleCompactBoundary(message);
+		}
+	}
+
+	/**
+	 * Handle system message (capture SDK session ID)
+	 */
+	private async handleSystemMessage(message: SDKMessage): Promise<void> {
+		if (!isSDKSystemMessage(message)) return;
+
+		// Capture SDK's internal session ID if we don't have it yet
+		// This enables session resumption after daemon restart
+		if (!this.session.sdkSessionId && message.session_id) {
+			this.logger.log(`Captured SDK session ID: ${message.session_id}`);
+
+			// Update in-memory session
+			this.session.sdkSessionId = message.session_id;
+
+			// Persist to database
+			this.db.updateSession(this.session.id, {
+				sdkSessionId: message.session_id,
+			});
+
+			// Emit session:updated event so StateManager broadcasts the change
+			await this.eventBus.emit('session:updated', {
+				sessionId: this.session.id,
+				updates: { sdkSessionId: message.session_id },
+			});
 		}
 	}
 

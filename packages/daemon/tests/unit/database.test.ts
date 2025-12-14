@@ -205,6 +205,103 @@ describe('Database', () => {
 
 			db.close();
 		});
+
+		test('should persist and retrieve SDK session ID', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			session.sdkSessionId = 'sdk-session-abc-123';
+			db.createSession(session);
+
+			const retrieved = db.getSession('session-1');
+
+			assertExists(retrieved);
+			assertEquals(retrieved.sdkSessionId, 'sdk-session-abc-123');
+
+			db.close();
+		});
+
+		test('should update SDK session ID', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			db.createSession(session);
+
+			// Verify no SDK session ID initially
+			let retrieved = db.getSession('session-1');
+			assertExists(retrieved);
+			assertEquals(retrieved.sdkSessionId, undefined);
+
+			// Update with SDK session ID
+			db.updateSession('session-1', {
+				sdkSessionId: 'sdk-session-xyz-789',
+			});
+
+			retrieved = db.getSession('session-1');
+			assertExists(retrieved);
+			assertEquals(retrieved.sdkSessionId, 'sdk-session-xyz-789');
+
+			db.close();
+		});
+
+		test('should handle SDK session ID in listSessions', async () => {
+			const db = await createTestDb();
+
+			const session1 = createTestSession('session-1');
+			session1.sdkSessionId = 'sdk-session-1';
+			db.createSession(session1);
+
+			const session2 = createTestSession('session-2');
+			// No SDK session ID
+			db.createSession(session2);
+
+			const session3 = createTestSession('session-3');
+			session3.sdkSessionId = 'sdk-session-3';
+			db.createSession(session3);
+
+			const sessions = db.listSessions();
+
+			assertEquals(sessions.length, 3);
+
+			// Find each session and verify SDK session ID
+			const s1 = sessions.find((s) => s.id === 'session-1');
+			assertExists(s1);
+			assertEquals(s1.sdkSessionId, 'sdk-session-1');
+
+			const s2 = sessions.find((s) => s.id === 'session-2');
+			assertExists(s2);
+			assertEquals(s2.sdkSessionId, undefined);
+
+			const s3 = sessions.find((s) => s.id === 'session-3');
+			assertExists(s3);
+			assertEquals(s3.sdkSessionId, 'sdk-session-3');
+
+			db.close();
+		});
+
+		test('should handle SDK session ID update correctly', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			session.sdkSessionId = 'sdk-session-initial';
+			db.createSession(session);
+
+			// Verify initial SDK session ID
+			let retrieved = db.getSession('session-1');
+			assertExists(retrieved);
+			assertEquals(retrieved.sdkSessionId, 'sdk-session-initial');
+
+			// Update to a different SDK session ID
+			db.updateSession('session-1', {
+				sdkSessionId: 'sdk-session-updated',
+			});
+
+			retrieved = db.getSession('session-1');
+			assertExists(retrieved);
+			assertEquals(retrieved.sdkSessionId, 'sdk-session-updated');
+
+			db.close();
+		});
 	});
 
 	describe('Message Management', () => {

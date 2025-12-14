@@ -406,4 +406,129 @@ describe('SDKMessageHandler', () => {
 			expect(detectPhaseSpy).toHaveBeenCalledWith(message);
 		});
 	});
+
+	describe('SDK session ID capture', () => {
+		it('should capture SDK session ID from system message', async () => {
+			const updateSessionSpy = mockDb.updateSession as ReturnType<typeof mock>;
+			const sdkSessionId = generateUUID();
+
+			const systemMessage: SDKMessage = {
+				type: 'system',
+				subtype: 'init',
+				uuid: generateUUID() as `${string}-${string}-${string}-${string}-${string}`,
+				session_id: sdkSessionId,
+				apiKeySource: 'env',
+				claude_code_version: '0.1.0',
+				cwd: '/test/workspace',
+				tools: [],
+				mcp_servers: [],
+				model: 'claude-sonnet-4-5-20250929',
+				permissionMode: 'bypassPermissions',
+				slash_commands: [],
+				output_style: 'concise',
+				skills: [],
+				plugins: [],
+			};
+
+			await handler.handleMessage(systemMessage);
+
+			// Should update session with SDK session ID
+			expect(updateSessionSpy).toHaveBeenCalledWith(testSessionId, {
+				sdkSessionId,
+			});
+		});
+
+		it('should emit session:updated event when capturing SDK session ID', async () => {
+			const sdkSessionId = generateUUID();
+
+			const systemMessage: SDKMessage = {
+				type: 'system',
+				subtype: 'init',
+				uuid: generateUUID() as `${string}-${string}-${string}-${string}-${string}`,
+				session_id: sdkSessionId,
+				apiKeySource: 'env',
+				claude_code_version: '0.1.0',
+				cwd: '/test/workspace',
+				tools: [],
+				mcp_servers: [],
+				model: 'claude-sonnet-4-5-20250929',
+				permissionMode: 'bypassPermissions',
+				slash_commands: [],
+				output_style: 'concise',
+				skills: [],
+				plugins: [],
+			};
+
+			await handler.handleMessage(systemMessage);
+
+			expect(eventBusEmitSpy).toHaveBeenCalledWith('session:updated', {
+				sessionId: testSessionId,
+				updates: { sdkSessionId },
+			});
+		});
+
+		it('should not capture SDK session ID if already set', async () => {
+			const updateSessionSpy = mockDb.updateSession as ReturnType<typeof mock>;
+			updateSessionSpy.mockClear();
+
+			// Session already has SDK session ID
+			mockSession.sdkSessionId = 'existing-sdk-session-id';
+
+			const systemMessage: SDKMessage = {
+				type: 'system',
+				subtype: 'init',
+				uuid: generateUUID() as `${string}-${string}-${string}-${string}-${string}`,
+				session_id: 'new-sdk-session-id',
+				apiKeySource: 'env',
+				claude_code_version: '0.1.0',
+				cwd: '/test/workspace',
+				tools: [],
+				mcp_servers: [],
+				model: 'claude-sonnet-4-5-20250929',
+				permissionMode: 'bypassPermissions',
+				slash_commands: [],
+				output_style: 'concise',
+				skills: [],
+				plugins: [],
+			};
+
+			await handler.handleMessage(systemMessage);
+
+			// Should still save message and broadcast, but not update SDK session ID
+			expect(dbSaveSpy).toHaveBeenCalled();
+			// updateSession may be called by other handlers, but not for sdkSessionId
+			const sdkSessionIdUpdates = updateSessionSpy.mock.calls.filter((call: unknown[]) => {
+				const updates = call[1] as { sdkSessionId?: string };
+				return updates && 'sdkSessionId' in updates;
+			});
+			expect(sdkSessionIdUpdates.length).toBe(0);
+		});
+
+		it('should update in-memory session with SDK session ID', async () => {
+			const sdkSessionId = generateUUID();
+
+			const systemMessage: SDKMessage = {
+				type: 'system',
+				subtype: 'init',
+				uuid: generateUUID() as `${string}-${string}-${string}-${string}-${string}`,
+				session_id: sdkSessionId,
+				apiKeySource: 'env',
+				claude_code_version: '0.1.0',
+				cwd: '/test/workspace',
+				tools: [],
+				mcp_servers: [],
+				model: 'claude-sonnet-4-5-20250929',
+				permissionMode: 'bypassPermissions',
+				slash_commands: [],
+				output_style: 'concise',
+				skills: [],
+				plugins: [],
+			};
+
+			await handler.handleMessage(systemMessage);
+
+			// Verify in-memory session was updated
+			expect(mockSession.sdkSessionId).toBe(sdkSessionId);
+		});
+	});
 });
