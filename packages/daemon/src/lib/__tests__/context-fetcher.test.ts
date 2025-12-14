@@ -152,7 +152,7 @@ describe('ContextFetcher', () => {
 				percentUsed: 31,
 				breakdown: {
 					'System prompt': { tokens: 3200, percent: 1.6 },
-					'Messages': { tokens: 25, percent: 0.0 },
+					Messages: { tokens: 25, percent: 0.0 },
 				},
 			};
 

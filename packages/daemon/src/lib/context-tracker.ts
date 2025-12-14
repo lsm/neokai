@@ -91,6 +91,19 @@ export class ContextTracker {
 	}
 
 	/**
+	 * Update context info with detailed breakdown from /context command
+	 * This replaces the stream-based tracking with more detailed data from SDK
+	 */
+	updateWithDetailedBreakdown(contextInfo: ContextInfo): void {
+		this.currentContextInfo = contextInfo;
+		this.persistContext(contextInfo);
+		this.logger.log(
+			`Updated context with detailed breakdown: ${contextInfo.totalUsed}/${contextInfo.totalCapacity} tokens ` +
+				`(${contextInfo.percentUsed}%) with ${Object.keys(contextInfo.breakdown).length} categories`
+		);
+	}
+
+	/**
 	 * Update model (when model is switched)
 	 */
 	setModel(model: string): void {

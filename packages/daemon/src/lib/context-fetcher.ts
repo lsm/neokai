@@ -51,9 +51,7 @@ export class ContextFetcher {
 		if (!userMsg.isReplay) return false;
 
 		const content = userMsg.message?.content || '';
-		return (
-			content.includes('<local-command-stdout>') && content.includes('Context Usage')
-		);
+		return content.includes('<local-command-stdout>') && content.includes('Context Usage');
 	}
 
 	/**
@@ -84,9 +82,7 @@ export class ContextFetcher {
 	 */
 	private parseMarkdownContext(content: string): ParsedContextInfo {
 		// Extract content from <local-command-stdout> tags
-		const match = content.match(
-			/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/
-		);
+		const match = content.match(/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/);
 		if (!match) {
 			throw new Error('No <local-command-stdout> tags found');
 		}
@@ -97,9 +93,7 @@ export class ContextFetcher {
 		// Example: **Model:** claude-sonnet-4-5-20250929
 		// Example: **Tokens:** 62.5k / 200.0k (31%)
 		const modelMatch = markdown.match(/\*\*Model:\*\*\s*(\S+)/);
-		const tokensMatch = markdown.match(
-			/\*\*Tokens:\*\*\s*([\d.]+)k\s*\/\s*([\d.]+)k\s*\((\d+)%\)/
-		);
+		const tokensMatch = markdown.match(/\*\*Tokens:\*\*\s*([\d.]+)k\s*\/\s*([\d.]+)k\s*\((\d+)%\)/);
 
 		if (!tokensMatch) {
 			throw new Error('Failed to parse token usage from markdown');
@@ -134,9 +128,7 @@ export class ContextFetcher {
 	 * | System prompt | 3.2k | 1.6% |
 	 * | System tools | 14.3k | 7.1% |
 	 */
-	private parseCategoryTable(
-		markdown: string
-	): Record<string, ContextCategoryBreakdown> {
+	private parseCategoryTable(markdown: string): Record<string, ContextCategoryBreakdown> {
 		const breakdown: Record<string, ContextCategoryBreakdown> = {};
 
 		// Match table rows: | Category | Tokens | Percentage |
