@@ -59,6 +59,9 @@ export default function MessageInput({
 	// Draft persistence timeout ref
 	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+	// Track if we're currently sending a message (prevents draft save race condition)
+	const [isSending, setIsSending] = useState(false);
+
 	// Detect if device is mobile (touch-based)
 	const isMobileDevice = useRef(false);
 
@@ -118,6 +121,11 @@ export default function MessageInput({
 
 	// Save draft to session metadata (debounced 250ms)
 	useEffect(() => {
+		// Don't save drafts while sending a message (prevents race condition)
+		if (isSending) {
+			return;
+		}
+
 		// Clear existing timeout
 		if (draftSaveTimeoutRef.current) {
 			clearTimeout(draftSaveTimeoutRef.current);
@@ -128,6 +136,11 @@ export default function MessageInput({
 
 		draftSaveTimeoutRef.current = setTimeout(() => {
 			const saveDraft = async () => {
+				// Double-check we're not sending (async callback might fire after send starts)
+				if (isSending) {
+					return;
+				}
+
 				try {
 					const hub = await connectionManager.getHub();
 					await hub.call('session.update', {
@@ -151,7 +164,7 @@ export default function MessageInput({
 				clearTimeout(draftSaveTimeoutRef.current);
 			}
 		};
-	}, [content, sessionId]);
+	}, [content, sessionId, isSending]);
 
 	// Global Escape key listener for interrupt (works even when textarea is disabled)
 	useEffect(() => {
@@ -313,21 +326,47 @@ export default function MessageInput({
 
 	const handleSubmit = async (e: Event) => {
 		e.preventDefault();
+
 		// Check agent working state at time of submit
-		if (content.trim() && !isAgentWorking.value) {
-			onSend(content);
-			setContent('');
-			// Clear draft from database immediately after send
-			try {
-				const hub = await connectionManager.getHub();
-				await hub.call('session.update', {
-					sessionId,
-					metadata: { inputDraft: undefined },
-				});
-			} catch (error) {
-				// Silently fail - draft will be cleared on next save
-				console.error('Failed to clear draft:', error);
+		const messageContent = content.trim();
+		if (!messageContent || isAgentWorking.value || isSending) {
+			return;
+		}
+
+		try {
+			// ✅ Layer 1: Set sending flag to block draft saves
+			setIsSending(true);
+
+			// ✅ Layer 2: Cancel any pending debounced save
+			if (draftSaveTimeoutRef.current) {
+				clearTimeout(draftSaveTimeoutRef.current);
+				draftSaveTimeoutRef.current = null;
 			}
+
+			// ✅ Layer 3: Clear UI immediately (before async operations)
+			setContent('');
+
+			// ✅ Layer 4: Clear draft from database immediately (fire-and-forget)
+			// Don't await - we want UI to feel instant
+			connectionManager.getHub().then((hub) => {
+				hub
+					.call('session.update', {
+						sessionId,
+						metadata: { inputDraft: undefined },
+					})
+					.catch((error) => {
+						console.error('Failed to clear draft:', error);
+					});
+			});
+
+			// ✅ Layer 5: Send message with captured content
+			onSend(messageContent);
+		} finally {
+			// Re-enable draft saves after a short delay
+			// This ensures any stale callbacks have completed
+			setTimeout(() => {
+				setIsSending(false);
+			}, 100);
 		}
 	};
 
