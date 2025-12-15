@@ -6,7 +6,7 @@ import { SessionManager } from './lib/session-manager';
 import { AuthManager } from './lib/auth-manager';
 import { StateManager } from './lib/state-manager';
 import { SubscriptionManager } from './lib/subscription-manager';
-import { TitleGenerationQueue } from './lib/title-generation-queue';
+import { SimpleTitleQueue } from './lib/simple-title-queue';
 import { MessageHub, MessageHubRouter, EventBus } from '@liuboer/shared';
 import { setupRPCHandlers } from './lib/rpc-handlers';
 import { WebSocketServerTransport } from './lib/websocket-server-transport';
@@ -36,7 +36,7 @@ export interface DaemonAppContext {
 	authManager: AuthManager;
 	stateManager: StateManager;
 	subscriptionManager: SubscriptionManager;
-	titleQueue: TitleGenerationQueue;
+	titleQueue: SimpleTitleQueue;
 	transport: WebSocketServerTransport;
 	/**
 	 * Cleanup function for graceful shutdown.
@@ -158,14 +158,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	log('✅ State manager initialized (fine-grained channels + per-channel versioning)');
 
 	// Initialize Title Generation Queue (decoupled via EventBus)
-	const titleQueue = new TitleGenerationQueue(db, eventBus, {
+	const titleQueue = new SimpleTitleQueue(db, eventBus, {
 		maxRetries: 3,
 		pollIntervalMs: 1000,
 		timeoutSecs: 30,
-		keepFailedJobs: false,
 	});
 	await titleQueue.start();
-	log('✅ Title generation queue initialized (liteque + EventBus)');
+	log('✅ Title generation queue initialized (simple queue + EventBus)');
 
 	// Setup RPC handlers
 	setupRPCHandlers({

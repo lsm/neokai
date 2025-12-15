@@ -27,7 +27,6 @@
 	},
 	"dependencies": {
 		"hono": "4.11.0",
-		"liteque": "^0.7.0",
 		"simple-git": "^3.30.0",
 		"zod": "^4.2.0"
 	}
