@@ -297,7 +297,7 @@ export class StateChannel<T> {
 	/**
 	 * Fetch snapshot from server
 	 */
-	private async fetchSnapshot(): Promise<void> {
+	private async fetchSnapshot(since?: number): Promise<void> {
 		this.loading.value = true;
 		this.error.value = null;
 
@@ -305,7 +305,9 @@ export class StateChannel<T> {
 			// For RPC calls, pass sessionId as data parameter (not in options)
 			// because StateManager handlers expect it in the data, not as session routing
 			const callData =
-				this.options.sessionId !== 'global' ? { sessionId: this.options.sessionId } : {};
+				this.options.sessionId !== 'global'
+					? { sessionId: this.options.sessionId, since }
+					: { since };
 
 			const snapshot = await this.hub.call<T>(
 				this.channelName,
@@ -314,7 +316,13 @@ export class StateChannel<T> {
 				{ sessionId: 'global' }
 			);
 
-			this.state.value = snapshot;
+			// Smart merge: if incremental (since provided), merge; otherwise replace
+			if (since !== undefined && since > 0) {
+				this.mergeSnapshot(snapshot);
+			} else {
+				this.state.value = snapshot;
+			}
+
 			this.lastSync.value = Date.now();
 
 			this.log(`Snapshot fetched: ${this.channelName}`, snapshot);
@@ -326,6 +334,72 @@ export class StateChannel<T> {
 		} finally {
 			this.loading.value = false;
 		}
+	}
+
+	/**
+	 * Merge snapshot with existing state (for reconnection and incremental sync)
+	 * Handles SDK messages specially: deduplicates by uuid and sorts by timestamp
+	 */
+	private mergeSnapshot(snapshot: T): void {
+		const current = this.state.value;
+
+		// Handle SDK messages state (has sdkMessages array)
+		if (
+			current &&
+			typeof current === 'object' &&
+			typeof snapshot === 'object' &&
+			snapshot !== null &&
+			'sdkMessages' in current &&
+			'sdkMessages' in snapshot
+		) {
+			const currentMessages = (current as Record<string, unknown>).sdkMessages;
+			const snapshotMessages = (snapshot as Record<string, unknown>).sdkMessages;
+
+			if (Array.isArray(currentMessages) && Array.isArray(snapshotMessages)) {
+				const merged = this.mergeSdkMessages(
+					currentMessages as Array<Record<string, unknown>>,
+					snapshotMessages as Array<Record<string, unknown>>
+				);
+				this.state.value = { ...(snapshot as object), sdkMessages: merged } as T;
+				return;
+			}
+		}
+
+		// For other state types, replace is fine
+		this.state.value = snapshot;
+	}
+
+	/**
+	 * Merge two SDK message arrays (deduplicate by uuid + sort by timestamp)
+	 */
+	private mergeSdkMessages(
+		existing: Array<Record<string, unknown>>,
+		incoming: Array<Record<string, unknown>>
+	): Array<Record<string, unknown>> {
+		const map = new Map<string, Record<string, unknown>>();
+
+		// Add existing messages
+		for (const msg of existing) {
+			const id = msg.uuid as string;
+			if (id) {
+				map.set(id, msg);
+			}
+		}
+
+		// Add/update with incoming messages
+		for (const msg of incoming) {
+			const id = msg.uuid as string;
+			if (id) {
+				map.set(id, msg);
+			}
+		}
+
+		// Sort by timestamp (ascending - oldest to newest)
+		return Array.from(map.values()).sort((a, b) => {
+			const timeA = (a.timestamp as number) || 0;
+			const timeB = (b.timestamp as number) || 0;
+			return timeA - timeB;
+		});
 	}
 
 	/**
@@ -413,14 +487,60 @@ export class StateChannel<T> {
 	private setupReconnectionHandler(): void {
 		const reconnectSub = this.hub.onConnection((state) => {
 			if (state === 'connected') {
-				this.log(`Reconnected, refreshing channel: ${this.channelName}`);
-				this.refresh().catch(console.error);
+				this.log(`Reconnected, performing hybrid refresh: ${this.channelName}`);
+				this.hybridRefresh().catch(console.error);
 			} else if (state === 'disconnected' || state === 'error') {
 				this.error.value = new Error(`Connection ${state}`);
 			}
 		});
 
 		this.subscriptions.push(reconnectSub);
+	}
+
+	/**
+	 * Hybrid refresh on reconnection:
+	 * - Try incremental sync if recently disconnected (< 5 min)
+	 * - Fall back to full sync (with merge) for longer disconnections
+	 */
+	private async hybridRefresh(): Promise<void> {
+		const lastSyncTime = this.lastSync.value;
+		const now = Date.now();
+		const gap = now - lastSyncTime;
+		const INCREMENTAL_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+
+		// If we have a recent sync time and gap is reasonable, try incremental
+		if (lastSyncTime > 0 && gap < INCREMENTAL_THRESHOLD) {
+			this.log(
+				`Attempting incremental sync since ${new Date(lastSyncTime).toISOString()} (gap: ${Math.round(gap / 1000)}s)`
+			);
+			try {
+				await this.fetchSnapshot(lastSyncTime);
+				this.log(`Incremental sync successful`);
+				return;
+			} catch (err) {
+				this.log(`Incremental sync failed, falling back to full sync`, err);
+			}
+		} else {
+			this.log(
+				`Gap too large (${Math.round(gap / 1000)}s) or no previous sync, using full sync with merge`
+			);
+		}
+
+		// Fallback: full sync with merge (if we have existing state)
+		try {
+			if (this.state.value) {
+				// Fetch full snapshot and merge (this will deduplicate)
+				await this.fetchSnapshot(0); // 0 triggers merge in fetchSnapshot
+				this.log(`Full sync with merge completed`);
+			} else {
+				// No existing state, just do a clean fetch
+				await this.fetchSnapshot();
+				this.log(`Full sync completed (no existing state)`);
+			}
+		} catch (err) {
+			this.log(`Full sync failed`, err);
+			throw err;
+		}
 	}
 
 	/**
