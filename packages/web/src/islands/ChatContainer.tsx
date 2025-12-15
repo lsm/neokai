@@ -967,108 +967,114 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				</div>
 			</div>
 
-			{/* Messages */}
-			<div ref={messagesContainerRef} data-messages-container class="flex-1 overflow-y-auto">
-				{messages.length === 0 && streamingEvents.length === 0 ? (
-					<div class="flex items-center justify-center h-full px-6">
-						<div class="text-center">
-							<div class="text-5xl mb-4">💬</div>
-							<p class="text-lg text-gray-300 mb-2">No messages yet</p>
-							<p class="text-sm text-gray-500">
-								Start a conversation with Claude to see the magic happen
-							</p>
+			{/* Messages - wrapper with relative positioning for the scroll button */}
+			<div class="flex-1 relative">
+				<div
+					ref={messagesContainerRef}
+					data-messages-container
+					class="absolute inset-0 overflow-y-auto"
+				>
+					{messages.length === 0 && streamingEvents.length === 0 ? (
+						<div class="flex items-center justify-center h-full px-6">
+							<div class="text-center">
+								<div class="text-5xl mb-4">💬</div>
+								<p class="text-lg text-gray-300 mb-2">No messages yet</p>
+								<p class="text-sm text-gray-500">
+									Start a conversation with Claude to see the magic happen
+								</p>
+							</div>
 						</div>
-					</div>
-				) : (
-					<div class="max-w-4xl mx-auto w-full px-4 md:px-6 space-y-0">
-						{/* Load More Messages Button */}
-						{hasMoreMessages && messages.length > 0 && (
-							<div class="flex items-center justify-center py-4">
-								<Button
-									variant="secondary"
-									size="sm"
-									onClick={loadOlderMessages}
-									disabled={loadingOlder}
-								>
-									{loadingOlder ? (
-										<>
-											<svg class="animate-spin h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24">
-												<circle
-													class="opacity-25"
-													cx="12"
-													cy="12"
-													r="10"
-													stroke="currentColor"
-													stroke-width="4"
-												></circle>
-												<path
-													class="opacity-75"
-													fill="currentColor"
-													d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-												></path>
-											</svg>
-											Loading...
-										</>
-									) : (
-										'Load More Messages'
-									)}
-								</Button>
-							</div>
-						)}
+					) : (
+						<div class="max-w-4xl mx-auto w-full px-4 md:px-6 space-y-0">
+							{/* Load More Messages Button */}
+							{hasMoreMessages && messages.length > 0 && (
+								<div class="flex items-center justify-center py-4">
+									<Button
+										variant="secondary"
+										size="sm"
+										onClick={loadOlderMessages}
+										disabled={loadingOlder}
+									>
+										{loadingOlder ? (
+											<>
+												<svg class="animate-spin h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24">
+													<circle
+														class="opacity-25"
+														cx="12"
+														cy="12"
+														r="10"
+														stroke="currentColor"
+														stroke-width="4"
+													></circle>
+													<path
+														class="opacity-75"
+														fill="currentColor"
+														d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+													></path>
+												</svg>
+												Loading...
+											</>
+										) : (
+											'Load More Messages'
+										)}
+									</Button>
+								</div>
+							)}
 
-						{/* Show "No more messages" indicator */}
-						{!hasMoreMessages && messages.length > 0 && (
-							<div class="flex items-center justify-center py-4">
-								<div class="text-xs text-gray-500">Beginning of conversation</div>
-							</div>
-						)}
+							{/* Show "No more messages" indicator */}
+							{!hasMoreMessages && messages.length > 0 && (
+								<div class="flex items-center justify-center py-4">
+									<div class="text-xs text-gray-500">Beginning of conversation</div>
+								</div>
+							)}
 
-						{/* Render all messages using SDK components */}
-						{messages.map((msg, idx) => (
-							<SDKMessageRenderer
-								key={msg.uuid || `msg-${idx}`}
-								message={msg}
-								toolResultsMap={toolResultsMap}
-								toolInputsMap={toolInputsMap}
-								sessionInfo={
-									msg.uuid
-										? (sessionInfoMap.get(msg.uuid) as SDKSystemMessage | undefined)
-										: undefined
-								}
-								syntheticContent={msg.uuid ? compactSyntheticMap.get(msg.uuid) : undefined}
-								skipSynthetic={msg.uuid ? skipSyntheticSet.has(msg.uuid) : false}
-							/>
-						))}
+							{/* Render all messages using SDK components */}
+							{messages.map((msg, idx) => (
+								<SDKMessageRenderer
+									key={msg.uuid || `msg-${idx}`}
+									message={msg}
+									toolResultsMap={toolResultsMap}
+									toolInputsMap={toolInputsMap}
+									sessionInfo={
+										msg.uuid
+											? (sessionInfoMap.get(msg.uuid) as SDKSystemMessage | undefined)
+											: undefined
+									}
+									syntheticContent={msg.uuid ? compactSyntheticMap.get(msg.uuid) : undefined}
+									skipSynthetic={msg.uuid ? skipSyntheticSet.has(msg.uuid) : false}
+								/>
+							))}
 
-						{/* Render streaming events if present */}
-						{streamingEvents.length > 0 && <SDKStreamingAccumulator events={streamingEvents} />}
+							{/* Render streaming events if present */}
+							{streamingEvents.length > 0 && <SDKStreamingAccumulator events={streamingEvents} />}
+						</div>
+					)}
+
+					<div ref={messagesEndRef} />
+				</div>
+
+				{/* Scroll to Bottom Button */}
+				{showScrollButton && (
+					<div class="absolute bottom-4 left-1/2 -translate-x-1/2 z-10">
+						<button
+							onClick={scrollToBottom}
+							class="w-10 h-10 rounded-full bg-dark-800 hover:bg-dark-700 text-gray-300 hover:text-gray-100 shadow-lg border border-gray-600/50 flex items-center justify-center transition-all duration-150 animate-slideIn focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+							title="Scroll to bottom"
+							aria-label="Scroll to bottom"
+						>
+							<svg
+								class="w-5 h-5"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+								stroke-width="2"
+							>
+								<path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+							</svg>
+						</button>
 					</div>
 				)}
-
-				<div ref={messagesEndRef} />
 			</div>
-
-			{/* Scroll to Bottom Button */}
-			{showScrollButton && (
-				<div class="absolute bottom-28 left-1/2 -translate-x-1/2">
-					<button
-						onClick={scrollToBottom}
-						class="w-10 h-10 rounded-full bg-dark-800 hover:bg-dark-700 text-gray-300 hover:text-gray-100 shadow-lg flex items-center justify-center transition-all duration-150 animate-slideIn focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-						title="Scroll to bottom"
-						aria-label="Scroll to bottom"
-					>
-						<svg
-							class="w-5 h-5"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-							stroke-width="2"
-						>
-							<path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
-						</svg>
-					</button>
-				</div>
-			)}
 
 			{/* Error Banner */}
 			{error && (
