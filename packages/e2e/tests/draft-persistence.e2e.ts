@@ -268,6 +268,66 @@ test.describe('Draft Persistence', () => {
 		expect(finalValue).toBe('');
 	});
 
+	test('should not restore sent message as draft after session switch', async ({ page }) => {
+		// This test explicitly covers the bug: sent message reappearing as draft after session switch
+		// Create first session
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
+		await newSessionButton.click();
+
+		const sessionIdA = await waitForSessionCreated(page);
+
+		// Type and send a message in session A
+		const messageInputA = page.locator('textarea[placeholder*="Ask"]').first();
+		const messageToSend = 'This message should not reappear as draft';
+		await messageInputA.fill(messageToSend);
+
+		// Wait for draft to be saved (race condition setup)
+		await page.waitForTimeout(400);
+
+		// Send the message (press Enter)
+		await messageInputA.press('Enter');
+
+		// Wait for message to be sent
+		await waitForMessageSent(page, messageToSend);
+
+		// Verify textarea is cleared
+		let currentValue = await messageInputA.inputValue();
+		expect(currentValue).toBe('');
+
+		// Create second session to switch away
+		await newSessionButton.click();
+
+		const sessionIdB = await waitForSessionCreated(page);
+		expect(sessionIdB).not.toBe(sessionIdA);
+
+		// Type something in session B (to ensure session B is active)
+		const messageInputB = page.locator('textarea[placeholder*="Ask"]').first();
+		await messageInputB.fill('Different session');
+
+		// Wait for save
+		await page.waitForTimeout(400);
+
+		// Switch back to session A
+		const sessionAButton = page.locator(`button[data-session-id="${sessionIdA}"]`);
+		await sessionAButton.click();
+
+		// Wait for navigation
+		await page.waitForURL(`/${sessionIdA}`, { timeout: 5000 });
+
+		// Wait for draft loading to complete
+		await page.waitForTimeout(500);
+
+		// THE BUG: Previously, the sent message would reappear here
+		// With the fix, the textarea should be empty
+		const finalInput = page.locator('textarea[placeholder*="Ask"]').first();
+		const finalValue = await finalInput.inputValue();
+		expect(finalValue).toBe('');
+
+		// Clean up both sessions
+		sessionId = sessionIdA;
+		await cleanupTestSession(page, sessionIdB);
+	});
+
 	test('should handle empty drafts', async ({ page }) => {
 		// Create session
 		const newSessionButton = page.locator("button:has-text('New Session')");
