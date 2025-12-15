@@ -80,11 +80,27 @@ export async function startDevServer(config: Config) {
 			// Proxy all other requests to Vite dev server
 			try {
 				const viteUrl = `http://localhost:${vitePort}${url.pathname}${url.search}`;
-				const viteResponse = await fetch(viteUrl, {
-					method: req.method,
-					headers: req.headers,
-				});
 
+				// Build fetch options, including body for non-GET requests
+				const fetchOptions: RequestInit = {
+					method: req.method,
+					headers: {
+						...Object.fromEntries(req.headers.entries()),
+						// Override host to match Vite's expected host
+						host: `localhost:${vitePort}`,
+					},
+				};
+
+				// Forward request body for methods that may have one
+				if (req.method !== 'GET' && req.method !== 'HEAD') {
+					fetchOptions.body = req.body;
+					// Bun supports streaming body via duplex
+					(fetchOptions as Record<string, unknown>).duplex = 'half';
+				}
+
+				const viteResponse = await fetch(viteUrl, fetchOptions);
+
+				// Create response with Vite's response
 				return new Response(viteResponse.body, {
 					status: viteResponse.status,
 					headers: viteResponse.headers,

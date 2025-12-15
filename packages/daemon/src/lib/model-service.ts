@@ -294,8 +294,9 @@ export async function initializeModels(): Promise<void> {
 				throw new Error('No models returned from SDK');
 			}
 		} finally {
-			// Don't await - fire and forget since Query AsyncGenerator cleanup
-			// can hang if not actively consumed (SDK 0.1.69 behavior)
+			// Fire-and-forget interrupt - awaiting can hang indefinitely
+			// The SDK's AsyncGenerator cleanup blocks if not actively consumed
+			// This is a known SDK 0.1.69 behavior
 			tmpQuery.interrupt().catch(() => {});
 		}
 	} catch (error) {

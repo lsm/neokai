@@ -21,6 +21,9 @@ export default defineConfig({
 	},
 
 	server: {
+		// NOTE: When using dev-server.ts (make dev), these settings are OVERRIDDEN
+		// by the createViteServer() options which uses port 5173 internally.
+		// These defaults are for standalone Vite development (make web).
 		port: 9283,
 		strictPort: true,
 		host: true,
@@ -32,7 +35,8 @@ export default defineConfig({
 		},
 		watch: {
 			// Watch for changes in all relevant files
-			ignored: ['**/node_modules/**', '**/dist/**'],
+			// Exclude database, temporary files, and worktrees to prevent rebuild loops
+			ignored: ['**/node_modules/**', '**/dist/**', '**/data/**', '**/tmp/**', '**/.worktrees/**'],
 			usePolling: false, // Use native file system events
 		},
 		// Proxy API and WebSocket requests to daemon
