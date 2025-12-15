@@ -126,6 +126,9 @@ export default function MessageInput({
 		loadDraft();
 	}, [sessionId]);
 
+	// Track previous sessionId for cleanup
+	const prevSessionIdRef = useRef<string | null>(null);
+
 	// Save draft to session metadata (debounced 250ms)
 	useEffect(() => {
 		// ALWAYS clear existing timeout first (even if isSending)
@@ -134,6 +137,27 @@ export default function MessageInput({
 			clearTimeout(draftSaveTimeoutRef.current);
 			draftSaveTimeoutRef.current = null;
 		}
+
+		// If sessionId changed, flush the previous session's draft immediately
+		// This handles the case where user switches sessions before 250ms debounce fires
+		if (prevSessionIdRef.current && prevSessionIdRef.current !== sessionId) {
+			const prevSessionId = prevSessionIdRef.current;
+			// Fire-and-forget: save the current content as draft for the OLD session
+			// This ensures we don't lose draft state when switching quickly
+			connectionManager.getHub().then((hub) => {
+				hub
+					.call('session.update', {
+						sessionId: prevSessionId,
+						metadata: {
+							inputDraft: content.trim() || undefined,
+						},
+					})
+					.catch((error) => {
+						console.error('Failed to flush draft on session switch:', error);
+					});
+			});
+		}
+		prevSessionIdRef.current = sessionId;
 
 		// Don't save drafts while sending a message (prevents race condition)
 		if (isSending) {
