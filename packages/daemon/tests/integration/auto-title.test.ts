@@ -58,6 +58,44 @@ describe('Auto-Title Generation', () => {
 		);
 	}
 
+	/**
+	 * Helper: Wait for title generation to complete
+	 * Checks both agent idle AND titleGenerated flag OR title changed
+	 */
+	async function waitForTitleGeneration(
+		agentSession: NonNullable<Awaited<ReturnType<typeof ctx.sessionManager.getSessionAsync>>>,
+		timeoutMs = 20000
+	): Promise<void> {
+		const startTime = Date.now();
+
+		// First wait for agent to be idle
+		await waitForIdle(agentSession, timeoutMs);
+
+		// Then wait for title generation (happens async via queue)
+		const remainingTimeout = timeoutMs - (Date.now() - startTime);
+		const titleStartTime = Date.now();
+
+		while (Date.now() - titleStartTime < remainingTimeout) {
+			const sessionData = agentSession.getSessionData();
+
+			// Title is generated when either:
+			// 1. titleGenerated flag is true
+			// 2. Title has changed from default "New Session"
+			if (sessionData.metadata.titleGenerated || sessionData.title !== 'New Session') {
+				return;
+			}
+
+			await Bun.sleep(100);
+		}
+
+		// If we get here, title generation timed out - but that's ok for error handling test
+		// Log stats for debugging
+		const stats = await ctx.titleQueue.getStats();
+		console.log(
+			`Title generation timeout - queue stats: pending=${stats.pending}, processing=${stats.processing}, failed=${stats.failed}`
+		);
+	}
+
 	test.skipIf(!hasAnyCredentials())(
 		'should auto-generate title after first assistant response',
 		async () => {
@@ -80,8 +118,8 @@ describe('Auto-Title Generation', () => {
 				content: 'What is 2+2?',
 			});
 
-			// Wait for first response (includes title generation)
-			await waitForIdle(agentSession!);
+			// Wait for first response AND title generation (async via queue)
+			await waitForTitleGeneration(agentSession!);
 
 			// Title should be generated now (after first assistant response)
 			sessionData = agentSession!.getSessionData();
@@ -118,8 +156,8 @@ describe('Auto-Title Generation', () => {
 				content: 'What is 2+2?',
 			});
 
-			// Wait for first response (includes title generation)
-			await waitForIdle(agentSession!);
+			// Wait for first response AND title generation (async via queue)
+			await waitForTitleGeneration(agentSession!);
 
 			// Get the generated title
 			let sessionData = agentSession!.getSessionData();
@@ -176,8 +214,8 @@ describe('Auto-Title Generation', () => {
 				content: 'What is 1+1?',
 			});
 
-			// Wait for processing and title generation
-			await waitForIdle(agentSession!);
+			// Wait for processing AND title generation (async via queue)
+			await waitForTitleGeneration(agentSession!);
 
 			// Title should be generated (workspace path should be passed to SDK)
 			const finalSessionData = agentSession!.getSessionData();

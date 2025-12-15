@@ -125,15 +125,28 @@ export class SimpleTitleQueue {
 	}
 
 	private async handleMessageSent(sessionId: string): Promise<void> {
+		// Always log to debug title generation issues
+		const debugLog = process.env.TEST_VERBOSE === '1' || process.env.NODE_ENV === 'development';
+
+		if (debugLog) {
+			console.log(`[TitleQueue] handleMessageSent called for session ${sessionId}`);
+		}
+
 		try {
 			// Check if title already generated
 			const session = this.database.getSession(sessionId);
 			if (!session) {
+				if (debugLog) {
+					console.log(`[TitleQueue] Session ${sessionId} not found`);
+				}
 				logger.warn(`Session ${sessionId} not found, skipping title generation`);
 				return;
 			}
 
 			if (session.metadata.titleGenerated) {
+				if (debugLog) {
+					console.log(`[TitleQueue] Title already generated for session ${sessionId}`);
+				}
 				return; // Already generated
 			}
 
@@ -143,7 +156,16 @@ export class SimpleTitleQueue {
 				(m) => m.type === 'user' && !(m as { isSynthetic?: boolean }).isSynthetic
 			);
 
+			if (debugLog) {
+				console.log(
+					`[TitleQueue] Found ${messages.length} total messages, ${userMessages.length} user messages for session ${sessionId}`
+				);
+			}
+
 			if (userMessages.length === 0) {
+				if (debugLog) {
+					console.log(`[TitleQueue] No user messages found for session ${sessionId}`);
+				}
 				logger.warn(`No user messages found for session ${sessionId}`);
 				return;
 			}
@@ -155,8 +177,12 @@ export class SimpleTitleQueue {
 				userMessages: userMessages.map((m) => m as Record<string, unknown>),
 			});
 
+			if (debugLog) {
+				console.log(`[TitleQueue] Enqueued title generation for session ${sessionId}`);
+			}
 			logger.log(`Enqueued title generation for session ${sessionId}`);
 		} catch (error) {
+			console.error(`[TitleQueue] Error in handleMessageSent:`, error);
 			logger.error(`Failed to enqueue title generation for session ${sessionId}:`, error);
 		}
 	}
@@ -175,6 +201,7 @@ export class SimpleTitleQueue {
 	}
 
 	private async processNext(): Promise<void> {
+		const debugLog = process.env.TEST_VERBOSE === '1' || process.env.NODE_ENV === 'development';
 		const db = this.database.getDatabase();
 
 		// Get next pending job
@@ -192,6 +219,10 @@ export class SimpleTitleQueue {
 
 		if (!job) {
 			return; // No jobs to process
+		}
+
+		if (debugLog) {
+			console.log(`[TitleQueue] processNext: Found pending job for session ${job.session_id}`);
 		}
 
 		// Mark as processing
@@ -266,13 +297,22 @@ export class SimpleTitleQueue {
 	}
 
 	private async processJob(job: TitleGenerationJob): Promise<void> {
+		const debugLog = process.env.TEST_VERBOSE === '1' || process.env.NODE_ENV === 'development';
 		const { sessionId, workspacePath, userMessages } = job;
+
+		if (debugLog) {
+			console.log(`[TitleQueue] processJob: Starting title generation for session ${sessionId}`);
+		}
 
 		// Generate title
 		const title = await generateTitleFromUserInput(
 			userMessages as unknown as SDKUserMessage[],
 			workspacePath
 		);
+
+		if (debugLog) {
+			console.log(`[TitleQueue] processJob: Generated title "${title}" for session ${sessionId}`);
+		}
 
 		// Atomic update with fresh DB read
 		const currentSession = this.database.getSession(sessionId);
@@ -282,6 +322,9 @@ export class SimpleTitleQueue {
 
 		// Double-check titleGenerated flag (race condition protection)
 		if (currentSession.metadata.titleGenerated) {
+			if (debugLog) {
+				console.log(`[TitleQueue] processJob: Title already generated for session ${sessionId}`);
+			}
 			logger.log(`Title already generated for session ${sessionId}, skipping update`);
 			return;
 		}
@@ -294,6 +337,10 @@ export class SimpleTitleQueue {
 				titleGenerated: true,
 			},
 		});
+
+		if (debugLog) {
+			console.log(`[TitleQueue] processJob: Updated session ${sessionId} with title`);
+		}
 
 		// Emit success event
 		await this.eventBus.emit('title:generated', {

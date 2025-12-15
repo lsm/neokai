@@ -15,6 +15,7 @@ import { SessionManager } from '../src/lib/session-manager';
 import { AuthManager } from '../src/lib/auth-manager';
 import { StateManager } from '../src/lib/state-manager';
 import { SubscriptionManager } from '../src/lib/subscription-manager';
+import { SimpleTitleQueue } from '../src/lib/simple-title-queue';
 import { MessageHub, MessageHubRouter } from '@liuboer/shared';
 import { setupRPCHandlers } from '../src/lib/rpc-handlers';
 import { WebSocketServerTransport } from '../src/lib/websocket-server-transport';
@@ -30,6 +31,7 @@ export interface TestContext {
 	stateManager: StateManager;
 	subscriptionManager: SubscriptionManager;
 	authManager: AuthManager;
+	titleQueue: SimpleTitleQueue;
 	baseUrl: string;
 	config: Config;
 	cleanup: () => Promise<void>;
@@ -126,7 +128,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 	// Initialize EventBus (breaks circular dependency!)
 	const { EventBus } = await import('@liuboer/shared');
 	const eventBus = new EventBus({
-		debug: false,
+		debug: process.env.TEST_VERBOSE === '1', // Enable debug with TEST_VERBOSE=1
 	});
 
 	// Create session manager with EventBus
@@ -146,6 +148,15 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 
 	// Initialize State Manager (listens to EventBus)
 	const stateManager = new StateManager(messageHub, sessionManager, authManager, config, eventBus);
+
+	// Initialize Title Generation Queue (decoupled via EventBus)
+	// This is critical for auto-title integration tests
+	const titleQueue = new SimpleTitleQueue(db, eventBus, {
+		maxRetries: 3,
+		pollIntervalMs: 500, // Faster polling for tests
+		timeoutSecs: 30,
+	});
+	await titleQueue.start();
 
 	// Setup RPC handlers
 	setupRPCHandlers({
@@ -293,10 +304,14 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 		stateManager,
 		subscriptionManager,
 		authManager,
+		titleQueue,
 		baseUrl,
 		config,
 		cleanup: async () => {
-			// First cleanup session resources
+			// First stop title generation queue
+			await titleQueue.stop();
+
+			// Then cleanup session resources
 			await sessionManager.cleanup();
 
 			// Reduced wait - most async operations complete faster
