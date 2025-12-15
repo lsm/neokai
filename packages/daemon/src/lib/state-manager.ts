@@ -228,8 +228,8 @@ export class StateManager {
 		});
 
 		this.messageHub.handle(STATE_CHANNELS.SESSION_SDK_MESSAGES, async (data) => {
-			const { sessionId } = data as { sessionId: string };
-			return await this.getSDKMessagesState(sessionId);
+			const { sessionId, since } = data as { sessionId: string; since?: number };
+			return await this.getSDKMessagesState(sessionId, since);
 		});
 	}
 
@@ -355,13 +355,14 @@ export class StateManager {
 		};
 	}
 
-	private async getSDKMessagesState(sessionId: string): Promise<SDKMessagesState> {
+	private async getSDKMessagesState(sessionId: string, since?: number): Promise<SDKMessagesState> {
 		const agentSession = await this.sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) {
 			throw new Error('Session not found');
 		}
 
-		const sdkMessages = agentSession.getSDKMessages();
+		// Use 'since' for incremental sync on reconnection
+		const sdkMessages = agentSession.getSDKMessages(100, undefined, since);
 
 		return {
 			sdkMessages,
