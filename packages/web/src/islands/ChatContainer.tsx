@@ -965,7 +965,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			</div>
 
 			{/* Messages */}
-			<div ref={messagesContainerRef} class="flex-1 overflow-y-auto">
+			<div ref={messagesContainerRef} data-messages-container class="flex-1 overflow-y-auto">
 				{messages.length === 0 && streamingEvents.length === 0 ? (
 					<div class="flex items-center justify-center h-full px-6">
 						<div class="text-center">
@@ -1047,23 +1047,23 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 			{/* Scroll to Bottom Button */}
 			{showScrollButton && (
-				<div class="absolute bottom-28 right-8">
-					<IconButton
+				<div class="absolute bottom-28 left-1/2 -translate-x-1/2">
+					<button
 						onClick={scrollToBottom}
-						variant="solid"
-						size="lg"
-						class="shadow-lg animate-slideIn"
+						class="w-10 h-10 rounded-full bg-dark-800 hover:bg-dark-700 text-gray-300 hover:text-gray-100 shadow-lg flex items-center justify-center transition-all duration-150 animate-slideIn focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
 						title="Scroll to bottom"
+						aria-label="Scroll to bottom"
 					>
-						<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M19 14l-7 7m0 0l-7-7m7 7V3"
-							/>
+						<svg
+							class="w-5 h-5"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
 						</svg>
-					</IconButton>
+					</button>
 				</div>
 			)}
 
