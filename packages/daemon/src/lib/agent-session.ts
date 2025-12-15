@@ -343,6 +343,33 @@ export class AgentSession {
 				this.logger.log(`Session uses shared workspace (no worktree)`);
 			}
 
+			// Build system prompt with worktree instructions if applicable
+			const systemPromptConfig: Options['systemPrompt'] = {
+				type: 'preset',
+				preset: 'claude_code',
+			};
+
+			// Append worktree instructions if session uses a worktree
+			if (this.session.worktree) {
+				systemPromptConfig.append = `
+IMPORTANT: Git Worktree Isolation
+
+This session is running in an isolated git worktree at:
+${this.session.worktree.worktreePath}
+
+Branch: ${this.session.worktree.branch}
+Main repository: ${this.session.worktree.mainRepoPath}
+
+CRITICAL RULES:
+1. ALL file operations MUST stay within the worktree directory: ${this.session.worktree.worktreePath}
+2. NEVER modify files in the main repository at: ${this.session.worktree.mainRepoPath}
+3. Your current working directory (cwd) is already set to the worktree path
+4. Do NOT attempt to access or modify files outside the worktree path
+
+This isolation ensures concurrent sessions don't conflict with each other.
+`.trim();
+			}
+
 			// Build query options
 			const queryOptions: Options = {
 				model: this.session.config.model,
@@ -351,10 +378,7 @@ export class AgentSession {
 				allowDangerouslySkipPermissions: true,
 				maxTurns: Infinity,
 				settingSources: ['project', 'local'],
-				systemPrompt: {
-					type: 'preset',
-					preset: 'claude_code',
-				},
+				systemPrompt: systemPromptConfig,
 			};
 
 			// Add resume parameter if SDK session ID exists (session resumption)
