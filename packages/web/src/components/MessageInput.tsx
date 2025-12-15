@@ -61,6 +61,13 @@ export default function MessageInput({
 
 	// Track if we're currently sending a message (prevents draft save race condition)
 	const [isSending, setIsSending] = useState(false);
+	// Ref for isSending - allows async callbacks to read current value instead of stale closure
+	const isSendingRef = useRef(false);
+
+	// Keep ref in sync with state
+	useEffect(() => {
+		isSendingRef.current = isSending;
+	}, [isSending]);
 
 	// Detect if device is mobile (touch-based)
 	const isMobileDevice = useRef(false);
@@ -121,14 +128,16 @@ export default function MessageInput({
 
 	// Save draft to session metadata (debounced 250ms)
 	useEffect(() => {
+		// ALWAYS clear existing timeout first (even if isSending)
+		// This prevents stale callbacks from firing
+		if (draftSaveTimeoutRef.current) {
+			clearTimeout(draftSaveTimeoutRef.current);
+			draftSaveTimeoutRef.current = null;
+		}
+
 		// Don't save drafts while sending a message (prevents race condition)
 		if (isSending) {
 			return;
-		}
-
-		// Clear existing timeout
-		if (draftSaveTimeoutRef.current) {
-			clearTimeout(draftSaveTimeoutRef.current);
 		}
 
 		// Don't save empty drafts - clear them instead
@@ -136,13 +145,21 @@ export default function MessageInput({
 
 		draftSaveTimeoutRef.current = setTimeout(() => {
 			const saveDraft = async () => {
-				// Double-check we're not sending (async callback might fire after send starts)
-				if (isSending) {
+				// Check ref BEFORE getting hub (early exit for obvious cases)
+				if (isSendingRef.current) {
 					return;
 				}
 
 				try {
 					const hub = await connectionManager.getHub();
+
+					// Check ref AFTER getting hub (catches race conditions)
+					// This is critical: the async getHub() call takes time,
+					// and user might have pressed Enter during that time
+					if (isSendingRef.current) {
+						return;
+					}
+
 					await hub.call('session.update', {
 						sessionId,
 						metadata: {
@@ -162,6 +179,7 @@ export default function MessageInput({
 		return () => {
 			if (draftSaveTimeoutRef.current) {
 				clearTimeout(draftSaveTimeoutRef.current);
+				draftSaveTimeoutRef.current = null;
 			}
 		};
 	}, [content, sessionId, isSending]);
@@ -335,7 +353,9 @@ export default function MessageInput({
 
 		try {
 			// ✅ Layer 1: Set sending flag to block draft saves
+			// Set both state and ref - ref updates synchronously for in-flight async operations
 			setIsSending(true);
+			isSendingRef.current = true;
 
 			// ✅ Layer 2: Cancel any pending debounced save
 			if (draftSaveTimeoutRef.current) {
@@ -366,6 +386,7 @@ export default function MessageInput({
 			// This ensures any stale callbacks have completed
 			setTimeout(() => {
 				setIsSending(false);
+				isSendingRef.current = false;
 			}, 100);
 		}
 	};
