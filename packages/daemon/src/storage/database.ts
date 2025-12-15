@@ -323,8 +323,13 @@ export class Database {
 			values.push(updates.lastActiveAt);
 		}
 		if (updates.metadata) {
+			// Merge partial metadata updates with existing metadata
+			const existing = this.getSession(id);
+			const mergedMetadata = existing
+				? { ...existing.metadata, ...updates.metadata }
+				: updates.metadata;
 			fields.push('metadata = ?');
-			values.push(JSON.stringify(updates.metadata));
+			values.push(JSON.stringify(mergedMetadata));
 		}
 		if (updates.config) {
 			// Merge partial config updates with existing config

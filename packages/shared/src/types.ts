@@ -40,6 +40,7 @@ export interface SessionMetadata {
 	toolCallCount: number;
 	titleGenerated?: boolean; // Flag to track if title has been auto-generated
 	lastContextInfo?: ContextInfo | null; // Last known context info (persisted)
+	inputDraft?: string; // Draft input text (persisted across sessions and devices)
 }
 
 // Message content types for streaming input (supports images)
