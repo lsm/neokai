@@ -226,11 +226,14 @@ export function SDKUserMessage({
 
 	// If this is a synthetic message with multiple content blocks, render them in detail
 	if (syntheticContentBlocks && syntheticContentBlocks.length > 0) {
+		const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
 		return (
 			<div
 				class={cn(messageSpacing.user.container.combined, 'flex justify-end')}
 				data-testid="user-message"
 				data-message-role="user"
+				data-message-uuid={message.uuid}
+				data-message-timestamp={messageWithTimestamp.timestamp || 0}
 			>
 				<div class="max-w-[85%] md:max-w-[70%] w-auto">
 					<div
@@ -340,11 +343,16 @@ export function SDKUserMessage({
 		);
 	}
 
+	// Get message metadata for E2E tests
+	const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
+
 	return (
 		<div
 			class={cn(messageSpacing.user.container.combined, 'flex justify-end')}
 			data-testid="user-message"
 			data-message-role="user"
+			data-message-uuid={message.uuid}
+			data-message-timestamp={messageWithTimestamp.timestamp || 0}
 		>
 			<div class="max-w-[85%] md:max-w-[70%] w-auto">
 				{/* Message bubble */}

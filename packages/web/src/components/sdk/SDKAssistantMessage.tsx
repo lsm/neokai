@@ -86,8 +86,17 @@ export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
 	const toolBlocks = apiMessage.content.filter((block: ContentBlock) => isToolUseBlock(block));
 	const thinkingBlocks = apiMessage.content.filter((block: ContentBlock) => isThinkingBlock(block));
 
+	// Get message metadata for E2E tests
+	const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
+
 	return (
-		<div class="py-2 space-y-3" data-testid="assistant-message" data-message-role="assistant">
+		<div
+			class="py-2 space-y-3"
+			data-testid="assistant-message"
+			data-message-role="assistant"
+			data-message-uuid={message.uuid}
+			data-message-timestamp={messageWithTimestamp.timestamp || 0}
+		>
 			{/* Tool use blocks - full width like result messages */}
 			{toolBlocks.map((block: Extract<ContentBlock, { type: 'tool_use' }>, idx: number) => {
 				const toolResult = toolResultsMap?.get(block.id);
