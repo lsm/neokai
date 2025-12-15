@@ -398,9 +398,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			setShowScrollButton(!isNearBottom);
 		};
 
+		// Call once immediately to set initial state
+		handleScroll();
+
 		container.addEventListener('scroll', handleScroll);
 		return () => container.removeEventListener('scroll', handleScroll);
-	}, []);
+	}, [messages, streamingEvents]); // Re-run when messages change to update button visibility
 
 	const loadSession = async () => {
 		try {
@@ -865,7 +868,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	}
 
 	return (
-		<div class="flex-1 flex flex-col bg-dark-900 overflow-x-hidden">
+		<div class="flex-1 flex flex-col bg-dark-900 overflow-x-hidden relative">
 			{/* Header */}
 			<div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 p-4">
 				<div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center gap-3">

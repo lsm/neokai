@@ -8,13 +8,12 @@ import {
 /**
  * Scroll to Bottom Button E2E Tests
  *
- * Tests the ChatGPT-like scroll-to-bottom button's styling and structure.
- * Functional scroll tests require real message content, which are covered by manual testing.
- *
- * These tests verify:
- * - Button structure and styling (circular, centered)
- * - Icon presence (chevron down)
- * - Button visibility logic with real content
+ * Tests the ChatGPT-like scroll-to-bottom button functionality.
+ * These tests verify the actual bug that was fixed:
+ * 1. Button appears when scrolled away from bottom
+ * 2. Button hides when at bottom
+ * 3. Button works when clicked (scrolls to bottom)
+ * 4. Parent container has correct positioning
  */
 test.describe('Scroll to Bottom Button', () => {
 	let sessionId: string | null = null;
@@ -37,129 +36,198 @@ test.describe('Scroll to Bottom Button', () => {
 		}
 	});
 
-	test('should not show scroll button in empty session at bottom', async ({ page }) => {
+	test('should not show button when at bottom of empty session', async ({ page }) => {
 		// Create a new session
 		await page.locator('button:has-text("New Session")').first().click();
 		sessionId = await waitForSessionCreated(page);
 
-		// At bottom (empty session), button should not be visible
-		const scrollButton = page.locator('button[title="Scroll to bottom"]');
+		// At bottom (empty session), button should not be visible to the user
+		const scrollButton = page.locator('button[aria-label="Scroll to bottom"]');
 		await expect(scrollButton).not.toBeVisible();
 	});
 
-	test('should have correct button structure and styling when visible', async ({ page }) => {
+	test('should show button when scrolled away from bottom with real content', async ({ page }) => {
 		// Create a new session
 		await page.locator('button:has-text("New Session")').first().click();
 		sessionId = await waitForSessionCreated(page);
 
-		// Send a message to create some content
+		// Send multiple messages to create scrollable content
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
-		await messageInput.fill(
-			'Hello, please give me a long detailed response about web development.'
-		);
-		await messageInput.press('Enter');
 
-		// Wait for assistant response
+		// Send first message
+		await messageInput.fill('Please explain React hooks in detail with examples.');
+		await messageInput.press('Enter');
 		await waitForAssistantResponse(page, { timeout: 45000 });
 
-		// Wait a bit for content to render
+		// Send second message to ensure we have enough content
+		await messageInput.fill('Now explain useEffect hook with 5 detailed examples.');
+		await messageInput.press('Enter');
+		await waitForAssistantResponse(page, { timeout: 45000 });
+
+		// Wait for content to fully render
 		await page.waitForTimeout(1000);
 
-		// Try to trigger the button by scrolling up programmatically
+		// Verify we have scrollable content
+		const hasScrollableContent = await page.evaluate(() => {
+			const container = document.querySelector('[data-messages-container]') as HTMLElement;
+			return container && container.scrollHeight > container.clientHeight;
+		});
+
+		// Skip test if content isn't scrollable (this can happen with short responses)
+		if (!hasScrollableContent) {
+			test.skip();
+			return;
+		}
+
+		// Scroll to top to trigger button appearance
 		await page.evaluate(() => {
 			const container = document.querySelector('[data-messages-container]') as HTMLElement;
-			if (container && container.scrollHeight > container.clientHeight) {
-				// Scroll to top to show button
+			if (container) {
 				container.scrollTop = 0;
 			}
 		});
 
+		// Wait for React to update state
 		await page.waitForTimeout(500);
 
-		// Check if button appears (it may not if content isn't scrollable enough, which is okay)
-		const scrollButton = page.locator('button[title="Scroll to bottom"]');
-		const buttonCount = await scrollButton.count();
+		// Button MUST be visible to the user now
+		const scrollButton = page.locator('button[aria-label="Scroll to bottom"]');
+		await expect(scrollButton).toBeVisible({ timeout: 5000 });
 
-		if (buttonCount > 0) {
-			// Button is visible, verify its structure
-			await expect(scrollButton).toBeVisible();
+		// Verify button has correct visual styling (user can see these)
+		const buttonClasses = await scrollButton.getAttribute('class');
+		expect(buttonClasses).toContain('rounded-full');
+		expect(buttonClasses).toContain('w-10');
+		expect(buttonClasses).toContain('h-10');
 
-			// Check for circular shape classes
-			const buttonClasses = await scrollButton.getAttribute('class');
-			expect(buttonClasses).toContain('rounded-full');
-			expect(buttonClasses).toContain('w-10');
-			expect(buttonClasses).toContain('h-10');
+		// Verify button is positioned correctly (bottom center of viewport)
+		const buttonBox = await scrollButton.boundingBox();
+		expect(buttonBox).not.toBeNull();
 
-			// Check for animation class
-			expect(buttonClasses).toContain('animate-slideIn');
+		// Button should be in the lower portion of the viewport
+		const viewportHeight = page.viewportSize()?.height || 0;
+		expect(buttonBox!.y).toBeGreaterThan(viewportHeight * 0.5);
 
-			// Check parent has centering classes
-			const parentDiv = scrollButton.locator('..');
-			const parentClasses = await parentDiv.getAttribute('class');
-			expect(parentClasses).toContain('left-1/2');
-			expect(parentClasses).toContain('-translate-x-1/2');
-
-			// Check for SVG icon
-			const svg = scrollButton.locator('svg');
-			await expect(svg).toBeVisible();
-
-			// SVG should have a path element (the chevron)
-			const path = svg.locator('path');
-			await expect(path).toBeVisible();
-		} else {
-			// Button not visible - content might not be scrollable enough
-			// This is okay, just log it
-			console.log(
-				'Scroll button not visible - content may not be scrollable enough (this is expected for short responses)'
-			);
-		}
+		// Verify icon is visible to user
+		const svg = scrollButton.locator('svg');
+		await expect(svg).toBeVisible();
 	});
 
-	test('should display chevron down icon structure', async ({ page }) => {
-		// This test verifies the icon structure exists in the code by checking the implementation
-		// We don't need scrollable content to verify the SVG structure
-
+	test('should scroll to bottom when button is clicked', async ({ page }) => {
 		// Create a new session
 		await page.locator('button:has-text("New Session")').first().click();
 		sessionId = await waitForSessionCreated(page);
 
-		// Check that the scroll button element structure exists in the DOM (even if hidden)
-		// by looking for the specific SVG path that represents the chevron
-		const hasChevronStructure = await page.evaluate(() => {
-			// The button exists in the DOM even when hidden
-			// Look for SVG with the chevron path
-			const svgs = document.querySelectorAll('svg');
-			for (const svg of svgs) {
-				const paths = svg.querySelectorAll('path');
-				for (const path of paths) {
-					const d = path.getAttribute('d');
-					// Check for the chevron path: M19 9l-7 7-7-7
-					if (d && d.includes('M19 9l-7 7-7-7')) {
-						return true;
-					}
-				}
-			}
-			return false;
+		// Send multiple messages to create scrollable content
+		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+		await messageInput.fill('Please write a long detailed explanation about TypeScript.');
+		await messageInput.press('Enter');
+		await waitForAssistantResponse(page, { timeout: 45000 });
+
+		await messageInput.fill('Now explain async/await in JavaScript with examples.');
+		await messageInput.press('Enter');
+		await waitForAssistantResponse(page, { timeout: 45000 });
+
+		await page.waitForTimeout(1000);
+
+		// Verify scrollable content exists
+		const hasScrollableContent = await page.evaluate(() => {
+			const container = document.querySelector('[data-messages-container]') as HTMLElement;
+			return container && container.scrollHeight > container.clientHeight;
 		});
 
-		expect(hasChevronStructure).toBe(true);
+		// Skip test if content isn't scrollable
+		if (!hasScrollableContent) {
+			test.skip();
+			return;
+		}
+
+		// Scroll to top
+		await page.evaluate(() => {
+			const container = document.querySelector('[data-messages-container]') as HTMLElement;
+			if (container) container.scrollTop = 0;
+		});
+		await page.waitForTimeout(500);
+
+		// Button should be visible to user
+		const scrollButton = page.locator('button[aria-label="Scroll to bottom"]');
+		await expect(scrollButton).toBeVisible({ timeout: 5000 });
+
+		// User clicks the button
+		await scrollButton.click();
+
+		// Wait for smooth scroll animation to complete
+		await page.waitForTimeout(1000);
+
+		// Verify user can see the last message (button scrolled us to bottom)
+		const lastMessage = page.locator('[data-messages-container] > div > *').last();
+		await expect(lastMessage).toBeInViewport();
+
+		// Button should now be hidden from user's view
+		await expect(scrollButton).not.toBeVisible();
 	});
 
-	test('should have button in DOM with correct title attribute', async ({ page }) => {
-		// Create a new session
+	test('should hide button when user scrolls to bottom', async ({ page }) => {
+		// Create session and content
 		await page.locator('button:has-text("New Session")').first().click();
 		sessionId = await waitForSessionCreated(page);
 
-		// Even if not visible, the button should exist in the DOM with correct attributes
-		const scrollButton = page.locator('button[title="Scroll to bottom"]');
+		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+		await messageInput.fill('Explain Promise chains with detailed examples.');
+		await messageInput.press('Enter');
+		await waitForAssistantResponse(page, { timeout: 45000 });
 
-		// Check button exists (might be hidden)
-		const buttonExists = (await scrollButton.count()) > 0;
-		expect(buttonExists).toBe(true);
+		await page.waitForTimeout(1000);
 
-		// If visible, verify aria-label matches
-		if (await scrollButton.isVisible()) {
-			await expect(scrollButton).toHaveAttribute('aria-label', 'Scroll to bottom');
+		// Check if we have scrollable content
+		const hasScrollableContent = await page.evaluate(() => {
+			const container = document.querySelector('[data-messages-container]') as HTMLElement;
+			return container && container.scrollHeight > container.clientHeight;
+		});
+
+		if (!hasScrollableContent) {
+			test.skip();
+			return;
 		}
+
+		// Scroll to top - button should appear
+		await page.evaluate(() => {
+			const container = document.querySelector('[data-messages-container]') as HTMLElement;
+			if (container) container.scrollTop = 0;
+		});
+		await page.waitForTimeout(500);
+
+		// User should see the button
+		const scrollButton = page.locator('button[aria-label="Scroll to bottom"]');
+		await expect(scrollButton).toBeVisible({ timeout: 5000 });
+
+		// User scrolls down manually (using mouse wheel simulation)
+		const messagesContainer = page.locator('[data-messages-container]');
+		await messagesContainer.evaluate((el) => {
+			el.scrollTop = el.scrollHeight;
+		});
+		await page.waitForTimeout(500);
+
+		// Button should disappear from user's view
+		await expect(scrollButton).not.toBeVisible();
+	});
+
+	test('should verify parent container has position relative', async ({ page }) => {
+		// This tests the bug fix: parent must have position:relative for absolute button
+		await page.locator('button:has-text("New Session")').first().click();
+		sessionId = await waitForSessionCreated(page);
+
+		// Check the chat container has position: relative
+		const hasRelativePosition = await page.evaluate(() => {
+			const chatContainer = document.querySelector(
+				'.flex-1.flex.flex-col.bg-dark-900.overflow-x-hidden.relative'
+			) as HTMLElement;
+			if (!chatContainer) return false;
+
+			const computedStyle = window.getComputedStyle(chatContainer);
+			return computedStyle.position === 'relative';
+		});
+
+		expect(hasRelativePosition).toBe(true);
 	});
 });
