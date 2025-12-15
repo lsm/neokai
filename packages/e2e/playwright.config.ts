@@ -81,6 +81,7 @@ export default defineConfig({
 				'**/session-management.e2e.ts', // Will add cleanup
 				'**/chat-flow.e2e.ts', // Will add cleanup
 				'**/model-switcher.e2e.ts', // Model switcher UI tests
+				'**/draft-persistence.e2e.ts', // Draft persistence tests
 			],
 			use: { ...devices['Desktop Chrome'] },
 		},

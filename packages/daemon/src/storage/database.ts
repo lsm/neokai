@@ -324,10 +324,16 @@ export class Database {
 		}
 		if (updates.metadata) {
 			// Merge partial metadata updates with existing metadata
+			// Filter out undefined/null values to allow clearing fields
 			const existing = this.getSession(id);
-			const mergedMetadata = existing
-				? { ...existing.metadata, ...updates.metadata }
-				: updates.metadata;
+			const mergedMetadata = existing ? { ...existing.metadata } : {};
+			for (const [key, value] of Object.entries(updates.metadata)) {
+				if (value === undefined || value === null) {
+					delete mergedMetadata[key as keyof typeof mergedMetadata];
+				} else {
+					(mergedMetadata as Record<string, unknown>)[key] = value;
+				}
+			}
 			fields.push('metadata = ?');
 			values.push(JSON.stringify(mergedMetadata));
 		}

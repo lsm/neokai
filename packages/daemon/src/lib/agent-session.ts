@@ -729,7 +729,19 @@ This isolation ensures concurrent sessions don't conflict with each other.
 			this.session.workspacePath = updates.workspacePath;
 		}
 		if (updates.status) this.session.status = updates.status;
-		if (updates.metadata) this.session.metadata = updates.metadata;
+		if (updates.metadata) {
+			// Merge partial metadata updates (consistent with database.updateSession behavior)
+			// Filter out undefined/null values to allow clearing fields
+			const mergedMetadata = { ...this.session.metadata };
+			for (const [key, value] of Object.entries(updates.metadata)) {
+				if (value === undefined || value === null) {
+					delete mergedMetadata[key as keyof typeof mergedMetadata];
+				} else {
+					(mergedMetadata as Record<string, unknown>)[key] = value;
+				}
+			}
+			this.session.metadata = mergedMetadata;
+		}
 		if (updates.config) {
 			this.session.config = { ...this.session.config, ...updates.config };
 		}
