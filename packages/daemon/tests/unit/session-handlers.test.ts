@@ -667,7 +667,7 @@ describe('Session RPC Handlers', () => {
 					data: {
 						sessionId,
 						metadata: {
-							customField: 'preserved',
+							messageCount: 5,
 							titleGenerated: true,
 						},
 					},
@@ -724,7 +724,7 @@ describe('Session RPC Handlers', () => {
 
 			expect(getResponse.type).toBe('RESULT');
 			expect(getResponse.data.session.metadata.inputDraft).toBe('merged draft');
-			expect(getResponse.data.session.metadata.customField).toBe('preserved');
+			expect(getResponse.data.session.metadata.messageCount).toBe(5);
 			expect(getResponse.data.session.metadata.titleGenerated).toBe(true);
 
 			ws.close();
