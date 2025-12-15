@@ -719,6 +719,128 @@ describe('Database', () => {
 		});
 	});
 
+	describe('Session inputDraft persistence', () => {
+		test('should save inputDraft to metadata', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			db.createSession(session);
+
+			// Update with inputDraft
+			db.updateSession('session-1', {
+				metadata: { inputDraft: 'test draft' },
+			});
+
+			const updated = db.getSession('session-1');
+
+			assertExists(updated);
+			assertEquals(updated.metadata.inputDraft, 'test draft');
+
+			db.close();
+		});
+
+		test('should merge inputDraft with existing metadata fields', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			session.metadata.messageCount = 5;
+			session.metadata.totalTokens = 1000;
+			db.createSession(session);
+
+			// Update with inputDraft
+			db.updateSession('session-1', {
+				metadata: { inputDraft: 'draft text' },
+			});
+
+			const updated = db.getSession('session-1');
+
+			assertExists(updated);
+			assertEquals(updated.metadata.inputDraft, 'draft text');
+			// Verify other metadata fields are preserved
+			assertEquals(updated.metadata.messageCount, 5);
+			assertEquals(updated.metadata.totalTokens, 1000);
+			assertEquals(updated.metadata.inputTokens, 0);
+			assertEquals(updated.metadata.outputTokens, 0);
+
+			db.close();
+		});
+
+		test('should clear inputDraft when set to undefined', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			session.metadata.inputDraft = 'initial draft';
+			session.metadata.messageCount = 3;
+			db.createSession(session);
+
+			// Verify inputDraft is set
+			let retrieved = db.getSession('session-1');
+			assertExists(retrieved);
+			assertEquals(retrieved.metadata.inputDraft, 'initial draft');
+
+			// Clear inputDraft by setting to undefined
+			db.updateSession('session-1', {
+				metadata: { inputDraft: undefined },
+			});
+
+			retrieved = db.getSession('session-1');
+			assertExists(retrieved);
+			assertEquals(retrieved.metadata.inputDraft, undefined);
+			// Verify other metadata preserved
+			assertEquals(retrieved.metadata.messageCount, 3);
+
+			db.close();
+		});
+
+		test('should handle empty string inputDraft', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			db.createSession(session);
+
+			// Update with empty string
+			db.updateSession('session-1', {
+				metadata: { inputDraft: '' },
+			});
+
+			const updated = db.getSession('session-1');
+
+			assertExists(updated);
+			assertEquals(updated.metadata.inputDraft, '');
+
+			db.close();
+		});
+
+		test('should persist inputDraft across session retrieval', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			db.createSession(session);
+
+			// Set inputDraft
+			db.updateSession('session-1', {
+				metadata: { inputDraft: 'persisted draft' },
+			});
+
+			// Retrieve session multiple times
+			const retrieved1 = db.getSession('session-1');
+			assertExists(retrieved1);
+			assertEquals(retrieved1.metadata.inputDraft, 'persisted draft');
+
+			const retrieved2 = db.getSession('session-1');
+			assertExists(retrieved2);
+			assertEquals(retrieved2.metadata.inputDraft, 'persisted draft');
+
+			// Verify it's also in listSessions
+			const sessions = db.listSessions();
+			const found = sessions.find((s) => s.id === 'session-1');
+			assertExists(found);
+			assertEquals(found.metadata.inputDraft, 'persisted draft');
+
+			db.close();
+		});
+	});
+
 	describe('Data Integrity', () => {
 		test('should cascade delete SDK messages when session is deleted', async () => {
 			const db = await createTestDb();
