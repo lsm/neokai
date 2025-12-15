@@ -23,7 +23,7 @@ import {
 } from '../lib/signals.ts';
 import { connectionState } from '../lib/state.ts';
 import MessageInput from '../components/MessageInput.tsx';
-import StatusIndicator from '../components/StatusIndicator.tsx';
+import ContextIndicator from '../components/ContextIndicator.tsx';
 import { Button } from '../components/ui/Button.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
@@ -1078,8 +1078,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				</div>
 			)}
 
-			{/* Status Indicator */}
-			<StatusIndicator
+			{/* Context Indicator */}
+			<ContextIndicator
 				connectionState={connectionState.value}
 				isProcessing={sending || streamingEvents.length > 0}
 				currentAction={currentAction}
