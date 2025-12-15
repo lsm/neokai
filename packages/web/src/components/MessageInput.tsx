@@ -53,6 +53,9 @@ export default function MessageInput({
 	// Track interrupting state
 	const [interrupting, setInterrupting] = useState(false);
 
+	// Draft persistence timeout ref
+	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
 	// Detect if device is mobile (touch-based)
 	const isMobileDevice = useRef(false);
 
@@ -83,6 +86,67 @@ export default function MessageInput({
 		// Reset interrupting state when switching sessions
 		setInterrupting(false);
 	}, [sessionId]);
+
+	// Load draft from session metadata on mount/session change
+	useEffect(() => {
+		const loadDraft = async () => {
+			try {
+				const hub = await connectionManager.getHub();
+				const response = await hub.call<{ session: { metadata?: { inputDraft?: string } } }>(
+					'session.get',
+					{ sessionId }
+				);
+				const draft = response.session?.metadata?.inputDraft;
+				if (draft) {
+					setContent(draft);
+				} else {
+					setContent(''); // Clear if no draft
+				}
+			} catch (error) {
+				console.error('Failed to load draft:', error);
+				// Don't show error toast - just fail silently
+			}
+		};
+
+		loadDraft();
+	}, [sessionId]);
+
+	// Save draft to session metadata (debounced 250ms)
+	useEffect(() => {
+		// Clear existing timeout
+		if (draftSaveTimeoutRef.current) {
+			clearTimeout(draftSaveTimeoutRef.current);
+		}
+
+		// Don't save empty drafts - clear them instead
+		const trimmedContent = content.trim();
+
+		draftSaveTimeoutRef.current = setTimeout(() => {
+			const saveDraft = async () => {
+				try {
+					const hub = await connectionManager.getHub();
+					await hub.call('session.update', {
+						sessionId,
+						metadata: {
+							inputDraft: trimmedContent || undefined, // Clear if empty
+						},
+					});
+				} catch (error) {
+					// Silently fail - don't interrupt user typing
+					console.error('Failed to save draft:', error);
+				}
+			};
+
+			saveDraft();
+		}, 250); // 250ms debounce (matches context update throttle)
+
+		// Cleanup on unmount
+		return () => {
+			if (draftSaveTimeoutRef.current) {
+				clearTimeout(draftSaveTimeoutRef.current);
+			}
+		};
+	}, [content, sessionId]);
 
 	// Global Escape key listener for interrupt (works even when textarea is disabled)
 	useEffect(() => {
@@ -242,12 +306,23 @@ export default function MessageInput({
 		}
 	}, [content]);
 
-	const handleSubmit = (e: Event) => {
+	const handleSubmit = async (e: Event) => {
 		e.preventDefault();
 		// Check agent working state at time of submit
-		if (content.trim() && !disabled && !isAgentWorking.value) {
+		if (content.trim() && !isAgentWorking.value) {
 			onSend(content);
 			setContent('');
+			// Clear draft from database immediately after send
+			try {
+				const hub = await connectionManager.getHub();
+				await hub.call('session.update', {
+					sessionId,
+					metadata: { inputDraft: undefined },
+				});
+			} catch (error) {
+				// Silently fail - draft will be cleared on next save
+				console.error('Failed to clear draft:', error);
+			}
 		}
 	};
 
@@ -355,13 +430,10 @@ export default function MessageInput({
 								setMenuOpen(!menuOpen);
 								setShowModelSubmenu(false);
 							}}
-							disabled={disabled}
 							class={cn(
 								'w-11 h-11 rounded-full flex items-center justify-center transition-all',
 								'bg-dark-700/80 border border-dark-600/50',
-								disabled
-									? 'text-gray-600 cursor-not-allowed'
-									: 'text-gray-300 hover:bg-dark-600 hover:text-white active:scale-95'
+								'text-gray-300 hover:bg-dark-600 hover:text-white active:scale-95'
 							)}
 							title="More options"
 						>
@@ -387,11 +459,11 @@ export default function MessageInput({
 									<button
 										type="button"
 										onClick={() => setShowModelSubmenu(!showModelSubmenu)}
-										disabled={switching || loadingModels}
+										disabled={disabled || switching || loadingModels}
 										class={cn(
 											'w-full px-4 py-3 text-left flex items-center justify-between transition-colors',
 											'text-gray-200 hover:bg-dark-700/50',
-											(switching || loadingModels) && 'opacity-50 cursor-not-allowed'
+											(disabled || switching || loadingModels) && 'opacity-50 cursor-not-allowed'
 										)}
 									>
 										<span class="flex items-center gap-3">
@@ -440,13 +512,13 @@ export default function MessageInput({
 														key={model.id}
 														type="button"
 														onClick={() => handleModelSwitch(model.id)}
-														disabled={switching}
+														disabled={disabled || switching}
 														class={cn(
 															'w-full px-4 py-2.5 text-left flex items-center justify-between transition-colors',
 															isCurrent
 																? 'text-blue-400 bg-blue-500/10'
 																: 'text-gray-300 hover:bg-dark-700/50',
-															switching && 'opacity-50 cursor-not-allowed'
+															(disabled || switching) && 'opacity-50 cursor-not-allowed'
 														)}
 													>
 														<span class="flex items-center gap-3">
@@ -525,10 +597,16 @@ export default function MessageInput({
 								<button
 									type="button"
 									onClick={() => {
-										toast.info('File attachment coming soon');
-										setMenuOpen(false);
+										if (!disabled) {
+											toast.info('File attachment coming soon');
+											setMenuOpen(false);
+										}
 									}}
-									class="w-full px-4 py-3 text-left flex items-center gap-3 transition-colors text-gray-200 hover:bg-dark-700/50"
+									disabled={disabled}
+									class={cn(
+										'w-full px-4 py-3 text-left flex items-center gap-3 transition-colors text-gray-200 hover:bg-dark-700/50',
+										disabled && 'opacity-50 cursor-not-allowed'
+									)}
 								>
 									<svg
 										class="w-5 h-5 text-gray-400"
@@ -548,33 +626,6 @@ export default function MessageInput({
 							</div>
 						)}
 					</div>
-
-					{/* Autoscroll Button - Always enabled */}
-					<button
-						type="button"
-						onClick={() => onAutoScrollChange?.(!autoScroll)}
-						class={cn(
-							'w-11 h-11 rounded-full flex items-center justify-center transition-all',
-							'bg-dark-700/80 border border-dark-600/50',
-							'hover:bg-dark-600 active:scale-95'
-						)}
-						title={autoScroll ? 'Disable auto-scroll' : 'Enable auto-scroll'}
-						aria-label={autoScroll ? 'Disable auto-scroll' : 'Enable auto-scroll'}
-					>
-						<svg
-							class={cn(
-								'w-5 h-5 transition-colors',
-								autoScroll ? 'text-blue-400' : 'text-gray-400'
-							)}
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-							stroke-width={2}
-						>
-							<path stroke-linecap="round" stroke-linejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-							<path stroke-linecap="round" stroke-linejoin="round" d="M5 21h14" />
-						</svg>
-					</button>
 
 					{/* Input Pill */}
 					<div class="relative flex-1">
@@ -604,15 +655,13 @@ export default function MessageInput({
 								onInput={(e) => setContent((e.target as HTMLTextAreaElement).value)}
 								onKeyDown={handleKeyDown}
 								placeholder="Ask, search, or make anything..."
-								disabled={disabled}
 								maxLength={maxChars}
 								rows={1}
 								class={cn(
 									'block w-full px-5 py-2.5 text-gray-100 resize-none bg-transparent',
 									// Use 16px to prevent iOS Safari auto-zoom on focus (< 16px triggers zoom)
 									'placeholder:text-gray-500 text-base leading-normal',
-									'focus:outline-none',
-									'disabled:opacity-50 disabled:cursor-not-allowed'
+									'focus:outline-none'
 								)}
 								style={{
 									height: '40px',
@@ -642,7 +691,7 @@ export default function MessageInput({
 									aria-label="Stop generation"
 									data-testid="stop-button"
 									class={cn(
-										'absolute right-1.5 top-1/2 -translate-y-1/2',
+										'absolute right-1.5 bottom-1.5',
 										'w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200',
 										interrupting
 											? 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
@@ -652,22 +701,22 @@ export default function MessageInput({
 									{interrupting ? (
 										<div class="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
 									) : (
-										<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-											<rect x="6" y="6" width="12" height="12" rx="1" />
+										<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+											<rect x="5" y="5" width="14" height="14" rx="1.5" />
 										</svg>
 									)}
 								</button>
 							) : (
 								<button
 									type="submit"
-									disabled={disabled || !hasContent}
+									disabled={isAgentWorking.value || !hasContent}
 									title={
 										isMobileDevice.current ? 'Send message' : 'Send message (Enter or ⌘+Enter)'
 									}
 									aria-label="Send message"
 									data-testid="send-button"
 									class={cn(
-										'absolute right-1.5 top-1/2 -translate-y-1/2',
+										'absolute right-1.5 bottom-1.5',
 										'w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200',
 										hasContent && !disabled
 											? 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95'
