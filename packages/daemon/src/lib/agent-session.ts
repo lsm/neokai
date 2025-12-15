@@ -366,6 +366,16 @@ CRITICAL RULES:
 3. Your current working directory (cwd) is already set to the worktree path
 4. Do NOT attempt to access or modify files outside the worktree path
 
+ALLOWED GIT OPERATIONS ON ROOT REPOSITORY:
+To merge changes from this session branch into the main branch of the root repository:
+
+git --git-dir=${this.session.worktree.mainRepoPath}/.git --work-tree=${this.session.worktree.mainRepoPath} merge ${this.session.worktree.branch}
+
+To push the main branch to remote:
+
+git --git-dir=${this.session.worktree.mainRepoPath}/.git --work-tree=${this.session.worktree.mainRepoPath} push origin main
+
+These commands operate on the root repository without violating worktree isolation.
 This isolation ensures concurrent sessions don't conflict with each other.
 `.trim();
 			}
