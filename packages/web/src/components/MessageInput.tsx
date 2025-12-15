@@ -53,6 +53,9 @@ export default function MessageInput({
 	// Track interrupting state
 	const [interrupting, setInterrupting] = useState(false);
 
+	// Track multiline state for button positioning
+	const [isMultiline, setIsMultiline] = useState(false);
+
 	// Draft persistence timeout ref
 	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -77,6 +80,8 @@ export default function MessageInput({
 			// Expand if content needs more space (max 200px)
 			const newHeight = Math.min(Math.max(40, textarea.scrollHeight), 200);
 			textarea.style.height = `${newHeight}px`;
+			// Track multiline state for button positioning (use threshold of 45px to account for slight variations)
+			setIsMultiline(newHeight > 45);
 		}
 	}, [content]);
 
@@ -691,7 +696,8 @@ export default function MessageInput({
 									aria-label="Stop generation"
 									data-testid="stop-button"
 									class={cn(
-										'absolute right-1.5 bottom-1.5',
+										'absolute right-1.5',
+										isMultiline ? 'bottom-1.5' : 'top-1/2 -translate-y-1/2',
 										'w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200',
 										interrupting
 											? 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
@@ -716,7 +722,8 @@ export default function MessageInput({
 									aria-label="Send message"
 									data-testid="send-button"
 									class={cn(
-										'absolute right-1.5 bottom-1.5',
+										'absolute right-1.5',
+										isMultiline ? 'bottom-1.5' : 'top-1/2 -translate-y-1/2',
 										'w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200',
 										hasContent && !disabled
 											? 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95'

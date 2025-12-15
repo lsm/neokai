@@ -77,6 +77,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
 	const sendTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const processingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const prevMessageCountRef = useRef<number>(0);
 
 	useEffect(() => {
 		// Reset state when switching sessions
@@ -372,12 +373,17 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	useEffect(() => {
 		// Auto-scroll behavior:
 		// - Always scroll on initial load to show latest messages
-		// - Only scroll on new messages if autoScroll is enabled
+		// - Only scroll when message count increases (new message) or streaming events change
 		// - Never scroll when loading older messages (loadingOlder prevents unwanted scroll)
+		const currentCount = messages.length + streamingEvents.length;
+		const hasNewContent = currentCount > prevMessageCountRef.current;
+
 		if (isInitialLoad) {
 			scrollToBottom();
-		} else if (autoScroll && !loadingOlder) {
+			prevMessageCountRef.current = currentCount;
+		} else if (autoScroll && !loadingOlder && hasNewContent) {
 			scrollToBottom();
+			prevMessageCountRef.current = currentCount;
 		}
 	}, [messages, streamingEvents, isInitialLoad, loadingOlder, autoScroll]);
 
@@ -514,6 +520,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 			// Prepend older messages to the beginning of the array
 			setMessages((prev) => [...(sdkResponse.sdkMessages as SDKMessage[]), ...prev]);
+
+			// Update message count ref to prevent autoscroll from triggering
+			prevMessageCountRef.current =
+				messages.length + sdkResponse.sdkMessages.length + streamingEvents.length;
 
 			// Check if there are more messages
 			setHasMoreMessages(sdkResponse.sdkMessages.length === 100);
