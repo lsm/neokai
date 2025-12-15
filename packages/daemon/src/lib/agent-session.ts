@@ -121,6 +121,17 @@ export class AgentSession {
 		// Restore persisted processing state from database (if available)
 		this.stateManager.restoreFromDatabase();
 
+		// Subscribe to title:generated events to update local session cache
+		// This ensures getSessionData() returns the latest title after SimpleTitleQueue updates DB
+		const titleUnsubscribe = this.eventBus.on('title:generated', (data) => {
+			if (data.sessionId === this.session.id) {
+				this.session.title = data.title;
+				this.session.metadata.titleGenerated = true;
+				this.logger.log(`Updated session title to "${data.title}"`);
+			}
+		});
+		this.unsubscribers.push(titleUnsubscribe);
+
 		// LAZY START: Don't start the streaming query here.
 		// Query will be started on first message send via ensureQueryStarted()
 	}

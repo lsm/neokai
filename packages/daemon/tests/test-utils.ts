@@ -128,7 +128,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 	// Initialize EventBus (breaks circular dependency!)
 	const { EventBus } = await import('@liuboer/shared');
 	const eventBus = new EventBus({
-		debug: false,
+		debug: process.env.TEST_VERBOSE === '1', // Enable debug with TEST_VERBOSE=1
 	});
 
 	// Create session manager with EventBus
@@ -150,6 +150,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 	const stateManager = new StateManager(messageHub, sessionManager, authManager, config, eventBus);
 
 	// Initialize Title Generation Queue (decoupled via EventBus)
+	// This is critical for auto-title integration tests
 	const titleQueue = new SimpleTitleQueue(db, eventBus, {
 		maxRetries: 3,
 		pollIntervalMs: 500, // Faster polling for tests (500ms instead of 1000ms)
@@ -307,14 +308,14 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 		baseUrl,
 		config,
 		cleanup: async () => {
-			// First cleanup session resources
+			// First stop title generation queue
+			await titleQueue.stop();
+
+			// Then cleanup session resources
 			await sessionManager.cleanup();
 
 			// Reduced wait - most async operations complete faster
 			await Bun.sleep(20);
-
-			// Stop title generation queue
-			await titleQueue.stop();
 
 			// Now cleanup MessageHub (removes RPC handlers)
 			messageHub.cleanup();
