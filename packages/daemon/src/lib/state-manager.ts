@@ -106,6 +106,25 @@ export class StateManager {
 			);
 		});
 
+		// Title generation events - treat as session updates
+		this.eventBus.on('title:generated', async (data) => {
+			// Broadcast unified session state (includes updated title)
+			await this.broadcastSessionStateChange(data.sessionId);
+
+			// Also update global sessions list
+			const updatedSession = this.sessionManager
+				.listSessions()
+				.find((s) => s.id === data.sessionId);
+			if (updatedSession) {
+				await this.broadcastSessionsDelta({
+					updated: [updatedSession],
+					timestamp: Date.now(),
+				});
+			}
+
+			this.logger.log(`Title generated for session ${data.sessionId}: "${data.title}"`);
+		});
+
 		this.eventBus.on('session:deleted', async (data) => {
 			await this.broadcastSessionsDelta({
 				removed: [data.sessionId],

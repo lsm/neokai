@@ -277,6 +277,12 @@ export class AgentSession {
 			// During this time, state transitions: queued -> processing -> ...
 			await this.messageQueue.enqueueWithId(messageId, messageContent);
 
+			// Emit event for title generation (decoupled via EventBus)
+			// Fire-and-forget - don't wait for title generation
+			this.eventBus.emit('message:sent', { sessionId: this.session.id }).catch((err) => {
+				this.logger.warn('Failed to emit message:sent event:', err);
+			});
+
 			return { messageId };
 		} catch (error) {
 			this.logger.error(`Error handling message.send:`, error);

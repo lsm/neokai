@@ -60,6 +60,13 @@ export interface EventMap {
 		trigger: CompactionTrigger;
 		preTokens: number;
 	};
+
+	// Message events - emitted when user sends a message
+	'message:sent': { sessionId: string };
+
+	// Title generation events
+	'title:generated': { sessionId: string; title: string };
+	'title:generation:failed': { sessionId: string; error: Error; attempts: number };
 }
 
 /**

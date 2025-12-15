@@ -496,6 +496,22 @@ export class Database {
 		return result.count;
 	}
 
+	/**
+	 * Get the underlying Bun SQLite database instance
+	 * Used by background job queues (e.g., liteque) that need direct DB access
+	 */
+	getDatabase(): BunDatabase {
+		return this.db;
+	}
+
+	/**
+	 * Get the database file path
+	 * Used by background job queues to create their own connections to the same DB file
+	 */
+	getDatabasePath(): string {
+		return this.dbPath;
+	}
+
 	close() {
 		this.db.close();
 	}

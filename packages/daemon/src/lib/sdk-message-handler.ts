@@ -25,7 +25,6 @@ import { Logger } from './logger';
 import { ProcessingStateManager } from './processing-state-manager';
 import { ContextTracker } from './context-tracker';
 import { ContextFetcher } from './context-fetcher';
-import { generateTitle } from './title-generator';
 
 export class SDKMessageHandler {
 	private sdkMessageDeltaVersion: number = 0;
@@ -254,11 +253,8 @@ export class SDKMessageHandler {
 			}
 		}
 
-		// CRITICAL: Auto-generate title BEFORE returning to idle state
-		// This ensures the title update event is processed before the client sees idle state
-		await this.triggerTitleGeneration();
-
-		// Set state back to idle AFTER title generation completes
+		// Set state back to idle
+		// Note: Title generation now handled by TitleGenerationQueue (decoupled via EventBus)
 		await this.stateManager.setIdle();
 	}
 
@@ -325,61 +321,6 @@ export class SDKMessageHandler {
 			trigger: compactMsg.compact_metadata.trigger,
 			preTokens: compactMsg.compact_metadata.pre_tokens,
 		});
-	}
-
-	/**
-	 * Trigger title generation (after first assistant response)
-	 */
-	private async triggerTitleGeneration(): Promise<void> {
-		// Skip if title already generated
-		if (this.session.metadata.titleGenerated) {
-			return;
-		}
-
-		// Get messages to count assistant messages and find first user message
-		const messages = this.db.getSDKMessages(this.session.id, 50);
-		const assistantMessages = messages.filter((m) => isSDKAssistantMessage(m));
-		const firstUserMsg = messages.find((m) => m.type === 'user');
-
-		// Only generate title if we have at least 1 assistant message
-		if (assistantMessages.length < 1) {
-			return;
-		}
-
-		this.logger.log(
-			`Auto-generating session title (${assistantMessages.length} assistant messages)...`
-		);
-
-		if (firstUserMsg && assistantMessages.length > 0) {
-			try {
-				const generatedTitle = await generateTitle(
-					firstUserMsg,
-					assistantMessages[0],
-					this.session.workspacePath
-				);
-				if (generatedTitle) {
-					// Update session title and flag in memory and database
-					this.session.title = generatedTitle;
-					this.session.metadata.titleGenerated = true;
-
-					this.db.updateSession(this.session.id, {
-						title: generatedTitle,
-						metadata: this.session.metadata,
-					});
-
-					// Emit session:updated event so StateManager broadcasts the change
-					await this.eventBus.emit('session:updated', {
-						sessionId: this.session.id,
-						updates: { title: generatedTitle },
-					});
-
-					this.logger.log(`Session title updated to: "${generatedTitle}"`);
-				}
-			} catch (error) {
-				// Don't throw - title generation is non-critical
-				this.logger.warn('Failed to generate session title:', error);
-			}
-		}
 	}
 
 	/**
