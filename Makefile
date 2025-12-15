@@ -1,4 +1,4 @@
-.PHONY: dev start daemon web self restart sync-sdk-types clean-cache clean-all build-prod test test-daemon test-coverage test-coverage-lcov e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self lint lint-fix format typecheck
+.PHONY: dev start daemon web self profile restart sync-sdk-types clean-cache clean-all build-prod test test-daemon test-coverage test-coverage-lcov e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self lint lint-fix format typecheck
 
 # Unified server (daemon + web in single process) - RECOMMENDED
 dev:
@@ -19,6 +19,20 @@ self:
 	@mkdir -p $(shell pwd)/tmp/self-dev
 	@lsof -ti:9983 | xargs kill -9 2>/dev/null || true
 	@NODE_ENV=production bun run packages/cli/main.ts --port 9983 --workspace $(shell pwd) --db-path $(shell pwd)/tmp/self-dev/daemon.db
+
+# Profiling mode - production build with debugging and CPU profiling
+profile:
+	@echo "🔍 Starting profiling server (production mode with debugging)..."
+	@echo "   Workspace: $(shell pwd)/tmp/profiling"
+	@echo "   Database: $(shell pwd)/tmp/profiling/data/daemon.db"
+	@echo "   Listening on port 8302"
+	@echo "   Inspector: Web debugger available at https://debug.bun.sh"
+	@echo "   CPU Profile: Profile data will be saved on exit"
+	@echo "📦 Building web production bundle..."
+	@cd packages/web && bun run build
+	@mkdir -p $(shell pwd)/tmp/profiling/data
+	@lsof -ti:8302 | xargs kill -9 2>/dev/null || true
+	@NODE_ENV=production bun --inspect --cpu-prof run packages/cli/main.ts --port 8302 --workspace $(shell pwd)/tmp/profiling --db-path $(shell pwd)/tmp/profiling/data/daemon.db
 
 start:
 	@echo "🚀 Starting production server..."
