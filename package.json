@@ -21,13 +21,8 @@
 	},
 	"devDependencies": {
 		"dotenv": "17.2.3",
-		"oxlint": "1.32.0",
+		"oxlint": "1.33.0",
 		"prettier": "3.7.4",
 		"typescript": "5.9.3"
-	},
-	"dependencies": {
-		"hono": "4.11.0",
-		"simple-git": "^3.30.0",
-		"zod": "^4.2.0"
 	}
 }

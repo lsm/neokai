@@ -9,5 +9,8 @@
 	},
 	"devDependencies": {
 		"@types/bun": "latest"
+	},
+	"dependencies": {
+		"zod": "4.2.0"
 	}
 }
