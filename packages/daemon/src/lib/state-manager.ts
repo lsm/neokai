@@ -108,6 +108,11 @@ export class StateManager {
 
 		// Title generation events - treat as session updates
 		this.eventBus.on('title:generated', async (data) => {
+			// Yield to microtask queue to ensure AgentSession's synchronous title update
+			// (in its own title:generated handler) completes before we broadcast.
+			// This is necessary because EventBus executes handlers in parallel.
+			await Promise.resolve();
+
 			// Broadcast unified session state (includes updated title)
 			await this.broadcastSessionStateChange(data.sessionId);
 
