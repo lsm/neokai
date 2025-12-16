@@ -9,6 +9,7 @@
  * - Automatic retry with exponential backoff
  * - Non-blocking job processing
  * - EventBus integration
+ * - Event-driven architecture (no polling when queue is empty)
  */
 
 import { z } from 'zod';
@@ -40,13 +41,14 @@ interface TitleQueueOptions {
 
 /**
  * Simple Bun-compatible title generation queue
+ *
+ * Event-driven architecture: Jobs are processed immediately when enqueued,
+ * eliminating CPU-intensive polling when the queue is empty.
  */
 export class SimpleTitleQueue {
-	private pollInterval: Timer | null = null;
 	private eventBusUnsubscribe?: () => void;
 	private isRunning = false;
 	private maxRetries: number;
-	private pollIntervalMs: number;
 	private timeoutMs: number;
 
 	constructor(
@@ -55,8 +57,8 @@ export class SimpleTitleQueue {
 		options: TitleQueueOptions = {}
 	) {
 		this.maxRetries = options.maxRetries ?? 3;
-		this.pollIntervalMs = options.pollIntervalMs ?? 1000;
 		this.timeoutMs = (options.timeoutSecs ?? 30) * 1000;
+		// Note: pollIntervalMs option is ignored in event-driven mode
 
 		// Create queue table
 		this.initializeTable();
@@ -85,20 +87,22 @@ export class SimpleTitleQueue {
 
 		logger.log('Starting title generation queue...');
 
-		// Listen to message:sent events
+		// Listen to message:sent events - process jobs immediately when they arrive
 		this.eventBusUnsubscribe = this.eventBus.on('message:sent', async (data) => {
 			await this.handleMessageSent(data.sessionId);
-		});
-
-		// Start polling for jobs
-		this.pollInterval = setInterval(() => {
-			this.processNext().catch((err) => {
+			// Process the newly enqueued job immediately (event-driven)
+			await this.processNext().catch((err) => {
 				logger.error('Error processing job:', err);
 			});
-		}, this.pollIntervalMs);
+		});
+
+		// Process any existing pending jobs from previous sessions (startup recovery)
+		await this.processNext().catch((err) => {
+			logger.error('Error processing startup jobs:', err);
+		});
 
 		this.isRunning = true;
-		logger.log('Title generation queue started');
+		logger.log('Title generation queue started (event-driven mode)');
 	}
 
 	async stop(): Promise<void> {
@@ -112,12 +116,6 @@ export class SimpleTitleQueue {
 		if (this.eventBusUnsubscribe) {
 			this.eventBusUnsubscribe();
 			this.eventBusUnsubscribe = undefined;
-		}
-
-		// Stop polling
-		if (this.pollInterval) {
-			clearInterval(this.pollInterval);
-			this.pollInterval = null;
 		}
 
 		this.isRunning = false;
