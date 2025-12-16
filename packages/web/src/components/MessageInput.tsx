@@ -465,7 +465,7 @@ export default function MessageInput({
 				{/* iOS 26 Style: Floating single-line input */}
 				<div class="flex items-end gap-3">
 					{/* Plus Button */}
-					<div class="relative">
+					<div class="relative flex-shrink-0">
 						<button
 							ref={plusButtonRef}
 							type="button"
@@ -474,7 +474,7 @@ export default function MessageInput({
 								setShowModelSubmenu(false);
 							}}
 							class={cn(
-								'w-11 h-11 rounded-full flex items-center justify-center transition-all',
+								'w-[46px] h-[46px] rounded-full flex items-center justify-center transition-all',
 								'bg-dark-700/80 border border-dark-600/50',
 								'text-gray-300 hover:bg-dark-600 hover:text-white active:scale-95'
 							)}
@@ -736,16 +736,16 @@ export default function MessageInput({
 									class={cn(
 										'absolute right-1.5',
 										isMultiline ? 'bottom-1.5' : 'top-1/2 -translate-y-1/2',
-										'w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200',
+										'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200',
 										interrupting
 											? 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
 											: 'bg-red-500 text-white hover:bg-red-600 active:scale-95'
 									)}
 								>
 									{interrupting ? (
-										<div class="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+										<div class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
 									) : (
-										<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+										<svg class="w-4.5 h-4.5" fill="currentColor" viewBox="0 0 24 24">
 											<rect x="5" y="5" width="14" height="14" rx="1.5" />
 										</svg>
 									)}
@@ -762,14 +762,14 @@ export default function MessageInput({
 									class={cn(
 										'absolute right-1.5',
 										isMultiline ? 'bottom-1.5' : 'top-1/2 -translate-y-1/2',
-										'w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200',
+										'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200',
 										hasContent && !disabled
 											? 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95'
 											: 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
 									)}
 								>
 									<svg
-										class="w-4 h-4"
+										class="w-4.5 h-4.5"
 										fill="none"
 										viewBox="0 0 24 24"
 										stroke="currentColor"
