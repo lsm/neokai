@@ -35,8 +35,15 @@ export default defineConfig({
 		},
 		watch: {
 			// Watch for changes in all relevant files
-			// Exclude database, temporary files, and worktrees to prevent rebuild loops
-			ignored: ['**/node_modules/**', '**/dist/**', '**/data/**', '**/tmp/**', '**/.worktrees/**'],
+			// Exclude database, temporary files, and session workspace worktrees
+			// NOTE: We specifically ignore tmp/workspace/.worktrees/ (session worktrees) but NOT
+			// the development worktree we might be running from (e.g., .worktrees/session-id/)
+			ignored: [
+				'**/node_modules/**',
+				'**/dist/**',
+				'**/data/**',
+				'**/tmp/**', // This covers tmp/workspace/.worktrees/ as well
+			],
 			usePolling: false, // Use native file system events
 		},
 		// Proxy API and WebSocket requests to daemon
