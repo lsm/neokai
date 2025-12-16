@@ -418,16 +418,57 @@ This isolation ensures concurrent sessions don't conflict with each other.
 `.trim();
 			}
 
-			// Build query options
+			// Build query options based on tools config
+			const toolsConfig = this.session.config.tools;
+
+			// Determine allowed tools from config
+			// - MCP tools: Only if loadProjectMcp is true and patterns are specified
+			// - SDK built-in tools: Always enabled (not configurable)
+			// - Liuboer tools: Based on liuboerTools config
+			const allowedTools: string[] = [];
+
+			// Add MCP tool patterns if project MCP is enabled
+			if (toolsConfig?.loadProjectMcp && toolsConfig?.enabledMcpPatterns) {
+				allowedTools.push(...toolsConfig.enabledMcpPatterns);
+			}
+
+			// SDK built-in tools are always enabled (not configurable)
+			// These include: Read, Write, Edit, Glob, Grep, Bash, WebSearch, WebFetch, Task, etc.
+			// We don't need to explicitly add them as they're enabled by default in the SDK
+
+			// Liuboer-specific tools (if enabled)
+			// Note: Actual tool implementation is separate - this just controls availability
+			if (toolsConfig?.liuboerTools?.memory) {
+				allowedTools.push('liuboer__memory__*');
+			}
+			if (toolsConfig?.liuboerTools?.sessionExport) {
+				allowedTools.push('liuboer__export__*');
+			}
+
+			// Determine setting sources: include 'project' if project MCP is enabled
+			const settingSources: Options['settingSources'] = toolsConfig?.loadProjectMcp
+				? ['project', 'local']
+				: ['local'];
+
 			const queryOptions: Options = {
 				model: this.session.config.model,
 				cwd: this.session.workspacePath,
 				permissionMode: 'bypassPermissions',
 				allowDangerouslySkipPermissions: true,
 				maxTurns: Infinity,
-				settingSources: ['project', 'local'],
+				settingSources,
 				systemPrompt: systemPromptConfig,
+				// Tools: Use session config, default to WebSearch enabled only
+				allowedTools,
 			};
+
+			// DEBUG: Log query options for verification
+			this.logger.log(`[AgentSession ${this.session.id}] Query options:`, {
+				model: queryOptions.model,
+				settingSources: queryOptions.settingSources,
+				allowedTools: queryOptions.allowedTools,
+				toolsConfig,
+			});
 
 			// Add resume parameter if SDK session ID exists (session resumption)
 			if (this.session.sdkSessionId) {
@@ -785,6 +826,102 @@ This isolation ensures concurrent sessions don't conflict with each other.
 		}
 
 		this.db.updateSession(this.session.id, updates);
+	}
+
+	/**
+	 * Update tools configuration and restart query to apply changes
+	 *
+	 * This is a blocking operation that:
+	 * 1. Updates session config in memory and DB
+	 * 2. Stops the current query (if running)
+	 * 3. Restarts the query with new config
+	 *
+	 * Timeout: 10 seconds for the entire operation
+	 */
+	async updateToolsConfig(
+		tools: Session['config']['tools']
+	): Promise<{ success: boolean; error?: string }> {
+		const timeout = 10000; // 10 second timeout
+		const startTime = Date.now();
+
+		try {
+			this.logger.log(`Updating tools config:`, tools);
+
+			// 1. Update session config in memory and DB
+			const newConfig = { ...this.session.config, tools };
+			this.session.config = newConfig;
+			this.db.updateSession(this.session.id, { config: newConfig });
+
+			// Check timeout
+			if (Date.now() - startTime > timeout) {
+				throw new Error('Operation timed out during config update');
+			}
+
+			// 2. If query is running, stop it
+			if (this.messageQueue.isRunning()) {
+				this.logger.log(`Stopping current query to apply new config...`);
+
+				// Signal queue to stop
+				this.messageQueue.stop();
+
+				// Interrupt query using SDK method
+				if (this.queryObject && typeof this.queryObject.interrupt === 'function') {
+					try {
+						await Promise.race([
+							this.queryObject.interrupt(),
+							new Promise((_, reject) =>
+								setTimeout(() => reject(new Error('Interrupt timed out')), 5000)
+							),
+						]);
+					} catch (error) {
+						this.logger.warn(`Interrupt during tools update:`, error);
+					}
+				}
+
+				// Wait for query to fully stop (with timeout)
+				if (this.queryPromise) {
+					try {
+						await Promise.race([
+							this.queryPromise,
+							new Promise((resolve) => setTimeout(resolve, 5000)),
+						]);
+					} catch (error) {
+						this.logger.warn(`Query stop error:`, error);
+					}
+					this.queryPromise = null;
+				}
+
+				// Reset query object
+				this.queryObject = null;
+
+				// Check timeout
+				if (Date.now() - startTime > timeout) {
+					throw new Error('Operation timed out while stopping query');
+				}
+
+				// 3. Restart the query with new config
+				this.logger.log(`Restarting query with new tools config...`);
+
+				// Reset commands fetched flag so they get refreshed
+				this.commandsFetchedFromSDK = false;
+
+				// Restart the query
+				await this.startStreamingQuery();
+			}
+
+			// Emit event for StateManager to broadcast updated session state
+			await this.eventBus.emit('session:updated', {
+				sessionId: this.session.id,
+				updates: { config: this.session.config },
+			});
+
+			this.logger.log(`Tools config updated successfully`);
+			return { success: true };
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			this.logger.error(`Failed to update tools config:`, error);
+			return { success: false, error: errorMessage };
+		}
 	}
 
 	/**
