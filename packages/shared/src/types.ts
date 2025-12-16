@@ -29,7 +29,74 @@ export interface SessionConfig {
 	maxTokens: number;
 	temperature: number;
 	autoScroll?: boolean;
+	// Tools configuration
+	tools?: ToolsConfig;
 }
+
+/**
+ * Tools configuration for a session
+ * Controls MCP tools and built-in tools availability
+ */
+export interface ToolsConfig {
+	// Project MCP: Load .mcp.json from workspace (default: false)
+	loadProjectMcp?: boolean;
+	// Enabled MCP tool patterns (e.g., ["mcp__chrome-devtools__*"])
+	enabledMcpPatterns?: string[];
+	// Liuboer-specific tools (not SDK built-in tools)
+	liuboerTools?: {
+		// Memory tool: persistent key-value storage for the workspace
+		memory?: boolean;
+		// Session export tool: export conversation to markdown/JSON
+		sessionExport?: boolean;
+	};
+}
+
+/**
+ * Global tools configuration
+ * Two-stage control: 1) allowed or not, 2) default for new sessions
+ * Stored at the daemon level, applies to all sessions
+ */
+export interface GlobalToolsConfig {
+	// MCP tools settings
+	mcp: {
+		// Is loading project MCP allowed?
+		allowProjectMcp: boolean;
+		// Default for new sessions
+		defaultProjectMcp: boolean;
+	};
+	// Liuboer-specific tools settings
+	liuboerTools: {
+		memory: {
+			allowed: boolean;
+			defaultEnabled: boolean;
+		};
+		sessionExport: {
+			allowed: boolean;
+			defaultEnabled: boolean;
+		};
+	};
+}
+
+/**
+ * Default global tools configuration
+ * Zero-trust: MCP disabled by default, Liuboer tools allowed but disabled by default
+ */
+export const DEFAULT_GLOBAL_TOOLS_CONFIG: GlobalToolsConfig = {
+	mcp: {
+		allowProjectMcp: true, // Allow but don't enable by default
+		defaultProjectMcp: false,
+	},
+	liuboerTools: {
+		memory: {
+			allowed: true,
+			defaultEnabled: false,
+		},
+		sessionExport: {
+			allowed: true,
+			defaultEnabled: false,
+		},
+	},
+};
 
 export interface SessionMetadata {
 	messageCount: number;
