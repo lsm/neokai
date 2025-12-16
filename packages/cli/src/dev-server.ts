@@ -2,6 +2,26 @@ import { createDaemonApp } from '@liuboer/daemon/app';
 import type { Config } from '@liuboer/daemon/config';
 import { createServer as createViteServer } from 'vite';
 import { resolve } from 'path';
+import * as net from 'net';
+
+/**
+ * Find an available port by creating a temporary server
+ */
+async function findAvailablePort(): Promise<number> {
+	return new Promise((resolve, reject) => {
+		const server = net.createServer();
+		server.listen(0, () => {
+			const address = server.address();
+			if (address && typeof address === 'object') {
+				const port = address.port;
+				server.close(() => resolve(port));
+			} else {
+				server.close(() => reject(new Error('Failed to get port')));
+			}
+		});
+		server.on('error', reject);
+	});
+}
 
 export async function startDevServer(config: Config) {
 	console.log('🔧 Starting unified development server...');
@@ -16,15 +36,16 @@ export async function startDevServer(config: Config) {
 	// Stop the daemon's internal server (we'll create a unified one)
 	daemonContext.server.stop();
 
-	// Create Vite dev server on a different internal port
+	// Find an available port for Vite dev server
 	console.log('📦 Starting Vite dev server...');
-	const vitePort = 5173;
+	const vitePort = await findAvailablePort();
+	console.log(`   Found available Vite port: ${vitePort}`);
 	const vite = await createViteServer({
 		configFile: resolve(import.meta.dir, '../../web/vite.config.ts'),
 		root: resolve(import.meta.dir, '../../web/src'),
 		server: {
 			port: vitePort,
-			strictPort: true,
+			strictPort: false, // Allow Vite to find another port if needed
 			hmr: {
 				protocol: 'ws',
 				host: 'localhost',
