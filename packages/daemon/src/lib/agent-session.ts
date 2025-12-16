@@ -907,6 +907,16 @@ This isolation ensures concurrent sessions don't conflict with each other.
 
 				// Restart the query
 				await this.startStreamingQuery();
+
+				// 4. Queue internal /context command to get updated context breakdown
+				// This is needed because tools changes affect context (MCP tools tokens, etc.)
+				try {
+					this.logger.log(`Queuing /context for updated context breakdown after tools change...`);
+					await this.messageQueue.enqueue('/context', true);
+				} catch (contextError) {
+					// Non-critical - just log the error
+					this.logger.warn(`Failed to queue /context after tools update:`, contextError);
+				}
 			}
 
 			// Emit event for StateManager to broadcast updated session state
