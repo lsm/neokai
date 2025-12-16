@@ -157,8 +157,11 @@ export default function Sidebar() {
 					))}
 				</div>
 
-				{/* Footer */}
-				<div class={`p-4 border-t ${borderColors.ui.default} space-y-3`}>
+				{/* Footer - with safe area padding for mobile Safari */}
+				<div
+					class={`p-4 border-t ${borderColors.ui.default} space-y-3`}
+					style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
+				>
 					{/* Auth Status */}
 					<div class="flex items-center justify-between text-xs">
 						<span class="text-gray-400">Authentication</span>
