@@ -119,6 +119,11 @@ export class SessionManager {
 				model: modelId, // Use validated model ID
 				maxTokens: params.config?.maxTokens || this.config.maxTokens,
 				temperature: params.config?.temperature || this.config.temperature,
+				autoScroll: params.config?.autoScroll,
+				// Tools config: Use global defaults for new sessions
+				// SDK built-in tools are always enabled (not configurable)
+				// MCP and Liuboer tools are configurable based on global settings
+				tools: params.config?.tools ?? this.getDefaultToolsConfig(),
 			},
 			metadata: {
 				messageCount: 0,
@@ -380,6 +385,40 @@ export class SessionManager {
 
 	getTotalSessions(): number {
 		return this.db.listSessions().length;
+	}
+
+	/**
+	 * Get the global tools configuration
+	 */
+	getGlobalToolsConfig() {
+		return this.db.getGlobalToolsConfig();
+	}
+
+	/**
+	 * Save the global tools configuration
+	 */
+	saveGlobalToolsConfig(config: ReturnType<typeof this.db.getGlobalToolsConfig>) {
+		this.db.saveGlobalToolsConfig(config);
+	}
+
+	/**
+	 * Get default tools configuration for new sessions based on global settings
+	 */
+	private getDefaultToolsConfig(): Session['config']['tools'] {
+		const global = this.db.getGlobalToolsConfig();
+
+		return {
+			// MCP: Only enable if allowed AND default is on
+			loadProjectMcp: global.mcp.allowProjectMcp && global.mcp.defaultProjectMcp,
+			enabledMcpPatterns: [],
+			// Liuboer tools: Only enable if allowed AND default is on
+			liuboerTools: {
+				memory: global.liuboerTools.memory.allowed && global.liuboerTools.memory.defaultEnabled,
+				sessionExport:
+					global.liuboerTools.sessionExport.allowed &&
+					global.liuboerTools.sessionExport.defaultEnabled,
+			},
+		};
 	}
 
 	/**

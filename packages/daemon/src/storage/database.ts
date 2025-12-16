@@ -1,7 +1,8 @@
 import { Database as BunDatabase } from 'bun:sqlite';
 import { dirname } from 'node:path';
 import { mkdirSync, existsSync } from 'node:fs';
-import type { Session } from '@liuboer/shared';
+import type { Session, GlobalToolsConfig } from '@liuboer/shared';
+import { DEFAULT_GLOBAL_TOOLS_CONFIG } from '@liuboer/shared';
 import type { SDKMessage } from '@liuboer/shared/sdk';
 import { generateUUID } from '@liuboer/shared';
 import { Logger } from '../lib/logger';
@@ -117,6 +118,21 @@ export class Database {
 		this.db.exec(`
       INSERT OR IGNORE INTO auth_config (id, auth_method, updated_at)
       VALUES (1, 'none', datetime('now'))
+    `);
+
+		// Global tools configuration table
+		this.db.exec(`
+      CREATE TABLE IF NOT EXISTS global_tools_config (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        config TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+
+		// Initialize global_tools_config with default values if not exists
+		this.db.exec(`
+      INSERT OR IGNORE INTO global_tools_config (id, config, updated_at)
+      VALUES (1, '${JSON.stringify(DEFAULT_GLOBAL_TOOLS_CONFIG)}', datetime('now'))
     `);
 
 		// Create indexes
@@ -378,6 +394,39 @@ export class Database {
 	//
 	// The auth_config table remains for potential future use but is not
 	// actively used by the application.
+
+	// ============================================================================
+	// Global Tools Configuration operations
+	// ============================================================================
+
+	/**
+	 * Get the global tools configuration
+	 */
+	getGlobalToolsConfig(): GlobalToolsConfig {
+		const stmt = this.db.prepare(`SELECT config FROM global_tools_config WHERE id = 1`);
+		const row = stmt.get() as { config: string } | undefined;
+
+		if (!row) {
+			return DEFAULT_GLOBAL_TOOLS_CONFIG;
+		}
+
+		try {
+			return JSON.parse(row.config) as GlobalToolsConfig;
+		} catch {
+			return DEFAULT_GLOBAL_TOOLS_CONFIG;
+		}
+	}
+
+	/**
+	 * Save the global tools configuration
+	 */
+	saveGlobalToolsConfig(config: GlobalToolsConfig): void {
+		const stmt = this.db.prepare(`
+			INSERT OR REPLACE INTO global_tools_config (id, config, updated_at)
+			VALUES (1, ?, datetime('now'))
+		`);
+		stmt.run(JSON.stringify(config));
+	}
 
 	// ============================================================================
 	// SDK Message operations

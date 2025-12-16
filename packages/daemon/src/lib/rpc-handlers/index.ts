@@ -16,6 +16,7 @@ import { setupFileHandlers } from './file-handlers';
 import { setupSystemHandlers } from './system-handlers';
 import { setupAuthHandlers } from './auth-handlers';
 import { setupCommandHandlers } from './command-handlers';
+import { registerMcpHandlers } from './mcp-handlers';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -34,4 +35,5 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
 	setupFileHandlers(deps.messageHub, deps.sessionManager);
 	setupSystemHandlers(deps.messageHub, deps.sessionManager, deps.authManager, deps.config);
 	setupAuthHandlers(deps.messageHub, deps.authManager);
+	registerMcpHandlers(deps.messageHub, deps.sessionManager);
 }
