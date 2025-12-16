@@ -1,4 +1,4 @@
-.PHONY: dev start daemon web self profile restart sync-sdk-types clean-cache clean-all build-prod test test-daemon test-coverage test-coverage-lcov e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self lint lint-fix format typecheck
+.PHONY: dev worktree-dev start daemon web self profile restart sync-sdk-types clean-cache clean-all build-prod test test-daemon test-coverage test-coverage-lcov e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self lint lint-fix format typecheck
 
 # Unified server (daemon + web in single process) - RECOMMENDED
 dev:
@@ -7,6 +7,21 @@ dev:
 	@mkdir -p $(shell pwd)/tmp/workspace
 	@lsof -ti:9283 | xargs kill -9 2>/dev/null || true
 	@NODE_ENV=development bun run packages/cli/main.ts --workspace $(shell pwd)/tmp/workspace
+
+# Worktree development server - uses dynamic port for concurrent sessions
+worktree-dev:
+	@echo "🌳 Starting worktree development server..."
+	@echo "📦 Installing dependencies..."
+	@bun install --silent
+	@echo "🔍 Finding available port..."
+	@PORT=$$(node -e "const net = require('net'); const server = net.createServer(); server.listen(0, () => { console.log(server.address().port); server.close(); });"); \
+	echo ""; \
+	echo "✅ Found available port: $$PORT"; \
+	echo "🌐 Web UI will be available at: http://localhost:$$PORT"; \
+	echo "   Workspace: $(shell pwd)/tmp/workspace"; \
+	echo ""; \
+	mkdir -p $(shell pwd)/tmp/workspace; \
+	NODE_ENV=development bun run packages/cli/main.ts --port $$PORT --workspace $(shell pwd)/tmp/workspace
 
 # Self-hosting mode - use Liuboer to develop itself (production mode, no HMR)
 self:
