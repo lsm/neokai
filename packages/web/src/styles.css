@@ -12,9 +12,15 @@
 	--color-blue: 59 130 246;
 }
 
-* {
-	border-color: var(--color-dark-700);
-}
+/*
+ * NOTE: Global border color removed to allow semantic border colors
+ * from design tokens to work properly (tool categories, success/error states, etc.)
+ *
+ * Components should use borderColors from design-tokens.ts:
+ * - borderColors.ui.default ('border-dark-700') for UI elements
+ * - borderColors.semantic.* for status colors
+ * - borderColors.tool.* for tool category colors
+ */
 
 body {
 	background-color: var(--color-dark-950);

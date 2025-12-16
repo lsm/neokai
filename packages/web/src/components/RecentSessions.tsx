@@ -1,6 +1,7 @@
 import type { Session } from '@liuboer/shared';
 import { currentSessionIdSignal, sidebarOpenSignal } from '../lib/signals.ts';
 import { formatRelativeTime } from '../lib/utils.ts';
+import { borderColors } from '../lib/design-tokens.ts';
 
 interface RecentSessionsProps {
 	sessions: Session[];
@@ -27,12 +28,12 @@ export default function RecentSessions({ sessions }: RecentSessionsProps) {
 	return (
 		<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden">
 			{/* Header with hamburger menu */}
-			<div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 p-4">
+			<div class={`bg-dark-850/50 backdrop-blur-sm border-b ${borderColors.ui.default} p-4`}>
 				<div class="max-w-6xl mx-auto w-full px-4 md:px-6 flex items-center gap-3">
 					{/* Hamburger menu button - visible only on mobile */}
 					<button
 						onClick={handleMenuClick}
-						class="md:hidden p-2 -ml-2 bg-dark-850 border border-dark-700 rounded-lg hover:bg-dark-800 transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0"
+						class={`md:hidden p-2 -ml-2 bg-dark-850 border ${borderColors.ui.default} rounded-lg hover:bg-dark-800 transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0`}
 						title="Open menu"
 					>
 						<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -94,7 +95,7 @@ export default function RecentSessions({ sessions }: RecentSessionsProps) {
 									<button
 										key={session.id}
 										onClick={() => handleSessionClick(session.id)}
-										class="group relative bg-dark-850 border border-dark-700 rounded-lg p-5 hover:bg-dark-800 hover:border-dark-600 transition-all text-left cursor-pointer hover:shadow-lg hover:shadow-blue-500/10"
+										class={`group relative bg-dark-850 border ${borderColors.ui.default} rounded-lg p-5 hover:bg-dark-800 hover:border-dark-600 transition-all text-left cursor-pointer hover:shadow-lg hover:shadow-blue-500/10`}
 									>
 										{/* Session header */}
 										<div class="mb-3">

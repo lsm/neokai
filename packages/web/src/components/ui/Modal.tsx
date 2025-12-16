@@ -2,6 +2,7 @@ import { ComponentChildren } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import { cn } from '../../lib/utils.ts';
+import { borderColors } from '../../lib/design-tokens.ts';
 
 export interface ModalProps {
 	isOpen: boolean;
@@ -92,14 +93,16 @@ export function Modal({
 			<div
 				ref={modalRef}
 				class={cn(
-					'relative w-full bg-dark-900 rounded-xl shadow-2xl border border-dark-700 animate-scaleIn',
+					`relative w-full bg-dark-900 rounded-xl shadow-2xl border ${borderColors.ui.default} animate-scaleIn`,
 					sizes[size]
 				)}
 				onClick={(e) => e.stopPropagation()}
 			>
 				{/* Header */}
 				{(title || showCloseButton) && (
-					<div class="flex items-center justify-between px-6 py-4 border-b border-dark-700">
+					<div
+						class={`flex items-center justify-between px-6 py-4 border-b ${borderColors.ui.default}`}
+					>
 						{title && <h2 class="text-lg font-semibold text-gray-100">{title}</h2>}
 						{showCloseButton && (
 							<button

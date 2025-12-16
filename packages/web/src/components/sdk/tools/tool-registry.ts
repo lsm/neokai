@@ -8,6 +8,7 @@
 import { h } from 'preact';
 import type { ToolConfig, ToolCategory } from './tool-types.ts';
 import { TodoViewer } from './TodoViewer.tsx';
+import { borderColors } from '../../../lib/design-tokens.ts';
 
 /**
  * Helper to safely get a property from unknown input as string
@@ -195,11 +196,11 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
 		},
 		hasLongOutput: true,
 		defaultExpanded: false,
-		// Custom amber colors for Thinking
+		// Custom amber colors for Thinking (using design tokens)
 		colors: {
 			bg: 'bg-amber-50 dark:bg-amber-900/20',
 			text: 'text-amber-900 dark:text-amber-100',
-			border: 'border-amber-200 dark:border-amber-800',
+			border: borderColors.semantic.warning,
 			iconColor: 'text-amber-600 dark:text-amber-400',
 			lightText: 'text-amber-700 dark:text-amber-300',
 		},
@@ -213,6 +214,7 @@ const customToolConfigs: Map<string, ToolConfig> = new Map();
 
 /**
  * Get category colors
+ * Uses centralized border color tokens from design-tokens.ts
  */
 export function getCategoryColors(category: ToolCategory) {
 	switch (category) {
@@ -220,7 +222,7 @@ export function getCategoryColors(category: ToolCategory) {
 			return {
 				bg: 'bg-blue-50 dark:bg-blue-900/20',
 				text: 'text-blue-900 dark:text-blue-100',
-				border: 'border-blue-200 dark:border-blue-800',
+				border: borderColors.tool.file,
 				iconColor: 'text-blue-600 dark:text-blue-400',
 				lightText: 'text-blue-700 dark:text-blue-300',
 			};
@@ -228,7 +230,7 @@ export function getCategoryColors(category: ToolCategory) {
 			return {
 				bg: 'bg-purple-50 dark:bg-purple-900/20',
 				text: 'text-purple-900 dark:text-purple-100',
-				border: 'border-purple-200 dark:border-purple-800',
+				border: borderColors.tool.search,
 				iconColor: 'text-purple-600 dark:text-purple-400',
 				lightText: 'text-purple-700 dark:text-purple-300',
 			};
@@ -236,7 +238,7 @@ export function getCategoryColors(category: ToolCategory) {
 			return {
 				bg: 'bg-gray-50 dark:bg-gray-900/20',
 				text: 'text-gray-900 dark:text-gray-100',
-				border: 'border-gray-200 dark:border-gray-800',
+				border: borderColors.tool.terminal,
 				iconColor: 'text-gray-600 dark:text-gray-400',
 				lightText: 'text-gray-700 dark:text-gray-300',
 			};
@@ -244,7 +246,7 @@ export function getCategoryColors(category: ToolCategory) {
 			return {
 				bg: 'bg-indigo-50 dark:bg-indigo-900/20',
 				text: 'text-indigo-900 dark:text-indigo-100',
-				border: 'border-indigo-200 dark:border-indigo-800',
+				border: borderColors.tool.agent,
 				iconColor: 'text-indigo-600 dark:text-indigo-400',
 				lightText: 'text-indigo-700 dark:text-indigo-300',
 			};
@@ -252,7 +254,7 @@ export function getCategoryColors(category: ToolCategory) {
 			return {
 				bg: 'bg-green-50 dark:bg-green-900/20',
 				text: 'text-green-900 dark:text-green-100',
-				border: 'border-green-200 dark:border-green-800',
+				border: borderColors.tool.web,
 				iconColor: 'text-green-600 dark:text-green-400',
 				lightText: 'text-green-700 dark:text-green-300',
 			};
@@ -260,7 +262,7 @@ export function getCategoryColors(category: ToolCategory) {
 			return {
 				bg: 'bg-amber-50 dark:bg-amber-900/20',
 				text: 'text-amber-900 dark:text-amber-100',
-				border: 'border-amber-200 dark:border-amber-800',
+				border: borderColors.tool.todo,
 				iconColor: 'text-amber-600 dark:text-amber-400',
 				lightText: 'text-amber-700 dark:text-amber-300',
 			};
@@ -268,7 +270,7 @@ export function getCategoryColors(category: ToolCategory) {
 			return {
 				bg: 'bg-pink-50 dark:bg-pink-900/20',
 				text: 'text-pink-900 dark:text-pink-100',
-				border: 'border-pink-200 dark:border-pink-800',
+				border: borderColors.tool.mcp,
 				iconColor: 'text-pink-600 dark:text-pink-400',
 				lightText: 'text-pink-700 dark:text-pink-300',
 			};
@@ -276,7 +278,7 @@ export function getCategoryColors(category: ToolCategory) {
 			return {
 				bg: 'bg-cyan-50 dark:bg-cyan-900/20',
 				text: 'text-cyan-900 dark:text-cyan-100',
-				border: 'border-cyan-200 dark:border-cyan-800',
+				border: borderColors.tool.system,
 				iconColor: 'text-cyan-600 dark:text-cyan-400',
 				lightText: 'text-cyan-700 dark:text-cyan-300',
 			};
@@ -284,7 +286,7 @@ export function getCategoryColors(category: ToolCategory) {
 			return {
 				bg: 'bg-gray-50 dark:bg-gray-900/20',
 				text: 'text-gray-900 dark:text-gray-100',
-				border: 'border-gray-200 dark:border-gray-800',
+				border: borderColors.semantic.neutral,
 				iconColor: 'text-gray-600 dark:text-gray-400',
 				lightText: 'text-gray-700 dark:text-gray-300',
 			};

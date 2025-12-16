@@ -22,6 +22,7 @@ import {
 	slashCommandsSignal,
 } from '../lib/signals.ts';
 import { connectionState } from '../lib/state.ts';
+import { borderColors } from '../lib/design-tokens.ts';
 import MessageInput from '../components/MessageInput.tsx';
 import ContextIndicator from '../components/ContextIndicator.tsx';
 import { Button } from '../components/ui/Button.tsx';
@@ -702,7 +703,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		return (
 			<div class="flex-1 flex flex-col bg-dark-900">
 				{/* Header Skeleton */}
-				<div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 p-4">
+				<div class={`bg-dark-850/50 backdrop-blur-sm border-b ${borderColors.ui.default} p-4`}>
 					<Skeleton width="200px" height={24} class="mb-2" />
 					<Skeleton width="150px" height={16} />
 				</div>
@@ -870,12 +871,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	return (
 		<div class="flex-1 flex flex-col bg-dark-900 overflow-x-hidden relative">
 			{/* Header */}
-			<div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 p-4">
+			<div class={`bg-dark-850/50 backdrop-blur-sm border-b ${borderColors.ui.default} p-4`}>
 				<div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center gap-3">
 					{/* Hamburger menu button - visible only on mobile */}
 					<button
 						onClick={handleMenuClick}
-						class="md:hidden p-2 -ml-2 bg-dark-850 border border-dark-700 rounded-lg hover:bg-dark-800 transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0"
+						class={`md:hidden p-2 -ml-2 bg-dark-850 border ${borderColors.ui.default} rounded-lg hover:bg-dark-800 transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0`}
 						title="Open menu"
 					>
 						<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1058,7 +1059,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					<div class="absolute bottom-4 left-1/2 -translate-x-1/2 z-10">
 						<button
 							onClick={scrollToBottom}
-							class="w-10 h-10 rounded-full bg-dark-800 hover:bg-dark-700 text-gray-300 hover:text-gray-100 shadow-lg border border-gray-600/50 flex items-center justify-center transition-all duration-150 animate-slideIn focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+							class={`w-10 h-10 rounded-full bg-dark-800 hover:bg-dark-700 text-gray-300 hover:text-gray-100 shadow-lg border ${borderColors.ui.secondary} flex items-center justify-center transition-all duration-150 animate-slideIn focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500`}
 							title="Scroll to bottom"
 							aria-label="Scroll to bottom"
 						>
@@ -1078,7 +1079,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 			{/* Error Banner */}
 			{error && (
-				<div data-testid="error-banner" class="bg-red-500/10 border-t border-red-500/20 px-4 py-3">
+				<div
+					data-testid="error-banner"
+					class={`bg-red-500/10 border-t ${borderColors.special.toast.error} px-4 py-3`}
+				>
 					<div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center justify-between">
 						<p class="text-sm text-red-400">{error}</p>
 						<button

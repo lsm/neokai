@@ -3,6 +3,7 @@ import { currentSessionIdSignal, sidebarOpenSignal } from '../lib/signals.ts';
 import { sessions, authStatus, connectionState } from '../lib/state.ts';
 import { createSession } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
+import { borderColors } from '../lib/design-tokens.ts';
 import { Button } from '../components/ui/Button.tsx';
 import { SettingsModal } from '../components/SettingsModal.tsx';
 import SessionListItem from '../components/SessionListItem.tsx';
@@ -88,7 +89,7 @@ export default function Sidebar() {
 				class={`
         fixed md:relative
         h-screen w-80
-        bg-dark-950 border-r border-dark-700
+        bg-dark-950 border-r ${borderColors.ui.default}
         flex flex-col
         z-50
         transition-transform duration-300 ease-in-out
@@ -97,7 +98,7 @@ export default function Sidebar() {
       `}
 			>
 				{/* Header */}
-				<div class="p-4 border-b border-dark-700">
+				<div class={`p-4 border-b ${borderColors.ui.default}`}>
 					<div class="flex items-center gap-3 mb-4">
 						<div class="text-2xl">🤖</div>
 						<h1 class="text-xl font-bold text-gray-100 flex-1">Liuboer</h1>
@@ -157,7 +158,7 @@ export default function Sidebar() {
 				</div>
 
 				{/* Footer */}
-				<div class="p-4 border-t border-dark-700 space-y-3">
+				<div class={`p-4 border-t ${borderColors.ui.default} space-y-3`}>
 					{/* Auth Status */}
 					<div class="flex items-center justify-between text-xs">
 						<span class="text-gray-400">Authentication</span>

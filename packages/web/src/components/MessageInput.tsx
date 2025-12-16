@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
+import { borderColors } from '../lib/design-tokens.ts';
 import { slashCommandsSignal } from '../lib/signals.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
@@ -475,7 +476,7 @@ export default function MessageInput({
 							}}
 							class={cn(
 								'w-[46px] h-[46px] rounded-full flex items-center justify-center transition-all',
-								'bg-dark-700/80 border border-dark-600/50',
+								`bg-dark-700/80 border ${borderColors.ui.secondary}`,
 								'text-gray-300 hover:bg-dark-600 hover:text-white active:scale-95'
 							)}
 							title="More options"
@@ -495,7 +496,7 @@ export default function MessageInput({
 						{menuOpen && (
 							<div
 								ref={menuRef}
-								class="absolute bottom-full left-0 mb-2 bg-dark-800 border border-dark-600 rounded-xl shadow-2xl overflow-hidden animate-slideIn min-w-[220px] z-50"
+								class={`absolute bottom-full left-0 mb-2 bg-dark-800 border ${borderColors.ui.secondary} rounded-xl shadow-2xl overflow-hidden animate-slideIn min-w-[220px] z-50`}
 							>
 								{/* Model Switcher */}
 								<div class="relative">
@@ -547,7 +548,9 @@ export default function MessageInput({
 
 									{/* Model Submenu */}
 									{showModelSubmenu && !loadingModels && (
-										<div class="border-t border-dark-600 bg-dark-850/50 max-h-[300px] overflow-y-auto">
+										<div
+											class={`border-t ${borderColors.ui.secondary} bg-dark-850/50 max-h-[300px] overflow-y-auto`}
+										>
 											{sortedModels.map((model) => {
 												const isCurrent = model.id === currentModel;
 												return (
@@ -687,8 +690,8 @@ export default function MessageInput({
 								'relative rounded-3xl border transition-all',
 								'bg-dark-800/60 backdrop-blur-sm',
 								disabled
-									? 'border-dark-700/30'
-									: 'border-dark-600/50 focus-within:border-blue-500/50 focus-within:bg-dark-800/80'
+									? `${borderColors.ui.default}/30`
+									: `${borderColors.ui.input} focus-within:bg-dark-800/80`
 							)}
 						>
 							{/* Textarea */}

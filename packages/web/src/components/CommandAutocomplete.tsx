@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
+import { borderColors } from '../lib/design-tokens.ts';
 
 export interface CommandAutocompleteProps {
 	commands: string[];
@@ -49,7 +50,7 @@ export default function CommandAutocomplete({
 		<div
 			ref={listRef}
 			class={cn(
-				'absolute z-50 bg-dark-800 border border-dark-700 rounded-lg shadow-xl',
+				`absolute z-50 bg-dark-800 border ${borderColors.ui.default} rounded-lg shadow-xl`,
 				'overflow-hidden max-h-64 overflow-y-auto',
 				'animate-slideIn'
 			)}
@@ -63,7 +64,7 @@ export default function CommandAutocomplete({
 			}}
 		>
 			{/* Header */}
-			<div class="px-3 py-2 border-b border-dark-700 bg-dark-850/50">
+			<div class={`px-3 py-2 border-b ${borderColors.ui.default} bg-dark-850/50`}>
 				<div class="flex items-center gap-2">
 					<svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path
@@ -97,7 +98,7 @@ export default function CommandAutocomplete({
 			</div>
 
 			{/* Footer hint */}
-			<div class="px-3 py-2 border-t border-dark-700 bg-dark-850/50">
+			<div class={`px-3 py-2 border-t ${borderColors.ui.default} bg-dark-850/50`}>
 				<p class="text-xs text-gray-500">
 					<kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">↑↓</kbd> navigate{' '}
 					<kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">Enter</kbd> select{' '}

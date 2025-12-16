@@ -1,6 +1,7 @@
 import { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
+import { borderColors } from '../../lib/design-tokens.ts';
 
 export interface DropdownItem {
 	label: string;
@@ -233,7 +234,9 @@ export function Dropdown({
 					}}
 					class={cn(
 						'shadow-xl z-[100] animate-slideIn',
-						customContent ? '' : 'py-1 bg-dark-850 border border-dark-700 rounded-lg min-w-[200px]'
+						customContent
+							? ''
+							: `py-1 bg-dark-850 border ${borderColors.ui.default} rounded-lg min-w-[200px]`
 					)}
 					role="menu"
 				>

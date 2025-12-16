@@ -8,6 +8,7 @@
  */
 
 import { cn } from '../../lib/utils.ts';
+import { borderColors } from '../../lib/design-tokens.ts';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 
 interface SlashCommandOutputProps {
@@ -75,7 +76,7 @@ export function SlashCommandOutput({ content, className }: SlashCommandOutputPro
 			{/* Output content */}
 			<div
 				class={cn(
-					'bg-dark-800/60 border border-dark-700/50 rounded-lg p-4',
+					`bg-dark-800/60 border ${borderColors.ui.default} rounded-lg p-4`,
 					'prose prose-invert max-w-none'
 				)}
 			>

@@ -1,6 +1,7 @@
 import { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
+import { borderColors } from '../../lib/design-tokens.ts';
 
 export interface CollapsibleProps {
 	trigger: ComponentChildren;
@@ -50,7 +51,7 @@ export function Collapsible({
 	}, [isOpen]);
 
 	return (
-		<div class={cn('border-dark-700', className)}>
+		<div class={cn(borderColors.ui.default, className)}>
 			{/* Trigger */}
 			<button
 				onClick={toggle}

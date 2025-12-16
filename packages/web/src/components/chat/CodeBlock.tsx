@@ -2,6 +2,7 @@ import { useState } from 'preact/hooks';
 import { copyToClipboard } from '../../lib/utils.ts';
 import { toast } from '../../lib/toast.ts';
 import { IconButton } from '../ui/IconButton.tsx';
+import { borderColors } from '../../lib/design-tokens.ts';
 
 interface CodeBlockProps {
 	code: string;
@@ -24,9 +25,11 @@ export default function CodeBlock({ code, language, filename }: CodeBlockProps) 
 	};
 
 	return (
-		<div class="relative group my-4 rounded-lg overflow-hidden border border-dark-700">
+		<div class={`relative group my-4 rounded-lg overflow-hidden border ${borderColors.ui.default}`}>
 			{/* Header */}
-			<div class="flex items-center justify-between px-4 py-2 bg-dark-850 border-b border-dark-700">
+			<div
+				class={`flex items-center justify-between px-4 py-2 bg-dark-850 border-b ${borderColors.ui.default}`}
+			>
 				<div class="flex items-center gap-2">
 					{filename && <span class="text-sm text-gray-300 font-medium">{filename}</span>}
 					{language && !filename && <span class="text-xs text-gray-400 font-mono">{language}</span>}

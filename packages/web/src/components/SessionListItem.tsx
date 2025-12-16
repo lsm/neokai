@@ -1,6 +1,7 @@
 import type { Session } from '@liuboer/shared';
 import { currentSessionIdSignal } from '../lib/signals.ts';
 import { formatRelativeTime } from '../lib/utils.ts';
+import { borderColors } from '../lib/design-tokens.ts';
 
 interface SessionListItemProps {
 	session: Session;
@@ -23,7 +24,7 @@ export default function SessionListItem({ session, onSessionClick }: SessionList
 			data-testid="session-card"
 			data-session-id={session.id}
 			onClick={() => onSessionClick(session.id)}
-			class={`group relative p-4 border-b border-dark-700 transition-all w-full text-left ${
+			class={`group relative p-4 border-b ${borderColors.ui.default} transition-all w-full text-left ${
 				isActive ? 'bg-dark-850 border-l-2 border-l-blue-500' : 'hover:bg-dark-900'
 			}`}
 		>

@@ -11,6 +11,7 @@
 
 import { useState, useRef, useEffect } from 'preact/hooks';
 import type { ContextInfo } from '@liuboer/shared';
+import { borderColors } from '../lib/design-tokens.ts';
 
 interface ContextIndicatorProps {
 	connectionState: 'connecting' | 'connected' | 'disconnected' | 'error' | 'reconnecting';
@@ -244,7 +245,9 @@ export default function ContextIndicator({
 					>
 						<div class="max-w-4xl mx-auto flex justify-end">
 							<div ref={dropdownRef} class="z-50 pointer-events-auto">
-								<div class="bg-dark-800 border border-dark-600 rounded-lg p-4 w-72 shadow-xl">
+								<div
+									class={`bg-dark-800 border ${borderColors.ui.secondary} rounded-lg p-4 w-72 shadow-xl`}
+								>
 									<div class="flex items-center justify-between mb-3">
 										<h3 class="text-sm font-semibold text-gray-200">Context Usage</h3>
 										<button
@@ -325,7 +328,7 @@ export default function ContextIndicator({
 
 										{/* Model info */}
 										{contextUsage?.model && (
-											<div class="pt-3 border-t border-dark-700">
+											<div class={`pt-3 border-t ${borderColors.ui.default}`}>
 												<div class="flex items-center gap-2 text-xs">
 													<svg
 														class="w-3.5 h-3.5 text-gray-400"

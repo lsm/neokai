@@ -101,6 +101,102 @@ export const typography = {
 } as const;
 
 /**
+ * Border Color Tokens
+ * Centralized border colors for consistent styling across all components
+ */
+export const borderColors = {
+	/**
+	 * UI Framework Borders (dark theme primary colors)
+	 * Used for structural UI elements like containers, inputs, modals, etc.
+	 */
+	ui: {
+		/** Primary border color - default for most UI elements (dark-700: #2a2a30) */
+		default: 'border-dark-700',
+		/** Secondary border color - for subtle divisions (dark-600: #3a3a42) */
+		secondary: 'border-dark-600',
+		/** Input border - brighter for visibility */
+		input: 'border-dark-600',
+		/** Darker border for emphasis */
+		emphasis: 'border-dark-800',
+	},
+
+	/**
+	 * Semantic Tool Category Borders
+	 * Each tool category has a light/dark pair for theme compatibility
+	 * Format: 'border-{color}-200 dark:border-{color}-800'
+	 */
+	tool: {
+		/** File operations (Write, Edit, Read) */
+		file: 'border-blue-200 dark:border-blue-800',
+		/** Search operations (Glob, Grep) */
+		search: 'border-purple-200 dark:border-purple-800',
+		/** Terminal operations (Bash, BashOutput) - brighter for visibility */
+		terminal: 'border-gray-200 dark:border-gray-600',
+		/** Agent/Task operations */
+		agent: 'border-indigo-200 dark:border-indigo-800',
+		/** Web operations (WebFetch, WebSearch) */
+		web: 'border-green-200 dark:border-green-800',
+		/** Todo operations */
+		todo: 'border-amber-200 dark:border-amber-800',
+		/** MCP operations */
+		mcp: 'border-pink-200 dark:border-pink-800',
+		/** System operations (Thinking, ExitPlanMode, etc.) */
+		system: 'border-cyan-200 dark:border-cyan-800',
+	},
+
+	/**
+	 * Semantic State Borders
+	 * For status-based UI elements (success, error, warning, info)
+	 */
+	semantic: {
+		/** Success states (green) */
+		success: 'border-green-200 dark:border-green-800',
+		/** Error states (red) */
+		error: 'border-red-200 dark:border-red-800',
+		/** Warning states (amber/yellow) */
+		warning: 'border-amber-200 dark:border-amber-800',
+		/** Warning states - yellow variant */
+		warningYellow: 'border-yellow-200 dark:border-yellow-800',
+		/** Info states (blue) */
+		info: 'border-blue-200 dark:border-blue-800',
+		/** Default/neutral states */
+		neutral: 'border-gray-200 dark:border-gray-700',
+	},
+
+	/**
+	 * Interactive State Borders
+	 * For hover, focus, active states
+	 */
+	interactive: {
+		/** Focus state - blue with opacity */
+		focus: 'focus-within:border-blue-500/50',
+		/** Hover state - lighter border */
+		hover: 'hover:border-dark-600',
+		/** Active/selected state */
+		active: 'border-blue-500',
+	},
+
+	/**
+	 * Special Purpose Borders
+	 * For specific UI patterns (toasts, banners, highlights)
+	 */
+	special: {
+		/** Toast notifications - semi-transparent */
+		toast: {
+			success: 'border-green-500/20',
+			error: 'border-red-500/20',
+			warning: 'border-amber-500/20',
+			info: 'border-blue-500/20',
+		},
+		/** Session/message indicators */
+		indicator: {
+			purple: 'border-purple-200 dark:border-purple-800',
+			indigo: 'border-indigo-200 dark:border-indigo-800',
+		},
+	},
+} as const;
+
+/**
  * Helper function to combine design token classes
  */
 export function cn(...classes: (string | undefined | false)[]): string {

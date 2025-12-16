@@ -3,6 +3,7 @@ import type { AuthStatus } from '@liuboer/shared';
 import { getAuthStatus } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
 import { Modal } from './ui/Modal.tsx';
+import { borderColors } from '../lib/design-tokens.ts';
 
 interface SettingsModalProps {
 	isOpen: boolean;
@@ -42,7 +43,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 					</div>
 				) : authStatus ? (
 					<div class="space-y-4">
-						<div class="bg-dark-800 rounded-lg p-4 border border-dark-600">
+						<div class={`bg-dark-800 rounded-lg p-4 border ${borderColors.ui.secondary}`}>
 							<h3 class="text-sm font-medium text-gray-300 mb-3">Authentication Status</h3>
 
 							{authStatus.isAuthenticated ? (

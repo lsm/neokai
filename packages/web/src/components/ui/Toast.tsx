@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
+import { borderColors } from '../../lib/design-tokens.ts';
 import type { Toast, ToastType } from '../../lib/toast.ts';
 import { dismissToast } from '../../lib/toast.ts';
 
@@ -86,14 +87,14 @@ function ToastItem({ toast }: ToastItemProps) {
 	const getStyles = (type: ToastType) => {
 		switch (type) {
 			case 'success':
-				return 'bg-green-500/10 border-green-500/20 text-green-400';
+				return `bg-green-500/10 ${borderColors.special.toast.success} text-green-400`;
 			case 'error':
-				return 'bg-red-500/10 border-red-500/20 text-red-400';
+				return `bg-red-500/10 ${borderColors.special.toast.error} text-red-400`;
 			case 'warning':
-				return 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400';
+				return `bg-yellow-500/10 ${borderColors.special.toast.warning} text-yellow-400`;
 			case 'info':
 			default:
-				return 'bg-blue-500/10 border-blue-500/20 text-blue-400';
+				return `bg-blue-500/10 ${borderColors.special.toast.info} text-blue-400`;
 		}
 	};
 
