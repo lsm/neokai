@@ -4,6 +4,7 @@ import { getAuthStatus } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
 import { Modal } from './ui/Modal.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
+import { GlobalToolsSettings } from './GlobalToolsSettings.tsx';
 
 interface SettingsModalProps {
 	isOpen: boolean;
@@ -113,6 +114,9 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 								</div>
 							</div>
 						</div>
+
+						{/* Global Tools Settings */}
+						<GlobalToolsSettings />
 					</div>
 				) : null}
 			</div>
