@@ -82,6 +82,7 @@ export default defineConfig({
 				'**/chat-flow.e2e.ts', // Will add cleanup
 				'**/model-switcher.e2e.ts', // Model switcher UI tests
 				'**/draft-persistence.e2e.ts', // Draft persistence tests
+				'**/draft-clearing-bug.e2e.ts', // Draft clearing bug fix tests
 				'**/scroll-to-bottom-button.e2e.ts', // Scroll to bottom button tests
 			],
 			use: { ...devices['Desktop Chrome'] },
