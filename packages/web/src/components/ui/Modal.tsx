@@ -93,7 +93,7 @@ export function Modal({
 			<div
 				ref={modalRef}
 				class={cn(
-					`relative w-full bg-dark-900 rounded-xl shadow-2xl border ${borderColors.ui.default} animate-scaleIn`,
+					`relative w-full bg-dark-900 rounded-xl shadow-2xl border ${borderColors.ui.default} animate-scaleIn flex flex-col max-h-[90vh]`,
 					sizes[size]
 				)}
 				onClick={(e) => e.stopPropagation()}
@@ -101,7 +101,7 @@ export function Modal({
 				{/* Header */}
 				{(title || showCloseButton) && (
 					<div
-						class={`flex items-center justify-between px-6 py-4 border-b ${borderColors.ui.default}`}
+						class={`flex items-center justify-between px-6 py-4 border-b ${borderColors.ui.default} flex-shrink-0`}
 					>
 						{title && <h2 class="text-lg font-semibold text-gray-100">{title}</h2>}
 						{showCloseButton && (
@@ -125,7 +125,7 @@ export function Modal({
 				)}
 
 				{/* Content */}
-				<div class="px-6 py-4">{children}</div>
+				<div class="px-6 py-4 overflow-y-auto flex-1">{children}</div>
 			</div>
 		</div>
 	);
