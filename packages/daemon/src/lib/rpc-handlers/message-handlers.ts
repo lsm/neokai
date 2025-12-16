@@ -3,6 +3,17 @@
  */
 
 import type { MessageHub } from '@liuboer/shared';
+import type { SDKMessage } from '@liuboer/shared/sdk';
+import {
+	isSDKAssistantMessage,
+	isSDKUserMessage,
+	isSDKUserMessageReplay,
+	isSDKResultMessage,
+	isTextBlock,
+	isToolUseBlock,
+	isThinkingBlock,
+	type ContentBlock,
+} from '@liuboer/shared/sdk';
 import type { SessionManager } from '../session-manager';
 
 export function setupMessageHandlers(messageHub: MessageHub, sessionManager: SessionManager): void {
@@ -42,4 +53,169 @@ export function setupMessageHandlers(messageHub: MessageHub, sessionManager: Ses
 		const count = agentSession.getSDKMessageCount();
 		return { count };
 	});
+
+	// Export session to markdown or JSON
+	messageHub.handle('session.export', async (data) => {
+		const { sessionId: targetSessionId, format = 'markdown' } = data as {
+			sessionId: string;
+			format?: 'markdown' | 'json';
+		};
+
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+
+		// Get all SDK messages (no limit)
+		const sdkMessages = agentSession.getSDKMessages(10000);
+		const sessionData = agentSession.getSessionData();
+
+		if (format === 'json') {
+			return {
+				session: sessionData,
+				messages: sdkMessages,
+			};
+		}
+
+		// Convert to markdown
+		const markdown = convertToMarkdown(sessionData, sdkMessages);
+		return { markdown };
+	});
+}
+
+/**
+ * Convert session and SDK messages to markdown format
+ */
+function convertToMarkdown(
+	session: { id: string; title?: string; config: { model: string }; createdAt: string },
+	messages: SDKMessage[]
+): string {
+	const lines: string[] = [];
+
+	// Header
+	lines.push(`# ${session.title || 'Untitled Session'}`);
+	lines.push('');
+	lines.push(`**Session ID:** ${session.id}`);
+	lines.push(`**Model:** ${session.config.model}`);
+	lines.push(`**Created:** ${session.createdAt}`);
+	lines.push('');
+	lines.push('---');
+	lines.push('');
+
+	// Messages
+	for (const msg of messages) {
+		const formatted = formatMessage(msg);
+		if (formatted) {
+			lines.push(formatted);
+			lines.push('');
+		}
+	}
+
+	return lines.join('\n');
+}
+
+/**
+ * Format a single SDK message to markdown
+ */
+function formatMessage(msg: SDKMessage): string | null {
+	if (isSDKUserMessage(msg) || isSDKUserMessageReplay(msg)) {
+		return formatUserMessage(msg);
+	}
+
+	if (isSDKAssistantMessage(msg)) {
+		return formatAssistantMessage(msg);
+	}
+
+	if (isSDKResultMessage(msg)) {
+		return formatResultMessage(msg);
+	}
+
+	// Skip other message types (system, stream_event, tool_progress, etc.)
+	return null;
+}
+
+/**
+ * Format user message to markdown
+ */
+function formatUserMessage(msg: Extract<SDKMessage, { type: 'user' }>): string {
+	const lines: string[] = [];
+	lines.push('## User');
+	lines.push('');
+
+	const content = msg.message?.content;
+	if (typeof content === 'string') {
+		lines.push(content);
+	} else if (Array.isArray(content)) {
+		for (const block of content) {
+			if (block.type === 'text') {
+				lines.push(block.text);
+			} else if (block.type === 'image') {
+				lines.push('*[Image attached]*');
+			}
+		}
+	}
+
+	return lines.join('\n');
+}
+
+/**
+ * Format assistant message to markdown
+ */
+function formatAssistantMessage(msg: Extract<SDKMessage, { type: 'assistant' }>): string {
+	const lines: string[] = [];
+	lines.push('## Assistant');
+	lines.push('');
+
+	const content = msg.message?.content;
+	if (Array.isArray(content)) {
+		for (const block of content as ContentBlock[]) {
+			if (isTextBlock(block)) {
+				lines.push(block.text);
+				lines.push('');
+			} else if (isToolUseBlock(block)) {
+				lines.push(`### Tool Use: ${block.name}`);
+				lines.push('');
+				lines.push('```json');
+				lines.push(JSON.stringify(block.input, null, 2));
+				lines.push('```');
+				lines.push('');
+			} else if (isThinkingBlock(block)) {
+				lines.push('<details>');
+				lines.push('<summary>Thinking</summary>');
+				lines.push('');
+				lines.push(block.thinking);
+				lines.push('');
+				lines.push('</details>');
+				lines.push('');
+			}
+		}
+	}
+
+	return lines.join('\n');
+}
+
+/**
+ * Format result message to markdown
+ */
+function formatResultMessage(msg: Extract<SDKMessage, { type: 'result' }>): string {
+	const lines: string[] = [];
+	lines.push('## Result');
+	lines.push('');
+
+	if (msg.subtype === 'success') {
+		lines.push('*Query completed successfully*');
+	} else {
+		lines.push(`*Error: ${msg.subtype}*`);
+		// Error result messages have 'errors' array
+		const errorMsg = msg as { errors?: string[] };
+		if (errorMsg.errors && errorMsg.errors.length > 0) {
+			lines.push('');
+			lines.push('```');
+			lines.push(errorMsg.errors.join('\n'));
+			lines.push('```');
+		}
+	}
+
+	return lines.join('\n');
 }
