@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { Session, ContextInfo, SessionState } from '@liuboer/shared';
+import type { Session, ContextInfo, SessionState, MessageImage } from '@liuboer/shared';
 import { STATE_CHANNELS } from '@liuboer/shared';
 import type { SDKMessage, SDKSystemMessage } from '@liuboer/shared/sdk/sdk.d.ts';
 import { isSDKStreamEvent, isSDKCompactBoundary } from '@liuboer/shared/sdk/type-guards';
@@ -553,7 +553,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		}
 	};
 
-	const handleSendMessage = async (content: string) => {
+	const handleSendMessage = async (content: string, images?: MessageImage[]) => {
 		if (!content.trim() || sending) return;
 
 		// Check if MessageHub is connected
@@ -584,7 +584,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			await hub.call('message.send', {
 				sessionId,
 				content,
-				// images: undefined, // Future: support image uploads
+				images,
 			});
 
 			// Note: Don't set sending=false here - wait for agent.state event

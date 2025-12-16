@@ -110,7 +110,18 @@ export function SDKUserMessage({
 		return '';
 	};
 
+	// Extract image blocks from the message
+	const getImageBlocks = (): Array<Record<string, unknown>> => {
+		if (!Array.isArray(apiMessage.content)) return [];
+
+		return apiMessage.content.filter((block: unknown) => {
+			const b = block as Record<string, unknown>;
+			return b.type === 'image';
+		}) as Array<Record<string, unknown>>;
+	};
+
 	const textContent = getTextContent();
+	const imageBlocks = getImageBlocks();
 
 	// For synthetic messages, extract all content blocks for detailed display
 	const getSyntheticContentBlocks = (): Array<Record<string, unknown>> | null => {
@@ -372,6 +383,27 @@ export function SDKUserMessage({
 					<div class={cn(messageColors.user.text, 'whitespace-pre-wrap break-words')}>
 						{textContent}
 					</div>
+
+					{/* Attached images */}
+					{imageBlocks.length > 0 && (
+						<div class="mt-3 space-y-2">
+							{imageBlocks.map((img, idx) => {
+								const source = img.source as Record<string, unknown>;
+								const mediaType = source.media_type as string;
+								const data = source.data as string;
+
+								return (
+									<div key={idx} class="rounded overflow-hidden border border-gray-600/50">
+										<img
+											src={`data:${mediaType};base64,${data}`}
+											alt="Attached image"
+											class="max-w-full h-auto"
+										/>
+									</div>
+								);
+							})}
+						</div>
+					)}
 
 					{/* Parent tool use indicator (for sub-agent messages) */}
 					{message.parent_tool_use_id && (

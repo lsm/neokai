@@ -5,12 +5,14 @@ import { slashCommandsSignal } from '../lib/signals.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import CommandAutocomplete from './CommandAutocomplete.tsx';
-import type { ModelInfo } from '@liuboer/shared';
+import { AttachmentPreview } from './AttachmentPreview.tsx';
+import type { ModelInfo, MessageImage } from '@liuboer/shared';
 import { isAgentWorking } from '../lib/state.ts';
+import { fileToBase64, validateImageFile } from '../lib/file-utils.ts';
 
 interface MessageInputProps {
 	sessionId: string;
-	onSend: (content: string) => void;
+	onSend: (content: string, images?: MessageImage[]) => void;
 	disabled?: boolean;
 	autoScroll?: boolean;
 	onAutoScrollChange?: (autoScroll: boolean) => void;
@@ -51,6 +53,7 @@ export default function MessageInput({
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
 	const plusButtonRef = useRef<HTMLButtonElement>(null);
+	const fileInputRef = useRef<HTMLInputElement>(null);
 	const maxChars = 10000;
 
 	// Track interrupting state
@@ -61,6 +64,11 @@ export default function MessageInput({
 
 	// Draft persistence timeout ref
 	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	// Track file attachments
+	const [attachments, setAttachments] = useState<
+		Array<MessageImage & { name: string; size: number }>
+	>([]);
 
 	// Detect if device is mobile (touch-based)
 	const isMobileDevice = useRef(false);
@@ -365,11 +373,59 @@ export default function MessageInput({
 			return;
 		}
 
+		// Prepare images for sending (strip metadata)
+		const images: MessageImage[] | undefined =
+			attachments.length > 0
+				? attachments.map(({ data, media_type }) => ({ data, media_type }))
+				: undefined;
+
 		// Clear UI - this triggers the draft save effect which will immediately clear the draft
 		setContent('');
+		setAttachments([]);
 
-		// Send message
-		onSend(messageContent);
+		// Send message with images
+		onSend(messageContent, images);
+	};
+
+	const handleFileSelect = async (e: Event) => {
+		const input = e.target as HTMLInputElement;
+		const files = input.files;
+		if (!files || files.length === 0) return;
+
+		for (const file of Array.from(files)) {
+			// Validate file
+			const error = validateImageFile(file);
+			if (error) {
+				toast.error(error);
+				continue;
+			}
+
+			try {
+				// Convert to base64
+				const base64Data = await fileToBase64(file);
+
+				// Add to attachments
+				setAttachments((prev) => [
+					...prev,
+					{
+						data: base64Data,
+						media_type: file.type as MessageImage['media_type'],
+						name: file.name,
+						size: file.size,
+					},
+				]);
+			} catch (error) {
+				console.error('Failed to read file:', error);
+				toast.error(`Failed to read ${file.name}`);
+			}
+		}
+
+		// Reset input so same file can be selected again
+		input.value = '';
+	};
+
+	const handleRemoveAttachment = (index: number) => {
+		setAttachments((prev) => prev.filter((_, i) => i !== index));
 	};
 
 	const handleInterrupt = async () => {
@@ -465,6 +521,13 @@ export default function MessageInput({
 	return (
 		<div class="p-4">
 			<form onSubmit={handleSubmit} class="max-w-4xl mx-auto">
+				{/* Attachment Preview */}
+				{attachments.length > 0 && (
+					<div class="mb-3">
+						<AttachmentPreview attachments={attachments} onRemove={handleRemoveAttachment} />
+					</div>
+				)}
+
 				{/* iOS 26 Style: Floating single-line input */}
 				<div class="flex items-end gap-3">
 					{/* Plus Button */}
@@ -679,7 +742,7 @@ export default function MessageInput({
 									type="button"
 									onClick={() => {
 										if (!disabled) {
-											toast.info('File attachment coming soon');
+											fileInputRef.current?.click();
 											setMenuOpen(false);
 										}
 									}}
@@ -702,8 +765,18 @@ export default function MessageInput({
 											d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
 										/>
 									</svg>
-									<span class="text-sm">Attach file</span>
+									<span class="text-sm">Attach image</span>
 								</button>
+
+								{/* Hidden file input */}
+								<input
+									ref={fileInputRef}
+									type="file"
+									accept="image/png,image/jpeg,image/gif,image/webp"
+									multiple
+									onChange={handleFileSelect}
+									class="hidden"
+								/>
 							</div>
 						)}
 					</div>
