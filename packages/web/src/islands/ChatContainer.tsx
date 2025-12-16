@@ -29,6 +29,8 @@ import { Button } from '../components/ui/Button.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
 import { Modal } from '../components/ui/Modal.tsx';
+import { SessionSettingsModal } from '../components/SessionSettingsModal.tsx';
+import { ToolsModal } from '../components/ToolsModal.tsx';
 import { Skeleton, SkeletonMessage } from '../components/ui/Skeleton.tsx';
 import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
 import { SDKStreamingAccumulator } from '../components/sdk/SDKStreamingMessage.tsx';
@@ -52,6 +54,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const [sending, setSending] = useState(false);
 	const [showScrollButton, setShowScrollButton] = useState(false);
 	const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+	const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+	const [toolsModalOpen, setToolsModalOpen] = useState(false);
 	const [currentAction, setCurrentAction] = useState<string | undefined>(undefined);
 	const [loadingOlder, setLoadingOlder] = useState(false);
 	const [hasMoreMessages, setHasMoreMessages] = useState(true);
@@ -649,7 +653,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const getHeaderActions = () => [
 		{
 			label: 'Session Settings',
-			onClick: () => toast.info('Session settings coming soon'),
+			onClick: () => setSettingsModalOpen(true),
 			icon: (
 				<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
 					<path
@@ -1119,6 +1123,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				disabled={sending || isCompacting || connectionState.value !== 'connected'}
 				autoScroll={autoScroll}
 				onAutoScrollChange={handleAutoScrollChange}
+				onOpenTools={() => setToolsModalOpen(true)}
 			/>
 
 			{/* Delete Chat Modal */}
@@ -1146,6 +1151,20 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					</div>
 				</div>
 			</Modal>
+
+			{/* Session Settings Modal */}
+			<SessionSettingsModal
+				isOpen={settingsModalOpen}
+				onClose={() => setSettingsModalOpen(false)}
+				session={session}
+			/>
+
+			{/* Tools Modal */}
+			<ToolsModal
+				isOpen={toolsModalOpen}
+				onClose={() => setToolsModalOpen(false)}
+				session={session}
+			/>
 		</div>
 	);
 }
