@@ -105,6 +105,16 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 			throw new Error('Session not found');
 		}
 
+		// Clear draft if it matches the sent message content
+		// This prevents the draft from reappearing after send
+		const session = agentSession.getSessionData();
+		if (session.metadata?.inputDraft && session.metadata.inputDraft === content.trim()) {
+			// Cast to bypass strict typing - database.updateSession handles partial metadata merging
+			await sessionManager.updateSession(targetSessionId, {
+				metadata: { inputDraft: undefined },
+			} as Partial<Session>);
+		}
+
 		return await agentSession.handleMessageSend({ content, images });
 	});
 

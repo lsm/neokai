@@ -807,11 +807,6 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		}
 	}
 
-	// Create a map of compact boundary UUIDs to their associated synthetic content
-	// Synthetic messages appear right after compact boundaries
-	const compactSyntheticMap = new Map<string, string>();
-	const skipSyntheticSet = new Set<string>();
-
 	// Helper to extract text from a user message
 	const extractUserMessageText = (msg: SDKMessage): string => {
 		if (msg.type !== 'user') return '';
@@ -830,6 +825,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		}
 		return '';
 	};
+
+	// Create a map of compact boundary UUIDs to their associated synthetic content
+	// Synthetic messages appear right after compact boundaries
+	const compactSyntheticMap = new Map<string, string>();
+	const skipSyntheticSet = new Set<string>();
 
 	// Helper to check if a message is synthetic
 	const isSyntheticMessage = (msg: SDKMessage): boolean => {

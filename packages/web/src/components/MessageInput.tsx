@@ -59,16 +59,6 @@ export default function MessageInput({
 	// Draft persistence timeout ref
 	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-	// Track if we're currently sending a message (prevents draft save race condition)
-	const [isSending, setIsSending] = useState(false);
-	// Ref for isSending - allows async callbacks to read current value instead of stale closure
-	const isSendingRef = useRef(false);
-
-	// Keep ref in sync with state
-	useEffect(() => {
-		isSendingRef.current = isSending;
-	}, [isSending]);
-
 	// Detect if device is mobile (touch-based)
 	const isMobileDevice = useRef(false);
 
@@ -104,6 +94,15 @@ export default function MessageInput({
 
 	// Load draft from session metadata on mount/session change
 	useEffect(() => {
+		// Clear content immediately if sessionId is invalid
+		if (!sessionId) {
+			setContent('');
+			return;
+		}
+
+		// Clear content immediately when sessionId changes to prevent showing stale draft
+		setContent('');
+
 		const loadDraft = async () => {
 			try {
 				const hub = await connectionManager.getHub();
@@ -114,12 +113,9 @@ export default function MessageInput({
 				const draft = response.session?.metadata?.inputDraft;
 				if (draft) {
 					setContent(draft);
-				} else {
-					setContent(''); // Clear if no draft
 				}
 			} catch (error) {
 				console.error('Failed to load draft:', error);
-				// Don't show error toast - just fail silently
 			}
 		};
 
@@ -129,27 +125,26 @@ export default function MessageInput({
 	// Track previous sessionId for cleanup
 	const prevSessionIdRef = useRef<string | null>(null);
 
-	// Save draft to session metadata (debounced 250ms)
+	// Save draft to session metadata (debounced 250ms for non-empty, immediate for empty)
 	useEffect(() => {
-		// ALWAYS clear existing timeout first (even if isSending)
-		// This prevents stale callbacks from firing
+		// Clear existing timeout
 		if (draftSaveTimeoutRef.current) {
 			clearTimeout(draftSaveTimeoutRef.current);
 			draftSaveTimeoutRef.current = null;
 		}
 
 		// If sessionId changed, flush the previous session's draft immediately
-		// This handles the case where user switches sessions before 250ms debounce fires
 		if (prevSessionIdRef.current && prevSessionIdRef.current !== sessionId) {
 			const prevSessionId = prevSessionIdRef.current;
+			const trimmedContent = content.trim();
+
 			// Fire-and-forget: save the current content as draft for the OLD session
-			// This ensures we don't lose draft state when switching quickly
 			connectionManager.getHub().then((hub) => {
 				hub
 					.call('session.update', {
 						sessionId: prevSessionId,
 						metadata: {
-							inputDraft: content.trim() || undefined,
+							inputDraft: trimmedContent || undefined,
 						},
 					})
 					.catch((error) => {
@@ -159,54 +154,47 @@ export default function MessageInput({
 		}
 		prevSessionIdRef.current = sessionId;
 
-		// Don't save drafts while sending a message (prevents race condition)
-		if (isSending) {
-			return;
-		}
-
-		// Don't save empty drafts - clear them instead
 		const trimmedContent = content.trim();
 
-		draftSaveTimeoutRef.current = setTimeout(() => {
-			const saveDraft = async () => {
-				// Check ref BEFORE getting hub (early exit for obvious cases)
-				if (isSendingRef.current) {
-					return;
-				}
-
-				try {
-					const hub = await connectionManager.getHub();
-
-					// Check ref AFTER getting hub (catches race conditions)
-					// This is critical: the async getHub() call takes time,
-					// and user might have pressed Enter during that time
-					if (isSendingRef.current) {
-						return;
-					}
-
-					await hub.call('session.update', {
+		// Empty content: save immediately to ensure draft clears before any pending debounced save
+		if (trimmedContent === '') {
+			connectionManager.getHub().then((hub) => {
+				hub
+					.call('session.update', {
 						sessionId,
 						metadata: {
-							inputDraft: trimmedContent || undefined, // Clear if empty
+							inputDraft: undefined,
 						},
+					})
+					.catch((error) => {
+						console.error('Failed to clear draft:', error);
 					});
-				} catch (error) {
-					// Silently fail - don't interrupt user typing
-					console.error('Failed to save draft:', error);
-				}
-			};
+			});
+			return; // No cleanup needed for immediate save
+		}
 
-			saveDraft();
-		}, 250); // 250ms debounce (matches context update throttle)
+		// Non-empty content: debounce as usual
+		draftSaveTimeoutRef.current = setTimeout(async () => {
+			try {
+				const hub = await connectionManager.getHub();
+				await hub.call('session.update', {
+					sessionId,
+					metadata: {
+						inputDraft: trimmedContent,
+					},
+				});
+			} catch (error) {
+				console.error('Failed to save draft:', error);
+			}
+		}, 250);
 
-		// Cleanup on unmount
 		return () => {
 			if (draftSaveTimeoutRef.current) {
 				clearTimeout(draftSaveTimeoutRef.current);
 				draftSaveTimeoutRef.current = null;
 			}
 		};
-	}, [content, sessionId, isSending]);
+	}, [content, sessionId]);
 
 	// Global Escape key listener for interrupt (works even when textarea is disabled)
 	useEffect(() => {
@@ -366,53 +354,19 @@ export default function MessageInput({
 		}
 	}, [content]);
 
-	const handleSubmit = async (e: Event) => {
+	const handleSubmit = (e: Event) => {
 		e.preventDefault();
 
-		// Check agent working state at time of submit
 		const messageContent = content.trim();
-		if (!messageContent || isAgentWorking.value || isSending) {
+		if (!messageContent || isAgentWorking.value) {
 			return;
 		}
 
-		try {
-			// ✅ Layer 1: Set sending flag to block draft saves
-			// Set both state and ref - ref updates synchronously for in-flight async operations
-			setIsSending(true);
-			isSendingRef.current = true;
+		// Clear UI - this triggers the draft save effect which will immediately clear the draft
+		setContent('');
 
-			// ✅ Layer 2: Cancel any pending debounced save
-			if (draftSaveTimeoutRef.current) {
-				clearTimeout(draftSaveTimeoutRef.current);
-				draftSaveTimeoutRef.current = null;
-			}
-
-			// ✅ Layer 3: Clear UI immediately (before async operations)
-			setContent('');
-
-			// ✅ Layer 4: Clear draft from database immediately (fire-and-forget)
-			// Don't await - we want UI to feel instant
-			connectionManager.getHub().then((hub) => {
-				hub
-					.call('session.update', {
-						sessionId,
-						metadata: { inputDraft: undefined },
-					})
-					.catch((error) => {
-						console.error('Failed to clear draft:', error);
-					});
-			});
-
-			// ✅ Layer 5: Send message with captured content
-			onSend(messageContent);
-		} finally {
-			// Re-enable draft saves after a short delay
-			// This ensures any stale callbacks have completed
-			setTimeout(() => {
-				setIsSending(false);
-				isSendingRef.current = false;
-			}, 100);
-		}
+		// Send message
+		onSend(messageContent);
 	};
 
 	const handleInterrupt = async () => {
