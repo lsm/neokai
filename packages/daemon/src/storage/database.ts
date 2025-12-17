@@ -225,6 +225,10 @@ export class Database {
 
 		// Migration 9: Update CHECK constraint to include 'archived' status
 		// SQLite doesn't support ALTER COLUMN, so we need to recreate the table
+		//
+		// CRITICAL: Must disable foreign_keys during table recreation!
+		// With foreign_keys=ON, DROP TABLE cascades to child tables (sdk_messages),
+		// which would delete all messages. This was a data-loss bug.
 		try {
 			// Check if the CHECK constraint already includes 'archived'
 			// We do this by trying to insert a test row with status='archived'
@@ -262,44 +266,53 @@ export class Database {
 				"🔧 Running migration: Updating sessions table CHECK constraint to include 'archived' status"
 			);
 
-			// SQLite table recreation pattern for modifying constraints
-			this.db.exec(`
-				-- Create new table with updated CHECK constraint
-				CREATE TABLE sessions_new (
-					id TEXT PRIMARY KEY,
-					title TEXT NOT NULL,
-					workspace_path TEXT NOT NULL,
-					created_at TEXT NOT NULL,
-					last_active_at TEXT NOT NULL,
-					status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived')),
-					config TEXT NOT NULL,
-					metadata TEXT NOT NULL,
-					is_worktree INTEGER DEFAULT 0,
-					worktree_path TEXT,
-					main_repo_path TEXT,
-					worktree_branch TEXT,
-					git_branch TEXT,
-					sdk_session_id TEXT,
-					available_commands TEXT,
-					processing_state TEXT,
-					archived_at TEXT
-				);
+			// CRITICAL: Disable foreign keys during table recreation to prevent
+			// CASCADE delete from wiping sdk_messages when we DROP TABLE sessions
+			this.db.exec('PRAGMA foreign_keys = OFF');
 
-				-- Copy all data from old table to new table
-				INSERT INTO sessions_new
-				SELECT id, title, workspace_path, created_at, last_active_at, status, config, metadata,
-					   is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch,
-					   sdk_session_id, available_commands, processing_state, archived_at
-				FROM sessions;
+			try {
+				// SQLite table recreation pattern for modifying constraints
+				this.db.exec(`
+					-- Create new table with updated CHECK constraint
+					CREATE TABLE sessions_new (
+						id TEXT PRIMARY KEY,
+						title TEXT NOT NULL,
+						workspace_path TEXT NOT NULL,
+						created_at TEXT NOT NULL,
+						last_active_at TEXT NOT NULL,
+						status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived')),
+						config TEXT NOT NULL,
+						metadata TEXT NOT NULL,
+						is_worktree INTEGER DEFAULT 0,
+						worktree_path TEXT,
+						main_repo_path TEXT,
+						worktree_branch TEXT,
+						git_branch TEXT,
+						sdk_session_id TEXT,
+						available_commands TEXT,
+						processing_state TEXT,
+						archived_at TEXT
+					);
 
-				-- Drop old table
-				DROP TABLE sessions;
+					-- Copy all data from old table to new table
+					INSERT INTO sessions_new
+					SELECT id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+						   is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch,
+						   sdk_session_id, available_commands, processing_state, archived_at
+					FROM sessions;
 
-				-- Rename new table to original name
-				ALTER TABLE sessions_new RENAME TO sessions;
-			`);
+					-- Drop old table (safe now that foreign_keys is OFF)
+					DROP TABLE sessions;
 
-			this.logger.log('✅ Migration complete: sessions table CHECK constraint updated');
+					-- Rename new table to original name
+					ALTER TABLE sessions_new RENAME TO sessions;
+				`);
+
+				this.logger.log('✅ Migration complete: sessions table CHECK constraint updated');
+			} finally {
+				// Re-enable foreign keys
+				this.db.exec('PRAGMA foreign_keys = ON');
+			}
 		}
 	}
 
