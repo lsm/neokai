@@ -391,15 +391,30 @@ export class AgentSession {
 				this.logger.log(`Session uses shared workspace (no worktree)`);
 			}
 
-			// Build system prompt with worktree instructions if applicable
-			const systemPromptConfig: Options['systemPrompt'] = {
-				type: 'preset',
-				preset: 'claude_code',
-			};
+			// Build query options based on tools config
+			const toolsConfig = this.session.config.tools;
 
-			// Append worktree instructions if session uses a worktree
-			if (this.session.worktree) {
-				systemPromptConfig.append = `
+			// ============================================================================
+			// System Prompt Configuration
+			// SDK option: systemPrompt
+			// ============================================================================
+			// Build system prompt based on useClaudeCodePreset config
+			// When true: Use Claude Code preset with optional worktree append
+			// When false: Use minimal system prompt (or undefined to let SDK use default)
+			let systemPromptConfig: Options['systemPrompt'];
+
+			// Check if Claude Code preset is enabled (default: true for backward compat)
+			const useClaudeCodePreset = toolsConfig?.useClaudeCodePreset ?? true;
+
+			if (useClaudeCodePreset) {
+				systemPromptConfig = {
+					type: 'preset',
+					preset: 'claude_code',
+				};
+
+				// Append worktree instructions if session uses a worktree
+				if (this.session.worktree) {
+					systemPromptConfig.append = `
 IMPORTANT: Git Worktree Isolation
 
 This session is running in an isolated git worktree at:
@@ -426,11 +441,34 @@ git --git-dir=${this.session.worktree.mainRepoPath}/.git --work-tree=${this.sess
 These commands operate on the root repository without violating worktree isolation.
 This isolation ensures concurrent sessions don't conflict with each other.
 `.trim();
+				}
+			} else {
+				// No Claude Code preset - use minimal system prompt or undefined
+				// When worktree is used, still append isolation instructions
+				if (this.session.worktree) {
+					systemPromptConfig = `
+You are an AI assistant helping with coding tasks.
+
+IMPORTANT: Git Worktree Isolation
+
+This session is running in an isolated git worktree at:
+${this.session.worktree.worktreePath}
+
+Branch: ${this.session.worktree.branch}
+Main repository: ${this.session.worktree.mainRepoPath}
+
+CRITICAL RULES:
+1. ALL file operations MUST stay within the worktree directory: ${this.session.worktree.worktreePath}
+2. NEVER modify files in the main repository at: ${this.session.worktree.mainRepoPath}
+3. Your current working directory (cwd) is already set to the worktree path
+`.trim();
+				}
+				// If no worktree, systemPromptConfig remains undefined (SDK default behavior)
 			}
 
-			// Build query options based on tools config
-			const toolsConfig = this.session.config.tools;
-
+			// ============================================================================
+			// Allowed Tools Configuration
+			// ============================================================================
 			// Determine allowed tools from config
 			// - MCP tools: Only if loadProjectMcp is true and patterns are specified
 			// - SDK built-in tools: Always enabled (not configurable)
@@ -452,12 +490,34 @@ This isolation ensures concurrent sessions don't conflict with each other.
 				allowedTools.push('liuboer__memory__*');
 			}
 
-			// Determine setting sources: include 'project' if project settings is enabled
-			// This controls CLAUDE.md loading, separate from MCP
-			const settingSources: Options['settingSources'] = toolsConfig?.loadProjectSettings
+			// ============================================================================
+			// Setting Sources Configuration
+			// SDK option: settingSources
+			// ============================================================================
+			// Determine setting sources: include 'project' if setting sources loading is enabled
+			// This controls CLAUDE.md and .claude/settings.json loading
+			// Note: loadSettingSources replaces the old loadProjectSettings for clarity
+			const loadSettingSources = toolsConfig?.loadSettingSources ?? true;
+			const settingSources: Options['settingSources'] = loadSettingSources
 				? ['project', 'local']
 				: ['local'];
 
+			// ============================================================================
+			// MCP Servers Configuration
+			// SDK option: mcpServers
+			// ============================================================================
+			// CRITICAL: Control MCP server loading explicitly
+			// When loadProjectMcp is false, pass empty mcpServers to prevent SDK from
+			// auto-loading .mcp.json. This prevents MCP tool definitions from consuming
+			// context tokens when MCP is disabled.
+			// Note: allowedTools only controls what Claude can USE, not what's LOADED.
+			const mcpServers: Options['mcpServers'] = toolsConfig?.loadProjectMcp
+				? undefined // Let SDK load from .mcp.json
+				: {}; // Explicitly disable MCP loading
+
+			// ============================================================================
+			// Build Final Query Options
+			// ============================================================================
 			const queryOptions: Options = {
 				model: this.session.config.model,
 				cwd: this.session.workspacePath,
@@ -466,15 +526,17 @@ This isolation ensures concurrent sessions don't conflict with each other.
 				maxTurns: Infinity,
 				settingSources,
 				systemPrompt: systemPromptConfig,
-				// Tools: Use session config, default to WebSearch enabled only
 				allowedTools,
+				mcpServers,
 			};
 
 			// DEBUG: Log query options for verification
 			this.logger.log(`[AgentSession ${this.session.id}] Query options:`, {
 				model: queryOptions.model,
+				useClaudeCodePreset,
 				settingSources: queryOptions.settingSources,
 				allowedTools: queryOptions.allowedTools,
+				mcpServers: queryOptions.mcpServers === undefined ? 'auto-load' : 'disabled',
 				toolsConfig,
 			});
 

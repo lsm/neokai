@@ -408,9 +408,13 @@ export class SessionManager {
 		const global = this.db.getGlobalToolsConfig();
 
 		return {
-			// Preset (CLAUDE.md): Only enable if allowed AND default is on
-			loadProjectSettings:
-				global.preset.claudeCode.allowed && global.preset.claudeCode.defaultEnabled,
+			// System Prompt: Claude Code preset - Only enable if allowed AND default is on
+			useClaudeCodePreset:
+				global.systemPrompt.claudeCodePreset.allowed &&
+				global.systemPrompt.claudeCodePreset.defaultEnabled,
+			// Setting Sources: Load project settings - Only enable if allowed AND default is on
+			loadSettingSources:
+				global.settingSources.project.allowed && global.settingSources.project.defaultEnabled,
 			// MCP: Only enable if allowed AND default is on
 			loadProjectMcp: global.mcp.allowProjectMcp && global.mcp.defaultProjectMcp,
 			enabledMcpPatterns: [],

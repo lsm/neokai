@@ -456,34 +456,72 @@ export class Database {
 		}
 
 		try {
-			const parsed = JSON.parse(row.config) as Partial<GlobalToolsConfig>;
+			// Parse stored config - may be old format or new format
+			const parsed = JSON.parse(row.config) as Record<string, unknown>;
 
 			// Deep merge with defaults to ensure all fields exist
-			// This handles cases where DB was created before new fields were added
+			// This handles:
+			// 1. DB created before new fields were added
+			// 2. Migration from old 'preset' structure to new 'systemPrompt'/'settingSources' structure
+
+			// Handle backward compatibility: old 'preset.claudeCode' maps to new 'systemPrompt.claudeCodePreset'
+			// and 'settingSources.project' (both default to same value for consistency)
+			const oldPreset = parsed.preset as
+				| { claudeCode?: { allowed?: boolean; defaultEnabled?: boolean } }
+				| undefined;
+			const newSystemPrompt = parsed.systemPrompt as
+				| { claudeCodePreset?: { allowed?: boolean; defaultEnabled?: boolean } }
+				| undefined;
+			const newSettingSources = parsed.settingSources as
+				| { project?: { allowed?: boolean; defaultEnabled?: boolean } }
+				| undefined;
+			const newMcp = parsed.mcp as
+				| { allowProjectMcp?: boolean; defaultProjectMcp?: boolean }
+				| undefined;
+			const newLiuboerTools = parsed.liuboerTools as
+				| { memory?: { allowed?: boolean; defaultEnabled?: boolean } }
+				| undefined;
+
 			return {
-				preset: {
-					claudeCode: {
+				systemPrompt: {
+					claudeCodePreset: {
+						// New format takes precedence, fall back to old format, then default
 						allowed:
-							parsed.preset?.claudeCode?.allowed ??
-							DEFAULT_GLOBAL_TOOLS_CONFIG.preset.claudeCode.allowed,
+							newSystemPrompt?.claudeCodePreset?.allowed ??
+							oldPreset?.claudeCode?.allowed ??
+							DEFAULT_GLOBAL_TOOLS_CONFIG.systemPrompt.claudeCodePreset.allowed,
 						defaultEnabled:
-							parsed.preset?.claudeCode?.defaultEnabled ??
-							DEFAULT_GLOBAL_TOOLS_CONFIG.preset.claudeCode.defaultEnabled,
+							newSystemPrompt?.claudeCodePreset?.defaultEnabled ??
+							oldPreset?.claudeCode?.defaultEnabled ??
+							DEFAULT_GLOBAL_TOOLS_CONFIG.systemPrompt.claudeCodePreset.defaultEnabled,
+					},
+				},
+				settingSources: {
+					project: {
+						// New format takes precedence, fall back to old preset format, then default
+						allowed:
+							newSettingSources?.project?.allowed ??
+							oldPreset?.claudeCode?.allowed ??
+							DEFAULT_GLOBAL_TOOLS_CONFIG.settingSources.project.allowed,
+						defaultEnabled:
+							newSettingSources?.project?.defaultEnabled ??
+							oldPreset?.claudeCode?.defaultEnabled ??
+							DEFAULT_GLOBAL_TOOLS_CONFIG.settingSources.project.defaultEnabled,
 					},
 				},
 				mcp: {
 					allowProjectMcp:
-						parsed.mcp?.allowProjectMcp ?? DEFAULT_GLOBAL_TOOLS_CONFIG.mcp.allowProjectMcp,
+						newMcp?.allowProjectMcp ?? DEFAULT_GLOBAL_TOOLS_CONFIG.mcp.allowProjectMcp,
 					defaultProjectMcp:
-						parsed.mcp?.defaultProjectMcp ?? DEFAULT_GLOBAL_TOOLS_CONFIG.mcp.defaultProjectMcp,
+						newMcp?.defaultProjectMcp ?? DEFAULT_GLOBAL_TOOLS_CONFIG.mcp.defaultProjectMcp,
 				},
 				liuboerTools: {
 					memory: {
 						allowed:
-							parsed.liuboerTools?.memory?.allowed ??
+							newLiuboerTools?.memory?.allowed ??
 							DEFAULT_GLOBAL_TOOLS_CONFIG.liuboerTools.memory.allowed,
 						defaultEnabled:
-							parsed.liuboerTools?.memory?.defaultEnabled ??
+							newLiuboerTools?.memory?.defaultEnabled ??
 							DEFAULT_GLOBAL_TOOLS_CONFIG.liuboerTools.memory.defaultEnabled,
 					},
 				},
