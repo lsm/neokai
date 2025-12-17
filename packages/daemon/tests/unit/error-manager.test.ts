@@ -364,4 +364,178 @@ describe('ErrorManager', () => {
 			});
 		});
 	});
+
+	describe('rich error context', () => {
+		it('should include stack trace from Error objects', () => {
+			const error = new Error('Test error with stack');
+			const structured = errorManager.createError(error, ErrorCategory.SYSTEM);
+
+			expect(structured.stack).toBeDefined();
+			expect(structured.stack).toContain('Test error with stack');
+		});
+
+		it('should not include stack trace for string errors', () => {
+			const structured = errorManager.createError('String error', ErrorCategory.SYSTEM);
+
+			expect(structured.stack).toBeUndefined();
+		});
+
+		it('should include session context when provided', () => {
+			const sessionContext = {
+				sessionId: 'test-session-123',
+				processingState: {
+					status: 'processing',
+					messageId: 'msg-456',
+					phase: 'thinking',
+				},
+			};
+
+			const structured = errorManager.createError(
+				new Error('test'),
+				ErrorCategory.MESSAGE,
+				undefined,
+				sessionContext
+			);
+
+			expect(structured.sessionContext).toEqual(sessionContext);
+			expect(structured.sessionContext?.sessionId).toBe('test-session-123');
+			expect(structured.sessionContext?.processingState?.status).toBe('processing');
+			expect(structured.sessionContext?.processingState?.phase).toBe('thinking');
+		});
+
+		it('should include metadata when provided', () => {
+			const metadata = {
+				queueSize: 5,
+				errorMessage: 'Network timeout',
+				requestedModel: 'claude-3-opus',
+			};
+
+			const structured = errorManager.createError(
+				new Error('test'),
+				ErrorCategory.SYSTEM,
+				undefined,
+				undefined,
+				metadata
+			);
+
+			expect(structured.metadata).toEqual(metadata);
+		});
+
+		it('should include recovery suggestions', () => {
+			const structured = errorManager.createError(
+				new Error('invalid_api_key'),
+				ErrorCategory.AUTHENTICATION
+			);
+
+			expect(structured.recoverySuggestions).toBeDefined();
+			expect(structured.recoverySuggestions?.length).toBeGreaterThan(0);
+			expect(structured.recoverySuggestions).toContain(
+				'Check your API key in environment variables'
+			);
+			expect(structured.recoverySuggestions).toContain(
+				'Ensure ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN is set correctly'
+			);
+		});
+
+		it('should include recovery suggestions for all categories', () => {
+			const categories = [
+				ErrorCategory.AUTHENTICATION,
+				ErrorCategory.CONNECTION,
+				ErrorCategory.MESSAGE,
+				ErrorCategory.MODEL,
+				ErrorCategory.SESSION,
+				ErrorCategory.RATE_LIMIT,
+			];
+
+			categories.forEach((category) => {
+				const structured = errorManager.createError(new Error('test'), category);
+				expect(structured.recoverySuggestions).toBeDefined();
+				expect(structured.recoverySuggestions?.length).toBeGreaterThan(0);
+			});
+		});
+
+		it('should provide different suggestions based on error code', () => {
+			const quotaError = errorManager.createError(
+				new Error('quota exceeded'),
+				ErrorCategory.RATE_LIMIT
+			);
+			const rateLimitError = errorManager.createError(
+				new Error('429 rate limit'),
+				ErrorCategory.RATE_LIMIT
+			);
+
+			expect(quotaError.recoverySuggestions).toContain('Check your API usage limits');
+			expect(rateLimitError.recoverySuggestions).toContain(
+				'Wait a few moments before trying again'
+			);
+		});
+	});
+
+	describe('handleError with rich context', () => {
+		it('should include processing state in error context', async () => {
+			const sessionId = 'test-session-789';
+			const processingState = {
+				status: 'processing',
+				messageId: 'msg-123',
+				phase: 'streaming',
+			};
+
+			const result = await errorManager.handleError(
+				sessionId,
+				new Error('Test error'),
+				ErrorCategory.MESSAGE,
+				undefined,
+				processingState
+			);
+
+			expect(result.sessionContext?.sessionId).toBe(sessionId);
+			expect(result.sessionContext?.processingState).toEqual(processingState);
+		});
+
+		it('should include metadata in error context', async () => {
+			const sessionId = 'test-session-abc';
+			const metadata = {
+				messageType: 'assistant',
+				queueSize: 3,
+			};
+
+			const result = await errorManager.handleError(
+				sessionId,
+				new Error('Test error'),
+				ErrorCategory.MESSAGE,
+				undefined,
+				undefined,
+				metadata
+			);
+
+			expect(result.metadata).toEqual(metadata);
+		});
+
+		it('should broadcast rich error details', async () => {
+			const sessionId = 'test-session-def';
+			const processingState = {
+				status: 'processing',
+				messageId: 'msg-789',
+			};
+			const metadata = { testData: 'test' };
+
+			await errorManager.handleError(
+				sessionId,
+				new Error('Test error'),
+				ErrorCategory.SYSTEM,
+				'Custom message',
+				processingState,
+				metadata
+			);
+
+			expect(publishSpy).toHaveBeenCalledTimes(1);
+			const broadcastedError = publishSpy.mock.calls[0][1].errorDetails;
+
+			expect(broadcastedError.sessionContext?.sessionId).toBe(sessionId);
+			expect(broadcastedError.sessionContext?.processingState).toEqual(processingState);
+			expect(broadcastedError.metadata).toEqual(metadata);
+			expect(broadcastedError.recoverySuggestions).toBeDefined();
+			expect(broadcastedError.stack).toBeDefined();
+		});
+	});
 });
