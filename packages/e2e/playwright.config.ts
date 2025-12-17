@@ -84,6 +84,7 @@ export default defineConfig({
 				'**/draft-persistence.e2e.ts', // Draft persistence tests
 				'**/draft-clearing-bug.e2e.ts', // Draft clearing bug fix tests
 				'**/scroll-to-bottom-button.e2e.ts', // Scroll to bottom button tests
+				'**/mcp-toggle.e2e.ts', // MCP toggle functionality tests
 			],
 			use: { ...devices['Desktop Chrome'] },
 		},
