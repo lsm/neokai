@@ -20,6 +20,7 @@ import { MessageQueue } from './message-queue';
 import { ProcessingStateManager } from './processing-state-manager';
 import { ContextTracker } from './context-tracker';
 import { SDKMessageHandler } from './sdk-message-handler';
+import { expandBuiltInCommand, getBuiltInCommandNames } from './built-in-commands';
 
 /**
  * SDK query object with control methods
@@ -193,9 +194,13 @@ export class AgentSession {
 			const commands = await this.queryObject.supportedCommands();
 			const commandNames = commands.map((cmd: SlashCommand) => cmd.name);
 
-			// Add built-in commands that the SDK supports but doesn't advertise
-			const builtInCommands = ['clear', 'help'];
-			const allCommands = [...new Set([...commandNames, ...builtInCommands])];
+			// Add SDK built-in commands that SDK supports but doesn't advertise
+			const sdkBuiltInCommands = ['clear', 'help'];
+			// Add Liuboer built-in commands
+			const liuboerBuiltInCommands = getBuiltInCommandNames();
+			const allCommands = [
+				...new Set([...commandNames, ...sdkBuiltInCommands, ...liuboerBuiltInCommands]),
+			];
 
 			this.slashCommands = allCommands;
 			this.commandsFetchedFromSDK = true;
@@ -295,7 +300,15 @@ export class AgentSession {
 			// LAZY START: Start the query on first message
 			await this.ensureQueryStarted();
 
-			const { content, images } = data;
+			let { content, images } = data;
+
+			// Expand built-in commands to their full prompts
+			const expandedContent = expandBuiltInCommand(content);
+			if (expandedContent) {
+				this.logger.log(`Expanding built-in command: ${content.trim()}`);
+				content = expandedContent;
+			}
+
 			const messageContent = this.buildMessageContent(content, images);
 
 			// Generate message ID before enqueuing so we can set state BEFORE the message starts processing
@@ -1115,6 +1128,7 @@ CRITICAL RULES:
 	/**
 	 * Get available slash commands for this session
 	 * Returns DB-persisted commands immediately, refreshes from SDK if available
+	 * Always includes Liuboer built-in commands even if SDK hasn't started
 	 */
 	async getSlashCommands(): Promise<string[]> {
 		// Return cached/DB-persisted commands if available
@@ -1130,6 +1144,13 @@ CRITICAL RULES:
 
 		// No cached commands - try to fetch from SDK query object
 		await this.fetchAndCacheSlashCommands();
+
+		// Fallback: If SDK fetch failed or query not started, return at least built-in commands
+		if (this.slashCommands.length === 0) {
+			const liuboerBuiltInCommands = getBuiltInCommandNames();
+			this.slashCommands = liuboerBuiltInCommands;
+		}
+
 		return this.slashCommands;
 	}
 }
