@@ -1,0 +1,39 @@
+/**
+ * Error types matching daemon's ErrorManager
+ * These types should be kept in sync with packages/daemon/src/lib/error-manager.ts
+ */
+
+export enum ErrorCategory {
+	AUTHENTICATION = 'authentication',
+	CONNECTION = 'connection',
+	SESSION = 'session',
+	MESSAGE = 'message',
+	MODEL = 'model',
+	SYSTEM = 'system',
+	VALIDATION = 'validation',
+	TIMEOUT = 'timeout',
+	PERMISSION = 'permission',
+	RATE_LIMIT = 'rate_limit',
+}
+
+export interface StructuredError {
+	category: ErrorCategory;
+	code: string;
+	message: string;
+	userMessage: string;
+	details?: unknown;
+	recoverable: boolean;
+	timestamp: string;
+	stack?: string;
+	sessionContext?: {
+		sessionId: string;
+		processingState?: {
+			status: string;
+			messageId?: string;
+			phase?: string;
+		};
+		messageBeingProcessed?: string;
+	};
+	recoverySuggestions?: string[];
+	metadata?: Record<string, unknown>;
+}

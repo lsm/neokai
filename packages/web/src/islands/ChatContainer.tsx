@@ -36,6 +36,8 @@ import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
 import { SDKStreamingAccumulator } from '../components/sdk/SDKStreamingMessage.tsx';
 import { getCurrentAction } from '../lib/status-actions.ts';
 import { Tooltip } from '../components/ui/Tooltip.tsx';
+import { ErrorDialog } from '../components/ErrorDialog.tsx';
+import type { StructuredError } from '../types/error.ts';
 
 interface ChatContainerProps {
 	sessionId: string;
@@ -51,6 +53,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
+	const [errorDetails, setErrorDetails] = useState<StructuredError | null>(null);
+	const [errorDialogOpen, setErrorDialogOpen] = useState(false);
 	const [sending, setSending] = useState(false);
 	const [showScrollButton, setShowScrollButton] = useState(false);
 	const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -224,12 +228,28 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				cleanupFunctions.push(unsubContextCompacted);
 
 				// Error handling
-				const unsubSessionError = await hub.subscribe<{ error: string }>(
+				const unsubSessionError = await hub.subscribe<{
+					error: string;
+					errorDetails?: StructuredError;
+				}>(
 					'session.error',
 					(data) => {
-						const error = data.error;
+						const { error, errorDetails } = data;
 						setError(error);
+
+						// Store rich error details if available
+						if (errorDetails) {
+							setErrorDetails(errorDetails);
+							// Auto-open error dialog for non-recoverable errors or in dev mode
+							const isDev = import.meta.env.DEV;
+							if (!errorDetails.recoverable || isDev) {
+								setErrorDialogOpen(true);
+							}
+						}
+
+						// Show toast notification with details button
 						toast.error(error);
+
 						setSending(false);
 						setStreamingEvents([]);
 						setCurrentAction(undefined);
@@ -1087,20 +1107,31 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					data-testid="error-banner"
 					class={`bg-red-500/10 border-t ${borderColors.special.toast.error} px-4 py-3`}
 				>
-					<div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center justify-between">
-						<p class="text-sm text-red-400">{error}</p>
-						<button
-							onClick={() => setError(null)}
-							class="text-red-400 hover:text-red-300 transition-colors"
-						>
-							<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-								<path
-									fill-rule="evenodd"
-									d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
-									clip-rule="evenodd"
-								/>
-							</svg>
-						</button>
+					<div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center justify-between gap-4">
+						<p class="text-sm text-red-400 flex-1">{error}</p>
+						<div class="flex items-center gap-2">
+							{errorDetails && (
+								<button
+									onClick={() => setErrorDialogOpen(true)}
+									class="text-xs px-3 py-1 rounded-md bg-red-500/20 hover:bg-red-500/30 text-red-300 hover:text-red-200 transition-colors border border-red-500/30"
+								>
+									View Details
+								</button>
+							)}
+							<button
+								onClick={() => setError(null)}
+								class="text-red-400 hover:text-red-300 transition-colors"
+								aria-label="Dismiss error"
+							>
+								<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+									<path
+										fill-rule="evenodd"
+										d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+										clip-rule="evenodd"
+									/>
+								</svg>
+							</button>
+						</div>
 					</div>
 				</div>
 			)}
@@ -1164,6 +1195,14 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				isOpen={toolsModalOpen}
 				onClose={() => setToolsModalOpen(false)}
 				session={session}
+			/>
+
+			{/* Error Dialog */}
+			<ErrorDialog
+				isOpen={errorDialogOpen}
+				onClose={() => setErrorDialogOpen(false)}
+				error={errorDetails}
+				isDev={import.meta.env.DEV === 'true' || import.meta.env.MODE === 'development'}
 			/>
 		</div>
 	);
