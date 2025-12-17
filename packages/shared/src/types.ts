@@ -49,13 +49,23 @@ export interface SessionConfig {
 
 /**
  * Tools configuration for a session
- * Controls MCP tools and built-in tools availability
+ * Controls system prompt, setting sources, MCP tools, and Liuboer tools
+ *
+ * SDK Terms Reference:
+ * - systemPrompt: { type: 'preset', preset: 'claude_code' } - The Claude Code system prompt
+ * - settingSources: ['project', 'local', 'user'] - Which config files to load
  */
 export interface ToolsConfig {
-	// Project Settings: Load CLAUDE.md and .claude/settings.json (default: true)
-	// This is separate from MCP to allow preset loading without MCP
-	loadProjectSettings?: boolean;
+	// System Prompt: Use Claude Code preset (default: true)
+	// SDK option: systemPrompt: { type: 'preset', preset: 'claude_code' }
+	// When false, uses empty/minimal system prompt
+	useClaudeCodePreset?: boolean;
+	// Setting Sources: Load project settings from settingSources (default: true)
+	// SDK option: settingSources: ['project', 'local']
+	// Controls loading of CLAUDE.md, .claude/settings.json, .claude/settings.local.json
+	loadSettingSources?: boolean;
 	// Project MCP: Load .mcp.json from workspace (default: false)
+	// SDK option: mcpServers (auto-loaded when settingSources includes 'project')
 	loadProjectMcp?: boolean;
 	// Enabled MCP tool patterns (e.g., ["mcp__chrome-devtools__*"])
 	enabledMcpPatterns?: string[];
@@ -70,14 +80,27 @@ export interface ToolsConfig {
  * Global tools configuration
  * Two-stage control: 1) allowed or not, 2) default for new sessions
  * Stored at the daemon level, applies to all sessions
+ *
+ * SDK Terms Reference:
+ * - systemPrompt: { type: 'preset', preset: 'claude_code' } - The Claude Code system prompt
+ * - settingSources: ['project', 'local', 'user'] - Which config files to load
  */
 export interface GlobalToolsConfig {
-	// Preset settings (Claude Code system prompt, CLAUDE.md loading)
-	preset: {
-		claudeCode: {
-			// Is using Claude Code preset allowed?
+	// System Prompt settings
+	systemPrompt: {
+		// Claude Code preset: Use the official Claude Code system prompt
+		// SDK option: systemPrompt: { type: 'preset', preset: 'claude_code' }
+		claudeCodePreset: {
 			allowed: boolean;
-			// Default for new sessions (loads CLAUDE.md, .claude/settings.json)
+			defaultEnabled: boolean;
+		};
+	};
+	// Setting Sources settings
+	settingSources: {
+		// Project settings: Load from settingSources: ['project', 'local']
+		// Controls CLAUDE.md, .claude/settings.json, .claude/settings.local.json loading
+		project: {
+			allowed: boolean;
 			defaultEnabled: boolean;
 		};
 	};
@@ -99,13 +122,19 @@ export interface GlobalToolsConfig {
 
 /**
  * Default global tools configuration
- * Preset enabled by default, MCP disabled by default
+ * All features enabled by default, MCP disabled by default
  */
 export const DEFAULT_GLOBAL_TOOLS_CONFIG: GlobalToolsConfig = {
-	preset: {
-		claudeCode: {
+	systemPrompt: {
+		claudeCodePreset: {
 			allowed: true,
-			defaultEnabled: true, // Load CLAUDE.md by default
+			defaultEnabled: true, // Use Claude Code preset by default
+		},
+	},
+	settingSources: {
+		project: {
+			allowed: true,
+			defaultEnabled: true, // Load project settings by default
 		},
 	},
 	mcp: {
