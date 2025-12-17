@@ -35,6 +35,11 @@ export class StateManager {
 	// FIX: Per-channel versioning instead of global version
 	private channelVersions = new Map<string, number>();
 	private logger = new Logger('StateManager');
+	// Track API connection state (updated via broadcasts from ErrorManager)
+	private apiConnectionState: import('@liuboer/shared').ApiConnectionState = {
+		status: 'connected',
+		timestamp: Date.now(),
+	};
 
 	constructor(
 		private messageHub: MessageHub,
@@ -45,6 +50,7 @@ export class StateManager {
 	) {
 		this.setupHandlers();
 		this.setupEventListeners(); // FIX: Listen to internal events
+		this.setupApiConnectionListener(); // Listen to API connection state updates
 	}
 
 	/**
@@ -280,7 +286,25 @@ export class StateManager {
 	}
 
 	/**
-	 * Get unified system state (auth + config + health)
+	 * Setup listener for API connection state updates from ErrorManager
+	 */
+	private setupApiConnectionListener(): void {
+		this.messageHub.subscribe(
+			'state.apiConnection',
+			(data) => {
+				this.apiConnectionState = data as import('@liuboer/shared').ApiConnectionState;
+				this.logger.log('API connection state updated:', this.apiConnectionState.status);
+				// Broadcast system state change when API connection changes
+				this.broadcastSystemChange().catch((err: unknown) => {
+					this.logger.error('Failed to broadcast system state after API connection change:', err);
+				});
+			},
+			{ sessionId: 'global' }
+		);
+	}
+
+	/**
+	 * Get unified system state (auth + config + health + API connection)
 	 * NEW: Replaces individual getAuthState/getConfigState/getHealthState
 	 */
 	private async getSystemState(): Promise<SystemState> {
@@ -309,6 +333,9 @@ export class StateManager {
 					total: this.sessionManager.getTotalSessions(),
 				},
 			},
+
+			// API connectivity (daemon <-> Claude API)
+			apiConnection: this.apiConnectionState,
 
 			timestamp: Date.now(),
 		};

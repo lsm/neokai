@@ -294,6 +294,13 @@ export const healthStatus = computed<HealthStatus | null>(() => {
 	return system?.health || null;
 });
 
+export const apiConnectionStatus = computed<import('@liuboer/shared').ApiConnectionState | null>(
+	() => {
+		const system = systemState.value;
+		return system?.apiConnection || null;
+	}
+);
+
 // Current session signals (derived from currentSessionId) - exported as direct Preact computed signals
 // IMPORTANT: Access the underlying signal via .$ to ensure Preact tracks the dependency
 export const currentSessionState = computed<SessionState | null>(() => {

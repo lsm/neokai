@@ -18,6 +18,23 @@ export interface SessionsState {
 	timestamp: number;
 }
 
+/**
+ * API Connection Status
+ * Tracks connectivity between daemon and Claude API (not WebSocket)
+ */
+export type ApiConnectionStatus = 'connected' | 'degraded' | 'disconnected';
+
+export interface ApiConnectionState {
+	status: ApiConnectionStatus;
+	/** Number of consecutive connection errors in current window */
+	errorCount?: number;
+	/** Last connection error message */
+	lastError?: string;
+	/** Timestamp of last successful API call */
+	lastSuccessfulCall?: number;
+	timestamp: number;
+}
+
 // State channel: global:state.system (UNIFIED)
 // Combines auth, config, and health into single channel
 export interface SystemState {
@@ -35,6 +52,9 @@ export interface SystemState {
 
 	// System health
 	health: HealthStatus;
+
+	// API connectivity (daemon <-> Claude API)
+	apiConnection: ApiConnectionState;
 
 	timestamp: number;
 }

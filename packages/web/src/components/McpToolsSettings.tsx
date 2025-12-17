@@ -5,25 +5,28 @@
  * - Loads available MCP servers from .mcp.json
  * - Shows which tools would be available per server
  * - Allows enabling/disabling specific tool patterns
- * - Warns that session restart is needed for changes to take effect
+ * - Automatically restarts SDK query when changes are made
  */
 
 import { useComputed, useSignal } from '@preact/signals';
 import { useEffect } from 'preact/hooks';
-import { currentSession } from '../lib/state.ts';
+import { currentSession, currentAgentState } from '../lib/state.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import { borderColors } from '../lib/design-tokens.ts';
-import { deleteSession } from '../lib/api-helpers.ts';
 
 export function McpToolsSettings() {
 	const loading = useSignal(false);
 	const servers = useSignal<Record<string, unknown>>({});
-	const showRestartWarning = useSignal(false);
 
 	// Current enabled tools from session config (using new tools format)
 	const enabledTools = useComputed(() => {
 		return currentSession.value?.config.tools?.enabledMcpPatterns || [];
+	});
+
+	// Check if agent is currently processing
+	const isAgentProcessing = useComputed(() => {
+		return currentAgentState.value.status !== 'idle';
 	});
 
 	// Load available MCP servers when component mounts or session changes
@@ -76,51 +79,29 @@ export function McpToolsSettings() {
 				? currentTools.filter((p: string) => p !== pattern)
 				: [...currentTools, pattern];
 
+			// Build new tools config
+			const currentConfig = currentSession.value.config.tools ?? {};
+			const newToolsConfig = {
+				...currentConfig,
+				loadProjectMcp: newTools.length > 0,
+				enabledMcpPatterns: newTools,
+			};
+
 			const hub = await connectionManager.getHub();
-			await hub.call('mcp.updateEnabledTools', {
+			// Use tools.save to automatically restart query with new config
+			await hub.call('tools.save', {
 				sessionId: currentSession.value.id,
-				enabledTools: newTools,
+				tools: newToolsConfig,
 			});
 
-			showRestartWarning.value = true;
-			toast.success(`MCP tool ${currentTools.includes(pattern) ? 'disabled' : 'enabled'}`);
+			toast.success(
+				`MCP tool ${currentTools.includes(pattern) ? 'disabled' : 'enabled'} - query restarted`
+			);
 		} catch (error) {
 			console.error('Failed to update MCP tools:', error);
 			toast.error('Failed to update MCP tools');
 		} finally {
 			loading.value = false;
-		}
-	};
-
-	const handleRestartSession = async () => {
-		if (!currentSession.value) return;
-
-		const confirmed = confirm(
-			'Restart this session to apply MCP tool changes?\n\nThis will:\n- End the current session\n- Create a new session with the same settings\n- Apply the new MCP tool configuration'
-		);
-
-		if (!confirmed) return;
-
-		try {
-			const oldSessionId = currentSession.value.id;
-			const workspacePath = currentSession.value.workspacePath;
-			const config = currentSession.value.config;
-
-			// Delete old session
-			await deleteSession(oldSessionId);
-
-			// Create new session with same settings
-			const hub = await connectionManager.getHub();
-			await hub.call('session.create', {
-				workspacePath,
-				config,
-			});
-
-			showRestartWarning.value = false;
-			toast.success('Session restarted with new MCP configuration');
-		} catch (error) {
-			console.error('Failed to restart session:', error);
-			toast.error('Failed to restart session');
 		}
 	};
 
@@ -139,38 +120,31 @@ export function McpToolsSettings() {
 
 				<div class="text-xs text-gray-400 mb-4">
 					Configure which MCP (Model Context Protocol) tools are available for this session. Tools
-					are disabled by default for security (zero-trust).
+					are disabled by default for security (zero-trust). Changes apply immediately by restarting
+					the SDK query.
 				</div>
 
-				{/* Restart warning banner */}
-				{showRestartWarning.value && (
-					<div class="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
-						<div class="flex items-start gap-3">
-							<svg
-								class="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5"
+				{/* Agent processing warning */}
+				{isAgentProcessing.value && (
+					<div class="mb-4 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg flex items-center gap-2">
+						<svg class="w-4 h-4 text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24">
+							<circle
+								class="opacity-25"
+								cx="12"
+								cy="12"
+								r="10"
+								stroke="currentColor"
+								stroke-width="4"
+							></circle>
+							<path
+								class="opacity-75"
 								fill="currentColor"
-								viewBox="0 0 20 20"
-							>
-								<path
-									fill-rule="evenodd"
-									d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
-									clip-rule="evenodd"
-								/>
-							</svg>
-							<div class="flex-1">
-								<div class="text-sm font-medium text-yellow-300 mb-1">Session restart required</div>
-								<div class="text-xs text-yellow-200/80 mb-2">
-									MCP tool changes only apply to new sessions. Restart this session to use the new
-									configuration.
-								</div>
-								<button
-									onClick={handleRestartSession}
-									class="px-3 py-1 bg-yellow-500/20 hover:bg-yellow-500/30 border border-yellow-500/40 rounded text-xs font-medium text-yellow-300 transition-colors"
-								>
-									Restart Session Now
-								</button>
-							</div>
-						</div>
+								d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+							></path>
+						</svg>
+						<span class="text-xs text-blue-300">
+							Agent is processing - tool changes are temporarily disabled
+						</span>
 					</div>
 				)}
 
@@ -207,7 +181,7 @@ export function McpToolsSettings() {
 												type="checkbox"
 												checked={isPatternEnabled(item.pattern)}
 												onChange={() => togglePattern(item.pattern)}
-												disabled={loading.value}
+												disabled={loading.value || isAgentProcessing.value}
 												class="mt-0.5 rounded border-gray-600 text-blue-500 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-dark-900 disabled:opacity-50"
 											/>
 											<div class="flex-1">

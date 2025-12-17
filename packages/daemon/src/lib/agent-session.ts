@@ -702,6 +702,9 @@ CRITICAL RULES:
 
 		// Delegate to message handler
 		await this.messageHandler.handleMessage(sdkMessage);
+
+		// Mark successful API interaction (resets connection error count)
+		await this.errorManager.markApiSuccess();
 	}
 
 	/**

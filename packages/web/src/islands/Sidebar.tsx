@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks';
 import { currentSessionIdSignal, sidebarOpenSignal } from '../lib/signals.ts';
-import { sessions, authStatus, connectionState } from '../lib/state.ts';
+import { sessions, authStatus, connectionState, apiConnectionStatus } from '../lib/state.ts';
 import { createSession } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
 import { borderColors } from '../lib/design-tokens.ts';
@@ -262,30 +262,74 @@ export default function Sidebar() {
 					</div>
 
 					{/* Connection Status */}
-					<div class="flex items-center justify-between text-xs">
-						<span class="text-gray-400">Status</span>
-						<div class="flex items-center gap-2">
-							{connectionState.value === 'connected' && (
-								<>
-									<div class="relative">
-										<span class="w-2 h-2 bg-green-500 rounded-full block" />
-										<span class="absolute inset-0 w-2 h-2 bg-green-500 rounded-full animate-ping opacity-75" />
-									</div>
-									<span class="text-gray-300">Online</span>
-								</>
-							)}
-							{connectionState.value === 'connecting' && (
-								<>
-									<div class="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
-									<span class="text-yellow-300">Connecting...</span>
-								</>
-							)}
-							{connectionState.value === 'disconnected' && (
-								<>
-									<div class="w-2 h-2 bg-gray-500 rounded-full" />
-									<span class="text-gray-500">Offline</span>
-								</>
-							)}
+					<div class="space-y-2">
+						{/* WebSocket Connection (Client <-> Daemon) */}
+						<div class="flex items-center justify-between text-xs">
+							<span class="text-gray-400">Daemon</span>
+							<div class="flex items-center gap-2">
+								{connectionState.value === 'connected' && (
+									<>
+										<div class="relative">
+											<span class="w-2 h-2 bg-green-500 rounded-full block" />
+											<span class="absolute inset-0 w-2 h-2 bg-green-500 rounded-full animate-ping opacity-75" />
+										</div>
+										<span class="text-gray-300">Connected</span>
+									</>
+								)}
+								{connectionState.value === 'connecting' && (
+									<>
+										<div class="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
+										<span class="text-yellow-300">Connecting...</span>
+									</>
+								)}
+								{connectionState.value === 'disconnected' && (
+									<>
+										<div class="w-2 h-2 bg-gray-500 rounded-full" />
+										<span class="text-gray-500">Offline</span>
+									</>
+								)}
+							</div>
+						</div>
+
+						{/* API Connection (Daemon <-> Claude API) */}
+						<div class="flex items-center justify-between text-xs">
+							<span class="text-gray-400">Claude API</span>
+							<div class="flex items-center gap-2">
+								{apiConnectionStatus.value?.status === 'connected' && (
+									<>
+										<div class="relative">
+											<span class="w-2 h-2 bg-green-500 rounded-full block" />
+											<span class="absolute inset-0 w-2 h-2 bg-green-500 rounded-full animate-ping opacity-75" />
+										</div>
+										<span class="text-gray-300">Connected</span>
+									</>
+								)}
+								{apiConnectionStatus.value?.status === 'degraded' && (
+									<>
+										<div class="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
+										<span
+											class="text-yellow-300"
+											title={`${apiConnectionStatus.value.errorCount} errors`}
+										>
+											Degraded
+										</span>
+									</>
+								)}
+								{apiConnectionStatus.value?.status === 'disconnected' && (
+									<>
+										<div class="w-2 h-2 bg-red-500 rounded-full" />
+										<span class="text-red-300" title={apiConnectionStatus.value.lastError}>
+											Offline
+										</span>
+									</>
+								)}
+								{!apiConnectionStatus.value && (
+									<>
+										<div class="w-2 h-2 bg-gray-500 rounded-full" />
+										<span class="text-gray-500">Unknown</span>
+									</>
+								)}
+							</div>
 						</div>
 					</div>
 				</div>
