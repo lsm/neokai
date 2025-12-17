@@ -812,7 +812,7 @@ export default function MessageInput({
 								maxLength={maxChars}
 								rows={1}
 								class={cn(
-									'block w-full px-5 py-2.5 text-gray-100 resize-none bg-transparent',
+									'block w-full pl-5 pr-14 py-2.5 text-gray-100 resize-none bg-transparent',
 									// Use 16px to prevent iOS Safari auto-zoom on focus (< 16px triggers zoom)
 									'placeholder:text-gray-500 text-base leading-normal',
 									'focus:outline-none'
@@ -827,7 +827,7 @@ export default function MessageInput({
 							{showCharCount && (
 								<div
 									class={cn(
-										'absolute top-1 right-12 text-xs',
+										'absolute top-1 right-14 text-xs',
 										charCount >= maxChars ? 'text-red-400' : 'text-gray-500'
 									)}
 								>
