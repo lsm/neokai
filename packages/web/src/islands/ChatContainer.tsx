@@ -402,16 +402,21 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 	useEffect(() => {
 		// Auto-scroll behavior:
-		// - Always scroll on initial load to show latest messages
+		// - Always scroll on initial load to show latest messages (regardless of autoScroll setting)
 		// - Only scroll when message count increases (new message) or streaming events change
 		// - Never scroll when loading older messages (loadingOlder prevents unwanted scroll)
 		const currentCount = messages.length + streamingEvents.length;
 		const hasNewContent = currentCount > prevMessageCountRef.current;
 
-		if (isInitialLoad) {
+		// Always scroll to bottom on initial load when first messages are loaded
+		if (isInitialLoad && messages.length > 0) {
 			scrollToBottom();
 			prevMessageCountRef.current = currentCount;
-		} else if (autoScroll && !loadingOlder && hasNewContent) {
+			// Clear flag after first scroll to prevent subsequent scrolls
+			setIsInitialLoad(false);
+		}
+		// Only scroll for new messages if autoScroll is enabled
+		else if (autoScroll && !loadingOlder && hasNewContent) {
 			scrollToBottom();
 			prevMessageCountRef.current = currentCount;
 		}
@@ -428,11 +433,15 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			setShowScrollButton(!isNearBottom);
 		};
 
-		// Call once immediately to set initial state
-		handleScroll();
+		// Use requestAnimationFrame to ensure DOM layout is complete before checking scroll position
+		// This prevents race conditions where scrollHeight is stale
+		const rafId = requestAnimationFrame(handleScroll);
 
 		container.addEventListener('scroll', handleScroll);
-		return () => container.removeEventListener('scroll', handleScroll);
+		return () => {
+			cancelAnimationFrame(rafId);
+			container.removeEventListener('scroll', handleScroll);
+		};
 	}, [messages, streamingEvents]); // Re-run when messages change to update button visibility
 
 	const loadSession = async () => {
@@ -498,8 +507,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				}
 			}
 
-			// Mark initial load complete after a short delay to ensure scroll happens
-			setTimeout(() => setIsInitialLoad(false), 100);
+			// Note: isInitialLoad will be cleared by the auto-scroll effect after first scroll
 		} catch (err) {
 			const message = err instanceof Error ? err.message : 'Failed to load session';
 
