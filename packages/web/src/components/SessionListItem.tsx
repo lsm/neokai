@@ -51,6 +51,14 @@ export default function SessionListItem({ session, onSessionClick }: SessionList
 								</svg>
 							</span>
 						)}
+						{session.status === 'archived' && (
+							<span
+								class="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-gray-500/10 text-gray-400 rounded border border-gray-500/20"
+								title="Archived session"
+							>
+								📦
+							</span>
+						)}
 					</div>
 					<div class="flex items-center gap-3 text-xs text-gray-500">
 						<span class="flex items-center gap-1">

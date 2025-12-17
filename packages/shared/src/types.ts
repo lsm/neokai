@@ -13,6 +13,7 @@ export interface Session {
 	sdkSessionId?: string; // SDK's internal session ID for resuming conversations
 	availableCommands?: string[]; // Available slash commands for this session (persisted)
 	processingState?: string; // Persisted agent processing state (JSON serialized AgentProcessingState)
+	archivedAt?: string; // ISO timestamp when session was archived
 }
 
 export interface WorktreeMetadata {
@@ -22,7 +23,20 @@ export interface WorktreeMetadata {
 	branch: string;
 }
 
-export type SessionStatus = 'active' | 'paused' | 'ended';
+export interface CommitInfo {
+	hash: string;
+	message: string;
+	author: string;
+	date: string;
+}
+
+export interface WorktreeCommitStatus {
+	hasCommitsAhead: boolean;
+	commits: CommitInfo[];
+	baseBranch: string;
+}
+
+export type SessionStatus = 'active' | 'paused' | 'ended' | 'archived';
 
 export interface SessionConfig {
 	model: string;

@@ -11,6 +11,7 @@ import type {
 	GetSessionResponse,
 	ListSessionsResponse,
 	UpdateSessionRequest,
+	ArchiveSessionResponse,
 	ReadFileRequest,
 	ReadFileResponse,
 	ListFilesRequest,
@@ -50,6 +51,17 @@ export async function updateSession(sessionId: string, req: UpdateSessionRequest
 export async function deleteSession(sessionId: string): Promise<void> {
 	const hub = await connectionManager.getHub();
 	await hub.call('session.delete', { sessionId });
+}
+
+export async function archiveSession(
+	sessionId: string,
+	confirmed = false
+): Promise<ArchiveSessionResponse> {
+	const hub = await connectionManager.getHub();
+	return await hub.call<ArchiveSessionResponse>('session.archive', {
+		sessionId,
+		confirmed,
+	});
 }
 
 // ==================== Message Operations ====================

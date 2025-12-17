@@ -65,7 +65,7 @@ export class Database {
         workspace_path TEXT NOT NULL,
         created_at TEXT NOT NULL,
         last_active_at TEXT NOT NULL,
-        status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended')),
+        status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived')),
         config TEXT NOT NULL,
         metadata TEXT NOT NULL
       )
@@ -214,13 +214,21 @@ export class Database {
 			this.logger.log('🔧 Running migration: Adding processing_state column to sessions table');
 			this.db.exec(`ALTER TABLE sessions ADD COLUMN processing_state TEXT`);
 		}
+
+		// Migration 8: Add archived_at column for archive session feature
+		try {
+			this.db.prepare(`SELECT archived_at FROM sessions LIMIT 1`).all();
+		} catch {
+			this.logger.log('🔧 Running migration: Adding archived_at column to sessions table');
+			this.db.exec(`ALTER TABLE sessions ADD COLUMN archived_at TEXT`);
+		}
 	}
 
 	// Session operations
 	createSession(session: Session): void {
 		const stmt = this.db.prepare(
-			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state, archived_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 		stmt.run(
 			session.id,
@@ -238,7 +246,8 @@ export class Database {
 			session.gitBranch ?? null,
 			session.sdkSessionId ?? null,
 			session.availableCommands ? JSON.stringify(session.availableCommands) : null,
-			session.processingState ?? null
+			session.processingState ?? null,
+			session.archivedAt ?? null
 		);
 	}
 
@@ -269,7 +278,7 @@ export class Database {
 			workspacePath: row.workspace_path as string,
 			createdAt: row.created_at as string,
 			lastActiveAt: row.last_active_at as string,
-			status: row.status as 'active' | 'paused' | 'ended',
+			status: row.status as 'active' | 'paused' | 'ended' | 'archived',
 			config: JSON.parse(row.config as string),
 			metadata: JSON.parse(row.metadata as string),
 			worktree,
@@ -277,6 +286,7 @@ export class Database {
 			sdkSessionId: (row.sdk_session_id as string | null) ?? undefined,
 			availableCommands,
 			processingState: (row.processing_state as string | null) ?? undefined,
+			archivedAt: (row.archived_at as string | null) ?? undefined,
 		};
 	}
 
@@ -306,7 +316,7 @@ export class Database {
 				workspacePath: r.workspace_path as string,
 				createdAt: r.created_at as string,
 				lastActiveAt: r.last_active_at as string,
-				status: r.status as 'active' | 'paused' | 'ended',
+				status: r.status as 'active' | 'paused' | 'ended' | 'archived',
 				config: JSON.parse(r.config as string),
 				metadata: JSON.parse(r.metadata as string),
 				worktree,
@@ -314,6 +324,7 @@ export class Database {
 				sdkSessionId: (r.sdk_session_id as string | null) ?? undefined,
 				availableCommands,
 				processingState: (r.processing_state as string | null) ?? undefined,
+				archivedAt: (r.archived_at as string | null) ?? undefined,
 			};
 		});
 	}
@@ -371,6 +382,37 @@ export class Database {
 		if (updates.processingState !== undefined) {
 			fields.push('processing_state = ?');
 			values.push(updates.processingState ?? null);
+		}
+		if (updates.archivedAt !== undefined) {
+			fields.push('archived_at = ?');
+			values.push(updates.archivedAt ?? null);
+		}
+		// Handle worktree update (including clearing it when archiving)
+		if ('worktree' in updates) {
+			if (updates.worktree === undefined || updates.worktree === null) {
+				// Clear worktree fields
+				fields.push(
+					'is_worktree = ?',
+					'worktree_path = ?',
+					'main_repo_path = ?',
+					'worktree_branch = ?'
+				);
+				values.push(0, null, null, null);
+			} else {
+				// Update worktree fields
+				fields.push(
+					'is_worktree = ?',
+					'worktree_path = ?',
+					'main_repo_path = ?',
+					'worktree_branch = ?'
+				);
+				values.push(
+					1,
+					updates.worktree.worktreePath,
+					updates.worktree.mainRepoPath,
+					updates.worktree.branch
+				);
+			}
 		}
 
 		if (fields.length > 0) {

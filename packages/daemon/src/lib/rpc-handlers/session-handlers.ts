@@ -88,6 +88,65 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 		return { success: true };
 	});
 
+	messageHub.handle('session.archive', async (data, _ctx) => {
+		const { sessionId: targetSessionId, confirmed = false } = data as {
+			sessionId: string;
+			confirmed?: boolean;
+		};
+
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+
+		const session = agentSession.getSessionData();
+
+		// No worktree - direct archive
+		if (!session.worktree) {
+			await sessionManager.updateSession(targetSessionId, {
+				status: 'archived',
+				archivedAt: new Date().toISOString(),
+			} as Partial<Session>);
+
+			return { success: true, requiresConfirmation: false };
+		}
+
+		// Check commits ahead
+		const { WorktreeManager } = await import('../worktree-manager');
+		const worktreeManager = new WorktreeManager();
+		const commitStatus = await worktreeManager.getCommitsAhead(session.worktree);
+
+		// If has commits and not confirmed, return commit info
+		if (!confirmed && commitStatus.hasCommitsAhead) {
+			return {
+				success: false,
+				requiresConfirmation: true,
+				commitStatus,
+			};
+		}
+
+		// Archive: remove worktree and update session
+		try {
+			await worktreeManager.removeWorktree(session.worktree, true);
+
+			await sessionManager.updateSession(targetSessionId, {
+				status: 'archived',
+				archivedAt: new Date().toISOString(),
+				worktree: undefined,
+			} as Partial<Session>);
+
+			return {
+				success: true,
+				requiresConfirmation: false,
+				commitsRemoved: commitStatus.commits.length,
+			};
+		} catch (error) {
+			throw new Error(
+				`Failed to archive: ${error instanceof Error ? error.message : String(error)}`
+			);
+		}
+	});
+
 	// Handle message sending to a session
 	messageHub.handle('message.send', async (data) => {
 		const {

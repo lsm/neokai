@@ -8,6 +8,7 @@ import type {
 	SessionConfig,
 	Tool,
 	ToolBundle,
+	WorktreeCommitStatus,
 } from './types.ts';
 
 // Request types
@@ -41,6 +42,18 @@ export interface UpdateSessionRequest {
 	title?: string;
 	workspacePath?: string;
 	config?: Partial<SessionConfig>;
+}
+
+export interface ArchiveSessionRequest {
+	sessionId: string;
+	confirmed?: boolean;
+}
+
+export interface ArchiveSessionResponse {
+	success: boolean;
+	requiresConfirmation: boolean;
+	commitStatus?: WorktreeCommitStatus;
+	commitsRemoved?: number;
 }
 
 export interface SendMessageRequest {

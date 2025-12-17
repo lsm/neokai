@@ -1,7 +1,7 @@
 import simpleGit, { SimpleGit } from 'simple-git';
 import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
-import type { WorktreeMetadata } from '@liuboer/shared';
+import type { WorktreeMetadata, CommitInfo, WorktreeCommitStatus } from '@liuboer/shared';
 
 export interface WorktreeInfo {
 	path: string;
@@ -345,6 +345,64 @@ export class WorktreeManager {
 		} catch (error) {
 			console.error('[WorktreeManager] Failed to get current branch:', error);
 			return null;
+		}
+	}
+
+	/**
+	 * Check if worktree branch has commits ahead of the base branch
+	 * Returns commit information for user confirmation before archiving
+	 */
+	async getCommitsAhead(
+		worktree: WorktreeMetadata,
+		baseBranch?: string
+	): Promise<WorktreeCommitStatus> {
+		const { mainRepoPath, branch } = worktree;
+
+		try {
+			const git = this.getGit(mainRepoPath);
+
+			// Auto-detect base branch: try main, fallback to master, then HEAD
+			let base = baseBranch;
+			if (!base) {
+				try {
+					await git.revparse(['--verify', 'main']);
+					base = 'main';
+				} catch {
+					try {
+						await git.revparse(['--verify', 'master']);
+						base = 'master';
+					} catch {
+						base = 'HEAD';
+					}
+				}
+			}
+
+			// Get commits: format as hash|author|date|message
+			const logFormat = '--format=%H|%an|%ai|%s';
+			const logOutput = await git.raw(['log', `${base}..${branch}`, logFormat]);
+
+			const commits: CommitInfo[] = [];
+			if (logOutput.trim()) {
+				for (const line of logOutput.trim().split('\n')) {
+					const [hash, author, date, ...messageParts] = line.split('|');
+					commits.push({
+						hash: hash.substring(0, 7), // Short hash
+						author,
+						date,
+						message: messageParts.join('|'), // Rejoin in case message had |
+					});
+				}
+			}
+
+			return {
+				hasCommitsAhead: commits.length > 0,
+				commits,
+				baseBranch: base,
+			};
+		} catch (error) {
+			throw new Error(
+				`Failed to check commits: ${error instanceof Error ? error.message : String(error)}`
+			);
 		}
 	}
 }
