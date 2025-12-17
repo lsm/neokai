@@ -12,10 +12,31 @@ export default function Sidebar() {
 	// Keep local UI state
 	const [creatingSession, setCreatingSession] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
+	const [showAllArchived, setShowAllArchived] = useState(false);
 
 	// FIX: Access sessionsList once to prevent multiple subscriptions
 	// But we need to keep currentSessionIdSignal reactive for active state
 	const sessionsList = sessions.value;
+
+	// Filter archived sessions based on 48-hour window
+	const FORTY_EIGHT_HOURS = 48 * 60 * 60 * 1000;
+	const now = Date.now();
+
+	const filteredSessions = sessionsList.filter((session) => {
+		// Show all non-archived sessions
+		if (session.status !== 'archived') return true;
+
+		// Show all archived if toggle is on
+		if (showAllArchived) return true;
+
+		// Show archived sessions within 48 hours
+		if (session.archivedAt) {
+			const archivedTime = new Date(session.archivedAt).getTime();
+			return now - archivedTime < FORTY_EIGHT_HOURS;
+		}
+
+		return false;
+	});
 
 	const handleCreateSession = async () => {
 		setCreatingSession(true);
@@ -138,6 +159,32 @@ export default function Sidebar() {
 					</Button>
 				</div>
 
+				{/* Archived Sessions Toggle */}
+				{sessionsList.some((s) => s.status === 'archived') && (
+					<div class={`px-4 py-2 border-b ${borderColors.ui.default}`}>
+						<button
+							type="button"
+							onClick={() => setShowAllArchived(!showAllArchived)}
+							class="text-xs text-gray-400 hover:text-gray-200 transition-colors flex items-center gap-2 w-full"
+						>
+							<svg
+								class={`w-3 h-3 transition-transform ${showAllArchived ? 'rotate-90' : ''}`}
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M9 5l7 7-7 7"
+								/>
+							</svg>
+							<span>{showAllArchived ? 'Hide old archived' : 'Show all archived'}</span>
+						</button>
+					</div>
+				)}
+
 				{/* Session List */}
 				<div class="flex-1 overflow-y-auto">
 					{sessionsList.length === 0 && (
@@ -148,7 +195,7 @@ export default function Sidebar() {
 						</div>
 					)}
 
-					{sessionsList.map((session) => (
+					{filteredSessions.map((session) => (
 						<SessionListItem
 							key={session.id}
 							session={session}

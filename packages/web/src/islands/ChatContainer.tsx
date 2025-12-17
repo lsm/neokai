@@ -14,7 +14,7 @@ import {
 	updateSession,
 } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
-// import { generateUUID } from '../lib/utils.ts';
+import { cn } from '../lib/utils.ts';
 import {
 	currentSessionIdSignal,
 	sessionsSignal,
@@ -575,6 +575,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 	const handleSendMessage = async (content: string, images?: MessageImage[]) => {
 		if (!content.trim() || sending) return;
+
+		// Prevent sending to archived sessions
+		if (session?.status === 'archived') {
+			toast.error('Cannot send messages to archived sessions');
+			return;
+		}
 
 		// Check if MessageHub is connected
 		if (connectionState.value !== 'connected') {
@@ -1171,15 +1177,41 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				onSendMessage={handleSendMessage}
 			/>
 
-			{/* Input */}
-			<MessageInput
-				sessionId={sessionId}
-				onSend={handleSendMessage}
-				disabled={sending || isCompacting || connectionState.value !== 'connected'}
-				autoScroll={autoScroll}
-				onAutoScrollChange={handleAutoScrollChange}
-				onOpenTools={() => setToolsModalOpen(true)}
-			/>
+			{/* Input Area or Archived Label */}
+			{session?.status === 'archived' ? (
+				<div class="p-4">
+					<div class="max-w-4xl mx-auto">
+						<div
+							class={cn(
+								'rounded-3xl border px-5 py-3 text-center',
+								'bg-dark-800/60 backdrop-blur-sm',
+								borderColors.ui.default
+							)}
+						>
+							<span class="text-gray-400 text-sm flex items-center justify-center gap-2">
+								<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path
+										strokeLinecap="round"
+										strokeLinejoin="round"
+										strokeWidth={2}
+										d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
+									/>
+								</svg>
+								Session archived
+							</span>
+						</div>
+					</div>
+				</div>
+			) : (
+				<MessageInput
+					sessionId={sessionId}
+					onSend={handleSendMessage}
+					disabled={sending || isCompacting || connectionState.value !== 'connected'}
+					autoScroll={autoScroll}
+					onAutoScrollChange={handleAutoScrollChange}
+					onOpenTools={() => setToolsModalOpen(true)}
+				/>
+			)}
 
 			{/* Delete Chat Modal */}
 			<Modal
