@@ -451,12 +451,10 @@ This isolation ensures concurrent sessions don't conflict with each other.
 			if (toolsConfig?.liuboerTools?.memory) {
 				allowedTools.push('liuboer__memory__*');
 			}
-			if (toolsConfig?.liuboerTools?.sessionExport) {
-				allowedTools.push('liuboer__export__*');
-			}
 
-			// Determine setting sources: include 'project' if project MCP is enabled
-			const settingSources: Options['settingSources'] = toolsConfig?.loadProjectMcp
+			// Determine setting sources: include 'project' if project settings is enabled
+			// This controls CLAUDE.md loading, separate from MCP
+			const settingSources: Options['settingSources'] = toolsConfig?.loadProjectSettings
 				? ['project', 'local']
 				: ['local'];
 

@@ -408,15 +408,15 @@ export class SessionManager {
 		const global = this.db.getGlobalToolsConfig();
 
 		return {
+			// Preset (CLAUDE.md): Only enable if allowed AND default is on
+			loadProjectSettings:
+				global.preset.claudeCode.allowed && global.preset.claudeCode.defaultEnabled,
 			// MCP: Only enable if allowed AND default is on
 			loadProjectMcp: global.mcp.allowProjectMcp && global.mcp.defaultProjectMcp,
 			enabledMcpPatterns: [],
 			// Liuboer tools: Only enable if allowed AND default is on
 			liuboerTools: {
 				memory: global.liuboerTools.memory.allowed && global.liuboerTools.memory.defaultEnabled,
-				sessionExport:
-					global.liuboerTools.sessionExport.allowed &&
-					global.liuboerTools.sessionExport.defaultEnabled,
 			},
 		};
 	}

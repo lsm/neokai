@@ -38,6 +38,9 @@ export interface SessionConfig {
  * Controls MCP tools and built-in tools availability
  */
 export interface ToolsConfig {
+	// Project Settings: Load CLAUDE.md and .claude/settings.json (default: true)
+	// This is separate from MCP to allow preset loading without MCP
+	loadProjectSettings?: boolean;
 	// Project MCP: Load .mcp.json from workspace (default: false)
 	loadProjectMcp?: boolean;
 	// Enabled MCP tool patterns (e.g., ["mcp__chrome-devtools__*"])
@@ -46,8 +49,6 @@ export interface ToolsConfig {
 	liuboerTools?: {
 		// Memory tool: persistent key-value storage for the workspace
 		memory?: boolean;
-		// Session export tool: export conversation to markdown/JSON
-		sessionExport?: boolean;
 	};
 }
 
@@ -57,6 +58,15 @@ export interface ToolsConfig {
  * Stored at the daemon level, applies to all sessions
  */
 export interface GlobalToolsConfig {
+	// Preset settings (Claude Code system prompt, CLAUDE.md loading)
+	preset: {
+		claudeCode: {
+			// Is using Claude Code preset allowed?
+			allowed: boolean;
+			// Default for new sessions (loads CLAUDE.md, .claude/settings.json)
+			defaultEnabled: boolean;
+		};
+	};
 	// MCP tools settings
 	mcp: {
 		// Is loading project MCP allowed?
@@ -70,28 +80,26 @@ export interface GlobalToolsConfig {
 			allowed: boolean;
 			defaultEnabled: boolean;
 		};
-		sessionExport: {
-			allowed: boolean;
-			defaultEnabled: boolean;
-		};
 	};
 }
 
 /**
  * Default global tools configuration
- * Zero-trust: MCP disabled by default, Liuboer tools allowed but disabled by default
+ * Preset enabled by default, MCP disabled by default
  */
 export const DEFAULT_GLOBAL_TOOLS_CONFIG: GlobalToolsConfig = {
+	preset: {
+		claudeCode: {
+			allowed: true,
+			defaultEnabled: true, // Load CLAUDE.md by default
+		},
+	},
 	mcp: {
 		allowProjectMcp: true, // Allow but don't enable by default
 		defaultProjectMcp: false,
 	},
 	liuboerTools: {
 		memory: {
-			allowed: true,
-			defaultEnabled: false,
-		},
-		sessionExport: {
 			allowed: true,
 			defaultEnabled: false,
 		},
