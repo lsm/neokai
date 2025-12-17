@@ -349,6 +349,44 @@ export class WorktreeManager {
 	}
 
 	/**
+	 * Get the default branch of the repository
+	 * Uses symbolic-ref to get the branch that HEAD points to on the remote
+	 */
+	private async getDefaultBranch(repoPath: string): Promise<string> {
+		const git = this.getGit(repoPath);
+
+		try {
+			// Try to get the default branch from origin/HEAD
+			const defaultBranch = await git.raw(['symbolic-ref', 'refs/remotes/origin/HEAD', '--short']);
+			// Returns "origin/main" or "origin/master", extract just the branch name
+			const branchName = defaultBranch.trim().replace('origin/', '');
+			if (branchName) {
+				console.log(`[WorktreeManager] Detected default branch from origin/HEAD: ${branchName}`);
+				return branchName;
+			}
+		} catch {
+			// origin/HEAD not set, continue to fallback
+		}
+
+		// Fallback: try common branch names
+		try {
+			await git.revparse(['--verify', 'main']);
+			console.log('[WorktreeManager] Using fallback default branch: main');
+			return 'main';
+		} catch {
+			try {
+				await git.revparse(['--verify', 'master']);
+				console.log('[WorktreeManager] Using fallback default branch: master');
+				return 'master';
+			} catch {
+				// Ultimate fallback
+				console.log('[WorktreeManager] Using ultimate fallback: HEAD');
+				return 'HEAD';
+			}
+		}
+	}
+
+	/**
 	 * Check if worktree branch has commits ahead of the base branch
 	 * Returns commit information for user confirmation before archiving
 	 */
@@ -367,27 +405,18 @@ export class WorktreeManager {
 			} catch {
 				// Branch doesn't exist yet - no commits ahead
 				console.log(`[WorktreeManager] Branch ${branch} does not exist yet, no commits to check`);
+				const defaultBranch = await this.getDefaultBranch(mainRepoPath);
 				return {
 					hasCommitsAhead: false,
 					commits: [],
-					baseBranch: baseBranch || 'main',
+					baseBranch: baseBranch || defaultBranch,
 				};
 			}
 
-			// Auto-detect base branch: try main, fallback to master, then HEAD
+			// Auto-detect base branch from repository's default branch
 			let base = baseBranch;
 			if (!base) {
-				try {
-					await git.revparse(['--verify', 'main']);
-					base = 'main';
-				} catch {
-					try {
-						await git.revparse(['--verify', 'master']);
-						base = 'master';
-					} catch {
-						base = 'HEAD';
-					}
-				}
+				base = await this.getDefaultBranch(mainRepoPath);
 			}
 
 			// Verify base branch exists
