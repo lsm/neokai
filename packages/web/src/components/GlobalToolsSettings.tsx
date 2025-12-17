@@ -6,6 +6,10 @@
  * - Second stage: Is the tool default ON for new sessions
  *
  * This applies globally to all sessions, not per-session.
+ *
+ * SDK Terms Reference:
+ * - systemPrompt: { type: 'preset', preset: 'claude_code' } - The Claude Code system prompt
+ * - settingSources: ['project', 'local', 'user'] - Which config files to load
  */
 
 import { useSignal } from '@preact/signals';
@@ -16,8 +20,14 @@ import { borderColors } from '../lib/design-tokens.ts';
 import type { GlobalToolsConfig } from '@liuboer/shared';
 
 const DEFAULT_CONFIG: GlobalToolsConfig = {
-	preset: {
-		claudeCode: {
+	systemPrompt: {
+		claudeCodePreset: {
+			allowed: true,
+			defaultEnabled: true,
+		},
+	},
+	settingSources: {
+		project: {
 			allowed: true,
 			defaultEnabled: true,
 		},
@@ -72,20 +82,39 @@ export function GlobalToolsSettings() {
 		}
 	};
 
-	const updatePresetConfig = (key: 'allowed' | 'defaultEnabled', value: boolean) => {
+	const updateSystemPromptConfig = (key: 'allowed' | 'defaultEnabled', value: boolean) => {
 		const newConfig = {
 			...config.value,
-			preset: {
-				...(config.value.preset ?? DEFAULT_CONFIG.preset),
-				claudeCode: {
-					...(config.value.preset?.claudeCode ?? DEFAULT_CONFIG.preset.claudeCode),
+			systemPrompt: {
+				...(config.value.systemPrompt ?? DEFAULT_CONFIG.systemPrompt),
+				claudeCodePreset: {
+					...(config.value.systemPrompt?.claudeCodePreset ??
+						DEFAULT_CONFIG.systemPrompt.claudeCodePreset),
 					[key]: value,
 				},
 			},
 		};
 		// If disabling permission, also disable default
 		if (key === 'allowed' && !value) {
-			newConfig.preset.claudeCode.defaultEnabled = false;
+			newConfig.systemPrompt.claudeCodePreset.defaultEnabled = false;
+		}
+		saveConfig(newConfig);
+	};
+
+	const updateSettingSourcesConfig = (key: 'allowed' | 'defaultEnabled', value: boolean) => {
+		const newConfig = {
+			...config.value,
+			settingSources: {
+				...(config.value.settingSources ?? DEFAULT_CONFIG.settingSources),
+				project: {
+					...(config.value.settingSources?.project ?? DEFAULT_CONFIG.settingSources.project),
+					[key]: value,
+				},
+			},
+		};
+		// If disabling permission, also disable default
+		if (key === 'allowed' && !value) {
+			newConfig.settingSources.project.defaultEnabled = false;
 		}
 		saveConfig(newConfig);
 	};
@@ -144,12 +173,79 @@ export function GlobalToolsSettings() {
 					new sessions only.
 				</p>
 
-				{/* Preset Section */}
+				{/* System Prompt Section */}
 				<div class="mb-6">
-					<h4 class="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Preset</h4>
+					<h4 class="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">
+						System Prompt
+					</h4>
 
 					<div class="space-y-3">
 						{/* Claude Code Preset */}
+						<div class="flex items-center justify-between p-3 rounded-lg bg-dark-700/50">
+							<div class="flex items-center gap-3">
+								<svg
+									class="w-5 h-5 text-blue-400"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+									/>
+								</svg>
+								<div>
+									<div class="text-sm text-gray-200">Claude Code Preset</div>
+									<div class="text-xs text-gray-500">
+										Use official Claude Code system prompt with tools
+									</div>
+								</div>
+							</div>
+							<div class="flex items-center gap-4">
+								<label class="flex items-center gap-2 cursor-pointer">
+									<span class="text-xs text-gray-400">Allowed</span>
+									<input
+										type="checkbox"
+										checked={config.value.systemPrompt?.claudeCodePreset?.allowed ?? true}
+										onChange={(e) =>
+											updateSystemPromptConfig('allowed', (e.target as HTMLInputElement).checked)
+										}
+										disabled={saving.value}
+										class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+									/>
+								</label>
+								<label
+									class={`flex items-center gap-2 ${config.value.systemPrompt?.claudeCodePreset?.allowed ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
+								>
+									<span class="text-xs text-gray-400">Default ON</span>
+									<input
+										type="checkbox"
+										checked={config.value.systemPrompt?.claudeCodePreset?.defaultEnabled ?? true}
+										onChange={(e) =>
+											updateSystemPromptConfig(
+												'defaultEnabled',
+												(e.target as HTMLInputElement).checked
+											)
+										}
+										disabled={saving.value || !config.value.systemPrompt?.claudeCodePreset?.allowed}
+										class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+									/>
+								</label>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				{/* Setting Sources Section */}
+				<div class="mb-6">
+					<h4 class="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">
+						Setting Sources
+					</h4>
+
+					<div class="space-y-3">
+						{/* Project Settings */}
 						<div class="flex items-center justify-between p-3 rounded-lg bg-dark-700/50">
 							<div class="flex items-center gap-3">
 								<svg
@@ -166,36 +262,39 @@ export function GlobalToolsSettings() {
 									/>
 								</svg>
 								<div>
-									<div class="text-sm text-gray-200">Claude Code Preset</div>
-									<div class="text-xs text-gray-500">Load CLAUDE.md and .claude/settings.json</div>
+									<div class="text-sm text-gray-200">Project Settings</div>
+									<div class="text-xs text-gray-500">
+										Load CLAUDE.md, .claude/settings.json from workspace
+									</div>
 								</div>
 							</div>
 							<div class="flex items-center gap-4">
-								{/* Allowed toggle */}
 								<label class="flex items-center gap-2 cursor-pointer">
 									<span class="text-xs text-gray-400">Allowed</span>
 									<input
 										type="checkbox"
-										checked={config.value.preset?.claudeCode?.allowed ?? true}
+										checked={config.value.settingSources?.project?.allowed ?? true}
 										onChange={(e) =>
-											updatePresetConfig('allowed', (e.target as HTMLInputElement).checked)
+											updateSettingSourcesConfig('allowed', (e.target as HTMLInputElement).checked)
 										}
 										disabled={saving.value}
 										class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 									/>
 								</label>
-								{/* Default toggle */}
 								<label
-									class={`flex items-center gap-2 ${config.value.preset?.claudeCode?.allowed ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
+									class={`flex items-center gap-2 ${config.value.settingSources?.project?.allowed ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
 								>
 									<span class="text-xs text-gray-400">Default ON</span>
 									<input
 										type="checkbox"
-										checked={config.value.preset?.claudeCode?.defaultEnabled ?? true}
+										checked={config.value.settingSources?.project?.defaultEnabled ?? true}
 										onChange={(e) =>
-											updatePresetConfig('defaultEnabled', (e.target as HTMLInputElement).checked)
+											updateSettingSourcesConfig(
+												'defaultEnabled',
+												(e.target as HTMLInputElement).checked
+											)
 										}
-										disabled={saving.value || !config.value.preset?.claudeCode?.allowed}
+										disabled={saving.value || !config.value.settingSources?.project?.allowed}
 										class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 									/>
 								</label>

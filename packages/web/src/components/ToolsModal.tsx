@@ -2,10 +2,15 @@
  * Tools Modal Component
  *
  * Configure tools for the current session:
- * - Preset: Claude Code system prompt (CLAUDE.md loading)
+ * - System Prompt: Claude Code preset
+ * - Setting Sources: Project settings (CLAUDE.md, .claude/settings.json)
  * - MCP Tools: Individual MCP servers from .mcp.json
  * - Liuboer Tools: Memory (configurable)
  * - SDK Built-in: Always enabled, shown for information only
+ *
+ * SDK Terms Reference:
+ * - systemPrompt: { type: 'preset', preset: 'claude_code' } - The Claude Code system prompt
+ * - settingSources: ['project', 'local', 'user'] - Which config files to load
  */
 
 import { useSignal, useComputed } from '@preact/signals';
@@ -30,7 +35,8 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	const globalConfig = useSignal<GlobalToolsConfig | null>(null);
 
 	// Local state for editing
-	const loadProjectSettings = useSignal(false);
+	const useClaudeCodePreset = useSignal(true);
+	const loadSettingSources = useSignal(true);
 	const loadProjectMcp = useSignal(false);
 	const enabledMcpPatterns = useSignal<string[]>([]);
 	const memoryEnabled = useSignal(false);
@@ -48,7 +54,12 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		if (!session) return;
 
 		const tools = session.config.tools;
-		loadProjectSettings.value = tools?.loadProjectSettings ?? false;
+		// Handle both old and new config format for backward compatibility
+		useClaudeCodePreset.value = tools?.useClaudeCodePreset ?? true;
+		// Support old loadProjectSettings for backward compat, prefer new loadSettingSources
+		const oldLoadProjectSettings = (tools as Record<string, unknown> | undefined)
+			?.loadProjectSettings as boolean | undefined;
+		loadSettingSources.value = tools?.loadSettingSources ?? oldLoadProjectSettings ?? true;
 		loadProjectMcp.value = tools?.loadProjectMcp ?? false;
 		enabledMcpPatterns.value = tools?.enabledMcpPatterns ?? [];
 		memoryEnabled.value = tools?.liuboerTools?.memory ?? false;
@@ -86,8 +97,11 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	const serverNames = useComputed(() => Object.keys(mcpServers.value));
 
 	// Check if tools are allowed based on global config
-	const isPresetAllowed = useComputed(
-		() => globalConfig.value?.preset?.claudeCode?.allowed ?? true
+	const isClaudeCodePresetAllowed = useComputed(
+		() => globalConfig.value?.systemPrompt?.claudeCodePreset?.allowed ?? true
+	);
+	const isSettingSourcesAllowed = useComputed(
+		() => globalConfig.value?.settingSources?.project?.allowed ?? true
 	);
 	const isMcpAllowed = useComputed(() => globalConfig.value?.mcp?.allowProjectMcp ?? true);
 	const isMemoryAllowed = useComputed(
@@ -107,8 +121,13 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		hasChanges.value = true;
 	};
 
-	const toggleProjectSettings = () => {
-		loadProjectSettings.value = !loadProjectSettings.value;
+	const toggleClaudeCodePreset = () => {
+		useClaudeCodePreset.value = !useClaudeCodePreset.value;
+		hasChanges.value = true;
+	};
+
+	const toggleSettingSources = () => {
+		loadSettingSources.value = !loadSettingSources.value;
 		hasChanges.value = true;
 	};
 
@@ -129,7 +148,8 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 			saving.value = true;
 
 			const toolsConfig: ToolsConfig = {
-				loadProjectSettings: loadProjectSettings.value,
+				useClaudeCodePreset: useClaudeCodePreset.value,
+				loadSettingSources: loadSettingSources.value,
 				loadProjectMcp: loadProjectMcp.value,
 				enabledMcpPatterns: enabledMcpPatterns.value,
 				liuboerTools: {
@@ -168,15 +188,63 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	return (
 		<Modal isOpen={isOpen} onClose={handleCancel} title="Tools" size="md">
 			<div class="space-y-5">
-				{/* Preset Section */}
+				{/* System Prompt Section */}
 				<div>
-					<h3 class="text-sm font-medium text-gray-300 mb-2">Preset</h3>
-					<p class="text-xs text-gray-500 mb-3">System prompt customization from project files.</p>
+					<h3 class="text-sm font-medium text-gray-300 mb-2">System Prompt</h3>
+					<p class="text-xs text-gray-500 mb-3">Configure the system prompt preset.</p>
 					<div class="space-y-2">
 						{/* Claude Code Preset Toggle */}
 						<label
 							class={`flex items-center justify-between p-3 rounded-lg bg-dark-800/50 transition-colors ${
-								isPresetAllowed.value
+								isClaudeCodePresetAllowed.value
+									? 'hover:bg-dark-800 cursor-pointer'
+									: 'opacity-50 cursor-not-allowed'
+							}`}
+						>
+							<div class="flex items-center gap-3">
+								<svg
+									class="w-5 h-5 text-blue-400"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+									/>
+								</svg>
+								<div>
+									<div class="text-sm text-gray-200">Claude Code Preset</div>
+									<div class="text-xs text-gray-500">
+										Use official Claude Code system prompt with tools
+									</div>
+								</div>
+							</div>
+							<input
+								type="checkbox"
+								checked={useClaudeCodePreset.value}
+								onChange={toggleClaudeCodePreset}
+								disabled={!isClaudeCodePresetAllowed.value}
+								class="w-5 h-5 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+							/>
+						</label>
+					</div>
+				</div>
+
+				{/* Divider */}
+				<div class={`border-t ${borderColors.ui.secondary}`} />
+
+				{/* Setting Sources Section */}
+				<div>
+					<h3 class="text-sm font-medium text-gray-300 mb-2">Setting Sources</h3>
+					<p class="text-xs text-gray-500 mb-3">Load configuration files from the workspace.</p>
+					<div class="space-y-2">
+						{/* Project Settings Toggle */}
+						<label
+							class={`flex items-center justify-between p-3 rounded-lg bg-dark-800/50 transition-colors ${
+								isSettingSourcesAllowed.value
 									? 'hover:bg-dark-800 cursor-pointer'
 									: 'opacity-50 cursor-not-allowed'
 							}`}
@@ -196,15 +264,17 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 									/>
 								</svg>
 								<div>
-									<div class="text-sm text-gray-200">Claude Code Preset</div>
-									<div class="text-xs text-gray-500">Load CLAUDE.md and .claude/settings.json</div>
+									<div class="text-sm text-gray-200">Project Settings</div>
+									<div class="text-xs text-gray-500">
+										Load CLAUDE.md, .claude/settings.json from workspace
+									</div>
 								</div>
 							</div>
 							<input
 								type="checkbox"
-								checked={loadProjectSettings.value}
-								onChange={toggleProjectSettings}
-								disabled={!isPresetAllowed.value}
+								checked={loadSettingSources.value}
+								onChange={toggleSettingSources}
+								disabled={!isSettingSourcesAllowed.value}
 								class="w-5 h-5 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 							/>
 						</label>
