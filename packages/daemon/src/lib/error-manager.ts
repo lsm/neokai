@@ -45,6 +45,17 @@ export interface StructuredError {
 
 export class ErrorManager {
 	private debug: boolean;
+	// Error throttling: track recent errors to prevent flooding client with duplicates
+	private recentErrors: Map<string, { count: number; lastSeen: number; firstSeen: number }> =
+		new Map();
+	private readonly ERROR_THROTTLE_WINDOW_MS = 10000; // 10 second window
+	private readonly MAX_ERRORS_PER_WINDOW = 3; // Max 3 identical errors per window
+
+	// API connection state tracking
+	private apiConnectionErrors = 0; // Consecutive connection errors
+	private lastApiError: string | undefined;
+	private lastSuccessfulApiCall = Date.now();
+	private currentApiStatus: 'connected' | 'degraded' | 'disconnected' = 'connected';
 
 	constructor(private messageHub: MessageHub) {
 		// Only enable debug logs in development mode, not in test mode
@@ -293,9 +304,161 @@ export class ErrorManager {
 	}
 
 	/**
-	 * Broadcast error to clients
+	 * Check if error should be throttled based on recent occurrences
+	 */
+	private shouldThrottleError(sessionId: string, category: ErrorCategory, code: string): boolean {
+		const key = `${sessionId}:${category}:${code}`;
+		const now = Date.now();
+		const existing = this.recentErrors.get(key);
+
+		if (!existing) {
+			// First occurrence - allow and track
+			this.recentErrors.set(key, { count: 1, lastSeen: now, firstSeen: now });
+			return false;
+		}
+
+		// Check if we're still in the throttle window
+		const timeSinceFirst = now - existing.firstSeen;
+		if (timeSinceFirst > this.ERROR_THROTTLE_WINDOW_MS) {
+			// Window expired - reset and allow
+			this.recentErrors.set(key, { count: 1, lastSeen: now, firstSeen: now });
+			return false;
+		}
+
+		// Still in window - check count
+		existing.count++;
+		existing.lastSeen = now;
+		this.recentErrors.set(key, existing);
+
+		if (existing.count > this.MAX_ERRORS_PER_WINDOW) {
+			// Throttle this error
+			if (this.debug && existing.count === this.MAX_ERRORS_PER_WINDOW + 1) {
+				// Log once when throttling starts
+				this.error(
+					`[ErrorManager] Throttling error ${category}:${code} for session ${sessionId} (${existing.count} occurrences in ${timeSinceFirst}ms)`
+				);
+			}
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Cleanup old throttle entries (called periodically)
+	 */
+	private cleanupThrottleMap(): void {
+		const now = Date.now();
+		for (const [key, value] of this.recentErrors.entries()) {
+			if (now - value.lastSeen > this.ERROR_THROTTLE_WINDOW_MS * 2) {
+				this.recentErrors.delete(key);
+			}
+		}
+	}
+
+	/**
+	 * Update API connection status and broadcast if changed
+	 */
+	private async updateApiConnectionStatus(
+		category: ErrorCategory,
+		code: string,
+		errorMessage?: string
+	): Promise<void> {
+		let newStatus: 'connected' | 'degraded' | 'disconnected' = this.currentApiStatus;
+
+		// Track connection-related errors
+		if (category === ErrorCategory.CONNECTION || category === ErrorCategory.TIMEOUT) {
+			this.apiConnectionErrors++;
+			this.lastApiError = errorMessage;
+
+			// Determine status based on consecutive errors
+			if (this.apiConnectionErrors >= 5) {
+				newStatus = 'disconnected';
+			} else if (this.apiConnectionErrors >= 2) {
+				newStatus = 'degraded';
+			}
+		}
+
+		// Broadcast if status changed
+		if (newStatus !== this.currentApiStatus) {
+			this.currentApiStatus = newStatus;
+
+			await this.messageHub.publish(
+				'state.apiConnection',
+				{
+					status: newStatus,
+					errorCount: this.apiConnectionErrors,
+					lastError: this.lastApiError,
+					lastSuccessfulCall: this.lastSuccessfulApiCall,
+					timestamp: Date.now(),
+				},
+				{ sessionId: 'global' }
+			);
+
+			if (this.debug) {
+				this.error(
+					`[ErrorManager] API connection status changed: ${this.currentApiStatus} → ${newStatus} (${this.apiConnectionErrors} errors)`
+				);
+			}
+		}
+	}
+
+	/**
+	 * Mark successful API call (resets error count)
+	 */
+	async markApiSuccess(): Promise<void> {
+		const hadErrors = this.apiConnectionErrors > 0;
+		this.apiConnectionErrors = 0;
+		this.lastApiError = undefined;
+		this.lastSuccessfulApiCall = Date.now();
+
+		// If we had errors, broadcast recovery
+		if (hadErrors && this.currentApiStatus !== 'connected') {
+			this.currentApiStatus = 'connected';
+
+			await this.messageHub.publish(
+				'state.apiConnection',
+				{
+					status: 'connected',
+					errorCount: 0,
+					lastSuccessfulCall: this.lastSuccessfulApiCall,
+					timestamp: Date.now(),
+				},
+				{ sessionId: 'global' }
+			);
+
+			if (this.debug) {
+				this.error('[ErrorManager] API connection recovered');
+			}
+		}
+	}
+
+	/**
+	 * Get current API connection state
+	 */
+	getApiConnectionState() {
+		return {
+			status: this.currentApiStatus,
+			errorCount: this.apiConnectionErrors,
+			lastError: this.lastApiError,
+			lastSuccessfulCall: this.lastSuccessfulApiCall,
+			timestamp: Date.now(),
+		};
+	}
+
+	/**
+	 * Broadcast error to clients (with throttling)
 	 */
 	async broadcastError(sessionId: string, error: StructuredError): Promise<void> {
+		// Update API connection status (for connection/timeout errors)
+		await this.updateApiConnectionStatus(error.category, error.code, error.message);
+
+		// Check if this error should be throttled
+		if (this.shouldThrottleError(sessionId, error.category, error.code)) {
+			// Don't broadcast throttled errors
+			return;
+		}
+
 		await this.messageHub.publish(
 			'session.error',
 			{
@@ -304,6 +467,11 @@ export class ErrorManager {
 			},
 			{ sessionId }
 		);
+
+		// Periodically cleanup old entries (every 100 errors)
+		if (this.recentErrors.size > 100) {
+			this.cleanupThrottleMap();
+		}
 	}
 
 	/**
