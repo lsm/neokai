@@ -16,16 +16,18 @@ import { borderColors } from '../lib/design-tokens.ts';
 import type { GlobalToolsConfig } from '@liuboer/shared';
 
 const DEFAULT_CONFIG: GlobalToolsConfig = {
+	preset: {
+		claudeCode: {
+			allowed: true,
+			defaultEnabled: true,
+		},
+	},
 	mcp: {
 		allowProjectMcp: true,
 		defaultProjectMcp: false,
 	},
 	liuboerTools: {
 		memory: {
-			allowed: true,
-			defaultEnabled: false,
-		},
-		sessionExport: {
 			allowed: true,
 			defaultEnabled: false,
 		},
@@ -70,6 +72,24 @@ export function GlobalToolsSettings() {
 		}
 	};
 
+	const updatePresetConfig = (key: 'allowed' | 'defaultEnabled', value: boolean) => {
+		const newConfig = {
+			...config.value,
+			preset: {
+				...config.value.preset,
+				claudeCode: {
+					...config.value.preset.claudeCode,
+					[key]: value,
+				},
+			},
+		};
+		// If disabling permission, also disable default
+		if (key === 'allowed' && !value) {
+			newConfig.preset.claudeCode.defaultEnabled = false;
+		}
+		saveConfig(newConfig);
+	};
+
 	const updateMcpConfig = (key: 'allowProjectMcp' | 'defaultProjectMcp', value: boolean) => {
 		const newConfig = {
 			...config.value,
@@ -86,7 +106,7 @@ export function GlobalToolsSettings() {
 	};
 
 	const updateLiuboerToolConfig = (
-		tool: 'memory' | 'sessionExport',
+		tool: 'memory',
 		key: 'allowed' | 'defaultEnabled',
 		value: boolean
 	) => {
@@ -124,9 +144,71 @@ export function GlobalToolsSettings() {
 					new sessions only.
 				</p>
 
+				{/* Preset Section */}
+				<div class="mb-6">
+					<h4 class="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Preset</h4>
+
+					<div class="space-y-3">
+						{/* Claude Code Preset */}
+						<div class="flex items-center justify-between p-3 rounded-lg bg-dark-700/50">
+							<div class="flex items-center gap-3">
+								<svg
+									class="w-5 h-5 text-orange-400"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+									/>
+								</svg>
+								<div>
+									<div class="text-sm text-gray-200">Claude Code Preset</div>
+									<div class="text-xs text-gray-500">Load CLAUDE.md and .claude/settings.json</div>
+								</div>
+							</div>
+							<div class="flex items-center gap-4">
+								{/* Allowed toggle */}
+								<label class="flex items-center gap-2 cursor-pointer">
+									<span class="text-xs text-gray-400">Allowed</span>
+									<input
+										type="checkbox"
+										checked={config.value.preset?.claudeCode?.allowed ?? true}
+										onChange={(e) =>
+											updatePresetConfig('allowed', (e.target as HTMLInputElement).checked)
+										}
+										disabled={saving.value}
+										class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+									/>
+								</label>
+								{/* Default toggle */}
+								<label
+									class={`flex items-center gap-2 ${config.value.preset?.claudeCode?.allowed ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
+								>
+									<span class="text-xs text-gray-400">Default ON</span>
+									<input
+										type="checkbox"
+										checked={config.value.preset?.claudeCode?.defaultEnabled ?? true}
+										onChange={(e) =>
+											updatePresetConfig('defaultEnabled', (e.target as HTMLInputElement).checked)
+										}
+										disabled={saving.value || !config.value.preset?.claudeCode?.allowed}
+										class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+									/>
+								</label>
+							</div>
+						</div>
+					</div>
+				</div>
+
 				{/* MCP Tools Section */}
 				<div class="mb-6">
-					<h4 class="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">MCP Tools</h4>
+					<h4 class="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">
+						MCP Servers
+					</h4>
 
 					<div class="space-y-3">
 						{/* Project MCP Permission */}
@@ -142,7 +224,7 @@ export function GlobalToolsSettings() {
 										stroke-linecap="round"
 										stroke-linejoin="round"
 										stroke-width={2}
-										d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+										d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"
 									/>
 								</svg>
 								<div>
@@ -156,7 +238,7 @@ export function GlobalToolsSettings() {
 									<span class="text-xs text-gray-400">Allowed</span>
 									<input
 										type="checkbox"
-										checked={config.value.mcp.allowProjectMcp}
+										checked={config.value.mcp?.allowProjectMcp ?? true}
 										onChange={(e) =>
 											updateMcpConfig('allowProjectMcp', (e.target as HTMLInputElement).checked)
 										}
@@ -166,16 +248,16 @@ export function GlobalToolsSettings() {
 								</label>
 								{/* Default toggle */}
 								<label
-									class={`flex items-center gap-2 ${config.value.mcp.allowProjectMcp ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
+									class={`flex items-center gap-2 ${config.value.mcp?.allowProjectMcp ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
 								>
 									<span class="text-xs text-gray-400">Default ON</span>
 									<input
 										type="checkbox"
-										checked={config.value.mcp.defaultProjectMcp}
+										checked={config.value.mcp?.defaultProjectMcp ?? false}
 										onChange={(e) =>
 											updateMcpConfig('defaultProjectMcp', (e.target as HTMLInputElement).checked)
 										}
-										disabled={saving.value || !config.value.mcp.allowProjectMcp}
+										disabled={saving.value || !config.value.mcp?.allowProjectMcp}
 										class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 									/>
 								</label>
@@ -222,7 +304,7 @@ export function GlobalToolsSettings() {
 									<span class="text-xs text-gray-400">Allowed</span>
 									<input
 										type="checkbox"
-										checked={config.value.liuboerTools.memory.allowed}
+										checked={config.value.liuboerTools?.memory?.allowed ?? true}
 										onChange={(e) =>
 											updateLiuboerToolConfig(
 												'memory',
@@ -235,12 +317,12 @@ export function GlobalToolsSettings() {
 									/>
 								</label>
 								<label
-									class={`flex items-center gap-2 ${config.value.liuboerTools.memory.allowed ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
+									class={`flex items-center gap-2 ${config.value.liuboerTools?.memory?.allowed ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
 								>
 									<span class="text-xs text-gray-400">Default ON</span>
 									<input
 										type="checkbox"
-										checked={config.value.liuboerTools.memory.defaultEnabled}
+										checked={config.value.liuboerTools?.memory?.defaultEnabled ?? false}
 										onChange={(e) =>
 											updateLiuboerToolConfig(
 												'memory',
@@ -248,66 +330,7 @@ export function GlobalToolsSettings() {
 												(e.target as HTMLInputElement).checked
 											)
 										}
-										disabled={saving.value || !config.value.liuboerTools.memory.allowed}
-										class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
-									/>
-								</label>
-							</div>
-						</div>
-
-						{/* Session Export Tool */}
-						<div class="flex items-center justify-between p-3 rounded-lg bg-dark-700/50">
-							<div class="flex items-center gap-3">
-								<svg
-									class="w-5 h-5 text-cyan-400"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke="currentColor"
-								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
-									/>
-								</svg>
-								<div>
-									<div class="text-sm text-gray-200">Session Export</div>
-									<div class="text-xs text-gray-500">Export conversation to markdown/JSON</div>
-								</div>
-							</div>
-							<div class="flex items-center gap-4">
-								<label class="flex items-center gap-2 cursor-pointer">
-									<span class="text-xs text-gray-400">Allowed</span>
-									<input
-										type="checkbox"
-										checked={config.value.liuboerTools.sessionExport.allowed}
-										onChange={(e) =>
-											updateLiuboerToolConfig(
-												'sessionExport',
-												'allowed',
-												(e.target as HTMLInputElement).checked
-											)
-										}
-										disabled={saving.value}
-										class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
-									/>
-								</label>
-								<label
-									class={`flex items-center gap-2 ${config.value.liuboerTools.sessionExport.allowed ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
-								>
-									<span class="text-xs text-gray-400">Default ON</span>
-									<input
-										type="checkbox"
-										checked={config.value.liuboerTools.sessionExport.defaultEnabled}
-										onChange={(e) =>
-											updateLiuboerToolConfig(
-												'sessionExport',
-												'defaultEnabled',
-												(e.target as HTMLInputElement).checked
-											)
-										}
-										disabled={saving.value || !config.value.liuboerTools.sessionExport.allowed}
+										disabled={saving.value || !config.value.liuboerTools?.memory?.allowed}
 										class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 									/>
 								</label>

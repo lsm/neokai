@@ -693,7 +693,29 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		},
 		{
 			label: 'Export Chat',
-			onClick: () => toast.info('Export feature coming soon'),
+			onClick: async () => {
+				try {
+					const hub = await connectionManager.getHub();
+					const result = await hub.call<{ markdown: string }>('session.export', {
+						sessionId,
+						format: 'markdown',
+					});
+					// Download as file
+					const blob = new Blob([result.markdown], { type: 'text/markdown' });
+					const url = URL.createObjectURL(blob);
+					const a = document.createElement('a');
+					a.href = url;
+					a.download = `${session?.title || 'chat'}-export.md`;
+					document.body.appendChild(a);
+					a.click();
+					document.body.removeChild(a);
+					URL.revokeObjectURL(url);
+					toast.success('Chat exported!');
+				} catch (err) {
+					console.error('Failed to export chat:', err);
+					toast.error('Failed to export chat');
+				}
+			},
 			icon: (
 				<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
 					<path
@@ -895,7 +917,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	return (
 		<div class="flex-1 flex flex-col bg-dark-900 overflow-x-hidden relative">
 			{/* Header */}
-			<div class={`bg-dark-850/50 backdrop-blur-sm border-b ${borderColors.ui.default} p-4`}>
+			<div
+				class={`bg-dark-850/50 backdrop-blur-sm border-b ${borderColors.ui.default} p-4 relative z-10`}
+			>
 				<div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center gap-3">
 					{/* Hamburger menu button - visible only on mobile */}
 					<button
