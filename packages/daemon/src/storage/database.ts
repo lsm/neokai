@@ -1,6 +1,6 @@
 import { Database as BunDatabase } from 'bun:sqlite';
-import { dirname } from 'node:path';
-import { mkdirSync, existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { mkdirSync, existsSync, copyFileSync, readdirSync, unlinkSync, statSync } from 'node:fs';
 import type { Session, GlobalToolsConfig } from '@liuboer/shared';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG } from '@liuboer/shared';
 import type { SDKMessage } from '@liuboer/shared/sdk';
@@ -52,8 +52,74 @@ export class Database {
 		// Create tables
 		this.createTables();
 
-		// Run migrations
+		// Run migrations (with automatic backup)
 		this.runMigrations();
+	}
+
+	/**
+	 * Create a backup of the database before migrations
+	 * Keeps up to 3 most recent backups to prevent disk bloat
+	 */
+	private createBackup(): void {
+		if (!existsSync(this.dbPath)) return;
+
+		const dir = dirname(this.dbPath);
+		const backupDir = join(dir, 'backups');
+
+		// Create backup directory if needed
+		if (!existsSync(backupDir)) {
+			mkdirSync(backupDir, { recursive: true });
+		}
+
+		// Checkpoint WAL to ensure backup has all data
+		try {
+			this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+		} catch {
+			// Ignore checkpoint errors
+		}
+
+		// Create timestamped backup
+		const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+		const backupPath = join(backupDir, `daemon-${timestamp}.db`);
+
+		try {
+			copyFileSync(this.dbPath, backupPath);
+			this.logger.log(`📦 Database backup created: ${backupPath}`);
+		} catch (err) {
+			this.logger.log(`⚠️ Failed to create backup: ${err}`);
+			return;
+		}
+
+		// Cleanup old backups (keep only 3 most recent)
+		this.cleanupOldBackups(backupDir, 3);
+	}
+
+	/**
+	 * Remove old backups, keeping only the N most recent
+	 */
+	private cleanupOldBackups(backupDir: string, keepCount: number): void {
+		try {
+			const files = readdirSync(backupDir)
+				.filter((f) => f.startsWith('daemon-') && f.endsWith('.db'))
+				.map((f) => ({
+					name: f,
+					path: join(backupDir, f),
+					mtime: statSync(join(backupDir, f)).mtime.getTime(),
+				}))
+				.sort((a, b) => b.mtime - a.mtime); // newest first
+
+			// Delete old backups
+			for (const file of files.slice(keepCount)) {
+				try {
+					unlinkSync(file.path);
+					this.logger.log(`🗑️ Removed old backup: ${file.name}`);
+				} catch {
+					// Ignore deletion errors
+				}
+			}
+		} catch {
+			// Ignore cleanup errors
+		}
 	}
 
 	private createTables() {
@@ -148,6 +214,10 @@ export class Database {
 	 * Run database migrations for schema changes
 	 */
 	private runMigrations() {
+		// Create backup before running any migrations
+		// This ensures we can recover if a migration causes data loss
+		this.createBackup();
+
 		// Migration 1: Add oauth_token_encrypted column if it doesn't exist
 		try {
 			// Check if column exists by trying to query it
