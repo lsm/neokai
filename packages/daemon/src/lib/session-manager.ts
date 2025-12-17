@@ -1,4 +1,4 @@
-import type { Session } from '@liuboer/shared';
+import type { Session, WorktreeMetadata } from '@liuboer/shared';
 import type { MessageHub, EventBus } from '@liuboer/shared';
 import { generateUUID } from '@liuboer/shared';
 import { Database } from '../storage/database';
@@ -58,55 +58,9 @@ export class SessionManager {
 		// Validate and resolve model ID using cached models
 		const modelId = await this.getValidatedModelId(params.config?.model);
 
-		// Try to create worktree if useWorktree is true (default) and we're in a git repo
-		// Also respect config.disableWorktrees flag (for testing)
-		let sessionWorkspacePath = baseWorkspacePath;
-		let worktreeMetadata;
-		let gitBranch: string | undefined;
-
-		if (params.useWorktree !== false && !this.config.disableWorktrees) {
-			try {
-				worktreeMetadata = await this.worktreeManager.createWorktree({
-					sessionId,
-					repoPath: baseWorkspacePath,
-					baseBranch: params.worktreeBaseBranch || 'HEAD',
-				});
-
-				if (worktreeMetadata) {
-					sessionWorkspacePath = worktreeMetadata.worktreePath;
-					this.log(
-						`[SessionManager] Created worktree for session ${sessionId} at ${worktreeMetadata.worktreePath}`
-					);
-				} else {
-					this.log(
-						`[SessionManager] Not a git repository, using shared workspace: ${baseWorkspacePath}`
-					);
-				}
-			} catch (error) {
-				console.error(
-					'[SessionManager] Failed to create worktree, falling back to shared workspace:',
-					error
-				);
-				// Fall back to shared workspace on error
-			}
-		}
-
-		// For non-worktree sessions, try to get the current git branch
-		if (!worktreeMetadata) {
-			try {
-				const gitRoot = await this.worktreeManager.findGitRoot(baseWorkspacePath);
-				if (gitRoot) {
-					const branch = await this.worktreeManager.getCurrentBranch(gitRoot);
-					gitBranch = branch ?? undefined;
-					if (gitBranch) {
-						this.log(`[SessionManager] Detected git branch: ${gitBranch}`);
-					}
-				}
-			} catch (error) {
-				// Not a git repo or can't detect branch - that's fine
-				this.log('[SessionManager] Could not detect git branch:', error);
-			}
-		}
+		// NOTE: Worktree creation is now deferred to initializeSessionWorkspace()
+		// which is called on first message send
+		const sessionWorkspacePath = baseWorkspacePath;
 
 		const session: Session = {
 			id: sessionId,
@@ -133,9 +87,11 @@ export class SessionManager {
 				totalCost: 0,
 				toolCallCount: 0,
 				titleGenerated: false,
+				workspaceInitialized: false, // Will be set to true after first message
 			},
-			worktree: worktreeMetadata ?? undefined,
-			gitBranch: gitBranch ?? undefined,
+			// Worktree and gitBranch will be set after workspace initialization
+			worktree: undefined,
+			gitBranch: undefined,
 		};
 
 		// Save to database
@@ -154,6 +110,211 @@ export class SessionManager {
 		this.log('[SessionManager] Event emitted, returning sessionId:', sessionId);
 
 		return sessionId;
+	}
+
+	/**
+	 * Initialize session workspace on first message
+	 * - Generates meaningful title from user message
+	 * - Creates worktree with slugified branch name
+	 * - Updates session record
+	 */
+	async initializeSessionWorkspace(sessionId: string, userMessageText: string): Promise<void> {
+		const agentSession = this.sessions.get(sessionId);
+		if (!agentSession) {
+			throw new Error(`Session ${sessionId} not found`);
+		}
+
+		const session = agentSession.getSessionData();
+
+		// Check if already initialized
+		if (session.metadata.workspaceInitialized) {
+			this.log(`[SessionManager] Session ${sessionId} already initialized`);
+			return;
+		}
+
+		this.log(`[SessionManager] Initializing workspace for session ${sessionId}...`);
+
+		try {
+			// Step 1: Generate title from user message
+			const title = await this.generateTitleFromMessage(userMessageText, session.workspacePath);
+			this.log(`[SessionManager] Generated title: "${title}"`);
+
+			// Step 2: Generate branch name from title
+			const branchName = this.generateBranchName(title, sessionId);
+			this.log(`[SessionManager] Generated branch name: ${branchName}`);
+
+			// Step 3: Create worktree with meaningful branch (if not disabled)
+			let worktreeMetadata: WorktreeMetadata | undefined = session.worktree;
+			if (!this.config.disableWorktrees) {
+				try {
+					const result = await this.worktreeManager.createWorktree({
+						sessionId,
+						repoPath: this.config.workspaceRoot,
+						branchName,
+						baseBranch: 'HEAD',
+					});
+
+					if (result) {
+						worktreeMetadata = result;
+						this.log(
+							`[SessionManager] Created worktree at ${worktreeMetadata.worktreePath} with branch ${worktreeMetadata.branch}`
+						);
+					}
+				} catch (error) {
+					this.error('[SessionManager] Failed to create worktree:', error);
+					// Continue without worktree
+				}
+			}
+
+			// Step 4: Update session record
+			const updatedSession: Session = {
+				...session,
+				title,
+				worktree: worktreeMetadata ?? undefined,
+				workspacePath: worktreeMetadata?.worktreePath ?? session.workspacePath,
+				metadata: {
+					...session.metadata,
+					workspaceInitialized: true,
+					titleGenerated: true,
+				},
+			};
+
+			// Save to DB
+			this.db.updateSession(sessionId, updatedSession);
+
+			// Update in-memory session
+			agentSession.updateMetadata(updatedSession);
+
+			// Broadcast updates
+			await this.eventBus.emit('session:updated', {
+				sessionId,
+				updates: updatedSession,
+			});
+
+			this.log(`[SessionManager] Workspace initialized for session ${sessionId}`);
+		} catch (error) {
+			this.error('[SessionManager] Failed to initialize workspace:', error);
+
+			// Fallback: Mark as initialized to prevent retries, use fallback title
+			const fallbackTitle = userMessageText.substring(0, 50).trim() || 'New Session';
+			const fallbackSession: Session = {
+				...session,
+				title: fallbackTitle,
+				metadata: {
+					...session.metadata,
+					workspaceInitialized: true,
+					titleGenerated: false,
+				},
+			};
+
+			this.db.updateSession(sessionId, fallbackSession);
+			agentSession.updateMetadata(fallbackSession);
+
+			await this.eventBus.emit('session:updated', {
+				sessionId,
+				updates: fallbackSession,
+			});
+
+			this.log(`[SessionManager] Used fallback title "${fallbackTitle}" for session ${sessionId}`);
+		}
+	}
+
+	/**
+	 * Generate title from first user message
+	 */
+	private async generateTitleFromMessage(
+		messageText: string,
+		workspacePath: string
+	): Promise<string> {
+		try {
+			// Use the same approach as title-generator.ts but simplified
+			const { query } = await import('@anthropic-ai/claude-agent-sdk');
+
+			this.log('[SessionManager] Generating title with Haiku...');
+
+			// Use Agent SDK with maxTurns: 1 for simple title generation
+			const result = await query({
+				prompt: `Based on the user's request below, generate a concise 3-7 word title that captures the main intent or topic.
+
+IMPORTANT: Return ONLY the title text itself, with NO formatting whatsoever:
+- NO quotes around the title
+- NO asterisks or markdown
+- NO backticks
+- NO punctuation at the end
+- Just plain text words
+
+User's request:
+${messageText.slice(0, 2000)}`,
+				options: {
+					model: 'haiku',
+					maxTurns: 1,
+					permissionMode: 'bypassPermissions',
+					allowDangerouslySkipPermissions: true,
+					cwd: workspacePath,
+				},
+			});
+
+			// Extract and clean title from SDK response
+			const { isSDKAssistantMessage } = await import('@liuboer/shared/sdk/type-guards');
+
+			for await (const message of result) {
+				if (isSDKAssistantMessage(message)) {
+					const textBlocks = message.message.content.filter(
+						(b: { type: string }) => b.type === 'text'
+					);
+					let title = textBlocks
+						.map((b: { text?: string }) => b.text)
+						.join(' ')
+						.trim();
+
+					if (title) {
+						// Strip any markdown formatting
+						title = title.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1');
+
+						// Remove wrapping quotes
+						while (
+							(title.startsWith('"') && title.endsWith('"')) ||
+							(title.startsWith("'") && title.endsWith("'"))
+						) {
+							title = title.slice(1, -1).trim();
+						}
+
+						// Remove backticks
+						title = title.replace(/`/g, '');
+
+						if (title) {
+							this.log(`[SessionManager] Generated title: "${title}"`);
+							return title;
+						}
+					}
+				}
+			}
+
+			// Fallback if no title extracted
+			return messageText.substring(0, 50).trim() || 'New Session';
+		} catch (error) {
+			this.log('[SessionManager] Title generation failed:', error);
+			// Fallback to first 50 chars of message
+			return messageText.substring(0, 50).trim() || 'New Session';
+		}
+	}
+
+	/**
+	 * Generate branch name from title
+	 * Creates a slugified branch name like "session/fix-login-bug-abc123"
+	 */
+	private generateBranchName(title: string, sessionId: string): string {
+		// Slugify title: "Fix login bug" -> "fix-login-bug"
+		const slug = title
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, '-') // Replace non-alphanumeric with hyphens
+			.replace(/^-|-$/g, '') // Remove leading/trailing hyphens
+			.substring(0, 50); // Max 50 chars
+
+		// Add short UUID to prevent conflicts
+		const shortId = sessionId.substring(0, 8);
+
+		return `session/${slug}-${shortId}`;
 	}
 
 	/**

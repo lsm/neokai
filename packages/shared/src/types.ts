@@ -157,6 +157,7 @@ export interface SessionMetadata {
 	totalCost: number;
 	toolCallCount: number;
 	titleGenerated?: boolean; // Flag to track if title has been auto-generated
+	workspaceInitialized?: boolean; // Flag to track if workspace (title + worktree) has been initialized
 	lastContextInfo?: ContextInfo | null; // Last known context info (persisted)
 	inputDraft?: string; // Draft input text (persisted across sessions and devices)
 }

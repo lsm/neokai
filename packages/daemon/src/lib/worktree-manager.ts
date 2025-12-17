@@ -13,6 +13,7 @@ export interface WorktreeInfo {
 export interface CreateWorktreeOptions {
 	sessionId: string;
 	repoPath: string;
+	branchName?: string; // Optional custom branch name
 	baseBranch?: string;
 }
 
@@ -64,11 +65,24 @@ export class WorktreeManager {
 	}
 
 	/**
+	 * Check if a git branch exists
+	 */
+	private async checkBranchExists(repoPath: string, branchName: string): Promise<boolean> {
+		try {
+			const git = this.getGit(repoPath);
+			const result = await git.raw(['branch', '--list', branchName]);
+			return result.trim().length > 0;
+		} catch {
+			return false;
+		}
+	}
+
+	/**
 	 * Create a new worktree for a session
 	 * Returns WorktreeMetadata on success, null if repo is not a git repository
 	 */
 	async createWorktree(options: CreateWorktreeOptions): Promise<WorktreeMetadata | null> {
-		const { sessionId, repoPath, baseBranch = 'HEAD' } = options;
+		const { sessionId, repoPath, branchName: customBranchName, baseBranch = 'HEAD' } = options;
 
 		// Find git root
 		const gitRoot = await this.findGitRoot(repoPath);
@@ -87,7 +101,7 @@ export class WorktreeManager {
 
 		// Generate worktree path and branch name
 		const worktreePath = join(worktreesDir, sessionId);
-		const branchName = `session/${sessionId}`;
+		let branchName = customBranchName || `session/${sessionId}`;
 
 		try {
 			// Check if worktree already exists (shouldn't happen, but safety check)
@@ -96,8 +110,21 @@ export class WorktreeManager {
 				throw new Error(`Worktree directory already exists: ${worktreePath}`);
 			}
 
+			// Check if branch already exists (and fallback to UUID if it does)
+			if (customBranchName) {
+				const branchExists = await this.checkBranchExists(gitRoot, customBranchName);
+				if (branchExists) {
+					console.warn(
+						`[WorktreeManager] Branch ${customBranchName} already exists, using UUID fallback`
+					);
+					branchName = `session/${sessionId}`; // Fallback to UUID-based branch
+				}
+			}
+
 			// Create worktree with new branch
-			console.log(`[WorktreeManager] Creating worktree at ${worktreePath} from ${baseBranch}`);
+			console.log(
+				`[WorktreeManager] Creating worktree at ${worktreePath} with branch ${branchName} from ${baseBranch}`
+			);
 			await git.raw(['worktree', 'add', worktreePath, '-b', branchName, baseBranch]);
 
 			console.log(`[WorktreeManager] Successfully created worktree for session ${sessionId}`);

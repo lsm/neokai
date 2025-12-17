@@ -164,9 +164,20 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 			throw new Error('Session not found');
 		}
 
+		const session = agentSession.getSessionData();
+
+		// NEW: Initialize workspace on first message (2-stage session creation)
+		if (!session.metadata.workspaceInitialized) {
+			await sessionManager.initializeSessionWorkspace(targetSessionId, content);
+			// Session data has been updated, reload it
+			const updatedAgentSession = await sessionManager.getSessionAsync(targetSessionId);
+			if (!updatedAgentSession) {
+				throw new Error('Session not found after initialization');
+			}
+		}
+
 		// Clear draft if it matches the sent message content
 		// This prevents the draft from reappearing after send
-		const session = agentSession.getSessionData();
 		if (session.metadata?.inputDraft && session.metadata.inputDraft === content.trim()) {
 			// Cast to bypass strict typing - database.updateSession handles partial metadata merging
 			await sessionManager.updateSession(targetSessionId, {
