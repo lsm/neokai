@@ -318,11 +318,19 @@ export class AgentSession {
 			return { messageId };
 		} catch (error) {
 			this.logger.error(`Error handling message.send:`, error);
+
+			// Capture processing state before reset for error context
+			const processingState = this.stateManager.getState();
+
+			// Reset state to idle on error to prevent session from getting stuck
+			await this.stateManager.setIdle();
+
 			await this.errorManager.handleError(
 				this.session.id,
 				error as Error,
 				ErrorCategory.MESSAGE,
-				'Failed to send message. Please try again.'
+				'Failed to send message. Please try again.',
+				processingState
 			);
 			throw error;
 		}
@@ -358,7 +366,9 @@ export class AgentSession {
 				await this.errorManager.handleError(
 					this.session.id,
 					authError,
-					ErrorCategory.AUTHENTICATION
+					ErrorCategory.AUTHENTICATION,
+					undefined, // userMessage - will use default
+					this.stateManager.getState()
 				);
 				throw authError;
 			}
@@ -510,6 +520,24 @@ This isolation ensures concurrent sessions don't conflict with each other.
 					// Catch individual message handling errors to prevent stream death
 					this.logger.error(`Error handling SDK message:`, error);
 					this.logger.error(`Message type:`, (message as SDKMessage).type);
+
+					// Capture state before reset
+					const processingState = this.stateManager.getState();
+
+					// Reset state to idle on message handling error
+					await this.stateManager.setIdle();
+
+					// Report error with rich context
+					await this.errorManager.handleError(
+						this.session.id,
+						error as Error,
+						ErrorCategory.MESSAGE,
+						'Error processing SDK message. The session has been reset.',
+						processingState,
+						{
+							messageType: (message as SDKMessage).type,
+						}
+					);
 				}
 			}
 
@@ -544,10 +572,30 @@ This isolation ensures concurrent sessions don't conflict with each other.
 					category = ErrorCategory.MODEL;
 				}
 
-				await this.errorManager.handleError(this.session.id, error as Error, category);
+				// Capture state before reset
+				const processingState = this.stateManager.getState();
+
+				await this.errorManager.handleError(
+					this.session.id,
+					error as Error,
+					category,
+					undefined, // userMessage - will use default
+					processingState,
+					{
+						errorMessage,
+						queueSize: this.messageQueue.size(),
+					}
+				);
+
+				// Reset state to idle on stream error
+				await this.stateManager.setIdle();
 			}
 		} finally {
 			this.messageQueue.stop();
+
+			// Ensure state is reset to idle when streaming stops (normal or error)
+			await this.stateManager.setIdle();
+
 			this.logger.log(`Streaming query stopped`);
 		}
 	}
@@ -757,7 +805,12 @@ This isolation ensures concurrent sessions don't conflict with each other.
 				this.session.id,
 				error as Error,
 				ErrorCategory.MODEL,
-				`Failed to switch model: ${errorMessage}`
+				`Failed to switch model: ${errorMessage}`,
+				this.stateManager.getState(),
+				{
+					requestedModel: newModel,
+					currentModel: this.session.config.model,
+				}
 			);
 
 			return {
