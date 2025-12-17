@@ -875,6 +875,14 @@ This isolation ensures concurrent sessions don't conflict with each other.
 		if (updates.config) {
 			this.session.config = { ...this.session.config, ...updates.config };
 		}
+		// Handle archivedAt field for archived sessions
+		if (updates.archivedAt !== undefined) {
+			this.session.archivedAt = updates.archivedAt;
+		}
+		// Handle worktree field updates (including clearing worktree on archive)
+		if (updates.worktree !== undefined) {
+			this.session.worktree = updates.worktree;
+		}
 
 		this.db.updateSession(this.session.id, updates);
 	}
