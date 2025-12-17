@@ -1,4 +1,4 @@
-.PHONY: dev worktree-dev start daemon web self profile restart sync-sdk-types clean-cache clean-all build-prod test test-daemon test-coverage test-coverage-lcov e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self lint lint-fix format typecheck
+.PHONY: dev worktree-dev start daemon web self profile restart sync-sdk-types clean-cache clean-all build-prod test test-daemon test-coverage test-coverage-lcov e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self lint lint-fix format typecheck merge-session
 
 # Unified server (daemon + web in single process) - RECOMMENDED
 dev:
@@ -193,3 +193,38 @@ format:
 
 typecheck:
 	@bun run typecheck
+
+# Merge worktree session to root repo branch - complete workflow automation
+merge-session:
+	@echo "🔀 Completing worktree session workflow..."
+	@CURRENT_BRANCH=$$(git rev-parse --abbrev-ref HEAD); \
+	ROOT_REPO=$$(git rev-parse --show-superproject-working-tree); \
+	if [ -z "$$ROOT_REPO" ]; then \
+		echo "❌ Error: Not in a worktree. This command is for worktree sessions only."; \
+		exit 1; \
+	fi; \
+	TARGET_BRANCH=$$(git --git-dir=$$ROOT_REPO/.git --work-tree=$$ROOT_REPO rev-parse --abbrev-ref HEAD); \
+	if [ "$$CURRENT_BRANCH" = "$$TARGET_BRANCH" ]; then \
+		echo "❌ Error: Already on target branch ($$TARGET_BRANCH). Run this from a worktree session branch."; \
+		exit 1; \
+	fi; \
+	echo "📝 Session branch: $$CURRENT_BRANCH"; \
+	echo "📁 Root repository: $$ROOT_REPO"; \
+	echo "🎯 Target branch: $$TARGET_BRANCH"; \
+	echo ""; \
+	echo "Step 1: Pulling and rebasing $$TARGET_BRANCH..."; \
+	git --git-dir=$$ROOT_REPO/.git --work-tree=$$ROOT_REPO fetch origin $$TARGET_BRANCH && \
+	git --git-dir=$$ROOT_REPO/.git --work-tree=$$ROOT_REPO rebase origin/$$TARGET_BRANCH $$TARGET_BRANCH && \
+	echo "✅ $$TARGET_BRANCH branch updated"; \
+	echo ""; \
+	echo "Step 2: Merging session branch to $$TARGET_BRANCH..."; \
+	git --git-dir=$$ROOT_REPO/.git --work-tree=$$ROOT_REPO checkout $$TARGET_BRANCH && \
+	git --git-dir=$$ROOT_REPO/.git --work-tree=$$ROOT_REPO merge --ff-only $$CURRENT_BRANCH && \
+	echo "✅ Session merged to $$TARGET_BRANCH"; \
+	echo ""; \
+	echo "Step 3: Pushing to remote..."; \
+	git --git-dir=$$ROOT_REPO/.git --work-tree=$$ROOT_REPO push origin $$TARGET_BRANCH && \
+	echo "✅ Changes pushed to remote"; \
+	echo ""; \
+	echo "🎉 Workflow complete! Session branch merged to $$TARGET_BRANCH and pushed."; \
+	echo "💡 You can now delete this worktree session from the UI."
