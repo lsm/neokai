@@ -222,6 +222,85 @@ export class Database {
 			this.logger.log('🔧 Running migration: Adding archived_at column to sessions table');
 			this.db.exec(`ALTER TABLE sessions ADD COLUMN archived_at TEXT`);
 		}
+
+		// Migration 9: Update CHECK constraint to include 'archived' status
+		// SQLite doesn't support ALTER COLUMN, so we need to recreate the table
+		try {
+			// Check if the CHECK constraint already includes 'archived'
+			// We do this by trying to insert a test row with status='archived'
+			const testId = '__migration_test_archived_status__';
+			this.db
+				.prepare(
+					`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state, archived_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				)
+				.run(
+					testId,
+					'Test',
+					'/tmp',
+					new Date().toISOString(),
+					new Date().toISOString(),
+					'archived',
+					'{}',
+					'{}',
+					0,
+					null,
+					null,
+					null,
+					null,
+					null,
+					null,
+					null,
+					null
+				);
+			// If we got here, the constraint already includes 'archived', clean up and skip migration
+			this.db.prepare(`DELETE FROM sessions WHERE id = ?`).run(testId);
+		} catch {
+			// INSERT failed, which means CHECK constraint doesn't include 'archived'
+			// Need to recreate the table with updated constraint
+			this.logger.log(
+				"🔧 Running migration: Updating sessions table CHECK constraint to include 'archived' status"
+			);
+
+			// SQLite table recreation pattern for modifying constraints
+			this.db.exec(`
+				-- Create new table with updated CHECK constraint
+				CREATE TABLE sessions_new (
+					id TEXT PRIMARY KEY,
+					title TEXT NOT NULL,
+					workspace_path TEXT NOT NULL,
+					created_at TEXT NOT NULL,
+					last_active_at TEXT NOT NULL,
+					status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived')),
+					config TEXT NOT NULL,
+					metadata TEXT NOT NULL,
+					is_worktree INTEGER DEFAULT 0,
+					worktree_path TEXT,
+					main_repo_path TEXT,
+					worktree_branch TEXT,
+					git_branch TEXT,
+					sdk_session_id TEXT,
+					available_commands TEXT,
+					processing_state TEXT,
+					archived_at TEXT
+				);
+
+				-- Copy all data from old table to new table
+				INSERT INTO sessions_new
+				SELECT id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+					   is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch,
+					   sdk_session_id, available_commands, processing_state, archived_at
+				FROM sessions;
+
+				-- Drop old table
+				DROP TABLE sessions;
+
+				-- Rename new table to original name
+				ALTER TABLE sessions_new RENAME TO sessions;
+			`);
+
+			this.logger.log('✅ Migration complete: sessions table CHECK constraint updated');
+		}
 	}
 
 	// Session operations
