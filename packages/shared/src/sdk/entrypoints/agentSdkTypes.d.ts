@@ -306,9 +306,10 @@ export type HookJSONOutput = AsyncHookJSONOutput | SyncHookJSONOutput;
  * - `'acceptEdits'` - Auto-accept file edit operations
  * - `'bypassPermissions'` - Bypass all permission checks (requires `allowDangerouslySkipPermissions`)
  * - `'plan'` - Planning mode, no actual tool execution
+ * - `'delegate'` - Delegate mode, restricts team leader to only Teammate and Task tools
  * - `'dontAsk'` - Don't prompt for permissions, deny if not pre-approved
  */
-export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk';
+export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'delegate' | 'dontAsk';
 /**
  * Information about an available slash command.
  */
@@ -352,6 +353,17 @@ export type McpServerStatus = {
         name: string;
         version: string;
     };
+};
+/**
+ * Result of a setMcpServers operation.
+ */
+export type McpSetServersResult = {
+    /** Names of servers that were added */
+    added: string[];
+    /** Names of servers that were removed */
+    removed: string[];
+    /** Map of server names to error messages for servers that failed to connect */
+    errors: Record<string, string>;
 };
 type SDKUserMessageContent = {
     type: 'user';
@@ -580,6 +592,18 @@ export interface Query extends AsyncGenerator<SDKMessage, void> {
      */
     rewindFiles(userMessageId: string): Promise<void>;
     /**
+     * Dynamically set the MCP servers for this session.
+     * This replaces the current set of dynamically-added MCP servers with the provided set.
+     * Servers that are removed will be disconnected, and new servers will be connected.
+     *
+     * Note: This only affects servers added dynamically via this method or the SDK.
+     * Servers configured via settings files are not affected.
+     *
+     * @param servers - Record of server name to configuration. Pass an empty object to remove all dynamic servers.
+     * @returns Information about which servers were added, removed, and any connection errors
+     */
+    setMcpServers(servers: Record<string, McpServerConfigForProcessTransport>): Promise<McpSetServersResult>;
+    /**
      * Stream input messages to the query.
      * Used internally for multi-turn conversations.
      *
@@ -710,8 +734,9 @@ export type Options = {
      */
     agents?: Record<string, AgentDefinition>;
     /**
-     * List of tool names that are allowed. When specified, only these tools
-     * will be available. Use with `disallowedTools` to fine-tune tool access.
+     * List of tool names that are auto-allowed without prompting for permission.
+     * These tools will execute automatically without asking the user for approval.
+     * To restrict which tools are available, use the `tools` option instead.
      */
     allowedTools?: string[];
     /**
@@ -729,8 +754,9 @@ export type Options = {
      */
     cwd?: string;
     /**
-     * List of tool names that are disallowed. These tools will not be available
-     * even if they would otherwise be allowed.
+     * List of tool names that are disallowed. These tools will be removed
+     * from the model's context and cannot be used, even if they would
+     * otherwise be allowed.
      */
     disallowedTools?: string[];
     /**
