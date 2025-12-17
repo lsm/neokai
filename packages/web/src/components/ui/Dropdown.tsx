@@ -233,7 +233,7 @@ export function Dropdown({
 						maxHeight: 'calc(100vh - 32px)',
 					}}
 					class={cn(
-						'shadow-xl z-[100] animate-slideIn',
+						'shadow-xl z-[9999] animate-slideIn',
 						customContent
 							? ''
 							: `py-1 bg-dark-850 border ${borderColors.ui.default} rounded-lg min-w-[200px]`
