@@ -28,6 +28,19 @@ export interface StructuredError {
 	details?: unknown;
 	recoverable: boolean;
 	timestamp: string;
+	// Rich error context for debugging and UI improvements
+	stack?: string;
+	sessionContext?: {
+		sessionId: string;
+		processingState?: {
+			status: string;
+			messageId?: string;
+			phase?: string;
+		};
+		messageBeingProcessed?: string;
+	};
+	recoverySuggestions?: string[];
+	metadata?: Record<string, unknown>;
 }
 
 export class ErrorManager {
@@ -50,19 +63,30 @@ export class ErrorManager {
 	createError(
 		error: Error | string,
 		category: ErrorCategory = ErrorCategory.SYSTEM,
-		userMessage?: string
+		userMessage?: string,
+		sessionContext?: StructuredError['sessionContext'],
+		metadata?: Record<string, unknown>
 	): StructuredError {
 		const errorMessage = error instanceof Error ? error.message : String(error);
 		const errorCode = this.extractErrorCode(errorMessage);
+		const stack = error instanceof Error ? error.stack : undefined;
 
-		return {
+		const structuredError: StructuredError = {
 			category,
 			code: errorCode,
 			message: errorMessage,
 			userMessage: userMessage || this.getUserFriendlyMessage(category, errorCode, errorMessage),
 			recoverable: this.isRecoverable(category, errorCode),
 			timestamp: new Date().toISOString(),
+			stack,
+			sessionContext,
+			metadata,
 		};
+
+		// Add recovery suggestions
+		structuredError.recoverySuggestions = this.getRecoverySuggestions(category, errorCode);
+
+		return structuredError;
 	}
 
 	/**
@@ -211,6 +235,64 @@ export class ErrorManager {
 	}
 
 	/**
+	 * Get recovery suggestions for error
+	 */
+	private getRecoverySuggestions(category: ErrorCategory, code: string): string[] {
+		const suggestions: string[] = [];
+
+		switch (category) {
+			case ErrorCategory.AUTHENTICATION:
+				if (code === 'INVALID_API_KEY') {
+					suggestions.push('Check your API key in environment variables');
+					suggestions.push('Ensure ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN is set correctly');
+				} else {
+					suggestions.push('Verify your authentication credentials');
+					suggestions.push('Try logging in again');
+				}
+				break;
+
+			case ErrorCategory.CONNECTION:
+				suggestions.push('Check your internet connection');
+				suggestions.push('Verify the service is running and accessible');
+				if (code === 'TIMEOUT') {
+					suggestions.push('Try again in a moment - the server may be under load');
+				}
+				break;
+
+			case ErrorCategory.RATE_LIMIT:
+				if (code === 'QUOTA_EXCEEDED') {
+					suggestions.push('Check your API usage limits');
+					suggestions.push('Contact support to increase your quota');
+				} else {
+					suggestions.push('Wait a few moments before trying again');
+					suggestions.push('Reduce the frequency of requests');
+				}
+				break;
+
+			case ErrorCategory.MESSAGE:
+				suggestions.push('Try sending your message again');
+				suggestions.push('If the error persists, try starting a new session');
+				break;
+
+			case ErrorCategory.MODEL:
+				suggestions.push('Try using a different model');
+				suggestions.push('Check that the model ID is correct');
+				break;
+
+			case ErrorCategory.SESSION:
+				suggestions.push('Create a new session');
+				suggestions.push('Check that the session still exists');
+				break;
+
+			default:
+				suggestions.push('Try the operation again');
+				suggestions.push('If the issue persists, check the error details below');
+		}
+
+		return suggestions;
+	}
+
+	/**
 	 * Broadcast error to clients
 	 */
 	async broadcastError(sessionId: string, error: StructuredError): Promise<void> {
@@ -225,22 +307,49 @@ export class ErrorManager {
 	}
 
 	/**
-	 * Handle and broadcast error
+	 * Handle and broadcast error with rich context
 	 */
 	async handleError(
 		sessionId: string,
 		error: Error | string,
 		category: ErrorCategory = ErrorCategory.SYSTEM,
-		userMessage?: string
+		userMessage?: string,
+		processingState?: {
+			status: string;
+			messageId?: string;
+			phase?: string;
+		},
+		metadata?: Record<string, unknown>
 	): Promise<StructuredError> {
-		const structuredError = this.createError(error, category, userMessage);
-
-		// Log for debugging
-		this.error(`[ErrorManager] ${category}:`, {
-			code: structuredError.code,
-			message: structuredError.message,
+		// Build session context
+		const sessionContext: StructuredError['sessionContext'] = {
 			sessionId,
-		});
+			processingState,
+		};
+
+		const structuredError = this.createError(
+			error,
+			category,
+			userMessage,
+			sessionContext,
+			metadata
+		);
+
+		// Log for debugging (include stack trace in dev mode)
+		if (this.debug && structuredError.stack) {
+			this.error(`[ErrorManager] ${category}:`, {
+				code: structuredError.code,
+				message: structuredError.message,
+				sessionId,
+				stack: structuredError.stack,
+			});
+		} else {
+			this.error(`[ErrorManager] ${category}:`, {
+				code: structuredError.code,
+				message: structuredError.message,
+				sessionId,
+			});
+		}
 
 		// Broadcast to client
 		await this.broadcastError(sessionId, structuredError);
