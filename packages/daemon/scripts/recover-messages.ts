@@ -13,9 +13,9 @@
  *
  * This script will:
  * 1. Scan the raw database file for SDK message JSON objects
- * 2. Extract workspace paths and titles from message content
- * 3. Create missing session records
- * 4. Restore all recoverable messages
+ * 2. Match messages to existing sessions via sdk_session_id
+ * 3. Create placeholder sessions only for truly orphaned messages
+ * 4. Restore all recoverable messages to correct sessions
  */
 
 import { readFileSync } from 'fs';
@@ -40,7 +40,7 @@ const content = raw.toString('utf8', 0, raw.length);
 interface RecoveredMessage {
 	type: string;
 	uuid: string;
-	session_id?: string;
+	sdk_session_id?: string; // SDK session ID from JSON (NOT Liuboer session ID)
 	raw: string;
 }
 
@@ -77,7 +77,7 @@ while (pos < raw.length) {
 				messages.push({
 					type: obj.type,
 					uuid: obj.uuid,
-					session_id: obj.session_id,
+					sdk_session_id: obj.session_id, // This is the SDK session ID!
 					raw: jsonStr,
 				});
 			}
@@ -91,18 +91,25 @@ while (pos < raw.length) {
 
 console.log(`   Found ${messages.length} unique messages`);
 
-// Step 2: Open database and check existing state
-console.log('\nStep 2: Checking database state...');
+// Step 2: Open database and build session mappings
+console.log('\nStep 2: Building session mappings...');
 
 const db = new Database(dbPath);
 
-const existingSessionIds = new Set(
-	db
-		.query('SELECT id FROM sessions')
-		.all()
-		.map((r: unknown) => (r as { id: string }).id)
-);
+// Map: SDK session ID -> Liuboer session ID
+const sdkToLiuboer = new Map<string, string>();
+const sessions = db.query('SELECT id, sdk_session_id FROM sessions').all() as {
+	id: string;
+	sdk_session_id: string | null;
+}[];
 
+for (const s of sessions) {
+	if (s.sdk_session_id) {
+		sdkToLiuboer.set(s.sdk_session_id, s.id);
+	}
+}
+
+const existingSessionIds = new Set(sessions.map((s) => s.id));
 const existingMessageIds = new Set(
 	db
 		.query('SELECT id FROM sdk_messages')
@@ -111,33 +118,83 @@ const existingMessageIds = new Set(
 );
 
 console.log(`   Existing sessions: ${existingSessionIds.size}`);
+console.log(`   SDK→Liuboer mappings: ${sdkToLiuboer.size}`);
 console.log(`   Existing messages: ${existingMessageIds.size}`);
 
-// Step 3: Group messages by session and identify orphans
-console.log('\nStep 3: Analyzing message ownership...');
+// Step 3: Group messages by SDK session and resolve to Liuboer sessions
+console.log('\nStep 3: Resolving message ownership...');
 
-const messagesBySession = new Map<string, RecoveredMessage[]>();
+const messagesByLiuboerSession = new Map<string, RecoveredMessage[]>();
+const orphanMessages: RecoveredMessage[] = [];
+
 for (const msg of messages) {
-	if (msg.session_id) {
-		if (!messagesBySession.has(msg.session_id)) {
-			messagesBySession.set(msg.session_id, []);
+	if (!msg.sdk_session_id) {
+		orphanMessages.push(msg);
+		continue;
+	}
+
+	// Try to find the Liuboer session for this SDK session
+	const liuboerSessionId = sdkToLiuboer.get(msg.sdk_session_id);
+
+	if (liuboerSessionId) {
+		if (!messagesByLiuboerSession.has(liuboerSessionId)) {
+			messagesByLiuboerSession.set(liuboerSessionId, []);
 		}
-		messagesBySession.get(msg.session_id)!.push(msg);
+		messagesByLiuboerSession.get(liuboerSessionId)!.push(msg);
+	} else {
+		// No existing session has this SDK session ID - treat as orphan
+		orphanMessages.push(msg);
 	}
 }
 
-const orphanSessions = new Map<string, RecoveredMessage[]>();
-for (const [sessionId, msgs] of messagesBySession.entries()) {
-	if (!existingSessionIds.has(sessionId)) {
-		orphanSessions.set(sessionId, msgs);
+console.log(`   Messages matched to existing sessions: ${messages.length - orphanMessages.length}`);
+console.log(`   Orphan messages (no session found): ${orphanMessages.length}`);
+
+// Step 4: Insert messages for existing sessions
+console.log('\nStep 4: Restoring messages to existing sessions...');
+
+const insertMessage = db.prepare(`
+  INSERT OR IGNORE INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
+  VALUES (?, ?, ?, ?, ?, ?)
+`);
+
+let messagesInserted = 0;
+
+for (const [liuboerSessionId, msgs] of messagesByLiuboerSession.entries()) {
+	for (const msg of msgs) {
+		if (existingMessageIds.has(msg.uuid)) continue;
+
+		try {
+			const parsed = JSON.parse(msg.raw);
+			const result = insertMessage.run(
+				msg.uuid,
+				liuboerSessionId,
+				msg.type,
+				parsed.subtype || null,
+				msg.raw,
+				new Date().toISOString()
+			);
+			if (result.changes > 0) messagesInserted++;
+		} catch {
+			// Skip insert errors
+		}
 	}
 }
 
-console.log(`   Sessions with messages: ${messagesBySession.size}`);
-console.log(`   Orphan sessions (need recreation): ${orphanSessions.size}`);
+console.log(`   Messages restored to existing sessions: ${messagesInserted}`);
 
-// Step 4: Create missing sessions
-console.log('\nStep 4: Creating missing sessions...');
+// Step 5: Handle orphan messages by creating placeholder sessions
+console.log('\nStep 5: Handling orphan messages...');
+
+// Group orphans by SDK session ID
+const orphansBySDKSession = new Map<string, RecoveredMessage[]>();
+for (const msg of orphanMessages) {
+	const key = msg.sdk_session_id || 'unknown';
+	if (!orphansBySDKSession.has(key)) {
+		orphansBySDKSession.set(key, []);
+	}
+	orphansBySDKSession.get(key)!.push(msg);
+}
 
 const insertSession = db.prepare(`
   INSERT INTO sessions (
@@ -148,25 +205,24 @@ const insertSession = db.prepare(`
   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
-let sessionsCreated = 0;
+let orphanSessionsCreated = 0;
+let orphanMessagesInserted = 0;
 
-for (const [sessionId, msgs] of orphanSessions.entries()) {
+for (const [sdkSessionId, msgs] of orphansBySDKSession.entries()) {
+	if (sdkSessionId === 'unknown' || msgs.length === 0) continue;
+
 	// Extract metadata from messages
 	let workspacePath = '/tmp/recovered';
 	let title = 'Recovered Session';
-	let sdkSessionId: string | null = null;
 
 	for (const msg of msgs) {
 		try {
 			const parsed = JSON.parse(msg.raw);
 
-			// System init messages contain workspace path
-			if (parsed.type === 'system' && parsed.subtype === 'init') {
-				if (parsed.cwd) workspacePath = parsed.cwd;
-				if (parsed.session_id) sdkSessionId = parsed.session_id;
+			if (parsed.type === 'system' && parsed.subtype === 'init' && parsed.cwd) {
+				workspacePath = parsed.cwd;
 			}
 
-			// Get title from first user message
 			if (parsed.type === 'user' && title === 'Recovered Session') {
 				const msgContent = parsed.message?.content;
 				let text = '';
@@ -188,6 +244,9 @@ for (const [sessionId, msgs] of orphanSessions.entries()) {
 		}
 	}
 
+	// Generate a new Liuboer session ID (don't reuse SDK session ID!)
+	const newSessionId = crypto.randomUUID();
+
 	try {
 		const config = JSON.stringify({
 			model: 'claude-sonnet-4-20250514',
@@ -202,7 +261,7 @@ for (const [sessionId, msgs] of orphanSessions.entries()) {
 		const now = new Date().toISOString();
 
 		insertSession.run(
-			sessionId,
+			newSessionId,
 			title,
 			workspacePath,
 			now,
@@ -215,55 +274,37 @@ for (const [sessionId, msgs] of orphanSessions.entries()) {
 			null,
 			null,
 			null,
-			sdkSessionId,
+			sdkSessionId, // Store SDK session ID for future reference
 			null,
 			null,
 			null
 		);
-		sessionsCreated++;
+		orphanSessionsCreated++;
+
+		// Insert messages for this new session
+		for (const msg of msgs) {
+			try {
+				const parsed = JSON.parse(msg.raw);
+				const result = insertMessage.run(
+					msg.uuid,
+					newSessionId, // Use the NEW Liuboer session ID
+					msg.type,
+					parsed.subtype || null,
+					msg.raw,
+					new Date().toISOString()
+				);
+				if (result.changes > 0) orphanMessagesInserted++;
+			} catch {
+				// Skip insert errors
+			}
+		}
 	} catch (e) {
-		console.error(`   Failed to create session ${sessionId}:`, e);
+		console.error(`   Failed to create orphan session:`, e);
 	}
 }
 
-console.log(`   Sessions created: ${sessionsCreated}`);
-
-// Step 5: Insert missing messages
-console.log('\nStep 5: Restoring messages...');
-
-const insertMessage = db.prepare(`
-  INSERT OR IGNORE INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
-  VALUES (?, ?, ?, ?, ?, ?)
-`);
-
-let messagesInserted = 0;
-
-for (const msg of messages) {
-	if (!msg.session_id) continue;
-	if (existingMessageIds.has(msg.uuid)) continue;
-
-	// Check if session exists (either originally or just created)
-	if (!existingSessionIds.has(msg.session_id) && !orphanSessions.has(msg.session_id)) {
-		continue;
-	}
-
-	try {
-		const parsed = JSON.parse(msg.raw);
-		const result = insertMessage.run(
-			msg.uuid,
-			msg.session_id,
-			msg.type,
-			parsed.subtype || null,
-			msg.raw,
-			new Date().toISOString()
-		);
-		if (result.changes > 0) messagesInserted++;
-	} catch {
-		// Skip insert errors
-	}
-}
-
-console.log(`   Messages restored: ${messagesInserted}`);
+console.log(`   Orphan sessions created: ${orphanSessionsCreated}`);
+console.log(`   Orphan messages restored: ${orphanMessagesInserted}`);
 
 // Final summary
 const finalSessions = db.query('SELECT COUNT(*) as count FROM sessions').get() as { count: number };
