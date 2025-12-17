@@ -131,10 +131,8 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		hasChanges.value = true;
 	};
 
-	const _toggleProjectMcp = () => {
-		loadProjectMcp.value = !loadProjectMcp.value;
-		hasChanges.value = true;
-	};
+	// Note: loadProjectMcp is auto-synced with enabledMcpPatterns in handleSave()
+	// No separate toggle needed - MCP loading is enabled when any patterns are enabled
 
 	const toggleMemory = () => {
 		memoryEnabled.value = !memoryEnabled.value;
@@ -147,10 +145,15 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		try {
 			saving.value = true;
 
+			// Auto-sync loadProjectMcp with enabledMcpPatterns:
+			// - Enable MCP loading only when there are enabled patterns
+			// - This ensures unchecking all MCP servers actually prevents MCP from loading
+			const shouldLoadMcp = enabledMcpPatterns.value.length > 0;
+
 			const toolsConfig: ToolsConfig = {
 				useClaudeCodePreset: useClaudeCodePreset.value,
 				loadSettingSources: loadSettingSources.value,
-				loadProjectMcp: loadProjectMcp.value,
+				loadProjectMcp: shouldLoadMcp,
 				enabledMcpPatterns: enabledMcpPatterns.value,
 				liuboerTools: {
 					memory: memoryEnabled.value,
