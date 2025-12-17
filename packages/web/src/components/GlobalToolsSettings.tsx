@@ -76,9 +76,9 @@ export function GlobalToolsSettings() {
 		const newConfig = {
 			...config.value,
 			preset: {
-				...config.value.preset,
+				...(config.value.preset ?? DEFAULT_CONFIG.preset),
 				claudeCode: {
-					...config.value.preset.claudeCode,
+					...(config.value.preset?.claudeCode ?? DEFAULT_CONFIG.preset.claudeCode),
 					[key]: value,
 				},
 			},
@@ -94,7 +94,7 @@ export function GlobalToolsSettings() {
 		const newConfig = {
 			...config.value,
 			mcp: {
-				...config.value.mcp,
+				...(config.value.mcp ?? DEFAULT_CONFIG.mcp),
 				[key]: value,
 			},
 		};
@@ -113,9 +113,9 @@ export function GlobalToolsSettings() {
 		const newConfig = {
 			...config.value,
 			liuboerTools: {
-				...config.value.liuboerTools,
+				...(config.value.liuboerTools ?? DEFAULT_CONFIG.liuboerTools),
 				[tool]: {
-					...config.value.liuboerTools[tool],
+					...(config.value.liuboerTools?.[tool] ?? DEFAULT_CONFIG.liuboerTools[tool]),
 					[key]: value,
 				},
 			},

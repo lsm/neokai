@@ -401,6 +401,9 @@ export class Database {
 
 	/**
 	 * Get the global tools configuration
+	 *
+	 * Deep merges stored config with defaults to ensure backward compatibility
+	 * when new fields are added to GlobalToolsConfig schema.
 	 */
 	getGlobalToolsConfig(): GlobalToolsConfig {
 		const stmt = this.db.prepare(`SELECT config FROM global_tools_config WHERE id = 1`);
@@ -411,7 +414,38 @@ export class Database {
 		}
 
 		try {
-			return JSON.parse(row.config) as GlobalToolsConfig;
+			const parsed = JSON.parse(row.config) as Partial<GlobalToolsConfig>;
+
+			// Deep merge with defaults to ensure all fields exist
+			// This handles cases where DB was created before new fields were added
+			return {
+				preset: {
+					claudeCode: {
+						allowed:
+							parsed.preset?.claudeCode?.allowed ??
+							DEFAULT_GLOBAL_TOOLS_CONFIG.preset.claudeCode.allowed,
+						defaultEnabled:
+							parsed.preset?.claudeCode?.defaultEnabled ??
+							DEFAULT_GLOBAL_TOOLS_CONFIG.preset.claudeCode.defaultEnabled,
+					},
+				},
+				mcp: {
+					allowProjectMcp:
+						parsed.mcp?.allowProjectMcp ?? DEFAULT_GLOBAL_TOOLS_CONFIG.mcp.allowProjectMcp,
+					defaultProjectMcp:
+						parsed.mcp?.defaultProjectMcp ?? DEFAULT_GLOBAL_TOOLS_CONFIG.mcp.defaultProjectMcp,
+				},
+				liuboerTools: {
+					memory: {
+						allowed:
+							parsed.liuboerTools?.memory?.allowed ??
+							DEFAULT_GLOBAL_TOOLS_CONFIG.liuboerTools.memory.allowed,
+						defaultEnabled:
+							parsed.liuboerTools?.memory?.defaultEnabled ??
+							DEFAULT_GLOBAL_TOOLS_CONFIG.liuboerTools.memory.defaultEnabled,
+					},
+				},
+			};
 		} catch {
 			return DEFAULT_GLOBAL_TOOLS_CONFIG;
 		}
