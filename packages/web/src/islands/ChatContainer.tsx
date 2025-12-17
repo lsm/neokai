@@ -12,7 +12,9 @@ import {
 	deleteSession,
 	listSessions,
 	updateSession,
+	archiveSession,
 } from '../lib/api-helpers.ts';
+import type { ArchiveSessionResponse } from '@liuboer/shared';
 import { toast } from '../lib/toast.ts';
 import { cn } from '../lib/utils.ts';
 import {
@@ -29,7 +31,6 @@ import { Button } from '../components/ui/Button.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
 import { Modal } from '../components/ui/Modal.tsx';
-import { SessionSettingsModal } from '../components/SessionSettingsModal.tsx';
 import { ToolsModal } from '../components/ToolsModal.tsx';
 import { Skeleton, SkeletonMessage } from '../components/ui/Skeleton.tsx';
 import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
@@ -58,8 +59,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const [sending, setSending] = useState(false);
 	const [showScrollButton, setShowScrollButton] = useState(false);
 	const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-	const [settingsModalOpen, setSettingsModalOpen] = useState(false);
 	const [toolsModalOpen, setToolsModalOpen] = useState(false);
+	const [archiving, setArchiving] = useState(false);
+	const [archiveConfirmDialog, setArchiveConfirmDialog] = useState<{
+		show: boolean;
+		commitStatus?: ArchiveSessionResponse['commitStatus'];
+	} | null>(null);
 	const [currentAction, setCurrentAction] = useState<string | undefined>(undefined);
 	const [loadingOlder, setLoadingOlder] = useState(false);
 	const [hasMoreMessages, setHasMoreMessages] = useState(true);
@@ -676,23 +681,56 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		}
 	};
 
+	const handleArchiveClick = async () => {
+		try {
+			setArchiving(true);
+			const result = await archiveSession(sessionId, false);
+
+			if (result.requiresConfirmation && result.commitStatus) {
+				setArchiveConfirmDialog({ show: true, commitStatus: result.commitStatus });
+			} else if (result.success) {
+				toast.success('Session archived successfully');
+				// Reload sessions list
+				const response = await listSessions();
+				sessionsSignal.value = response.sessions;
+			}
+		} catch (error) {
+			toast.error(error instanceof Error ? error.message : 'Failed to archive session');
+		} finally {
+			setArchiving(false);
+		}
+	};
+
+	const handleConfirmArchive = async () => {
+		try {
+			setArchiving(true);
+			const result = await archiveSession(sessionId, true);
+
+			if (result.success) {
+				toast.success(`Session archived (${result.commitsRemoved} commits removed)`);
+				setArchiveConfirmDialog(null);
+				// Reload sessions list
+				const response = await listSessions();
+				sessionsSignal.value = response.sessions;
+			}
+		} catch (error) {
+			toast.error(error instanceof Error ? error.message : 'Failed to archive session');
+		} finally {
+			setArchiving(false);
+		}
+	};
+
 	const getHeaderActions = () => [
 		{
-			label: 'Session Settings',
-			onClick: () => setSettingsModalOpen(true),
+			label: 'Tools',
+			onClick: () => setToolsModalOpen(true),
 			icon: (
 				<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
 					<path
 						stroke-linecap="round"
 						stroke-linejoin="round"
 						stroke-width={2}
-						d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-					/>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width={2}
-						d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+						d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
 					/>
 				</svg>
 			),
@@ -734,6 +772,21 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			),
 		},
 		{ type: 'divider' as const },
+		{
+			label: 'Archive Session',
+			onClick: handleArchiveClick,
+			disabled: archiving || session?.status === 'archived',
+			icon: (
+				<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={2}
+						d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
+					/>
+				</svg>
+			),
+		},
 		{
 			label: 'Delete Chat',
 			onClick: () => setDeleteModalOpen(true),
@@ -1239,12 +1292,53 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				</div>
 			</Modal>
 
-			{/* Session Settings Modal */}
-			<SessionSettingsModal
-				isOpen={settingsModalOpen}
-				onClose={() => setSettingsModalOpen(false)}
-				session={session}
-			/>
+			{/* Archive Confirmation Dialog */}
+			{archiveConfirmDialog?.show && archiveConfirmDialog.commitStatus && (
+				<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+					<div class={`bg-dark-800 border rounded-xl p-6 max-w-md mx-4 ${borderColors.ui.default}`}>
+						<h3 class="text-lg font-semibold text-gray-100 mb-3">Confirm Archive</h3>
+						<p class="text-sm text-gray-300 mb-4">
+							This worktree has {archiveConfirmDialog.commitStatus.commits.length} uncommitted
+							changes:
+						</p>
+						<div
+							class={`bg-dark-900 rounded-lg p-3 mb-4 max-h-48 overflow-y-auto border ${borderColors.ui.secondary}`}
+						>
+							{archiveConfirmDialog.commitStatus.commits.map((commit) => (
+								<div
+									key={commit.hash}
+									class="mb-2 text-xs pb-2 border-b border-dark-700 last:border-0 last:pb-0"
+								>
+									<div class="font-mono text-blue-400">{commit.hash}</div>
+									<div class="text-gray-300">{commit.message}</div>
+									<div class="text-gray-500">
+										{commit.author} • {commit.date}
+									</div>
+								</div>
+							))}
+						</div>
+						<p class="text-sm text-orange-400 mb-4">
+							⚠️ These commits will be lost when the worktree is removed. Continue?
+						</p>
+						<div class="flex gap-3">
+							<Button
+								onClick={() => setArchiveConfirmDialog(null)}
+								variant="secondary"
+								class="flex-1"
+							>
+								Cancel
+							</Button>
+							<Button
+								onClick={handleConfirmArchive}
+								disabled={archiving}
+								class="flex-1 bg-orange-500 hover:bg-orange-600 text-white"
+							>
+								{archiving ? 'Archiving...' : 'Archive Anyway'}
+							</Button>
+						</div>
+					</div>
+				</div>
+			)}
 
 			{/* Tools Modal */}
 			<ToolsModal

@@ -361,6 +361,19 @@ export class WorktreeManager {
 		try {
 			const git = this.getGit(mainRepoPath);
 
+			// Verify the worktree branch exists
+			try {
+				await git.revparse(['--verify', branch]);
+			} catch {
+				// Branch doesn't exist yet - no commits ahead
+				console.log(`[WorktreeManager] Branch ${branch} does not exist yet, no commits to check`);
+				return {
+					hasCommitsAhead: false,
+					commits: [],
+					baseBranch: baseBranch || 'main',
+				};
+			}
+
 			// Auto-detect base branch: try main, fallback to master, then HEAD
 			let base = baseBranch;
 			if (!base) {
@@ -375,6 +388,19 @@ export class WorktreeManager {
 						base = 'HEAD';
 					}
 				}
+			}
+
+			// Verify base branch exists
+			try {
+				await git.revparse(['--verify', base]);
+			} catch {
+				// Base branch doesn't exist - this is an edge case
+				console.log(`[WorktreeManager] Base branch ${base} does not exist`);
+				return {
+					hasCommitsAhead: false,
+					commits: [],
+					baseBranch: base,
+				};
 			}
 
 			// Get commits: format as hash|author|date|message
