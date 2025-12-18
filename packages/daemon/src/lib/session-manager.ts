@@ -148,9 +148,10 @@ export class SessionManager {
 			let worktreeMetadata: WorktreeMetadata | undefined = session.worktree;
 			if (!this.config.disableWorktrees) {
 				try {
+					// Use session.workspacePath (the actual repo path) not config.workspaceRoot
 					const result = await this.worktreeManager.createWorktree({
 						sessionId,
-						repoPath: this.config.workspaceRoot,
+						repoPath: session.workspacePath,
 						branchName,
 						baseBranch: 'HEAD',
 					});
