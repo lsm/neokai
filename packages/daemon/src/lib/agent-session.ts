@@ -480,27 +480,32 @@ CRITICAL RULES:
 			}
 
 			// ============================================================================
-			// Allowed Tools Configuration
+			// Tool Configuration
 			// ============================================================================
-			// Determine allowed tools from config
-			// - MCP tools: Only if loadProjectMcp is true and patterns are specified
+			// CRITICAL: Use disallowedTools to REMOVE tools from context (saves tokens)
+			// vs allowedTools which only auto-approves tools (they're still in context!)
+			//
+			// SDK docs:
+			// - allowedTools: "auto-allowed without prompting for permission" (still in context)
+			// - disallowedTools: "removed from the model's context" (actually removes them)
+			//
+			// Strategy:
+			// - When loadProjectMcp=false: Add 'mcp__*' to disallowedTools to remove ALL MCP tools
 			// - SDK built-in tools: Always enabled (not configurable)
 			// - Liuboer tools: Based on liuboerTools config
-			const allowedTools: string[] = [];
 
-			// Add MCP tool patterns if project MCP is enabled
-			if (toolsConfig?.loadProjectMcp && toolsConfig?.enabledMcpPatterns) {
-				allowedTools.push(...toolsConfig.enabledMcpPatterns);
+			const disallowedTools: string[] = [];
+
+			// Disable MCP tools if loadProjectMcp is false
+			// This removes MCP tool definitions from context, saving tokens
+			if (!toolsConfig?.loadProjectMcp) {
+				// Wildcard pattern to disallow ALL MCP tools
+				disallowedTools.push('mcp__*');
 			}
 
-			// SDK built-in tools are always enabled (not configurable)
-			// These include: Read, Write, Edit, Glob, Grep, Bash, WebSearch, WebFetch, Task, etc.
-			// We don't need to explicitly add them as they're enabled by default in the SDK
-
-			// Liuboer-specific tools (if enabled)
-			// Note: Actual tool implementation is separate - this just controls availability
-			if (toolsConfig?.liuboerTools?.memory) {
-				allowedTools.push('liuboer__memory__*');
+			// Disable Liuboer memory tool if not enabled
+			if (!toolsConfig?.liuboerTools?.memory) {
+				disallowedTools.push('liuboer__memory__*');
 			}
 
 			// ============================================================================
@@ -539,7 +544,7 @@ CRITICAL RULES:
 				maxTurns: Infinity,
 				settingSources,
 				systemPrompt: systemPromptConfig,
-				allowedTools,
+				disallowedTools: disallowedTools.length > 0 ? disallowedTools : undefined,
 				mcpServers,
 			};
 
@@ -548,7 +553,7 @@ CRITICAL RULES:
 				model: queryOptions.model,
 				useClaudeCodePreset,
 				settingSources: queryOptions.settingSources,
-				allowedTools: queryOptions.allowedTools,
+				disallowedTools: queryOptions.disallowedTools,
 				mcpServers: queryOptions.mcpServers === undefined ? 'auto-load' : 'disabled',
 				toolsConfig,
 			});

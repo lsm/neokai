@@ -65,7 +65,8 @@ export interface ToolsConfig {
 	// Controls loading of CLAUDE.md, .claude/settings.json, .claude/settings.local.json
 	loadSettingSources?: boolean;
 	// Project MCP: Load .mcp.json from workspace (default: false)
-	// SDK option: mcpServers (auto-loaded when settingSources includes 'project')
+	// When false: SDK option disallowedTools: ['mcp__*'] removes MCP tools from context
+	// This saves tokens by not including MCP tool definitions in the model's context
 	loadProjectMcp?: boolean;
 	// Enabled MCP tool patterns (e.g., ["mcp__chrome-devtools__*"])
 	enabledMcpPatterns?: string[];
