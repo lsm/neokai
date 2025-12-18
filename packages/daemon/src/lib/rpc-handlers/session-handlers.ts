@@ -166,22 +166,23 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 
 		const session = agentSession.getSessionData();
 
-		// CRITICAL UX FIX: Persist user message IMMEDIATELY before workspace initialization
-		// This ensures the user sees their message instantly (<10ms) instead of waiting
-		// for workspace init to complete (~2s), preventing confusing blank states and
-		// gracefully handling timeout scenarios.
-		const result = await agentSession.persistAndQueueMessage({ content, images });
+		// STEP 1: Persist user message and publish to UI IMMEDIATELY (instant UX)
+		// User sees their message instantly (<10ms) before any blocking operations
+		const { messageId, messageContent } = await agentSession.persistUserMessage({
+			content,
+			images,
+		});
 
-		// Initialize workspace on first message (2-stage session creation)
-		// User can now see their message while this happens in the background (~2s)
+		// STEP 2: Initialize workspace on first message (2-stage session creation)
+		// This creates the worktree and sets session.worktree (~2s)
+		// CRITICAL: Must complete BEFORE SDK query starts so cwd is correct
 		if (!session.metadata.workspaceInitialized) {
 			await sessionManager.initializeSessionWorkspace(targetSessionId, content);
-			// Session data has been updated, reload it
-			const updatedAgentSession = await sessionManager.getSessionAsync(targetSessionId);
-			if (!updatedAgentSession) {
-				throw new Error('Session not found after initialization');
-			}
 		}
+
+		// STEP 3: Start SDK query (if not started) and enqueue message for processing
+		// Now uses correct worktree path as cwd since workspace init is complete
+		await agentSession.startQueryAndEnqueue(messageId, messageContent);
 
 		// Clear draft if it matches the sent message content
 		// This prevents the draft from reappearing after send
@@ -192,7 +193,7 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 			} as Partial<Session>);
 		}
 
-		return result;
+		return { messageId };
 	});
 
 	// Handle session interruption

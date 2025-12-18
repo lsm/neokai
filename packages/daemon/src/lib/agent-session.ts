@@ -277,6 +277,96 @@ export class AgentSession {
 	}
 
 	/**
+	 * Persist user message to DB and publish to UI immediately (instant UX)
+	 * Does NOT start SDK query - caller must call startQueryAndEnqueue() separately
+	 * after workspace initialization is complete.
+	 *
+	 * @returns messageId and processed message content for later enqueuing
+	 */
+	async persistUserMessage(data: {
+		content: string;
+		images?: MessageImage[];
+	}): Promise<{ messageId: string; messageContent: string | MessageContent[] }> {
+		let { content, images } = data;
+
+		// Expand built-in commands to their full prompts
+		const expandedContent = expandBuiltInCommand(content);
+		if (expandedContent) {
+			this.logger.log(`Expanding built-in command: ${content.trim()}`);
+			content = expandedContent;
+		}
+
+		const messageContent = this.buildMessageContent(content, images);
+		const messageId = generateUUID();
+
+		// Create SDK user message
+		const sdkUserMessage: SDKUserMessage = {
+			type: 'user' as const,
+			uuid: messageId as UUID,
+			session_id: this.session.id,
+			parent_tool_use_id: null,
+			message: {
+				role: 'user' as const,
+				content:
+					typeof messageContent === 'string'
+						? [{ type: 'text' as const, text: messageContent }]
+						: messageContent,
+			},
+		};
+
+		// Save to database
+		this.db.saveSDKMessage(this.session.id, sdkUserMessage);
+
+		// Publish to UI immediately
+		await this.messageHub.publish('sdk.message', sdkUserMessage, {
+			sessionId: this.session.id,
+		});
+
+		this.logger.log(`User message ${messageId} persisted and published for instant UI display`);
+
+		return { messageId, messageContent };
+	}
+
+	/**
+	 * Start SDK query (if not started) and enqueue message for processing
+	 * Call this AFTER workspace initialization is complete to ensure
+	 * the SDK query uses the correct worktree path as cwd.
+	 */
+	async startQueryAndEnqueue(
+		messageId: string,
+		messageContent: string | MessageContent[]
+	): Promise<void> {
+		// Lazy start the query (uses correct worktree path now)
+		await this.ensureQueryStarted();
+
+		// Set state to 'queued'
+		await this.stateManager.setQueued(messageId);
+
+		// Enqueue for SDK processing (fire-and-forget)
+		this.messageQueue.enqueueWithId(messageId, messageContent).catch(async (error) => {
+			if (error instanceof Error && error.message === 'Interrupted by user') {
+				this.logger.log(`Message ${messageId} interrupted by user`);
+			} else {
+				this.logger.error(`Queue error for message ${messageId}:`, error);
+				await this.errorManager.handleError(
+					this.session.id,
+					error as Error,
+					ErrorCategory.MESSAGE,
+					'Failed to process message. Please try again.',
+					this.stateManager.getState(),
+					{ messageId }
+				);
+				await this.stateManager.setIdle();
+			}
+		});
+
+		// Emit event for title generation (decoupled via EventBus)
+		this.eventBus.emit('message:sent', { sessionId: this.session.id }).catch((err) => {
+			this.logger.warn('Failed to emit message:sent event:', err);
+		});
+	}
+
+	/**
 	 * Persist user message to DB and UI, then queue for SDK processing
 	 *
 	 * This method provides instant user feedback by saving and publishing the message
