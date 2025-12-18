@@ -631,7 +631,9 @@ CRITICAL RULES:
 			// ============================================================================
 			const queryOptions: Options = {
 				model: this.session.config.model,
-				cwd: this.session.workspacePath,
+				cwd: this.session.worktree
+					? this.session.worktree.worktreePath
+					: this.session.workspacePath,
 				permissionMode: 'bypassPermissions',
 				allowDangerouslySkipPermissions: true,
 				maxTurns: Infinity,
