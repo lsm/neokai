@@ -518,6 +518,22 @@ export class AgentSession {
 			// Generate message ID before enqueuing so we can set state BEFORE the message starts processing
 			const messageId = generateUUID();
 
+			// Save user message to DB BEFORE enqueuing (required for title generation and persistence)
+			const sdkUserMessage: SDKUserMessage = {
+				type: 'user' as const,
+				uuid: messageId as UUID,
+				session_id: this.session.id,
+				parent_tool_use_id: null,
+				message: {
+					role: 'user' as const,
+					content:
+						typeof messageContent === 'string'
+							? [{ type: 'text' as const, text: messageContent }]
+							: messageContent,
+				},
+			};
+			this.db.saveSDKMessage(this.session.id, sdkUserMessage);
+
 			// Set state to 'queued' BEFORE enqueue, because enqueue() blocks until the message
 			// is actually sent to the SDK, by which time state should transition to 'processing'
 			await this.stateManager.setQueued(messageId);
