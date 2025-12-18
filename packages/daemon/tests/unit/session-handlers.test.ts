@@ -67,43 +67,48 @@ describe('Session RPC Handlers', () => {
 		});
 
 		// Note: This test requires authentication (API key or OAuth) because message.send uses Claude SDK
-		test.skipIf(!hasAnyCredentials())('should accept message for existing session', async () => {
-			const tmpDir = process.env.TMPDIR || '/tmp';
-			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: `${tmpDir}/liuboer-test-message-send-${Date.now()}`,
-			});
+		test.skipIf(!hasAnyCredentials())(
+			'should accept message for existing session',
+			async () => {
+				const tmpDir = process.env.TMPDIR || '/tmp';
+				const sessionId = await ctx.sessionManager.createSession({
+					workspacePath: `${tmpDir}/liuboer-test-message-send-${Date.now()}`,
+					useWorktree: false, // Disable worktrees for test speed
+				});
 
-			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
-			await waitForWebSocketState(ws, WebSocket.OPEN);
-			await firstMessagePromise;
+				const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+				await waitForWebSocketState(ws, WebSocket.OPEN);
+				await firstMessagePromise;
 
-			const responsePromise = waitForWebSocketMessage(ws, 10000);
+				const responsePromise = waitForWebSocketMessage(ws, 12000); // Increased to 12s to match test timeout
 
-			ws.send(
-				JSON.stringify({
-					id: 'msg-2',
-					type: 'CALL',
-					method: 'message.send',
-					data: {
-						sessionId,
-						content: 'Hello, Claude!',
-					},
-					sessionId: 'global',
-					timestamp: new Date().toISOString(),
-					version: '1.0.0',
-				})
-			);
+				ws.send(
+					JSON.stringify({
+						id: 'msg-2',
+						type: 'CALL',
+						method: 'message.send',
+						data: {
+							sessionId,
+							content: 'Hello, Claude!',
+						},
+						sessionId: 'global',
+						timestamp: new Date().toISOString(),
+						version: '1.0.0',
+					})
+				);
 
-			const response = await responsePromise;
+				const response = await responsePromise;
 
-			if (response.type === 'ERROR') {
-				console.error('Error response:', response.error);
-			}
-			expect(response.type).toBe('RESULT');
-			expect(response.data.messageId).toBeString();
+				if (response.type === 'ERROR') {
+					console.error('Error response:', response.error);
+				}
+				expect(response.type).toBe('RESULT');
+				expect(response.data.messageId).toBeString();
 
-			ws.close();
-		});
+				ws.close();
+			},
+			{ timeout: 15000 }
+		); // Increase timeout to 15s for SDK initialization
 	});
 
 	describe('client.interrupt', () => {

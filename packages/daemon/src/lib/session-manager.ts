@@ -135,9 +135,10 @@ export class SessionManager {
 		this.log(`[SessionManager] Initializing workspace for session ${sessionId}...`);
 
 		try {
-			// Step 1: Generate title from user message
-			const title = await this.generateTitleFromMessage(userMessageText, session.workspacePath);
-			this.log(`[SessionManager] Generated title: "${title}"`);
+			// Step 1: Generate temporary title from user message (first 50 chars)
+			// Title generation is async (via SimpleTitleQueue) and happens in background
+			const title = userMessageText.substring(0, 50).trim() || 'New Session';
+			this.log(`[SessionManager] Using temporary title: "${title}"`);
 
 			// Step 2: Generate branch name from title
 			const branchName = this.generateBranchName(title, sessionId);
@@ -175,7 +176,7 @@ export class SessionManager {
 				metadata: {
 					...session.metadata,
 					workspaceInitialized: true,
-					titleGenerated: true,
+					// Don't set titleGenerated: true here - SimpleTitleQueue will generate proper title async
 				},
 			};
 
