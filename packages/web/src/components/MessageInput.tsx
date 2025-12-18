@@ -798,7 +798,7 @@ export default function MessageInput({
 								'relative rounded-3xl border transition-all',
 								'bg-dark-800/60 backdrop-blur-sm',
 								disabled
-									? `${borderColors.ui.default}/30`
+									? borderColors.ui.disabled
 									: `${borderColors.ui.input} focus-within:bg-dark-800/80`
 							)}
 						>
