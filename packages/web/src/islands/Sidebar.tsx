@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useState, useEffect } from 'preact/hooks';
 import { currentSessionIdSignal, sidebarOpenSignal } from '../lib/signals.ts';
 import { sessions, authStatus, connectionState, apiConnectionStatus } from '../lib/state.ts';
 import { createSession } from '../lib/api-helpers.ts';
@@ -8,11 +8,14 @@ import { Button } from '../components/ui/Button.tsx';
 import { SettingsModal } from '../components/SettingsModal.tsx';
 import SessionListItem from '../components/SessionListItem.tsx';
 
+const SESSIONS_PER_PAGE = 20;
+
 export default function Sidebar() {
 	// Keep local UI state
 	const [creatingSession, setCreatingSession] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [showAllArchived, setShowAllArchived] = useState(false);
+	const [visibleCount, setVisibleCount] = useState(SESSIONS_PER_PAGE);
 
 	// FIX: Access sessionsList once to prevent multiple subscriptions
 	// But we need to keep currentSessionIdSignal reactive for active state
@@ -37,6 +40,15 @@ export default function Sidebar() {
 
 		return false;
 	});
+
+	// Pagination
+	const visibleSessions = filteredSessions.slice(0, visibleCount);
+	const hasMore = filteredSessions.length > visibleCount;
+
+	// Reset visible count when archive filter changes
+	useEffect(() => {
+		setVisibleCount(SESSIONS_PER_PAGE);
+	}, [showAllArchived]);
 
 	const handleCreateSession = async () => {
 		setCreatingSession(true);
@@ -95,6 +107,10 @@ export default function Sidebar() {
 		if (window.innerWidth < 768) {
 			sidebarOpenSignal.value = false;
 		}
+	};
+
+	const handleLoadMore = () => {
+		setVisibleCount((prev) => prev + SESSIONS_PER_PAGE);
 	};
 
 	return (
@@ -195,13 +211,26 @@ export default function Sidebar() {
 						</div>
 					)}
 
-					{filteredSessions.map((session) => (
+					{visibleSessions.map((session) => (
 						<SessionListItem
 							key={session.id}
 							session={session}
 							onSessionClick={handleSessionClick}
 						/>
 					))}
+
+					{/* Load More Button */}
+					{hasMore && (
+						<div class="p-4">
+							<button
+								type="button"
+								onClick={handleLoadMore}
+								class="w-full py-2 px-4 text-sm text-gray-400 hover:text-gray-200 hover:bg-dark-800 rounded-lg transition-colors border border-dark-700 hover:border-dark-600"
+							>
+								Load More ({filteredSessions.length - visibleCount} remaining)
+							</button>
+						</div>
+					)}
 				</div>
 
 				{/* Footer - with safe area padding for mobile Safari */}
