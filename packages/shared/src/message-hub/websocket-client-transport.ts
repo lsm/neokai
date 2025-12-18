@@ -57,6 +57,7 @@ export class WebSocketClientTransport implements IMessageTransport {
 	private reconnectAttempts = 0;
 	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	private pingTimer: ReturnType<typeof setInterval> | null = null;
+	private closed = false;
 
 	private messageHandlers: Set<(message: HubMessage) => void> = new Set();
 	private connectionHandlers: Set<ConnectionStateHandler> = new Set();
@@ -88,6 +89,11 @@ export class WebSocketClientTransport implements IMessageTransport {
 	 * Connect to WebSocket
 	 */
 	private async connect(): Promise<void> {
+		// Prevent connection after close() has been called
+		if (this.closed) {
+			return;
+		}
+
 		if (this.ws && this.ws.readyState === WebSocket.OPEN) {
 			return;
 		}
@@ -135,6 +141,11 @@ export class WebSocketClientTransport implements IMessageTransport {
 	 * FIX P1.2: Add jitter to prevent thundering herd on reconnect
 	 */
 	private handleDisconnect(): void {
+		// Prevent reconnection after close() has been called
+		if (this.closed) {
+			return;
+		}
+
 		if (!this.autoReconnect) {
 			return;
 		}
@@ -205,6 +216,9 @@ export class WebSocketClientTransport implements IMessageTransport {
 	 * Close transport
 	 */
 	async close(): Promise<void> {
+		// Set closed flag to prevent reconnection
+		this.closed = true;
+
 		// Clear timers
 		if (this.reconnectTimer) {
 			clearTimeout(this.reconnectTimer);
