@@ -29,14 +29,12 @@ export const BUILT_IN_COMMANDS: BuiltInCommand[] = [
 3. Pull rebase on that target branch in the root repository
 4. Fast-forward merge this session branch to the target branch in the root repository
 5. Push to remote
-6. Clean up this worktree session (optional)
 
 Follow git best practices:
 - Create atomic, logical commits with clear messages
-- Add co-author attribution to Claude
 - Verify no conflicts during rebase
 - Ensure the merge is fast-forward only
-- Detect and use whatever branch is currently checked out in the root repo (do NOT hardcode "main")`,
+- Detect and use whatever branch is currently checked out in the root repo`,
 	},
 ];
 
