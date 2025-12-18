@@ -41,8 +41,7 @@ describe('Session Resume Integration', () => {
 		// Send a message to trigger SDK initialization
 		await callRPCHandler(ctx.messageHub, 'message.send', {
 			sessionId,
-			messageId: generateUUID(),
-			content: [{ type: 'text', text: 'Hello' }],
+			content: 'Hello',
 		});
 
 		// Wait for SDK to emit system message and capture session ID
