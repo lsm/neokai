@@ -341,9 +341,30 @@ export class AgentSession {
 			// STEP 2: Set state to 'queued' and enqueue for processing
 			await this.stateManager.setQueued(messageId);
 
-			// Enqueue for SDK processing
-			// NOTE: Message is already saved, so we don't save it again in the generator
-			await this.messageQueue.enqueueWithId(messageId, messageContent);
+			// Enqueue for SDK processing (fire-and-forget)
+			// NOTE: Message is already saved to DB and published to UI above.
+			// We don't await here to prevent RPC timeout - SDK processing can take
+			// longer than the RPC timeout (10s default). Errors are handled via .catch().
+			this.messageQueue.enqueueWithId(messageId, messageContent).catch(async (error) => {
+				// Handle queue errors (e.g., interrupted by user)
+				// Don't log "Interrupted by user" as error - it's expected behavior
+				if (error instanceof Error && error.message === 'Interrupted by user') {
+					this.logger.log(`Message ${messageId} interrupted by user`);
+				} else {
+					// Surface non-interrupt errors to the UI
+					this.logger.error(`Queue error for message ${messageId}:`, error);
+					await this.errorManager.handleError(
+						this.session.id,
+						error as Error,
+						ErrorCategory.MESSAGE,
+						'Failed to process message. Please try again.',
+						this.stateManager.getState(),
+						{ messageId }
+					);
+					// Reset state to idle so user can retry
+					await this.stateManager.setIdle();
+				}
+			});
 
 			// Emit event for title generation (decoupled via EventBus)
 			this.eventBus.emit('message:sent', { sessionId: this.session.id }).catch((err) => {
