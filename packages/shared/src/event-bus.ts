@@ -15,7 +15,7 @@
 
 import type { Session, AuthMethod, ContextInfo } from './types.ts';
 import type { SDKMessage } from './sdk/sdk.d.ts';
-import type { AgentProcessingState } from './state-types.ts';
+import type { AgentProcessingState, ApiConnectionState } from './state-types.ts';
 
 export type UnsubscribeFn = () => void;
 
@@ -43,6 +43,9 @@ export interface EventMap {
 
 	// Auth events
 	'auth:changed': { method: AuthMethod; isAuthenticated: boolean };
+
+	// API connection events - internal server-side only
+	'api:connection': ApiConnectionState;
 
 	// Agent state events
 	'agent-state:changed': { sessionId: string; state: AgentProcessingState };

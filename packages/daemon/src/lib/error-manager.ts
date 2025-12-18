@@ -5,7 +5,7 @@
  * and error categorization for better debugging and user experience.
  */
 
-import type { MessageHub } from '@liuboer/shared';
+import type { MessageHub, EventBus } from '@liuboer/shared';
 
 export enum ErrorCategory {
 	AUTHENTICATION = 'authentication',
@@ -57,7 +57,10 @@ export class ErrorManager {
 	private lastSuccessfulApiCall = Date.now();
 	private currentApiStatus: 'connected' | 'degraded' | 'disconnected' = 'connected';
 
-	constructor(private messageHub: MessageHub) {
+	constructor(
+		private messageHub: MessageHub,
+		private eventBus?: EventBus
+	) {
 		// Only enable debug logs in development mode, not in test mode
 		this.debug = process.env.NODE_ENV === 'development';
 	}
@@ -408,17 +411,16 @@ export class ErrorManager {
 		if (newStatus !== this.currentApiStatus) {
 			this.currentApiStatus = newStatus;
 
-			await this.messageHub.publish(
-				'state.apiConnection',
-				{
+			// Emit via EventBus for internal server-side listeners (StateManager)
+			if (this.eventBus) {
+				this.eventBus.emit('api:connection', {
 					status: newStatus,
 					errorCount: this.apiConnectionErrors,
 					lastError: this.lastApiError,
 					lastSuccessfulCall: this.lastSuccessfulApiCall,
 					timestamp: Date.now(),
-				},
-				{ sessionId: 'global' }
-			);
+				});
+			}
 
 			if (this.debug) {
 				this.error(
@@ -441,16 +443,15 @@ export class ErrorManager {
 		if (hadErrors && this.currentApiStatus !== 'connected') {
 			this.currentApiStatus = 'connected';
 
-			await this.messageHub.publish(
-				'state.apiConnection',
-				{
+			// Emit via EventBus for internal server-side listeners (StateManager)
+			if (this.eventBus) {
+				this.eventBus.emit('api:connection', {
 					status: 'connected',
 					errorCount: 0,
 					lastSuccessfulCall: this.lastSuccessfulApiCall,
 					timestamp: Date.now(),
-				},
-				{ sessionId: 'global' }
-			);
+				});
+			}
 
 			if (this.debug) {
 				this.error('[ErrorManager] API connection recovered');

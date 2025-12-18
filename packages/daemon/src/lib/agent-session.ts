@@ -74,8 +74,8 @@ export class AgentSession {
 		private eventBus: EventBus,
 		private getApiKey: () => Promise<string | null>
 	) {
-		// Initialize error manager and logger
-		this.errorManager = new ErrorManager(this.messageHub);
+		// Initialize error manager and logger (with EventBus for internal events)
+		this.errorManager = new ErrorManager(this.messageHub, this.eventBus);
 		this.logger = new Logger(`AgentSession ${session.id}`);
 
 		// Initialize extracted components

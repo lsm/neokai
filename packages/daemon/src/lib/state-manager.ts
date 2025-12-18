@@ -50,17 +50,26 @@ export class StateManager {
 	) {
 		this.setupHandlers();
 		this.setupEventListeners(); // FIX: Listen to internal events
-		this.setupApiConnectionListener(); // Listen to API connection state updates
 	}
 
 	/**
 	 * FIX: Setup EventBus listeners for internal events
 	 *
-	 * StateManager listens to events from SessionManager/AuthManager
+	 * StateManager listens to events from SessionManager/AuthManager/ErrorManager
 	 * and broadcasts state changes to clients. This breaks the circular
 	 * dependency where SessionManager had to call StateManager directly.
 	 */
 	private setupEventListeners(): void {
+		// API connection state updates from ErrorManager
+		this.eventBus.on('api:connection', (data) => {
+			this.apiConnectionState = data as import('@liuboer/shared').ApiConnectionState;
+			this.logger.log('API connection state updated:', this.apiConnectionState.status);
+			// Broadcast system state change when API connection changes
+			this.broadcastSystemChange().catch((err: unknown) => {
+				this.logger.error('Failed to broadcast system state after API connection change:', err);
+			});
+		});
+
 		// Session lifecycle events
 		this.eventBus.on('session:created', async (data) => {
 			this.logger.log(
@@ -283,24 +292,6 @@ export class StateManager {
 				version: this.channelVersions.get('global') || 0,
 			},
 		};
-	}
-
-	/**
-	 * Setup listener for API connection state updates from ErrorManager
-	 */
-	private setupApiConnectionListener(): void {
-		this.messageHub.subscribe(
-			'state.apiConnection',
-			(data) => {
-				this.apiConnectionState = data as import('@liuboer/shared').ApiConnectionState;
-				this.logger.log('API connection state updated:', this.apiConnectionState.status);
-				// Broadcast system state change when API connection changes
-				this.broadcastSystemChange().catch((err: unknown) => {
-					this.logger.error('Failed to broadcast system state after API connection change:', err);
-				});
-			},
-			{ sessionId: 'global' }
-		);
 	}
 
 	/**
