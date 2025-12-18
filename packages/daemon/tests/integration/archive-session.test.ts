@@ -104,6 +104,10 @@ describe('Archive Session Integration', () => {
 				useWorktree: true,
 			});
 
+			// Trigger workspace initialization (2-stage session creation)
+			// This creates the worktree with a branch name based on the message
+			await ctx.sessionManager.initializeSessionWorkspace(created.sessionId, 'test worktree');
+
 			const session = ctx.db.getSession(created.sessionId);
 			expect(session?.worktree).toBeDefined();
 
@@ -154,7 +158,11 @@ describe('Archive Session Integration', () => {
 				useWorktree: true,
 			});
 
+			// Trigger workspace initialization (2-stage session creation)
+			await ctx.sessionManager.initializeSessionWorkspace(created.sessionId, 'test commits');
+
 			const session = ctx.db.getSession(created.sessionId);
+			expect(session?.worktree).toBeDefined();
 			const worktreePath = session!.worktree!.worktreePath;
 
 			// Make a commit in the worktree
@@ -207,7 +215,11 @@ describe('Archive Session Integration', () => {
 				useWorktree: true,
 			});
 
+			// Trigger workspace initialization (2-stage session creation)
+			await ctx.sessionManager.initializeSessionWorkspace(created.sessionId, 'test confirmed');
+
 			const session = ctx.db.getSession(created.sessionId);
+			expect(session?.worktree).toBeDefined();
 			const worktreePath = session!.worktree!.worktreePath;
 
 			// Make multiple commits in the worktree
