@@ -118,6 +118,8 @@ export const borderColors = {
 		input: 'border-dark-600',
 		/** Darker border for emphasis */
 		emphasis: 'border-dark-800',
+		/** Disabled/dimmed border for inactive states */
+		disabled: 'border-dark-700/30',
 	},
 
 	/**
