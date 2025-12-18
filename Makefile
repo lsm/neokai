@@ -13,6 +13,20 @@ worktree-dev:
 	@echo "🌳 Starting worktree development server..."
 	@echo "📦 Installing dependencies..."
 	@bun install --silent
+	@GIT_COMMON_DIR=$$(git rev-parse --git-common-dir 2>/dev/null); \
+	if [ -n "$$GIT_COMMON_DIR" ] && [ "$$GIT_COMMON_DIR" != ".git" ]; then \
+		ROOT_REPO=$$(dirname "$$GIT_COMMON_DIR"); \
+		echo "📋 Copying .env files from root repository..."; \
+		if [ -f "$$ROOT_REPO/.env" ]; then \
+			cp "$$ROOT_REPO/.env" ./.env && echo "   ✅ Copied .env"; \
+		fi; \
+		if [ -f "$$ROOT_REPO/packages/daemon/.env" ]; then \
+			mkdir -p ./packages/daemon && cp "$$ROOT_REPO/packages/daemon/.env" ./packages/daemon/.env && echo "   ✅ Copied packages/daemon/.env"; \
+		fi; \
+		if [ -f "$$ROOT_REPO/packages/cli/.env" ]; then \
+			mkdir -p ./packages/cli && cp "$$ROOT_REPO/packages/cli/.env" ./packages/cli/.env && echo "   ✅ Copied packages/cli/.env"; \
+		fi; \
+	fi
 	@echo "🔍 Finding available port..."
 	@PORT=$$(node -e "const net = require('net'); const server = net.createServer(); server.listen(0, () => { console.log(server.address().port); server.close(); });"); \
 	echo ""; \
