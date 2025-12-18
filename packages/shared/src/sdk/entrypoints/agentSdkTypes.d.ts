@@ -645,8 +645,8 @@ export interface SDKSession {
     readonly sessionId: string;
     /** Send a message to the agent */
     send(message: string | SDKUserMessage): Promise<void>;
-    /** Receive messages from the agent */
-    receive(): AsyncGenerator<SDKMessage, void>;
+    /** Stream messages from the agent */
+    stream(): AsyncGenerator<SDKMessage, void>;
     /** Close the session */
     close(): void;
     /** Async disposal support (calls close if not already closed) */

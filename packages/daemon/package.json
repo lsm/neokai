@@ -18,11 +18,11 @@
 		"test:coverage:lcov": "bun test --coverage --coverage-reporter=lcov"
 	},
 	"dependencies": {
-		"@anthropic-ai/claude-agent-sdk": "0.1.71",
+		"@anthropic-ai/claude-agent-sdk": "0.1.72",
 		"@liuboer/shared": "workspace:*",
 		"dotenv": "17.2.3",
 		"simple-git": "3.30.0",
-		"zod": "4.2.0"
+		"zod": "4.2.1"
 	},
 	"devDependencies": {
 		"@types/bun": "latest"
