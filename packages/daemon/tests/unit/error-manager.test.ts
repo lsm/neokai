@@ -537,5 +537,37 @@ describe('ErrorManager', () => {
 			expect(broadcastedError.recoverySuggestions).toBeDefined();
 			expect(broadcastedError.stack).toBeDefined();
 		});
+
+		it('should capture additional error properties', () => {
+			// Create an error with custom properties
+			const error = new Error('Custom error');
+			(error as unknown as Record<string, unknown>).code = 'CUSTOM_CODE';
+			(error as unknown as Record<string, unknown>).statusCode = 500;
+			(error as unknown as Record<string, unknown>).details = { foo: 'bar' };
+
+			const structured = errorManager.createError(error, ErrorCategory.SYSTEM);
+
+			// Verify custom properties are captured with error_ prefix
+			expect(structured.metadata).toMatchObject({
+				error_code: 'CUSTOM_CODE',
+				error_statusCode: 500,
+				error_details: { foo: 'bar' },
+			});
+		});
+
+		it('should capture error.cause if present', () => {
+			// Create an error with a cause
+			const cause = new Error('Root cause error');
+			const error = new Error('Wrapper error', { cause });
+
+			const structured = errorManager.createError(error, ErrorCategory.SYSTEM);
+
+			// Verify cause is captured
+			expect(structured.metadata).toBeDefined();
+			const errorCause = structured.metadata?.errorCause as { message: string; stack: string };
+			expect(errorCause).toBeDefined();
+			expect(errorCause.message).toBe('Root cause error');
+			expect(errorCause.stack).toBeDefined();
+		});
 	});
 });

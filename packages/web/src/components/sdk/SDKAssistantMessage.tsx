@@ -35,6 +35,7 @@ interface Props {
 
 export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
 	const { message: apiMessage } = message;
+	const hasError = 'error' in message && message.error !== undefined;
 
 	// Extract text content for copy functionality
 	const getTextContent = (): string => {
@@ -113,14 +114,32 @@ export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
 				<div class="w-full">
 					<div
 						class={cn(
-							messageColors.assistant.background,
+							hasError
+								? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
+								: messageColors.assistant.background,
 							borderRadius.message.bubble,
 							messageSpacing.assistant.bubble.combined,
 							'space-y-3'
 						)}
 					>
+						{hasError && (
+							<div class="flex items-center gap-2 text-red-700 dark:text-red-400 text-sm font-medium">
+								<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+									/>
+								</svg>
+								<span>API Error</span>
+							</div>
+						)}
 						{textBlocks.map((block: Extract<ContentBlock, { type: 'text' }>, idx: number) => (
-							<div key={idx} class={messageColors.assistant.text}>
+							<div
+								key={idx}
+								class={hasError ? 'text-red-900 dark:text-red-100' : messageColors.assistant.text}
+							>
 								<MarkdownRenderer
 									content={block.text}
 									class="dark:prose-invert max-w-none prose-pre:bg-gray-900 prose-pre:text-gray-100"

@@ -464,6 +464,76 @@ export class AgentSession {
 	}
 
 	/**
+	 * Handle API validation errors (400-level) by displaying them as assistant messages
+	 * Returns true if the error was handled, false otherwise
+	 */
+	private async handleApiValidationError(error: unknown): Promise<boolean> {
+		try {
+			const errorMessage = error instanceof Error ? error.message : String(error);
+
+			// Check if this looks like an API error (starts with status code)
+			// Format: "400 {...}" or "422 {...}"
+			const apiErrorMatch = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
+			if (!apiErrorMatch) {
+				return false; // Not an API error
+			}
+
+			const [, statusCode, jsonBody] = apiErrorMatch;
+
+			// Try to parse the JSON error body
+			let errorBody: { type?: string; error?: { type?: string; message?: string } };
+			try {
+				errorBody = JSON.parse(jsonBody);
+			} catch {
+				return false; // Invalid JSON
+			}
+
+			// Extract the error message
+			const apiErrorMessage = errorBody.error?.message || errorMessage;
+			const apiErrorType = errorBody.error?.type || 'api_error';
+
+			this.logger.log(`Handling API validation error as assistant message: ${statusCode}`);
+
+			// Create a synthetic assistant message to display the error in chat
+			const assistantMessage: Extract<SDKMessage, { type: 'assistant' }> = {
+				type: 'assistant' as const,
+				uuid: generateUUID() as UUID,
+				session_id: this.session.id,
+				parent_tool_use_id: null,
+				error: 'invalid_request' as const, // Mark this as an error message
+				message: {
+					role: 'assistant' as const,
+					content: [
+						{
+							type: 'text' as const,
+							text: `**API Error (${statusCode})**: ${apiErrorType}
+
+${apiErrorMessage}
+
+This error occurred while processing your request. Please review the error message above and adjust your request accordingly.`,
+						},
+					],
+				},
+			};
+
+			// Save to database
+			this.db.saveSDKMessage(this.session.id, assistantMessage);
+
+			// Broadcast to UI
+			await this.messageHub.publish('sdk.message', assistantMessage, {
+				sessionId: this.session.id,
+			});
+
+			this.logger.log(`API validation error displayed as assistant message`);
+			return true; // Error was handled
+		} catch (err) {
+			// If anything goes wrong, let the caller handle it as a system error
+			this.logger.warn(`Failed to handle API validation error:`, err);
+			return false;
+		}
+	}
+
+	/**
 	 * Start the long-running streaming query with AsyncGenerator
 	 */
 	private async startStreamingQuery(): Promise<void> {
@@ -747,41 +817,48 @@ CRITICAL RULES:
 			const isAbortError = error instanceof Error && error.name === 'AbortError';
 
 			if (!isAbortError) {
-				// Determine error category based on error message
-				let category = ErrorCategory.SYSTEM;
+				// Check if this is an API validation error (400-level errors)
+				// These should be displayed in chat as assistant messages, not as system errors
+				const apiErrorHandled = await this.handleApiValidationError(error);
 
-				if (
-					errorMessage.includes('401') ||
-					errorMessage.includes('unauthorized') ||
-					errorMessage.includes('invalid_api_key')
-				) {
-					category = ErrorCategory.AUTHENTICATION;
-				} else if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND')) {
-					category = ErrorCategory.CONNECTION;
-				} else if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
-					category = ErrorCategory.RATE_LIMIT;
-				} else if (errorMessage.includes('timeout')) {
-					category = ErrorCategory.TIMEOUT;
-				} else if (errorMessage.includes('model_not_found')) {
-					category = ErrorCategory.MODEL;
+				if (!apiErrorHandled) {
+					// Not an API validation error - handle as system error
+					// Determine error category based on error message
+					let category = ErrorCategory.SYSTEM;
+
+					if (
+						errorMessage.includes('401') ||
+						errorMessage.includes('unauthorized') ||
+						errorMessage.includes('invalid_api_key')
+					) {
+						category = ErrorCategory.AUTHENTICATION;
+					} else if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND')) {
+						category = ErrorCategory.CONNECTION;
+					} else if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
+						category = ErrorCategory.RATE_LIMIT;
+					} else if (errorMessage.includes('timeout')) {
+						category = ErrorCategory.TIMEOUT;
+					} else if (errorMessage.includes('model_not_found')) {
+						category = ErrorCategory.MODEL;
+					}
+
+					// Capture state before reset
+					const processingState = this.stateManager.getState();
+
+					await this.errorManager.handleError(
+						this.session.id,
+						error as Error,
+						category,
+						undefined, // userMessage - will use default
+						processingState,
+						{
+							errorMessage,
+							queueSize: this.messageQueue.size(),
+						}
+					);
 				}
 
-				// Capture state before reset
-				const processingState = this.stateManager.getState();
-
-				await this.errorManager.handleError(
-					this.session.id,
-					error as Error,
-					category,
-					undefined, // userMessage - will use default
-					processingState,
-					{
-						errorMessage,
-						queueSize: this.messageQueue.size(),
-					}
-				);
-
-				// Reset state to idle on stream error
+				// Reset state to idle on error
 				await this.stateManager.setIdle();
 			}
 		} finally {

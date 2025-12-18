@@ -39,13 +39,13 @@ const ERROR_CATEGORY_ICONS: Record<ErrorCategory, string> = {
 	rate_limit: '⏸️',
 };
 
-export function ErrorDialog({ isOpen, onClose, error, isDev = false }: ErrorDialogProps) {
+export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: ErrorDialogProps) {
 	const [copied, setCopied] = useState(false);
 
 	if (!error) return null;
 
 	const handleCopyReport = async () => {
-		const report = formatErrorReport(error, isDev);
+		const report = formatErrorReport(error);
 		try {
 			await navigator.clipboard.writeText(report);
 			setCopied(true);
@@ -165,31 +165,20 @@ export function ErrorDialog({ isOpen, onClose, error, isDev = false }: ErrorDial
 								)}
 							</dd>
 						</div>
-					</div>
-				</Collapsible>
 
-				{/* Debug Info (Dev mode only, Collapsible) */}
-				{isDev && error.stack && (
-					<Collapsible
-						trigger={
-							<div class="flex items-center gap-2 py-2 text-gray-400 hover:text-gray-300">
-								<span class="text-sm font-medium">🐛 Debug Info (Dev Mode)</span>
-							</div>
-						}
-						class={`border border-amber-500/20 rounded-lg px-4 bg-amber-500/5`}
-					>
-						<div class="space-y-2">
+						{/* Stack Trace - Always show in Technical Details if available */}
+						{error.stack && (
 							<div>
-								<dt class="font-medium text-amber-400 mb-1 text-sm">Stack Trace:</dt>
+								<dt class="font-medium text-gray-400 mb-1">Stack Trace:</dt>
 								<dd class="text-gray-300">
-									<pre class="text-xs bg-dark-900 p-3 rounded overflow-x-auto max-h-64">
+									<pre class="text-xs bg-dark-900 p-3 rounded overflow-x-auto max-h-64 whitespace-pre-wrap break-words">
 										{error.stack}
 									</pre>
 								</dd>
 							</div>
-						</div>
-					</Collapsible>
-				)}
+						)}
+					</div>
+				</Collapsible>
 
 				{/* Actions */}
 				<div class="flex items-center justify-between pt-2">
@@ -238,7 +227,7 @@ export function ErrorDialog({ isOpen, onClose, error, isDev = false }: ErrorDial
 /**
  * Format error details for copying/reporting
  */
-function formatErrorReport(error: StructuredError, includeDev: boolean): string {
+function formatErrorReport(error: StructuredError): string {
 	const lines = [
 		'=== ERROR REPORT ===',
 		'',
@@ -284,7 +273,7 @@ function formatErrorReport(error: StructuredError, includeDev: boolean): string 
 		lines.push('');
 	}
 
-	if (includeDev && error.stack) {
+	if (error.stack) {
 		lines.push('Stack Trace:');
 		lines.push(error.stack);
 		lines.push('');

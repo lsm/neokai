@@ -82,6 +82,31 @@ export class ErrorManager {
 		const errorCode = this.extractErrorCode(errorMessage);
 		const stack = error instanceof Error ? error.stack : undefined;
 
+		// Capture additional error properties (cause, code, etc.)
+		const enhancedMetadata = { ...metadata };
+		if (error instanceof Error) {
+			// Capture error.cause if available (Node.js 16.9.0+)
+			if ('cause' in error && error.cause) {
+				enhancedMetadata.errorCause =
+					error.cause instanceof Error
+						? {
+								message: error.cause.message,
+								stack: error.cause.stack,
+								name: error.cause.name,
+							}
+						: String(error.cause);
+			}
+
+			// Capture any additional properties on the error object
+			const errorObj = error as unknown as Record<string, unknown>;
+			const standardProps = ['name', 'message', 'stack', 'cause'];
+			for (const [key, value] of Object.entries(errorObj)) {
+				if (!standardProps.includes(key) && value !== undefined) {
+					enhancedMetadata[`error_${key}`] = value;
+				}
+			}
+		}
+
 		const structuredError: StructuredError = {
 			category,
 			code: errorCode,
@@ -91,7 +116,7 @@ export class ErrorManager {
 			timestamp: new Date().toISOString(),
 			stack,
 			sessionContext,
-			metadata,
+			metadata: enhancedMetadata,
 		};
 
 		// Add recovery suggestions
