@@ -129,11 +129,14 @@ export function CodeViewer({
 			{showHeader && filePath && (
 				<div class="bg-gray-100 dark:bg-gray-800 px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
 					<div class="text-xs font-mono text-gray-700 dark:text-gray-300">{filePath}</div>
-					{detectedLanguage && (
-						<div class="text-xs px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
-							{detectedLanguage}
-						</div>
-					)}
+					<div class="flex items-center gap-2">
+						<div class="text-xs text-gray-600 dark:text-gray-400 font-mono">{lineCount}</div>
+						{detectedLanguage && (
+							<div class="text-xs px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
+								{detectedLanguage}
+							</div>
+						)}
+					</div>
 				</div>
 			)}
 

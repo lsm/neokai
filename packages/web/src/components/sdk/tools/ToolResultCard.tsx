@@ -102,6 +102,76 @@ export function ToolResultCard({
 		);
 	}
 
+	// Helper function to calculate diff line counts (same logic as DiffViewer)
+	const calculateDiffCounts = (oldText: string, newText: string) => {
+		const oldLines = oldText.split('\n');
+		const newLines = newText.split('\n');
+
+		// Find the first different line
+		let firstDiffIndex = 0;
+		while (
+			firstDiffIndex < Math.min(oldLines.length, newLines.length) &&
+			oldLines[firstDiffIndex] === newLines[firstDiffIndex]
+		) {
+			firstDiffIndex++;
+		}
+
+		// Find the last different line
+		let lastDiffIndexOld = oldLines.length - 1;
+		let lastDiffIndexNew = newLines.length - 1;
+		while (
+			lastDiffIndexOld > firstDiffIndex &&
+			lastDiffIndexNew > firstDiffIndex &&
+			oldLines[lastDiffIndexOld] === newLines[lastDiffIndexNew]
+		) {
+			lastDiffIndexOld--;
+			lastDiffIndexNew--;
+		}
+
+		const removedLines = lastDiffIndexOld - firstDiffIndex + 1;
+		const addedLines = lastDiffIndexNew - firstDiffIndex + 1;
+
+		return { addedLines, removedLines };
+	};
+
+	// Calculate line counts for Read, Write, Edit tools
+	const getLineCountDisplay = () => {
+		if (toolName === 'Read') {
+			// Count lines in output
+			const content =
+				typeof output === 'string' ? output : (outputRecord.content as string | undefined);
+			if (content) {
+				const lineCount = content.split('\n').length;
+				return <span class="text-xs text-gray-600 dark:text-gray-400 font-mono">{lineCount}</span>;
+			}
+		} else if (toolName === 'Write') {
+			// Count lines in input content
+			const content = inputRecord?.content as string | undefined;
+			if (content && typeof content === 'string') {
+				const lineCount = content.split('\n').length;
+				return (
+					<span class="text-xs text-green-700 dark:text-green-400 font-mono">+{lineCount}</span>
+				);
+			}
+		} else if (toolName === 'Edit') {
+			// Count actual diff changes (not total lines)
+			const oldText = inputRecord?.old_string as string | undefined;
+			const newText = inputRecord?.new_string as string | undefined;
+			if (oldText && newText) {
+				const { addedLines, removedLines } = calculateDiffCounts(oldText, newText);
+				return (
+					<span class="text-xs font-mono flex items-center gap-1">
+						<span class="text-green-700 dark:text-green-400">+{addedLines}</span>
+						<span class="text-red-700 dark:text-red-400">-{removedLines}</span>
+					</span>
+				);
+			}
+		}
+		return null;
+	};
+
+	const lineCountDisplay = getLineCountDisplay();
+
 	// Default & detailed variants - full display with expand/collapse
 	return (
 		<div class={cn('border rounded-lg overflow-hidden', colors.bg, colors.border, className)}>
@@ -122,6 +192,7 @@ export function ToolResultCard({
 				</div>
 
 				<div class="flex items-center gap-2 flex-shrink-0">
+					{lineCountDisplay}
 					{isError && (
 						<svg
 							class="w-4 h-4 text-red-600 dark:text-red-400"

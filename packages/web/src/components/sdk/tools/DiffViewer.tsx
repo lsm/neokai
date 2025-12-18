@@ -125,6 +125,8 @@ export function DiffViewer({
 	className,
 }: DiffViewerProps) {
 	const diff = generateDiff(oldText, newText);
+	const addedLines = diff.filter((l) => l.type === 'add').length;
+	const removedLines = diff.filter((l) => l.type === 'remove').length;
 
 	return (
 		<div
@@ -135,8 +137,12 @@ export function DiffViewer({
 		>
 			{/* Header */}
 			{filePath && (
-				<div class="bg-gray-100 dark:bg-gray-800 px-3 py-2 border-b border-gray-200 dark:border-gray-700">
+				<div class="bg-gray-100 dark:bg-gray-800 px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
 					<div class="text-xs font-mono text-gray-700 dark:text-gray-300">{filePath}</div>
+					<div class="text-xs font-mono flex items-center gap-1">
+						<span class="text-green-700 dark:text-green-400">+{addedLines}</span>
+						<span class="text-red-700 dark:text-red-400">-{removedLines}</span>
+					</div>
 				</div>
 			)}
 
