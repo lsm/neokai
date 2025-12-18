@@ -166,7 +166,14 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 
 		const session = agentSession.getSessionData();
 
-		// NEW: Initialize workspace on first message (2-stage session creation)
+		// CRITICAL UX FIX: Persist user message IMMEDIATELY before workspace initialization
+		// This ensures the user sees their message instantly (<10ms) instead of waiting
+		// for workspace init to complete (~2s), preventing confusing blank states and
+		// gracefully handling timeout scenarios.
+		const result = await agentSession.persistAndQueueMessage({ content, images });
+
+		// Initialize workspace on first message (2-stage session creation)
+		// User can now see their message while this happens in the background (~2s)
 		if (!session.metadata.workspaceInitialized) {
 			await sessionManager.initializeSessionWorkspace(targetSessionId, content);
 			// Session data has been updated, reload it
@@ -185,7 +192,7 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 			} as Partial<Session>);
 		}
 
-		return await agentSession.handleMessageSend({ content, images });
+		return result;
 	});
 
 	// Handle session interruption

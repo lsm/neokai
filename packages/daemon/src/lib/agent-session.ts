@@ -1,5 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { UUID } from 'crypto';
 import type {
 	AgentProcessingState,
 	MessageContent,
@@ -9,7 +10,7 @@ import type {
 } from '@liuboer/shared';
 import type { EventBus, MessageHub, CurrentModelInfo } from '@liuboer/shared';
 import { generateUUID } from '@liuboer/shared';
-import type { SDKMessage, SlashCommand } from '@liuboer/shared/sdk';
+import type { SDKMessage, SDKUserMessage, SlashCommand } from '@liuboer/shared/sdk';
 import { Database } from '../storage/database';
 import { ErrorCategory, ErrorManager } from './error-manager';
 import { Logger } from './logger';
@@ -273,6 +274,98 @@ export class AgentSession {
 	 */
 	async sendMessage(content: string): Promise<string> {
 		return this.messageQueue.enqueue(content);
+	}
+
+	/**
+	 * Persist user message to DB and UI, then queue for SDK processing
+	 *
+	 * This method provides instant user feedback by saving and publishing the message
+	 * BEFORE any long-running operations (workspace init, SDK processing, etc.)
+	 *
+	 * UX Flow:
+	 * 1. Generate message ID
+	 * 2. Save to DB and publish to UI (<10ms) ← User sees message instantly
+	 * 3. Set processing state to 'queued'
+	 * 4. Enqueue for SDK processing (may block on workspace init)
+	 *
+	 * @returns Promise<{ messageId: string }>
+	 */
+	async persistAndQueueMessage(data: {
+		content: string;
+		images?: MessageImage[];
+	}): Promise<{ messageId: string }> {
+		try {
+			// Lazy start the query on first message
+			await this.ensureQueryStarted();
+
+			let { content, images } = data;
+
+			// Expand built-in commands to their full prompts
+			const expandedContent = expandBuiltInCommand(content);
+			if (expandedContent) {
+				this.logger.log(`Expanding built-in command: ${content.trim()}`);
+				content = expandedContent;
+			}
+
+			const messageContent = this.buildMessageContent(content, images);
+
+			// Generate message ID early
+			const messageId = generateUUID();
+
+			// STEP 1: Create and persist the SDK user message IMMEDIATELY
+			// This ensures instant UI feedback before any blocking operations
+			const sdkUserMessage: SDKUserMessage = {
+				type: 'user' as const,
+				uuid: messageId as UUID,
+				session_id: this.session.id,
+				parent_tool_use_id: null,
+				message: {
+					role: 'user' as const,
+					content:
+						typeof messageContent === 'string'
+							? [{ type: 'text' as const, text: messageContent }]
+							: messageContent,
+				},
+			};
+
+			// Save to database
+			this.db.saveSDKMessage(this.session.id, sdkUserMessage);
+
+			// Publish to UI immediately
+			await this.messageHub.publish('sdk.message', sdkUserMessage, {
+				sessionId: this.session.id,
+			});
+
+			this.logger.log(`User message ${messageId} persisted and published for instant UI display`);
+
+			// STEP 2: Set state to 'queued' and enqueue for processing
+			await this.stateManager.setQueued(messageId);
+
+			// Enqueue for SDK processing
+			// NOTE: Message is already saved, so we don't save it again in the generator
+			await this.messageQueue.enqueueWithId(messageId, messageContent);
+
+			// Emit event for title generation (decoupled via EventBus)
+			this.eventBus.emit('message:sent', { sessionId: this.session.id }).catch((err) => {
+				this.logger.warn('Failed to emit message:sent event:', err);
+			});
+
+			return { messageId };
+		} catch (error) {
+			this.logger.error(`Error in persistAndQueueMessage:`, error);
+
+			const processingState = this.stateManager.getState();
+			await this.stateManager.setIdle();
+
+			await this.errorManager.handleError(
+				this.session.id,
+				error as Error,
+				ErrorCategory.MESSAGE,
+				'Failed to send message. Please try again.',
+				processingState
+			);
+			throw error;
+		}
 	}
 
 	/**
@@ -680,25 +773,27 @@ CRITICAL RULES:
 
 	/**
 	 * Create wrapper for MessageQueue's AsyncGenerator
-	 * Handles saving user messages to DB and updating processing state
+	 * Updates processing state and yields messages to SDK
+	 *
+	 * NOTE: User messages are now saved to DB and published to UI in persistAndQueueMessage()
+	 * BEFORE being enqueued. This wrapper only handles state transitions and yielding to SDK.
+	 *
+	 * Internal messages (like automatic /context fetching) are NOT saved or published - they're
+	 * invisible background operations.
 	 */
 	private async *createMessageGeneratorWrapper() {
 		for await (const { message, onSent } of this.messageQueue.messageGenerator(this.session.id)) {
-			// Check if this is an internal message (don't save or emit)
+			// Check if this is an internal message (e.g., automatic /context command)
 			const queuedMessage = message as typeof message & { internal?: boolean };
 			const isInternal = queuedMessage.internal || false;
 
-			// Save and emit only if NOT internal
+			// Internal messages are NOT saved to DB or published to UI
+			// They're invisible background operations (e.g., automatic /context fetching)
+			// Regular user messages are already saved in persistAndQueueMessage()
+
+			// Update state to 'processing' in 'initializing' phase
+			// Skip state update for internal messages to avoid UI flicker
 			if (!isInternal) {
-				// Save user message to DB
-				this.db.saveSDKMessage(this.session.id, message);
-
-				// Emit user message as SDK message event
-				await this.messageHub.publish('sdk.message', message, {
-					sessionId: this.session.id,
-				});
-
-				// Update state to 'processing' in 'initializing' phase
 				await this.stateManager.setProcessing(message.uuid ?? 'unknown', 'initializing');
 			}
 
