@@ -535,6 +535,39 @@ ${messageText.slice(0, 2000)}`,
 		await this.eventBus.emit('session:updated', { sessionId, updates });
 	}
 
+	/**
+	 * Get session metadata directly from database without loading SDK
+	 * Used for operations that don't require SDK initialization (e.g., removing tool outputs)
+	 */
+	getSessionFromDB(sessionId: string): Session | null {
+		return this.db.getSession(sessionId);
+	}
+
+	/**
+	 * Mark a message's tool output as removed from SDK session file
+	 * This updates the session metadata to track which outputs were deleted
+	 */
+	async markOutputRemoved(sessionId: string, messageUuid: string): Promise<void> {
+		const session = this.db.getSession(sessionId);
+		if (!session) {
+			throw new Error('Session not found');
+		}
+
+		// Add messageUuid to removedOutputs array (if not already present)
+		const removedOutputs = session.metadata.removedOutputs || [];
+		if (!removedOutputs.includes(messageUuid)) {
+			removedOutputs.push(messageUuid);
+		}
+
+		// Update session metadata
+		await this.updateSession(sessionId, {
+			metadata: {
+				...session.metadata,
+				removedOutputs,
+			},
+		});
+	}
+
 	async deleteSession(sessionId: string): Promise<void> {
 		// Transaction-like cleanup with proper error handling
 		const agentSession = this.sessions.get(sessionId);

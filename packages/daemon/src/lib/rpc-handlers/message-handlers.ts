@@ -15,8 +15,59 @@ import {
 	type ContentBlock,
 } from '@liuboer/shared/sdk';
 import type { SessionManager } from '../session-manager';
+import { removeToolResultFromSessionFile } from '../sdk-session-file-manager';
 
 export function setupMessageHandlers(messageHub: MessageHub, sessionManager: SessionManager): void {
+	// Remove large task output from a message to reduce session size
+	// This modifies the .jsonl file in ~/.claude/projects/ (SDK session storage)
+	// No SDK initialization required - only file system operations
+	messageHub.handle('message.removeOutput', async (data) => {
+		const { sessionId: targetSessionId, messageUuid } = data as {
+			sessionId: string;
+			messageUuid: string;
+		};
+
+		// Get session metadata from database (no SDK initialization needed)
+		const session = sessionManager.getSessionFromDB(targetSessionId);
+
+		if (!session) {
+			throw new Error('Session not found');
+		}
+
+		// Try to get SDK session ID from active session if available
+		let sdkSessionId: string | null = null;
+		const agentSession = sessionManager.getSession(targetSessionId);
+		if (agentSession) {
+			sdkSessionId = agentSession.getSDKSessionId();
+		}
+
+		// Remove tool_result from the .jsonl file
+		// Pass both SDK session ID and Liuboer session ID for fallback search
+		const success = removeToolResultFromSessionFile(
+			session.workspacePath,
+			sdkSessionId,
+			messageUuid,
+			targetSessionId
+		);
+
+		if (!success) {
+			throw new Error('Failed to remove output from SDK session file');
+		}
+
+		// Mark output as removed in session metadata (for UI warning)
+		await sessionManager.markOutputRemoved(targetSessionId, messageUuid);
+
+		// Broadcast update via state channel to refresh UI
+		// The client will reload messages after receiving this update
+		await messageHub.publish(
+			'sdk.message.updated',
+			{ sessionId: targetSessionId, messageUuid },
+			{ sessionId: targetSessionId }
+		);
+
+		return { success: true };
+	});
+
 	messageHub.handle('message.sdkMessages', async (data) => {
 		const {
 			sessionId: targetSessionId,
