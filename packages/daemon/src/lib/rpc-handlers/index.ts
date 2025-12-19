@@ -8,6 +8,7 @@
 import type { MessageHub, EventBus } from '@liuboer/shared';
 import type { SessionManager } from '../session-manager';
 import type { AuthManager } from '../auth-manager';
+import type { SettingsManager } from '../settings-manager';
 import type { Config } from '../../config';
 
 import { setupSessionHandlers } from './session-handlers';
@@ -17,13 +18,15 @@ import { setupSystemHandlers } from './system-handlers';
 import { setupAuthHandlers } from './auth-handlers';
 import { setupCommandHandlers } from './command-handlers';
 import { registerMcpHandlers } from './mcp-handlers';
+import { registerSettingsHandlers } from './settings-handlers';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
 	sessionManager: SessionManager;
 	authManager: AuthManager;
-	eventBus: EventBus;
+	settingsManager: SettingsManager;
 	config: Config;
+	eventBus: EventBus;
 }
 
 /**
@@ -37,4 +40,5 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
 	setupSystemHandlers(deps.messageHub, deps.sessionManager, deps.authManager, deps.config);
 	setupAuthHandlers(deps.messageHub, deps.authManager);
 	registerMcpHandlers(deps.messageHub, deps.sessionManager);
+	registerSettingsHandlers(deps.messageHub, deps.settingsManager, deps.eventBus);
 }

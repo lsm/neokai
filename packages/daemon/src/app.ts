@@ -4,6 +4,7 @@ import type { WebSocketData } from './types/websocket';
 import { Database } from './storage/database';
 import { SessionManager } from './lib/session-manager';
 import { AuthManager } from './lib/auth-manager';
+import { SettingsManager } from './lib/settings-manager';
 import { StateManager } from './lib/state-manager';
 import { SubscriptionManager } from './lib/subscription-manager';
 import { SimpleTitleQueue } from './lib/simple-title-queue';
@@ -34,6 +35,7 @@ export interface DaemonAppContext {
 	messageHub: MessageHub;
 	sessionManager: SessionManager;
 	authManager: AuthManager;
+	settingsManager: SettingsManager;
 	stateManager: StateManager;
 	subscriptionManager: SubscriptionManager;
 	titleQueue: SimpleTitleQueue;
@@ -72,6 +74,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const authManager = new AuthManager(db, config);
 	await authManager.initialize();
 	log('✅ Authentication manager initialized');
+
+	// Initialize settings manager
+	const settingsManager = new SettingsManager(db, config.workspaceRoot);
+	log('✅ Settings manager initialized');
 
 	// Check authentication status - MUST be configured via environment variables
 	const authStatus = await authManager.getAuthStatus();
@@ -136,13 +142,20 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	});
 	log('✅ EventBus initialized (mediator pattern for component coordination)');
 
-	// Initialize session manager (with EventBus, no StateManager dependency!)
-	const sessionManager = new SessionManager(db, messageHub, authManager, eventBus, {
-		defaultModel: config.defaultModel,
-		maxTokens: config.maxTokens,
-		temperature: config.temperature,
-		workspaceRoot: config.workspaceRoot,
-	});
+	// Initialize session manager (with EventBus, SettingsManager, no StateManager dependency!)
+	const sessionManager = new SessionManager(
+		db,
+		messageHub,
+		authManager,
+		settingsManager,
+		eventBus,
+		{
+			defaultModel: config.defaultModel,
+			maxTokens: config.maxTokens,
+			temperature: config.temperature,
+			workspaceRoot: config.workspaceRoot,
+		}
+	);
 	log('✅ Session manager initialized (no circular dependency!)');
 	log(`   Environment: ${config.nodeEnv}`);
 	log(`   Workspace root: ${config.workspaceRoot}`);
@@ -152,6 +165,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		messageHub,
 		sessionManager,
 		authManager,
+		settingsManager,
 		config,
 		eventBus // FIX: Listens to events instead of being called directly
 	);
@@ -171,8 +185,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		messageHub,
 		sessionManager,
 		authManager,
-		eventBus,
+		settingsManager,
 		config,
+		eventBus,
 	});
 	log('✅ RPC handlers registered');
 
@@ -321,6 +336,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		messageHub,
 		sessionManager,
 		authManager,
+		settingsManager,
 		stateManager,
 		subscriptionManager,
 		titleQueue,
