@@ -1,13 +1,22 @@
 /**
  * Session RPC Handlers
+ *
+ * ARCHITECTURE: Follows the 3-layer communication pattern:
+ * - RPC handlers do minimal work and return fast (<100ms)
+ * - Heavy operations are deferred to EventBus subscribers
+ * - State updates are broadcast via State Channels
  */
 
-import type { MessageHub, MessageImage, Session } from '@liuboer/shared';
+import type { MessageHub, MessageImage, Session, EventBus } from '@liuboer/shared';
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@liuboer/shared';
 import { clearModelsCache } from '../model-service';
 
-export function setupSessionHandlers(messageHub: MessageHub, sessionManager: SessionManager): void {
+export function setupSessionHandlers(
+	messageHub: MessageHub,
+	sessionManager: SessionManager,
+	eventBus: EventBus
+): void {
 	messageHub.handle('session.create', async (data) => {
 		const req = data as CreateSessionRequest;
 		const sessionId = await sessionManager.createSession({
@@ -148,6 +157,7 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 	});
 
 	// Handle message sending to a session
+	// ARCHITECTURE: Fast RPC handler - defers heavy work to EventBus
 	messageHub.handle('message.send', async (data) => {
 		const {
 			sessionId: targetSessionId,
@@ -173,26 +183,20 @@ export function setupSessionHandlers(messageHub: MessageHub, sessionManager: Ses
 			images,
 		});
 
-		// STEP 2: Initialize workspace on first message (2-stage session creation)
-		// This creates the worktree and sets session.worktree (~2s)
-		// CRITICAL: Must complete BEFORE SDK query starts so cwd is correct
-		if (!session.metadata.workspaceInitialized) {
-			await sessionManager.initializeSessionWorkspace(targetSessionId, content);
-		}
+		// STEP 2: Emit event for async processing (non-blocking)
+		// Heavy operations (workspace init, SDK query, draft clearing) handled by EventBus subscriber
+		// This ensures RPC returns quickly (<100ms) and avoids timeout issues
+		await eventBus.emit('user-message:persisted', {
+			sessionId: targetSessionId,
+			messageId,
+			messageContent,
+			userMessageText: content,
+			needsWorkspaceInit: !session.metadata.workspaceInitialized,
+			hasDraftToClear: session.metadata?.inputDraft === content.trim(),
+		});
 
-		// STEP 3: Start SDK query (if not started) and enqueue message for processing
-		// Now uses correct worktree path as cwd since workspace init is complete
-		await agentSession.startQueryAndEnqueue(messageId, messageContent);
-
-		// Clear draft if it matches the sent message content
-		// This prevents the draft from reappearing after send
-		if (session.metadata?.inputDraft && session.metadata.inputDraft === content.trim()) {
-			// Cast to bypass strict typing - database.updateSession handles partial metadata merging
-			await sessionManager.updateSession(targetSessionId, {
-				metadata: { inputDraft: undefined },
-			} as Partial<Session>);
-		}
-
+		// STEP 3: Return immediately with messageId
+		// Client gets instant feedback, heavy processing continues async
 		return { messageId };
 	});
 

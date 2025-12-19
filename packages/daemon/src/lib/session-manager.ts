@@ -1,4 +1,4 @@
-import type { Session, WorktreeMetadata } from '@liuboer/shared';
+import type { Session, WorktreeMetadata, MessageContent } from '@liuboer/shared';
 import type { MessageHub, EventBus } from '@liuboer/shared';
 import { generateUUID } from '@liuboer/shared';
 import { Database } from '../storage/database';
@@ -30,6 +30,68 @@ export class SessionManager {
 		// Only enable debug logs in development mode, not in test mode
 		this.debug = process.env.NODE_ENV === 'development';
 		this.worktreeManager = new WorktreeManager();
+
+		// Setup EventBus subscribers for async message processing
+		this.setupEventSubscriptions();
+	}
+
+	/**
+	 * Setup EventBus subscriptions for async message processing
+	 * ARCHITECTURE: Heavy operations are handled here instead of RPC handlers
+	 */
+	private setupEventSubscriptions(): void {
+		// Handle user message persisted event - process heavy operations async
+		this.eventBus.on(
+			'user-message:persisted',
+			async (data: {
+				sessionId: string;
+				messageId: string;
+				messageContent: string | MessageContent[];
+				userMessageText: string;
+				needsWorkspaceInit: boolean;
+				hasDraftToClear: boolean;
+			}) => {
+				const { sessionId, messageId, messageContent, userMessageText, needsWorkspaceInit, hasDraftToClear } =
+					data;
+
+				this.log(`[SessionManager] Processing user-message:persisted for session ${sessionId}`);
+
+				try {
+					const agentSession = await this.getSessionAsync(sessionId);
+					if (!agentSession) {
+						this.error(`[SessionManager] Session ${sessionId} not found for message processing`);
+						return;
+					}
+
+					// STEP 1: Initialize workspace if needed (can take 5-15s for large repos)
+					// CRITICAL: Must complete BEFORE SDK query starts so cwd is correct
+					if (needsWorkspaceInit) {
+						this.log(`[SessionManager] Initializing workspace for session ${sessionId}...`);
+						await this.initializeSessionWorkspace(sessionId, userMessageText);
+						this.log(`[SessionManager] Workspace initialized for session ${sessionId}`);
+					}
+
+					// STEP 2: Start SDK query (if not started) and enqueue message for processing
+					// Now uses correct worktree path as cwd since workspace init is complete
+					await agentSession.startQueryAndEnqueue(messageId, messageContent);
+
+					// STEP 3: Clear draft if it matches the sent message content
+					if (hasDraftToClear) {
+						await this.updateSession(sessionId, {
+							metadata: { inputDraft: undefined },
+						} as Partial<Session>);
+					}
+
+					this.log(`[SessionManager] Message ${messageId} processing initiated for session ${sessionId}`);
+				} catch (error) {
+					this.error(`[SessionManager] Error processing message for session ${sessionId}:`, error);
+					// Errors are non-fatal - the user message is already persisted and visible
+					// The SDK query may retry or the user can send another message
+				}
+			}
+		);
+
+		this.log('[SessionManager] EventBus subscriptions setup complete');
 	}
 
 	private log(...args: unknown[]): void {

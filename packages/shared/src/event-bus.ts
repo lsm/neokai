@@ -13,7 +13,7 @@
  * Events are typed for safety and IDE autocomplete.
  */
 
-import type { Session, AuthMethod, ContextInfo } from './types.ts';
+import type { Session, AuthMethod, ContextInfo, MessageContent } from './types.ts';
 import type { SDKMessage } from './sdk/sdk.d.ts';
 import type { AgentProcessingState, ApiConnectionState } from './state-types.ts';
 
@@ -70,6 +70,17 @@ export interface EventMap {
 	// Title generation events
 	'title:generated': { sessionId: string; title: string };
 	'title:generation:failed': { sessionId: string; error: Error; attempts: number };
+
+	// User message processing events (3-layer communication pattern)
+	// Emitted by RPC handler after persisting message, processed async by SessionManager
+	'user-message:persisted': {
+		sessionId: string;
+		messageId: string;
+		messageContent: string | MessageContent[];
+		userMessageText: string;
+		needsWorkspaceInit: boolean;
+		hasDraftToClear: boolean;
+	};
 }
 
 /**

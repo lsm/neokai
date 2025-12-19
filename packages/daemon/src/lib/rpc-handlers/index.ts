@@ -5,7 +5,7 @@
  * Organized by domain for better maintainability.
  */
 
-import type { MessageHub } from '@liuboer/shared';
+import type { MessageHub, EventBus } from '@liuboer/shared';
 import type { SessionManager } from '../session-manager';
 import type { AuthManager } from '../auth-manager';
 import type { Config } from '../../config';
@@ -22,6 +22,7 @@ export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
 	sessionManager: SessionManager;
 	authManager: AuthManager;
+	eventBus: EventBus;
 	config: Config;
 }
 
@@ -29,7 +30,7 @@ export interface RPCHandlerDependencies {
  * Register all RPC handlers on MessageHub
  */
 export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
-	setupSessionHandlers(deps.messageHub, deps.sessionManager);
+	setupSessionHandlers(deps.messageHub, deps.sessionManager, deps.eventBus);
 	setupMessageHandlers(deps.messageHub, deps.sessionManager);
 	setupCommandHandlers(deps.messageHub, deps.sessionManager);
 	setupFileHandlers(deps.messageHub, deps.sessionManager);
