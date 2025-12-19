@@ -1,3 +1,5 @@
+import type { SettingSource } from './types/settings.ts';
+
 // Core session types
 export interface Session {
 	id: string;
@@ -60,16 +62,31 @@ export interface ToolsConfig {
 	// SDK option: systemPrompt: { type: 'preset', preset: 'claude_code' }
 	// When false, uses empty/minimal system prompt
 	useClaudeCodePreset?: boolean;
-	// Setting Sources: Load project settings from settingSources (default: true)
-	// SDK option: settingSources: ['project', 'local']
+	// Setting Sources: Which sources to load settings from
+	// SDK option: settingSources: ['user', 'project', 'local']
 	// Controls loading of CLAUDE.md, .claude/settings.json, .claude/settings.local.json
+	settingSources?: SettingSource[];
+	// Legacy field - deprecated, use settingSources instead
 	loadSettingSources?: boolean;
-	// Project MCP: Load .mcp.json from workspace (default: false)
-	// When false: SDK option disallowedTools: ['mcp__*'] removes MCP tools from context
-	// This saves tokens by not including MCP tool definitions in the model's context
+
+	// ============================================================================
+	// MCP Server Control (File-based approach)
+	// ============================================================================
+	// These are written to .claude/settings.local.json and read by the SDK.
+	// Changes take effect on the next SDK turn without session restart.
+
+	// List of MCP server names to disable (unchecked in UI)
+	// Written to settings.local.json as "disabledMcpjsonServers"
+	disabledMcpServers?: string[];
+
+	// ============================================================================
+	// LEGACY FIELDS - Deprecated, kept for backward compatibility
+	// ============================================================================
+	// @deprecated Use disabledMcpServers instead. Will be removed in future version.
 	loadProjectMcp?: boolean;
-	// Enabled MCP tool patterns (e.g., ["mcp__chrome-devtools__*"])
+	// @deprecated Use disabledMcpServers instead. Will be removed in future version.
 	enabledMcpPatterns?: string[];
+
 	// Liuboer-specific tools (not SDK built-in tools)
 	liuboerTools?: {
 		// Memory tool: persistent key-value storage for the workspace

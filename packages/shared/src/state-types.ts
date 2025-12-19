@@ -6,6 +6,7 @@
 
 import type { AuthStatus, Session, HealthStatus, ContextInfo } from './types.ts';
 import type { SDKMessage } from './sdk/sdk.d.ts';
+import type { GlobalSettings } from './types/settings.ts';
 
 /**
  * Global State Channels
@@ -56,6 +57,12 @@ export interface SystemState {
 	// API connectivity (daemon <-> Claude API)
 	apiConnection: ApiConnectionState;
 
+	timestamp: number;
+}
+
+// State channel: global:state.settings
+export interface SettingsState {
+	settings: GlobalSettings;
 	timestamp: number;
 }
 
@@ -138,6 +145,7 @@ export interface StateChannelMeta {
 export interface GlobalStateSnapshot {
 	sessions: SessionsState;
 	system: SystemState;
+	settings: SettingsState;
 	meta: StateChannelMeta;
 }
 
@@ -175,6 +183,7 @@ export const STATE_CHANNELS = {
 	// Global channels
 	GLOBAL_SESSIONS: 'state.sessions',
 	GLOBAL_SYSTEM: 'state.system', // Unified system state (auth + config + health)
+	GLOBAL_SETTINGS: 'state.settings', // Global settings state
 	GLOBAL_SNAPSHOT: 'state.global.snapshot',
 
 	// Session channels (prefix with sessionId:)

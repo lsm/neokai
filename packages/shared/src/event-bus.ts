@@ -47,6 +47,9 @@ export interface EventMap {
 	// API connection events - internal server-side only
 	'api:connection': ApiConnectionState;
 
+	// Settings events
+	'settings:updated': { settings: import('./types/settings.ts').GlobalSettings };
+
 	// Agent state events
 	'agent-state:changed': { sessionId: string; state: AgentProcessingState };
 
