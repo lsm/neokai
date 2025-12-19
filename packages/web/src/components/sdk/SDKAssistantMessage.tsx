@@ -196,13 +196,22 @@ function ToolUseBlock({
 	block: Extract<ContentBlock, { type: 'tool_use' }>;
 	toolResult?: unknown;
 }) {
-	// Use SubagentBlock for Task tool
+	// Extract content and metadata from enhanced toolResult structure
+	const resultData = toolResult as
+		| { content: unknown; messageUuid?: string; sessionId?: string; isOutputRemoved?: boolean }
+		| undefined;
+	const content = resultData?.content;
+	const messageUuid = resultData?.messageUuid;
+	const sessionId = resultData?.sessionId;
+	const isOutputRemoved = resultData?.isOutputRemoved || false;
+
+	// Use SubagentBlock for Task tool (no delete button)
 	if (block.name === 'Task') {
 		return (
 			<SubagentBlock
 				input={block.input as unknown as AgentInput}
-				output={toolResult}
-				isError={((toolResult as Record<string, unknown>)?.is_error as boolean) || false}
+				output={content}
+				isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
 				toolId={block.id}
 			/>
 		);
@@ -213,9 +222,12 @@ function ToolUseBlock({
 			toolName={block.name}
 			toolId={block.id}
 			input={block.input}
-			output={toolResult}
-			isError={((toolResult as Record<string, unknown>)?.is_error as boolean) || false}
+			output={content}
+			isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
 			variant="default"
+			messageUuid={messageUuid}
+			sessionId={sessionId}
+			isOutputRemoved={isOutputRemoved}
 		/>
 	);
 }

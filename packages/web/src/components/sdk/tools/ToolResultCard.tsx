@@ -17,6 +17,9 @@ import {
 	shouldExpandByDefault,
 } from './tool-utils.ts';
 import { cn } from '../../../lib/utils.ts';
+import { connectionManager } from '../../../lib/connection-manager.ts';
+import { toast } from '../../../lib/toast.ts';
+import { ConfirmModal } from '../../ui/ConfirmModal.tsx';
 
 /**
  * Strip line numbers from Read tool output
@@ -44,6 +47,9 @@ export function ToolResultCard({
 	isError = false,
 	variant = 'default',
 	defaultExpanded,
+	messageUuid,
+	sessionId,
+	isOutputRemoved = false,
 	className,
 }: ToolResultCardProps) {
 	// Type-safe access to input/output properties
@@ -55,7 +61,40 @@ export function ToolResultCard({
 	const shouldExpand =
 		defaultExpanded !== undefined ? defaultExpanded : shouldExpandByDefault(toolName);
 	const [isExpanded, setIsExpanded] = useState(shouldExpand);
+	const [deleting, setDeleting] = useState(false);
+	const [showConfirmModal, setShowConfirmModal] = useState(false);
 	const customRenderer = hasCustomRenderer(toolName) ? getCustomRenderer(toolName) : null;
+
+	const handleDeleteClick = () => {
+		if (!messageUuid || !sessionId) {
+			toast.error('Cannot delete: missing message or session ID');
+			return;
+		}
+		setShowConfirmModal(true);
+	};
+
+	const handleConfirmDelete = async () => {
+		try {
+			setDeleting(true);
+			const hub = await connectionManager.getHub();
+			await hub.call('message.removeOutput', {
+				sessionId,
+				messageUuid,
+			});
+			toast.success('Tool output removed. Reloading session...');
+			setShowConfirmModal(false);
+
+			// Reload the page to refresh messages
+			setTimeout(() => {
+				window.location.reload();
+			}, 500);
+		} catch (err) {
+			const errorMessage = err instanceof Error ? err.message : 'Failed to remove output';
+			toast.error(errorMessage);
+			console.error('Failed to remove tool output:', err);
+			setDeleting(false);
+		}
+	};
 
 	// Compact variant - minimal display
 	if (variant === 'compact') {
@@ -319,26 +358,95 @@ export function ToolResultCard({
 							{/* Output/Result */}
 							{output !== undefined && output !== null && (
 								<div>
-									<div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
-										Output:
-										{isError && <span class="ml-2 text-red-600 dark:text-red-400">(Error)</span>}
-									</div>
-									<pre
-										class={cn(
-											'text-xs p-3 rounded overflow-x-auto border',
-											isError
-												? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-900 dark:text-red-100'
-												: 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100'
+									<div class="flex items-center justify-between mb-2">
+										<div class="text-xs font-semibold text-gray-600 dark:text-gray-400">
+											Output:
+											{isError && <span class="ml-2 text-red-600 dark:text-red-400">(Error)</span>}
+										</div>
+										{messageUuid && sessionId && !isOutputRemoved && (
+											<button
+												onClick={handleDeleteClick}
+												disabled={deleting}
+												class="flex items-center gap-1 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors disabled:opacity-50"
+												title="Delete this tool output to reduce session size"
+											>
+												<svg
+													class="w-3.5 h-3.5"
+													fill="none"
+													viewBox="0 0 24 24"
+													stroke="currentColor"
+												>
+													<path
+														strokeLinecap="round"
+														strokeLinejoin="round"
+														strokeWidth={2}
+														d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+													/>
+												</svg>
+												<span>{deleting ? 'Deleting...' : 'Delete Output'}</span>
+											</button>
 										)}
-									>
-										{getOutputDisplayText(output)}
-									</pre>
+									</div>
+									{isOutputRemoved ? (
+										<div class="p-3 rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20">
+											<div class="flex items-start gap-2">
+												<svg
+													class="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5"
+													fill="none"
+													viewBox="0 0 24 24"
+													stroke="currentColor"
+												>
+													<path
+														strokeLinecap="round"
+														strokeLinejoin="round"
+														strokeWidth={2}
+														d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+													/>
+												</svg>
+												<div class="flex-1">
+													<div class="text-sm font-medium text-amber-900 dark:text-amber-100 mb-1">
+														Output Removed from Agent Context
+													</div>
+													<div class="text-xs text-amber-800 dark:text-amber-200">
+														This tool output has been removed from the Claude Agent SDK session file
+														to save context window space. What you see here is stored in the
+														database for reference only and will not be sent to the agent in future
+														requests.
+													</div>
+												</div>
+											</div>
+										</div>
+									) : (
+										<pre
+											class={cn(
+												'text-xs p-3 rounded overflow-x-auto border',
+												isError
+													? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-900 dark:text-red-100'
+													: 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100'
+											)}
+										>
+											{getOutputDisplayText(output)}
+										</pre>
+									)}
 								</div>
 							)}
 						</>
 					)}
 				</div>
 			)}
+
+			{/* Confirmation Modal */}
+			<ConfirmModal
+				isOpen={showConfirmModal}
+				onClose={() => setShowConfirmModal(false)}
+				onConfirm={handleConfirmDelete}
+				title="Delete Tool Output"
+				message="Are you sure you want to delete this tool output? It will be replaced with a placeholder message to save context window space."
+				confirmText="Delete Output"
+				cancelText="Cancel"
+				confirmButtonVariant="danger"
+				isLoading={deleting}
+			/>
 		</div>
 	);
 }

@@ -125,6 +125,12 @@ export interface ToolResultCardProps {
 	variant?: ToolCardVariant;
 	defaultExpanded?: boolean;
 	className?: string;
+	/** The message UUID (for deletion) */
+	messageUuid?: string;
+	/** The session ID (for deletion) */
+	sessionId?: string;
+	/** Whether the output was removed from SDK session file */
+	isOutputRemoved?: boolean;
 }
 
 /**

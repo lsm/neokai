@@ -870,12 +870,28 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	};
 
 	// Create a map of tool use IDs to tool results for easy lookup
+	// Enhanced to include message UUID, session ID, and removed status for deletion functionality
+	const removedOutputs = session?.metadata?.removedOutputs || [];
 	const toolResultsMap = new Map<string, unknown>();
 	messages.forEach((msg) => {
 		if (msg.type === 'user' && Array.isArray(msg.message.content)) {
 			msg.message.content.forEach((block: unknown) => {
 				if ((block as Record<string, unknown>).type === 'tool_result') {
-					toolResultsMap.set((block as Record<string, unknown>).tool_use_id as string, block);
+					const toolUseId = (block as Record<string, unknown>).tool_use_id as string;
+					const isRemoved = msg.uuid ? removedOutputs.includes(msg.uuid) : false;
+					const resultData = {
+						content: block,
+						messageUuid: msg.uuid,
+						sessionId,
+						isOutputRemoved: isRemoved,
+					};
+					toolResultsMap.set(toolUseId, resultData);
+					console.log('[ChatContainer] Added to toolResultsMap:', {
+						toolUseId,
+						messageUuid: msg.uuid,
+						sessionId,
+						isOutputRemoved: isRemoved,
+					});
 				}
 			});
 		}
