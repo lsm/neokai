@@ -1330,6 +1330,10 @@ CRITICAL RULES:
 		if (updates.title) this.session.title = updates.title;
 		if (updates.workspacePath) {
 			this.session.workspacePath = updates.workspacePath;
+			// CRITICAL: Recreate SettingsManager with new workspace path
+			// This ensures worktree sessions write settings to correct location
+			this.settingsManager = new SettingsManager(this.db, updates.workspacePath);
+			this.logger.log(`Updated SettingsManager workspacePath to: ${updates.workspacePath}`);
 		}
 		if (updates.status) this.session.status = updates.status;
 		if (updates.metadata) {
