@@ -1,6 +1,8 @@
 import simpleGit, { SimpleGit } from 'simple-git';
 import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { homedir } from 'node:os';
 import type { WorktreeMetadata, CommitInfo, WorktreeCommitStatus } from '@liuboer/shared';
 
 export interface WorktreeInfo {
@@ -78,6 +80,23 @@ export class WorktreeManager {
 	}
 
 	/**
+	 * Generate a unique hash for a repository path
+	 * Used to organize worktrees by repository to avoid conflicts
+	 */
+	private getRepoHash(repoPath: string): string {
+		return createHash('sha256').update(repoPath).digest('hex').slice(0, 8);
+	}
+
+	/**
+	 * Get the worktree base directory for a repository
+	 * Format: ~/.liuboer/worktrees/{repo-hash}/
+	 */
+	private getWorktreeBaseDir(gitRoot: string): string {
+		const repoHash = this.getRepoHash(gitRoot);
+		return join(homedir(), '.liuboer', 'worktrees', repoHash);
+	}
+
+	/**
 	 * Create a new worktree for a session
 	 * Returns WorktreeMetadata on success, null if repo is not a git repository
 	 */
@@ -93,8 +112,9 @@ export class WorktreeManager {
 
 		const git = this.getGit(gitRoot);
 
-		// Create .worktrees directory if it doesn't exist
-		const worktreesDir = join(gitRoot, '.worktrees');
+		// Create worktree base directory if it doesn't exist
+		// Format: ~/.liuboer/worktrees/{repo-hash}/
+		const worktreesDir = this.getWorktreeBaseDir(gitRoot);
 		if (!existsSync(worktreesDir)) {
 			mkdirSync(worktreesDir, { recursive: true });
 		}
@@ -297,9 +317,11 @@ export class WorktreeManager {
 				}
 
 				// Check if worktree is prunable (directory missing) or if it's a session worktree that doesn't exist
+				// Support both old (.worktrees) and new (~/.liuboer/worktrees) paths
 				if (
 					worktree.isPrunable ||
-					(!existsSync(worktree.path) && worktree.path.includes('.worktrees'))
+					(!existsSync(worktree.path) &&
+						(worktree.path.includes('.worktrees') || worktree.path.includes('.liuboer/worktrees')))
 				) {
 					console.log(`[WorktreeManager] Removing orphaned worktree: ${worktree.path}`);
 
