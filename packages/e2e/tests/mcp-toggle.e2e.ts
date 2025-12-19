@@ -4,33 +4,47 @@
  * End-to-end tests for the MCP (Model Context Protocol) toggle functionality.
  * Tests the Tools modal MCP server toggles and verifies:
  * 1. MCP servers can be enabled/disabled via UI
- * 2. Disabling all MCP servers correctly sets loadProjectMcp to false
+ * 2. Disabling MCP servers writes to .claude/settings.local.json
  * 3. MCP toggle state persists after save
- * 4. MCP tools are not loaded when disabled
+ * 4. File-based settings are correctly formatted (disabledMcpjsonServers)
  *
  * IMPORTANT: Tests actual UI behavior - does not bypass via RPC
+ *
+ * Implementation Notes:
+ * - Uses file-based approach: disabled servers written to settings.local.json
+ * - SDK reads settings.local.json on each turn (no session restart needed)
+ * - disabledMcpServers array maps to disabledMcpjsonServers in the file
  */
 
 import { test, expect, type Page } from '@playwright/test';
+import { readFileSync, existsSync, mkdirSync, rmSync } from 'fs';
+import { join } from 'path';
 import {
 	waitForSessionCreated,
 	waitForWebSocketConnected,
 	cleanupTestSession,
 } from './helpers/wait-helpers';
 
+// Workspace path where settings.local.json is written
+const WORKSPACE_PATH = join(process.cwd(), '..', 'cli', 'tmp', 'workspace');
+const SETTINGS_LOCAL_PATH = join(WORKSPACE_PATH, '.claude', 'settings.local.json');
+
 /**
- * Open the Tools modal
+ * Open the Tools modal via Session options menu
  */
 async function openToolsModal(page: Page): Promise<void> {
-	// Look for the Tools button in the toolbar (wrench icon)
-	const toolsButton = page.locator('button[title="Tools"]').first();
-	await toolsButton.waitFor({ state: 'visible', timeout: 5000 });
-	await toolsButton.click();
+	// Click the Session options button (gear/settings icon in header)
+	const sessionOptionsButton = page.locator('button[aria-label="Session options"]').first();
+	await sessionOptionsButton.waitFor({ state: 'visible', timeout: 5000 });
+	await sessionOptionsButton.click();
+
+	// Wait for menu to appear and click Tools
+	const toolsMenuItem = page.locator('text=Tools').first();
+	await toolsMenuItem.waitFor({ state: 'visible', timeout: 3000 });
+	await toolsMenuItem.click();
 
 	// Wait for modal to appear
-	await page
-		.locator('[role="dialog"]:has-text("Tools")')
-		.waitFor({ state: 'visible', timeout: 5000 });
+	await page.locator('h2:has-text("Tools")').waitFor({ state: 'visible', timeout: 5000 });
 }
 
 /**
@@ -41,9 +55,7 @@ async function closeToolsModal(page: Page): Promise<void> {
 	await cancelButton.click();
 
 	// Wait for modal to close
-	await page
-		.locator('[role="dialog"]:has-text("Tools")')
-		.waitFor({ state: 'hidden', timeout: 3000 });
+	await page.locator('h2:has-text("Tools")').waitFor({ state: 'hidden', timeout: 3000 });
 }
 
 /**
@@ -53,35 +65,40 @@ async function saveToolsModal(page: Page): Promise<void> {
 	const saveButton = page.locator('button:has-text("Save")').first();
 	await saveButton.click();
 
-	// Wait for modal to close
+	// Wait for success toast notification
 	await page
-		.locator('[role="dialog"]:has-text("Tools")')
-		.waitFor({ state: 'hidden', timeout: 10000 });
+		.locator('text=Tools configuration saved')
+		.waitFor({ state: 'visible', timeout: 10000 });
 
-	// Wait for toast or state update
-	await page.waitForTimeout(500);
+	// Wait for modal to close
+	await page.locator('h2:has-text("Tools")').waitFor({ state: 'hidden', timeout: 5000 });
 }
 
 /**
  * Get the list of MCP server names displayed in the modal
  */
 async function getMcpServerNames(page: Page): Promise<string[]> {
-	// MCP servers section contains server labels
+	// MCP servers section contains server labels with checkbox inputs
 	const mcpSection = page.locator('h3:has-text("MCP Servers")').locator('..').first();
-	const serverLabels = mcpSection.locator('label');
+	const serverNames: string[] = [];
 
-	const count = await serverLabels.count();
-	const names: string[] = [];
+	// Get all labels that contain server checkboxes
+	const labels = mcpSection.locator('label:has(input[type="checkbox"])');
+	const count = await labels.count();
 
 	for (let i = 0; i < count; i++) {
-		const label = serverLabels.nth(i);
-		const text = await label.locator('div.text-sm').first().textContent();
-		if (text) {
-			names.push(text.trim());
+		const label = labels.nth(i);
+		// Server name is usually in a span or div with text
+		const nameElement = label.locator('span, div').first();
+		const name = await nameElement.textContent();
+		if (name) {
+			// Extract just the server name (remove "bunx" suffix if present)
+			const serverName = name.trim().split(/\s+/)[0];
+			serverNames.push(serverName);
 		}
 	}
 
-	return names;
+	return serverNames;
 }
 
 /**
@@ -89,21 +106,41 @@ async function getMcpServerNames(page: Page): Promise<string[]> {
  */
 async function isMcpServerEnabled(page: Page, serverName: string): Promise<boolean> {
 	const mcpSection = page.locator('h3:has-text("MCP Servers")').locator('..').first();
-	const serverLabel = mcpSection.locator(`label:has-text("${serverName}")`).first();
-	const checkbox = serverLabel.locator('input[type="checkbox"]').first();
+	// Find checkbox by looking for label containing server name
+	const labels = mcpSection.locator('label');
+	const count = await labels.count();
 
-	return checkbox.isChecked();
+	for (let i = 0; i < count; i++) {
+		const label = labels.nth(i);
+		const text = await label.textContent();
+		if (text && text.includes(serverName)) {
+			const cb = label.locator('input[type="checkbox"]');
+			return cb.isChecked();
+		}
+	}
+
+	return false;
 }
 
 /**
- * Toggle a specific MCP server
+ * Toggle a specific MCP server by clicking its checkbox
  */
 async function toggleMcpServer(page: Page, serverName: string): Promise<void> {
 	const mcpSection = page.locator('h3:has-text("MCP Servers")').locator('..').first();
-	const serverLabel = mcpSection.locator(`label:has-text("${serverName}")`).first();
-	const checkbox = serverLabel.locator('input[type="checkbox"]').first();
+	const labels = mcpSection.locator('label');
+	const count = await labels.count();
 
-	await checkbox.click();
+	for (let i = 0; i < count; i++) {
+		const label = labels.nth(i);
+		const text = await label.textContent();
+		if (text && text.includes(serverName)) {
+			const checkbox = label.locator('input[type="checkbox"]');
+			await checkbox.click();
+			return;
+		}
+	}
+
+	throw new Error(`MCP server "${serverName}" not found in modal`);
 }
 
 /**
@@ -161,12 +198,50 @@ async function getEnabledMcpServerCount(page: Page): Promise<number> {
 }
 
 /**
- * Verify MCP tools config via RPC (for assertion purposes)
+ * Read the settings.local.json file
+ */
+function readSettingsLocalJson(): { disabledMcpjsonServers?: string[] } | null {
+	try {
+		if (!existsSync(SETTINGS_LOCAL_PATH)) {
+			return null;
+		}
+		const content = readFileSync(SETTINGS_LOCAL_PATH, 'utf-8');
+		return JSON.parse(content) as { disabledMcpjsonServers?: string[] };
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Clean up settings.local.json before tests
+ */
+function cleanupSettingsLocalJson(): void {
+	try {
+		if (existsSync(SETTINGS_LOCAL_PATH)) {
+			rmSync(SETTINGS_LOCAL_PATH);
+		}
+	} catch {
+		// Ignore errors
+	}
+}
+
+/**
+ * Ensure .claude directory exists
+ */
+function ensureClaudeDir(): void {
+	const claudeDir = join(WORKSPACE_PATH, '.claude');
+	if (!existsSync(claudeDir)) {
+		mkdirSync(claudeDir, { recursive: true });
+	}
+}
+
+/**
+ * Get MCP config from session via RPC
  */
 async function getMcpConfigViaRPC(
 	page: Page,
 	sessionId: string
-): Promise<{ loadProjectMcp: boolean; enabledMcpPatterns: string[] }> {
+): Promise<{ disabledMcpServers?: string[] }> {
 	return page.evaluate(async (sid) => {
 		const hub = window.__messageHub || window.appState?.messageHub;
 		if (!hub) {
@@ -177,15 +252,13 @@ async function getMcpConfigViaRPC(
 		const session = result.session as {
 			config: {
 				tools?: {
-					loadProjectMcp?: boolean;
-					enabledMcpPatterns?: string[];
+					disabledMcpServers?: string[];
 				};
 			};
 		};
 
 		return {
-			loadProjectMcp: session.config.tools?.loadProjectMcp ?? false,
-			enabledMcpPatterns: session.config.tools?.enabledMcpPatterns ?? [],
+			disabledMcpServers: session.config.tools?.disabledMcpServers ?? [],
 		};
 	}, sessionId);
 }
@@ -194,6 +267,10 @@ test.describe('MCP Toggle - Tools Modal', () => {
 	let sessionId: string | null = null;
 
 	test.beforeEach(async ({ page }) => {
+		// Clean up settings file before each test
+		cleanupSettingsLocalJson();
+		ensureClaudeDir();
+
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
@@ -212,19 +289,15 @@ test.describe('MCP Toggle - Tools Modal', () => {
 			}
 			sessionId = null;
 		}
+		// Clean up settings file after each test
+		cleanupSettingsLocalJson();
 	});
 
-	test('should display Tools button in message input toolbar', async ({ page }) => {
-		const toolsButton = page.locator('button[title="Tools"]').first();
-		await expect(toolsButton).toBeVisible();
-	});
-
-	test('should open Tools modal when Tools button is clicked', async ({ page }) => {
+	test('should open Tools modal from session options menu', async ({ page }) => {
 		await openToolsModal(page);
 
 		// Verify modal is open with expected sections
-		const modal = page.locator('[role="dialog"]:has-text("Tools")');
-		await expect(modal).toBeVisible();
+		await expect(page.locator('h2:has-text("Tools")')).toBeVisible();
 
 		// Verify section headers
 		await expect(page.locator('h3:has-text("System Prompt")')).toBeVisible();
@@ -238,39 +311,30 @@ test.describe('MCP Toggle - Tools Modal', () => {
 		await openToolsModal(page);
 
 		// Verify modal is open
-		await expect(page.locator('[role="dialog"]:has-text("Tools")')).toBeVisible();
+		await expect(page.locator('h2:has-text("Tools")')).toBeVisible();
 
 		// Close with Cancel
 		await closeToolsModal(page);
 
 		// Verify modal is closed
-		await expect(page.locator('[role="dialog"]:has-text("Tools")')).toBeHidden();
+		await expect(page.locator('h2:has-text("Tools")')).toBeHidden();
 	});
 
-	test('should show MCP servers section', async ({ page }) => {
+	test('should show MCP servers section with servers from settings', async ({ page }) => {
 		await openToolsModal(page);
 
 		// Find MCP Servers section
 		const mcpSection = page.locator('h3:has-text("MCP Servers")');
 		await expect(mcpSection).toBeVisible();
 
-		// Verify the section description
-		const mcpDescription = page.locator('text=External tool servers from .mcp.json');
-		await expect(mcpDescription).toBeVisible();
-	});
-
-	test('should display MCP servers from .mcp.json', async ({ page }) => {
-		await openToolsModal(page);
-
 		// Get MCP servers displayed
 		const serverNames = await getMcpServerNames(page);
 
-		// We should have at least one MCP server (chrome-devtools is common)
-		// Note: If no .mcp.json exists, this might be 0 which is valid
-		expect(serverNames).toBeDefined();
-
 		// Log server names for debugging
 		console.log('MCP servers found:', serverNames);
+
+		// We should have at least the test MCP server if configured
+		expect(serverNames).toBeDefined();
 	});
 
 	test('should enable Save button when MCP toggle changes', async ({ page }) => {
@@ -294,7 +358,68 @@ test.describe('MCP Toggle - Tools Modal', () => {
 		await expect(saveButton).toBeEnabled();
 	});
 
-	test('should save MCP toggle state', async ({ page }) => {
+	test('should write disabledMcpjsonServers to settings.local.json when server is disabled', async ({
+		page,
+	}) => {
+		await openToolsModal(page);
+
+		const serverNames = await getMcpServerNames(page);
+		if (serverNames.length === 0) {
+			console.log('Skipping test - no MCP servers available');
+			return;
+		}
+
+		// Ensure server starts enabled (check and enable if not)
+		const wasEnabled = await isMcpServerEnabled(page, serverNames[0]);
+		if (!wasEnabled) {
+			await toggleMcpServer(page, serverNames[0]);
+			await saveToolsModal(page);
+			await openToolsModal(page);
+		}
+
+		// Disable the first server
+		await toggleMcpServer(page, serverNames[0]);
+		await saveToolsModal(page);
+
+		// Verify settings.local.json was written correctly
+		const settings = readSettingsLocalJson();
+		expect(settings).not.toBeNull();
+		expect(settings?.disabledMcpjsonServers).toBeDefined();
+		expect(settings?.disabledMcpjsonServers).toContain(serverNames[0]);
+	});
+
+	test('should remove server from disabledMcpjsonServers when re-enabled', async ({ page }) => {
+		await openToolsModal(page);
+
+		const serverNames = await getMcpServerNames(page);
+		if (serverNames.length === 0) {
+			console.log('Skipping test - no MCP servers available');
+			return;
+		}
+
+		// First, disable the server
+		const wasEnabled = await isMcpServerEnabled(page, serverNames[0]);
+		if (wasEnabled) {
+			await toggleMcpServer(page, serverNames[0]);
+		}
+		await saveToolsModal(page);
+
+		// Verify server is disabled in file
+		let settings = readSettingsLocalJson();
+		expect(settings?.disabledMcpjsonServers).toContain(serverNames[0]);
+
+		// Re-enable the server
+		await openToolsModal(page);
+		await toggleMcpServer(page, serverNames[0]);
+		await saveToolsModal(page);
+
+		// Verify server is no longer in disabled list
+		settings = readSettingsLocalJson();
+		expect(settings?.disabledMcpjsonServers).toBeDefined();
+		expect(settings?.disabledMcpjsonServers).not.toContain(serverNames[0]);
+	});
+
+	test('should persist toggle state in UI after save', async ({ page }) => {
 		await openToolsModal(page);
 
 		const serverNames = await getMcpServerNames(page);
@@ -320,7 +445,7 @@ test.describe('MCP Toggle - Tools Modal', () => {
 		expect(currentEnabled).toBe(!initialEnabled);
 	});
 
-	test('should disable all MCP servers when all toggles are unchecked', async ({ page }) => {
+	test('should handle disabling all MCP servers', async ({ page }) => {
 		if (!sessionId) {
 			throw new Error('Session ID is required for this test');
 		}
@@ -333,59 +458,54 @@ test.describe('MCP Toggle - Tools Modal', () => {
 			return;
 		}
 
-		// First, enable all servers
+		// Disable all servers
+		await disableAllMcpServers(page);
+		await saveToolsModal(page);
+
+		// Verify settings.local.json contains all servers as disabled
+		const settings = readSettingsLocalJson();
+		expect(settings?.disabledMcpjsonServers).toBeDefined();
+		expect(settings?.disabledMcpjsonServers?.length).toBe(serverNames.length);
+
+		// Verify each server is in the disabled list
+		for (const serverName of serverNames) {
+			expect(settings?.disabledMcpjsonServers).toContain(serverName);
+		}
+	});
+
+	test('should handle enabling all MCP servers', async ({ page }) => {
+		if (!sessionId) {
+			throw new Error('Session ID is required for this test');
+		}
+
+		await openToolsModal(page);
+
+		const serverNames = await getMcpServerNames(page);
+		if (serverNames.length === 0) {
+			console.log('Skipping test - no MCP servers available');
+			return;
+		}
+
+		// First disable all
+		await disableAllMcpServers(page);
+		await saveToolsModal(page);
+
+		// Verify all disabled
+		let settings = readSettingsLocalJson();
+		expect(settings?.disabledMcpjsonServers?.length).toBe(serverNames.length);
+
+		// Now enable all
+		await openToolsModal(page);
 		await enableAllMcpServers(page);
 		await saveToolsModal(page);
 
-		// Verify loadProjectMcp is true via RPC
-		let mcpConfig = await getMcpConfigViaRPC(page, sessionId);
-		expect(mcpConfig.loadProjectMcp).toBe(true);
-		expect(mcpConfig.enabledMcpPatterns.length).toBeGreaterThan(0);
-
-		// Reopen and disable all
-		await openToolsModal(page);
-		await disableAllMcpServers(page);
-		await saveToolsModal(page);
-
-		// Verify loadProjectMcp is now false (auto-synced)
-		mcpConfig = await getMcpConfigViaRPC(page, sessionId);
-		expect(mcpConfig.loadProjectMcp).toBe(false);
-		expect(mcpConfig.enabledMcpPatterns.length).toBe(0);
+		// Verify disabled list is empty
+		settings = readSettingsLocalJson();
+		expect(settings?.disabledMcpjsonServers).toBeDefined();
+		expect(settings?.disabledMcpjsonServers?.length).toBe(0);
 	});
 
-	test('should enable loadProjectMcp when any MCP server is enabled', async ({ page }) => {
-		if (!sessionId) {
-			throw new Error('Session ID is required for this test');
-		}
-
-		await openToolsModal(page);
-
-		const serverNames = await getMcpServerNames(page);
-		if (serverNames.length === 0) {
-			console.log('Skipping test - no MCP servers available');
-			return;
-		}
-
-		// Start with all disabled
-		await disableAllMcpServers(page);
-		await saveToolsModal(page);
-
-		// Verify loadProjectMcp is false
-		let mcpConfig = await getMcpConfigViaRPC(page, sessionId);
-		expect(mcpConfig.loadProjectMcp).toBe(false);
-
-		// Enable just one server
-		await openToolsModal(page);
-		await toggleMcpServer(page, serverNames[0]);
-		await saveToolsModal(page);
-
-		// Verify loadProjectMcp is now true (auto-synced)
-		mcpConfig = await getMcpConfigViaRPC(page, sessionId);
-		expect(mcpConfig.loadProjectMcp).toBe(true);
-		expect(mcpConfig.enabledMcpPatterns.length).toBe(1);
-	});
-
-	test('should persist MCP toggle state across modal open/close', async ({ page }) => {
+	test('should discard changes when Cancel is clicked', async ({ page }) => {
 		await openToolsModal(page);
 
 		const serverNames = await getMcpServerNames(page);
@@ -410,68 +530,15 @@ test.describe('MCP Toggle - Tools Modal', () => {
 		const currentEnabledCount = await getEnabledMcpServerCount(page);
 		expect(currentEnabledCount).toBe(initialEnabledCount);
 	});
-
-	test('should handle enabling and disabling single MCP server', async ({ page }) => {
-		if (!sessionId) {
-			throw new Error('Session ID is required for this test');
-		}
-
-		await openToolsModal(page);
-
-		const serverNames = await getMcpServerNames(page);
-		if (serverNames.length < 2) {
-			console.log('Skipping test - need at least 2 MCP servers');
-			return;
-		}
-
-		// Start with all disabled
-		await disableAllMcpServers(page);
-		await saveToolsModal(page);
-
-		// Enable first server
-		await openToolsModal(page);
-		await toggleMcpServer(page, serverNames[0]);
-		await saveToolsModal(page);
-
-		let mcpConfig = await getMcpConfigViaRPC(page, sessionId);
-		expect(mcpConfig.loadProjectMcp).toBe(true);
-		expect(mcpConfig.enabledMcpPatterns.length).toBe(1);
-		expect(mcpConfig.enabledMcpPatterns[0]).toContain(serverNames[0].replace(/-/g, '-'));
-
-		// Enable second server
-		await openToolsModal(page);
-		await toggleMcpServer(page, serverNames[1]);
-		await saveToolsModal(page);
-
-		mcpConfig = await getMcpConfigViaRPC(page, sessionId);
-		expect(mcpConfig.loadProjectMcp).toBe(true);
-		expect(mcpConfig.enabledMcpPatterns.length).toBe(2);
-
-		// Disable first server
-		await openToolsModal(page);
-		await toggleMcpServer(page, serverNames[0]);
-		await saveToolsModal(page);
-
-		mcpConfig = await getMcpConfigViaRPC(page, sessionId);
-		expect(mcpConfig.loadProjectMcp).toBe(true);
-		expect(mcpConfig.enabledMcpPatterns.length).toBe(1);
-
-		// Disable second server (last one)
-		await openToolsModal(page);
-		await toggleMcpServer(page, serverNames[1]);
-		await saveToolsModal(page);
-
-		// loadProjectMcp should now be false (auto-synced)
-		mcpConfig = await getMcpConfigViaRPC(page, sessionId);
-		expect(mcpConfig.loadProjectMcp).toBe(false);
-		expect(mcpConfig.enabledMcpPatterns.length).toBe(0);
-	});
 });
 
-test.describe('MCP Toggle - State Persistence', () => {
+test.describe('MCP Toggle - Session Config Sync', () => {
 	let sessionId: string | null = null;
 
 	test.beforeEach(async ({ page }) => {
+		cleanupSettingsLocalJson();
+		ensureClaudeDir();
+
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
@@ -489,6 +556,91 @@ test.describe('MCP Toggle - State Persistence', () => {
 			}
 			sessionId = null;
 		}
+		cleanupSettingsLocalJson();
+	});
+
+	test('should sync disabledMcpServers to session config', async ({ page }) => {
+		if (!sessionId) {
+			throw new Error('Session ID is required for this test');
+		}
+
+		await openToolsModal(page);
+
+		const serverNames = await getMcpServerNames(page);
+		if (serverNames.length === 0) {
+			console.log('Skipping test - no MCP servers available');
+			return;
+		}
+
+		// Disable first server
+		const wasEnabled = await isMcpServerEnabled(page, serverNames[0]);
+		if (wasEnabled) {
+			await toggleMcpServer(page, serverNames[0]);
+		}
+		await saveToolsModal(page);
+
+		// Verify session config via RPC
+		const mcpConfig = await getMcpConfigViaRPC(page, sessionId);
+		expect(mcpConfig.disabledMcpServers).toContain(serverNames[0]);
+	});
+
+	test('should clear disabledMcpServers when all servers enabled', async ({ page }) => {
+		if (!sessionId) {
+			throw new Error('Session ID is required for this test');
+		}
+
+		await openToolsModal(page);
+
+		const serverNames = await getMcpServerNames(page);
+		if (serverNames.length === 0) {
+			console.log('Skipping test - no MCP servers available');
+			return;
+		}
+
+		// First disable all
+		await disableAllMcpServers(page);
+		await saveToolsModal(page);
+
+		// Verify all disabled in config
+		let mcpConfig = await getMcpConfigViaRPC(page, sessionId);
+		expect(mcpConfig.disabledMcpServers?.length).toBe(serverNames.length);
+
+		// Enable all
+		await openToolsModal(page);
+		await enableAllMcpServers(page);
+		await saveToolsModal(page);
+
+		// Verify config is cleared
+		mcpConfig = await getMcpConfigViaRPC(page, sessionId);
+		expect(mcpConfig.disabledMcpServers?.length).toBe(0);
+	});
+});
+
+test.describe('MCP Toggle - State Persistence', () => {
+	let sessionId: string | null = null;
+
+	test.beforeEach(async ({ page }) => {
+		cleanupSettingsLocalJson();
+		ensureClaudeDir();
+
+		await page.goto('/');
+		await waitForWebSocketConnected(page);
+
+		const newSessionButton = page.locator("button:has-text('New Session')");
+		await newSessionButton.click();
+		sessionId = await waitForSessionCreated(page);
+	});
+
+	test.afterEach(async ({ page }) => {
+		if (sessionId) {
+			try {
+				await cleanupTestSession(page, sessionId);
+			} catch (error) {
+				console.warn(`Failed to cleanup session ${sessionId}:`, error);
+			}
+			sessionId = null;
+		}
+		cleanupSettingsLocalJson();
 	});
 
 	test('should persist MCP state after page refresh', async ({ page }) => {
@@ -504,15 +656,16 @@ test.describe('MCP Toggle - State Persistence', () => {
 			return;
 		}
 
-		// Enable first server only
-		await disableAllMcpServers(page);
-		await toggleMcpServer(page, serverNames[0]);
+		// Disable first server
+		const wasEnabled = await isMcpServerEnabled(page, serverNames[0]);
+		if (wasEnabled) {
+			await toggleMcpServer(page, serverNames[0]);
+		}
 		await saveToolsModal(page);
 
-		// Verify state before refresh
-		let mcpConfig = await getMcpConfigViaRPC(page, sessionId);
-		expect(mcpConfig.loadProjectMcp).toBe(true);
-		expect(mcpConfig.enabledMcpPatterns.length).toBe(1);
+		// Verify file before refresh
+		let settings = readSettingsLocalJson();
+		expect(settings?.disabledMcpjsonServers).toContain(serverNames[0]);
 
 		// Refresh page
 		await page.reload();
@@ -523,18 +676,17 @@ test.describe('MCP Toggle - State Persistence', () => {
 		await sessionLink.click();
 		await page.waitForTimeout(1000);
 
-		// Verify state persisted
-		mcpConfig = await getMcpConfigViaRPC(page, sessionId);
-		expect(mcpConfig.loadProjectMcp).toBe(true);
-		expect(mcpConfig.enabledMcpPatterns.length).toBe(1);
+		// Verify file still contains correct data
+		settings = readSettingsLocalJson();
+		expect(settings?.disabledMcpjsonServers).toContain(serverNames[0]);
 
 		// Verify in UI
 		await openToolsModal(page);
 		const isEnabled = await isMcpServerEnabled(page, serverNames[0]);
-		expect(isEnabled).toBe(true);
+		expect(isEnabled).toBe(false);
 	});
 
-	test('should maintain correct loadProjectMcp state after multiple toggles', async ({ page }) => {
+	test('should maintain correct state after multiple toggle cycles', async ({ page }) => {
 		if (!sessionId) {
 			throw new Error('Session ID is required for this test');
 		}
@@ -549,20 +701,20 @@ test.describe('MCP Toggle - State Persistence', () => {
 
 		// Perform multiple toggle cycles
 		for (let i = 0; i < 3; i++) {
-			// Enable all
-			await enableAllMcpServers(page);
-			await saveToolsModal(page);
-
-			let mcpConfig = await getMcpConfigViaRPC(page, sessionId);
-			expect(mcpConfig.loadProjectMcp).toBe(true);
-
 			// Disable all
-			await openToolsModal(page);
 			await disableAllMcpServers(page);
 			await saveToolsModal(page);
 
-			mcpConfig = await getMcpConfigViaRPC(page, sessionId);
-			expect(mcpConfig.loadProjectMcp).toBe(false);
+			let settings = readSettingsLocalJson();
+			expect(settings?.disabledMcpjsonServers?.length).toBe(serverNames.length);
+
+			// Enable all
+			await openToolsModal(page);
+			await enableAllMcpServers(page);
+			await saveToolsModal(page);
+
+			settings = readSettingsLocalJson();
+			expect(settings?.disabledMcpjsonServers?.length).toBe(0);
 
 			// Reopen for next cycle
 			if (i < 2) {
@@ -576,6 +728,9 @@ test.describe('MCP Toggle - Edge Cases', () => {
 	let sessionId: string | null = null;
 
 	test.beforeEach(async ({ page }) => {
+		cleanupSettingsLocalJson();
+		ensureClaudeDir();
+
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
@@ -593,9 +748,10 @@ test.describe('MCP Toggle - Edge Cases', () => {
 			}
 			sessionId = null;
 		}
+		cleanupSettingsLocalJson();
 	});
 
-	test('should handle rapid toggle clicks', async ({ page }) => {
+	test('should handle rapid toggle clicks gracefully', async ({ page }) => {
 		await openToolsModal(page);
 
 		const serverNames = await getMcpServerNames(page);
@@ -629,14 +785,71 @@ test.describe('MCP Toggle - Edge Cases', () => {
 			.first();
 		const claudeCodeEnabled = await claudeCodeCheckbox.isChecked();
 
+		// Get Memory checkbox state
+		const memoryCheckbox = page
+			.locator('label:has-text("Memory")')
+			.locator('input[type="checkbox"]')
+			.first();
+		const memoryEnabled = await memoryCheckbox.isChecked();
+
 		// Toggle MCP server (if available)
 		const serverNames = await getMcpServerNames(page);
 		if (serverNames.length > 0) {
 			await toggleMcpServer(page, serverNames[0]);
+			await saveToolsModal(page);
+			await openToolsModal(page);
 		}
 
-		// Verify Claude Code Preset wasn't affected
+		// Verify other settings weren't affected
 		const claudeCodeEnabledAfter = await claudeCodeCheckbox.isChecked();
 		expect(claudeCodeEnabledAfter).toBe(claudeCodeEnabled);
+
+		const memoryEnabledAfter = await memoryCheckbox.isChecked();
+		expect(memoryEnabledAfter).toBe(memoryEnabled);
+	});
+
+	test('should handle individual server toggle correctly', async ({ page }) => {
+		if (!sessionId) {
+			throw new Error('Session ID is required for this test');
+		}
+
+		await openToolsModal(page);
+
+		const serverNames = await getMcpServerNames(page);
+		if (serverNames.length < 2) {
+			console.log('Skipping test - need at least 2 MCP servers');
+			return;
+		}
+
+		// Start with all enabled
+		await enableAllMcpServers(page);
+		await saveToolsModal(page);
+
+		// Disable first server only
+		await openToolsModal(page);
+		await toggleMcpServer(page, serverNames[0]);
+		await saveToolsModal(page);
+
+		let settings = readSettingsLocalJson();
+		expect(settings?.disabledMcpjsonServers).toContain(serverNames[0]);
+		expect(settings?.disabledMcpjsonServers).not.toContain(serverNames[1]);
+
+		// Disable second server too
+		await openToolsModal(page);
+		await toggleMcpServer(page, serverNames[1]);
+		await saveToolsModal(page);
+
+		settings = readSettingsLocalJson();
+		expect(settings?.disabledMcpjsonServers).toContain(serverNames[0]);
+		expect(settings?.disabledMcpjsonServers).toContain(serverNames[1]);
+
+		// Enable first server back
+		await openToolsModal(page);
+		await toggleMcpServer(page, serverNames[0]);
+		await saveToolsModal(page);
+
+		settings = readSettingsLocalJson();
+		expect(settings?.disabledMcpjsonServers).not.toContain(serverNames[0]);
+		expect(settings?.disabledMcpjsonServers).toContain(serverNames[1]);
 	});
 });
