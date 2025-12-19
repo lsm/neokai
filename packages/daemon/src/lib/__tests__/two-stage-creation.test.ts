@@ -42,14 +42,32 @@ describe('2-Stage Session Creation', () => {
 			getCurrentApiKey: async () => process.env.ANTHROPIC_API_KEY || null,
 		} as AuthManager;
 
+		// Mock SettingsManager
+		const mockSettingsManager = {
+			prepareSDKOptions: async () => ({}),
+			getGlobalSettings: () => ({
+				settingSources: ['user', 'project', 'local'],
+				disabledMcpServers: [],
+				mcpServerSettings: {},
+			}),
+			listMcpServersFromSources: () => [],
+		} as unknown as import('../settings-manager').SettingsManager;
+
 		// Initialize SessionManager
-		sessionManager = new SessionManager(db, messageHub, mockAuthManager, eventBus, {
-			defaultModel: 'claude-sonnet-4-5-20250929',
-			maxTokens: 8192,
-			temperature: 1.0,
-			workspaceRoot: testWorkspace,
-			disableWorktrees: true, // Disable for unit tests
-		});
+		sessionManager = new SessionManager(
+			db,
+			messageHub,
+			mockAuthManager,
+			mockSettingsManager,
+			eventBus,
+			{
+				defaultModel: 'claude-sonnet-4-5-20250929',
+				maxTokens: 8192,
+				temperature: 1.0,
+				workspaceRoot: testWorkspace,
+				disableWorktrees: true, // Disable for unit tests
+			}
+		);
 	});
 
 	afterEach(async () => {

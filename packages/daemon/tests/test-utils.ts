@@ -13,6 +13,7 @@ dotenvConfig({ path: join(__dirname, '../.env') });
 import { Database } from '../src/storage/database';
 import { SessionManager } from '../src/lib/session-manager';
 import { AuthManager } from '../src/lib/auth-manager';
+import { SettingsManager } from '../src/lib/settings-manager';
 import { StateManager } from '../src/lib/state-manager';
 import { SubscriptionManager } from '../src/lib/subscription-manager';
 import { SimpleTitleQueue } from '../src/lib/simple-title-queue';
@@ -26,6 +27,7 @@ export interface TestContext {
 	server: Server;
 	db: Database;
 	sessionManager: SessionManager;
+	settingsManager: SettingsManager;
 	messageHub: MessageHub;
 	transport: WebSocketServerTransport;
 	stateManager: StateManager;
@@ -33,6 +35,7 @@ export interface TestContext {
 	authManager: AuthManager;
 	titleQueue: SimpleTitleQueue;
 	baseUrl: string;
+	workspacePath: string;
 	config: Config;
 	cleanup: () => Promise<void>;
 }
@@ -125,17 +128,21 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 
 	messageHub.registerTransport(transport);
 
+	// Initialize settings manager
+	const settingsManager = new SettingsManager(db, config.workspaceRoot);
+
 	// Initialize EventBus (breaks circular dependency!)
 	const { EventBus } = await import('@liuboer/shared');
 	const eventBus = new EventBus({
 		debug: process.env.TEST_VERBOSE === '1', // Enable debug with TEST_VERBOSE=1
 	});
 
-	// Create session manager with EventBus
+	// Create session manager with EventBus and SettingsManager
 	const sessionManager = new SessionManager(
 		db,
 		messageHub,
 		authManager,
+		settingsManager,
 		eventBus, // Pass EventBus instead of StateManager
 		{
 			defaultModel: config.defaultModel,
@@ -147,7 +154,14 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 	);
 
 	// Initialize State Manager (listens to EventBus)
-	const stateManager = new StateManager(messageHub, sessionManager, authManager, config, eventBus);
+	const stateManager = new StateManager(
+		messageHub,
+		sessionManager,
+		authManager,
+		settingsManager,
+		config,
+		eventBus
+	);
 
 	// Initialize Title Generation Queue (decoupled via EventBus)
 	// This is critical for auto-title integration tests
@@ -163,7 +177,9 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 		messageHub,
 		sessionManager,
 		authManager,
+		settingsManager,
 		config,
+		eventBus,
 	});
 
 	// Initialize Subscription Manager
@@ -299,6 +315,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 		server,
 		db,
 		sessionManager,
+		settingsManager,
 		messageHub,
 		transport,
 		stateManager,
@@ -306,6 +323,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 		authManager,
 		titleQueue,
 		baseUrl,
+		workspacePath: config.workspaceRoot,
 		config,
 		cleanup: async () => {
 			// First stop title generation queue

@@ -12,11 +12,13 @@ import { SessionManager } from '../../src/lib/session-manager';
 import { Database } from '../../src/storage/database';
 import { AuthManager } from '../../src/lib/auth-manager';
 import { MessageHub, MessageHubRouter, EventBus } from '@liuboer/shared';
+import type { SettingsManager } from '../../src/lib/settings-manager';
 
 describe('SessionManager', () => {
 	let db: Database;
 	let messageHub: MessageHub;
 	let authManager: AuthManager;
+	let settingsManager: SettingsManager;
 	let eventBus: EventBus;
 	let sessionManager: SessionManager;
 	let originalEnv: string | undefined;
@@ -44,8 +46,19 @@ describe('SessionManager', () => {
 		});
 		await authManager.initialize();
 
+		// Mock SettingsManager
+		settingsManager = {
+			prepareSDKOptions: async () => ({}),
+			getGlobalSettings: () => ({
+				settingSources: ['user', 'project', 'local'],
+				disabledMcpServers: [],
+				mcpServerSettings: {},
+			}),
+			listMcpServersFromSources: () => [],
+		} as unknown as SettingsManager;
+
 		// Create SessionManager
-		sessionManager = new SessionManager(db, messageHub, authManager, eventBus, {
+		sessionManager = new SessionManager(db, messageHub, authManager, settingsManager, eventBus, {
 			defaultModel: 'claude-sonnet-4-5-20250929',
 			maxTokens: 8192,
 			temperature: 1.0,
@@ -336,12 +349,19 @@ describe('SessionManager', () => {
 			process.env.NODE_ENV = 'development';
 
 			// Create new SessionManager in development mode
-			const devSessionManager = new SessionManager(db, messageHub, authManager, eventBus, {
-				defaultModel: 'claude-sonnet-4-5-20250929',
-				maxTokens: 8192,
-				temperature: 1.0,
-				workspaceRoot: '/tmp/test-workspace',
-			});
+			const devSessionManager = new SessionManager(
+				db,
+				messageHub,
+				authManager,
+				settingsManager,
+				eventBus,
+				{
+					defaultModel: 'claude-sonnet-4-5-20250929',
+					maxTokens: 8192,
+					temperature: 1.0,
+					workspaceRoot: '/tmp/test-workspace',
+				}
+			);
 
 			// Spy on console.error
 			const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
