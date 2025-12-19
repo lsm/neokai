@@ -4,6 +4,7 @@ import { generateUUID } from '@liuboer/shared';
 import { Database } from '../storage/database';
 import { AgentSession } from './agent-session';
 import type { AuthManager } from './auth-manager';
+import type { SettingsManager } from './settings-manager';
 import { WorktreeManager } from './worktree-manager';
 
 export class SessionManager {
@@ -18,6 +19,7 @@ export class SessionManager {
 		private db: Database,
 		private messageHub: MessageHub,
 		private authManager: AuthManager,
+		private settingsManager: SettingsManager,
 		private eventBus: EventBus, // FIX: Use EventBus instead of StateManager
 		private config: {
 			defaultModel: string;
@@ -167,9 +169,14 @@ export class SessionManager {
 		// Save to database
 		this.db.createSession(session);
 
-		// Create agent session with MessageHub, EventBus, and auth function
-		const agentSession = new AgentSession(session, this.db, this.messageHub, this.eventBus, () =>
-			this.authManager.getCurrentApiKey()
+		// Create agent session with MessageHub, EventBus, SettingsManager, and auth function
+		const agentSession = new AgentSession(
+			session,
+			this.db,
+			this.messageHub,
+			this.settingsManager,
+			this.eventBus,
+			() => this.authManager.getCurrentApiKey()
 		);
 
 		this.sessions.set(sessionId, agentSession);
@@ -464,9 +471,14 @@ ${messageText.slice(0, 2000)}`,
 		const session = this.db.getSession(sessionId);
 		if (!session) return null;
 
-		// Create agent session with MessageHub, EventBus, and auth function
-		const agentSession = new AgentSession(session, this.db, this.messageHub, this.eventBus, () =>
-			this.authManager.getCurrentApiKey()
+		// Create agent session with MessageHub, EventBus, SettingsManager, and auth function
+		const agentSession = new AgentSession(
+			session,
+			this.db,
+			this.messageHub,
+			this.settingsManager,
+			this.eventBus,
+			() => this.authManager.getCurrentApiKey()
 		);
 		this.sessions.set(sessionId, agentSession);
 
@@ -512,9 +524,14 @@ ${messageText.slice(0, 2000)}`,
 		const session = this.db.getSession(sessionId);
 		if (!session) return null;
 
-		// Create agent session with MessageHub, EventBus, and auth function
-		return new AgentSession(session, this.db, this.messageHub, this.eventBus, () =>
-			this.authManager.getCurrentApiKey()
+		// Create agent session with MessageHub, EventBus, SettingsManager, and auth function
+		return new AgentSession(
+			session,
+			this.db,
+			this.messageHub,
+			this.settingsManager,
+			this.eventBus,
+			() => this.authManager.getCurrentApiKey()
 		);
 	}
 
@@ -671,22 +688,54 @@ ${messageText.slice(0, 2000)}`,
 	 * Get default tools configuration for new sessions based on global settings
 	 */
 	private getDefaultToolsConfig(): Session['config']['tools'] {
-		const global = this.db.getGlobalToolsConfig();
+		const globalToolsConfig = this.db.getGlobalToolsConfig();
+		const globalSettings = this.settingsManager.getGlobalSettings();
+
+		// Get MCP servers that have defaultOn enabled
+		const mcpServerSettings = globalSettings.mcpServerSettings || {};
+		const mcpServers = this.settingsManager.listMcpServersFromSources();
+
+		this.log(
+			'[SessionManager] getDefaultToolsConfig - mcpServerSettings:',
+			JSON.stringify(mcpServerSettings)
+		);
+		this.log('[SessionManager] getDefaultToolsConfig - mcpServers:', JSON.stringify(mcpServers));
+
+		// Build enabled MCP patterns from servers that are allowed AND defaultOn
+		const enabledMcpPatterns: string[] = [];
+		for (const source of Object.keys(mcpServers) as Array<'user' | 'project' | 'local'>) {
+			for (const server of mcpServers[source]) {
+				const settings = mcpServerSettings[server.name];
+				const isAllowed = settings?.allowed !== false; // Default to true
+				const isDefaultOn = settings?.defaultOn === true; // Default to false
+				this.log(
+					`[SessionManager] Server ${server.name}: allowed=${isAllowed}, defaultOn=${isDefaultOn}, settings=`,
+					settings
+				);
+				if (isAllowed && isDefaultOn) {
+					enabledMcpPatterns.push(`mcp__${server.name}__*`);
+				}
+			}
+		}
+
+		this.log('[SessionManager] getDefaultToolsConfig - enabledMcpPatterns:', enabledMcpPatterns);
 
 		return {
 			// System Prompt: Claude Code preset - Only enable if allowed AND default is on
 			useClaudeCodePreset:
-				global.systemPrompt.claudeCodePreset.allowed &&
-				global.systemPrompt.claudeCodePreset.defaultEnabled,
-			// Setting Sources: Load project settings - Only enable if allowed AND default is on
-			loadSettingSources:
-				global.settingSources.project.allowed && global.settingSources.project.defaultEnabled,
-			// MCP: Only enable if allowed AND default is on
-			loadProjectMcp: global.mcp.allowProjectMcp && global.mcp.defaultProjectMcp,
-			enabledMcpPatterns: [],
+				globalToolsConfig.systemPrompt.claudeCodePreset.allowed &&
+				globalToolsConfig.systemPrompt.claudeCodePreset.defaultEnabled,
+			// Setting Sources: Use global setting sources
+			settingSources: globalSettings.settingSources || ['user', 'project', 'local'],
+			// MCP: Only enable if allowed AND there are enabled patterns
+			loadProjectMcp: globalToolsConfig.mcp.allowProjectMcp && enabledMcpPatterns.length > 0,
+			// Enabled MCP patterns based on global server settings
+			enabledMcpPatterns,
 			// Liuboer tools: Only enable if allowed AND default is on
 			liuboerTools: {
-				memory: global.liuboerTools.memory.allowed && global.liuboerTools.memory.defaultEnabled,
+				memory:
+					globalToolsConfig.liuboerTools.memory.allowed &&
+					globalToolsConfig.liuboerTools.memory.defaultEnabled,
 			},
 		};
 	}

@@ -11,11 +11,13 @@
 import type { MessageHub, EventBus } from '@liuboer/shared';
 import type { SessionManager } from './session-manager';
 import type { AuthManager } from './auth-manager';
+import type { SettingsManager } from './settings-manager';
 import type { Config } from '../config';
 import { Logger } from './logger';
 import type {
 	SessionsState,
 	SystemState,
+	SettingsState,
 	GlobalStateSnapshot,
 	SessionStateSnapshot,
 	SessionState,
@@ -45,6 +47,7 @@ export class StateManager {
 		private messageHub: MessageHub,
 		private sessionManager: SessionManager,
 		private authManager: AuthManager,
+		private settingsManager: SettingsManager,
 		private config: Config,
 		private eventBus: EventBus // FIX: Listen to EventBus for changes
 	) {
@@ -164,6 +167,11 @@ export class StateManager {
 			await this.broadcastSystemChange();
 		});
 
+		// Settings events - broadcast settings state
+		this.eventBus.on('settings:updated', async () => {
+			await this.broadcastSettingsChange();
+		});
+
 		// Agent state events - broadcast unified session state
 		this.eventBus.on(
 			'agent-state:changed',
@@ -260,6 +268,10 @@ export class StateManager {
 			return await this.getSessionsState();
 		});
 
+		this.messageHub.handle(STATE_CHANNELS.GLOBAL_SETTINGS, async () => {
+			return await this.getSettingsState();
+		});
+
 		// Session-specific channel requests
 		this.messageHub.handle(STATE_CHANNELS.SESSION, async (data) => {
 			const { sessionId } = data as { sessionId: string };
@@ -280,11 +292,16 @@ export class StateManager {
 	 * Get full global state snapshot
 	 */
 	async getGlobalSnapshot(): Promise<GlobalStateSnapshot> {
-		const [sessions, system] = await Promise.all([this.getSessionsState(), this.getSystemState()]);
+		const [sessions, system, settings] = await Promise.all([
+			this.getSessionsState(),
+			this.getSystemState(),
+			this.getSettingsState(),
+		]);
 
 		return {
 			sessions,
 			system,
+			settings,
 			meta: {
 				channel: 'global',
 				sessionId: 'global',
@@ -328,6 +345,16 @@ export class StateManager {
 			// API connectivity (daemon <-> Claude API)
 			apiConnection: this.apiConnectionState,
 
+			timestamp: Date.now(),
+		};
+	}
+
+	/**
+	 * Get global settings state
+	 */
+	private async getSettingsState(): Promise<SettingsState> {
+		return {
+			settings: this.settingsManager.getGlobalSettings(),
 			timestamp: Date.now(),
 		};
 	}
@@ -454,6 +481,18 @@ export class StateManager {
 		const state = { ...(await this.getSystemState()), version };
 
 		await this.messageHub.publish(STATE_CHANNELS.GLOBAL_SYSTEM, state, {
+			sessionId: 'global',
+		});
+	}
+
+	/**
+	 * Broadcast global settings change
+	 */
+	async broadcastSettingsChange(): Promise<void> {
+		const version = this.incrementVersion(STATE_CHANNELS.GLOBAL_SETTINGS);
+		const state = { ...(await this.getSettingsState()), version };
+
+		await this.messageHub.publish(STATE_CHANNELS.GLOBAL_SETTINGS, state, {
 			sessionId: 'global',
 		});
 	}

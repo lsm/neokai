@@ -1,8 +1,8 @@
 import { Database as BunDatabase } from 'bun:sqlite';
 import { dirname, join } from 'node:path';
 import { mkdirSync, existsSync, copyFileSync, readdirSync, unlinkSync, statSync } from 'node:fs';
-import type { Session, GlobalToolsConfig } from '@liuboer/shared';
-import { DEFAULT_GLOBAL_TOOLS_CONFIG } from '@liuboer/shared';
+import type { Session, GlobalToolsConfig, GlobalSettings } from '@liuboer/shared';
+import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@liuboer/shared';
 import type { SDKMessage } from '@liuboer/shared/sdk';
 import { generateUUID } from '@liuboer/shared';
 import { Logger } from '../lib/logger';
@@ -199,6 +199,21 @@ export class Database {
 		this.db.exec(`
       INSERT OR IGNORE INTO global_tools_config (id, config, updated_at)
       VALUES (1, '${JSON.stringify(DEFAULT_GLOBAL_TOOLS_CONFIG)}', datetime('now'))
+    `);
+
+		// Global settings table
+		this.db.exec(`
+      CREATE TABLE IF NOT EXISTS global_settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        settings TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+
+		// Initialize global_settings with default values if not exists
+		this.db.exec(`
+      INSERT OR IGNORE INTO global_settings (id, settings, updated_at)
+      VALUES (1, '${JSON.stringify(DEFAULT_GLOBAL_SETTINGS)}', datetime('now'))
     `);
 
 		// Create indexes
@@ -702,6 +717,54 @@ export class Database {
 			VALUES (1, ?, datetime('now'))
 		`);
 		stmt.run(JSON.stringify(config));
+	}
+
+	// ============================================================================
+	// Global Settings operations
+	// ============================================================================
+
+	/**
+	 * Get the global settings
+	 *
+	 * Merges stored settings with defaults to ensure backward compatibility
+	 * when new fields are added to GlobalSettings schema.
+	 */
+	getGlobalSettings(): GlobalSettings {
+		const stmt = this.db.prepare(`SELECT settings FROM global_settings WHERE id = 1`);
+		const row = stmt.get() as { settings: string } | undefined;
+
+		if (!row) {
+			return { ...DEFAULT_GLOBAL_SETTINGS };
+		}
+
+		try {
+			const settings = JSON.parse(row.settings) as GlobalSettings;
+			// Merge with defaults to ensure all required fields exist
+			return { ...DEFAULT_GLOBAL_SETTINGS, ...settings };
+		} catch {
+			return { ...DEFAULT_GLOBAL_SETTINGS };
+		}
+	}
+
+	/**
+	 * Save the global settings
+	 */
+	saveGlobalSettings(settings: GlobalSettings): void {
+		const stmt = this.db.prepare(`
+			INSERT OR REPLACE INTO global_settings (id, settings, updated_at)
+			VALUES (1, ?, datetime('now'))
+		`);
+		stmt.run(JSON.stringify(settings));
+	}
+
+	/**
+	 * Update global settings (partial update)
+	 */
+	updateGlobalSettings(updates: Partial<GlobalSettings>): GlobalSettings {
+		const current = this.getGlobalSettings();
+		const updated = { ...current, ...updates };
+		this.saveGlobalSettings(updated);
+		return updated;
 	}
 
 	// ============================================================================
