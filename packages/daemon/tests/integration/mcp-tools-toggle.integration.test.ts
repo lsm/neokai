@@ -6,8 +6,8 @@
  * 2. Disable server via disabledMcpServers → verify written to settings.local.json
  * 3. Enable server (remove from disabled list) → verify file updated
  *
- * Key insight: The SDK reads .claude/settings.local.json on each turn,
- * so changes take effect without session restart.
+ * Key insight: The SDK reads .claude/settings.local.json at query initialization.
+ * Query restart is required for changes to take effect (implemented in updateToolsConfig).
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';

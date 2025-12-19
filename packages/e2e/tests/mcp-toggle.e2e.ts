@@ -12,7 +12,7 @@
  *
  * Implementation Notes:
  * - Uses file-based approach: disabled servers written to settings.local.json
- * - SDK reads settings.local.json on each turn (no session restart needed)
+ * - SDK reads settings.local.json at query init (session restart required for changes)
  * - disabledMcpServers array maps to disabledMcpjsonServers in the file
  */
 
