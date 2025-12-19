@@ -22,24 +22,13 @@ export default function Sidebar() {
 	// But we need to keep currentSessionIdSignal reactive for active state
 	const sessionsList = sessions.value;
 
-	// Filter archived sessions based on 48-hour window
-	const FORTY_EIGHT_HOURS = 48 * 60 * 60 * 1000;
-	const now = Date.now();
-
+	// Filter archived sessions based on toggle
 	const filteredSessions = sessionsList.filter((session) => {
 		// Show all non-archived sessions
 		if (session.status !== 'archived') return true;
 
-		// Show all archived if toggle is on
-		if (showAllArchived) return true;
-
-		// Show archived sessions within 48 hours
-		if (session.archivedAt) {
-			const archivedTime = new Date(session.archivedAt).getTime();
-			return now - archivedTime < FORTY_EIGHT_HOURS;
-		}
-
-		return false;
+		// Show archived sessions only if toggle is on
+		return showAllArchived;
 	});
 
 	// Pagination
@@ -209,7 +198,7 @@ export default function Sidebar() {
 									d="M9 5l7 7-7 7"
 								/>
 							</svg>
-							<span>{showAllArchived ? 'Hide old archived' : 'Show all archived'}</span>
+							<span>{showAllArchived ? 'Hide archived' : 'Show archived'}</span>
 						</button>
 					</div>
 				)}
