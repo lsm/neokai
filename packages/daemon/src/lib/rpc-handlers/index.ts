@@ -10,6 +10,7 @@ import type { SessionManager } from '../session-manager';
 import type { AuthManager } from '../auth-manager';
 import type { SettingsManager } from '../settings-manager';
 import type { Config } from '../../config';
+import type { Database } from '../../storage/database';
 
 import { setupSessionHandlers } from './session-handlers';
 import { setupMessageHandlers } from './message-handlers';
@@ -27,6 +28,7 @@ export interface RPCHandlerDependencies {
 	settingsManager: SettingsManager;
 	config: Config;
 	eventBus: EventBus;
+	db: Database;
 }
 
 /**
@@ -40,5 +42,5 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
 	setupSystemHandlers(deps.messageHub, deps.sessionManager, deps.authManager, deps.config);
 	setupAuthHandlers(deps.messageHub, deps.authManager);
 	registerMcpHandlers(deps.messageHub, deps.sessionManager);
-	registerSettingsHandlers(deps.messageHub, deps.settingsManager, deps.eventBus);
+	registerSettingsHandlers(deps.messageHub, deps.settingsManager, deps.eventBus, deps.db);
 }

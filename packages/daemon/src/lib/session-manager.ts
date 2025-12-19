@@ -169,14 +169,10 @@ export class SessionManager {
 		// Save to database
 		this.db.createSession(session);
 
-		// Create agent session with MessageHub, EventBus, SettingsManager, and auth function
-		const agentSession = new AgentSession(
-			session,
-			this.db,
-			this.messageHub,
-			this.settingsManager,
-			this.eventBus,
-			() => this.authManager.getCurrentApiKey()
+		// Create agent session with MessageHub, EventBus, and auth function
+		// Note: AgentSession creates its own SettingsManager with session.workspacePath for isolation
+		const agentSession = new AgentSession(session, this.db, this.messageHub, this.eventBus, () =>
+			this.authManager.getCurrentApiKey()
 		);
 
 		this.sessions.set(sessionId, agentSession);
@@ -471,14 +467,10 @@ ${messageText.slice(0, 2000)}`,
 		const session = this.db.getSession(sessionId);
 		if (!session) return null;
 
-		// Create agent session with MessageHub, EventBus, SettingsManager, and auth function
-		const agentSession = new AgentSession(
-			session,
-			this.db,
-			this.messageHub,
-			this.settingsManager,
-			this.eventBus,
-			() => this.authManager.getCurrentApiKey()
+		// Create agent session with MessageHub, EventBus, and auth function
+		// Note: AgentSession creates its own SettingsManager with session.workspacePath for isolation
+		const agentSession = new AgentSession(session, this.db, this.messageHub, this.eventBus, () =>
+			this.authManager.getCurrentApiKey()
 		);
 		this.sessions.set(sessionId, agentSession);
 
@@ -524,14 +516,10 @@ ${messageText.slice(0, 2000)}`,
 		const session = this.db.getSession(sessionId);
 		if (!session) return null;
 
-		// Create agent session with MessageHub, EventBus, SettingsManager, and auth function
-		return new AgentSession(
-			session,
-			this.db,
-			this.messageHub,
-			this.settingsManager,
-			this.eventBus,
-			() => this.authManager.getCurrentApiKey()
+		// Create agent session with MessageHub, EventBus, and auth function
+		// Note: AgentSession creates its own SettingsManager with session.workspacePath for isolation
+		return new AgentSession(session, this.db, this.messageHub, this.eventBus, () =>
+			this.authManager.getCurrentApiKey()
 		);
 	}
 

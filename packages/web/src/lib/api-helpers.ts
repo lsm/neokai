@@ -215,9 +215,14 @@ export interface McpServersFromSourcesResponse {
 	serverSettings: Record<string, { allowed?: boolean; defaultOn?: boolean }>;
 }
 
-export async function listMcpServersFromSources(): Promise<McpServersFromSourcesResponse> {
+export async function listMcpServersFromSources(
+	sessionId?: string
+): Promise<McpServersFromSourcesResponse> {
 	const hub = await connectionManager.getHub();
-	return await hub.call<McpServersFromSourcesResponse>('settings.mcp.listFromSources');
+	return await hub.call<McpServersFromSourcesResponse>(
+		'settings.mcp.listFromSources',
+		sessionId ? { sessionId } : {}
+	);
 }
 
 export async function updateMcpServerSettings(

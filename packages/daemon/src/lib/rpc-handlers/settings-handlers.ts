@@ -7,11 +7,13 @@
 import type { MessageHub, EventBus } from '@liuboer/shared';
 import type { GlobalSettings, SessionSettings } from '@liuboer/shared';
 import type { SettingsManager } from '../settings-manager';
+import type { Database } from '../../storage/database';
 
 export function registerSettingsHandlers(
 	messageHub: MessageHub,
 	settingsManager: SettingsManager,
-	eventBus: EventBus
+	eventBus: EventBus,
+	db: Database
 ) {
 	/**
 	 * Get global settings
@@ -86,11 +88,34 @@ export function registerSettingsHandlers(
 
 	/**
 	 * List MCP servers from enabled setting sources
+	 *
+	 * IMPORTANT: Reads from session-specific workspace path for worktree isolation.
+	 * - If sessionId provided: Reads from session's workspace (worktree or shared)
+	 * - If sessionId omitted: Reads from global workspace root (for GlobalSettingsEditor)
 	 */
-	messageHub.handle('settings.mcp.listFromSources', async () => {
+	messageHub.handle('settings.mcp.listFromSources', async (data?: { sessionId?: string }) => {
+		let effectiveSettings = settingsManager; // Default: global workspace root
+
+		// If sessionId provided, use session-specific workspace path
+		if (data?.sessionId) {
+			const session = db.getSession(data.sessionId);
+			if (!session) {
+				throw new Error(`Session not found: ${data.sessionId}`);
+			}
+
+			// Create session-specific SettingsManager with session's workspace path
+			// This ensures we read .mcp.json and settings files from the correct location:
+			// - Worktree sessions: .worktrees/{sessionId}/.mcp.json
+			// - Non-worktree sessions: {workspaceRoot}/.mcp.json
+			effectiveSettings = new (await import('../settings-manager')).SettingsManager(
+				db,
+				session.workspacePath
+			);
+		}
+
 		return {
-			servers: settingsManager.listMcpServersFromSources(),
-			serverSettings: settingsManager.getMcpServerSettings(),
+			servers: effectiveSettings.listMcpServersFromSources(),
+			serverSettings: settingsManager.getMcpServerSettings(), // Global server settings
 		};
 	});
 

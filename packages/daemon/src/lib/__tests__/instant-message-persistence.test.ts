@@ -85,20 +85,8 @@ describe('Instant Message Persistence UX', () => {
 		// Save session to DB
 		db.createSession(session);
 
-		// Create mock SettingsManager
-		const mockSettingsManager = {
-			prepareSDKOptions: async () => ({}),
-		} as unknown as import('../settings-manager').SettingsManager;
-
-		// Create AgentSession
-		agentSession = new AgentSession(
-			session,
-			db,
-			messageHub,
-			mockSettingsManager,
-			eventBus,
-			async () => null
-		);
+		// Create AgentSession (it now creates its own SettingsManager)
+		agentSession = new AgentSession(session, db, messageHub, eventBus, async () => null);
 	});
 
 	afterEach(() => {
@@ -163,15 +151,10 @@ describe('Instant Message Persistence UX', () => {
 		db.createSession(uninitializedSession);
 		mkdirSync(join(testDir, 'uninitialized-workspace'), { recursive: true });
 
-		const mockSettingsManager = {
-			prepareSDKOptions: async () => ({}),
-		} as unknown as import('../settings-manager').SettingsManager;
-
 		const uninitializedAgentSession = new AgentSession(
 			{ ...uninitializedSession, workspacePath: join(testDir, 'uninitialized-workspace') },
 			db,
 			messageHub,
-			mockSettingsManager,
 			eventBus,
 			async () => null
 		);

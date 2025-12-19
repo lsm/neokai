@@ -15,7 +15,7 @@ import { Database } from '../storage/database';
 import { ErrorCategory, ErrorManager } from './error-manager';
 import { Logger } from './logger';
 import { isValidModel, resolveModelAlias, getModelInfo } from './model-service';
-import type { SettingsManager } from './settings-manager';
+import { SettingsManager } from './settings-manager';
 
 // New extracted components
 import { MessageQueue } from './message-queue';
@@ -70,19 +70,26 @@ export class AgentSession {
 	// Error manager for structured error handling
 	private errorManager: ErrorManager;
 
+	// Session-specific settings manager (created per-session for worktree isolation)
+	private settingsManager: SettingsManager;
+
 	private logger: Logger;
 
 	constructor(
 		private session: Session,
 		private db: Database,
 		private messageHub: MessageHub,
-		private settingsManager: SettingsManager,
 		private eventBus: EventBus,
 		private getApiKey: () => Promise<string | null>
 	) {
 		// Initialize error manager and logger (with EventBus for internal events)
 		this.errorManager = new ErrorManager(this.messageHub, this.eventBus);
 		this.logger = new Logger(`AgentSession ${session.id}`);
+
+		// CRITICAL: Create session-specific SettingsManager with session's workspace path
+		// This ensures worktree sessions write settings to their own .claude/settings.local.json
+		// instead of the root workspace (fixes worktree isolation bug)
+		this.settingsManager = new SettingsManager(this.db, this.session.workspacePath);
 
 		// Initialize extracted components
 		this.messageQueue = new MessageQueue();
@@ -869,6 +876,22 @@ CRITICAL RULES:
 			const sdkSettingsOptions = await this.settingsManager.prepareSDKOptions();
 
 			// ============================================================================
+			// Worktree Directory Isolation
+			// ============================================================================
+			// For worktree sessions: Restrict SDK file access to ONLY the worktree directory
+			// This prevents the agent from accidentally modifying files in the main repo
+			// or accessing files outside the worktree boundary
+			//
+			// SDK option: additionalDirectories
+			// - undefined (default): SDK can access any file on the system
+			// - [] (empty array): SDK can ONLY access files within cwd
+			//
+			// Strategy:
+			// - Worktree sessions: Set to [] to enforce strict isolation
+			// - Non-worktree sessions: Leave undefined for backward compatibility
+			const additionalDirectories: string[] | undefined = this.session.worktree ? [] : undefined;
+
+			// ============================================================================
 			// Build Final Query Options
 			// ============================================================================
 			// First merge settings-derived options, then override with session-specific options
@@ -881,6 +904,7 @@ CRITICAL RULES:
 				cwd: this.session.worktree
 					? this.session.worktree.worktreePath
 					: this.session.workspacePath,
+				additionalDirectories, // Enforce worktree isolation
 				permissionMode: 'bypassPermissions',
 				allowDangerouslySkipPermissions: true,
 				maxTurns: Infinity,
@@ -897,6 +921,10 @@ CRITICAL RULES:
 				settingSources: queryOptions.settingSources,
 				disallowedTools: queryOptions.disallowedTools,
 				mcpServers: queryOptions.mcpServers === undefined ? 'auto-load' : 'disabled',
+				additionalDirectories:
+					queryOptions.additionalDirectories === undefined
+						? 'unrestricted'
+						: `restricted to cwd (${queryOptions.additionalDirectories.length} additional dirs)`,
 				toolsConfig,
 			});
 

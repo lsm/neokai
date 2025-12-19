@@ -104,9 +104,11 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	};
 
 	const loadMcpServers = async () => {
+		if (!session) return;
+
 		try {
 			mcpLoading.value = true;
-			const response = await listMcpServersFromSources();
+			const response = await listMcpServersFromSources(session.id);
 			mcpServersData.value = response;
 		} catch (error) {
 			console.error('Failed to load MCP servers:', error);

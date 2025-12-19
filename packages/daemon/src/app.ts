@@ -188,6 +188,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		settingsManager,
 		config,
 		eventBus,
+		db,
 	});
 	log('✅ RPC handlers registered');
 
