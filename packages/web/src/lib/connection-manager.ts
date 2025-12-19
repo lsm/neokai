@@ -2,11 +2,41 @@
  * Connection Manager
  *
  * Manages the WebSocket connection lifecycle for MessageHub.
- * Simpler and more focused than MessageHubAPIClient.
+ * Provides both blocking and non-blocking connection access patterns.
+ *
+ * ## Usage Patterns:
+ *
+ * ### Non-blocking (preferred for UI):
+ * ```typescript
+ * const hub = connectionManager.getHubIfConnected();
+ * if (!hub) {
+ *   toast.error('Not connected');
+ *   return;
+ * }
+ * await hub.call(...);
+ * ```
+ *
+ * ### Blocking (for initialization):
+ * ```typescript
+ * const hub = await connectionManager.getHub();
+ * ```
+ *
+ * ### Event-driven (for waiting):
+ * ```typescript
+ * await connectionManager.onConnected();
+ * const hub = connectionManager.getHubOrThrow();
+ * ```
  */
 
 import { MessageHub, WebSocketClientTransport } from '@liuboer/shared';
 import { appState, connectionState } from './state';
+import { ConnectionNotReadyError, ConnectionTimeoutError } from './errors';
+import { createDeferred } from './timeout';
+
+/**
+ * Type for connection event handlers
+ */
+type ConnectionHandler = () => void;
 
 /**
  * Get the daemon WebSocket base URL
@@ -43,6 +73,7 @@ function getDaemonWsUrl(): string {
  * - Connection caching and reuse
  * - WebSocket transport configuration
  * - Connection state management
+ * - Non-blocking connection access for UI responsiveness
  */
 export class ConnectionManager {
 	private messageHub: MessageHub | null = null;
@@ -52,14 +83,157 @@ export class ConnectionManager {
 	private visibilityHandler: (() => void) | null = null;
 	private pageHideHandler: (() => void) | null = null;
 
+	// Event-driven connection handlers
+	private connectionHandlers: Set<ConnectionHandler> = new Set();
+
 	constructor(baseUrl?: string) {
 		this.baseUrl = baseUrl || getDaemonWsUrl();
 		console.log(`[ConnectionManager] Initialized with baseUrl: ${this.baseUrl}`);
 		this.setupVisibilityHandlers();
 	}
 
+	// ========================================
+	// Non-Blocking Access Methods (NEW)
+	// ========================================
+
 	/**
-	 * Get the MessageHub instance, creating connection if needed
+	 * Get the MessageHub instance if currently connected (NON-BLOCKING)
+	 *
+	 * Returns null immediately if not connected. Use this for UI handlers
+	 * that should not block on connection.
+	 *
+	 * @returns MessageHub if connected, null otherwise
+	 *
+	 * @example
+	 * ```typescript
+	 * const hub = connectionManager.getHubIfConnected();
+	 * if (!hub) {
+	 *   toast.error('Not connected to server');
+	 *   return;
+	 * }
+	 * await hub.call('session.create', data);
+	 * ```
+	 */
+	getHubIfConnected(): MessageHub | null {
+		if (this.messageHub && this.transport?.isReady()) {
+			return this.messageHub;
+		}
+		return null;
+	}
+
+	/**
+	 * Get the MessageHub instance or throw immediately (NON-BLOCKING)
+	 *
+	 * Throws ConnectionNotReadyError if not connected. Use this when you
+	 * want to handle connection errors explicitly.
+	 *
+	 * @throws {ConnectionNotReadyError} If not connected
+	 * @returns MessageHub instance
+	 *
+	 * @example
+	 * ```typescript
+	 * try {
+	 *   const hub = connectionManager.getHubOrThrow();
+	 *   await hub.call('session.create', data);
+	 * } catch (err) {
+	 *   if (err instanceof ConnectionNotReadyError) {
+	 *     toast.error('Please wait for connection...');
+	 *   }
+	 * }
+	 * ```
+	 */
+	getHubOrThrow(): MessageHub {
+		const hub = this.getHubIfConnected();
+		if (!hub) {
+			throw new ConnectionNotReadyError('WebSocket not connected');
+		}
+		return hub;
+	}
+
+	/**
+	 * Wait for connection to be established (EVENT-DRIVEN)
+	 *
+	 * Returns a promise that resolves when connected. Does not block
+	 * with polling - uses event-driven approach.
+	 *
+	 * @param timeout - Optional timeout in milliseconds (default: 10000)
+	 * @throws {ConnectionTimeoutError} If timeout exceeded
+	 *
+	 * @example
+	 * ```typescript
+	 * await connectionManager.onConnected(5000);
+	 * const hub = connectionManager.getHubOrThrow();
+	 * ```
+	 */
+	onConnected(timeout: number = 10000): Promise<void> {
+		// Already connected - resolve immediately
+		if (this.isConnected()) {
+			return Promise.resolve();
+		}
+
+		const { promise, resolve, reject } = createDeferred<void>();
+
+		// Set up timeout
+		const timer = setTimeout(() => {
+			this.connectionHandlers.delete(handler);
+			reject(new ConnectionTimeoutError(timeout));
+		}, timeout);
+
+		// Handler to call when connected
+		const handler = () => {
+			clearTimeout(timer);
+			this.connectionHandlers.delete(handler);
+			resolve();
+		};
+
+		// Register handler
+		this.connectionHandlers.add(handler);
+
+		return promise;
+	}
+
+	/**
+	 * Register a callback for when connection is established
+	 *
+	 * @param callback - Function to call when connected
+	 * @returns Unsubscribe function
+	 *
+	 * @example
+	 * ```typescript
+	 * const unsub = connectionManager.onceConnected(() => {
+	 *   console.log('Connected!');
+	 * });
+	 * // Later: unsub() to cancel
+	 * ```
+	 */
+	onceConnected(callback: ConnectionHandler): () => void {
+		// Already connected - call immediately
+		if (this.isConnected()) {
+			callback();
+			return () => {};
+		}
+
+		const handler = () => {
+			this.connectionHandlers.delete(handler);
+			callback();
+		};
+
+		this.connectionHandlers.add(handler);
+
+		return () => {
+			this.connectionHandlers.delete(handler);
+		};
+	}
+
+	// ========================================
+	// Blocking Access Methods (Existing)
+	// ========================================
+
+	/**
+	 * Get the MessageHub instance, creating connection if needed (BLOCKING)
+	 *
+	 * NOTE: This method can block for several seconds. For UI handlers,
+	 * prefer getHubIfConnected() or getHubOrThrow() instead.
 	 *
 	 * PHASE 3.3 FIX: Prevent race condition where multiple concurrent calls
 	 * could create duplicate connections
@@ -111,6 +285,11 @@ export class ConnectionManager {
 		this.messageHub.onConnection((state, error) => {
 			console.log(`[ConnectionManager] Connection state: ${state}`, error);
 			connectionState.value = state;
+
+			// Notify connection handlers when connected
+			if (state === 'connected') {
+				this.notifyConnectionHandlers();
+			}
 		});
 
 		// Expose to window for testing
@@ -144,8 +323,8 @@ export class ConnectionManager {
 		// Initialize transport (establishes WebSocket connection)
 		await this.transport.initialize();
 
-		// Wait for connection to be established
-		await this.waitForConnection(5000);
+		// Wait for connection to be established (event-driven, not polling)
+		await this.waitForConnectionEventDriven(5000);
 
 		console.log('[ConnectionManager] WebSocket connected');
 
@@ -158,16 +337,46 @@ export class ConnectionManager {
 	}
 
 	/**
-	 * Wait for WebSocket to be ready
+	 * Wait for WebSocket to be ready (EVENT-DRIVEN - replaces polling)
 	 */
-	private async waitForConnection(timeout: number): Promise<void> {
-		const start = Date.now();
+	private waitForConnectionEventDriven(timeout: number): Promise<void> {
+		// Already connected
+		if (this.messageHub?.isConnected()) {
+			return Promise.resolve();
+		}
 
-		while (!this.messageHub?.isConnected()) {
-			if (Date.now() - start > timeout) {
-				throw new Error('WebSocket connection timeout');
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => {
+				unsub();
+				reject(new ConnectionTimeoutError(timeout, 'WebSocket connection timeout'));
+			}, timeout);
+
+			const unsub = this.messageHub!.onConnection((state) => {
+				if (state === 'connected') {
+					clearTimeout(timer);
+					unsub();
+					resolve();
+				} else if (state === 'error') {
+					clearTimeout(timer);
+					unsub();
+					reject(new ConnectionNotReadyError('WebSocket connection error'));
+				}
+			});
+		});
+	}
+
+	/**
+	 * Notify all registered connection handlers
+	 */
+	private notifyConnectionHandlers(): void {
+		// Copy to array to allow handlers to remove themselves
+		const handlers = Array.from(this.connectionHandlers);
+		for (const handler of handlers) {
+			try {
+				handler();
+			} catch (error) {
+				console.error('[ConnectionManager] Error in connection handler:', error);
 			}
-			await new Promise((resolve) => setTimeout(resolve, 100));
 		}
 	}
 
@@ -182,6 +391,9 @@ export class ConnectionManager {
 
 		// Cleanup visibility handlers
 		this.cleanupVisibilityHandlers();
+
+		// Clear connection handlers
+		this.connectionHandlers.clear();
 
 		if (this.transport) {
 			this.transport.close();
@@ -199,6 +411,13 @@ export class ConnectionManager {
 	 */
 	isConnected(): boolean {
 		return this.messageHub?.isConnected() || false;
+	}
+
+	/**
+	 * Get current connection state
+	 */
+	getConnectionState(): typeof connectionState.value {
+		return connectionState.value;
 	}
 
 	/**

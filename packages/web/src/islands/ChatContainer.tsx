@@ -119,14 +119,16 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		const cleanupFunctions: Array<() => void> = [];
 
 		// Set up WebSocket subscriptions asynchronously
+		// Using subscribeOptimistic for non-blocking subscriptions - handlers are
+		// registered locally immediately, server ACKs happen in background
 		connectionManager
 			.getHub()
-			.then(async (hub) => {
+			.then((hub) => {
 				// Only subscribe if component is still mounted
 				if (!isMounted) return;
 
-				// SDK message events - PRIMARY EVENT HANDLER
-				const unsubSDKMessage = await hub.subscribe<SDKMessage>(
+				// SDK message events - PRIMARY EVENT HANDLER (NON-BLOCKING)
+				const unsubSDKMessage = hub.subscribeOptimistic<SDKMessage>(
 					'sdk.message',
 					(sdkMessage) => {
 						console.log('Received SDK message:', sdkMessage.type, sdkMessage);
@@ -197,13 +199,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					},
 					{ sessionId }
 				);
-				if (!isMounted) return;
 				cleanupFunctions.push(unsubSDKMessage);
 
 				// Context is now part of unified session state (no separate subscription needed)
 
-				// Subscribe to compaction start - lock input and show toast
-				const unsubContextCompacting = await hub.subscribe<{ trigger: 'manual' | 'auto' }>(
+				// Subscribe to compaction start - lock input and show toast (NON-BLOCKING)
+				const unsubContextCompacting = hub.subscribeOptimistic<{ trigger: 'manual' | 'auto' }>(
 					'context.compacting',
 					(_data) => {
 						setIsCompacting(true);
@@ -212,11 +213,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					},
 					{ sessionId }
 				);
-				if (!isMounted) return;
 				cleanupFunctions.push(unsubContextCompacting);
 
-				// Subscribe to compaction complete - unlock input and show result
-				const unsubContextCompacted = await hub.subscribe<{
+				// Subscribe to compaction complete - unlock input and show result (NON-BLOCKING)
+				const unsubContextCompacted = hub.subscribeOptimistic<{
 					trigger: 'manual' | 'auto';
 					preTokens: number;
 				}>(
@@ -229,11 +229,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					},
 					{ sessionId }
 				);
-				if (!isMounted) return;
 				cleanupFunctions.push(unsubContextCompacted);
 
-				// Error handling
-				const unsubSessionError = await hub.subscribe<{
+				// Error handling (NON-BLOCKING)
+				const unsubSessionError = hub.subscribeOptimistic<{
 					error: string;
 					errorDetails?: StructuredError;
 				}>(
@@ -269,11 +268,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					},
 					{ sessionId }
 				);
-				if (!isMounted) return;
 				cleanupFunctions.push(unsubSessionError);
 
-				// Subscribe to unified session state (includes agent state, commands, and context)
-				const unsubSessionState = await hub.subscribe<{
+				// Subscribe to unified session state - includes agent state, commands, and context (NON-BLOCKING)
+				const unsubSessionState = hub.subscribeOptimistic<{
 					session: Session;
 					agent: {
 						status: 'idle' | 'queued' | 'processing' | 'interrupted';
@@ -366,7 +364,6 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					},
 					{ sessionId }
 				);
-				if (!isMounted) return;
 				cleanupFunctions.push(unsubSessionState);
 			})
 			.catch((error) => {

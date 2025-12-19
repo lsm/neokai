@@ -7,6 +7,7 @@ import { borderColors } from '../lib/design-tokens.ts';
 import { Button } from '../components/ui/Button.tsx';
 import { SettingsModal } from '../components/SettingsModal.tsx';
 import SessionListItem from '../components/SessionListItem.tsx';
+import { ConnectionNotReadyError } from '../lib/errors.ts';
 
 const SESSIONS_PER_PAGE = 20;
 
@@ -51,6 +52,12 @@ export default function Sidebar() {
 	}, [showAllArchived]);
 
 	const handleCreateSession = async () => {
+		// CONNECTION GUARD: Check connection before attempting to create session
+		if (connectionState.value !== 'connected') {
+			toast.error('Not connected to server. Please wait...');
+			return;
+		}
+
 		setCreatingSession(true);
 
 		try {
@@ -91,8 +98,14 @@ export default function Sidebar() {
 			toast.success('Session created successfully');
 		} catch (err) {
 			console.error('[Sidebar] Error creating session:', err);
-			const message = err instanceof Error ? err.message : 'Failed to create session';
-			toast.error(message);
+
+			// Handle connection-specific errors
+			if (err instanceof ConnectionNotReadyError) {
+				toast.error('Connection lost. Please try again.');
+			} else {
+				const message = err instanceof Error ? err.message : 'Failed to create session';
+				toast.error(message);
+			}
 		} finally {
 			setCreatingSession(false);
 		}
@@ -158,7 +171,7 @@ export default function Sidebar() {
 					<Button
 						onClick={handleCreateSession}
 						loading={creatingSession}
-						disabled={!authStatus.value?.isAuthenticated}
+						disabled={!authStatus.value?.isAuthenticated || connectionState.value !== 'connected'}
 						fullWidth
 						icon={
 							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -171,7 +184,7 @@ export default function Sidebar() {
 							</svg>
 						}
 					>
-						New Session
+						{connectionState.value !== 'connected' ? 'Connecting...' : 'New Session'}
 					</Button>
 				</div>
 

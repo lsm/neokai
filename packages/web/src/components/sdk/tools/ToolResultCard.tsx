@@ -179,7 +179,7 @@ export function ToolResultCard({
 			// Count lines in output
 			const content =
 				typeof output === 'string' ? output : (outputRecord.content as string | undefined);
-			if (content) {
+			if (content && typeof content === 'string') {
 				const lineCount = content.split('\n').length;
 				return <span class="text-xs text-gray-600 dark:text-gray-400 font-mono">{lineCount}</span>;
 			}

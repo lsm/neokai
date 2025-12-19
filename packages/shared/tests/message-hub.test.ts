@@ -831,6 +831,192 @@ describe('MessageHub', () => {
 		});
 	});
 
+	describe('Optimistic Subscriptions (Non-blocking)', () => {
+		test('should subscribe synchronously and return immediately', () => {
+			const handler = mock((_data: unknown) => {});
+
+			const start = Date.now();
+			const unsubscribe = messageHub.subscribeOptimistic('user.created', handler, {
+				sessionId: 'test-session',
+			});
+			const elapsed = Date.now() - start;
+
+			// Should return immediately (< 10ms)
+			expect(elapsed).toBeLessThan(10);
+			expect(typeof unsubscribe).toBe('function');
+		});
+
+		test('should register handler locally immediately', () => {
+			const handler = mock((_data: unknown) => {});
+
+			messageHub.subscribeOptimistic('user.created', handler, { sessionId: 'test-session' });
+
+			const sessionSubs = (
+				messageHub as unknown as { subscriptions: Map<string, Map<string, Set<unknown>>> }
+			).subscriptions.get('test-session');
+			expect(sessionSubs).toBeDefined();
+			expect(sessionSubs?.has('user.created')).toBe(true);
+			expect(sessionSubs?.get('user.created')?.has(handler)).toBe(true);
+		});
+
+		test('should receive events matching subscription', async () => {
+			const handler = mock((_data: unknown) => {});
+
+			messageHub.subscribeOptimistic('user.created', handler, { sessionId: 'test-session' });
+
+			const eventMessage = createEventMessage({
+				method: 'user.created',
+				data: { userId: '123' },
+				sessionId: 'test-session',
+			});
+
+			transport.simulateMessage(eventMessage);
+
+			expect(handler).toHaveBeenCalledWith(
+				{ userId: '123' },
+				expect.objectContaining({
+					method: 'user.created',
+					sessionId: 'test-session',
+				})
+			);
+		});
+
+		test('should send SUBSCRIBE message to server in background', async () => {
+			const handler = mock((_data: unknown) => {});
+
+			transport.clearSentMessages();
+			messageHub.subscribeOptimistic('user.created', handler, { sessionId: 'test-session' });
+
+			// Wait for background send
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Should have sent SUBSCRIBE message
+			const subscribeMsg = transport.sentMessages.find(
+				(msg) => msg.type === MessageType.SUBSCRIBE && msg.method === 'user.created'
+			);
+			expect(subscribeMsg).toBeDefined();
+			expect(subscribeMsg?.sessionId).toBe('test-session');
+		});
+
+		test('should unsubscribe synchronously', async () => {
+			const handler = mock((_data: unknown) => {});
+
+			const unsubscribe = messageHub.subscribeOptimistic('user.created', handler, {
+				sessionId: 'test-session',
+			});
+
+			const start = Date.now();
+			unsubscribe();
+			const elapsed = Date.now() - start;
+
+			// Should be synchronous (< 10ms)
+			expect(elapsed).toBeLessThan(10);
+
+			// Handler should be removed
+			const eventMessage = createEventMessage({
+				method: 'user.created',
+				data: { userId: '123' },
+				sessionId: 'test-session',
+			});
+			transport.simulateMessage(eventMessage);
+
+			expect(handler).not.toHaveBeenCalled();
+		});
+
+		test('should send UNSUBSCRIBE message to server in background', async () => {
+			const handler = mock((_data: unknown) => {});
+
+			const unsubscribe = messageHub.subscribeOptimistic('user.created', handler, {
+				sessionId: 'test-session',
+			});
+
+			transport.clearSentMessages();
+			unsubscribe();
+
+			// Wait for background send
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Should have sent UNSUBSCRIBE message
+			const unsubscribeMsg = transport.sentMessages.find(
+				(msg) => msg.type === MessageType.UNSUBSCRIBE && msg.method === 'user.created'
+			);
+			expect(unsubscribeMsg).toBeDefined();
+		});
+
+		test('should persist subscription for auto-resubscription', () => {
+			const handler = mock((_data: unknown) => {});
+
+			messageHub.subscribeOptimistic('user.created', handler, { sessionId: 'test-session' });
+
+			const persistedSubs = (
+				messageHub as unknown as { persistedSubscriptions: Map<string, unknown> }
+			).persistedSubscriptions;
+			expect(persistedSubs.size).toBeGreaterThan(0);
+		});
+
+		test('should work when not connected (local-only subscription)', async () => {
+			transport.simulateStateChange('disconnected');
+
+			const handler = mock((_data: unknown) => {});
+
+			// Should not throw
+			const unsubscribe = messageHub.subscribeOptimistic('user.created', handler, {
+				sessionId: 'test-session',
+			});
+			expect(typeof unsubscribe).toBe('function');
+
+			// Handler should be registered locally
+			const sessionSubs = (
+				messageHub as unknown as { subscriptions: Map<string, Map<string, Set<unknown>>> }
+			).subscriptions.get('test-session');
+			expect(sessionSubs?.get('user.created')?.has(handler)).toBe(true);
+
+			unsubscribe();
+		});
+
+		test('should throw for invalid method name', () => {
+			const handler = mock((_data: unknown) => {});
+
+			expect(() => {
+				messageHub.subscribeOptimistic('', handler);
+			}).toThrow('Invalid method name');
+		});
+
+		test('should support multiple handlers for same event', async () => {
+			const handler1 = mock((_data: unknown) => {});
+			const handler2 = mock((_data: unknown) => {});
+
+			messageHub.subscribeOptimistic('user.created', handler1, { sessionId: 'test-session' });
+			messageHub.subscribeOptimistic('user.created', handler2, { sessionId: 'test-session' });
+
+			const eventMessage = createEventMessage({
+				method: 'user.created',
+				data: { userId: '123' },
+				sessionId: 'test-session',
+			});
+
+			transport.simulateMessage(eventMessage);
+
+			// Wait for async event handling to complete
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			expect(handler1).toHaveBeenCalled();
+			expect(handler2).toHaveBeenCalled();
+		});
+
+		test('should use default session ID when not specified', () => {
+			const handler = mock((_data: unknown) => {});
+
+			messageHub.subscribeOptimistic('user.created', handler);
+
+			// Default session ID is 'test-session' from beforeEach
+			const sessionSubs = (
+				messageHub as unknown as { subscriptions: Map<string, Map<string, Set<unknown>>> }
+			).subscriptions.get('test-session');
+			expect(sessionSubs?.get('user.created')?.has(handler)).toBe(true);
+		});
+	});
+
 	describe('Utility Methods', () => {
 		test('should get pending call count', async () => {
 			// No pending calls initially

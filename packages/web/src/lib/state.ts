@@ -168,6 +168,9 @@ class ApplicationState {
 	// Current session ID (from existing signal)
 	private currentSessionIdSignal = signal<string | null>(null);
 
+	// FIX: Track subscriptions to prevent memory leaks
+	private subscriptions: Array<() => void> = [];
+
 	/**
 	 * Initialize state management with MessageHub
 	 */
@@ -228,18 +231,24 @@ class ApplicationState {
 	 */
 	private setupCurrentSessionAutoLoad(): void {
 		// Watch for current session changes and auto-load channels
-		this.currentSessionIdSignal.subscribe((sessionId) => {
+		// FIX: Store the unsubscribe function to prevent memory leaks
+		const unsub = this.currentSessionIdSignal.subscribe((sessionId) => {
 			if (sessionId) {
 				// Ensure channels are loaded for current session
 				this.getSessionChannels(sessionId);
 			}
 		});
+		this.subscriptions.push(unsub);
 	}
 
 	/**
 	 * Cleanup all state
 	 */
 	cleanup(): void {
+		// FIX: Cleanup all signal subscriptions to prevent memory leaks
+		this.subscriptions.forEach((unsub) => unsub());
+		this.subscriptions = [];
+
 		// Stop global channels
 		this.global.value?.stop();
 		this.global.value = null;

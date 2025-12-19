@@ -551,6 +551,109 @@ export class MessageHub {
 		};
 	}
 
+	/**
+	 * Subscribe to events (OPTIMISTIC - non-blocking, returns immediately)
+	 *
+	 * NON-BLOCKING SUBSCRIPTION PROTOCOL:
+	 * - Registers handler locally immediately (synchronous)
+	 * - Sends SUBSCRIBE message to server in background (fire-and-forget)
+	 * - Returns unsubscribe function immediately (no waiting for ACK)
+	 * - Auto-resubscribes on reconnection
+	 *
+	 * USE CASE:
+	 * Use this when UI responsiveness is more important than subscription
+	 * confirmation. The slight delay before server-side events start flowing
+	 * is acceptable because local state will be used as fallback.
+	 *
+	 * @example
+	 * // Non-blocking subscription - returns immediately
+	 * const unsubscribe = hub.subscribeOptimistic('sdk.message', (data) => {
+	 *   console.log('SDK message:', data);
+	 * }, { sessionId: 'abc-123' });
+	 *
+	 * // Can unsubscribe synchronously
+	 * unsubscribe();
+	 */
+	subscribeOptimistic<TData = unknown>(
+		method: string,
+		handler: EventHandler<TData>,
+		options: SubscribeOptions = {}
+	): UnsubscribeFn {
+		const sessionId = options.sessionId || this.defaultSessionId;
+
+		if (!validateMethod(method)) {
+			throw new Error(`Invalid method name: ${method}`);
+		}
+
+		// Generate unique subscription ID
+		const subId = generateUUID();
+
+		// 1. Register handler locally IMMEDIATELY (synchronous - no blocking)
+		if (!this.subscriptions.has(sessionId)) {
+			this.subscriptions.set(sessionId, new Map());
+		}
+
+		const sessionSubs = this.subscriptions.get(sessionId)!;
+
+		if (!sessionSubs.has(method)) {
+			sessionSubs.set(method, new Set());
+		}
+
+		sessionSubs.get(method)!.add(handler as EventHandler);
+
+		this.log(
+			`Subscribed (optimistic) to: ${method} (session: ${sessionId}) - local handler registered`
+		);
+
+		// 2. Send SUBSCRIBE to server in BACKGROUND (fire-and-forget, non-blocking)
+		if (this.isConnected()) {
+			const subscribeMsg = createSubscribeMessage({
+				method,
+				sessionId,
+				id: subId,
+			});
+
+			// Fire and forget - don't wait for ACK
+			this.sendMessage(subscribeMsg).catch((error) => {
+				console.warn(`[MessageHub] Background SUBSCRIBE failed for ${method}:`, error);
+				// Handler is still registered locally - events will flow once server-side catches up
+			});
+		}
+
+		// 3. Persist subscription for auto-resubscription on reconnect
+		this.persistedSubscriptions.set(subId, {
+			method,
+			handler: handler as EventHandler,
+			options: { sessionId },
+			createdAt: Date.now(),
+		});
+
+		// 4. Return SYNCHRONOUS unsubscribe function (non-blocking)
+		return () => {
+			// Remove from active subscriptions immediately
+			sessionSubs.get(method)?.delete(handler as EventHandler);
+
+			// Remove from persisted subscriptions
+			this.persistedSubscriptions.delete(subId);
+
+			this.log(`Unsubscribed (optimistic) from: ${method} (session: ${sessionId})`);
+
+			// Send UNSUBSCRIBE to server in background (fire-and-forget)
+			if (this.isConnected()) {
+				const unsubscribeMsg = createUnsubscribeMessage({
+					method,
+					sessionId,
+					id: generateUUID(),
+				});
+
+				this.sendMessage(unsubscribeMsg).catch((error) => {
+					console.warn(`[MessageHub] Background UNSUBSCRIBE failed for ${method}:`, error);
+					// Local cleanup already done - server will eventually clean up stale subscriptions
+				});
+			}
+		};
+	}
+
 	// ========================================
 	// Hybrid Pattern (callAndPublish)
 	// ========================================

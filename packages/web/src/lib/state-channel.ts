@@ -52,6 +52,22 @@ export interface StateChannelOptions<T> {
 	 * Default: 5000
 	 */
 	optimisticTimeout?: number;
+
+	/**
+	 * Non-blocking subscription setup
+	 * If true, subscriptions are setup in background (fire-and-forget)
+	 * This improves startup time at the cost of possibly missing early events
+	 * Default: false
+	 */
+	nonBlocking?: boolean;
+
+	/**
+	 * Use optimistic subscriptions (subscribeOptimistic)
+	 * If true, uses non-blocking subscriptions that don't wait for server ACK
+	 * This provides the best UI responsiveness
+	 * Default: false
+	 */
+	useOptimisticSubscriptions?: boolean;
 }
 
 /**
@@ -91,22 +107,45 @@ export class StateChannel<T> {
 			refreshInterval: 0,
 			debug: false,
 			optimisticTimeout: 5000,
+			nonBlocking: false,
+			useOptimisticSubscriptions: false,
 			...options,
 		};
 	}
 
 	/**
 	 * Start syncing this channel
+	 *
+	 * Supports three modes:
+	 * 1. Blocking (default): Waits for snapshot AND subscriptions
+	 * 2. Non-blocking: Waits for snapshot, subscriptions setup in background
+	 * 3. Optimistic: Uses subscribeOptimistic for immediate local registration
 	 */
 	async start(): Promise<void> {
-		this.log(`Starting channel: ${this.channelName}`);
+		this.log(
+			`Starting channel: ${this.channelName} (nonBlocking: ${this.options.nonBlocking}, optimistic: ${this.options.useOptimisticSubscriptions})`
+		);
 
 		try {
-			// 1. Get initial snapshot
+			// 1. Get initial snapshot (always await - required for initial state)
 			await this.fetchSnapshot();
 
-			// 2. Subscribe to updates (now async)
-			await this.setupSubscriptions();
+			// 2. Subscribe to updates (behavior depends on options)
+			if (this.options.useOptimisticSubscriptions) {
+				// Optimistic: Use subscribeOptimistic for instant local registration
+				this.setupOptimisticSubscriptions();
+			} else if (this.options.nonBlocking) {
+				// Non-blocking: Setup subscriptions in background
+				this.setupSubscriptions().catch((err) => {
+					console.error(
+						`[StateChannel:${this.channelName}] Background subscription setup failed:`,
+						err
+					);
+				});
+			} else {
+				// Blocking (default): Wait for subscriptions
+				await this.setupSubscriptions();
+			}
 
 			// 3. Setup auto-refresh if configured
 			if (this.options.refreshInterval && this.options.refreshInterval > 0) {
@@ -403,12 +442,73 @@ export class StateChannel<T> {
 	}
 
 	/**
-	 * Setup subscriptions to state updates
+	 * Setup subscriptions to state updates (PARALLEL - uses Promise.all)
+	 *
+	 * This method was refactored from sequential awaits to parallel Promise.all
+	 * to reduce total subscription time from O(n*timeout) to O(timeout)
 	 */
 	private async setupSubscriptions(): Promise<void> {
-		// Subscribe to full updates
-		// IMPORTANT: hub.subscribe() returns a Promise<UnsubscribeFn>, must await it
-		const fullUpdateSub = await this.hub.subscribe<T>(
+		// Collect all subscription promises for parallel execution
+		const subscriptionPromises: Promise<UnsubscribeFn>[] = [];
+
+		// 1. Subscribe to full updates
+		subscriptionPromises.push(
+			this.hub.subscribe<T>(
+				this.channelName,
+				(data) => {
+					this.log(`Full update received: ${this.channelName}`, data);
+					this.state.value = data;
+					this.lastSync.value = Date.now();
+					this.error.value = null;
+				},
+				{ sessionId: this.options.sessionId }
+			)
+		);
+
+		// 2. Subscribe to delta updates if enabled
+		if (this.options.enableDeltas && this.options.mergeDelta) {
+			const deltaChannel = `${this.channelName}.delta`;
+			this.log(`Subscribing to delta channel: ${deltaChannel}`);
+
+			subscriptionPromises.push(
+				this.hub.subscribe<unknown>(
+					deltaChannel,
+					(delta) => {
+						this.log(`Delta update received: ${this.channelName}`, delta);
+
+						if (this.state.value && this.options.mergeDelta) {
+							this.state.value = this.options.mergeDelta(this.state.value, delta);
+							this.lastSync.value = Date.now();
+							this.error.value = null;
+						} else {
+							console.warn(
+								`[StateChannel:${this.channelName}] Cannot apply delta - state or mergeDelta missing`
+							);
+						}
+					},
+					{ sessionId: this.options.sessionId }
+				)
+			);
+		}
+
+		// Execute all subscriptions in parallel (reduces timeout from O(n) to O(1))
+		const results = await Promise.all(subscriptionPromises);
+		this.subscriptions.push(...results);
+
+		this.log(`Subscriptions setup complete: ${results.length} subscriptions`);
+	}
+
+	/**
+	 * Setup optimistic subscriptions (NON-BLOCKING - uses subscribeOptimistic)
+	 *
+	 * This method uses subscribeOptimistic for completely synchronous subscription
+	 * setup. Handlers are registered locally immediately, server ACKs happen in background.
+	 * This provides the best UI responsiveness at the cost of possibly missing
+	 * the first few events before server-side subscription is confirmed.
+	 */
+	private setupOptimisticSubscriptions(): void {
+		// 1. Subscribe to full updates (synchronous, immediate)
+		const fullUpdateSub = this.hub.subscribeOptimistic<T>(
 			this.channelName,
 			(data) => {
 				this.log(`Full update received: ${this.channelName}`, data);
@@ -421,38 +521,23 @@ export class StateChannel<T> {
 
 		this.subscriptions.push(fullUpdateSub);
 
-		// Subscribe to delta updates if enabled
+		// 2. Subscribe to delta updates if enabled (synchronous, immediate)
 		if (this.options.enableDeltas && this.options.mergeDelta) {
 			const deltaChannel = `${this.channelName}.delta`;
-			console.log(
-				`[StateChannel:${this.channelName}] Subscribing to delta channel:`,
-				deltaChannel,
-				'with sessionId:',
-				this.options.sessionId
-			);
+			this.log(`Subscribing (optimistic) to delta channel: ${deltaChannel}`);
 
-			const deltaUpdateSub = await this.hub.subscribe<unknown>(
+			const deltaUpdateSub = this.hub.subscribeOptimistic<unknown>(
 				deltaChannel,
 				(delta) => {
-					console.log(`[StateChannel:${this.channelName}] <<<< DELTA RECEIVED >>>>`, delta);
 					this.log(`Delta update received: ${this.channelName}`, delta);
 
 					if (this.state.value && this.options.mergeDelta) {
-						const oldState = this.state.value;
 						this.state.value = this.options.mergeDelta(this.state.value, delta);
-						console.log(`[StateChannel:${this.channelName}] State updated from delta:`, {
-							oldState,
-							newState: this.state.value,
-						});
 						this.lastSync.value = Date.now();
 						this.error.value = null;
 					} else {
 						console.warn(
-							`[StateChannel:${this.channelName}] Cannot apply delta - state or mergeDelta missing`,
-							{
-								hasState: !!this.state.value,
-								hasMergeDelta: !!this.options.mergeDelta,
-							}
+							`[StateChannel:${this.channelName}] Cannot apply delta - state or mergeDelta missing`
 						);
 					}
 				},
@@ -460,11 +545,9 @@ export class StateChannel<T> {
 			);
 
 			this.subscriptions.push(deltaUpdateSub);
-			console.log(
-				`[StateChannel:${this.channelName}] Successfully subscribed to delta channel:`,
-				deltaChannel
-			);
 		}
+
+		this.log(`Optimistic subscriptions setup complete`);
 	}
 
 	/**
