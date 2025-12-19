@@ -1228,6 +1228,17 @@ CRITICAL RULES:
 	}
 
 	/**
+	 * Get the SDK session ID from the query object
+	 * This is used to locate the .jsonl file in ~/.claude/projects/
+	 */
+	getSDKSessionId(): string | null {
+		if (!this.queryObject || !('sessionId' in this.queryObject)) {
+			return null;
+		}
+		return this.queryObject.sessionId as string;
+	}
+
+	/**
 	 * Get session data
 	 */
 	getSessionData(): Session {

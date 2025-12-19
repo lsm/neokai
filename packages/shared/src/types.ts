@@ -161,6 +161,7 @@ export interface SessionMetadata {
 	workspaceInitialized?: boolean; // Flag to track if workspace (title + worktree) has been initialized
 	lastContextInfo?: ContextInfo | null; // Last known context info (persisted)
 	inputDraft?: string; // Draft input text (persisted across sessions and devices)
+	removedOutputs?: string[]; // UUIDs of messages whose tool_result outputs were removed from SDK session file
 }
 
 // Message content types for streaming input (supports images)
