@@ -21,6 +21,7 @@ export class ProcessingStateManager {
 	private streamingPhase: StreamingPhase = 'initializing';
 	private streamingStartedAt: number | null = null;
 	private logger: Logger;
+	private onIdleCallback?: () => Promise<void>;
 
 	constructor(
 		private sessionId: string,
@@ -28,6 +29,14 @@ export class ProcessingStateManager {
 		private db: Database
 	) {
 		this.logger = new Logger(`ProcessingStateManager ${sessionId}`);
+	}
+
+	/**
+	 * Set callback to execute when state transitions to idle
+	 * Used for deferred restarts and other idle-triggered actions
+	 */
+	setOnIdleCallback(callback: () => Promise<void>): void {
+		this.onIdleCallback = callback;
 	}
 
 	/**
@@ -101,6 +110,16 @@ export class ProcessingStateManager {
 	 */
 	async setIdle(): Promise<void> {
 		await this.setState({ status: 'idle' });
+
+		// Execute idle callback if set (e.g., for deferred restarts)
+		if (this.onIdleCallback) {
+			try {
+				await this.onIdleCallback();
+			} catch (error) {
+				this.logger.error('Error in onIdle callback:', error);
+				// Don't re-throw - callback errors shouldn't break state transitions
+			}
+		}
 	}
 
 	/**

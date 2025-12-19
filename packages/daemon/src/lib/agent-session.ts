@@ -63,6 +63,10 @@ export class AgentSession {
 	// Track query promise for proper cleanup
 	private queryPromise: Promise<void> | null = null;
 
+	// Pending restart flag - tracks if restart is needed after agent becomes idle
+	// Reason: 'settings.local.json' when MCP configuration changed
+	private pendingRestartReason: 'settings.local.json' | null = null;
+
 	// Error manager for structured error handling
 	private errorManager: ErrorManager;
 
@@ -107,6 +111,11 @@ export class AgentSession {
 		// Set queue callback for automatic /context fetching
 		this.messageHandler.setQueueMessageCallback(async (content: string, internal: boolean) => {
 			return await this.messageQueue.enqueue(content, internal);
+		});
+
+		// Set callback to execute deferred restarts when agent becomes idle
+		this.stateManager.setOnIdleCallback(async () => {
+			await this.executeDeferredRestartIfPending();
 		});
 
 		// Restore persisted context info from session metadata (if available)
@@ -159,6 +168,32 @@ export class AgentSession {
 		);
 
 		this.unsubscribers.push(unsubscribe);
+	}
+
+	/**
+	 * Check and execute deferred restart if pending
+	 *
+	 * Called after agent becomes idle to check if there's a pending restart.
+	 * This is invoked from the message processing loop when state transitions to idle.
+	 */
+	private async executeDeferredRestartIfPending(): Promise<void> {
+		// If no pending restart, nothing to do
+		if (!this.pendingRestartReason) {
+			return;
+		}
+
+		const reason = this.pendingRestartReason;
+		this.pendingRestartReason = null; // Clear flag before executing
+
+		this.logger.log(`Agent became idle, executing deferred restart (reason: ${reason})`);
+
+		try {
+			await this.doActualRestart();
+			this.logger.log(`Deferred restart completed successfully (${reason})`);
+		} catch (error) {
+			this.logger.error(`Deferred restart failed (${reason}):`, error);
+			// Don't re-throw - already logged
+		}
 	}
 
 	/**
@@ -817,8 +852,8 @@ CRITICAL RULES:
 			// ============================================================================
 			// MCP server enable/disable is controlled via file-based settings:
 			// - disabledMcpServers → written to .claude/settings.local.json as disabledMcpjsonServers
-			// - SDK reads this file and handles server filtering automatically
-			// - No query restart needed - changes take effect on next SDK turn
+			// - SDK reads this file at query initialization time
+			// - Query restart IS required for changes to take effect (implemented in updateToolsConfig)
 			//
 			// We only use query option mcpServers:{} for legacy complete MCP disable
 			const mcpServers: Options['mcpServers'] =
@@ -1319,13 +1354,16 @@ CRITICAL RULES:
 			this.db.updateSession(this.session.id, { config: newConfig });
 
 			// 2. Write MCP settings to .claude/settings.local.json (file-based approach)
-			// SDK reads this file on each turn, so changes take effect without query restart
+			// Then restart query to reload settings (SDK only reads settings at initialization)
 			if (tools?.disabledMcpServers !== undefined) {
 				this.logger.log(
 					`Writing disabledMcpServers to settings.local.json:`,
 					tools.disabledMcpServers
 				);
 				await this.settingsManager.setDisabledMcpServers(tools.disabledMcpServers);
+
+				// Restart query to reload MCP settings (SDK only reads settings files at query init)
+				await this.restartQuery();
 			}
 
 			// 3. Queue /context to get updated context breakdown (if query is running)
@@ -1352,6 +1390,102 @@ CRITICAL RULES:
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 			this.logger.error(`Failed to update tools config:`, error);
 			return { success: false, error: errorMessage };
+		}
+	}
+
+	/**
+	 * Restart SDK query to reload settings from .claude/settings.local.json
+	 *
+	 * This is necessary when MCP configuration changes (enabling/disabling servers)
+	 * because the SDK only reads settings files at query initialization time.
+	 *
+	 * Smart restart strategy:
+	 * - If agent is IDLE: Restart immediately
+	 * - If agent is PROCESSING: Queue restart, execute when agent becomes idle
+	 *
+	 * This ensures we never interrupt active agent responses.
+	 */
+	private async restartQuery(): Promise<void> {
+		this.logger.log(`Restart requested to reload settings.local.json`);
+
+		// If query hasn't started yet, no need to restart
+		if (!this.messageQueue.isRunning() || !this.queryObject) {
+			this.logger.log(`Query not running, skipping restart`);
+			return;
+		}
+
+		// Check current processing state
+		const currentState = this.stateManager.getState();
+
+		// If agent is actively processing, queue the restart for later
+		if (currentState.status === 'processing') {
+			this.logger.log(
+				`Agent is processing (phase: ${currentState.phase}), queuing restart for when idle`
+			);
+			this.pendingRestartReason = 'settings.local.json';
+			return;
+		}
+
+		// Agent is idle or queued, restart immediately
+		this.logger.log(`Agent is ${currentState.status}, restarting immediately`);
+		await this.doActualRestart();
+	}
+
+	/**
+	 * Execute the actual query restart
+	 *
+	 * This method does the heavy lifting:
+	 * 1. Stop the message queue
+	 * 2. Interrupt current query
+	 * 3. Wait for termination
+	 * 4. Clear query object
+	 * 5. Start fresh query (SDK re-reads settings.local.json)
+	 */
+	private async doActualRestart(): Promise<void> {
+		this.logger.log(`Executing query restart...`);
+
+		try {
+			// 1. Stop the message queue (no new messages processed)
+			this.messageQueue.stop();
+			this.logger.log(`Message queue stopped`);
+
+			// 2. Interrupt current query using SDK method
+			if (this.queryObject && typeof this.queryObject.interrupt === 'function') {
+				try {
+					await this.queryObject.interrupt();
+					this.logger.log(`Query interrupted successfully`);
+				} catch (interruptError) {
+					this.logger.warn(`Query interrupt failed:`, interruptError);
+					// Continue - query might already be stopped
+				}
+			}
+
+			// 3. Wait for query promise to resolve (with timeout)
+			if (this.queryPromise) {
+				try {
+					await Promise.race([
+						this.queryPromise,
+						new Promise((resolve) => setTimeout(resolve, 5000)), // 5s timeout
+					]);
+					this.logger.log(`Previous query terminated`);
+				} catch (error) {
+					this.logger.warn(`Error waiting for query termination:`, error);
+				}
+			}
+
+			// 4. Clear query object and promise
+			this.queryObject = null;
+			this.queryPromise = null;
+
+			// 5. Start new query (SDK will re-read settings.local.json)
+			// This calls runQuery() which creates a fresh query with updated MCP settings
+			await this.startStreamingQuery();
+
+			this.logger.log(`Query restarted successfully with fresh MCP settings`);
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			this.logger.error(`Failed to restart query:`, error);
+			throw new Error(`Query restart failed: ${errorMessage}`);
 		}
 	}
 
