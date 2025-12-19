@@ -51,8 +51,14 @@ export class SessionManager {
 				needsWorkspaceInit: boolean;
 				hasDraftToClear: boolean;
 			}) => {
-				const { sessionId, messageId, messageContent, userMessageText, needsWorkspaceInit, hasDraftToClear } =
-					data;
+				const {
+					sessionId,
+					messageId,
+					messageContent,
+					userMessageText,
+					needsWorkspaceInit,
+					hasDraftToClear,
+				} = data;
 
 				this.log(`[SessionManager] Processing user-message:persisted for session ${sessionId}`);
 
@@ -82,7 +88,9 @@ export class SessionManager {
 						} as Partial<Session>);
 					}
 
-					this.log(`[SessionManager] Message ${messageId} processing initiated for session ${sessionId}`);
+					this.log(
+						`[SessionManager] Message ${messageId} processing initiated for session ${sessionId}`
+					);
 				} catch (error) {
 					this.error(`[SessionManager] Error processing message for session ${sessionId}:`, error);
 					// Errors are non-fatal - the user message is already persisted and visible
