@@ -15,6 +15,7 @@ import { Database } from '../storage/database';
 import { ErrorCategory, ErrorManager } from './error-manager';
 import { Logger } from './logger';
 import { isValidModel, resolveModelAlias, getModelInfo } from './model-service';
+import type { SettingsManager } from './settings-manager';
 
 // New extracted components
 import { MessageQueue } from './message-queue';
@@ -71,6 +72,7 @@ export class AgentSession {
 		private session: Session,
 		private db: Database,
 		private messageHub: MessageHub,
+		private settingsManager: SettingsManager,
 		private eventBus: EventBus,
 		private getApiKey: () => Promise<string | null>
 	) {
@@ -812,29 +814,42 @@ CRITICAL RULES:
 
 			// ============================================================================
 			// MCP Servers Configuration
-			// SDK option: mcpServers
 			// ============================================================================
-			// CRITICAL: Control MCP server loading explicitly
-			// When loadProjectMcp is false, pass empty mcpServers to prevent SDK from
-			// auto-loading .mcp.json. This prevents MCP tool definitions from consuming
-			// context tokens when MCP is disabled.
-			// Note: allowedTools only controls what Claude can USE, not what's LOADED.
-			const mcpServers: Options['mcpServers'] = toolsConfig?.loadProjectMcp
-				? undefined // Let SDK load from .mcp.json
-				: {}; // Explicitly disable MCP loading
+			// MCP server enable/disable is controlled via file-based settings:
+			// - disabledMcpServers → written to .claude/settings.local.json as disabledMcpjsonServers
+			// - SDK reads this file and handles server filtering automatically
+			// - No query restart needed - changes take effect on next SDK turn
+			//
+			// We only use query option mcpServers:{} for legacy complete MCP disable
+			const mcpServers: Options['mcpServers'] =
+				toolsConfig?.loadProjectMcp === false
+					? {} // Legacy: completely disable MCP loading
+					: undefined; // Let SDK auto-load and apply file-based disabledMcpjsonServers
+
+			// ============================================================================
+			// Prepare Settings (File-only + SDK Options)
+			// ============================================================================
+			// This writes file-only settings to .claude/settings.local.json and returns
+			// SDK-supported options to merge with query options
+			const sdkSettingsOptions = await this.settingsManager.prepareSDKOptions();
 
 			// ============================================================================
 			// Build Final Query Options
 			// ============================================================================
+			// First merge settings-derived options, then override with session-specific options
+			// Session-specific options take precedence over global settings
 			const queryOptions: Options = {
-				model: this.session.config.model,
+				// Start with settings-derived options (from global settings)
+				...sdkSettingsOptions,
+				// Override with session-specific options (these take precedence)
+				model: this.session.config.model, // Session model always wins
 				cwd: this.session.worktree
 					? this.session.worktree.worktreePath
 					: this.session.workspacePath,
 				permissionMode: 'bypassPermissions',
 				allowDangerouslySkipPermissions: true,
 				maxTurns: Infinity,
-				settingSources,
+				settingSources, // Session settingSources always wins
 				systemPrompt: systemPromptConfig,
 				disallowedTools: disallowedTools.length > 0 ? disallowedTools : undefined,
 				mcpServers,
@@ -1295,9 +1310,6 @@ CRITICAL RULES:
 	async updateToolsConfig(
 		tools: Session['config']['tools']
 	): Promise<{ success: boolean; error?: string }> {
-		const timeout = 10000; // 10 second timeout
-		const startTime = Date.now();
-
 		try {
 			this.logger.log(`Updating tools config:`, tools);
 
@@ -1306,66 +1318,21 @@ CRITICAL RULES:
 			this.session.config = newConfig;
 			this.db.updateSession(this.session.id, { config: newConfig });
 
-			// Check timeout
-			if (Date.now() - startTime > timeout) {
-				throw new Error('Operation timed out during config update');
+			// 2. Write MCP settings to .claude/settings.local.json (file-based approach)
+			// SDK reads this file on each turn, so changes take effect without query restart
+			if (tools?.disabledMcpServers !== undefined) {
+				this.logger.log(
+					`Writing disabledMcpServers to settings.local.json:`,
+					tools.disabledMcpServers
+				);
+				await this.settingsManager.setDisabledMcpServers(tools.disabledMcpServers);
 			}
 
-			// 2. If query is running, stop it
+			// 3. Queue /context to get updated context breakdown (if query is running)
+			// This shows the user what changed in their tools
 			if (this.messageQueue.isRunning()) {
-				this.logger.log(`Stopping current query to apply new config...`);
-
-				// Signal queue to stop
-				this.messageQueue.stop();
-
-				// Interrupt query using SDK method
-				if (this.queryObject && typeof this.queryObject.interrupt === 'function') {
-					try {
-						await Promise.race([
-							this.queryObject.interrupt(),
-							new Promise((_, reject) =>
-								setTimeout(() => reject(new Error('Interrupt timed out')), 5000)
-							),
-						]);
-					} catch (error) {
-						this.logger.warn(`Interrupt during tools update:`, error);
-					}
-				}
-
-				// Wait for query to fully stop (with timeout)
-				if (this.queryPromise) {
-					try {
-						await Promise.race([
-							this.queryPromise,
-							new Promise((resolve) => setTimeout(resolve, 5000)),
-						]);
-					} catch (error) {
-						this.logger.warn(`Query stop error:`, error);
-					}
-					this.queryPromise = null;
-				}
-
-				// Reset query object
-				this.queryObject = null;
-
-				// Check timeout
-				if (Date.now() - startTime > timeout) {
-					throw new Error('Operation timed out while stopping query');
-				}
-
-				// 3. Restart the query with new config
-				this.logger.log(`Restarting query with new tools config...`);
-
-				// Reset commands fetched flag so they get refreshed
-				this.commandsFetchedFromSDK = false;
-
-				// Restart the query
-				await this.startStreamingQuery();
-
-				// 4. Queue internal /context command to get updated context breakdown
-				// This is needed because tools changes affect context (MCP tools tokens, etc.)
 				try {
-					this.logger.log(`Queuing /context for updated context breakdown after tools change...`);
+					this.logger.log(`Queuing /context for updated context breakdown...`);
 					await this.messageQueue.enqueue('/context', true);
 				} catch (contextError) {
 					// Non-critical - just log the error
@@ -1373,7 +1340,7 @@ CRITICAL RULES:
 				}
 			}
 
-			// Emit event for StateManager to broadcast updated session state
+			// 4. Emit event for StateManager to broadcast updated session state
 			await this.eventBus.emit('session:updated', {
 				sessionId: this.session.id,
 				updates: { config: this.session.config },
