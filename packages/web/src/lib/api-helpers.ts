@@ -143,3 +143,61 @@ export async function getAuthStatus(): Promise<GetAuthStatusResponse> {
 	const hub = await connectionManager.getHub();
 	return await hub.call<GetAuthStatusResponse>('auth.status');
 }
+
+// ==================== Settings Operations ====================
+
+export async function getGlobalSettings(): Promise<import('@liuboer/shared').GlobalSettings> {
+	const hub = await connectionManager.getHub();
+	return await hub.call<import('@liuboer/shared').GlobalSettings>('settings.global.get');
+}
+
+export async function updateGlobalSettings(
+	updates: Partial<import('@liuboer/shared').GlobalSettings>
+): Promise<{ success: boolean; settings: import('@liuboer/shared').GlobalSettings }> {
+	const hub = await connectionManager.getHub();
+	return await hub.call<{ success: boolean; settings: import('@liuboer/shared').GlobalSettings }>(
+		'settings.global.update',
+		{ updates }
+	);
+}
+
+export async function toggleMcpServer(
+	serverName: string,
+	enabled: boolean
+): Promise<{ success: boolean }> {
+	const hub = await connectionManager.getHub();
+	return await hub.call<{ success: boolean }>('settings.mcp.toggle', { serverName, enabled });
+}
+
+export async function getDisabledMcpServers(): Promise<{ disabledServers: string[] }> {
+	const hub = await connectionManager.getHub();
+	return await hub.call<{ disabledServers: string[] }>('settings.mcp.getDisabled');
+}
+
+export interface McpServerFromSource {
+	name: string;
+	source: import('@liuboer/shared').SettingSource;
+	command?: string;
+	args?: string[];
+}
+
+export interface McpServersFromSourcesResponse {
+	servers: Record<import('@liuboer/shared').SettingSource, McpServerFromSource[]>;
+	serverSettings: Record<string, { allowed?: boolean; defaultOn?: boolean }>;
+}
+
+export async function listMcpServersFromSources(): Promise<McpServersFromSourcesResponse> {
+	const hub = await connectionManager.getHub();
+	return await hub.call<McpServersFromSourcesResponse>('settings.mcp.listFromSources');
+}
+
+export async function updateMcpServerSettings(
+	serverName: string,
+	settings: { allowed?: boolean; defaultOn?: boolean }
+): Promise<{ success: boolean }> {
+	const hub = await connectionManager.getHub();
+	return await hub.call<{ success: boolean }>('settings.mcp.updateServerSettings', {
+		serverName,
+		settings,
+	});
+}

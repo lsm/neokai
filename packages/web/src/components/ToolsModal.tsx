@@ -3,8 +3,8 @@
  *
  * Configure tools for the current session:
  * - System Prompt: Claude Code preset
- * - Setting Sources: Project settings (CLAUDE.md, .claude/settings.json)
- * - MCP Tools: Individual MCP servers from .mcp.json
+ * - Setting Sources: User/Project/Local settings selection
+ * - MCP Servers: Dynamic list from selected setting sources
  * - Liuboer Tools: Memory (configurable)
  * - SDK Built-in: Always enabled, shown for information only
  *
@@ -19,7 +19,12 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import { Modal } from './ui/Modal.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
-import type { Session, ToolsConfig, GlobalToolsConfig } from '@liuboer/shared';
+import type { Session, ToolsConfig, GlobalToolsConfig, SettingSource } from '@liuboer/shared';
+import {
+	listMcpServersFromSources,
+	type McpServerFromSource,
+	type McpServersFromSourcesResponse,
+} from '../lib/api-helpers.ts';
 
 interface ToolsModalProps {
 	isOpen: boolean;
@@ -27,28 +32,54 @@ interface ToolsModalProps {
 	session: Session | null;
 }
 
+// Setting source options with descriptions
+const SETTING_SOURCE_OPTIONS: Array<{ value: SettingSource; label: string; description: string }> =
+	[
+		{ value: 'user', label: 'User', description: 'Load settings from ~/.claude/' },
+		{ value: 'project', label: 'Project', description: 'Load settings from .claude/ in workspace' },
+		{
+			value: 'local',
+			label: 'Local',
+			description: 'Load settings from .claude/settings.local.json',
+		},
+	];
+
+// Source label mapping
+const SOURCE_LABELS: Record<SettingSource, string> = {
+	user: 'User (~/.claude/)',
+	project: 'Project (.claude/)',
+	local: 'Local (.claude/settings.local.json)',
+};
+
 export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
-	const loading = useSignal(false);
 	const saving = useSignal(false);
 	const hasChanges = useSignal(false);
-	const mcpServers = useSignal<Record<string, unknown>>({});
+	const mcpLoading = useSignal(true);
+	const mcpServersData = useSignal<McpServersFromSourcesResponse | null>(null);
 	const globalConfig = useSignal<GlobalToolsConfig | null>(null);
 
 	// Local state for editing
 	const useClaudeCodePreset = useSignal(true);
-	const loadSettingSources = useSignal(true);
-	const loadProjectMcp = useSignal(false);
-	const enabledMcpPatterns = useSignal<string[]>([]);
+	const settingSources = useSignal<SettingSource[]>(['user', 'project', 'local']);
+	// List of disabled MCP server names (unchecked servers)
+	// This is the inverse of the old enabledMcpPatterns approach
+	const disabledMcpServers = useSignal<string[]>([]);
 	const memoryEnabled = useSignal(false);
 
 	// Load current config and MCP servers when modal opens
 	useEffect(() => {
 		if (isOpen && session) {
 			loadConfig();
-			loadMcpServers();
 			loadGlobalConfig();
 		}
 	}, [isOpen, session?.id]);
+
+	// Reload MCP servers when setting sources change
+	useEffect(() => {
+		if (isOpen) {
+			loadMcpServers();
+		}
+	}, [isOpen, settingSources.value]);
 
 	const loadConfig = () => {
 		if (!session) return;
@@ -56,31 +87,32 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		const tools = session.config.tools;
 		// Handle both old and new config format for backward compatibility
 		useClaudeCodePreset.value = tools?.useClaudeCodePreset ?? true;
-		// Support old loadProjectSettings for backward compat, prefer new loadSettingSources
-		const oldLoadProjectSettings = (tools as Record<string, unknown> | undefined)
-			?.loadProjectSettings as boolean | undefined;
-		loadSettingSources.value = tools?.loadSettingSources ?? oldLoadProjectSettings ?? true;
-		loadProjectMcp.value = tools?.loadProjectMcp ?? false;
-		enabledMcpPatterns.value = tools?.enabledMcpPatterns ?? [];
+		// New settingSources field or fall back to legacy loadSettingSources behavior
+		if (tools?.settingSources) {
+			settingSources.value = tools.settingSources;
+		} else if (tools?.loadSettingSources !== false) {
+			// Legacy: if loadSettingSources was true or undefined, enable all sources
+			settingSources.value = ['user', 'project', 'local'];
+		} else {
+			// Legacy: loadSettingSources was explicitly false
+			settingSources.value = [];
+		}
+		// Load disabled MCP servers (new approach)
+		disabledMcpServers.value = tools?.disabledMcpServers ?? [];
 		memoryEnabled.value = tools?.liuboerTools?.memory ?? false;
 		hasChanges.value = false;
 	};
 
 	const loadMcpServers = async () => {
-		if (!session) return;
-
 		try {
-			loading.value = true;
-			const hub = await connectionManager.getHub();
-			const response = await hub.call<{ servers: Record<string, unknown> }>('mcp.listServers', {
-				sessionId: session.id,
-			});
-			mcpServers.value = response.servers;
+			mcpLoading.value = true;
+			const response = await listMcpServersFromSources();
+			mcpServersData.value = response;
 		} catch (error) {
 			console.error('Failed to load MCP servers:', error);
-			mcpServers.value = {};
+			mcpServersData.value = null;
 		} finally {
-			loading.value = false;
+			mcpLoading.value = false;
 		}
 	};
 
@@ -94,29 +126,28 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		}
 	};
 
-	const serverNames = useComputed(() => Object.keys(mcpServers.value));
-
 	// Check if tools are allowed based on global config
 	const isClaudeCodePresetAllowed = useComputed(
 		() => globalConfig.value?.systemPrompt?.claudeCodePreset?.allowed ?? true
-	);
-	const isSettingSourcesAllowed = useComputed(
-		() => globalConfig.value?.settingSources?.project?.allowed ?? true
 	);
 	const isMcpAllowed = useComputed(() => globalConfig.value?.mcp?.allowProjectMcp ?? true);
 	const isMemoryAllowed = useComputed(
 		() => globalConfig.value?.liuboerTools?.memory?.allowed ?? true
 	);
 
-	const isPatternEnabled = (pattern: string): boolean => {
-		return enabledMcpPatterns.value.includes(pattern);
+	// Check if a server is enabled (not in disabled list)
+	const isServerEnabled = (serverName: string): boolean => {
+		return !disabledMcpServers.value.includes(serverName);
 	};
 
-	const togglePattern = (pattern: string) => {
-		if (enabledMcpPatterns.value.includes(pattern)) {
-			enabledMcpPatterns.value = enabledMcpPatterns.value.filter((p) => p !== pattern);
+	// Toggle server enabled/disabled state
+	const toggleServer = (serverName: string) => {
+		if (disabledMcpServers.value.includes(serverName)) {
+			// Currently disabled → enable (remove from disabled list)
+			disabledMcpServers.value = disabledMcpServers.value.filter((s) => s !== serverName);
 		} else {
-			enabledMcpPatterns.value = [...enabledMcpPatterns.value, pattern];
+			// Currently enabled → disable (add to disabled list)
+			disabledMcpServers.value = [...disabledMcpServers.value, serverName];
 		}
 		hasChanges.value = true;
 	};
@@ -126,13 +157,22 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		hasChanges.value = true;
 	};
 
-	const toggleSettingSources = () => {
-		loadSettingSources.value = !loadSettingSources.value;
+	const toggleSettingSource = (source: SettingSource, enabled: boolean) => {
+		if (enabled) {
+			if (!settingSources.value.includes(source)) {
+				settingSources.value = [...settingSources.value, source];
+			}
+		} else {
+			// Ensure at least one source is enabled
+			const newSources = settingSources.value.filter((s) => s !== source);
+			if (newSources.length === 0) {
+				toast.error('At least one setting source must be enabled');
+				return;
+			}
+			settingSources.value = newSources;
+		}
 		hasChanges.value = true;
 	};
-
-	// Note: loadProjectMcp is auto-synced with enabledMcpPatterns in handleSave()
-	// No separate toggle needed - MCP loading is enabled when any patterns are enabled
 
 	const toggleMemory = () => {
 		memoryEnabled.value = !memoryEnabled.value;
@@ -145,16 +185,14 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		try {
 			saving.value = true;
 
-			// Auto-sync loadProjectMcp with enabledMcpPatterns:
-			// - Enable MCP loading only when there are enabled patterns
-			// - This ensures unchecking all MCP servers actually prevents MCP from loading
-			const shouldLoadMcp = enabledMcpPatterns.value.length > 0;
-
+			// Build tools config with the new file-based approach
+			// disabledMcpServers is written to .claude/settings.local.json
+			// SDK reads this file and applies server filtering automatically
 			const toolsConfig: ToolsConfig = {
 				useClaudeCodePreset: useClaudeCodePreset.value,
-				loadSettingSources: loadSettingSources.value,
-				loadProjectMcp: shouldLoadMcp,
-				enabledMcpPatterns: enabledMcpPatterns.value,
+				settingSources: settingSources.value,
+				// List of unchecked servers → written to settings.local.json as disabledMcpjsonServers
+				disabledMcpServers: disabledMcpServers.value,
 				liuboerTools: {
 					memory: memoryEnabled.value,
 				},
@@ -242,102 +280,124 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 				{/* Setting Sources Section */}
 				<div>
 					<h3 class="text-sm font-medium text-gray-300 mb-2">Setting Sources</h3>
-					<p class="text-xs text-gray-500 mb-3">Load configuration files from the workspace.</p>
+					<p class="text-xs text-gray-500 mb-3">
+						Choose which configuration sources to load for this session.
+					</p>
 					<div class="space-y-2">
-						{/* Project Settings Toggle */}
-						<label
-							class={`flex items-center justify-between p-3 rounded-lg bg-dark-800/50 transition-colors ${
-								isSettingSourcesAllowed.value
-									? 'hover:bg-dark-800 cursor-pointer'
-									: 'opacity-50 cursor-not-allowed'
-							}`}
-						>
-							<div class="flex items-center gap-3">
-								<svg
-									class="w-5 h-5 text-orange-400"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke="currentColor"
+						{SETTING_SOURCE_OPTIONS.map((option) => {
+							const isEnabled = settingSources.value.includes(option.value);
+							return (
+								<label
+									key={option.value}
+									class={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+										isEnabled
+											? `${borderColors.ui.secondary} bg-dark-800`
+											: 'border-dark-700 bg-dark-900 opacity-60'
+									}`}
 								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+									<input
+										type="checkbox"
+										checked={isEnabled}
+										onChange={(e) =>
+											toggleSettingSource(option.value, (e.target as HTMLInputElement).checked)
+										}
+										class="mt-0.5 w-4 h-4 rounded border-gray-600 bg-dark-900 text-blue-500 focus:ring-blue-500 focus:ring-offset-0"
 									/>
-								</svg>
-								<div>
-									<div class="text-sm text-gray-200">Project Settings</div>
-									<div class="text-xs text-gray-500">
-										Load CLAUDE.md, .claude/settings.json from workspace
+									<div class="flex-1">
+										<div class="text-sm text-gray-200 font-medium">{option.label}</div>
+										<div class="text-xs text-gray-500">{option.description}</div>
 									</div>
-								</div>
-							</div>
-							<input
-								type="checkbox"
-								checked={loadSettingSources.value}
-								onChange={toggleSettingSources}
-								disabled={!isSettingSourcesAllowed.value}
-								class="w-5 h-5 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
-							/>
-						</label>
+								</label>
+							);
+						})}
 					</div>
 				</div>
 
 				{/* Divider */}
 				<div class={`border-t ${borderColors.ui.secondary}`} />
 
-				{/* MCP Tools Section */}
+				{/* MCP Servers Section - Dynamic from setting sources */}
 				<div>
 					<h3 class="text-sm font-medium text-gray-300 mb-2">MCP Servers</h3>
-					<p class="text-xs text-gray-500 mb-3">External tool servers from .mcp.json</p>
+					<p class="text-xs text-gray-500 mb-3">
+						MCP servers from enabled setting sources. Enable servers you want to use in this
+						session.
+					</p>
 
-					{/* MCP Servers List (always visible when MCP allowed) */}
 					{!isMcpAllowed.value ? (
 						<div class="text-sm text-gray-500 py-2 italic">
 							MCP servers are disabled in global settings.
 						</div>
-					) : loading.value ? (
+					) : mcpLoading.value ? (
 						<div class="flex items-center gap-2 text-sm text-gray-400 py-2">
 							<div class="w-4 h-4 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
 							Loading servers...
 						</div>
-					) : serverNames.value.length === 0 ? (
-						<div class="text-sm text-gray-500 py-2">No MCP servers found in .mcp.json</div>
-					) : (
-						<div class="space-y-2">
-							{serverNames.value.map((serverName) => (
-								<label
-									key={serverName}
-									class="flex items-center justify-between p-3 rounded-lg bg-dark-800/50 hover:bg-dark-800 transition-colors cursor-pointer"
-								>
-									<div class="flex items-center gap-3">
-										<svg
-											class="w-5 h-5 text-green-400"
-											fill="none"
-											viewBox="0 0 24 24"
-											stroke="currentColor"
-										>
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width={2}
-												d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"
-											/>
-										</svg>
-										<div>
-											<div class="text-sm text-gray-200">{serverName}</div>
+					) : mcpServersData.value ? (
+						<div class="space-y-3">
+							{/* Group servers by source */}
+							{(['user', 'project', 'local'] as SettingSource[])
+								.filter((source) => settingSources.value.includes(source))
+								.map((source) => {
+									const serversForSource = mcpServersData.value?.servers[source] || [];
+									if (serversForSource.length === 0) return null;
+
+									return (
+										<div key={source} class="space-y-2">
+											<div class="text-xs font-medium text-gray-400 uppercase tracking-wider">
+												{SOURCE_LABELS[source]}
+											</div>
+											<div class="space-y-1">
+												{serversForSource.map((server: McpServerFromSource) => (
+													<label
+														key={`${source}-${server.name}`}
+														class="flex items-center justify-between p-2 rounded-lg bg-dark-800/50 hover:bg-dark-800 transition-colors cursor-pointer"
+													>
+														<div class="flex items-center gap-2 flex-1 min-w-0">
+															<svg
+																class="w-4 h-4 text-purple-400 flex-shrink-0"
+																fill="none"
+																viewBox="0 0 24 24"
+																stroke="currentColor"
+															>
+																<path
+																	stroke-linecap="round"
+																	stroke-linejoin="round"
+																	stroke-width={2}
+																	d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"
+																/>
+															</svg>
+															<div class="flex-1 min-w-0">
+																<div class="text-sm text-gray-200 truncate">{server.name}</div>
+																{server.command && (
+																	<div class="text-xs text-gray-500 truncate">{server.command}</div>
+																)}
+															</div>
+														</div>
+														<input
+															type="checkbox"
+															checked={isServerEnabled(server.name)}
+															onChange={() => toggleServer(server.name)}
+															class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+														/>
+													</label>
+												))}
+											</div>
 										</div>
-									</div>
-									<input
-										type="checkbox"
-										checked={isPatternEnabled(`mcp__${serverName}__*`)}
-										onChange={() => togglePattern(`mcp__${serverName}__*`)}
-										class="w-5 h-5 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
-									/>
-								</label>
-							))}
+									);
+								})}
+
+							{/* No servers message */}
+							{(['user', 'project', 'local'] as SettingSource[])
+								.filter((source) => settingSources.value.includes(source))
+								.every((source) => (mcpServersData.value?.servers[source] || []).length === 0) && (
+								<div class="text-xs text-gray-500 py-2 text-center">
+									No MCP servers found in enabled setting sources.
+								</div>
+							)}
 						</div>
+					) : (
+						<div class="text-xs text-gray-500 py-2">Failed to load MCP servers.</div>
 					)}
 				</div>
 

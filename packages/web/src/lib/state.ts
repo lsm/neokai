@@ -17,6 +17,7 @@ import type { SDKMessage } from '@liuboer/shared/sdk';
 import type {
 	SessionsState,
 	SystemState,
+	SettingsState,
 	SessionState,
 	SDKMessagesState,
 	AgentProcessingState,
@@ -35,6 +36,9 @@ class GlobalStateChannels {
 
 	// Unified system state (auth + config + health)
 	system: StateChannel<SystemState>;
+
+	// Global settings
+	settings: StateChannel<SettingsState>;
 
 	constructor(private hub: MessageHub) {
 		// Initialize channels with delta support
@@ -65,13 +69,20 @@ class GlobalStateChannels {
 			refreshInterval: 30000, // Refresh every 30s (for health uptime)
 			debug: true, // Enable debug to see what's happening
 		});
+
+		// Global settings channel
+		this.settings = new StateChannel<SettingsState>(hub, STATE_CHANNELS.GLOBAL_SETTINGS, {
+			sessionId: 'global',
+			enableDeltas: false, // Settings are small, full updates are fine
+			debug: true,
+		});
 	}
 
 	/**
 	 * Start all global channels
 	 */
 	async start(): Promise<void> {
-		await Promise.all([this.sessions.start(), this.system.start()]);
+		await Promise.all([this.sessions.start(), this.system.start(), this.settings.start()]);
 	}
 
 	/**
@@ -80,6 +91,7 @@ class GlobalStateChannels {
 	stop(): void {
 		this.sessions.stop();
 		this.system.stop();
+		this.settings.stop();
 	}
 }
 
@@ -300,6 +312,13 @@ export const apiConnectionStatus = computed<import('@liuboer/shared').ApiConnect
 		return system?.apiConnection || null;
 	}
 );
+
+export const globalSettings = computed<import('@liuboer/shared').GlobalSettings | null>(() => {
+	const global = appState.global.value;
+	if (!global) return null;
+	const stateValue = global.settings.$.value;
+	return stateValue?.settings || null;
+});
 
 // Current session signals (derived from currentSessionId) - exported as direct Preact computed signals
 // IMPORTANT: Access the underlying signal via .$ to ensure Preact tracks the dependency
