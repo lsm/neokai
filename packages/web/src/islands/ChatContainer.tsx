@@ -59,6 +59,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const [deleteModalOpen, setDeleteModalOpen] = useState(false);
 	const [toolsModalOpen, setToolsModalOpen] = useState(false);
 	const [archiving, setArchiving] = useState(false);
+	const [resettingAgent, setResettingAgent] = useState(false);
 	const [archiveConfirmDialog, setArchiveConfirmDialog] = useState<{
 		show: boolean;
 		commitStatus?: ArchiveSessionResponse['commitStatus'];
@@ -748,6 +749,49 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		}
 	};
 
+	/**
+	 * Reset the SDK agent query
+	 * This forcefully terminates and restarts the SDK query stream.
+	 * Use case: Recovering from stuck "queued" state or unresponsive SDK.
+	 */
+	const handleResetAgent = async () => {
+		// Guard: Check connection before RPC call
+		if (!isConnected) {
+			toast.error('Not connected to server');
+			return;
+		}
+
+		try {
+			setResettingAgent(true);
+			const hub = connectionManager.getHubIfConnected();
+			if (!hub) {
+				toast.error('Not connected to server');
+				return;
+			}
+
+			const result = await hub.call<{ success: boolean; error?: string }>('session.resetQuery', {
+				sessionId,
+				restartQuery: true,
+			});
+
+			if (result.success) {
+				toast.success('Agent reset successfully. You can send a new message.');
+				// Reset local UI state
+				setSending(false);
+				setStreamingEvents([]);
+				setStreamingPhase(null);
+				setCurrentAction(undefined);
+				setError(null);
+			} else {
+				toast.error(result.error || 'Failed to reset agent');
+			}
+		} catch (error) {
+			toast.error(error instanceof Error ? error.message : 'Failed to reset agent');
+		} finally {
+			setResettingAgent(false);
+		}
+	};
+
 	// Check if connected for guarding RPC operations
 	const isConnected = connectionState.value === 'connected';
 
@@ -808,6 +852,21 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 						stroke-linejoin="round"
 						stroke-width={2}
 						d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+					/>
+				</svg>
+			),
+		},
+		{
+			label: resettingAgent ? 'Resetting...' : 'Reset Agent',
+			onClick: handleResetAgent,
+			disabled: resettingAgent || !isConnected,
+			icon: (
+				<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={2}
+						d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
 					/>
 				</svg>
 			),
