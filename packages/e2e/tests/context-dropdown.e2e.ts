@@ -4,7 +4,8 @@ import { cleanupTestSession, waitForSessionCreated } from './helpers/wait-helper
 /**
  * Context Dropdown E2E Tests
  *
- * Tests the context usage dropdown in the status indicator.
+ * Tests the context usage dropdown in the ContextUsageBar component
+ * (part of SessionStatusBar).
  * - Context percentage display
  * - Dropdown visibility on click
  * - Context category breakdown
@@ -31,12 +32,13 @@ test.describe('Context Dropdown', () => {
 	});
 
 	test('should display context percentage after message exchange', async ({ page }) => {
-		// Create a new session
-		await page.locator('button:has-text("New Session")').click();
+		// Create a new session - use specific selector for the primary New Session button
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
+		await newSessionButton.click();
 		sessionId = await waitForSessionCreated(page);
 
-		// Send a test message
-		const textarea = page.locator('textarea[placeholder*="message"]').first();
+		// Send a test message - use placeholder that matches actual input field
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await textarea.fill('Hello, what is 2+2?');
 		await page.keyboard.press('Meta+Enter'); // Cmd+Enter on Mac
 
@@ -49,12 +51,13 @@ test.describe('Context Dropdown', () => {
 	});
 
 	test('should open dropdown on context percentage click', async ({ page }) => {
-		// Create a new session
-		await page.locator('button:has-text("New Session")').click();
+		// Create a new session - use specific selector for the primary New Session button
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
+		await newSessionButton.click();
 		sessionId = await waitForSessionCreated(page);
 
-		// Send a test message
-		const textarea = page.locator('textarea[placeholder*="message"]').first();
+		// Send a test message - use placeholder that matches actual input field
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await textarea.fill('Hello, what is 2+2?');
 		await page.keyboard.press('Meta+Enter');
 
@@ -72,12 +75,13 @@ test.describe('Context Dropdown', () => {
 	});
 
 	test('should show context category breakdown in dropdown', async ({ page }) => {
-		// Create a new session
-		await page.locator('button:has-text("New Session")').click();
+		// Create a new session - use specific selector for the primary New Session button
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
+		await newSessionButton.click();
 		sessionId = await waitForSessionCreated(page);
 
-		// Send a test message
-		const textarea = page.locator('textarea[placeholder*="message"]').first();
+		// Send a test message - use placeholder that matches actual input field
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await textarea.fill('Hello, what is 2+2?');
 		await page.keyboard.press('Meta+Enter');
 
