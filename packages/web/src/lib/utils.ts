@@ -100,3 +100,15 @@ export function generateUUID(): string {
 		return v.toString(16);
 	});
 }
+
+/**
+ * Format token count in k format (e.g., 16500 -> "16.5k")
+ */
+export function formatTokens(tokens: number): string {
+	if (tokens < 1000) {
+		return tokens.toString();
+	}
+	const k = tokens / 1000;
+	// Show 1 decimal place for precision
+	return `${k.toFixed(1)}k`;
+}
