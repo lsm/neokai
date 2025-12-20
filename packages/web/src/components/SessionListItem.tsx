@@ -2,10 +2,67 @@ import type { Session } from '@liuboer/shared';
 import { currentSessionIdSignal } from '../lib/signals.ts';
 import { formatRelativeTime, formatTokens } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
+import { allSessionStatuses, getProcessingPhaseColor } from '../lib/session-status.ts';
 
 interface SessionListItemProps {
 	session: Session;
 	onSessionClick: (sessionId: string) => void;
+}
+
+/**
+ * Status Indicator Component
+ * Shows processing state (pulsing) or unread state (static)
+ */
+function StatusIndicator({ sessionId }: { sessionId: string }) {
+	const statuses = allSessionStatuses.value;
+	const status = statuses.get(sessionId);
+
+	if (!status) return null;
+
+	const { processingState, hasUnread } = status;
+	const phaseColors = getProcessingPhaseColor(processingState);
+
+	// Processing state takes priority - show pulsing indicator
+	if (phaseColors) {
+		return (
+			<div class="relative flex-shrink-0 w-2.5 h-2.5">
+				<span class={`absolute inset-0 rounded-full ${phaseColors.dot} animate-pulse`} />
+				<span class={`absolute inset-0 rounded-full ${phaseColors.dot} animate-ping opacity-50`} />
+			</div>
+		);
+	}
+
+	// Unread state - show static blue dot
+	if (hasUnread) {
+		return (
+			<div class="flex-shrink-0 w-2.5 h-2.5">
+				<span class="block w-full h-full rounded-full bg-blue-500" />
+			</div>
+		);
+	}
+
+	// Idle and read - show empty spacer for alignment
+	return <div class="flex-shrink-0 w-2.5 h-2.5" />;
+}
+
+/**
+ * Git Branch Icon for Worktree indicator
+ */
+function GitBranchIcon({ className }: { className?: string }) {
+	return (
+		<svg
+			class={className}
+			viewBox="0 0 16 16"
+			fill="currentColor"
+			xmlns="http://www.w3.org/2000/svg"
+		>
+			<path
+				fill-rule="evenodd"
+				d="M11.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM9.25 3.25a2.75 2.75 0 1 1 3.5 2.646v1.54A2.76 2.76 0 0 1 10 10.25h-.75v2.354a2.75 2.75 0 1 1-1.5 0V10.25H7A2.76 2.76 0 0 1 4.25 7.5V5.896a2.75 2.75 0 1 1 1.5 0V7.5A1.26 1.26 0 0 0 7 8.75h3a1.26 1.26 0 0 0 1.25-1.25V5.896a2.75 2.75 0 0 1-2-2.646ZM5 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm3.25 11.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z"
+				clip-rule="evenodd"
+			/>
+		</svg>
+	);
 }
 
 /**
@@ -28,7 +85,13 @@ export default function SessionListItem({ session, onSessionClick }: SessionList
 				isActive ? 'bg-dark-850 border-l-2 border-l-blue-500' : 'hover:bg-dark-900'
 			}`}
 		>
-			<div class="flex items-start justify-between gap-2">
+			<div class="flex items-start gap-3">
+				{/* Status indicator - fixed width for alignment */}
+				<div class="pt-0.5">
+					<StatusIndicator sessionId={session.id} />
+				</div>
+
+				{/* Main content */}
 				<div class="flex-1 min-w-0">
 					<div class="flex items-center justify-between gap-2 mb-1">
 						<h3
@@ -39,14 +102,7 @@ export default function SessionListItem({ session, onSessionClick }: SessionList
 						<div class="flex items-center gap-1 flex-shrink-0">
 							{session.worktree && (
 								<span class="text-purple-400" title={`Worktree: ${session.worktree.branch}`}>
-									<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width={2}
-											d="M9 4v16m-4-8h4m0 0l-3-3m3 3l-3 3m8-3h4m0 0l3-3m-3 3l3 3"
-										/>
-									</svg>
+									<GitBranchIcon className="w-3.5 h-3.5" />
 								</span>
 							)}
 							{session.status === 'archived' && (

@@ -1098,16 +1098,15 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 								{session?.worktree && (
 									<Tooltip content="Using isolated git worktree" position="bottom">
 										<svg
-											class="w-3.5 h-3.5 text-blue-400"
-											fill="none"
-											viewBox="0 0 24 24"
-											stroke="currentColor"
+											class="w-3.5 h-3.5 text-purple-400"
+											viewBox="0 0 16 16"
+											fill="currentColor"
+											xmlns="http://www.w3.org/2000/svg"
 										>
 											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width={2}
-												d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+												fill-rule="evenodd"
+												d="M11.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM9.25 3.25a2.75 2.75 0 1 1 3.5 2.646v1.54A2.76 2.76 0 0 1 10 10.25h-.75v2.354a2.75 2.75 0 1 1-1.5 0V10.25H7A2.76 2.76 0 0 1 4.25 7.5V5.896a2.75 2.75 0 1 1 1.5 0V7.5A1.26 1.26 0 0 0 7 8.75h3a1.26 1.26 0 0 0 1.25-1.25V5.896a2.75 2.75 0 0 1-2-2.646ZM5 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm3.25 11.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z"
+												clip-rule="evenodd"
 											/>
 										</svg>
 									</Tooltip>

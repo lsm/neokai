@@ -6,6 +6,7 @@ import { ConnectionOverlay } from './components/ConnectionOverlay.tsx';
 import { connectionManager } from './lib/connection-manager.ts';
 import { initializeApplicationState } from './lib/state.ts';
 import { currentSessionIdSignal } from './lib/signals.ts';
+import { initSessionStatusTracking } from './lib/session-status.ts';
 
 export function App() {
 	useEffect(() => {
@@ -18,6 +19,10 @@ export function App() {
 				// Initialize state channels now that connection is ready
 				await initializeApplicationState(hub, currentSessionIdSignal);
 				console.log('[App] State management initialized successfully');
+
+				// Initialize session status tracking for sidebar live indicators
+				initSessionStatusTracking();
+				console.log('[App] Session status tracking initialized');
 			} catch (error) {
 				console.error('[App] Failed to initialize state management:', error);
 			}
