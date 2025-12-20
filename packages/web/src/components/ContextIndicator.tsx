@@ -9,7 +9,7 @@
  * - Shows context usage percentage on the right
  */
 
-import { useState, useRef, useEffect } from 'preact/hooks';
+import { useState, useRef, useEffect, useCallback } from 'preact/hooks';
 import type { ContextInfo } from '@liuboer/shared';
 import { borderColors } from '../lib/design-tokens.ts';
 
@@ -36,6 +36,55 @@ export default function ContextIndicator({
 	const [dropdownBottom, setDropdownBottom] = useState(96); // Default 24*4px = 96px
 	const indicatorRef = useRef<HTMLDivElement>(null);
 	const dropdownRef = useRef<HTMLDivElement>(null);
+
+	// FIX: Use useCallback to prevent stale closure issues that could cause UI freeze
+	const closeDropdown = useCallback(() => {
+		setShowContextDetails(false);
+	}, []);
+
+	// FIX: Add escape key handler and click outside detection
+	// Use document-level detection instead of invisible backdrop div to prevent z-index issues
+	useEffect(() => {
+		if (!showContextDetails) return;
+
+		const handleEscape = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') {
+				closeDropdown();
+			}
+		};
+
+		const handleClickOutside = (e: MouseEvent) => {
+			// Close dropdown if click is outside both the dropdown and the indicator
+			const target = e.target as Node;
+			const isInsideDropdown = dropdownRef.current?.contains(target);
+			const isInsideIndicator = indicatorRef.current?.contains(target);
+
+			if (!isInsideDropdown && !isInsideIndicator) {
+				closeDropdown();
+			}
+		};
+
+		// Use capture phase to ensure we catch the event before any stopPropagation
+		document.addEventListener('keydown', handleEscape, true);
+		// Use timeout to avoid closing immediately from the same click that opened it
+		const timeoutId = setTimeout(() => {
+			document.addEventListener('click', handleClickOutside, true);
+		}, 0);
+
+		return () => {
+			document.removeEventListener('keydown', handleEscape, true);
+			document.removeEventListener('click', handleClickOutside, true);
+			clearTimeout(timeoutId);
+		};
+	}, [showContextDetails, closeDropdown]);
+
+	// FIX: Ensure dropdown is closed when component unmounts
+	useEffect(() => {
+		return () => {
+			// Force close on unmount to prevent stale backdrop
+			setShowContextDetails(false);
+		};
+	}, []);
 
 	// Calculate dropdown position dynamically when it opens
 	useEffect(() => {
@@ -232,128 +281,117 @@ export default function ContextIndicator({
 				</div>
 			</div>
 
-			{/* Context Details Dropdown */}
+			{/* Context Details Dropdown - uses document click detection instead of backdrop */}
 			{showContextDetails && totalTokens > 0 && (
-				<>
-					{/* Backdrop to close dropdown */}
-					<div class="fixed inset-0 z-40" onClick={() => setShowContextDetails(false)} />
-
-					{/* Dropdown positioned above the indicator */}
-					<div
-						class="fixed right-0 px-4 pointer-events-none"
-						style={{ bottom: `${dropdownBottom}px` }}
-					>
-						<div class="max-w-4xl mx-auto flex justify-end">
-							<div ref={dropdownRef} class="z-50 pointer-events-auto">
-								<div
-									class={`bg-dark-800 border ${borderColors.ui.secondary} rounded-lg p-4 w-72 shadow-xl`}
-								>
-									<div class="flex items-center justify-between mb-3">
-										<h3 class="text-sm font-semibold text-gray-200">Context Usage</h3>
-										<button
-											class="text-gray-400 hover:text-gray-200 transition-colors"
-											onClick={() => setShowContextDetails(false)}
+				<div class="fixed right-0 px-4 z-50" style={{ bottom: `${dropdownBottom}px` }}>
+					<div class="max-w-4xl mx-auto flex justify-end">
+						<div ref={dropdownRef}>
+							<div
+								class={`bg-dark-800 border ${borderColors.ui.secondary} rounded-lg p-4 w-72 shadow-xl`}
+							>
+								<div class="flex items-center justify-between mb-3">
+									<h3 class="text-sm font-semibold text-gray-200">Context Usage</h3>
+									<button
+										class="text-gray-400 hover:text-gray-200 transition-colors"
+										onClick={closeDropdown}
+									>
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											class="w-4 h-4"
+											viewBox="0 0 24 24"
+											fill="none"
+											stroke="currentColor"
+											stroke-width="2"
+											stroke-linecap="round"
+											stroke-linejoin="round"
 										>
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												class="w-4 h-4"
-												viewBox="0 0 24 24"
-												fill="none"
-												stroke="currentColor"
-												stroke-width="2"
-												stroke-linecap="round"
-												stroke-linejoin="round"
-											>
-												<line x1="18" y1="6" x2="6" y2="18"></line>
-												<line x1="6" y1="6" x2="18" y2="18"></line>
-											</svg>
-										</button>
+											<line x1="18" y1="6" x2="6" y2="18"></line>
+											<line x1="6" y1="6" x2="18" y2="18"></line>
+										</svg>
+									</button>
+								</div>
+
+								<div class="space-y-3">
+									{/* Total Usage */}
+									<div class="bg-dark-700 rounded-lg p-2.5">
+										<div class="flex justify-between items-center mb-1.5">
+											<span class="text-xs text-gray-400">Context Window</span>
+											<span class={`text-xs font-semibold ${getContextColor()}`}>
+												{contextPercentage.toFixed(1)}%
+											</span>
+										</div>
+										<div class="w-full h-2.5 bg-dark-600 rounded-full overflow-hidden">
+											<div
+												class={`h-full transition-all duration-300 ${getContextBarColor()}`}
+												style={{ width: `${Math.min(contextPercentage, 100)}%` }}
+											/>
+										</div>
+										<div class="text-xs text-gray-500 mt-1">
+											{totalTokens.toLocaleString()} / {contextCapacity.toLocaleString()}
+										</div>
 									</div>
 
-									<div class="space-y-3">
-										{/* Total Usage */}
-										<div class="bg-dark-700 rounded-lg p-2.5">
-											<div class="flex justify-between items-center mb-1.5">
-												<span class="text-xs text-gray-400">Context Window</span>
-												<span class={`text-xs font-semibold ${getContextColor()}`}>
-													{contextPercentage.toFixed(1)}%
-												</span>
-											</div>
-											<div class="w-full h-2.5 bg-dark-600 rounded-full overflow-hidden">
-												<div
-													class={`h-full transition-all duration-300 ${getContextBarColor()}`}
-													style={{ width: `${Math.min(contextPercentage, 100)}%` }}
-												/>
-											</div>
-											<div class="text-xs text-gray-500 mt-1">
-												{totalTokens.toLocaleString()} / {contextCapacity.toLocaleString()}
+									{/* Token Breakdown with colored squares */}
+									{contextUsage?.breakdown && (
+										<div class="space-y-2">
+											<h4 class="text-xs font-medium text-gray-300">Breakdown</h4>
+											<div class="space-y-1.5">
+												{Object.entries(contextUsage.breakdown)
+													.sort(
+														([categoryA], [categoryB]) =>
+															getCategorySortOrder(categoryA) - getCategorySortOrder(categoryB)
+													)
+													.map(([category, data]) => {
+														const { bg, text } = getCategoryColor(category);
+														const percentage =
+															data.percent !== null
+																? data.percent
+																: (data.tokens / contextCapacity) * 100;
+														return (
+															<div key={category} class="flex items-center gap-2 text-xs">
+																{/* Colored square icon */}
+																<div class={`w-3 h-3 rounded ${bg} flex-shrink-0`} />
+																<span class="text-gray-400 flex-1 min-w-0 truncate">
+																	{category}
+																</span>
+																<span class={`${text} font-medium`}>{percentage.toFixed(1)}%</span>
+																<span class="text-gray-200 font-mono text-xs">
+																	{data.tokens.toLocaleString()}
+																</span>
+															</div>
+														);
+													})}
 											</div>
 										</div>
+									)}
 
-										{/* Token Breakdown with colored squares */}
-										{contextUsage?.breakdown && (
-											<div class="space-y-2">
-												<h4 class="text-xs font-medium text-gray-300">Breakdown</h4>
-												<div class="space-y-1.5">
-													{Object.entries(contextUsage.breakdown)
-														.sort(
-															([categoryA], [categoryB]) =>
-																getCategorySortOrder(categoryA) - getCategorySortOrder(categoryB)
-														)
-														.map(([category, data]) => {
-															const { bg, text } = getCategoryColor(category);
-															const percentage =
-																data.percent !== null
-																	? data.percent
-																	: (data.tokens / contextCapacity) * 100;
-															return (
-																<div key={category} class="flex items-center gap-2 text-xs">
-																	{/* Colored square icon */}
-																	<div class={`w-3 h-3 rounded ${bg} flex-shrink-0`} />
-																	<span class="text-gray-400 flex-1 min-w-0 truncate">
-																		{category}
-																	</span>
-																	<span class={`${text} font-medium`}>
-																		{percentage.toFixed(1)}%
-																	</span>
-																	<span class="text-gray-200 font-mono text-xs">
-																		{data.tokens.toLocaleString()}
-																	</span>
-																</div>
-															);
-														})}
-												</div>
+									{/* Model info */}
+									{contextUsage?.model && (
+										<div class={`pt-3 border-t ${borderColors.ui.default}`}>
+											<div class="flex items-center gap-2 text-xs">
+												<svg
+													class="w-3.5 h-3.5 text-gray-400"
+													fill="none"
+													viewBox="0 0 24 24"
+													stroke="currentColor"
+												>
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														stroke-width={2}
+														d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"
+													/>
+												</svg>
+												<span class="text-gray-400">Model:</span>
+												<span class="text-gray-200 font-mono">{contextUsage.model}</span>
 											</div>
-										)}
-
-										{/* Model info */}
-										{contextUsage?.model && (
-											<div class={`pt-3 border-t ${borderColors.ui.default}`}>
-												<div class="flex items-center gap-2 text-xs">
-													<svg
-														class="w-3.5 h-3.5 text-gray-400"
-														fill="none"
-														viewBox="0 0 24 24"
-														stroke="currentColor"
-													>
-														<path
-															stroke-linecap="round"
-															stroke-linejoin="round"
-															stroke-width={2}
-															d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"
-														/>
-													</svg>
-													<span class="text-gray-400">Model:</span>
-													<span class="text-gray-200 font-mono">{contextUsage.model}</span>
-												</div>
-											</div>
-										)}
-									</div>
+										</div>
+									)}
 								</div>
 							</div>
 						</div>
 					</div>
-				</>
+				</div>
 			)}
 		</>
 	);
