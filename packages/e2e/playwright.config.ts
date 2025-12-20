@@ -106,6 +106,7 @@ export default defineConfig({
 				'**/file-operations.e2e.ts', // File operations tests
 				'**/character-counter.e2e.ts', // Character counter tests
 				'**/mobile-responsive.e2e.ts', // Mobile responsiveness tests
+				'**/session-status-indicators.e2e.ts', // Session status indicators tests
 			],
 			use: { ...devices['Desktop Chrome'] },
 		},
