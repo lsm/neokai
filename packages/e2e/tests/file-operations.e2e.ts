@@ -45,10 +45,12 @@ test.describe('File Operations', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-role="assistant"]').first()).toBeVisible({ timeout: 45000 });
+		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
+			timeout: 45000,
+		});
 
 		// The response should contain file content or mention inability to read
-		const assistantMessage = page.locator('[data-role="assistant"]').first();
+		const assistantMessage = page.locator('[data-testid="assistant-message"]').first();
 		const content = await assistantMessage.textContent();
 		expect(content).toBeTruthy();
 
@@ -74,10 +76,12 @@ test.describe('File Operations', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-role="assistant"]').first()).toBeVisible({ timeout: 45000 });
+		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
+			timeout: 45000,
+		});
 
 		// The response should contain file listings
-		const assistantMessage = page.locator('[data-role="assistant"]').first();
+		const assistantMessage = page.locator('[data-testid="assistant-message"]').first();
 		const content = await assistantMessage.textContent();
 		expect(content).toBeTruthy();
 		expect(content!.length).toBeGreaterThan(0);
@@ -97,10 +101,12 @@ test.describe('File Operations', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-role="assistant"]').first()).toBeVisible({ timeout: 45000 });
+		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
+			timeout: 45000,
+		});
 
 		// Response should exist
-		const assistantMessage = page.locator('[data-role="assistant"]').first();
+		const assistantMessage = page.locator('[data-testid="assistant-message"]').first();
 		await expect(assistantMessage).toBeVisible();
 
 		// The message area should have content
@@ -120,10 +126,12 @@ test.describe('File Operations', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-role="assistant"]').first()).toBeVisible({ timeout: 45000 });
+		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
+			timeout: 45000,
+		});
 
 		// The response should handle the error gracefully
-		const assistantMessage = page.locator('[data-role="assistant"]').first();
+		const assistantMessage = page.locator('[data-testid="assistant-message"]').first();
 		const content = await assistantMessage.textContent();
 		expect(content).toBeTruthy();
 
@@ -151,10 +159,12 @@ test.describe('File Operations', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-role="assistant"]').first()).toBeVisible({ timeout: 45000 });
+		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
+			timeout: 45000,
+		});
 
 		// The response should contain path information
-		const assistantMessage = page.locator('[data-role="assistant"]').first();
+		const assistantMessage = page.locator('[data-testid="assistant-message"]').first();
 		const content = await assistantMessage.textContent();
 		expect(content).toBeTruthy();
 

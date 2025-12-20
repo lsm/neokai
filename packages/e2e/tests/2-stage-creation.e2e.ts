@@ -89,7 +89,9 @@ test.describe('2-Stage Session Creation', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-role="assistant"]').first()).toBeVisible({ timeout: 30000 });
+		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
+			timeout: 30000,
+		});
 
 		// After first message, title should be generated (not "New Session")
 		// Wait for title to update (auto-title generation runs after first response)

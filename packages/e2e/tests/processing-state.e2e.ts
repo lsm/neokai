@@ -54,7 +54,9 @@ test.describe('Processing State Display', () => {
 		await expect(pulsingDot).toBeVisible({ timeout: 5000 });
 
 		// Wait for processing to complete
-		await expect(page.locator('[data-role="assistant"]').first()).toBeVisible({ timeout: 30000 });
+		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
+			timeout: 30000,
+		});
 
 		// Should return to "Online" state after completion
 		await expect(page.locator('text=Online').first()).toBeVisible({ timeout: 5000 });
@@ -90,7 +92,9 @@ test.describe('Processing State Display', () => {
 		expect(['thinking', 'processing', 'missed']).toContain(thinkingOrStreaming);
 
 		// Wait for completion
-		await expect(page.locator('[data-role="assistant"]').first()).toBeVisible({ timeout: 30000 });
+		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
+			timeout: 30000,
+		});
 	});
 
 	test('should show streaming state during response generation', async ({ page }) => {
@@ -119,7 +123,9 @@ test.describe('Processing State Display', () => {
 		// _sawStreaming is intentionally unused - we just verify no errors occur
 
 		// Wait for completion
-		await expect(page.locator('[data-role="assistant"]').first()).toBeVisible({ timeout: 30000 });
+		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
+			timeout: 30000,
+		});
 
 		// Should return to idle state
 		await expect(page.locator('text=Online').first()).toBeVisible({ timeout: 5000 });
@@ -140,7 +146,9 @@ test.describe('Processing State Display', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-role="assistant"]').first()).toBeVisible({ timeout: 30000 });
+		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
+			timeout: 30000,
+		});
 
 		// Should be back to idle state (Online) without any processing indicators
 		await expect(page.locator('text=Online').first()).toBeVisible({ timeout: 5000 });
@@ -184,6 +192,8 @@ test.describe('Processing State Display', () => {
 		expect(hasPhaseColor).toBe(true);
 
 		// Wait for completion
-		await expect(page.locator('[data-role="assistant"]').first()).toBeVisible({ timeout: 30000 });
+		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
+			timeout: 30000,
+		});
 	});
 });

@@ -58,7 +58,9 @@ test.describe('Session Export', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-role="assistant"]').first()).toBeVisible({ timeout: 30000 });
+		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
+			timeout: 30000,
+		});
 
 		// Setup download listener
 		const downloadPromise = page.waitForEvent('download');
@@ -86,7 +88,9 @@ test.describe('Session Export', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-role="assistant"]').first()).toBeVisible({ timeout: 30000 });
+		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
+			timeout: 30000,
+		});
 
 		// Setup download listener
 		const downloadPromise = page.waitForEvent('download');
@@ -122,7 +126,9 @@ test.describe('Session Export', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-role="assistant"]').first()).toBeVisible({ timeout: 30000 });
+		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
+			timeout: 30000,
+		});
 
 		// Setup download listener (need to handle download to complete export)
 		const downloadPromise = page.waitForEvent('download');

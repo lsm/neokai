@@ -64,8 +64,10 @@ export async function waitForSessionCreated(page: Page): Promise<string> {
 		const localStorageId = localStorage.getItem('currentSessionId');
 		if (localStorageId) return localStorageId;
 
-		// 4. From URL path
-		const pathId = window.location.pathname.split('/').filter(Boolean)[0];
+		// 4. From URL path (format: /session/{id})
+		const pathParts = window.location.pathname.split('/').filter(Boolean);
+		// URL is /session/{id}, so id is at index 1
+		const pathId = pathParts[0] === 'session' ? pathParts[1] : pathParts[0];
 		if (pathId && pathId !== 'undefined') return pathId;
 
 		// 5. From latest session in sessions list
