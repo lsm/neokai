@@ -11,6 +11,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { EventBus } from '@liuboer/shared';
 import { Database } from '../../src/storage/database';
 import { SessionManager } from '../../src/lib/session-manager';
+import { SettingsManager } from '../../src/lib/settings-manager';
 import { AuthManager } from '../../src/lib/auth-manager';
 import { MessageHub } from '@liuboer/shared';
 import { getConfig } from '../../src/config';
@@ -23,6 +24,7 @@ describe('message.send EventBus Integration', () => {
 	let eventBus: EventBus;
 	let sessionManager: SessionManager;
 	let authManager: AuthManager;
+	let settingsManager: SettingsManager;
 	let testWorkspace: string;
 
 	beforeEach(async () => {
@@ -40,6 +42,9 @@ describe('message.send EventBus Integration', () => {
 		authManager = new AuthManager(db, config);
 		await authManager.initialize();
 
+		// Setup SettingsManager
+		settingsManager = new SettingsManager(db, testWorkspace);
+
 		// Setup EventBus
 		eventBus = new EventBus({ debug: false });
 
@@ -47,7 +52,7 @@ describe('message.send EventBus Integration', () => {
 		const messageHub = new MessageHub({ defaultSessionId: 'global', debug: false });
 
 		// Setup SessionManager with EventBus
-		sessionManager = new SessionManager(db, messageHub, authManager, eventBus, {
+		sessionManager = new SessionManager(db, messageHub, authManager, settingsManager, eventBus, {
 			defaultModel: config.defaultModel,
 			maxTokens: config.maxTokens,
 			temperature: config.temperature,

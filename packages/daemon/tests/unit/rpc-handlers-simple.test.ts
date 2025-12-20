@@ -5,6 +5,7 @@ import { getConfig } from '../../src/config';
 import { Database } from '../../src/storage/database';
 import { AuthManager } from '../../src/lib/auth-manager';
 import { SessionManager } from '../../src/lib/session-manager';
+import { SettingsManager } from '../../src/lib/settings-manager';
 
 describe('setupRPCHandlers - Handler Registration', () => {
 	test('should register all RPC handlers without needing a class', async () => {
@@ -16,15 +17,24 @@ describe('setupRPCHandlers - Handler Registration', () => {
 		const authManager = new AuthManager(db, config);
 		await authManager.initialize();
 
+		const settingsManager = new SettingsManager(db, config.workspaceRoot);
+
 		const messageHub = new MessageHub({ defaultSessionId: 'global' });
 		const eventBus = new EventBus({ debug: false });
 
-		const sessionManager = new SessionManager(db, messageHub, authManager, eventBus, {
-			defaultModel: config.defaultModel,
-			maxTokens: config.maxTokens,
-			temperature: config.temperature,
-			workspaceRoot: config.workspaceRoot,
-		});
+		const sessionManager = new SessionManager(
+			db,
+			messageHub,
+			authManager,
+			settingsManager,
+			eventBus,
+			{
+				defaultModel: config.defaultModel,
+				maxTokens: config.maxTokens,
+				temperature: config.temperature,
+				workspaceRoot: config.workspaceRoot,
+			}
+		);
 
 		// Get initial handler count
 		const initialHandlers = (messageHub as unknown).rpcHandlers.size;
@@ -56,15 +66,24 @@ describe('setupRPCHandlers - Handler Registration', () => {
 		const authManager = new AuthManager(db, config);
 		await authManager.initialize();
 
+		const settingsManager = new SettingsManager(db, config.workspaceRoot);
+
 		const messageHub = new MessageHub({ defaultSessionId: 'global' });
 		const eventBus = new EventBus({ debug: false });
 
-		const sessionManager = new SessionManager(db, messageHub, authManager, eventBus, {
-			defaultModel: config.defaultModel,
-			maxTokens: config.maxTokens,
-			temperature: config.temperature,
-			workspaceRoot: config.workspaceRoot,
-		});
+		const sessionManager = new SessionManager(
+			db,
+			messageHub,
+			authManager,
+			settingsManager,
+			eventBus,
+			{
+				defaultModel: config.defaultModel,
+				maxTokens: config.maxTokens,
+				temperature: config.temperature,
+				workspaceRoot: config.workspaceRoot,
+			}
+		);
 
 		// Setup handlers
 		setupRPCHandlers({

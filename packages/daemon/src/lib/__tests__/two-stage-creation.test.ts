@@ -261,19 +261,16 @@ describe('2-Stage Session Creation', () => {
 				workspacePath: testWorkspace,
 			});
 
-			// Mock title generation
-			const manager = sessionManager as unknown as Record<string, unknown>;
-			manager.generateTitleFromMessage = async (_text: string) => {
-				return 'Fix Login Bug';
-			};
-
-			await sessionManager.initializeSessionWorkspace(sessionId, 'I need to fix the login bug');
+			const userMessage = 'I need to fix the login bug';
+			await sessionManager.initializeSessionWorkspace(sessionId, userMessage);
 
 			const agentSession = sessionManager.getSession(sessionId);
 			const session = agentSession!.getSessionData();
 
-			expect(session.title).toBe('Fix Login Bug');
-			expect(session.metadata.titleGenerated).toBe(true);
+			// Title should be first 50 chars of user message (temporary title)
+			// Real title generation happens async via SimpleTitleQueue
+			expect(session.title).toBe(userMessage);
+			expect(session.metadata.workspaceInitialized).toBe(true);
 		});
 
 		test('initializeSessionWorkspace is idempotent', async () => {
@@ -281,24 +278,16 @@ describe('2-Stage Session Creation', () => {
 				workspacePath: testWorkspace,
 			});
 
-			// Mock title generation
-			const manager = sessionManager as unknown as Record<string, unknown>;
-			let callCount = 0;
-			manager.generateTitleFromMessage = async () => {
-				callCount++;
-				return 'Test Title';
-			};
-
-			// Call twice
+			// Call twice with different messages
 			await sessionManager.initializeSessionWorkspace(sessionId, 'Test message');
 			await sessionManager.initializeSessionWorkspace(sessionId, 'Another message');
 
-			// Title generation should only be called once
-			expect(callCount).toBe(1);
-
 			const agentSession = sessionManager.getSession(sessionId);
 			const session = agentSession!.getSessionData();
-			expect(session.title).toBe('Test Title');
+
+			// Title should be from first call (idempotent)
+			expect(session.title).toBe('Test message');
+			expect(session.metadata.workspaceInitialized).toBe(true);
 		});
 
 		test('initializeSessionWorkspace handles title generation failure', async () => {
@@ -332,15 +321,12 @@ describe('2-Stage Session Creation', () => {
 				workspacePath: testWorkspace,
 			});
 
-			// Mock title generation
-			const manager = sessionManager as unknown as Record<string, unknown>;
-			manager.generateTitleFromMessage = async () => 'Updated Title';
-
-			await sessionManager.initializeSessionWorkspace(sessionId, 'Test message');
+			const userMessage = 'Test message';
+			await sessionManager.initializeSessionWorkspace(sessionId, userMessage);
 
 			// Verify in database
 			const dbSession = db.getSession(sessionId);
-			expect(dbSession!.title).toBe('Updated Title');
+			expect(dbSession!.title).toBe(userMessage);
 			expect(dbSession!.metadata.workspaceInitialized).toBe(true);
 		});
 	});
