@@ -19,6 +19,15 @@ export interface WebSocketServerTransportOptions {
 	debug?: boolean;
 	router: MessageHubRouter; // For client management only, not routing
 	maxQueueSize?: number; // Backpressure: max queued messages per client
+	/**
+	 * Stale connection timeout in ms (default: 120000 = 2 minutes)
+	 * Connections without ping activity for this duration will be closed
+	 */
+	staleTimeout?: number;
+	/**
+	 * Interval for checking stale connections in ms (default: 30000 = 30 seconds)
+	 */
+	staleCheckInterval?: number;
 }
 
 /**
@@ -44,18 +53,100 @@ export class WebSocketServerTransport implements IMessageTransport {
 	// Backpressure: track pending messages per client
 	private clientQueues: Map<string, number> = new Map();
 
+	// Stale connection detection
+	private lastActivityTime: Map<string, number> = new Map();
+	private readonly staleTimeout: number;
+	private readonly staleCheckInterval: number;
+	private staleCheckTimer: ReturnType<typeof setInterval> | null = null;
+
 	constructor(options: WebSocketServerTransportOptions) {
 		this.name = options.name || 'websocket-server';
 		this.debug = options.debug || false;
 		this.router = options.router;
 		this.maxQueueSize = options.maxQueueSize || 1000;
+		this.staleTimeout = options.staleTimeout || 120000; // 2 minutes default
+		this.staleCheckInterval = options.staleCheckInterval || 30000; // 30 seconds default
 	}
 
 	/**
-	 * Initialize transport (no-op for Bun WebSocket - managed by Elysia)
+	 * Initialize transport and start stale connection checker
 	 */
 	async initialize(): Promise<void> {
 		this.log('Transport initialized (Bun WebSocket managed by Elysia)');
+		this.startStaleConnectionChecker();
+	}
+
+	/**
+	 * Start periodic stale connection checker
+	 */
+	private startStaleConnectionChecker(): void {
+		if (this.staleCheckTimer) {
+			return; // Already running
+		}
+
+		this.staleCheckTimer = setInterval(() => {
+			this.checkStaleConnections();
+		}, this.staleCheckInterval);
+
+		this.log(
+			`Stale connection checker started (timeout: ${this.staleTimeout}ms, interval: ${this.staleCheckInterval}ms)`
+		);
+	}
+
+	/**
+	 * Stop stale connection checker
+	 */
+	private stopStaleConnectionChecker(): void {
+		if (this.staleCheckTimer) {
+			clearInterval(this.staleCheckTimer);
+			this.staleCheckTimer = null;
+			this.log('Stale connection checker stopped');
+		}
+	}
+
+	/**
+	 * Check for and close stale connections
+	 */
+	private checkStaleConnections(): void {
+		const now = Date.now();
+		const staleClientIds: string[] = [];
+
+		for (const [clientId, lastActivity] of this.lastActivityTime) {
+			const timeSinceActivity = now - lastActivity;
+			if (timeSinceActivity > this.staleTimeout) {
+				staleClientIds.push(clientId);
+				console.warn(
+					`[${this.name}] Closing stale connection ${clientId} (inactive for ${Math.round(timeSinceActivity / 1000)}s)`
+				);
+			}
+		}
+
+		// Close stale connections
+		for (const clientId of staleClientIds) {
+			const ws = this.clientIdToWs.get(clientId);
+			if (ws) {
+				try {
+					ws.close(1000, 'Connection timed out due to inactivity');
+				} catch (error) {
+					this.log(`Error closing stale connection ${clientId}:`, error);
+				}
+			}
+			// Cleanup will happen in the close handler
+			this.unregisterClient(clientId);
+		}
+
+		if (staleClientIds.length > 0) {
+			this.log(`Closed ${staleClientIds.length} stale connections`);
+		}
+	}
+
+	/**
+	 * Update last activity time for a client (call on ping/any message)
+	 */
+	updateClientActivity(clientId: string): void {
+		if (this.lastActivityTime.has(clientId)) {
+			this.lastActivityTime.set(clientId, Date.now());
+		}
 	}
 
 	/**
@@ -64,6 +155,9 @@ export class WebSocketServerTransport implements IMessageTransport {
 	 */
 	async close(): Promise<void> {
 		this.log('Closing transport and cleaning up connections');
+
+		// Stop stale connection checker
+		this.stopStaleConnectionChecker();
 
 		// Unregister all clients
 		const clientIds = Array.from(this.clientIdToWs.keys());
@@ -74,6 +168,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 		// FIX P2.2: Clear both mappings
 		this.wsToClientId.clear();
 		this.clientIdToWs.clear();
+		this.lastActivityTime.clear();
 
 		// Notify connection handlers
 		this.notifyConnectionHandlers('disconnected');
@@ -129,6 +224,9 @@ export class WebSocketServerTransport implements IMessageTransport {
 		this.wsToClientId.set(ws, clientId);
 		this.clientIdToWs.set(clientId, ws);
 
+		// Initialize activity time for stale connection detection
+		this.lastActivityTime.set(clientId, Date.now());
+
 		this.log(`Client registered: ${clientId} (session: ${connectionSessionId})`);
 
 		// Notify connection handlers
@@ -153,6 +251,9 @@ export class WebSocketServerTransport implements IMessageTransport {
 
 		// Clean up queue tracking
 		this.clientQueues.delete(clientId);
+
+		// Clean up activity tracking
+		this.lastActivityTime.delete(clientId);
 
 		// Unregister from router
 		this.router.unregisterConnection(clientId);

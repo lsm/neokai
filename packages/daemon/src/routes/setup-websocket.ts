@@ -97,6 +97,12 @@ export function createWebSocketHandlers(
 
 				// Handle ping/pong
 				if (data.type === 'ping' || data.type === 'PING') {
+					// Update client activity time for stale connection detection
+					const clientId = ws.data.clientId;
+					if (clientId) {
+						transport.updateClientActivity(clientId);
+					}
+
 					const pongMsg = {
 						id: generateUUID(),
 						type: MessageType.PONG,
