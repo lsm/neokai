@@ -98,6 +98,12 @@ export default defineConfig({
 				'**/reconnection-message-sync.e2e.ts', // Reconnection message sync tests
 				'**/session-list-ordering.e2e.ts', // Session list ordering tests
 				'**/connection-state.e2e.ts', // Connection state tests (creates sessions)
+				'**/session-export.e2e.ts', // Session export tests
+				'**/processing-state.e2e.ts', // Processing state display tests
+				'**/error-handling.e2e.ts', // Error handling tests
+				'**/tools-modal-complete.e2e.ts', // Tools modal complete tests
+				'**/2-stage-creation.e2e.ts', // 2-stage session creation tests
+				'**/worktree-isolation.e2e.ts', // Worktree isolation tests
 			],
 			use: { ...devices['Desktop Chrome'] },
 		},
