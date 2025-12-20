@@ -47,19 +47,13 @@ class GlobalStateChannels {
 			enableDeltas: true,
 			mergeDelta: (current, delta) => {
 				const typedDelta = delta as SessionsUpdate;
-				console.log('[State] Merging sessions delta:', {
-					currentCount: current.sessions.length,
-					delta: typedDelta,
-				});
-				const merged = {
+				return {
 					...current,
 					sessions: DeltaMergers.array(current.sessions, typedDelta),
 					timestamp: typedDelta.timestamp,
 				};
-				console.log('[State] After merge, sessions count:', merged.sessions.length);
-				return merged;
 			},
-			debug: true, // Enable debug to see what's happening
+			debug: false,
 		});
 
 		// NEW: Unified system state channel
@@ -67,14 +61,14 @@ class GlobalStateChannels {
 			sessionId: 'global',
 			enableDeltas: false, // System state is small, full updates are fine
 			refreshInterval: 30000, // Refresh every 30s (for health uptime)
-			debug: true, // Enable debug to see what's happening
+			debug: false,
 		});
 
 		// Global settings channel
 		this.settings = new StateChannel<SettingsState>(hub, STATE_CHANNELS.GLOBAL_SETTINGS, {
 			sessionId: 'global',
 			enableDeltas: false, // Settings are small, full updates are fine
-			debug: true,
+			debug: false,
 		});
 	}
 
@@ -275,9 +269,7 @@ export const sessions = computed<Session[]>(() => {
 	const global = appState.global.value;
 	if (!global) return [];
 	const stateValue = global.sessions.$.value;
-	const value = stateValue?.sessions || [];
-	console.log('[State Signal] sessions.value:', value);
-	return value;
+	return stateValue?.sessions || [];
 });
 
 // NEW: Extract from unified system state
@@ -289,9 +281,7 @@ export const systemState = computed<SystemState | null>(() => {
 
 export const authStatus = computed<AuthStatus | null>(() => {
 	const system = systemState.value;
-	const value = system?.auth || null;
-	console.log('[State Signal] authStatus.value:', value);
-	return value;
+	return system?.auth || null;
 });
 
 export const daemonConfig = computed<DaemonConfig | null>(() => {

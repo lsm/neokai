@@ -8,7 +8,7 @@
  * - Automatic reconnection handling
  */
 
-import { signal, computed, type Signal } from '@preact/signals';
+import { signal, computed, type Signal, batch } from '@preact/signals';
 import type { MessageHub } from '@liuboer/shared';
 import type { UnsubscribeFn } from '@liuboer/shared/message-hub/types';
 
@@ -457,9 +457,12 @@ export class StateChannel<T> {
 				this.channelName,
 				(data) => {
 					this.log(`Full update received: ${this.channelName}`, data);
-					this.state.value = data;
-					this.lastSync.value = Date.now();
-					this.error.value = null;
+					// Batch signal updates to prevent cascading renders
+					batch(() => {
+						this.state.value = data;
+						this.lastSync.value = Date.now();
+						this.error.value = null;
+					});
 				},
 				{ sessionId: this.options.sessionId }
 			)
@@ -477,9 +480,12 @@ export class StateChannel<T> {
 						this.log(`Delta update received: ${this.channelName}`, delta);
 
 						if (this.state.value && this.options.mergeDelta) {
-							this.state.value = this.options.mergeDelta(this.state.value, delta);
-							this.lastSync.value = Date.now();
-							this.error.value = null;
+							// Batch signal updates to prevent cascading renders
+							batch(() => {
+								this.state.value = this.options.mergeDelta!(this.state.value!, delta);
+								this.lastSync.value = Date.now();
+								this.error.value = null;
+							});
 						} else {
 							console.warn(
 								`[StateChannel:${this.channelName}] Cannot apply delta - state or mergeDelta missing`
@@ -512,9 +518,12 @@ export class StateChannel<T> {
 			this.channelName,
 			(data) => {
 				this.log(`Full update received: ${this.channelName}`, data);
-				this.state.value = data;
-				this.lastSync.value = Date.now();
-				this.error.value = null;
+				// Batch signal updates to prevent cascading renders
+				batch(() => {
+					this.state.value = data;
+					this.lastSync.value = Date.now();
+					this.error.value = null;
+				});
 			},
 			{ sessionId: this.options.sessionId }
 		);
@@ -532,9 +541,12 @@ export class StateChannel<T> {
 					this.log(`Delta update received: ${this.channelName}`, delta);
 
 					if (this.state.value && this.options.mergeDelta) {
-						this.state.value = this.options.mergeDelta(this.state.value, delta);
-						this.lastSync.value = Date.now();
-						this.error.value = null;
+						// Batch signal updates to prevent cascading renders
+						batch(() => {
+							this.state.value = this.options.mergeDelta!(this.state.value!, delta);
+							this.lastSync.value = Date.now();
+							this.error.value = null;
+						});
 					} else {
 						console.warn(
 							`[StateChannel:${this.channelName}] Cannot apply delta - state or mergeDelta missing`
