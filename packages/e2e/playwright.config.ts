@@ -65,7 +65,7 @@ export default defineConfig({
 		// Group 1: Read-only tests (no session creation) - fully parallel
 		{
 			name: 'read-only',
-			testMatch: ['**/home.e2e.ts', '**/ui-components.e2e.ts', '**/connection-state.e2e.ts'],
+			testMatch: ['**/home.e2e.ts', '**/ui-components.e2e.ts'],
 			use: { ...devices['Desktop Chrome'] },
 		},
 		// Group 2: Isolated sessions (with cleanup) - parallel
@@ -85,6 +85,19 @@ export default defineConfig({
 				'**/draft-clearing-bug.e2e.ts', // Draft clearing bug fix tests
 				'**/scroll-to-bottom-button.e2e.ts', // Scroll to bottom button tests
 				'**/mcp-toggle.e2e.ts', // MCP toggle functionality tests
+				'**/settings-modal.e2e.ts', // Settings modal tests
+				'**/slash-command-autocomplete.e2e.ts', // Slash command autocomplete tests
+				'**/session-archive.e2e.ts', // Session archive functionality tests
+				'**/auto-title-generation.e2e.ts', // Auto-title generation tests
+				'**/auto-scroll-toggle.e2e.ts', // Auto-scroll toggle tests
+				'**/context-dropdown.e2e.ts', // Context dropdown tests
+				'**/file-attachment.e2e.ts', // File attachment tests
+				'**/interrupt-button.e2e.ts', // Interrupt button tests
+				'**/message-input-ux.e2e.ts', // Message input UX tests
+				'**/page-refresh.e2e.ts', // Page refresh tests
+				'**/reconnection-message-sync.e2e.ts', // Reconnection message sync tests
+				'**/session-list-ordering.e2e.ts', // Session list ordering tests
+				'**/connection-state.e2e.ts', // Connection state tests (creates sessions)
 			],
 			use: { ...devices['Desktop Chrome'] },
 		},

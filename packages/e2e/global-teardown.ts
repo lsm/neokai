@@ -6,6 +6,11 @@
  */
 
 import { chromium, type FullConfig } from '@playwright/test';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 async function globalTeardown(config: FullConfig) {
 	console.log('\n🧹 Running global teardown...');
@@ -109,7 +114,6 @@ async function globalTeardown(config: FullConfig) {
 
 		try {
 			const { execSync } = await import('child_process');
-			const { join } = await import('path');
 			const { existsSync, rmSync, readdirSync } = await import('fs');
 
 			// Get project root (2 levels up from packages/e2e)

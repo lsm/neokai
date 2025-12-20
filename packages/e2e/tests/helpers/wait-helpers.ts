@@ -22,8 +22,9 @@ export async function waitForWebSocketConnected(page: Page): Promise<void> {
 		{ timeout: 10000 }
 	);
 
-	// Also wait for visual indicator
-	await page.locator('text=Online').waitFor({ state: 'visible', timeout: 5000 });
+	// Also wait for visual indicator in the sidebar footer
+	// The sidebar shows "Daemon: Connected" when WebSocket is connected
+	await page.locator('text=Connected').waitFor({ state: 'visible', timeout: 5000 });
 }
 
 /**
@@ -501,4 +502,145 @@ export async function cleanupTestSessions(page: Page, sessionIds: string[]): Pro
 	for (const sessionId of sessionIds) {
 		await cleanupTestSession(page, sessionId);
 	}
+}
+
+/**
+ * Wait for session to be archived
+ */
+export async function waitForSessionArchived(page: Page, sessionId: string): Promise<void> {
+	await page.waitForFunction(
+		(sid) => {
+			const session = window.appState?.sessions?.get(sid);
+			const sessionValue = session?.session?.$.value as { isArchived?: boolean } | undefined;
+			return sessionValue?.isArchived === true;
+		},
+		sessionId,
+		{ timeout: 10000 }
+	);
+
+	// Also wait for visual confirmation (archived label)
+	await page.locator('text=Session archived').waitFor({ state: 'visible', timeout: 5000 });
+}
+
+/**
+ * Wait for processing state change
+ * @param state - Expected state: 'idle', 'queued', or 'processing'
+ * @param phase - Optional phase when state is 'processing': 'initializing', 'thinking', 'streaming', 'finalizing'
+ */
+export async function waitForProcessingState(
+	page: Page,
+	sessionId: string,
+	state: 'idle' | 'queued' | 'processing',
+	phase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing'
+): Promise<void> {
+	await page.waitForFunction(
+		({ sid, expectedState, expectedPhase }) => {
+			const agentState = window.appState?.sessions?.get(sid)?.agent?.$.value;
+			if (!agentState) return false;
+
+			if (agentState.status !== expectedState) return false;
+
+			// If phase is specified and state is 'processing', check the phase
+			if (expectedPhase && expectedState === 'processing') {
+				return agentState.phase === expectedPhase;
+			}
+
+			return true;
+		},
+		{ sid: sessionId, expectedState: state, expectedPhase: phase },
+		{ timeout: 30000 }
+	);
+}
+
+/**
+ * Wait for slash command autocomplete dropdown to appear
+ */
+export async function waitForCommandAutocomplete(page: Page): Promise<Locator> {
+	const dropdown = page.locator('text=Slash Commands').locator('..');
+	await dropdown.waitFor({ state: 'visible', timeout: 5000 });
+	return dropdown;
+}
+
+/**
+ * Wait for slash command autocomplete dropdown to close
+ */
+export async function waitForCommandAutocompleteClosed(page: Page): Promise<void> {
+	const dropdown = page.locator('text=Slash Commands').locator('..');
+	await dropdown.waitFor({ state: 'hidden', timeout: 5000 });
+}
+
+/**
+ * Wait for error message to appear
+ */
+export async function waitForError(page: Page, errorText?: string): Promise<Locator> {
+	if (errorText) {
+		const errorElement = page.locator(`[data-error-message]:has-text("${errorText}")`);
+		await errorElement.waitFor({ state: 'visible', timeout: 10000 });
+		return errorElement;
+	}
+
+	const errorElement = page.locator('[data-error-message]').first();
+	await errorElement.waitFor({ state: 'visible', timeout: 10000 });
+	return errorElement;
+}
+
+/**
+ * Wait for Settings modal to open
+ */
+export async function waitForSettingsModal(page: Page): Promise<void> {
+	await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 5000 });
+}
+
+/**
+ * Wait for Settings modal to close
+ */
+export async function waitForSettingsModalClosed(page: Page): Promise<void> {
+	await page.locator('h2:has-text("Settings")').waitFor({ state: 'hidden', timeout: 5000 });
+}
+
+/**
+ * Wait for plus menu dropdown to open
+ */
+export async function waitForPlusMenu(page: Page): Promise<void> {
+	// Click the plus/more options button
+	const plusButton = page.locator('button[title="More options"]');
+	await plusButton.waitFor({ state: 'visible', timeout: 5000 });
+	await plusButton.click();
+	await page.waitForTimeout(300);
+}
+
+/**
+ * Wait for toast notification to appear
+ */
+export async function waitForToast(page: Page, text?: string): Promise<Locator> {
+	if (text) {
+		const toast = page.locator(
+			`[data-testid="toast"]:has-text("${text}"), [role="alert"]:has-text("${text}")`
+		);
+		await toast.waitFor({ state: 'visible', timeout: 5000 });
+		return toast;
+	}
+
+	const toast = page.locator('[data-testid="toast"], [role="alert"]').first();
+	await toast.waitFor({ state: 'visible', timeout: 5000 });
+	return toast;
+}
+
+/**
+ * Wait for model to be switched
+ */
+export async function waitForModelSwitch(
+	page: Page,
+	sessionId: string,
+	modelId: string
+): Promise<void> {
+	await page.waitForFunction(
+		({ sid, expected }) => {
+			const session = window.appState?.sessions?.get(sid);
+			const sessionValue = session?.session?.$.value as { config?: { model?: string } } | undefined;
+			return sessionValue?.config?.model === expected;
+		},
+		{ sid: sessionId, expected: modelId },
+		{ timeout: 10000 }
+	);
 }
