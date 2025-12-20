@@ -182,7 +182,7 @@ export class SDKMessageHandler {
 			// Emit session:updated event so StateManager broadcasts the change
 			await this.eventBus.emit('session:updated', {
 				sessionId: this.session.id,
-				updates: { sdkSessionId: message.session_id },
+				source: 'sdk-session',
 			});
 		}
 	}
@@ -218,7 +218,7 @@ export class SDKMessageHandler {
 		// Emit session:updated event so StateManager broadcasts the change
 		await this.eventBus.emit('session:updated', {
 			sessionId: this.session.id,
-			updates: { lastActiveAt: this.session.lastActiveAt, metadata: this.session.metadata },
+			source: 'metadata',
 		});
 
 		// Update context tracker with final accurate usage
@@ -277,7 +277,7 @@ export class SDKMessageHandler {
 			// Emit session:updated event so StateManager broadcasts the change
 			await this.eventBus.emit('session:updated', {
 				sessionId: this.session.id,
-				updates: { metadata: this.session.metadata },
+				source: 'metadata',
 			});
 		}
 	}

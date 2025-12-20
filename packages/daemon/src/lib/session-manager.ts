@@ -263,7 +263,7 @@ export class SessionManager {
 			// Broadcast updates
 			await this.eventBus.emit('session:updated', {
 				sessionId,
-				updates: updatedSession,
+				source: 'workspace-init',
 			});
 
 			this.log(`[SessionManager] Workspace initialized for session ${sessionId}`);
@@ -287,7 +287,7 @@ export class SessionManager {
 
 			await this.eventBus.emit('session:updated', {
 				sessionId,
-				updates: fallbackSession,
+				source: 'workspace-init',
 			});
 
 			this.log(`[SessionManager] Used fallback title "${fallbackTitle}" for session ${sessionId}`);
@@ -537,7 +537,7 @@ ${messageText.slice(0, 2000)}`,
 		}
 
 		// FIX: Emit event via EventBus
-		await this.eventBus.emit('session:updated', { sessionId, updates });
+		await this.eventBus.emit('session:updated', { sessionId, source: 'update' });
 	}
 
 	/**

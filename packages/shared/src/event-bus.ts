@@ -35,7 +35,7 @@ export type CompactionTrigger = 'manual' | 'auto';
 export interface EventMap {
 	// Session lifecycle events
 	'session:created': { session: Session };
-	'session:updated': { sessionId: string; updates: Partial<Session> };
+	'session:updated': { sessionId: string; source?: string };
 	'session:deleted': { sessionId: string };
 
 	// SDK events

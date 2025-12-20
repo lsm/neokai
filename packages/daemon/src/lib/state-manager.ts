@@ -22,7 +22,6 @@ import type {
 	SessionStateSnapshot,
 	SessionState,
 	SDKMessagesState,
-	AgentProcessingState,
 	SessionsUpdate,
 	SDKMessagesUpdate,
 } from '@liuboer/shared';
@@ -42,6 +41,10 @@ export class StateManager {
 		status: 'connected',
 		timestamp: Date.now(),
 	};
+
+	// Debouncing for session updates (prevents rapid-fire during streaming)
+	private sessionUpdateTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	private readonly SESSION_UPDATE_DEBOUNCE_MS = 50;
 
 	constructor(
 		private messageHub: MessageHub,
@@ -101,27 +104,10 @@ export class StateManager {
 			this.logger.log(' Delta broadcasted for session:', data.session.id);
 		});
 
-		this.eventBus.on('session:updated', async (data) => {
-			// Broadcast unified session state
-			await this.broadcastSessionStateChange(data.sessionId);
-
-			// Also update global sessions list
-			const updatedSession = this.sessionManager
-				.listSessions()
-				.find((s) => s.id === data.sessionId);
-			if (updatedSession) {
-				await this.broadcastSessionsDelta({
-					updated: [updatedSession],
-					timestamp: Date.now(),
-				});
-			}
-
-			// Publish session.updated event for subscribers
-			await this.messageHub.publish(
-				'session.updated',
-				{ sessionId: data.sessionId },
-				{ sessionId: 'global' }
-			);
+		// Unified session:updated listener - handles ALL session changes
+		// (processing state, metadata, title, config, commands, context)
+		this.eventBus.on('session:updated', async (data: { sessionId: string; source?: string }) => {
+			this.handleSessionUpdate(data.sessionId, data.source);
 		});
 
 		// Title generation events - treat as session updates
@@ -171,27 +157,6 @@ export class StateManager {
 		this.eventBus.on('settings:updated', async () => {
 			await this.broadcastSettingsChange();
 		});
-
-		// Agent state events - broadcast unified session state AND global sessions list
-		// FIX: Must broadcast sessions delta so all clients (including other browser windows)
-		// receive the agent state change, not just clients subscribed to that specific session
-		this.eventBus.on(
-			'agent-state:changed',
-			async (data: { sessionId: string; state: AgentProcessingState }) => {
-				await this.broadcastSessionStateChange(data.sessionId);
-
-				// Also update global sessions list so all clients see the change
-				const updatedSession = this.sessionManager
-					.listSessions()
-					.find((s) => s.id === data.sessionId);
-				if (updatedSession) {
-					await this.broadcastSessionsDelta({
-						updated: [updatedSession],
-						timestamp: Date.now(),
-					});
-				}
-			}
-		);
 
 		// Commands events - broadcast unified session state
 		this.eventBus.on(
@@ -244,6 +209,60 @@ export class StateManager {
 				);
 			}
 		);
+	}
+
+	/**
+	 * Handle any session update - debounces and fetches live data
+	 * Coalesces rapid updates (e.g., during streaming) into single broadcasts
+	 */
+	private handleSessionUpdate(sessionId: string, _source?: string): void {
+		const existingTimer = this.sessionUpdateTimers.get(sessionId);
+		if (existingTimer) {
+			clearTimeout(existingTimer);
+		}
+
+		const timer = setTimeout(async () => {
+			this.sessionUpdateTimers.delete(sessionId);
+			await this.broadcastSessionUpdateInternal(sessionId);
+		}, this.SESSION_UPDATE_DEBOUNCE_MS);
+
+		this.sessionUpdateTimers.set(sessionId, timer);
+	}
+
+	/**
+	 * Internal method to broadcast session update after debounce
+	 * Fetches live session data and broadcasts to both channels:
+	 * 1. state.session - For current session subscribers (ChatContainer)
+	 * 2. state.sessions.delta - For sidebar (includes processingState)
+	 */
+	private async broadcastSessionUpdateInternal(sessionId: string): Promise<void> {
+		try {
+			// Broadcast unified session state (for current session subscribers)
+			await this.broadcastSessionStateChange(sessionId);
+
+			// Also update global sessions list delta (for sidebar)
+			// Fetch live session data including processing state
+			const agentSession = await this.sessionManager.getSessionAsync(sessionId);
+			if (agentSession) {
+				const sessionData = agentSession.getSessionData();
+				const processingState = agentSession.getProcessingState();
+
+				// Merge processing state into session for delta broadcast
+				// This allows sidebar to show processing status without per-session subscriptions
+				const sessionWithState = {
+					...sessionData,
+					processingState,
+				};
+
+				await this.broadcastSessionsDelta({
+					updated: [sessionWithState as Session],
+					timestamp: Date.now(),
+				});
+			}
+		} catch (error) {
+			// Session may have been deleted during update
+			this.logger.warn(`Failed to broadcast session update for ${sessionId}:`, error);
+		}
 	}
 
 	/**

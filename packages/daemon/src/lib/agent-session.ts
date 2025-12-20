@@ -1279,7 +1279,7 @@ CRITICAL RULES:
 				// Emit session:updated event
 				await this.eventBus.emit('session:updated', {
 					sessionId: this.session.id,
-					updates: { config: this.session.config },
+					source: 'model-switch',
 				});
 			} else {
 				// Use SDK's native setModel() method
@@ -1298,7 +1298,7 @@ CRITICAL RULES:
 				// Emit session:updated event
 				await this.eventBus.emit('session:updated', {
 					sessionId: this.session.id,
-					updates: { config: this.session.config },
+					source: 'model-switch',
 				});
 
 				this.logger.log(`Model switched via SDK to: ${resolvedModel}`);
@@ -1477,7 +1477,7 @@ CRITICAL RULES:
 			// 4. Emit event for StateManager to broadcast updated session state
 			await this.eventBus.emit('session:updated', {
 				sessionId: this.session.id,
-				updates: { config: this.session.config },
+				source: 'config',
 			});
 
 			this.logger.log(`Tools config updated successfully`);

@@ -238,15 +238,14 @@ describe('Metadata and State Broadcasting Integration', () => {
 			const sessionUpdatedEvents = emittedEvents.filter((e) => e.event === 'session:updated');
 			expect(sessionUpdatedEvents.length).toBeGreaterThan(0);
 
+			// Events now use 'source' field instead of 'updates'
+			// StateManager fetches live session data and broadcasts it
 			const sessionUpdateData = sessionUpdatedEvents.find(
 				(e) =>
 					typeof e.data === 'object' &&
 					e.data !== null &&
-					'updates' in e.data &&
-					typeof e.data.updates === 'object' &&
-					e.data.updates !== null &&
-					'metadata' in e.data.updates &&
-					e.data.updates.metadata !== undefined
+					'source' in e.data &&
+					e.data.source === 'metadata'
 			);
 			expect(sessionUpdateData).toBeDefined();
 		});
@@ -344,15 +343,14 @@ describe('Metadata and State Broadcasting Integration', () => {
 			const sessionUpdatedEvents = emittedEvents.filter((e) => e.event === 'session:updated');
 			expect(sessionUpdatedEvents.length).toBeGreaterThan(0);
 
+			// Events now use 'source' field instead of 'updates'
+			// StateManager fetches live session data and broadcasts it
 			const sessionUpdateData = sessionUpdatedEvents.find(
 				(e) =>
 					typeof e.data === 'object' &&
 					e.data !== null &&
-					'updates' in e.data &&
-					typeof e.data.updates === 'object' &&
-					e.data.updates !== null &&
-					'metadata' in e.data.updates &&
-					e.data.updates.metadata !== undefined
+					'source' in e.data &&
+					e.data.source === 'metadata'
 			);
 			expect(sessionUpdateData).toBeDefined();
 		});
@@ -389,8 +387,8 @@ describe('Metadata and State Broadcasting Integration', () => {
 
 			// Track EventBus emissions
 			const emittedEvents: Array<{ event: string; data: unknown }> = [];
-			eventBus.on('agent-state:changed', (data) => {
-				emittedEvents.push({ event: 'agent-state:changed', data });
+			eventBus.on('session:updated', (data) => {
+				emittedEvents.push({ event: 'session:updated', data });
 			});
 
 			// Create ProcessingStateManager
@@ -409,18 +407,15 @@ describe('Metadata and State Broadcasting Integration', () => {
 			expect(queuedState.status).toBe('queued');
 			expect(queuedState.messageId).toBe(messageId);
 
-			// Verify EventBus emitted event
+			// Verify EventBus emitted session:updated with processing-state source
 			expect(emittedEvents.length).toBeGreaterThan(0);
 			const queuedEvent = emittedEvents.find(
 				(e) =>
-					e.event === 'agent-state:changed' &&
+					e.event === 'session:updated' &&
 					typeof e.data === 'object' &&
 					e.data !== null &&
-					'state' in e.data &&
-					typeof e.data.state === 'object' &&
-					e.data.state !== null &&
-					'status' in e.data.state &&
-					e.data.state.status === 'queued'
+					'source' in e.data &&
+					e.data.source === 'processing-state'
 			);
 			expect(queuedEvent).toBeDefined();
 
@@ -961,11 +956,7 @@ describe('Metadata and State Broadcasting Integration', () => {
 			// Manually emit event (in real code, this would be done by SessionManager)
 			eventBus.emit('session:updated', {
 				sessionId,
-				updates: {
-					metadata: {
-						inputDraft: 'New draft',
-					} as unknown as SessionMetadata,
-				},
+				source: 'metadata',
 			});
 
 			// Verify EventBus emitted event

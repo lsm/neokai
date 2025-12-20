@@ -179,10 +179,10 @@ export class ProcessingStateManager {
 		// DB-first: Persist to database before broadcasting
 		this.persistToDatabase();
 
-		// Broadcast updated state
-		await this.eventBus.emit('agent-state:changed', {
+		// Broadcast updated state via unified session:updated event
+		await this.eventBus.emit('session:updated', {
 			sessionId: this.sessionId,
-			state: this.processingState,
+			source: 'processing-state',
 		});
 
 		this.logger.log(`Streaming phase changed to: ${phase}`);
@@ -245,9 +245,9 @@ export class ProcessingStateManager {
 		this.persistToDatabase();
 
 		// Emit event via EventBus (StateManager will broadcast unified session state)
-		await this.eventBus.emit('agent-state:changed', {
+		await this.eventBus.emit('session:updated', {
 			sessionId: this.sessionId,
-			state: newState,
+			source: 'processing-state',
 		});
 
 		this.logger.log(`Agent state changed:`, newState);
