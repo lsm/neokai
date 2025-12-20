@@ -172,11 +172,24 @@ export class StateManager {
 			await this.broadcastSettingsChange();
 		});
 
-		// Agent state events - broadcast unified session state
+		// Agent state events - broadcast unified session state AND global sessions list
+		// FIX: Must broadcast sessions delta so all clients (including other browser windows)
+		// receive the agent state change, not just clients subscribed to that specific session
 		this.eventBus.on(
 			'agent-state:changed',
 			async (data: { sessionId: string; state: AgentProcessingState }) => {
 				await this.broadcastSessionStateChange(data.sessionId);
+
+				// Also update global sessions list so all clients see the change
+				const updatedSession = this.sessionManager
+					.listSessions()
+					.find((s) => s.id === data.sessionId);
+				if (updatedSession) {
+					await this.broadcastSessionsDelta({
+						updated: [updatedSession],
+						timestamp: Date.now(),
+					});
+				}
 			}
 		);
 

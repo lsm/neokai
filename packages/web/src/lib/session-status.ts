@@ -110,11 +110,11 @@ function subscribeToSessionState(sessionId: string): void {
 
 		// Subscribe to session state changes
 		channels.session.$.subscribe((state) => {
-			if (state?.agent) {
-				const newMap = new Map(sessionProcessingStates.value);
-				newMap.set(sessionId, state.agent);
-				sessionProcessingStates.value = newMap;
-			}
+			// Always update state - if agent is undefined, set to idle
+			const agentState = state?.agent ?? { status: 'idle' as const };
+			const newMap = new Map(sessionProcessingStates.value);
+			newMap.set(sessionId, agentState);
+			sessionProcessingStates.value = newMap;
 		});
 	} catch (e) {
 		console.error(`[SessionStatus] Failed to subscribe to session ${sessionId}:`, e);
