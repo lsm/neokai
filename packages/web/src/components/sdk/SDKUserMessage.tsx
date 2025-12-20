@@ -305,9 +305,11 @@ export function SDKUserMessage({
 												Tool Result: {(block.tool_use_id as string).slice(0, 12)}...
 											</div>
 											<div class="font-mono text-xs text-gray-300 bg-gray-900/50 p-2 rounded max-h-48 overflow-y-auto">
-												{typeof block.content === 'string'
-													? block.content
-													: JSON.stringify(block.content, null, 2)}
+												{block.content !== undefined && block.content !== null
+													? typeof block.content === 'string'
+														? block.content
+														: JSON.stringify(block.content, null, 2)
+													: '(empty)'}
 											</div>
 										</div>
 									)}

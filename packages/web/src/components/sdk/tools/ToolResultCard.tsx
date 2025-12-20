@@ -54,7 +54,7 @@ export function ToolResultCard({
 }: ToolResultCardProps) {
 	// Type-safe access to input/output properties
 	const inputRecord = input as Record<string, unknown>;
-	const outputRecord = output as Record<string, unknown>;
+	const outputRecord = (output || {}) as Record<string, unknown>;
 
 	const colors = getToolColors(toolName);
 	const displayName = getToolDisplayName(toolName);
@@ -178,7 +178,11 @@ export function ToolResultCard({
 		if (toolName === 'Read') {
 			// Count lines in output
 			const content =
-				typeof output === 'string' ? output : (outputRecord.content as string | undefined);
+				typeof output === 'string'
+					? output
+					: output && typeof output === 'object'
+						? (outputRecord.content as string | undefined)
+						: undefined;
 			if (content && typeof content === 'string') {
 				const lineCount = content.split('\n').length;
 				return <span class="text-xs text-gray-600 dark:text-gray-400 font-mono">{lineCount}</span>;
@@ -281,10 +285,13 @@ export function ToolResultCard({
 					  (typeof output === 'string' ||
 							(typeof output === 'object' &&
 								'content' in output &&
-								typeof outputRecord.content === 'string')) ? (
+								output.content &&
+								typeof (output as Record<string, unknown>).content === 'string')) ? (
 						<CodeViewer
 							code={stripLineNumbers(
-								typeof output === 'string' ? output : (outputRecord.content as string)
+								typeof output === 'string'
+									? output
+									: ((output as Record<string, unknown>).content as string)
 							)}
 							filePath={inputRecord?.file_path as string | undefined}
 							showLineNumbers={true}

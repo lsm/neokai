@@ -25,10 +25,10 @@ export function SDKStreamingMessage({ message }: Props) {
 				return '';
 			case 'content_block_delta':
 				if (event.delta?.type === 'text_delta') {
-					return event.delta.text || '';
+					return event.delta?.text || '';
 				}
 				if (event.delta?.type === 'input_json_delta') {
-					return event.delta.partial_json || '';
+					return event.delta?.partial_json || '';
 				}
 				return '';
 			case 'content_block_stop':
@@ -80,7 +80,7 @@ export function SDKStreamingAccumulator({ events }: AccumulatorProps) {
 
 		if (event.type === 'content_block_delta') {
 			if (event.delta?.type === 'text_delta') {
-				return acc + (event.delta.text || '');
+				return acc + (event.delta?.text || '');
 			}
 		}
 

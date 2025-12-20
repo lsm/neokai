@@ -912,8 +912,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		messages.forEach((msg) => {
 			if (msg.type === 'user' && Array.isArray(msg.message.content)) {
 				msg.message.content.forEach((block: unknown) => {
-					if ((block as Record<string, unknown>).type === 'tool_result') {
-						const toolUseId = (block as Record<string, unknown>).tool_use_id as string;
+					const blockObj = block as Record<string, unknown>;
+					if (blockObj.type === 'tool_result' && blockObj.tool_use_id) {
+						const toolUseId = blockObj.tool_use_id as string;
 						const isRemoved = msg.uuid ? removedOutputs.includes(msg.uuid) : false;
 						const resultData = {
 							content: block,
@@ -936,11 +937,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		messages.forEach((msg) => {
 			if (msg.type === 'assistant' && Array.isArray(msg.message.content)) {
 				msg.message.content.forEach((block: unknown) => {
-					if ((block as Record<string, unknown>).type === 'tool_use') {
-						map.set(
-							(block as Record<string, unknown>).id as string,
-							(block as Record<string, unknown>).input
-						);
+					const blockObj = block as Record<string, unknown>;
+					if (blockObj.type === 'tool_use' && blockObj.id) {
+						map.set(blockObj.id as string, blockObj.input);
 					}
 				});
 			}
