@@ -2,11 +2,12 @@
  * MCP Toggle Integration Tests
  *
  * Tests for MCP (Model Context Protocol) toggle functionality.
- * Verifies that:
- * 1. MCP tools can be enabled/disabled via tools.save RPC
- * 2. loadProjectMcp auto-syncs with enabledMcpPatterns
- * 3. Disabling all MCP patterns sets loadProjectMcp to false
- * 4. Session config correctly reflects MCP toggle state
+ * Uses the new disabledMcpServers approach:
+ * - Empty disabledMcpServers = all servers enabled
+ * - Server name in disabledMcpServers = that server disabled
+ *
+ * This is a direct 1:1 UI→SDK mapping where disabledMcpServers is written
+ * to .claude/settings.local.json as disabledMcpjsonServers.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -29,7 +30,7 @@ describe('MCP Toggle Integration', () => {
 	});
 
 	describe('tools.save RPC', () => {
-		test('should save tools config with MCP patterns enabled', async () => {
+		test('should save tools config with all servers enabled (empty disabledMcpServers)', async () => {
 			// Create a session
 			const { sessionId } = await callRPCHandler<{ sessionId: string }>(
 				ctx.messageHub,
@@ -37,12 +38,10 @@ describe('MCP Toggle Integration', () => {
 				{ workspacePath: `${TMP_DIR}/mcp-test-1` }
 			);
 
-			// Save tools config with MCP enabled
+			// Save tools config with all servers enabled (empty disabled list)
 			const toolsConfig: ToolsConfig = {
 				useClaudeCodePreset: true,
-				loadSettingSources: true,
-				loadProjectMcp: true,
-				enabledMcpPatterns: ['mcp__chrome-devtools__*', 'mcp__filesystem__*'],
+				disabledMcpServers: [], // Empty = all enabled
 				liuboerTools: { memory: false },
 			};
 
@@ -55,14 +54,10 @@ describe('MCP Toggle Integration', () => {
 
 			// Verify config was saved to database
 			const session = ctx.db.getSession(sessionId);
-			expect(session?.config.tools?.loadProjectMcp).toBe(true);
-			expect(session?.config.tools?.enabledMcpPatterns).toEqual([
-				'mcp__chrome-devtools__*',
-				'mcp__filesystem__*',
-			]);
+			expect(session?.config.tools?.disabledMcpServers).toEqual([]);
 		});
 
-		test('should save tools config with MCP disabled (empty patterns)', async () => {
+		test('should save tools config with specific servers disabled', async () => {
 			// Create a session
 			const { sessionId } = await callRPCHandler<{ sessionId: string }>(
 				ctx.messageHub,
@@ -70,12 +65,10 @@ describe('MCP Toggle Integration', () => {
 				{ workspacePath: `${TMP_DIR}/mcp-test-2` }
 			);
 
-			// Save tools config with MCP disabled (empty patterns)
+			// Save tools config with specific servers disabled
 			const toolsConfig: ToolsConfig = {
 				useClaudeCodePreset: true,
-				loadSettingSources: true,
-				loadProjectMcp: false, // Should be false when patterns are empty
-				enabledMcpPatterns: [],
+				disabledMcpServers: ['chrome-devtools', 'filesystem'],
 				liuboerTools: { memory: false },
 			};
 
@@ -86,13 +79,12 @@ describe('MCP Toggle Integration', () => {
 
 			expect(result.success).toBe(true);
 
-			// Verify config was saved to database
+			// Verify config was saved
 			const session = ctx.db.getSession(sessionId);
-			expect(session?.config.tools?.loadProjectMcp).toBe(false);
-			expect(session?.config.tools?.enabledMcpPatterns).toEqual([]);
+			expect(session?.config.tools?.disabledMcpServers).toEqual(['chrome-devtools', 'filesystem']);
 		});
 
-		test('should handle transition from enabled to disabled MCP', async () => {
+		test('should toggle server from enabled to disabled', async () => {
 			// Create a session
 			const { sessionId } = await callRPCHandler<{ sessionId: string }>(
 				ctx.messageHub,
@@ -100,381 +92,197 @@ describe('MCP Toggle Integration', () => {
 				{ workspacePath: `${TMP_DIR}/mcp-test-3` }
 			);
 
-			// First enable MCP
+			// Start with all enabled
 			await callRPCHandler<{ success: boolean }>(ctx.messageHub, 'tools.save', {
 				sessionId,
-				tools: {
-					useClaudeCodePreset: true,
-					loadSettingSources: true,
-					loadProjectMcp: true,
-					enabledMcpPatterns: ['mcp__chrome-devtools__*'],
-					liuboerTools: { memory: false },
-				},
+				tools: { disabledMcpServers: [] },
 			});
 
-			// Verify MCP is enabled
 			let session = ctx.db.getSession(sessionId);
-			expect(session?.config.tools?.loadProjectMcp).toBe(true);
-			expect(session?.config.tools?.enabledMcpPatterns?.length).toBe(1);
+			expect(session?.config.tools?.disabledMcpServers).toEqual([]);
 
-			// Now disable MCP by removing all patterns
+			// Disable chrome-devtools
 			await callRPCHandler<{ success: boolean }>(ctx.messageHub, 'tools.save', {
 				sessionId,
-				tools: {
-					useClaudeCodePreset: true,
-					loadSettingSources: true,
-					loadProjectMcp: false, // Auto-synced with empty patterns
-					enabledMcpPatterns: [],
-					liuboerTools: { memory: false },
-				},
+				tools: { disabledMcpServers: ['chrome-devtools'] },
 			});
 
-			// Verify MCP is disabled
 			session = ctx.db.getSession(sessionId);
-			expect(session?.config.tools?.loadProjectMcp).toBe(false);
-			expect(session?.config.tools?.enabledMcpPatterns).toEqual([]);
+			expect(session?.config.tools?.disabledMcpServers).toEqual(['chrome-devtools']);
 		});
 
-		test('should preserve other config when updating tools', async () => {
-			// Create a session with specific config
+		test('should toggle server from disabled to enabled', async () => {
+			// Create a session
 			const { sessionId } = await callRPCHandler<{ sessionId: string }>(
 				ctx.messageHub,
 				'session.create',
+				{ workspacePath: `${TMP_DIR}/mcp-test-4` }
+			);
+
+			// Start with chrome-devtools disabled
+			await callRPCHandler<{ success: boolean }>(ctx.messageHub, 'tools.save', {
+				sessionId,
+				tools: { disabledMcpServers: ['chrome-devtools'] },
+			});
+
+			let session = ctx.db.getSession(sessionId);
+			expect(session?.config.tools?.disabledMcpServers).toEqual(['chrome-devtools']);
+
+			// Enable chrome-devtools (remove from disabled list)
+			await callRPCHandler<{ success: boolean }>(ctx.messageHub, 'tools.save', {
+				sessionId,
+				tools: { disabledMcpServers: [] },
+			});
+
+			session = ctx.db.getSession(sessionId);
+			expect(session?.config.tools?.disabledMcpServers).toEqual([]);
+		});
+	});
+
+	describe('mcp.updateDisabledServers RPC', () => {
+		test('should update disabled servers list', async () => {
+			// Create a session
+			const { sessionId } = await callRPCHandler<{ sessionId: string }>(
+				ctx.messageHub,
+				'session.create',
+				{ workspacePath: `${TMP_DIR}/mcp-test-5` }
+			);
+
+			// Use the new RPC method to update disabled servers
+			const result = await callRPCHandler<{ success: boolean }>(
+				ctx.messageHub,
+				'mcp.updateDisabledServers',
 				{
-					workspacePath: `${TMP_DIR}/mcp-test-4`,
-					config: {
-						model: 'default',
-						maxTokens: 4096,
-						temperature: 0.7,
-					},
+					sessionId,
+					disabledServers: ['chrome-devtools', 'github'],
 				}
 			);
 
-			// Save tools config
+			expect(result.success).toBe(true);
+
+			// Verify via mcp.getDisabledServers
+			const getResult = await callRPCHandler<{ disabledServers: string[] }>(
+				ctx.messageHub,
+				'mcp.getDisabledServers',
+				{ sessionId }
+			);
+
+			expect(getResult.disabledServers).toEqual(['chrome-devtools', 'github']);
+		});
+
+		test('should enable all servers by setting empty disabled list', async () => {
+			// Create a session
+			const { sessionId } = await callRPCHandler<{ sessionId: string }>(
+				ctx.messageHub,
+				'session.create',
+				{ workspacePath: `${TMP_DIR}/mcp-test-6` }
+			);
+
+			// First disable some servers
+			await callRPCHandler<{ success: boolean }>(ctx.messageHub, 'mcp.updateDisabledServers', {
+				sessionId,
+				disabledServers: ['chrome-devtools'],
+			});
+
+			// Then enable all by setting empty list
+			await callRPCHandler<{ success: boolean }>(ctx.messageHub, 'mcp.updateDisabledServers', {
+				sessionId,
+				disabledServers: [],
+			});
+
+			const getResult = await callRPCHandler<{ disabledServers: string[] }>(
+				ctx.messageHub,
+				'mcp.getDisabledServers',
+				{ sessionId }
+			);
+
+			expect(getResult.disabledServers).toEqual([]);
+		});
+	});
+
+	describe('Default session configuration', () => {
+		test('should create session with empty disabledMcpServers by default', async () => {
+			// Create a session without specifying tools config
+			const { sessionId } = await callRPCHandler<{ sessionId: string }>(
+				ctx.messageHub,
+				'session.create',
+				{ workspacePath: `${TMP_DIR}/mcp-test-7` }
+			);
+
+			// New sessions should have all servers enabled (empty disabled list)
+			const session = ctx.db.getSession(sessionId);
+			expect(session?.config.tools?.disabledMcpServers).toEqual([]);
+		});
+	});
+
+	describe('Multiple server management', () => {
+		test('should handle multiple servers being disabled', async () => {
+			// Create a session
+			const { sessionId } = await callRPCHandler<{ sessionId: string }>(
+				ctx.messageHub,
+				'session.create',
+				{ workspacePath: `${TMP_DIR}/mcp-test-8` }
+			);
+
+			// Disable multiple servers
+			await callRPCHandler<{ success: boolean }>(ctx.messageHub, 'tools.save', {
+				sessionId,
+				tools: {
+					disabledMcpServers: ['chrome-devtools', 'filesystem', 'github'],
+				},
+			});
+
+			let session = ctx.db.getSession(sessionId);
+			expect(session?.config.tools?.disabledMcpServers?.length).toBe(3);
+			expect(session?.config.tools?.disabledMcpServers).toContain('chrome-devtools');
+			expect(session?.config.tools?.disabledMcpServers).toContain('filesystem');
+			expect(session?.config.tools?.disabledMcpServers).toContain('github');
+
+			// Remove one server from disabled list (enable it)
+			await callRPCHandler<{ success: boolean }>(ctx.messageHub, 'tools.save', {
+				sessionId,
+				tools: {
+					disabledMcpServers: ['filesystem', 'github'],
+				},
+			});
+
+			session = ctx.db.getSession(sessionId);
+			expect(session?.config.tools?.disabledMcpServers?.length).toBe(2);
+			expect(session?.config.tools?.disabledMcpServers).not.toContain('chrome-devtools');
+		});
+
+		test('should preserve other tools config when updating disabledMcpServers', async () => {
+			// Create a session
+			const { sessionId } = await callRPCHandler<{ sessionId: string }>(
+				ctx.messageHub,
+				'session.create',
+				{ workspacePath: `${TMP_DIR}/mcp-test-9` }
+			);
+
+			// Set initial config with various options
 			await callRPCHandler<{ success: boolean }>(ctx.messageHub, 'tools.save', {
 				sessionId,
 				tools: {
 					useClaudeCodePreset: true,
-					loadSettingSources: true,
-					loadProjectMcp: true,
-					enabledMcpPatterns: ['mcp__test__*'],
+					disabledMcpServers: [],
 					liuboerTools: { memory: true },
 				},
 			});
 
-			// Verify other config values are preserved
-			const session = ctx.db.getSession(sessionId);
-			expect(session?.config.model).toBe('default');
-			expect(session?.config.maxTokens).toBe(4096);
-			expect(session?.config.temperature).toBe(0.7);
-			// And tools config is set
-			expect(session?.config.tools?.loadProjectMcp).toBe(true);
-		});
-
-		test('should throw error for non-existent session', async () => {
-			await expect(
-				callRPCHandler(ctx.messageHub, 'tools.save', {
-					sessionId: 'non-existent-session',
-					tools: {
-						useClaudeCodePreset: true,
-						loadSettingSources: true,
-						loadProjectMcp: false,
-						enabledMcpPatterns: [],
-						liuboerTools: { memory: false },
-					},
-				})
-			).rejects.toThrow('Session not found');
-		});
-	});
-
-	describe('mcp.updateEnabledTools (legacy)', () => {
-		test('should auto-sync loadProjectMcp when patterns are added', async () => {
-			const { sessionId } = await callRPCHandler<{ sessionId: string }>(
-				ctx.messageHub,
-				'session.create',
-				{ workspacePath: `${TMP_DIR}/mcp-legacy-1` }
-			);
-
-			// Use legacy handler to enable tools
-			await callRPCHandler(ctx.messageHub, 'mcp.updateEnabledTools', {
-				sessionId,
-				enabledTools: ['mcp__chrome-devtools__*'],
-			});
-
-			// Verify loadProjectMcp is auto-synced to true
-			const session = ctx.db.getSession(sessionId);
-			expect(session?.config.tools?.loadProjectMcp).toBe(true);
-			expect(session?.config.tools?.enabledMcpPatterns).toEqual(['mcp__chrome-devtools__*']);
-		});
-
-		test('should auto-sync loadProjectMcp when all patterns are removed', async () => {
-			const { sessionId } = await callRPCHandler<{ sessionId: string }>(
-				ctx.messageHub,
-				'session.create',
-				{ workspacePath: `${TMP_DIR}/mcp-legacy-2` }
-			);
-
-			// First enable some tools
-			await callRPCHandler(ctx.messageHub, 'mcp.updateEnabledTools', {
-				sessionId,
-				enabledTools: ['mcp__chrome-devtools__*'],
-			});
-
-			// Then remove all tools
-			await callRPCHandler(ctx.messageHub, 'mcp.updateEnabledTools', {
-				sessionId,
-				enabledTools: [],
-			});
-
-			// Verify loadProjectMcp is auto-synced to false
-			const session = ctx.db.getSession(sessionId);
-			expect(session?.config.tools?.loadProjectMcp).toBe(false);
-			expect(session?.config.tools?.enabledMcpPatterns).toEqual([]);
-		});
-	});
-
-	describe('mcp.getEnabledTools', () => {
-		test('should return enabled tools patterns', async () => {
-			const { sessionId } = await callRPCHandler<{ sessionId: string }>(
-				ctx.messageHub,
-				'session.create',
-				{ workspacePath: `${TMP_DIR}/mcp-get-1` }
-			);
-
-			// Enable some tools
-			await callRPCHandler(ctx.messageHub, 'tools.save', {
+			// Update only disabledMcpServers
+			await callRPCHandler<{ success: boolean }>(ctx.messageHub, 'tools.save', {
 				sessionId,
 				tools: {
 					useClaudeCodePreset: true,
-					loadSettingSources: true,
-					loadProjectMcp: true,
-					enabledMcpPatterns: ['mcp__server1__*', 'mcp__server2__*'],
-					liuboerTools: { memory: false },
-				},
-			});
-
-			// Get enabled tools
-			const result = await callRPCHandler<{ enabledTools: string[] }>(
-				ctx.messageHub,
-				'mcp.getEnabledTools',
-				{ sessionId }
-			);
-
-			expect(result.enabledTools).toEqual(['mcp__server1__*', 'mcp__server2__*']);
-		});
-
-		test('should return empty array when no tools enabled', async () => {
-			const { sessionId } = await callRPCHandler<{ sessionId: string }>(
-				ctx.messageHub,
-				'session.create',
-				{ workspacePath: `${TMP_DIR}/mcp-get-2` }
-			);
-
-			// Get enabled tools for fresh session
-			const result = await callRPCHandler<{ enabledTools: string[] }>(
-				ctx.messageHub,
-				'mcp.getEnabledTools',
-				{ sessionId }
-			);
-
-			expect(result.enabledTools).toEqual([]);
-		});
-	});
-
-	describe('session config tools state', () => {
-		test('should have default tools config for new session', async () => {
-			const { sessionId } = await callRPCHandler<{ sessionId: string }>(
-				ctx.messageHub,
-				'session.create',
-				{ workspacePath: `${TMP_DIR}/mcp-state-1` }
-			);
-
-			const session = ctx.db.getSession(sessionId);
-			// New sessions have default tools config initialized
-			expect(session?.config.tools).toBeDefined();
-			// Default config should have MCP disabled
-			expect(session?.config.tools?.loadProjectMcp).toBe(false);
-			expect(session?.config.tools?.enabledMcpPatterns).toEqual([]);
-		});
-
-		test('should correctly initialize tools config after first save', async () => {
-			const { sessionId } = await callRPCHandler<{ sessionId: string }>(
-				ctx.messageHub,
-				'session.create',
-				{ workspacePath: `${TMP_DIR}/mcp-state-2` }
-			);
-
-			// Save initial tools config
-			await callRPCHandler(ctx.messageHub, 'tools.save', {
-				sessionId,
-				tools: {
-					useClaudeCodePreset: true,
-					loadSettingSources: true,
-					loadProjectMcp: false,
-					enabledMcpPatterns: [],
-					liuboerTools: { memory: false },
+					disabledMcpServers: ['chrome-devtools'],
+					liuboerTools: { memory: true },
 				},
 			});
 
 			const session = ctx.db.getSession(sessionId);
-			expect(session?.config.tools).toBeDefined();
 			expect(session?.config.tools?.useClaudeCodePreset).toBe(true);
-			expect(session?.config.tools?.loadSettingSources).toBe(true);
-			expect(session?.config.tools?.loadProjectMcp).toBe(false);
-			expect(session?.config.tools?.enabledMcpPatterns).toEqual([]);
-		});
-
-		test('should maintain consistency between loadProjectMcp and enabledMcpPatterns', async () => {
-			const { sessionId } = await callRPCHandler<{ sessionId: string }>(
-				ctx.messageHub,
-				'session.create',
-				{ workspacePath: `${TMP_DIR}/mcp-state-3` }
-			);
-
-			// Test case 1: patterns exist, loadProjectMcp should be true
-			await callRPCHandler(ctx.messageHub, 'tools.save', {
-				sessionId,
-				tools: {
-					useClaudeCodePreset: true,
-					loadSettingSources: true,
-					loadProjectMcp: true,
-					enabledMcpPatterns: ['mcp__test__*'],
-					liuboerTools: { memory: false },
-				},
-			});
-
-			let session = ctx.db.getSession(sessionId);
-			expect(session?.config.tools?.loadProjectMcp).toBe(true);
-			expect(session?.config.tools?.enabledMcpPatterns?.length).toBeGreaterThan(0);
-
-			// Test case 2: patterns empty, loadProjectMcp should be false
-			await callRPCHandler(ctx.messageHub, 'tools.save', {
-				sessionId,
-				tools: {
-					useClaudeCodePreset: true,
-					loadSettingSources: true,
-					loadProjectMcp: false, // Should match empty patterns
-					enabledMcpPatterns: [],
-					liuboerTools: { memory: false },
-				},
-			});
-
-			session = ctx.db.getSession(sessionId);
-			expect(session?.config.tools?.loadProjectMcp).toBe(false);
-			expect(session?.config.tools?.enabledMcpPatterns?.length).toBe(0);
-		});
-	});
-
-	describe('edge cases', () => {
-		test('should handle multiple MCP servers toggle', async () => {
-			const { sessionId } = await callRPCHandler<{ sessionId: string }>(
-				ctx.messageHub,
-				'session.create',
-				{ workspacePath: `${TMP_DIR}/mcp-edge-1` }
-			);
-
-			// Enable multiple servers
-			await callRPCHandler(ctx.messageHub, 'tools.save', {
-				sessionId,
-				tools: {
-					useClaudeCodePreset: true,
-					loadSettingSources: true,
-					loadProjectMcp: true,
-					enabledMcpPatterns: ['mcp__chrome-devtools__*', 'mcp__filesystem__*', 'mcp__github__*'],
-					liuboerTools: { memory: false },
-				},
-			});
-
-			let session = ctx.db.getSession(sessionId);
-			expect(session?.config.tools?.enabledMcpPatterns?.length).toBe(3);
-
-			// Disable one server (keep two)
-			await callRPCHandler(ctx.messageHub, 'tools.save', {
-				sessionId,
-				tools: {
-					useClaudeCodePreset: true,
-					loadSettingSources: true,
-					loadProjectMcp: true, // Still true - we have patterns
-					enabledMcpPatterns: ['mcp__filesystem__*', 'mcp__github__*'],
-					liuboerTools: { memory: false },
-				},
-			});
-
-			session = ctx.db.getSession(sessionId);
-			expect(session?.config.tools?.loadProjectMcp).toBe(true);
-			expect(session?.config.tools?.enabledMcpPatterns?.length).toBe(2);
-			expect(session?.config.tools?.enabledMcpPatterns).not.toContain('mcp__chrome-devtools__*');
-
-			// Disable all remaining servers
-			await callRPCHandler(ctx.messageHub, 'tools.save', {
-				sessionId,
-				tools: {
-					useClaudeCodePreset: true,
-					loadSettingSources: true,
-					loadProjectMcp: false, // Now false - no patterns
-					enabledMcpPatterns: [],
-					liuboerTools: { memory: false },
-				},
-			});
-
-			session = ctx.db.getSession(sessionId);
-			expect(session?.config.tools?.loadProjectMcp).toBe(false);
-			expect(session?.config.tools?.enabledMcpPatterns?.length).toBe(0);
-		});
-
-		test('should handle rapid toggle changes', async () => {
-			const { sessionId } = await callRPCHandler<{ sessionId: string }>(
-				ctx.messageHub,
-				'session.create',
-				{ workspacePath: `${TMP_DIR}/mcp-edge-2` }
-			);
-
-			// Rapid toggle on/off
-			for (let i = 0; i < 5; i++) {
-				const isEnabled = i % 2 === 0;
-				await callRPCHandler(ctx.messageHub, 'tools.save', {
-					sessionId,
-					tools: {
-						useClaudeCodePreset: true,
-						loadSettingSources: true,
-						loadProjectMcp: isEnabled,
-						enabledMcpPatterns: isEnabled ? ['mcp__test__*'] : [],
-						liuboerTools: { memory: false },
-					},
-				});
-			}
-
-			// Final state should be enabled (last iteration i=4, 4%2=0, isEnabled=true)
-			const session = ctx.db.getSession(sessionId);
-			expect(session?.config.tools?.loadProjectMcp).toBe(true);
-			expect(session?.config.tools?.enabledMcpPatterns).toEqual(['mcp__test__*']);
-		});
-
-		test('should handle tools save with all options disabled', async () => {
-			const { sessionId } = await callRPCHandler<{ sessionId: string }>(
-				ctx.messageHub,
-				'session.create',
-				{ workspacePath: `${TMP_DIR}/mcp-edge-3` }
-			);
-
-			// Save with everything disabled
-			await callRPCHandler(ctx.messageHub, 'tools.save', {
-				sessionId,
-				tools: {
-					useClaudeCodePreset: false,
-					loadSettingSources: false,
-					loadProjectMcp: false,
-					enabledMcpPatterns: [],
-					liuboerTools: { memory: false },
-				},
-			});
-
-			const session = ctx.db.getSession(sessionId);
-			expect(session?.config.tools?.useClaudeCodePreset).toBe(false);
-			expect(session?.config.tools?.loadSettingSources).toBe(false);
-			expect(session?.config.tools?.loadProjectMcp).toBe(false);
-			expect(session?.config.tools?.enabledMcpPatterns).toEqual([]);
-			expect(session?.config.tools?.liuboerTools?.memory).toBe(false);
+			expect(session?.config.tools?.disabledMcpServers).toEqual(['chrome-devtools']);
+			expect(session?.config.tools?.liuboerTools?.memory).toBe(true);
 		});
 	});
 });

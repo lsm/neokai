@@ -41,13 +41,13 @@ export function registerMcpHandlers(messageHub: MessageHub, sessionManager: Sess
 	});
 
 	/**
-	 * Update enabled MCP tools for a session (legacy - kept for backward compatibility)
-	 * Now converts to new tools config format
+	 * Update disabled MCP servers for a session (new approach)
+	 * Uses disabledMcpServers which is written to settings.local.json
 	 */
 	messageHub.handle(
-		'mcp.updateEnabledTools',
-		async (data: { sessionId: string; enabledTools: string[] }) => {
-			const { sessionId, enabledTools } = data;
+		'mcp.updateDisabledServers',
+		async (data: { sessionId: string; disabledServers: string[] }) => {
+			const { sessionId, disabledServers } = data;
 
 			const agentSession = sessionManager.getSession(sessionId);
 			if (!agentSession) {
@@ -56,29 +56,24 @@ export function registerMcpHandlers(messageHub: MessageHub, sessionManager: Sess
 
 			const session = agentSession.getSessionData();
 
-			// Convert legacy format to new tools config format
+			// Update session with new disabledMcpServers list
 			const currentTools = session.config.tools ?? {};
 			const newTools: ToolsConfig = {
 				...currentTools,
-				loadProjectMcp: enabledTools.length > 0,
-				enabledMcpPatterns: enabledTools,
+				disabledMcpServers: disabledServers,
 			};
 
-			agentSession.updateMetadata({
-				config: {
-					...session.config,
-					tools: newTools,
-				},
-			});
+			// Use updateToolsConfig to properly restart query with new settings
+			await agentSession.updateToolsConfig(newTools);
 
 			return { success: true };
 		}
 	);
 
 	/**
-	 * Get enabled MCP tools for a session
+	 * Get disabled MCP servers for a session
 	 */
-	messageHub.handle('mcp.getEnabledTools', async (data: { sessionId: string }) => {
+	messageHub.handle('mcp.getDisabledServers', async (data: { sessionId: string }) => {
 		const { sessionId } = data;
 
 		const agentSession = sessionManager.getSession(sessionId);
@@ -88,9 +83,8 @@ export function registerMcpHandlers(messageHub: MessageHub, sessionManager: Sess
 
 		const session = agentSession.getSessionData();
 
-		// Return patterns from new tools config format
 		return {
-			enabledTools: session.config.tools?.enabledMcpPatterns || [],
+			disabledServers: session.config.tools?.disabledMcpServers || [],
 		};
 	});
 

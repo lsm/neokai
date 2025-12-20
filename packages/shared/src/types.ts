@@ -70,22 +70,15 @@ export interface ToolsConfig {
 	loadSettingSources?: boolean;
 
 	// ============================================================================
-	// MCP Server Control (File-based approach)
+	// MCP Server Control (Direct 1:1 UI→SDK Mapping)
 	// ============================================================================
-	// These are written to .claude/settings.local.json and read by the SDK.
-	// Changes take effect on the next SDK turn without session restart.
+	// disabledMcpServers is written to .claude/settings.local.json as disabledMcpjsonServers
+	// SDK reads this file and applies filtering automatically
+	// Empty array = all servers enabled; server name in array = that server disabled
 
 	// List of MCP server names to disable (unchecked in UI)
 	// Written to settings.local.json as "disabledMcpjsonServers"
 	disabledMcpServers?: string[];
-
-	// ============================================================================
-	// LEGACY FIELDS - Deprecated, kept for backward compatibility
-	// ============================================================================
-	// @deprecated Use disabledMcpServers instead. Will be removed in future version.
-	loadProjectMcp?: boolean;
-	// @deprecated Use disabledMcpServers instead. Will be removed in future version.
-	enabledMcpPatterns?: string[];
 
 	// Liuboer-specific tools (not SDK built-in tools)
 	liuboerTools?: {

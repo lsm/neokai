@@ -674,39 +674,40 @@ ${messageText.slice(0, 2000)}`,
 
 	/**
 	 * Get default tools configuration for new sessions based on global settings
+	 *
+	 * ARCHITECTURE (Direct 1:1 UI→SDK Mapping):
+	 * - disabledMcpServers: List of server names to disable (empty = all enabled)
+	 * - This is written to .claude/settings.local.json and SDK applies filtering
+	 * - No intermediate loadProjectMcp/enabledMcpPatterns values needed
 	 */
 	private getDefaultToolsConfig(): Session['config']['tools'] {
 		const globalToolsConfig = this.db.getGlobalToolsConfig();
 		const globalSettings = this.settingsManager.getGlobalSettings();
 
-		// Get MCP servers that have defaultOn enabled
+		// Build disabledMcpServers from global mcpServerSettings
+		// Servers with allowed=false or defaultOn=false are disabled by default
 		const mcpServerSettings = globalSettings.mcpServerSettings || {};
 		const mcpServers = this.settingsManager.listMcpServersFromSources();
 
-		this.log(
-			'[SessionManager] getDefaultToolsConfig - mcpServerSettings:',
-			JSON.stringify(mcpServerSettings)
-		);
-		this.log('[SessionManager] getDefaultToolsConfig - mcpServers:', JSON.stringify(mcpServers));
-
-		// Build enabled MCP patterns from servers that are allowed AND defaultOn
-		const enabledMcpPatterns: string[] = [];
+		const disabledMcpServers: string[] = [];
 		for (const source of Object.keys(mcpServers) as Array<'user' | 'project' | 'local'>) {
 			for (const server of mcpServers[source]) {
 				const settings = mcpServerSettings[server.name];
 				const isAllowed = settings?.allowed !== false; // Default to true
-				const isDefaultOn = settings?.defaultOn === true; // Default to false
+				const isDefaultOn = settings?.defaultOn !== false; // Default to TRUE (changed!)
+
 				this.log(
-					`[SessionManager] Server ${server.name}: allowed=${isAllowed}, defaultOn=${isDefaultOn}, settings=`,
-					settings
+					`[SessionManager] Server ${server.name}: allowed=${isAllowed}, defaultOn=${isDefaultOn}`
 				);
-				if (isAllowed && isDefaultOn) {
-					enabledMcpPatterns.push(`mcp__${server.name}__*`);
+
+				// Add to disabled list if not allowed OR not defaultOn
+				if (!isAllowed || !isDefaultOn) {
+					disabledMcpServers.push(server.name);
 				}
 			}
 		}
 
-		this.log('[SessionManager] getDefaultToolsConfig - enabledMcpPatterns:', enabledMcpPatterns);
+		this.log('[SessionManager] getDefaultToolsConfig - disabledMcpServers:', disabledMcpServers);
 
 		return {
 			// System Prompt: Claude Code preset - Only enable if allowed AND default is on
@@ -715,10 +716,9 @@ ${messageText.slice(0, 2000)}`,
 				globalToolsConfig.systemPrompt.claudeCodePreset.defaultEnabled,
 			// Setting Sources: Use global setting sources
 			settingSources: globalSettings.settingSources || ['user', 'project', 'local'],
-			// MCP: Only enable if allowed AND there are enabled patterns
-			loadProjectMcp: globalToolsConfig.mcp.allowProjectMcp && enabledMcpPatterns.length > 0,
-			// Enabled MCP patterns based on global server settings
-			enabledMcpPatterns,
+			// MCP: Direct mapping - list of disabled servers (empty = all enabled)
+			// SDK will auto-load from .mcp.json and apply this filter via settings.local.json
+			disabledMcpServers,
 			// Liuboer tools: Only enable if allowed AND default is on
 			liuboerTools: {
 				memory:

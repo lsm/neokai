@@ -824,18 +824,15 @@ CRITICAL RULES:
 			// - disallowedTools: "removed from the model's context" (actually removes them)
 			//
 			// Strategy:
-			// - When loadProjectMcp=false: Add 'mcp__*' to disallowedTools to remove ALL MCP tools
+			// - MCP tools: Controlled via file-based settings (disabledMcpServers → settings.local.json)
 			// - SDK built-in tools: Always enabled (not configurable)
 			// - Liuboer tools: Based on liuboerTools config
 
 			const disallowedTools: string[] = [];
 
-			// Disable MCP tools if loadProjectMcp is false
-			// This removes MCP tool definitions from context, saving tokens
-			if (!toolsConfig?.loadProjectMcp) {
-				// Wildcard pattern to disallow ALL MCP tools
-				disallowedTools.push('mcp__*');
-			}
+			// MCP Tools: Controlled via file-based settings (disabledMcpServers)
+			// SDK reads .claude/settings.local.json and applies filtering automatically
+			// No disallowedTools needed for MCP - SDK handles it via disabledMcpjsonServers
 
 			// Disable Liuboer memory tool if not enabled
 			if (!toolsConfig?.liuboerTools?.memory) {
@@ -855,25 +852,25 @@ CRITICAL RULES:
 				: ['local'];
 
 			// ============================================================================
-			// MCP Servers Configuration
+			// MCP Servers Configuration (Direct 1:1 UI→SDK Mapping)
 			// ============================================================================
 			// MCP server enable/disable is controlled via file-based settings:
 			// - disabledMcpServers → written to .claude/settings.local.json as disabledMcpjsonServers
 			// - SDK reads this file at query initialization time
-			// - Query restart IS required for changes to take effect (implemented in updateToolsConfig)
+			// - Always let SDK auto-load from .mcp.json, filtering applied via settings.local.json
 			//
-			// We only use query option mcpServers:{} for legacy complete MCP disable
-			const mcpServers: Options['mcpServers'] =
-				toolsConfig?.loadProjectMcp === false
-					? {} // Legacy: completely disable MCP loading
-					: undefined; // Let SDK auto-load and apply file-based disabledMcpjsonServers
+			// mcpServers option is always undefined to allow SDK auto-loading
+			const mcpServers: Options['mcpServers'] = undefined;
 
 			// ============================================================================
 			// Prepare Settings (File-only + SDK Options)
 			// ============================================================================
 			// This writes file-only settings to .claude/settings.local.json and returns
 			// SDK-supported options to merge with query options
-			const sdkSettingsOptions = await this.settingsManager.prepareSDKOptions();
+			// IMPORTANT: Pass session's disabledMcpServers so it gets written to the file
+			const sdkSettingsOptions = await this.settingsManager.prepareSDKOptions({
+				disabledMcpServers: toolsConfig?.disabledMcpServers ?? [],
+			});
 
 			// ============================================================================
 			// Worktree Directory Isolation
