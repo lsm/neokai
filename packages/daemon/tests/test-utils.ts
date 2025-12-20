@@ -329,11 +329,12 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 			// First stop title generation queue
 			await titleQueue.stop();
 
-			// Then cleanup session resources
+			// Then cleanup session resources (interrupts SDK queries)
 			await sessionManager.cleanup();
 
-			// Reduced wait - most async operations complete faster
-			await Bun.sleep(20);
+			// Wait for SDK queries to gracefully stop after interrupt
+			// This prevents "Cannot use a closed database" errors in CI
+			await Bun.sleep(100);
 
 			// Now cleanup MessageHub (removes RPC handlers)
 			messageHub.cleanup();

@@ -38,14 +38,31 @@ describe('Session Resume Integration', () => {
 		expect(session).toBeDefined();
 		expect(session?.sdkSessionId).toBeUndefined();
 
+		// Set up a promise that resolves when SDK session ID is captured
+		const sdkSessionIdCaptured = new Promise<void>((resolve) => {
+			const checkInterval = setInterval(() => {
+				const updatedSession = ctx.db.getSession(sessionId);
+				if (updatedSession?.sdkSessionId) {
+					clearInterval(checkInterval);
+					resolve();
+				}
+			}, 100);
+
+			// Timeout after 5 seconds
+			setTimeout(() => {
+				clearInterval(checkInterval);
+				resolve();
+			}, 5000);
+		});
+
 		// Send a message to trigger SDK initialization
 		await callRPCHandler(ctx.messageHub, 'message.send', {
 			sessionId,
 			content: 'Hello',
 		});
 
-		// Wait for SDK to emit system message and capture session ID
-		await new Promise((resolve) => setTimeout(resolve, 2000));
+		// Wait for SDK session ID to be captured
+		await sdkSessionIdCaptured;
 
 		// Retrieve session from database - SDK session ID should now be captured
 		session = ctx.db.getSession(sessionId);
