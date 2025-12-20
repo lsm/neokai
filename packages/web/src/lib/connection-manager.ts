@@ -435,6 +435,11 @@ export class ConnectionManager {
 				console.log('[ConnectionManager] Page hidden - connection may be paused by browser');
 			} else {
 				console.log('[ConnectionManager] Page visible - validating connection');
+				// IMPORTANT: Reset reconnect state when returning to page
+				// This allows fresh reconnection attempts after being backgrounded
+				if (this.transport) {
+					this.transport.resetReconnectState();
+				}
 				this.validateConnectionOnResume();
 			}
 		};
@@ -454,6 +459,9 @@ export class ConnectionManager {
 	 */
 	private async validateConnectionOnResume(): Promise<void> {
 		if (!this.messageHub || !this.transport) {
+			// No connection exists - try to reconnect from scratch
+			console.log('[ConnectionManager] No existing connection on resume, initiating reconnect');
+			await this.reconnect();
 			return;
 		}
 
@@ -465,13 +473,45 @@ export class ConnectionManager {
 		} catch (error) {
 			console.error('[ConnectionManager] Connection validation failed, forcing reconnect:', error);
 
-			// Update connection state to show we're reconnecting
-			connectionState.value = 'reconnecting';
-
-			// Force close and let auto-reconnect handle it
+			// FIX: Use forceReconnect() instead of close()
+			// close() sets closed=true which prevents auto-reconnect
 			if (this.transport) {
-				this.transport.close();
+				this.transport.forceReconnect();
 			}
+		}
+	}
+
+	/**
+	 * Manually trigger a reconnection attempt
+	 * Use this when user clicks "Reconnect" button or to recover from permanent failure
+	 */
+	async reconnect(): Promise<void> {
+		console.log('[ConnectionManager] Manual reconnect initiated');
+
+		// Reset transport state to allow fresh connection
+		if (this.transport) {
+			this.transport.resetReconnectState();
+			// Close existing connection if any
+			if (this.transport.isReady()) {
+				this.transport.forceReconnect();
+				return; // forceReconnect will handle the reconnection
+			}
+		}
+
+		// Clear existing state for fresh connection
+		this.messageHub = null;
+		this.connectionPromise = null;
+
+		// Update UI state
+		connectionState.value = 'connecting';
+
+		// Attempt fresh connection
+		try {
+			await this.getHub();
+			console.log('[ConnectionManager] Reconnection successful');
+		} catch (error) {
+			console.error('[ConnectionManager] Reconnection failed:', error);
+			connectionState.value = 'failed';
 		}
 	}
 
