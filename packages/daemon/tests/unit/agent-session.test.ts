@@ -354,6 +354,83 @@ describe('AgentSession', () => {
 		});
 	});
 
+	describe('resetQuery', () => {
+		test('should reset successfully when no query is running', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/reset-no-query',
+			});
+
+			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+			const result = await agentSession!.resetQuery();
+
+			expect(result.success).toBe(true);
+			expect(result.error).toBeUndefined();
+
+			// State should be idle after reset
+			const state = agentSession!.getProcessingState();
+			expect(state.status).toBe('idle');
+		});
+
+		test('should reset with restartQuery=false', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/reset-no-restart',
+			});
+
+			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+			const result = await agentSession!.resetQuery({ restartQuery: false });
+
+			expect(result.success).toBe(true);
+
+			// State should be idle
+			const state = agentSession!.getProcessingState();
+			expect(state.status).toBe('idle');
+		});
+
+		test('should reset with restartQuery=true (default)', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/reset-with-restart',
+			});
+
+			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+			const result = await agentSession!.resetQuery({ restartQuery: true });
+
+			expect(result.success).toBe(true);
+
+			// State should be idle after reset
+			const state = agentSession!.getProcessingState();
+			expect(state.status).toBe('idle');
+		});
+
+		test('should clear pending messages on reset', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/reset-clear-messages',
+			});
+
+			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+
+			// Reset should complete without error even with no pending messages
+			const result = await agentSession!.resetQuery();
+
+			expect(result.success).toBe(true);
+		});
+
+		test('should reset state to idle after reset', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/reset-state-idle',
+			});
+
+			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+
+			// Verify initial state is idle
+			expect(agentSession!.getProcessingState().status).toBe('idle');
+
+			// Reset should keep state idle
+			await agentSession!.resetQuery();
+
+			expect(agentSession!.getProcessingState().status).toBe('idle');
+		});
+	});
+
 	describe('Error Handling with Rich Context', () => {
 		test('should capture processing state when handleMessageSend fails', async () => {
 			const sessionId = await ctx.sessionManager.createSession({

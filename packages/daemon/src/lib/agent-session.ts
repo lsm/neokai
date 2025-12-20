@@ -392,15 +392,44 @@ export class AgentSession {
 				this.logger.log(`Message ${messageId} interrupted by user`);
 			} else {
 				this.logger.error(`Queue error for message ${messageId}:`, error);
+
+				// Determine error category and user message based on error type
+				const isTimeoutError = error instanceof Error && error.name === 'MessageQueueTimeoutError';
+				const category = isTimeoutError ? ErrorCategory.TIMEOUT : ErrorCategory.MESSAGE;
+				const userMessage = isTimeoutError
+					? 'The SDK is not responding. This may be due to an internal SDK error. Click "Reset Agent" in the menu to recover, or try again.'
+					: 'Failed to process message. Please try again.';
+
 				await this.errorManager.handleError(
 					this.session.id,
 					error as Error,
-					ErrorCategory.MESSAGE,
-					'Failed to process message. Please try again.',
+					category,
+					userMessage,
 					this.stateManager.getState(),
 					{ messageId }
 				);
-				await this.stateManager.setIdle();
+
+				// On timeout, attempt auto-recovery by resetting the query
+				if (isTimeoutError) {
+					this.logger.log(`Auto-recovering from timeout by resetting query...`);
+					try {
+						await this.resetQuery({ restartQuery: true });
+						this.logger.log(`Auto-recovery from timeout successful`);
+
+						// Re-enqueue the timed-out message so user doesn't have to re-send
+						this.logger.log(`Re-enqueuing timed-out message ${messageId}...`);
+						await this.stateManager.setQueued(messageId);
+						this.messageQueue.enqueueWithId(messageId, messageContent).catch(async (retryError) => {
+							this.logger.error(`Retry of message ${messageId} also failed:`, retryError);
+							await this.stateManager.setIdle();
+						});
+					} catch (resetError) {
+						this.logger.error(`Auto-recovery from timeout failed:`, resetError);
+						await this.stateManager.setIdle();
+					}
+				} else {
+					await this.stateManager.setIdle();
+				}
 			}
 		});
 
@@ -480,23 +509,61 @@ export class AgentSession {
 			// We don't await here to prevent RPC timeout - SDK processing can take
 			// longer than the RPC timeout (10s default). Errors are handled via .catch().
 			this.messageQueue.enqueueWithId(messageId, messageContent).catch(async (error) => {
-				// Handle queue errors (e.g., interrupted by user)
+				// Handle queue errors (e.g., interrupted by user, timeout)
 				// Don't log "Interrupted by user" as error - it's expected behavior
 				if (error instanceof Error && error.message === 'Interrupted by user') {
 					this.logger.log(`Message ${messageId} interrupted by user`);
 				} else {
 					// Surface non-interrupt errors to the UI
 					this.logger.error(`Queue error for message ${messageId}:`, error);
+
+					// Determine error category and user message based on error type
+					const isTimeoutError =
+						error instanceof Error && error.name === 'MessageQueueTimeoutError';
+					const category = isTimeoutError ? ErrorCategory.TIMEOUT : ErrorCategory.MESSAGE;
+					const userMessage = isTimeoutError
+						? 'The SDK is not responding. This may be due to an internal SDK error. Click "Reset Agent" in the menu to recover, or try again.'
+						: 'Failed to process message. Please try again.';
+
 					await this.errorManager.handleError(
 						this.session.id,
 						error as Error,
-						ErrorCategory.MESSAGE,
-						'Failed to process message. Please try again.',
+						category,
+						userMessage,
 						this.stateManager.getState(),
 						{ messageId }
 					);
-					// Reset state to idle so user can retry
-					await this.stateManager.setIdle();
+
+					// On timeout, attempt auto-recovery by resetting the query
+					// This terminates the stuck query and starts a fresh one
+					if (isTimeoutError) {
+						this.logger.log(`Auto-recovering from timeout by resetting query...`);
+						try {
+							await this.resetQuery({ restartQuery: true });
+							this.logger.log(`Auto-recovery from timeout successful`);
+
+							// Re-enqueue the timed-out message so user doesn't have to re-send
+							// The message is already saved to DB and shown in UI
+							this.logger.log(`Re-enqueuing timed-out message ${messageId}...`);
+							await this.stateManager.setQueued(messageId);
+							// Fire-and-forget: don't await to avoid nested timeout handling
+							this.messageQueue
+								.enqueueWithId(messageId, messageContent)
+								.catch(async (retryError) => {
+									// If retry also fails, just log and reset to idle
+									// Don't infinite loop - user can manually click Reset Agent
+									this.logger.error(`Retry of message ${messageId} also failed:`, retryError);
+									await this.stateManager.setIdle();
+								});
+						} catch (resetError) {
+							this.logger.error(`Auto-recovery from timeout failed:`, resetError);
+							// Reset to idle anyway so user can try manually
+							await this.stateManager.setIdle();
+						}
+					} else {
+						// Reset state to idle so user can retry
+						await this.stateManager.setIdle();
+					}
 				}
 			});
 
@@ -1515,6 +1582,105 @@ CRITICAL RULES:
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 			this.logger.error(`Failed to restart query:`, error);
 			throw new Error(`Query restart failed: ${errorMessage}`);
+		}
+	}
+
+	/**
+	 * Reset the SDK query - terminates current query and starts fresh
+	 *
+	 * PUBLIC API: Called by RPC handler when user clicks "Reset Agent" button.
+	 * This is a forceful reset that:
+	 * 1. Clears any pending messages in the queue
+	 * 2. Interrupts the current query
+	 * 3. Resets state to idle
+	 * 4. Starts a fresh query (ready to receive new messages)
+	 *
+	 * Use cases:
+	 * - User wants to recover from stuck "queued" state
+	 * - SDK is unresponsive
+	 * - User wants to clear SDK context and start fresh
+	 *
+	 * @param options.restartQuery - If true (default), starts a new query after reset.
+	 *                               If false, leaves query stopped (user must send message to restart).
+	 */
+	async resetQuery(options?: {
+		restartQuery?: boolean;
+	}): Promise<{ success: boolean; error?: string }> {
+		const { restartQuery = true } = options ?? {};
+		this.logger.log(`User-initiated query reset (restartQuery: ${restartQuery})...`);
+
+		try {
+			// 1. Clear any pending messages (reject with interrupt error)
+			const queueSize = this.messageQueue.size();
+			if (queueSize > 0) {
+				this.logger.log(`Clearing ${queueSize} pending messages`);
+				this.messageQueue.clear();
+			}
+
+			// 2. Clear any pending restart flag
+			this.pendingRestartReason = null;
+
+			// 3. If query hasn't started yet, just reset state
+			if (!this.queryObject && !this.queryPromise) {
+				this.logger.log(`Query not started, just resetting state`);
+				await this.stateManager.setIdle();
+				return { success: true };
+			}
+
+			// 4. Stop the message queue
+			this.messageQueue.stop();
+			this.logger.log(`Message queue stopped`);
+
+			// 5. Interrupt current query
+			if (this.queryObject && typeof this.queryObject.interrupt === 'function') {
+				try {
+					await this.queryObject.interrupt();
+					this.logger.log(`Query interrupted successfully`);
+				} catch (interruptError) {
+					this.logger.warn(`Query interrupt failed (may be expected):`, interruptError);
+				}
+			}
+
+			// 6. Wait for query promise to resolve (with short timeout)
+			if (this.queryPromise) {
+				try {
+					await Promise.race([
+						this.queryPromise,
+						new Promise((resolve) => setTimeout(resolve, 3000)), // 3s timeout
+					]);
+					this.logger.log(`Previous query terminated`);
+				} catch (error) {
+					this.logger.warn(`Error waiting for query termination:`, error);
+				}
+			}
+
+			// 7. Clear query object and promise
+			this.queryObject = null;
+			this.queryPromise = null;
+
+			// 8. Reset state to idle
+			await this.stateManager.setIdle();
+
+			// 9. Optionally start a new query
+			if (restartQuery) {
+				this.logger.log(`Starting fresh query...`);
+				await this.startStreamingQuery();
+				this.logger.log(`Fresh query started successfully`);
+			}
+
+			// 10. Notify clients
+			await this.messageHub.publish(
+				'session.reset',
+				{ message: 'Agent has been reset and is ready for new messages' },
+				{ sessionId: this.session.id }
+			);
+
+			this.logger.log(`Query reset completed successfully`);
+			return { success: true };
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			this.logger.error(`Query reset failed:`, error);
+			return { success: false, error: errorMessage };
 		}
 	}
 

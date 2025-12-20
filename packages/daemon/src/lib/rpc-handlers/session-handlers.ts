@@ -326,4 +326,32 @@ export function setupSessionHandlers(
 			message: `Cleaned up ${cleanedPaths.length} orphaned worktree(s)`,
 		};
 	});
+
+	// Handle resetting the SDK agent query
+	// This forcefully terminates and restarts the SDK query stream
+	// Use case: Recovering from stuck "queued" state or unresponsive SDK
+	messageHub.handle('session.resetQuery', async (data) => {
+		const { sessionId: targetSessionId, restartQuery = true } = data as {
+			sessionId: string;
+			restartQuery?: boolean;
+		};
+
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+
+		const result = await agentSession.resetQuery({ restartQuery });
+
+		if (result.success) {
+			// Notify all clients about the reset
+			await messageHub.publish(
+				'session.reset',
+				{ message: 'Agent has been reset successfully' },
+				{ sessionId: targetSessionId }
+			);
+		}
+
+		return result;
+	});
 }
