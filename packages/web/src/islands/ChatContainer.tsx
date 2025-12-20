@@ -475,7 +475,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 			// Load initial session state (includes context info and commands)
 			try {
-				const hub = await connectionManager.getHub();
+				const hub = connectionManager.getHubIfConnected();
+				if (!hub) {
+					// Not connected, will populate from events later
+					return;
+				}
 
 				// Fetch state.session snapshot to get initial context info
 				// This includes: session, agent state, commands, and context info
@@ -629,7 +633,13 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 			// Send via MessageHub RPC (streaming input mode!)
 			// The daemon will queue the message and yield it to the SDK AsyncGenerator
-			const hub = await connectionManager.getHub();
+			const hub = connectionManager.getHubIfConnected();
+			if (!hub) {
+				toast.error('Connection lost. Please refresh the page.');
+				setSending(false);
+				setCurrentAction(undefined);
+				return;
+			}
 			await hub.call('message.send', {
 				sessionId,
 				content,
@@ -738,6 +748,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		}
 	};
 
+	// Check if connected for guarding RPC operations
+	const isConnected = connectionState.value === 'connected';
+
 	const getHeaderActions = () => [
 		{
 			label: 'Tools',
@@ -756,8 +769,17 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		{
 			label: 'Export Chat',
 			onClick: async () => {
+				// Guard: Check connection before RPC call
+				if (!isConnected) {
+					toast.error('Not connected to server');
+					return;
+				}
 				try {
-					const hub = await connectionManager.getHub();
+					const hub = connectionManager.getHubIfConnected();
+					if (!hub) {
+						toast.error('Not connected to server');
+						return;
+					}
 					const result = await hub.call<{ markdown: string }>('session.export', {
 						sessionId,
 						format: 'markdown',
@@ -778,6 +800,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					toast.error('Failed to export chat');
 				}
 			},
+			disabled: !isConnected,
 			icon: (
 				<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
 					<path
@@ -793,7 +816,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		{
 			label: 'Archive Session',
 			onClick: handleArchiveClick,
-			disabled: archiving || session?.status === 'archived',
+			disabled: archiving || session?.status === 'archived' || !isConnected,
 			icon: (
 				<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
 					<path
@@ -809,6 +832,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			label: 'Delete Chat',
 			onClick: () => setDeleteModalOpen(true),
 			danger: true,
+			disabled: !isConnected,
 			icon: (
 				<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
 					<path
@@ -1109,7 +1133,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					{/* Options dropdown */}
 					<Dropdown
 						trigger={
-							<IconButton title="Session options">
+							<IconButton
+								title={connectionState.value !== 'connected' ? 'Not connected' : 'Session options'}
+								disabled={connectionState.value !== 'connected'}
+							>
 								<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
 									<path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
 								</svg>

@@ -115,8 +115,13 @@ export default function MessageInput({
 		setContent('');
 
 		const loadDraft = async () => {
+			// Use non-blocking pattern to avoid freezing UI
+			const hub = connectionManager.getHubIfConnected();
+			if (!hub) {
+				// Not connected yet, skip loading draft
+				return;
+			}
 			try {
-				const hub = await connectionManager.getHub();
 				const response = await hub.call<{ session: { metadata?: { inputDraft?: string } } }>(
 					'session.get',
 					{ sessionId }
@@ -150,7 +155,9 @@ export default function MessageInput({
 			const trimmedContent = content.trim();
 
 			// Fire-and-forget: save the current content as draft for the OLD session
-			connectionManager.getHub().then((hub) => {
+			// Use non-blocking pattern to avoid freezing UI
+			const hub = connectionManager.getHubIfConnected();
+			if (hub) {
 				hub
 					.call('session.update', {
 						sessionId: prevSessionId,
@@ -161,7 +168,7 @@ export default function MessageInput({
 					.catch((error) => {
 						console.error('Failed to flush draft on session switch:', error);
 					});
-			});
+			}
 		}
 		prevSessionIdRef.current = sessionId;
 
@@ -169,7 +176,9 @@ export default function MessageInput({
 
 		// Empty content: save immediately to ensure draft clears before any pending debounced save
 		if (trimmedContent === '') {
-			connectionManager.getHub().then((hub) => {
+			// Use non-blocking pattern
+			const hub = connectionManager.getHubIfConnected();
+			if (hub) {
 				hub
 					.call('session.update', {
 						sessionId,
@@ -180,14 +189,16 @@ export default function MessageInput({
 					.catch((error) => {
 						console.error('Failed to clear draft:', error);
 					});
-			});
+			}
 			return; // No cleanup needed for immediate save
 		}
 
 		// Non-empty content: debounce as usual
 		draftSaveTimeoutRef.current = setTimeout(async () => {
+			// Use non-blocking pattern
+			const hub = connectionManager.getHubIfConnected();
+			if (!hub) return;
 			try {
-				const hub = await connectionManager.getHub();
 				await hub.call('session.update', {
 					sessionId,
 					metadata: {
@@ -264,7 +275,11 @@ export default function MessageInput({
 	const loadModelInfo = async () => {
 		try {
 			setLoadingModels(true);
-			const hub = await connectionManager.getHub();
+			const hub = connectionManager.getHubIfConnected();
+			if (!hub) {
+				// Not connected, skip loading models
+				return;
+			}
 
 			// Fetch current model
 			const { currentModel: modelId, modelInfo } = (await hub.call('session.model.get', {
@@ -319,7 +334,11 @@ export default function MessageInput({
 
 		try {
 			setSwitching(true);
-			const hub = await connectionManager.getHub();
+			const hub = connectionManager.getHubIfConnected();
+			if (!hub) {
+				toast.error('Not connected to server');
+				return;
+			}
 			const result = (await hub.call('session.model.switch', {
 				sessionId,
 				model: newModelId,
@@ -434,7 +453,11 @@ export default function MessageInput({
 
 		try {
 			setInterrupting(true);
-			const hub = await connectionManager.getHub();
+			const hub = connectionManager.getHubIfConnected();
+			if (!hub) {
+				toast.error('Not connected to server');
+				return;
+			}
 			await hub.call('client.interrupt', { sessionId });
 			// Don't show toast - the state change provides feedback
 		} catch (error) {
@@ -535,16 +558,20 @@ export default function MessageInput({
 						<button
 							ref={plusButtonRef}
 							type="button"
+							disabled={disabled}
 							onClick={() => {
+								if (disabled) return;
 								setMenuOpen(!menuOpen);
 								setShowModelSubmenu(false);
 							}}
 							class={cn(
 								'w-[46px] h-[46px] rounded-full flex items-center justify-center transition-all',
 								`bg-dark-700/80 border ${borderColors.ui.secondary}`,
-								'text-gray-300 hover:bg-dark-600 hover:text-white active:scale-95'
+								disabled
+									? 'opacity-50 cursor-not-allowed text-gray-500'
+									: 'text-gray-300 hover:bg-dark-600 hover:text-white active:scale-95'
 							)}
-							title="More options"
+							title={disabled ? 'Not connected' : 'More options'}
 						>
 							<svg
 								class={cn('w-5 h-5 transition-transform duration-200', menuOpen && 'rotate-45')}

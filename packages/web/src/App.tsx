@@ -2,6 +2,7 @@ import { useEffect } from 'preact/hooks';
 import Sidebar from './islands/Sidebar.tsx';
 import MainContent from './islands/MainContent.tsx';
 import ToastContainer from './islands/ToastContainer.tsx';
+import { ConnectionOverlay } from './components/ConnectionOverlay.tsx';
 import { connectionManager } from './lib/connection-manager.ts';
 import { initializeApplicationState } from './lib/state.ts';
 import { currentSessionIdSignal } from './lib/signals.ts';
@@ -37,6 +38,9 @@ export function App() {
 
 			{/* Global Toast Container */}
 			<ToastContainer />
+
+			{/* Connection Overlay - blocks UI when disconnected */}
+			<ConnectionOverlay />
 		</>
 	);
 }

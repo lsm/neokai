@@ -2,6 +2,7 @@ import { useState, useEffect } from 'preact/hooks';
 import { currentSessionIdSignal, sidebarOpenSignal } from '../lib/signals.ts';
 import { sessions, authStatus, connectionState, apiConnectionStatus } from '../lib/state.ts';
 import { createSession } from '../lib/api-helpers.ts';
+import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import { Button } from '../components/ui/Button.tsx';
@@ -313,14 +314,44 @@ export default function Sidebar() {
 										<span class="text-yellow-300">Connecting...</span>
 									</>
 								)}
+								{connectionState.value === 'reconnecting' && (
+									<>
+										<div class="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
+										<span class="text-yellow-300">Reconnecting...</span>
+									</>
+								)}
 								{connectionState.value === 'disconnected' && (
 									<>
 										<div class="w-2 h-2 bg-gray-500 rounded-full" />
 										<span class="text-gray-500">Offline</span>
 									</>
 								)}
+								{connectionState.value === 'error' && (
+									<>
+										<div class="w-2 h-2 bg-red-500 rounded-full" />
+										<span class="text-red-400">Error</span>
+									</>
+								)}
+								{connectionState.value === 'failed' && (
+									<>
+										<div class="w-2 h-2 bg-red-500 rounded-full" />
+										<span class="text-red-400">Failed</span>
+									</>
+								)}
 							</div>
 						</div>
+
+						{/* Reconnect Button - shown when offline/failed/error */}
+						{(connectionState.value === 'disconnected' ||
+							connectionState.value === 'error' ||
+							connectionState.value === 'failed') && (
+							<button
+								onClick={() => connectionManager.reconnect()}
+								class="w-full px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded-md transition-colors"
+							>
+								Reconnect
+							</button>
+						)}
 
 						{/* API Connection (Daemon <-> Claude API) */}
 						<div class="flex items-center justify-between text-xs">
