@@ -1,4 +1,4 @@
-.PHONY: dev worktree-dev start daemon web self profile other restart sync-sdk-types clean-cache clean-all build-prod test test-daemon test-coverage test-coverage-lcov e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self lint lint-fix format typecheck merge-session
+.PHONY: dev worktree-dev start daemon web self profile other restart sync-sdk-types clean-cache clean-all build-prod test test-daemon test-coverage test-coverage-lcov e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self lint lint-fix format typecheck merge-session outdated update
 
 # Unified server (daemon + web in single process) - RECOMMENDED
 dev:
@@ -228,6 +228,46 @@ format:
 
 typecheck:
 	@bun run typecheck
+
+# Check for outdated dependencies across all workspace packages
+outdated:
+	@echo "📦 Checking for outdated dependencies..."
+	@echo ""
+	@echo "=== Root ==="
+	@bun outdated || true
+	@echo ""
+	@echo "=== packages/cli ==="
+	@cd packages/cli && bun outdated || true
+	@echo ""
+	@echo "=== packages/daemon ==="
+	@cd packages/daemon && bun outdated || true
+	@echo ""
+	@echo "=== packages/web ==="
+	@cd packages/web && bun outdated || true
+	@echo ""
+	@echo "=== packages/shared ==="
+	@cd packages/shared && bun outdated || true
+
+# Interactive dependency update across all workspace packages
+update:
+	@echo "🔄 Updating dependencies interactively..."
+	@echo ""
+	@echo "=== Root ==="
+	@bun update --interactive
+	@echo ""
+	@echo "=== packages/cli ==="
+	@cd packages/cli && bun update --interactive
+	@echo ""
+	@echo "=== packages/daemon ==="
+	@cd packages/daemon && bun update --interactive
+	@echo ""
+	@echo "=== packages/web ==="
+	@cd packages/web && bun update --interactive
+	@echo ""
+	@echo "=== packages/shared ==="
+	@cd packages/shared && bun update --interactive
+	@echo ""
+	@echo "✅ All packages updated!"
 
 # Merge worktree session to root repo branch - complete workflow automation
 merge-session:
