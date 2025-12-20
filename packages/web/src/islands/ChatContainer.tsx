@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState, useMemo } from 'preact/hooks';
 import type { Session, ContextInfo, SessionState, MessageImage } from '@liuboer/shared';
 import { STATE_CHANNELS } from '@liuboer/shared';
 import type { SDKMessage, SDKSystemMessage } from '@liuboer/shared/sdk/sdk.d.ts';
@@ -45,8 +45,6 @@ interface ChatContainerProps {
 }
 
 export default function ChatContainer({ sessionId }: ChatContainerProps) {
-	console.log('ChatContainer rendering with sessionId:', sessionId);
-
 	const [session, setSession] = useState<Session | null>(null);
 	const [messages, setMessages] = useState<SDKMessage[]>([]);
 	const [streamingEvents, setStreamingEvents] = useState<
@@ -92,6 +90,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const sendTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const processingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const prevMessageCountRef = useRef<number>(0);
+	// PERFORMANCE: Track seen message UUIDs for O(1) deduplication instead of O(n) findIndex
+	const seenMessageUuids = useRef<Set<string>>(new Set());
 
 	useEffect(() => {
 		// Reset state when switching sessions
@@ -101,6 +101,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		setStreamingEvents([]);
 		setStreamingPhase(null);
 		setIsCompacting(false);
+
+		// Reset seen message UUIDs for new session
+		seenMessageUuids.current.clear();
 
 		// Clear any pending timeouts from previous session
 		if (sendTimeoutRef.current) {
@@ -131,13 +134,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				const unsubSDKMessage = hub.subscribeOptimistic<SDKMessage>(
 					'sdk.message',
 					(sdkMessage) => {
-						console.log('Received SDK message:', sdkMessage.type, sdkMessage);
-
 						// Extract slash commands from SDK init message
 						if (sdkMessage.type === 'system' && sdkMessage.subtype === 'init') {
 							const initMessage = sdkMessage as Record<string, unknown> as Record<string, unknown>;
 							if (initMessage.slash_commands && Array.isArray(initMessage.slash_commands)) {
-								console.log('Extracted slash commands from SDK:', initMessage.slash_commands);
 								slashCommandsSignal.value = initMessage.slash_commands;
 							}
 						}
@@ -184,15 +184,20 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 								}
 							}
 							// Add non-stream messages to main array, deduplicating by uuid
+							// PERFORMANCE: Use Set for O(1) UUID lookup instead of O(n) findIndex
 							setMessages((prev) => {
 								if (sdkMessage.uuid) {
-									const existingIndex = prev.findIndex((m) => m.uuid === sdkMessage.uuid);
-									if (existingIndex !== -1) {
-										const updated = [...prev];
-										updated[existingIndex] = sdkMessage;
+									if (seenMessageUuids.current.has(sdkMessage.uuid)) {
+										// Update existing message
+										const updated = prev.map((m) => (m.uuid === sdkMessage.uuid ? sdkMessage : m));
 										return updated;
+									} else {
+										// New message - add to set and append
+										seenMessageUuids.current.add(sdkMessage.uuid);
+										return [...prev, sdkMessage];
 									}
 								}
+								// No UUID - just append (shouldn't happen normally)
 								return [...prev, sdkMessage];
 							});
 						}
@@ -284,8 +289,6 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				}>(
 					'state.session',
 					(data) => {
-						console.log('Received unified session state:', data);
-
 						// Update session metadata (including title)
 						if (data.session) {
 							setSession(data.session);
@@ -298,7 +301,6 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 						// Update context info
 						if (data.context) {
-							console.log('Context info from state.session:', data.context);
 							setContextUsage(data.context);
 						}
 
@@ -457,7 +459,16 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				getSDKMessages(sessionId, { limit: 100 }),
 				getMessageCount(sessionId),
 			]);
-			setMessages(sdkResponse.sdkMessages as SDKMessage[]);
+			const loadedMessages = sdkResponse.sdkMessages as SDKMessage[];
+			setMessages(loadedMessages);
+
+			// PERFORMANCE: Initialize seen UUIDs set from loaded messages
+			seenMessageUuids.current.clear();
+			loadedMessages.forEach((msg) => {
+				if (msg.uuid) {
+					seenMessageUuids.current.add(msg.uuid);
+				}
+			});
 
 			// Use actual count to determine if there are more messages
 			setHasMoreMessages(sdkResponse.sdkMessages.length < countResponse.count);
@@ -476,16 +487,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 				// Set context info from snapshot (may be null for new sessions)
 				if (sessionState?.context) {
-					console.log('Loaded initial context info:', sessionState.context);
 					setContextUsage(sessionState.context);
 				}
 
 				// Set slash commands from snapshot
 				if (sessionState?.commands?.availableCommands?.length > 0) {
-					console.log(
-						'Loaded slash commands from snapshot:',
-						sessionState.commands.availableCommands
-					);
 					slashCommandsSignal.value = sessionState.commands.availableCommands;
 				}
 			} catch (stateError) {
@@ -496,11 +502,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				try {
 					const commandsResponse = await getSlashCommands(sessionId);
 					if (commandsResponse.commands && commandsResponse.commands.length > 0) {
-						console.log('Loaded slash commands (fallback):', commandsResponse.commands);
 						slashCommandsSignal.value = commandsResponse.commands;
 					}
-				} catch (cmdError) {
-					console.log('Slash commands not yet available:', cmdError);
+				} catch {
+					// Slash commands not yet available, will be loaded from events
 				}
 			}
 
@@ -557,7 +562,15 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			}
 
 			// Prepend older messages to the beginning of the array
-			setMessages((prev) => [...(sdkResponse.sdkMessages as SDKMessage[]), ...prev]);
+			const olderMessages = sdkResponse.sdkMessages as SDKMessage[];
+			setMessages((prev) => [...olderMessages, ...prev]);
+
+			// PERFORMANCE: Add older message UUIDs to seen set
+			olderMessages.forEach((msg) => {
+				if (msg.uuid) {
+					seenMessageUuids.current.add(msg.uuid);
+				}
+			});
 
 			// Update message count ref to prevent autoscroll from triggering
 			prevMessageCountRef.current =
@@ -868,71 +881,77 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 	// Create a map of tool use IDs to tool results for easy lookup
 	// Enhanced to include message UUID, session ID, and removed status for deletion functionality
+	// PERFORMANCE: Memoized to avoid O(n*m) recalculation on every render
 	const removedOutputs = session?.metadata?.removedOutputs || [];
-	const toolResultsMap = new Map<string, unknown>();
-	messages.forEach((msg) => {
-		if (msg.type === 'user' && Array.isArray(msg.message.content)) {
-			msg.message.content.forEach((block: unknown) => {
-				if ((block as Record<string, unknown>).type === 'tool_result') {
-					const toolUseId = (block as Record<string, unknown>).tool_use_id as string;
-					const isRemoved = msg.uuid ? removedOutputs.includes(msg.uuid) : false;
-					const resultData = {
-						content: block,
-						messageUuid: msg.uuid,
-						sessionId,
-						isOutputRemoved: isRemoved,
-					};
-					toolResultsMap.set(toolUseId, resultData);
-					console.log('[ChatContainer] Added to toolResultsMap:', {
-						toolUseId,
-						messageUuid: msg.uuid,
-						sessionId,
-						isOutputRemoved: isRemoved,
-					});
-				}
-			});
-		}
-	});
+	const toolResultsMap = useMemo(() => {
+		const map = new Map<string, unknown>();
+		messages.forEach((msg) => {
+			if (msg.type === 'user' && Array.isArray(msg.message.content)) {
+				msg.message.content.forEach((block: unknown) => {
+					if ((block as Record<string, unknown>).type === 'tool_result') {
+						const toolUseId = (block as Record<string, unknown>).tool_use_id as string;
+						const isRemoved = msg.uuid ? removedOutputs.includes(msg.uuid) : false;
+						const resultData = {
+							content: block,
+							messageUuid: msg.uuid,
+							sessionId,
+							isOutputRemoved: isRemoved,
+						};
+						map.set(toolUseId, resultData);
+					}
+				});
+			}
+		});
+		return map;
+	}, [messages, removedOutputs, sessionId]);
 
 	// Create a map of tool use IDs to tool inputs for easy lookup
-	const toolInputsMap = new Map<string, unknown>();
-	messages.forEach((msg) => {
-		if (msg.type === 'assistant' && Array.isArray(msg.message.content)) {
-			msg.message.content.forEach((block: unknown) => {
-				if ((block as Record<string, unknown>).type === 'tool_use') {
-					toolInputsMap.set(
-						(block as Record<string, unknown>).id as string,
-						(block as Record<string, unknown>).input
-					);
-				}
-			});
-		}
-	});
+	// PERFORMANCE: Memoized to avoid O(n*m) recalculation on every render
+	const toolInputsMap = useMemo(() => {
+		const map = new Map<string, unknown>();
+		messages.forEach((msg) => {
+			if (msg.type === 'assistant' && Array.isArray(msg.message.content)) {
+				msg.message.content.forEach((block: unknown) => {
+					if ((block as Record<string, unknown>).type === 'tool_use') {
+						map.set(
+							(block as Record<string, unknown>).id as string,
+							(block as Record<string, unknown>).input
+						);
+					}
+				});
+			}
+		});
+		return map;
+	}, [messages]);
 
 	// Create a map of user message UUIDs to their attached session init info
 	// Session init messages appear after the first user message, so we attach them to the preceding user message
-	const sessionInfoMap = new Map<string, unknown>();
-	for (let i = 0; i < messages.length; i++) {
-		const msg = messages[i];
-		if (msg.type === 'system' && msg.subtype === 'init') {
-			// Find the most recent user message before this session init
-			for (let j = i - 1; j >= 0; j--) {
-				if (messages[j].type === 'user' && messages[j].uuid) {
-					sessionInfoMap.set(messages[j].uuid!, msg);
-					break;
-				}
-			}
-			// If no preceding user message, attach to the first user message after this session init
-			if (msg.uuid && !sessionInfoMap.has(msg.uuid)) {
-				for (let j = i + 1; j < messages.length; j++) {
+	// PERFORMANCE: Memoized to avoid O(n²) recalculation on every render
+	const sessionInfoMap = useMemo(() => {
+		const map = new Map<string, unknown>();
+		for (let i = 0; i < messages.length; i++) {
+			const msg = messages[i];
+			if (msg.type === 'system' && msg.subtype === 'init') {
+				// Find the most recent user message before this session init
+				for (let j = i - 1; j >= 0; j--) {
 					if (messages[j].type === 'user' && messages[j].uuid) {
-						sessionInfoMap.set(messages[j].uuid!, msg);
+						map.set(messages[j].uuid!, msg);
 						break;
+					}
+				}
+				// If no preceding user message, attach to the first user message after this session init
+				if (msg.uuid && !map.has(msg.uuid)) {
+					for (let j = i + 1; j < messages.length; j++) {
+						if (messages[j].type === 'user' && messages[j].uuid) {
+							map.set(messages[j].uuid!, msg);
+							break;
+						}
 					}
 				}
 			}
 		}
-	}
+		return map;
+	}, [messages]);
 
 	// Helper to extract text from a user message
 	const extractUserMessageText = (msg: SDKMessage): string => {
@@ -955,44 +974,49 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 	// Create a map of compact boundary UUIDs to their associated synthetic content
 	// Synthetic messages appear right after compact boundaries
-	const compactSyntheticMap = new Map<string, string>();
-	const skipSyntheticSet = new Set<string>();
+	// PERFORMANCE: Memoized to avoid O(n²) recalculation on every render
+	const { compactSyntheticMap, skipSyntheticSet } = useMemo(() => {
+		const map = new Map<string, string>();
+		const skipSet = new Set<string>();
 
-	// Helper to check if a message is synthetic
-	const isSyntheticMessage = (msg: SDKMessage): boolean => {
-		if (msg.type !== 'user') return false;
-		const msgWithSynthetic = msg as SDKMessage & { isSynthetic?: boolean };
-		// Check isSynthetic flag - all SDK-emitted user messages are marked synthetic by daemon
-		if (msgWithSynthetic.isSynthetic) return true;
-		// Backward compatibility: check content pattern for legacy messages without flag
-		const text = extractUserMessageText(msg);
-		return text.startsWith('This session is being continued from a previous conversation');
-	};
+		// Helper to check if a message is synthetic
+		const isSyntheticMessage = (msg: SDKMessage): boolean => {
+			if (msg.type !== 'user') return false;
+			const msgWithSynthetic = msg as SDKMessage & { isSynthetic?: boolean };
+			// Check isSynthetic flag - all SDK-emitted user messages are marked synthetic by daemon
+			if (msgWithSynthetic.isSynthetic) return true;
+			// Backward compatibility: check content pattern for legacy messages without flag
+			const text = extractUserMessageText(msg);
+			return text.startsWith('This session is being continued from a previous conversation');
+		};
 
-	for (let i = 0; i < messages.length; i++) {
-		const msg = messages[i];
-		// Use proper type guard for compact boundary detection
-		if (isSDKCompactBoundary(msg) && msg.uuid) {
-			// Look for the next synthetic user message
-			for (let j = i + 1; j < messages.length; j++) {
-				const nextMsg = messages[j];
-				if (isSyntheticMessage(nextMsg)) {
-					const text = extractUserMessageText(nextMsg);
-					if (text) {
-						compactSyntheticMap.set(msg.uuid, text);
-						if (nextMsg.uuid) {
-							skipSyntheticSet.add(nextMsg.uuid);
+		for (let i = 0; i < messages.length; i++) {
+			const msg = messages[i];
+			// Use proper type guard for compact boundary detection
+			if (isSDKCompactBoundary(msg) && msg.uuid) {
+				// Look for the next synthetic user message
+				for (let j = i + 1; j < messages.length; j++) {
+					const nextMsg = messages[j];
+					if (isSyntheticMessage(nextMsg)) {
+						const text = extractUserMessageText(nextMsg);
+						if (text) {
+							map.set(msg.uuid, text);
+							if (nextMsg.uuid) {
+								skipSet.add(nextMsg.uuid);
+							}
 						}
+						break;
 					}
-					break;
-				}
-				// Stop searching if we hit a non-user message that's not system
-				if (nextMsg.type !== 'user' && nextMsg.type !== 'system') {
-					break;
+					// Stop searching if we hit a non-user message that's not system
+					if (nextMsg.type !== 'user' && nextMsg.type !== 'system') {
+						break;
+					}
 				}
 			}
 		}
-	}
+
+		return { compactSyntheticMap: map, skipSyntheticSet: skipSet };
+	}, [messages]);
 
 	return (
 		<div class="flex-1 flex flex-col bg-dark-900 overflow-x-hidden relative">
