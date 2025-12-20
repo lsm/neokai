@@ -3,6 +3,9 @@
  *
  * Provides AsyncGenerator interface for Claude SDK's streaming input mode.
  * Messages are queued and yielded to the SDK as they arrive.
+ *
+ * Includes stuck state detection: if a message stays queued for too long
+ * without being consumed by the SDK, it will be rejected with a timeout error.
  */
 
 import type { UUID } from 'crypto';
@@ -11,15 +14,23 @@ import type { SDKUserMessage } from '@liuboer/shared/sdk';
 import { generateUUID } from '@liuboer/shared';
 
 /**
+ * Default timeout for queued messages (30 seconds)
+ * If SDK doesn't consume a message within this time, it's considered stuck
+ */
+const MESSAGE_QUEUE_TIMEOUT_MS = 30_000;
+
+/**
  * Queued message waiting to be sent to Claude
  */
 interface QueuedMessage {
 	id: string;
 	content: string | MessageContent[];
 	timestamp: string;
+	queuedAt: number; // Timestamp when message was queued (for timeout detection)
 	resolve: (messageId: string) => void;
 	reject: (error: Error) => void;
 	internal?: boolean; // If true, don't save to DB or emit to client
+	timeoutId?: ReturnType<typeof setTimeout>; // Timeout handle for cleanup
 }
 
 export class MessageQueue {
@@ -39,6 +50,10 @@ export class MessageQueue {
 	/**
 	 * Enqueue a message with a pre-generated ID
 	 * Used when caller needs the ID before the message is processed (e.g., for state tracking)
+	 *
+	 * Includes timeout detection: if the SDK doesn't consume the message within
+	 * MESSAGE_QUEUE_TIMEOUT_MS, the promise is rejected with a timeout error.
+	 * This prevents the session from getting stuck in 'queued' state indefinitely.
 	 */
 	async enqueueWithId(
 		messageId: string,
@@ -50,10 +65,39 @@ export class MessageQueue {
 				id: messageId,
 				content,
 				timestamp: new Date().toISOString(),
-				resolve: () => resolve(),
-				reject,
+				queuedAt: Date.now(),
+				resolve: () => {
+					// Clear timeout when message is successfully consumed
+					if (queuedMessage.timeoutId) {
+						clearTimeout(queuedMessage.timeoutId);
+					}
+					resolve();
+				},
+				reject: (error: Error) => {
+					// Clear timeout on rejection
+					if (queuedMessage.timeoutId) {
+						clearTimeout(queuedMessage.timeoutId);
+					}
+					reject(error);
+				},
 				internal,
 			};
+
+			// Set up timeout to detect stuck messages
+			// If SDK doesn't consume the message in time, reject with timeout error
+			queuedMessage.timeoutId = setTimeout(() => {
+				// Remove from queue if still present
+				const index = this.queue.indexOf(queuedMessage);
+				if (index !== -1) {
+					this.queue.splice(index, 1);
+					const timeoutError = new Error(
+						`Message queue timeout: SDK did not consume message ${messageId} within ${MESSAGE_QUEUE_TIMEOUT_MS / 1000}s. ` +
+							`This usually indicates an SDK internal error. Please try again or create a new session.`
+					);
+					timeoutError.name = 'MessageQueueTimeoutError';
+					queuedMessage.reject(timeoutError);
+				}
+			}, MESSAGE_QUEUE_TIMEOUT_MS);
 
 			this.queue.push(queuedMessage);
 
@@ -65,10 +109,14 @@ export class MessageQueue {
 
 	/**
 	 * Clear all pending messages (used during interrupt)
+	 * Also cleans up any pending timeouts
 	 */
 	clear(): void {
-		// Reject all pending messages
+		// Clear timeouts and reject all pending messages
 		for (const msg of this.queue) {
+			if (msg.timeoutId) {
+				clearTimeout(msg.timeoutId);
+			}
 			msg.reject(new Error('Interrupted by user'));
 		}
 		this.queue = [];
