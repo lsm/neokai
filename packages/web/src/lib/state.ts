@@ -80,6 +80,14 @@ class GlobalStateChannels {
 	}
 
 	/**
+	 * Refresh all global channels (force fetch latest state from server)
+	 * Used after reconnection to ensure state is in sync
+	 */
+	async refresh(): Promise<void> {
+		await Promise.all([this.sessions.refresh(), this.system.refresh(), this.settings.refresh()]);
+	}
+
+	/**
 	 * Stop all global channels
 	 */
 	stop(): void {
@@ -135,6 +143,14 @@ class SessionStateChannels {
 	 */
 	async start(): Promise<void> {
 		await Promise.all([this.session.start(), this.sdkMessages.start()]);
+	}
+
+	/**
+	 * Refresh all session channels (force fetch latest state from server)
+	 * Used after reconnection to ensure state is in sync
+	 */
+	async refresh(): Promise<void> {
+		await Promise.all([this.session.refresh(), this.sdkMessages.refresh()]);
 	}
 
 	/**
@@ -233,6 +249,41 @@ class ApplicationState {
 			}
 		});
 		this.subscriptions.push(unsub);
+	}
+
+	/**
+	 * Refresh all state channels (force fetch latest state from server)
+	 * Used after reconnection validation to ensure state is in sync
+	 *
+	 * This is critical for the Safari background tab issue where the connection
+	 * may appear healthy but subscriptions are stale.
+	 */
+	async refreshAll(): Promise<void> {
+		if (!this.initialized.value) {
+			console.warn('[State] Cannot refresh: state not initialized');
+			return;
+		}
+
+		console.log('[State] Refreshing all state channels after reconnection validation');
+
+		const promises: Promise<void>[] = [];
+
+		// Refresh global channels
+		if (this.global.value) {
+			promises.push(this.global.value.refresh());
+		}
+
+		// Refresh current session channels
+		const currentSessionId = this.currentSessionIdSignal.value;
+		if (currentSessionId) {
+			const sessionChannels = this.sessionChannels.get(currentSessionId);
+			if (sessionChannels) {
+				promises.push(sessionChannels.refresh());
+			}
+		}
+
+		await Promise.all(promises);
+		console.log('[State] All state channels refreshed');
 	}
 
 	/**

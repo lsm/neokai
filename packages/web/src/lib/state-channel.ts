@@ -596,8 +596,19 @@ export class StateChannel<T> {
 	 * Hybrid refresh on reconnection:
 	 * - Try incremental sync if recently disconnected (< 5 min)
 	 * - Fall back to full sync (with merge) for longer disconnections
+	 *
+	 * CRITICAL FIX: Also ensures subscriptions are re-established.
+	 * While MessageHub.resubscribeAll() should run before this handler,
+	 * we call forceResubscribe() defensively to handle edge cases like
+	 * visibility change triggers before full reconnection completes.
 	 */
 	private async hybridRefresh(): Promise<void> {
+		// Defense in depth: ensure subscriptions are re-established
+		// This handles edge cases where resubscribeAll() might not have run yet
+		if (this.hub.forceResubscribe) {
+			this.hub.forceResubscribe();
+		}
+
 		const lastSyncTime = this.lastSync.value;
 		const now = Date.now();
 		const gap = now - lastSyncTime;
