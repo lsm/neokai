@@ -311,14 +311,14 @@ export type HookJSONOutput = AsyncHookJSONOutput | SyncHookJSONOutput;
  */
 export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'delegate' | 'dontAsk';
 /**
- * Information about an available slash command.
+ * Information about an available skill (invoked via /command syntax).
  */
 export type SlashCommand = {
-    /** Command name (without the leading slash) */
+    /** Skill name (without the leading slash) */
     name: string;
-    /** Description of what the command does */
+    /** Description of what the skill does */
     description: string;
-    /** Hint for command arguments (e.g., "<file>") */
+    /** Hint for skill arguments (e.g., "<file>") */
     argumentHint: string;
 };
 /**
@@ -561,9 +561,9 @@ export interface Query extends AsyncGenerator<SDKMessage, void> {
      */
     setMaxThinkingTokens(maxThinkingTokens: number | null): Promise<void>;
     /**
-     * Get the list of available slash commands for the current session.
+     * Get the list of available skills for the current session.
      *
-     * @returns Array of available slash commands with their names and descriptions
+     * @returns Array of available skills with their names and descriptions
      */
     supportedCommands(): Promise<SlashCommand[]>;
     /**
@@ -596,13 +596,17 @@ export interface Query extends AsyncGenerator<SDKMessage, void> {
      * This replaces the current set of dynamically-added MCP servers with the provided set.
      * Servers that are removed will be disconnected, and new servers will be connected.
      *
+     * Supports both process-based servers (stdio, sse, http) and SDK servers (in-process).
+     * SDK servers are handled locally in the SDK process, while process-based servers
+     * are managed by the CLI subprocess.
+     *
      * Note: This only affects servers added dynamically via this method or the SDK.
      * Servers configured via settings files are not affected.
      *
      * @param servers - Record of server name to configuration. Pass an empty object to remove all dynamic servers.
      * @returns Information about which servers were added, removed, and any connection errors
      */
-    setMcpServers(servers: Record<string, McpServerConfigForProcessTransport>): Promise<McpSetServersResult>;
+    setMcpServers(servers: Record<string, McpServerConfig>): Promise<McpSetServersResult>;
     /**
      * Stream input messages to the query.
      * Used internally for multi-turn conversations.

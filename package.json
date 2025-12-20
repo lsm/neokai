@@ -21,7 +21,7 @@
 	},
 	"devDependencies": {
 		"dotenv": "17.2.3",
-		"oxlint": "1.33.0",
+		"oxlint": "1.34.0",
 		"prettier": "3.7.4",
 		"typescript": "5.9.3"
 	}
