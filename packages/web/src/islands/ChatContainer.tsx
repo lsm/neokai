@@ -26,7 +26,7 @@ import {
 import { connectionState } from '../lib/state.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import MessageInput from '../components/MessageInput.tsx';
-import ContextIndicator from '../components/ContextIndicator.tsx';
+import SessionStatusBar from '../components/SessionStatusBar.tsx';
 import { Button } from '../components/ui/Button.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
@@ -1277,15 +1277,13 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				</div>
 			)}
 
-			{/* Context Indicator */}
-			<ContextIndicator
-				connectionState={connectionState.value}
+			{/* Session Status Bar */}
+			<SessionStatusBar
 				isProcessing={sending || streamingEvents.length > 0}
 				currentAction={currentAction}
 				streamingPhase={streamingPhase}
 				contextUsage={contextUsage}
 				maxContextTokens={200000}
-				onSendMessage={handleSendMessage}
 			/>
 
 			{/* Input Area or Archived Label */}

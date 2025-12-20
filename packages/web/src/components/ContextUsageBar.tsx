@@ -1,43 +1,25 @@
 /**
- * ContextIndicator Component
+ * ContextUsageBar Component
  *
- * Shows daemon connection and processing status above the message input
- * - Connecting: Yellow dot + "Connecting..."
- * - Connected: Green dot + "Online"
- * - Disconnected: Gray dot + "Offline"
- * - Processing: Pulsing purple dot + dynamic verb (e.g., "Reading files...", "Thinking...")
- * - Shows context usage percentage on the right
+ * Shows context usage percentage and progress bar with expandable dropdown:
+ * - Percentage text with color coding (green → blue → yellow → red)
+ * - Progress bar visualization
+ * - Clickable to show detailed breakdown by category
  */
 
 import { useState, useRef, useEffect, useCallback } from 'preact/hooks';
 import type { ContextInfo } from '@liuboer/shared';
 import { borderColors } from '../lib/design-tokens.ts';
 
-interface ContextIndicatorProps {
-	connectionState:
-		| 'connecting'
-		| 'connected'
-		| 'disconnected'
-		| 'error'
-		| 'reconnecting'
-		| 'failed';
-	isProcessing: boolean;
-	currentAction?: string;
-	streamingPhase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing' | null;
+interface ContextUsageBarProps {
 	contextUsage?: ContextInfo;
 	maxContextTokens?: number;
-	onSendMessage?: (message: string) => void;
 }
 
-export default function ContextIndicator({
-	connectionState,
-	isProcessing,
-	currentAction,
-	streamingPhase,
+export default function ContextUsageBar({
 	contextUsage,
 	maxContextTokens = 200000, // Default to Sonnet 4.5's 200k context window
-	onSendMessage: _onSendMessage,
-}: ContextIndicatorProps) {
+}: ContextUsageBarProps) {
 	const [showContextDetails, setShowContextDetails] = useState(false);
 	const [dropdownBottom, setDropdownBottom] = useState(96); // Default 24*4px = 96px
 	const indicatorRef = useRef<HTMLDivElement>(null);
@@ -107,84 +89,6 @@ export default function ContextIndicator({
 			setDropdownBottom(bottomPosition);
 		}
 	}, [showContextDetails]);
-
-	const getStatus = () => {
-		// Processing state takes priority with phase-specific colors
-		if (isProcessing && currentAction) {
-			// Phase-specific color coding
-			let dotClass = 'bg-purple-500 animate-pulse';
-			let textClass = 'text-purple-400';
-
-			if (streamingPhase) {
-				switch (streamingPhase) {
-					case 'initializing':
-						dotClass = 'bg-yellow-500 animate-pulse';
-						textClass = 'text-yellow-400';
-						break;
-					case 'thinking':
-						dotClass = 'bg-blue-500 animate-pulse';
-						textClass = 'text-blue-400';
-						break;
-					case 'streaming':
-						dotClass = 'bg-green-500 animate-pulse';
-						textClass = 'text-green-400';
-						break;
-					case 'finalizing':
-						dotClass = 'bg-purple-500 animate-pulse';
-						textClass = 'text-purple-400';
-						break;
-				}
-			}
-
-			return {
-				dotClass,
-				text: currentAction,
-				textClass,
-			};
-		}
-
-		// Connection states
-		if (connectionState === 'connected') {
-			return {
-				dotClass: 'bg-green-500',
-				text: 'Online',
-				textClass: 'text-green-400',
-			};
-		}
-
-		if (connectionState === 'connecting') {
-			return {
-				dotClass: 'bg-yellow-500 animate-pulse',
-				text: 'Connecting...',
-				textClass: 'text-yellow-400',
-			};
-		}
-
-		if (connectionState === 'reconnecting') {
-			return {
-				dotClass: 'bg-yellow-500 animate-pulse',
-				text: 'Reconnecting...',
-				textClass: 'text-yellow-400',
-			};
-		}
-
-		if (connectionState === 'failed' || connectionState === 'error') {
-			return {
-				dotClass: 'bg-red-500',
-				text: 'Connection Failed',
-				textClass: 'text-red-400',
-			};
-		}
-
-		// disconnected
-		return {
-			dotClass: 'bg-gray-500',
-			text: 'Offline',
-			textClass: 'text-gray-500',
-		};
-	};
-
-	const status = getStatus();
 
 	// Only show context info when accurate data is available
 	const totalTokens = contextUsage?.totalUsed || 0;
@@ -276,30 +180,21 @@ export default function ContextIndicator({
 
 	return (
 		<>
-			<div ref={indicatorRef} class="px-4 pb-2">
-				<div class="max-w-4xl mx-auto flex items-center gap-2 justify-between">
-					{/* Status indicator */}
-					<div class="flex items-center gap-2">
-						<div class={`w-2 h-2 rounded-full ${status.dotClass}`} />
-						<span class={`text-xs font-medium ${status.textClass}`}>{status.text}</span>
-					</div>
-
-					{/* Context usage indicator - always show */}
+			{/* Context usage indicator - always show */}
+			<div
+				ref={indicatorRef}
+				class="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
+				onClick={() => totalTokens > 0 && setShowContextDetails(!showContextDetails)}
+				title={totalTokens > 0 ? 'Click for context details' : 'Context data loading...'}
+			>
+				<span class={`text-xs font-medium ${getContextColor()}`}>
+					{contextPercentage.toFixed(1)}%
+				</span>
+				<div class="w-24 sm:w-32 h-2 bg-dark-700 rounded-full overflow-hidden">
 					<div
-						class="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
-						onClick={() => totalTokens > 0 && setShowContextDetails(!showContextDetails)}
-						title={totalTokens > 0 ? 'Click for context details' : 'Context data loading...'}
-					>
-						<span class={`text-xs font-medium ${getContextColor()}`}>
-							{contextPercentage.toFixed(1)}%
-						</span>
-						<div class="w-24 sm:w-32 h-2 bg-dark-700 rounded-full overflow-hidden">
-							<div
-								class={`h-full transition-all duration-300 ${getContextBarColor()}`}
-								style={{ width: `${Math.min(contextPercentage, 100)}%` }}
-							/>
-						</div>
-					</div>
+						class={`h-full transition-all duration-300 ${getContextBarColor()}`}
+						style={{ width: `${Math.min(contextPercentage, 100)}%` }}
+					/>
 				</div>
 			</div>
 
