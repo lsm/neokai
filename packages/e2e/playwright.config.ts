@@ -72,13 +72,9 @@ export default defineConfig({
 		{
 			name: 'isolated-sessions',
 			testMatch: [
-				'**/tests/sessions.e2e.ts',
 				'**/chat-flow-improved.e2e.ts',
 				'**/message-send-receive.e2e.ts',
-				'**/tests/state-sync.e2e.ts',
-				'**/tests/multi-tab.e2e.ts',
-				'**/tests/page-refresh.e2e.ts', // Page refresh persistence tests
-				'**/session-management.e2e.ts', // Will add cleanup
+				'**/session-management.e2e.ts', // Session management with cleanup
 				'**/chat-flow.e2e.ts', // Will add cleanup
 				'**/model-switcher.e2e.ts', // Model switcher UI tests
 				'**/draft-persistence.e2e.ts', // Draft persistence tests

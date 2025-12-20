@@ -37,7 +37,7 @@ test.describe('Session Management', () => {
 		// Check for connection status indicators in sidebar footer
 		// The sidebar shows "Daemon" connection status and "Claude API" status
 		await expect(page.locator('text=Daemon')).toBeVisible();
-		await expect(page.locator('text=Connected')).toBeVisible();
+		await expect(page.locator('text=Connected').first()).toBeVisible();
 
 		// Check for green indicator dot
 		const statusDot = page.locator('.bg-green-500').first();
