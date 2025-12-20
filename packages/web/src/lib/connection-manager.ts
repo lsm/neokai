@@ -541,8 +541,8 @@ export class ConnectionManager {
 	simulateDisconnect(): void {
 		if (this.transport) {
 			console.log('[ConnectionManager] Simulating disconnect for testing');
-			// Close the WebSocket transport (will trigger reconnect if autoReconnect is enabled)
-			this.transport.close();
+			// Use forceReconnect() instead of close() - close() sets closed=true which prevents reconnection
+			this.transport.forceReconnect();
 		}
 	}
 }
