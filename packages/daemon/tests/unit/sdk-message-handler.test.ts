@@ -463,7 +463,7 @@ describe('SDKMessageHandler', () => {
 
 			expect(eventBusEmitSpy).toHaveBeenCalledWith('session:updated', {
 				sessionId: testSessionId,
-				updates: { sdkSessionId },
+				source: 'sdk-session',
 			});
 		});
 

@@ -89,12 +89,9 @@ describe('ProcessingStateManager', () => {
 			expect(stateManager.isIdle()).toBe(false);
 
 			// Should emit event
-			expect(emitSpy).toHaveBeenCalledWith('agent-state:changed', {
+			expect(emitSpy).toHaveBeenCalledWith('session:updated', {
 				sessionId: testSessionId,
-				state: expect.objectContaining({
-					status: 'queued',
-					messageId: 'msg-123',
-				}),
+				source: 'processing-state',
 			});
 		});
 
@@ -237,18 +234,14 @@ describe('ProcessingStateManager', () => {
 			expect(emitSpy).toHaveBeenCalledTimes(4);
 		});
 
-		it('should include sessionId and state in event payload', async () => {
+		it('should include sessionId and source in event payload', async () => {
 			emitSpy.mockClear();
 
 			await stateManager.setProcessing('msg-123', 'streaming');
 
-			expect(emitSpy).toHaveBeenCalledWith('agent-state:changed', {
+			expect(emitSpy).toHaveBeenCalledWith('session:updated', {
 				sessionId: testSessionId,
-				state: expect.objectContaining({
-					status: 'processing',
-					messageId: 'msg-123',
-					phase: 'streaming',
-				}),
+				source: 'processing-state',
 			});
 		});
 	});
