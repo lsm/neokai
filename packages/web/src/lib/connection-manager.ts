@@ -456,6 +456,13 @@ export class ConnectionManager {
 	/**
 	 * Validate connection when returning from background
 	 * Safari may have paused the WebSocket, so we need to check if it's still alive
+	 *
+	 * CRITICAL FIX: After successful health check, we MUST:
+	 * 1. Force re-establish subscriptions (they may be stale on server)
+	 * 2. Refresh all state channels (fetch latest state)
+	 *
+	 * This fixes the "sticky bug" where UI appears connected but doesn't
+	 * receive updates after returning from background.
 	 */
 	private async validateConnectionOnResume(): Promise<void> {
 		if (!this.messageHub || !this.transport) {
@@ -470,6 +477,16 @@ export class ConnectionManager {
 			// If this fails, the connection is dead and needs reconnect
 			await this.messageHub.call('system.health', {}, { timeout: 3000 });
 			console.log('[ConnectionManager] Connection validated successfully');
+
+			// CRITICAL: Even if connection appears healthy, subscriptions may be stale
+			// Force re-establish all subscriptions with the server
+			this.messageHub.forceResubscribe();
+
+			// CRITICAL: Refresh all state channels to fetch latest state
+			// This ensures UI is in sync even if events were missed during background
+			await appState.refreshAll();
+
+			console.log('[ConnectionManager] State channels refreshed after validation');
 		} catch (error) {
 			console.error('[ConnectionManager] Connection validation failed, forcing reconnect:', error);
 
