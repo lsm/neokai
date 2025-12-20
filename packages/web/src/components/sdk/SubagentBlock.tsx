@@ -203,8 +203,7 @@ export function SubagentBlock({
 	toolId: _toolId,
 	className,
 }: SubagentBlockProps) {
-	const [isExpanded, setIsExpanded] = useState(true);
-	const [showInput, setShowInput] = useState(false);
+	const [isExpanded, setIsExpanded] = useState(false);
 
 	const colors = getSubagentColors(input.subagent_type);
 	const outputText = extractOutputText(output);
@@ -264,34 +263,12 @@ export function SubagentBlock({
 			{/* Expanded content */}
 			{isExpanded && (
 				<div class={cn('border-t bg-white dark:bg-gray-900', colors.border)}>
-					{/* Input section (collapsible) */}
-					<div class="border-b border-gray-200 dark:border-gray-700">
-						<button
-							onClick={() => setShowInput(!showInput)}
-							class="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
-						>
-							<span>Input</span>
-							<svg
-								class={cn('w-4 h-4 transition-transform', showInput ? 'rotate-180' : '')}
-								fill="none"
-								stroke="currentColor"
-								viewBox="0 0 24 24"
-							>
-								<path
-									strokeLinecap="round"
-									strokeLinejoin="round"
-									strokeWidth={2}
-									d="M19 9l-7 7-7-7"
-								/>
-							</svg>
-						</button>
-						{showInput && (
-							<div class="px-3 pb-3">
-								<div class="text-sm bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 whitespace-pre-wrap text-gray-700 dark:text-gray-300">
-									{input.prompt}
-								</div>
-							</div>
-						)}
+					{/* Input section */}
+					<div class="border-b border-gray-200 dark:border-gray-700 p-3">
+						<div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">Input</div>
+						<div class="text-sm bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 whitespace-pre-wrap text-gray-700 dark:text-gray-300">
+							{input.prompt}
+						</div>
 					</div>
 
 					{/* Output section */}
@@ -300,6 +277,7 @@ export function SubagentBlock({
 						{outputText ? (
 							<div
 								class={cn(
+									'bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700',
 									'prose prose-sm dark:prose-invert max-w-none',
 									'prose-pre:bg-gray-900 prose-pre:text-gray-100',
 									isError && 'text-red-600 dark:text-red-400'
@@ -308,7 +286,9 @@ export function SubagentBlock({
 								<MarkdownRenderer content={outputText} />
 							</div>
 						) : (
-							<div class="text-sm text-gray-500 dark:text-gray-400 italic">No output yet...</div>
+							<div class="text-sm bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 italic">
+								No output yet...
+							</div>
 						)}
 					</div>
 				</div>
