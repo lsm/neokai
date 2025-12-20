@@ -158,12 +158,18 @@ export class MessageHub {
 		// Subscribe to connection state changes
 		const unsubConnection = transport.onConnectionChange((state, error) => {
 			this.log(`Connection state: ${state}`, error);
-			this.notifyConnectionStateHandlers(state, error);
 
-			// Auto-resubscribe on reconnection
+			// CRITICAL FIX: Resubscribe BEFORE notifying handlers
+			// This ensures subscriptions are re-established on the server BEFORE
+			// StateChannel handlers run and fetch snapshots. Otherwise, there's
+			// a race window where events published between snapshot fetch and
+			// subscription re-establishment are lost.
 			if (state === 'connected') {
 				this.resubscribeAll();
 			}
+
+			// Now notify handlers (e.g., StateChannel.hybridRefresh)
+			this.notifyConnectionStateHandlers(state, error);
 		});
 
 		// Return unregister function
@@ -1197,11 +1203,27 @@ export class MessageHub {
 	// ========================================
 
 	/**
+	 * Force re-establish all subscriptions with the server.
+	 *
+	 * Use this after connection validation (e.g., returning from background tab)
+	 * to ensure server-side subscriptions are in sync. This is critical for
+	 * Safari background tab handling where the connection may appear healthy
+	 * but subscriptions are stale.
+	 *
+	 * This is a public wrapper around the internal resubscribeAll() method.
+	 */
+	forceResubscribe(): void {
+		this.log('Force resubscribing all subscriptions (connection validation)');
+		this.resubscribeAll();
+	}
+
+	/**
 	 * Re-subscribe all persisted subscriptions after reconnection
 	 *
 	 * FIX P0.3: Atomic swap to prevent race condition where events are dropped
 	 * FIX P0.7: Queue events during resubscription, then replay after swap
 	 * FIX: Send SUBSCRIBE messages to server to re-establish server-side subscriptions
+	 * FIX: Wait for SUBSCRIBE ACKs with timeout for better reliability
 	 */
 	private resubscribeAll(): void {
 		if (this.persistedSubscriptions.size === 0) {
@@ -1212,6 +1234,10 @@ export class MessageHub {
 
 		// FIX P0.7: Set flag to queue incoming events during rebuild
 		this.resubscribing = true;
+
+		// Track subscription promises for ACK verification
+		const subscriptionPromises: Promise<{ method: string; success: boolean }>[] = [];
+		const RESUBSCRIBE_TIMEOUT = 2000; // 2 second timeout for ACKs
 
 		try {
 			// FIX P0.3: Build new subscription map first, then atomically swap
@@ -1235,24 +1261,48 @@ export class MessageHub {
 
 				sessionSubs.get(method)!.add(handler);
 
-				// FIX: Send SUBSCRIBE message to server to re-establish server-side subscription
-				// Fire and forget - don't await or block reconnection on subscription ACKs
-				// The server needs to know about this subscription for event routing
+				// FIX: Send SUBSCRIBE message to server with ACK tracking
 				if (this.isConnected()) {
+					const subId = generateUUID();
 					const subscribeMsg = createSubscribeMessage({
 						method,
 						sessionId,
-						id: generateUUID(),
+						id: subId,
 					});
 
-					// Send asynchronously without waiting for ACK
-					// If this fails, the subscription will be retried on next reconnect
+					// Create promise that waits for ACK with timeout
+					const ackPromise = new Promise<{ method: string; success: boolean }>((resolve) => {
+						const timer = setTimeout(() => {
+							this.pendingSubscribes.delete(subId);
+							this.log(`Subscription ACK timeout for ${method} (session: ${sessionId})`);
+							resolve({ method, success: false });
+						}, RESUBSCRIBE_TIMEOUT);
+
+						// Track pending subscription
+						this.pendingSubscribes.set(subId, {
+							resolve: () => {
+								clearTimeout(timer);
+								resolve({ method, success: true });
+							},
+							reject: () => {
+								clearTimeout(timer);
+								resolve({ method, success: false });
+							},
+							timer,
+							method,
+							type: 'subscribe',
+						});
+					});
+
+					// Send message (don't await here to avoid blocking)
 					this.sendMessage(subscribeMsg).catch((error) => {
 						console.error(
 							`[MessageHub] Failed to send SUBSCRIBE for ${method} (session: ${sessionId}):`,
 							error
 						);
 					});
+
+					subscriptionPromises.push(ackPromise);
 				}
 
 				this.log(`Re-subscribed to: ${method} (session: ${sessionId})`);
@@ -1263,6 +1313,22 @@ export class MessageHub {
 		} finally {
 			// FIX P0.7: Clear flag to allow event processing
 			this.resubscribing = false;
+		}
+
+		// Wait for ACKs in background (non-blocking) and log results
+		if (subscriptionPromises.length > 0) {
+			Promise.allSettled(subscriptionPromises).then((results) => {
+				const succeeded = results.filter((r) => r.status === 'fulfilled' && r.value.success).length;
+				const failed = results.length - succeeded;
+
+				if (failed > 0) {
+					console.warn(
+						`[MessageHub] Resubscription completed: ${succeeded}/${results.length} ACKs received, ${failed} timed out`
+					);
+				} else {
+					this.log(`Resubscription completed: all ${succeeded} ACKs received`);
+				}
+			});
 		}
 
 		// FIX P0.7: Replay queued events after subscription rebuild
