@@ -1,4 +1,4 @@
-.PHONY: dev worktree-dev start daemon web self profile restart sync-sdk-types clean-cache clean-all build-prod test test-daemon test-coverage test-coverage-lcov e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self lint lint-fix format typecheck merge-session
+.PHONY: dev worktree-dev start daemon web self profile other restart sync-sdk-types clean-cache clean-all build-prod test test-daemon test-coverage test-coverage-lcov e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self lint lint-fix format typecheck merge-session
 
 # Unified server (daemon + web in single process) - RECOMMENDED
 dev:
@@ -62,6 +62,27 @@ profile:
 	@mkdir -p $(shell pwd)/tmp/profiling/data
 	@lsof -ti:8302 | xargs kill -9 2>/dev/null || true
 	@NODE_ENV=production bun --inspect --cpu-prof run packages/cli/main.ts --port 8302 --workspace $(shell pwd)/tmp/profiling --db-path $(shell pwd)/tmp/profiling/data/daemon.db
+
+# Other workspace mode - production build with custom workspace and port
+# Usage: make other WORKSPACE=/path/to/workspace PORT=8080
+other:
+	@if [ -z "$(WORKSPACE)" ]; then \
+		echo "❌ Error: WORKSPACE parameter is required"; \
+		echo "Usage: make other WORKSPACE=/path/to/workspace PORT=8080"; \
+		exit 1; \
+	fi
+	@if [ -z "$(PORT)" ]; then \
+		echo "❌ Error: PORT parameter is required"; \
+		echo "Usage: make other WORKSPACE=/path/to/workspace PORT=8080"; \
+		exit 1; \
+	fi
+	@echo "🚀 Starting production server for custom workspace..."
+	@echo "   Workspace: $(WORKSPACE)"
+	@echo "   Listening on port $(PORT)"
+	@echo "📦 Building web production bundle..."
+	@cd packages/web && bun run build
+	@lsof -ti:$(PORT) | xargs kill -9 2>/dev/null || true
+	@NODE_ENV=production bun run packages/cli/main.ts --port $(PORT) --workspace $(WORKSPACE)
 
 start:
 	@echo "🚀 Starting production server..."

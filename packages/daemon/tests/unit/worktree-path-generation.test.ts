@@ -1,12 +1,13 @@
 /**
  * Worktree Path Generation Tests
  *
- * Verifies that worktrees are created in ~/.liuboer/worktrees/{repo-hash}/ instead of {repo}/.worktrees/
+ * Verifies that worktrees are created in ~/.liuboer/projects/{encoded-repo-path}/worktrees/ instead of {repo}/.worktrees/
  * Tests that:
- * 1. New worktrees use the new path format
- * 2. Different repos get different repo hashes (no collisions)
- * 3. Same repo gets same hash (deterministic)
+ * 1. New worktrees use the project-based path format with readable encoded paths
+ * 2. Different repos get different project directories (no collisions)
+ * 3. Same repo gets same project directory (deterministic)
  * 4. Cleanup handles both old and new path formats
+ * 5. Path encoding follows Claude Code's approach (dash-separated)
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -57,8 +58,8 @@ describe('WorktreeManager - Path Generation', () => {
 			try {
 				if (fs.existsSync(worktreePath)) {
 					// Remove via git if possible
-					// For new worktrees in ~/.liuboer, always use testRepoPath1
-					const repoPath = worktreePath.startsWith(path.join(homedir(), '.liuboer', 'worktrees'))
+					// For new worktrees in ~/.liuboer/projects, always use testRepoPath1
+					const repoPath = worktreePath.startsWith(path.join(homedir(), '.liuboer', 'projects'))
 						? testRepoPath1
 						: path.dirname(path.dirname(worktreePath));
 
@@ -81,20 +82,18 @@ describe('WorktreeManager - Path Generation', () => {
 			}
 		}
 
-		// Cleanup ~/.liuboer/worktrees test directories
-		const liuboerWorktreesDir = path.join(homedir(), '.liuboer', 'worktrees');
-		if (fs.existsSync(liuboerWorktreesDir)) {
-			// Only remove directories that look like test hashes
+		// Cleanup ~/.liuboer/projects test directories
+		const liuboerProjectsDir = path.join(homedir(), '.liuboer', 'projects');
+		if (fs.existsSync(liuboerProjectsDir)) {
+			// Only remove test project directories
 			try {
-				const entries = fs.readdirSync(liuboerWorktreesDir);
+				const entries = fs.readdirSync(liuboerProjectsDir);
 				for (const entry of entries) {
-					const fullPath = path.join(liuboerWorktreesDir, entry);
+					const fullPath = path.join(liuboerProjectsDir, entry);
 					const stat = fs.statSync(fullPath);
 					if (stat.isDirectory()) {
-						// Check if this directory has session worktrees from our test
-						const sessions = fs.readdirSync(fullPath);
-						if (sessions.length === 0) {
-							// Empty, safe to remove
+						// Check if this is a test directory (contains test-git-repo in path)
+						if (entry.includes('test-git-repo')) {
 							fs.rmSync(fullPath, { recursive: true, force: true });
 						}
 					}
@@ -105,7 +104,7 @@ describe('WorktreeManager - Path Generation', () => {
 		}
 	});
 
-	test('Creates worktree in ~/.liuboer/worktrees/{repo-hash}/ instead of repo/.worktrees/', async () => {
+	test('Creates worktree in ~/.liuboer/projects/{encoded-repo-path}/worktrees/ instead of repo/.worktrees/', async () => {
 		const sessionId = 'test-session-123';
 
 		const worktree = await worktreeManager.createWorktree({
@@ -118,13 +117,19 @@ describe('WorktreeManager - Path Generation', () => {
 
 		createdWorktrees.push(worktree.worktreePath);
 
-		// Verify path format: ~/.liuboer/worktrees/{hash}/{sessionId}
-		expect(worktree.worktreePath).toContain('.liuboer/worktrees');
+		// Verify path format: ~/.liuboer/projects/{encoded-path}/worktrees/{sessionId}
+		expect(worktree.worktreePath).toContain('.liuboer/projects');
+		expect(worktree.worktreePath).toContain('/worktrees/');
 		expect(worktree.worktreePath).toContain(sessionId);
 		expect(worktree.worktreePath).toStartWith(homedir());
 
+		// Verify it contains encoded repo path (with dashes)
+		// testRepoPath1 is like /var/folders/.../test-git-repo-1-... or /tmp/test-git-repo-1-...
+		// which becomes -var-folders-...-test-git-repo-1-... or -tmp-test-git-repo-1-...
+		expect(worktree.worktreePath).toMatch(/test-git-repo-1-/);
+
 		// Verify it does NOT use the old format
-		expect(worktree.worktreePath).not.toContain('.worktrees');
+		expect(worktree.worktreePath).not.toContain('/.worktrees/');
 		expect(worktree.worktreePath).not.toStartWith(testRepoPath1);
 
 		// Verify directory exists
@@ -135,7 +140,7 @@ describe('WorktreeManager - Path Generation', () => {
 		expect(fs.existsSync(gitDir)).toBe(true);
 	});
 
-	test('Different repositories get different repo hashes (no collisions)', async () => {
+	test('Different repositories get different encoded paths (no collisions)', async () => {
 		const sessionId1 = 'test-session-repo1';
 		const sessionId2 = 'test-session-repo2';
 
@@ -155,26 +160,30 @@ describe('WorktreeManager - Path Generation', () => {
 
 		createdWorktrees.push(worktree1.worktreePath, worktree2.worktreePath);
 
-		// Extract repo hash from paths
-		// Path format: ~/.liuboer/worktrees/{hash}/{sessionId}
-		const extractHash = (p: string) => {
+		// Extract encoded repo path from worktree paths
+		// Path format: ~/.liuboer/projects/{encoded-path}/worktrees/{sessionId}
+		const extractEncodedPath = (p: string) => {
 			const parts = p.split(path.sep);
-			const worktreesIndex = parts.indexOf('worktrees');
-			return parts[worktreesIndex + 1];
+			const projectsIndex = parts.indexOf('projects');
+			return parts[projectsIndex + 1];
 		};
 
-		const hash1 = extractHash(worktree1.worktreePath);
-		const hash2 = extractHash(worktree2.worktreePath);
+		const encodedPath1 = extractEncodedPath(worktree1.worktreePath);
+		const encodedPath2 = extractEncodedPath(worktree2.worktreePath);
 
-		// Different repos should have different hashes
-		expect(hash1).not.toBe(hash2);
+		// Different repos should have different encoded paths
+		expect(encodedPath1).not.toBe(encodedPath2);
 
-		// Both hashes should be 8 characters (first 8 chars of sha256)
-		expect(hash1).toHaveLength(8);
-		expect(hash2).toHaveLength(8);
+		// Both should start with dash (indicating absolute path)
+		expect(encodedPath1.startsWith('-')).toBe(true);
+		expect(encodedPath2.startsWith('-')).toBe(true);
+
+		// Both should contain readable path components (dashes instead of slashes)
+		expect(encodedPath1).toMatch(/test-git-repo-1-/);
+		expect(encodedPath2).toMatch(/test-git-repo-2-/);
 	});
 
-	test('Same repository gets same hash (deterministic)', async () => {
+	test('Same repository gets same encoded path (deterministic)', async () => {
 		const sessionId1 = 'test-session-1';
 		const sessionId2 = 'test-session-2';
 
@@ -195,18 +204,19 @@ describe('WorktreeManager - Path Generation', () => {
 
 		createdWorktrees.push(worktree1.worktreePath, worktree2.worktreePath);
 
-		// Extract repo hash from paths
-		const extractHash = (p: string) => {
+		// Extract encoded repo path from worktree paths
+		// Path format: ~/.liuboer/projects/{encoded-path}/worktrees/{sessionId}
+		const extractEncodedPath = (p: string) => {
 			const parts = p.split(path.sep);
-			const worktreesIndex = parts.indexOf('worktrees');
-			return parts[worktreesIndex + 1];
+			const projectsIndex = parts.indexOf('projects');
+			return parts[projectsIndex + 1];
 		};
 
-		const hash1 = extractHash(worktree1.worktreePath);
-		const hash2 = extractHash(worktree2.worktreePath);
+		const encodedPath1 = extractEncodedPath(worktree1.worktreePath);
+		const encodedPath2 = extractEncodedPath(worktree2.worktreePath);
 
-		// Same repo should have same hash
-		expect(hash1).toBe(hash2);
+		// Same repo should have same encoded path
+		expect(encodedPath1).toBe(encodedPath2);
 
 		// But different session IDs should result in different full paths
 		expect(worktree1.worktreePath).not.toBe(worktree2.worktreePath);
@@ -227,7 +237,8 @@ describe('WorktreeManager - Path Generation', () => {
 		if (!worktree) return;
 
 		// Verify worktree was created with new path format
-		expect(worktree.worktreePath).toContain('.liuboer/worktrees');
+		expect(worktree.worktreePath).toContain('.liuboer/projects');
+		expect(worktree.worktreePath).toContain('/worktrees/');
 
 		// Remove the worktree properly via git first, then manually delete to create orphan state
 		try {
@@ -257,17 +268,22 @@ describe('WorktreeManager - Path Generation', () => {
 
 		createdWorktrees.push(worktree.worktreePath);
 
-		// Expected structure: ~/.liuboer/worktrees/{8-char-hash}/{sessionId}
+		// Expected structure: ~/.liuboer/projects/{encoded-repo-path}/worktrees/{sessionId}
 		const pathParts = worktree.worktreePath.split(path.sep);
 
-		// Find the worktrees index
-		const worktreesIndex = pathParts.indexOf('worktrees');
-		expect(worktreesIndex).toBeGreaterThan(0);
+		// Find the projects index
+		const projectsIndex = pathParts.indexOf('projects');
+		expect(projectsIndex).toBeGreaterThan(0);
 
-		// Next part should be the 8-character hash
-		const hash = pathParts[worktreesIndex + 1];
-		expect(hash).toHaveLength(8);
-		expect(/^[a-f0-9]{8}$/.test(hash)).toBe(true); // Should be hex
+		// Next part should be the encoded repo path (starts with dash, contains dashes)
+		const encodedPath = pathParts[projectsIndex + 1];
+		expect(encodedPath.startsWith('-')).toBe(true);
+		// Should contain path components (varies by OS - macOS uses /var/folders, Linux uses /tmp)
+		expect(encodedPath).toMatch(/test-git-repo-1-/);
+
+		// After encoded path should be 'worktrees'
+		const worktreesDir = pathParts[projectsIndex + 2];
+		expect(worktreesDir).toBe('worktrees');
 
 		// Last part should be the session ID
 		const lastPart = pathParts[pathParts.length - 1];

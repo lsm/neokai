@@ -1,7 +1,6 @@
 import simpleGit, { SimpleGit } from 'simple-git';
 import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import type { WorktreeMetadata, CommitInfo, WorktreeCommitStatus } from '@liuboer/shared';
 
@@ -80,20 +79,35 @@ export class WorktreeManager {
 	}
 
 	/**
-	 * Generate a unique hash for a repository path
-	 * Used to organize worktrees by repository to avoid conflicts
+	 * Encode an absolute path to a filesystem-safe directory name
+	 * Uses the same approach as Claude Code (~/.claude/projects/)
+	 *
+	 * Examples:
+	 * - /Users/alice/project → -Users-alice-project
+	 * - /home/john_doe/my_project → -home-john_doe-my_project
+	 * - C:\Users\alice\project → -C--Users-alice-project
 	 */
-	private getRepoHash(repoPath: string): string {
-		return createHash('sha256').update(repoPath).digest('hex').slice(0, 8);
+	private encodeRepoPath(repoPath: string): string {
+		// Normalize path separators (handle both Unix and Windows)
+		const normalizedPath = repoPath.replace(/\\/g, '/');
+
+		// Strip leading slash (if any) and replace remaining slashes with dashes
+		// Then prepend a dash to indicate it was an absolute path
+		const encoded = normalizedPath.startsWith('/')
+			? '-' + normalizedPath.slice(1).replace(/\//g, '-')
+			: '-' + normalizedPath.replace(/\//g, '-');
+
+		return encoded;
 	}
 
 	/**
 	 * Get the worktree base directory for a repository
-	 * Format: ~/.liuboer/worktrees/{repo-hash}/
+	 * Format: ~/.liuboer/projects/{encoded-repo-path}/worktrees/
+	 * Example: ~/.liuboer/projects/-Users-alice-project/worktrees/
 	 */
 	private getWorktreeBaseDir(gitRoot: string): string {
-		const repoHash = this.getRepoHash(gitRoot);
-		return join(homedir(), '.liuboer', 'worktrees', repoHash);
+		const encodedPath = this.encodeRepoPath(gitRoot);
+		return join(homedir(), '.liuboer', 'projects', encodedPath, 'worktrees');
 	}
 
 	/**
@@ -113,7 +127,7 @@ export class WorktreeManager {
 		const git = this.getGit(gitRoot);
 
 		// Create worktree base directory if it doesn't exist
-		// Format: ~/.liuboer/worktrees/{repo-hash}/
+		// Format: ~/.liuboer/projects/{encoded-repo-path}/worktrees/
 		const worktreesDir = this.getWorktreeBaseDir(gitRoot);
 		if (!existsSync(worktreesDir)) {
 			mkdirSync(worktreesDir, { recursive: true });
@@ -317,11 +331,13 @@ export class WorktreeManager {
 				}
 
 				// Check if worktree is prunable (directory missing) or if it's a session worktree that doesn't exist
-				// Support both old (.worktrees) and new (~/.liuboer/worktrees) paths
+				// Support old paths (.worktrees, .liuboer/worktrees) and new path (.liuboer/projects)
 				if (
 					worktree.isPrunable ||
 					(!existsSync(worktree.path) &&
-						(worktree.path.includes('.worktrees') || worktree.path.includes('.liuboer/worktrees')))
+						(worktree.path.includes('.worktrees') ||
+							worktree.path.includes('.liuboer/worktrees') ||
+							worktree.path.includes('.liuboer/projects')))
 				) {
 					console.log(`[WorktreeManager] Removing orphaned worktree: ${worktree.path}`);
 

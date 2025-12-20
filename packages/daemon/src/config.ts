@@ -1,9 +1,27 @@
 import { config } from 'dotenv';
 import { join } from 'path';
+import { homedir } from 'os';
 
 // Load environment variables from .env file in the current working directory
 // This allows each instance (dev, self-hosting, production) to have its own configuration
 config({ path: join(process.cwd(), '.env') });
+
+/**
+ * Encode an absolute path to a filesystem-safe directory name
+ * Uses the same approach as Claude Code (~/.claude/projects/)
+ */
+function encodeRepoPath(repoPath: string): string {
+	// Normalize path separators (handle both Unix and Windows)
+	const normalizedPath = repoPath.replace(/\\/g, '/');
+
+	// Strip leading slash (if any) and replace remaining slashes with dashes
+	// Then prepend a dash to indicate it was an absolute path
+	const encoded = normalizedPath.startsWith('/')
+		? '-' + normalizedPath.slice(1).replace(/\//g, '-')
+		: '-' + normalizedPath.replace(/\//g, '-');
+
+	return encoded;
+}
 
 export interface Config {
 	port: number;
@@ -49,10 +67,21 @@ export function getConfig(overrides?: ConfigOverrides): Config {
 		);
 	}
 
+	// Default database path: ~/.liuboer/projects/{encoded-workspace-path}/database/daemon.db
+	// This ensures each workspace/project gets its own isolated database
+	const defaultDbPath = join(
+		homedir(),
+		'.liuboer',
+		'projects',
+		encodeRepoPath(workspaceRoot),
+		'database',
+		'daemon.db'
+	);
+
 	return {
 		port: overrides?.port ?? parseInt(process.env.PORT || '9283'),
 		host: overrides?.host ?? (process.env.HOST || '0.0.0.0'),
-		dbPath: overrides?.dbPath ?? (process.env.DB_PATH || './data/daemon.db'),
+		dbPath: overrides?.dbPath ?? (process.env.DB_PATH || defaultDbPath),
 		anthropicApiKey: process.env.ANTHROPIC_API_KEY,
 		claudeCodeOAuthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN,
 		// Use 'default' which maps to Sonnet 4.5 in the SDK

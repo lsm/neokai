@@ -37,7 +37,10 @@ describe('getConfig', () => {
 
 		expect(config.port).toBe(9283);
 		expect(config.host).toBe('0.0.0.0');
-		expect(config.dbPath).toBe('./data/daemon.db');
+		// Database path should be project-based: ~/.liuboer/projects/{encoded-workspace}/database/daemon.db
+		expect(config.dbPath).toContain('.liuboer/projects');
+		expect(config.dbPath).toContain('-test-workspace');
+		expect(config.dbPath).toEndWith('database/daemon.db');
 		// 'default' maps to Sonnet 4.5 in the SDK
 		expect(config.defaultModel).toBe('default');
 		expect(config.maxTokens).toBe(8192);
@@ -140,5 +143,36 @@ describe('getConfig', () => {
 		const config = getConfig();
 
 		expect(config.claudeCodeOAuthToken).toBe('oauth-token-123');
+	});
+
+	test('generates project-based database path with encoded workspace path', () => {
+		delete process.env.DB_PATH;
+		process.env.NODE_ENV = 'production';
+
+		const config = getConfig({ workspace: '/Users/alice/my_project' });
+
+		// Should encode path: /Users/alice/my_project → -Users-alice-my_project
+		expect(config.dbPath).toContain('.liuboer/projects/-Users-alice-my_project/database/daemon.db');
+	});
+
+	test('handles Windows-style paths in database path generation', () => {
+		delete process.env.DB_PATH;
+		process.env.NODE_ENV = 'production';
+
+		// Windows path with backslashes
+		const config = getConfig({ workspace: 'C:\\Users\\bob\\project' });
+
+		// Should normalize and encode: C:\Users\bob\project → -C:-Users-bob-project
+		// Note: The colon is preserved in Windows drive letters
+		expect(config.dbPath).toContain('.liuboer/projects/-C:-Users-bob-project/database/daemon.db');
+	});
+
+	test('DB_PATH env var takes precedence over auto-generated path', () => {
+		process.env.DB_PATH = '/custom/database.db';
+		process.env.LIUBOER_WORKSPACE_PATH = '/workspace';
+
+		const config = getConfig();
+
+		expect(config.dbPath).toBe('/custom/database.db');
 	});
 });
