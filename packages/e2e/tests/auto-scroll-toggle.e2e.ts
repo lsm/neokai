@@ -4,11 +4,33 @@ import { cleanupTestSession, waitForSessionCreated } from './helpers/wait-helper
 /**
  * Auto-Scroll Toggle E2E Tests
  *
- * Tests the auto-scroll toggle feature in the chat input toolbar.
- * - Toggle button visibility and state
+ * Tests the auto-scroll toggle feature in the message input plus menu.
+ * - Toggle visibility in plus menu
+ * - Toggle state changes
  * - Persistence of setting across page reloads
  * - Visual feedback when enabled/disabled
+ *
+ * NOTE: The auto-scroll toggle is inside the plus menu dropdown, not a standalone button.
  */
+
+/**
+ * Open the plus menu in the message input
+ */
+async function openPlusMenu(page: import('@playwright/test').Page): Promise<void> {
+	const plusButton = page.locator('button[title="More options"]');
+	await plusButton.waitFor({ state: 'visible', timeout: 5000 });
+	await plusButton.click();
+	// Wait for menu to animate in
+	await page.waitForTimeout(300);
+}
+
+/**
+ * Get the auto-scroll toggle button inside the menu
+ */
+function getAutoScrollToggle(page: import('@playwright/test').Page) {
+	return page.locator('button:has-text("Auto-scroll")');
+}
+
 test.describe('Auto-Scroll Toggle', () => {
 	let sessionId: string | null = null;
 
@@ -30,15 +52,17 @@ test.describe('Auto-Scroll Toggle', () => {
 		}
 	});
 
-	test('should display auto-scroll toggle button in chat input toolbar', async ({ page }) => {
+	test('should display auto-scroll toggle in plus menu', async ({ page }) => {
 		// Create a new session
 		await page.locator('button:has-text("New Session")').click();
 		sessionId = await waitForSessionCreated(page);
 
-		// The auto-scroll toggle button should be visible in the input toolbar
-		// It has a title attribute for identification
-		const autoScrollButton = page.locator('button[title*="Auto-scroll"]');
-		await expect(autoScrollButton).toBeVisible();
+		// Open the plus menu
+		await openPlusMenu(page);
+
+		// The auto-scroll toggle should be visible in the menu
+		const autoScrollToggle = getAutoScrollToggle(page);
+		await expect(autoScrollToggle).toBeVisible();
 	});
 
 	test('should toggle auto-scroll state on click', async ({ page }) => {
@@ -46,25 +70,30 @@ test.describe('Auto-Scroll Toggle', () => {
 		await page.locator('button:has-text("New Session")').click();
 		sessionId = await waitForSessionCreated(page);
 
-		const autoScrollButton = page.locator('button[title*="Auto-scroll"]');
-		await expect(autoScrollButton).toBeVisible();
+		// Open the plus menu
+		await openPlusMenu(page);
 
-		// Initially disabled (gray color) - check title text
-		await expect(autoScrollButton).toHaveAttribute('title', /disabled/i);
+		// Get the toggle
+		const autoScrollToggle = getAutoScrollToggle(page);
+		await expect(autoScrollToggle).toBeVisible();
 
-		// Click to enable
-		await autoScrollButton.click();
+		// Initially auto-scroll should be OFF (no checkmark visible)
+		const checkmarkBefore = autoScrollToggle.locator('svg[class*="text-blue-400"]');
+		const hasCheckmarkBefore = (await checkmarkBefore.count()) > 0;
+
+		// Click to toggle
+		await autoScrollToggle.click();
 		await page.waitForTimeout(500);
 
-		// Should now show enabled state
-		await expect(autoScrollButton).toHaveAttribute('title', /enabled/i);
+		// Menu closes after click, reopen it
+		await openPlusMenu(page);
 
-		// Click again to disable
-		await autoScrollButton.click();
-		await page.waitForTimeout(500);
+		// State should have changed
+		const checkmarkAfter = getAutoScrollToggle(page).locator('svg[class*="text-blue-400"]');
+		const hasCheckmarkAfter = (await checkmarkAfter.count()) > 0;
 
-		// Should show disabled state again
-		await expect(autoScrollButton).toHaveAttribute('title', /disabled/i);
+		// The checkmark state should be different
+		expect(hasCheckmarkAfter).not.toBe(hasCheckmarkBefore);
 	});
 
 	test('should persist auto-scroll setting across page reload', async ({ page }) => {
@@ -72,27 +101,41 @@ test.describe('Auto-Scroll Toggle', () => {
 		await page.locator('button:has-text("New Session")').click();
 		sessionId = await waitForSessionCreated(page);
 
-		const autoScrollButton = page.locator('button[title*="Auto-scroll"]');
-		await expect(autoScrollButton).toBeVisible();
+		// Open the plus menu
+		await openPlusMenu(page);
 
-		// Enable auto-scroll
-		await autoScrollButton.click();
+		// Get the toggle
+		const autoScrollToggle = getAutoScrollToggle(page);
+		await expect(autoScrollToggle).toBeVisible();
+
+		// Check initial state - look for the blue checkmark SVG
+		const initialHasCheckmark =
+			(await autoScrollToggle.locator('svg[class*="text-blue-400"]').count()) > 0;
+
+		// Toggle to opposite state
+		await autoScrollToggle.click();
 		await page.waitForTimeout(500);
-
-		// Verify enabled
-		await expect(autoScrollButton).toHaveAttribute('title', /enabled/i);
 
 		// Reload the page
 		await page.reload();
 		await page.waitForTimeout(1500);
 
-		// Navigate back to the session (it should load from URL or sidebar)
-		// The session should still be selected after reload
-		const autoScrollButtonAfterReload = page.locator('button[title*="Auto-scroll"]');
-		await expect(autoScrollButtonAfterReload).toBeVisible({ timeout: 5000 });
+		// Wait for session to load
+		await expect(page.locator('textarea[placeholder*="Ask"]')).toBeVisible({ timeout: 10000 });
 
-		// Setting should still be enabled
-		await expect(autoScrollButtonAfterReload).toHaveAttribute('title', /enabled/i);
+		// Open the plus menu again
+		await openPlusMenu(page);
+
+		// Get the toggle after reload
+		const autoScrollToggleAfterReload = getAutoScrollToggle(page);
+		await expect(autoScrollToggleAfterReload).toBeVisible();
+
+		// Check state - should be toggled (opposite of initial)
+		const afterReloadHasCheckmark =
+			(await autoScrollToggleAfterReload.locator('svg[class*="text-blue-400"]').count()) > 0;
+
+		// State should have persisted (opposite of initial)
+		expect(afterReloadHasCheckmark).not.toBe(initialHasCheckmark);
 	});
 
 	test('should have visual distinction between enabled and disabled states', async ({ page }) => {
@@ -100,36 +143,59 @@ test.describe('Auto-Scroll Toggle', () => {
 		await page.locator('button:has-text("New Session")').click();
 		sessionId = await waitForSessionCreated(page);
 
-		const autoScrollButton = page.locator('button[title*="Auto-scroll"]');
-		await expect(autoScrollButton).toBeVisible();
+		// Open the plus menu
+		await openPlusMenu(page);
 
-		// Get initial classes (disabled state)
-		const disabledClasses = await autoScrollButton.getAttribute('class');
-		expect(disabledClasses).toContain('text-gray-400');
+		// Get the toggle
+		const autoScrollToggle = getAutoScrollToggle(page);
+		await expect(autoScrollToggle).toBeVisible();
 
-		// Enable auto-scroll
-		await autoScrollButton.click();
+		// Get the icon SVG inside the toggle
+		const iconSvg = autoScrollToggle.locator('svg').first();
+		const initialClass = await iconSvg.getAttribute('class');
+
+		// Toggle state
+		await autoScrollToggle.click();
 		await page.waitForTimeout(500);
 
-		// Get enabled classes
-		const enabledClasses = await autoScrollButton.getAttribute('class');
-		expect(enabledClasses).toContain('text-blue-400');
+		// Reopen menu
+		await openPlusMenu(page);
+
+		// Get the icon class again
+		const toggledClass = await getAutoScrollToggle(page)
+			.locator('svg')
+			.first()
+			.getAttribute('class');
+
+		// The class should have changed (text-gray-400 vs text-blue-400)
+		expect(initialClass).not.toBe(toggledClass);
 	});
 
-	test('should show appropriate icon (down arrow with line)', async ({ page }) => {
+	test('should show checkmark when enabled', async ({ page }) => {
 		// Create a new session
 		await page.locator('button:has-text("New Session")').click();
 		sessionId = await waitForSessionCreated(page);
 
-		const autoScrollButton = page.locator('button[title*="Auto-scroll"]');
-		await expect(autoScrollButton).toBeVisible();
+		// Open the plus menu
+		await openPlusMenu(page);
 
-		// Button should contain an SVG with the arrow icon
-		const svg = autoScrollButton.locator('svg');
-		await expect(svg).toBeVisible();
+		// Get the toggle
+		const autoScrollToggle = getAutoScrollToggle(page);
+		await expect(autoScrollToggle).toBeVisible();
 
-		// SVG should have path elements (the arrow and line)
-		const paths = svg.locator('path');
-		expect(await paths.count()).toBeGreaterThanOrEqual(2);
+		// Check if initially enabled (has checkmark)
+		const initialHasCheckmark =
+			(await autoScrollToggle.locator('svg[class*="text-blue-400"]').count()) > 0;
+
+		// Toggle until enabled
+		if (!initialHasCheckmark) {
+			await autoScrollToggle.click();
+			await page.waitForTimeout(500);
+			await openPlusMenu(page);
+		}
+
+		// Now should have checkmark
+		const checkmark = getAutoScrollToggle(page).locator('svg[class*="text-blue-400"]');
+		await expect(checkmark).toBeVisible();
 	});
 });

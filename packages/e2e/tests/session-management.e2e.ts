@@ -34,9 +34,10 @@ test.describe('Session Management', () => {
 	});
 
 	test('should display connection status in footer', async ({ page }) => {
-		// Check for connection status indicator
-		await expect(page.locator('text=Status')).toBeVisible();
-		await expect(page.locator('text=Online')).toBeVisible();
+		// Check for connection status indicators in sidebar footer
+		// The sidebar shows "Daemon" connection status and "Claude API" status
+		await expect(page.locator('text=Daemon')).toBeVisible();
+		await expect(page.locator('text=Connected')).toBeVisible();
 
 		// Check for green indicator dot
 		const statusDot = page.locator('.bg-green-500').first();
