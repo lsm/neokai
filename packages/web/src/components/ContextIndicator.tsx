@@ -14,7 +14,13 @@ import type { ContextInfo } from '@liuboer/shared';
 import { borderColors } from '../lib/design-tokens.ts';
 
 interface ContextIndicatorProps {
-	connectionState: 'connecting' | 'connected' | 'disconnected' | 'error' | 'reconnecting';
+	connectionState:
+		| 'connecting'
+		| 'connected'
+		| 'disconnected'
+		| 'error'
+		| 'reconnecting'
+		| 'failed';
 	isProcessing: boolean;
 	currentAction?: string;
 	streamingPhase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing' | null;
@@ -151,6 +157,22 @@ export default function ContextIndicator({
 				dotClass: 'bg-yellow-500 animate-pulse',
 				text: 'Connecting...',
 				textClass: 'text-yellow-400',
+			};
+		}
+
+		if (connectionState === 'reconnecting') {
+			return {
+				dotClass: 'bg-yellow-500 animate-pulse',
+				text: 'Reconnecting...',
+				textClass: 'text-yellow-400',
+			};
+		}
+
+		if (connectionState === 'failed' || connectionState === 'error') {
+			return {
+				dotClass: 'bg-red-500',
+				text: 'Connection Failed',
+				textClass: 'text-red-400',
 			};
 		}
 

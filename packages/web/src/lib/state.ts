@@ -392,7 +392,8 @@ export type ConnectionState =
 	| 'connected'
 	| 'disconnected'
 	| 'error'
-	| 'reconnecting';
+	| 'reconnecting'
+	| 'failed';
 export const connectionState = signal<ConnectionState>('connecting');
 
 /**

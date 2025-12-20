@@ -107,7 +107,13 @@ export interface EventContext {
 /**
  * Connection state
  */
-export type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'error';
+export type ConnectionState =
+	| 'connecting'
+	| 'connected'
+	| 'disconnected'
+	| 'error'
+	| 'reconnecting'
+	| 'failed';
 
 /**
  * Options for call()

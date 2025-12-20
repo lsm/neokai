@@ -154,6 +154,8 @@ export class WebSocketClientTransport implements IMessageTransport {
 			console.error(
 				`[${this.name}] Max reconnection attempts (${this.maxReconnectAttempts}) reached`
 			);
+			// Emit 'failed' state to notify UI that reconnection has permanently failed
+			this.setState('failed');
 			return;
 		}
 
@@ -247,6 +249,40 @@ export class WebSocketClientTransport implements IMessageTransport {
 	 */
 	getState(): ConnectionState {
 		return this.state;
+	}
+
+	/**
+	 * Reset reconnection state to allow fresh reconnection attempts
+	 * Used when user manually triggers reconnect or returns from background
+	 */
+	resetReconnectState(): void {
+		this.closed = false;
+		this.reconnectAttempts = 0;
+		console.log(`[${this.name}] Reconnect state reset - ready for fresh connection attempt`);
+	}
+
+	/**
+	 * Force close and trigger reconnection
+	 * Unlike close(), this does NOT set closed=true, allowing auto-reconnect
+	 */
+	forceReconnect(): void {
+		console.log(`[${this.name}] Force reconnect initiated`);
+
+		// Reset state to allow reconnection
+		this.resetReconnectState();
+
+		// Stop ping timer
+		this.stopPing();
+
+		// Close current WebSocket if exists
+		if (this.ws) {
+			this.ws.close();
+			this.ws = null;
+		}
+
+		// Trigger handleDisconnect which will start reconnection
+		this.setState('reconnecting');
+		this.handleDisconnect();
 	}
 
 	/**
