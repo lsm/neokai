@@ -545,6 +545,19 @@ export class ConnectionManager {
 			this.transport.forceReconnect();
 		}
 	}
+
+	/**
+	 * Simulate permanent disconnection for testing purposes
+	 * This closes the WebSocket and prevents auto-reconnect
+	 * Use this for testing UI states when disconnected
+	 */
+	simulatePermanentDisconnect(): void {
+		if (this.transport) {
+			console.log('[ConnectionManager] Simulating permanent disconnect for testing');
+			this.transport.close();
+		}
+		connectionState.value = 'disconnected';
+	}
 }
 
 // Singleton instance

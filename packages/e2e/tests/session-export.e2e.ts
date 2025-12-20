@@ -151,43 +151,30 @@ test.describe('Session Export', () => {
 		await newSessionButton.click();
 		sessionId = await waitForSessionCreated(page);
 
-		// Open session options menu
+		// Verify Export is clickable when connected
 		const optionsButton = page.locator('button[aria-label="Session options"]');
 		await optionsButton.click();
-
-		// Export should be visible and enabled when connected
-		const exportOption = page.locator('text=Export Chat');
+		const exportOption = page.locator('[role="menuitem"]:has-text("Export Chat")');
 		await expect(exportOption).toBeVisible();
+		await expect(exportOption).not.toBeDisabled();
 
-		// Simulate disconnection
+		// Close the menu
+		await page.keyboard.press('Escape');
+		await page.waitForTimeout(300);
+
+		// Simulate permanent disconnection (prevents auto-reconnect)
 		await page.evaluate(() => {
 			(
-				window as unknown as { connectionManager: { simulateDisconnect: () => void } }
-			).connectionManager.simulateDisconnect();
+				window as unknown as { connectionManager: { simulatePermanentDisconnect: () => void } }
+			).connectionManager.simulatePermanentDisconnect();
 		});
 
-		// Wait for offline state
+		// Wait for disconnected state indicator
 		await expect(page.locator('text=Offline').first()).toBeVisible({ timeout: 10000 });
 
-		// Reopen menu and check if Export is disabled
-		// Close current dropdown first
-		await page.keyboard.press('Escape');
-		await page.waitForTimeout(500);
-
-		// Reopen menu
-		await optionsButton.click();
-
-		// Export Chat option should be disabled (has disabled styling or aria-disabled)
-		const exportButton = page.locator('[role="menuitem"]:has-text("Export Chat")');
-		const isDisabled = await exportButton.evaluate((el) => {
-			const classes = el.className;
-			const ariaDisabled = el.getAttribute('aria-disabled');
-			return (
-				classes.includes('opacity-50') ||
-				classes.includes('cursor-not-allowed') ||
-				ariaDisabled === 'true'
-			);
-		});
-		expect(isDisabled).toBe(true);
+		// The options button should be disabled when disconnected
+		// When disabled, the title changes to "Not connected"
+		const disabledOptionsButton = page.getByRole('button', { name: 'Not connected' }).first();
+		await expect(disabledOptionsButton).toBeDisabled();
 	});
 });
