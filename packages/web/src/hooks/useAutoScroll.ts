@@ -76,33 +76,49 @@ export function useAutoScroll({
 
 	// Detect scroll position to show/hide scroll button
 	useEffect(() => {
-		const container = containerRef.current;
-		if (!container) return;
+		// Try to get container, with a fallback check after a brief delay if not immediately available
+		let container = containerRef.current;
 
-		const handleScroll = () => {
-			const { scrollTop, scrollHeight, clientHeight } = container;
-			const nearBottom = scrollHeight - scrollTop - clientHeight < nearBottomThreshold;
-			setIsNearBottom(nearBottom);
-			setShowScrollButton(!nearBottom);
-		};
+		if (!container) {
+			// Schedule a retry after a brief moment to allow the ref to be populated
+			const timeoutId = setTimeout(() => {
+				container = containerRef.current;
+				if (container) {
+					setupScrollDetection(container);
+				}
+			}, 50);
+			return () => clearTimeout(timeoutId);
+		}
 
-		// Initial check
-		handleScroll();
+		function setupScrollDetection(container: HTMLDivElement) {
+			const handleScroll = () => {
+				const { scrollTop, scrollHeight, clientHeight } = container;
+				const nearBottom = scrollHeight - scrollTop - clientHeight < nearBottomThreshold;
+				setIsNearBottom(nearBottom);
+				setShowScrollButton(!nearBottom);
+			};
 
-		// Use passive event listener for better scroll performance
-		container.addEventListener('scroll', handleScroll, { passive: true });
-
-		// Use ResizeObserver to update when content size changes
-		const resizeObserver = new ResizeObserver(() => {
+			// Initial check
 			handleScroll();
-		});
-		resizeObserver.observe(container);
 
-		return () => {
-			container.removeEventListener('scroll', handleScroll);
-			resizeObserver.disconnect();
-		};
-	}, [containerRef, nearBottomThreshold]);
+			// Use passive event listener for better scroll performance
+			container.addEventListener('scroll', handleScroll, { passive: true });
+
+			// Use ResizeObserver to update when content size changes
+			const resizeObserver = new ResizeObserver(() => {
+				handleScroll();
+			});
+			resizeObserver.observe(container);
+
+			// Return cleanup function
+			return () => {
+				container.removeEventListener('scroll', handleScroll);
+				resizeObserver.disconnect();
+			};
+		}
+
+		return setupScrollDetection(container);
+	}, [nearBottomThreshold, messageCount]);
 
 	// Auto-scroll on new messages
 	useEffect(() => {

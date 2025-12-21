@@ -329,7 +329,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					<div ref={messagesEndRef} />
 				</div>
 
-				{/* Scroll Button */}
+				{/* Scroll Button - positioned relative to container, not scrollable content */}
 				{showScrollButton && <ScrollToBottomButton onClick={() => scrollToBottom(true)} />}
 			</div>
 
