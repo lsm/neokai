@@ -160,7 +160,7 @@ export default function RecentSessions({ sessions }: RecentSessionsProps) {
 										</div>
 
 										{/* Hover indicator */}
-										<div class="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
+										<div class="absolute top-1/2 -translate-y-1/2 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
 											<svg
 												class="w-5 h-5 text-blue-400"
 												fill="none"
