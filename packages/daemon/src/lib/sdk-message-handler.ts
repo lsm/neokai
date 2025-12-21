@@ -180,9 +180,11 @@ export class SDKMessageHandler {
 			});
 
 			// Emit session:updated event so StateManager broadcasts the change
+			// Include data for decoupled state management
 			await this.eventBus.emit('session:updated', {
 				sessionId: this.session.id,
 				source: 'sdk-session',
+				session: { sdkSessionId: message.session_id },
 			});
 		}
 	}
@@ -216,9 +218,14 @@ export class SDKMessageHandler {
 		});
 
 		// Emit session:updated event so StateManager broadcasts the change
+		// Include data for decoupled state management
 		await this.eventBus.emit('session:updated', {
 			sessionId: this.session.id,
 			source: 'metadata',
+			session: {
+				lastActiveAt: this.session.lastActiveAt,
+				metadata: this.session.metadata,
+			},
 		});
 
 		// Update context tracker with final accurate usage
@@ -275,9 +282,11 @@ export class SDKMessageHandler {
 			});
 
 			// Emit session:updated event so StateManager broadcasts the change
+			// Include data for decoupled state management
 			await this.eventBus.emit('session:updated', {
 				sessionId: this.session.id,
 				source: 'metadata',
+				session: { metadata: this.session.metadata },
 			});
 		}
 	}

@@ -2,13 +2,16 @@
  * StateManager - Server-side state coordinator
  *
  * Manages authoritative state and broadcasts changes to clients
- * via fine-grained state channels
+ * via fine-grained state channels.
  *
- * FIX: Uses EventBus to listen for internal events instead of
- * being directly called by SessionManager (breaks circular dependency)
+ * ARCHITECTURE: Event-sourced state management
+ * - StateManager maintains its own state from EventBus events
+ * - Publishers include their data in events (no fetching from sources)
+ * - This ensures full decoupling between components via EventBus
+ * - Broadcasts immediately on event (no debouncing needed - LLM is slow)
  */
 
-import type { MessageHub, EventBus } from '@liuboer/shared';
+import type { MessageHub, EventBus, AgentProcessingState } from '@liuboer/shared';
 import type { SessionManager } from './session-manager';
 import type { AuthManager } from './auth-manager';
 import type { SettingsManager } from './settings-manager';
@@ -36,15 +39,19 @@ export class StateManager {
 	// FIX: Per-channel versioning instead of global version
 	private channelVersions = new Map<string, number>();
 	private logger = new Logger('StateManager');
+
 	// Track API connection state (updated via broadcasts from ErrorManager)
 	private apiConnectionState: import('@liuboer/shared').ApiConnectionState = {
 		status: 'connected',
 		timestamp: Date.now(),
 	};
 
-	// Debouncing for session updates (prevents rapid-fire during streaming)
-	private sessionUpdateTimers = new Map<string, ReturnType<typeof setTimeout>>();
-	private readonly SESSION_UPDATE_DEBOUNCE_MS = 50;
+	// Event-sourced state caches (updated from EventBus events)
+	// This enables full decoupling - StateManager doesn't fetch from AgentSession
+	private sessionCache = new Map<string, Session>();
+	private processingStateCache = new Map<string, AgentProcessingState>();
+	private commandsCache = new Map<string, string[]>();
+	private contextCache = new Map<string, ContextInfo>();
 
 	constructor(
 		private messageHub: MessageHub,
@@ -52,132 +59,139 @@ export class StateManager {
 		private authManager: AuthManager,
 		private settingsManager: SettingsManager,
 		private config: Config,
-		private eventBus: EventBus // FIX: Listen to EventBus for changes
+		private eventBus: EventBus
 	) {
 		this.setupHandlers();
-		this.setupEventListeners(); // FIX: Listen to internal events
+		this.setupEventListeners();
 	}
 
 	/**
-	 * FIX: Setup EventBus listeners for internal events
+	 * Setup EventBus listeners for internal events
 	 *
-	 * StateManager listens to events from SessionManager/AuthManager/ErrorManager
-	 * and broadcasts state changes to clients. This breaks the circular
-	 * dependency where SessionManager had to call StateManager directly.
+	 * ARCHITECTURE: Event-sourced state management
+	 * - Publishers include their data in events
+	 * - StateManager caches this data (no fetching from sources)
+	 * - Broadcasts immediately to clients (no debouncing)
 	 */
 	private setupEventListeners(): void {
 		// API connection state updates from ErrorManager
 		this.eventBus.on('api:connection', (data) => {
 			this.apiConnectionState = data as import('@liuboer/shared').ApiConnectionState;
 			this.logger.log('API connection state updated:', this.apiConnectionState.status);
-			// Broadcast system state change when API connection changes
 			this.broadcastSystemChange().catch((err: unknown) => {
 				this.logger.error('Failed to broadcast system state after API connection change:', err);
 			});
 		});
 
-		// Session lifecycle events
+		// Session created - cache and broadcast
 		this.eventBus.on('session:created', async (data) => {
-			this.logger.log(
-				'Received session:created event, broadcasting delta for session:',
-				data.session.id
-			);
-			this.logger.log('Session data:', JSON.stringify(data.session, null, 2));
+			const { session } = data;
+			this.logger.log('Session created, caching and broadcasting:', session.id);
 
-			// Broadcast state channel delta
+			// Cache session and initial processing state
+			this.sessionCache.set(session.id, session);
+			this.processingStateCache.set(session.id, { status: 'idle' });
+
+			// Broadcast delta
 			await this.broadcastSessionsDelta({
-				added: [data.session],
+				added: [session],
 				timestamp: Date.now(),
 			});
 
-			// Publish session.created event for subscribers
-			this.logger.log(' Publishing session.created event with data:', {
-				sessionId: data.session.id,
-			});
+			// Publish session.created event
 			await this.messageHub.publish(
 				'session.created',
-				{ sessionId: data.session.id },
+				{ sessionId: session.id },
 				{ sessionId: 'global' }
 			);
-			this.logger.log(' session.created event published');
-
-			this.logger.log(' Delta broadcasted for session:', data.session.id);
 		});
 
-		// Unified session:updated listener - handles ALL session changes
-		// (processing state, metadata, title, config, commands, context)
-		this.eventBus.on('session:updated', async (data: { sessionId: string; source?: string }) => {
-			this.handleSessionUpdate(data.sessionId, data.source);
-		});
+		// Session updated - update cache from event data and broadcast immediately
+		this.eventBus.on('session:updated', async (data) => {
+			const { sessionId, session, processingState } = data;
 
-		// Title generation events - treat as session updates
-		this.eventBus.on('title:generated', async (data) => {
-			// Yield to microtask queue to ensure AgentSession's synchronous title update
-			// (in its own title:generated handler) completes before we broadcast.
-			// This is necessary because EventBus executes handlers in parallel.
-			await Promise.resolve();
-
-			// Broadcast unified session state (includes updated title)
-			await this.broadcastSessionStateChange(data.sessionId);
-
-			// Also update global sessions list
-			const updatedSession = this.sessionManager
-				.listSessions()
-				.find((s) => s.id === data.sessionId);
-			if (updatedSession) {
-				await this.broadcastSessionsDelta({
-					updated: [updatedSession],
-					timestamp: Date.now(),
-				});
+			// Update caches from event data (decoupled - no fetching)
+			if (session) {
+				const existing = this.sessionCache.get(sessionId);
+				if (existing) {
+					this.sessionCache.set(sessionId, { ...existing, ...session });
+				} else {
+					this.sessionCache.set(sessionId, session as Session);
+				}
+			}
+			if (processingState) {
+				this.processingStateCache.set(sessionId, processingState);
 			}
 
-			this.logger.log(`Title generated for session ${data.sessionId}: "${data.title}"`);
+			// Broadcast immediately (no debouncing - LLM is slow enough)
+			await this.broadcastSessionUpdateFromCache(sessionId);
 		});
 
+		// Title generation - update cache and broadcast
+		this.eventBus.on('title:generated', async (data) => {
+			const { sessionId, title } = data;
+
+			// Update session cache with new title
+			const session = this.sessionCache.get(sessionId);
+			if (session) {
+				session.title = title;
+				this.sessionCache.set(sessionId, session);
+			}
+
+			// Broadcast immediately
+			await this.broadcastSessionUpdateFromCache(sessionId);
+			this.logger.log(`Title generated for session ${sessionId}: "${title}"`);
+		});
+
+		// Session deleted - clear cache and broadcast
 		this.eventBus.on('session:deleted', async (data) => {
+			const { sessionId } = data;
+
+			// Clear caches
+			this.sessionCache.delete(sessionId);
+			this.processingStateCache.delete(sessionId);
+			this.commandsCache.delete(sessionId);
+			this.contextCache.delete(sessionId);
+
+			// Broadcast
 			await this.broadcastSessionsDelta({
-				removed: [data.sessionId],
+				removed: [sessionId],
 				timestamp: Date.now(),
 			});
-
-			// Publish session.deleted event for subscribers
-			await this.messageHub.publish(
-				'session.deleted',
-				{ sessionId: data.sessionId },
-				{ sessionId: 'global' }
-			);
+			await this.messageHub.publish('session.deleted', { sessionId }, { sessionId: 'global' });
 		});
 
-		// Auth events - broadcast unified system state
+		// Auth events
 		this.eventBus.on('auth:changed', async () => {
 			await this.broadcastSystemChange();
 		});
 
-		// Settings events - broadcast settings state
+		// Settings events
 		this.eventBus.on('settings:updated', async () => {
 			await this.broadcastSettingsChange();
 		});
 
-		// Commands events - broadcast unified session state
+		// Commands updated - cache and broadcast
 		this.eventBus.on(
 			'commands:updated',
 			async (data: { sessionId: string; commands: string[] }) => {
+				this.commandsCache.set(data.sessionId, data.commands);
 				await this.broadcastSessionStateChange(data.sessionId);
 			}
 		);
 
-		// Context events - broadcast context updates AND unified session state
-		// This enables real-time context tracking during streaming
+		// Context updated - cache and broadcast
 		this.eventBus.on(
 			'context:updated',
 			async (data: { sessionId: string; contextInfo: ContextInfo }) => {
-				// Publish dedicated context.updated event for clients
-				// This is the primary channel for real-time context updates
+				this.contextCache.set(data.sessionId, data.contextInfo);
+
+				// Publish dedicated context.updated event
 				await this.messageHub.publish('context.updated', data.contextInfo, {
 					sessionId: data.sessionId,
 				});
 
-				// Also update unified session state (for clients using state channels)
+				// Also update unified session state
 				await this.broadcastSessionStateChange(data.sessionId);
 			}
 		);
@@ -212,53 +226,44 @@ export class StateManager {
 	}
 
 	/**
-	 * Handle any session update - debounces and fetches live data
-	 * Coalesces rapid updates (e.g., during streaming) into single broadcasts
+	 * Broadcast session update from cached state (event-sourced)
+	 *
+	 * ARCHITECTURE: No debouncing, no fetching from AgentSession
+	 * - Uses cached state from EventBus events
+	 * - Broadcasts immediately (LLM processing is slow enough)
+	 * - Full decoupling via EventBus
 	 */
-	private handleSessionUpdate(sessionId: string, _source?: string): void {
-		const existingTimer = this.sessionUpdateTimers.get(sessionId);
-		if (existingTimer) {
-			clearTimeout(existingTimer);
-		}
-
-		const timer = setTimeout(async () => {
-			this.sessionUpdateTimers.delete(sessionId);
-			await this.broadcastSessionUpdateInternal(sessionId);
-		}, this.SESSION_UPDATE_DEBOUNCE_MS);
-
-		this.sessionUpdateTimers.set(sessionId, timer);
-	}
-
-	/**
-	 * Internal method to broadcast session update after debounce
-	 * Fetches live session data and broadcasts to both channels:
-	 * 1. state.session - For current session subscribers (ChatContainer)
-	 * 2. state.sessions.delta - For sidebar (includes processingState)
-	 */
-	private async broadcastSessionUpdateInternal(sessionId: string): Promise<void> {
+	private async broadcastSessionUpdateFromCache(sessionId: string): Promise<void> {
 		try {
+			// Get cached session data
+			const session = this.sessionCache.get(sessionId);
+			if (!session) {
+				this.logger.warn(`No cached session for ${sessionId}, skipping broadcast`);
+				return;
+			}
+
+			// Get cached processing state (default to idle if not cached)
+			const processingState = this.processingStateCache.get(sessionId) || {
+				status: 'idle' as const,
+			};
+
 			// Broadcast unified session state (for current session subscribers)
 			await this.broadcastSessionStateChange(sessionId);
 
 			// Also update global sessions list delta (for sidebar)
-			// Fetch live session data including processing state
-			const agentSession = await this.sessionManager.getSessionAsync(sessionId);
-			if (agentSession) {
-				const sessionData = agentSession.getSessionData();
-				const processingState = agentSession.getProcessingState();
+			// Merge processing state into session for delta broadcast
+			// This allows sidebar to show processing status without per-session subscriptions
+			// Note: Session.processingState is typed as string (DB serialized), but we send
+			// the object directly for client-side use. Type assertion is intentional.
+			const sessionWithState = {
+				...session,
+				processingState,
+			};
 
-				// Merge processing state into session for delta broadcast
-				// This allows sidebar to show processing status without per-session subscriptions
-				const sessionWithState = {
-					...sessionData,
-					processingState,
-				};
-
-				await this.broadcastSessionsDelta({
-					updated: [sessionWithState as Session],
-					timestamp: Date.now(),
-				});
-			}
+			await this.broadcastSessionsDelta({
+				updated: [sessionWithState as unknown as Session],
+				timestamp: Date.now(),
+			});
 		} catch (error) {
 			// Session may have been deleted during update
 			this.logger.warn(`Failed to broadcast session update for ${sessionId}:`, error);

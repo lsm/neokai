@@ -88,10 +88,11 @@ describe('ProcessingStateManager', () => {
 			expect(state.messageId).toBe('msg-123');
 			expect(stateManager.isIdle()).toBe(false);
 
-			// Should emit event
+			// Should emit event with processingState included (event-sourced architecture)
 			expect(emitSpy).toHaveBeenCalledWith('session:updated', {
 				sessionId: testSessionId,
 				source: 'processing-state',
+				processingState: { status: 'queued', messageId: 'msg-123' },
 			});
 		});
 
@@ -234,15 +235,23 @@ describe('ProcessingStateManager', () => {
 			expect(emitSpy).toHaveBeenCalledTimes(4);
 		});
 
-		it('should include sessionId and source in event payload', async () => {
+		it('should include sessionId, source, and processingState in event payload', async () => {
 			emitSpy.mockClear();
 
 			await stateManager.setProcessing('msg-123', 'streaming');
 
-			expect(emitSpy).toHaveBeenCalledWith('session:updated', {
-				sessionId: testSessionId,
-				source: 'processing-state',
-			});
+			// Verify event was emitted with correct structure
+			expect(emitSpy).toHaveBeenCalledTimes(1);
+			const [eventName, payload] = emitSpy.mock.calls[0];
+			expect(eventName).toBe('session:updated');
+			expect(payload.sessionId).toBe(testSessionId);
+			expect(payload.source).toBe('processing-state');
+			// processingState included for event-sourced architecture
+			expect(payload.processingState).toBeDefined();
+			expect(payload.processingState.status).toBe('processing');
+			expect(payload.processingState.messageId).toBe('msg-123');
+			expect(payload.processingState.phase).toBe('streaming');
+			expect(payload.processingState.streamingStartedAt).toBeDefined();
 		});
 	});
 

@@ -260,10 +260,11 @@ export class SessionManager {
 			// Update in-memory session
 			agentSession.updateMetadata(updatedSession);
 
-			// Broadcast updates
+			// Broadcast updates - include session data for decoupled state management
 			await this.eventBus.emit('session:updated', {
 				sessionId,
 				source: 'workspace-init',
+				session: updatedSession,
 			});
 
 			this.log(`[SessionManager] Workspace initialized for session ${sessionId}`);
@@ -285,9 +286,11 @@ export class SessionManager {
 			this.db.updateSession(sessionId, fallbackSession);
 			agentSession.updateMetadata(fallbackSession);
 
+			// Include session data for decoupled state management
 			await this.eventBus.emit('session:updated', {
 				sessionId,
 				source: 'workspace-init',
+				session: fallbackSession,
 			});
 
 			this.log(`[SessionManager] Used fallback title "${fallbackTitle}" for session ${sessionId}`);
@@ -536,8 +539,8 @@ ${messageText.slice(0, 2000)}`,
 			agentSession.updateMetadata(updates);
 		}
 
-		// FIX: Emit event via EventBus
-		await this.eventBus.emit('session:updated', { sessionId, source: 'update' });
+		// FIX: Emit event via EventBus - include data for decoupled state management
+		await this.eventBus.emit('session:updated', { sessionId, source: 'update', session: updates });
 	}
 
 	/**

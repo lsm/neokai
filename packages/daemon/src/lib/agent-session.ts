@@ -1276,10 +1276,11 @@ CRITICAL RULES:
 				// Update context tracker model
 				this.contextTracker.setModel(resolvedModel);
 
-				// Emit session:updated event
+				// Emit session:updated event - include data for decoupled state management
 				await this.eventBus.emit('session:updated', {
 					sessionId: this.session.id,
 					source: 'model-switch',
+					session: { config: this.session.config },
 				});
 			} else {
 				// Use SDK's native setModel() method
@@ -1295,10 +1296,11 @@ CRITICAL RULES:
 				// Update context tracker model
 				this.contextTracker.setModel(resolvedModel);
 
-				// Emit session:updated event
+				// Emit session:updated event - include data for decoupled state management
 				await this.eventBus.emit('session:updated', {
 					sessionId: this.session.id,
 					source: 'model-switch',
+					session: { config: this.session.config },
 				});
 
 				this.logger.log(`Model switched via SDK to: ${resolvedModel}`);
@@ -1475,9 +1477,11 @@ CRITICAL RULES:
 			}
 
 			// 4. Emit event for StateManager to broadcast updated session state
+			// Include data for decoupled state management
 			await this.eventBus.emit('session:updated', {
 				sessionId: this.session.id,
 				source: 'config',
+				session: { config: this.session.config },
 			});
 
 			this.logger.log(`Tools config updated successfully`);

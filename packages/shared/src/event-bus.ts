@@ -31,11 +31,21 @@ export type CompactionTrigger = 'manual' | 'auto';
 
 /**
  * Event types for type safety
+ *
+ * Design principle: Publishers include their data in events.
+ * StateManager maintains its own state from events (no fetching from sources).
+ * This ensures full decoupling between components via EventBus.
  */
 export interface EventMap {
 	// Session lifecycle events
 	'session:created': { session: Session };
-	'session:updated': { sessionId: string; source?: string };
+	'session:updated': {
+		sessionId: string;
+		source?: string;
+		// Include the data that changed - StateManager caches these
+		session?: Partial<Session>;
+		processingState?: AgentProcessingState;
+	};
 	'session:deleted': { sessionId: string };
 
 	// SDK events
@@ -49,9 +59,6 @@ export interface EventMap {
 
 	// Settings events
 	'settings:updated': { settings: import('./types/settings.ts').GlobalSettings };
-
-	// Agent state events
-	'agent-state:changed': { sessionId: string; state: AgentProcessingState };
 
 	// Commands events
 	'commands:updated': { sessionId: string; commands: string[] };

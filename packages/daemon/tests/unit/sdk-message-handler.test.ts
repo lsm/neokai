@@ -461,9 +461,11 @@ describe('SDKMessageHandler', () => {
 
 			await handler.handleMessage(systemMessage);
 
+			// Event includes session data for event-sourced architecture
 			expect(eventBusEmitSpy).toHaveBeenCalledWith('session:updated', {
 				sessionId: testSessionId,
 				source: 'sdk-session',
+				session: { sdkSessionId },
 			});
 		});
 
