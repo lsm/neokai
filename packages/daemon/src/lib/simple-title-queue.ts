@@ -12,7 +12,6 @@
  * - Event-driven architecture (no polling when queue is empty)
  */
 
-import { z } from 'zod';
 import type { EventBus } from '@liuboer/shared';
 import type { SDKUserMessage } from '@liuboer/shared/sdk';
 import type { Database } from '../storage/database.ts';
@@ -23,15 +22,38 @@ import { generateUUID } from '@liuboer/shared';
 const logger = new Logger('TitleQueue');
 
 /**
- * Job data schema for type safety and validation
+ * Job data type for title generation
  */
-const titleJobSchema = z.object({
-	sessionId: z.string(),
-	workspacePath: z.string(),
-	userMessages: z.array(z.record(z.string(), z.unknown())),
-});
+type TitleGenerationJob = {
+	sessionId: string;
+	workspacePath: string;
+	userMessages: Array<Record<string, unknown>>;
+};
 
-type TitleGenerationJob = z.infer<typeof titleJobSchema>;
+/**
+ * Validates job data from database JSON
+ */
+function validateTitleJob(data: unknown): TitleGenerationJob {
+	if (!data || typeof data !== 'object') {
+		throw new Error('Invalid job data: expected object');
+	}
+
+	const obj = data as Record<string, unknown>;
+
+	if (typeof obj.sessionId !== 'string') {
+		throw new Error('Invalid job data: sessionId must be a string');
+	}
+
+	if (typeof obj.workspacePath !== 'string') {
+		throw new Error('Invalid job data: workspacePath must be a string');
+	}
+
+	if (!Array.isArray(obj.userMessages)) {
+		throw new Error('Invalid job data: userMessages must be an array');
+	}
+
+	return obj as TitleGenerationJob;
+}
 
 interface TitleQueueOptions {
 	maxRetries?: number;
@@ -234,7 +256,7 @@ export class SimpleTitleQueue {
 
 		try {
 			// Parse and validate job data
-			const data = titleJobSchema.parse(JSON.parse(job.data));
+			const data = validateTitleJob(JSON.parse(job.data));
 
 			// Generate title with timeout
 			const titlePromise = this.processJob(data);
