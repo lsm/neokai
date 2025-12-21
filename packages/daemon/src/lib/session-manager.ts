@@ -697,7 +697,7 @@ ${messageText.slice(0, 2000)}`,
 			for (const server of mcpServers[source]) {
 				const settings = mcpServerSettings[server.name];
 				const isAllowed = settings?.allowed !== false; // Default to true
-				const isDefaultOn = settings?.defaultOn !== false; // Default to TRUE (changed!)
+				const isDefaultOn = settings?.defaultOn === true; // Default to false (matches UI)
 
 				this.log(
 					`[SessionManager] Server ${server.name}: allowed=${isAllowed}, defaultOn=${isDefaultOn}`
