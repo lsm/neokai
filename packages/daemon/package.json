@@ -21,8 +21,7 @@
 		"@anthropic-ai/claude-agent-sdk": "0.1.75",
 		"@liuboer/shared": "workspace:*",
 		"dotenv": "17.2.3",
-		"simple-git": "3.30.0",
-		"zod": "4.2.1"
+		"simple-git": "3.30.0"
 	},
 	"devDependencies": {
 		"@types/bun": "latest"
