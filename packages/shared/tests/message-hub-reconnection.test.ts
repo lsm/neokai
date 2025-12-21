@@ -229,4 +229,80 @@ describe('MessageHub Reconnection', () => {
 		// 5. Verify event was received
 		expect(eventReceived).toBe(true);
 	});
+
+	it('should deduplicate subscription requests during reconnection', async () => {
+		// 1. Setup
+		hub.registerTransport(transport);
+		await transport.initialize();
+
+		// 2. Subscribe to same event multiple times with different handlers
+		const handler1 = () => {};
+		const handler2 = () => {};
+		const handler3 = () => {};
+
+		await hub.subscribe('test.event', handler1, { sessionId: 'test-session' });
+		await hub.subscribe('test.event', handler2, { sessionId: 'test-session' });
+		await hub.subscribe('test.event', handler3, { sessionId: 'test-session' });
+
+		// 3. Clear and reconnect
+		transport.clearSentMessages();
+		transport.simulateDisconnect();
+		transport.simulateReconnect();
+
+		await new Promise((resolve) => setTimeout(resolve, 10));
+
+		// 4. Verify only ONE SUBSCRIBE message was sent for the duplicate subscriptions
+		const resubscribes = transport.sentMessages.filter((m) => m.type === MessageType.SUBSCRIBE);
+
+		// Should only send 1 SUBSCRIBE for test.event despite 3 handlers
+		expect(resubscribes.length).toBe(1);
+		expect(resubscribes[0].method).toBe('test.event');
+		expect(resubscribes[0].sessionId).toBe('test-session');
+	});
+
+	it('should reset sequence number tracking on reconnection', async () => {
+		// 1. Setup
+		hub.registerTransport(transport);
+		await transport.initialize();
+
+		// 2. Send some messages to increment sequence counter
+		await hub.subscribe('test.event', () => {}, { sessionId: 'test-session' });
+
+		// Wait for subscription to complete
+		await new Promise((resolve) => setTimeout(resolve, 10));
+
+		// 3. Simulate server restart (disconnect + reconnect)
+		transport.simulateDisconnect();
+		transport.simulateReconnect();
+
+		await new Promise((resolve) => setTimeout(resolve, 10));
+
+		// 4. Receive a message with low sequence number (simulating server restart)
+		const testEvent: HubMessage = {
+			id: 'event-1',
+			type: MessageType.EVENT,
+			method: 'test.event',
+			sessionId: 'test-session',
+			data: { message: 'test' },
+			timestamp: new Date().toISOString(),
+			version: '1.0.0',
+			sequence: 0, // Server restarted, sequence reset to 0
+		};
+
+		// This should NOT trigger an out-of-order warning since we cleared expectedSequence
+		// We verify this by checking that no error is thrown and the event is processed
+		let eventReceived = false;
+		await hub.subscribe(
+			'test.event',
+			() => {
+				eventReceived = true;
+			},
+			{ sessionId: 'test-session' }
+		);
+
+		transport.receiveMessage(testEvent);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+
+		expect(eventReceived).toBe(true);
+	});
 });

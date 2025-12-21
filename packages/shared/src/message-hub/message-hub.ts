@@ -111,6 +111,10 @@ export class MessageHub {
 	private expectedSequence: Map<string, number> = new Map(); // sessionId -> next expected sequence
 	private readonly warnOnSequenceGap: boolean;
 
+	// FIX: Track in-flight subscription requests to prevent duplicates
+	// Key format: "{sessionId}:{method}"
+	private inFlightSubscriptions = new Set<string>();
+
 	// FIX P1.4: Event handler error handling mode
 	private readonly stopOnEventHandlerError: boolean;
 
@@ -1232,8 +1236,16 @@ export class MessageHub {
 
 		this.log(`Re-subscribing ${this.persistedSubscriptions.size} subscriptions after reconnection`);
 
+		// FIX: Clear sequence tracking on reconnection
+		// Server may have restarted and reset its sequence counter, so client must reset expectations
+		this.expectedSequence.clear();
+		this.log(`Cleared sequence tracking for fresh reconnection`);
+
 		// FIX P0.7: Set flag to queue incoming events during rebuild
 		this.resubscribing = true;
+
+		// FIX: Clear in-flight subscription tracking on reconnection
+		this.inFlightSubscriptions.clear();
 
 		// Track subscription promises for ACK verification
 		const subscriptionPromises: Promise<{ method: string; success: boolean }>[] = [];
@@ -1262,7 +1274,11 @@ export class MessageHub {
 				sessionSubs.get(method)!.add(handler);
 
 				// FIX: Send SUBSCRIBE message to server with ACK tracking
-				if (this.isConnected()) {
+				// Deduplicate: only send if not already in-flight
+				const subKey = `${sessionId}:${method}`;
+				if (this.isConnected() && !this.inFlightSubscriptions.has(subKey)) {
+					this.inFlightSubscriptions.add(subKey);
+
 					const subId = generateUUID();
 					const subscribeMsg = createSubscribeMessage({
 						method,
@@ -1274,6 +1290,7 @@ export class MessageHub {
 					const ackPromise = new Promise<{ method: string; success: boolean }>((resolve) => {
 						const timer = setTimeout(() => {
 							this.pendingSubscribes.delete(subId);
+							this.inFlightSubscriptions.delete(subKey); // Clean up on timeout
 							this.log(`Subscription ACK timeout for ${method} (session: ${sessionId})`);
 							resolve({ method, success: false });
 						}, RESUBSCRIBE_TIMEOUT);
@@ -1282,10 +1299,12 @@ export class MessageHub {
 						this.pendingSubscribes.set(subId, {
 							resolve: () => {
 								clearTimeout(timer);
+								this.inFlightSubscriptions.delete(subKey); // Clean up on success
 								resolve({ method, success: true });
 							},
 							reject: () => {
 								clearTimeout(timer);
+								this.inFlightSubscriptions.delete(subKey); // Clean up on error
 								resolve({ method, success: false });
 							},
 							timer,
@@ -1300,9 +1319,12 @@ export class MessageHub {
 							`[MessageHub] Failed to send SUBSCRIBE for ${method} (session: ${sessionId}):`,
 							error
 						);
+						this.inFlightSubscriptions.delete(subKey); // Clean up on send error
 					});
 
 					subscriptionPromises.push(ackPromise);
+				} else if (this.inFlightSubscriptions.has(subKey)) {
+					this.log(`Skipping duplicate SUBSCRIBE for ${method} (session: ${sessionId})`);
 				}
 
 				this.log(`Re-subscribed to: ${method} (session: ${sessionId})`);
@@ -1350,6 +1372,7 @@ export class MessageHub {
 	 * Cleanup all state
 	 * FIX P1.3: Clear sequence tracking map
 	 * FIX: Clear pending subscription operations
+	 * FIX: Clear in-flight subscription tracking
 	 */
 	cleanup(): void {
 		// Reject all pending calls
@@ -1379,6 +1402,9 @@ export class MessageHub {
 
 		// FIX P1.3: Clear sequence tracking
 		this.expectedSequence.clear();
+
+		// FIX: Clear in-flight subscription tracking
+		this.inFlightSubscriptions.clear();
 
 		this.log('MessageHub cleaned up');
 	}
