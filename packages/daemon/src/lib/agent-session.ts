@@ -573,13 +573,39 @@ export class AgentSession {
 
 	/**
 	 * Handle message.send RPC call
-	 * Called by RPC handler in session-handlers.ts
+	 * Called by RPC handler in session-handlers.ts or directly by tests
 	 */
 	async handleMessageSend(data: {
 		content: string;
 		images?: MessageImage[];
 	}): Promise<{ messageId: string }> {
 		try {
+			// WORKSPACE INIT: Ensure workspace is initialized before starting SDK query
+			// This handles direct calls (e.g., tests) that bypass the RPC handler.
+			// The RPC path handles this via the user-message:persisted event handler,
+			// but direct calls need to trigger initialization here.
+			if (!this.session.metadata.workspaceInitialized) {
+				this.logger.log(`Triggering workspace initialization before SDK query...`);
+				// Emit event with skipQueryStart=true since we handle query start below
+				await this.eventBus.emit('user-message:persisted', {
+					sessionId: this.session.id,
+					messageId: '', // Will be generated below
+					messageContent: data.content,
+					userMessageText: typeof data.content === 'string' ? data.content : '',
+					needsWorkspaceInit: true,
+					hasDraftToClear: false,
+					skipQueryStart: true,
+				});
+				// Refresh session data to get updated workspace path
+				const updatedSession = this.db.getSession(this.session.id);
+				if (updatedSession) {
+					this.session = updatedSession;
+					this.logger.log(
+						`Session updated after workspace init: workspacePath=${this.session.workspacePath}`
+					);
+				}
+			}
+
 			// LAZY START: Start the query on first message
 			await this.ensureQueryStarted();
 
