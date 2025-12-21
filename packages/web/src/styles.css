@@ -34,15 +34,10 @@ body {
 	height: 100dvh;
 	/* Fallback for browsers that don't support dvh */
 	height: 100vh;
-	/* Prevent touch-based scrolling on body */
+	/* Prevent overscroll bounce on body - scrollable children handle their own */
 	overscroll-behavior: none;
-	touch-action: none;
-}
-
-/* Prevent iOS elastic bounce on body */
-html {
-	position: fixed;
-	width: 100%;
+	/* Allow touch manipulation (zoom, pan) but let children control scroll */
+	touch-action: manipulation;
 }
 
 /* Smooth scrolling */
