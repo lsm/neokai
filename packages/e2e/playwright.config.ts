@@ -107,6 +107,7 @@ export default defineConfig({
 				'**/character-counter.e2e.ts', // Character counter tests
 				'**/mobile-responsive.e2e.ts', // Mobile responsiveness tests
 				'**/session-status-indicators.e2e.ts', // Session status indicators tests
+				'**/scroll-responsiveness.e2e.ts', // Scroll responsiveness tests
 			],
 			use: { ...devices['Desktop Chrome'] },
 		},
