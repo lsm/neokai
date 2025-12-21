@@ -126,6 +126,156 @@ describe('SessionManager', () => {
 
 			expect(receivedEvent).toBe(true);
 		});
+
+		test('respects MCP defaultOn=false setting', async () => {
+			// Mock settings manager with MCP server that has defaultOn=false
+			settingsManager = {
+				prepareSDKOptions: async () => ({}),
+				getGlobalSettings: () => ({
+					settingSources: ['user', 'project', 'local'],
+					disabledMcpServers: [],
+					mcpServerSettings: {
+						'chrome-devtools': {
+							allowed: true,
+							defaultOn: false, // Explicitly disabled by default
+						},
+					},
+				}),
+				listMcpServersFromSources: () => ({
+					user: [
+						{
+							name: 'chrome-devtools',
+							command: 'npx @modelcontextprotocol/server-chrome-devtools',
+						},
+					],
+					project: [],
+					local: [],
+				}),
+			} as unknown as SettingsManager;
+
+			// Create new SessionManager with updated settings
+			const testSessionManager = new SessionManager(
+				db,
+				messageHub,
+				authManager,
+				settingsManager,
+				eventBus,
+				{
+					defaultModel: 'claude-sonnet-4-5-20250929',
+					maxTokens: 8192,
+					temperature: 1.0,
+					workspaceRoot: '/tmp/test-workspace',
+				}
+			);
+
+			const sessionId = await testSessionManager.createSession({});
+			const session = db.getSession(sessionId);
+
+			// chrome-devtools should be in disabledMcpServers
+			expect(session?.config.tools?.disabledMcpServers).toContain('chrome-devtools');
+
+			await testSessionManager.cleanup();
+		});
+
+		test('respects MCP defaultOn=undefined (should default to false)', async () => {
+			// Mock settings manager with MCP server that has NO defaultOn setting
+			settingsManager = {
+				prepareSDKOptions: async () => ({}),
+				getGlobalSettings: () => ({
+					settingSources: ['user', 'project', 'local'],
+					disabledMcpServers: [],
+					mcpServerSettings: {
+						'chrome-devtools': {
+							allowed: true,
+							// defaultOn is undefined
+						},
+					},
+				}),
+				listMcpServersFromSources: () => ({
+					user: [
+						{
+							name: 'chrome-devtools',
+							command: 'npx @modelcontextprotocol/server-chrome-devtools',
+						},
+					],
+					project: [],
+					local: [],
+				}),
+			} as unknown as SettingsManager;
+
+			// Create new SessionManager with updated settings
+			const testSessionManager = new SessionManager(
+				db,
+				messageHub,
+				authManager,
+				settingsManager,
+				eventBus,
+				{
+					defaultModel: 'claude-sonnet-4-5-20250929',
+					maxTokens: 8192,
+					temperature: 1.0,
+					workspaceRoot: '/tmp/test-workspace',
+				}
+			);
+
+			const sessionId = await testSessionManager.createSession({});
+			const session = db.getSession(sessionId);
+
+			// chrome-devtools should be in disabledMcpServers (defaultOn defaults to false)
+			expect(session?.config.tools?.disabledMcpServers).toContain('chrome-devtools');
+
+			await testSessionManager.cleanup();
+		});
+
+		test('enables MCP when defaultOn=true', async () => {
+			// Mock settings manager with MCP server that has defaultOn=true
+			settingsManager = {
+				prepareSDKOptions: async () => ({}),
+				getGlobalSettings: () => ({
+					settingSources: ['user', 'project', 'local'],
+					disabledMcpServers: [],
+					mcpServerSettings: {
+						'chrome-devtools': {
+							allowed: true,
+							defaultOn: true, // Explicitly enabled by default
+						},
+					},
+				}),
+				listMcpServersFromSources: () => ({
+					user: [
+						{
+							name: 'chrome-devtools',
+							command: 'npx @modelcontextprotocol/server-chrome-devtools',
+						},
+					],
+					project: [],
+					local: [],
+				}),
+			} as unknown as SettingsManager;
+
+			// Create new SessionManager with updated settings
+			const testSessionManager = new SessionManager(
+				db,
+				messageHub,
+				authManager,
+				settingsManager,
+				eventBus,
+				{
+					defaultModel: 'claude-sonnet-4-5-20250929',
+					maxTokens: 8192,
+					temperature: 1.0,
+					workspaceRoot: '/tmp/test-workspace',
+				}
+			);
+
+			const sessionId = await testSessionManager.createSession({});
+			const session = db.getSession(sessionId);
+
+			// chrome-devtools should NOT be in disabledMcpServers
+			expect(session?.config.tools?.disabledMcpServers).not.toContain('chrome-devtools');
+
+			await testSessionManager.cleanup();
+		});
 	});
 
 	describe('getSession (sync)', () => {
