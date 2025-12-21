@@ -1103,10 +1103,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	}, [messages]);
 
 	return (
-		<div class="flex-1 flex flex-col bg-dark-900 overflow-x-hidden relative">
-			{/* Header */}
+		<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden relative">
+			{/* Header - flex-shrink-0 ensures it doesn't shrink and stays fixed at top */}
 			<div
-				class={`bg-dark-850/50 backdrop-blur-sm border-b ${borderColors.ui.default} p-4 relative z-10`}
+				class={`flex-shrink-0 bg-dark-850/50 backdrop-blur-sm border-b ${borderColors.ui.default} p-4 relative z-10`}
 			>
 				<div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center gap-3">
 					{/* Hamburger menu button - visible only on mobile */}
@@ -1183,14 +1183,15 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			</div>
 
 			{/* Messages - wrapper with relative positioning for the scroll button */}
-			<div class="flex-1 relative">
+			<div class="flex-1 relative min-h-0">
 				<div
 					ref={messagesContainerRef}
 					data-messages-container
-					class="absolute inset-0 overflow-y-auto"
+					class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y"
+					style={{ WebkitOverflowScrolling: 'touch' }}
 				>
 					{messages.length === 0 && streamingEvents.length === 0 ? (
-						<div class="flex items-center justify-center h-full px-6">
+						<div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6">
 							<div class="text-center">
 								<div class="text-5xl mb-4">💬</div>
 								<p class="text-lg text-gray-300 mb-2">No messages yet</p>
@@ -1200,7 +1201,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 							</div>
 						</div>
 					) : (
-						<ContentContainer className="space-y-0">
+						<ContentContainer className="space-y-0 min-h-[calc(100%+1px)]">
 							{/* Load More Messages Button */}
 							{hasMoreMessages && messages.length > 0 && (
 								<div class="flex items-center justify-center py-4">
@@ -1291,11 +1292,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				)}
 			</div>
 
-			{/* Error Banner */}
+			{/* Error Banner - flex-shrink-0 ensures it stays fixed */}
 			{error && (
 				<div
 					data-testid="error-banner"
-					class={`bg-red-500/10 border-t ${borderColors.special.toast.error} px-4 py-3`}
+					class={`flex-shrink-0 bg-red-500/10 border-t ${borderColors.special.toast.error} px-4 py-3`}
 				>
 					<div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center justify-between gap-4">
 						<p class="text-sm text-red-400 flex-1">{error}</p>
@@ -1326,50 +1327,53 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				</div>
 			)}
 
-			{/* Session Status Bar */}
-			<SessionStatusBar
-				isProcessing={sending || streamingEvents.length > 0}
-				currentAction={currentAction}
-				streamingPhase={streamingPhase}
-				contextUsage={contextUsage}
-				maxContextTokens={200000}
-			/>
+			{/* Footer area - flex-shrink-0 ensures it stays fixed at bottom */}
+			<div class="flex-shrink-0">
+				{/* Session Status Bar */}
+				<SessionStatusBar
+					isProcessing={sending || streamingEvents.length > 0}
+					currentAction={currentAction}
+					streamingPhase={streamingPhase}
+					contextUsage={contextUsage}
+					maxContextTokens={200000}
+				/>
 
-			{/* Input Area or Archived Label */}
-			{session?.status === 'archived' ? (
-				<div class="p-4">
-					<div class="max-w-4xl mx-auto">
-						<div
-							class={cn(
-								'rounded-3xl border px-5 py-3 text-center',
-								'bg-dark-800/60 backdrop-blur-sm',
-								borderColors.ui.default
-							)}
-						>
-							<span class="text-gray-400 text-sm flex items-center justify-center gap-2">
-								<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path
-										strokeLinecap="round"
-										strokeLinejoin="round"
-										strokeWidth={2}
-										d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
-									/>
-								</svg>
-								Session archived
-							</span>
+				{/* Input Area or Archived Label */}
+				{session?.status === 'archived' ? (
+					<div class="p-4">
+						<div class="max-w-4xl mx-auto">
+							<div
+								class={cn(
+									'rounded-3xl border px-5 py-3 text-center',
+									'bg-dark-800/60 backdrop-blur-sm',
+									borderColors.ui.default
+								)}
+							>
+								<span class="text-gray-400 text-sm flex items-center justify-center gap-2">
+									<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path
+											strokeLinecap="round"
+											strokeLinejoin="round"
+											strokeWidth={2}
+											d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
+										/>
+									</svg>
+									Session archived
+								</span>
+							</div>
 						</div>
 					</div>
-				</div>
-			) : (
-				<MessageInput
-					sessionId={sessionId}
-					onSend={handleSendMessage}
-					disabled={sending || isCompacting || connectionState.value !== 'connected'}
-					autoScroll={autoScroll}
-					onAutoScrollChange={handleAutoScrollChange}
-					onOpenTools={() => setToolsModalOpen(true)}
-				/>
-			)}
+				) : (
+					<MessageInput
+						sessionId={sessionId}
+						onSend={handleSendMessage}
+						disabled={sending || isCompacting || connectionState.value !== 'connected'}
+						autoScroll={autoScroll}
+						onAutoScrollChange={handleAutoScrollChange}
+						onOpenTools={() => setToolsModalOpen(true)}
+					/>
+				)}
+			</div>
 
 			{/* Delete Chat Modal */}
 			<Modal

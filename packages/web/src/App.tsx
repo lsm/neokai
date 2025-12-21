@@ -33,7 +33,7 @@ export function App() {
 
 	return (
 		<>
-			<div class="flex h-screen overflow-hidden bg-dark-950 relative">
+			<div class="flex h-dvh overflow-hidden bg-dark-950 relative" style={{ height: '100dvh' }}>
 				{/* Sidebar */}
 				<Sidebar />
 

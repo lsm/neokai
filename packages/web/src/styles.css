@@ -22,16 +22,27 @@
  * - borderColors.tool.* for tool category colors
  */
 
+html,
 body {
 	background-color: var(--color-dark-950);
 	color: rgb(243 244 246);
 	-webkit-font-smoothing: antialiased;
 	-moz-osx-font-smoothing: grayscale;
-	overflow-x: hidden;
+	/* Prevent page-level scrolling - only message container should scroll */
+	overflow: hidden;
+	/* Use dynamic viewport height for mobile Safari (accounts for address bar) */
+	height: 100dvh;
+	/* Fallback for browsers that don't support dvh */
+	height: 100vh;
+	/* Prevent touch-based scrolling on body */
+	overscroll-behavior: none;
+	touch-action: none;
 }
 
+/* Prevent iOS elastic bounce on body */
 html {
-	overflow-x: hidden;
+	position: fixed;
+	width: 100%;
 }
 
 /* Smooth scrolling */
