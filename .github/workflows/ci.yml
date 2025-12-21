@@ -113,6 +113,26 @@ jobs:
         working-directory: packages/shared
         run: bun test
 
+  test-web:
+    name: Test Web
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run web tests
+        working-directory: packages/web
+        run: bun test
+
   # Type checking disabled temporarily - needs fixing
   # typecheck:
   #   name: Type Check

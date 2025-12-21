@@ -4,6 +4,7 @@
 		"packages/*"
 	],
 	"scripts": {
+		"postinstall": "mkdir -p node_modules/react && ln -sf ../preact/jsx-runtime node_modules/react/jsx-runtime 2>/dev/null || true",
 		"lint": "oxlint .",
 		"lint:fix": "oxlint --fix .",
 		"format": "prettier --write .",
@@ -20,7 +21,10 @@
 		"test:e2e:clean": "bun run cleanup:all && bun run test:e2e"
 	},
 	"devDependencies": {
+		"@preact/compat": "^18.3.1",
+		"@testing-library/preact": "^3.2.4",
 		"dotenv": "17.2.3",
+		"happy-dom": "^20.0.11",
 		"oxlint": "1.34.0",
 		"prettier": "3.7.4",
 		"typescript": "5.9.3"

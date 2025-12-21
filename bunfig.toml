@@ -4,5 +4,12 @@ exclude = [
   "tmp/**",
   "**/node_modules/**",
   "**/dist/**",
-  "**/.next/**"
+  "**/.next/**",
+  "e2e/**",
+  "packages/e2e/**"
 ]
+
+# JSX configuration for Preact
+[jsx]
+runtime = "automatic"
+importSource = "preact"
