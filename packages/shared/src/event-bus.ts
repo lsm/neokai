@@ -90,6 +90,9 @@ export interface EventMap {
 		userMessageText: string;
 		needsWorkspaceInit: boolean;
 		hasDraftToClear: boolean;
+		// When true, skip SDK query start (caller handles it separately)
+		// Used by handleMessageSend() which needs workspace init but handles query itself
+		skipQueryStart?: boolean;
 	};
 }
 
