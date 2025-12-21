@@ -52,6 +52,7 @@ export class SessionManager {
 				userMessageText: string;
 				needsWorkspaceInit: boolean;
 				hasDraftToClear: boolean;
+				skipQueryStart?: boolean;
 			}) => {
 				const {
 					sessionId,
@@ -60,6 +61,7 @@ export class SessionManager {
 					userMessageText,
 					needsWorkspaceInit,
 					hasDraftToClear,
+					skipQueryStart,
 				} = data;
 
 				this.log(`[SessionManager] Processing user-message:persisted for session ${sessionId}`);
@@ -80,8 +82,11 @@ export class SessionManager {
 					}
 
 					// STEP 2: Start SDK query (if not started) and enqueue message for processing
-					// Now uses correct worktree path as cwd since workspace init is complete
-					await agentSession.startQueryAndEnqueue(messageId, messageContent);
+					// Skip if caller will handle query start (e.g., handleMessageSend direct calls)
+					if (!skipQueryStart) {
+						// Now uses correct worktree path as cwd since workspace init is complete
+						await agentSession.startQueryAndEnqueue(messageId, messageContent);
+					}
 
 					// STEP 3: Clear draft if it matches the sent message content
 					if (hasDraftToClear) {
@@ -304,15 +309,26 @@ export class SessionManager {
 		messageText: string,
 		workspacePath: string
 	): Promise<string> {
+		// Timeout for title generation (15 seconds) - prevents blocking if SDK hangs
+		const TITLE_GENERATION_TIMEOUT = 15000;
+
 		try {
 			// Use the same approach as title-generator.ts but simplified
 			const { query } = await import('@anthropic-ai/claude-agent-sdk');
 
 			this.log('[SessionManager] Generating title with Haiku...');
 
-			// Use Agent SDK with maxTurns: 1 for simple title generation
-			const result = await query({
-				prompt: `Based on the user's request below, generate a concise 3-7 word title that captures the main intent or topic.
+			// Create a promise that rejects after timeout
+			const timeoutPromise = new Promise<never>((_, reject) => {
+				setTimeout(() => reject(new Error('Title generation timed out')), TITLE_GENERATION_TIMEOUT);
+			});
+
+			// Race between title generation and timeout
+			const generateTitle = async (): Promise<string> => {
+				// Use Agent SDK with maxTurns: 1 for simple title generation
+				// Disable MCP servers and other features that might cause hanging
+				const result = await query({
+					prompt: `Based on the user's request below, generate a concise 3-7 word title that captures the main intent or topic.
 
 IMPORTANT: Return ONLY the title text itself, with NO formatting whatsoever:
 - NO quotes around the title
@@ -323,53 +339,60 @@ IMPORTANT: Return ONLY the title text itself, with NO formatting whatsoever:
 
 User's request:
 ${messageText.slice(0, 2000)}`,
-				options: {
-					model: 'haiku',
-					maxTurns: 1,
-					permissionMode: 'bypassPermissions',
-					allowDangerouslySkipPermissions: true,
-					cwd: workspacePath,
-				},
-			});
+					options: {
+						model: 'haiku',
+						maxTurns: 1,
+						permissionMode: 'bypassPermissions',
+						allowDangerouslySkipPermissions: true,
+						cwd: workspacePath,
+						// Disable features that might cause hanging in test/CI environments
+						mcpServers: {},
+						settingSources: [],
+					},
+				});
 
-			// Extract and clean title from SDK response
-			const { isSDKAssistantMessage } = await import('@liuboer/shared/sdk/type-guards');
+				// Extract and clean title from SDK response
+				const { isSDKAssistantMessage } = await import('@liuboer/shared/sdk/type-guards');
 
-			for await (const message of result) {
-				if (isSDKAssistantMessage(message)) {
-					const textBlocks = message.message.content.filter(
-						(b: { type: string }) => b.type === 'text'
-					);
-					let title = textBlocks
-						.map((b: { text?: string }) => b.text)
-						.join(' ')
-						.trim();
-
-					if (title) {
-						// Strip any markdown formatting
-						title = title.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1');
-
-						// Remove wrapping quotes
-						while (
-							(title.startsWith('"') && title.endsWith('"')) ||
-							(title.startsWith("'") && title.endsWith("'"))
-						) {
-							title = title.slice(1, -1).trim();
-						}
-
-						// Remove backticks
-						title = title.replace(/`/g, '');
+				for await (const message of result) {
+					if (isSDKAssistantMessage(message)) {
+						const textBlocks = message.message.content.filter(
+							(b: { type: string }) => b.type === 'text'
+						);
+						let title = textBlocks
+							.map((b: { text?: string }) => b.text)
+							.join(' ')
+							.trim();
 
 						if (title) {
-							this.log(`[SessionManager] Generated title: "${title}"`);
-							return title;
+							// Strip any markdown formatting
+							title = title.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1');
+
+							// Remove wrapping quotes
+							while (
+								(title.startsWith('"') && title.endsWith('"')) ||
+								(title.startsWith("'") && title.endsWith("'"))
+							) {
+								title = title.slice(1, -1).trim();
+							}
+
+							// Remove backticks
+							title = title.replace(/`/g, '');
+
+							if (title) {
+								this.log(`[SessionManager] Generated title: "${title}"`);
+								return title;
+							}
 						}
 					}
 				}
-			}
 
-			// Fallback if no title extracted
-			return messageText.substring(0, 50).trim() || 'New Session';
+				// Fallback if no title extracted
+				return messageText.substring(0, 50).trim() || 'New Session';
+			};
+
+			// Race between generation and timeout
+			return await Promise.race([generateTitle(), timeoutPromise]);
 		} catch (error) {
 			this.log('[SessionManager] Title generation failed:', error);
 			// Fallback to first 50 chars of message
