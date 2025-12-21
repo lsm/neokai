@@ -9,6 +9,7 @@ import { AttachmentPreview } from './AttachmentPreview.tsx';
 import type { ModelInfo, MessageImage } from '@liuboer/shared';
 import { isAgentWorking } from '../lib/state.ts';
 import { fileToBase64, validateImageFile } from '../lib/file-utils.ts';
+import { ContentContainer } from './ui/ContentContainer.tsx';
 
 interface MessageInputProps {
 	sessionId: string;
@@ -542,8 +543,8 @@ export default function MessageInput({
 	);
 
 	return (
-		<div class="p-4">
-			<form onSubmit={handleSubmit} class="max-w-4xl mx-auto">
+		<ContentContainer className="py-4">
+			<form onSubmit={handleSubmit}>
 				{/* Attachment Preview */}
 				{attachments.length > 0 && (
 					<div class="mb-3">
@@ -925,6 +926,6 @@ export default function MessageInput({
 					</div>
 				</div>
 			</form>
-		</div>
+		</ContentContainer>
 	);
 }

@@ -17,6 +17,7 @@ import type { ContextInfo } from '@liuboer/shared';
 import { connectionState, type ConnectionState } from '../lib/state.ts';
 import ConnectionStatus from './ConnectionStatus.tsx';
 import ContextUsageBar from './ContextUsageBar.tsx';
+import { ContentContainer } from './ui/ContentContainer.tsx';
 
 interface SessionStatusBarProps {
 	isProcessing: boolean;
@@ -42,19 +43,17 @@ export default function SessionStatusBar({
 	});
 
 	return (
-		<div class="px-4 pb-2">
-			<div class="max-w-4xl mx-auto flex items-center gap-2 justify-between">
-				{/* Left: Connection status */}
-				<ConnectionStatus
-					connectionState={connState}
-					isProcessing={isProcessing}
-					currentAction={currentAction}
-					streamingPhase={streamingPhase}
-				/>
+		<ContentContainer className="pb-2 flex items-center gap-2 justify-between">
+			{/* Left: Connection status */}
+			<ConnectionStatus
+				connectionState={connState}
+				isProcessing={isProcessing}
+				currentAction={currentAction}
+				streamingPhase={streamingPhase}
+			/>
 
-				{/* Right: Context usage */}
-				<ContextUsageBar contextUsage={contextUsage} maxContextTokens={maxContextTokens} />
-			</div>
-		</div>
+			{/* Right: Context usage */}
+			<ContextUsageBar contextUsage={contextUsage} maxContextTokens={maxContextTokens} />
+		</ContentContainer>
 	);
 }

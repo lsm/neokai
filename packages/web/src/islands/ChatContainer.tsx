@@ -31,6 +31,7 @@ import { Button } from '../components/ui/Button.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
 import { Modal } from '../components/ui/Modal.tsx';
+import { ContentContainer } from '../components/ui/ContentContainer.tsx';
 import { ToolsModal } from '../components/ToolsModal.tsx';
 import { Skeleton, SkeletonMessage } from '../components/ui/Skeleton.tsx';
 import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
@@ -1199,7 +1200,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 							</div>
 						</div>
 					) : (
-						<div class="max-w-4xl mx-auto w-full px-4 space-y-0">
+						<ContentContainer className="space-y-0">
 							{/* Load More Messages Button */}
 							{hasMoreMessages && messages.length > 0 && (
 								<div class="flex items-center justify-center py-4">
@@ -1261,7 +1262,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 							{/* Render streaming events if present */}
 							{streamingEvents.length > 0 && <SDKStreamingAccumulator events={streamingEvents} />}
-						</div>
+						</ContentContainer>
 					)}
 
 					<div ref={messagesEndRef} />
