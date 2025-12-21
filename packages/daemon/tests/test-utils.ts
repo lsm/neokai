@@ -16,7 +16,6 @@ import { AuthManager } from '../src/lib/auth-manager';
 import { SettingsManager } from '../src/lib/settings-manager';
 import { StateManager } from '../src/lib/state-manager';
 import { SubscriptionManager } from '../src/lib/subscription-manager';
-import { SimpleTitleQueue } from '../src/lib/simple-title-queue';
 import { MessageHub, MessageHubRouter } from '@liuboer/shared';
 import { setupRPCHandlers } from '../src/lib/rpc-handlers';
 import { WebSocketServerTransport } from '../src/lib/websocket-server-transport';
@@ -33,7 +32,6 @@ export interface TestContext {
 	stateManager: StateManager;
 	subscriptionManager: SubscriptionManager;
 	authManager: AuthManager;
-	titleQueue: SimpleTitleQueue;
 	baseUrl: string;
 	workspacePath: string;
 	config: Config;
@@ -162,15 +160,6 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 		config,
 		eventBus
 	);
-
-	// Initialize Title Generation Queue (decoupled via EventBus)
-	// This is critical for auto-title integration tests
-	const titleQueue = new SimpleTitleQueue(db, eventBus, {
-		maxRetries: 3,
-		pollIntervalMs: 500, // Faster polling for tests (500ms instead of 1000ms)
-		timeoutSecs: 30,
-	});
-	await titleQueue.start();
 
 	// Setup RPC handlers
 	setupRPCHandlers({
@@ -321,15 +310,11 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 		stateManager,
 		subscriptionManager,
 		authManager,
-		titleQueue,
 		baseUrl,
 		workspacePath: config.workspaceRoot,
 		config,
 		cleanup: async () => {
-			// First stop title generation queue
-			await titleQueue.stop();
-
-			// Then cleanup session resources (interrupts SDK queries)
+			// Cleanup session resources (interrupts SDK queries)
 			await sessionManager.cleanup();
 
 			// Wait for SDK queries to gracefully stop after interrupt

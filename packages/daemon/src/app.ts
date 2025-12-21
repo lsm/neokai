@@ -7,7 +7,6 @@ import { AuthManager } from './lib/auth-manager';
 import { SettingsManager } from './lib/settings-manager';
 import { StateManager } from './lib/state-manager';
 import { SubscriptionManager } from './lib/subscription-manager';
-import { SimpleTitleQueue } from './lib/simple-title-queue';
 import { MessageHub, MessageHubRouter, EventBus } from '@liuboer/shared';
 import { setupRPCHandlers } from './lib/rpc-handlers';
 import { WebSocketServerTransport } from './lib/websocket-server-transport';
@@ -38,7 +37,6 @@ export interface DaemonAppContext {
 	settingsManager: SettingsManager;
 	stateManager: StateManager;
 	subscriptionManager: SubscriptionManager;
-	titleQueue: SimpleTitleQueue;
 	transport: WebSocketServerTransport;
 	/**
 	 * Cleanup function for graceful shutdown.
@@ -171,15 +169,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	);
 	log('✅ State manager initialized (fine-grained channels + per-channel versioning)');
 
-	// Initialize Title Generation Queue (decoupled via EventBus)
-	const titleQueue = new SimpleTitleQueue(db, eventBus, {
-		maxRetries: 3,
-		pollIntervalMs: 1000,
-		timeoutSecs: 30,
-	});
-	await titleQueue.start();
-	log('✅ Title generation queue initialized (simple queue + EventBus)');
-
 	// Setup RPC handlers
 	setupRPCHandlers({
 		messageHub,
@@ -284,11 +273,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// Cleanup function for graceful shutdown
 	const cleanup = async () => {
-		log('   1/6 Stopping server...');
+		log('   1/5 Stopping server...');
 		server.stop();
 
 		// Wait for pending RPC calls (with 5s timeout)
-		log('   2/6 Waiting for pending RPC calls...');
+		log('   2/5 Waiting for pending RPC calls...');
 		const pendingCallsCount = messageHub.getPendingCallCount();
 		if (pendingCallsCount > 0) {
 			log(`       ${pendingCallsCount} pending calls detected`);
@@ -313,19 +302,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		}
 
 		// Cleanup MessageHub (rejects remaining calls)
-		log('   3/6 Cleaning up MessageHub...');
+		log('   3/5 Cleaning up MessageHub...');
 		messageHub.cleanup();
 
-		// Stop title generation queue
-		log('   4/6 Stopping title generation queue...');
-		await titleQueue.stop();
-
 		// Stop all agent sessions
-		log('   5/6 Stopping agent sessions...');
+		log('   4/5 Stopping agent sessions...');
 		await sessionManager.cleanup();
 
 		// Close database
-		log('   6/6 Closing database...');
+		log('   5/5 Closing database...');
 		db.close();
 
 		log('✅ Graceful shutdown complete');
@@ -340,7 +325,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		settingsManager,
 		stateManager,
 		subscriptionManager,
-		titleQueue,
 		transport,
 		cleanup,
 	};
