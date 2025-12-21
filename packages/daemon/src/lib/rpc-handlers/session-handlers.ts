@@ -183,17 +183,22 @@ export function setupSessionHandlers(
 			images,
 		});
 
-		// STEP 2: Emit event for async processing (non-blocking)
+		// STEP 2: Emit event for async processing (truly non-blocking fire-and-forget)
 		// Heavy operations (workspace init, SDK query, draft clearing) handled by EventBus subscriber
-		// This ensures RPC returns quickly (<100ms) and avoids timeout issues
-		await eventBus.emit('user-message:persisted', {
-			sessionId: targetSessionId,
-			messageId,
-			messageContent,
-			userMessageText: content,
-			needsWorkspaceInit: !session.metadata.workspaceInitialized,
-			hasDraftToClear: session.metadata?.inputDraft === content.trim(),
-		});
+		// DO NOT await - this ensures RPC returns quickly (<100ms) and avoids timeout issues
+		// Title generation alone can take 15+ seconds if SDK is slow
+		eventBus
+			.emit('user-message:persisted', {
+				sessionId: targetSessionId,
+				messageId,
+				messageContent,
+				userMessageText: content,
+				needsWorkspaceInit: !session.metadata.workspaceInitialized,
+				hasDraftToClear: session.metadata?.inputDraft === content.trim(),
+			})
+			.catch((err) => {
+				console.error('[message.send] Error in async message processing:', err);
+			});
 
 		// STEP 3: Return immediately with messageId
 		// Client gets instant feedback, heavy processing continues async
