@@ -98,15 +98,15 @@ export default function ContextUsageBar({
 	// Determine color based on usage - green for lower usage
 	const getContextColor = () => {
 		if (contextPercentage >= 90) return 'text-red-400';
-		if (contextPercentage >= 70) return 'text-yellow-400';
-		if (contextPercentage >= 50) return 'text-blue-400';
+		if (contextPercentage >= 75) return 'text-orange-400';
+		if (contextPercentage >= 60) return 'text-yellow-400';
 		return 'text-green-400';
 	};
 
 	const getContextBarColor = () => {
 		if (contextPercentage >= 90) return 'bg-red-500';
-		if (contextPercentage >= 70) return 'bg-yellow-500';
-		if (contextPercentage >= 50) return 'bg-blue-500';
+		if (contextPercentage >= 75) return 'bg-orange-500';
+		if (contextPercentage >= 60) return 'bg-yellow-500';
 		return 'bg-green-500';
 	};
 
