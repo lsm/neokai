@@ -39,6 +39,8 @@ describe('Session Resume Integration', () => {
 		expect(session?.sdkSessionId).toBeUndefined();
 
 		// Set up a promise that resolves when SDK session ID is captured
+		// Note: Workspace initialization (including title generation) can take up to 15s,
+		// so we need a longer timeout here. The SDK session ID is captured after SDK query starts.
 		const sdkSessionIdCaptured = new Promise<void>((resolve) => {
 			const checkInterval = setInterval(() => {
 				const updatedSession = ctx.db.getSession(sessionId);
@@ -48,11 +50,11 @@ describe('Session Resume Integration', () => {
 				}
 			}, 100);
 
-			// Timeout after 5 seconds
+			// Timeout after 20 seconds (workspace init can take 15s + SDK query setup)
 			setTimeout(() => {
 				clearInterval(checkInterval);
 				resolve();
-			}, 5000);
+			}, 20000);
 		});
 
 		// Send a message to trigger SDK initialization
