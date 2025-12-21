@@ -23,9 +23,9 @@ export const messageSpacing = {
 			combined: 'px-3 py-1.5 md:px-3.5 md:py-2',
 		},
 		container: {
-			mobile: 'px-4 py-2',
-			desktop: 'md:px-6',
-			combined: 'py-2 px-4 md:px-6',
+			mobile: 'py-2',
+			desktop: '',
+			combined: 'py-2',
 		},
 	},
 

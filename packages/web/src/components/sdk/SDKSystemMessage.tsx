@@ -53,7 +53,7 @@ export function SDKSystemMessage({ message, syntheticContent }: Props) {
 	// Hook response
 	if (isSDKHookResponse(message)) {
 		return (
-			<div class="py-2 px-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
+			<div class="py-2 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
 				<div class="text-sm font-medium text-purple-900 dark:text-purple-100 mb-1">
 					Hook: {message.hook_name} ({message.hook_event})
 				</div>
@@ -86,7 +86,7 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
 	const [showDetails, setShowDetails] = useState(false);
 
 	return (
-		<div class="py-2 px-3 bg-indigo-50 dark:bg-indigo-900/20 rounded border border-indigo-200 dark:border-indigo-800">
+		<div class="py-2 bg-indigo-50 dark:bg-indigo-900/20 rounded border border-indigo-200 dark:border-indigo-800">
 			<button
 				onClick={() => setShowDetails(!showDetails)}
 				class="w-full flex items-center justify-between hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors -m-1 p-1 rounded"

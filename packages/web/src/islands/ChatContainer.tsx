@@ -1199,7 +1199,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 							</div>
 						</div>
 					) : (
-						<div class="max-w-4xl mx-auto w-full px-4 md:px-6 space-y-0">
+						<div class="max-w-4xl mx-auto w-full px-4 space-y-0">
 							{/* Load More Messages Button */}
 							{hasMoreMessages && messages.length > 0 && (
 								<div class="flex items-center justify-center py-4">

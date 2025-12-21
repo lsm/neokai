@@ -47,7 +47,7 @@ export function SDKStreamingMessage({ message }: Props) {
 
 	return (
 		<div
-			class="py-2 px-4 md:px-6 animate-fadeIn"
+			class="py-2 animate-fadeIn"
 			data-testid="assistant-message"
 			data-message-role="assistant"
 			data-streaming="true"
@@ -96,7 +96,7 @@ export function SDKStreamingAccumulator({ events }: AccumulatorProps) {
 	if (!accumulatedContent && !hasThinking) {
 		return (
 			<div
-				class="py-2 px-4 md:px-6 animate-fadeIn"
+				class="py-2 animate-fadeIn"
 				data-testid="assistant-message"
 				data-message-role="assistant"
 				data-streaming="true"
@@ -113,7 +113,7 @@ export function SDKStreamingAccumulator({ events }: AccumulatorProps) {
 
 	return (
 		<div
-			class="py-2 px-4 md:px-6 animate-fadeIn"
+			class="py-2 animate-fadeIn"
 			data-testid="assistant-message"
 			data-message-role="assistant"
 			data-streaming="true"
