@@ -127,22 +127,6 @@ export class StateManager {
 			await this.broadcastSessionUpdateFromCache(sessionId);
 		});
 
-		// Title generation - update cache and broadcast
-		this.eventBus.on('title:generated', async (data) => {
-			const { sessionId, title } = data;
-
-			// Update session cache with new title
-			const session = this.sessionCache.get(sessionId);
-			if (session) {
-				session.title = title;
-				this.sessionCache.set(sessionId, session);
-			}
-
-			// Broadcast immediately
-			await this.broadcastSessionUpdateFromCache(sessionId);
-			this.logger.log(`Title generated for session ${sessionId}: "${title}"`);
-		});
-
 		// Session deleted - clear cache and broadcast
 		this.eventBus.on('session:deleted', async (data) => {
 			const { sessionId } = data;

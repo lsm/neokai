@@ -267,9 +267,10 @@ describe('2-Stage Session Creation', () => {
 			const agentSession = sessionManager.getSession(sessionId);
 			const session = agentSession!.getSessionData();
 
-			// Title should be first 50 chars of user message (temporary title)
-			// Real title generation happens async via SimpleTitleQueue
-			expect(session.title).toBe(userMessage);
+			// Title should be AI-generated from the user message (not exact match)
+			expect(session.title).not.toBe('New Session'); // Not the default
+			expect(session.title.length).toBeGreaterThan(0); // Has a title
+			expect(session.metadata.titleGenerated).toBe(true); // Title is generated during init now
 			expect(session.metadata.workspaceInitialized).toBe(true);
 		});
 
@@ -285,8 +286,9 @@ describe('2-Stage Session Creation', () => {
 			const agentSession = sessionManager.getSession(sessionId);
 			const session = agentSession!.getSessionData();
 
-			// Title should be from first call (idempotent)
-			expect(session.title).toBe('Test message');
+			// Title should be AI-generated and not change on second call (idempotent)
+			expect(session.title).not.toBe('New Session'); // Should have a generated title
+			expect(session.title.length).toBeGreaterThan(0); // Should have a title
 			expect(session.metadata.workspaceInitialized).toBe(true);
 		});
 
@@ -324,9 +326,11 @@ describe('2-Stage Session Creation', () => {
 			const userMessage = 'Test message';
 			await sessionManager.initializeSessionWorkspace(sessionId, userMessage);
 
-			// Verify in database
+			// Verify in database - should have AI-generated title
 			const dbSession = db.getSession(sessionId);
-			expect(dbSession!.title).toBe(userMessage);
+			expect(dbSession!.title).not.toBe('New Session'); // AI-generated title, not default
+			expect(dbSession!.title.length).toBeGreaterThan(0); // Has a title
+			expect(dbSession!.metadata.titleGenerated).toBe(true); // Title was generated
 			expect(dbSession!.metadata.workspaceInitialized).toBe(true);
 		});
 	});

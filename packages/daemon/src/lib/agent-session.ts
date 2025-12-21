@@ -141,40 +141,8 @@ export class AgentSession {
 		// Restore persisted processing state from database (if available)
 		this.stateManager.restoreFromDatabase();
 
-		// Listen for title:generated events to sync in-memory session with database
-		// This ensures getSessionData() returns fresh title when state.session is broadcast
-		this.setupTitleSyncListener();
-
 		// LAZY START: Don't start the streaming query here.
 		// Query will be started on first message send via ensureQueryStarted()
-	}
-
-	/**
-	 * Setup listener for title:generated events to keep in-memory session in sync
-	 *
-	 * When SimpleTitleQueue generates a title, it updates the database directly.
-	 * This listener ensures our in-memory this.session object stays in sync,
-	 * so that getSessionData() returns the updated title when StateManager
-	 * broadcasts state.session channel updates.
-	 */
-	private setupTitleSyncListener(): void {
-		const unsubscribe = this.eventBus.on(
-			'title:generated',
-			async (data: { sessionId: string; title: string }) => {
-				// Only update if this event is for our session
-				if (data.sessionId !== this.session.id) {
-					return;
-				}
-
-				this.logger.log(`Syncing title from database: "${data.title}"`);
-
-				// Update in-memory session to match database
-				this.session.title = data.title;
-				this.session.metadata.titleGenerated = true;
-			}
-		);
-
-		this.unsubscribers.push(unsubscribe);
 	}
 
 	/**
