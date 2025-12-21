@@ -292,80 +292,97 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				}>(
 					'state.session',
 					(data) => {
-						// Update session metadata (including title)
-						if (data.session) {
-							setSession(data.session);
-						}
+						// PERFORMANCE: Use requestAnimationFrame to batch all state updates
+						// This prevents multiple re-renders and keeps the main thread responsive
+						requestAnimationFrame(() => {
+							// Update session metadata (including title)
+							if (data.session) {
+								setSession(data.session);
+							}
 
-						// Update commands
-						if (data.commands?.availableCommands) {
-							slashCommandsSignal.value = data.commands.availableCommands;
-						}
+							// Update context info
+							if (data.context) {
+								setContextUsage(data.context);
+							}
 
-						// Update context info
-						if (data.context) {
-							setContextUsage(data.context);
-						}
+							// Determine new state values based on agent status
+							let newSending = false;
+							let newAction: string | undefined;
+							let newPhase: 'initializing' | 'thinking' | 'streaming' | 'finalizing' | null = null;
+							let clearStreamingEvents = false;
 
-						// Update UI based on agent state
-						switch (data.agent.status) {
-							case 'idle':
-								setSending(false);
+							switch (data.agent.status) {
+								case 'idle':
+									newSending = false;
+									newAction = undefined;
+									newPhase = null;
+									clearStreamingEvents = true;
+									break;
+								case 'queued':
+									newSending = true;
+									newAction = 'Queued...';
+									newPhase = null;
+									// Clear send timeout when message is successfully queued
+									if (sendTimeoutRef.current) {
+										clearTimeout(sendTimeoutRef.current);
+										sendTimeoutRef.current = null;
+									}
+									break;
+								case 'processing': {
+									newSending = true;
+									const phase = data.agent.phase || 'initializing';
+									newPhase = phase;
+
+									switch (phase) {
+										case 'initializing':
+											newAction = 'Starting...';
+											break;
+										case 'thinking':
+											newAction = 'Thinking...';
+											break;
+										case 'streaming': {
+											const duration = data.agent.streamingStartedAt
+												? Math.floor((Date.now() - data.agent.streamingStartedAt) / 1000)
+												: 0;
+											newAction = duration > 0 ? `Streaming (${duration}s)...` : 'Streaming...';
+											break;
+										}
+										case 'finalizing':
+											newAction = 'Finalizing...';
+											break;
+									}
+
+									// Clear send timeout when processing starts
+									if (sendTimeoutRef.current) {
+										clearTimeout(sendTimeoutRef.current);
+										sendTimeoutRef.current = null;
+									}
+									break;
+								}
+								case 'interrupted':
+									newSending = false;
+									newAction = 'Interrupted';
+									newPhase = null;
+									clearStreamingEvents = true;
+									// Clear interrupted status after brief delay
+									setTimeout(() => setCurrentAction(undefined), 2000);
+									break;
+							}
+
+							// Apply all state updates together (React will batch these)
+							setSending(newSending);
+							setCurrentAction(newAction);
+							setStreamingPhase(newPhase);
+							if (clearStreamingEvents) {
 								setStreamingEvents([]);
-								setCurrentAction(undefined);
-								setStreamingPhase(null);
-								break;
-							case 'queued':
-								setSending(true);
-								setCurrentAction('Queued...');
-								setStreamingPhase(null);
-								// Clear send timeout when message is successfully queued
-								if (sendTimeoutRef.current) {
-									clearTimeout(sendTimeoutRef.current);
-									sendTimeoutRef.current = null;
-								}
-								break;
-							case 'processing':
-								setSending(true);
+							}
 
-								// Phase-specific UI feedback
-								const phase = data.agent.phase || 'initializing';
-								setStreamingPhase(phase);
-
-								switch (phase) {
-									case 'initializing':
-										setCurrentAction('Starting...');
-										break;
-									case 'thinking':
-										setCurrentAction('Thinking...');
-										break;
-									case 'streaming':
-										// Calculate streaming duration
-										const duration = data.agent.streamingStartedAt
-											? Math.floor((Date.now() - data.agent.streamingStartedAt) / 1000)
-											: 0;
-										setCurrentAction(duration > 0 ? `Streaming (${duration}s)...` : 'Streaming...');
-										break;
-									case 'finalizing':
-										setCurrentAction('Finalizing...');
-										break;
-								}
-
-								// Clear send timeout when processing starts
-								if (sendTimeoutRef.current) {
-									clearTimeout(sendTimeoutRef.current);
-									sendTimeoutRef.current = null;
-								}
-								break;
-							case 'interrupted':
-								setSending(false);
-								setStreamingEvents([]);
-								setCurrentAction('Interrupted');
-								setStreamingPhase(null);
-								// Clear interrupted status after brief delay
-								setTimeout(() => setCurrentAction(undefined), 2000);
-								break;
-						}
+							// Update commands signal AFTER React state updates
+							// (signals are synchronous and could cause issues if mixed)
+							if (data.commands?.availableCommands) {
+								slashCommandsSignal.value = data.commands.availableCommands;
+							}
+						});
 					},
 					{ sessionId }
 				);
@@ -425,6 +442,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	}, [messages, streamingEvents, isInitialLoad, loadingOlder, autoScroll]);
 
 	// Detect scroll position to show/hide scroll button
+	// PERFORMANCE: Empty dependency array - listener is registered once and uses passive event
+	// The scroll handler reads live DOM values, so it doesn't need to depend on state
 	useEffect(() => {
 		const container = messagesContainerRef.current;
 		if (!container) return;
@@ -435,16 +454,24 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			setShowScrollButton(!isNearBottom);
 		};
 
-		// Use requestAnimationFrame to ensure DOM layout is complete before checking scroll position
-		// This prevents race conditions where scrollHeight is stale
-		const rafId = requestAnimationFrame(handleScroll);
+		// Initial check for scroll button visibility
+		handleScroll();
 
-		container.addEventListener('scroll', handleScroll);
+		// Use passive event listener for better scroll performance
+		container.addEventListener('scroll', handleScroll, { passive: true });
+
+		// Use ResizeObserver to update scroll button when content size changes
+		// This handles new messages being added without re-registering scroll listener
+		const resizeObserver = new ResizeObserver(() => {
+			handleScroll();
+		});
+		resizeObserver.observe(container);
+
 		return () => {
-			cancelAnimationFrame(rafId);
 			container.removeEventListener('scroll', handleScroll);
+			resizeObserver.disconnect();
 		};
-	}, [messages, streamingEvents]); // Re-run when messages change to update button visibility
+	}, []); // Empty deps - listener reads live DOM values, no state dependency needed
 
 	const loadSession = async () => {
 		try {
@@ -666,8 +693,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		}
 	};
 
-	const scrollToBottom = () => {
-		messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+	// Use instant scroll during streaming to avoid fighting with user scroll attempts
+	// Smooth scroll only when user explicitly clicks scroll button
+	const scrollToBottom = (smooth = false) => {
+		messagesEndRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'instant' });
 	};
 
 	const handleDeleteSession = async () => {
@@ -1273,7 +1302,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				{showScrollButton && (
 					<div class="absolute bottom-4 left-1/2 -translate-x-1/2 z-10">
 						<button
-							onClick={scrollToBottom}
+							onClick={() => scrollToBottom(true)}
 							class={`w-10 h-10 rounded-full bg-dark-800 hover:bg-dark-700 text-gray-300 hover:text-gray-100 shadow-lg border ${borderColors.ui.secondary} flex items-center justify-center transition-all duration-150 animate-slideIn focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500`}
 							title="Scroll to bottom"
 							aria-label="Scroll to bottom"
