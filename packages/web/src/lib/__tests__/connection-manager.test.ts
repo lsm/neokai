@@ -4,7 +4,7 @@
  * Tests the non-blocking access patterns and event-driven connection handling.
  */
 
-import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { ConnectionManager } from '../connection-manager';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from '../errors';
 

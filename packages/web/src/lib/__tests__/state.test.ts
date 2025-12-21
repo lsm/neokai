@@ -4,7 +4,7 @@
  * Tests signal subscription leak fixes and state channel management.
  */
 
-import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
+import { describe, it, expect, mock, spyOn, beforeEach, afterEach } from 'bun:test';
 import { signal } from '@preact/signals';
 
 // Mock the MessageHub and StateChannel

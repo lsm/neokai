@@ -4,7 +4,7 @@
  * Tests the non-blocking connection access patterns and reactive state.
  */
 
-import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { describe, it, expect, mock, beforeEach } from 'bun:test';
 import { signal } from '@preact/signals';
 
 // Track state for assertions
@@ -18,10 +18,10 @@ const mockConnectionManager = {
 	getHubIfConnected: mock(() => {
 		if (!hubIsConnected) return null;
 		return {
-			call: mock((_method: string, _data: unknown, _options: unknown) =>
+			call: mock((__method: string, _data: unknown, _options: unknown) =>
 				Promise.resolve(hubCallResult)
 			),
-			subscribeOptimistic: mock((_method: string, _handler: unknown, _options: unknown) => {
+			subscribeOptimistic: mock((__method: string, _handler: unknown, _options: unknown) => {
 				subscribeOptimisticCalled = true;
 				return () => {};
 			}),
