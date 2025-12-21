@@ -4,14 +4,21 @@
  * Tracks session processing states and unread status for sidebar display.
  *
  * Features:
- * - Subscribes to session state channels for visible sessions
+ * - Uses Session.processingState field from unified state.sessions channel
+ * - NO per-session subscriptions (prevents rate limit issues)
  * - Tracks agent processing states (idle, queued, processing)
  * - Tracks unread status using localStorage persistence
+ *
+ * Architecture Note:
+ * Previously, this module subscribed to per-session state channels for every
+ * session to track processing states. This caused subscription rate limit
+ * issues (>50 ops/sec) when many sessions existed. The fix uses the persisted
+ * processingState field from the Session object in the global sessions channel.
  */
 
 import { signal, computed } from '@preact/signals';
 import type { AgentProcessingState } from '@liuboer/shared';
-import { appState, sessions } from './state.ts';
+import { sessions } from './state.ts';
 import { currentSessionIdSignal } from './signals.ts';
 
 /**
@@ -28,12 +35,6 @@ export interface SessionStatusInfo {
 	/** Whether the session has unread messages */
 	hasUnread: boolean;
 }
-
-/**
- * Map of session ID to their agent processing state
- * Updated reactively when session state channels update
- */
-const sessionProcessingStates = signal<Map<string, AgentProcessingState>>(new Map());
 
 /**
  * Map of session ID to last seen message count
@@ -70,20 +71,46 @@ function saveLastSeenCounts(counts: Map<string, number>): void {
 }
 
 /**
+ * Parse processingState from Session object
+ *
+ * The field can be in two formats:
+ * 1. JSON string (when from database) - needs JSON.parse
+ * 2. Object (when from delta broadcast) - use directly
+ *
+ * Server broadcasts processingState as object in delta updates for
+ * client-side convenience (see state-manager.ts), but database stores
+ * it as serialized JSON string.
+ */
+function parseProcessingState(
+	processingState?: string | AgentProcessingState
+): AgentProcessingState {
+	if (!processingState) {
+		return { status: 'idle' };
+	}
+
+	// If already an object, use directly
+	if (typeof processingState === 'object') {
+		return processingState;
+	}
+
+	// If string, parse as JSON
+	try {
+		return JSON.parse(processingState) as AgentProcessingState;
+	} catch {
+		return { status: 'idle' };
+	}
+}
+
+/**
  * Initialize session status tracking
  * Call this after appState is initialized
+ *
+ * Note: Processing states are now read directly from Session.processingState
+ * field in the sessions signal. No per-session subscriptions are needed.
  */
 export function initSessionStatusTracking(): void {
 	// Load persisted unread data
 	lastSeenMessageCounts.value = loadLastSeenCounts();
-
-	// Subscribe to session list changes to track new sessions
-	sessions.subscribe((sessionList) => {
-		// Subscribe to each session's state channel
-		for (const session of sessionList) {
-			subscribeToSessionState(session.id);
-		}
-	});
 
 	// When user clicks on a session, mark it as read
 	currentSessionIdSignal.subscribe((sessionId) => {
@@ -91,34 +118,6 @@ export function initSessionStatusTracking(): void {
 			markSessionAsRead(sessionId);
 		}
 	});
-}
-
-/**
- * Set of session IDs we've already subscribed to
- */
-const subscribedSessions = new Set<string>();
-
-/**
- * Subscribe to a session's state channel
- */
-function subscribeToSessionState(sessionId: string): void {
-	if (subscribedSessions.has(sessionId)) return;
-	subscribedSessions.add(sessionId);
-
-	try {
-		const channels = appState.getSessionChannels(sessionId);
-
-		// Subscribe to session state changes
-		channels.session.$.subscribe((state) => {
-			// Always update state - if agent is undefined, set to idle
-			const agentState = state?.agent ?? { status: 'idle' as const };
-			const newMap = new Map(sessionProcessingStates.value);
-			newMap.set(sessionId, agentState);
-			sessionProcessingStates.value = newMap;
-		});
-	} catch (e) {
-		console.error(`[SessionStatus] Failed to subscribe to session ${sessionId}:`, e);
-	}
 }
 
 /**
@@ -154,9 +153,12 @@ export function hasUnreadMessages(sessionId: string): boolean {
 
 /**
  * Get the processing state for a session
+ * Reads from the Session.processingState field in the sessions list
  */
 export function getSessionProcessingState(sessionId: string): AgentProcessingState {
-	return sessionProcessingStates.value.get(sessionId) ?? { status: 'idle' };
+	const sessionList = sessions.value;
+	const session = sessionList.find((s) => s.id === sessionId);
+	return parseProcessingState(session?.processingState);
 }
 
 /**
@@ -172,18 +174,21 @@ export function getSessionStatus(sessionId: string): SessionStatusInfo {
 /**
  * Computed signal: all session statuses
  * Use this for reactive updates in UI
+ *
+ * Processing states are now derived from Session.processingState field
+ * instead of per-session state channel subscriptions.
  */
 export const allSessionStatuses = computed<Map<string, SessionStatusInfo>>(() => {
 	const statuses = new Map<string, SessionStatusInfo>();
 
 	// Trigger reactivity by accessing the signals
-	const processingStates = sessionProcessingStates.value;
 	const lastSeen = lastSeenMessageCounts.value;
 	const sessionList = sessions.value;
 	const currentId = currentSessionIdSignal.value;
 
 	for (const session of sessionList) {
-		const processingState = processingStates.get(session.id) ?? { status: 'idle' };
+		// Parse processing state from Session.processingState field (JSON string)
+		const processingState = parseProcessingState(session.processingState);
 
 		// Calculate unread status
 		const lastSeenCount = lastSeen.get(session.id) ?? 0;
