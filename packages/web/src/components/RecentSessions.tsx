@@ -2,6 +2,7 @@ import type { Session } from '@liuboer/shared';
 import { currentSessionIdSignal, sidebarOpenSignal } from '../lib/signals.ts';
 import { formatRelativeTime, formatTokens } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
+import { GitBranchIcon } from './icons/GitBranchIcon.tsx';
 
 interface RecentSessionsProps {
 	sessions: Session[];
@@ -108,19 +109,7 @@ export default function RecentSessions({ sessions }: RecentSessionsProps) {
 														class="text-purple-400 flex-shrink-0"
 														title={`Worktree: ${session.worktree.branch}`}
 													>
-														<svg
-															class="w-4 h-4"
-															fill="none"
-															viewBox="0 0 24 24"
-															stroke="currentColor"
-														>
-															<path
-																stroke-linecap="round"
-																stroke-linejoin="round"
-																stroke-width={2}
-																d="M9 4v16m-4-8h4m0 0l-3-3m3 3l-3 3m8-3h4m0 0l3-3m-3 3l3 3"
-															/>
-														</svg>
+														<GitBranchIcon className="w-4 h-4" />
 													</span>
 												)}
 												{session.status === 'archived' && (

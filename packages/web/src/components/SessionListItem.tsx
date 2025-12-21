@@ -3,6 +3,7 @@ import { currentSessionIdSignal } from '../lib/signals.ts';
 import { formatRelativeTime, formatTokens } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import { allSessionStatuses, getProcessingPhaseColor } from '../lib/session-status.ts';
+import { GitBranchIcon } from './icons/GitBranchIcon.tsx';
 
 interface SessionListItemProps {
 	session: Session;
@@ -43,26 +44,6 @@ function StatusIndicator({ sessionId }: { sessionId: string }) {
 
 	// Idle and read - no indicator needed
 	return null;
-}
-
-/**
- * Git Branch Icon for Worktree indicator
- */
-function GitBranchIcon({ className }: { className?: string }) {
-	return (
-		<svg
-			class={className}
-			viewBox="0 0 16 16"
-			fill="currentColor"
-			xmlns="http://www.w3.org/2000/svg"
-		>
-			<path
-				fill-rule="evenodd"
-				d="M11.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM9.25 3.25a2.75 2.75 0 1 1 3.5 2.646v1.54A2.76 2.76 0 0 1 10 10.25h-.75v2.354a2.75 2.75 0 1 1-1.5 0V10.25H7A2.76 2.76 0 0 1 4.25 7.5V5.896a2.75 2.75 0 1 1 1.5 0V7.5A1.26 1.26 0 0 0 7 8.75h3a1.26 1.26 0 0 0 1.25-1.25V5.896a2.75 2.75 0 0 1-2-2.646ZM5 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm3.25 11.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z"
-				clip-rule="evenodd"
-			/>
-		</svg>
-	);
 }
 
 /**
