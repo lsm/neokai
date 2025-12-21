@@ -238,8 +238,7 @@ describe('Metadata and State Broadcasting Integration', () => {
 			const sessionUpdatedEvents = emittedEvents.filter((e) => e.event === 'session:updated');
 			expect(sessionUpdatedEvents.length).toBeGreaterThan(0);
 
-			// Events now use 'source' field instead of 'updates'
-			// StateManager fetches live session data and broadcasts it
+			// Event-sourced: events include their data directly (no fetching by StateManager)
 			const sessionUpdateData = sessionUpdatedEvents.find(
 				(e) =>
 					typeof e.data === 'object' &&
@@ -343,8 +342,7 @@ describe('Metadata and State Broadcasting Integration', () => {
 			const sessionUpdatedEvents = emittedEvents.filter((e) => e.event === 'session:updated');
 			expect(sessionUpdatedEvents.length).toBeGreaterThan(0);
 
-			// Events now use 'source' field instead of 'updates'
-			// StateManager fetches live session data and broadcasts it
+			// Event-sourced: events include their data directly (no fetching by StateManager)
 			const sessionUpdateData = sessionUpdatedEvents.find(
 				(e) =>
 					typeof e.data === 'object' &&
