@@ -414,6 +414,36 @@ export class WorktreeManager {
 	}
 
 	/**
+	 * Rename a branch (works even when branch is checked out in a worktree)
+	 * Can be called from root repo or from within the worktree itself
+	 *
+	 * @param repoPath - Path to the git repository (root or worktree)
+	 * @param oldBranch - Current branch name
+	 * @param newBranch - New branch name
+	 * @returns true if rename succeeded, false otherwise
+	 */
+	async renameBranch(repoPath: string, oldBranch: string, newBranch: string): Promise<boolean> {
+		try {
+			const git = this.getGit(repoPath);
+
+			// Check if new branch name already exists
+			const branchExists = await this.checkBranchExists(repoPath, newBranch);
+			if (branchExists) {
+				console.warn(`[WorktreeManager] Branch ${newBranch} already exists, cannot rename`);
+				return false;
+			}
+
+			console.log(`[WorktreeManager] Renaming branch ${oldBranch} to ${newBranch}`);
+			await git.branch(['-m', oldBranch, newBranch]);
+			console.log(`[WorktreeManager] Successfully renamed branch to ${newBranch}`);
+			return true;
+		} catch (error) {
+			console.error('[WorktreeManager] Failed to rename branch:', error);
+			return false;
+		}
+	}
+
+	/**
 	 * Get the default branch of the repository
 	 * Uses symbolic-ref to get the branch that HEAD points to on the remote
 	 */

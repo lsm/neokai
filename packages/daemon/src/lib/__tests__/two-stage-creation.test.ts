@@ -1,5 +1,11 @@
 /**
- * Unit tests for 2-stage session creation
+ * Unit tests for session creation and title generation
+ *
+ * The session creation flow is:
+ * 1. Session created → Worktree created with session/{uuid} branch → workspaceInitialized=true
+ * 2. First message → Title generated async → Branch renamed to session/{slug}-{shortId}
+ *
+ * Note: worktrees are disabled in these tests, so we focus on title generation behavior.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -11,7 +17,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { tmpdir } from 'node:os';
 
-describe('2-Stage Session Creation', () => {
+describe('Session Creation and Title Generation', () => {
 	let sessionManager: SessionManager;
 	let db: Database;
 	let messageHub: MessageHub;
@@ -93,7 +99,7 @@ describe('2-Stage Session Creation', () => {
 		}
 	});
 
-	describe('Stage 1: Quick Session Creation', () => {
+	describe('Quick Session Creation', () => {
 		test('createSession returns sessionId quickly', async () => {
 			const start = Date.now();
 			const sessionId = await sessionManager.createSession({
@@ -118,7 +124,7 @@ describe('2-Stage Session Creation', () => {
 			expect(session.title).toBe('New Session');
 		});
 
-		test('session created without worktree initially', async () => {
+		test('session created without worktree when worktrees disabled', async () => {
 			const sessionId = await sessionManager.createSession({
 				workspacePath: testWorkspace,
 			});
@@ -126,8 +132,10 @@ describe('2-Stage Session Creation', () => {
 			const agentSession = sessionManager.getSession(sessionId);
 			const session = agentSession!.getSessionData();
 
+			// Worktrees are disabled in test config, so worktree should be undefined
 			expect(session.worktree).toBeUndefined();
-			expect(session.metadata.workspaceInitialized).toBe(false);
+			// But workspace is still considered initialized (ready for SDK)
+			expect(session.metadata.workspaceInitialized).toBe(true);
 		});
 
 		test('session appears in database immediately', async () => {
@@ -152,7 +160,8 @@ describe('2-Stage Session Creation', () => {
 			expect(session.metadata.messageCount).toBe(0);
 			expect(session.metadata.totalTokens).toBe(0);
 			expect(session.metadata.titleGenerated).toBe(false);
-			expect(session.metadata.workspaceInitialized).toBe(false);
+			// Workspace is initialized immediately (worktree created or not needed)
+			expect(session.metadata.workspaceInitialized).toBe(true);
 		});
 	});
 
@@ -232,8 +241,8 @@ describe('2-Stage Session Creation', () => {
 		});
 	});
 
-	describe('Stage 2: Workspace Initialization', () => {
-		test('initializeSessionWorkspace marks session as initialized', async () => {
+	describe('Title Generation (On First Message)', () => {
+		test('generateTitleAndRenameBranch marks title as generated', async () => {
 			const sessionId = await sessionManager.createSession({
 				workspacePath: testWorkspace,
 			});
@@ -245,7 +254,7 @@ describe('2-Stage Session Creation', () => {
 				return text.substring(0, 20);
 			};
 
-			await sessionManager.initializeSessionWorkspace(sessionId, 'Fix login bug');
+			await sessionManager.generateTitleAndRenameBranch(sessionId, 'Fix login bug');
 
 			// Restore original method
 			manager.generateTitleFromMessage = originalGenerate;
@@ -253,16 +262,16 @@ describe('2-Stage Session Creation', () => {
 			const agentSession = sessionManager.getSession(sessionId);
 			const session = agentSession!.getSessionData();
 
-			expect(session.metadata.workspaceInitialized).toBe(true);
+			expect(session.metadata.titleGenerated).toBe(true);
 		});
 
-		test('initializeSessionWorkspace updates title', async () => {
+		test('generateTitleAndRenameBranch updates title', async () => {
 			const sessionId = await sessionManager.createSession({
 				workspacePath: testWorkspace,
 			});
 
 			const userMessage = 'I need to fix the login bug';
-			await sessionManager.initializeSessionWorkspace(sessionId, userMessage);
+			await sessionManager.generateTitleAndRenameBranch(sessionId, userMessage);
 
 			const agentSession = sessionManager.getSession(sessionId);
 			const session = agentSession!.getSessionData();
@@ -270,18 +279,17 @@ describe('2-Stage Session Creation', () => {
 			// Title should be AI-generated from the user message (not exact match)
 			expect(session.title).not.toBe('New Session'); // Not the default
 			expect(session.title.length).toBeGreaterThan(0); // Has a title
-			expect(session.metadata.titleGenerated).toBe(true); // Title is generated during init now
-			expect(session.metadata.workspaceInitialized).toBe(true);
+			expect(session.metadata.titleGenerated).toBe(true);
 		});
 
-		test('initializeSessionWorkspace is idempotent', async () => {
+		test('generateTitleAndRenameBranch is idempotent', async () => {
 			const sessionId = await sessionManager.createSession({
 				workspacePath: testWorkspace,
 			});
 
 			// Call twice with different messages
-			await sessionManager.initializeSessionWorkspace(sessionId, 'Test message');
-			await sessionManager.initializeSessionWorkspace(sessionId, 'Another message');
+			await sessionManager.generateTitleAndRenameBranch(sessionId, 'Test message');
+			await sessionManager.generateTitleAndRenameBranch(sessionId, 'Another message');
 
 			const agentSession = sessionManager.getSession(sessionId);
 			const session = agentSession!.getSessionData();
@@ -289,10 +297,10 @@ describe('2-Stage Session Creation', () => {
 			// Title should be AI-generated and not change on second call (idempotent)
 			expect(session.title).not.toBe('New Session'); // Should have a generated title
 			expect(session.title.length).toBeGreaterThan(0); // Should have a title
-			expect(session.metadata.workspaceInitialized).toBe(true);
+			expect(session.metadata.titleGenerated).toBe(true);
 		});
 
-		test('initializeSessionWorkspace handles title generation failure', async () => {
+		test('generateTitleAndRenameBranch handles title generation failure', async () => {
 			const sessionId = await sessionManager.createSession({
 				workspacePath: testWorkspace,
 			});
@@ -304,7 +312,7 @@ describe('2-Stage Session Creation', () => {
 			};
 
 			// Should not throw, should use fallback
-			await sessionManager.initializeSessionWorkspace(
+			await sessionManager.generateTitleAndRenameBranch(
 				sessionId,
 				'This is a test message that should be used as fallback title'
 			);
@@ -314,31 +322,50 @@ describe('2-Stage Session Creation', () => {
 
 			// Should use first 50 chars of message as fallback
 			expect(session.title).toBe('This is a test message that should be used as fall');
-			expect(session.metadata.workspaceInitialized).toBe(true);
 			expect(session.metadata.titleGenerated).toBe(false);
 		});
 
-		test('initializeSessionWorkspace persists to database', async () => {
+		test('generateTitleAndRenameBranch persists to database', async () => {
 			const sessionId = await sessionManager.createSession({
 				workspacePath: testWorkspace,
 			});
 
 			const userMessage = 'Test message';
-			await sessionManager.initializeSessionWorkspace(sessionId, userMessage);
+			await sessionManager.generateTitleAndRenameBranch(sessionId, userMessage);
 
 			// Verify in database - should have AI-generated title
 			const dbSession = db.getSession(sessionId);
 			expect(dbSession!.title).not.toBe('New Session'); // AI-generated title, not default
 			expect(dbSession!.title.length).toBeGreaterThan(0); // Has a title
 			expect(dbSession!.metadata.titleGenerated).toBe(true); // Title was generated
-			expect(dbSession!.metadata.workspaceInitialized).toBe(true);
+		});
+
+		test('initializeSessionWorkspace is an alias for generateTitleAndRenameBranch', async () => {
+			const sessionId = await sessionManager.createSession({
+				workspacePath: testWorkspace,
+			});
+
+			// Mock title generation to avoid API call
+			const manager = sessionManager as unknown as Record<string, unknown>;
+			manager.generateTitleFromMessage = async (text: string) => {
+				return text.substring(0, 20);
+			};
+
+			// Use the deprecated alias
+			await sessionManager.initializeSessionWorkspace(sessionId, 'Fix login bug');
+
+			const agentSession = sessionManager.getSession(sessionId);
+			const session = agentSession!.getSessionData();
+
+			expect(session.metadata.titleGenerated).toBe(true);
+			expect(session.title).toBe('Fix login bug'); // First 20 chars
 		});
 	});
 
 	describe('Error Handling', () => {
-		test('throws error if session not found during initialization', async () => {
+		test('throws error if session not found during title generation', async () => {
 			await expect(
-				sessionManager.initializeSessionWorkspace('nonexistent-id', 'Test message')
+				sessionManager.generateTitleAndRenameBranch('nonexistent-id', 'Test message')
 			).rejects.toThrow('Session nonexistent-id not found');
 		});
 
@@ -353,18 +380,18 @@ describe('2-Stage Session Creation', () => {
 				return text || 'New Session';
 			};
 
-			await sessionManager.initializeSessionWorkspace(sessionId, '');
+			await sessionManager.generateTitleAndRenameBranch(sessionId, '');
 
 			const agentSession = sessionManager.getSession(sessionId);
 			const session = agentSession!.getSessionData();
 
 			expect(session.title).toBe('New Session');
-			expect(session.metadata.workspaceInitialized).toBe(true);
+			expect(session.metadata.titleGenerated).toBe(true);
 		});
 	});
 
 	describe('Backward Compatibility', () => {
-		test('sessions without workspaceInitialized flag work correctly', async () => {
+		test('sessions without titleGenerated flag work correctly', async () => {
 			// Create session manually without the flag
 			const sessionId = await sessionManager.createSession({
 				workspacePath: testWorkspace,
@@ -374,14 +401,20 @@ describe('2-Stage Session Creation', () => {
 			const session = agentSession!.getSessionData();
 
 			// Remove the flag to simulate old session
-			delete (session.metadata as unknown as Record<string, unknown>).workspaceInitialized;
+			delete (session.metadata as unknown as Record<string, unknown>).titleGenerated;
 			db.updateSession(sessionId, session);
 
-			// Should still work
-			await sessionManager.initializeSessionWorkspace(sessionId, 'Test message');
+			// Mock title generation
+			const manager = sessionManager as unknown as Record<string, unknown>;
+			manager.generateTitleFromMessage = async (text: string) => {
+				return text.substring(0, 20);
+			};
+
+			// Should still work - titleGenerated check uses falsy, so undefined works
+			await sessionManager.generateTitleAndRenameBranch(sessionId, 'Test message');
 
 			const updatedSession = sessionManager.getSession(sessionId)!.getSessionData();
-			expect(updatedSession.metadata.workspaceInitialized).toBe(true);
+			expect(updatedSession.metadata.titleGenerated).toBe(true);
 		});
 	});
 });

@@ -184,16 +184,17 @@ export function setupSessionHandlers(
 		});
 
 		// STEP 2: Emit event for async processing (truly non-blocking fire-and-forget)
-		// Heavy operations (workspace init, SDK query, draft clearing) handled by EventBus subscriber
+		// Heavy operations (title gen, branch rename, SDK query, draft clearing) handled by EventBus subscriber
 		// DO NOT await - this ensures RPC returns quickly (<100ms) and avoids timeout issues
 		// Title generation alone can take 15+ seconds if SDK is slow
+		// NOTE: Workspace (worktree) is already created during session creation
 		eventBus
 			.emit('user-message:persisted', {
 				sessionId: targetSessionId,
 				messageId,
 				messageContent,
 				userMessageText: content,
-				needsWorkspaceInit: !session.metadata.workspaceInitialized,
+				needsWorkspaceInit: !session.metadata.titleGenerated, // Triggers title gen on first message
 				hasDraftToClear: session.metadata?.inputDraft === content.trim(),
 			})
 			.catch((err) => {

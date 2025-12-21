@@ -73,20 +73,23 @@ export class SessionManager {
 						return;
 					}
 
-					// STEP 1: Initialize workspace if needed (can take 5-15s for large repos)
-					// CRITICAL: Must complete BEFORE SDK query starts so cwd is correct
-					if (needsWorkspaceInit) {
-						this.log(`[SessionManager] Initializing workspace for session ${sessionId}...`);
-						await this.initializeSessionWorkspace(sessionId, userMessageText);
-						this.log(`[SessionManager] Workspace initialized for session ${sessionId}`);
-					}
+					// SDK query and title generation can now run in PARALLEL
+					// because worktree is created during session creation with correct cwd
 
-					// STEP 2: Start SDK query (if not started) and enqueue message for processing
+					// STEP 1: Start SDK query (if not started) and enqueue message for processing
 					// Skip if caller will handle query start (e.g., handleMessageSend direct calls)
-					if (!skipQueryStart) {
-						// Now uses correct worktree path as cwd since workspace init is complete
-						await agentSession.startQueryAndEnqueue(messageId, messageContent);
-					}
+					const sdkQueryPromise = skipQueryStart
+						? Promise.resolve()
+						: agentSession.startQueryAndEnqueue(messageId, messageContent);
+
+					// STEP 2: Generate title and rename branch (runs in parallel with SDK query)
+					// Only run if workspace initialization is needed (first message)
+					const titlePromise = needsWorkspaceInit
+						? this.generateTitleAndRenameBranch(sessionId, userMessageText).catch((error) => {
+								// Title generation failure is non-fatal
+								this.error(`[SessionManager] Title generation failed:`, error);
+							})
+						: Promise.resolve();
 
 					// STEP 3: Clear draft if it matches the sent message content
 					if (hasDraftToClear) {
@@ -94,6 +97,12 @@ export class SessionManager {
 							metadata: { inputDraft: undefined },
 						} as Partial<Session>);
 					}
+
+					// Wait for SDK query to start (title gen can continue in background)
+					await sdkQueryPromise;
+
+					// Wait for title generation to complete (non-blocking for user)
+					await titlePromise;
 
 					this.log(
 						`[SessionManager] Message ${messageId} processing initiated for session ${sessionId}`
@@ -135,9 +144,33 @@ export class SessionManager {
 		// Validate and resolve model ID using cached models
 		const modelId = await this.getValidatedModelId(params.config?.model);
 
-		// NOTE: Worktree creation is now deferred to initializeSessionWorkspace()
-		// which is called on first message send
-		const sessionWorkspacePath = baseWorkspacePath;
+		// Create worktree immediately with session/{uuid} branch
+		// This allows SDK query to start without waiting for title generation
+		let worktreeMetadata: WorktreeMetadata | undefined;
+		let sessionWorkspacePath = baseWorkspacePath;
+
+		if (!this.config.disableWorktrees) {
+			try {
+				const result = await this.worktreeManager.createWorktree({
+					sessionId,
+					repoPath: baseWorkspacePath,
+					// Use session/{uuid} as initial branch name (will be renamed after title gen)
+					branchName: `session/${sessionId}`,
+					baseBranch: params.worktreeBaseBranch || 'HEAD',
+				});
+
+				if (result) {
+					worktreeMetadata = result;
+					sessionWorkspacePath = result.worktreePath;
+					this.log(
+						`[SessionManager] Created worktree at ${result.worktreePath} with branch ${result.branch}`
+					);
+				}
+			} catch (error) {
+				this.error('[SessionManager] Failed to create worktree during session creation:', error);
+				// Continue without worktree - fallback to base workspace
+			}
+		}
 
 		const session: Session = {
 			id: sessionId,
@@ -164,11 +197,12 @@ export class SessionManager {
 				totalCost: 0,
 				toolCallCount: 0,
 				titleGenerated: false,
-				workspaceInitialized: false, // Will be set to true after first message
+				// Workspace is already initialized (worktree created or using base path)
+				workspaceInitialized: true,
 			},
-			// Worktree and gitBranch will be set after workspace initialization
-			worktree: undefined,
-			gitBranch: undefined,
+			// Worktree set during creation (if enabled)
+			worktree: worktreeMetadata,
+			gitBranch: worktreeMetadata?.branch,
 		};
 
 		// Save to database
@@ -191,12 +225,16 @@ export class SessionManager {
 	}
 
 	/**
-	 * Initialize session workspace on first message
-	 * - Generates meaningful title from user message
-	 * - Creates worktree with slugified branch name
-	 * - Updates session record
+	 * Generate title and rename branch for a session
+	 * Called on first message to:
+	 * - Generate meaningful title from user message
+	 * - Rename branch from session/{uuid} to session/{slug}-{shortId}
+	 * - Update session record
+	 *
+	 * NOTE: Worktree is already created during session creation with session/{uuid} branch.
+	 * This method only generates title and renames the branch.
 	 */
-	async initializeSessionWorkspace(sessionId: string, userMessageText: string): Promise<void> {
+	async generateTitleAndRenameBranch(sessionId: string, userMessageText: string): Promise<void> {
 		const agentSession = this.sessions.get(sessionId);
 		if (!agentSession) {
 			throw new Error(`Session ${sessionId} not found`);
@@ -204,58 +242,56 @@ export class SessionManager {
 
 		const session = agentSession.getSessionData();
 
-		// Check if already initialized
-		if (session.metadata.workspaceInitialized) {
-			this.log(`[SessionManager] Session ${sessionId} already initialized`);
+		// Check if title already generated
+		if (session.metadata.titleGenerated) {
+			this.log(`[SessionManager] Session ${sessionId} title already generated`);
 			return;
 		}
 
-		this.log(`[SessionManager] Initializing workspace for session ${sessionId}...`);
+		this.log(`[SessionManager] Generating title for session ${sessionId}...`);
 
 		try {
 			// Step 1: Generate title from user message using Haiku model
-			// This ensures the branch name matches the session title
 			const title = await this.generateTitleFromMessage(userMessageText, session.workspacePath);
 			this.log(`[SessionManager] Generated title: "${title}"`);
 
-			// Step 2: Generate branch name from title
-			const branchName = this.generateBranchName(title, sessionId);
-			this.log(`[SessionManager] Generated branch name: ${branchName}`);
+			// Step 2: Rename branch if we have a worktree
+			let newBranchName = session.worktree?.branch;
+			if (session.worktree) {
+				const newBranch = this.generateBranchName(title, sessionId);
+				const oldBranch = session.worktree.branch;
 
-			// Step 3: Create worktree with meaningful branch (if not disabled)
-			let worktreeMetadata: WorktreeMetadata | undefined = session.worktree;
-			if (!this.config.disableWorktrees) {
-				try {
-					// Use session.workspacePath (the actual repo path) not config.workspaceRoot
-					const result = await this.worktreeManager.createWorktree({
-						sessionId,
-						repoPath: session.workspacePath,
-						branchName,
-						baseBranch: 'HEAD',
-					});
+				// Only rename if branch name is different (i.e., it's still session/{uuid})
+				if (oldBranch !== newBranch) {
+					const renamed = await this.worktreeManager.renameBranch(
+						session.worktree.mainRepoPath,
+						oldBranch,
+						newBranch
+					);
 
-					if (result) {
-						worktreeMetadata = result;
-						this.log(
-							`[SessionManager] Created worktree at ${worktreeMetadata.worktreePath} with branch ${worktreeMetadata.branch}`
-						);
+					if (renamed) {
+						newBranchName = newBranch;
+						this.log(`[SessionManager] Renamed branch from ${oldBranch} to ${newBranch}`);
+					} else {
+						this.log(`[SessionManager] Failed to rename branch, keeping ${oldBranch}`);
 					}
-				} catch (error) {
-					this.error('[SessionManager] Failed to create worktree:', error);
-					// Continue without worktree
 				}
 			}
 
-			// Step 4: Update session record
+			// Step 3: Update session record
 			const updatedSession: Session = {
 				...session,
 				title,
-				worktree: worktreeMetadata ?? undefined,
-				workspacePath: worktreeMetadata?.worktreePath ?? session.workspacePath,
+				worktree: session.worktree
+					? {
+							...session.worktree,
+							branch: newBranchName || session.worktree.branch,
+						}
+					: undefined,
+				gitBranch: newBranchName || session.gitBranch,
 				metadata: {
 					...session.metadata,
-					workspaceInitialized: true,
-					titleGenerated: true, // Title is now generated during initialization
+					titleGenerated: true,
 				},
 			};
 
@@ -268,23 +304,22 @@ export class SessionManager {
 			// Broadcast updates - include session data for decoupled state management
 			await this.eventBus.emit('session:updated', {
 				sessionId,
-				source: 'workspace-init',
+				source: 'title-generated',
 				session: updatedSession,
 			});
 
-			this.log(`[SessionManager] Workspace initialized for session ${sessionId}`);
+			this.log(`[SessionManager] Title generated for session ${sessionId}: "${title}"`);
 		} catch (error) {
-			this.error('[SessionManager] Failed to initialize workspace:', error);
+			this.error('[SessionManager] Failed to generate title:', error);
 
-			// Fallback: Mark as initialized to prevent retries, use fallback title
+			// Fallback: Use first 50 chars of message as title
 			const fallbackTitle = userMessageText.substring(0, 50).trim() || 'New Session';
 			const fallbackSession: Session = {
 				...session,
 				title: fallbackTitle,
 				metadata: {
 					...session.metadata,
-					workspaceInitialized: true,
-					titleGenerated: false,
+					titleGenerated: false, // Mark as not generated (user can retry)
 				},
 			};
 
@@ -294,12 +329,20 @@ export class SessionManager {
 			// Include session data for decoupled state management
 			await this.eventBus.emit('session:updated', {
 				sessionId,
-				source: 'workspace-init',
+				source: 'title-generated',
 				session: fallbackSession,
 			});
 
 			this.log(`[SessionManager] Used fallback title "${fallbackTitle}" for session ${sessionId}`);
 		}
+	}
+
+	/**
+	 * @deprecated Use generateTitleAndRenameBranch instead
+	 * Kept for backward compatibility - now just calls generateTitleAndRenameBranch
+	 */
+	async initializeSessionWorkspace(sessionId: string, userMessageText: string): Promise<void> {
+		return this.generateTitleAndRenameBranch(sessionId, userMessageText);
 	}
 
 	/**

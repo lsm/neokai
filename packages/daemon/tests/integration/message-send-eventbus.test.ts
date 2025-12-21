@@ -3,8 +3,12 @@
  *
  * Tests the 3-layer communication pattern:
  * - RPC handler returns quickly (<100ms)
- * - Heavy work is deferred to EventBus subscriber
- * - No RPC timeout occurs even with slow workspace initialization
+ * - Heavy work is deferred to EventBus subscriber (title generation, SDK query)
+ * - No RPC timeout occurs even with slow title generation
+ *
+ * Note: With the new flow, workspaceInitialized is true from session creation
+ * (worktree created immediately). The EventBus now handles title generation
+ * and branch renaming on first message.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -81,7 +85,7 @@ describe('message.send EventBus Integration', () => {
 		expect(handlerCount).toBeGreaterThan(0);
 	});
 
-	test('user-message:persisted event triggers workspace initialization', async () => {
+	test('user-message:persisted event triggers title generation', async () => {
 		const sessionId = await sessionManager.createSession({
 			workspacePath: testWorkspace,
 		});
@@ -89,16 +93,24 @@ describe('message.send EventBus Integration', () => {
 		const agentSession = sessionManager.getSession(sessionId);
 		let session = agentSession!.getSessionData();
 
-		// Verify workspace not initialized initially
-		expect(session.metadata.workspaceInitialized).toBe(false);
+		// Workspace is now initialized from session creation
+		expect(session.metadata.workspaceInitialized).toBe(true);
+		// But title is not yet generated
+		expect(session.metadata.titleGenerated).toBe(false);
+
+		// Mock the title generation to avoid API call
+		const manager = sessionManager as unknown as Record<string, unknown>;
+		manager.generateTitleFromMessage = async (text: string) => {
+			return text.substring(0, 20);
+		};
 
 		// Emit the event directly (simulating what RPC handler does)
 		await eventBus.emit('user-message:persisted', {
 			sessionId,
 			messageId: 'test-msg-1',
-			messageContent: 'Test message',
-			userMessageText: 'Test message',
-			needsWorkspaceInit: true,
+			messageContent: 'Test message for title',
+			userMessageText: 'Test message for title',
+			needsWorkspaceInit: true, // This now triggers title generation
 			hasDraftToClear: false,
 		});
 
@@ -108,25 +120,33 @@ describe('message.send EventBus Integration', () => {
 		// Get updated session
 		session = agentSession!.getSessionData();
 
-		// Verify workspace was initialized
-		expect(session.metadata.workspaceInitialized).toBe(true);
+		// Verify title was generated
+		expect(session.metadata.titleGenerated).toBe(true);
+		expect(session.title).toBe('Test message for tit'); // First 20 chars
 	});
 
-	test('user-message:persisted event does not initialize if already initialized', async () => {
+	test('user-message:persisted event does not regenerate title if already generated', async () => {
 		const sessionId = await sessionManager.createSession({
 			workspacePath: testWorkspace,
 		});
 
-		// Initialize workspace first
-		await sessionManager.initializeSessionWorkspace(sessionId, 'First message');
+		// Mock title generation
+		const manager = sessionManager as unknown as Record<string, unknown>;
+		manager.generateTitleFromMessage = async (text: string) => {
+			return text.substring(0, 20);
+		};
+
+		// Generate title first
+		await sessionManager.generateTitleAndRenameBranch(sessionId, 'First message');
 
 		const agentSession = sessionManager.getSession(sessionId);
 		const session = agentSession!.getSessionData();
 
-		// Verify workspace is initialized
-		expect(session.metadata.workspaceInitialized).toBe(true);
+		// Verify title is generated
+		expect(session.metadata.titleGenerated).toBe(true);
+		const originalTitle = session.title;
 
-		// Emit event with needsWorkspaceInit=false
+		// Emit event with needsWorkspaceInit=false (title already generated)
 		await eventBus.emit('user-message:persisted', {
 			sessionId,
 			messageId: 'test-msg-2',
@@ -136,12 +156,13 @@ describe('message.send EventBus Integration', () => {
 			hasDraftToClear: false,
 		});
 
-		// Should complete quickly without re-initializing
+		// Should complete quickly without re-generating title
 		await new Promise((resolve) => setTimeout(resolve, 100));
 
-		// Session should still be initialized (not changed)
+		// Title should remain the same
 		const updatedSession = agentSession!.getSessionData();
-		expect(updatedSession.metadata.workspaceInitialized).toBe(true);
+		expect(updatedSession.metadata.titleGenerated).toBe(true);
+		expect(updatedSession.title).toBe(originalTitle);
 	});
 
 	test('EventBus subscriber handles draft clearing', async () => {
@@ -198,9 +219,9 @@ describe('message.send EventBus Integration', () => {
 		// Wait for processing
 		await new Promise((resolve) => setTimeout(resolve, 100));
 
-		// Original session should be unaffected
+		// Original session should be unaffected (title not generated yet)
 		const agentSession = sessionManager.getSession(sessionId);
 		const session = agentSession!.getSessionData();
-		expect(session.metadata.workspaceInitialized).toBe(false);
+		expect(session.metadata.titleGenerated).toBe(false);
 	});
 });

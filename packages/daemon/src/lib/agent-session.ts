@@ -580,30 +580,32 @@ export class AgentSession {
 		images?: MessageImage[];
 	}): Promise<{ messageId: string }> {
 		try {
-			// WORKSPACE INIT: Ensure workspace is initialized before starting SDK query
+			// TITLE GENERATION: Trigger async title generation on first message
 			// This handles direct calls (e.g., tests) that bypass the RPC handler.
 			// The RPC path handles this via the user-message:persisted event handler,
-			// but direct calls need to trigger initialization here.
-			if (!this.session.metadata.workspaceInitialized) {
-				this.logger.log(`Triggering workspace initialization before SDK query...`);
+			// but direct calls need to trigger title generation here.
+			// NOTE: Workspace (worktree) is already created during session creation,
+			// so this only triggers title generation and branch renaming.
+			if (!this.session.metadata.titleGenerated) {
+				this.logger.log(`Triggering title generation for first message...`);
+				const userMessageText = typeof data.content === 'string' ? data.content : '';
 				// Emit event with skipQueryStart=true since we handle query start below
-				await this.eventBus.emit('user-message:persisted', {
-					sessionId: this.session.id,
-					messageId: '', // Will be generated below
-					messageContent: data.content,
-					userMessageText: typeof data.content === 'string' ? data.content : '',
-					needsWorkspaceInit: true,
-					hasDraftToClear: false,
-					skipQueryStart: true,
-				});
-				// Refresh session data to get updated workspace path
-				const updatedSession = this.db.getSession(this.session.id);
-				if (updatedSession) {
-					this.session = updatedSession;
-					this.logger.log(
-						`Session updated after workspace init: workspacePath=${this.session.workspacePath}`
-					);
-				}
+				// Fire-and-forget: title generation runs in parallel with SDK query
+				this.eventBus
+					.emit('user-message:persisted', {
+						sessionId: this.session.id,
+						messageId: '', // Will be generated below
+						messageContent: data.content,
+						userMessageText,
+						needsWorkspaceInit: true, // Signals first message - triggers title generation
+						hasDraftToClear: false,
+						skipQueryStart: true,
+					})
+					.catch((error) => {
+						this.logger.log(`Title generation failed (non-fatal): ${error}`);
+					});
+				// Note: We don't await or refresh session here anymore
+				// Title generation runs in parallel and updates session asynchronously
 			}
 
 			// LAZY START: Start the query on first message
