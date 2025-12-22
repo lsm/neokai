@@ -17,6 +17,7 @@ import { toast } from '../lib/toast.ts';
 import { cn } from '../lib/utils.ts';
 import { connectionState } from '../lib/state.ts';
 import { borderColors } from '../lib/design-tokens.ts';
+import { sessionStore } from '../lib/session-store.ts';
 
 // Hooks
 import { useModal } from '../hooks/useModal.ts';
@@ -115,11 +116,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		}
 	}, [subscriptions.state.error, messageLoader]);
 
-	// Send message hook
+	// Send message hook - uses sessionStore.isWorking for reactive sending state
 	const { sendMessage } = useSendMessage({
 		sessionId,
 		session: messageLoader.session,
-		isSending: subscriptions.state.sending,
+		isSending: sessionStore.isWorking.value,
 		onSendStart: useCallback(() => {
 			messageLoader.setError(null);
 		}, [messageLoader]),
@@ -206,8 +207,49 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		messageLoader.session?.metadata?.totalCost,
 	]);
 
-	// Derived state - processing based on sending state only (no streaming events)
-	const isProcessing = subscriptions.state.sending;
+	// Derived state from sessionStore signals (reactive)
+	const agentState = sessionStore.agentState.value;
+	const isProcessing = sessionStore.isWorking.value;
+	const isCompacting = sessionStore.isCompacting.value;
+
+	// Derive currentAction and streamingPhase from agentState
+	const { currentAction, streamingPhase } = useMemo(() => {
+		if (agentState.status === 'processing') {
+			const phase = agentState.phase;
+			let action = 'Processing...';
+			if (agentState.isCompacting) {
+				action = 'Compacting context...';
+			} else {
+				switch (phase) {
+					case 'initializing':
+						action = 'Starting...';
+						break;
+					case 'thinking':
+						action = 'Thinking...';
+						break;
+					case 'streaming': {
+						const duration = agentState.streamingStartedAt
+							? Math.floor((Date.now() - agentState.streamingStartedAt) / 1000)
+							: 0;
+						action = duration > 0 ? `Streaming (${duration}s)...` : 'Streaming...';
+						break;
+					}
+					case 'finalizing':
+						action = 'Finalizing...';
+						break;
+				}
+			}
+			return { currentAction: action, streamingPhase: phase };
+		}
+		if (agentState.status === 'queued') {
+			return { currentAction: 'Queued...', streamingPhase: null };
+		}
+		if (agentState.status === 'interrupted') {
+			return { currentAction: 'Interrupted', streamingPhase: null };
+		}
+		return { currentAction: undefined, streamingPhase: null };
+	}, [agentState]);
+
 	const error = messageLoader.error || subscriptions.state.error;
 
 	// Render loading state
@@ -341,8 +383,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			<div class="flex-shrink-0">
 				<SessionStatusBar
 					isProcessing={isProcessing}
-					currentAction={subscriptions.state.currentAction}
-					streamingPhase={subscriptions.state.streamingPhase}
+					currentAction={currentAction}
+					streamingPhase={streamingPhase}
 					contextUsage={messageLoader.contextUsage}
 					maxContextTokens={200000}
 				/>
@@ -375,7 +417,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					<MessageInput
 						sessionId={sessionId}
 						onSend={handleSendMessage}
-						disabled={isProcessing || subscriptions.state.isCompacting || !isConnected}
+						disabled={isProcessing || isCompacting || !isConnected}
 						autoScroll={messageLoader.autoScroll}
 						onAutoScrollChange={handleAutoScrollChange}
 						onOpenTools={toolsModal.open}
