@@ -1,6 +1,6 @@
 import { ComponentChildren } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
-import Portal from 'preact-portal';
+import { Portal } from './Portal.tsx';
 import { cn } from '../../lib/utils.ts';
 import { borderColors } from '../../lib/design-tokens.ts';
 
