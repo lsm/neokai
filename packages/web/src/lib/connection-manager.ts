@@ -478,9 +478,11 @@ export class ConnectionManager {
 			await this.messageHub.call('system.health', {}, { timeout: 3000 });
 			console.log('[ConnectionManager] Connection validated successfully');
 
-			// CRITICAL: Even if connection appears healthy, subscriptions may be stale
-			// Force re-establish all subscriptions with the server
-			this.messageHub.forceResubscribe();
+			// NOTE: We removed the forceResubscribe() call here because:
+			// 1. MessageHub.resubscribeAll() is already called on reconnection
+			// 2. Having multiple sources trigger resubscription caused subscription storms
+			// 3. The debounce in resubscribeAll() now handles any duplicate calls
+			// If subscriptions are truly stale, the next reconnection will fix them.
 
 			// CRITICAL: Refresh all state channels to fetch latest state
 			// This ensures UI is in sync even if events were missed during background
