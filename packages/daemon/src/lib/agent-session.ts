@@ -329,12 +329,14 @@ export class AgentSession {
 		// Save to database
 		this.db.saveSDKMessage(this.session.id, sdkUserMessage);
 
-		// Publish to UI immediately (fire-and-forget to avoid blocking RPC)
+		// Publish to UI immediately via state.sdkMessages.delta (fire-and-forget to avoid blocking RPC)
 		// This prevents "Message send timed out" errors when WebSocket is slow
 		this.messageHub
-			.publish('sdk.message', sdkUserMessage, {
-				sessionId: this.session.id,
-			})
+			.publish(
+				'state.sdkMessages.delta',
+				{ added: [sdkUserMessage], timestamp: Date.now() },
+				{ sessionId: this.session.id }
+			)
 			.catch(async (err) => {
 				this.logger.error('Failed to publish user message to UI:', err);
 				// Report to UI via error manager (non-fatal warning)
@@ -475,10 +477,12 @@ export class AgentSession {
 			// Save to database
 			this.db.saveSDKMessage(this.session.id, sdkUserMessage);
 
-			// Publish to UI immediately
-			await this.messageHub.publish('sdk.message', sdkUserMessage, {
-				sessionId: this.session.id,
-			});
+			// Publish to UI immediately via state.sdkMessages.delta
+			await this.messageHub.publish(
+				'state.sdkMessages.delta',
+				{ added: [sdkUserMessage], timestamp: Date.now() },
+				{ sessionId: this.session.id }
+			);
 
 			this.logger.log(`User message ${messageId} persisted and published for instant UI display`);
 
@@ -745,10 +749,12 @@ This error occurred while processing your request. Please review the error messa
 			// Save to database
 			this.db.saveSDKMessage(this.session.id, assistantMessage);
 
-			// Broadcast to UI
-			await this.messageHub.publish('sdk.message', assistantMessage, {
-				sessionId: this.session.id,
-			});
+			// Broadcast to UI via state.sdkMessages.delta
+			await this.messageHub.publish(
+				'state.sdkMessages.delta',
+				{ added: [assistantMessage], timestamp: Date.now() },
+				{ sessionId: this.session.id }
+			);
 
 			this.logger.log(`API validation error displayed as assistant message`);
 			return true; // Error was handled

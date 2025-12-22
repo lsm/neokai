@@ -121,10 +121,7 @@ export class SDKMessageHandler {
 			return;
 		}
 
-		// Only broadcast if successfully saved to DB
-		await this.messageHub.publish('sdk.message', message, { sessionId: this.session.id });
-
-		// Broadcast SDK message delta
+		// Broadcast SDK message delta (only channel - sdk.message removed as redundant)
 		await this.messageHub.publish(
 			'state.sdkMessages.delta',
 			{

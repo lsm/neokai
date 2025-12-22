@@ -87,9 +87,9 @@ export class SubscriptionManager {
 
 		// Define session subscription patterns
 		// These are APPLICATION-SPECIFIC events for agent sessions
+		// NOTE: sdk.message removed - messages now arrive via state.sdkMessages.delta only
 		const sessionEvents = [
 			// Agent communication events
-			'sdk.message', // Messages from Claude SDK
 			'context.updated', // Token usage / context info
 
 			// Session status events
@@ -98,8 +98,8 @@ export class SubscriptionManager {
 
 			// State channel events for this session
 			'state.session', // Unified session state (metadata + agent + commands + context)
-			'state.sdkMessages', // SDK-level messages
-			'state.sdkMessages.delta', // SDK message deltas
+			'state.sdkMessages', // SDK-level messages (full state on subscribe)
+			'state.sdkMessages.delta', // SDK message deltas (incremental updates)
 		];
 
 		// Subscribe to each event for this specific session
@@ -153,8 +153,8 @@ export class SubscriptionManager {
 	}
 
 	getSessionEventPatterns(): string[] {
+		// NOTE: sdk.message removed - messages now arrive via state.sdkMessages.delta only
 		return [
-			'sdk.message',
 			'context.updated',
 			'session.error',
 			'session.interrupted',
