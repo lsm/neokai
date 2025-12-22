@@ -75,10 +75,14 @@ export function useSendMessage({
 				if (!hub) {
 					toast.error('Connection lost.');
 					onSendComplete();
+					clearSendTimeout();
 					return;
 				}
 
 				await hub.call('message.send', { sessionId, content, images });
+
+				// Clear timeout on successful send
+				clearSendTimeout();
 			} catch (err) {
 				const message = err instanceof Error ? err.message : 'Failed to send message';
 				onError(message);
