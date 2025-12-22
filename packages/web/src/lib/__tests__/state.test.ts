@@ -196,7 +196,9 @@ describe('ApplicationState', () => {
 			const sessionChannelsBefore = (
 				appState as unknown as { sessionChannels: Map<string, unknown> }
 			).sessionChannels;
-			expect(sessionChannelsBefore.size).toBe(3);
+			// After cleanup on switch fix: only the current session has channels
+			expect(sessionChannelsBefore.size).toBe(1);
+			expect(sessionChannelsBefore.has('session-3')).toBe(true);
 
 			// Cleanup all
 			cleanupApplicationState();
@@ -311,13 +313,14 @@ describe('ApplicationState - Edge Cases', () => {
 			currentSessionId.value = `rapid-session-${i}`;
 		}
 
-		// All sessions should have channels
+		// After cleanup on switch fix: only the last session has channels
 		const sessionChannels = (appState as unknown as { sessionChannels: Map<string, unknown> })
 			.sessionChannels;
-		expect(sessionChannels.size).toBe(10);
+		expect(sessionChannels.size).toBe(1);
+		expect(sessionChannels.has('rapid-session-9')).toBe(true);
 	});
 
-	it('should reuse existing session channels', async () => {
+	it('should create new channels when switching back to a session', async () => {
 		await initializeApplicationState(
 			mockHub as unknown as Parameters<typeof initializeApplicationState>[0],
 			currentSessionId
@@ -328,14 +331,22 @@ describe('ApplicationState - Edge Cases', () => {
 
 		const channels1 = appState.getSessionChannels('reuse-test');
 
-		// Switch away and back
+		// Switch away (this will cleanup 'reuse-test' channels)
 		currentSessionId.value = 'other-session';
+
+		// Switch back (this will create new channels)
 		currentSessionId.value = 'reuse-test';
 
 		const channels2 = appState.getSessionChannels('reuse-test');
 
-		// Should be same instance
-		expect(channels1).toBe(channels2);
+		// After cleanup on switch fix: channels are recreated, not reused
+		expect(channels1).not.toBe(channels2);
+
+		// But both should be valid channel instances
+		expect(channels1).toBeDefined();
+		expect(channels2).toBeDefined();
+		expect(channels1.session).toBeDefined();
+		expect(channels2.session).toBeDefined();
 	});
 
 	it('should throw when getSessionChannels called before init', () => {
