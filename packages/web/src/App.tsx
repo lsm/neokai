@@ -1,4 +1,5 @@
 import { useEffect } from 'preact/hooks';
+import { effect } from '@preact/signals';
 import Sidebar from './islands/Sidebar.tsx';
 import MainContent from './islands/MainContent.tsx';
 import ToastContainer from './islands/ToastContainer.tsx';
@@ -7,6 +8,8 @@ import { connectionManager } from './lib/connection-manager.ts';
 import { initializeApplicationState } from './lib/state.ts';
 import { currentSessionIdSignal } from './lib/signals.ts';
 import { initSessionStatusTracking } from './lib/session-status.ts';
+import { globalStore } from './lib/global-store.ts';
+import { sessionStore } from './lib/session-store.ts';
 
 export function App() {
 	useEffect(() => {
@@ -16,13 +19,24 @@ export function App() {
 				// Wait for MessageHub connection to be ready
 				const hub = await connectionManager.getHub();
 
-				// Initialize state channels now that connection is ready
+				// Initialize new unified stores (Phase 3 migration)
+				await globalStore.initialize();
+				console.log('[App] GlobalStore initialized successfully');
+
+				// Initialize legacy state channels (will be removed in Phase 5)
 				await initializeApplicationState(hub, currentSessionIdSignal);
-				console.log('[App] State management initialized successfully');
+				console.log('[App] Legacy state management initialized successfully');
 
 				// Initialize session status tracking for sidebar live indicators
 				initSessionStatusTracking();
 				console.log('[App] Session status tracking initialized');
+
+				// Sync currentSessionIdSignal with sessionStore.select()
+				// This bridges the old signal-based approach with the new store
+				effect(() => {
+					const sessionId = currentSessionIdSignal.value;
+					sessionStore.select(sessionId);
+				});
 			} catch (error) {
 				console.error('[App] Failed to initialize state management:', error);
 			}
