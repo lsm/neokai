@@ -63,14 +63,29 @@ export default defineConfig({
 	},
 
 	optimizeDeps: {
-		include: ['preact', '@preact/signals', 'marked', 'highlight.js', 'clsx', 'date-fns'],
+		include: [
+			'preact',
+			'@preact/signals',
+			'marked',
+			'highlight.js',
+			'clsx',
+			'date-fns',
+			'preact-portal',
+		],
 		exclude: ['@liuboer/shared'], // Exclude local packages from pre-bundling
+		esbuildOptions: {
+			jsx: 'automatic',
+			jsxImportSource: 'preact',
+		},
 	},
 
 	resolve: {
 		alias: [
-			{ find: 'react', replacement: 'preact/compat' },
-			{ find: 'react-dom', replacement: 'preact/compat' },
+			// Use preact-portal dist instead of src to avoid JSX parsing issues
+			{
+				find: 'preact-portal',
+				replacement: resolve(__dirname, '../../node_modules/preact-portal/dist/preact-portal.js'),
+			},
 			// Handle subpath imports (e.g., @liuboer/shared/sdk/type-guards)
 			{ find: /^@liuboer\/shared\/(.+)$/, replacement: resolve(__dirname, '../shared/src/$1') },
 			// Handle main package import
