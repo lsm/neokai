@@ -1,7 +1,7 @@
 import type { SettingSource } from './types/settings.ts';
 
 // Core session types
-export interface Session {
+export interface SessionInfo {
 	id: string;
 	title: string;
 	workspacePath: string;
@@ -17,6 +17,9 @@ export interface Session {
 	processingState?: string; // Persisted agent processing state (JSON serialized AgentProcessingState)
 	archivedAt?: string; // ISO timestamp when session was archived
 }
+
+// Backward compatibility alias (use SessionInfo in new code)
+export type Session = SessionInfo;
 
 export interface WorktreeMetadata {
 	isWorktree: true;

@@ -74,6 +74,10 @@ export interface EventMap {
 		preTokens: number;
 	};
 
+	// Session error events - folded into unified state.session
+	'session:error': { sessionId: string; error: string; details?: unknown };
+	'session:error:clear': { sessionId: string };
+
 	// Message events - emitted when user sends a message
 	'message:sent': { sessionId: string };
 

@@ -4,7 +4,7 @@
  * Fine-grained state channels - each property has its own channel
  */
 
-import type { AuthStatus, Session, HealthStatus, ContextInfo } from './types.ts';
+import type { AuthStatus, SessionInfo, HealthStatus, ContextInfo } from './types.ts';
 import type { SDKMessage } from './sdk/sdk.d.ts';
 import type { GlobalSettings } from './types/settings.ts';
 
@@ -15,7 +15,7 @@ import type { GlobalSettings } from './types/settings.ts';
 
 // State channel: global:state.sessions
 export interface SessionsState {
-	sessions: Session[];
+	sessions: SessionInfo[];
 	timestamp: number;
 }
 
@@ -84,6 +84,7 @@ export type AgentProcessingState =
 			messageId: string;
 			phase: 'initializing' | 'thinking' | 'streaming' | 'finalizing';
 			streamingStartedAt?: number; // Timestamp when streaming began
+			isCompacting?: boolean; // True during context compaction
 	  }
 	| { status: 'interrupted' };
 
@@ -92,6 +93,16 @@ export type AgentProcessingState =
  */
 export interface CommandsData {
 	availableCommands: string[];
+}
+
+/**
+ * Session error state
+ * Folded from separate session.error event into unified state.session
+ */
+export interface SessionError {
+	message: string;
+	details?: unknown; // StructuredError when available
+	occurredAt: number;
 }
 
 /**
@@ -109,16 +120,19 @@ export interface CommandsData {
  */
 export interface SessionState {
 	// Session metadata
-	session: Session;
+	sessionInfo: SessionInfo;
 
 	// Agent processing state
-	agent: AgentProcessingState;
+	agentState: AgentProcessingState;
 
 	// Available slash commands
-	commands: CommandsData;
+	commandsData: CommandsData;
 
-	// Context information (placeholder - will implement later)
-	context: ContextInfo | null;
+	// Context information
+	contextInfo: ContextInfo | null;
+
+	// Error state (folded from session.error event)
+	error: SessionError | null;
 
 	timestamp: number;
 }
@@ -164,8 +178,8 @@ export interface SessionStateSnapshot {
 
 // For array updates, we can send deltas
 export interface SessionsUpdate {
-	added?: Session[];
-	updated?: Session[];
+	added?: SessionInfo[];
+	updated?: SessionInfo[];
 	removed?: string[]; // session IDs
 	timestamp: number;
 }
