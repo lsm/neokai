@@ -41,3 +41,4 @@ playwright-report/
 
 # Git worktrees
 .worktrees/
+**/settings.local.json
