@@ -172,8 +172,10 @@ class ApplicationState {
 	// Global channels - must be a signal so computed signals can track when it's initialized
 	global = signal<GlobalStateChannels | null>(null);
 
-	// Session channels (lazy-loaded)
-	private sessionChannels = new Map<string, SessionStateChannels>();
+	// Active session channels - only ONE session can have channels at a time
+	// This is the session whose chat container is currently displayed
+	private activeSessionId: string | null = null;
+	private activeSessionChannels: SessionStateChannels | null = null;
 
 	// Current session ID (from existing signal)
 	private currentSessionIdSignal = signal<string | null>(null);
@@ -208,31 +210,49 @@ class ApplicationState {
 
 	/**
 	 * Get or create session channels
+	 *
+	 * INVARIANT: Only ONE session can have active channels at any time.
+	 * This is the "current active session" whose chat container is displayed.
+	 *
+	 * Session data shown in lists (sidebar, recent sessions) should come from
+	 * `state.sessions` (global channel), NOT per-session subscriptions.
 	 */
 	getSessionChannels(sessionId: string): SessionStateChannels {
 		if (!this.hub) {
 			throw new Error('State not initialized');
 		}
 
-		if (!this.sessionChannels.has(sessionId)) {
-			const channels = new SessionStateChannels(this.hub, sessionId);
-			this.sessionChannels.set(sessionId, channels);
-
-			// Start channels immediately
-			channels.start().catch(console.error);
+		// If requesting the same session, return existing channels
+		if (this.activeSessionId === sessionId && this.activeSessionChannels) {
+			return this.activeSessionChannels;
 		}
 
-		return this.sessionChannels.get(sessionId)!;
+		// Cleanup previous session's channels before creating new ones
+		if (this.activeSessionChannels) {
+			console.log(`[State] Switching session: cleaning up channels for ${this.activeSessionId}`);
+			this.activeSessionChannels.stop();
+		}
+
+		// Create new channels for the requested session
+		const channels = new SessionStateChannels(this.hub, sessionId);
+		this.activeSessionId = sessionId;
+		this.activeSessionChannels = channels;
+
+		// Start channels immediately
+		channels.start().catch(console.error);
+
+		return channels;
 	}
 
 	/**
-	 * Cleanup session channels (when session closed)
+	 * Cleanup session channels (when navigating away from a session)
 	 */
 	cleanupSessionChannels(sessionId: string): void {
-		const channels = this.sessionChannels.get(sessionId);
-		if (channels) {
-			channels.stop();
-			this.sessionChannels.delete(sessionId);
+		if (this.activeSessionId === sessionId && this.activeSessionChannels) {
+			console.log(`[State] Cleaning up channels for session: ${sessionId}`);
+			this.activeSessionChannels.stop();
+			this.activeSessionId = null;
+			this.activeSessionChannels = null;
 		}
 	}
 
@@ -301,12 +321,8 @@ class ApplicationState {
 		}
 
 		// Refresh current session channels
-		const currentSessionId = this.currentSessionIdSignal.value;
-		if (currentSessionId) {
-			const sessionChannels = this.sessionChannels.get(currentSessionId);
-			if (sessionChannels) {
-				promises.push(sessionChannels.refresh());
-			}
+		if (this.activeSessionChannels) {
+			promises.push(this.activeSessionChannels.refresh());
 		}
 
 		await Promise.all(promises);
@@ -325,9 +341,12 @@ class ApplicationState {
 		this.global.value?.stop();
 		this.global.value = null;
 
-		// Stop all session channels
-		this.sessionChannels.forEach((channels) => channels.stop());
-		this.sessionChannels.clear();
+		// Stop active session channels
+		if (this.activeSessionChannels) {
+			this.activeSessionChannels.stop();
+			this.activeSessionId = null;
+			this.activeSessionChannels = null;
+		}
 
 		this.hub = null;
 		this.initialized.value = false;
