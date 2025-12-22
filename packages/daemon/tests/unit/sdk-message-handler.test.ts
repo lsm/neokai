@@ -131,12 +131,17 @@ describe('SDKMessageHandler', () => {
 
 			await handler.handleMessage(message);
 
-			expect(hubPublishSpy).toHaveBeenCalledWith('sdk.message', message, {
-				sessionId: testSessionId,
-			});
+			// NOTE: sdk.message removed - messages now broadcast via state.sdkMessages.delta only
+			expect(hubPublishSpy).toHaveBeenCalledWith(
+				'state.sdkMessages.delta',
+				expect.objectContaining({
+					added: [message],
+				}),
+				{ sessionId: testSessionId }
+			);
 		});
 
-		it('should broadcast delta update', async () => {
+		it('should broadcast delta update with version', async () => {
 			const message: SDKMessage = {
 				type: 'assistant',
 				uuid: generateUUID() as `${string}-${string}-${string}-${string}-${string}`,
@@ -152,7 +157,7 @@ describe('SDKMessageHandler', () => {
 
 			await handler.handleMessage(message);
 
-			// Should publish both sdk.message and delta
+			// Should publish via state.sdkMessages.delta
 			expect(hubPublishSpy).toHaveBeenCalledWith(
 				'state.sdkMessages.delta',
 				expect.objectContaining({

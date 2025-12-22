@@ -103,8 +103,8 @@ describe('SubscriptionManager', () => {
 			expect(subscribeSpy).toHaveBeenCalled();
 
 			// Verify all session events are subscribed
+			// NOTE: sdk.message removed - messages now arrive via state.sdkMessages.delta
 			const expectedEvents = [
-				'sdk.message',
 				'context.updated',
 				'session.error',
 				'session.interrupted',
@@ -145,7 +145,8 @@ describe('SubscriptionManager', () => {
 			const sessionEvents = freshSubscribeSpy.mock.calls.map((call) => call[0]);
 
 			// Should include session-specific events
-			expect(sessionEvents).toContain('sdk.message');
+			// NOTE: sdk.message removed - messages now arrive via state.sdkMessages.delta
+			expect(sessionEvents).toContain('state.sdkMessages.delta');
 			expect(sessionEvents).toContain('session.error');
 			expect(sessionEvents).toContain('session.interrupted');
 
@@ -208,7 +209,7 @@ describe('SubscriptionManager', () => {
 		it('should return all session event patterns', () => {
 			const patterns = subscriptionManager.getSessionEventPatterns();
 
-			expect(patterns).toContain('sdk.message');
+			// NOTE: sdk.message removed - messages now arrive via state.sdkMessages.delta
 			expect(patterns).toContain('context.updated');
 			expect(patterns).toContain('session.error');
 			expect(patterns).toContain('session.interrupted');
@@ -251,7 +252,8 @@ describe('SubscriptionManager', () => {
 
 			// These are application patterns, not infrastructure
 			expect(globalPatterns).toContain('session.created');
-			expect(sessionPatterns).toContain('sdk.message');
+			// NOTE: sdk.message removed - messages now arrive via state.sdkMessages.delta
+			expect(sessionPatterns).toContain('state.sdkMessages.delta');
 
 			// Infrastructure (MessageHub/Router) has no knowledge of these
 		});
@@ -293,7 +295,8 @@ describe('SubscriptionManager', () => {
 			const patterns = subscriptionManager.getSessionEventPatterns();
 
 			// Should include agent events
-			expect(patterns).toContain('sdk.message');
+			// NOTE: sdk.message removed - messages now arrive via state.sdkMessages.delta
+			expect(patterns).toContain('state.sdkMessages.delta');
 			expect(patterns).toContain('session.interrupted');
 		});
 	});
