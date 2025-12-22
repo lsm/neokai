@@ -7,7 +7,6 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { TestContext } from '../test-utils';
 import { createTestApp, callRPCHandler } from '../test-utils';
-import type { Session } from '@liuboer/shared';
 
 describe('Session Filtering Integration', () => {
 	let ctx: TestContext;
@@ -23,27 +22,27 @@ describe('Session Filtering Integration', () => {
 	describe('Server-side filtering based on showArchived', () => {
 		test('filters out archived sessions by default', async () => {
 			// Create 3 sessions
-			const session1 = await ctx.sessionManager.createSession({
+			const session1Id = await ctx.sessionManager.createSession({
 				workspacePath: ctx.workspacePath,
 			});
-			const session2 = await ctx.sessionManager.createSession({
+			const session2Id = await ctx.sessionManager.createSession({
 				workspacePath: ctx.workspacePath,
 			});
-			const session3 = await ctx.sessionManager.createSession({
+			const session3Id = await ctx.sessionManager.createSession({
 				workspacePath: ctx.workspacePath,
 			});
 
 			// Archive session2
-			await ctx.sessionManager.updateSession(session2.id, { status: 'archived' });
+			await ctx.sessionManager.updateSession(session2Id, { status: 'archived' });
 
 			// Get sessions via state manager (simulates what client receives)
 			const sessionsState = await ctx.stateManager['getSessionsState']();
 
 			// Should only return active sessions (session1 and session3)
 			expect(sessionsState.sessions).toHaveLength(2);
-			expect(sessionsState.sessions.find((s) => s.id === session1.id)).toBeDefined();
-			expect(sessionsState.sessions.find((s) => s.id === session3.id)).toBeDefined();
-			expect(sessionsState.sessions.find((s) => s.id === session2.id)).toBeUndefined();
+			expect(sessionsState.sessions.find((s) => s.id === session1Id)).toBeDefined();
+			expect(sessionsState.sessions.find((s) => s.id === session3Id)).toBeDefined();
+			expect(sessionsState.sessions.find((s) => s.id === session2Id)).toBeUndefined();
 
 			// Should indicate that archived sessions exist
 			expect(sessionsState.hasArchivedSessions).toBe(true);
@@ -51,13 +50,13 @@ describe('Session Filtering Integration', () => {
 
 		test('includes archived sessions when showArchived is true', async () => {
 			// Create and archive a session
-			const session1 = await ctx.sessionManager.createSession({
+			const session1Id = await ctx.sessionManager.createSession({
 				workspacePath: ctx.workspacePath,
 			});
-			const session2 = await ctx.sessionManager.createSession({
+			const session2Id = await ctx.sessionManager.createSession({
 				workspacePath: ctx.workspacePath,
 			});
-			await ctx.sessionManager.updateSession(session2.id, { status: 'archived' });
+			await ctx.sessionManager.updateSession(session2Id, { status: 'archived' });
 
 			// Enable showArchived
 			await callRPCHandler(ctx.messageHub, 'settings.global.update', {
@@ -69,8 +68,8 @@ describe('Session Filtering Integration', () => {
 
 			// Should include both active and archived sessions
 			expect(sessionsState.sessions).toHaveLength(2);
-			expect(sessionsState.sessions.find((s) => s.id === session1.id)).toBeDefined();
-			expect(sessionsState.sessions.find((s) => s.id === session2.id)).toBeDefined();
+			expect(sessionsState.sessions.find((s) => s.id === session1Id)).toBeDefined();
+			expect(sessionsState.sessions.find((s) => s.id === session2Id)).toBeDefined();
 			expect(sessionsState.hasArchivedSessions).toBe(true);
 		});
 
@@ -87,10 +86,10 @@ describe('Session Filtering Integration', () => {
 
 		test('hasArchivedSessions is true even when showArchived is false', async () => {
 			// Create and archive a session
-			const session = await ctx.sessionManager.createSession({
+			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: ctx.workspacePath,
 			});
-			await ctx.sessionManager.updateSession(session.id, { status: 'archived' });
+			await ctx.sessionManager.updateSession(sessionId, { status: 'archived' });
 
 			// Ensure showArchived is false (default)
 			const settings = ctx.settingsManager.getGlobalSettings();
@@ -107,18 +106,18 @@ describe('Session Filtering Integration', () => {
 
 		test('toggling showArchived updates filtered sessions', async () => {
 			// Create sessions
-			const activeSession = await ctx.sessionManager.createSession({
+			const activeSessionId = await ctx.sessionManager.createSession({
 				workspacePath: ctx.workspacePath,
 			});
-			const archivedSession = await ctx.sessionManager.createSession({
+			const archivedSessionId = await ctx.sessionManager.createSession({
 				workspacePath: ctx.workspacePath,
 			});
-			await ctx.sessionManager.updateSession(archivedSession.id, { status: 'archived' });
+			await ctx.sessionManager.updateSession(archivedSessionId, { status: 'archived' });
 
 			// Initially, only active session is visible
 			let sessionsState = await ctx.stateManager['getSessionsState']();
 			expect(sessionsState.sessions).toHaveLength(1);
-			expect(sessionsState.sessions[0].id).toBe(activeSession.id);
+			expect(sessionsState.sessions[0].id).toBe(activeSessionId);
 
 			// Enable showArchived
 			await callRPCHandler(ctx.messageHub, 'settings.global.update', {
@@ -137,23 +136,23 @@ describe('Session Filtering Integration', () => {
 			// Back to only active session
 			sessionsState = await ctx.stateManager['getSessionsState']();
 			expect(sessionsState.sessions).toHaveLength(1);
-			expect(sessionsState.sessions[0].id).toBe(activeSession.id);
+			expect(sessionsState.sessions[0].id).toBe(activeSessionId);
 		});
 
 		test('filters work with multiple archived sessions', async () => {
 			// Create 5 sessions, archive 3 of them
-			const sessions: Session[] = [];
+			const sessionIds: string[] = [];
 			for (let i = 0; i < 5; i++) {
-				const session = await ctx.sessionManager.createSession({
+				const sessionId = await ctx.sessionManager.createSession({
 					workspacePath: ctx.workspacePath,
 				});
-				sessions.push(session);
+				sessionIds.push(sessionId);
 			}
 
 			// Archive sessions at indices 1, 2, and 4
-			await ctx.sessionManager.updateSession(sessions[1].id, { status: 'archived' });
-			await ctx.sessionManager.updateSession(sessions[2].id, { status: 'archived' });
-			await ctx.sessionManager.updateSession(sessions[4].id, { status: 'archived' });
+			await ctx.sessionManager.updateSession(sessionIds[1], { status: 'archived' });
+			await ctx.sessionManager.updateSession(sessionIds[2], { status: 'archived' });
+			await ctx.sessionManager.updateSession(sessionIds[4], { status: 'archived' });
 
 			// Default: should show only 2 active sessions
 			let sessionsState = await ctx.stateManager['getSessionsState']();
@@ -180,15 +179,15 @@ describe('Session Filtering Integration', () => {
 
 		test('handles all sessions being archived', async () => {
 			// Create sessions and archive all
-			const session1 = await ctx.sessionManager.createSession({
+			const session1Id = await ctx.sessionManager.createSession({
 				workspacePath: ctx.workspacePath,
 			});
-			const session2 = await ctx.sessionManager.createSession({
+			const session2Id = await ctx.sessionManager.createSession({
 				workspacePath: ctx.workspacePath,
 			});
 
-			await ctx.sessionManager.updateSession(session1.id, { status: 'archived' });
-			await ctx.sessionManager.updateSession(session2.id, { status: 'archived' });
+			await ctx.sessionManager.updateSession(session1Id, { status: 'archived' });
+			await ctx.sessionManager.updateSession(session2Id, { status: 'archived' });
 
 			// With showArchived=false, should show empty list
 			let sessionsState = await ctx.stateManager['getSessionsState']();
@@ -205,7 +204,7 @@ describe('Session Filtering Integration', () => {
 		});
 
 		test('handles session status change from active to archived', async () => {
-			const session = await ctx.sessionManager.createSession({
+			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: ctx.workspacePath,
 			});
 
@@ -215,7 +214,7 @@ describe('Session Filtering Integration', () => {
 			expect(sessionsState.hasArchivedSessions).toBe(false);
 
 			// Archive it
-			await ctx.sessionManager.updateSession(session.id, { status: 'archived' });
+			await ctx.sessionManager.updateSession(sessionId, { status: 'archived' });
 
 			// Should be filtered out
 			sessionsState = await ctx.stateManager['getSessionsState']();
@@ -223,7 +222,7 @@ describe('Session Filtering Integration', () => {
 			expect(sessionsState.hasArchivedSessions).toBe(true);
 
 			// Unarchive it
-			await ctx.sessionManager.updateSession(session.id, { status: 'active' });
+			await ctx.sessionManager.updateSession(sessionId, { status: 'active' });
 
 			// Should be visible again
 			sessionsState = await ctx.stateManager['getSessionsState']();

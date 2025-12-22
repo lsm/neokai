@@ -232,7 +232,7 @@ export default function Sidebar() {
 								onClick={handleLoadMore}
 								class="w-full py-2 px-4 text-sm text-gray-400 hover:text-gray-200 hover:bg-dark-800 rounded-lg transition-colors border border-dark-700 hover:border-dark-600"
 							>
-								Load More ({filteredSessions.length - visibleCount} remaining)
+								Load More ({sessionsList.length - visibleCount} remaining)
 							</button>
 						</div>
 					)}

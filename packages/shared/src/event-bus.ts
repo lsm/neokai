@@ -59,6 +59,7 @@ export interface EventMap {
 
 	// Settings events
 	'settings:updated': { settings: import('./types/settings.ts').GlobalSettings };
+	'sessions:filter-changed': Record<string, never>; // Empty payload - triggers sessions list re-broadcast
 
 	// Commands events
 	'commands:updated': { sessionId: string; commands: string[] };

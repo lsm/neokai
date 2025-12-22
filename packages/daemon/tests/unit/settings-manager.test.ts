@@ -106,6 +106,7 @@ describe('SettingsManager', () => {
 				permissionMode: 'acceptEdits',
 				maxThinkingTokens: 10000,
 				disabledMcpServers: ['server1'],
+				showArchived: false,
 			};
 
 			settingsManager.saveGlobalSettings(customSettings);
