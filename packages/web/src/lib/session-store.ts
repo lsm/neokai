@@ -1,13 +1,13 @@
 /**
- * SessionStore - Unified session state management with single subscription source
+ * SessionStore - Unified session state management with pure WebSocket architecture
  *
- * ARCHITECTURE: Fixes subscription storm by consolidating all session subscriptions
- * into a single store with promise-chain locking for atomic session switches.
- *
- * Key features:
+ * ARCHITECTURE: Pure WebSocket (no REST API)
+ * - Initial state: Fetched via RPC over WebSocket on session select
+ * - Updates: Real-time via state channel subscriptions
+ * - Pagination: Loaded via RPC over WebSocket
  * - Single subscription source (replaces StateChannel + useSessionSubscriptions)
  * - Promise-chain lock for atomic session switching
- * - 3 subscriptions per session (sdk.message not needed - messages arrive via state.sdkMessages)
+ * - 2 subscriptions per session (state.session + state.sdkMessages.delta)
  * - 6 operations per switch (reduced from 50+)
  *
  * Signals (reactive state):
@@ -146,6 +146,11 @@ class SessionStore {
 	 * NOTE: sdk.message subscription removed - the SDK's query() with AsyncGenerator
 	 * yields complete messages, not stream_event tokens. Messages arrive via
 	 * state.sdkMessages and state.sdkMessages.delta channels.
+	 *
+	 * ARCHITECTURE: Pure WebSocket
+	 * - Subscriptions set up handlers for future events
+	 * - Initial state fetched via RPC calls (over same WebSocket)
+	 * - No REST API calls needed
 	 */
 	private async startSubscriptions(sessionId: string): Promise<void> {
 		try {
@@ -171,17 +176,8 @@ class SessionStore {
 			);
 			this.cleanupFunctions.push(unsubSessionState);
 
-			// 2. SDK messages full state
-			const unsubSDKMessages = hub.subscribeOptimistic<{ sdkMessages: SDKMessage[] }>(
-				'state.sdkMessages',
-				(state) => {
-					this.sdkMessages.value = state.sdkMessages || [];
-				},
-				{ sessionId }
-			);
-			this.cleanupFunctions.push(unsubSDKMessages);
-
-			// 3. SDK messages delta (for incremental updates)
+			// 2. SDK messages delta (for incremental updates)
+			// Set up BEFORE fetching initial state to avoid race conditions
 			const unsubSDKMessagesDelta = hub.subscribeOptimistic<{ added?: SDKMessage[] }>(
 				'state.sdkMessages.delta',
 				(delta) => {
@@ -192,9 +188,45 @@ class SessionStore {
 				{ sessionId }
 			);
 			this.cleanupFunctions.push(unsubSDKMessagesDelta);
+
+			// 3. Fetch initial state via RPC (pure WebSocket - no REST API)
+			// This replaces the old REST API calls and state.sdkMessages subscription
+			await this.fetchInitialState(hub, sessionId);
 		} catch (err) {
 			console.error('[SessionStore] Failed to start subscriptions:', err);
 			toast.error('Failed to connect to daemon');
+		}
+	}
+
+	/**
+	 * Fetch initial state via RPC calls (pure WebSocket)
+	 * Replaces REST API calls for session data and messages
+	 */
+	private async fetchInitialState(
+		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+		sessionId: string
+	): Promise<void> {
+		try {
+			// Fetch session state and messages in parallel
+			const [sessionState, messagesState] = await Promise.all([
+				hub.call<SessionState>('state.session', { sessionId }),
+				hub.call<{ sdkMessages: SDKMessage[] }>('state.sdkMessages', { sessionId }),
+			]);
+
+			// Update signals with initial state
+			if (sessionState) {
+				this.sessionState.value = sessionState;
+				if (sessionState.commandsData?.availableCommands) {
+					slashCommandsSignal.value = sessionState.commandsData.availableCommands;
+				}
+			}
+
+			if (messagesState?.sdkMessages) {
+				this.sdkMessages.value = messagesState.sdkMessages;
+			}
+		} catch (err) {
+			console.error('[SessionStore] Failed to fetch initial state:', err);
+			// Don't show toast here - subscriptions are still active and will receive updates
 		}
 	}
 
@@ -244,7 +276,7 @@ class SessionStore {
 
 	/**
 	 * Prepend older messages (for pagination)
-	 * Used when loading older messages via REST API
+	 * Used when loading older messages via RPC
 	 */
 	prependMessages(messages: SDKMessage[]): void {
 		if (messages.length === 0) return;
@@ -252,10 +284,58 @@ class SessionStore {
 	}
 
 	/**
-	 * Get message count for determining if more messages exist
+	 * Get current message count (local)
 	 */
 	get messageCount(): number {
 		return this.sdkMessages.value.length;
+	}
+
+	/**
+	 * Get total message count from server via RPC
+	 * Used for pagination to determine if more messages exist
+	 */
+	async getTotalMessageCount(): Promise<number> {
+		const sessionId = this.activeSessionId.value;
+		if (!sessionId) return 0;
+
+		try {
+			const hub = await connectionManager.getHub();
+			const result = await hub.call<{ count: number }>('message.count', { sessionId });
+			return result?.count ?? 0;
+		} catch (err) {
+			console.error('[SessionStore] Failed to get message count:', err);
+			return 0;
+		}
+	}
+
+	/**
+	 * Load older messages for pagination via RPC
+	 * Returns the messages and whether more exist
+	 */
+	async loadOlderMessages(
+		beforeTimestamp: number,
+		limit = 100
+	): Promise<{ messages: SDKMessage[]; hasMore: boolean }> {
+		const sessionId = this.activeSessionId.value;
+		if (!sessionId) return { messages: [], hasMore: false };
+
+		try {
+			const hub = await connectionManager.getHub();
+			const result = await hub.call<{ sdkMessages: SDKMessage[] }>('message.sdkMessages', {
+				sessionId,
+				before: beforeTimestamp,
+				limit,
+			});
+
+			const messages = result?.sdkMessages ?? [];
+			return {
+				messages,
+				hasMore: messages.length === limit,
+			};
+		} catch (err) {
+			console.error('[SessionStore] Failed to load older messages:', err);
+			throw err;
+		}
 	}
 }
 

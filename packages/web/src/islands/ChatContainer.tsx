@@ -4,9 +4,11 @@
  * Main chat interface for displaying messages and handling user interaction.
  * Uses sessionStore as single source of truth for all session state.
  *
- * Architecture:
+ * Architecture (Pure WebSocket):
  * - sessionStore: All session state (messages, errors, session info, context, agent state)
- * - usePaginationLoader: Pagination only (load older messages via REST API)
+ * - Initial data: Fetched via RPC over WebSocket (no REST API)
+ * - Updates: Real-time via state channel subscriptions
+ * - Pagination: Loaded via RPC over WebSocket
  * - useSessionActions: Session actions (delete, archive, reset, export)
  *
  * NOTE: Stream events removed - the SDK's query() with AsyncGenerator yields
@@ -18,7 +20,7 @@ import { useEffect, useRef, useCallback, useMemo, useState } from 'preact/hooks'
 import { useSignalEffect } from '@preact/signals';
 import type { MessageImage } from '@liuboer/shared';
 import type { SDKMessage, SDKSystemMessage } from '@liuboer/shared/sdk/sdk.d.ts';
-import { updateSession, getSession, getSDKMessages, getMessageCount } from '../lib/api-helpers.ts';
+import { updateSession } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
 import { cn } from '../lib/utils.ts';
 import { connectionState } from '../lib/state.ts';
@@ -61,9 +63,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
 
 	// ========================================
-	// Local State (pagination, loading, autoScroll)
+	// Local State (pagination, autoScroll)
 	// ========================================
-	const [loading, setLoading] = useState(true);
 	const [loadingOlder, setLoadingOlder] = useState(false);
 	const [hasMoreMessages, setHasMoreMessages] = useState(true);
 	const [isInitialLoad, setIsInitialLoad] = useState(true);
@@ -136,23 +137,16 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	});
 
 	// ========================================
-	// Initial Load (session info + message count for pagination)
+	// Pagination Check (on session load)
 	// ========================================
-	const loadSession = useCallback(async () => {
+	const checkPagination = useCallback(async () => {
 		try {
-			setLoading(true);
-			setLocalError(null);
 			setIsInitialLoad(true);
+			setLocalError(null);
 
-			// Load session info via REST (for initial data before WebSocket connects)
-			const response = await getSession(sessionId);
-			setAutoScroll(response.session.config.autoScroll ?? false);
-
-			// Get message count for pagination
-			const countResponse = await getMessageCount(sessionId);
-			// sessionStore.sdkMessages will be populated via WebSocket subscription
-			// We use count to determine if there are more messages to load
-			setHasMoreMessages(countResponse.count > 100);
+			// Get total message count via RPC for pagination
+			const totalCount = await sessionStore.getTotalMessageCount();
+			setHasMoreMessages(totalCount > 100);
 		} catch (err) {
 			const message = err instanceof Error ? err.message : 'Failed to load session';
 			if (message.includes('Session not found') || message.includes('404')) {
@@ -161,14 +155,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				return;
 			}
 			setLocalError(message);
-			toast.error(message);
-		} finally {
-			setLoading(false);
 		}
-	}, [sessionId]);
+	}, []);
 
 	// ========================================
-	// Pagination (load older messages)
+	// Pagination (load older messages via RPC - pure WebSocket)
 	// ========================================
 	const loadOlderMessages = useCallback(async () => {
 		if (loadingOlder || !hasMoreMessages || messages.length === 0) return;
@@ -187,15 +178,17 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				return;
 			}
 
-			const sdkResponse = await getSDKMessages(sessionId, { limit: 100, before: beforeTimestamp });
-			if (sdkResponse.sdkMessages.length === 0) {
+			// Load older messages via sessionStore RPC (pure WebSocket)
+			const { messages: olderMessages, hasMore } =
+				await sessionStore.loadOlderMessages(beforeTimestamp);
+			if (olderMessages.length === 0) {
 				setHasMoreMessages(false);
 				return;
 			}
 
 			// Prepend older messages to sessionStore
-			sessionStore.prependMessages(sdkResponse.sdkMessages as SDKMessage[]);
-			setHasMoreMessages(sdkResponse.sdkMessages.length === 100);
+			sessionStore.prependMessages(olderMessages);
+			setHasMoreMessages(hasMore);
 
 			// Restore scroll position
 			requestAnimationFrame(() => {
@@ -209,7 +202,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		} finally {
 			setLoadingOlder(false);
 		}
-	}, [sessionId, loadingOlder, hasMoreMessages, messages]);
+	}, [loadingOlder, hasMoreMessages, messages]);
 
 	// ========================================
 	// Send Message
@@ -234,10 +227,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// Effects
 	// ========================================
 
-	// Load session on mount / session change
+	// Check pagination on mount / session change
+	// Initial data is loaded via sessionStore.select() in App.tsx
 	useEffect(() => {
-		loadSession();
-	}, [sessionId, loadSession]);
+		checkPagination();
+	}, [sessionId, checkPagination]);
 
 	// ========================================
 	// Auto-scroll
@@ -353,6 +347,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// Combined error (local + store)
 	const error = localError || storeError?.message || null;
 
+	// Derive loading state from sessionStore (session is null means still loading)
+	const loading = session === null && !error;
+
 	// Render loading state
 	if (loading) {
 		return (
@@ -370,7 +367,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		);
 	}
 
-	// Render error state
+	// Render error state (with retry via sessionStore re-selection)
 	if (error && !session) {
 		return (
 			<div class="flex-1 flex items-center justify-center bg-dark-900">
@@ -378,7 +375,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					<div class="text-5xl mb-4">⚠️</div>
 					<h3 class="text-lg font-semibold text-gray-100 mb-2">Failed to load session</h3>
 					<p class="text-sm text-gray-400 mb-4">{error}</p>
-					<Button onClick={loadSession}>Retry</Button>
+					<Button onClick={() => sessionStore.select(sessionId)}>Retry</Button>
 				</div>
 			</div>
 		);
