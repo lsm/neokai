@@ -171,7 +171,9 @@ export class StateChannel<T> {
 	 * waits for ACK).
 	 */
 	async stop(): Promise<void> {
-		console.log(`[StateChannel] Stopping channel: ${this.channelName} (${this.subscriptions.length} subscriptions)`);
+		console.log(
+			`[StateChannel] Stopping channel: ${this.channelName} (${this.subscriptions.length} subscriptions)`
+		);
 
 		// Unsubscribe from all events (AWAIT to ensure unsubscribe completes)
 		await Promise.all(this.subscriptions.map((unsub) => unsub()));
