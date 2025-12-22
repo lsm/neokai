@@ -329,12 +329,25 @@ export class AgentSession {
 		// Save to database
 		this.db.saveSDKMessage(this.session.id, sdkUserMessage);
 
-		// Publish to UI immediately
-		await this.messageHub.publish('sdk.message', sdkUserMessage, {
-			sessionId: this.session.id,
-		});
+		// Publish to UI immediately (fire-and-forget to avoid blocking RPC)
+		// This prevents "Message send timed out" errors when WebSocket is slow
+		this.messageHub
+			.publish('sdk.message', sdkUserMessage, {
+				sessionId: this.session.id,
+			})
+			.catch(async (err) => {
+				this.logger.error('Failed to publish user message to UI:', err);
+				// Report to UI via error manager (non-fatal warning)
+				await this.errorManager.handleError(
+					this.session.id,
+					err as Error,
+					ErrorCategory.CONNECTION,
+					'Failed to display your message in real-time. The message was saved and will be processed.',
+					this.stateManager.getState()
+				);
+			});
 
-		this.logger.log(`User message ${messageId} persisted and published for instant UI display`);
+		this.logger.log(`User message ${messageId} persisted and publishing to UI`);
 
 		return { messageId, messageContent };
 	}
