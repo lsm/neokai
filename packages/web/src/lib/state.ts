@@ -238,15 +238,31 @@ class ApplicationState {
 
 	/**
 	 * Setup auto-loading of current session channels
+	 *
+	 * FIX: Cleanup previous session's channels when switching sessions.
+	 * This prevents subscription accumulation that caused the "subscription storm"
+	 * on reconnection. Only the ACTIVE session should have subscriptions.
+	 *
+	 * Before: Open 30 sessions → 4 global + 90 session = 94 subscriptions (never cleaned up)
+	 * After: Open 30 sessions → 4 global + 3 session = 7 subscriptions (only active session)
 	 */
 	private setupCurrentSessionAutoLoad(): void {
-		// Watch for current session changes and auto-load channels
-		// FIX: Store the unsubscribe function to prevent memory leaks
+		let previousSessionId: string | null = null;
+
 		const unsub = this.currentSessionIdSignal.subscribe((sessionId) => {
+			// CLEANUP: Stop previous session's channels before starting new ones
+			// This prevents subscription accumulation across session switches
+			if (previousSessionId && previousSessionId !== sessionId) {
+				console.log(`[State] Cleaning up channels for previous session: ${previousSessionId}`);
+				this.cleanupSessionChannels(previousSessionId);
+			}
+
+			// START: Load channels for new current session
 			if (sessionId) {
-				// Ensure channels are loaded for current session
 				this.getSessionChannels(sessionId);
 			}
+
+			previousSessionId = sessionId;
 		});
 		this.subscriptions.push(unsub);
 	}
