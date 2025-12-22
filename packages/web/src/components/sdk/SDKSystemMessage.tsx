@@ -8,6 +8,7 @@
  * - hook_response: Hook execution results
  */
 
+import { useState } from 'preact/hooks';
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
 import {
 	isSDKSystemInit,
@@ -15,17 +16,15 @@ import {
 	isSDKStatusMessage,
 	isSDKHookResponse,
 } from '@liuboer/shared/sdk/type-guards';
-import { useState, useRef, useLayoutEffect } from 'preact/hooks';
+import { customColors } from '../../lib/design-tokens.ts';
 
 type SystemMessage = Extract<SDKMessage, { type: 'system' }>;
 
 interface Props {
 	message: SystemMessage;
-	/** Optional synthetic content to display inside compact boundary */
-	syntheticContent?: string;
 }
 
-export function SDKSystemMessage({ message, syntheticContent }: Props) {
+export function SDKSystemMessage({ message }: Props) {
 	// Init message - session started
 	if (isSDKSystemInit(message)) {
 		return <SystemInitMessage message={message} />;
@@ -33,7 +32,7 @@ export function SDKSystemMessage({ message, syntheticContent }: Props) {
 
 	// Compact boundary - shows when message compaction occurred
 	if (isSDKCompactBoundary(message)) {
-		return <CompactBoundaryMessage message={message} syntheticContent={syntheticContent} />;
+		return <CompactBoundaryMessage message={message} />;
 	}
 
 	// Status message
@@ -41,9 +40,17 @@ export function SDKSystemMessage({ message, syntheticContent }: Props) {
 		if (message.status === 'compacting') {
 			return (
 				<div class="flex items-center gap-3 py-4">
-					<div class="flex-1 h-px bg-blue-300 dark:bg-blue-700"></div>
-					<span class="text-xs font-medium text-blue-600 dark:text-blue-400">Compact Boundary</span>
-					<div class="flex-1 h-px bg-blue-300 dark:bg-blue-700"></div>
+					<div
+						class="flex-1 h-px"
+						style={{ backgroundColor: customColors.canaryYellow.light }}
+					></div>
+					<span class="text-xs font-medium text-yellow-600 dark:text-yellow-400">
+						Compact Boundary
+					</span>
+					<div
+						class="flex-1 h-px"
+						style={{ backgroundColor: customColors.canaryYellow.light }}
+					></div>
 				</div>
 			);
 		}
@@ -218,139 +225,89 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
 }
 
 /**
- * Compact Boundary Message - Shows compaction metadata with optional synthetic content
- * Styled similarly to ThinkingBlock for consistency
+ * Compact Boundary Message - Shows compaction metadata only
  */
 function CompactBoundaryMessage({
 	message,
-	syntheticContent,
 }: {
 	message: Extract<SystemMessage, { subtype: 'compact_boundary' }>;
-	syntheticContent?: string;
 }) {
 	const [isExpanded, setIsExpanded] = useState(false);
-	const [needsTruncation, setNeedsTruncation] = useState(false);
-	const contentRef = useRef<HTMLDivElement>(null);
+
+	// Yellow/amber color scheme with canary yellow borders for visibility
+	const colors = {
+		bg: 'bg-yellow-50 dark:bg-yellow-900/20',
+		text: 'text-yellow-900 dark:text-yellow-100',
+		borderColor: customColors.canaryYellow.light,
+		iconColor: 'text-yellow-600 dark:text-yellow-400',
+		lightText: 'text-yellow-700 dark:text-yellow-300',
+	};
 
 	const trigger = message.compact_metadata.trigger === 'manual' ? 'Manual' : 'Auto';
 	const preTokens = message.compact_metadata.pre_tokens.toLocaleString();
 
-	// Number of lines to show in preview mode (same as ThinkingBlock)
-	const PREVIEW_LINE_COUNT = 6;
-	const LINE_HEIGHT_PX = 20;
-	const PREVIEW_MAX_HEIGHT = PREVIEW_LINE_COUNT * LINE_HEIGHT_PX;
-
-	// Check if content exceeds preview height
-	useLayoutEffect(() => {
-		if (contentRef.current && syntheticContent) {
-			const scrollHeight = contentRef.current.scrollHeight;
-			setNeedsTruncation(scrollHeight > PREVIEW_MAX_HEIGHT);
-		}
-	}, [syntheticContent]);
-
-	// Blue color scheme for compact blocks (matching thinking block pattern)
-	const colors = {
-		bg: 'bg-blue-50 dark:bg-blue-900/20',
-		text: 'text-blue-900 dark:text-blue-100',
-		border: 'border-blue-200 dark:border-blue-800',
-		iconColor: 'text-blue-600 dark:text-blue-400',
-		lightText: 'text-blue-700 dark:text-blue-300',
-	};
-
 	return (
-		<div class="my-4">
-			<div class={`border rounded-lg overflow-hidden ${colors.bg} ${colors.border}`}>
-				{/* Header */}
-				<div class={`flex items-center gap-2 px-3 py-2 ${colors.bg}`}>
-					{/* Compact icon */}
-					<svg
-						class={`w-4 h-4 flex-shrink-0 ${colors.iconColor}`}
-						fill="none"
-						stroke="currentColor"
-						viewBox="0 0 24 24"
-					>
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M4 7h16M4 12h16M4 17h16"
-						/>
-					</svg>
-					<span class={`text-sm font-semibold ${colors.text}`}>Messages Compacted</span>
-					<span class={`text-xs ${colors.lightText}`}>
-						• {trigger} trigger • {preTokens} tokens before compaction
-					</span>
-				</div>
-
-				{/* Content area - only show if there's synthetic content */}
-				{syntheticContent && (
-					<div class={`relative border-t ${colors.border}`}>
-						<div
-							class={`p-3 bg-white dark:bg-gray-900 ${!isExpanded && needsTruncation ? 'overflow-hidden' : ''}`}
-							style={
-								!isExpanded && needsTruncation ? { maxHeight: `${PREVIEW_MAX_HEIGHT + 24}px` } : {}
-							}
+		<div class="my-2">
+			<div
+				class={`border rounded-lg overflow-hidden ${colors.bg}`}
+				style={{ borderColor: colors.borderColor }}
+			>
+				{/* Header - clickable to expand/collapse */}
+				<button
+					onClick={() => setIsExpanded(!isExpanded)}
+					class="w-full flex items-center justify-between p-3 transition-colors hover:bg-opacity-80 dark:hover:bg-opacity-80"
+				>
+					<div class="flex items-center gap-2 min-w-0 flex-1">
+						{/* Compress/zip icon */}
+						<svg
+							class={`w-5 h-5 flex-shrink-0 ${colors.iconColor}`}
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
 						>
-							<div ref={contentRef} class={`text-sm whitespace-pre-wrap ${colors.text}`}>
-								{syntheticContent}
-							</div>
-						</div>
-
-						{/* Gradient fade overlay when truncated and not expanded */}
-						{needsTruncation && !isExpanded && (
-							<div
-								class="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-white dark:from-gray-900 to-transparent pointer-events-none"
-								aria-hidden="true"
+							<path
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								strokeWidth={2}
+								d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
 							/>
-						)}
+						</svg>
+						<span class={`font-semibold text-sm flex-shrink-0 ${colors.text}`}>Compact</span>
+						<span class={`text-sm font-mono truncate ${colors.lightText}`}>
+							{trigger} • {preTokens} tokens
+						</span>
+					</div>
 
-						{/* Expand/Collapse button at bottom edge */}
-						{needsTruncation && (
-							<div
-								class={`flex justify-center py-2 border-t bg-white dark:bg-gray-900 ${colors.border}`}
-							>
-								<button
-									onClick={() => setIsExpanded(!isExpanded)}
-									class={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors hover:bg-blue-100 dark:hover:bg-blue-900/40 ${colors.text}`}
-								>
-									{isExpanded ? (
-										<>
-											<svg
-												class="w-3.5 h-3.5"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													strokeLinecap="round"
-													strokeLinejoin="round"
-													strokeWidth={2}
-													d="M5 15l7-7 7 7"
-												/>
-											</svg>
-											Show less
-										</>
-									) : (
-										<>
-											<svg
-												class="w-3.5 h-3.5"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													strokeLinecap="round"
-													strokeLinejoin="round"
-													strokeWidth={2}
-													d="M19 9l-7 7-7-7"
-												/>
-											</svg>
-											Show more
-										</>
-									)}
-								</button>
-							</div>
-						)}
+					<div class="flex items-center gap-2 flex-shrink-0">
+						{/* Chevron icon */}
+						<svg
+							class={`w-5 h-5 transition-transform ${colors.iconColor} ${isExpanded ? 'rotate-180' : ''}`}
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+						>
+							<path
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								strokeWidth={2}
+								d="M19 9l-7 7-7-7"
+							/>
+						</svg>
+					</div>
+				</button>
+
+				{/* Expanded content - metadata details */}
+				{isExpanded && (
+					<div
+						class="p-3 border-t bg-white dark:bg-gray-900"
+						style={{ borderColor: colors.borderColor }}
+					>
+						<div class={`text-xs font-semibold mb-2 ${colors.lightText}`}>Metadata:</div>
+						<pre
+							class={`text-xs font-mono whitespace-pre-wrap overflow-x-auto bg-yellow-100 dark:bg-yellow-900/30 p-2 rounded ${colors.text}`}
+						>
+							{JSON.stringify(message.compact_metadata, null, 2)}
+						</pre>
 					</div>
 				)}
 			</div>

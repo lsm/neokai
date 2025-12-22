@@ -314,8 +314,6 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 											? (maps.sessionInfoMap.get(msg.uuid) as SDKSystemMessage | undefined)
 											: undefined
 									}
-									syntheticContent={msg.uuid ? maps.compactSyntheticMap.get(msg.uuid) : undefined}
-									skipSynthetic={msg.uuid ? maps.skipSyntheticSet.has(msg.uuid) : false}
 								/>
 							))}
 

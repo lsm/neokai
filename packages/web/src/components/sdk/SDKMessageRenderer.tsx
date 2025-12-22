@@ -30,8 +30,6 @@ interface Props {
 	toolResultsMap?: Map<string, unknown>;
 	toolInputsMap?: Map<string, unknown>;
 	sessionInfo?: SystemInitMessage; // Optional session init info to attach to user messages
-	syntheticContent?: string; // Optional synthetic content for compact boundary messages
-	skipSynthetic?: boolean; // Whether to skip rendering this synthetic message
 }
 
 /**
@@ -46,14 +44,7 @@ function isSubagentMessage(message: SDKMessage): boolean {
 /**
  * Main SDK message renderer - routes to appropriate sub-renderer
  */
-export function SDKMessageRenderer({
-	message,
-	toolResultsMap,
-	toolInputsMap,
-	sessionInfo,
-	syntheticContent,
-	skipSynthetic,
-}: Props) {
+export function SDKMessageRenderer({ message, toolResultsMap, toolInputsMap, sessionInfo }: Props) {
 	// Skip messages that shouldn't be shown to user (e.g., stream events)
 	if (!isUserVisibleMessage(message)) {
 		return null;
@@ -66,13 +57,6 @@ export function SDKMessageRenderer({
 
 	// Skip sub-agent messages - they're now shown inside SubagentBlock
 	if (isSubagentMessage(message)) {
-		return null;
-	}
-
-	// Skip synthetic messages that are attached to compact boundaries
-	// The skipSynthetic flag is set by ChatContainer when this message's UUID
-	// is in skipSyntheticSet (determined by isSynthetic flag OR content pattern)
-	if (skipSynthetic) {
 		return null;
 	}
 
@@ -95,7 +79,7 @@ export function SDKMessageRenderer({
 	}
 
 	if (isSDKSystemMessage(message)) {
-		return <SDKSystemMessage message={message} syntheticContent={syntheticContent} />;
+		return <SDKSystemMessage message={message} />;
 	}
 
 	if (isSDKToolProgressMessage(message)) {

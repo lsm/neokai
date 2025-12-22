@@ -101,6 +101,23 @@ export const typography = {
 } as const;
 
 /**
+ * Custom Color Tokens
+ * Additional colors not in Tailwind's default palette
+ */
+export const customColors = {
+	/** Lemon yellow - #FFF44F */
+	lemonYellow: {
+		light: '#FFF44F',
+		dark: '#B8A837', // Darker variant for dark mode
+	},
+	/** Canary yellow - #FFEF00 */
+	canaryYellow: {
+		light: '#FFEF00',
+		dark: '#B8AA00', // Darker variant for dark mode
+	},
+} as const;
+
+/**
  * Border Color Tokens
  * Centralized border colors for consistent styling across all components
  */

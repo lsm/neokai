@@ -231,15 +231,9 @@ export function getMessageTypeDescription(msg: SDKMessage): string {
  * Check if a message should be displayed to the user (vs internal system messages)
  */
 export function isUserVisibleMessage(msg: SDKMessage): boolean {
-	// User should see: assistant, user, result, tool_progress, auth_status, user replays (slash command responses), compaction messages
-	// User should NOT see: stream events (these are intermediate), compact_boundary, compacting status
+	// User should see: assistant, user, result, tool_progress, auth_status, user replays (slash command responses), compact_boundary, compacting status, compaction summaries
+	// User should NOT see: stream events (these are intermediate)
 	if (isSDKStreamEvent(msg)) return false;
-
-	// Hide compact_boundary system messages
-	if (isSDKCompactBoundary(msg)) return false;
-
-	// Hide compacting status messages
-	if (isSDKStatusMessage(msg) && msg.status === 'compacting') return false;
 
 	return true;
 }
