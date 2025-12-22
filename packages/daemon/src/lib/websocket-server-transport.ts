@@ -43,6 +43,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 	private router: MessageHubRouter;
 	private messageHandlers: Set<(message: HubMessage) => void> = new Set();
 	private connectionHandlers: Set<(state: ConnectionState, error?: Error) => void> = new Set();
+	private clientDisconnectHandlers: Set<(clientId: string) => void> = new Set();
 	private debug: boolean;
 	private readonly maxQueueSize: number;
 
@@ -258,6 +259,15 @@ export class WebSocketServerTransport implements IMessageTransport {
 		// Unregister from router
 		this.router.unregisterConnection(clientId);
 
+		// Notify client disconnect handlers (for per-client cleanup like sequence tracking)
+		for (const handler of this.clientDisconnectHandlers) {
+			try {
+				handler(clientId);
+			} catch (error) {
+				console.error(`[${this.name}] Error in client disconnect handler:`, error);
+			}
+		}
+
 		this.log(`Client unregistered: ${clientId}`);
 
 		// Notify connection handlers if no clients left
@@ -334,6 +344,16 @@ export class WebSocketServerTransport implements IMessageTransport {
 		this.connectionHandlers.add(handler);
 		return () => {
 			this.connectionHandlers.delete(handler);
+		};
+	}
+
+	/**
+	 * Subscribe to client disconnect events (for per-client cleanup)
+	 */
+	onClientDisconnect(handler: (clientId: string) => void): () => void {
+		this.clientDisconnectHandlers.add(handler);
+		return () => {
+			this.clientDisconnectHandlers.delete(handler);
 		};
 	}
 

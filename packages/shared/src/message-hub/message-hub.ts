@@ -107,9 +107,11 @@ export class MessageHub {
 	private resubscribing: boolean = false;
 	private pendingEvents: HubMessage[] = [];
 
-	// FIX P1.3: Message sequence tracking (GLOBAL - matches server's global counter)
-	// Server uses single messageSequence counter for ALL messages, so client must track globally
-	private expectedSequence: number | null = null; // null = not yet initialized
+	// FIX P1.3: Message sequence tracking
+	// Client-side: tracks server's global sequence (all messages from server use one counter)
+	// Server-side: tracks per-client sequences (each client has its own counter)
+	private expectedSequence: number | null = null; // For client-side global tracking
+	private expectedSequencePerClient = new Map<string, number>(); // For server-side per-client tracking
 	private readonly warnOnSequenceGap: boolean;
 
 	// FIX: Track in-flight subscription requests to prevent duplicates
@@ -182,11 +184,20 @@ export class MessageHub {
 			this.notifyConnectionStateHandlers(state, error);
 		});
 
+		// Subscribe to client disconnect events (server-side only, for per-client cleanup)
+		let unsubClientDisconnect: (() => void) | undefined;
+		if (transport.onClientDisconnect) {
+			unsubClientDisconnect = transport.onClientDisconnect((clientId) => {
+				this.cleanupClientSequence(clientId);
+			});
+		}
+
 		// Return unregister function
 		return () => {
 			this.transport = null;
 			unsubMessage();
 			unsubConnection();
+			unsubClientDisconnect?.();
 			this.log(`Transport unregistered: ${transport.name}`);
 		};
 	}
@@ -741,26 +752,49 @@ export class MessageHub {
 		this.log(`← Incoming: ${message.type} ${message.method}`, message);
 
 		// FIX P1.3: Validate message sequence (if present)
-		// NOTE: Server uses a GLOBAL sequence counter for all messages, so we track globally
+		// Server-side: track per-client (each client has its own sequence counter)
+		// Client-side: track globally (server uses one global counter for all outgoing messages)
 		if (typeof message.sequence === 'number' && this.warnOnSequenceGap) {
-			if (this.expectedSequence !== null) {
-				// We've seen messages before
-				if (message.sequence < this.expectedSequence) {
-					console.warn(
-						`[MessageHub] Out-of-order message detected: ` +
-							`received sequence ${message.sequence}, expected >= ${this.expectedSequence}`
-					);
-				} else if (message.sequence > this.expectedSequence) {
-					const gap = message.sequence - this.expectedSequence;
-					console.warn(
-						`[MessageHub] Message sequence gap detected: ` +
-							`received sequence ${message.sequence}, expected ${this.expectedSequence} (gap: ${gap} messages)`
-					);
-				}
-			}
+			const clientId = (message as import('./protocol').HubMessageWithMetadata).clientId;
 
-			// Update expected sequence for next message (global)
-			this.expectedSequence = message.sequence + 1;
+			if (this.router && clientId) {
+				// Server-side: use per-client tracking
+				const expectedSeq = this.expectedSequencePerClient.get(clientId);
+				if (expectedSeq !== undefined) {
+					if (message.sequence < expectedSeq) {
+						console.warn(
+							`[MessageHub] Out-of-order message from client ${clientId}: ` +
+								`received sequence ${message.sequence}, expected >= ${expectedSeq}`
+						);
+					} else if (message.sequence > expectedSeq) {
+						const gap = message.sequence - expectedSeq;
+						console.warn(
+							`[MessageHub] Message sequence gap from client ${clientId}: ` +
+								`received sequence ${message.sequence}, expected ${expectedSeq} (gap: ${gap} messages)`
+						);
+					}
+				}
+				// Update expected sequence for this client
+				this.expectedSequencePerClient.set(clientId, message.sequence + 1);
+			} else {
+				// Client-side: use global tracking (server uses single counter)
+				if (this.expectedSequence !== null) {
+					if (message.sequence < this.expectedSequence) {
+						console.warn(
+							`[MessageHub] Out-of-order message detected: ` +
+								`received sequence ${message.sequence}, expected >= ${this.expectedSequence}`
+						);
+					} else if (message.sequence > this.expectedSequence) {
+						const gap = message.sequence - this.expectedSequence;
+						console.warn(
+							`[MessageHub] Message sequence gap detected: ` +
+								`received sequence ${message.sequence}, expected ${this.expectedSequence} (gap: ${gap} messages)`
+						);
+					}
+				}
+				// Update expected sequence for next message (global)
+				this.expectedSequence = message.sequence + 1;
+			}
 		}
 
 		// Notify message handlers
@@ -1417,6 +1451,7 @@ export class MessageHub {
 
 		// FIX P1.3: Clear sequence tracking
 		this.expectedSequence = null;
+		this.expectedSequencePerClient.clear();
 
 		// FIX: Clear in-flight subscription tracking
 		this.inFlightSubscriptions.clear();
@@ -1427,6 +1462,14 @@ export class MessageHub {
 	// ========================================
 	// Utilities
 	// ========================================
+
+	/**
+	 * Clean up sequence tracking for a disconnected client (server-side only)
+	 * Call this when a client disconnects to free up memory
+	 */
+	cleanupClientSequence(clientId: string): void {
+		this.expectedSequencePerClient.delete(clientId);
+	}
 
 	/**
 	 * Debug logging

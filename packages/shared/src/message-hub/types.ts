@@ -325,6 +325,12 @@ export interface IMessageTransport {
 	 * Register handler for connection state changes
 	 */
 	onConnectionChange(handler: ConnectionStateHandler): UnsubscribeFn;
+
+	/**
+	 * Register handler for client disconnect events (server-side only)
+	 * Used for per-client cleanup like sequence tracking
+	 */
+	onClientDisconnect?(handler: (clientId: string) => void): UnsubscribeFn;
 }
 
 /**
