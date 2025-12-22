@@ -47,6 +47,9 @@ mock.module('@liuboer/shared', () => ({
 // Import after mocking
 import { appState, initializeApplicationState, cleanupApplicationState } from '../state';
 
+// Helper to wait for debounced session switching (150ms debounce + buffer)
+const waitForSessionSwitch = () => new Promise((resolve) => setTimeout(resolve, 200));
+
 describe('ApplicationState', () => {
 	let currentSessionId: import('@preact/signals').Signal<string | null>;
 
@@ -155,6 +158,9 @@ describe('ApplicationState', () => {
 			// Change session ID
 			currentSessionId.value = 'auto-load-test-session';
 
+			// Wait for debounced session switch to complete
+			await waitForSessionSwitch();
+
 			// Should have created channels for the session
 			const sessionChannelsAfter = (
 				appState as unknown as { sessionChannels: Map<string, unknown> }
@@ -170,6 +176,9 @@ describe('ApplicationState', () => {
 
 			// Create channels for a session
 			currentSessionId.value = 'cleanup-test-session';
+
+			// Wait for debounced session switch to complete
+			await waitForSessionSwitch();
 
 			const sessionChannels = (appState as unknown as { sessionChannels: Map<string, unknown> })
 				.sessionChannels;
@@ -192,6 +201,9 @@ describe('ApplicationState', () => {
 			currentSessionId.value = 'session-1';
 			currentSessionId.value = 'session-2';
 			currentSessionId.value = 'session-3';
+
+			// Wait for debounced session switch to complete
+			await waitForSessionSwitch();
 
 			const sessionChannelsBefore = (
 				appState as unknown as { sessionChannels: Map<string, unknown> }
@@ -313,6 +325,9 @@ describe('ApplicationState - Edge Cases', () => {
 			currentSessionId.value = `rapid-session-${i}`;
 		}
 
+		// Wait for debounced session switch to complete
+		await waitForSessionSwitch();
+
 		// After cleanup on switch fix: only the last session has channels
 		const sessionChannels = (appState as unknown as { sessionChannels: Map<string, unknown> })
 			.sessionChannels;
@@ -328,14 +343,17 @@ describe('ApplicationState - Edge Cases', () => {
 
 		// Set session
 		currentSessionId.value = 'reuse-test';
+		await waitForSessionSwitch();
 
 		const channels1 = appState.getSessionChannels('reuse-test');
 
-		// Switch away (this will cleanup 'reuse-test' channels)
+		// Switch away (this will cleanup 'reuse-test' channels after debounce)
 		currentSessionId.value = 'other-session';
+		await waitForSessionSwitch();
 
 		// Switch back (this will create new channels)
 		currentSessionId.value = 'reuse-test';
+		await waitForSessionSwitch();
 
 		const channels2 = appState.getSessionChannels('reuse-test');
 
