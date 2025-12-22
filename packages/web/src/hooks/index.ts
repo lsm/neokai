@@ -35,23 +35,11 @@ export {
 	ConnectionNotReadyError,
 } from './useMessageHub';
 export {
-	useSessionSubscriptions,
-	type SessionSubscriptionState,
-	type SessionSubscriptionCallbacks,
-	type UseSessionSubscriptionsOptions,
-	type UseSessionSubscriptionsResult,
-} from './useSessionSubscriptions';
-export {
 	useSessionActions,
 	type ArchiveConfirmState,
 	type UseSessionActionsOptions,
 	type UseSessionActionsResult,
 } from './useSessionActions';
-export {
-	useMessageLoader,
-	type UseMessageLoaderOptions,
-	type UseMessageLoaderResult,
-} from './useMessageLoader';
 export {
 	useSendMessage,
 	type UseSendMessageOptions,

@@ -2,30 +2,35 @@
  * ChatContainer Component
  *
  * Main chat interface for displaying messages and handling user interaction.
- * Refactored to use extracted hooks and components for better separation of concerns.
+ * Uses sessionStore as single source of truth for all session state.
+ *
+ * Architecture:
+ * - sessionStore: All session state (messages, errors, session info, context, agent state)
+ * - usePaginationLoader: Pagination only (load older messages via REST API)
+ * - useSessionActions: Session actions (delete, archive, reset, export)
  *
  * NOTE: Stream events removed - the SDK's query() with AsyncGenerator yields
  * complete messages, not incremental tokens. Processing status shown via
  * agent state from state.session channel.
  */
 
-import { useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
-import type { MessageImage, Session, ContextInfo } from '@liuboer/shared';
+import { useEffect, useRef, useCallback, useMemo, useState } from 'preact/hooks';
+import { useSignalEffect } from '@preact/signals';
+import type { MessageImage } from '@liuboer/shared';
 import type { SDKMessage, SDKSystemMessage } from '@liuboer/shared/sdk/sdk.d.ts';
-import { updateSession } from '../lib/api-helpers.ts';
+import { updateSession, getSession, getSDKMessages, getMessageCount } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
 import { cn } from '../lib/utils.ts';
 import { connectionState } from '../lib/state.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import { sessionStore } from '../lib/session-store.ts';
+import { currentSessionIdSignal } from '../lib/signals.ts';
 
 // Hooks
 import { useModal } from '../hooks/useModal.ts';
 import { useAutoScroll } from '../hooks/useAutoScroll.ts';
 import { useMessageMaps } from '../hooks/useMessageMaps.ts';
-import { useMessageLoader } from '../hooks/useMessageLoader.ts';
 import { useSessionActions } from '../hooks/useSessionActions.ts';
-import { useSessionSubscriptions } from '../hooks/useSessionSubscriptions.ts';
 import { useSendMessage } from '../hooks/useSendMessage.ts';
 
 // Components
@@ -38,7 +43,6 @@ import { ToolsModal } from '../components/ToolsModal.tsx';
 import { Skeleton, SkeletonMessage } from '../components/ui/Skeleton.tsx';
 import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
 import { ErrorDialog } from '../components/ErrorDialog.tsx';
-import type { StructuredError } from '../types/error.ts';
 import { ChatHeader } from '../components/ChatHeader.tsx';
 import { Spinner } from '../components/ui/Spinner.tsx';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
@@ -50,115 +54,217 @@ interface ChatContainerProps {
 }
 
 export default function ChatContainer({ sessionId }: ChatContainerProps) {
+	// ========================================
 	// Refs
+	// ========================================
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
-	const errorDetailsRef = useRef<StructuredError | null>(null);
 
+	// ========================================
+	// Local State (pagination, loading, autoScroll)
+	// ========================================
+	const [loading, setLoading] = useState(true);
+	const [loadingOlder, setLoadingOlder] = useState(false);
+	const [hasMoreMessages, setHasMoreMessages] = useState(true);
+	const [isInitialLoad, setIsInitialLoad] = useState(true);
+	const [localError, setLocalError] = useState<string | null>(null);
+	const [autoScroll, setAutoScroll] = useState(false);
+
+	// ========================================
 	// Modals
+	// ========================================
 	const deleteModal = useModal();
 	const toolsModal = useModal();
 	const errorDialog = useModal();
 
-	// Message loader hook
-	const messageLoader = useMessageLoader({
-		sessionId,
-		messagesContainerRef,
+	// ========================================
+	// Reactive State from sessionStore (via useSignalEffect for re-renders)
+	// ========================================
+	const [messages, setMessages] = useState<SDKMessage[]>([]);
+	const [session, setSession] = useState(sessionStore.sessionInfo.value);
+	const [contextUsage, setContextUsage] = useState(sessionStore.contextInfo.value);
+	const [agentState, setAgentState] = useState(sessionStore.agentState.value);
+	const [storeError, setStoreError] = useState(sessionStore.error.value);
+
+	// Sync messages from sessionStore
+	useSignalEffect(() => {
+		setMessages(sessionStore.sdkMessages.value);
 	});
 
-	// Session actions hook
+	// Sync session info from sessionStore
+	useSignalEffect(() => {
+		const info = sessionStore.sessionInfo.value;
+		setSession(info);
+		if (info?.config.autoScroll !== undefined) {
+			setAutoScroll(info.config.autoScroll);
+		}
+	});
+
+	// Sync context from sessionStore
+	useSignalEffect(() => {
+		setContextUsage(sessionStore.contextInfo.value);
+	});
+
+	// Sync agent state from sessionStore
+	useSignalEffect(() => {
+		setAgentState(sessionStore.agentState.value);
+	});
+
+	// Sync error from sessionStore
+	useSignalEffect(() => {
+		setStoreError(sessionStore.error.value);
+	});
+
+	// Derived processing state
+	const isProcessing = agentState.status === 'processing' || agentState.status === 'queued';
+	const isCompacting =
+		agentState.status === 'processing' &&
+		'isCompacting' in agentState &&
+		agentState.isCompacting === true;
+
+	// ========================================
+	// Session Actions
+	// ========================================
 	const sessionActions = useSessionActions({
 		sessionId,
-		session: messageLoader.session,
+		session,
 		onDeleteModalClose: deleteModal.close,
 		onStateReset: useCallback(() => {
-			messageLoader.setError(null);
-		}, [messageLoader]),
-	});
-
-	// Subscription callbacks
-	const subscriptionCallbacks = useMemo(
-		() => ({
-			onSessionUpdate: (session: Session) => {
-				messageLoader.setSession(session);
-				messageLoader.setAutoScroll(session.config.autoScroll ?? false);
-			},
-			onContextUpdate: (context: ContextInfo) => {
-				messageLoader.setContextUsage(context);
-			},
-			onMessageReceived: (message: SDKMessage) => {
-				messageLoader.addMessage(message);
-			},
-			onErrorDialogOpen: () => {
-				errorDialog.open();
-			},
-		}),
-		[messageLoader, errorDialog]
-	);
-
-	// Session subscriptions hook
-	const subscriptions = useSessionSubscriptions({
-		sessionId,
-		callbacks: subscriptionCallbacks,
-	});
-
-	// Update error details ref when error occurs
-	useEffect(() => {
-		if (subscriptions.state.errorDetails) {
-			errorDetailsRef.current = subscriptions.state.errorDetails;
-		}
-	}, [subscriptions.state.errorDetails]);
-
-	// Sync error state from subscriptions to message loader
-	useEffect(() => {
-		if (subscriptions.state.error) {
-			messageLoader.setError(subscriptions.state.error);
-		}
-	}, [subscriptions.state.error, messageLoader]);
-
-	// Send message hook - uses sessionStore.isWorking for reactive sending state
-	const { sendMessage } = useSendMessage({
-		sessionId,
-		session: messageLoader.session,
-		isSending: sessionStore.isWorking.value,
-		onSendStart: useCallback(() => {
-			messageLoader.setError(null);
-		}, [messageLoader]),
-		onSendComplete: useCallback(() => {
-			// Completion is handled by subscriptions
+			setLocalError(null);
+			sessionStore.clearError();
 		}, []),
-		onError: useCallback(
-			(error: string) => {
-				messageLoader.setError(error);
-			},
-			[messageLoader]
-		),
 	});
 
-	// Load session on mount
-	useEffect(() => {
-		subscriptions.resetState();
-		messageLoader.loadSession();
+	// ========================================
+	// Initial Load (session info + message count for pagination)
+	// ========================================
+	const loadSession = useCallback(async () => {
+		try {
+			setLoading(true);
+			setLocalError(null);
+			setIsInitialLoad(true);
+
+			// Load session info via REST (for initial data before WebSocket connects)
+			const response = await getSession(sessionId);
+			setAutoScroll(response.session.config.autoScroll ?? false);
+
+			// Get message count for pagination
+			const countResponse = await getMessageCount(sessionId);
+			// sessionStore.sdkMessages will be populated via WebSocket subscription
+			// We use count to determine if there are more messages to load
+			setHasMoreMessages(countResponse.count > 100);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : 'Failed to load session';
+			if (message.includes('Session not found') || message.includes('404')) {
+				currentSessionIdSignal.value = null;
+				toast.error('Session not found.');
+				return;
+			}
+			setLocalError(message);
+			toast.error(message);
+		} finally {
+			setLoading(false);
+		}
 	}, [sessionId]);
 
-	// Auto-scroll hook - uses message count only (no streaming events)
+	// ========================================
+	// Pagination (load older messages)
+	// ========================================
+	const loadOlderMessages = useCallback(async () => {
+		if (loadingOlder || !hasMoreMessages || messages.length === 0) return;
+
+		try {
+			setLoadingOlder(true);
+
+			const container = messagesContainerRef.current;
+			const oldScrollHeight = container?.scrollHeight || 0;
+			const oldScrollTop = container?.scrollTop || 0;
+
+			const oldestMessage = messages[0] as SDKMessage & { timestamp?: number };
+			const beforeTimestamp = oldestMessage?.timestamp;
+			if (!beforeTimestamp) {
+				setHasMoreMessages(false);
+				return;
+			}
+
+			const sdkResponse = await getSDKMessages(sessionId, { limit: 100, before: beforeTimestamp });
+			if (sdkResponse.sdkMessages.length === 0) {
+				setHasMoreMessages(false);
+				return;
+			}
+
+			// Prepend older messages to sessionStore
+			sessionStore.prependMessages(sdkResponse.sdkMessages as SDKMessage[]);
+			setHasMoreMessages(sdkResponse.sdkMessages.length === 100);
+
+			// Restore scroll position
+			requestAnimationFrame(() => {
+				if (container) {
+					container.scrollTop = oldScrollTop + (container.scrollHeight - oldScrollHeight);
+				}
+			});
+		} catch (err) {
+			console.error('Failed to load older messages:', err);
+			toast.error('Failed to load older messages');
+		} finally {
+			setLoadingOlder(false);
+		}
+	}, [sessionId, loadingOlder, hasMoreMessages, messages]);
+
+	// ========================================
+	// Send Message
+	// ========================================
+	const { sendMessage } = useSendMessage({
+		sessionId,
+		session,
+		isSending: isProcessing,
+		onSendStart: useCallback(() => {
+			setLocalError(null);
+			sessionStore.clearError();
+		}, []),
+		onSendComplete: useCallback(() => {
+			// Completion handled by sessionStore state updates
+		}, []),
+		onError: useCallback((error: string) => {
+			setLocalError(error);
+		}, []),
+	});
+
+	// ========================================
+	// Effects
+	// ========================================
+
+	// Load session on mount / session change
+	useEffect(() => {
+		loadSession();
+	}, [sessionId, loadSession]);
+
+	// ========================================
+	// Auto-scroll
+	// ========================================
 	const { showScrollButton, scrollToBottom } = useAutoScroll({
 		containerRef: messagesContainerRef,
 		endRef: messagesEndRef,
-		enabled: messageLoader.autoScroll,
-		messageCount: messageLoader.messages.length,
-		isInitialLoad: messageLoader.isInitialLoad,
-		loadingOlder: messageLoader.loadingOlder,
+		enabled: autoScroll,
+		messageCount: messages.length,
+		isInitialLoad,
+		loadingOlder,
 	});
 
-	// Message maps hook
-	const removedOutputs = messageLoader.session?.metadata?.removedOutputs || [];
-	const maps = useMessageMaps(messageLoader.messages, sessionId, removedOutputs);
+	// ========================================
+	// Message Maps (for tool results/inputs)
+	// ========================================
+	const removedOutputs = session?.metadata?.removedOutputs || [];
+	const maps = useMessageMaps(messages, sessionId, removedOutputs);
 
-	// Connection check
+	// ========================================
+	// Connection Check
+	// ========================================
 	const isConnected = connectionState.value === 'connected';
 
-	// Handle send message wrapper
+	// ========================================
+	// Handlers
+	// ========================================
 	const handleSendMessage = useCallback(
 		async (content: string, images?: MessageImage[]) => {
 			await sendMessage(content, images);
@@ -166,24 +272,25 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		[sendMessage]
 	);
 
-	// Handle auto-scroll change
 	const handleAutoScrollChange = useCallback(
 		async (newAutoScroll: boolean) => {
-			messageLoader.setAutoScroll(newAutoScroll);
+			setAutoScroll(newAutoScroll);
 			try {
 				await updateSession(sessionId, { config: { autoScroll: newAutoScroll } });
 			} catch (err) {
-				messageLoader.setAutoScroll(!newAutoScroll);
+				setAutoScroll(!newAutoScroll);
 				toast.error('Failed to save auto-scroll setting');
 				console.error('Failed to update autoScroll:', err);
 			}
 		},
-		[sessionId, messageLoader]
+		[sessionId]
 	);
 
-	// Calculate display stats
+	// ========================================
+	// Display Stats
+	// ========================================
 	const displayStats = useMemo(() => {
-		const accumulatedStats = messageLoader.messages.reduce(
+		const accumulatedStats = messages.reduce(
 			(acc, msg) => {
 				if (msg.type === 'result' && msg.subtype === 'success') {
 					acc.inputTokens += msg.usage.input_tokens;
@@ -197,22 +304,15 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 		return {
 			totalTokens:
-				messageLoader.session?.metadata?.totalTokens ??
+				session?.metadata?.totalTokens ??
 				accumulatedStats.inputTokens + accumulatedStats.outputTokens,
-			totalCost: messageLoader.session?.metadata?.totalCost ?? accumulatedStats.totalCost,
+			totalCost: session?.metadata?.totalCost ?? accumulatedStats.totalCost,
 		};
-	}, [
-		messageLoader.messages,
-		messageLoader.session?.metadata?.totalTokens,
-		messageLoader.session?.metadata?.totalCost,
-	]);
+	}, [messages, session?.metadata?.totalTokens, session?.metadata?.totalCost]);
 
-	// Derived state from sessionStore signals (reactive)
-	const agentState = sessionStore.agentState.value;
-	const isProcessing = sessionStore.isWorking.value;
-	const isCompacting = sessionStore.isCompacting.value;
-
+	// ========================================
 	// Derive currentAction and streamingPhase from agentState
+	// ========================================
 	const { currentAction, streamingPhase } = useMemo(() => {
 		if (agentState.status === 'processing') {
 			const phase = agentState.phase;
@@ -250,10 +350,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		return { currentAction: undefined, streamingPhase: null };
 	}, [agentState]);
 
-	const error = messageLoader.error || subscriptions.state.error;
+	// Combined error (local + store)
+	const error = localError || storeError?.message || null;
 
 	// Render loading state
-	if (messageLoader.loading) {
+	if (loading) {
 		return (
 			<div class="flex-1 flex flex-col bg-dark-900">
 				<div class={`bg-dark-850/50 backdrop-blur-sm border-b ${borderColors.ui.default} p-4`}>
@@ -270,14 +371,14 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	}
 
 	// Render error state
-	if (error && !messageLoader.session) {
+	if (error && !session) {
 		return (
 			<div class="flex-1 flex items-center justify-center bg-dark-900">
 				<div class="text-center">
 					<div class="text-5xl mb-4">⚠️</div>
 					<h3 class="text-lg font-semibold text-gray-100 mb-2">Failed to load session</h3>
 					<p class="text-sm text-gray-400 mb-4">{error}</p>
-					<Button onClick={messageLoader.loadSession}>Retry</Button>
+					<Button onClick={loadSession}>Retry</Button>
 				</div>
 			</div>
 		);
@@ -287,7 +388,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden relative">
 			{/* Header */}
 			<ChatHeader
-				session={messageLoader.session}
+				session={session}
 				displayStats={displayStats}
 				onToolsClick={toolsModal.open}
 				onExportClick={sessionActions.handleExportChat}
@@ -306,7 +407,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y"
 					style={{ WebkitOverflowScrolling: 'touch' }}
 				>
-					{messageLoader.messages.length === 0 ? (
+					{messages.length === 0 ? (
 						<div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6">
 							<div class="text-center">
 								<div class="text-5xl mb-4">💬</div>
@@ -319,15 +420,15 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					) : (
 						<ContentContainer className="space-y-0 min-h-[calc(100%+1px)]">
 							{/* Load More Button */}
-							{messageLoader.hasMoreMessages && messageLoader.messages.length > 0 && (
+							{hasMoreMessages && messages.length > 0 && (
 								<div class="flex items-center justify-center py-4">
 									<Button
 										variant="secondary"
 										size="sm"
-										onClick={messageLoader.loadOlderMessages}
-										disabled={messageLoader.loadingOlder}
+										onClick={loadOlderMessages}
+										disabled={loadingOlder}
 									>
-										{messageLoader.loadingOlder ? (
+										{loadingOlder ? (
 											<>
 												<Spinner size="sm" className="mr-2" />
 												Loading...
@@ -339,14 +440,14 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 								</div>
 							)}
 
-							{!messageLoader.hasMoreMessages && messageLoader.messages.length > 0 && (
+							{!hasMoreMessages && messages.length > 0 && (
 								<div class="flex items-center justify-center py-4">
 									<div class="text-xs text-gray-500">Beginning of conversation</div>
 								</div>
 							)}
 
 							{/* Messages */}
-							{messageLoader.messages.map((msg, idx) => (
+							{messages.map((msg, idx) => (
 								<SDKMessageRenderer
 									key={msg.uuid || `msg-${idx}`}
 									message={msg}
@@ -373,9 +474,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			{error && (
 				<ErrorBanner
 					error={error}
-					hasDetails={!!errorDetailsRef.current}
+					hasDetails={!!storeError?.details}
 					onViewDetails={errorDialog.open}
-					onDismiss={() => messageLoader.setError(null)}
+					onDismiss={() => {
+						setLocalError(null);
+						sessionStore.clearError();
+					}}
 				/>
 			)}
 
@@ -385,11 +489,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					isProcessing={isProcessing}
 					currentAction={currentAction}
 					streamingPhase={streamingPhase}
-					contextUsage={messageLoader.contextUsage}
+					contextUsage={contextUsage ?? undefined}
 					maxContextTokens={200000}
 				/>
 
-				{messageLoader.session?.status === 'archived' ? (
+				{session?.status === 'archived' ? (
 					<div class="p-4">
 						<div class="max-w-4xl mx-auto">
 							<div
@@ -418,7 +522,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 						sessionId={sessionId}
 						onSend={handleSendMessage}
 						disabled={isProcessing || isCompacting || !isConnected}
-						autoScroll={messageLoader.autoScroll}
+						autoScroll={autoScroll}
 						onAutoScrollChange={handleAutoScrollChange}
 						onOpenTools={toolsModal.open}
 					/>
@@ -458,17 +562,13 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				)}
 
 			{/* Tools Modal */}
-			<ToolsModal
-				isOpen={toolsModal.isOpen}
-				onClose={toolsModal.close}
-				session={messageLoader.session}
-			/>
+			<ToolsModal isOpen={toolsModal.isOpen} onClose={toolsModal.close} session={session} />
 
 			{/* Error Dialog */}
 			<ErrorDialog
 				isOpen={errorDialog.isOpen}
 				onClose={errorDialog.close}
-				error={errorDetailsRef.current}
+				error={sessionStore.getErrorDetails()}
 				isDev={import.meta.env.DEV === 'true' || import.meta.env.MODE === 'development'}
 			/>
 		</div>
