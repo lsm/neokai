@@ -164,12 +164,17 @@ export class StateChannel<T> {
 
 	/**
 	 * Stop syncing and cleanup
+	 *
+	 * IMPORTANT: This is async to ensure all unsubscribe operations complete
+	 * before returning. This prevents subscription accumulation when rapidly
+	 * switching sessions (each unsubscribe sends a message to the server and
+	 * waits for ACK).
 	 */
-	stop(): void {
-		this.log(`Stopping channel: ${this.channelName}`);
+	async stop(): Promise<void> {
+		console.log(`[StateChannel] Stopping channel: ${this.channelName} (${this.subscriptions.length} subscriptions)`);
 
-		// Unsubscribe from all events
-		this.subscriptions.forEach((unsub) => unsub());
+		// Unsubscribe from all events (AWAIT to ensure unsubscribe completes)
+		await Promise.all(this.subscriptions.map((unsub) => unsub()));
 		this.subscriptions = [];
 
 		// Clear refresh timer
@@ -184,7 +189,7 @@ export class StateChannel<T> {
 		});
 		this.optimisticUpdates.clear();
 
-		this.log(`Channel stopped: ${this.channelName}`);
+		console.log(`[StateChannel] Channel stopped: ${this.channelName}`);
 	}
 
 	/**

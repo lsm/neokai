@@ -89,11 +89,11 @@ class GlobalStateChannels {
 
 	/**
 	 * Stop all global channels
+	 *
+	 * IMPORTANT: Async to await all unsubscribe operations.
 	 */
-	stop(): void {
-		this.sessions.stop();
-		this.system.stop();
-		this.settings.stop();
+	async stop(): Promise<void> {
+		await Promise.all([this.sessions.stop(), this.system.stop(), this.settings.stop()]);
 	}
 }
 
@@ -155,10 +155,12 @@ class SessionStateChannels {
 
 	/**
 	 * Stop all session channels
+	 *
+	 * IMPORTANT: Async to await all unsubscribe operations.
+	 * This ensures clean session switches without subscription accumulation.
 	 */
-	stop(): void {
-		this.session.stop();
-		this.sdkMessages.stop();
+	async stop(): Promise<void> {
+		await Promise.all([this.session.stop(), this.sdkMessages.stop()]);
 	}
 }
 
@@ -216,6 +218,10 @@ class ApplicationState {
 	 *
 	 * Session data shown in lists (sidebar, recent sessions) should come from
 	 * `state.sessions` (global channel), NOT per-session subscriptions.
+	 *
+	 * CRITICAL: Returns channels synchronously but initiates async cleanup/start.
+	 * The cleanup waits for all unsubscribe ACKs before starting new subscriptions,
+	 * preventing the subscription accumulation that caused rate limit errors.
 	 */
 	getSessionChannels(sessionId: string): SessionStateChannels {
 		if (!this.hub) {
@@ -228,31 +234,46 @@ class ApplicationState {
 		}
 
 		// Cleanup previous session's channels before creating new ones
-		if (this.activeSessionChannels) {
-			console.log(`[State] Switching session: cleaning up channels for ${this.activeSessionId}`);
-			this.activeSessionChannels.stop();
-		}
+		// CRITICAL: Must await stop() to ensure unsubscribes complete before new subscribes
+		const previousChannels = this.activeSessionChannels;
+		const previousSessionId = this.activeSessionId;
 
-		// Create new channels for the requested session
+		// Create new channels for the requested session (but don't start yet)
 		const channels = new SessionStateChannels(this.hub, sessionId);
 		this.activeSessionId = sessionId;
 		this.activeSessionChannels = channels;
 
-		// Start channels immediately
-		channels.start().catch(console.error);
+		// Async cleanup + start sequence (awaits unsubscribes before subscribes)
+		(async () => {
+			if (previousChannels) {
+				console.log(`[State] Switching session: cleaning up channels for ${previousSessionId}`);
+				await previousChannels.stop(); // AWAIT unsubscribes
+				console.log(`[State] Cleanup complete for ${previousSessionId}`);
+			}
+
+			// Now start new session's channels
+			console.log(`[State] Starting channels for ${sessionId}`);
+			await channels.start();
+			console.log(`[State] Channels started for ${sessionId}`);
+		})().catch((err) => {
+			console.error(`[State] Session channel switch error:`, err);
+		});
 
 		return channels;
 	}
 
 	/**
 	 * Cleanup session channels (when navigating away from a session)
+	 *
+	 * IMPORTANT: Async to await all unsubscribe operations.
 	 */
-	cleanupSessionChannels(sessionId: string): void {
+	async cleanupSessionChannels(sessionId: string): Promise<void> {
 		if (this.activeSessionId === sessionId && this.activeSessionChannels) {
 			console.log(`[State] Cleaning up channels for session: ${sessionId}`);
-			this.activeSessionChannels.stop();
+			await this.activeSessionChannels.stop();
 			this.activeSessionId = null;
 			this.activeSessionChannels = null;
+			console.log(`[State] Cleanup complete for session: ${sessionId}`);
 		}
 	}
 
@@ -279,19 +300,22 @@ class ApplicationState {
 
 			// Debounce the actual channel setup to prevent subscription storm on rapid switching
 			debounceTimer = setTimeout(() => {
-				// CLEANUP: Stop previous session's channels before starting new ones
-				// This prevents subscription accumulation across session switches
-				if (previousSessionId && previousSessionId !== sessionId) {
-					console.log(`[State] Cleaning up channels for previous session: ${previousSessionId}`);
-					this.cleanupSessionChannels(previousSessionId);
-				}
+				(async () => {
+					// CLEANUP: Stop previous session's channels before starting new ones
+					// This prevents subscription accumulation across session switches
+					if (previousSessionId && previousSessionId !== sessionId) {
+						console.log(`[State] Cleaning up channels for previous session: ${previousSessionId}`);
+						await this.cleanupSessionChannels(previousSessionId);
+					}
 
-				// START: Load channels for new current session
-				if (sessionId) {
-					this.getSessionChannels(sessionId);
-				}
+					// START: Load channels for new current session
+					if (sessionId) {
+						this.getSessionChannels(sessionId);
+					}
 
-				previousSessionId = sessionId;
+					previousSessionId = sessionId;
+				})().catch(console.error);
+
 				debounceTimer = null;
 			}, DEBOUNCE_MS);
 		});
@@ -331,19 +355,22 @@ class ApplicationState {
 
 	/**
 	 * Cleanup all state
+	 *
+	 * NOTE: Fire-and-forget for stop() calls since this is final cleanup.
+	 * During session switching, proper await is done in getSessionChannels().
 	 */
 	cleanup(): void {
 		// FIX: Cleanup all signal subscriptions to prevent memory leaks
 		this.subscriptions.forEach((unsub) => unsub());
 		this.subscriptions = [];
 
-		// Stop global channels
-		this.global.value?.stop();
+		// Stop global channels (fire-and-forget, we're shutting down)
+		this.global.value?.stop().catch(console.error);
 		this.global.value = null;
 
-		// Stop active session channels
+		// Stop active session channels (fire-and-forget, we're shutting down)
 		if (this.activeSessionChannels) {
-			this.activeSessionChannels.stop();
+			this.activeSessionChannels.stop().catch(console.error);
 			this.activeSessionId = null;
 			this.activeSessionChannels = null;
 		}
