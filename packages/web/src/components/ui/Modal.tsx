@@ -1,6 +1,6 @@
 import { ComponentChildren } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
-import { createPortal } from 'preact/compat';
+import Portal from 'preact-portal';
 import { cn } from '../../lib/utils.ts';
 import { borderColors } from '../../lib/design-tokens.ts';
 
@@ -131,14 +131,5 @@ export function Modal({
 	);
 
 	// Render in portal to avoid z-index issues
-	// Use try-catch to handle SSR gracefully
-	try {
-		if (typeof document !== 'undefined') {
-			return createPortal(modalContent, document.body);
-		}
-	} catch (e) {
-		console.error('Modal portal error:', e);
-	}
-
-	return modalContent;
+	return <Portal into="body">{modalContent}</Portal>;
 }
