@@ -219,13 +219,13 @@ describe('AgentSession SDK Integration', () => {
 				await waitForWebSocketState(ws, WebSocket.OPEN);
 				await firstMessagePromise;
 
-				// Subscribe to sdk.message events
+				// Subscribe to state.sdkMessages.delta events (NOTE: sdk.message was removed)
 				const subPromise = waitForWebSocketMessage(ws);
 				ws.send(
 					JSON.stringify({
 						id: 'sub-sdk-1',
 						type: 'SUBSCRIBE',
-						method: 'sdk.message',
+						method: 'state.sdkMessages.delta',
 						sessionId,
 						timestamp: new Date().toISOString(),
 						version: '1.0.0',
@@ -242,9 +242,9 @@ describe('AgentSession SDK Integration', () => {
 				// Wait for SDK message event
 				const sdkEvent = (await waitForWebSocketMessage(ws, 10000)) as Record<string, unknown>;
 
-				// Should receive an sdk.message event
+				// Should receive a state.sdkMessages.delta event
 				expect(sdkEvent.type).toBe('EVENT');
-				expect(sdkEvent.method).toBe('sdk.message');
+				expect(sdkEvent.method).toBe('state.sdkMessages.delta');
 				expect(sdkEvent.data).toBeDefined();
 
 				ws.close();

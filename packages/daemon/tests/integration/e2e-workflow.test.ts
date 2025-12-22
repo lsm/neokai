@@ -257,7 +257,7 @@ describe('End-to-End Workflow Integration', () => {
 				sessionId: created.sessionId,
 			});
 
-			expect(snapshot.session.session.id).toBe(created.sessionId);
+			expect(snapshot.session.sessionInfo.id).toBe(created.sessionId);
 			expect(snapshot.sdkMessages.sdkMessages.length).toBe(1);
 		});
 	});

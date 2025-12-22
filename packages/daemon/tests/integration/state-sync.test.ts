@@ -81,10 +81,10 @@ describe('State Synchronization Integration', () => {
 
 			expect(snapshot).toBeDefined();
 			expect(snapshot.session).toBeDefined();
-			expect(snapshot.session.session).toBeDefined();
-			expect(snapshot.session.agent).toBeDefined();
-			expect(snapshot.session.context).toBeDefined();
-			expect(snapshot.session.commands).toBeDefined();
+			expect(snapshot.session.sessionInfo).toBeDefined();
+			expect(snapshot.session.agentState).toBeDefined();
+			expect(snapshot.session.contextInfo).toBeNull(); // null before first message
+			expect(snapshot.session.commandsData).toBeDefined();
 			expect(snapshot.sdkMessages).toBeDefined();
 			expect(snapshot.meta).toBeDefined();
 			expect(snapshot.meta.sessionId).toBe(created.sessionId);
@@ -386,8 +386,8 @@ describe('State Synchronization Integration', () => {
 			// Verify we got the session state update
 			expect(stateEvent.type).toBe(MessageType.EVENT);
 			expect(stateEvent.method).toBe(STATE_CHANNELS.SESSION);
-			expect(stateEvent.data.session).toBeDefined();
-			expect(stateEvent.data.session.title).toBe('Updated Title');
+			expect(stateEvent.data.sessionInfo).toBeDefined();
+			expect(stateEvent.data.sessionInfo.title).toBe('Updated Title');
 
 			ws.close();
 		}, 10000);
