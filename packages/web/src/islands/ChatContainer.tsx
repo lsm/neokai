@@ -3,6 +3,10 @@
  *
  * Main chat interface for displaying messages and handling user interaction.
  * Refactored to use extracted hooks and components for better separation of concerns.
+ *
+ * NOTE: Stream events removed - the SDK's query() with AsyncGenerator yields
+ * complete messages, not incremental tokens. Processing status shown via
+ * agent state from state.session channel.
  */
 
 import { useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
@@ -32,7 +36,6 @@ import { ContentContainer } from '../components/ui/ContentContainer.tsx';
 import { ToolsModal } from '../components/ToolsModal.tsx';
 import { Skeleton, SkeletonMessage } from '../components/ui/Skeleton.tsx';
 import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
-import { SDKStreamingAccumulator } from '../components/sdk/SDKStreamingMessage.tsx';
 import { ErrorDialog } from '../components/ErrorDialog.tsx';
 import type { StructuredError } from '../types/error.ts';
 import { ChatHeader } from '../components/ChatHeader.tsx';
@@ -137,12 +140,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		messageLoader.loadSession();
 	}, [sessionId]);
 
-	// Auto-scroll hook
+	// Auto-scroll hook - uses message count only (no streaming events)
 	const { showScrollButton, scrollToBottom } = useAutoScroll({
 		containerRef: messagesContainerRef,
 		endRef: messagesEndRef,
 		enabled: messageLoader.autoScroll,
-		messageCount: messageLoader.messages.length + subscriptions.state.streamingEvents.length,
+		messageCount: messageLoader.messages.length,
 		isInitialLoad: messageLoader.isInitialLoad,
 		loadingOlder: messageLoader.loadingOlder,
 	});
@@ -203,9 +206,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		messageLoader.session?.metadata?.totalCost,
 	]);
 
-	// Derived state
-	const isProcessing =
-		subscriptions.state.sending || subscriptions.state.streamingEvents.length > 0;
+	// Derived state - processing based on sending state only (no streaming events)
+	const isProcessing = subscriptions.state.sending;
 	const error = messageLoader.error || subscriptions.state.error;
 
 	// Render loading state
@@ -262,8 +264,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y"
 					style={{ WebkitOverflowScrolling: 'touch' }}
 				>
-					{messageLoader.messages.length === 0 &&
-					subscriptions.state.streamingEvents.length === 0 ? (
+					{messageLoader.messages.length === 0 ? (
 						<div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6">
 							<div class="text-center">
 								<div class="text-5xl mb-4">💬</div>
@@ -316,11 +317,6 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 									}
 								/>
 							))}
-
-							{/* Streaming */}
-							{subscriptions.state.streamingEvents.length > 0 && (
-								<SDKStreamingAccumulator events={subscriptions.state.streamingEvents} />
-							)}
 						</ContentContainer>
 					)}
 

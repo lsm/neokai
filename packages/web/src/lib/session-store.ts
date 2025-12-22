@@ -7,14 +7,13 @@
  * Key features:
  * - Single subscription source (replaces StateChannel + useSessionSubscriptions)
  * - Promise-chain lock for atomic session switching
- * - 4 subscriptions per session (reduced from 7)
- * - 8 operations per switch (reduced from 50+)
+ * - 3 subscriptions per session (sdk.message not needed - messages arrive via state.sdkMessages)
+ * - 6 operations per switch (reduced from 50+)
  *
  * Signals (reactive state):
  * - activeSessionId: Current session ID
  * - sessionState: Unified session state (sessionInfo, agentState, commandsData, contextInfo, error)
  * - sdkMessages: SDK message array
- * - streamingEvents: Current streaming events (cleared on completion)
  *
  * Computed accessors (derived state):
  * - sessionInfo, agentState, contextInfo, commandsData, error, isCompacting, isWorking
@@ -23,13 +22,10 @@
 import { signal, computed } from '@preact/signals';
 import type { Session, ContextInfo, AgentProcessingState, SessionState } from '@liuboer/shared';
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
-import { isSDKStreamEvent } from '@liuboer/shared/sdk/type-guards';
 import { connectionManager } from './connection-manager';
 import { slashCommandsSignal } from './signals';
 import { toast } from './toast';
 import type { StructuredError } from '../types/error';
-
-type StreamEvent = Extract<SDKMessage, { type: 'stream_event' }>;
 
 class SessionStore {
 	// ========================================
@@ -44,9 +40,6 @@ class SessionStore {
 
 	/** SDK messages from state.sdkMessages channel */
 	readonly sdkMessages = signal<SDKMessage[]>([]);
-
-	/** Streaming events accumulator (cleared when stream completes) */
-	readonly streamingEvents = signal<StreamEvent[]>([]);
 
 	// ========================================
 	// Computed Accessors
@@ -99,9 +92,6 @@ class SessionStore {
 	/** Subscription cleanup functions */
 	private cleanupFunctions: Array<() => void> = [];
 
-	/** Seen message UUIDs for deduplication */
-	private seenMessageUuids = new Set<string>();
-
 	// ========================================
 	// Session Selection (with Promise-Chain Lock)
 	// ========================================
@@ -112,7 +102,7 @@ class SessionStore {
 	 * Uses promise-chain locking to prevent race conditions:
 	 * - Each select() waits for previous select() to complete
 	 * - Unsubscribe → Update state → Subscribe happens atomically
-	 * - Reduces subscription operations from 50+ to 8 per switch
+	 * - Reduces subscription operations from 50+ to 6 per switch
 	 */
 	select(sessionId: string | null): Promise<void> {
 		// Chain the new selection onto the previous one
@@ -135,8 +125,6 @@ class SessionStore {
 		// 2. Clear state
 		this.sessionState.value = null;
 		this.sdkMessages.value = [];
-		this.streamingEvents.value = [];
-		this.seenMessageUuids.clear();
 
 		// 3. Update active session
 		this.activeSessionId.value = sessionId;
@@ -153,36 +141,17 @@ class SessionStore {
 
 	/**
 	 * Start subscriptions for a session
-	 * Only 4 subscriptions: sdk.message, state.session, state.sdkMessages, state.sdkMessages.delta
+	 * Only 3 subscriptions: state.session, state.sdkMessages, state.sdkMessages.delta
+	 *
+	 * NOTE: sdk.message subscription removed - the SDK's query() with AsyncGenerator
+	 * yields complete messages, not stream_event tokens. Messages arrive via
+	 * state.sdkMessages and state.sdkMessages.delta channels.
 	 */
 	private async startSubscriptions(sessionId: string): Promise<void> {
 		try {
 			const hub = await connectionManager.getHub();
 
-			// 1. SDK message subscription (for streaming and real-time updates)
-			const unsubSDKMessage = hub.subscribeOptimistic<SDKMessage>(
-				'sdk.message',
-				(message) => {
-					// Handle stream events
-					if (isSDKStreamEvent(message)) {
-						this.streamingEvents.value = [...this.streamingEvents.value, message];
-					} else {
-						// Clear streaming on result
-						if (message.type === 'result' && message.subtype === 'success') {
-							this.streamingEvents.value = [];
-						}
-
-						// Deduplicate and store non-stream messages
-						if (message.uuid && !this.seenMessageUuids.has(message.uuid)) {
-							this.seenMessageUuids.add(message.uuid);
-						}
-					}
-				},
-				{ sessionId }
-			);
-			this.cleanupFunctions.push(unsubSDKMessage);
-
-			// 2. Session state subscription (unified: metadata + agent + commands + context + error)
+			// 1. Session state subscription (unified: metadata + agent + commands + context + error)
 			const unsubSessionState = hub.subscribeOptimistic<SessionState>(
 				'state.session',
 				(state) => {
@@ -202,7 +171,7 @@ class SessionStore {
 			);
 			this.cleanupFunctions.push(unsubSessionState);
 
-			// 3. SDK messages full state
+			// 2. SDK messages full state
 			const unsubSDKMessages = hub.subscribeOptimistic<{ sdkMessages: SDKMessage[] }>(
 				'state.sdkMessages',
 				(state) => {
@@ -212,7 +181,7 @@ class SessionStore {
 			);
 			this.cleanupFunctions.push(unsubSDKMessages);
 
-			// 4. SDK messages delta (for incremental updates)
+			// 3. SDK messages delta (for incremental updates)
 			const unsubSDKMessagesDelta = hub.subscribeOptimistic<{ added?: SDKMessage[] }>(
 				'state.sdkMessages.delta',
 				(delta) => {

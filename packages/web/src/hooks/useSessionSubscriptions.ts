@@ -4,23 +4,24 @@
  * Manages WebSocket subscriptions for a session.
  * Handles SDK messages, session state, errors, and context compaction events.
  * Extracted from ChatContainer.tsx for better separation of concerns.
+ *
+ * NOTE: Stream events removed - the SDK's query() with AsyncGenerator yields
+ * complete messages, not incremental tokens. Processing status comes from
+ * agentState in state.session channel.
  */
 
 import { useEffect, useRef, useCallback } from 'preact/hooks';
 import type { Session, ContextInfo } from '@liuboer/shared';
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
-import { isSDKStreamEvent } from '@liuboer/shared/sdk/type-guards';
 import { connectionManager } from '../lib/connection-manager';
 import { slashCommandsSignal } from '../lib/signals';
 import { toast } from '../lib/toast';
-import { getCurrentAction } from '../lib/status-actions';
 import type { StructuredError } from '../types/error';
 
 export interface SessionSubscriptionState {
 	sending: boolean;
 	currentAction: string | undefined;
 	streamingPhase: 'initializing' | 'thinking' | 'streaming' | 'finalizing' | null;
-	streamingEvents: Extract<SDKMessage, { type: 'stream_event' }>[];
 	isCompacting: boolean;
 	error: string | null;
 	errorDetails: StructuredError | null;
@@ -55,7 +56,6 @@ export function useSessionSubscriptions({
 		sending: false,
 		currentAction: undefined,
 		streamingPhase: null,
-		streamingEvents: [],
 		isCompacting: false,
 		error: null,
 		errorDetails: null,
@@ -69,7 +69,6 @@ export function useSessionSubscriptions({
 
 	// Timeout refs
 	const sendTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const processingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	// Seen messages for deduplication
 	const seenMessageUuids = useRef<Set<string>>(new Set());
@@ -88,7 +87,6 @@ export function useSessionSubscriptions({
 			sending: false,
 			currentAction: undefined,
 			streamingPhase: null,
-			streamingEvents: [],
 			isCompacting: false,
 			error: null,
 			errorDetails: null,
@@ -98,10 +96,6 @@ export function useSessionSubscriptions({
 		if (sendTimeoutRef.current) {
 			clearTimeout(sendTimeoutRef.current);
 			sendTimeoutRef.current = null;
-		}
-		if (processingTimeoutRef.current) {
-			clearTimeout(processingTimeoutRef.current);
-			processingTimeoutRef.current = null;
 		}
 		forceUpdate();
 	}, [forceUpdate]);
@@ -117,7 +111,7 @@ export function useSessionSubscriptions({
 			.then((hub) => {
 				if (!isMounted) return;
 
-				// SDK message subscription
+				// SDK message subscription - for extracting slash commands and forwarding messages
 				const unsubSDKMessage = hub.subscribeOptimistic<SDKMessage>(
 					'sdk.message',
 					(sdkMessage) => {
@@ -129,55 +123,22 @@ export function useSessionSubscriptions({
 							}
 						}
 
-						// Update current action
-						const state = stateRef.current;
-						const isProcessing =
-							state.sending || state.streamingEvents.length > 0 || sdkMessage.type !== 'result';
-						const action = getCurrentAction(sdkMessage, isProcessing);
-						if (action) {
-							updateState({ currentAction: action });
-						}
-
-						// Handle stream events
-						if (isSDKStreamEvent(sdkMessage)) {
+						// Handle result:success - clear sending state
+						if (sdkMessage.type === 'result' && sdkMessage.subtype === 'success') {
 							updateState({
-								streamingEvents: [...stateRef.current.streamingEvents, sdkMessage],
+								sending: false,
+								currentAction: undefined,
 							});
-
-							if (processingTimeoutRef.current) {
-								clearTimeout(processingTimeoutRef.current);
-							}
-							processingTimeoutRef.current = setTimeout(
-								() => {
-									console.warn('[useSessionSubscriptions] Processing timeout');
-									updateState({
-										sending: false,
-										streamingEvents: [],
-										currentAction: undefined,
-										error: 'Response timed out.',
-									});
-								},
-								5 * 60 * 1000
-							);
-						} else {
-							if (sdkMessage.type === 'result' && sdkMessage.subtype === 'success') {
-								updateState({
-									streamingEvents: [],
-									sending: false,
-									currentAction: undefined,
-								});
-								if (sendTimeoutRef.current) clearTimeout(sendTimeoutRef.current);
-								if (processingTimeoutRef.current) clearTimeout(processingTimeoutRef.current);
-							}
-
-							// Deduplicate and forward message
-							if (sdkMessage.uuid) {
-								if (!seenMessageUuids.current.has(sdkMessage.uuid)) {
-									seenMessageUuids.current.add(sdkMessage.uuid);
-								}
-							}
-							callbacks.onMessageReceived(sdkMessage);
+							if (sendTimeoutRef.current) clearTimeout(sendTimeoutRef.current);
 						}
+
+						// Deduplicate and forward message
+						if (sdkMessage.uuid) {
+							if (!seenMessageUuids.current.has(sdkMessage.uuid)) {
+								seenMessageUuids.current.add(sdkMessage.uuid);
+							}
+						}
+						callbacks.onMessageReceived(sdkMessage);
 					},
 					{ sessionId }
 				);
@@ -208,12 +169,10 @@ export function useSessionSubscriptions({
 									error: data.error.message,
 									errorDetails: (data.error.details as StructuredError | null) || null,
 									sending: false,
-									streamingEvents: [],
 									currentAction: undefined,
 								});
 								toast.error(data.error.message);
 								if (sendTimeoutRef.current) clearTimeout(sendTimeoutRef.current);
-								if (processingTimeoutRef.current) clearTimeout(processingTimeoutRef.current);
 							}
 
 							// Update processing state based on agent status
@@ -223,7 +182,6 @@ export function useSessionSubscriptions({
 										sending: false,
 										currentAction: undefined,
 										streamingPhase: null,
-										streamingEvents: [],
 										isCompacting: false,
 									});
 									break;
@@ -274,7 +232,6 @@ export function useSessionSubscriptions({
 										sending: false,
 										currentAction: 'Interrupted',
 										streamingPhase: null,
-										streamingEvents: [],
 										isCompacting: false,
 									});
 									setTimeout(() => updateState({ currentAction: undefined }), 2000);
@@ -300,7 +257,6 @@ export function useSessionSubscriptions({
 			isMounted = false;
 			cleanupFunctions.forEach((cleanup) => cleanup());
 			if (sendTimeoutRef.current) clearTimeout(sendTimeoutRef.current);
-			if (processingTimeoutRef.current) clearTimeout(processingTimeoutRef.current);
 		};
 	}, [sessionId, callbacks, resetState, updateState]);
 

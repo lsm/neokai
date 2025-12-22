@@ -64,16 +64,13 @@ export class SDKMessageHandler {
 
 	/**
 	 * Main entry point - handle incoming SDK message
+	 *
+	 * NOTE: Stream events removed - the SDK's query() with AsyncGenerator yields
+	 * complete messages, not incremental stream_event tokens.
 	 */
 	async handleMessage(message: SDKMessage): Promise<void> {
 		// Automatically update phase based on message type
 		await this.stateManager.detectPhaseFromMessage(message);
-
-		// Context tracking: Extract usage from stream events
-		if (message.type === 'stream_event') {
-			const streamEventMessage = message as { event: unknown };
-			await this.contextTracker.processStreamEvent(streamEventMessage.event);
-		}
 
 		// Check if this is a /context response BEFORE saving/emitting
 		// /context responses should be processed for context tracking but NOT saved to DB or shown in UI

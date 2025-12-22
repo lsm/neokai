@@ -363,28 +363,8 @@ describe('SDKMessageHandler', () => {
 	// Compaction event tests removed - they require complex SDK message structures
 	// that are better tested in integration tests
 
-	describe('stream event processing', () => {
-		it('should process stream events for context tracking', async () => {
-			const processStreamSpy = mockContextTracker.processStreamEvent as ReturnType<typeof mock>;
-
-			const streamEvent = {
-				type: 'stream_event',
-				event: {
-					type: 'message_start',
-					message: {
-						usage: {
-							input_tokens: 10000,
-							output_tokens: 1,
-						},
-					},
-				},
-			};
-
-			await handler.handleMessage(streamEvent);
-
-			expect(processStreamSpy).toHaveBeenCalledWith(streamEvent.event);
-		});
-	});
+	// Stream event tests removed - the SDK's query() with AsyncGenerator yields
+	// complete messages, not incremental stream_event tokens
 
 	describe('phase detection integration', () => {
 		it('should detect phase from all messages', async () => {
