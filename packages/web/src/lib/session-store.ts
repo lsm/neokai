@@ -237,6 +237,26 @@ class SessionStore {
 		if (!error?.details) return null;
 		return error.details as StructuredError;
 	}
+
+	// ========================================
+	// Message Management
+	// ========================================
+
+	/**
+	 * Prepend older messages (for pagination)
+	 * Used when loading older messages via REST API
+	 */
+	prependMessages(messages: SDKMessage[]): void {
+		if (messages.length === 0) return;
+		this.sdkMessages.value = [...messages, ...this.sdkMessages.value];
+	}
+
+	/**
+	 * Get message count for determining if more messages exist
+	 */
+	get messageCount(): number {
+		return this.sdkMessages.value.length;
+	}
 }
 
 /** Singleton session store instance */
