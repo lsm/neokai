@@ -305,4 +305,36 @@ describe('MessageHub Reconnection', () => {
 
 		expect(eventReceived).toBe(true);
 	});
+
+	it('should debounce rapid resubscription calls to prevent subscription storm', async () => {
+		// 1. Setup with subscription
+		hub.registerTransport(transport);
+		await transport.initialize();
+
+		await hub.subscribe('test.event', () => {}, { sessionId: 'test-session' });
+		await new Promise((resolve) => setTimeout(resolve, 10));
+
+		// 2. Clear sent messages
+		transport.clearSentMessages();
+
+		// 3. Simulate rapid reconnection (what causes subscription storm)
+		transport.simulateDisconnect();
+		transport.simulateReconnect();
+
+		// 4. Immediately call forceResubscribe multiple times (simulating multiple sources)
+		// This simulates: MessageHub auto-resubscribe + StateChannel + ConnectionManager
+		hub.forceResubscribe();
+		hub.forceResubscribe();
+		hub.forceResubscribe();
+
+		await new Promise((resolve) => setTimeout(resolve, 20));
+
+		// 5. Verify only ONE batch of SUBSCRIBE messages was sent
+		// Without debounce, we would see 4 batches (1 from reconnect + 3 from forceResubscribe)
+		const resubscribes = transport.sentMessages.filter((m) => m.type === MessageType.SUBSCRIBE);
+
+		// Should only have 1 SUBSCRIBE message (debounced)
+		expect(resubscribes.length).toBe(1);
+		expect(resubscribes[0].method).toBe('test.event');
+	});
 });
