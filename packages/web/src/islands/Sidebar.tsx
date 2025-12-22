@@ -68,22 +68,15 @@ export default function Sidebar() {
 			console.log('[Sidebar] Navigating to session:', response.sessionId);
 			currentSessionIdSignal.value = response.sessionId;
 
-			// FIX: Force a manual refresh of sessions list after a short delay
-			// to ensure the session appears even if delta doesn't arrive
-			setTimeout(async () => {
+			// Verify session appears in list after a short delay
+			setTimeout(() => {
 				const currentSessionIds = sessions.value.map((s) => s.id);
 				if (!currentSessionIds.includes(response.sessionId)) {
-					console.warn('[Sidebar] Session not in list after navigation, forcing refresh');
-					// Trigger a refresh by accessing the state channel
-					const global = (await import('../lib/state.ts')).appState.global.value;
-					if (global) {
-						await global.sessions.refresh();
-						console.log('[Sidebar] Sessions list refreshed');
-					}
+					console.warn('[Sidebar] Session not in list after navigation - delta may be delayed');
 				} else {
 					console.log('[Sidebar] Session successfully appeared in list');
 				}
-			}, 1000); // Wait 1 second for delta to arrive
+			}, 1000);
 
 			toast.success('Session created successfully');
 		} catch (err) {

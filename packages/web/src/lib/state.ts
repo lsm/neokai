@@ -1,13 +1,10 @@
 /**
  * Application State Management
  *
- * Fine-grained state channels for client-server synchronization
- *
  * Architecture:
- * - Fine-grained channels (one per state property)
- * - Snapshot on connect + delta updates
- * - Optimistic reads, confirmed writes
- * - Server-only persistence
+ * - Global state: Managed by globalStore (sessions, system, settings)
+ * - Session state: Managed by SessionStateChannels (per-session data)
+ * - Connection state: Managed by connectionState signal
  */
 
 import { signal, computed, type Signal } from '@preact/signals';
@@ -15,87 +12,15 @@ import type { MessageHub } from '@liuboer/shared';
 import type { Session, AuthStatus, DaemonConfig, HealthStatus, ContextInfo } from '@liuboer/shared';
 import type { SDKMessage } from '@liuboer/shared/sdk';
 import type {
-	SessionsState,
 	SystemState,
-	SettingsState,
 	SessionState,
 	SDKMessagesState,
 	AgentProcessingState,
-	SessionsUpdate,
 	SDKMessagesUpdate,
 } from '@liuboer/shared';
 import { STATE_CHANNELS } from '@liuboer/shared';
 import { StateChannel, DeltaMergers } from './state-channel';
-
-/**
- * Global State Channels
- */
-class GlobalStateChannels {
-	// Sessions list
-	sessions: StateChannel<SessionsState>;
-
-	// Unified system state (auth + config + health)
-	system: StateChannel<SystemState>;
-
-	// Global settings
-	settings: StateChannel<SettingsState>;
-
-	constructor(private hub: MessageHub) {
-		// Initialize channels with delta support
-		this.sessions = new StateChannel<SessionsState>(hub, STATE_CHANNELS.GLOBAL_SESSIONS, {
-			sessionId: 'global',
-			enableDeltas: true,
-			mergeDelta: (current, delta) => {
-				const typedDelta = delta as SessionsUpdate;
-				return {
-					...current,
-					sessions: DeltaMergers.array(current.sessions, typedDelta),
-					timestamp: typedDelta.timestamp,
-				};
-			},
-			debug: false,
-		});
-
-		// NEW: Unified system state channel
-		this.system = new StateChannel<SystemState>(hub, STATE_CHANNELS.GLOBAL_SYSTEM, {
-			sessionId: 'global',
-			enableDeltas: false, // System state is small, full updates are fine
-			refreshInterval: 30000, // Refresh every 30s (for health uptime)
-			debug: false,
-		});
-
-		// Global settings channel
-		this.settings = new StateChannel<SettingsState>(hub, STATE_CHANNELS.GLOBAL_SETTINGS, {
-			sessionId: 'global',
-			enableDeltas: false, // Settings are small, full updates are fine
-			debug: false,
-		});
-	}
-
-	/**
-	 * Start all global channels
-	 */
-	async start(): Promise<void> {
-		await Promise.all([this.sessions.start(), this.system.start(), this.settings.start()]);
-	}
-
-	/**
-	 * Refresh all global channels (force fetch latest state from server)
-	 * Used after reconnection to ensure state is in sync
-	 */
-	async refresh(): Promise<void> {
-		await Promise.all([this.sessions.refresh(), this.system.refresh(), this.settings.refresh()]);
-	}
-
-	/**
-	 * Stop all global channels
-	 *
-	 * IMPORTANT: Async to await all unsubscribe operations.
-	 */
-	async stop(): Promise<void> {
-		await Promise.all([this.sessions.stop(), this.system.stop(), this.settings.stop()]);
-	}
-}
+import { globalStore } from './global-store';
 
 /**
  * Session-Specific State Channels
@@ -166,13 +91,12 @@ class SessionStateChannels {
 
 /**
  * Application State Manager
+ *
+ * Manages per-session state channels. Global state is handled by globalStore.
  */
 class ApplicationState {
 	private hub: MessageHub | null = null;
 	private initialized = signal(false);
-
-	// Global channels - must be a signal so computed signals can track when it's initialized
-	global = signal<GlobalStateChannels | null>(null);
 
 	// Active session channels - only ONE session can have channels at a time
 	// This is the session whose chat container is currently displayed
@@ -182,11 +106,13 @@ class ApplicationState {
 	// Current session ID (from existing signal)
 	private currentSessionIdSignal = signal<string | null>(null);
 
-	// FIX: Track subscriptions to prevent memory leaks
+	// Track subscriptions to prevent memory leaks
 	private subscriptions: Array<() => void> = [];
 
 	/**
 	 * Initialize state management with MessageHub
+	 *
+	 * Global state is handled by globalStore. This only sets up session channels.
 	 */
 	async initialize(hub: MessageHub, currentSessionId: Signal<string | null>): Promise<void> {
 		if (this.initialized.value) {
@@ -197,17 +123,12 @@ class ApplicationState {
 		this.hub = hub;
 		this.currentSessionIdSignal = currentSessionId;
 
-		// Initialize global channels
-		const globalChannels = new GlobalStateChannels(hub);
-		await globalChannels.start();
-		this.global.value = globalChannels;
-
 		// Setup current session auto-loading
 		this.setupCurrentSessionAutoLoad();
 
 		this.initialized.value = true;
 
-		console.log('[State] Initialized with fine-grained channels');
+		console.log('[State] Initialized (global state handled by globalStore)');
 	}
 
 	/**
@@ -217,7 +138,7 @@ class ApplicationState {
 	 * This is the "current active session" whose chat container is displayed.
 	 *
 	 * Session data shown in lists (sidebar, recent sessions) should come from
-	 * `state.sessions` (global channel), NOT per-session subscriptions.
+	 * globalStore.sessions, NOT per-session subscriptions.
 	 *
 	 * CRITICAL: Returns channels synchronously but initiates async cleanup/start.
 	 * The cleanup waits for all unsubscribe ACKs before starting new subscriptions,
@@ -283,9 +204,6 @@ class ApplicationState {
 	 * FIX: Cleanup previous session's channels when switching sessions.
 	 * This prevents subscription accumulation that caused the "subscription storm"
 	 * on reconnection. Only the ACTIVE session should have subscriptions.
-	 *
-	 * Before: Open 30 sessions → 4 global + 90 session = 94 subscriptions (never cleaned up)
-	 * After: Open 30 sessions → 4 global + 3 session = 7 subscriptions (only active session)
 	 */
 	private setupCurrentSessionAutoLoad(): void {
 		let previousSessionId: string | null = null;
@@ -335,22 +253,14 @@ class ApplicationState {
 			return;
 		}
 
-		console.log('[State] Refreshing all state channels after reconnection validation');
-
-		const promises: Promise<void>[] = [];
-
-		// Refresh global channels
-		if (this.global.value) {
-			promises.push(this.global.value.refresh());
-		}
+		console.log('[State] Refreshing state channels after reconnection validation');
 
 		// Refresh current session channels
 		if (this.activeSessionChannels) {
-			promises.push(this.activeSessionChannels.refresh());
+			await this.activeSessionChannels.refresh();
 		}
 
-		await Promise.all(promises);
-		console.log('[State] All state channels refreshed');
+		console.log('[State] Session state channels refreshed');
 	}
 
 	/**
@@ -360,13 +270,9 @@ class ApplicationState {
 	 * During session switching, proper await is done in getSessionChannels().
 	 */
 	cleanup(): void {
-		// FIX: Cleanup all signal subscriptions to prevent memory leaks
+		// Cleanup all signal subscriptions to prevent memory leaks
 		this.subscriptions.forEach((unsub) => unsub());
 		this.subscriptions = [];
-
-		// Stop global channels (fire-and-forget, we're shutting down)
-		this.global.value?.stop().catch(console.error);
-		this.global.value = null;
 
 		// Stop active session channels (fire-and-forget, we're shutting down)
 		if (this.activeSessionChannels) {
@@ -385,22 +291,18 @@ export const appState = new ApplicationState();
 
 /**
  * Convenience signals - reactive accessors for UI components
+ *
+ * Global state is backed by globalStore. Session state uses SessionStateChannels.
  */
 
-// Global state signals - exported as direct Preact computed signals for proper reactivity
-// IMPORTANT: Access appState.global.value (signal) then the channel's .$.value for proper tracking
+// Global state signals - delegating to globalStore
 export const sessions = computed<Session[]>(() => {
-	const global = appState.global.value;
-	if (!global) return [];
-	const stateValue = global.sessions.$.value;
-	return stateValue?.sessions || [];
+	return globalStore.sessions.value;
 });
 
-// NEW: Extract from unified system state
+// System state - delegating to globalStore
 export const systemState = computed<SystemState | null>(() => {
-	const global = appState.global.value;
-	if (!global) return null;
-	return global.system.$.value;
+	return globalStore.systemState.value;
 });
 
 export const authStatus = computed<AuthStatus | null>(() => {
@@ -437,14 +339,10 @@ export const apiConnectionStatus = computed<import('@liuboer/shared').ApiConnect
 );
 
 export const globalSettings = computed<import('@liuboer/shared').GlobalSettings | null>(() => {
-	const global = appState.global.value;
-	if (!global) return null;
-	const stateValue = global.settings.$.value;
-	return stateValue?.settings || null;
+	return globalStore.settings.value;
 });
 
-// Current session signals (derived from currentSessionId) - exported as direct Preact computed signals
-// IMPORTANT: Access the underlying signal via .$ to ensure Preact tracks the dependency
+// Current session signals (derived from currentSessionId)
 export const currentSessionState = computed<SessionState | null>(() => {
 	const sessionId = appState['currentSessionIdSignal'].value;
 	if (!sessionId) return null;
@@ -479,7 +377,7 @@ export const currentCommands = computed<string[]>(() => {
 });
 
 /**
- * Derived/computed state - exported as direct Preact computed signals
+ * Derived/computed state
  */
 export const isAgentWorking = computed<boolean>(() => {
 	const state = currentAgentState.value;
@@ -528,11 +426,6 @@ export const connectionState = signal<ConnectionState>('connecting');
  * Create a new session (optimistic)
  */
 export async function createSessionOptimistic(workspacePath?: string): Promise<string> {
-	const global = appState.global.value;
-	if (!global) {
-		throw new Error('State not initialized');
-	}
-
 	const tempId = `temp-${Date.now()}`;
 	const tempSession: Session = {
 		id: tempId,
@@ -556,12 +449,8 @@ export async function createSessionOptimistic(workspacePath?: string): Promise<s
 		},
 	};
 
-	// Optimistic update (prepend to show newest first)
-	global.sessions.updateOptimistic(tempId, (current) => ({
-		...current,
-		sessions: [tempSession, ...current.sessions],
-		timestamp: Date.now(),
-	}));
+	// Optimistic update using globalStore
+	globalStore.addSession(tempSession);
 
 	// Actual API call will trigger server state update
 	return tempId;
@@ -571,17 +460,8 @@ export async function createSessionOptimistic(workspacePath?: string): Promise<s
  * Delete a session (optimistic)
  */
 export function deleteSessionOptimistic(sessionId: string): void {
-	const global = appState.global.value;
-	if (!global) {
-		throw new Error('State not initialized');
-	}
-
-	// Optimistic update
-	global.sessions.updateOptimistic(`delete-${sessionId}`, (current) => ({
-		...current,
-		sessions: current.sessions.filter((s) => s.id !== sessionId),
-		timestamp: Date.now(),
-	}));
+	// Optimistic update using globalStore
+	globalStore.removeSession(sessionId);
 }
 
 /**

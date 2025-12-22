@@ -39,8 +39,21 @@ mock.module('@liuboer/shared', () => ({
 	STATE_CHANNELS: {
 		GLOBAL_SESSIONS: 'state.sessions',
 		GLOBAL_SYSTEM: 'state.system',
+		GLOBAL_SETTINGS: 'state.settings',
 		SESSION: 'state.session',
 		SESSION_SDK_MESSAGES: 'state.sdkMessages',
+	},
+}));
+
+// Mock globalStore module
+mock.module('../global-store', () => ({
+	globalStore: {
+		sessions: signal([]),
+		systemState: signal(null),
+		settings: signal(null),
+		addSession: mock(() => {}),
+		removeSession: mock(() => {}),
+		updateSession: mock(() => {}),
 	},
 }));
 
@@ -220,30 +233,7 @@ describe('ApplicationState', () => {
 		});
 	});
 
-	describe('Global State Channels', () => {
-		it('should initialize global channels on start', async () => {
-			await initializeApplicationState(
-				mockHub as unknown as Parameters<typeof initializeApplicationState>[0],
-				currentSessionId
-			);
-
-			// Global channels should be initialized
-			expect(appState.global.value).not.toBeNull();
-		});
-
-		it('should stop global channels on cleanup', async () => {
-			await initializeApplicationState(
-				mockHub as unknown as Parameters<typeof initializeApplicationState>[0],
-				currentSessionId
-			);
-
-			expect(appState.global.value).not.toBeNull();
-
-			cleanupApplicationState();
-
-			expect(appState.global.value).toBeNull();
-		});
-	});
+	// NOTE: Global state channels tests removed - global state is now managed by globalStore
 
 	describe('Initialization State', () => {
 		it('should prevent double initialization', async () => {
