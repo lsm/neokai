@@ -115,6 +115,11 @@ export class MessageHub {
 	// Key format: "{sessionId}:{method}"
 	private inFlightSubscriptions = new Set<string>();
 
+	// FIX: Debounce resubscription to prevent duplicate calls within short window
+	// This prevents the subscription storm caused by multiple sources triggering resubscription
+	private lastResubscribeTime = 0;
+	private readonly resubscribeDebounceMs = 1000; // 1 second debounce window
+
 	// FIX P1.4: Event handler error handling mode
 	private readonly stopOnEventHandlerError: boolean;
 
@@ -1233,6 +1238,17 @@ export class MessageHub {
 		if (this.persistedSubscriptions.size === 0) {
 			return;
 		}
+
+		// FIX: Debounce to prevent subscription storm from multiple sources
+		// (MessageHub on connect, StateChannel.hybridRefresh, ConnectionManager.validateConnectionOnResume)
+		const now = Date.now();
+		if (now - this.lastResubscribeTime < this.resubscribeDebounceMs) {
+			this.log(
+				`Skipping resubscribeAll - debounced (last call ${now - this.lastResubscribeTime}ms ago)`
+			);
+			return;
+		}
+		this.lastResubscribeTime = now;
 
 		this.log(`Re-subscribing ${this.persistedSubscriptions.size} subscriptions after reconnection`);
 
