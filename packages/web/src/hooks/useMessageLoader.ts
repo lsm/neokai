@@ -43,7 +43,7 @@ export interface UseMessageLoaderResult {
 	updateMessage: (message: SDKMessage) => void;
 
 	// Refs
-	seenMessageUuids: React.RefObject<Set<string>>;
+	seenMessageUuids: RefObject<Set<string>>;
 }
 
 /**
