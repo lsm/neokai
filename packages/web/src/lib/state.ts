@@ -248,21 +248,32 @@ class ApplicationState {
 	 */
 	private setupCurrentSessionAutoLoad(): void {
 		let previousSessionId: string | null = null;
+		let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+		const DEBOUNCE_MS = 150; // Debounce rapid session switches to prevent rate limit errors
 
-		const unsub = this.currentSessionIdSignal.subscribe((sessionId) => {
-			// CLEANUP: Stop previous session's channels before starting new ones
-			// This prevents subscription accumulation across session switches
-			if (previousSessionId && previousSessionId !== sessionId) {
-				console.log(`[State] Cleaning up channels for previous session: ${previousSessionId}`);
-				this.cleanupSessionChannels(previousSessionId);
+		const unsub = this.currentSessionIdSignal.subscribe((sessionId: string | null) => {
+			// Cancel any pending session switch
+			if (debounceTimer) {
+				clearTimeout(debounceTimer);
 			}
 
-			// START: Load channels for new current session
-			if (sessionId) {
-				this.getSessionChannels(sessionId);
-			}
+			// Debounce the actual channel setup to prevent subscription storm on rapid switching
+			debounceTimer = setTimeout(() => {
+				// CLEANUP: Stop previous session's channels before starting new ones
+				// This prevents subscription accumulation across session switches
+				if (previousSessionId && previousSessionId !== sessionId) {
+					console.log(`[State] Cleaning up channels for previous session: ${previousSessionId}`);
+					this.cleanupSessionChannels(previousSessionId);
+				}
 
-			previousSessionId = sessionId;
+				// START: Load channels for new current session
+				if (sessionId) {
+					this.getSessionChannels(sessionId);
+				}
+
+				previousSessionId = sessionId;
+				debounceTimer = null;
+			}, DEBOUNCE_MS);
 		});
 		this.subscriptions.push(unsub);
 	}
