@@ -52,6 +52,10 @@ export class StateManager {
 	private processingStateCache = new Map<string, AgentProcessingState>();
 	private commandsCache = new Map<string, string[]>();
 	private contextCache = new Map<string, ContextInfo>();
+	private errorCache = new Map<
+		string,
+		{ message: string; details?: unknown; occurredAt: number } | null
+	>();
 
 	constructor(
 		private messageHub: MessageHub,
@@ -180,33 +184,31 @@ export class StateManager {
 			}
 		);
 
-		// Compaction events - notify UI when auto-compaction starts/finishes
-		// This allows the UI to lock the input and show progress
+		// Session error events - update error cache and broadcast via state.session
+		// This folds the separate session.error event into the unified session state
 		this.eventBus.on(
-			'context:compacting',
-			async (data: { sessionId: string; trigger: 'manual' | 'auto' }) => {
-				this.logger.log(`Context compacting (${data.trigger}) for session: ${data.sessionId}`);
-				await this.messageHub.publish(
-					'context.compacting',
-					{ trigger: data.trigger },
-					{ sessionId: data.sessionId }
-				);
+			'session:error',
+			async (data: { sessionId: string; error: string; details?: unknown }) => {
+				this.logger.log(`Session error for ${data.sessionId}: ${data.error}`);
+
+				// Update error cache
+				this.errorCache.set(data.sessionId, {
+					message: data.error,
+					details: data.details,
+					occurredAt: Date.now(),
+				});
+
+				// Broadcast updated session state (includes error)
+				await this.broadcastSessionStateChange(data.sessionId);
 			}
 		);
 
-		this.eventBus.on(
-			'context:compacted',
-			async (data: { sessionId: string; trigger: 'manual' | 'auto'; preTokens: number }) => {
-				this.logger.log(
-					`Context compacted (${data.trigger}) for session: ${data.sessionId}, pre-tokens: ${data.preTokens}`
-				);
-				await this.messageHub.publish(
-					'context.compacted',
-					{ trigger: data.trigger, preTokens: data.preTokens },
-					{ sessionId: data.sessionId }
-				);
-			}
-		);
+		// Clear error when session becomes idle or processing continues successfully
+		this.eventBus.on('session:error:clear', async (data: { sessionId: string }) => {
+			this.logger.log(`Clearing session error for ${data.sessionId}`);
+			this.errorCache.set(data.sessionId, null);
+			await this.broadcastSessionStateChange(data.sessionId);
+		});
 	}
 
 	/**
@@ -434,13 +436,17 @@ export class StateManager {
 		// Get context info (populated during streaming, null before first message)
 		const contextInfo = agentSession.getContextInfo();
 
+		// Get error from cache (null if no error or error has been cleared)
+		const error = this.errorCache.get(sessionId) || null;
+
 		return {
-			session: sessionData,
-			agent: agentState,
-			commands: {
+			sessionInfo: sessionData,
+			agentState: agentState,
+			commandsData: {
 				availableCommands: commands,
 			},
-			context: contextInfo,
+			contextInfo: contextInfo,
+			error: error,
 			timestamp: Date.now(),
 		};
 	}

@@ -20,6 +20,7 @@ export class ProcessingStateManager {
 	private processingState: AgentProcessingState = { status: 'idle' };
 	private streamingPhase: StreamingPhase = 'initializing';
 	private streamingStartedAt: number | null = null;
+	private isCompacting = false;
 	private logger: Logger;
 	private onIdleCallback?: () => Promise<void>;
 
@@ -143,6 +144,7 @@ export class ProcessingStateManager {
 			messageId,
 			phase: this.streamingPhase,
 			streamingStartedAt: this.streamingStartedAt ?? undefined,
+			isCompacting: this.isCompacting,
 		});
 	}
 
@@ -151,6 +153,39 @@ export class ProcessingStateManager {
 	 */
 	async setInterrupted(): Promise<void> {
 		await this.setState({ status: 'interrupted' });
+	}
+
+	/**
+	 * Set compacting state
+	 * Folded into unified state.session via isCompacting field
+	 */
+	async setCompacting(isCompacting: boolean): Promise<void> {
+		this.isCompacting = isCompacting;
+
+		// Only relevant when processing
+		if (this.processingState.status === 'processing') {
+			this.processingState = {
+				...this.processingState,
+				isCompacting,
+			};
+
+			// Persist and broadcast
+			this.persistToDatabase();
+			await this.eventBus.emit('session:updated', {
+				sessionId: this.sessionId,
+				source: 'processing-state',
+				processingState: this.processingState,
+			});
+
+			this.logger.log(`Compacting state changed to: ${isCompacting}`);
+		}
+	}
+
+	/**
+	 * Check if currently compacting
+	 */
+	getIsCompacting(): boolean {
+		return this.isCompacting;
 	}
 
 	/**
@@ -174,6 +209,7 @@ export class ProcessingStateManager {
 			messageId: this.processingState.messageId,
 			phase: this.streamingPhase,
 			streamingStartedAt: this.streamingStartedAt ?? undefined,
+			isCompacting: this.isCompacting,
 		};
 
 		// DB-first: Persist to database before broadcasting
@@ -239,6 +275,7 @@ export class ProcessingStateManager {
 		if (newState.status === 'idle' || newState.status === 'interrupted') {
 			this.streamingPhase = 'initializing';
 			this.streamingStartedAt = null;
+			this.isCompacting = false; // Reset compacting on idle/interrupted
 		}
 
 		this.processingState = newState;

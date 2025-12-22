@@ -300,10 +300,8 @@ export class SDKMessageHandler {
 		const statusMsg = message as { status: string | null };
 		if (statusMsg.status === 'compacting') {
 			this.logger.log('Context compaction started (auto)');
-			await this.eventBus.emit('context:compacting', {
-				sessionId: this.session.id,
-				trigger: 'auto' as const,
-			});
+			// Set isCompacting flag on processing state (flows through state.session)
+			await this.stateManager.setCompacting(true);
 		}
 	}
 
@@ -325,11 +323,8 @@ export class SDKMessageHandler {
 				`pre-tokens: ${compactMsg.compact_metadata.pre_tokens}`
 		);
 
-		await this.eventBus.emit('context:compacted', {
-			sessionId: this.session.id,
-			trigger: compactMsg.compact_metadata.trigger,
-			preTokens: compactMsg.compact_metadata.pre_tokens,
-		});
+		// Clear isCompacting flag on processing state (flows through state.session)
+		await this.stateManager.setCompacting(false);
 	}
 
 	/**

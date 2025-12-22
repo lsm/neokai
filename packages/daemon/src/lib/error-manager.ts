@@ -474,6 +474,7 @@ export class ErrorManager {
 
 	/**
 	 * Broadcast error to clients (with throttling)
+	 * Emits via EventBus for StateManager to fold into state.session
 	 */
 	async broadcastError(sessionId: string, error: StructuredError): Promise<void> {
 		// Update API connection status (for connection/timeout errors)
@@ -485,14 +486,14 @@ export class ErrorManager {
 			return;
 		}
 
-		await this.messageHub.publish(
-			'session.error',
-			{
+		// Emit via EventBus for StateManager to fold into state.session
+		if (this.eventBus) {
+			this.eventBus.emit('session:error', {
+				sessionId,
 				error: error.userMessage,
-				errorDetails: error,
-			},
-			{ sessionId }
-		);
+				details: error,
+			});
+		}
 
 		// Periodically cleanup old entries (every 100 errors)
 		if (this.recentErrors.size > 100) {
