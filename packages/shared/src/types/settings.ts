@@ -69,6 +69,7 @@ export interface FileOnlySettings {
 
 	// UI/Display
 	outputStyle?: string;
+	showArchived?: boolean;
 
 	// Attribution
 	attribution?: {
@@ -110,6 +111,7 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
 	settingSources: ['user', 'project', 'local'],
 	permissionMode: 'default',
 	disabledMcpServers: [],
+	showArchived: false,
 };
 
 /**

@@ -1,7 +1,14 @@
 import { useState, useEffect } from 'preact/hooks';
 import { currentSessionIdSignal, sidebarOpenSignal } from '../lib/signals.ts';
-import { sessions, authStatus, connectionState, apiConnectionStatus } from '../lib/state.ts';
-import { createSession } from '../lib/api-helpers.ts';
+import {
+	sessions,
+	authStatus,
+	connectionState,
+	apiConnectionStatus,
+	globalSettings,
+	hasArchivedSessions,
+} from '../lib/state.ts';
+import { createSession, updateGlobalSettings } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import { borderColors } from '../lib/design-tokens.ts';
@@ -16,30 +23,23 @@ export default function Sidebar() {
 	// Keep local UI state
 	const [creatingSession, setCreatingSession] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
-	const [showAllArchived, setShowAllArchived] = useState(false);
 	const [visibleCount, setVisibleCount] = useState(SESSIONS_PER_PAGE);
 
 	// FIX: Access sessionsList once to prevent multiple subscriptions
 	// But we need to keep currentSessionIdSignal reactive for active state
 	const sessionsList = sessions.value;
 
-	// Filter archived sessions based on toggle
-	const filteredSessions = sessionsList.filter((session) => {
-		// Show all non-archived sessions
-		if (session.status !== 'archived') return true;
+	// Get showArchived setting from global settings (server-side filtering)
+	const showArchived = globalSettings.value?.showArchived ?? false;
 
-		// Show archived sessions only if toggle is on
-		return showAllArchived;
-	});
-
-	// Pagination
-	const visibleSessions = filteredSessions.slice(0, visibleCount);
-	const hasMore = filteredSessions.length > visibleCount;
+	// Pagination (no client-side filtering needed - server does it)
+	const visibleSessions = sessionsList.slice(0, visibleCount);
+	const hasMore = sessionsList.length > visibleCount;
 
 	// Reset visible count when archive filter changes
 	useEffect(() => {
 		setVisibleCount(SESSIONS_PER_PAGE);
-	}, [showAllArchived]);
+	}, [showArchived]);
 
 	const handleCreateSession = async () => {
 		// CONNECTION GUARD: Check connection before attempting to create session
@@ -109,6 +109,15 @@ export default function Sidebar() {
 		setVisibleCount((prev) => prev + SESSIONS_PER_PAGE);
 	};
 
+	const handleToggleShowArchived = async () => {
+		try {
+			await updateGlobalSettings({ showArchived: !showArchived });
+		} catch (err) {
+			console.error('[Sidebar] Error toggling showArchived:', err);
+			toast.error('Failed to toggle archived sessions visibility');
+		}
+	};
+
 	return (
 		<>
 			{/* Mobile backdrop */}
@@ -171,16 +180,16 @@ export default function Sidebar() {
 					</Button>
 				</div>
 
-				{/* Archived Sessions Toggle */}
-				{sessionsList.some((s) => s.status === 'archived') && (
+				{/* Archived Sessions Toggle - only show if there are any archived sessions */}
+				{hasArchivedSessions.value && (
 					<div class={`px-4 py-2 border-b ${borderColors.ui.default}`}>
 						<button
 							type="button"
-							onClick={() => setShowAllArchived(!showAllArchived)}
+							onClick={handleToggleShowArchived}
 							class="text-xs text-gray-400 hover:text-gray-200 transition-colors flex items-center gap-2 w-full"
 						>
 							<svg
-								class={`w-3 h-3 transition-transform ${showAllArchived ? 'rotate-90' : ''}`}
+								class={`w-3 h-3 transition-transform ${showArchived ? 'rotate-90' : ''}`}
 								fill="none"
 								viewBox="0 0 24 24"
 								stroke="currentColor"
@@ -192,7 +201,7 @@ export default function Sidebar() {
 									d="M9 5l7 7-7 7"
 								/>
 							</svg>
-							<span>{showAllArchived ? 'Hide archived' : 'Show archived'}</span>
+							<span>{showArchived ? 'Hide archived' : 'Show archived'}</span>
 						</button>
 					</div>
 				)}

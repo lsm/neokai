@@ -36,6 +36,9 @@ class GlobalStore {
 	/** All sessions */
 	readonly sessions = signal<Session[]>([]);
 
+	/** Whether there are any archived sessions in the database */
+	readonly hasArchivedSessions = signal<boolean>(false);
+
 	/** Unified system state (auth + config + health + API connection) */
 	readonly systemState = signal<SystemState | null>(null);
 
@@ -109,6 +112,7 @@ class GlobalStore {
 
 			if (snapshot) {
 				this.sessions.value = snapshot.sessions?.sessions || [];
+				this.hasArchivedSessions.value = snapshot.sessions?.hasArchivedSessions || false;
 				this.systemState.value = snapshot.system || null;
 				this.settings.value = snapshot.settings?.settings || null;
 			}
@@ -118,6 +122,7 @@ class GlobalStore {
 				STATE_CHANNELS.GLOBAL_SESSIONS,
 				(state) => {
 					this.sessions.value = state.sessions || [];
+					this.hasArchivedSessions.value = state.hasArchivedSessions || false;
 				},
 				{ sessionId: 'global' }
 			);

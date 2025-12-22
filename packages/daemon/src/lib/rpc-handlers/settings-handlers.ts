@@ -31,6 +31,13 @@ export function registerSettingsHandlers(
 			const updated = settingsManager.updateGlobalSettings(data.updates);
 			// Emit event for StateManager to broadcast
 			eventBus.emit('settings:updated', { settings: updated });
+
+			// SPECIAL CASE: If showArchived changed, also broadcast sessions change
+			// because the filtered session list needs to update
+			if ('showArchived' in data.updates) {
+				eventBus.emit('sessions:filter-changed', {});
+			}
+
 			return { success: true, settings: updated };
 		}
 	);

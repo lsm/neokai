@@ -159,6 +159,11 @@ export class StateManager {
 			await this.broadcastSettingsChange();
 		});
 
+		// Sessions filter changed (when showArchived setting changes)
+		this.eventBus.on('sessions:filter-changed', async () => {
+			await this.broadcastSessionsChange();
+		});
+
 		// Commands updated - cache and broadcast
 		this.eventBus.on(
 			'commands:updated',
@@ -383,9 +388,20 @@ export class StateManager {
 	}
 
 	private async getSessionsState(): Promise<SessionsState> {
-		const sessions = this.sessionManager.listSessions();
+		const allSessions = this.sessionManager.listSessions();
+		const settings = this.settingsManager.getGlobalSettings();
+
+		// Check if there are any archived sessions in the database
+		const hasArchivedSessions = allSessions.some((s) => s.status === 'archived');
+
+		// Filter out archived sessions unless showArchived is enabled
+		const sessions = settings.showArchived
+			? allSessions
+			: allSessions.filter((s) => s.status !== 'archived');
+
 		return {
 			sessions,
+			hasArchivedSessions,
 			timestamp: Date.now(),
 		};
 	}

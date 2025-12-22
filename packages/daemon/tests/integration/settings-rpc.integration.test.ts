@@ -253,6 +253,60 @@ describe('Settings RPC Integration', () => {
 		});
 	});
 
+	describe('showArchived Setting', () => {
+		test('defaults to false', async () => {
+			const result = (await callRPCHandler(
+				ctx.messageHub,
+				'settings.global.get',
+				{}
+			)) as GlobalSettings;
+
+			expect(result.showArchived).toBe(false);
+		});
+
+		test('can be updated', async () => {
+			const result = (await callRPCHandler(ctx.messageHub, 'settings.global.update', {
+				updates: { showArchived: true },
+			})) as { success: boolean; settings: GlobalSettings };
+
+			expect(result.success).toBe(true);
+			expect(result.settings.showArchived).toBe(true);
+		});
+
+		test('persists to database', async () => {
+			await callRPCHandler(ctx.messageHub, 'settings.global.update', {
+				updates: { showArchived: true },
+			});
+
+			// Verify persisted
+			const loaded = ctx.db.getGlobalSettings();
+			expect(loaded.showArchived).toBe(true);
+		});
+
+		test('can be toggled multiple times', async () => {
+			// Toggle on
+			await callRPCHandler(ctx.messageHub, 'settings.global.update', {
+				updates: { showArchived: true },
+			});
+			let settings = ctx.db.getGlobalSettings();
+			expect(settings.showArchived).toBe(true);
+
+			// Toggle off
+			await callRPCHandler(ctx.messageHub, 'settings.global.update', {
+				updates: { showArchived: false },
+			});
+			settings = ctx.db.getGlobalSettings();
+			expect(settings.showArchived).toBe(false);
+
+			// Toggle on again
+			await callRPCHandler(ctx.messageHub, 'settings.global.update', {
+				updates: { showArchived: true },
+			});
+			settings = ctx.db.getGlobalSettings();
+			expect(settings.showArchived).toBe(true);
+		});
+	});
+
 	describe('Complete Flow', () => {
 		test('update settings → persist to DB → write to file', async () => {
 			// 1. Update settings via RPC

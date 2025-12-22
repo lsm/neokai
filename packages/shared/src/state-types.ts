@@ -16,6 +16,7 @@ import type { GlobalSettings } from './types/settings.ts';
 // State channel: global:state.sessions
 export interface SessionsState {
 	sessions: SessionInfo[];
+	hasArchivedSessions: boolean; // Whether there are any archived sessions in the database
 	timestamp: number;
 }
 

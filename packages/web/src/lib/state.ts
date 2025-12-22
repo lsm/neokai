@@ -300,6 +300,10 @@ export const sessions = computed<Session[]>(() => {
 	return globalStore.sessions.value;
 });
 
+export const hasArchivedSessions = computed<boolean>(() => {
+	return globalStore.hasArchivedSessions.value;
+});
+
 // System state - delegating to globalStore
 export const systemState = computed<SystemState | null>(() => {
 	return globalStore.systemState.value;
