@@ -148,10 +148,11 @@ describe('StateManager', () => {
 			const response = await responsePromise;
 
 			expect(response.type).toBe('RESULT');
-			expect(response.data.session).toBeDefined();
-			expect(response.data.session.id).toBe(sessionId);
-			expect(response.data.agent).toBeDefined();
-			expect(response.data.commands).toBeDefined();
+			// Unified session state uses sessionInfo (not session)
+			expect(response.data.sessionInfo).toBeDefined();
+			expect(response.data.sessionInfo.id).toBe(sessionId);
+			expect(response.data.agentState).toBeDefined();
+			expect(response.data.commandsData).toBeDefined();
 
 			ws.close();
 		});
@@ -496,8 +497,9 @@ describe('StateManager', () => {
 
 			expect(event.type).toBe('EVENT');
 			expect(event.method).toBe(STATE_CHANNELS.SESSION);
-			expect(event.data.session).toBeDefined();
-			expect(event.data.agent).toBeDefined();
+			// Unified session state uses sessionInfo (not session)
+			expect(event.data.sessionInfo).toBeDefined();
+			expect(event.data.agentState).toBeDefined();
 
 			ws.close();
 		});

@@ -149,11 +149,10 @@ describe('ApplicationState', () => {
 				currentSessionId
 			);
 
-			// Initially no session channels
-			const sessionChannelsBefore = (
-				appState as unknown as { sessionChannels: Map<string, unknown> }
-			).sessionChannels;
-			expect(sessionChannelsBefore.size).toBe(0);
+			// Initially no active session
+			const activeSessionIdBefore = (appState as unknown as { activeSessionId: string | null })
+				.activeSessionId;
+			expect(activeSessionIdBefore).toBeNull();
 
 			// Change session ID
 			currentSessionId.value = 'auto-load-test-session';
@@ -161,11 +160,10 @@ describe('ApplicationState', () => {
 			// Wait for debounced session switch to complete
 			await waitForSessionSwitch();
 
-			// Should have created channels for the session
-			const sessionChannelsAfter = (
-				appState as unknown as { sessionChannels: Map<string, unknown> }
-			).sessionChannels;
-			expect(sessionChannelsAfter.has('auto-load-test-session')).toBe(true);
+			// Should have set the active session
+			const activeSessionIdAfter = (appState as unknown as { activeSessionId: string | null })
+				.activeSessionId;
+			expect(activeSessionIdAfter).toBe('auto-load-test-session');
 		});
 
 		it('should cleanup session channels on cleanupSessionChannels()', async () => {
@@ -180,15 +178,17 @@ describe('ApplicationState', () => {
 			// Wait for debounced session switch to complete
 			await waitForSessionSwitch();
 
-			const sessionChannels = (appState as unknown as { sessionChannels: Map<string, unknown> })
-				.sessionChannels;
-			expect(sessionChannels.has('cleanup-test-session')).toBe(true);
+			const activeSessionId = (appState as unknown as { activeSessionId: string | null })
+				.activeSessionId;
+			expect(activeSessionId).toBe('cleanup-test-session');
 
 			// Cleanup specific session
-			appState.cleanupSessionChannels('cleanup-test-session');
+			await appState.cleanupSessionChannels('cleanup-test-session');
 
 			// Should be removed
-			expect(sessionChannels.has('cleanup-test-session')).toBe(false);
+			const activeSessionIdAfter = (appState as unknown as { activeSessionId: string | null })
+				.activeSessionId;
+			expect(activeSessionIdAfter).toBeNull();
 		});
 
 		it('should stop all session channels on cleanup()', async () => {
@@ -197,7 +197,7 @@ describe('ApplicationState', () => {
 				currentSessionId
 			);
 
-			// Create multiple sessions
+			// Create multiple sessions (only last one is active due to single-session invariant)
 			currentSessionId.value = 'session-1';
 			currentSessionId.value = 'session-2';
 			currentSessionId.value = 'session-3';
@@ -205,21 +205,18 @@ describe('ApplicationState', () => {
 			// Wait for debounced session switch to complete
 			await waitForSessionSwitch();
 
-			const sessionChannelsBefore = (
-				appState as unknown as { sessionChannels: Map<string, unknown> }
-			).sessionChannels;
-			// After cleanup on switch fix: only the current session has channels
-			expect(sessionChannelsBefore.size).toBe(1);
-			expect(sessionChannelsBefore.has('session-3')).toBe(true);
+			// Only the current session has channels (single-session invariant)
+			const activeSessionIdBefore = (appState as unknown as { activeSessionId: string | null })
+				.activeSessionId;
+			expect(activeSessionIdBefore).toBe('session-3');
 
 			// Cleanup all
 			cleanupApplicationState();
 
 			// All should be cleared
-			const sessionChannelsAfter = (
-				appState as unknown as { sessionChannels: Map<string, unknown> }
-			).sessionChannels;
-			expect(sessionChannelsAfter.size).toBe(0);
+			const activeSessionIdAfter = (appState as unknown as { activeSessionId: string | null })
+				.activeSessionId;
+			expect(activeSessionIdAfter).toBeNull();
 		});
 	});
 
@@ -308,10 +305,10 @@ describe('ApplicationState - Edge Cases', () => {
 		// Set to null (should not throw)
 		currentSessionId.value = null;
 
-		// No session channels should be created
-		const sessionChannels = (appState as unknown as { sessionChannels: Map<string, unknown> })
-			.sessionChannels;
-		expect(sessionChannels.size).toBe(0);
+		// No active session should be set
+		const activeSessionId = (appState as unknown as { activeSessionId: string | null })
+			.activeSessionId;
+		expect(activeSessionId).toBeNull();
 	});
 
 	it('should handle rapid session ID changes', async () => {
@@ -328,11 +325,10 @@ describe('ApplicationState - Edge Cases', () => {
 		// Wait for debounced session switch to complete
 		await waitForSessionSwitch();
 
-		// After cleanup on switch fix: only the last session has channels
-		const sessionChannels = (appState as unknown as { sessionChannels: Map<string, unknown> })
-			.sessionChannels;
-		expect(sessionChannels.size).toBe(1);
-		expect(sessionChannels.has('rapid-session-9')).toBe(true);
+		// Only the last session has channels (single-session invariant + debounce)
+		const activeSessionId = (appState as unknown as { activeSessionId: string | null })
+			.activeSessionId;
+		expect(activeSessionId).toBe('rapid-session-9');
 	});
 
 	it('should create new channels when switching back to a session', async () => {

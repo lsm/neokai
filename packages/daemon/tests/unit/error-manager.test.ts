@@ -7,12 +7,14 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { ErrorManager, ErrorCategory } from '../../src/lib/error-manager';
-import { MessageHub } from '@liuboer/shared';
+import { MessageHub, EventBus } from '@liuboer/shared';
 
 describe('ErrorManager', () => {
 	let errorManager: ErrorManager;
 	let mockMessageHub: MessageHub;
+	let mockEventBus: EventBus;
 	let publishSpy: ReturnType<typeof mock>;
+	let emitSpy: ReturnType<typeof mock>;
 
 	beforeEach(() => {
 		// Create mock MessageHub
@@ -21,7 +23,15 @@ describe('ErrorManager', () => {
 			publish: publishSpy,
 		} as unknown as MessageHub;
 
-		errorManager = new ErrorManager(mockMessageHub);
+		// Create mock EventBus (errors now emit via EventBus, not direct publish)
+		emitSpy = mock(async () => {});
+		mockEventBus = {
+			emit: emitSpy,
+			on: mock(() => {}),
+			off: mock(() => {}),
+		} as unknown as EventBus;
+
+		errorManager = new ErrorManager(mockMessageHub, mockEventBus);
 	});
 
 	describe('createError', () => {
@@ -280,21 +290,19 @@ describe('ErrorManager', () => {
 	});
 
 	describe('broadcastError', () => {
-		it('should publish error to MessageHub with correct format', async () => {
+		it('should emit error via EventBus for StateManager', async () => {
 			const sessionId = 'test-session-123';
 			const error = errorManager.createError(new Error('test'), ErrorCategory.SYSTEM);
 
 			await errorManager.broadcastError(sessionId, error);
 
-			expect(publishSpy).toHaveBeenCalledTimes(1);
-			expect(publishSpy).toHaveBeenCalledWith(
-				'session.error',
-				{
-					error: error.userMessage,
-					errorDetails: error,
-				},
-				{ sessionId }
-			);
+			// Errors now emit via EventBus for StateManager to fold into state.session
+			expect(emitSpy).toHaveBeenCalledTimes(1);
+			expect(emitSpy.mock.calls[0][0]).toBe('session:error');
+			expect(emitSpy.mock.calls[0][1]).toMatchObject({
+				sessionId,
+				error: error.userMessage,
+			});
 		});
 	});
 
@@ -311,7 +319,8 @@ describe('ErrorManager', () => {
 
 			expect(result.message).toBe(errorMessage);
 			expect(result.category).toBe(ErrorCategory.MESSAGE);
-			expect(publishSpy).toHaveBeenCalledTimes(1);
+			// Errors now emit via EventBus
+			expect(emitSpy).toHaveBeenCalledTimes(1);
 		});
 
 		it('should use custom user message when provided', async () => {
@@ -337,7 +346,7 @@ describe('ErrorManager', () => {
 			);
 
 			expect(result.message).toBe('String error');
-			expect(publishSpy).toHaveBeenCalledTimes(1);
+			expect(emitSpy).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -511,7 +520,7 @@ describe('ErrorManager', () => {
 			expect(result.metadata).toEqual(metadata);
 		});
 
-		it('should broadcast rich error details', async () => {
+		it('should emit error via EventBus', async () => {
 			const sessionId = 'test-session-def';
 			const processingState = {
 				status: 'processing',
@@ -528,14 +537,18 @@ describe('ErrorManager', () => {
 				metadata
 			);
 
-			expect(publishSpy).toHaveBeenCalledTimes(1);
-			const broadcastedError = publishSpy.mock.calls[0][1].errorDetails;
+			// Errors now emit via EventBus for StateManager to fold into state.session
+			expect(emitSpy).toHaveBeenCalledTimes(1);
+			expect(emitSpy.mock.calls[0][0]).toBe('session:error');
+			const emittedData = emitSpy.mock.calls[0][1];
 
-			expect(broadcastedError.sessionContext?.sessionId).toBe(sessionId);
-			expect(broadcastedError.sessionContext?.processingState).toEqual(processingState);
-			expect(broadcastedError.metadata).toEqual(metadata);
-			expect(broadcastedError.recoverySuggestions).toBeDefined();
-			expect(broadcastedError.stack).toBeDefined();
+			expect(emittedData.sessionId).toBe(sessionId);
+			expect(emittedData.error).toBe('Custom message');
+			expect(emittedData.details.sessionContext?.sessionId).toBe(sessionId);
+			expect(emittedData.details.sessionContext?.processingState).toEqual(processingState);
+			expect(emittedData.details.metadata).toEqual(metadata);
+			expect(emittedData.details.recoverySuggestions).toBeDefined();
+			expect(emittedData.details.stack).toBeDefined();
 		});
 
 		it('should capture additional error properties', () => {
