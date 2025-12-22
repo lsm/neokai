@@ -81,7 +81,10 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
 	Bash: {
 		displayName: 'Bash',
 		category: 'terminal',
-		summaryExtractor: (input) => truncateString(getProp(input, 'command'), 50),
+		summaryExtractor: (input) => {
+			const description = getProp(input, 'description');
+			return description || truncateString(getProp(input, 'command'), 50);
+		},
 		hasLongOutput: true,
 		defaultExpanded: false,
 	},
