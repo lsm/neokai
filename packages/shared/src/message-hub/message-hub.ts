@@ -107,8 +107,9 @@ export class MessageHub {
 	private resubscribing: boolean = false;
 	private pendingEvents: HubMessage[] = [];
 
-	// FIX P1.3: Message sequence tracking (per-session)
-	private expectedSequence: Map<string, number> = new Map(); // sessionId -> next expected sequence
+	// FIX P1.3: Message sequence tracking (GLOBAL - matches server's global counter)
+	// Server uses single messageSequence counter for ALL messages, so client must track globally
+	private expectedSequence: number | null = null; // null = not yet initialized
 	private readonly warnOnSequenceGap: boolean;
 
 	// FIX: Track in-flight subscription requests to prevent duplicates
@@ -740,28 +741,26 @@ export class MessageHub {
 		this.log(`← Incoming: ${message.type} ${message.method}`, message);
 
 		// FIX P1.3: Validate message sequence (if present)
+		// NOTE: Server uses a GLOBAL sequence counter for all messages, so we track globally
 		if (typeof message.sequence === 'number' && this.warnOnSequenceGap) {
-			const sessionId = message.sessionId;
-			const expected = this.expectedSequence.get(sessionId);
-
-			if (expected !== undefined) {
-				// We've seen messages from this session before
-				if (message.sequence < expected) {
+			if (this.expectedSequence !== null) {
+				// We've seen messages before
+				if (message.sequence < this.expectedSequence) {
 					console.warn(
-						`[MessageHub] Out-of-order message detected for session ${sessionId}: ` +
-							`received sequence ${message.sequence}, expected >= ${expected}`
+						`[MessageHub] Out-of-order message detected: ` +
+							`received sequence ${message.sequence}, expected >= ${this.expectedSequence}`
 					);
-				} else if (message.sequence > expected) {
-					const gap = message.sequence - expected;
+				} else if (message.sequence > this.expectedSequence) {
+					const gap = message.sequence - this.expectedSequence;
 					console.warn(
-						`[MessageHub] Message sequence gap detected for session ${sessionId}: ` +
-							`received sequence ${message.sequence}, expected ${expected} (gap: ${gap} messages)`
+						`[MessageHub] Message sequence gap detected: ` +
+							`received sequence ${message.sequence}, expected ${this.expectedSequence} (gap: ${gap} messages)`
 					);
 				}
 			}
 
-			// Update expected sequence for next message
-			this.expectedSequence.set(sessionId, message.sequence + 1);
+			// Update expected sequence for next message (global)
+			this.expectedSequence = message.sequence + 1;
 		}
 
 		// Notify message handlers
@@ -1254,7 +1253,7 @@ export class MessageHub {
 
 		// FIX: Clear sequence tracking on reconnection
 		// Server may have restarted and reset its sequence counter, so client must reset expectations
-		this.expectedSequence.clear();
+		this.expectedSequence = null;
 		this.log(`Cleared sequence tracking for fresh reconnection`);
 
 		// FIX P0.7: Set flag to queue incoming events during rebuild
@@ -1417,7 +1416,7 @@ export class MessageHub {
 		this.eventDepthMap.clear();
 
 		// FIX P1.3: Clear sequence tracking
-		this.expectedSequence.clear();
+		this.expectedSequence = null;
 
 		// FIX: Clear in-flight subscription tracking
 		this.inFlightSubscriptions.clear();
