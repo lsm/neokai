@@ -99,9 +99,9 @@ export function useMessageLoader({
 						{ sessionId },
 						{ sessionId: 'global' }
 					);
-					if (sessionState?.context) setContextUsage(sessionState.context);
-					if (sessionState?.commands?.availableCommands?.length > 0) {
-						slashCommandsSignal.value = sessionState.commands.availableCommands;
+					if (sessionState?.contextInfo) setContextUsage(sessionState.contextInfo);
+					if (sessionState?.commandsData?.availableCommands?.length > 0) {
+						slashCommandsSignal.value = sessionState.commandsData.availableCommands;
 					}
 				}
 			} catch {

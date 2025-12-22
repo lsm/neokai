@@ -454,7 +454,7 @@ export const currentSessionState = computed<SessionState | null>(() => {
 });
 
 export const currentSession = computed<Session | null>(() => {
-	return currentSessionState.value?.session || null;
+	return currentSessionState.value?.sessionInfo || null;
 });
 
 export const currentSDKMessages = computed<SDKMessage[]>(() => {
@@ -467,15 +467,15 @@ export const currentSDKMessages = computed<SDKMessage[]>(() => {
 });
 
 export const currentAgentState = computed<AgentProcessingState>(() => {
-	return currentSessionState.value?.agent || { status: 'idle' };
+	return currentSessionState.value?.agentState || { status: 'idle' };
 });
 
 export const currentContextInfo = computed<ContextInfo | null>(() => {
-	return currentSessionState.value?.context || null;
+	return currentSessionState.value?.contextInfo || null;
 });
 
 export const currentCommands = computed<string[]>(() => {
-	return currentSessionState.value?.commands?.availableCommands || [];
+	return currentSessionState.value?.commandsData?.availableCommands || [];
 });
 
 /**

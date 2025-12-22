@@ -183,91 +183,48 @@ export function useSessionSubscriptions({
 				);
 				cleanupFunctions.push(unsubSDKMessage);
 
-				// Compaction subscriptions
-				const unsubCompacting = hub.subscribeOptimistic<{ trigger: 'manual' | 'auto' }>(
-					'context.compacting',
-					() => {
-						updateState({
-							isCompacting: true,
-							currentAction: 'Compacting context...',
-						});
-						toast.info('Compacting context...');
-					},
-					{ sessionId }
-				);
-				cleanupFunctions.push(unsubCompacting);
-
-				const unsubCompacted = hub.subscribeOptimistic<{
-					trigger: 'manual' | 'auto';
-					preTokens: number;
-				}>(
-					'context.compacted',
-					(data) => {
-						updateState({
-							isCompacting: false,
-							currentAction: undefined,
-						});
-						const savedTokens = Math.round(data.preTokens * 0.5);
-						toast.success(`Context compacted! Freed ~${savedTokens.toLocaleString()} tokens`);
-					},
-					{ sessionId }
-				);
-				cleanupFunctions.push(unsubCompacted);
-
-				// Error subscription
-				const unsubError = hub.subscribeOptimistic<{
-					error: string;
-					errorDetails?: StructuredError;
-				}>(
-					'session.error',
-					(data) => {
-						updateState({
-							error: data.error,
-							errorDetails: data.errorDetails || null,
-							sending: false,
-							streamingEvents: [],
-							currentAction: undefined,
-						});
-
-						if (data.errorDetails) {
-							const isDev = import.meta.env.DEV;
-							if (!data.errorDetails.recoverable || isDev) {
-								callbacks.onErrorDialogOpen();
-							}
-						}
-						toast.error(data.error);
-						if (sendTimeoutRef.current) clearTimeout(sendTimeoutRef.current);
-						if (processingTimeoutRef.current) clearTimeout(processingTimeoutRef.current);
-					},
-					{ sessionId }
-				);
-				cleanupFunctions.push(unsubError);
-
-				// Session state subscription
+				// Session state subscription (unified: includes error, compacting via agentState.isCompacting)
 				const unsubSessionState = hub.subscribeOptimistic<{
-					session: Session;
-					agent: {
+					sessionInfo: Session;
+					agentState: {
 						status: 'idle' | 'queued' | 'processing' | 'interrupted';
 						phase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing';
 						streamingStartedAt?: number;
+						isCompacting?: boolean;
 					};
-					commands: { availableCommands: string[] };
-					context: ContextInfo | null;
+					commandsData: { availableCommands: string[] };
+					contextInfo: ContextInfo | null;
+					error: { message: string; details?: unknown; occurredAt: number } | null;
 				}>(
 					'state.session',
 					(data) => {
 						requestAnimationFrame(() => {
-							if (data.session) callbacks.onSessionUpdate(data.session);
-							if (data.context) callbacks.onContextUpdate(data.context);
+							if (data.sessionInfo) callbacks.onSessionUpdate(data.sessionInfo);
+							if (data.contextInfo) callbacks.onContextUpdate(data.contextInfo);
+
+							// Handle error state (folded from session.error event)
+							if (data.error) {
+								updateState({
+									error: data.error.message,
+									errorDetails: (data.error.details as StructuredError | null) || null,
+									sending: false,
+									streamingEvents: [],
+									currentAction: undefined,
+								});
+								toast.error(data.error.message);
+								if (sendTimeoutRef.current) clearTimeout(sendTimeoutRef.current);
+								if (processingTimeoutRef.current) clearTimeout(processingTimeoutRef.current);
+							}
 
 							// Update processing state based on agent status
-							switch (data.agent.status) {
+							switch (data.agentState.status) {
 								case 'idle':
 									updateState({
 										sending: false,
 										currentAction: undefined,
 										streamingPhase: null,
 										streamingEvents: [],
+										isCompacting: false,
 									});
 									break;
 								case 'queued':
@@ -278,30 +235,36 @@ export function useSessionSubscriptions({
 									if (sendTimeoutRef.current) clearTimeout(sendTimeoutRef.current);
 									break;
 								case 'processing': {
-									const phase = data.agent.phase || 'initializing';
+									const phase = data.agentState.phase || 'initializing';
+									const isCompacting = data.agentState.isCompacting || false;
 									let action: string;
-									switch (phase) {
-										case 'initializing':
-											action = 'Starting...';
-											break;
-										case 'thinking':
-											action = 'Thinking...';
-											break;
-										case 'streaming': {
-											const duration = data.agent.streamingStartedAt
-												? Math.floor((Date.now() - data.agent.streamingStartedAt) / 1000)
-												: 0;
-											action = duration > 0 ? `Streaming (${duration}s)...` : 'Streaming...';
-											break;
+									if (isCompacting) {
+										action = 'Compacting context...';
+									} else {
+										switch (phase) {
+											case 'initializing':
+												action = 'Starting...';
+												break;
+											case 'thinking':
+												action = 'Thinking...';
+												break;
+											case 'streaming': {
+												const duration = data.agentState.streamingStartedAt
+													? Math.floor((Date.now() - data.agentState.streamingStartedAt) / 1000)
+													: 0;
+												action = duration > 0 ? `Streaming (${duration}s)...` : 'Streaming...';
+												break;
+											}
+											case 'finalizing':
+												action = 'Finalizing...';
+												break;
 										}
-										case 'finalizing':
-											action = 'Finalizing...';
-											break;
 									}
 									updateState({
 										sending: true,
 										streamingPhase: phase,
 										currentAction: action,
+										isCompacting: isCompacting,
 									});
 									if (sendTimeoutRef.current) clearTimeout(sendTimeoutRef.current);
 									break;
@@ -312,13 +275,14 @@ export function useSessionSubscriptions({
 										currentAction: 'Interrupted',
 										streamingPhase: null,
 										streamingEvents: [],
+										isCompacting: false,
 									});
 									setTimeout(() => updateState({ currentAction: undefined }), 2000);
 									break;
 							}
 
-							if (data.commands?.availableCommands) {
-								slashCommandsSignal.value = data.commands.availableCommands;
+							if (data.commandsData?.availableCommands) {
+								slashCommandsSignal.value = data.commandsData.availableCommands;
 							}
 						});
 					},
