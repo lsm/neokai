@@ -375,7 +375,7 @@ export function ToolResultCard({
 												onClick={handleDeleteClick}
 												disabled={deleting}
 												class="flex items-center gap-1 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors disabled:opacity-50"
-												title="Delete this tool output to reduce session size"
+												title="Remove this tool output from context to reduce session size"
 											>
 												<svg
 													class="w-3.5 h-3.5"
@@ -390,7 +390,7 @@ export function ToolResultCard({
 														d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
 													/>
 												</svg>
-												<span>{deleting ? 'Deleting...' : 'Delete Output'}</span>
+												<span>{deleting ? 'Removing...' : 'Remove From Context'}</span>
 											</button>
 										)}
 									</div>
@@ -447,9 +447,9 @@ export function ToolResultCard({
 				isOpen={showConfirmModal}
 				onClose={() => setShowConfirmModal(false)}
 				onConfirm={handleConfirmDelete}
-				title="Delete Tool Output"
-				message="Are you sure you want to delete this tool output? It will be replaced with a placeholder message to save context window space."
-				confirmText="Delete Output"
+				title="Remove Tool Output From Context"
+				message="Are you sure you want to remove this tool output from context? It will be replaced with a placeholder message to save context window space."
+				confirmText="Remove From Context"
 				cancelText="Cancel"
 				confirmButtonVariant="danger"
 				isLoading={deleting}
