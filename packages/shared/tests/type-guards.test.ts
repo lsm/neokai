@@ -579,23 +579,23 @@ describe('isUserVisibleMessage', () => {
 		expect(isUserVisibleMessage(msg as unknown as SDKMessage)).toBe(false);
 	});
 
-	test('should return false for compact_boundary', () => {
+	test('should return true for compact_boundary', () => {
 		const msg = {
 			...baseProps,
 			type: 'system',
 			subtype: 'compact_boundary',
 		};
-		expect(isUserVisibleMessage(msg as unknown as SDKMessage)).toBe(false);
+		expect(isUserVisibleMessage(msg as unknown as SDKMessage)).toBe(true);
 	});
 
-	test('should return false for compacting status', () => {
+	test('should return true for compacting status', () => {
 		const msg = {
 			...baseProps,
 			type: 'system',
 			subtype: 'status',
 			status: 'compacting',
 		};
-		expect(isUserVisibleMessage(msg as unknown as SDKMessage)).toBe(false);
+		expect(isUserVisibleMessage(msg as unknown as SDKMessage)).toBe(true);
 	});
 
 	test('should return true for assistant message', () => {
