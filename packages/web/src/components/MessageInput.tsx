@@ -140,7 +140,7 @@ export default function MessageInput({
 	);
 
 	return (
-		<ContentContainer className="py-4">
+		<ContentContainer className="pb-4">
 			<form
 				onSubmit={(e) => {
 					e.preventDefault();

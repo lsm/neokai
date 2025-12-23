@@ -474,3 +474,10 @@ a:focus-visible {
 	background-size: 1000px 100%;
 	animation: shimmer 2s infinite;
 }
+
+/* Mobile styles for status bar controls */
+@media (max-width: 640px) {
+	.control-btn {
+		border: none !important;
+	}
+}

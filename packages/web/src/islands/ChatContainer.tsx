@@ -34,6 +34,7 @@ import { useAutoScroll } from '../hooks/useAutoScroll.ts';
 import { useMessageMaps } from '../hooks/useMessageMaps.ts';
 import { useSessionActions } from '../hooks/useSessionActions.ts';
 import { useSendMessage } from '../hooks/useSendMessage.ts';
+import { useModelSwitcher } from '../hooks/useModelSwitcher.ts';
 
 // Components
 import MessageInput from '../components/MessageInput.tsx';
@@ -122,6 +123,18 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		agentState.status === 'processing' &&
 		'isCompacting' in agentState &&
 		agentState.isCompacting === true;
+
+	// ========================================
+	// Model Switcher
+	// ========================================
+	const {
+		currentModel,
+		currentModelInfo,
+		availableModels,
+		switching: modelSwitching,
+		loading: modelLoading,
+		switchModel,
+	} = useModelSwitcher(sessionId);
 
 	// ========================================
 	// Session Actions
@@ -483,11 +496,20 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			{/* Footer */}
 			<div class="flex-shrink-0">
 				<SessionStatusBar
+					sessionId={sessionId}
 					isProcessing={isProcessing}
 					currentAction={currentAction}
 					streamingPhase={streamingPhase}
 					contextUsage={contextUsage ?? undefined}
 					maxContextTokens={200000}
+					currentModel={currentModel}
+					currentModelInfo={currentModelInfo}
+					availableModels={availableModels}
+					modelSwitching={modelSwitching}
+					modelLoading={modelLoading}
+					onModelSwitch={switchModel}
+					autoScroll={autoScroll}
+					onAutoScrollChange={handleAutoScrollChange}
 				/>
 
 				{session?.status === 'archived' ? (
