@@ -3,6 +3,7 @@ import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import type { WorktreeMetadata, CommitInfo, WorktreeCommitStatus } from '@liuboer/shared';
+import { Logger } from './logger';
 
 export interface WorktreeInfo {
 	path: string;
@@ -20,6 +21,7 @@ export interface CreateWorktreeOptions {
 
 export class WorktreeManager {
 	private gitCache = new Map<string, SimpleGit>();
+	private logger = new Logger('WorktreeManager');
 
 	/**
 	 * Get or create a SimpleGit instance for a repository
@@ -120,7 +122,7 @@ export class WorktreeManager {
 		// Find git root
 		const gitRoot = await this.findGitRoot(repoPath);
 		if (!gitRoot) {
-			console.log(`[WorktreeManager] Not a git repository: ${repoPath}`);
+			this.logger.info(`[WorktreeManager] Not a git repository: ${repoPath}`);
 			return null;
 		}
 
@@ -140,7 +142,7 @@ export class WorktreeManager {
 		try {
 			// Check if worktree already exists (shouldn't happen, but safety check)
 			if (existsSync(worktreePath)) {
-				console.warn(`[WorktreeManager] Worktree already exists: ${worktreePath}`);
+				this.logger.warn(`[WorktreeManager] Worktree already exists: ${worktreePath}`);
 				throw new Error(`Worktree directory already exists: ${worktreePath}`);
 			}
 
@@ -148,7 +150,7 @@ export class WorktreeManager {
 			if (customBranchName) {
 				const branchExists = await this.checkBranchExists(gitRoot, customBranchName);
 				if (branchExists) {
-					console.warn(
+					this.logger.warn(
 						`[WorktreeManager] Branch ${customBranchName} already exists, using UUID fallback`
 					);
 					branchName = `session/${sessionId}`; // Fallback to UUID-based branch
@@ -156,12 +158,12 @@ export class WorktreeManager {
 			}
 
 			// Create worktree with new branch
-			console.log(
+			this.logger.info(
 				`[WorktreeManager] Creating worktree at ${worktreePath} with branch ${branchName} from ${baseBranch}`
 			);
 			await git.raw(['worktree', 'add', worktreePath, '-b', branchName, baseBranch]);
 
-			console.log(`[WorktreeManager] Successfully created worktree for session ${sessionId}`);
+			this.logger.info(`[WorktreeManager] Successfully created worktree for session ${sessionId}`);
 
 			return {
 				isWorktree: true,
@@ -170,14 +172,14 @@ export class WorktreeManager {
 				branch: branchName,
 			};
 		} catch (error) {
-			console.error('[WorktreeManager] Failed to create worktree:', error);
+			this.logger.error(' Failed to create worktree:', error);
 
 			// Try to clean up if worktree directory was created
 			if (existsSync(worktreePath)) {
 				try {
 					await git.raw(['worktree', 'remove', worktreePath, '--force']);
 				} catch (cleanupError) {
-					console.error('[WorktreeManager] Failed to clean up worktree:', cleanupError);
+					this.logger.error(' Failed to clean up worktree:', cleanupError);
 				}
 			}
 
@@ -201,11 +203,11 @@ export class WorktreeManager {
 			const exists = worktrees.some((w) => w.path === worktreePath);
 
 			if (exists) {
-				console.log(`[WorktreeManager] Removing worktree: ${worktreePath}`);
+				this.logger.info(`[WorktreeManager] Removing worktree: ${worktreePath}`);
 				// --force flag handles uncommitted changes
 				await git.raw(['worktree', 'remove', worktreePath, '--force']);
 			} else {
-				console.log(
+				this.logger.info(
 					`[WorktreeManager] Worktree not found in git, may have been manually removed: ${worktreePath}`
 				);
 			}
@@ -213,18 +215,18 @@ export class WorktreeManager {
 			// Delete branch (auto-delete strategy as specified)
 			if (deleteBranch && branch) {
 				try {
-					console.log(`[WorktreeManager] Deleting branch: ${branch}`);
+					this.logger.info(`[WorktreeManager] Deleting branch: ${branch}`);
 					// -D force deletes even if not merged
 					await git.branch(['-D', branch]);
 				} catch (error) {
 					// Branch might not exist or already deleted
-					console.warn(`[WorktreeManager] Failed to delete branch ${branch}:`, error);
+					this.logger.warn(`[WorktreeManager] Failed to delete branch ${branch}:`, error);
 				}
 			}
 
-			console.log(`[WorktreeManager] Successfully removed worktree: ${worktreePath}`);
+			this.logger.info(`[WorktreeManager] Successfully removed worktree: ${worktreePath}`);
 		} catch (error) {
-			console.error('[WorktreeManager] Failed to remove worktree:', error);
+			this.logger.error(' Failed to remove worktree:', error);
 			throw new Error(
 				`Failed to remove worktree: ${error instanceof Error ? error.message : String(error)}`
 			);
@@ -247,7 +249,7 @@ export class WorktreeManager {
 			const output = await git.raw(['worktree', 'list', '--porcelain']);
 			return this.parseWorktreeList(output);
 		} catch (error) {
-			console.error('[WorktreeManager] Failed to list worktrees:', error);
+			this.logger.error(' Failed to list worktrees:', error);
 			return [];
 		}
 	}
@@ -305,7 +307,7 @@ export class WorktreeManager {
 	async cleanupOrphanedWorktrees(repoPath: string): Promise<string[]> {
 		const gitRoot = await this.findGitRoot(repoPath);
 		if (!gitRoot) {
-			console.log('[WorktreeManager] Not a git repository, no worktrees to clean up');
+			this.logger.info(' Not a git repository, no worktrees to clean up');
 			return [];
 		}
 
@@ -314,11 +316,11 @@ export class WorktreeManager {
 
 		try {
 			// Prune removes worktree information for directories that no longer exist
-			console.log('[WorktreeManager] Pruning stale worktree metadata...');
+			this.logger.info(' Pruning stale worktree metadata...');
 			const pruneOutput = await git.raw(['worktree', 'prune', '--verbose']);
 
 			if (pruneOutput.trim()) {
-				console.log('[WorktreeManager] Prune output:', pruneOutput);
+				this.logger.info(' Prune output:', pruneOutput);
 			}
 
 			// List remaining worktrees and check for prunable ones
@@ -339,7 +341,7 @@ export class WorktreeManager {
 							worktree.path.includes('.liuboer/worktrees') ||
 							worktree.path.includes('.liuboer/projects')))
 				) {
-					console.log(`[WorktreeManager] Removing orphaned worktree: ${worktree.path}`);
+					this.logger.info(`[WorktreeManager] Removing orphaned worktree: ${worktree.path}`);
 
 					try {
 						await git.raw(['worktree', 'remove', worktree.path, '--force']);
@@ -349,26 +351,29 @@ export class WorktreeManager {
 						if (worktree.branch.startsWith('session/')) {
 							try {
 								await git.branch(['-D', worktree.branch]);
-								console.log(`[WorktreeManager] Deleted orphaned branch: ${worktree.branch}`);
+								this.logger.info(`[WorktreeManager] Deleted orphaned branch: ${worktree.branch}`);
 							} catch (error) {
-								console.warn(
+								this.logger.warn(
 									`[WorktreeManager] Could not delete branch ${worktree.branch}:`,
 									error
 								);
 							}
 						}
 					} catch (error) {
-						console.error(`[WorktreeManager] Failed to remove worktree ${worktree.path}:`, error);
+						this.logger.error(
+							`[WorktreeManager] Failed to remove worktree ${worktree.path}:`,
+							error
+						);
 					}
 				}
 			}
 
-			console.log(
+			this.logger.info(
 				`[WorktreeManager] Cleanup complete. Removed ${cleaned.length} orphaned worktrees`
 			);
 			return cleaned;
 		} catch (error) {
-			console.error('[WorktreeManager] Failed to cleanup orphaned worktrees:', error);
+			this.logger.error(' Failed to cleanup orphaned worktrees:', error);
 			throw new Error(
 				`Failed to cleanup: ${error instanceof Error ? error.message : String(error)}`
 			);
@@ -383,7 +388,7 @@ export class WorktreeManager {
 
 		// Check if directory exists
 		if (!existsSync(worktreePath)) {
-			console.warn(`[WorktreeManager] Worktree directory missing: ${worktreePath}`);
+			this.logger.warn(`[WorktreeManager] Worktree directory missing: ${worktreePath}`);
 			return false;
 		}
 
@@ -392,7 +397,7 @@ export class WorktreeManager {
 		const exists = worktrees.some((w) => w.path === worktreePath);
 
 		if (!exists) {
-			console.warn(`[WorktreeManager] Worktree not in git worktree list: ${worktreePath}`);
+			this.logger.warn(`[WorktreeManager] Worktree not in git worktree list: ${worktreePath}`);
 			return false;
 		}
 
@@ -408,7 +413,7 @@ export class WorktreeManager {
 			const branch = await git.revparse(['--abbrev-ref', 'HEAD']);
 			return branch.trim();
 		} catch (error) {
-			console.error('[WorktreeManager] Failed to get current branch:', error);
+			this.logger.error(' Failed to get current branch:', error);
 			return null;
 		}
 	}
@@ -429,16 +434,16 @@ export class WorktreeManager {
 			// Check if new branch name already exists
 			const branchExists = await this.checkBranchExists(repoPath, newBranch);
 			if (branchExists) {
-				console.warn(`[WorktreeManager] Branch ${newBranch} already exists, cannot rename`);
+				this.logger.warn(`[WorktreeManager] Branch ${newBranch} already exists, cannot rename`);
 				return false;
 			}
 
-			console.log(`[WorktreeManager] Renaming branch ${oldBranch} to ${newBranch}`);
+			this.logger.info(`[WorktreeManager] Renaming branch ${oldBranch} to ${newBranch}`);
 			await git.branch(['-m', oldBranch, newBranch]);
-			console.log(`[WorktreeManager] Successfully renamed branch to ${newBranch}`);
+			this.logger.info(`[WorktreeManager] Successfully renamed branch to ${newBranch}`);
 			return true;
 		} catch (error) {
-			console.error('[WorktreeManager] Failed to rename branch:', error);
+			this.logger.error(' Failed to rename branch:', error);
 			return false;
 		}
 	}
@@ -456,7 +461,9 @@ export class WorktreeManager {
 			// Returns "origin/main" or "origin/master", extract just the branch name
 			const branchName = defaultBranch.trim().replace('origin/', '');
 			if (branchName) {
-				console.log(`[WorktreeManager] Detected default branch from origin/HEAD: ${branchName}`);
+				this.logger.info(
+					`[WorktreeManager] Detected default branch from origin/HEAD: ${branchName}`
+				);
 				return branchName;
 			}
 		} catch {
@@ -466,16 +473,16 @@ export class WorktreeManager {
 		// Fallback: try common branch names
 		try {
 			await git.revparse(['--verify', 'main']);
-			console.log('[WorktreeManager] Using fallback default branch: main');
+			this.logger.info(' Using fallback default branch: main');
 			return 'main';
 		} catch {
 			try {
 				await git.revparse(['--verify', 'master']);
-				console.log('[WorktreeManager] Using fallback default branch: master');
+				this.logger.info(' Using fallback default branch: master');
 				return 'master';
 			} catch {
 				// Ultimate fallback
-				console.log('[WorktreeManager] Using ultimate fallback: HEAD');
+				this.logger.info(' Using ultimate fallback: HEAD');
 				return 'HEAD';
 			}
 		}
@@ -499,7 +506,9 @@ export class WorktreeManager {
 				await git.revparse(['--verify', branch]);
 			} catch {
 				// Branch doesn't exist yet - no commits ahead
-				console.log(`[WorktreeManager] Branch ${branch} does not exist yet, no commits to check`);
+				this.logger.info(
+					`[WorktreeManager] Branch ${branch} does not exist yet, no commits to check`
+				);
 				const defaultBranch = await this.getDefaultBranch(mainRepoPath);
 				return {
 					hasCommitsAhead: false,
@@ -519,7 +528,7 @@ export class WorktreeManager {
 				await git.revparse(['--verify', base]);
 			} catch {
 				// Base branch doesn't exist - this is an edge case
-				console.log(`[WorktreeManager] Base branch ${base} does not exist`);
+				this.logger.info(`[WorktreeManager] Base branch ${base} does not exist`);
 				return {
 					hasCommitsAhead: false,
 					commits: [],

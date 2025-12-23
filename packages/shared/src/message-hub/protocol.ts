@@ -11,6 +11,9 @@
  */
 
 import { generateUUID } from '../utils.ts';
+import { createLogger } from '../logger.ts';
+
+const log = createLogger('liuboer:messagehub:protocol');
 
 /**
  * Protocol version for compatibility checking
@@ -631,8 +634,8 @@ export function isValidMessage(msg: unknown): msg is HubMessage {
 
 		// Warn if version doesn't match (but allow for backward/forward compatibility)
 		if (m.version !== PROTOCOL_VERSION) {
-			console.warn(
-				`[MessageHub Protocol] Version mismatch: received ${m.version}, expected ${PROTOCOL_VERSION}. ` +
+			log.warn(
+				`Version mismatch: received ${m.version}, expected ${PROTOCOL_VERSION}. ` +
 					`Message will be processed but may have compatibility issues.`
 			);
 		}

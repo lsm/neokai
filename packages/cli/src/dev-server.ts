@@ -3,6 +3,9 @@ import type { Config } from '@liuboer/daemon/config';
 import { createServer as createViteServer } from 'vite';
 import { resolve } from 'path';
 import * as net from 'net';
+import { createLogger } from '@liuboer/shared';
+
+const log = createLogger('liuboer:cli:dev-server');
 
 /**
  * Find an available port by creating a temporary server
@@ -24,7 +27,7 @@ async function findAvailablePort(): Promise<number> {
 }
 
 export async function startDevServer(config: Config) {
-	console.log('🔧 Starting unified development server...');
+	log.info('🔧 Starting unified development server...');
 
 	// Create daemon app in embedded mode (no root route)
 	const daemonContext = await createDaemonApp({
@@ -37,9 +40,9 @@ export async function startDevServer(config: Config) {
 	daemonContext.server.stop();
 
 	// Find an available port for Vite dev server
-	console.log('📦 Starting Vite dev server...');
+	log.info('📦 Starting Vite dev server...');
 	const vitePort = await findAvailablePort();
-	console.log(`   Found available Vite port: ${vitePort}`);
+	log.info(`   Found available Vite port: ${vitePort}`);
 	const vite = await createViteServer({
 		configFile: resolve(import.meta.dir, '../../web/vite.config.ts'),
 		root: resolve(import.meta.dir, '../../web/src'),
@@ -54,7 +57,7 @@ export async function startDevServer(config: Config) {
 		},
 	});
 	await vite.listen();
-	console.log(`✅ Vite dev server running on port ${vitePort}`);
+	log.info(`✅ Vite dev server running on port ${vitePort}`);
 
 	// Get WebSocket handlers from daemon
 	const { createWebSocketHandlers } = await import('@liuboer/daemon/routes/setup-websocket');
@@ -127,7 +130,7 @@ export async function startDevServer(config: Config) {
 					headers: viteResponse.headers,
 				});
 			} catch (error) {
-				console.error('Vite proxy error:', error);
+				log.error('Vite proxy error:', error);
 				return new Response('Failed to proxy to Vite', { status: 502 });
 			}
 		},
@@ -135,7 +138,7 @@ export async function startDevServer(config: Config) {
 		websocket: wsHandlers,
 
 		error(error) {
-			console.error('Server error:', error);
+			log.error('Server error:', error);
 			return new Response(
 				JSON.stringify({
 					error: 'Internal server error',
@@ -151,24 +154,24 @@ export async function startDevServer(config: Config) {
 		},
 	});
 
-	console.log(`\n✨ Unified development server running!`);
-	console.log(`   🌐 Frontend: http://localhost:${config.port}`);
-	console.log(`   🔌 WebSocket: ws://localhost:${config.port}/ws`);
-	console.log(`   🔥 HMR enabled (Vite on port ${vitePort}, proxied)`);
-	console.log(`\n📝 Press Ctrl+C to stop\n`);
+	log.info(`\n✨ Unified development server running!`);
+	log.info(`   🌐 Frontend: http://localhost:${config.port}`);
+	log.info(`   🔌 WebSocket: ws://localhost:${config.port}/ws`);
+	log.info(`   🔥 HMR enabled (Vite on port ${vitePort}, proxied)`);
+	log.info(`\n📝 Press Ctrl+C to stop\n`);
 
 	// Graceful shutdown
 	const shutdown = async (signal: string) => {
-		console.log(`\n👋 Received ${signal}, shutting down gracefully...`);
+		log.info(`\n👋 Received ${signal}, shutting down gracefully...`);
 		try {
 			server.stop();
-			console.log('🛑 Stopping Vite dev server...');
+			log.info('🛑 Stopping Vite dev server...');
 			await vite.close();
-			console.log('🛑 Stopping daemon...');
+			log.info('🛑 Stopping daemon...');
 			await daemonContext.cleanup();
 			process.exit(0);
 		} catch (error) {
-			console.error('❌ Error during shutdown:', error);
+			log.error('❌ Error during shutdown:', error);
 			process.exit(1);
 		}
 	};

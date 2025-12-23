@@ -6,6 +6,7 @@
  */
 
 import type { MessageHub, EventBus } from '@liuboer/shared';
+import { Logger } from './logger';
 
 export enum ErrorCategory {
 	AUTHENTICATION = 'authentication',
@@ -44,6 +45,7 @@ export interface StructuredError {
 }
 
 export class ErrorManager {
+	private logger = new Logger('ErrorManager');
 	private debug: boolean;
 	// Error throttling: track recent errors to prevent flooding client with duplicates
 	private recentErrors: Map<string, { count: number; lastSeen: number; firstSeen: number }> =
@@ -67,7 +69,7 @@ export class ErrorManager {
 
 	private error(...args: unknown[]): void {
 		if (this.debug) {
-			console.error(...args);
+			this.logger.error(...args);
 		}
 	}
 

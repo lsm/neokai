@@ -9,8 +9,11 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { Logger } from './logger';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+
+const log = new Logger('SDKSessionFileManager');
 
 /**
  * Construct the path to the SDK session .jsonl file
@@ -62,7 +65,7 @@ export function findSDKSessionFile(workspacePath: string, liuboerSessionId: stri
 
 		return null;
 	} catch (error) {
-		console.error('[SDKSessionFileManager] Error finding session file:', error);
+		log.error('[SDKSessionFileManager] Error finding session file:', error);
 		return null;
 	}
 }
@@ -99,13 +102,13 @@ export function removeToolResultFromSessionFile(
 		}
 
 		if (!sessionFile) {
-			console.error('[SDKSessionFileManager] Could not find session file');
+			log.error('[SDKSessionFileManager] Could not find session file');
 			return false;
 		}
 
 		// Check if file exists
 		if (!existsSync(sessionFile)) {
-			console.error(`[SDKSessionFileManager] File not found: ${sessionFile}`);
+			log.error(`[SDKSessionFileManager] File not found: ${sessionFile}`);
 			return false;
 		}
 
@@ -154,21 +157,19 @@ export function removeToolResultFromSessionFile(
 		});
 
 		if (!modified) {
-			console.error(
-				`[SDKSessionFileManager] Message ${messageUuid} not found or has no tool_result`
-			);
+			log.error(`[SDKSessionFileManager] Message ${messageUuid} not found or has no tool_result`);
 			return false;
 		}
 
 		// Write back to file
 		writeFileSync(sessionFile, updatedLines.join('\n') + '\n', 'utf-8');
 
-		console.log(
+		log.info(
 			`[SDKSessionFileManager] Successfully removed tool_result from message ${messageUuid}`
 		);
 		return true;
 	} catch (error) {
-		console.error('[SDKSessionFileManager] Failed to remove tool_result:', error);
+		log.error('[SDKSessionFileManager] Failed to remove tool_result:', error);
 		return false;
 	}
 }

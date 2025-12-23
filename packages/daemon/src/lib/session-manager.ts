@@ -120,13 +120,13 @@ export class SessionManager {
 
 	private log(...args: unknown[]): void {
 		if (this.debug) {
-			console.log(...args);
+			this.logger.info(...args);
 		}
 	}
 
 	private error(...args: unknown[]): void {
 		if (this.debug) {
-			console.error(...args);
+			this.logger.error(...args);
 		}
 	}
 
@@ -478,11 +478,11 @@ ${messageText.slice(0, 2000)}`,
 						(m) => m.id === requestedModel || m.alias === requestedModel
 					);
 					if (found) {
-						console.log(`[SessionManager] Using requested model: ${found.id}`);
+						this.logger.info(`[SessionManager] Using requested model: ${found.id}`);
 						return found.id;
 					}
 					// Model not found - log warning but continue to try default
-					console.log(
+					this.logger.info(
 						`[SessionManager] Requested model "${requestedModel}" not found in available models:`,
 						availableModels.map((m) => m.id)
 					);
@@ -493,20 +493,20 @@ ${messageText.slice(0, 2000)}`,
 					availableModels.find((m) => m.family === 'sonnet') || availableModels[0];
 
 				if (defaultModel) {
-					console.log(`[SessionManager] Using default model: ${defaultModel.id}`);
+					this.logger.info(`[SessionManager] Using default model: ${defaultModel.id}`);
 					return defaultModel.id;
 				}
 			} else {
-				console.log('[SessionManager] No available models loaded from cache');
+				this.logger.info('[SessionManager] No available models loaded from cache');
 			}
 		} catch (error) {
-			console.log('[SessionManager] Error getting models:', error);
+			this.logger.info('[SessionManager] Error getting models:', error);
 		}
 
 		// Fallback to config default model or requested model
 		// IMPORTANT: Always return full model ID, never aliases
 		const fallbackModel = requestedModel || this.config.defaultModel;
-		console.log(`[SessionManager] Using fallback model: ${fallbackModel}`);
+		this.logger.info(`[SessionManager] Using fallback model: ${fallbackModel}`);
 		return fallbackModel;
 	}
 
@@ -666,7 +666,7 @@ ${messageText.slice(0, 2000)}`,
 					// Verify worktree was actually removed
 					const stillExists = await this.worktreeManager.verifyWorktree(session.worktree);
 					if (stillExists) {
-						console.error(
+						this.logger.error(
 							`[SessionManager] WARNING: Worktree still exists after removal: ${session.worktree.worktreePath}`
 						);
 						// Log to a failures list that global teardown can check
@@ -676,7 +676,7 @@ ${messageText.slice(0, 2000)}`,
 					}
 				} catch (error) {
 					const errorMsg = error instanceof Error ? error.message : String(error);
-					console.error(
+					this.logger.error(
 						`[SessionManager] FAILED to remove worktree (will be cleaned by global teardown): ${errorMsg}`,
 						{ sessionId, worktreePath: session.worktree.worktreePath }
 					);

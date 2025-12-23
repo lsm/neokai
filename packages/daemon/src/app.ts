@@ -82,15 +82,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	if (authStatus.isAuthenticated) {
 		log(`✅ Authenticated via ${authStatus.method} (source: ${authStatus.source})`);
 	} else {
-		console.error('\n❌ AUTHENTICATION REQUIRED');
-		console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-		console.error('Authentication credentials must be provided via environment variables.');
-		console.error('\nOption 1: Anthropic API Key (Recommended)');
-		console.error('  export ANTHROPIC_API_KEY=sk-ant-...');
-		console.error('\nOption 2: Claude Code OAuth Token');
-		console.error('  export CLAUDE_CODE_OAUTH_TOKEN=...');
-		console.error('\nGet your API key from: https://console.anthropic.com/');
-		console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+		log.error('\n❌ AUTHENTICATION REQUIRED');
+		log.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+		log.error('Authentication credentials must be provided via environment variables.');
+		log.error('\nOption 1: Anthropic API Key (Recommended)');
+		log.error('  export ANTHROPIC_API_KEY=sk-ant-...');
+		log.error('\nOption 2: Claude Code OAuth Token');
+		log.error('  export CLAUDE_CODE_OAUTH_TOKEN=...');
+		log.error('\nGet your API key from: https://console.anthropic.com/');
+		log.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 		throw new Error('Authentication required');
 	}
 
@@ -252,7 +252,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		websocket: wsHandlers,
 
 		error(error) {
-			console.error('Server error:', error);
+			log.error('Server error:', error);
 			return new Response(
 				JSON.stringify({
 					error: 'Internal server error',

@@ -11,6 +11,9 @@ import type { MessageHub, MessageImage, Session, EventBus } from '@liuboer/share
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@liuboer/shared';
 import { clearModelsCache } from '../model-service';
+import { Logger } from '../logger';
+
+const log = new Logger('SessionHandlers');
 
 export function setupSessionHandlers(
 	messageHub: MessageHub,
@@ -198,7 +201,7 @@ export function setupSessionHandlers(
 				hasDraftToClear: session.metadata?.inputDraft === content.trim(),
 			})
 			.catch((err) => {
-				console.error('[message.send] Error in async message processing:', err);
+				log.error('[message.send] Error in async message processing:', err);
 			});
 
 		// STEP 3: Return immediately with messageId
@@ -294,7 +297,7 @@ export function setupSessionHandlers(
 			};
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
-			console.error('[RPC] Failed to list models:', errorMessage);
+			log.error('[RPC] Failed to list models:', errorMessage);
 			throw new Error(`Failed to list models: ${errorMessage}`);
 		}
 	});

@@ -9,6 +9,10 @@
  */
 
 import { generateUUID } from '../utils.ts';
+import { createLogger } from '../logger.ts';
+
+// Create logger for MessageHub (uses unified log levels)
+const log = createLogger('liuboer:messagehub');
 import {
 	type HubMessage,
 	MessageType,
@@ -73,7 +77,6 @@ export class MessageHub {
 	private router: MessageHubRouter | null = null; // Server-side only
 	private readonly defaultSessionId: string;
 	private readonly defaultTimeout: number;
-	private readonly debug: boolean;
 
 	// Backpressure limits
 	private readonly maxPendingCalls: number;
@@ -135,7 +138,6 @@ export class MessageHub {
 	constructor(options: MessageHubOptions = {}) {
 		this.defaultSessionId = options.defaultSessionId || GLOBAL_SESSION_ID;
 		this.defaultTimeout = options.timeout || 10000;
-		this.debug = options.debug || false;
 		this.maxPendingCalls = options.maxPendingCalls || 1000;
 		this.maxCacheSize = options.maxCacheSize || 500;
 		this.cacheTTL = options.cacheTTL || 60000;
@@ -160,7 +162,7 @@ export class MessageHub {
 		}
 
 		this.transport = transport;
-		this.log(`Transport registered: ${transport.name}`);
+		this.logDebug(`Transport registered: ${transport.name}`);
 
 		// Subscribe to incoming messages
 		const unsubMessage = transport.onMessage((message) => {
@@ -169,7 +171,7 @@ export class MessageHub {
 
 		// Subscribe to connection state changes
 		const unsubConnection = transport.onConnectionChange((state, error) => {
-			this.log(`Connection state: ${state}`, error);
+			this.logDebug(`Connection state: ${state}`, error);
 
 			// CRITICAL FIX: Resubscribe BEFORE notifying handlers
 			// This ensures subscriptions are re-established on the server BEFORE
@@ -198,7 +200,7 @@ export class MessageHub {
 			unsubMessage();
 			unsubConnection();
 			unsubClientDisconnect?.();
-			this.log(`Transport unregistered: ${transport.name}`);
+			this.logDebug(`Transport unregistered: ${transport.name}`);
 		};
 	}
 
@@ -239,10 +241,10 @@ export class MessageHub {
 	 */
 	registerRouter(router: MessageHubRouter): void {
 		if (this.router) {
-			console.warn('[MessageHub] Router already registered, replacing...');
+			log.warn('Router already registered, replacing...');
 		}
 		this.router = router;
-		this.log(`Router registered`);
+		this.logDebug(`Router registered`);
 	}
 
 	/**
@@ -299,7 +301,7 @@ export class MessageHub {
 		const cacheKey = createCacheKey(method, sessionId, data);
 		const cached = this.requestCache.get(cacheKey);
 		if (cached) {
-			this.log(`Returning cached request for: ${method}`);
+			this.logDebug(`Returning cached request for: ${method}`);
 			return cached as Promise<TResult>;
 		}
 
@@ -375,16 +377,16 @@ export class MessageHub {
 		}
 
 		if (this.rpcHandlers.has(method)) {
-			console.warn(`[MessageHub] Overwriting existing handler for: ${method}`);
+			log.warn(`Overwriting existing handler for: ${method}`);
 		}
 
 		this.rpcHandlers.set(method, handler as RPCHandler);
-		this.log(`RPC handler registered: ${method}`);
+		this.logDebug(`RPC handler registered: ${method}`);
 
 		// Return unregister function
 		return () => {
 			this.rpcHandlers.delete(method);
-			this.log(`RPC handler unregistered: ${method}`);
+			this.logDebug(`RPC handler unregistered: ${method}`);
 		};
 	}
 
@@ -406,7 +408,7 @@ export class MessageHub {
 		// Allow publishing without transport (for server-side testing)
 		// In this case, we just skip sending - the event won't propagate
 		if (!this.isConnected()) {
-			this.log(`Publish skipped (no transport): ${method}`);
+			this.logDebug(`Publish skipped (no transport): ${method}`);
 			return;
 		}
 
@@ -511,7 +513,7 @@ export class MessageHub {
 				await this.sendMessage(subscribeMsg);
 				// Wait for ACK from server
 				await ackPromise;
-				this.log(`Subscribed to: ${method} (session: ${sessionId}) - ACK received`);
+				this.logDebug(`Subscribed to: ${method} (session: ${sessionId}) - ACK received`);
 			} catch (error) {
 				// Cleanup on failure
 				sessionSubs.get(method)?.delete(handler as EventHandler);
@@ -519,7 +521,9 @@ export class MessageHub {
 			}
 		} else {
 			// Not connected - local-only subscription
-			this.log(`Subscribed to: ${method} (session: ${sessionId}) - local only (not connected)`);
+			this.logDebug(
+				`Subscribed to: ${method} (session: ${sessionId}) - local only (not connected)`
+			);
 		}
 
 		// FIX P0.2: Track creation time for subscription lifecycle management
@@ -562,9 +566,9 @@ export class MessageHub {
 				try {
 					await this.sendMessage(unsubscribeMsg);
 					await ackPromise;
-					this.log(`Unsubscribed from: ${method} (session: ${sessionId}) - ACK received`);
+					this.logDebug(`Unsubscribed from: ${method} (session: ${sessionId}) - ACK received`);
 				} catch (error) {
-					console.warn(`[MessageHub] Unsubscribe failed:`, error);
+					log.warn(`Unsubscribe failed:`, error);
 					// Continue with local cleanup even if server unsubscribe fails
 				}
 			}
@@ -574,7 +578,7 @@ export class MessageHub {
 
 			// Remove from active subscriptions
 			sessionSubs.get(method)?.delete(handler as EventHandler);
-			this.log(`Unsubscribed from: ${method} (session: ${sessionId})`);
+			this.logDebug(`Unsubscribed from: ${method} (session: ${sessionId})`);
 		};
 	}
 
@@ -628,7 +632,7 @@ export class MessageHub {
 
 		sessionSubs.get(method)!.add(handler as EventHandler);
 
-		this.log(
+		this.logDebug(
 			`Subscribed (optimistic) to: ${method} (session: ${sessionId}) - local handler registered`
 		);
 
@@ -642,7 +646,7 @@ export class MessageHub {
 
 			// Fire and forget - don't wait for ACK
 			this.sendMessage(subscribeMsg).catch((error) => {
-				console.warn(`[MessageHub] Background SUBSCRIBE failed for ${method}:`, error);
+				log.warn(`Background SUBSCRIBE failed for ${method}:`, error);
 				// Handler is still registered locally - events will flow once server-side catches up
 			});
 		}
@@ -663,7 +667,7 @@ export class MessageHub {
 			// Remove from persisted subscriptions
 			this.persistedSubscriptions.delete(subId);
 
-			this.log(`Unsubscribed (optimistic) from: ${method} (session: ${sessionId})`);
+			this.logDebug(`Unsubscribed (optimistic) from: ${method} (session: ${sessionId})`);
 
 			// Send UNSUBSCRIBE to server in background (fire-and-forget)
 			if (this.isConnected()) {
@@ -674,7 +678,7 @@ export class MessageHub {
 				});
 
 				this.sendMessage(unsubscribeMsg).catch((error) => {
-					console.warn(`[MessageHub] Background UNSUBSCRIBE failed for ${method}:`, error);
+					log.warn(`Background UNSUBSCRIBE failed for ${method}:`, error);
 					// Local cleanup already done - server will eventually clean up stale subscriptions
 				});
 			}
@@ -745,11 +749,11 @@ export class MessageHub {
 	private async handleIncomingMessage(message: HubMessage): Promise<void> {
 		// Validate message structure
 		if (!isValidMessage(message)) {
-			console.error(`[MessageHub] Invalid message format:`, message);
+			log.error(`Invalid message format:`, message);
 			throw new Error(`Invalid message format: ${JSON.stringify(message)}`);
 		}
 
-		this.log(`← Incoming: ${message.type} ${message.method}`, message);
+		this.logDebug(`← Incoming: ${message.type} ${message.method}`, message);
 
 		// FIX P1.3: Validate message sequence (if present)
 		// Server-side: track per-client (each client has its own sequence counter)
@@ -762,14 +766,14 @@ export class MessageHub {
 				const expectedSeq = this.expectedSequencePerClient.get(clientId);
 				if (expectedSeq !== undefined) {
 					if (message.sequence < expectedSeq) {
-						console.warn(
-							`[MessageHub] Out-of-order message from client ${clientId}: ` +
+						log.warn(
+							`Out-of-order message from client ${clientId}: ` +
 								`received sequence ${message.sequence}, expected >= ${expectedSeq}`
 						);
 					} else if (message.sequence > expectedSeq) {
 						const gap = message.sequence - expectedSeq;
-						console.warn(
-							`[MessageHub] Message sequence gap from client ${clientId}: ` +
+						log.warn(
+							`Message sequence gap from client ${clientId}: ` +
 								`received sequence ${message.sequence}, expected ${expectedSeq} (gap: ${gap} messages)`
 						);
 					}
@@ -780,14 +784,14 @@ export class MessageHub {
 				// Client-side: use global tracking (server uses single counter)
 				if (this.expectedSequence !== null) {
 					if (message.sequence < this.expectedSequence) {
-						console.warn(
-							`[MessageHub] Out-of-order message detected: ` +
+						log.warn(
+							`Out-of-order message detected: ` +
 								`received sequence ${message.sequence}, expected >= ${this.expectedSequence}`
 						);
 					} else if (message.sequence > this.expectedSequence) {
 						const gap = message.sequence - this.expectedSequence;
-						console.warn(
-							`[MessageHub] Message sequence gap detected: ` +
+						log.warn(
+							`Message sequence gap detected: ` +
 								`received sequence ${message.sequence}, expected ${this.expectedSequence} (gap: ${gap} messages)`
 						);
 					}
@@ -819,7 +823,7 @@ export class MessageHub {
 				await this.handleEvent(message);
 			}
 		} catch (error) {
-			console.error(`[MessageHub] Error handling message:`, error);
+			log.error(`Error handling message:`, error);
 		}
 	}
 
@@ -885,13 +889,13 @@ export class MessageHub {
 	private handleSubscriptionResponse(message: HubMessage): void {
 		const requestId = message.requestId;
 		if (!requestId) {
-			console.warn(`[MessageHub] Subscription response without requestId:`, message);
+			log.warn(`Subscription response without requestId:`, message);
 			return;
 		}
 
 		const pendingSub = this.pendingSubscribes.get(requestId);
 		if (!pendingSub) {
-			this.log(
+			this.logDebug(
 				`Subscription response for unknown request: ${requestId} (method: ${message.method})`
 			);
 			return;
@@ -902,7 +906,7 @@ export class MessageHub {
 
 		if (message.type === MessageType.SUBSCRIBED || message.type === MessageType.UNSUBSCRIBED) {
 			const action = message.type === MessageType.SUBSCRIBED ? 'SUBSCRIBE' : 'UNSUBSCRIBE';
-			this.log(`${action} ACK received: ${pendingSub.method}`);
+			this.logDebug(`${action} ACK received: ${pendingSub.method}`);
 			pendingSub.resolve();
 		} else {
 			// Shouldn't reach here, but handle just in case
@@ -921,14 +925,14 @@ export class MessageHub {
 	private handleResponse(message: HubMessage): void {
 		const requestId = message.requestId;
 		if (!requestId) {
-			console.warn(`[MessageHub] Response without requestId:`, message);
+			log.warn(`Response without requestId:`, message);
 			return;
 		}
 
 		// Check if it's an RPC call response
 		const pending = this.pendingCalls.get(requestId);
 		if (!pending) {
-			this.log(`Response for unknown request: ${requestId} (method: ${message.method})`);
+			this.logDebug(`Response for unknown request: ${requestId} (method: ${message.method})`);
 			return;
 		}
 
@@ -954,15 +958,15 @@ export class MessageHub {
 		// FIX P0.7: Queue events during resubscription
 		if (this.resubscribing) {
 			this.pendingEvents.push(message);
-			this.log(`Event queued during resubscription: ${message.method}`);
+			this.logDebug(`Event queued during resubscription: ${message.method}`);
 			return;
 		}
 
 		// FIX P0.4: Check recursion depth
 		const currentDepth = this.eventDepthMap.get(message.id) || 0;
 		if (currentDepth >= this.maxEventDepth) {
-			console.error(
-				`[MessageHub] Max event depth (${this.maxEventDepth}) exceeded for ${message.method}. ` +
+			log.error(
+				`Max event depth (${this.maxEventDepth}) exceeded for ${message.method}. ` +
 					`Possible circular dependency or infinite loop.`
 			);
 			return;
@@ -1004,10 +1008,7 @@ export class MessageHub {
 					// FIX P1.4: Configurable error handling behavior
 					if (this.stopOnEventHandlerError) {
 						// Stop on first error (strict mode)
-						console.error(
-							`[MessageHub] Event handler failed for ${message.method} (stopping):`,
-							err
-						);
+						log.error(`Event handler failed for ${message.method} (stopping):`, err);
 						break;
 					}
 					// Default: Continue executing other handlers (resilient mode)
@@ -1016,8 +1017,8 @@ export class MessageHub {
 
 			// FIX P1.4: Log all collected errors together
 			if (handlerErrors.length > 0 && !this.stopOnEventHandlerError) {
-				console.error(
-					`[MessageHub] ${handlerErrors.length} event handler(s) failed for ${message.method}:`,
+				log.error(
+					`${handlerErrors.length} event handler(s) failed for ${message.method}:`,
 					handlerErrors.map((e) => e.error.message)
 				);
 			}
@@ -1035,7 +1036,7 @@ export class MessageHub {
 	 */
 	private async handleSubscribe(message: HubMessage): Promise<void> {
 		if (!this.router) {
-			this.log('No router registered, ignoring SUBSCRIBE');
+			this.logDebug('No router registered, ignoring SUBSCRIBE');
 			return;
 		}
 
@@ -1043,9 +1044,7 @@ export class MessageHub {
 		const clientId = (message as import('./protocol').HubMessageWithMetadata).clientId;
 
 		if (!clientId) {
-			console.error(
-				'[MessageHub] SUBSCRIBE without clientId - transport must add clientId to messages'
-			);
+			log.error('SUBSCRIBE without clientId - transport must add clientId to messages');
 			return;
 		}
 
@@ -1053,7 +1052,7 @@ export class MessageHub {
 			// Register subscription in router
 			this.router.subscribe(message.sessionId, message.method, clientId);
 
-			this.log(`Client ${clientId} subscribed to ${message.sessionId}:${message.method}`);
+			this.logDebug(`Client ${clientId} subscribed to ${message.sessionId}:${message.method}`);
 
 			// Send SUBSCRIBED confirmation
 			const ackMsg = createSubscribedMessage({
@@ -1064,7 +1063,7 @@ export class MessageHub {
 
 			await this.sendResponseToClient(ackMsg, clientId);
 		} catch (error) {
-			console.error(`[MessageHub] Error handling SUBSCRIBE:`, error);
+			log.error(`Error handling SUBSCRIBE:`, error);
 
 			// Send error response
 			const errorMsg = createErrorMessage({
@@ -1089,14 +1088,14 @@ export class MessageHub {
 	 */
 	private async handleUnsubscribe(message: HubMessage): Promise<void> {
 		if (!this.router) {
-			this.log('No router registered, ignoring UNSUBSCRIBE');
+			this.logDebug('No router registered, ignoring UNSUBSCRIBE');
 			return;
 		}
 
 		const clientId = (message as import('./protocol').HubMessageWithMetadata).clientId;
 
 		if (!clientId) {
-			console.error('[MessageHub] UNSUBSCRIBE without clientId');
+			log.error('UNSUBSCRIBE without clientId');
 			return;
 		}
 
@@ -1104,7 +1103,7 @@ export class MessageHub {
 			// Remove subscription from router
 			this.router.unsubscribeClient(message.sessionId, message.method, clientId);
 
-			this.log(`Client ${clientId} unsubscribed from ${message.sessionId}:${message.method}`);
+			this.logDebug(`Client ${clientId} unsubscribed from ${message.sessionId}:${message.method}`);
 
 			// Send UNSUBSCRIBED confirmation
 			const ackMsg = createUnsubscribedMessage({
@@ -1115,7 +1114,7 @@ export class MessageHub {
 
 			await this.sendResponseToClient(ackMsg, clientId);
 		} catch (error) {
-			console.error(`[MessageHub] Error handling UNSUBSCRIBE:`, error);
+			log.error(`Error handling UNSUBSCRIBE:`, error);
 		}
 	}
 
@@ -1123,7 +1122,7 @@ export class MessageHub {
 	 * Handle PING message - respond with PONG
 	 */
 	private async handlePing(message: HubMessage): Promise<void> {
-		this.log(`Received PING from session: ${message.sessionId}`);
+		this.logDebug(`Received PING from session: ${message.sessionId}`);
 
 		// Create PONG response
 		const pongMessage: HubMessage = {
@@ -1143,7 +1142,7 @@ export class MessageHub {
 	 * Handle PONG message - track connection health
 	 */
 	private handlePong(message: HubMessage): void {
-		this.log(`Received PONG from session: ${message.sessionId}`);
+		this.logDebug(`Received PONG from session: ${message.sessionId}`);
 		// Optional: Could track latency metrics here
 		// const latency = Date.now() - new Date(message.timestamp).getTime();
 		// this.connectionHealth.set(message.sessionId, { latency, lastPong: Date.now() });
@@ -1166,7 +1165,10 @@ export class MessageHub {
 		// Add sequence number for ordering guarantees
 		message.sequence = this.messageSequence++;
 
-		this.log(`→ Outgoing: ${message.type} ${message.method} [seq=${message.sequence}]`, message);
+		this.logDebug(
+			`→ Outgoing: ${message.type} ${message.method} [seq=${message.sequence}]`,
+			message
+		);
 
 		// Notify message handlers
 		this.notifyMessageHandlers(message, 'out');
@@ -1175,7 +1177,7 @@ export class MessageHub {
 		if (this.router && message.type === MessageType.EVENT) {
 			// Use router to route EVENT to subscribed clients
 			const result = this.router.routeEvent(message);
-			this.log(`Routed event: ${result.sent}/${result.totalSubscribers} delivered`);
+			this.logDebug(`Routed event: ${result.sent}/${result.totalSubscribers} delivered`);
 			return;
 		}
 
@@ -1198,9 +1200,7 @@ export class MessageHub {
 		if (this.router && clientId) {
 			const success = this.router.sendToClient(clientId, message);
 			if (!success) {
-				console.warn(
-					`[MessageHub] Failed to send response to client ${clientId}, falling back to broadcast`
-				);
+				log.warn(`Failed to send response to client ${clientId}, falling back to broadcast`);
 				// Fallback to broadcast if client not found
 				this.router.broadcast(message);
 			}
@@ -1222,7 +1222,7 @@ export class MessageHub {
 			try {
 				handler(message, direction);
 			} catch (error) {
-				console.error(`[MessageHub] Error in message handler:`, error);
+				log.error(`Error in message handler:`, error);
 			}
 		}
 	}
@@ -1235,7 +1235,7 @@ export class MessageHub {
 			try {
 				handler(state, error);
 			} catch (err) {
-				console.error(`[MessageHub] Error in connection state handler:`, err);
+				log.error(`Error in connection state handler:`, err);
 			}
 		}
 	}
@@ -1255,7 +1255,7 @@ export class MessageHub {
 	 * This is a public wrapper around the internal resubscribeAll() method.
 	 */
 	forceResubscribe(): void {
-		this.log('Force resubscribing all subscriptions (connection validation)');
+		this.logDebug('Force resubscribing all subscriptions (connection validation)');
 		this.resubscribeAll();
 	}
 
@@ -1276,19 +1276,21 @@ export class MessageHub {
 		// (MessageHub on connect, StateChannel.hybridRefresh, ConnectionManager.validateConnectionOnResume)
 		const now = Date.now();
 		if (now - this.lastResubscribeTime < this.resubscribeDebounceMs) {
-			this.log(
+			this.logDebug(
 				`Skipping resubscribeAll - debounced (last call ${now - this.lastResubscribeTime}ms ago)`
 			);
 			return;
 		}
 		this.lastResubscribeTime = now;
 
-		this.log(`Re-subscribing ${this.persistedSubscriptions.size} subscriptions after reconnection`);
+		this.logDebug(
+			`Re-subscribing ${this.persistedSubscriptions.size} subscriptions after reconnection`
+		);
 
 		// FIX: Clear sequence tracking on reconnection
 		// Server may have restarted and reset its sequence counter, so client must reset expectations
 		this.expectedSequence = null;
-		this.log(`Cleared sequence tracking for fresh reconnection`);
+		this.logDebug(`Cleared sequence tracking for fresh reconnection`);
 
 		// FIX P0.7: Set flag to queue incoming events during rebuild
 		this.resubscribing = true;
@@ -1340,7 +1342,7 @@ export class MessageHub {
 						const timer = setTimeout(() => {
 							this.pendingSubscribes.delete(subId);
 							this.inFlightSubscriptions.delete(subKey); // Clean up on timeout
-							this.log(`Subscription ACK timeout for ${method} (session: ${sessionId})`);
+							this.logDebug(`Subscription ACK timeout for ${method} (session: ${sessionId})`);
 							resolve({ method, success: false });
 						}, RESUBSCRIBE_TIMEOUT);
 
@@ -1364,19 +1366,16 @@ export class MessageHub {
 
 					// Send message (don't await here to avoid blocking)
 					this.sendMessage(subscribeMsg).catch((error) => {
-						console.error(
-							`[MessageHub] Failed to send SUBSCRIBE for ${method} (session: ${sessionId}):`,
-							error
-						);
+						log.error(`Failed to send SUBSCRIBE for ${method} (session: ${sessionId}):`, error);
 						this.inFlightSubscriptions.delete(subKey); // Clean up on send error
 					});
 
 					subscriptionPromises.push(ackPromise);
 				} else if (this.inFlightSubscriptions.has(subKey)) {
-					this.log(`Skipping duplicate SUBSCRIBE for ${method} (session: ${sessionId})`);
+					this.logDebug(`Skipping duplicate SUBSCRIBE for ${method} (session: ${sessionId})`);
 				}
 
-				this.log(`Re-subscribed to: ${method} (session: ${sessionId})`);
+				this.logDebug(`Re-subscribed to: ${method} (session: ${sessionId})`);
 			}
 
 			// Atomic swap - no window where events are missed
@@ -1393,25 +1392,25 @@ export class MessageHub {
 				const failed = results.length - succeeded;
 
 				if (failed > 0) {
-					console.warn(
-						`[MessageHub] Resubscription completed: ${succeeded}/${results.length} ACKs received, ${failed} timed out`
+					log.warn(
+						`Resubscription completed: ${succeeded}/${results.length} ACKs received, ${failed} timed out`
 					);
 				} else {
-					this.log(`Resubscription completed: all ${succeeded} ACKs received`);
+					this.logDebug(`Resubscription completed: all ${succeeded} ACKs received`);
 				}
 			});
 		}
 
 		// FIX P0.7: Replay queued events after subscription rebuild
 		if (this.pendingEvents.length > 0) {
-			this.log(`Replaying ${this.pendingEvents.length} queued events`);
+			this.logDebug(`Replaying ${this.pendingEvents.length} queued events`);
 			const events = [...this.pendingEvents];
 			this.pendingEvents = [];
 
 			for (const event of events) {
 				// Replay event asynchronously (don't block reconnection)
 				this.handleEvent(event).catch((error) => {
-					console.error(`[MessageHub] Error replaying queued event:`, error);
+					log.error(`Error replaying queued event:`, error);
 				});
 			}
 		}
@@ -1456,7 +1455,7 @@ export class MessageHub {
 		// FIX: Clear in-flight subscription tracking
 		this.inFlightSubscriptions.clear();
 
-		this.log('MessageHub cleaned up');
+		this.logDebug('MessageHub cleaned up');
 	}
 
 	// ========================================
@@ -1472,12 +1471,10 @@ export class MessageHub {
 	}
 
 	/**
-	 * Debug logging
+	 * Debug logging - uses unified logger
 	 */
-	private log(message: string, ...args: unknown[]): void {
-		if (this.debug) {
-			console.log(`[MessageHub] ${message}`, ...args);
-		}
+	private logDebug(message: string, ...args: unknown[]): void {
+		log.debug(message, ...args);
 	}
 
 	/**

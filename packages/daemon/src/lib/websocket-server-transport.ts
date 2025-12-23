@@ -9,6 +9,7 @@
  */
 
 import type { ServerWebSocket } from 'bun';
+import { Logger } from './logger';
 import type { HubMessage, IMessageTransport, ConnectionState } from '@liuboer/shared';
 import type { HubMessageWithMetadata } from '@liuboer/shared/message-hub/protocol';
 import type { MessageHubRouter, ClientConnection } from '@liuboer/shared';
@@ -39,6 +40,7 @@ export interface WebSocketServerTransportOptions {
  * - Delegate all routing to MessageHubRouter
  */
 export class WebSocketServerTransport implements IMessageTransport {
+	private logger = new Logger('WebSocketServerTransport');
 	readonly name: string;
 	private router: MessageHubRouter;
 	private messageHandlers: Set<(message: HubMessage) => void> = new Set();
@@ -116,7 +118,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 			const timeSinceActivity = now - lastActivity;
 			if (timeSinceActivity > this.staleTimeout) {
 				staleClientIds.push(clientId);
-				console.warn(
+				this.logger.warn(
 					`[${this.name}] Closing stale connection ${clientId} (inactive for ${Math.round(timeSinceActivity / 1000)}s)`
 				);
 			}
@@ -202,7 +204,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 					this.clientQueues.set(clientId, queueSize);
 				} catch (error) {
 					this.clientQueues.set(clientId, queueSize); // Revert on error
-					console.error(`[${this.name}] Failed to send:`, error);
+					this.logger.error(`[${this.name}] Failed to send:`, error);
 					throw error;
 				}
 			},
@@ -264,7 +266,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 			try {
 				handler(clientId);
 			} catch (error) {
-				console.error(`[${this.name}] Error in client disconnect handler:`, error);
+				this.logger.error(`[${this.name}] Error in client disconnect handler:`, error);
 			}
 		}
 
@@ -294,7 +296,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 			try {
 				handler(message);
 			} catch (error) {
-				console.error(`[${this.name}] Error in message handler:`, error);
+				this.logger.error(`[${this.name}] Error in message handler:`, error);
 			}
 		}
 	}
@@ -314,7 +316,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 		// For EVENT messages: MessageHub should have routed via Router already
 		// If we get here, it means no router registered (shouldn't happen server-side)
 		if (message.type === 'EVENT') {
-			console.warn(
+			this.logger.warn(
 				`[${this.name}] EVENT message sent via deprecated path. ` +
 					`MessageHub should route via Router.`
 			);
@@ -422,14 +424,14 @@ export class WebSocketServerTransport implements IMessageTransport {
 			try {
 				handler(state, error);
 			} catch (err) {
-				console.error(`[${this.name}] Error in connection handler:`, err);
+				this.logger.error(`[${this.name}] Error in connection handler:`, err);
 			}
 		}
 	}
 
 	private log(message: string, ...args: unknown[]): void {
 		if (this.debug) {
-			console.log(`[${this.name}] ${message}`, ...args);
+			this.logger.info(`[${this.name}] ${message}`, ...args);
 		}
 	}
 }

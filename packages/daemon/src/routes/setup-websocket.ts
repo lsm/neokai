@@ -11,6 +11,9 @@ import type { HubMessage } from '@liuboer/shared/message-hub/protocol';
 import type { WebSocketServerTransport } from '../lib/websocket-server-transport';
 import type { SessionManager } from '../lib/session-manager';
 import type { SubscriptionManager } from '../lib/subscription-manager';
+import { Logger } from '../lib/logger';
+
+const log = new Logger('WebSocketHandler');
 
 const GLOBAL_SESSION_ID = 'global';
 
@@ -46,7 +49,7 @@ export function createWebSocketHandlers(
 ) {
 	return {
 		open(ws: ServerWebSocket<WebSocketData>) {
-			console.log('WebSocket connection established');
+			log.info('WebSocket connection established');
 
 			// Register client with transport (starts in global session)
 			const clientId = transport.registerClient(ws, GLOBAL_SESSION_ID);
@@ -78,7 +81,7 @@ export function createWebSocketHandlers(
 				const messageSize = new TextEncoder().encode(messageStr).length;
 
 				if (messageSize > MAX_MESSAGE_SIZE) {
-					console.error(
+					log.error(
 						`Message rejected: size ${(messageSize / (1024 * 1024)).toFixed(2)}MB exceeds limit ${MAX_MESSAGE_SIZE_MB}MB`
 					);
 					const errorMsg = createErrorMessage({
@@ -120,7 +123,7 @@ export function createWebSocketHandlers(
 
 				// Validate sessionId exists in message
 				if (!data.sessionId) {
-					console.warn('Message without sessionId, defaulting to global');
+					log.warn('Message without sessionId, defaulting to global');
 					data.sessionId = GLOBAL_SESSION_ID;
 				}
 
@@ -151,7 +154,7 @@ export function createWebSocketHandlers(
 					transport.handleClientMessage(data as unknown as HubMessage, clientId);
 				}
 			} catch (error) {
-				console.error('Error processing WebSocket message:', error);
+				log.error('Error processing WebSocket message:', error);
 				const errorMsg = createErrorMessage({
 					method: 'message.process',
 					error: {
@@ -165,7 +168,7 @@ export function createWebSocketHandlers(
 		},
 
 		close(ws: ServerWebSocket<WebSocketData>) {
-			console.log('WebSocket disconnected');
+			log.info('WebSocket disconnected');
 			const clientId = ws.data.clientId;
 			if (clientId) {
 				transport.unregisterClient(clientId);
@@ -173,7 +176,7 @@ export function createWebSocketHandlers(
 		},
 
 		error(ws: ServerWebSocket<WebSocketData>, error: Error) {
-			console.error('WebSocket error:', error);
+			log.error('WebSocket error:', error);
 			const clientId = ws.data.clientId;
 			if (clientId) {
 				transport.unregisterClient(clientId);

@@ -7,6 +7,10 @@
  * - Automatic cleanup of stale entries
  */
 
+import { createLogger } from '../logger.ts';
+
+const log = createLogger('liuboer:messagehub:cache');
+
 export interface CacheEntry<T> {
 	value: T;
 	timestamp: number;
@@ -28,7 +32,7 @@ export class LRUCache<K, V> {
 			try {
 				this.cleanup();
 			} catch (error) {
-				console.error('[LRUCache] Cleanup failed:', error);
+				log.error('Cleanup failed:', error);
 				// Continue - don't break the timer chain
 			}
 		}, 30000);
@@ -117,7 +121,7 @@ export class LRUCache<K, V> {
 		}
 
 		if (keysToDelete.length > 0) {
-			console.log(`[LRUCache] Cleaned up ${keysToDelete.length} expired entries`);
+			log.debug(`Cleaned up ${keysToDelete.length} expired entries`);
 		}
 	}
 

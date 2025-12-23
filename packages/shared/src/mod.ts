@@ -8,3 +8,20 @@ export * from './models.ts';
 export * from './types/settings.ts';
 export { EventBus } from './event-bus.ts';
 export type { EventMap, EventHandler as EventBusHandler } from './event-bus.ts';
+
+// Unified logger
+export {
+	Logger,
+	LogLevel,
+	createLogger,
+	logger,
+	loggers,
+	configureLogger,
+	getLoggerConfig,
+	silenceNamespace,
+	setLogLevel,
+	isTestEnvironment,
+	isDevelopment,
+	isProduction,
+} from './logger.ts';
+export type { LoggerConfig } from './logger.ts';

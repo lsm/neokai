@@ -13,6 +13,7 @@
  */
 
 import type { MessageHub } from '@liuboer/shared';
+import { Logger } from './logger';
 
 /**
  * Subscription Manager
@@ -21,6 +22,7 @@ import type { MessageHub } from '@liuboer/shared';
  * When clients connect, this manager subscribes them to relevant events.
  */
 export class SubscriptionManager {
+	private logger = new Logger('SubscriptionManager');
 	private debug: boolean;
 
 	constructor(private messageHub: MessageHub) {
@@ -30,7 +32,7 @@ export class SubscriptionManager {
 
 	private log(...args: unknown[]): void {
 		if (this.debug) {
-			console.log(...args);
+			this.logger.info(...args);
 		}
 	}
 

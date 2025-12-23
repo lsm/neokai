@@ -793,8 +793,8 @@ export class Database {
 			return true;
 		} catch (error) {
 			// Log error but don't throw - prevents stream from dying
-			console.error('[Database] Failed to save SDK message:', error);
-			console.error('[Database] Message type:', message.type, 'Session:', sessionId);
+			this.logger.error('[Database] Failed to save SDK message:', error);
+			this.logger.error('[Database] Message type:', message.type, 'Session:', sessionId);
 			return false;
 		}
 	}

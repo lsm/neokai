@@ -557,7 +557,7 @@ export class StateManager {
 			// Session may have been deleted or database may be closed during cleanup
 			// This is expected behavior, don't throw
 			if (process.env.TEST_VERBOSE) {
-				console.warn(
+				this.logger.warn(
 					`[StateManager] Failed to broadcast session state for ${sessionId}:`,
 					error instanceof Error ? error.message : error
 				);

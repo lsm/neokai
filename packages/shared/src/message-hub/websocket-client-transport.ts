@@ -12,6 +12,10 @@ import type {
 } from './types.ts';
 import type { HubMessage } from './protocol.ts';
 import { generateUUID } from '../utils.ts';
+import { createLogger } from '../logger.ts';
+
+// Create logger for WebSocket transport (uses unified log levels)
+const log = createLogger('liuboer:transport:client');
 
 export interface WebSocketClientTransportOptions {
 	/**
@@ -105,7 +109,7 @@ export class WebSocketClientTransport implements IMessageTransport {
 				this.ws = new WebSocket(this.url);
 
 				this.ws.onopen = () => {
-					console.log(`[${this.name}] Connected to ${this.url}`);
+					log.info(`Connected to ${this.url}`);
 					this.setState('connected');
 					this.reconnectAttempts = 0;
 					this.startPing();
@@ -117,12 +121,12 @@ export class WebSocketClientTransport implements IMessageTransport {
 				};
 
 				this.ws.onerror = (error) => {
-					console.error(`[${this.name}] WebSocket error:`, error);
+					log.error(`WebSocket error:`, error);
 					this.setState('error', new Error('WebSocket error'));
 				};
 
 				this.ws.onclose = () => {
-					console.log(`[${this.name}] Disconnected`);
+					log.info(`Disconnected`);
 					this.setState('disconnected');
 					this.stopPing();
 					this.handleDisconnect();
@@ -151,9 +155,7 @@ export class WebSocketClientTransport implements IMessageTransport {
 		}
 
 		if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-			console.error(
-				`[${this.name}] Max reconnection attempts (${this.maxReconnectAttempts}) reached`
-			);
+			log.error(`Max reconnection attempts (${this.maxReconnectAttempts}) reached`);
 			// Emit 'failed' state to notify UI that reconnection has permanently failed
 			this.setState('failed');
 			return;
@@ -166,13 +168,13 @@ export class WebSocketClientTransport implements IMessageTransport {
 		const jitter = Math.random() * baseDelay * 0.6 - baseDelay * 0.3; // ±30%
 		const delay = Math.max(100, baseDelay + jitter); // Minimum 100ms
 
-		console.log(
-			`[${this.name}] Reconnecting in ${Math.round(delay)}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`
+		log.debug(
+			`Reconnecting in ${Math.round(delay)}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`
 		);
 
 		this.reconnectTimer = setTimeout(() => {
 			this.connect().catch((error) => {
-				console.error(`[${this.name}] Reconnection failed:`, error);
+				log.error(`Reconnection failed:`, error);
 			});
 		}, delay);
 	}
@@ -201,7 +203,7 @@ export class WebSocketClientTransport implements IMessageTransport {
 
 			this.ws!.send(json);
 		} catch (error) {
-			console.error(`[${this.name}] Send failed:`, error);
+			log.error(`Send failed:`, error);
 
 			// Update state if WebSocket closed
 			if (this.ws && this.ws.readyState !== WebSocket.OPEN) {
@@ -258,7 +260,7 @@ export class WebSocketClientTransport implements IMessageTransport {
 	resetReconnectState(): void {
 		this.closed = false;
 		this.reconnectAttempts = 0;
-		console.log(`[${this.name}] Reconnect state reset - ready for fresh connection attempt`);
+		log.debug(`Reconnect state reset - ready for fresh connection attempt`);
 	}
 
 	/**
@@ -266,7 +268,7 @@ export class WebSocketClientTransport implements IMessageTransport {
 	 * Unlike close(), this does NOT set closed=true, allowing auto-reconnect
 	 */
 	forceReconnect(): void {
-		console.log(`[${this.name}] Force reconnect initiated`);
+		log.debug(`Force reconnect initiated`);
 
 		// Reset state to allow reconnection
 		this.resetReconnectState();
@@ -315,8 +317,8 @@ export class WebSocketClientTransport implements IMessageTransport {
 			// FIX P1.1: Validate message size before parsing
 			const messageSize = new TextEncoder().encode(data).length;
 			if (messageSize > this.maxMessageSize) {
-				console.error(
-					`[${this.name}] Message rejected: size ${(messageSize / (1024 * 1024)).toFixed(2)}MB exceeds limit ${this.maxMessageSize / (1024 * 1024)}MB`
+				log.error(
+					`Message rejected: size ${(messageSize / (1024 * 1024)).toFixed(2)}MB exceeds limit ${this.maxMessageSize / (1024 * 1024)}MB`
 				);
 				return;
 			}
@@ -333,11 +335,11 @@ export class WebSocketClientTransport implements IMessageTransport {
 				try {
 					handler(message);
 				} catch (error) {
-					console.error(`[${this.name}] Error in message handler:`, error);
+					log.error(`Error in message handler:`, error);
 				}
 			}
 		} catch (error) {
-			console.error(`[${this.name}] Failed to parse message:`, error);
+			log.error(`Failed to parse message:`, error);
 		}
 	}
 
@@ -356,7 +358,7 @@ export class WebSocketClientTransport implements IMessageTransport {
 			try {
 				handler(state, error);
 			} catch (err) {
-				console.error(`[${this.name}] Error in connection handler:`, err);
+				log.error(`Error in connection handler:`, err);
 			}
 		}
 	}
@@ -382,8 +384,8 @@ export class WebSocketClientTransport implements IMessageTransport {
 				// FIX P1.2: Check if PONG timeout exceeded
 				const timeSinceLastPong = Date.now() - this.lastPongTime;
 				if (timeSinceLastPong > this.pongTimeout) {
-					console.error(
-						`[${this.name}] PONG timeout exceeded (${Math.round(timeSinceLastPong / 1000)}s > ${this.pongTimeout / 1000}s). Connection appears stale.`
+					log.error(
+						`PONG timeout exceeded (${Math.round(timeSinceLastPong / 1000)}s > ${this.pongTimeout / 1000}s). Connection appears stale.`
 					);
 					// Force disconnect and reconnect
 					if (this.ws) {
@@ -405,7 +407,7 @@ export class WebSocketClientTransport implements IMessageTransport {
 				try {
 					this.ws!.send(JSON.stringify(pingMessage));
 				} catch (error) {
-					console.error(`[${this.name}] Failed to send PING:`, error);
+					log.error(`Failed to send PING:`, error);
 					this.handleDisconnect();
 				}
 			}

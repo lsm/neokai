@@ -3,9 +3,12 @@ import { serveStatic } from 'hono/bun';
 import { createDaemonApp } from '@liuboer/daemon/app';
 import type { Config } from '@liuboer/daemon/config';
 import { resolve } from 'path';
+import { createLogger } from '@liuboer/shared';
+
+const log = createLogger('liuboer:cli:prod-server');
 
 export async function startProdServer(config: Config) {
-	console.log('🚀 Starting production server...');
+	log.info('🚀 Starting production server...');
 
 	// Create daemon app (returns Bun server)
 	const daemonContext = await createDaemonApp({
@@ -19,7 +22,7 @@ export async function startProdServer(config: Config) {
 
 	// Get path to web dist folder
 	const distPath = resolve(import.meta.dir, '../../web/dist');
-	console.log(`📦 Serving static files from: ${distPath}`);
+	log.info(`📦 Serving static files from: ${distPath}`);
 
 	// Get WebSocket handlers from daemon
 	const { createWebSocketHandlers } = await import('@liuboer/daemon/routes/setup-websocket');
@@ -104,7 +107,7 @@ export async function startProdServer(config: Config) {
 		websocket: wsHandlers,
 
 		error(error) {
-			console.error('Server error:', error);
+			log.error('Server error:', error);
 			return new Response(
 				JSON.stringify({
 					error: 'Internal server error',
@@ -120,20 +123,20 @@ export async function startProdServer(config: Config) {
 		},
 	});
 
-	console.log(`\n✨ Production server running!`);
-	console.log(`   🌐 UI: http://localhost:${config.port}`);
-	console.log(`   🔌 WebSocket: ws://localhost:${config.port}/ws`);
-	console.log(`\n📝 Press Ctrl+C to stop\n`);
+	log.info(`\n✨ Production server running!`);
+	log.info(`   🌐 UI: http://localhost:${config.port}`);
+	log.info(`   🔌 WebSocket: ws://localhost:${config.port}/ws`);
+	log.info(`\n📝 Press Ctrl+C to stop\n`);
 
 	// Graceful shutdown
 	const shutdown = async (signal: string) => {
-		console.log(`\n👋 Received ${signal}, shutting down gracefully...`);
+		log.info(`\n👋 Received ${signal}, shutting down gracefully...`);
 		try {
 			server.stop();
 			await daemonContext.cleanup();
 			process.exit(0);
 		} catch (error) {
-			console.error('❌ Error during shutdown:', error);
+			log.error('❌ Error during shutdown:', error);
 			process.exit(1);
 		}
 	};
