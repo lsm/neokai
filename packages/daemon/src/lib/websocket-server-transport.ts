@@ -46,7 +46,6 @@ export class WebSocketServerTransport implements IMessageTransport {
 	private messageHandlers: Set<(message: HubMessage) => void> = new Set();
 	private connectionHandlers: Set<(state: ConnectionState, error?: Error) => void> = new Set();
 	private clientDisconnectHandlers: Set<(clientId: string) => void> = new Set();
-	private debug: boolean;
 	private readonly maxQueueSize: number;
 
 	// FIX P2.2: Bidirectional mapping for O(1) lookups
@@ -64,7 +63,6 @@ export class WebSocketServerTransport implements IMessageTransport {
 
 	constructor(options: WebSocketServerTransportOptions) {
 		this.name = options.name || 'websocket-server';
-		this.debug = options.debug || false;
 		this.router = options.router;
 		this.maxQueueSize = options.maxQueueSize || 1000;
 		this.staleTimeout = options.staleTimeout || 120000; // 2 minutes default
@@ -75,7 +73,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 	 * Initialize transport and start stale connection checker
 	 */
 	async initialize(): Promise<void> {
-		this.log('Transport initialized (Bun WebSocket managed by Elysia)');
+		this.logger.info('Transport initialized (Bun WebSocket managed by Elysia)');
 		this.startStaleConnectionChecker();
 	}
 
@@ -91,7 +89,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 			this.checkStaleConnections();
 		}, this.staleCheckInterval);
 
-		this.log(
+		this.logger.info(
 			`Stale connection checker started (timeout: ${this.staleTimeout}ms, interval: ${this.staleCheckInterval}ms)`
 		);
 	}
@@ -103,7 +101,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 		if (this.staleCheckTimer) {
 			clearInterval(this.staleCheckTimer);
 			this.staleCheckTimer = null;
-			this.log('Stale connection checker stopped');
+			this.logger.info('Stale connection checker stopped');
 		}
 	}
 
@@ -131,7 +129,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 				try {
 					ws.close(1000, 'Connection timed out due to inactivity');
 				} catch (error) {
-					this.log(`Error closing stale connection ${clientId}:`, error);
+					this.logger.info(`Error closing stale connection ${clientId}:`, error);
 				}
 			}
 			// Cleanup will happen in the close handler
@@ -139,7 +137,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 		}
 
 		if (staleClientIds.length > 0) {
-			this.log(`Closed ${staleClientIds.length} stale connections`);
+			this.logger.info(`Closed ${staleClientIds.length} stale connections`);
 		}
 	}
 
@@ -157,7 +155,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 	 * FIX P2.2: Clear both bidirectional maps
 	 */
 	async close(): Promise<void> {
-		this.log('Closing transport and cleaning up connections');
+		this.logger.info('Closing transport and cleaning up connections');
 
 		// Stop stale connection checker
 		this.stopStaleConnectionChecker();
@@ -230,7 +228,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 		// Initialize activity time for stale connection detection
 		this.lastActivityTime.set(clientId, Date.now());
 
-		this.log(`Client registered: ${clientId} (session: ${connectionSessionId})`);
+		this.logger.info(`Client registered: ${clientId} (session: ${connectionSessionId})`);
 
 		// Notify connection handlers
 		if (this.router.getClientCount() === 1) {
@@ -270,7 +268,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 			}
 		}
 
-		this.log(`Client unregistered: ${clientId}`);
+		this.logger.info(`Client unregistered: ${clientId}`);
 
 		// Notify connection handlers if no clients left
 		if (this.router.getClientCount() === 0) {
@@ -283,7 +281,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 	 * Adds clientId to message for subscription tracking
 	 */
 	handleClientMessage(message: HubMessage, clientId?: string): void {
-		this.log(`Received message: ${message.type} ${message.method}`, message);
+		this.logger.info(`Received message: ${message.type} ${message.method}`, message);
 
 		// Add clientId to message metadata for SUBSCRIBE/UNSUBSCRIBE handling
 		// MessageHub needs this to track which client subscribed
@@ -426,12 +424,6 @@ export class WebSocketServerTransport implements IMessageTransport {
 			} catch (err) {
 				this.logger.error(`[${this.name}] Error in connection handler:`, err);
 			}
-		}
-	}
-
-	private log(message: string, ...args: unknown[]): void {
-		if (this.debug) {
-			this.logger.info(`[${this.name}] ${message}`, ...args);
 		}
 	}
 }

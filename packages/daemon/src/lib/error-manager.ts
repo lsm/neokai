@@ -46,7 +46,6 @@ export interface StructuredError {
 
 export class ErrorManager {
 	private logger = new Logger('ErrorManager');
-	private debug: boolean;
 	// Error throttling: track recent errors to prevent flooding client with duplicates
 	private recentErrors: Map<string, { count: number; lastSeen: number; firstSeen: number }> =
 		new Map();
@@ -62,16 +61,7 @@ export class ErrorManager {
 	constructor(
 		private messageHub: MessageHub,
 		private eventBus?: EventBus
-	) {
-		// Only enable debug logs in development mode, not in test mode
-		this.debug = process.env.NODE_ENV === 'development';
-	}
-
-	private error(...args: unknown[]): void {
-		if (this.debug) {
-			this.logger.error(...args);
-		}
-	}
+	) {}
 
 	/**
 	 * Create a structured error from various error types
@@ -362,9 +352,9 @@ export class ErrorManager {
 
 		if (existing.count > this.MAX_ERRORS_PER_WINDOW) {
 			// Throttle this error
-			if (this.debug && existing.count === this.MAX_ERRORS_PER_WINDOW + 1) {
+			if (existing.count === this.MAX_ERRORS_PER_WINDOW + 1) {
 				// Log once when throttling starts
-				this.error(
+				this.logger.error(
 					`[ErrorManager] Throttling error ${category}:${code} for session ${sessionId} (${existing.count} occurrences in ${timeSinceFirst}ms)`
 				);
 			}
@@ -424,11 +414,9 @@ export class ErrorManager {
 				});
 			}
 
-			if (this.debug) {
-				this.error(
-					`[ErrorManager] API connection status changed: ${this.currentApiStatus} → ${newStatus} (${this.apiConnectionErrors} errors)`
-				);
-			}
+			this.logger.error(
+				`[ErrorManager] API connection status changed: ${this.currentApiStatus} → ${newStatus} (${this.apiConnectionErrors} errors)`
+			);
 		}
 	}
 
@@ -455,9 +443,7 @@ export class ErrorManager {
 				});
 			}
 
-			if (this.debug) {
-				this.error('[ErrorManager] API connection recovered');
-			}
+			this.logger.error('[ErrorManager] API connection recovered');
 		}
 	}
 
@@ -533,15 +519,15 @@ export class ErrorManager {
 		);
 
 		// Log for debugging (include stack trace in dev mode)
-		if (this.debug && structuredError.stack) {
-			this.error(`[ErrorManager] ${category}:`, {
+		if (structuredError.stack) {
+			this.logger.error(`[ErrorManager] ${category}:`, {
 				code: structuredError.code,
 				message: structuredError.message,
 				sessionId,
 				stack: structuredError.stack,
 			});
 		} else {
-			this.error(`[ErrorManager] ${category}:`, {
+			this.logger.error(`[ErrorManager] ${category}:`, {
 				code: structuredError.code,
 				message: structuredError.message,
 				sessionId,

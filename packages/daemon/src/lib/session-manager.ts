@@ -67,12 +67,16 @@ export class SessionManager {
 					skipQueryStart,
 				} = data;
 
-				this.log(`[SessionManager] Processing user-message:persisted for session ${sessionId}`);
+				this.logger.info(
+					`[SessionManager] Processing user-message:persisted for session ${sessionId}`
+				);
 
 				try {
 					const agentSession = await this.getSessionAsync(sessionId);
 					if (!agentSession) {
-						this.error(`[SessionManager] Session ${sessionId} not found for message processing`);
+						this.logger.error(
+							`[SessionManager] Session ${sessionId} not found for message processing`
+						);
 						return;
 					}
 
@@ -90,7 +94,7 @@ export class SessionManager {
 					const titlePromise = needsWorkspaceInit
 						? this.generateTitleAndRenameBranch(sessionId, userMessageText).catch((error) => {
 								// Title generation failure is non-fatal
-								this.error(`[SessionManager] Title generation failed:`, error);
+								this.logger.error(`[SessionManager] Title generation failed:`, error);
 							})
 						: Promise.resolve();
 
@@ -107,30 +111,21 @@ export class SessionManager {
 					// Wait for title generation to complete (non-blocking for user)
 					await titlePromise;
 
-					this.log(
+					this.logger.info(
 						`[SessionManager] Message ${messageId} processing initiated for session ${sessionId}`
 					);
 				} catch (error) {
-					this.error(`[SessionManager] Error processing message for session ${sessionId}:`, error);
+					this.logger.error(
+						`[SessionManager] Error processing message for session ${sessionId}:`,
+						error
+					);
 					// Errors are non-fatal - the user message is already persisted and visible
 					// The SDK query may retry or the user can send another message
 				}
 			}
 		);
 
-		this.log('[SessionManager] EventBus subscriptions setup complete');
-	}
-
-	private log(...args: unknown[]): void {
-		if (this.debug) {
-			this.logger.info(...args);
-		}
-	}
-
-	private error(...args: unknown[]): void {
-		if (this.debug) {
-			this.logger.error(...args);
-		}
+		this.logger.info('[SessionManager] EventBus subscriptions setup complete');
 	}
 
 	async createSession(params: {
@@ -165,12 +160,15 @@ export class SessionManager {
 				if (result) {
 					worktreeMetadata = result;
 					sessionWorkspacePath = result.worktreePath;
-					this.log(
+					this.logger.info(
 						`[SessionManager] Created worktree at ${result.worktreePath} with branch ${result.branch}`
 					);
 				}
 			} catch (error) {
-				this.error('[SessionManager] Failed to create worktree during session creation:', error);
+				this.logger.error(
+					'[SessionManager] Failed to create worktree during session creation:',
+					error
+				);
 				// Continue without worktree - fallback to base workspace
 			}
 		}
@@ -220,9 +218,9 @@ export class SessionManager {
 		this.sessions.set(sessionId, agentSession);
 
 		// Emit event via EventBus (StateManager will handle publishing to MessageHub)
-		this.log('[SessionManager] Emitting session:created event for session:', sessionId);
+		this.logger.info('[SessionManager] Emitting session:created event for session:', sessionId);
 		await this.eventBus.emit('session:created', { session });
-		this.log('[SessionManager] Event emitted, returning sessionId:', sessionId);
+		this.logger.info('[SessionManager] Event emitted, returning sessionId:', sessionId);
 
 		return sessionId;
 	}
@@ -247,16 +245,16 @@ export class SessionManager {
 
 		// Check if title already generated
 		if (session.metadata.titleGenerated) {
-			this.log(`[SessionManager] Session ${sessionId} title already generated`);
+			this.logger.info(`[SessionManager] Session ${sessionId} title already generated`);
 			return;
 		}
 
-		this.log(`[SessionManager] Generating title for session ${sessionId}...`);
+		this.logger.info(`[SessionManager] Generating title for session ${sessionId}...`);
 
 		try {
 			// Step 1: Generate title from user message using Haiku model
 			const title = await this.generateTitleFromMessage(userMessageText, session.workspacePath);
-			this.log(`[SessionManager] Generated title: "${title}"`);
+			this.logger.info(`[SessionManager] Generated title: "${title}"`);
 
 			// Step 2: Rename branch if we have a worktree
 			let newBranchName = session.worktree?.branch;
@@ -274,9 +272,9 @@ export class SessionManager {
 
 					if (renamed) {
 						newBranchName = newBranch;
-						this.log(`[SessionManager] Renamed branch from ${oldBranch} to ${newBranch}`);
+						this.logger.info(`[SessionManager] Renamed branch from ${oldBranch} to ${newBranch}`);
 					} else {
-						this.log(`[SessionManager] Failed to rename branch, keeping ${oldBranch}`);
+						this.logger.info(`[SessionManager] Failed to rename branch, keeping ${oldBranch}`);
 					}
 				}
 			}
@@ -311,9 +309,9 @@ export class SessionManager {
 				session: updatedSession,
 			});
 
-			this.log(`[SessionManager] Title generated for session ${sessionId}: "${title}"`);
+			this.logger.info(`[SessionManager] Title generated for session ${sessionId}: "${title}"`);
 		} catch (error) {
-			this.error('[SessionManager] Failed to generate title:', error);
+			this.logger.error('[SessionManager] Failed to generate title:', error);
 
 			// Fallback: Use first 50 chars of message as title
 			const fallbackTitle = userMessageText.substring(0, 50).trim() || 'New Session';
@@ -336,7 +334,9 @@ export class SessionManager {
 				session: fallbackSession,
 			});
 
-			this.log(`[SessionManager] Used fallback title "${fallbackTitle}" for session ${sessionId}`);
+			this.logger.info(
+				`[SessionManager] Used fallback title "${fallbackTitle}" for session ${sessionId}`
+			);
 		}
 	}
 
@@ -362,7 +362,7 @@ export class SessionManager {
 			// Use the same approach as title-generator.ts but simplified
 			const { query } = await import('@anthropic-ai/claude-agent-sdk');
 
-			this.log('[SessionManager] Generating title with Haiku...');
+			this.logger.info('[SessionManager] Generating title with Haiku...');
 
 			// Create a promise that rejects after timeout
 			const timeoutPromise = new Promise<never>((_, reject) => {
@@ -426,7 +426,7 @@ ${messageText.slice(0, 2000)}`,
 							title = title.replace(/`/g, '');
 
 							if (title) {
-								this.log(`[SessionManager] Generated title: "${title}"`);
+								this.logger.info(`[SessionManager] Generated title: "${title}"`);
 								return title;
 							}
 						}
@@ -440,7 +440,7 @@ ${messageText.slice(0, 2000)}`,
 			// Race between generation and timeout
 			return await Promise.race([generateTitle(), timeoutPromise]);
 		} catch (error) {
-			this.log('[SessionManager] Title generation failed:', error);
+			this.logger.info('[SessionManager] Title generation failed:', error);
 			// Fallback to first 50 chars of message
 			return messageText.substring(0, 50).trim() || 'New Session';
 		}
@@ -661,7 +661,7 @@ ${messageText.slice(0, 2000)}`,
 
 			// 2. Delete worktree if session uses one (before DB deletion)
 			if (session?.worktree) {
-				this.log(`[SessionManager] Removing worktree for session ${sessionId}`);
+				this.logger.info(`[SessionManager] Removing worktree for session ${sessionId}`);
 
 				try {
 					await this.worktreeManager.removeWorktree(session.worktree, true);
@@ -675,7 +675,7 @@ ${messageText.slice(0, 2000)}`,
 						// Log to a failures list that global teardown can check
 						// For now, just log - global teardown will catch these
 					} else {
-						this.log(`[SessionManager] Successfully removed worktree`);
+						this.logger.info(`[SessionManager] Successfully removed worktree`);
 					}
 				} catch (error) {
 					const errorMsg = error instanceof Error ? error.message : String(error);
@@ -707,18 +707,18 @@ ${messageText.slice(0, 2000)}`,
 				// Emit event via EventBus
 				await this.eventBus.emit('session:deleted', { sessionId });
 			} catch (error) {
-				this.error('[SessionManager] Failed to broadcast deletion:', error);
+				this.logger.error('[SessionManager] Failed to broadcast deletion:', error);
 				// Don't rollback - session is already deleted
 			}
 		} catch (error) {
 			// Rollback if DB delete failed
 			if (!dbDeleted) {
-				this.error('[SessionManager] Session deletion failed:', error);
+				this.logger.error('[SessionManager] Session deletion failed:', error);
 				throw error;
 			}
 
 			// If cleanup failed but DB delete succeeded, log but don't rollback
-			this.error('[SessionManager] Session deleted but cleanup failed:', error);
+			this.logger.error('[SessionManager] Session deleted but cleanup failed:', error);
 		}
 	}
 
@@ -768,7 +768,7 @@ ${messageText.slice(0, 2000)}`,
 				const isAllowed = settings?.allowed !== false; // Default to true
 				const isDefaultOn = settings?.defaultOn === true; // Default to false (matches UI)
 
-				this.log(
+				this.logger.info(
 					`[SessionManager] Server ${server.name}: allowed=${isAllowed}, defaultOn=${isDefaultOn}`
 				);
 
@@ -779,7 +779,10 @@ ${messageText.slice(0, 2000)}`,
 			}
 		}
 
-		this.log('[SessionManager] getDefaultToolsConfig - disabledMcpServers:', disabledMcpServers);
+		this.logger.info(
+			'[SessionManager] getDefaultToolsConfig - disabledMcpServers:',
+			disabledMcpServers
+		);
 
 		return {
 			// System Prompt: Claude Code preset - Only enable if allowed AND default is on
@@ -804,20 +807,20 @@ ${messageText.slice(0, 2000)}`,
 	 * Cleanup all sessions (called during shutdown)
 	 */
 	async cleanup(): Promise<void> {
-		this.log(`[SessionManager] Cleaning up ${this.sessions.size} active sessions...`);
+		this.logger.info(`[SessionManager] Cleaning up ${this.sessions.size} active sessions...`);
 
 		// Cleanup all in-memory sessions
 		for (const [sessionId, agentSession] of this.sessions) {
 			try {
 				agentSession.cleanup();
 			} catch (error) {
-				this.error(`[SessionManager] Error cleaning up session ${sessionId}:`, error);
+				this.logger.error(`[SessionManager] Error cleaning up session ${sessionId}:`, error);
 			}
 		}
 
 		// Clear session map
 		this.sessions.clear();
-		this.log(`[SessionManager] All sessions cleaned up`);
+		this.logger.info(`[SessionManager] All sessions cleaned up`);
 	}
 
 	/**
@@ -826,7 +829,7 @@ ${messageText.slice(0, 2000)}`,
 	 */
 	async cleanupOrphanedWorktrees(workspacePath?: string): Promise<string[]> {
 		const path = workspacePath || this.config.workspaceRoot;
-		this.log(`[SessionManager] Cleaning up orphaned worktrees in ${path}`);
+		this.logger.info(`[SessionManager] Cleaning up orphaned worktrees in ${path}`);
 		return await this.worktreeManager.cleanupOrphanedWorktrees(path);
 	}
 }

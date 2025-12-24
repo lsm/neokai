@@ -1,9 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKMessage, SDKUserMessage } from '@liuboer/shared/sdk';
 import { isSDKAssistantMessage } from '@liuboer/shared/sdk/type-guards';
-import { Logger } from './logger';
-
-const logger = new Logger('TitleGenerator');
 
 const TITLE_GENERATION_MODEL = 'haiku';
 const MAX_CONTEXT_LENGTH = 2000;
@@ -25,7 +22,7 @@ export async function generateTitle(
 
 		if (!userText) return null;
 
-		logger.log('Generating title with Haiku...');
+		console.log('Generating title with Haiku...');
 
 		// Use Agent SDK with maxTurns: 1 for simple title generation
 		const result = await query({
@@ -75,7 +72,7 @@ User's message: ${userText}`,
 					// Final trim
 					title = title.trim();
 
-					logger.log(`Generated title: "${title}"`);
+					console.log(`Generated title: "${title}"`);
 					return title;
 				}
 			}
@@ -83,7 +80,7 @@ User's message: ${userText}`,
 
 		return null;
 	} catch (error) {
-		logger.error('Title generation failed:', error);
+		console.error('Title generation failed:', error);
 		return null;
 	}
 }
@@ -126,7 +123,7 @@ export async function generateTitleFromUserInput(
 	const combinedContext = userTexts.join('\n\n');
 	const truncatedContext = combinedContext.slice(0, MAX_CONTEXT_LENGTH);
 
-	logger.log(
+	console.log(
 		`Generating title from ${userMessages.length} user message(s) (${combinedContext.length} chars)...`
 	);
 
@@ -183,7 +180,7 @@ ${truncatedContext}`,
 					throw new Error('Title generation returned empty string after cleaning');
 				}
 
-				logger.log(`Generated title: "${title}"`);
+				console.log(`Generated title: "${title}"`);
 				return title;
 			}
 		}

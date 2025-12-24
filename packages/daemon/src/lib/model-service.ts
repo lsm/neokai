@@ -10,11 +10,8 @@
  */
 
 import type { ModelInfo as SDKModelInfo } from '@liuboer/shared/sdk';
-import { Logger } from './logger';
 import type { ModelInfo } from '@liuboer/shared';
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
-
-const log = new Logger('ModelService');
 
 /**
  * Legacy model ID mappings to SDK model IDs
@@ -86,7 +83,7 @@ export async function getSupportedModelsFromQuery(
 			cacheTimestamps.set(cacheKey, Date.now());
 			return models;
 		} catch (error) {
-			log.warn('Failed to load models from SDK:', error);
+			console.warn('Failed to load models from SDK:', error);
 		}
 	}
 
@@ -173,7 +170,9 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 				if (models && models.length > 0) {
 					modelsCache.set(cacheKey, models);
 					cacheTimestamps.set(cacheKey, Date.now());
-					log.info(`[model-service] Background refresh complete: ${models.length} models loaded`);
+					console.info(
+						`[model-service] Background refresh complete: ${models.length} models loaded`
+					);
 				}
 			} finally {
 				try {
@@ -183,7 +182,7 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 				}
 			}
 		} catch (error) {
-			log.warn('[model-service] Background refresh failed:', error);
+			console.warn('[model-service] Background refresh failed:', error);
 		} finally {
 			refreshInProgress.delete(cacheKey);
 		}
@@ -219,7 +218,7 @@ export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
 
 	if (!dynamicModels || dynamicModels.length === 0) {
 		// Models not loaded - this should not happen if initializeModels() was called
-		log.error('[model-service] Models cache is empty. Was initializeModels() called?');
+		console.error('[model-service] Models cache is empty. Was initializeModels() called?');
 		return [];
 	}
 
@@ -262,11 +261,11 @@ export async function initializeModels(): Promise<void> {
 
 	// Skip if already initialized
 	if (modelsCache.has(cacheKey)) {
-		log.info('[model-service] Models already initialized, skipping');
+		console.info('[model-service] Models already initialized, skipping');
 		return;
 	}
 
-	log.info('[model-service] Loading models on app startup...');
+	console.info('[model-service] Loading models on app startup...');
 
 	try {
 		const { query } = await import('@anthropic-ai/claude-agent-sdk');
@@ -288,7 +287,7 @@ export async function initializeModels(): Promise<void> {
 				// Cache the raw SDK models (will be converted to ModelInfo when retrieved)
 				modelsCache.set(cacheKey, sdkModels);
 				cacheTimestamps.set(cacheKey, Date.now());
-				log.info(
+				console.info(
 					`[model-service] Startup initialization complete: ${sdkModels.length} models loaded`
 				);
 			} else {
@@ -301,7 +300,7 @@ export async function initializeModels(): Promise<void> {
 			tmpQuery.interrupt().catch(() => {});
 		}
 	} catch (error) {
-		log.error('[model-service] Failed to load models on startup:', error);
+		console.error('[model-service] Failed to load models on startup:', error);
 		throw error; // Re-throw - models are required
 	}
 }
