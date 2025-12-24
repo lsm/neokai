@@ -85,12 +85,10 @@ function getEnv(name: string): string | undefined {
 	if (typeof process !== 'undefined' && process.env) {
 		return process.env[name];
 	}
-	// Browser environment - check window.ENV if available
-	if (typeof window !== 'undefined') {
-		const win = window as Record<string, unknown>;
-		if (win.ENV && typeof win.ENV === 'object') {
-			return (win.ENV as Record<string, string>)[name];
-		}
+	// Browser environment - check globalThis.ENV if available
+	const globalEnv = (globalThis as unknown as Record<string, unknown>).ENV;
+	if (globalEnv && typeof globalEnv === 'object') {
+		return (globalEnv as Record<string, string>)[name];
 	}
 	return undefined;
 }

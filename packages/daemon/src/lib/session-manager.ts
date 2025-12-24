@@ -6,6 +6,7 @@ import { AgentSession } from './agent-session';
 import type { AuthManager } from './auth-manager';
 import type { SettingsManager } from './settings-manager';
 import { WorktreeManager } from './worktree-manager';
+import { Logger } from './logger';
 
 export class SessionManager {
 	private sessions: Map<string, AgentSession> = new Map();
@@ -14,6 +15,7 @@ export class SessionManager {
 	private sessionLoadLocks = new Map<string, Promise<AgentSession | null>>();
 	private debug: boolean;
 	private worktreeManager: WorktreeManager;
+	private logger: Logger;
 
 	constructor(
 		private db: Database,
@@ -32,6 +34,7 @@ export class SessionManager {
 		// Only enable debug logs in development mode, not in test mode
 		this.debug = process.env.NODE_ENV === 'development';
 		this.worktreeManager = new WorktreeManager();
+		this.logger = new Logger('SessionManager');
 
 		// Setup EventBus subscribers for async message processing
 		this.setupEventSubscriptions();
