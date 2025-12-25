@@ -25,18 +25,10 @@
 import type {
 	CreateSessionRequest,
 	CreateSessionResponse,
-	GetSessionResponse,
 	ListSessionsResponse,
 	UpdateSessionRequest,
 	ArchiveSessionResponse,
-	ReadFileRequest,
-	ReadFileResponse,
-	ListFilesRequest,
-	ListFilesResponse,
-	GetFileTreeRequest,
-	GetFileTreeResponse,
 	GetAuthStatusResponse,
-	DaemonConfig,
 	HealthStatus,
 } from '@liuboer/shared';
 import { connectionManager } from './connection-manager.ts';
@@ -67,11 +59,6 @@ export async function listSessions(): Promise<ListSessionsResponse> {
 	return await hub.call<ListSessionsResponse>('session.list');
 }
 
-export async function getSession(sessionId: string): Promise<GetSessionResponse> {
-	const hub = getHubOrThrow();
-	return await hub.call<GetSessionResponse>('session.get', { sessionId });
-}
-
 export async function updateSession(sessionId: string, req: UpdateSessionRequest): Promise<void> {
 	const hub = getHubOrThrow();
 	await hub.call('session.update', { sessionId, ...req });
@@ -93,77 +80,11 @@ export async function archiveSession(
 	});
 }
 
-// ==================== Message Operations ====================
-
-export async function getSDKMessages(
-	sessionId: string,
-	params?: {
-		limit?: number;
-		before?: number; // Cursor: get messages older than this timestamp (ms)
-		since?: number; // Get messages newer than this timestamp (ms)
-	}
-): Promise<{ sdkMessages: unknown[] }> {
-	const hub = getHubOrThrow();
-	return await hub.call<{ sdkMessages: unknown[] }>('message.sdkMessages', {
-		sessionId,
-		...params,
-	});
-}
-
-export async function getMessageCount(sessionId: string): Promise<{ count: number }> {
-	const hub = getHubOrThrow();
-	return await hub.call<{ count: number }>('message.count', { sessionId });
-}
-
-// ==================== Command Operations ====================
-
-export async function getSlashCommands(sessionId: string): Promise<{ commands: string[] }> {
-	const hub = getHubOrThrow();
-	return await hub.call<{ commands: string[] }>('commands.list', { sessionId });
-}
-
-// ==================== File Operations ====================
-
-export async function readFile(sessionId: string, req: ReadFileRequest): Promise<ReadFileResponse> {
-	const hub = getHubOrThrow();
-	return await hub.call<ReadFileResponse>('file.read', {
-		sessionId,
-		...req,
-	});
-}
-
-export async function listFiles(
-	sessionId: string,
-	req: ListFilesRequest
-): Promise<ListFilesResponse> {
-	const hub = getHubOrThrow();
-	return await hub.call<ListFilesResponse>('file.list', {
-		sessionId,
-		...req,
-	});
-}
-
-export async function getFileTree(
-	sessionId: string,
-	req: GetFileTreeRequest
-): Promise<GetFileTreeResponse> {
-	const hub = getHubOrThrow();
-	return await hub.call<GetFileTreeResponse>('file.tree', {
-		sessionId,
-		...req,
-	});
-}
-
 // ==================== System Operations ====================
 
 export async function health(): Promise<HealthStatus> {
 	const hub = getHubOrThrow();
 	return await hub.call<HealthStatus>('system.health');
-}
-
-export async function getConfig(): Promise<DaemonConfig> {
-	const hub = getHubOrThrow();
-	return await hub.call<DaemonConfig>('system.config');
 }
 
 // ==================== Authentication ====================

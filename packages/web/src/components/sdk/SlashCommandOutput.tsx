@@ -87,16 +87,6 @@ export function SlashCommandOutput({ content, className }: SlashCommandOutputPro
 }
 
 /**
- * Check if content contains a slash command output that should be rendered
- * Useful for conditional rendering decisions
- */
-export function hasVisibleCommandOutput(content: string): boolean {
-	const output = parseCommandOutput(content);
-	if (!output) return false;
-	return !shouldHideOutput(output);
-}
-
-/**
  * Check if content is a hidden command output (like "Compacted")
  * Useful for skipping entire message rendering
  */

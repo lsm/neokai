@@ -8,7 +8,7 @@
  * - Automatic reconnection handling
  */
 
-import { signal, computed, type Signal, batch } from '@preact/signals';
+import { signal, type Signal, batch } from '@preact/signals';
 import type { MessageHub } from '@liuboer/shared';
 import type { UnsubscribeFn } from '@liuboer/shared/message-hub/types';
 
@@ -648,25 +648,6 @@ export class StateChannel<T> {
 		if (this.options.debug) {
 			console.log(`[StateChannel:${this.channelName}] ${message}`, ...args);
 		}
-	}
-}
-
-/**
- * Computed state channel - derives state from other channels
- */
-export class ComputedStateChannel<T> {
-	private state: Signal<T>;
-
-	constructor(compute: () => T) {
-		this.state = computed(compute);
-	}
-
-	get value(): T {
-		return this.state.value;
-	}
-
-	get $(): Signal<T> {
-		return this.state;
 	}
 }
 

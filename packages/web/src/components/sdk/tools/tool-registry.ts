@@ -363,38 +363,3 @@ export function getToolConfig(toolName: string): ToolConfig {
 		defaultExpanded: false,
 	};
 }
-
-/**
- * Get tool category
- */
-export function getToolCategory(toolName: string): ToolCategory {
-	return getToolConfig(toolName).category;
-}
-
-/**
- * Register a custom tool configuration
- */
-export function registerTool(toolName: string, config: ToolConfig): void {
-	customToolConfigs.set(toolName, config);
-}
-
-/**
- * Unregister a custom tool configuration
- */
-export function unregisterTool(toolName: string): void {
-	customToolConfigs.delete(toolName);
-}
-
-/**
- * Check if tool is registered (custom or default)
- */
-export function isToolRegistered(toolName: string): boolean {
-	return customToolConfigs.has(toolName) || toolName in defaultToolConfigs;
-}
-
-/**
- * Get all registered tool names
- */
-export function getAllRegisteredTools(): string[] {
-	return [...Object.keys(defaultToolConfigs), ...Array.from(customToolConfigs.keys())];
-}

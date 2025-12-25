@@ -88,40 +88,14 @@ export function truncateText(text: string, maxLength: number): string {
 }
 
 /**
- * Extract filename from file path
+ * Format JSON for display (internal use)
  */
-export function extractFileName(path: string): string {
-	const parts = path.split('/');
-	return parts[parts.length - 1] || path;
-}
-
-/**
- * Format JSON for display
- */
-export function formatJSON(data: unknown, indent: number = 2): string {
+function formatJSON(data: unknown, indent: number = 2): string {
 	try {
 		return JSON.stringify(data, null, indent);
 	} catch {
 		return String(data);
 	}
-}
-
-/**
- * Check if output is likely JSON
- */
-export function isJSONOutput(output: unknown): boolean {
-	if (typeof output === 'object' && output !== null) {
-		return true;
-	}
-	if (typeof output === 'string') {
-		try {
-			JSON.parse(output);
-			return true;
-		} catch {
-			return false;
-		}
-	}
-	return false;
 }
 
 /**
@@ -171,12 +145,4 @@ export function getCustomRenderer(toolName: string) {
 export function shouldExpandByDefault(toolName: string): boolean {
 	const config = getToolConfig(toolName);
 	return config.defaultExpanded || false;
-}
-
-/**
- * Does tool typically have long output?
- */
-export function hasLongOutput(toolName: string): boolean {
-	const config = getToolConfig(toolName);
-	return config.hasLongOutput || false;
 }

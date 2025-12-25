@@ -91,16 +91,6 @@ export const messageColors = {
 } as const;
 
 /**
- * Typography Tokens
- */
-export const typography = {
-	message: {
-		text: 'text-gray-200',
-		timestamp: 'text-xs text-gray-500',
-	},
-} as const;
-
-/**
  * Custom Color Tokens
  * Additional colors not in Tailwind's default palette
  */
