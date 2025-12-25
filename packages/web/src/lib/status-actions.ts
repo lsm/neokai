@@ -102,8 +102,9 @@ function getActionFromToolName(toolName: string): string | null {
 /**
  * Extract action verb from SDK message
  * Returns null if no specific action can be determined
+ * Internal-only: used by getCurrentAction()
  */
-export function extractActionFromMessage(message: SDKMessage): string | null {
+function extractActionFromMessage(message: SDKMessage): string | null {
 	// PRIORITY 1: Tool progress messages (actively running tools)
 	// These messages are emitted while a tool is executing, providing real-time status
 	if (message.type === 'tool_progress') {

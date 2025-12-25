@@ -16,8 +16,9 @@ export interface BuiltInCommand {
 
 /**
  * Built-in command definitions
+ * Internal-only: use getBuiltInCommandNames() or expandBuiltInCommand() instead
  */
-export const BUILT_IN_COMMANDS: BuiltInCommand[] = [
+const BUILT_IN_COMMANDS: BuiltInCommand[] = [
 	{
 		name: 'merge-session',
 		description:
@@ -46,19 +47,6 @@ export function getBuiltInCommandNames(): string[] {
 }
 
 /**
- * Check if a message is a built-in command
- */
-export function isBuiltInCommand(content: string): boolean {
-	const trimmed = content.trim();
-	if (!trimmed.startsWith('/')) {
-		return false;
-	}
-
-	const commandName = trimmed.slice(1).split(/\s+/)[0];
-	return BUILT_IN_COMMANDS.some((cmd) => cmd.name === commandName);
-}
-
-/**
  * Expand a built-in command to its full prompt
  * Returns null if the command is not a built-in command
  */
@@ -76,11 +64,4 @@ export function expandBuiltInCommand(content: string): string | null {
 	}
 
 	return command.prompt;
-}
-
-/**
- * Get built-in command metadata for listing
- */
-export function getBuiltInCommands(): BuiltInCommand[] {
-	return BUILT_IN_COMMANDS;
 }

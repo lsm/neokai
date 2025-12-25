@@ -9,8 +9,7 @@
 
 import { signal, computed, type Signal } from '@preact/signals';
 import type { MessageHub } from '@liuboer/shared';
-import type { Session, AuthStatus, DaemonConfig, HealthStatus, ContextInfo } from '@liuboer/shared';
-import type { SDKMessage } from '@liuboer/shared/sdk';
+import type { Session, AuthStatus, HealthStatus, ContextInfo } from '@liuboer/shared';
 import type {
 	SystemState,
 	SessionState,
@@ -364,22 +363,6 @@ export const authStatus = computed<AuthStatus | null>(() => {
 	return system?.auth || null;
 });
 
-export const daemonConfig = computed<DaemonConfig | null>(() => {
-	const system = systemState.value;
-	if (!system) return null;
-
-	// Reconstruct DaemonConfig from SystemState
-	return {
-		version: system.version,
-		claudeSDKVersion: system.claudeSDKVersion,
-		defaultModel: system.defaultModel,
-		maxSessions: system.maxSessions,
-		storageLocation: system.storageLocation,
-		authMethod: system.auth.method,
-		authStatus: system.auth,
-	};
-});
-
 export const healthStatus = computed<HealthStatus | null>(() => {
 	const system = systemState.value;
 	return system?.health || null;
@@ -397,7 +380,8 @@ export const globalSettings = computed<import('@liuboer/shared').GlobalSettings 
 });
 
 // Current session signals (derived from currentSessionId)
-export const currentSessionState = computed<SessionState | null>(() => {
+// Internal-only: used by other computed signals below
+const currentSessionState = computed<SessionState | null>(() => {
 	const sessionId = appState['currentSessionIdSignal'].value;
 	if (!sessionId) return null;
 
@@ -409,15 +393,6 @@ export const currentSession = computed<Session | null>(() => {
 	return currentSessionState.value?.sessionInfo || null;
 });
 
-export const currentSDKMessages = computed<SDKMessage[]>(() => {
-	const sessionId = appState['currentSessionIdSignal'].value;
-	if (!sessionId) return [];
-
-	const channels = appState.getSessionChannels(sessionId);
-	const stateValue = channels.sdkMessages.$.value;
-	return stateValue?.sdkMessages || [];
-});
-
 export const currentAgentState = computed<AgentProcessingState>(() => {
 	return currentSessionState.value?.agentState || { status: 'idle' };
 });
@@ -426,27 +401,12 @@ export const currentContextInfo = computed<ContextInfo | null>(() => {
 	return currentSessionState.value?.contextInfo || null;
 });
 
-export const currentCommands = computed<string[]>(() => {
-	return currentSessionState.value?.commandsData?.availableCommands || [];
-});
-
 /**
  * Derived/computed state
  */
 export const isAgentWorking = computed<boolean>(() => {
 	const state = currentAgentState.value;
 	return state.status === 'processing' || state.status === 'queued';
-});
-
-export const canSendMessage = computed<boolean>(() => {
-	const auth = authStatus.value;
-	const agentWorking = isAgentWorking.value;
-
-	return auth?.isAuthenticated === true && !agentWorking;
-});
-
-export const totalSessions = computed<number>(() => {
-	return sessions.value.length;
 });
 
 export const activeSessions = computed<number>(() => {
@@ -508,14 +468,6 @@ export async function createSessionOptimistic(workspacePath?: string): Promise<s
 
 	// Actual API call will trigger server state update
 	return tempId;
-}
-
-/**
- * Delete a session (optimistic)
- */
-export function deleteSessionOptimistic(sessionId: string): void {
-	// Optimistic update using globalStore
-	globalStore.removeSession(sessionId);
 }
 
 /**
