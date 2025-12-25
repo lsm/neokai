@@ -60,11 +60,31 @@ const config: KnipConfig = {
 		'happy-dom', // Used in unit tests
 	],
 
-	// Ignore unused exports from these files (public API)
+	// Ignore unused exports from these files
 	ignoreExportsUsedInFile: {
 		interface: true,
 		type: true,
 	},
+
+	/**
+	 * Remaining 84 unused exports are intentionally kept:
+	 *
+	 * 1. Preact signals (packages/web/src/lib/state.ts):
+	 *    - Knip can't detect .value access in JSX templates
+	 *    - systemState, healthStatus, currentSession, etc.
+	 *
+	 * 2. Low-level utilities (packages/shared/src/*):
+	 *    - logger.ts - May be used via dynamic imports
+	 *    - message-hub/* - Internal protocol utilities
+	 *
+	 * 3. Stable internal APIs:
+	 *    - Tool registry utilities
+	 *    - Error classes
+	 *    - Timeout utilities
+	 *
+	 * These provide stable APIs for future features and can't be
+	 * automatically detected due to Preact signals pattern.
+	 */
 
 	// Include entry source files in project
 	includeEntryExports: true,
