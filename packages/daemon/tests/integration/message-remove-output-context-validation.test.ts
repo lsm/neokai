@@ -46,7 +46,7 @@ describe('SDK Context Validation Tests', () => {
 		messageUuid: string,
 		largeOutputSize = 10000 // 10KB of text
 	): string {
-		const projectKey = workspacePath.replace(/\//g, '-');
+		const projectKey = workspacePath.replace(/[/.]/g, '-');
 		testSessionDir = join(homedir(), '.claude', 'projects', projectKey);
 		mkdirSync(testSessionDir, { recursive: true });
 
@@ -292,7 +292,7 @@ describe('SDK Context Validation Tests', () => {
 		});
 
 		const sdkSessionId = 'test-sdk-session-preserve';
-		const projectKey = process.cwd().replace(/\//g, '-');
+		const projectKey = process.cwd().replace(/[/.]/g, '-');
 		testSessionDir = join(homedir(), '.claude', 'projects', projectKey);
 		mkdirSync(testSessionDir, { recursive: true });
 
@@ -386,7 +386,7 @@ describe('SDK Context Validation Tests', () => {
 		});
 
 		const sdkSessionId = 'test-sdk-session-realistic';
-		const projectKey = process.cwd().replace(/\//g, '-');
+		const projectKey = process.cwd().replace(/[/.]/g, '-');
 		testSessionDir = join(homedir(), '.claude', 'projects', projectKey);
 		mkdirSync(testSessionDir, { recursive: true });
 

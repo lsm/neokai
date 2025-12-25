@@ -57,7 +57,7 @@ describe('SDK Session Load Validation', () => {
 		const sdkSessionId = 'test-sdk-load-validation';
 		const messageUuid = '00000000-0000-0000-0000-000000000003';
 
-		const projectKey = process.cwd().replace(/\//g, '-');
+		const projectKey = process.cwd().replace(/[/.]/g, '-');
 		testSessionDir = join(homedir(), '.claude', 'projects', projectKey);
 		mkdirSync(testSessionDir, { recursive: true });
 
@@ -177,7 +177,7 @@ describe('SDK Session Load Validation', () => {
 		const sdkSessionId = 'test-sdk-structure-validation';
 		const messageUuid = '00000000-0000-0000-0000-000000000005';
 
-		const projectKey = process.cwd().replace(/\//g, '-');
+		const projectKey = process.cwd().replace(/[/.]/g, '-');
 		testSessionDir = join(homedir(), '.claude', 'projects', projectKey);
 		mkdirSync(testSessionDir, { recursive: true });
 
@@ -316,7 +316,7 @@ describe('SDK Session Load Validation', () => {
 
 		const sdkSessionId = 'test-sdk-multiple-placeholders';
 
-		const projectKey = process.cwd().replace(/\//g, '-');
+		const projectKey = process.cwd().replace(/[/.]/g, '-');
 		testSessionDir = join(homedir(), '.claude', 'projects', projectKey);
 		mkdirSync(testSessionDir, { recursive: true });
 

@@ -13,6 +13,18 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 /**
+ * Get the SDK project directory for a workspace path
+ * SDK replaces both / and . with - (e.g., /.liuboer/ -> --liuboer-)
+ *
+ * @param workspacePath - The session's workspace path
+ * @returns Absolute path to the SDK project directory
+ */
+function getSDKProjectDir(workspacePath: string): string {
+	const projectKey = workspacePath.replace(/[/.]/g, '-');
+	return join(homedir(), '.claude', 'projects', projectKey);
+}
+
+/**
  * Construct the path to the SDK session .jsonl file
  *
  * @param workspacePath - The session's workspace path
@@ -20,14 +32,7 @@ import { join } from 'node:path';
  * @returns Absolute path to the .jsonl file
  */
 export function getSDKSessionFilePath(workspacePath: string, sdkSessionId: string): string {
-	// Convert workspace path: /foo/bar/baz -> -foo-bar-baz
-	const projectKey = workspacePath.replace(/\//g, '-');
-
-	// Construct the full path
-	const sessionDir = join(homedir(), '.claude', 'projects', projectKey);
-	const sessionFile = join(sessionDir, `${sdkSessionId}.jsonl`);
-
-	return sessionFile;
+	return join(getSDKProjectDir(workspacePath), `${sdkSessionId}.jsonl`);
 }
 
 /**
@@ -40,8 +45,7 @@ export function getSDKSessionFilePath(workspacePath: string, sdkSessionId: strin
  */
 export function findSDKSessionFile(workspacePath: string, liuboerSessionId: string): string | null {
 	try {
-		const projectKey = workspacePath.replace(/\//g, '-');
-		const sessionDir = join(homedir(), '.claude', 'projects', projectKey);
+		const sessionDir = getSDKProjectDir(workspacePath);
 
 		if (!existsSync(sessionDir)) {
 			return null;

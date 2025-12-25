@@ -51,7 +51,8 @@ describe('Message Remove Output Integration Tests', () => {
 		messageUuid: string
 	): string {
 		// Create directory structure
-		const projectKey = workspacePath.replace(/\//g, '-');
+		// SDK replaces both / and . with - (e.g., /.liuboer/ -> --liuboer-)
+		const projectKey = workspacePath.replace(/[/.]/g, '-');
 		testSessionDir = join(homedir(), '.claude', 'projects', projectKey);
 		mkdirSync(testSessionDir, { recursive: true });
 
@@ -356,7 +357,7 @@ describe('Message Remove Output Integration Tests', () => {
 			});
 
 			const sdkSessionId = 'test-sdk-session-error-2';
-			const projectKey = process.cwd().replace(/\//g, '-');
+			const projectKey = process.cwd().replace(/[/.]/g, '-');
 			testSessionDir = join(homedir(), '.claude', 'projects', projectKey);
 			mkdirSync(testSessionDir, { recursive: true });
 
@@ -463,7 +464,7 @@ describe('Message Remove Output Integration Tests', () => {
 			});
 
 			const sdkSessionId = 'test-sdk-session-multiple';
-			const projectKey = process.cwd().replace(/\//g, '-');
+			const projectKey = process.cwd().replace(/[/.]/g, '-');
 			testSessionDir = join(homedir(), '.claude', 'projects', projectKey);
 			mkdirSync(testSessionDir, { recursive: true });
 
