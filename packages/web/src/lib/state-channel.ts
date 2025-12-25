@@ -350,10 +350,15 @@ export class StateChannel<T> {
 		try {
 			// For RPC calls, pass sessionId as data parameter (not in options)
 			// because StateManager handlers expect it in the data, not as session routing
+			// Only include 'since' if it's actually provided (not undefined)
 			const callData =
 				this.options.sessionId !== 'global'
-					? { sessionId: this.options.sessionId, since }
-					: { since };
+					? since !== undefined
+						? { sessionId: this.options.sessionId, since }
+						: { sessionId: this.options.sessionId }
+					: since !== undefined
+						? { since }
+						: {};
 
 			const snapshot = await this.hub.call<T>(
 				this.channelName,
