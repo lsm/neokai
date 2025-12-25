@@ -122,6 +122,11 @@ export class AgentSession {
 			return await this.messageQueue.enqueue(content, internal);
 		});
 
+		// Set circuit breaker callback to handle fatal API errors
+		this.messageHandler.setCircuitBreakerTripCallback(async (reason, userMessage) => {
+			await this.handleCircuitBreakerTrip(reason, userMessage);
+		});
+
 		// Set callback to execute deferred restarts when agent becomes idle
 		this.stateManager.setOnIdleCallback(async () => {
 			await this.executeDeferredRestartIfPending();
@@ -1273,6 +1278,82 @@ CRITICAL RULES:
 	}
 
 	/**
+	 * Handle circuit breaker trip - stops the query and notifies the user
+	 *
+	 * Called when the circuit breaker detects repeated API errors (like "prompt too long")
+	 * that would otherwise cause an infinite retry loop.
+	 *
+	 * This method:
+	 * 1. Resets the query to stop the error loop
+	 * 2. Creates a synthetic assistant message to explain the error
+	 * 3. Emits an error event for logging/monitoring
+	 */
+	private async handleCircuitBreakerTrip(reason: string, userMessage: string): Promise<void> {
+		this.logger.log(`Handling circuit breaker trip: ${reason}`);
+
+		try {
+			// 1. Reset the query to stop the error loop
+			// Use restartQuery: false since we don't want to immediately restart
+			// User needs to address the issue (e.g., start new session, compact context)
+			await this.resetQuery({ restartQuery: false });
+
+			// 2. Create a synthetic assistant message to explain the error to the user
+			const assistantMessage: SDKMessage = {
+				type: 'assistant' as const,
+				uuid: generateUUID() as UUID,
+				session_id: this.session.id,
+				parent_tool_use_id: null,
+				message: {
+					role: 'assistant' as const,
+					content: [
+						{
+							type: 'text' as const,
+							text: `⚠️ **Session Stopped: Error Loop Detected**
+
+${userMessage}
+
+**What happened:** The same API error occurred multiple times in quick succession, indicating the request cannot succeed in its current state.
+
+**What to do:**
+- Use \`/compact\` to reduce the conversation context
+- Start a new session if the context is too large
+- Click "Reset Agent" in the menu to try again
+
+The agent has been automatically stopped to prevent further errors.`,
+						},
+					],
+				},
+			};
+
+			// Save to database
+			this.db.saveSDKMessage(this.session.id, assistantMessage);
+
+			// Broadcast to UI
+			await this.messageHub.publish(
+				'state.sdkMessages.delta',
+				{ added: [assistantMessage], timestamp: Date.now() },
+				{ sessionId: this.session.id }
+			);
+
+			// 3. Emit error event for monitoring
+			await this.errorManager.handleError(
+				this.session.id,
+				new Error(`Circuit breaker tripped: ${reason}`),
+				ErrorCategory.SYSTEM,
+				userMessage,
+				this.stateManager.getState(),
+				{ circuitBreakerReason: reason }
+			);
+
+			this.logger.log(`Circuit breaker trip handled successfully`);
+		} catch (error) {
+			this.logger.error(`Error handling circuit breaker trip:`, error);
+			// Ensure we at least reset to idle state
+			await this.stateManager.setIdle();
+		}
+	}
+
+	/**
 	 * Switch to a different Claude model mid-session
 	 * Called by RPC handler in session-handlers.ts
 	 */
@@ -1676,18 +1757,21 @@ CRITICAL RULES:
 			// 2. Clear any pending restart flag
 			this.pendingRestartReason = null;
 
-			// 3. If query hasn't started yet, just reset state
+			// 3. Reset circuit breaker (clears error tracking for fresh start)
+			this.messageHandler.resetCircuitBreaker();
+
+			// 4. If query hasn't started yet, just reset state
 			if (!this.queryObject && !this.queryPromise) {
 				this.logger.log(`Query not started, just resetting state`);
 				await this.stateManager.setIdle();
 				return { success: true };
 			}
 
-			// 4. Stop the message queue
+			// 5. Stop the message queue
 			this.messageQueue.stop();
 			this.logger.log(`Message queue stopped`);
 
-			// 5. Interrupt current query
+			// 6. Interrupt current query
 			if (this.queryObject && typeof this.queryObject.interrupt === 'function') {
 				try {
 					await this.queryObject.interrupt();
@@ -1697,7 +1781,7 @@ CRITICAL RULES:
 				}
 			}
 
-			// 6. Wait for query promise to resolve (with short timeout)
+			// 7. Wait for query promise to resolve (with short timeout)
 			if (this.queryPromise) {
 				try {
 					await Promise.race([
@@ -1710,21 +1794,21 @@ CRITICAL RULES:
 				}
 			}
 
-			// 7. Clear query object and promise
+			// 8. Clear query object and promise
 			this.queryObject = null;
 			this.queryPromise = null;
 
-			// 8. Reset state to idle
+			// 9. Reset state to idle
 			await this.stateManager.setIdle();
 
-			// 9. Optionally start a new query
+			// 10. Optionally start a new query
 			if (restartQuery) {
 				this.logger.log(`Starting fresh query...`);
 				await this.startStreamingQuery();
 				this.logger.log(`Fresh query started successfully`);
 			}
 
-			// 10. Notify clients
+			// 11. Notify clients
 			await this.messageHub.publish(
 				'session.reset',
 				{ message: 'Agent has been reset and is ready for new messages' },

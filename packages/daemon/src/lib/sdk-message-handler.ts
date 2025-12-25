@@ -25,11 +25,13 @@ import { Logger } from './logger';
 import { ProcessingStateManager } from './processing-state-manager';
 import { ContextTracker } from './context-tracker';
 import { ContextFetcher } from './context-fetcher';
+import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
 
 export class SDKMessageHandler {
 	private sdkMessageDeltaVersion: number = 0;
 	private logger: Logger;
 	private contextFetcher: ContextFetcher;
+	private circuitBreaker: ApiErrorCircuitBreaker;
 
 	// Track whether we just processed a context response to prevent infinite loop
 	// When true, we skip queuing /context for the next result message
@@ -42,6 +44,9 @@ export class SDKMessageHandler {
 	// Returns the message UUID so we can track internal commands
 	private queueMessage?: (content: string, internal: boolean) => Promise<string>;
 
+	// Callback to stop the query when circuit breaker trips
+	private onCircuitBreakerTrip?: (reason: string, userMessage: string) => Promise<void>;
+
 	constructor(
 		private session: Session,
 		private db: Database,
@@ -52,6 +57,41 @@ export class SDKMessageHandler {
 	) {
 		this.logger = new Logger(`SDKMessageHandler ${session.id}`);
 		this.contextFetcher = new ContextFetcher(session.id);
+		this.circuitBreaker = new ApiErrorCircuitBreaker(session.id);
+
+		// Set up circuit breaker callback
+		this.circuitBreaker.setOnTripCallback(async (reason, errorCount) => {
+			const userMessage = this.circuitBreaker.getTripMessage();
+			this.logger.log(`Circuit breaker tripped: ${reason} (${errorCount} errors)`);
+
+			if (this.onCircuitBreakerTrip) {
+				await this.onCircuitBreakerTrip(reason, userMessage);
+			}
+		});
+	}
+
+	/**
+	 * Set callback to execute when circuit breaker trips
+	 * Called by AgentSession to enable stopping the query on fatal errors
+	 */
+	setCircuitBreakerTripCallback(
+		callback: (reason: string, userMessage: string) => Promise<void>
+	): void {
+		this.onCircuitBreakerTrip = callback;
+	}
+
+	/**
+	 * Reset the circuit breaker (after manual reset or successful recovery)
+	 */
+	resetCircuitBreaker(): void {
+		this.circuitBreaker.reset();
+	}
+
+	/**
+	 * Mark successful API interaction (resets error tracking)
+	 */
+	markApiSuccess(): void {
+		this.circuitBreaker.markSuccess();
 	}
 
 	/**
@@ -69,6 +109,16 @@ export class SDKMessageHandler {
 	 * complete messages, not incremental stream_event tokens.
 	 */
 	async handleMessage(message: SDKMessage): Promise<void> {
+		// Check for API error patterns that indicate an infinite loop
+		// This MUST happen BEFORE any other processing to catch errors early
+		const circuitBreakerTripped = await this.circuitBreaker.checkMessage(message);
+		if (circuitBreakerTripped) {
+			// Circuit breaker tripped - skip normal processing
+			// The callback will handle stopping the query and notifying the user
+			this.logger.log('Circuit breaker tripped, skipping message processing');
+			return;
+		}
+
 		// Automatically update phase based on message type
 		await this.stateManager.detectPhaseFromMessage(message);
 
@@ -253,6 +303,10 @@ export class SDKMessageHandler {
 				this.logger.warn('Failed to queue /context:', error);
 			}
 		}
+
+		// Mark successful API interaction - resets circuit breaker error tracking
+		// This indicates the API is responding normally
+		this.circuitBreaker.markSuccess();
 
 		// Set state back to idle
 		// Note: Title generation now handled by TitleGenerationQueue (decoupled via EventBus)
