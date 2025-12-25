@@ -8,7 +8,7 @@
  * ~/.claude/projects/{workspace-path-with-slashes-replaced}/{sdk-session-id}.jsonl
  */
 
-import { existsSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -54,17 +54,27 @@ export function findSDKSessionFile(workspacePath: string, liuboerSessionId: stri
 		// Search all .jsonl files for the Liuboer session ID
 		const files = readdirSync(sessionDir).filter((f) => f.endsWith('.jsonl'));
 
+		// Track all matching files with their modification times
+		const matchingFiles: Array<{ path: string; mtime: number }> = [];
+
 		for (const file of files) {
 			const filePath = join(sessionDir, file);
 			const content = readFileSync(filePath, 'utf-8');
 
 			// Check if this file contains the Liuboer session ID
 			if (content.includes(liuboerSessionId)) {
-				return filePath;
+				const stats = statSync(filePath);
+				matchingFiles.push({ path: filePath, mtime: stats.mtimeMs });
 			}
 		}
 
-		return null;
+		// Return the most recently modified file
+		if (matchingFiles.length === 0) {
+			return null;
+		}
+
+		matchingFiles.sort((a, b) => b.mtime - a.mtime);
+		return matchingFiles[0].path;
 	} catch (error) {
 		console.error('[SDKSessionFileManager] Error finding session file:', error);
 		return null;
