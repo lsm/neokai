@@ -242,19 +242,41 @@ export class StateManager {
 			await this.broadcastSessionStateChange(sessionId);
 
 			// Also update global sessions list delta (for sidebar)
-			// Merge processing state into session for delta broadcast
-			// This allows sidebar to show processing status without per-session subscriptions
-			// Note: Session.processingState is typed as string (DB serialized), but we send
-			// the object directly for client-side use. Type assertion is intentional.
-			const sessionWithState = {
-				...session,
-				processingState,
-			};
+			// Check if session should be filtered out based on current settings
+			const settings = this.settingsManager.getGlobalSettings();
+			const isArchived = session.status === 'archived';
+			const shouldBeFiltered = isArchived && !settings.showArchived;
 
-			await this.broadcastSessionsDelta({
-				updated: [sessionWithState as unknown as Session],
-				timestamp: Date.now(),
-			});
+			if (shouldBeFiltered) {
+				// If session is archived and showArchived is false, remove it from client lists
+				await this.broadcastSessionsDelta({
+					removed: [sessionId],
+					timestamp: Date.now(),
+				});
+
+				// Also broadcast full sessions state to update hasArchivedSessions flag
+				await this.broadcastSessionsChange();
+			} else {
+				// Merge processing state into session for delta broadcast
+				// This allows sidebar to show processing status without per-session subscriptions
+				// Note: Session.processingState is typed as string (DB serialized), but we send
+				// the object directly for client-side use. Type assertion is intentional.
+				const sessionWithState = {
+					...session,
+					processingState,
+				};
+
+				await this.broadcastSessionsDelta({
+					updated: [sessionWithState as unknown as Session],
+					timestamp: Date.now(),
+				});
+
+				// If this is a newly archived session, broadcast full sessions state
+				// to update hasArchivedSessions flag (in case this is the first archived session)
+				if (isArchived) {
+					await this.broadcastSessionsChange();
+				}
+			}
 		} catch (error) {
 			// Session may have been deleted during update
 			this.logger.warn(`Failed to broadcast session update for ${sessionId}:`, error);
