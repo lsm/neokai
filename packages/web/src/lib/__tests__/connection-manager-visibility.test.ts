@@ -109,17 +109,29 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 			};
 
 			// Inject mocks into connection manager
-			(connectionManager as Record<string, unknown>).transport = mockTransport;
-			(connectionManager as Record<string, unknown>).messageHub = mockMessageHub;
+			(connectionManager as unknown as Record<string, unknown>).transport = mockTransport;
+			(connectionManager as unknown as Record<string, unknown>).messageHub = mockMessageHub;
 		});
 
 		afterEach(() => {
 			// Restore all mocks to prevent test pollution
-			if (typeof (appState.refreshAll as { mockRestore?: () => void }).mockRestore === 'function') {
-				(appState.refreshAll as { mockRestore: () => void }).mockRestore();
+			const appStateRefresh = appState.refreshAll as unknown;
+			if (
+				typeof appStateRefresh === 'object' &&
+				appStateRefresh !== null &&
+				'mockRestore' in appStateRefresh &&
+				typeof (appStateRefresh as { mockRestore: unknown }).mockRestore === 'function'
+			) {
+				(appStateRefresh as { mockRestore: () => void }).mockRestore();
 			}
-			if (typeof (globalStore.refresh as { mockRestore?: () => void }).mockRestore === 'function') {
-				(globalStore.refresh as { mockRestore: () => void }).mockRestore();
+			const globalStoreRefresh = globalStore.refresh as unknown;
+			if (
+				typeof globalStoreRefresh === 'object' &&
+				globalStoreRefresh !== null &&
+				'mockRestore' in globalStoreRefresh &&
+				typeof (globalStoreRefresh as { mockRestore: unknown }).mockRestore === 'function'
+			) {
+				(globalStoreRefresh as { mockRestore: () => void }).mockRestore();
 			}
 		});
 
@@ -138,7 +150,7 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 
 		it('should trigger validateConnectionOnResume when page becomes visible', async () => {
 			const validateSpy = spyOn(
-				connectionManager as Record<string, unknown>,
+				connectionManager as unknown as Record<string, unknown>,
 				'validateConnectionOnResume'
 			);
 
@@ -177,8 +189,8 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 		});
 
 		it('should refresh both appState and globalStore', async () => {
-			const _appStateRefreshSpy = spyOn(appState, 'refreshAll').mockResolvedValue(undefined);
-			const _globalStoreRefreshSpy = spyOn(globalStore, 'refresh').mockResolvedValue(undefined);
+			const appStateRefreshSpy = spyOn(appState, 'refreshAll').mockResolvedValue(undefined);
+			const globalStoreRefreshSpy = spyOn(globalStore, 'refresh').mockResolvedValue(undefined);
 
 			// Simulate page becoming visible
 			Object.defineProperty(document, 'hidden', {
@@ -231,8 +243,14 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 	describe('Error Handling', () => {
 		let mockTransport: Record<string, unknown>;
 		let mockMessageHub: Record<string, unknown>;
+		let appStateRefreshSpy: ReturnType<typeof spyOn> | null = null;
+		let globalStoreRefreshSpy: ReturnType<typeof spyOn> | null = null;
 
 		beforeEach(() => {
+			// Set up spies in beforeEach to track all calls in this describe block
+			appStateRefreshSpy = spyOn(appState, 'refreshAll').mockResolvedValue(undefined);
+			globalStoreRefreshSpy = spyOn(globalStore, 'refresh').mockResolvedValue(undefined);
+
 			mockTransport = {
 				isReady: mock(() => true),
 				resetReconnectState: mock(() => {}),
@@ -245,8 +263,20 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 				isConnected: mock(() => true),
 			};
 
-			(connectionManager as Record<string, unknown>).transport = mockTransport;
-			(connectionManager as Record<string, unknown>).messageHub = mockMessageHub;
+			(connectionManager as unknown as Record<string, unknown>).transport = mockTransport;
+			(connectionManager as unknown as Record<string, unknown>).messageHub = mockMessageHub;
+		});
+
+		afterEach(() => {
+			// Clean up spies
+			if (appStateRefreshSpy) {
+				appStateRefreshSpy.mockRestore();
+				appStateRefreshSpy = null;
+			}
+			if (globalStoreRefreshSpy) {
+				globalStoreRefreshSpy.mockRestore();
+				globalStoreRefreshSpy = null;
+			}
 		});
 
 		it('should call forceReconnect when health check fails', async () => {
@@ -266,9 +296,6 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 		});
 
 		it('should NOT call refresh methods when health check fails', async () => {
-			const _appStateRefreshSpy = spyOn(appState, 'refreshAll').mockResolvedValue(undefined);
-			const _globalStoreRefreshSpy = spyOn(globalStore, 'refresh').mockResolvedValue(undefined);
-
 			// Simulate page becoming visible
 			Object.defineProperty(document, 'hidden', {
 				value: false,
@@ -289,8 +316,8 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 	describe('No Connection Scenario', () => {
 		beforeEach(() => {
 			// No transport or messageHub
-			(connectionManager as Record<string, unknown>).transport = null;
-			(connectionManager as Record<string, unknown>).messageHub = null;
+			(connectionManager as unknown as Record<string, unknown>).transport = null;
+			(connectionManager as unknown as Record<string, unknown>).messageHub = null;
 		});
 
 		it('should attempt reconnect when no connection exists', async () => {

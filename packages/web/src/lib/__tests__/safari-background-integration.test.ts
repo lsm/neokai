@@ -26,10 +26,10 @@ describe('Safari Background Tab - Integration Tests', () => {
 			const connectionHandlers: Array<(state: string) => void> = [];
 
 			mockHub = {
-				call: mock(async (_channel: string, _data?: unknown) => ({
+				call: mock(async () => ({
 					data: 'test',
 					timestamp: Date.now(),
-				})),
+				})) as unknown,
 				subscribe: mock(async () => mock(() => Promise.resolve())),
 				subscribeOptimistic: mock(() => mock(() => {})),
 				onConnection: mock((handler: (state: string) => void) => {
@@ -65,7 +65,10 @@ describe('Safari Background Tab - Integration Tests', () => {
 
 		it('should use server timestamp from snapshot', async () => {
 			const serverTime = Date.now() - 5000; // 5 seconds ago
-			mockHub.call = mock(async () => ({ data: 'test', timestamp: serverTime }));
+			mockHub.call = mock(async () => ({
+				data: 'test',
+				timestamp: serverTime,
+			})) as unknown as typeof mockHub.call;
 
 			await stateChannel.start();
 
@@ -130,7 +133,10 @@ describe('Safari Background Tab - Integration Tests', () => {
 			await globalStore.initialize();
 
 			// Clear sessions to simulate stale state
-			(globalStore as unknown as Record<string, unknown>).sessions.value = [];
+			const globalStoreInternal = globalStore as unknown as {
+				sessions: { value: Array<unknown> };
+			};
+			globalStoreInternal.sessions.value = [];
 
 			// Refresh
 			await globalStore.refresh();
@@ -212,8 +218,8 @@ describe('Safari Background Tab - Integration Tests', () => {
 			};
 
 			connectionManager = new ConnectionManager();
-			(connectionManager as Record<string, unknown>).transport = mockTransport;
-			(connectionManager as Record<string, unknown>).messageHub = mockMessageHub;
+			(connectionManager as unknown as Record<string, unknown>).transport = mockTransport;
+			(connectionManager as unknown as Record<string, unknown>).messageHub = mockMessageHub;
 		});
 
 		it('should execute reconnection flow in correct order', async () => {
@@ -235,9 +241,8 @@ describe('Safari Background Tab - Integration Tests', () => {
 			// Trigger visibility change (which calls validateConnectionOnResume)
 			Object.defineProperty(document, 'hidden', { value: false, configurable: true });
 
-			const visibilityHandler = (connectionManager as Record<string, unknown>).visibilityHandler as
-				| (() => void)
-				| null;
+			const visibilityHandler = (connectionManager as unknown as Record<string, unknown>)
+				.visibilityHandler as (() => void) | null;
 			visibilityHandler?.();
 
 			// Wait for async flow
@@ -258,9 +263,8 @@ describe('Safari Background Tab - Integration Tests', () => {
 
 			Object.defineProperty(document, 'hidden', { value: false, configurable: true });
 
-			const visibilityHandler = (connectionManager as Record<string, unknown>).visibilityHandler as
-				| (() => void)
-				| null;
+			const visibilityHandler = (connectionManager as unknown as Record<string, unknown>)
+				.visibilityHandler as (() => void) | null;
 			visibilityHandler?.();
 
 			await new Promise((resolve) => setTimeout(resolve, 150));
@@ -273,9 +277,8 @@ describe('Safari Background Tab - Integration Tests', () => {
 
 			Object.defineProperty(document, 'hidden', { value: false, configurable: true });
 
-			const visibilityHandler = (connectionManager as Record<string, unknown>).visibilityHandler as
-				| (() => void)
-				| null;
+			const visibilityHandler = (connectionManager as unknown as Record<string, unknown>)
+				.visibilityHandler as (() => void) | null;
 			visibilityHandler?.();
 
 			await new Promise((resolve) => setTimeout(resolve, 150));

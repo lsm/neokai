@@ -1,6 +1,7 @@
 /**
  * Test setup for DOM environment
  */
+// @ts-nocheck - Happy-dom types don't perfectly match browser globals, but work fine for tests
 import { Window } from 'happy-dom';
 
 // Create and register DOM globals
