@@ -21,6 +21,7 @@ import type {
 	AuthStatus,
 	HealthStatus,
 	SessionsState,
+	SessionsUpdate,
 	SystemState,
 	SettingsState,
 } from '@liuboer/shared';
@@ -117,7 +118,7 @@ class GlobalStore {
 				this.settings.value = snapshot.settings?.settings || null;
 			}
 
-			// Subscribe to sessions changes
+			// Subscribe to sessions changes (full state)
 			const unsubSessions = hub.subscribeOptimistic<SessionsState>(
 				STATE_CHANNELS.GLOBAL_SESSIONS,
 				(state) => {
@@ -127,6 +128,16 @@ class GlobalStore {
 				{ sessionId: 'global' }
 			);
 			this.cleanupFunctions.push(unsubSessions);
+
+			// Subscribe to sessions delta updates (added/updated/removed)
+			const unsubSessionsDelta = hub.subscribeOptimistic<SessionsUpdate>(
+				`${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`,
+				(delta) => {
+					this.applySessionsDelta(delta);
+				},
+				{ sessionId: 'global' }
+			);
+			this.cleanupFunctions.push(unsubSessionsDelta);
 
 			// Subscribe to system state changes
 			const unsubSystem = hub.subscribeOptimistic<SystemState>(
@@ -152,6 +163,36 @@ class GlobalStore {
 		} catch (err) {
 			console.error('[GlobalStore] Failed to initialize:', err);
 		}
+	}
+
+	/**
+	 * Apply delta updates to sessions list
+	 * Called when receiving incremental updates from server
+	 */
+	private applySessionsDelta(delta: SessionsUpdate): void {
+		let sessions = [...this.sessions.value];
+
+		// Remove sessions
+		if (delta.removed && delta.removed.length > 0) {
+			sessions = sessions.filter((s) => !delta.removed!.includes(s.id));
+		}
+
+		// Update existing sessions
+		if (delta.updated && delta.updated.length > 0) {
+			for (const updated of delta.updated) {
+				const index = sessions.findIndex((s) => s.id === updated.id);
+				if (index !== -1) {
+					sessions[index] = updated as Session;
+				}
+			}
+		}
+
+		// Add new sessions (prepend to show newest first)
+		if (delta.added && delta.added.length > 0) {
+			sessions.unshift(...(delta.added as Session[]));
+		}
+
+		this.sessions.value = sessions;
 	}
 
 	/**
