@@ -27,6 +27,7 @@ import { connectionState } from '../lib/state.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import { sessionStore } from '../lib/session-store.ts';
 import { currentSessionIdSignal } from '../lib/signals.ts';
+import { getCurrentAction } from '../lib/status-actions.ts';
 
 // Hooks
 import { useModal } from '../hooks/useModal.ts';
@@ -319,43 +320,38 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 	// ========================================
 	// Derive currentAction and streamingPhase from agentState
+	// Uses status-actions.ts for intelligent action detection
 	// ========================================
 	const { currentAction, streamingPhase } = useMemo(() => {
-		if (agentState.status === 'processing') {
-			const phase = agentState.phase;
-			let action = 'Processing...';
-			if (agentState.isCompacting) {
-				action = 'Compacting context...';
-			} else {
-				switch (phase) {
-					case 'initializing':
-						action = 'Starting...';
-						break;
-					case 'thinking':
-						action = 'Thinking...';
-						break;
-					case 'streaming': {
-						const duration = agentState.streamingStartedAt
-							? Math.floor((Date.now() - agentState.streamingStartedAt) / 1000)
-							: 0;
-						action = duration > 0 ? `Streaming (${duration}s)...` : 'Streaming...';
-						break;
-					}
-					case 'finalizing':
-						action = 'Finalizing...';
-						break;
-				}
-			}
-			return { currentAction: action, streamingPhase: phase };
-		}
+		// Handle queued state
 		if (agentState.status === 'queued') {
 			return { currentAction: 'Queued...', streamingPhase: null };
 		}
+
+		// Handle interrupted state
 		if (agentState.status === 'interrupted') {
 			return { currentAction: 'Interrupted', streamingPhase: null };
 		}
+
+		// Handle processing state
+		if (agentState.status === 'processing') {
+			const phase = agentState.phase;
+			const latestMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+
+			// Use status-actions.ts to get intelligent action
+			// Priority: compaction > tool-specific actions > phase-based actions > fallback
+			const action = getCurrentAction(latestMessage, true, {
+				isCompacting: agentState.isCompacting,
+				streamingPhase: phase,
+				streamingStartedAt: agentState.streamingStartedAt,
+			});
+
+			return { currentAction: action, streamingPhase: phase };
+		}
+
+		// Idle state
 		return { currentAction: undefined, streamingPhase: null };
-	}, [agentState]);
+	}, [agentState, messages]);
 
 	// Combined error (local + store)
 	const error = localError || storeError?.message || null;

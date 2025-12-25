@@ -46,10 +46,13 @@ export type SessionStatus = 'active' | 'paused' | 'ended' | 'archived';
 /**
  * Thinking level options for extended thinking
  *
- * - 'auto': No thinking budget, no keyword - SDK default behavior
- * - 'think8k': 8000 tokens + "ultrathink" keyword appended
- * - 'think16k': 16000 tokens + "ultrathink" keyword appended
- * - 'think32k': 31999 tokens + "ultrathink" keyword appended
+ * Sets maxThinkingTokens budget for the SDK:
+ * - 'auto': No thinking budget - SDK default behavior
+ * - 'think8k': 8000 tokens thinking budget
+ * - 'think16k': 16000 tokens thinking budget
+ * - 'think32k': 31999 tokens thinking budget
+ *
+ * Note: The "ultrathink" keyword is NOT auto-appended. Users must type it explicitly if needed.
  */
 export type ThinkingLevel = 'auto' | 'think8k' | 'think16k' | 'think32k';
 

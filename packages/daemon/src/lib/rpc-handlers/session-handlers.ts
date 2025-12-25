@@ -269,8 +269,9 @@ export function setupSessionHandlers(
 
 	// Handle thinking level changes
 	// Levels: auto, think8k, think16k, think32k
-	// - auto: No thinking budget, no keyword
-	// - think8k/16k/32k: Token budget + "ultrathink" keyword appended by agent-session
+	// - auto: No thinking budget
+	// - think8k/16k/32k: Token budget set via maxThinkingTokens
+	// Note: "ultrathink" keyword is NOT auto-appended - users must type it manually
 	messageHub.handle('session.thinking.set', async (data) => {
 		const { sessionId: targetSessionId, level } = data as {
 			sessionId: string;

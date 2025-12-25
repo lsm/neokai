@@ -316,14 +316,6 @@ export class AgentSession {
 			content = expandedContent;
 		}
 
-		// Append "ultrathink" keyword for non-auto thinking levels
-		// This is required because Agent SDK only recognizes "ultrathink" for extended thinking
-		const thinkingLevel = this.session.config.thinkingLevel || 'auto';
-		if (thinkingLevel !== 'auto') {
-			content = `${content}\n\nultrathink`;
-			this.logger.log(`Appended "ultrathink" keyword for thinking level: ${thinkingLevel}`);
-		}
-
 		const messageContent = this.buildMessageContent(content, images);
 		const messageId = generateUUID();
 
@@ -467,14 +459,6 @@ export class AgentSession {
 			if (expandedContent) {
 				this.logger.log(`Expanding built-in command: ${content.trim()}`);
 				content = expandedContent;
-			}
-
-			// Append "ultrathink" keyword for non-auto thinking levels
-			// This is required because Agent SDK only recognizes "ultrathink" for extended thinking
-			const thinkingLevel = this.session.config.thinkingLevel || 'auto';
-			if (thinkingLevel !== 'auto') {
-				content = `${content}\n\nultrathink`;
-				this.logger.log(`Appended "ultrathink" keyword for thinking level: ${thinkingLevel}`);
 			}
 
 			const messageContent = this.buildMessageContent(content, images);
@@ -659,14 +643,6 @@ export class AgentSession {
 			if (expandedContent) {
 				this.logger.log(`Expanding built-in command: ${content.trim()}`);
 				content = expandedContent;
-			}
-
-			// Append "ultrathink" keyword for non-auto thinking levels
-			// This is required because Agent SDK only recognizes "ultrathink" for extended thinking
-			const thinkingLevel = this.session.config.thinkingLevel || 'auto';
-			if (thinkingLevel !== 'auto') {
-				content = `${content}\n\nultrathink`;
-				this.logger.log(`Appended "ultrathink" keyword for thinking level: ${thinkingLevel}`);
 			}
 
 			const messageContent = this.buildMessageContent(content, images);
