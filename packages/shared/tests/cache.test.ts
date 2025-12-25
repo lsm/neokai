@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { LRUCache, fastHash, createCacheKey } from '../src/message-hub/cache.ts';
 
 describe('LRUCache', () => {
@@ -84,11 +84,6 @@ describe('LRUCache', () => {
 	test('cleanup removes expired entries', () => {
 		const shortCache = new LRUCache(10, 50); // 50ms TTL
 
-		// Spy on console.log to verify cleanup message
-		const originalLog = console.log;
-		const logSpy = jest.fn();
-		console.log = logSpy;
-
 		shortCache.set('key1', 'value1');
 		shortCache.set('key2', 'value2');
 
@@ -98,12 +93,9 @@ describe('LRUCache', () => {
 				// Call cleanup directly to test the functionality
 				shortCache['cleanup']();
 
-				expect(shortCache.size).toBe(0); // Should be cleaned up
+				// Verify expired entries are removed
+				expect(shortCache.size).toBe(0);
 
-				// Verify cleanup message was logged
-				expect(logSpy).toHaveBeenCalledWith('[LRUCache] Cleaned up 2 expired entries');
-
-				console.log = originalLog;
 				shortCache.destroy();
 				resolve();
 			}, 60); // Wait for TTL expiration
@@ -111,24 +103,16 @@ describe('LRUCache', () => {
 	});
 
 	test('cleanup timer handles errors gracefully', () => {
-		// Test the actual setInterval callback that wraps cleanup in try-catch
-		// We'll mock setInterval to capture the callback and invoke it with a mocked cleanup that throws
-
+		// Test that cleanup errors don't crash the cache
 		let timerCallback: (() => void) | null = null;
 		const originalSetInterval = global.setInterval;
 
 		// Mock setInterval to capture the callback
 		global.setInterval = ((cb: () => void, _interval: number) => {
 			timerCallback = cb;
-			return 999 as unknown as NodeJS.Timeout; // Return a fake timer ID
+			return 999 as unknown as NodeJS.Timeout;
 		}) as typeof setInterval;
 
-		// Spy on console.error
-		const originalError = console.error;
-		const errorSpy = jest.fn();
-		console.error = errorSpy;
-
-		// Create cache - this will call setInterval and capture the callback
 		const errorCache = new LRUCache(10, 100);
 
 		// Restore setInterval immediately
@@ -140,20 +124,16 @@ describe('LRUCache', () => {
 			throw new Error('Cleanup error');
 		};
 
-		// Now invoke the captured timer callback, which should catch the error
+		// Invoke the timer callback - should handle the error gracefully
 		expect(timerCallback).not.toBeNull();
 		if (timerCallback) {
-			const callback: () => void = timerCallback;
-			callback(); // This should trigger the try-catch in the timer callback
+			// Should not throw
+			expect(() => timerCallback!()).not.toThrow();
 		}
 
-		// Restore
+		// Restore and cleanup
 		errorCache['cleanup'] = originalCleanup;
-		console.error = originalError;
 		errorCache.destroy();
-
-		// Error should have been logged by the timer callback's catch block
-		expect(errorSpy).toHaveBeenCalledWith('[LRUCache] Cleanup failed:', expect.any(Error));
 	});
 
 	test('destroy stops cleanup timer and clears cache', () => {

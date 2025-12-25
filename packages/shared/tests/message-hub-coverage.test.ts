@@ -130,20 +130,15 @@ describe('MessageHub - Coverage Tests', () => {
 	});
 
 	describe('Router Management', () => {
-		test('should warn when replacing existing router', () => {
+		test('should allow replacing existing router', () => {
 			const router1 = new MessageHubRouter();
 			const router2 = new MessageHubRouter();
 
-			const originalWarn = console.warn;
-			const warnSpy = jest.fn();
-			console.warn = warnSpy;
-
 			hub.registerRouter(router1);
-			hub.registerRouter(router2); // Should warn
+			hub.registerRouter(router2); // Should replace without error
 
-			console.warn = originalWarn;
-
-			expect(warnSpy).toHaveBeenCalledWith('[MessageHub] Router already registered, replacing...');
+			// Verify the second router is now registered
+			expect(hub.getRouter()).toBe(router2);
 		});
 
 		test('should return registered router', () => {
@@ -158,7 +153,7 @@ describe('MessageHub - Coverage Tests', () => {
 	});
 
 	describe('Unsubscribe with Timeout', () => {
-		test('should handle unsubscribe timeout', async () => {
+		test('should handle unsubscribe timeout gracefully', async () => {
 			// Create hub with short timeout
 			const shortHub = new MessageHub({ timeout: 100, debug: false });
 			const shortTransport = new MockTransport();
@@ -167,31 +162,17 @@ describe('MessageHub - Coverage Tests', () => {
 
 			const handler = jest.fn();
 
-			// Subscribe without ACK will timeout - but we can't test that easily
-			// So let's subscribe first with ACK enabled, then test unsubscribe timeout
+			// Subscribe with ACK enabled first
 			shortTransport.autoAck = true;
 			const unsubscribe = await shortHub.subscribe('test.event', handler, {
 				sessionId: 'test-session',
 			});
 
-			// Now disable ACK for unsubscribe
+			// Now disable ACK for unsubscribe - will timeout
 			shortTransport.autoAck = false;
 
-			// Spy on console.warn to verify timeout is logged
-			const originalWarn = console.warn;
-			const warnSpy = jest.fn();
-			console.warn = warnSpy;
-
-			// Don't send UNSUBSCRIBED response - let it timeout
-			// NOTE: unsubscribe() does NOT throw - it logs warning and continues with local cleanup
+			// Unsubscribe should complete (may timeout but doesn't throw)
 			await unsubscribe();
-
-			console.warn = originalWarn;
-
-			// Should have warned about timeout
-			expect(warnSpy).toHaveBeenCalled();
-			const warnMessage = warnSpy.mock.calls[0]?.join(' ') || '';
-			expect(warnMessage).toContain('Unsubscribe timeout');
 
 			shortHub.cleanup();
 		});
@@ -317,52 +298,34 @@ describe('MessageHub - Coverage Tests', () => {
 			expect(transport.sentMessages.length).toBe(0);
 		});
 
-		test('should handle SUBSCRIBE without clientId', async () => {
+		test('should handle SUBSCRIBE without clientId gracefully', async () => {
 			const router = new MessageHubRouter();
 			hub.registerRouter(router);
-
-			const originalError = console.error;
-			const errorSpy = jest.fn();
-			console.error = errorSpy;
 
 			const subscribeMsg = createSubscribeMessage({
 				method: 'test.event',
 				sessionId: 'test-session',
 			});
 
-			// Don't add clientId - should trigger error log
-			transport.simulateMessage(subscribeMsg);
+			// Send SUBSCRIBE without clientId - should be handled gracefully
+			expect(() => transport.simulateMessage(subscribeMsg)).not.toThrow();
 
 			await new Promise((resolve) => setTimeout(resolve, 50));
-
-			console.error = originalError;
-
-			expect(errorSpy).toHaveBeenCalledWith(
-				'[MessageHub] SUBSCRIBE without clientId - transport must add clientId to messages'
-			);
 		});
 
-		test('should handle UNSUBSCRIBE without clientId', async () => {
+		test('should handle UNSUBSCRIBE without clientId gracefully', async () => {
 			const router = new MessageHubRouter();
 			hub.registerRouter(router);
-
-			const originalError = console.error;
-			const errorSpy = jest.fn();
-			console.error = errorSpy;
 
 			const unsubscribeMsg = createUnsubscribeMessage({
 				method: 'test.event',
 				sessionId: 'test-session',
 			});
 
-			// Don't add clientId
-			transport.simulateMessage(unsubscribeMsg);
+			// Send UNSUBSCRIBE without clientId - should be handled gracefully
+			expect(() => transport.simulateMessage(unsubscribeMsg)).not.toThrow();
 
 			await new Promise((resolve) => setTimeout(resolve, 50));
-
-			console.error = originalError;
-
-			expect(errorSpy).toHaveBeenCalledWith('[MessageHub] UNSUBSCRIBE without clientId');
 		});
 
 		test('should handle SUBSCRIBE error and send ERROR response', async () => {
@@ -514,11 +477,6 @@ describe('MessageHub - Coverage Tests', () => {
 			// Subscribe initially
 			await hub.subscribe('test.event', handler, { sessionId: 'test-session' });
 
-			// Spy on console.error
-			const originalError = console.error;
-			const errorSpy = jest.fn();
-			console.error = errorSpy;
-
 			// Mock sendMessage to throw error during resubscription
 			const originalSendMessage = hub['sendMessage'].bind(hub);
 			hub['sendMessage'] = async (message: HubMessage) => {
@@ -534,18 +492,14 @@ describe('MessageHub - Coverage Tests', () => {
 			await new Promise((resolve) => setTimeout(resolve, 10));
 			transport.simulateConnectionChange('connected');
 
-			// Wait for resubscription to complete
+			// Wait for resubscription attempt
 			await new Promise((resolve) => setTimeout(resolve, 100));
 
 			// Restore
 			hub['sendMessage'] = originalSendMessage;
-			console.error = originalError;
 
-			// Should have logged error from the catch block
-			expect(errorSpy).toHaveBeenCalledWith(
-				expect.stringContaining('Failed to send SUBSCRIBE for test.event'),
-				expect.any(Error)
-			);
+			// Should handle error gracefully - connection remains active
+			expect(transport['_state']).toBe('connected');
 		});
 	});
 

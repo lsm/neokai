@@ -811,25 +811,8 @@ describe('MessageHub', () => {
 		});
 	});
 
-	describe('Debug Mode', () => {
-		test('should enable debug logging when debug option is true', () => {
-			const debugHub = new MessageHub({
-				defaultSessionId: 'test',
-				debug: true,
-			});
-
-			// Debug mode should be enabled
-			expect((debugHub as unknown as { debug: boolean }).debug).toBe(true);
-		});
-
-		test('should disable debug logging by default', () => {
-			const normalHub = new MessageHub({
-				defaultSessionId: 'test',
-			});
-
-			expect((normalHub as unknown as { debug: boolean }).debug).toBe(false);
-		});
-	});
+	// Debug Mode tests removed - logging has been intentionally reduced to minimize CI noise
+	// The debug option is accepted but no longer used for console logging
 
 	describe('Optimistic Subscriptions (Non-blocking)', () => {
 		test('should subscribe synchronously and return immediately', () => {
