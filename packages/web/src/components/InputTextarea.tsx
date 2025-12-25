@@ -110,7 +110,7 @@ export function InputTextarea({
 					value={content}
 					onInput={(e) => onContentChange((e.target as HTMLTextAreaElement).value)}
 					onKeyDown={onKeyDown}
-					placeholder="Ask, search, or make anything..."
+					placeholder="Ask or make anything..."
 					maxLength={maxChars}
 					rows={1}
 					class={cn(

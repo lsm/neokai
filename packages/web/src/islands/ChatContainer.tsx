@@ -494,7 +494,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			)}
 
 			{/* Footer - Floating Status Bar */}
-			<div class="absolute bottom-0 left-0 right-0 z-10 pointer-events-none px-4 mx-2">
+			<div class="absolute bottom-0 left-0 right-0 z-10 pointer-events-none">
 				<div class="pointer-events-auto pt-4 bg-gradient-to-t from-dark-900 from-[calc(100%-32px)] to-dark-900/0">
 					<SessionStatusBar
 						sessionId={sessionId}
