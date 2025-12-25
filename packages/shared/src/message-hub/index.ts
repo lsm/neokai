@@ -16,10 +16,7 @@ export type {
 
 // Protocol
 export {
-	PROTOCOL_VERSION,
-	GLOBAL_SESSION_ID,
 	MessageType,
-	ErrorCode,
 	type HubMessage,
 	type CallMessage,
 	type ResultMessage,
@@ -34,16 +31,6 @@ export {
 	type CreateEventMessageParams,
 	type CreateSubscribeMessageParams,
 	type CreateUnsubscribeMessageParams,
-	isCallMessage,
-	isResultMessage,
-	isErrorMessage,
-	isEventMessage,
-	isSubscribeMessage,
-	isUnsubscribeMessage,
-	isResponseMessage,
-	validateMethod,
-	createCallMessage,
-	createResultMessage,
 	createErrorMessage,
 	createEventMessage,
 } from './protocol.ts';
@@ -71,5 +58,5 @@ export { WebSocketClientTransport } from './websocket-client-transport.ts';
 export type { WebSocketClientTransportOptions } from './websocket-client-transport.ts';
 
 // Cache utilities (for advanced use cases)
-export { LRUCache, fastHash, createCacheKey } from './cache.ts';
+export { LRUCache, createCacheKey } from './cache.ts';
 export type { CacheEntry } from './cache.ts';

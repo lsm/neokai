@@ -19,40 +19,19 @@ export type {
 } from './tool-types.ts';
 
 // Components
-export { ToolIcon } from './ToolIcon.tsx';
-export { ToolSummary } from './ToolSummary.tsx';
 export { ToolProgressCard } from './ToolProgressCard.tsx';
 export { ToolResultCard } from './ToolResultCard.tsx';
 export { AuthStatusCard } from './AuthStatusCard.tsx';
-export { DiffViewer } from './DiffViewer.tsx';
-export { CodeViewer } from './CodeViewer.tsx';
-export { TodoViewer } from './TodoViewer.tsx';
-
-// Registry
-export {
-	getToolConfig,
-	getToolCategory,
-	getCategoryColors,
-	registerTool,
-	unregisterTool,
-	isToolRegistered,
-	getAllRegisteredTools,
-} from './tool-registry.ts';
 
 // Utilities
 export {
-	getToolSummary,
 	getToolDisplayName,
 	getToolColors,
 	getIconSizeClasses,
 	formatElapsedTime,
 	truncateText,
-	extractFileName,
-	formatJSON,
-	isJSONOutput,
 	getOutputDisplayText,
 	hasCustomRenderer,
 	getCustomRenderer,
 	shouldExpandByDefault,
-	hasLongOutput,
 } from './tool-utils.ts';

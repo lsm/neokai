@@ -335,76 +335,6 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 }
 
 /**
- * Make HTTP request to test server
- */
-export async function request(
-	baseUrl: string,
-	method: string,
-	path: string,
-	body?: unknown,
-	headers?: Record<string, string>
-): Promise<Response> {
-	const url = `${baseUrl}${path}`;
-	const options: RequestInit = {
-		method,
-		headers: {
-			'Content-Type': 'application/json',
-			...headers,
-		},
-	};
-
-	if (body) {
-		options.body = JSON.stringify(body);
-	}
-
-	return await fetch(url, options);
-}
-
-/**
- * Assert response is successful and return JSON body
- */
-export async function assertSuccessResponse<T>(
-	response: Response,
-	expectedStatus = 200
-): Promise<T> {
-	if (response.status !== expectedStatus) {
-		const text = await response.text();
-		throw new Error(`Expected status ${expectedStatus}, got ${response.status}. Body: ${text}`);
-	}
-
-	const body = await response.json();
-	if (!body) {
-		throw new Error('Response body is empty');
-	}
-	return body as T;
-}
-
-/**
- * Assert response is an error
- */
-export async function assertErrorResponse(
-	response: Response,
-	expectedStatus: number
-): Promise<{ error: string; message?: string }> {
-	if (response.status !== expectedStatus) {
-		const text = await response.text();
-		throw new Error(
-			`Expected error status ${expectedStatus}, got ${response.status}. Body: ${text}`
-		);
-	}
-
-	const body = await response.json();
-	if (!body) {
-		throw new Error('Error response body is empty');
-	}
-	// @ts-expect-error - body is typed as unknown, but we check it at runtime
-	if (!body.error) {
-		throw new Error("Error response should have 'error' field");
-	}
-	return body as { error: string; message?: string };
-}
-
-/**
  * Create WebSocket connection to test server and return both the WebSocket and a promise for the first message
  * Note: Uses unified /ws endpoint - sessionId is passed in message payloads, not URL
  */
@@ -529,62 +459,6 @@ export async function waitForWebSocketMessage(ws: WebSocket, timeout = 5000): Pr
 }
 
 /**
- * Wait for WebSocket to open and receive the first message
- * This avoids race conditions by setting up the message listener before waiting for OPEN
- */
-export async function waitForWebSocketOpenAndMessage(
-	ws: WebSocket,
-	timeout = 5000
-): Promise<unknown> {
-	return new Promise((resolve, reject) => {
-		const startTime = Date.now();
-
-		const messageHandler = (event: MessageEvent) => {
-			clearTimeout(timer);
-			ws.removeEventListener('message', messageHandler);
-			ws.removeEventListener('error', errorHandler);
-			ws.removeEventListener('open', openHandler);
-			try {
-				const data = JSON.parse(event.data as string);
-				resolve(data);
-			} catch {
-				reject(new Error('Failed to parse WebSocket message'));
-			}
-		};
-
-		const errorHandler = (error: Event) => {
-			clearTimeout(timer);
-			ws.removeEventListener('message', messageHandler);
-			ws.removeEventListener('error', errorHandler);
-			ws.removeEventListener('open', openHandler);
-			reject(error);
-		};
-
-		const openHandler = () => {
-			if (process.env.TEST_VERBOSE) {
-				console.log(`WebSocket opened on client side, waiting for message...`);
-			}
-		};
-
-		// Add all listeners immediately when WebSocket is created
-		ws.addEventListener('message', messageHandler);
-		ws.addEventListener('error', errorHandler);
-		ws.addEventListener('open', openHandler);
-
-		const timer = setTimeout(() => {
-			ws.removeEventListener('message', messageHandler);
-			ws.removeEventListener('error', errorHandler);
-			ws.removeEventListener('open', openHandler);
-			reject(
-				new Error(
-					`No WebSocket message received within ${timeout}ms (readyState: ${ws.readyState}, elapsed: ${Date.now() - startTime}ms)`
-				)
-			);
-		}, timeout);
-	});
-}
-
-/**
  * Assertions
  */
 export function assertEquals<T>(actual: T, expected: T, message?: string) {
@@ -599,38 +473,6 @@ export function assertEquals<T>(actual: T, expected: T, message?: string) {
 export function assertExists<T>(value: T, message?: string): asserts value {
 	if (value === null || value === undefined) {
 		throw new Error(message || 'Assertion failed: value does not exist');
-	}
-}
-
-export function assertNotEquals<T>(actual: T, expected: T, message?: string) {
-	if (actual === expected) {
-		throw new Error(
-			message || `Assertion failed: expected not to equal ${JSON.stringify(expected)}`
-		);
-	}
-}
-
-export function assertTrue(value: boolean, message?: string) {
-	if (!value) {
-		throw new Error(message || 'Assertion failed: expected true');
-	}
-}
-
-export function assertFalse(value: boolean, message?: string) {
-	if (value) {
-		throw new Error(message || 'Assertion failed: expected false');
-	}
-}
-
-export function assertGreaterThan(actual: number, expected: number, message?: string) {
-	if (actual <= expected) {
-		throw new Error(message || `Assertion failed: ${actual} is not greater than ${expected}`);
-	}
-}
-
-export function assertContains<T>(array: T[], item: T, message?: string) {
-	if (!array.includes(item)) {
-		throw new Error(message || `Assertion failed: array does not contain ${JSON.stringify(item)}`);
 	}
 }
 
@@ -664,33 +506,6 @@ export function hasOAuthToken(): boolean {
  */
 export function hasAnyCredentials(): boolean {
 	return hasApiKey() || hasOAuthToken();
-}
-
-/**
- * Skip test if no API key is available
- */
-export function requiresApiKey(test: { skip: () => void }) {
-	if (!hasApiKey()) {
-		test.skip();
-	}
-}
-
-/**
- * Skip test if no OAuth token is available
- */
-export function requiresOAuthToken(test: { skip: () => void }) {
-	if (!hasOAuthToken()) {
-		test.skip();
-	}
-}
-
-/**
- * Skip test if no credentials are available
- */
-export function requiresCredentials(test: { skip: () => void }) {
-	if (!hasAnyCredentials()) {
-		test.skip();
-	}
 }
 
 /**

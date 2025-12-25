@@ -10,17 +10,6 @@
  */
 
 export { useModal, type UseModalResult } from './useModal';
-export { useClickOutside } from './useClickOutside';
-export {
-	useAsyncOperation,
-	type UseAsyncOperationOptions,
-	type UseAsyncOperationResult,
-} from './useAsyncOperation';
-export {
-	useAutoScroll,
-	type UseAutoScrollOptions,
-	type UseAutoScrollResult,
-} from './useAutoScroll';
 export { useMessageMaps, type UseMessageMapsResult, type ToolResultData } from './useMessageMaps';
 export { useInputDraft, type UseInputDraftResult } from './useInputDraft';
 export {
@@ -32,19 +21,7 @@ export {
 	useMessageHub,
 	type UseMessageHubOptions,
 	type UseMessageHubResult,
-	ConnectionNotReadyError,
 } from './useMessageHub';
-export {
-	useSessionActions,
-	type ArchiveConfirmState,
-	type UseSessionActionsOptions,
-	type UseSessionActionsResult,
-} from './useSessionActions';
-export {
-	useSendMessage,
-	type UseSendMessageOptions,
-	type UseSendMessageResult,
-} from './useSendMessage';
 export {
 	useCommandAutocomplete,
 	type UseCommandAutocompleteOptions,

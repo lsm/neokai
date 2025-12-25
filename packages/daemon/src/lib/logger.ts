@@ -16,12 +16,6 @@ import {
 	LogLevel,
 	configureLogger,
 	getLoggerConfig,
-	silenceNamespace,
-	setLogLevel,
-	isTestEnvironment,
-	isDevelopment,
-	isProduction,
-	loggers,
 } from '@liuboer/shared';
 
 /**
@@ -65,15 +59,4 @@ export class Logger {
 }
 
 // Re-export shared logger utilities for direct usage
-export {
-	createLogger,
-	LogLevel,
-	configureLogger,
-	getLoggerConfig,
-	silenceNamespace,
-	setLogLevel,
-	isTestEnvironment,
-	isDevelopment,
-	isProduction,
-	loggers,
-};
+export { LogLevel, configureLogger, getLoggerConfig };

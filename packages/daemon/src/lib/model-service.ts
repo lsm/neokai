@@ -398,21 +398,3 @@ export async function resolveModelAlias(
 	// Return as-is if nothing found
 	return idOrAlias;
 }
-
-/**
- * Get current model info from a model ID
- * Used by AgentSession.getCurrentModel()
- */
-export async function getCurrentModelInfo(
-	modelId: string,
-	cacheKey: string = 'global'
-): Promise<{
-	id: string;
-	info: ModelInfo | null;
-}> {
-	const info = await getModelInfo(modelId, cacheKey);
-	return {
-		id: modelId,
-		info,
-	};
-}

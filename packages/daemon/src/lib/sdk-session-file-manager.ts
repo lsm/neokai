@@ -31,7 +31,7 @@ function getSDKProjectDir(workspacePath: string): string {
  * @param sdkSessionId - The SDK session ID from Query.sessionId
  * @returns Absolute path to the .jsonl file
  */
-export function getSDKSessionFilePath(workspacePath: string, sdkSessionId: string): string {
+function getSDKSessionFilePath(workspacePath: string, sdkSessionId: string): string {
 	return join(getSDKProjectDir(workspacePath), `${sdkSessionId}.jsonl`);
 }
 
@@ -43,7 +43,7 @@ export function getSDKSessionFilePath(workspacePath: string, sdkSessionId: strin
  * @param liuboerSessionId - The Liuboer session ID to search for in files
  * @returns Path to the session file if found, null otherwise
  */
-export function findSDKSessionFile(workspacePath: string, liuboerSessionId: string): string | null {
+function findSDKSessionFile(workspacePath: string, liuboerSessionId: string): string | null {
 	try {
 		const sessionDir = getSDKProjectDir(workspacePath);
 
