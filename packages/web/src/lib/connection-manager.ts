@@ -30,6 +30,7 @@
 
 import { MessageHub, WebSocketClientTransport } from '@liuboer/shared';
 import { appState, connectionState } from './state';
+import { globalStore } from './global-store';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from './errors';
 import { createDeferred } from './timeout';
 
@@ -478,17 +479,18 @@ export class ConnectionManager {
 			await this.messageHub.call('system.health', {}, { timeout: 3000 });
 			console.log('[ConnectionManager] Connection validated successfully');
 
-			// NOTE: We removed the forceResubscribe() call here because:
-			// 1. MessageHub.resubscribeAll() is already called on reconnection
-			// 2. Having multiple sources trigger resubscription caused subscription storms
-			// 3. The debounce in resubscribeAll() now handles any duplicate calls
-			// If subscriptions are truly stale, the next reconnection will fix them.
+			// CRITICAL FIX: Force resubscribe even when health check succeeds
+			// Safari may pause WebSocket without closing it, causing server-side
+			// subscriptions to timeout while client thinks it's still connected.
+			// This ensures subscriptions are re-established on the server.
+			// The debounce in resubscribeAll() prevents subscription storms.
+			this.messageHub.forceResubscribe();
 
-			// CRITICAL: Refresh all state channels to fetch latest state
+			// CRITICAL: Refresh ALL state (both session and global)
 			// This ensures UI is in sync even if events were missed during background
-			await appState.refreshAll();
+			await Promise.all([appState.refreshAll(), globalStore.refresh()]);
 
-			console.log('[ConnectionManager] State channels refreshed after validation');
+			console.log('[ConnectionManager] Subscriptions and state refreshed after validation');
 		} catch (error) {
 			console.error('[ConnectionManager] Connection validation failed, forcing reconnect:', error);
 

@@ -29,7 +29,7 @@ import { STATE_CHANNELS } from '@liuboer/shared';
 import type { GlobalSettings } from '@liuboer/shared/types/settings';
 import { connectionManager } from './connection-manager';
 
-class GlobalStore {
+export class GlobalStore {
 	// ========================================
 	// Core Signals
 	// ========================================
@@ -162,6 +162,43 @@ class GlobalStore {
 			this.initialized = true;
 		} catch (err) {
 			console.error('[GlobalStore] Failed to initialize:', err);
+		}
+	}
+
+	/**
+	 * Refresh all global state from server
+	 * Called after reconnection to sync missed updates
+	 *
+	 * CRITICAL: This fetches the latest snapshot from the server to ensure
+	 * the UI is in sync after WebSocket reconnection or Safari background tab resume.
+	 */
+	async refresh(): Promise<void> {
+		if (!this.initialized) {
+			console.warn('[GlobalStore] Cannot refresh: not initialized');
+			return;
+		}
+
+		try {
+			const hub = await connectionManager.getHub();
+
+			// Fetch fresh snapshot
+			const snapshot = await hub.call<{
+				sessions: SessionsState;
+				system: SystemState;
+				settings: SettingsState;
+			}>(STATE_CHANNELS.GLOBAL_SNAPSHOT, {});
+
+			if (snapshot) {
+				this.sessions.value = snapshot.sessions?.sessions || [];
+				this.hasArchivedSessions.value = snapshot.sessions?.hasArchivedSessions || false;
+				this.systemState.value = snapshot.system || null;
+				this.settings.value = snapshot.settings?.settings || null;
+			}
+
+			console.log('[GlobalStore] State refreshed after reconnection');
+		} catch (err) {
+			console.error('[GlobalStore] Failed to refresh state:', err);
+			throw err;
 		}
 	}
 

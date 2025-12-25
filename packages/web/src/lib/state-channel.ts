@@ -369,7 +369,13 @@ export class StateChannel<T> {
 				this.state.value = snapshot;
 			}
 
-			this.lastSync.value = Date.now();
+			// FIX: Use SERVER timestamp from response, not client's local time
+			// This prevents clock skew issues on incremental sync
+			if (snapshot && typeof snapshot === 'object' && 'timestamp' in snapshot) {
+				this.lastSync.value = (snapshot as { timestamp: number }).timestamp;
+			} else {
+				this.lastSync.value = Date.now(); // Fallback
+			}
 
 			this.log(`Snapshot fetched: ${this.channelName}`, snapshot);
 		} catch (err) {
@@ -600,50 +606,30 @@ export class StateChannel<T> {
 	}
 
 	/**
-	 * Hybrid refresh on reconnection:
-	 * - Try incremental sync if recently disconnected (< 5 min)
-	 * - Fall back to full sync (with merge) for longer disconnections
+	 * Refresh on reconnection - always do full sync
+	 *
+	 * FIX: Removed incremental sync logic which was error-prone due to:
+	 * - Clock skew between client and server timestamps
+	 * - Complexity of merging partial state
+	 * - Risk of missing events during background periods
+	 *
+	 * Now always fetches full state which is:
+	 * - Simpler and more reliable
+	 * - Still efficient (DB queries are fast, network latency dominates)
+	 * - Guarantees UI is in sync with server
 	 *
 	 * NOTE: MessageHub.resubscribeAll() is already called BEFORE this handler
-	 * (see message-hub.ts line 172). We removed the defensive forceResubscribe()
-	 * call here because it was contributing to the subscription storm problem.
-	 * The debounce in resubscribeAll() now handles any duplicate calls.
+	 * (see message-hub.ts line 181-182). Subscriptions are re-established first,
+	 * then this refresh fetches the latest snapshot.
 	 */
 	private async hybridRefresh(): Promise<void> {
-		const lastSyncTime = this.lastSync.value;
-		const now = Date.now();
-		const gap = now - lastSyncTime;
-		const INCREMENTAL_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+		this.log(`Reconnected, fetching full snapshot`);
 
-		// If we have a recent sync time and gap is reasonable, try incremental
-		if (lastSyncTime > 0 && gap < INCREMENTAL_THRESHOLD) {
-			this.log(
-				`Attempting incremental sync since ${new Date(lastSyncTime).toISOString()} (gap: ${Math.round(gap / 1000)}s)`
-			);
-			try {
-				await this.fetchSnapshot(lastSyncTime);
-				this.log(`Incremental sync successful`);
-				return;
-			} catch (err) {
-				this.log(`Incremental sync failed, falling back to full sync`, err);
-			}
-		} else {
-			this.log(
-				`Gap too large (${Math.round(gap / 1000)}s) or no previous sync, using full sync with merge`
-			);
-		}
-
-		// Fallback: full sync with merge (if we have existing state)
 		try {
-			if (this.state.value) {
-				// Fetch full snapshot and merge (this will deduplicate)
-				await this.fetchSnapshot(0); // 0 triggers merge in fetchSnapshot
-				this.log(`Full sync with merge completed`);
-			} else {
-				// No existing state, just do a clean fetch
-				await this.fetchSnapshot();
-				this.log(`Full sync completed (no existing state)`);
-			}
+			// FIX: Always do full refresh on reconnection
+			// Removed incremental sync logic which was error-prone due to clock skew
+			await this.fetchSnapshot();
+			this.log(`Full sync completed`);
 		} catch (err) {
 			this.log(`Full sync failed`, err);
 			throw err;
