@@ -119,11 +119,13 @@ export function removeToolResultFromSessionFile(
 
 		// Process each line to find and modify the target message
 		let modified = false;
+		let foundMessage = false;
 		const updatedLines = lines.map((line) => {
 			const message = JSON.parse(line) as Record<string, unknown>;
 
 			// Check if this is the target message
 			if (message.uuid === messageUuid) {
+				foundMessage = true;
 				// Modify tool_result content in this message
 				if (
 					message.type === 'user' &&
@@ -158,9 +160,15 @@ export function removeToolResultFromSessionFile(
 		});
 
 		if (!modified) {
-			console.error(
-				`[SDKSessionFileManager] Message ${messageUuid} not found or has no tool_result`
-			);
+			if (!foundMessage) {
+				console.error(
+					`[SDKSessionFileManager] Message UUID ${messageUuid} not found in session file. File contains ${lines.length} messages.`
+				);
+			} else {
+				console.error(
+					`[SDKSessionFileManager] Message ${messageUuid} found but has no tool_result blocks`
+				);
+			}
 			return false;
 		}
 
