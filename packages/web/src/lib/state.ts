@@ -19,8 +19,55 @@ import type {
 	SDKMessagesUpdate,
 } from '@liuboer/shared';
 import { STATE_CHANNELS } from '@liuboer/shared';
-import { StateChannel, DeltaMergers } from './state-channel';
+import { StateChannel } from './state-channel';
 import { globalStore } from './global-store';
+
+/**
+ * Merge SDK messages with deduplication by UUID
+ *
+ * Prevents duplicate messages during reconnection race conditions:
+ * 1. Client reconnects, subscriptions re-established
+ * 2. Snapshot fetch completes with messages [A, B, C, D]
+ * 3. Delta event arrives with message D (already in snapshot)
+ * 4. Without dedup: [A, B, C, D, D] - DUPLICATE!
+ * 5. With dedup: [A, B, C, D] - correct
+ *
+ * @internal Exported for testing
+ */
+export function mergeSdkMessagesWithDedup(
+	existing: SDKMessage[],
+	added: SDKMessage[] | undefined
+): SDKMessage[] {
+	if (!added || added.length === 0) {
+		return existing;
+	}
+
+	// Use Map for O(1) lookup by UUID
+	const map = new Map<string, SDKMessage>();
+
+	// Add existing messages first
+	for (const msg of existing) {
+		const msgWithUuid = msg as SDKMessage & { uuid?: string };
+		if (msgWithUuid.uuid) {
+			map.set(msgWithUuid.uuid, msg);
+		}
+	}
+
+	// Add new messages (overwrites if UUID already exists)
+	for (const msg of added) {
+		const msgWithUuid = msg as SDKMessage & { uuid?: string };
+		if (msgWithUuid.uuid) {
+			map.set(msgWithUuid.uuid, msg);
+		}
+	}
+
+	// Convert back to array, preserving order by timestamp
+	return Array.from(map.values()).sort((a, b) => {
+		const timeA = (a as SDKMessage & { timestamp?: number }).timestamp || 0;
+		const timeB = (b as SDKMessage & { timestamp?: number }).timestamp || 0;
+		return timeA - timeB;
+	});
+}
 
 /**
  * Session-Specific State Channels
@@ -54,7 +101,10 @@ class SessionStateChannels {
 					const typedDelta = delta as SDKMessagesUpdate;
 					return {
 						...current,
-						sdkMessages: DeltaMergers.append(current.sdkMessages, typedDelta),
+						// FIX: Deduplicate by UUID to prevent duplicates on reconnection
+						// Race condition: delta events may arrive after snapshot fetch completes,
+						// containing messages already in the snapshot
+						sdkMessages: mergeSdkMessagesWithDedup(current.sdkMessages, typedDelta.added),
 						timestamp: typedDelta.timestamp,
 					};
 				},

@@ -58,7 +58,12 @@ mock.module('../global-store', () => ({
 }));
 
 // Import after mocking
-import { appState, initializeApplicationState, cleanupApplicationState } from '../state';
+import {
+	appState,
+	initializeApplicationState,
+	cleanupApplicationState,
+	mergeSdkMessagesWithDedup,
+} from '../state';
 
 // Helper to wait for debounced session switching (150ms debounce + buffer)
 const waitForSessionSwitch = () => new Promise((resolve) => setTimeout(resolve, 200));
@@ -356,5 +361,121 @@ describe('ApplicationState - Edge Cases', () => {
 	it('should throw when getSessionChannels called before init', () => {
 		// Don't initialize - should throw
 		expect(() => appState.getSessionChannels('test')).toThrow('State not initialized');
+	});
+});
+
+describe('mergeSdkMessagesWithDedup', () => {
+	// Helper to create a mock SDK message with uuid and timestamp
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const createMessage = (uuid: string, timestamp: number, content = 'test'): any => ({
+		type: 'assistant',
+		uuid,
+		timestamp,
+		message: { content },
+	});
+
+	it('should return existing messages when added is undefined', () => {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const existing: any = [createMessage('a', 100), createMessage('b', 200)];
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const result = mergeSdkMessagesWithDedup(existing, undefined);
+		expect(result).toBe(existing);
+	});
+
+	it('should return existing messages when added is empty', () => {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const existing: any = [createMessage('a', 100), createMessage('b', 200)];
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const result = mergeSdkMessagesWithDedup(existing, []);
+		expect(result).toBe(existing);
+	});
+
+	it('should append new messages without duplicates', () => {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const existing: any = [createMessage('a', 100), createMessage('b', 200)];
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const added: any = [createMessage('c', 300)];
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const result = mergeSdkMessagesWithDedup(existing, added);
+
+		expect(result).toHaveLength(3);
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		expect(result.map((m: any) => m.uuid)).toEqual(['a', 'b', 'c']);
+	});
+
+	it('should deduplicate messages with same UUID (reconnection bug fix)', () => {
+		// Scenario: Snapshot contains [A, B, C, D], then delta arrives with D again
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const existing: any = [
+			createMessage('a', 100),
+			createMessage('b', 200),
+			createMessage('c', 300),
+			createMessage('d', 400),
+		];
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const added: any = [createMessage('d', 400, 'duplicate')]; // Same UUID as existing 'd'
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const result = mergeSdkMessagesWithDedup(existing, added);
+
+		// Should NOT have duplicate - only 4 messages, not 5
+		expect(result).toHaveLength(4);
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		expect(result.map((m: any) => m.uuid)).toEqual(['a', 'b', 'c', 'd']);
+	});
+
+	it('should update existing message when duplicate UUID arrives with newer data', () => {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const existing: any = [createMessage('a', 100, 'old content')];
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const added: any = [createMessage('a', 100, 'new content')];
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const result = mergeSdkMessagesWithDedup(existing, added);
+
+		expect(result).toHaveLength(1);
+		// Added message should overwrite existing (takes precedence)
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		expect((result[0] as any).message.content).toBe('new content');
+	});
+
+	it('should maintain chronological order by timestamp', () => {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const existing: any = [createMessage('b', 200), createMessage('d', 400)];
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const added: any = [createMessage('a', 100), createMessage('c', 300)];
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const result = mergeSdkMessagesWithDedup(existing, added);
+
+		expect(result).toHaveLength(4);
+		// Should be sorted by timestamp, not insertion order
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		expect(result.map((m: any) => m.uuid)).toEqual(['a', 'b', 'c', 'd']);
+	});
+
+	it('should handle multiple duplicates in single delta', () => {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const existing: any = [createMessage('a', 100), createMessage('b', 200)];
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const added: any = [
+			createMessage('a', 100), // duplicate
+			createMessage('b', 200), // duplicate
+			createMessage('c', 300), // new
+		];
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const result = mergeSdkMessagesWithDedup(existing, added);
+
+		expect(result).toHaveLength(3);
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		expect(result.map((m: any) => m.uuid)).toEqual(['a', 'b', 'c']);
+	});
+
+	it('should handle empty existing messages', () => {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const added: any = [createMessage('a', 100), createMessage('b', 200)];
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const result = mergeSdkMessagesWithDedup([], added);
+
+		expect(result).toHaveLength(2);
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		expect(result.map((m: any) => m.uuid)).toEqual(['a', 'b']);
 	});
 });
