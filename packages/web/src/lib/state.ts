@@ -345,29 +345,35 @@ export const appState = new ApplicationState();
  */
 
 // Global state signals - delegating to globalStore
+/** @public - Preact signal accessed via .value in components */
 export const sessions = computed<Session[]>(() => {
 	return globalStore.sessions.value;
 });
 
+/** @public - Preact signal accessed via .value in components */
 export const hasArchivedSessions = computed<boolean>(() => {
 	return globalStore.hasArchivedSessions.value;
 });
 
 // System state - delegating to globalStore
+/** @public - Preact signal accessed via .value in components */
 export const systemState = computed<SystemState | null>(() => {
 	return globalStore.systemState.value;
 });
 
+/** @public - Preact signal accessed via .value in components */
 export const authStatus = computed<AuthStatus | null>(() => {
 	const system = systemState.value;
 	return system?.auth || null;
 });
 
+/** @public - Preact signal accessed via .value in components */
 export const healthStatus = computed<HealthStatus | null>(() => {
 	const system = systemState.value;
 	return system?.health || null;
 });
 
+/** @public - Preact signal accessed via .value in components */
 export const apiConnectionStatus = computed<import('@liuboer/shared').ApiConnectionState | null>(
 	() => {
 		const system = systemState.value;
@@ -375,6 +381,7 @@ export const apiConnectionStatus = computed<import('@liuboer/shared').ApiConnect
 	}
 );
 
+/** @public - Preact signal accessed via .value in components */
 export const globalSettings = computed<import('@liuboer/shared').GlobalSettings | null>(() => {
 	return globalStore.settings.value;
 });
@@ -389,14 +396,17 @@ const currentSessionState = computed<SessionState | null>(() => {
 	return channels.session.$.value || null;
 });
 
+/** @public - Preact signal accessed via .value in components */
 export const currentSession = computed<Session | null>(() => {
 	return currentSessionState.value?.sessionInfo || null;
 });
 
+/** @public - Preact signal accessed via .value in components */
 export const currentAgentState = computed<AgentProcessingState>(() => {
 	return currentSessionState.value?.agentState || { status: 'idle' };
 });
 
+/** @public - Preact signal accessed via .value in components */
 export const currentContextInfo = computed<ContextInfo | null>(() => {
 	return currentSessionState.value?.contextInfo || null;
 });
@@ -404,15 +414,18 @@ export const currentContextInfo = computed<ContextInfo | null>(() => {
 /**
  * Derived/computed state
  */
+/** @public - Preact signal accessed via .value in components */
 export const isAgentWorking = computed<boolean>(() => {
 	const state = currentAgentState.value;
 	return state.status === 'processing' || state.status === 'queued';
 });
 
+/** @public - Preact signal accessed via .value in components */
 export const activeSessions = computed<number>(() => {
 	return sessions.value.filter((s) => s.status === 'active').length;
 });
 
+/** @public - Preact signal accessed via .value in components */
 export const recentSessions = computed<Session[]>(() => {
 	return sessions.value
 		.sort((a, b) => new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime())
