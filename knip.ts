@@ -40,6 +40,7 @@ const config: KnipConfig = {
 		'packages/daemon/scripts/**', // Database recovery scripts
 		'packages/daemon/tests/manual/**', // Manual test scripts
 		'packages/daemon/tests/mocks/**', // Test mocks
+		'packages/shared/src/sdk/**', // SDK types from Claude Agent SDK (not all used)
 	],
 
 	// Workspace dependencies (don't flag as unlisted)

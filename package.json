@@ -10,7 +10,7 @@
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
 		"typecheck": "tsc --build",
-		"knip": "knip --include files,dependencies --no-config-hints",
+		"knip": "knip --include files,dependencies,exports --no-config-hints",
 		"knip:all": "knip",
 		"check": "bun run lint && bun run typecheck && bun run knip",
 		"test": "NODE_ENV=test bun test",
