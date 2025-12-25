@@ -1,0 +1,3 @@
+[test]
+# Enable DOM environment for browser-related tests
+preload = ["./src/lib/__tests__/setup.ts"]
