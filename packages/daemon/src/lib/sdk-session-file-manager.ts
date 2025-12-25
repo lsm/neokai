@@ -124,7 +124,9 @@ export function removeToolResultFromSessionFile(
 				return false;
 			}
 		} else {
-			console.error('[SDKSessionFileManager] Neither SDK session ID nor Liuboer session ID provided');
+			console.error(
+				'[SDKSessionFileManager] Neither SDK session ID nor Liuboer session ID provided'
+			);
 			return false;
 		}
 
