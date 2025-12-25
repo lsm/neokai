@@ -7,12 +7,11 @@
  */
 
 import type { RefObject } from 'preact';
-import { useRef, useState } from 'preact/hooks';
+import { useRef } from 'preact/hooks';
 import type { ModelInfo } from '@liuboer/shared';
 import { cn } from '../lib/utils';
 import { borderColors } from '../lib/design-tokens';
 import { useClickOutside } from '../hooks/useClickOutside';
-import { Spinner } from './ui/Spinner';
 
 export interface InputActionsMenuProps {
 	/** Whether the menu is open */
@@ -22,12 +21,12 @@ export interface InputActionsMenuProps {
 	/** Close the menu */
 	onClose: () => void;
 	/** Model switcher state */
-	currentModel: string;
-	currentModelInfo: ModelInfo | null;
-	availableModels: ModelInfo[];
-	modelSwitching: boolean;
-	modelLoading: boolean;
-	onModelSwitch: (modelId: string) => void;
+	currentModel?: string;
+	currentModelInfo?: ModelInfo | null;
+	availableModels?: ModelInfo[];
+	modelSwitching?: boolean;
+	modelLoading?: boolean;
+	onModelSwitch?: (modelId: string) => void;
 	/** Auto-scroll state */
 	autoScroll: boolean;
 	onAutoScrollChange: (enabled: boolean) => void;
@@ -41,23 +40,16 @@ export interface InputActionsMenuProps {
 	buttonRef?: RefObject<HTMLButtonElement>;
 }
 
-/** Model family icons */
-const MODEL_FAMILY_ICONS = {
-	opus: '🧠',
-	sonnet: '💎',
-	haiku: '⚡',
-} as const;
-
 export function InputActionsMenu({
 	isOpen,
 	onToggle,
 	onClose,
-	currentModel,
-	currentModelInfo,
-	availableModels,
-	modelSwitching,
-	modelLoading,
-	onModelSwitch,
+	currentModel: _currentModel,
+	currentModelInfo: _currentModelInfo,
+	availableModels: _availableModels,
+	modelSwitching: _modelSwitching,
+	modelLoading: _modelLoading,
+	onModelSwitch: _onModelSwitch,
 	autoScroll,
 	onAutoScrollChange,
 	onOpenTools,
@@ -69,29 +61,8 @@ export function InputActionsMenu({
 	const internalButtonRef = useRef<HTMLButtonElement>(null);
 	const buttonRef = externalButtonRef || internalButtonRef;
 
-	// Track model submenu state
-	const [showModelSubmenu, setShowModelSubmenu] = useState(false);
-
 	// Handle click outside
-	useClickOutside(
-		menuRef,
-		() => {
-			onClose();
-			setShowModelSubmenu(false);
-		},
-		isOpen,
-		[buttonRef]
-	);
-
-	const handleModelSubmenuToggle = () => {
-		setShowModelSubmenu(!showModelSubmenu);
-	};
-
-	const handleModelSelect = (modelId: string) => {
-		onModelSwitch(modelId);
-		onClose();
-		setShowModelSubmenu(false);
-	};
+	useClickOutside(menuRef, onClose, isOpen, [buttonRef]);
 
 	const handleAutoScrollToggle = () => {
 		onAutoScrollChange(!autoScroll);
@@ -120,7 +91,6 @@ export function InputActionsMenu({
 				onClick={() => {
 					if (disabled) return;
 					onToggle();
-					setShowModelSubmenu(false);
 				}}
 				class={cn(
 					'w-[46px] h-[46px] rounded-full flex items-center justify-center transition-all',
@@ -148,103 +118,6 @@ export function InputActionsMenu({
 					ref={menuRef}
 					class={`absolute bottom-full left-0 mb-2 bg-dark-800 border ${borderColors.ui.secondary} rounded-xl shadow-2xl overflow-hidden animate-slideIn min-w-[220px] z-50`}
 				>
-					{/* Model Switcher */}
-					<div class="relative">
-						<button
-							type="button"
-							onClick={handleModelSubmenuToggle}
-							disabled={disabled || modelSwitching || modelLoading}
-							class={cn(
-								'w-full px-4 py-3 text-left flex items-center justify-between transition-colors',
-								'text-gray-200 hover:bg-dark-700/50',
-								(disabled || modelSwitching || modelLoading) && 'opacity-50 cursor-not-allowed'
-							)}
-						>
-							<span class="flex items-center gap-3">
-								{modelLoading ? (
-									<Spinner size="sm" />
-								) : modelSwitching ? (
-									<Spinner size="sm" color="border-blue-400" />
-								) : currentModelInfo ? (
-									<span class="text-lg">{MODEL_FAMILY_ICONS[currentModelInfo.family]}</span>
-								) : (
-									<span class="text-lg">🤖</span>
-								)}
-								<span class="text-sm">
-									{modelLoading
-										? 'Loading...'
-										: modelSwitching
-											? 'Switching...'
-											: currentModelInfo?.name || 'Select Model'}
-								</span>
-							</span>
-							<svg
-								class={cn(
-									'w-4 h-4 text-gray-400 transition-transform',
-									showModelSubmenu && 'rotate-180'
-								)}
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke="currentColor"
-							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
-									d="M9 5l7 7-7 7"
-								/>
-							</svg>
-						</button>
-
-						{/* Model Submenu */}
-						{showModelSubmenu && !modelLoading && (
-							<div
-								class={`border-t ${borderColors.ui.secondary} bg-dark-850/50 max-h-[300px] overflow-y-auto`}
-							>
-								{availableModels.map((model) => {
-									const isCurrent = model.id === currentModel;
-									return (
-										<button
-											key={model.id}
-											type="button"
-											onClick={() => handleModelSelect(model.id)}
-											disabled={disabled || modelSwitching}
-											class={cn(
-												'w-full px-4 py-2.5 text-left flex items-center justify-between transition-colors',
-												isCurrent
-													? 'text-blue-400 bg-blue-500/10'
-													: 'text-gray-300 hover:bg-dark-700/50',
-												(disabled || modelSwitching) && 'opacity-50 cursor-not-allowed'
-											)}
-										>
-											<span class="flex items-center gap-3">
-												<span class="text-base">{MODEL_FAMILY_ICONS[model.family]}</span>
-												<span class="text-sm">{model.name}</span>
-											</span>
-											{isCurrent && (
-												<svg
-													class="w-4 h-4 text-blue-400"
-													fill="none"
-													viewBox="0 0 24 24"
-													stroke="currentColor"
-												>
-													<path
-														stroke-linecap="round"
-														stroke-linejoin="round"
-														stroke-width={2.5}
-														d="M5 13l4 4L19 7"
-													/>
-												</svg>
-											)}
-										</button>
-									);
-								})}
-							</div>
-						)}
-					</div>
-
-					<div class="h-px bg-dark-600" />
-
 					{/* Auto-scroll Toggle */}
 					<button
 						type="button"

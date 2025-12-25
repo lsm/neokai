@@ -183,18 +183,70 @@ export default function ContextUsageBar({
 			{/* Context usage indicator - always show */}
 			<div
 				ref={indicatorRef}
-				class="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
+				class="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
 				onClick={() => totalTokens > 0 && setShowContextDetails(!showContextDetails)}
 				title={totalTokens > 0 ? 'Click for context details' : 'Context data loading...'}
 			>
-				<span class={`text-xs font-medium ${getContextColor()}`}>
-					{contextPercentage.toFixed(1)}%
-				</span>
-				<div class="w-24 sm:w-32 h-2 bg-dark-700 rounded-full overflow-hidden">
-					<div
-						class={`h-full transition-all duration-300 ${getContextBarColor()}`}
-						style={{ width: `${Math.min(contextPercentage, 100)}%` }}
-					/>
+				{/* Mobile: Pie Chart only */}
+				<div class="sm:hidden">
+					<svg width="32" height="32" viewBox="0 0 36 36" class="relative">
+						<g class="transform rotate-[-90deg]" transform-origin="18 18">
+							{/* Background circle */}
+							<circle
+								cx="18"
+								cy="18"
+								r="15"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="3"
+								class="text-dark-700"
+							/>
+							{/* Progress arc */}
+							<circle
+								cx="18"
+								cy="18"
+								r="15"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="4"
+								stroke-dasharray={`${(contextPercentage / 100) * 94.2} 94.2`}
+								class={`transition-all duration-300 ${
+									contextPercentage >= 90
+										? 'text-red-500'
+										: contextPercentage >= 75
+											? 'text-orange-500'
+											: contextPercentage >= 60
+												? 'text-yellow-500'
+												: 'text-green-500'
+								}`}
+								stroke-linecap="round"
+							/>
+						</g>
+						{/* Percentage text in center */}
+						<text
+							x="18"
+							y="18"
+							text-anchor="middle"
+							dominant-baseline="middle"
+							font-size="12"
+							class={`font-bold fill-current ${getContextColor()}`}
+						>
+							{Math.round(contextPercentage)}
+						</text>
+					</svg>
+				</div>
+
+				{/* Desktop: Percentage + Bar */}
+				<div class="hidden sm:flex items-center gap-3">
+					<span class={`text-xs font-medium ${getContextColor()}`}>
+						{contextPercentage.toFixed(1)}%
+					</span>
+					<div class="w-16 sm:w-24 h-2 bg-dark-700 rounded-full overflow-hidden">
+						<div
+							class={`h-full transition-all duration-300 ${getContextBarColor()}`}
+							style={{ width: `${Math.min(contextPercentage, 100)}%` }}
+						/>
+					</div>
 				</div>
 			</div>
 

@@ -161,14 +161,31 @@ export async function startDevServer(config: Config) {
 	log.info(`\n📝 Press Ctrl+C to stop\n`);
 
 	// Graceful shutdown
+	let isShuttingDown = false;
+
 	const shutdown = async (signal: string) => {
+		// Prevent multiple shutdown handlers from running concurrently
+		if (isShuttingDown) {
+			log.warn(`Shutdown already in progress, ignoring ${signal}`);
+			return;
+		}
+		isShuttingDown = true;
+
 		log.info(`\n👋 Received ${signal}, shutting down gracefully...`);
+
 		try {
+			log.info('🛑 Stopping unified server...');
 			server.stop();
+
 			log.info('🛑 Stopping Vite dev server...');
 			await vite.close();
-			log.info('🛑 Stopping daemon...');
+
+			log.info('🛑 Cleaning up daemon...');
+			// Call cleanup but it will try to stop daemon's server (already stopped above)
+			// Daemon cleanup handles: pending RPC calls, MessageHub, sessions, database
 			await daemonContext.cleanup();
+
+			log.info('✨ Shutdown complete');
 			process.exit(0);
 		} catch (error) {
 			log.error('❌ Error during shutdown:', error);

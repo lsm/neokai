@@ -33,6 +33,7 @@ export class SessionManager {
 	) {
 		// Only enable debug logs in development mode, not in test mode
 		this.debug = process.env.NODE_ENV === 'development';
+		this.logger = new Logger('SessionManager');
 		this.worktreeManager = new WorktreeManager();
 		this.logger = new Logger('SessionManager');
 

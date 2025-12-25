@@ -13,15 +13,119 @@
  */
 
 import { useSignalEffect } from '@preact/signals';
-import { useState, useCallback } from 'preact/hooks';
-import type { ContextInfo, ModelInfo } from '@liuboer/shared';
+import { useState, useCallback, useEffect } from 'preact/hooks';
+import type { ContextInfo, ModelInfo, ThinkingLevel } from '@liuboer/shared';
 import { connectionState, type ConnectionState } from '../lib/state.ts';
 import ConnectionStatus from './ConnectionStatus.tsx';
 import ContextUsageBar from './ContextUsageBar.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
-import { useModal, MODEL_FAMILY_ICONS } from '../hooks';
+import { useModal, MODEL_FAMILY_ICONS, useMessageHub } from '../hooks';
 import { Spinner } from './ui/Spinner.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
+
+/**
+ * Thinking level display labels
+ */
+const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
+	auto: 'Auto',
+	think8k: 'Think 8k',
+	think16k: 'Think 16k',
+	think32k: 'Think 32k',
+};
+
+/**
+ * ThinkingLevelIcon - Lightbulb icon with progressive lighting based on thinking level
+ *
+ * - auto: Dim (gray) - no glow
+ * - think8k: 1/4 lit (amber glow, dim bulb)
+ * - think16k: 1/2 lit (amber glow, medium bulb)
+ * - think32k: Full lit (bright amber glow, bright bulb)
+ */
+function ThinkingLevelIcon({ level }: { level: ThinkingLevel }) {
+	// Map level to brightness: 0 = off, 1 = 1/4, 2 = 1/2, 3 = full
+	const brightness = level === 'auto' ? 0 : level === 'think8k' ? 1 : level === 'think16k' ? 2 : 3;
+
+	// Color based on brightness level
+	// auto: slightly brighter white, non-auto: progressive amber
+	const strokeColor =
+		brightness === 0
+			? 'text-gray-400'
+			: brightness === 1
+				? 'text-amber-600'
+				: brightness === 2
+					? 'text-amber-500'
+					: 'text-amber-400';
+
+	// Fill opacity for the bulb (glow effect)
+	const fillOpacity = brightness === 0 ? 0 : brightness === 1 ? 0.15 : brightness === 2 ? 0.3 : 0.5;
+
+	return (
+		<svg class={`w-4 h-4 ${strokeColor}`} viewBox="0 0 24 24">
+			{/* Glow effect behind the bulb */}
+			{brightness > 0 && (
+				<circle
+					cx="12"
+					cy="10"
+					r={brightness === 1 ? 4 : brightness === 2 ? 5 : 6}
+					fill="currentColor"
+					opacity={fillOpacity}
+				/>
+			)}
+			{/* Lightbulb outline */}
+			<path
+				fill="none"
+				stroke="currentColor"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				stroke-width="2"
+				d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
+			/>
+		</svg>
+	);
+}
+
+/**
+ * ThinkingBorderRing - SVG ring that shows partial border lighting
+ *
+ * Uses stroke-dasharray to create partial circle effect:
+ * - think8k: 1/4 of circle lit (90 degrees)
+ * - think16k: 1/2 of circle lit (180 degrees)
+ * - think32k: Full circle lit (360 degrees)
+ */
+function ThinkingBorderRing({ level }: { level: ThinkingLevel }) {
+	if (level === 'auto') return null;
+
+	// Circle parameters (matches w-8 h-8 = 32px button)
+	const size = 32;
+	const strokeWidth = 2;
+	const radius = (size - strokeWidth) / 2; // 15
+	const circumference = 2 * Math.PI * radius; // ~94.25
+
+	// Calculate dash length based on level
+	// 1/4 = 25%, 1/2 = 50%, full = 100%
+	const dashPercent = level === 'think8k' ? 0.25 : level === 'think16k' ? 0.5 : 1;
+	const dashLength = circumference * dashPercent;
+
+	// Color based on level
+	const strokeColor =
+		level === 'think8k' ? '#d97706' : level === 'think16k' ? '#f59e0b' : '#fbbf24'; // amber-600, amber-500, amber-400
+
+	return (
+		<svg class="absolute inset-0 w-full h-full pointer-events-none" viewBox={`0 0 ${size} ${size}`}>
+			<circle
+				cx={size / 2}
+				cy={size / 2}
+				r={radius}
+				fill="none"
+				stroke={strokeColor}
+				stroke-width={strokeWidth}
+				stroke-dasharray={`${dashLength} ${circumference - dashLength}`}
+				stroke-dashoffset={circumference * 0.25} // Start from top (rotate -90deg)
+				stroke-linecap="round"
+			/>
+		</svg>
+	);
+}
 
 interface SessionStatusBarProps {
 	sessionId: string;
@@ -40,6 +144,8 @@ interface SessionStatusBarProps {
 	// Auto-scroll
 	autoScroll: boolean;
 	onAutoScrollChange: (enabled: boolean) => void;
+	// Thinking level
+	thinkingLevel?: ThinkingLevel;
 }
 
 export default function SessionStatusBar({
@@ -57,6 +163,7 @@ export default function SessionStatusBar({
 	onModelSwitch,
 	autoScroll,
 	onAutoScrollChange,
+	thinkingLevel: thinkingLevelProp,
 }: SessionStatusBarProps) {
 	// Use useState + useSignalEffect to ensure component re-renders on signal change
 	// This is more explicit than relying on implicit signal tracking
@@ -66,12 +173,39 @@ export default function SessionStatusBar({
 		setConnState(connectionState.value);
 	});
 
-	// Dropdowns
+	// Get MessageHub for RPC calls
+	const { callIfConnected } = useMessageHub();
+
+	// Dropdowns - only one can be open at a time
 	const modelDropdown = useModal();
 	const thinkingDropdown = useModal();
 
-	// Thinking level state (placeholder for now - TODO: integrate with session config)
-	const [thinkingLevel, setThinkingLevel] = useState<'off' | 'low' | 'normal' | 'high'>('normal');
+	// Helper to toggle dropdown and close the other one
+	const toggleModelDropdown = useCallback(() => {
+		if (modelDropdown.isOpen) {
+			modelDropdown.close();
+		} else {
+			thinkingDropdown.close();
+			modelDropdown.open();
+		}
+	}, [modelDropdown, thinkingDropdown]);
+
+	const toggleThinkingDropdown = useCallback(() => {
+		if (thinkingDropdown.isOpen) {
+			thinkingDropdown.close();
+		} else {
+			modelDropdown.close();
+			thinkingDropdown.open();
+		}
+	}, [modelDropdown, thinkingDropdown]);
+
+	// Thinking level state (synced from session config)
+	const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(thinkingLevelProp || 'auto');
+
+	// Sync thinking level with session config changes
+	useEffect(() => {
+		setThinkingLevel(thinkingLevelProp || 'auto');
+	}, [thinkingLevelProp]);
 
 	// Auto-scroll toggle handler
 	const handleAutoScrollToggle = useCallback(() => {
@@ -87,14 +221,19 @@ export default function SessionStatusBar({
 		[onModelSwitch, modelDropdown]
 	);
 
-	// Thinking level change handler
+	// Thinking level change handler with persistence
 	const handleThinkingLevelChange = useCallback(
-		(level: 'off' | 'low' | 'normal' | 'high') => {
+		async (level: ThinkingLevel) => {
 			setThinkingLevel(level);
 			thinkingDropdown.close();
-			// TODO: Persist to session config
+
+			// Persist to session config via RPC
+			await callIfConnected('session.thinking.set', {
+				sessionId: _sessionId,
+				level,
+			});
 		},
-		[thinkingDropdown]
+		[_sessionId, callIfConnected, thinkingDropdown]
 	);
 
 	// Get current model icon
@@ -110,13 +249,13 @@ export default function SessionStatusBar({
 				streamingPhase={streamingPhase}
 			/>
 
-			{/* Center: Interactive controls */}
-			<div class="flex items-center gap-4 sm:gap-2 flex-1 justify-center">
+			{/* Right: Interactive controls and context usage */}
+			<div class="flex items-center gap-3 sm:gap-4">
 				{/* Model Switcher */}
 				<div class="relative">
 					<button
-						class="control-btn w-7 h-7 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border border-gray-600 sm:border-gray-600 rounded-md transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
-						onClick={modelDropdown.toggle}
+						class="control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border border-gray-600 sm:border-gray-600 rounded-full transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+						onClick={toggleModelDropdown}
 						disabled={modelLoading || modelSwitching}
 						title={currentModelInfo ? `Switch Model (${currentModelInfo.name})` : 'Switch Model'}
 					>
@@ -126,7 +265,7 @@ export default function SessionStatusBar({
 					{/* Model Dropdown */}
 					{modelDropdown.isOpen && (
 						<div
-							class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-48 py-1 z-50`}
+							class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-48 py-1 z-50 animate-slideIn`}
 						>
 							<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">Select Model</div>
 							{availableModels.map((model) => (
@@ -147,14 +286,52 @@ export default function SessionStatusBar({
 					)}
 				</div>
 
-				{/* Auto-scroll Toggle */}
+				{/* Thinking Level */}
+				<div class="relative">
+					<button
+						class={`control-btn relative w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border rounded-full transition-colors ${
+							thinkingLevel === 'auto' ? 'border-gray-600' : 'border-transparent'
+						}`}
+						onClick={toggleThinkingDropdown}
+						title={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
+					>
+						<ThinkingBorderRing level={thinkingLevel} />
+						<ThinkingLevelIcon level={thinkingLevel} />
+					</button>
+
+					{/* Thinking Dropdown */}
+					{thinkingDropdown.isOpen && (
+						<div
+							class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-40 py-1 z-50 animate-slideIn`}
+						>
+							<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">Thinking Level</div>
+							{(['auto', 'think8k', 'think16k', 'think32k'] as const).map((level) => (
+								<button
+									key={level}
+									class={`w-full text-left px-3 py-2 hover:bg-dark-700 text-xs flex items-center gap-2 ${
+										level === thinkingLevel ? 'text-amber-400' : 'text-gray-200'
+									}`}
+									onClick={() => handleThinkingLevelChange(level)}
+								>
+									<ThinkingLevelIcon level={level} />
+									{THINKING_LEVEL_LABELS[level]}
+									{level === thinkingLevel && ' (current)'}
+								</button>
+							))}
+						</div>
+					)}
+				</div>
+
+				{/* Auto-scroll Toggle - Highlighted border and icon when active */}
 				<button
-					class={`control-btn w-7 h-7 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border border-gray-600 sm:border-gray-600 rounded-md transition-colors`}
+					class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all ${
+						autoScroll ? 'border-2 border-emerald-500' : 'border border-gray-600'
+					}`}
 					onClick={handleAutoScrollToggle}
 					title={`Auto-scroll (${autoScroll ? 'enabled' : 'disabled'})`}
 				>
 					<svg
-						class={`w-4 h-4 ${autoScroll ? 'text-green-400' : 'text-gray-500'}`}
+						class={`w-4 h-4 transition-colors ${autoScroll ? 'text-emerald-400' : 'text-gray-500'}`}
 						fill="none"
 						viewBox="0 0 24 24"
 						stroke="currentColor"
@@ -168,53 +345,10 @@ export default function SessionStatusBar({
 					</svg>
 				</button>
 
-				{/* Thinking Level */}
-				<div class="relative">
-					<button
-						class="control-btn w-7 h-7 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border border-gray-600 sm:border-gray-600 rounded-md transition-colors"
-						onClick={thinkingDropdown.toggle}
-						title={`Thinking Level: ${thinkingLevel.charAt(0).toUpperCase() + thinkingLevel.slice(1)}`}
-					>
-						<svg
-							class="w-4 h-4 text-gray-400"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
-							/>
-						</svg>
-					</button>
+				{/* Separator */}
+				<div class="h-6 w-px bg-gray-600" />
 
-					{/* Thinking Dropdown */}
-					{thinkingDropdown.isOpen && (
-						<div
-							class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-40 py-1 z-50`}
-						>
-							<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">Thinking Level</div>
-							{(['off', 'low', 'normal', 'high'] as const).map((level) => (
-								<button
-									key={level}
-									class={`w-full text-left px-3 py-2 hover:bg-dark-700 text-xs ${
-										level === thinkingLevel ? 'text-blue-400' : 'text-gray-200'
-									}`}
-									onClick={() => handleThinkingLevelChange(level)}
-								>
-									{level.charAt(0).toUpperCase() + level.slice(1)}
-									{level === thinkingLevel && ' (current)'}
-								</button>
-							))}
-						</div>
-					)}
-				</div>
-			</div>
-
-			{/* Right: Context usage (hidden on mobile) */}
-			<div class="hidden sm:flex">
+				{/* Context usage */}
 				<ContextUsageBar contextUsage={contextUsage} maxContextTokens={maxContextTokens} />
 			</div>
 		</ContentContainer>

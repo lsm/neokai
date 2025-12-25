@@ -43,11 +43,40 @@ export interface WorktreeCommitStatus {
 
 export type SessionStatus = 'active' | 'paused' | 'ended' | 'archived';
 
+/**
+ * Thinking level options for extended thinking
+ *
+ * - 'auto': No thinking budget, no keyword - SDK default behavior
+ * - 'think8k': 8000 tokens + "ultrathink" keyword appended
+ * - 'think16k': 16000 tokens + "ultrathink" keyword appended
+ * - 'think32k': 31999 tokens + "ultrathink" keyword appended
+ */
+export type ThinkingLevel = 'auto' | 'think8k' | 'think16k' | 'think32k';
+
+/**
+ * Mapping from ThinkingLevel to maxThinkingTokens value
+ */
+export const THINKING_LEVEL_TOKENS: Record<ThinkingLevel, number | undefined> = {
+	auto: undefined,
+	think8k: 8000,
+	think16k: 16000,
+	think32k: 31999,
+};
+
 export interface SessionConfig {
 	model: string;
 	maxTokens: number;
 	temperature: number;
 	autoScroll?: boolean;
+	/**
+	 * Thinking level for extended thinking
+	 * @default 'auto'
+	 */
+	thinkingLevel?: ThinkingLevel;
+	/**
+	 * @deprecated Use thinkingLevel instead
+	 */
+	maxThinkingTokens?: number | null;
 	// Tools configuration
 	tools?: ToolsConfig;
 }

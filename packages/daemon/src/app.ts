@@ -62,6 +62,7 @@ export interface DaemonAppContext {
 export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<DaemonAppContext> {
 	const { config, verbose = true, standalone = false } = options;
 	const log = verbose ? console.log : () => {};
+	const logError = verbose ? console.error : () => {};
 
 	// Initialize database
 	const db = new Database(config.dbPath);
@@ -82,15 +83,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	if (authStatus.isAuthenticated) {
 		log(`✅ Authenticated via ${authStatus.method} (source: ${authStatus.source})`);
 	} else {
-		console.error('\n❌ AUTHENTICATION REQUIRED');
-		console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-		console.error('Authentication credentials must be provided via environment variables.');
-		console.error('\nOption 1: Anthropic API Key (Recommended)');
-		console.error('  export ANTHROPIC_API_KEY=sk-ant-...');
-		console.error('\nOption 2: Claude Code OAuth Token');
-		console.error('  export CLAUDE_CODE_OAUTH_TOKEN=...');
-		console.error('\nGet your API key from: https://console.anthropic.com/');
-		console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+		logError('\n❌ AUTHENTICATION REQUIRED');
+		logError('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+		logError('Authentication credentials must be provided via environment variables.');
+		logError('\nOption 1: Anthropic API Key (Recommended)');
+		logError('  export ANTHROPIC_API_KEY=sk-ant-...');
+		logError('\nOption 2: Claude Code OAuth Token');
+		logError('  export CLAUDE_CODE_OAUTH_TOKEN=...');
+		logError('\nGet your API key from: https://console.anthropic.com/');
+		logError('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 		throw new Error('Authentication required');
 	}
 
@@ -252,7 +253,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		websocket: wsHandlers,
 
 		error(error) {
-			console.error('Server error:', error);
+			logError('Server error:', error);
 			return new Response(
 				JSON.stringify({
 					error: 'Internal server error',
@@ -272,48 +273,64 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	log(`✅ Bun server listening on ${config.host}:${config.port}`);
 
 	// Cleanup function for graceful shutdown
+	let isCleanedUp = false;
 	const cleanup = async () => {
-		log('   1/5 Stopping server...');
-		server.stop();
-
-		// Wait for pending RPC calls (with 5s timeout)
-		log('   2/5 Waiting for pending RPC calls...');
-		const pendingCallsCount = messageHub.getPendingCallCount();
-		if (pendingCallsCount > 0) {
-			log(`       ${pendingCallsCount} pending calls detected`);
-			await Promise.race([
-				new Promise((resolve) => {
-					const checkInterval = setInterval(() => {
-						const remaining = messageHub.getPendingCallCount();
-						if (remaining === 0) {
-							clearInterval(checkInterval);
-							resolve(null);
-						}
-					}, 100);
-				}),
-				new Promise((resolve) => setTimeout(resolve, 5000)),
-			]);
-			const remaining = messageHub.getPendingCallCount();
-			if (remaining > 0) {
-				log(`       ⚠️  Timeout: ${remaining} calls still pending`);
-			} else {
-				log(`       ✅ All pending calls completed`);
-			}
+		if (isCleanedUp) {
+			log('⚠️  Cleanup already in progress or completed, skipping');
+			return;
 		}
+		isCleanedUp = true;
 
-		// Cleanup MessageHub (rejects remaining calls)
-		log('   3/5 Cleaning up MessageHub...');
-		messageHub.cleanup();
+		try {
+			log('   1/5 Stopping server...');
+			try {
+				server.stop();
+			} catch {
+				log('       (server already stopped)');
+			}
 
-		// Stop all agent sessions
-		log('   4/5 Stopping agent sessions...');
-		await sessionManager.cleanup();
+			// Wait for pending RPC calls (with 3s timeout)
+			log('   2/5 Waiting for pending RPC calls...');
+			const pendingCallsCount = messageHub.getPendingCallCount();
+			if (pendingCallsCount > 0) {
+				log(`       ${pendingCallsCount} pending calls detected`);
+				await Promise.race([
+					new Promise((resolve) => {
+						const checkInterval = setInterval(() => {
+							const remaining = messageHub.getPendingCallCount();
+							if (remaining === 0) {
+								clearInterval(checkInterval);
+								resolve(null);
+							}
+						}, 100);
+					}),
+					new Promise((resolve) => setTimeout(resolve, 3000)),
+				]);
+				const remaining = messageHub.getPendingCallCount();
+				if (remaining > 0) {
+					log(`       ⚠️  Timeout: ${remaining} calls still pending`);
+				} else {
+					log(`       ✅ All pending calls completed`);
+				}
+			}
 
-		// Close database
-		log('   5/5 Closing database...');
-		db.close();
+			// Cleanup MessageHub (rejects remaining calls)
+			log('   3/5 Cleaning up MessageHub...');
+			messageHub.cleanup();
 
-		log('✅ Graceful shutdown complete');
+			// Stop all agent sessions
+			log('   4/5 Stopping agent sessions...');
+			await sessionManager.cleanup();
+
+			// Close database
+			log('   5/5 Closing database...');
+			db.close();
+
+			log('✅ Graceful shutdown complete');
+		} catch (error) {
+			log('❌ Error during cleanup:', error);
+			throw error;
+		}
 	};
 
 	return {

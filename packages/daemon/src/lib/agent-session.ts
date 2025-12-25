@@ -7,7 +7,9 @@ import type {
 	MessageImage,
 	Session,
 	ContextInfo,
+	ThinkingLevel,
 } from '@liuboer/shared';
+import { THINKING_LEVEL_TOKENS } from '@liuboer/shared';
 import type { EventBus, MessageHub, CurrentModelInfo } from '@liuboer/shared';
 import { generateUUID } from '@liuboer/shared';
 import type { SDKMessage, SDKUserMessage, SlashCommand } from '@liuboer/shared/sdk';
@@ -308,6 +310,14 @@ export class AgentSession {
 			content = expandedContent;
 		}
 
+		// Append "ultrathink" keyword for non-auto thinking levels
+		// This is required because Agent SDK only recognizes "ultrathink" for extended thinking
+		const thinkingLevel = this.session.config.thinkingLevel || 'auto';
+		if (thinkingLevel !== 'auto') {
+			content = `${content}\n\nultrathink`;
+			this.logger.log(`Appended "ultrathink" keyword for thinking level: ${thinkingLevel}`);
+		}
+
 		const messageContent = this.buildMessageContent(content, images);
 		const messageId = generateUUID();
 
@@ -451,6 +461,14 @@ export class AgentSession {
 			if (expandedContent) {
 				this.logger.log(`Expanding built-in command: ${content.trim()}`);
 				content = expandedContent;
+			}
+
+			// Append "ultrathink" keyword for non-auto thinking levels
+			// This is required because Agent SDK only recognizes "ultrathink" for extended thinking
+			const thinkingLevel = this.session.config.thinkingLevel || 'auto';
+			if (thinkingLevel !== 'auto') {
+				content = `${content}\n\nultrathink`;
+				this.logger.log(`Appended "ultrathink" keyword for thinking level: ${thinkingLevel}`);
 			}
 
 			const messageContent = this.buildMessageContent(content, images);
@@ -635,6 +653,14 @@ export class AgentSession {
 			if (expandedContent) {
 				this.logger.log(`Expanding built-in command: ${content.trim()}`);
 				content = expandedContent;
+			}
+
+			// Append "ultrathink" keyword for non-auto thinking levels
+			// This is required because Agent SDK only recognizes "ultrathink" for extended thinking
+			const thinkingLevel = this.session.config.thinkingLevel || 'auto';
+			if (thinkingLevel !== 'auto') {
+				content = `${content}\n\nultrathink`;
+				this.logger.log(`Appended "ultrathink" keyword for thinking level: ${thinkingLevel}`);
 			}
 
 			const messageContent = this.buildMessageContent(content, images);
@@ -1013,6 +1039,17 @@ CRITICAL RULES:
 				this.logger.log(`Resuming SDK session: ${this.session.sdkSessionId}`);
 			} else {
 				this.logger.log(`Starting new SDK session`);
+			}
+
+			// Add thinking token budget based on thinkingLevel config
+			// Levels: auto (undefined), think8k (8000), think16k (16000), think32k (31999)
+			const thinkingLevel = (this.session.config.thinkingLevel || 'auto') as ThinkingLevel;
+			const maxThinkingTokens = THINKING_LEVEL_TOKENS[thinkingLevel];
+			if (maxThinkingTokens !== undefined) {
+				queryOptions.maxThinkingTokens = maxThinkingTokens;
+				this.logger.log(
+					`Extended thinking enabled: ${thinkingLevel} (${maxThinkingTokens} tokens)`
+				);
 			}
 
 			// Create query with AsyncGenerator from MessageQueue

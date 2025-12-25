@@ -267,6 +267,43 @@ export function setupSessionHandlers(
 		return result;
 	});
 
+	// Handle thinking level changes
+	// Levels: auto, think8k, think16k, think32k
+	// - auto: No thinking budget, no keyword
+	// - think8k/16k/32k: Token budget + "ultrathink" keyword appended by agent-session
+	messageHub.handle('session.thinking.set', async (data) => {
+		const { sessionId: targetSessionId, level } = data as {
+			sessionId: string;
+			level: 'auto' | 'think8k' | 'think16k' | 'think32k';
+		};
+
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+
+		// Validate level
+		const validLevels = ['auto', 'think8k', 'think16k', 'think32k'];
+		const thinkingLevel = validLevels.includes(level) ? level : 'auto';
+
+		// Update session config with new thinkingLevel
+		await sessionManager.updateSession(targetSessionId, {
+			config: {
+				...agentSession.getSessionData().config,
+				thinkingLevel: thinkingLevel as 'auto' | 'think8k' | 'think16k' | 'think32k',
+			},
+		});
+
+		// Broadcast the thinking level change
+		await messageHub.publish(
+			'session.updated',
+			{ config: { thinkingLevel } },
+			{ sessionId: targetSessionId }
+		);
+
+		return { success: true, thinkingLevel };
+	});
+
 	// Handle listing available models - uses hardcoded model list
 	messageHub.handle('models.list', async (data) => {
 		try {

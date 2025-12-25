@@ -414,7 +414,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				<div
 					ref={messagesContainerRef}
 					data-messages-container
-					class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y"
+					class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y pb-32"
 					style={{ WebkitOverflowScrolling: 'touch' }}
 				>
 					{messages.length === 0 ? (
@@ -493,59 +493,62 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				/>
 			)}
 
-			{/* Footer */}
-			<div class="flex-shrink-0">
-				<SessionStatusBar
-					sessionId={sessionId}
-					isProcessing={isProcessing}
-					currentAction={currentAction}
-					streamingPhase={streamingPhase}
-					contextUsage={contextUsage ?? undefined}
-					maxContextTokens={200000}
-					currentModel={currentModel}
-					currentModelInfo={currentModelInfo}
-					availableModels={availableModels}
-					modelSwitching={modelSwitching}
-					modelLoading={modelLoading}
-					onModelSwitch={switchModel}
-					autoScroll={autoScroll}
-					onAutoScrollChange={handleAutoScrollChange}
-				/>
-
-				{session?.status === 'archived' ? (
-					<div class="p-4">
-						<div class="max-w-4xl mx-auto">
-							<div
-								class={cn(
-									'rounded-3xl border px-5 py-3 text-center',
-									'bg-dark-800/60 backdrop-blur-sm',
-									borderColors.ui.default
-								)}
-							>
-								<span class="text-gray-400 text-sm flex items-center justify-center gap-2">
-									<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-										<path
-											strokeLinecap="round"
-											strokeLinejoin="round"
-											strokeWidth={2}
-											d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
-										/>
-									</svg>
-									Session archived
-								</span>
-							</div>
-						</div>
-					</div>
-				) : (
-					<MessageInput
+			{/* Footer - Floating Status Bar */}
+			<div class="absolute bottom-0 left-0 right-0 z-10 pointer-events-none px-4 mx-2">
+				<div class="pointer-events-auto pt-4 bg-gradient-to-t from-dark-900 from-[calc(100%-32px)] to-dark-900/0">
+					<SessionStatusBar
 						sessionId={sessionId}
-						onSend={handleSendMessage}
-						disabled={isProcessing || isCompacting || !isConnected}
+						isProcessing={isProcessing}
+						currentAction={currentAction}
+						streamingPhase={streamingPhase}
+						contextUsage={contextUsage ?? undefined}
+						maxContextTokens={200000}
+						currentModel={currentModel}
+						currentModelInfo={currentModelInfo}
+						availableModels={availableModels}
+						modelSwitching={modelSwitching}
+						modelLoading={modelLoading}
+						onModelSwitch={switchModel}
 						autoScroll={autoScroll}
 						onAutoScrollChange={handleAutoScrollChange}
-						onOpenTools={toolsModal.open}
+						thinkingLevel={session?.config?.thinkingLevel}
 					/>
-				)}
+
+					{session?.status === 'archived' ? (
+						<div class="p-4">
+							<div class="max-w-4xl mx-auto">
+								<div
+									class={cn(
+										'rounded-3xl border px-5 py-3 text-center',
+										'bg-dark-800/60 backdrop-blur-sm',
+										borderColors.ui.default
+									)}
+								>
+									<span class="text-gray-400 text-sm flex items-center justify-center gap-2">
+										<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+											<path
+												strokeLinecap="round"
+												strokeLinejoin="round"
+												strokeWidth={2}
+												d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
+											/>
+										</svg>
+										Session archived
+									</span>
+								</div>
+							</div>
+						</div>
+					) : (
+						<MessageInput
+							sessionId={sessionId}
+							onSend={handleSendMessage}
+							disabled={isProcessing || isCompacting || !isConnected}
+							autoScroll={autoScroll}
+							onAutoScrollChange={handleAutoScrollChange}
+							onOpenTools={toolsModal.open}
+						/>
+					)}
+				</div>
 			</div>
 
 			{/* Delete Modal */}

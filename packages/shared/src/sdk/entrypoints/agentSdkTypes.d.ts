@@ -3,7 +3,6 @@ import type { BetaMessage as APIAssistantMessage, BetaUsage as Usage, BetaRawMes
 import type { UUID } from 'crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { type McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-// @ts-expect-error - Zod types for SDK's custom MCP tool API (not used in our codebase, but required for type definitions)
 import { type z, type ZodRawShape, type ZodObject } from 'zod';
 import type { SandboxSettings, SandboxNetworkConfig, SandboxIgnoreViolations } from './sandboxTypes.js';
 import type { SpawnedProcess, SpawnOptions } from '../transport/processTransportTypes.js';
