@@ -8,6 +8,8 @@ exclude = [
   "e2e/**",
   "packages/e2e/**"
 ]
+# Enable DOM environment for browser-related tests
+preload = ["./packages/web/src/lib/__tests__/setup.ts"]
 
 # JSX configuration for Preact
 [jsx]
