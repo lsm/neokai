@@ -102,24 +102,29 @@ export function removeToolResultFromSessionFile(
 	try {
 		let sessionFile: string | null = null;
 
-		// Try using SDK session ID first
+		// Primary: Use SDK session ID for direct file path construction
+		// This is 100% reliable - the filename IS the SDK session ID
 		if (sdkSessionId) {
 			sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
+			if (!existsSync(sessionFile)) {
+				console.error(
+					`[SDKSessionFileManager] SDK session file not found: ${sessionFile}. SDK session may have been deleted.`
+				);
+				return false;
+			}
 		}
-
-		// Fallback: search for session file by Liuboer session ID
-		if ((!sessionFile || !existsSync(sessionFile)) && liuboerSessionId) {
+		// Fallback: Search by Liuboer session ID (only when session not currently running)
+		// This is less reliable as the same Liuboer ID can appear in 100+ SDK files
+		else if (liuboerSessionId) {
 			sessionFile = findSDKSessionFile(workspacePath, liuboerSessionId);
-		}
-
-		if (!sessionFile) {
-			console.error('[SDKSessionFileManager] Could not find session file');
-			return false;
-		}
-
-		// Check if file exists
-		if (!existsSync(sessionFile)) {
-			console.error(`[SDKSessionFileManager] File not found: ${sessionFile}`);
+			if (!sessionFile) {
+				console.error(
+					'[SDKSessionFileManager] Could not find session file by searching for Liuboer session ID'
+				);
+				return false;
+			}
+		} else {
+			console.error('[SDKSessionFileManager] Neither SDK session ID nor Liuboer session ID provided');
 			return false;
 		}
 
