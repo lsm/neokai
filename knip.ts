@@ -40,11 +40,6 @@ const config: KnipConfig = {
 		'packages/daemon/scripts/**', // Database recovery scripts
 		'packages/daemon/tests/manual/**', // Manual test scripts
 		'packages/daemon/tests/mocks/**', // Test mocks
-		// Intentionally kept for potential future use
-		'packages/daemon/src/lib/title-generator.ts',
-		'packages/web/src/components/chat/CodeBlock.tsx',
-		'packages/web/src/components/McpToolsSettings.tsx',
-		'packages/web/src/components/ui/Transition.tsx',
 	],
 
 	// Workspace dependencies (don't flag as unlisted)
@@ -62,7 +57,6 @@ const config: KnipConfig = {
 		'@testing-library/preact', // Used in tests
 		'dotenv', // Used in development scripts
 		'happy-dom', // Used in unit tests
-		'date-fns', // Kept for potential future use
 	],
 
 	// Ignore unused exports from these files (public API)
