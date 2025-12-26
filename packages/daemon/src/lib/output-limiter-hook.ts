@@ -152,11 +152,10 @@ function limitToolInput(
 
 			// Create smart truncation command:
 			// 1. Save output to temp file
-			// 2. Show first N lines (beginning)
-			// 3. Show truncation message with line count
-			// 4. Show last N lines (end)
-			// 5. Clean up temp file
-			const limitedCommand = `tmpfile=$(mktemp); (${command}) 2>&1 > "$tmpfile"; total_lines=$(wc -l < "$tmpfile"); head -n ${headLines} "$tmpfile"; if [ "$total_lines" -gt ${headLines + tailLines} ]; then echo ""; echo "... [Truncated $(($total_lines - ${headLines + tailLines})) lines - showing first ${headLines} and last ${tailLines} lines] ..."; echo ""; tail -n ${tailLines} "$tmpfile"; fi; rm -f "$tmpfile"`;
+			// 2. If output exceeds limit: show first N + truncation message + last N
+			// 3. Otherwise: show all output
+			// 4. Clean up temp file
+			const limitedCommand = `tmpfile=$(mktemp); (${command}) 2>&1 > "$tmpfile"; total_lines=$(wc -l < "$tmpfile"); if [ "$total_lines" -gt ${headLines + tailLines} ]; then head -n ${headLines} "$tmpfile"; echo ""; echo "... [Truncated $(($total_lines - ${headLines + tailLines})) lines - showing first ${headLines} and last ${tailLines} lines] ..."; echo ""; tail -n ${tailLines} "$tmpfile"; else cat "$tmpfile"; fi; rm -f "$tmpfile"`;
 
 			logger.log(`Bash: Added smart truncation (first ${headLines} + last ${tailLines} lines)`);
 
