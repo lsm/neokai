@@ -60,6 +60,9 @@ export class AgentSession {
 	private slashCommands: string[] = [];
 	private commandsFetchedFromSDK = false; // Track if we've fetched from SDK to avoid duplicates
 
+	// Track if SDK has sent at least one message (indicates ProcessTransport is ready)
+	private firstMessageReceived = false;
+
 	// Unsubscribe functions to prevent memory leaks
 	private unsubscribers: Array<() => void> = [];
 
@@ -1074,6 +1077,10 @@ CRITICAL RULES:
 			}
 
 			for await (const message of this.queryObject) {
+				// Mark that we've received at least one message from SDK
+				// This indicates ProcessTransport is ready for control methods (setModel, interrupt, etc.)
+				this.firstMessageReceived = true;
+
 				try {
 					await this.handleSDKMessage(message);
 				} catch (error) {
@@ -1388,10 +1395,13 @@ The agent has been automatically stopped to prevent further errors.`,
 				{ sessionId: this.session.id }
 			);
 
-			// Check if query is running
-			if (!this.queryObject) {
-				// Query not started yet - just update config
-				this.logger.log(`Query not started yet, updating config only`);
+			// Check if query is running AND ProcessTransport is ready
+			// ProcessTransport is ready after we receive the first SDK message
+			if (!this.queryObject || !this.firstMessageReceived) {
+				// Query not started yet OR transport not ready - just update config
+				this.logger.log(
+					`${!this.queryObject ? 'Query not started yet' : 'ProcessTransport not ready yet'}, updating config only`
+				);
 				this.session.config.model = resolvedModel;
 				this.db.updateSession(this.session.id, {
 					config: this.session.config,
@@ -1407,7 +1417,7 @@ The agent has been automatically stopped to prevent further errors.`,
 					session: { config: this.session.config },
 				});
 			} else {
-				// Use SDK's native setModel() method
+				// Use SDK's native setModel() method (transport is ready)
 				this.logger.log(`Using SDK setModel() to switch to: ${resolvedModel}`);
 				await this.queryObject.setModel(resolvedModel);
 
@@ -1788,6 +1798,7 @@ The agent has been automatically stopped to prevent further errors.`,
 			// 8. Clear query object and promise
 			this.queryObject = null;
 			this.queryPromise = null;
+			this.firstMessageReceived = false; // Reset transport readiness flag
 
 			// 9. Reset state to idle
 			await this.stateManager.setIdle();
