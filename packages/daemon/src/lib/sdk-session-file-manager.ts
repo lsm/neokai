@@ -31,7 +31,7 @@ function getSDKProjectDir(workspacePath: string): string {
  * @param sdkSessionId - The SDK session ID from Query.sessionId
  * @returns Absolute path to the .jsonl file
  */
-function getSDKSessionFilePath(workspacePath: string, sdkSessionId: string): string {
+export function getSDKSessionFilePath(workspacePath: string, sdkSessionId: string): string {
 	return join(getSDKProjectDir(workspacePath), `${sdkSessionId}.jsonl`);
 }
 

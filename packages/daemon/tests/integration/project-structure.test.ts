@@ -22,8 +22,13 @@ describe('Project Structure Integration', () => {
 	let testRepoPath: string;
 	let worktreeManager: WorktreeManager;
 	let createdWorktrees: string[] = [];
+	let originalDbPath: string | undefined;
 
 	beforeEach(async () => {
+		// Save and clear DB_PATH env var to test default project-based path behavior
+		originalDbPath = process.env.DB_PATH;
+		delete process.env.DB_PATH;
+
 		// Create unique test repository
 		const timestamp = Date.now();
 		const random = Math.random().toString(36).substring(7);
@@ -47,6 +52,13 @@ describe('Project Structure Integration', () => {
 	});
 
 	afterEach(async () => {
+		// Restore DB_PATH env var
+		if (originalDbPath !== undefined) {
+			process.env.DB_PATH = originalDbPath;
+		} else {
+			delete process.env.DB_PATH;
+		}
+
 		// Cleanup created worktrees
 		for (const worktreePath of createdWorktrees) {
 			try {

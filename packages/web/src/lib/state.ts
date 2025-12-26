@@ -17,6 +17,7 @@ import type {
 	AgentProcessingState,
 	SDKMessagesUpdate,
 } from '@liuboer/shared';
+import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
 import { STATE_CHANNELS } from '@liuboer/shared';
 import { StateChannel } from './state-channel';
 import { globalStore } from './global-store';
