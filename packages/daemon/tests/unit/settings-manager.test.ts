@@ -107,6 +107,23 @@ describe('SettingsManager', () => {
 				maxThinkingTokens: 10000,
 				disabledMcpServers: ['server1'],
 				showArchived: false,
+				outputLimiter: {
+					enabled: true,
+					bash: {
+						headLines: 100,
+						tailLines: 200,
+					},
+					read: {
+						maxChars: 50000,
+					},
+					grep: {
+						maxMatches: 500,
+					},
+					glob: {
+						maxFiles: 1000,
+					},
+					excludeTools: [],
+				},
 			};
 
 			settingsManager.saveGlobalSettings(customSettings);
