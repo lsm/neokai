@@ -13,7 +13,7 @@ export const toastsSignal = signal<Toast[]>([]);
 
 let toastIdCounter = 0;
 
-export function showToast(message: string, type: ToastType = 'info', duration = 5000) {
+function showToast(message: string, type: ToastType = 'info', duration = 5000) {
 	const id = `toast-${++toastIdCounter}`;
 	const toast: Toast = { id, message, type, duration };
 

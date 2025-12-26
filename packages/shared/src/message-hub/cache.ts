@@ -142,7 +142,7 @@ export class LRUCache<K, V> {
  * FIX P2.5: Improved collision resistance using 53-bit hash (JavaScript safe integer)
  * Uses FNV-1a variant with larger bit space
  */
-export function fastHash(str: string): string {
+function fastHash(str: string): string {
 	// FNV-1a constants for 53-bit hash (JavaScript's safe integer range)
 	const FNV_PRIME = 0x01000193; // 16777619
 	let hash = 0x811c9dc5; // 2166136261 (FNV offset basis)

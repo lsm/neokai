@@ -18,7 +18,7 @@ const log = createLogger('liuboer:messagehub:protocol');
 /**
  * Protocol version for compatibility checking
  */
-export const PROTOCOL_VERSION = '1.0.0';
+const PROTOCOL_VERSION = '1.0.0';
 
 /**
  * Message types following WAMP-inspired pattern
@@ -232,14 +232,6 @@ export function isCallMessage(msg: HubMessage): msg is CallMessage {
 	return msg.type === MessageType.CALL;
 }
 
-export function isResultMessage(msg: HubMessage): msg is ResultMessage {
-	return msg.type === MessageType.RESULT;
-}
-
-export function isErrorMessage(msg: HubMessage): msg is ErrorMessage {
-	return msg.type === MessageType.ERROR;
-}
-
 export function isEventMessage(msg: HubMessage): msg is EventMessage {
 	return msg.type === MessageType.EVENT;
 }
@@ -268,15 +260,6 @@ export function isResponseMessage(msg: HubMessage): msg is ResultMessage | Error
 }
 
 /**
- * Check if message is a subscription response (SUBSCRIBED or UNSUBSCRIBED)
- */
-export function isSubscriptionResponseMessage(
-	msg: HubMessage
-): msg is SubscribedMessage | UnsubscribedMessage {
-	return msg.type === MessageType.SUBSCRIBED || msg.type === MessageType.UNSUBSCRIBED;
-}
-
-/**
  * HubMessage with internal metadata added by transport layer
  * This extends the protocol message with server-side routing metadata
  */
@@ -292,15 +275,6 @@ export interface HubMessageWithMetadata extends HubMessage {
  * Session ID constants
  */
 export const GLOBAL_SESSION_ID = 'global';
-
-/**
- * Reserved method prefixes
- */
-export const RESERVED_METHOD_PREFIXES = [
-	'system.', // System operations
-	'client.', // Client-side methods (server→client RPC)
-	'server.', // Server-side methods (client→server RPC)
-];
 
 /**
  * Validate method name

@@ -28,7 +28,7 @@ export function Skeleton({ variant = 'text', width, height, class: className }: 
 }
 
 // Pre-made skeleton components for common use cases
-export function SkeletonText({ lines = 3 }: { lines?: number }) {
+function SkeletonText({ lines = 3 }: { lines?: number }) {
 	return (
 		<div class="space-y-3">
 			{Array.from({ length: lines }).map((_, i) => (
@@ -46,15 +46,6 @@ export function SkeletonMessage() {
 				<Skeleton width="30%" height={16} />
 				<SkeletonText lines={2} />
 			</div>
-		</div>
-	);
-}
-
-export function SkeletonSession() {
-	return (
-		<div class="p-3 space-y-2">
-			<Skeleton width="80%" height={18} />
-			<Skeleton width="40%" height={14} />
 		</div>
 	);
 }

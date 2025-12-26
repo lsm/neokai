@@ -58,12 +58,7 @@ mock.module('../global-store', () => ({
 }));
 
 // Import after mocking
-import {
-	appState,
-	initializeApplicationState,
-	cleanupApplicationState,
-	mergeSdkMessagesWithDedup,
-} from '../state';
+import { appState, initializeApplicationState, mergeSdkMessagesWithDedup } from '../state';
 
 // Helper to wait for debounced session switching (150ms debounce + buffer)
 const waitForSessionSwitch = () => new Promise((resolve) => setTimeout(resolve, 200));
@@ -82,7 +77,7 @@ describe('ApplicationState', () => {
 
 	afterEach(() => {
 		// Cleanup state after each test
-		cleanupApplicationState();
+		appState.cleanup();
 	});
 
 	describe('Subscription Leak Prevention', () => {
@@ -127,7 +122,7 @@ describe('ApplicationState', () => {
 			});
 
 			// Cleanup
-			cleanupApplicationState();
+			appState.cleanup();
 
 			// Verify subscriptions were called
 			expect(unsubscribeCalls).toBe(subscriptionCount);
@@ -144,7 +139,7 @@ describe('ApplicationState', () => {
 				mockHub as unknown as Parameters<typeof initializeApplicationState>[0],
 				currentSessionId
 			);
-			cleanupApplicationState();
+			appState.cleanup();
 
 			// Create fresh signal for second initialization
 			const newSessionId = signal<string | null>(null);
@@ -229,7 +224,7 @@ describe('ApplicationState', () => {
 			expect(activeSessionIdBefore).toBe('session-3');
 
 			// Cleanup all
-			cleanupApplicationState();
+			appState.cleanup();
 
 			// All should be cleared
 			const activeSessionIdAfter = (appState as unknown as { activeSessionId: string | null })
@@ -273,7 +268,7 @@ describe('ApplicationState', () => {
 			const initialized = (appState as unknown as { initialized: { value: boolean } }).initialized;
 			expect(initialized.value).toBe(true);
 
-			cleanupApplicationState();
+			appState.cleanup();
 
 			expect(initialized.value).toBe(false);
 		});
@@ -288,7 +283,7 @@ describe('ApplicationState - Edge Cases', () => {
 	});
 
 	afterEach(() => {
-		cleanupApplicationState();
+		appState.cleanup();
 	});
 
 	it('should handle null session ID in auto-load', async () => {

@@ -10,8 +10,6 @@ import {
 	createUnsubscribeMessage,
 	isValidMessage,
 	isCallMessage,
-	isResultMessage,
-	isErrorMessage,
 	isEventMessage,
 	isSubscribeMessage,
 	isUnsubscribeMessage,
@@ -158,34 +156,6 @@ describe('MessageHub Protocol', () => {
 
 			expect(isCallMessage(callMsg)).toBe(true);
 			expect(isCallMessage(resultMsg)).toBe(false);
-		});
-
-		test('isResultMessage should identify RESULT messages', () => {
-			const resultMsg = createResultMessage({
-				method: 'test',
-				data: {},
-				sessionId: 's1',
-				requestId: 'req1',
-				id: 'msg1',
-			});
-			const callMsg = createCallMessage({ method: 'test', data: {}, sessionId: 's1', id: 'msg2' });
-
-			expect(isResultMessage(resultMsg)).toBe(true);
-			expect(isResultMessage(callMsg)).toBe(false);
-		});
-
-		test('isErrorMessage should identify ERROR messages', () => {
-			const errorMsg = createErrorMessage({
-				method: 'test',
-				error: 'fail',
-				sessionId: 's1',
-				requestId: 'req1',
-				id: 'msg1',
-			});
-			const callMsg = createCallMessage({ method: 'test', data: {}, sessionId: 's1', id: 'msg2' });
-
-			expect(isErrorMessage(errorMsg)).toBe(true);
-			expect(isErrorMessage(callMsg)).toBe(false);
 		});
 
 		test('isEventMessage should identify EVENT messages', () => {

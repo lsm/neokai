@@ -10,7 +10,6 @@
  */
 
 export { useModal, type UseModalResult } from './useModal';
-export { useMessageMaps, type UseMessageMapsResult, type ToolResultData } from './useMessageMaps';
 export { useInputDraft, type UseInputDraftResult } from './useInputDraft';
 export {
 	useModelSwitcher,

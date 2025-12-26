@@ -123,7 +123,7 @@ export function initSessionStatusTracking(): void {
 /**
  * Mark a session as read (user has viewed it)
  */
-export function markSessionAsRead(sessionId: string): void {
+function markSessionAsRead(sessionId: string): void {
 	const sessionList = sessions.value;
 	const session = sessionList.find((s) => s.id === sessionId);
 	if (!session) return;
@@ -132,43 +132,6 @@ export function markSessionAsRead(sessionId: string): void {
 	newCounts.set(sessionId, session.metadata.messageCount);
 	lastSeenMessageCounts.value = newCounts;
 	saveLastSeenCounts(newCounts);
-}
-
-/**
- * Check if a session has unread messages
- */
-export function hasUnreadMessages(sessionId: string): boolean {
-	const sessionList = sessions.value;
-	const session = sessionList.find((s) => s.id === sessionId);
-	if (!session) return false;
-
-	// If this is the currently selected session, it's not unread
-	if (currentSessionIdSignal.value === sessionId) return false;
-
-	const lastSeen = lastSeenMessageCounts.value.get(sessionId) ?? 0;
-	const currentCount = session.metadata.messageCount || 0;
-
-	return currentCount > lastSeen;
-}
-
-/**
- * Get the processing state for a session
- * Reads from the Session.processingState field in the sessions list
- */
-export function getSessionProcessingState(sessionId: string): AgentProcessingState {
-	const sessionList = sessions.value;
-	const session = sessionList.find((s) => s.id === sessionId);
-	return parseProcessingState(session?.processingState);
-}
-
-/**
- * Get full status info for a session
- */
-export function getSessionStatus(sessionId: string): SessionStatusInfo {
-	return {
-		processingState: getSessionProcessingState(sessionId),
-		hasUnread: hasUnreadMessages(sessionId),
-	};
 }
 
 /**

@@ -57,5 +57,3 @@ export function Portal({ children, into = 'body' }: PortalProps) {
 	// Portal renders nothing in its original location
 	return null;
 }
-
-export default Portal;

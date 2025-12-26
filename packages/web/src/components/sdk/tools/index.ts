@@ -1,7 +1,8 @@
 /**
  * Tool Components - Barrel export
  *
- * Provides a unified interface for all tool-related components and utilities.
+ * Provides a unified interface for all tool-related components.
+ * Utilities are imported directly from './tool-utils.ts' by components.
  */
 
 // Types
@@ -22,16 +23,3 @@ export type {
 export { ToolProgressCard } from './ToolProgressCard.tsx';
 export { ToolResultCard } from './ToolResultCard.tsx';
 export { AuthStatusCard } from './AuthStatusCard.tsx';
-
-// Utilities
-export {
-	getToolDisplayName,
-	getToolColors,
-	getIconSizeClasses,
-	formatElapsedTime,
-	truncateText,
-	getOutputDisplayText,
-	hasCustomRenderer,
-	getCustomRenderer,
-	shouldExpandByDefault,
-} from './tool-utils.ts';

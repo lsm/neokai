@@ -66,7 +66,7 @@ mock.module('../lib/errors', () => ({
 }));
 
 // Import after mocking
-import { ConnectionNotReadyError } from '../useMessageHub';
+import { ConnectionNotReadyError } from '../../lib/errors';
 
 // Helper to create a minimal hook context
 function createHookContext() {

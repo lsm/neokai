@@ -446,44 +446,6 @@ export type ConnectionState =
 export const connectionState = signal<ConnectionState>('connecting');
 
 /**
- * Helper functions for optimistic updates
- */
-
-/**
- * Create a new session (optimistic)
- */
-export async function createSessionOptimistic(workspacePath?: string): Promise<string> {
-	const tempId = `temp-${Date.now()}`;
-	const tempSession: Session = {
-		id: tempId,
-		title: `Session ${new Date().toLocaleString()}`,
-		workspacePath: workspacePath || '',
-		createdAt: new Date().toISOString(),
-		lastActiveAt: new Date().toISOString(),
-		status: 'active',
-		config: {
-			model: 'claude-sonnet-4',
-			maxTokens: 8096,
-			temperature: 1.0,
-		},
-		metadata: {
-			messageCount: 0,
-			totalTokens: 0,
-			inputTokens: 0,
-			outputTokens: 0,
-			totalCost: 0,
-			toolCallCount: 0,
-		},
-	};
-
-	// Optimistic update using globalStore
-	globalStore.addSession(tempSession);
-
-	// Actual API call will trigger server state update
-	return tempId;
-}
-
-/**
  * Initialize application state
  */
 export async function initializeApplicationState(
@@ -491,11 +453,4 @@ export async function initializeApplicationState(
 	currentSessionId: Signal<string | null>
 ): Promise<void> {
 	await appState.initialize(hub, currentSessionId);
-}
-
-/**
- * Cleanup application state
- */
-export function cleanupApplicationState(): void {
-	appState.cleanup();
 }

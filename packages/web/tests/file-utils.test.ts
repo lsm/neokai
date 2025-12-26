@@ -1,48 +1,7 @@
 import { describe, test, expect, beforeEach } from 'bun:test';
-import {
-	fileToBase64,
-	isValidImageType,
-	isValidFileSize,
-	formatFileSize,
-	getMaxFileSizeMB,
-	validateImageFile,
-} from '../src/lib/file-utils.ts';
+import { fileToBase64, formatFileSize, validateImageFile } from '../src/lib/file-utils.ts';
 
 describe('file-utils', () => {
-	describe('isValidImageType', () => {
-		test('should accept supported image types', () => {
-			expect(isValidImageType('image/png')).toBe(true);
-			expect(isValidImageType('image/jpeg')).toBe(true);
-			expect(isValidImageType('image/gif')).toBe(true);
-			expect(isValidImageType('image/webp')).toBe(true);
-		});
-
-		test('should reject unsupported types', () => {
-			expect(isValidImageType('image/svg+xml')).toBe(false);
-			expect(isValidImageType('image/bmp')).toBe(false);
-			expect(isValidImageType('application/pdf')).toBe(false);
-			expect(isValidImageType('text/plain')).toBe(false);
-			expect(isValidImageType('')).toBe(false);
-		});
-	});
-
-	describe('isValidFileSize', () => {
-		const maxSize = 5 * 1024 * 1024; // 5MB
-
-		test('should accept valid file sizes', () => {
-			expect(isValidFileSize(1024)).toBe(true); // 1KB
-			expect(isValidFileSize(1024 * 1024)).toBe(true); // 1MB
-			expect(isValidFileSize(maxSize)).toBe(true); // Exactly 5MB
-		});
-
-		test('should reject invalid file sizes', () => {
-			expect(isValidFileSize(0)).toBe(false); // Zero bytes
-			expect(isValidFileSize(-1)).toBe(false); // Negative
-			expect(isValidFileSize(maxSize + 1)).toBe(false); // Over 5MB
-			expect(isValidFileSize(10 * 1024 * 1024)).toBe(false); // 10MB
-		});
-	});
-
 	describe('formatFileSize', () => {
 		test('should format bytes correctly', () => {
 			expect(formatFileSize(0)).toBe('0 B');
@@ -70,12 +29,6 @@ describe('file-utils', () => {
 		test('should handle edge cases', () => {
 			expect(formatFileSize(1023)).toBe('1023 B');
 			expect(formatFileSize(1025)).toBe('1 KB');
-		});
-	});
-
-	describe('getMaxFileSizeMB', () => {
-		test('should return 5MB', () => {
-			expect(getMaxFileSizeMB()).toBe(5);
 		});
 	});
 

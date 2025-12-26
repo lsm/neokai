@@ -56,7 +56,3 @@ export type {
 // Transports
 export { WebSocketClientTransport } from './websocket-client-transport.ts';
 export type { WebSocketClientTransportOptions } from './websocket-client-transport.ts';
-
-// Cache utilities (for advanced use cases)
-export { LRUCache, createCacheKey } from './cache.ts';
-export type { CacheEntry } from './cache.ts';

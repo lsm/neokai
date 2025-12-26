@@ -324,5 +324,3 @@ export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHub
 		onConnected,
 	};
 }
-
-export { ConnectionNotReadyError };

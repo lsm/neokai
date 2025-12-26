@@ -29,7 +29,6 @@ import type {
 	UpdateSessionRequest,
 	ArchiveSessionResponse,
 	GetAuthStatusResponse,
-	HealthStatus,
 } from '@liuboer/shared';
 import { connectionManager } from './connection-manager.ts';
 import { ConnectionNotReadyError } from './errors.ts';
@@ -80,13 +79,6 @@ export async function archiveSession(
 	});
 }
 
-// ==================== System Operations ====================
-
-export async function health(): Promise<HealthStatus> {
-	const hub = getHubOrThrow();
-	return await hub.call<HealthStatus>('system.health');
-}
-
 // ==================== Authentication ====================
 
 export async function getAuthStatus(): Promise<GetAuthStatusResponse> {
@@ -96,11 +88,6 @@ export async function getAuthStatus(): Promise<GetAuthStatusResponse> {
 
 // ==================== Settings Operations ====================
 
-export async function getGlobalSettings(): Promise<import('@liuboer/shared').GlobalSettings> {
-	const hub = await connectionManager.getHub();
-	return await hub.call<import('@liuboer/shared').GlobalSettings>('settings.global.get');
-}
-
 export async function updateGlobalSettings(
 	updates: Partial<import('@liuboer/shared').GlobalSettings>
 ): Promise<{ success: boolean; settings: import('@liuboer/shared').GlobalSettings }> {
@@ -109,19 +96,6 @@ export async function updateGlobalSettings(
 		'settings.global.update',
 		{ updates }
 	);
-}
-
-export async function toggleMcpServer(
-	serverName: string,
-	enabled: boolean
-): Promise<{ success: boolean }> {
-	const hub = await connectionManager.getHub();
-	return await hub.call<{ success: boolean }>('settings.mcp.toggle', { serverName, enabled });
-}
-
-export async function getDisabledMcpServers(): Promise<{ disabledServers: string[] }> {
-	const hub = await connectionManager.getHub();
-	return await hub.call<{ disabledServers: string[] }>('settings.mcp.getDisabled');
 }
 
 export interface McpServerFromSource {

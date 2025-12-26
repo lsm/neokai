@@ -155,9 +155,4 @@ function ToastItem({ toast }: ToastItemProps) {
 	);
 }
 
-export function ToastContainer() {
-	// This will be imported and rendered in a global location
-	return null;
-}
-
 export { ToastItem };

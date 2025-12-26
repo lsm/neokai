@@ -28,14 +28,14 @@ export async function fileToBase64(file: File): Promise<string> {
 /**
  * Validate if file type is a supported image format
  */
-export function isValidImageType(type: string): type is SupportedImageType {
+function isValidImageType(type: string): type is SupportedImageType {
 	return SUPPORTED_IMAGE_TYPES.includes(type as SupportedImageType);
 }
 
 /**
  * Validate file size against maximum limit
  */
-export function isValidFileSize(size: number): boolean {
+function isValidFileSize(size: number): boolean {
 	return size > 0 && size <= MAX_IMAGE_SIZE;
 }
 
@@ -53,7 +53,7 @@ export function formatFileSize(bytes: number): string {
 /**
  * Get maximum file size in MB
  */
-export function getMaxFileSizeMB(): number {
+function getMaxFileSizeMB(): number {
 	return MAX_IMAGE_SIZE / (1024 * 1024);
 }
 
