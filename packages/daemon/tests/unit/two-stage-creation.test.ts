@@ -9,10 +9,10 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { SessionManager } from '../session-manager';
-import { Database } from '../../storage/database';
+import { SessionManager } from '../../src/lib/session-manager';
+import { Database } from '../../src/storage/database';
 import { MessageHub, EventBus } from '@liuboer/shared';
-import type { AuthManager } from '../auth-manager';
+import type { AuthManager } from '../../src/lib/auth-manager';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { tmpdir } from 'node:os';
@@ -270,8 +270,19 @@ describe('Session Creation and Title Generation', () => {
 				workspacePath: testWorkspace,
 			});
 
+			// Mock title generation to avoid API call
+			const manager = sessionManager as unknown as Record<string, unknown>;
+			const originalGenerate = manager.generateTitleFromMessage;
+			manager.generateTitleFromMessage = async (_text: string) => {
+				// Simulate AI-generated title based on message
+				return 'Fix Login Bug';
+			};
+
 			const userMessage = 'I need to fix the login bug';
 			await sessionManager.generateTitleAndRenameBranch(sessionId, userMessage);
+
+			// Restore original method
+			manager.generateTitleFromMessage = originalGenerate;
 
 			const agentSession = sessionManager.getSession(sessionId);
 			const session = agentSession!.getSessionData();
@@ -287,9 +298,20 @@ describe('Session Creation and Title Generation', () => {
 				workspacePath: testWorkspace,
 			});
 
+			// Mock title generation to avoid API call
+			const manager = sessionManager as unknown as Record<string, unknown>;
+			const originalGenerate = manager.generateTitleFromMessage;
+			manager.generateTitleFromMessage = async (_text: string) => {
+				// Simulate AI-generated title
+				return 'First Generated Title';
+			};
+
 			// Call twice with different messages
 			await sessionManager.generateTitleAndRenameBranch(sessionId, 'Test message');
 			await sessionManager.generateTitleAndRenameBranch(sessionId, 'Another message');
+
+			// Restore original method
+			manager.generateTitleFromMessage = originalGenerate;
 
 			const agentSession = sessionManager.getSession(sessionId);
 			const session = agentSession!.getSessionData();
@@ -330,8 +352,19 @@ describe('Session Creation and Title Generation', () => {
 				workspacePath: testWorkspace,
 			});
 
+			// Mock title generation to avoid API call
+			const manager = sessionManager as unknown as Record<string, unknown>;
+			const originalGenerate = manager.generateTitleFromMessage;
+			manager.generateTitleFromMessage = async (_text: string) => {
+				// Simulate AI-generated title
+				return 'Test Title Generated';
+			};
+
 			const userMessage = 'Test message';
 			await sessionManager.generateTitleAndRenameBranch(sessionId, userMessage);
+
+			// Restore original method
+			manager.generateTitleFromMessage = originalGenerate;
 
 			// Verify in database - should have AI-generated title
 			const dbSession = db.getSession(sessionId);
