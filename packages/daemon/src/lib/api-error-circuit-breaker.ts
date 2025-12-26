@@ -279,7 +279,22 @@ export class ApiErrorCircuitBreaker {
 
 		if (this.state.tripReason.startsWith('prompt_too_long:')) {
 			const maxTokens = this.state.tripReason.split(':')[1];
-			return `Context limit exceeded (${maxTokens} tokens maximum). The conversation has grown too large. Please start a new session or use /compact to reduce context.`;
+			return `Context limit exceeded (${maxTokens} tokens maximum).
+
+**Possible causes:**
+- A single tool output was extremely large (e.g., huge file, massive diff)
+- The conversation context has grown too large
+
+**What to do:**
+- Output limiting is now **enabled by default** to prevent this
+- If you still see this error, reduce limits further in .claude/settings.local.json:
+  - outputLimiter.bash.headLines (default: 100)
+  - outputLimiter.bash.tailLines (default: 200)
+  - outputLimiter.read.maxChars (default: 50000)
+  - outputLimiter.grep.maxMatches (default: 500)
+- Use filtering in tools (e.g., grep with patterns, head/tail for files)
+- Start a new session if context is too large
+- Use /compact to reduce conversation context`;
 		}
 
 		if (this.state.tripReason === 'invalid_request_error') {

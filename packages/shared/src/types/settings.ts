@@ -76,6 +76,25 @@ export interface FileOnlySettings {
 		commit?: string;
 		pr?: string;
 	};
+
+	// Output Limiter (Liuboer-specific)
+	outputLimiter?: {
+		enabled?: boolean;
+		bash?: {
+			headLines?: number; // First N lines to show (default: 100)
+			tailLines?: number; // Last N lines to show (default: 200)
+		};
+		read?: {
+			maxChars?: number; // Max characters to read (default: 50000)
+		};
+		grep?: {
+			maxMatches?: number; // Max search matches (default: 500)
+		};
+		glob?: {
+			maxFiles?: number; // Max files to list (default: 1000)
+		};
+		excludeTools?: string[]; // Tools to exclude from limiting
+	};
 }
 
 /**
@@ -112,6 +131,23 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
 	permissionMode: 'default',
 	disabledMcpServers: [],
 	showArchived: false,
+	outputLimiter: {
+		enabled: true,
+		bash: {
+			headLines: 100,
+			tailLines: 200,
+		},
+		read: {
+			maxChars: 50000,
+		},
+		grep: {
+			maxMatches: 500,
+		},
+		glob: {
+			maxFiles: 1000,
+		},
+		excludeTools: [],
+	},
 };
 
 /**

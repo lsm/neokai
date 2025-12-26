@@ -25,6 +25,7 @@ import { ProcessingStateManager } from './processing-state-manager';
 import { ContextTracker } from './context-tracker';
 import { SDKMessageHandler } from './sdk-message-handler';
 import { expandBuiltInCommand, getBuiltInCommandNames } from './built-in-commands';
+import { createOutputLimiterHook, getOutputLimiterConfigFromSettings } from './output-limiter-hook';
 
 /**
  * SDK query object with control methods
@@ -1006,6 +1007,16 @@ CRITICAL RULES:
 			// ============================================================================
 			// First merge settings-derived options, then override with session-specific options
 			// Session-specific options take precedence over global settings
+			// ============================================================================
+			// Hooks Configuration (Experimental)
+			// ============================================================================
+			// Configure PreToolUse hook to inject output limiting parameters
+			// This prevents "prompt too long" errors by limiting tool outputs before
+			// they're generated (SDK doesn't support output truncation after execution)
+			const globalSettings = this.settingsManager.getGlobalSettings();
+			const outputLimiterConfig = getOutputLimiterConfigFromSettings(globalSettings);
+			const outputLimiterHook = createOutputLimiterHook(outputLimiterConfig);
+
 			const queryOptions: Options = {
 				// Start with settings-derived options (from global settings)
 				...sdkSettingsOptions,
@@ -1022,6 +1033,10 @@ CRITICAL RULES:
 				systemPrompt: systemPromptConfig,
 				disallowedTools: disallowedTools.length > 0 ? disallowedTools : undefined,
 				mcpServers,
+				// Hooks: Inject output limiting before tools execute
+				hooks: {
+					PreToolUse: [{ hooks: [outputLimiterHook] }],
+				},
 			};
 
 			// DEBUG: Log query options for verification
