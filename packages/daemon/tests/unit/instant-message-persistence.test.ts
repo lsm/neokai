@@ -6,8 +6,8 @@
  */
 
 import { describe, expect, test, beforeEach, afterEach, mock } from 'bun:test';
-import { AgentSession } from '../agent-session';
-import { Database } from '../../storage/database';
+import { AgentSession } from '../../src/lib/agent-session';
+import { Database } from '../../src/storage/database';
 import { EventBus } from '@liuboer/shared';
 import type { MessageHub, Session } from '@liuboer/shared';
 import { generateUUID } from '@liuboer/shared';
@@ -119,18 +119,20 @@ describe('Instant Message Persistence UX', () => {
 		expect(savedMessage.type).toBe('user');
 		expect(savedMessage.uuid).toBe(messageId);
 
-		// Verify message was published to UI
+		// Verify message was published to UI via state.sdkMessages.delta
 		const publishedMessages = (messageHub as unknown as { _publishedMessages: unknown[] })
 			._publishedMessages;
 		expect(publishedMessages.length).toBeGreaterThanOrEqual(1);
 
 		const sdkMessagePublish = publishedMessages.find(
-			(p: unknown) => (p as { channel: string }).channel === 'sdk.message'
-		) as { channel: string; data: { type: string; uuid: string } } | undefined;
+			(p: unknown) => (p as { channel: string }).channel === 'state.sdkMessages.delta'
+		) as { channel: string; data: { added: Array<{ type: string; uuid: string }> } } | undefined;
 
 		expect(sdkMessagePublish).toBeDefined();
-		expect(sdkMessagePublish?.data.type).toBe('user');
-		expect(sdkMessagePublish?.data.uuid).toBe(messageId);
+		expect(sdkMessagePublish?.data.added).toBeDefined();
+		expect(sdkMessagePublish?.data.added.length).toBe(1);
+		expect(sdkMessagePublish?.data.added[0].type).toBe('user');
+		expect(sdkMessagePublish?.data.added[0].uuid).toBe(messageId);
 
 		// Verify it was fast (should be <100ms for instant feedback)
 		console.log(`Message persisted in ${duration}ms`);

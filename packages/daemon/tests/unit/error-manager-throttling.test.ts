@@ -6,27 +6,30 @@
  */
 
 import { describe, it, expect, beforeEach } from 'bun:test';
-import { ErrorManager, ErrorCategory } from '../error-manager';
-import { MessageHub } from '@liuboer/shared';
+import { ErrorManager, ErrorCategory } from '../../src/lib/error-manager';
+import { MessageHub, EventBus } from '@liuboer/shared';
 
 describe('ErrorManager - Error Throttling', () => {
 	let errorManager: ErrorManager;
 	let messageHub: MessageHub;
+	let eventBus: EventBus;
 	let broadcastedErrors: unknown[] = [];
 
 	beforeEach(() => {
 		broadcastedErrors = [];
 
-		// Mock MessageHub
+		// Mock MessageHub (still needed for API connection status)
 		messageHub = {
-			publish: async (channel: string, data: unknown) => {
-				if (channel === 'session.error') {
-					broadcastedErrors.push(data);
-				}
-			},
+			publish: async () => {},
 		} as unknown as MessageHub;
 
-		errorManager = new ErrorManager(messageHub);
+		// Create real EventBus and track emitted errors
+		eventBus = new EventBus();
+		eventBus.on('session:error', (data: unknown) => {
+			broadcastedErrors.push(data);
+		});
+
+		errorManager = new ErrorManager(messageHub, eventBus);
 	});
 
 	it('should allow first 3 identical errors through', async () => {
