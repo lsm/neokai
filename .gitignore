@@ -42,3 +42,6 @@ playwright-report/
 # Git worktrees
 .worktrees/
 **/settings.local.json
+
+# Synced external resources (regenerate with make targets)
+docs/claude-code-system-prompts/

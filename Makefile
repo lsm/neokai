@@ -1,4 +1,4 @@
-.PHONY: dev worktree-dev start daemon web self profile other restart sync-sdk-types clean-cache clean-all build-prod test test-daemon test-coverage test-coverage-lcov e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self lint lint-fix format typecheck merge-session outdated update
+.PHONY: dev worktree-dev start daemon web self profile other restart sync-sdk-types sync-claude-prompts clean-cache clean-all build-prod test test-daemon test-coverage test-coverage-lcov e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self lint lint-fix format typecheck merge-session outdated update
 
 # Unified server (daemon + web in single process) - RECOMMENDED
 dev:
@@ -109,6 +109,27 @@ sync-sdk-types:
 	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts packages/shared/src/sdk/
 	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk-tools.d.ts packages/shared/src/sdk/
 	@echo "✓ SDK types synced to packages/shared/src/sdk/"
+
+sync-claude-prompts:
+	@echo "📥 Syncing Claude Code system prompts..."
+	@TEMP_DIR=$$(mktemp -d); \
+	echo "   Cloning repository to temporary location..."; \
+	git clone --depth 1 https://github.com/Piebald-AI/claude-code-system-prompts.git "$$TEMP_DIR" 2>&1 | grep -v "Cloning into" || true; \
+	if [ -d "$$TEMP_DIR/system-prompts" ]; then \
+		echo "   Copying system-prompts to docs/claude-code-system-prompts..."; \
+		mkdir -p docs/claude-code-system-prompts; \
+		rm -rf docs/claude-code-system-prompts/*; \
+		cp -r "$$TEMP_DIR/system-prompts/"* docs/claude-code-system-prompts/; \
+		echo "   Cleaning up temporary files..."; \
+		rm -rf "$$TEMP_DIR"; \
+		echo "✅ Claude Code system prompts synced to docs/claude-code-system-prompts/"; \
+		echo "📊 Files synced:"; \
+		ls -1 docs/claude-code-system-prompts/ | sed 's/^/   - /'; \
+	else \
+		echo "❌ Error: system-prompts directory not found in repository"; \
+		rm -rf "$$TEMP_DIR"; \
+		exit 1; \
+	fi
 
 restart:
 	@echo "🔄 Restarting all services..."
