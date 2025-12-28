@@ -46,9 +46,13 @@ jobs:
       - name: Check formatting
         run: bun run format:check
 
-  # Run unit tests for each package in parallel
+  # ============================================
+  # OFFLINE TESTS (No API credentials required)
+  # ============================================
+
+  # Unit tests - pure logic with mocks only
   test-daemon-unit:
-    name: Test Daemon (Unit)
+    name: Daemon Unit Tests
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -65,15 +69,25 @@ jobs:
 
       - name: Run unit tests
         working-directory: packages/daemon
-        run: bun test tests/unit
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: bun test tests/offline/unit
 
+  # Integration tests - parallelized by category for speed
   test-daemon-integration:
-    name: Test Daemon (Integration)
+    name: Daemon Integration (${{ matrix.category }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        category:
+          - database
+          - filesystem
+          - git
+          - websocket
+          - rpc
+          - session
+          - mcp
+          - components
 
     steps:
       - uses: actions/checkout@v4
@@ -86,12 +100,54 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Run integration tests
+      - name: Run integration tests (${{ matrix.category }})
         working-directory: packages/daemon
-        run: bun test tests/integration
+        run: bun test tests/offline/integration/${{ matrix.category }}
+
+  # ============================================
+  # ONLINE TESTS (Requires API credentials)
+  # ============================================
+
+  test-daemon-online:
+    name: Daemon Online Tests (API)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check for API credentials
+        id: check-creds
+        run: |
+          if [ -n "${{ secrets.ANTHROPIC_API_KEY }}" ] || [ -n "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}" ]; then
+            echo "has_credentials=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_credentials=false" >> $GITHUB_OUTPUT
+            echo "⚠️ Skipping online tests - no API credentials configured"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.check-creds.outputs.has_credentials == 'true'
+
+      - name: Setup Bun
+        if: steps.check-creds.outputs.has_credentials == 'true'
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        if: steps.check-creds.outputs.has_credentials == 'true'
+        run: bun install
+
+      - name: Run online tests (API-dependent)
+        if: steps.check-creds.outputs.has_credentials == 'true'
+        working-directory: packages/daemon
+        run: bun test tests/online
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+      - name: Skip notification
+        if: steps.check-creds.outputs.has_credentials != 'true'
+        run: echo "✅ Online tests skipped (no API credentials). This is expected for PRs from forks."
 
   test-shared:
     name: Test Shared
