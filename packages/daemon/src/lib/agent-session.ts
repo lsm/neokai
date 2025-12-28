@@ -1772,30 +1772,36 @@ The agent has been automatically stopped to prevent further errors.`,
 			this.messageQueue.stop();
 			this.logger.log(`Message queue stopped`);
 
-			// 6. Interrupt current query
+			// 6. Interrupt current query (but don't fail if transport is dead)
 			if (this.queryObject && typeof this.queryObject.interrupt === 'function') {
 				try {
 					await this.queryObject.interrupt();
 					this.logger.log(`Query interrupted successfully`);
 				} catch (interruptError) {
+					// Expected to fail if SDK process crashed - log and continue
 					this.logger.warn(`Query interrupt failed (may be expected):`, interruptError);
 				}
 			}
 
 			// 7. Wait for query promise to resolve (with short timeout)
+			// This ensures the SDK process cleanup completes
 			if (this.queryPromise) {
 				try {
 					await Promise.race([
-						this.queryPromise,
+						this.queryPromise.catch((e) => {
+							// Ignore errors from crashed processes
+							this.logger.warn(`Query promise rejected during cleanup:`, e);
+						}),
 						new Promise((resolve) => setTimeout(resolve, 3000)), // 3s timeout
 					]);
 					this.logger.log(`Previous query terminated`);
 				} catch (error) {
+					// This catch should rarely trigger due to .catch() above
 					this.logger.warn(`Error waiting for query termination:`, error);
 				}
 			}
 
-			// 8. Clear query object and promise
+			// 8. Clear query object and promise (force cleanup regardless of errors)
 			this.queryObject = null;
 			this.queryPromise = null;
 			this.firstMessageReceived = false; // Reset transport readiness flag
@@ -1806,6 +1812,8 @@ The agent has been automatically stopped to prevent further errors.`,
 			// 10. Optionally start a new query
 			if (restartQuery) {
 				this.logger.log(`Starting fresh query...`);
+				// Small delay to ensure process cleanup completes
+				await new Promise((resolve) => setTimeout(resolve, 100));
 				await this.startStreamingQuery();
 				this.logger.log(`Fresh query started successfully`);
 			}
