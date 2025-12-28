@@ -79,13 +79,13 @@ describe('message.send EventBus Integration', () => {
 		}
 	});
 
-	test('SessionManager subscribes to user-message:persisted event', () => {
+	test('SessionManager subscribes to message:persisted event', () => {
 		// Verify EventBus has the handler registered
-		const handlerCount = eventBus.getHandlerCount('user-message:persisted');
+		const handlerCount = eventBus.getHandlerCount('message:persisted');
 		expect(handlerCount).toBeGreaterThan(0);
 	});
 
-	test('user-message:persisted event triggers title generation', async () => {
+	test('message:persisted event triggers title generation', async () => {
 		const sessionId = await sessionManager.createSession({
 			workspacePath: testWorkspace,
 		});
@@ -105,7 +105,7 @@ describe('message.send EventBus Integration', () => {
 		};
 
 		// Emit the event directly (simulating what RPC handler does)
-		await eventBus.emit('user-message:persisted', {
+		await eventBus.emit('message:persisted', {
 			sessionId,
 			messageId: 'test-msg-1',
 			messageContent: 'Test message for title',
@@ -125,7 +125,7 @@ describe('message.send EventBus Integration', () => {
 		expect(session.title).toBe('Test message for tit'); // First 20 chars
 	});
 
-	test('user-message:persisted event does not regenerate title if already generated', async () => {
+	test('message:persisted event does not regenerate title if already generated', async () => {
 		const sessionId = await sessionManager.createSession({
 			workspacePath: testWorkspace,
 		});
@@ -147,7 +147,7 @@ describe('message.send EventBus Integration', () => {
 		const originalTitle = session.title;
 
 		// Emit event with needsWorkspaceInit=false (title already generated)
-		await eventBus.emit('user-message:persisted', {
+		await eventBus.emit('message:persisted', {
 			sessionId,
 			messageId: 'test-msg-2',
 			messageContent: 'Second message',
@@ -180,7 +180,7 @@ describe('message.send EventBus Integration', () => {
 		expect(session.metadata.inputDraft).toBe('Test draft');
 
 		// Emit event with hasDraftToClear=true
-		await eventBus.emit('user-message:persisted', {
+		await eventBus.emit('message:persisted', {
 			sessionId,
 			messageId: 'test-msg-3',
 			messageContent: 'Test draft',
@@ -207,7 +207,7 @@ describe('message.send EventBus Integration', () => {
 
 		// Emit event with invalid session ID (should not throw)
 		// EventBus subscriber logs error but doesn't throw
-		await eventBus.emit('user-message:persisted', {
+		await eventBus.emit('message:persisted', {
 			sessionId: 'non-existent-session',
 			messageId: 'test-msg-4',
 			messageContent: 'Test',
