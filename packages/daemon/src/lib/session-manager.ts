@@ -905,7 +905,6 @@ ${messageText.slice(0, 2000)}`,
 		// Multi-modal message: array of content blocks
 		// Images first, then text (SDK format)
 		return [
-			{ type: 'text' as const, text: content },
 			...images.map((img) => ({
 				type: 'image' as const,
 				source: {
@@ -914,6 +913,7 @@ ${messageText.slice(0, 2000)}`,
 					data: img.data,
 				},
 			})),
+			{ type: 'text' as const, text: content },
 		];
 	}
 }

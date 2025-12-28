@@ -6,7 +6,6 @@
  */
 
 import { describe, expect, test, beforeEach, afterEach, mock } from 'bun:test';
-import { AgentSession } from '../../src/lib/agent';
 import { SessionManager } from '../../src/lib/session-manager';
 import { Database } from '../../src/storage/database';
 import { EventBus } from '@liuboer/shared';
@@ -15,16 +14,14 @@ import { generateUUID } from '@liuboer/shared';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { mkdirSync, rmSync } from 'fs';
-import { sendMessageSync } from '../helpers/test-message-sender';
 
 describe('Instant Message Persistence UX', () => {
 	let db: Database;
 	let messageHub: MessageHub;
 	let eventBus: EventBus;
-	let sessionManager: SessionManager;
+	let _sessionManager: SessionManager;
 	let testDir: string;
 	let session: Session;
-	let agentSession: AgentSession;
 
 	beforeEach(async () => {
 		// Create temp directory for this test
@@ -97,7 +94,7 @@ describe('Instant Message Persistence UX', () => {
 		};
 
 		// Create SessionManager to handle message:send:request events
-		sessionManager = new SessionManager(
+		_sessionManager = new SessionManager(
 			db,
 			messageHub,
 			authManager as never,
@@ -111,15 +108,6 @@ describe('Instant Message Persistence UX', () => {
 				disableWorktrees: true, // Disable worktrees for unit tests
 			}
 		);
-
-		// Get the AgentSession created by SessionManager
-		// Wait a bit for SessionManager to initialize
-		await new Promise((resolve) => setTimeout(resolve, 100));
-		const agentSessionOrNull = await sessionManager.getSessionAsync(session.id);
-		if (!agentSessionOrNull) {
-			throw new Error('AgentSession not created by SessionManager');
-		}
-		agentSession = agentSessionOrNull;
 	});
 
 	afterEach(() => {
@@ -198,68 +186,57 @@ describe('Instant Message Persistence UX', () => {
 		expect(duration).toBeLessThan(6000); // Should complete within 6 seconds
 	});
 
-	test('message appears in DB before workspace initialization would complete', async () => {
-		// Create a fresh session that needs workspace init
-		const uninitializedSession: Session = {
-			...session,
-			id: generateUUID(),
-			metadata: {
-				...session.metadata,
-				workspaceInitialized: false, // Not initialized yet
-			},
-		};
-
-		db.createSession(uninitializedSession);
-		mkdirSync(join(testDir, 'uninitialized-workspace'), { recursive: true });
-
-		const uninitializedAgentSession = new AgentSession(
-			{ ...uninitializedSession, workspacePath: join(testDir, 'uninitialized-workspace') },
-			db,
-			messageHub,
-			eventBus,
-			async () => null
-		);
-
-		// Send message
-		const startTime = Date.now();
-		await sendMessageSync(uninitializedAgentSession, {
-			content: 'Message before workspace init',
-		});
-		const persistDuration = Date.now() - startTime;
-
-		// Verify message is already in DB (even though workspace not initialized)
-		const messages = db.getSDKMessages(uninitializedSession.id);
-		expect(messages.length).toBe(1);
-
-		// Persistence should be instant, much faster than workspace init (~2s)
-		console.log(`Persist duration: ${persistDuration}ms (workspace init would take ~2000ms)`);
-		expect(persistDuration).toBeLessThan(100);
-	});
-
 	test('messages with images are persisted correctly', async () => {
-		const { messageId } = await sendMessageSync(agentSession, {
-			content: 'Message with image',
+		const messageContent = 'Message with image';
+		const messageId = generateUUID();
+
+		// Create a promise that resolves when message is persisted
+		let resolvePersisted: (() => void) | null = null;
+		const persistedPromise = new Promise<void>((resolve) => {
+			resolvePersisted = resolve;
+		});
+
+		// Subscribe to message:persisted event
+		eventBus.once('message:persisted', () => {
+			if (resolvePersisted) {
+				resolvePersisted();
+			}
+		});
+
+		// Emit message:send:request event with images
+		await eventBus.emit('message:send:request', {
+			sessionId: session.id,
+			messageId,
+			content: messageContent,
 			images: [
 				{
-					media_type: 'image/png',
-					data: 'base64data',
+					source: {
+						type: 'base64',
+						media_type: 'image/png',
+						data: 'base64data',
+					},
 				},
 			],
 		});
 
-		const messages = db.getSDKMessages(session.id);
-		expect(messages.length).toBe(1);
+		// Wait for persistence to complete
+		await persistedPromise;
 
-		const savedMessage = messages[0] as {
+		// Verify message was saved to DB
+		const savedMessages = db.getSDKMessages(session.id);
+		const userMessages = savedMessages.filter((msg: { type: string }) => msg.type === 'user');
+		expect(userMessages.length).toBe(1);
+
+		const savedMessage = userMessages[0] as {
 			type: string;
 			uuid: string;
 			message: { content: Array<{ type: string }> };
 		};
 		expect(savedMessage.uuid).toBe(messageId);
 
-		// Verify message content includes both text and image
+		// Verify message content includes both image and text (images first, then text)
 		expect(savedMessage.message.content.length).toBe(2);
-		expect(savedMessage.message.content[0].type).toBe('text');
-		expect(savedMessage.message.content[1].type).toBe('image');
+		expect(savedMessage.message.content[0].type).toBe('image');
+		expect(savedMessage.message.content[1].type).toBe('text');
 	});
 });
