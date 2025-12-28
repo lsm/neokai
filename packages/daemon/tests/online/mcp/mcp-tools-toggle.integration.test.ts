@@ -8,20 +8,20 @@
  *
  * Key insight: The SDK reads .claude/settings.local.json at query initialization.
  * Query restart is required for changes to take effect (implemented in updateToolsConfig).
+ *
+ * REQUIREMENTS:
+ * - Requires ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
+ * - Makes real API calls (costs money, uses rate limits)
+ * - Tests will FAIL if credentials are not available (no skip)
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import {
-	createTestApp,
-	callRPCHandler,
-	hasAnyCredentials,
-	type TestContext,
-} from '../../test-utils';
+import { createTestApp, callRPCHandler, type TestContext } from '../../test-utils';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Session } from '@liuboer/shared';
 
-describe.skipIf(!hasAnyCredentials())('MCP Tools Toggle Integration', () => {
+describe('MCP Tools Toggle Integration', () => {
 	let ctx: TestContext;
 	let sessionId: string;
 

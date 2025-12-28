@@ -8,6 +8,7 @@
  * REQUIREMENTS:
  * - Requires ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
  * - Makes real API calls (costs money, uses rate limits)
+ * - Tests will FAIL if credentials are not available (no skip)
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
@@ -17,7 +18,6 @@ import {
 	waitForWebSocketState,
 	waitForWebSocketMessage,
 	createWebSocketWithFirstMessage,
-	hasAnyCredentials,
 } from '../test-utils';
 
 describe('Session RPC Handlers (API-dependent)', () => {
@@ -34,7 +34,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 	});
 
 	describe('message.send', () => {
-		test.skipIf(!hasAnyCredentials())(
+		test(
 			'should accept message for existing session',
 			async () => {
 				const tmpDir = process.env.TMPDIR || '/tmp';
@@ -80,7 +80,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 
 	describe('models.list', () => {
 		// Note: Now using Agent SDK's supportedModels() which supports both API key and OAuth
-		test.skipIf(!hasAnyCredentials())('should return list of models with cache', async () => {
+		test('should return list of models with cache', async () => {
 			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
 			await waitForWebSocketState(ws, WebSocket.OPEN);
 			await firstMessagePromise;
@@ -110,7 +110,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 			ws.close();
 		});
 
-		test.skipIf(!hasAnyCredentials())('should return list of models without cache', async () => {
+		test('should return list of models without cache', async () => {
 			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
 			await waitForWebSocketState(ws, WebSocket.OPEN);
 			await firstMessagePromise;
@@ -140,7 +140,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 			ws.close();
 		});
 
-		test.skipIf(!hasAnyCredentials())('should force refresh cache', async () => {
+		test('should force refresh cache', async () => {
 			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
 			await waitForWebSocketState(ws, WebSocket.OPEN);
 			await firstMessagePromise;

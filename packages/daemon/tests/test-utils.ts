@@ -480,11 +480,14 @@ export function assertExists<T>(value: T, message?: string): asserts value {
  * Credential check utilities
  *
  * These functions check for the presence of authentication credentials in the test environment.
- * Tests that make actual API calls to Claude (sending messages, etc.) should use test.skipIf()
- * to skip when credentials are not available.
  *
- * Example usage:
- *   test.skipIf(!hasAnyCredentials())("test name", async () => { ... });
+ * IMPORTANT: Tests that require API credentials should be placed in tests/online/ folder.
+ * These tests will FAIL if credentials are not available - we do NOT use skipIf() because:
+ * 1. It makes test status unclear (skipped vs passed)
+ * 2. It hides missing credentials in CI
+ * 3. Online tests should explicitly require credentials
+ *
+ * Example: Tests in tests/online/ folder will fail with clear error if credentials missing.
  */
 
 /**

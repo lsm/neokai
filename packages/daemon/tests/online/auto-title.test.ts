@@ -11,13 +11,13 @@
  *
  * REQUIREMENTS:
  * - Requires ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
- * - Tests are skipped if credentials are not available
  * - Makes real API calls (costs money, uses rate limits)
+ * - Tests will FAIL if credentials are not available (no skip)
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import type { TestContext } from '../test-utils';
-import { createTestApp, hasAnyCredentials } from '../test-utils';
+import { createTestApp } from '../test-utils';
 import { sendMessageSync } from '../helpers/test-message-sender';
 
 describe('Auto-Title Generation', () => {
@@ -88,179 +88,163 @@ describe('Auto-Title Generation', () => {
 		}
 	}
 
-	test.skipIf(!hasAnyCredentials())(
-		'should auto-generate title after first user message',
-		async () => {
-			// Create session with workspace path
-			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: ctx.config.workspaceRoot,
-				config: { model: 'haiku' },
-			});
+	test('should auto-generate title after first user message', async () => {
+		// Create session with workspace path
+		const sessionId = await ctx.sessionManager.createSession({
+			workspacePath: ctx.config.workspaceRoot,
+			config: { model: 'haiku' },
+		});
 
-			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-			expect(agentSession).toBeDefined();
+		const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+		expect(agentSession).toBeDefined();
 
-			// Get initial session data
-			let sessionData = agentSession!.getSessionData();
-			expect(sessionData.title).toBe('New Session');
-			expect(sessionData.metadata.titleGenerated).toBe(false);
+		// Get initial session data
+		let sessionData = agentSession!.getSessionData();
+		expect(sessionData.title).toBe('New Session');
+		expect(sessionData.metadata.titleGenerated).toBe(false);
 
-			// Send first message (triggers workspace initialization with title generation)
-			await sendMessageSync(agentSession!, {
-				content: 'What is 2+2?',
-			});
+		// Send first message (triggers workspace initialization with title generation)
+		await sendMessageSync(agentSession!, {
+			content: 'What is 2+2?',
+		});
 
-			// Wait for first response (title generated during workspace initialization)
-			await waitForTitleGeneration(agentSession!);
+		// Wait for first response (title generated during workspace initialization)
+		await waitForTitleGeneration(agentSession!);
 
-			// Title should be generated now (via background queue)
-			sessionData = agentSession!.getSessionData();
-			expect(sessionData.title).not.toBe('New Session');
-			expect(sessionData.title.length).toBeGreaterThan(0);
-			expect(sessionData.title.length).toBeLessThan(100); // Should be concise
-			expect(sessionData.metadata.titleGenerated).toBe(true);
+		// Title should be generated now (via background queue)
+		sessionData = agentSession!.getSessionData();
+		expect(sessionData.title).not.toBe('New Session');
+		expect(sessionData.title.length).toBeGreaterThan(0);
+		expect(sessionData.title.length).toBeLessThan(100); // Should be concise
+		expect(sessionData.metadata.titleGenerated).toBe(true);
 
-			// Verify title doesn't have formatting artifacts
-			expect(sessionData.title).not.toMatch(/^["'`]/); // No leading quotes
-			expect(sessionData.title).not.toMatch(/["'`]$/); // No trailing quotes
-			expect(sessionData.title).not.toMatch(/\*\*/); // No bold markdown
-			expect(sessionData.title).not.toMatch(/`/); // No backticks
+		// Verify title doesn't have formatting artifacts
+		expect(sessionData.title).not.toMatch(/^["'`]/); // No leading quotes
+		expect(sessionData.title).not.toMatch(/["'`]$/); // No trailing quotes
+		expect(sessionData.title).not.toMatch(/\*\*/); // No bold markdown
+		expect(sessionData.title).not.toMatch(/`/); // No backticks
 
-			console.log(`Generated title: "${sessionData.title}"`);
-		},
-		30000 // 30s timeout for the entire test (1 message)
-	);
+		console.log(`Generated title: "${sessionData.title}"`);
+	}, 30000); // 30s timeout for the entire test (1 message)
 
-	test.skipIf(!hasAnyCredentials())(
-		'should only generate title once per session',
-		async () => {
-			// Create session
-			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: ctx.config.workspaceRoot,
-				config: { model: 'haiku' },
-			});
+	test('should only generate title once per session', async () => {
+		// Create session
+		const sessionId = await ctx.sessionManager.createSession({
+			workspacePath: ctx.config.workspaceRoot,
+			config: { model: 'haiku' },
+		});
 
-			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-			expect(agentSession).toBeDefined();
+		const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+		expect(agentSession).toBeDefined();
 
-			// Send first message
-			await sendMessageSync(agentSession!, {
-				content: 'What is 2+2?',
-			});
+		// Send first message
+		await sendMessageSync(agentSession!, {
+			content: 'What is 2+2?',
+		});
 
-			// Wait for first response (title generated during workspace initialization)
-			await waitForTitleGeneration(agentSession!);
+		// Wait for first response (title generated during workspace initialization)
+		await waitForTitleGeneration(agentSession!);
 
-			// Get the generated title
-			let sessionData = agentSession!.getSessionData();
-			const firstTitle = sessionData.title;
-			expect(firstTitle).not.toBe('New Session');
-			expect(sessionData.metadata.titleGenerated).toBe(true);
+		// Get the generated title
+		let sessionData = agentSession!.getSessionData();
+		const firstTitle = sessionData.title;
+		expect(firstTitle).not.toBe('New Session');
+		expect(sessionData.metadata.titleGenerated).toBe(true);
 
-			// Send second message
-			await sendMessageSync(agentSession!, {
-				content: 'What is 3+3?',
-			});
+		// Send second message
+		await sendMessageSync(agentSession!, {
+			content: 'What is 3+3?',
+		});
 
-			// Wait for processing
-			await waitForIdle(agentSession!);
+		// Wait for processing
+		await waitForIdle(agentSession!);
 
-			// Wait a bit to ensure no title regeneration happens
-			await Bun.sleep(2000);
+		// Wait a bit to ensure no title regeneration happens
+		await Bun.sleep(2000);
 
-			// Title should remain the same (not regenerated)
-			let sessionData2 = agentSession!.getSessionData();
-			expect(sessionData2.title).toBe(firstTitle);
+		// Title should remain the same (not regenerated)
+		let sessionData2 = agentSession!.getSessionData();
+		expect(sessionData2.title).toBe(firstTitle);
 
-			// Send third message
-			await sendMessageSync(agentSession!, {
-				content: 'What is 5+5?',
-			});
+		// Send third message
+		await sendMessageSync(agentSession!, {
+			content: 'What is 5+5?',
+		});
 
-			// Wait for processing
-			await waitForIdle(agentSession!);
+		// Wait for processing
+		await waitForIdle(agentSession!);
 
-			// Wait a bit to ensure no title regeneration happens
-			await Bun.sleep(2000);
+		// Wait a bit to ensure no title regeneration happens
+		await Bun.sleep(2000);
 
-			// Title should still remain the same
-			const thirdTitle = agentSession!.getSessionData().title;
-			expect(thirdTitle).toBe(firstTitle);
-		},
-		40000 // 40s timeout (3 messages)
-	);
+		// Title should still remain the same
+		const thirdTitle = agentSession!.getSessionData().title;
+		expect(thirdTitle).toBe(firstTitle);
+	}, 40000); // 40s timeout (3 messages)
 
-	test.skipIf(!hasAnyCredentials())(
-		'should handle title generation with workspace path correctly',
-		async () => {
-			// This test specifically verifies the workspace path fix
-			// Create session with explicit workspace path
-			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: ctx.config.workspaceRoot,
-				config: { model: 'haiku' },
-			});
+	test('should handle title generation with workspace path correctly', async () => {
+		// This test specifically verifies the workspace path fix
+		// Create session with explicit workspace path
+		const sessionId = await ctx.sessionManager.createSession({
+			workspacePath: ctx.config.workspaceRoot,
+			config: { model: 'haiku' },
+		});
 
-			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-			expect(agentSession).toBeDefined();
+		const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+		expect(agentSession).toBeDefined();
 
-			// Verify workspace path is set
-			const sessionData = agentSession!.getSessionData();
-			expect(sessionData.workspacePath).toBe(ctx.config.workspaceRoot);
+		// Verify workspace path is set
+		const sessionData = agentSession!.getSessionData();
+		expect(sessionData.workspacePath).toBe(ctx.config.workspaceRoot);
 
-			// Send first message (title generation should happen after this)
-			await sendMessageSync(agentSession!, {
-				content: 'What is 1+1?',
-			});
+		// Send first message (title generation should happen after this)
+		await sendMessageSync(agentSession!, {
+			content: 'What is 1+1?',
+		});
 
-			// Wait for processing AND title generation (async via queue)
-			await waitForTitleGeneration(agentSession!);
+		// Wait for processing AND title generation (async via queue)
+		await waitForTitleGeneration(agentSession!);
 
-			// Title should be generated (workspace path should be passed to SDK)
-			const finalSessionData = agentSession!.getSessionData();
-			expect(finalSessionData.title).not.toBe('New Session');
-			expect(finalSessionData.metadata.titleGenerated).toBe(true);
+		// Title should be generated (workspace path should be passed to SDK)
+		const finalSessionData = agentSession!.getSessionData();
+		expect(finalSessionData.title).not.toBe('New Session');
+		expect(finalSessionData.metadata.titleGenerated).toBe(true);
 
-			console.log(`Generated title with workspace path: "${finalSessionData.title}"`);
-		},
-		30000 // 30s timeout (1 message)
-	);
+		console.log(`Generated title with workspace path: "${finalSessionData.title}"`);
+	}, 30000); // 30s timeout (1 message)
 
-	test.skipIf(!hasAnyCredentials())(
-		'should handle title generation failure gracefully',
-		async () => {
-			// Create session
-			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: ctx.config.workspaceRoot,
-				config: { model: 'haiku' },
-			});
+	test('should handle title generation failure gracefully', async () => {
+		// Create session
+		const sessionId = await ctx.sessionManager.createSession({
+			workspacePath: ctx.config.workspaceRoot,
+			config: { model: 'haiku' },
+		});
 
-			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-			expect(agentSession).toBeDefined();
+		const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+		expect(agentSession).toBeDefined();
 
-			// Send first message with minimal content
-			await sendMessageSync(agentSession!, {
-				content: 'ok',
-			});
+		// Send first message with minimal content
+		await sendMessageSync(agentSession!, {
+			content: 'ok',
+		});
 
-			// Wait for first response (title generation happens during this)
-			await waitForIdle(agentSession!);
+		// Wait for first response (title generation happens during this)
+		await waitForIdle(agentSession!);
 
-			// Session should still be functional even if title generation fails
-			let sessionData = agentSession!.getSessionData();
-			// Title might be generated or might remain default - either is acceptable
-			// The key is that the session is still functional
-			expect(sessionData.metadata.titleGenerated).toBeBoolean();
+		// Session should still be functional even if title generation fails
+		let sessionData = agentSession!.getSessionData();
+		// Title might be generated or might remain default - either is acceptable
+		// The key is that the session is still functional
+		expect(sessionData.metadata.titleGenerated).toBeBoolean();
 
-			// Send another message to verify session is still working
-			await sendMessageSync(agentSession!, {
-				content: 'What is 5+5?',
-			});
+		// Send another message to verify session is still working
+		await sendMessageSync(agentSession!, {
+			content: 'What is 5+5?',
+		});
 
-			await waitForIdle(agentSession!);
+		await waitForIdle(agentSession!);
 
-			// Session should be idle and functional
-			expect(agentSession!.getProcessingState().status).toBe('idle');
-		},
-		30000 // 30s timeout (2 messages)
-	);
+		// Session should be idle and functional
+		expect(agentSession!.getProcessingState().status).toBe('idle');
+	}, 30000); // 30s timeout (2 messages)
 });

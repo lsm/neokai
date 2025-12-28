@@ -15,13 +15,18 @@
  * - No WAL mode = data loss on crash
  * - No error handling = one error kills entire stream
  * - Broadcast before persist = phantom messages in UI
+ *
+ * REQUIREMENTS:
+ * - Some tests require ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
+ * - Makes real API calls (costs money, uses rate limits)
+ * - Tests will FAIL if credentials are not available (no skip)
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { TestContext } from '../test-utils';
-import { createTestApp, hasAnyCredentials } from '../test-utils';
+import { createTestApp } from '../test-utils';
 import { Database } from '../../src/storage/database';
 import { sendMessageSync } from '../helpers/test-message-sender';
 
@@ -308,95 +313,87 @@ describe('Message Persistence Bug Fix', () => {
 	});
 
 	describe('Real SDK Integration with Persistence', () => {
-		test.skipIf(!hasAnyCredentials())(
-			'should persist messages during real SDK interaction',
-			async () => {
-				const sessionId = await ctx.sessionManager.createSession({
-					workspacePath: process.cwd(),
-					config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
-				});
+		test('should persist messages during real SDK interaction', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: process.cwd(),
+				config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
+			});
 
-				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-				expect(agentSession).toBeDefined();
+			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+			expect(agentSession).toBeDefined();
 
-				// Send a message to the real SDK
-				const result = await sendMessageSync(agentSession!, {
-					content: 'What is 2+2? Answer with just the number.',
-				});
+			// Send a message to the real SDK
+			const result = await sendMessageSync(agentSession!, {
+				content: 'What is 2+2? Answer with just the number.',
+			});
 
-				expect(result.messageId).toBeString();
+			expect(result.messageId).toBeString();
 
-				// Wait for processing to complete
-				await waitForIdle(agentSession!);
+			// Wait for processing to complete
+			await waitForIdle(agentSession!);
 
-				// Check messages were persisted to DB
-				const dbMessages = ctx.db.getSDKMessages(sessionId);
-				expect(dbMessages.length).toBeGreaterThan(0);
+			// Check messages were persisted to DB
+			const dbMessages = ctx.db.getSDKMessages(sessionId);
+			expect(dbMessages.length).toBeGreaterThan(0);
 
-				// Verify user message is saved
-				const userMessage = dbMessages.find((msg) => msg.type === 'user');
-				expect(userMessage).toBeDefined();
+			// Verify user message is saved
+			const userMessage = dbMessages.find((msg) => msg.type === 'user');
+			expect(userMessage).toBeDefined();
 
-				// Verify assistant response is saved
-				const assistantMessage = dbMessages.find((msg) => msg.type === 'assistant');
-				expect(assistantMessage).toBeDefined();
+			// Verify assistant response is saved
+			const assistantMessage = dbMessages.find((msg) => msg.type === 'assistant');
+			expect(assistantMessage).toBeDefined();
 
-				// Simulate page refresh - reload session and check messages still there
-				const reloadedSession = await ctx.sessionManager.getSessionAsync(sessionId);
-				const afterReloadMessages = reloadedSession!.getSDKMessages();
+			// Simulate page refresh - reload session and check messages still there
+			const reloadedSession = await ctx.sessionManager.getSessionAsync(sessionId);
+			const afterReloadMessages = reloadedSession!.getSDKMessages();
 
-				expect(afterReloadMessages.length).toBe(dbMessages.length);
-				expect(afterReloadMessages.length).toBeGreaterThan(0);
-			},
-			20000 // 20 second timeout
-		);
+			expect(afterReloadMessages.length).toBe(dbMessages.length);
+			expect(afterReloadMessages.length).toBeGreaterThan(0);
+		}, 20000); // 20 second timeout
 
-		test.skipIf(!hasAnyCredentials())(
-			'should handle interruption without losing saved messages',
-			async () => {
-				const sessionId = await ctx.sessionManager.createSession({
-					workspacePath: process.cwd(),
-					config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
-				});
+		test('should handle interruption without losing saved messages', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: process.cwd(),
+				config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
+			});
 
-				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-				expect(agentSession).toBeDefined();
+			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+			expect(agentSession).toBeDefined();
 
-				// Send a message
-				await sendMessageSync(agentSession!, {
-					content: 'Count from 1 to 100 slowly.',
-				});
+			// Send a message
+			await sendMessageSync(agentSession!, {
+				content: 'Count from 1 to 100 slowly.',
+			});
 
-				// Wait a bit for processing to start
-				await Bun.sleep(1000);
+			// Wait a bit for processing to start
+			await Bun.sleep(1000);
 
-				// Get messages before interrupt
-				const messagesBeforeInterrupt = ctx.db.getSDKMessages(sessionId);
-				const countBefore = messagesBeforeInterrupt.length;
+			// Get messages before interrupt
+			const messagesBeforeInterrupt = ctx.db.getSDKMessages(sessionId);
+			const countBefore = messagesBeforeInterrupt.length;
 
-				// Interrupt the stream
-				await agentSession!.handleInterrupt();
+			// Interrupt the stream
+			await agentSession!.handleInterrupt();
 
-				// Wait for interrupt to complete
-				await Bun.sleep(500);
+			// Wait for interrupt to complete
+			await Bun.sleep(500);
 
-				// Messages saved before interrupt should still be there
-				const messagesAfterInterrupt = ctx.db.getSDKMessages(sessionId);
-				const countAfter = messagesAfterInterrupt.length;
+			// Messages saved before interrupt should still be there
+			const messagesAfterInterrupt = ctx.db.getSDKMessages(sessionId);
+			const countAfter = messagesAfterInterrupt.length;
 
-				// Should have at least the user message
-				expect(countAfter).toBeGreaterThanOrEqual(1);
+			// Should have at least the user message
+			expect(countAfter).toBeGreaterThanOrEqual(1);
 
-				// Messages shouldn't have disappeared (count may increase but not decrease)
-				expect(countAfter).toBeGreaterThanOrEqual(countBefore);
+			// Messages shouldn't have disappeared (count may increase but not decrease)
+			expect(countAfter).toBeGreaterThanOrEqual(countBefore);
 
-				// Reload session - messages should still be there
-				const reloadedSession = await ctx.sessionManager.getSessionAsync(sessionId);
-				const finalMessages = reloadedSession!.getSDKMessages();
-				expect(finalMessages.length).toBe(countAfter);
-			},
-			20000
-		);
+			// Reload session - messages should still be there
+			const reloadedSession = await ctx.sessionManager.getSessionAsync(sessionId);
+			const finalMessages = reloadedSession!.getSDKMessages();
+			expect(finalMessages.length).toBe(countAfter);
+		}, 20000);
 	});
 
 	describe('Concurrency and WAL Mode', () => {
