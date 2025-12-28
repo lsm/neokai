@@ -1,31 +1,24 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { Options, Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type { UUID } from 'crypto';
-import type {
-	AgentProcessingState,
-	MessageContent,
-	MessageImage,
-	Session,
-	ContextInfo,
-	ThinkingLevel,
-} from '@liuboer/shared';
-import { THINKING_LEVEL_TOKENS } from '@liuboer/shared';
+import type { AgentProcessingState, MessageContent, Session, ContextInfo } from '@liuboer/shared';
 import type { EventBus, MessageHub, CurrentModelInfo } from '@liuboer/shared';
 import { generateUUID } from '@liuboer/shared';
-import type { SDKMessage, SDKUserMessage, SlashCommand } from '@liuboer/shared/sdk';
-import { Database } from '../storage/database';
-import { ErrorCategory, ErrorManager } from './error-manager';
-import { Logger } from './logger';
-import { isValidModel, resolveModelAlias, getModelInfo } from './model-service';
-import { SettingsManager } from './settings-manager';
+import type { SDKMessage, SlashCommand } from '@liuboer/shared/sdk';
+import { Database } from '../../storage/database';
+import { ErrorCategory, ErrorManager } from '../error-manager';
+import { Logger } from '../logger';
+import { SettingsManager } from '../settings-manager';
 
-// New extracted components
+// Extracted components (same folder)
 import { MessageQueue } from './message-queue';
 import { ProcessingStateManager } from './processing-state-manager';
 import { ContextTracker } from './context-tracker';
 import { SDKMessageHandler } from './sdk-message-handler';
-import { expandBuiltInCommand, getBuiltInCommandNames } from './built-in-commands';
-import { createOutputLimiterHook, getOutputLimiterConfigFromSettings } from './output-limiter-hook';
+import { QueryOptionsBuilder } from './query-options-builder';
+import { QueryLifecycleManager } from './query-lifecycle-manager';
+import { ModelSwitchHandler } from './model-switch-handler';
+import { getBuiltInCommandNames } from '../built-in-commands';
 
 /**
  * SDK query object with control methods
@@ -54,6 +47,8 @@ export class AgentSession {
 	private stateManager: ProcessingStateManager;
 	private contextTracker: ContextTracker;
 	private messageHandler: SDKMessageHandler;
+	private lifecycleManager: QueryLifecycleManager;
+	private modelSwitchHandler: ModelSwitchHandler;
 
 	// SDK query object with control methods
 	private queryObject: SDKQueryObject = null;
@@ -121,6 +116,35 @@ export class AgentSession {
 			this.contextTracker
 		);
 
+		// Initialize lifecycle manager with callbacks
+		this.lifecycleManager = new QueryLifecycleManager(
+			session.id,
+			this.messageQueue,
+			() => this.queryObject,
+			(q) => {
+				this.queryObject = q;
+			},
+			() => this.queryPromise,
+			(p) => {
+				this.queryPromise = p;
+			},
+			() => this.startStreamingQuery()
+		);
+
+		// Initialize model switch handler with dependencies
+		this.modelSwitchHandler = new ModelSwitchHandler({
+			session: this.session,
+			db: this.db,
+			messageHub: this.messageHub,
+			eventBus: this.eventBus,
+			contextTracker: this.contextTracker,
+			stateManager: this.stateManager,
+			errorManager: this.errorManager,
+			logger: this.logger,
+			getQueryObject: () => this.queryObject,
+			isTransportReady: () => this.firstMessageReceived,
+		});
+
 		// Set queue callback for automatic /context fetching
 		this.messageHandler.setQueueMessageCallback(async (content: string, internal: boolean) => {
 			return await this.messageQueue.enqueue(content, internal);
@@ -152,8 +176,93 @@ export class AgentSession {
 		// Restore persisted processing state from database (if available)
 		this.stateManager.restoreFromDatabase();
 
+		// Subscribe to EventBus events for this session
+		// This implements the EventBus-centric architecture pattern:
+		// RPC handlers emit events → AgentSession subscribes with sessionId filtering
+		this.setupEventSubscriptions();
+
 		// LAZY START: Don't start the streaming query here.
 		// Query will be started on first message send via ensureQueryStarted()
+	}
+
+	/**
+	 * Setup EventBus subscriptions for this session
+	 *
+	 * ARCHITECTURE: EventBus-centric pattern
+	 * - RPC handlers emit events (fire-and-forget)
+	 * - AgentSession subscribes with sessionId filtering
+	 * - Results are emitted back via EventBus for StateManager to broadcast
+	 *
+	 * This decouples RPC handlers from AgentSession internals.
+	 */
+	private setupEventSubscriptions(): void {
+		// Model switch request handler
+		// ARCHITECTURE: Uses EventBus native session filtering (no manual if-check needed)
+		const unsubModelSwitch = this.eventBus.on(
+			'model:switch:request',
+			async ({ sessionId, model }) => {
+				this.logger.log(`Received model:switch:request for model: ${model}`);
+				const result = await this.modelSwitchHandler.switchModel(model);
+
+				// Emit result for StateManager/clients
+				await this.eventBus.emit('model:switched', {
+					sessionId,
+					success: result.success,
+					model: result.model,
+					error: result.error,
+				});
+			},
+			{ sessionId: this.session.id }
+		);
+		this.unsubscribers.push(unsubModelSwitch);
+
+		// Interrupt request handler
+		const unsubInterrupt = this.eventBus.on(
+			'agent:interrupt:request',
+			async ({ sessionId }) => {
+				this.logger.log(`Received agent:interrupt:request`);
+				await this.handleInterrupt();
+
+				// Emit completion event
+				await this.eventBus.emit('agent:interrupted', { sessionId });
+			},
+			{ sessionId: this.session.id }
+		);
+		this.unsubscribers.push(unsubInterrupt);
+
+		// Reset query request handler
+		const unsubReset = this.eventBus.on(
+			'agent:reset:request',
+			async ({ sessionId, restartQuery }) => {
+				this.logger.log(`Received agent:reset:request (restartQuery: ${restartQuery})`);
+				const result = await this.resetQuery({ restartQuery });
+
+				// Emit result for StateManager/clients
+				await this.eventBus.emit('agent:reset', {
+					sessionId,
+					success: result.success,
+					error: result.error,
+				});
+			},
+			{ sessionId: this.session.id }
+		);
+		this.unsubscribers.push(unsubReset);
+
+		// Message persisted handler (for query feeding)
+		// ARCHITECTURE: SessionManager emits this after persisting message to DB
+		const unsubMessagePersisted = this.eventBus.on(
+			'message:persisted',
+			async (data) => {
+				this.logger.log(`Received message:persisted event (messageId: ${data.messageId})`);
+
+				// Start query and enqueue message for processing
+				await this.startQueryAndEnqueue(data.messageId, data.messageContent);
+			},
+			{ sessionId: this.session.id }
+		);
+		this.unsubscribers.push(unsubMessagePersisted);
+
+		this.logger.log(`EventBus subscriptions initialized with session filtering`);
 	}
 
 	/**
@@ -257,7 +366,7 @@ export class AgentSession {
 		}
 
 		try {
-			const { getSupportedModelsFromQuery } = await import('./model-service');
+			const { getSupportedModelsFromQuery } = await import('../model-service');
 			const models = await getSupportedModelsFromQuery(this.queryObject, this.session.id);
 
 			if (models.length > 0) {
@@ -268,101 +377,6 @@ export class AgentSession {
 		} catch (error) {
 			this.logger.warn(`Failed to fetch models from SDK:`, error);
 		}
-	}
-
-	/**
-	 * Build message content with text and optional images
-	 */
-	private buildMessageContent(text: string, images?: MessageImage[]): string | MessageContent[] {
-		if (!images || images.length === 0) {
-			return text;
-		}
-
-		return [
-			{ type: 'text' as const, text },
-			...images.map((img) => ({
-				type: 'image' as const,
-				source: {
-					type: 'base64' as const,
-					media_type: img.media_type,
-					data: img.data,
-				},
-			})),
-		];
-	}
-
-	/**
-	 * DEPRECATED: Use enqueueMessage instead
-	 * Kept temporarily for HTTP endpoint backward compatibility
-	 */
-	async sendMessage(content: string): Promise<string> {
-		return this.messageQueue.enqueue(content);
-	}
-
-	/**
-	 * Persist user message to DB and publish to UI immediately (instant UX)
-	 * Does NOT start SDK query - caller must call startQueryAndEnqueue() separately
-	 * after workspace initialization is complete.
-	 *
-	 * @returns messageId and processed message content for later enqueuing
-	 */
-	async persistUserMessage(data: {
-		content: string;
-		images?: MessageImage[];
-	}): Promise<{ messageId: string; messageContent: string | MessageContent[] }> {
-		let { content, images } = data;
-
-		// Expand built-in commands to their full prompts
-		const expandedContent = expandBuiltInCommand(content);
-		if (expandedContent) {
-			this.logger.log(`Expanding built-in command: ${content.trim()}`);
-			content = expandedContent;
-		}
-
-		const messageContent = this.buildMessageContent(content, images);
-		const messageId = generateUUID();
-
-		// Create SDK user message
-		const sdkUserMessage: SDKUserMessage = {
-			type: 'user' as const,
-			uuid: messageId as UUID,
-			session_id: this.session.id,
-			parent_tool_use_id: null,
-			message: {
-				role: 'user' as const,
-				content:
-					typeof messageContent === 'string'
-						? [{ type: 'text' as const, text: messageContent }]
-						: messageContent,
-			},
-		};
-
-		// Save to database
-		this.db.saveSDKMessage(this.session.id, sdkUserMessage);
-
-		// Publish to UI immediately via state.sdkMessages.delta (fire-and-forget to avoid blocking RPC)
-		// This prevents "Message send timed out" errors when WebSocket is slow
-		this.messageHub
-			.publish(
-				'state.sdkMessages.delta',
-				{ added: [sdkUserMessage], timestamp: Date.now() },
-				{ sessionId: this.session.id }
-			)
-			.catch(async (err) => {
-				this.logger.error('Failed to publish user message to UI:', err);
-				// Report to UI via error manager (non-fatal warning)
-				await this.errorManager.handleError(
-					this.session.id,
-					err as Error,
-					ErrorCategory.CONNECTION,
-					'Failed to display your message in real-time. The message was saved and will be processed.',
-					this.stateManager.getState()
-				);
-			});
-
-		this.logger.log(`User message ${messageId} persisted and publishing to UI`);
-
-		return { messageId, messageContent };
 	}
 
 	/**
@@ -434,159 +448,6 @@ export class AgentSession {
 	}
 
 	/**
-	 * Persist user message to DB and UI, then queue for SDK processing
-	 *
-	 * This method provides instant user feedback by saving and publishing the message
-	 * BEFORE any long-running operations (workspace init, SDK processing, etc.)
-	 *
-	 * UX Flow:
-	 * 1. Generate message ID
-	 * 2. Save to DB and publish to UI (<10ms) ← User sees message instantly
-	 * 3. Set processing state to 'queued'
-	 * 4. Enqueue for SDK processing (may block on workspace init)
-	 *
-	 * @returns Promise<{ messageId: string }>
-	 */
-	async persistAndQueueMessage(data: {
-		content: string;
-		images?: MessageImage[];
-	}): Promise<{ messageId: string }> {
-		try {
-			// Lazy start the query on first message
-			await this.ensureQueryStarted();
-
-			let { content, images } = data;
-
-			// Expand built-in commands to their full prompts
-			const expandedContent = expandBuiltInCommand(content);
-			if (expandedContent) {
-				this.logger.log(`Expanding built-in command: ${content.trim()}`);
-				content = expandedContent;
-			}
-
-			const messageContent = this.buildMessageContent(content, images);
-
-			// Generate message ID early
-			const messageId = generateUUID();
-
-			// STEP 1: Create and persist the SDK user message IMMEDIATELY
-			// This ensures instant UI feedback before any blocking operations
-			const sdkUserMessage: SDKUserMessage = {
-				type: 'user' as const,
-				uuid: messageId as UUID,
-				session_id: this.session.id,
-				parent_tool_use_id: null,
-				message: {
-					role: 'user' as const,
-					content:
-						typeof messageContent === 'string'
-							? [{ type: 'text' as const, text: messageContent }]
-							: messageContent,
-				},
-			};
-
-			// Save to database
-			this.db.saveSDKMessage(this.session.id, sdkUserMessage);
-
-			// Publish to UI immediately via state.sdkMessages.delta
-			await this.messageHub.publish(
-				'state.sdkMessages.delta',
-				{ added: [sdkUserMessage], timestamp: Date.now() },
-				{ sessionId: this.session.id }
-			);
-
-			this.logger.log(`User message ${messageId} persisted and published for instant UI display`);
-
-			// STEP 2: Set state to 'queued' and enqueue for processing
-			await this.stateManager.setQueued(messageId);
-
-			// Enqueue for SDK processing (fire-and-forget)
-			// NOTE: Message is already saved to DB and published to UI above.
-			// We don't await here to prevent RPC timeout - SDK processing can take
-			// longer than the RPC timeout (10s default). Errors are handled via .catch().
-			this.messageQueue.enqueueWithId(messageId, messageContent).catch(async (error) => {
-				// Handle queue errors (e.g., interrupted by user, timeout)
-				// Don't log "Interrupted by user" as error - it's expected behavior
-				if (error instanceof Error && error.message === 'Interrupted by user') {
-					this.logger.log(`Message ${messageId} interrupted by user`);
-				} else {
-					// Surface non-interrupt errors to the UI
-					this.logger.error(`Queue error for message ${messageId}:`, error);
-
-					// Determine error category and user message based on error type
-					const isTimeoutError =
-						error instanceof Error && error.name === 'MessageQueueTimeoutError';
-					const category = isTimeoutError ? ErrorCategory.TIMEOUT : ErrorCategory.MESSAGE;
-					const userMessage = isTimeoutError
-						? 'The SDK is not responding. This may be due to an internal SDK error. Click "Reset Agent" in the menu to recover, or try again.'
-						: 'Failed to process message. Please try again.';
-
-					await this.errorManager.handleError(
-						this.session.id,
-						error as Error,
-						category,
-						userMessage,
-						this.stateManager.getState(),
-						{ messageId }
-					);
-
-					// On timeout, attempt auto-recovery by resetting the query
-					// This terminates the stuck query and starts a fresh one
-					if (isTimeoutError) {
-						this.logger.log(`Auto-recovering from timeout by resetting query...`);
-						try {
-							await this.resetQuery({ restartQuery: true });
-							this.logger.log(`Auto-recovery from timeout successful`);
-
-							// Re-enqueue the timed-out message so user doesn't have to re-send
-							// The message is already saved to DB and shown in UI
-							this.logger.log(`Re-enqueuing timed-out message ${messageId}...`);
-							await this.stateManager.setQueued(messageId);
-							// Fire-and-forget: don't await to avoid nested timeout handling
-							this.messageQueue
-								.enqueueWithId(messageId, messageContent)
-								.catch(async (retryError) => {
-									// If retry also fails, just log and reset to idle
-									// Don't infinite loop - user can manually click Reset Agent
-									this.logger.error(`Retry of message ${messageId} also failed:`, retryError);
-									await this.stateManager.setIdle();
-								});
-						} catch (resetError) {
-							this.logger.error(`Auto-recovery from timeout failed:`, resetError);
-							// Reset to idle anyway so user can try manually
-							await this.stateManager.setIdle();
-						}
-					} else {
-						// Reset state to idle so user can retry
-						await this.stateManager.setIdle();
-					}
-				}
-			});
-
-			// Emit event for title generation (decoupled via EventBus)
-			this.eventBus.emit('message:sent', { sessionId: this.session.id }).catch((err) => {
-				this.logger.warn('Failed to emit message:sent event:', err);
-			});
-
-			return { messageId };
-		} catch (error) {
-			this.logger.error(`Error in persistAndQueueMessage:`, error);
-
-			const processingState = this.stateManager.getState();
-			await this.stateManager.setIdle();
-
-			await this.errorManager.handleError(
-				this.session.id,
-				error as Error,
-				ErrorCategory.MESSAGE,
-				'Failed to send message. Please try again.',
-				processingState
-			);
-			throw error;
-		}
-	}
-
-	/**
 	 * Ensure the streaming query is started (lazy initialization)
 	 * Called on first message send to avoid connecting to SDK until needed
 	 */
@@ -600,108 +461,38 @@ export class AgentSession {
 	}
 
 	/**
-	 * Handle message.send RPC call
-	 * Called by RPC handler in session-handlers.ts or directly by tests
+	 * Create and display a synthetic assistant message for errors
+	 *
+	 * Shared logic for error display:
+	 * 1. Create assistant message with formatted error text
+	 * 2. Save to database
+	 * 3. Broadcast to UI
 	 */
-	async handleMessageSend(data: {
-		content: string;
-		images?: MessageImage[];
-	}): Promise<{ messageId: string }> {
-		try {
-			// TITLE GENERATION: Trigger async title generation on first message
-			// This handles direct calls (e.g., tests) that bypass the RPC handler.
-			// The RPC path handles this via the user-message:persisted event handler,
-			// but direct calls need to trigger title generation here.
-			// NOTE: Workspace (worktree) is already created during session creation,
-			// so this only triggers title generation and branch renaming.
-			if (!this.session.metadata.titleGenerated) {
-				this.logger.log(`Triggering title generation for first message...`);
-				const userMessageText = typeof data.content === 'string' ? data.content : '';
-				// Emit event with skipQueryStart=true since we handle query start below
-				// Fire-and-forget: title generation runs in parallel with SDK query
-				this.eventBus
-					.emit('user-message:persisted', {
-						sessionId: this.session.id,
-						messageId: '', // Will be generated below
-						messageContent: data.content,
-						userMessageText,
-						needsWorkspaceInit: true, // Signals first message - triggers title generation
-						hasDraftToClear: false,
-						skipQueryStart: true,
-					})
-					.catch((error) => {
-						this.logger.log(`Title generation failed (non-fatal): ${error}`);
-					});
-				// Note: We don't await or refresh session here anymore
-				// Title generation runs in parallel and updates session asynchronously
-			}
+	private async displayErrorAsAssistantMessage(
+		text: string,
+		options?: { markAsError?: boolean }
+	): Promise<void> {
+		const assistantMessage: SDKMessage = {
+			type: 'assistant' as const,
+			uuid: generateUUID() as UUID,
+			session_id: this.session.id,
+			parent_tool_use_id: null,
+			...(options?.markAsError ? { error: 'invalid_request' as const } : {}),
+			message: {
+				role: 'assistant' as const,
+				content: [{ type: 'text' as const, text }],
+			},
+		};
 
-			// LAZY START: Start the query on first message
-			await this.ensureQueryStarted();
+		// Save to database
+		this.db.saveSDKMessage(this.session.id, assistantMessage);
 
-			let { content, images } = data;
-
-			// Expand built-in commands to their full prompts
-			const expandedContent = expandBuiltInCommand(content);
-			if (expandedContent) {
-				this.logger.log(`Expanding built-in command: ${content.trim()}`);
-				content = expandedContent;
-			}
-
-			const messageContent = this.buildMessageContent(content, images);
-
-			// Generate message ID before enqueuing so we can set state BEFORE the message starts processing
-			const messageId = generateUUID();
-
-			// Save user message to DB BEFORE enqueuing (required for title generation and persistence)
-			const sdkUserMessage: SDKUserMessage = {
-				type: 'user' as const,
-				uuid: messageId as UUID,
-				session_id: this.session.id,
-				parent_tool_use_id: null,
-				message: {
-					role: 'user' as const,
-					content:
-						typeof messageContent === 'string'
-							? [{ type: 'text' as const, text: messageContent }]
-							: messageContent,
-				},
-			};
-			this.db.saveSDKMessage(this.session.id, sdkUserMessage);
-
-			// Set state to 'queued' BEFORE enqueue, because enqueue() blocks until the message
-			// is actually sent to the SDK, by which time state should transition to 'processing'
-			await this.stateManager.setQueued(messageId);
-
-			// enqueue() waits for the message to be yielded to the SDK and onSent() called
-			// During this time, state transitions: queued -> processing -> ...
-			await this.messageQueue.enqueueWithId(messageId, messageContent);
-
-			// Emit event for title generation (decoupled via EventBus)
-			// Fire-and-forget - don't wait for title generation
-			this.eventBus.emit('message:sent', { sessionId: this.session.id }).catch((err) => {
-				this.logger.warn('Failed to emit message:sent event:', err);
-			});
-
-			return { messageId };
-		} catch (error) {
-			this.logger.error(`Error handling message.send:`, error);
-
-			// Capture processing state before reset for error context
-			const processingState = this.stateManager.getState();
-
-			// Reset state to idle on error to prevent session from getting stuck
-			await this.stateManager.setIdle();
-
-			await this.errorManager.handleError(
-				this.session.id,
-				error as Error,
-				ErrorCategory.MESSAGE,
-				'Failed to send message. Please try again.',
-				processingState
-			);
-			throw error;
-		}
+		// Broadcast to UI
+		await this.messageHub.publish(
+			'state.sdkMessages.delta',
+			{ added: [assistantMessage], timestamp: Date.now() },
+			{ sessionId: this.session.id }
+		);
 	}
 
 	/**
@@ -735,36 +526,9 @@ export class AgentSession {
 
 			this.logger.log(`Handling API validation error as assistant message: ${statusCode}`);
 
-			// Create a synthetic assistant message to display the error in chat
-			const assistantMessage: Extract<SDKMessage, { type: 'assistant' }> = {
-				type: 'assistant' as const,
-				uuid: generateUUID() as UUID,
-				session_id: this.session.id,
-				parent_tool_use_id: null,
-				error: 'invalid_request' as const, // Mark this as an error message
-				message: {
-					role: 'assistant' as const,
-					content: [
-						{
-							type: 'text' as const,
-							text: `**API Error (${statusCode})**: ${apiErrorType}
-
-${apiErrorMessage}
-
-This error occurred while processing your request. Please review the error message above and adjust your request accordingly.`,
-						},
-					],
-				},
-			};
-
-			// Save to database
-			this.db.saveSDKMessage(this.session.id, assistantMessage);
-
-			// Broadcast to UI via state.sdkMessages.delta
-			await this.messageHub.publish(
-				'state.sdkMessages.delta',
-				{ added: [assistantMessage], timestamp: Date.now() },
-				{ sessionId: this.session.id }
+			await this.displayErrorAsAssistantMessage(
+				`**API Error (${statusCode})**: ${apiErrorType}\n\n${apiErrorMessage}\n\nThis error occurred while processing your request. Please review the error message above and adjust your request accordingly.`,
+				{ markAsError: true }
 			);
 
 			this.logger.log(`API validation error displayed as assistant message`);
@@ -831,225 +595,12 @@ This error occurred while processing your request. Please review the error messa
 				this.logger.log(`Session uses shared workspace (no worktree)`);
 			}
 
-			// Build query options based on tools config
-			const toolsConfig = this.session.config.tools;
+			// Build query options using QueryOptionsBuilder
+			const optionsBuilder = new QueryOptionsBuilder(this.session, this.settingsManager);
+			let queryOptions = await optionsBuilder.build();
 
-			// ============================================================================
-			// System Prompt Configuration
-			// SDK option: systemPrompt
-			// ============================================================================
-			// Build system prompt based on useClaudeCodePreset config
-			// When true: Use Claude Code preset with optional worktree append
-			// When false: Use minimal system prompt (or undefined to let SDK use default)
-			let systemPromptConfig: Options['systemPrompt'];
-
-			// Check if Claude Code preset is enabled (default: true for backward compat)
-			const useClaudeCodePreset = toolsConfig?.useClaudeCodePreset ?? true;
-
-			if (useClaudeCodePreset) {
-				systemPromptConfig = {
-					type: 'preset',
-					preset: 'claude_code',
-				};
-
-				// Append worktree instructions if session uses a worktree
-				if (this.session.worktree) {
-					systemPromptConfig.append = `
-IMPORTANT: Git Worktree Isolation
-
-This session is running in an isolated git worktree at:
-${this.session.worktree.worktreePath}
-
-Branch: ${this.session.worktree.branch}
-Main repository: ${this.session.worktree.mainRepoPath}
-
-CRITICAL RULES:
-1. ALL file operations MUST stay within the worktree directory: ${this.session.worktree.worktreePath}
-2. NEVER modify files in the main repository at: ${this.session.worktree.mainRepoPath}
-3. Your current working directory (cwd) is already set to the worktree path
-4. Do NOT attempt to access or modify files outside the worktree path
-
-ALLOWED GIT OPERATIONS ON ROOT REPOSITORY:
-To merge changes from this session branch into the main branch of the root repository:
-
-git --git-dir=${this.session.worktree.mainRepoPath}/.git --work-tree=${this.session.worktree.mainRepoPath} merge ${this.session.worktree.branch}
-
-To push the main branch to remote:
-
-git --git-dir=${this.session.worktree.mainRepoPath}/.git --work-tree=${this.session.worktree.mainRepoPath} push origin main
-
-These commands operate on the root repository without violating worktree isolation.
-This isolation ensures concurrent sessions don't conflict with each other.
-`.trim();
-				}
-			} else {
-				// No Claude Code preset - use minimal system prompt or undefined
-				// When worktree is used, still append isolation instructions
-				if (this.session.worktree) {
-					systemPromptConfig = `
-You are an AI assistant helping with coding tasks.
-
-IMPORTANT: Git Worktree Isolation
-
-This session is running in an isolated git worktree at:
-${this.session.worktree.worktreePath}
-
-Branch: ${this.session.worktree.branch}
-Main repository: ${this.session.worktree.mainRepoPath}
-
-CRITICAL RULES:
-1. ALL file operations MUST stay within the worktree directory: ${this.session.worktree.worktreePath}
-2. NEVER modify files in the main repository at: ${this.session.worktree.mainRepoPath}
-3. Your current working directory (cwd) is already set to the worktree path
-`.trim();
-				}
-				// If no worktree, systemPromptConfig remains undefined (SDK default behavior)
-			}
-
-			// ============================================================================
-			// Tool Configuration
-			// ============================================================================
-			// CRITICAL: Use disallowedTools to REMOVE tools from context (saves tokens)
-			// vs allowedTools which only auto-approves tools (they're still in context!)
-			//
-			// SDK docs:
-			// - allowedTools: "auto-allowed without prompting for permission" (still in context)
-			// - disallowedTools: "removed from the model's context" (actually removes them)
-			//
-			// Strategy:
-			// - MCP tools: Controlled via file-based settings (disabledMcpServers → settings.local.json)
-			// - SDK built-in tools: Always enabled (not configurable)
-			// - Liuboer tools: Based on liuboerTools config
-
-			const disallowedTools: string[] = [];
-
-			// MCP Tools: Controlled via file-based settings (disabledMcpServers)
-			// SDK reads .claude/settings.local.json and applies filtering automatically
-			// No disallowedTools needed for MCP - SDK handles it via disabledMcpjsonServers
-
-			// Disable Liuboer memory tool if not enabled
-			if (!toolsConfig?.liuboerTools?.memory) {
-				disallowedTools.push('liuboer__memory__*');
-			}
-
-			// ============================================================================
-			// Setting Sources Configuration
-			// SDK option: settingSources
-			// ============================================================================
-			// Determine setting sources: include 'project' if setting sources loading is enabled
-			// This controls CLAUDE.md and .claude/settings.json loading
-			// Note: loadSettingSources replaces the old loadProjectSettings for clarity
-			const loadSettingSources = toolsConfig?.loadSettingSources ?? true;
-			const settingSources: Options['settingSources'] = loadSettingSources
-				? ['project', 'local']
-				: ['local'];
-
-			// ============================================================================
-			// MCP Servers Configuration (Direct 1:1 UI→SDK Mapping)
-			// ============================================================================
-			// MCP server enable/disable is controlled via file-based settings:
-			// - disabledMcpServers → written to .claude/settings.local.json as disabledMcpjsonServers
-			// - SDK reads this file at query initialization time
-			// - Always let SDK auto-load from .mcp.json, filtering applied via settings.local.json
-			//
-			// mcpServers option is always undefined to allow SDK auto-loading
-			const mcpServers: Options['mcpServers'] = undefined;
-
-			// ============================================================================
-			// Prepare Settings (File-only + SDK Options)
-			// ============================================================================
-			// This writes file-only settings to .claude/settings.local.json and returns
-			// SDK-supported options to merge with query options
-			// IMPORTANT: Pass session's disabledMcpServers so it gets written to the file
-			const sdkSettingsOptions = await this.settingsManager.prepareSDKOptions({
-				disabledMcpServers: toolsConfig?.disabledMcpServers ?? [],
-			});
-
-			// ============================================================================
-			// Worktree Directory Isolation
-			// ============================================================================
-			// For worktree sessions: Restrict SDK file access to ONLY the worktree directory
-			// This prevents the agent from accidentally modifying files in the main repo
-			// or accessing files outside the worktree boundary
-			//
-			// SDK option: additionalDirectories
-			// - undefined (default): SDK can access any file on the system
-			// - [] (empty array): SDK can ONLY access files within cwd
-			//
-			// Strategy:
-			// - Worktree sessions: Set to [] to enforce strict isolation
-			// - Non-worktree sessions: Leave undefined for backward compatibility
-			const additionalDirectories: string[] | undefined = this.session.worktree ? [] : undefined;
-
-			// ============================================================================
-			// Build Final Query Options
-			// ============================================================================
-			// First merge settings-derived options, then override with session-specific options
-			// Session-specific options take precedence over global settings
-			// ============================================================================
-			// Hooks Configuration (Experimental)
-			// ============================================================================
-			// Configure PreToolUse hook to inject output limiting parameters
-			// This prevents "prompt too long" errors by limiting tool outputs before
-			// they're generated (SDK doesn't support output truncation after execution)
-			const globalSettings = this.settingsManager.getGlobalSettings();
-			const outputLimiterConfig = getOutputLimiterConfigFromSettings(globalSettings);
-			const outputLimiterHook = createOutputLimiterHook(outputLimiterConfig);
-
-			const queryOptions: Options = {
-				// Start with settings-derived options (from global settings)
-				...sdkSettingsOptions,
-				// Override with session-specific options (these take precedence)
-				model: this.session.config.model, // Session model always wins
-				cwd: this.session.worktree
-					? this.session.worktree.worktreePath
-					: this.session.workspacePath,
-				additionalDirectories, // Enforce worktree isolation
-				permissionMode: 'bypassPermissions',
-				allowDangerouslySkipPermissions: true,
-				maxTurns: Infinity,
-				settingSources, // Session settingSources always wins
-				systemPrompt: systemPromptConfig,
-				disallowedTools: disallowedTools.length > 0 ? disallowedTools : undefined,
-				mcpServers,
-				// Hooks: Inject output limiting before tools execute
-				hooks: {
-					PreToolUse: [{ hooks: [outputLimiterHook] }],
-				},
-			};
-
-			// DEBUG: Log query options for verification
-			this.logger.log(`[AgentSession ${this.session.id}] Query options:`, {
-				model: queryOptions.model,
-				useClaudeCodePreset,
-				settingSources: queryOptions.settingSources,
-				disallowedTools: queryOptions.disallowedTools,
-				mcpServers: queryOptions.mcpServers === undefined ? 'auto-load' : 'disabled',
-				additionalDirectories:
-					queryOptions.additionalDirectories === undefined
-						? 'unrestricted'
-						: `restricted to cwd (${queryOptions.additionalDirectories.length} additional dirs)`,
-				toolsConfig,
-			});
-
-			// Add resume parameter if SDK session ID exists (session resumption)
-			if (this.session.sdkSessionId) {
-				queryOptions.resume = this.session.sdkSessionId;
-				this.logger.log(`Resuming SDK session: ${this.session.sdkSessionId}`);
-			} else {
-				this.logger.log(`Starting new SDK session`);
-			}
-
-			// Add thinking token budget based on thinkingLevel config
-			// Levels: auto (undefined), think8k (8000), think16k (16000), think32k (31999)
-			const thinkingLevel = (this.session.config.thinkingLevel || 'auto') as ThinkingLevel;
-			const maxThinkingTokens = THINKING_LEVEL_TOKENS[thinkingLevel];
-			if (maxThinkingTokens !== undefined) {
-				queryOptions.maxThinkingTokens = maxThinkingTokens;
-				this.logger.log(
-					`Extended thinking enabled: ${thinkingLevel} (${maxThinkingTokens} tokens)`
-				);
-			}
+			// Add session state options (resume, thinking tokens)
+			queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
 
 			// Create query with AsyncGenerator from MessageQueue
 			this.queryObject = query({
@@ -1295,42 +846,15 @@ CRITICAL RULES:
 			// User needs to address the issue (e.g., start new session, compact context)
 			await this.resetQuery({ restartQuery: false });
 
-			// 2. Create a synthetic assistant message to explain the error to the user
-			const assistantMessage: SDKMessage = {
-				type: 'assistant' as const,
-				uuid: generateUUID() as UUID,
-				session_id: this.session.id,
-				parent_tool_use_id: null,
-				message: {
-					role: 'assistant' as const,
-					content: [
-						{
-							type: 'text' as const,
-							text: `⚠️ **Session Stopped: Error Loop Detected**
-
-${userMessage}
-
-**What happened:** The same API error occurred multiple times in quick succession, indicating the request cannot succeed in its current state.
-
-**What to do:**
-- Use \`/compact\` to reduce the conversation context
-- Start a new session if the context is too large
-- Click "Reset Agent" in the menu to try again
-
-The agent has been automatically stopped to prevent further errors.`,
-						},
-					],
-				},
-			};
-
-			// Save to database
-			this.db.saveSDKMessage(this.session.id, assistantMessage);
-
-			// Broadcast to UI
-			await this.messageHub.publish(
-				'state.sdkMessages.delta',
-				{ added: [assistantMessage], timestamp: Date.now() },
-				{ sessionId: this.session.id }
+			// 2. Display error message to user
+			await this.displayErrorAsAssistantMessage(
+				`⚠️ **Session Stopped: Error Loop Detected**\n\n${userMessage}\n\n` +
+					`**What happened:** The same API error occurred multiple times in quick succession, indicating the request cannot succeed in its current state.\n\n` +
+					`**What to do:**\n` +
+					`- Use \`/compact\` to reduce the conversation context\n` +
+					`- Start a new session if the context is too large\n` +
+					`- Click "Reset Agent" in the menu to try again\n\n` +
+					`The agent has been automatically stopped to prevent further errors.`
 			);
 
 			// 3. Emit error event for monitoring
@@ -1353,142 +877,19 @@ The agent has been automatically stopped to prevent further errors.`,
 
 	/**
 	 * Switch to a different Claude model mid-session
-	 * Called by RPC handler in session-handlers.ts
+	 * Delegates to ModelSwitchHandler for the actual logic
 	 */
 	async handleModelSwitch(
 		newModel: string
 	): Promise<{ success: boolean; model: string; error?: string }> {
-		this.logger.log(`Handling model switch to: ${newModel}`);
-
-		try {
-			// Validate the model
-			const isValid = await isValidModel(newModel);
-			if (!isValid) {
-				const error = `Invalid model: ${newModel}. Use a valid model ID or alias.`;
-				this.logger.error(`${error}`);
-				return { success: false, model: this.session.config.model, error };
-			}
-
-			// Resolve alias to full model ID
-			const resolvedModel = await resolveModelAlias(newModel);
-			const modelInfo = await getModelInfo(resolvedModel);
-
-			// Check if already using this model
-			if (this.session.config.model === resolvedModel) {
-				this.logger.log(`Already using model: ${resolvedModel}`);
-				return {
-					success: true,
-					model: resolvedModel,
-					error: `Already using ${modelInfo?.name || resolvedModel}`,
-				};
-			}
-
-			const previousModel = this.session.config.model;
-
-			// Emit model switching event
-			await this.messageHub.publish(
-				'session.model-switching',
-				{
-					from: previousModel,
-					to: resolvedModel,
-				},
-				{ sessionId: this.session.id }
-			);
-
-			// Check if query is running AND ProcessTransport is ready
-			// ProcessTransport is ready after we receive the first SDK message
-			if (!this.queryObject || !this.firstMessageReceived) {
-				// Query not started yet OR transport not ready - just update config
-				this.logger.log(
-					`${!this.queryObject ? 'Query not started yet' : 'ProcessTransport not ready yet'}, updating config only`
-				);
-				this.session.config.model = resolvedModel;
-				this.db.updateSession(this.session.id, {
-					config: this.session.config,
-				});
-
-				// Update context tracker model
-				this.contextTracker.setModel(resolvedModel);
-
-				// Emit session:updated event - include data for decoupled state management
-				await this.eventBus.emit('session:updated', {
-					sessionId: this.session.id,
-					source: 'model-switch',
-					session: { config: this.session.config },
-				});
-			} else {
-				// Use SDK's native setModel() method (transport is ready)
-				this.logger.log(`Using SDK setModel() to switch to: ${resolvedModel}`);
-				await this.queryObject.setModel(resolvedModel);
-
-				// Update session config
-				this.session.config.model = resolvedModel;
-				this.db.updateSession(this.session.id, {
-					config: this.session.config,
-				});
-
-				// Update context tracker model
-				this.contextTracker.setModel(resolvedModel);
-
-				// Emit session:updated event - include data for decoupled state management
-				await this.eventBus.emit('session:updated', {
-					sessionId: this.session.id,
-					source: 'model-switch',
-					session: { config: this.session.config },
-				});
-
-				this.logger.log(`Model switched via SDK to: ${resolvedModel}`);
-			}
-
-			// Emit success event
-			await this.messageHub.publish(
-				'session.model-switched',
-				{
-					from: previousModel,
-					to: resolvedModel,
-					modelInfo: modelInfo || null,
-				},
-				{ sessionId: this.session.id }
-			);
-
-			this.logger.log(`Model switched successfully to: ${resolvedModel}`);
-
-			return {
-				success: true,
-				model: resolvedModel,
-			};
-		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : String(error);
-			this.logger.error(`Model switch failed:`, error);
-
-			await this.errorManager.handleError(
-				this.session.id,
-				error as Error,
-				ErrorCategory.MODEL,
-				`Failed to switch model: ${errorMessage}`,
-				this.stateManager.getState(),
-				{
-					requestedModel: newModel,
-					currentModel: this.session.config.model,
-				}
-			);
-
-			return {
-				success: false,
-				model: this.session.config.model,
-				error: errorMessage,
-			};
-		}
+		return this.modelSwitchHandler.switchModel(newModel);
 	}
 
 	/**
 	 * Get current model ID for this session
 	 */
 	getCurrentModel(): CurrentModelInfo {
-		return {
-			id: this.session.config.model,
-			info: null, // Model info is fetched asynchronously by RPC handler
-		};
+		return this.modelSwitchHandler.getCurrentModel();
 	}
 
 	/**
@@ -1667,60 +1068,10 @@ The agent has been automatically stopped to prevent further errors.`,
 
 	/**
 	 * Execute the actual query restart
-	 *
-	 * This method does the heavy lifting:
-	 * 1. Stop the message queue
-	 * 2. Interrupt current query
-	 * 3. Wait for termination
-	 * 4. Clear query object
-	 * 5. Start fresh query (SDK re-reads settings.local.json)
+	 * Delegates to QueryLifecycleManager for shared restart logic
 	 */
 	private async doActualRestart(): Promise<void> {
-		this.logger.log(`Executing query restart...`);
-
-		try {
-			// 1. Stop the message queue (no new messages processed)
-			this.messageQueue.stop();
-			this.logger.log(`Message queue stopped`);
-
-			// 2. Interrupt current query using SDK method
-			if (this.queryObject && typeof this.queryObject.interrupt === 'function') {
-				try {
-					await this.queryObject.interrupt();
-					this.logger.log(`Query interrupted successfully`);
-				} catch (interruptError) {
-					this.logger.warn(`Query interrupt failed:`, interruptError);
-					// Continue - query might already be stopped
-				}
-			}
-
-			// 3. Wait for query promise to resolve (with timeout)
-			if (this.queryPromise) {
-				try {
-					await Promise.race([
-						this.queryPromise,
-						new Promise((resolve) => setTimeout(resolve, 5000)), // 5s timeout
-					]);
-					this.logger.log(`Previous query terminated`);
-				} catch (error) {
-					this.logger.warn(`Error waiting for query termination:`, error);
-				}
-			}
-
-			// 4. Clear query object and promise
-			this.queryObject = null;
-			this.queryPromise = null;
-
-			// 5. Start new query (SDK will re-read settings.local.json)
-			// This calls runQuery() which creates a fresh query with updated MCP settings
-			await this.startStreamingQuery();
-
-			this.logger.log(`Query restarted successfully with fresh MCP settings`);
-		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-			this.logger.error(`Failed to restart query:`, error);
-			throw new Error(`Query restart failed: ${errorMessage}`);
-		}
+		await this.lifecycleManager.restart();
 	}
 
 	/**
@@ -1747,91 +1098,52 @@ The agent has been automatically stopped to prevent further errors.`,
 		const { restartQuery = true } = options ?? {};
 		this.logger.log(`User-initiated query reset (restartQuery: ${restartQuery})...`);
 
-		try {
-			// 1. Clear any pending messages (reject with interrupt error)
+		// Handle case where query hasn't started yet
+		if (!this.queryObject && !this.queryPromise) {
+			this.logger.log(`Query not started, just resetting state`);
+			// Still clear pending messages and reset circuit breaker
 			const queueSize = this.messageQueue.size();
 			if (queueSize > 0) {
 				this.logger.log(`Clearing ${queueSize} pending messages`);
 				this.messageQueue.clear();
 			}
-
-			// 2. Clear any pending restart flag
 			this.pendingRestartReason = null;
-
-			// 3. Reset circuit breaker (clears error tracking for fresh start)
 			this.messageHandler.resetCircuitBreaker();
-
-			// 4. If query hasn't started yet, just reset state
-			if (!this.queryObject && !this.queryPromise) {
-				this.logger.log(`Query not started, just resetting state`);
-				await this.stateManager.setIdle();
-				return { success: true };
-			}
-
-			// 5. Stop the message queue
-			this.messageQueue.stop();
-			this.logger.log(`Message queue stopped`);
-
-			// 6. Interrupt current query (but don't fail if transport is dead)
-			if (this.queryObject && typeof this.queryObject.interrupt === 'function') {
-				try {
-					await this.queryObject.interrupt();
-					this.logger.log(`Query interrupted successfully`);
-				} catch (interruptError) {
-					// Expected to fail if SDK process crashed - log and continue
-					this.logger.warn(`Query interrupt failed (may be expected):`, interruptError);
-				}
-			}
-
-			// 7. Wait for query promise to resolve (with short timeout)
-			// This ensures the SDK process cleanup completes
-			if (this.queryPromise) {
-				try {
-					await Promise.race([
-						this.queryPromise.catch((e) => {
-							// Ignore errors from crashed processes
-							this.logger.warn(`Query promise rejected during cleanup:`, e);
-						}),
-						new Promise((resolve) => setTimeout(resolve, 3000)), // 3s timeout
-					]);
-					this.logger.log(`Previous query terminated`);
-				} catch (error) {
-					// This catch should rarely trigger due to .catch() above
-					this.logger.warn(`Error waiting for query termination:`, error);
-				}
-			}
-
-			// 8. Clear query object and promise (force cleanup regardless of errors)
-			this.queryObject = null;
-			this.queryPromise = null;
-			this.firstMessageReceived = false; // Reset transport readiness flag
-
-			// 9. Reset state to idle
 			await this.stateManager.setIdle();
-
-			// 10. Optionally start a new query
-			if (restartQuery) {
-				this.logger.log(`Starting fresh query...`);
-				// Small delay to ensure process cleanup completes
-				await new Promise((resolve) => setTimeout(resolve, 100));
-				await this.startStreamingQuery();
-				this.logger.log(`Fresh query started successfully`);
-			}
-
-			// 11. Notify clients
-			await this.messageHub.publish(
-				'session.reset',
-				{ message: 'Agent has been reset and is ready for new messages' },
-				{ sessionId: this.session.id }
-			);
-
-			this.logger.log(`Query reset completed successfully`);
 			return { success: true };
-		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-			this.logger.error(`Query reset failed:`, error);
-			return { success: false, error: errorMessage };
 		}
+
+		// Delegate to lifecycle manager with callbacks for reset-specific actions
+		return await this.lifecycleManager.reset({
+			restartAfter: restartQuery,
+			onBeforeStop: async () => {
+				// Clear pending messages
+				const queueSize = this.messageQueue.size();
+				if (queueSize > 0) {
+					this.logger.log(`Clearing ${queueSize} pending messages`);
+					this.messageQueue.clear();
+				}
+				// Clear pending restart flag
+				this.pendingRestartReason = null;
+				// Reset circuit breaker
+				this.messageHandler.resetCircuitBreaker();
+			},
+			onAfterStop: async () => {
+				// Reset transport readiness flag
+				this.firstMessageReceived = false;
+				// Reset state to idle
+				await this.stateManager.setIdle();
+			},
+			onAfterRestart: async () => {
+				// Notify clients
+				await this.messageHub.publish(
+					'session.reset',
+					{ message: 'Agent has been reset and is ready for new messages' },
+					{ sessionId: this.session.id }
+				);
+				this.logger.log(`Query reset completed successfully`);
+			},
+		});
 	}
 
 	/**
@@ -1852,7 +1164,7 @@ The agent has been automatically stopped to prevent further errors.`,
 
 		// Clear models cache for this session
 		try {
-			const { clearModelsCache } = await import('./model-service');
+			const { clearModelsCache } = await import('../model-service');
 			clearModelsCache(this.session.id);
 		} catch {
 			// Ignore - not critical

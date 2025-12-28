@@ -404,8 +404,10 @@ export class ErrorManager {
 			this.currentApiStatus = newStatus;
 
 			// Emit via EventBus for internal server-side listeners (StateManager)
+			// API connection is a global event (not session-specific)
 			if (this.eventBus) {
 				this.eventBus.emit('api:connection', {
+					sessionId: 'global',
 					status: newStatus,
 					errorCount: this.apiConnectionErrors,
 					lastError: this.lastApiError,
@@ -434,8 +436,10 @@ export class ErrorManager {
 			this.currentApiStatus = 'connected';
 
 			// Emit via EventBus for internal server-side listeners (StateManager)
+			// API connection is a global event (not session-specific)
 			if (this.eventBus) {
 				this.eventBus.emit('api:connection', {
+					sessionId: 'global',
 					status: 'connected',
 					errorCount: 0,
 					lastSuccessfulCall: this.lastSuccessfulApiCall,

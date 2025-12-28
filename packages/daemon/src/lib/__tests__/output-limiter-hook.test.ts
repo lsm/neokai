@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
-import { createOutputLimiterHook } from '../output-limiter-hook';
+import { createOutputLimiterHook } from '../agent/output-limiter-hook';
 import type { PreToolUseHookInput, HookCallback } from '@anthropic-ai/claude-agent-sdk';
 
 describe('OutputLimiterHook', () => {

@@ -282,7 +282,7 @@ describe('AgentSession', () => {
 	});
 
 	// enqueueMessage() test removed - it's now a private method in MessageQueue
-	// handleMessageSend() integration tests moved to tests/integration/agent-session-sdk.test.ts
+	// sendMessageSync() integration tests are in tests/integration/agent-session-sdk.test.ts
 	// session.interrupted event test moved to tests/integration/agent-session-sdk.test.ts (requires SDK)
 
 	describe('Worktree System Prompt', () => {
@@ -432,7 +432,7 @@ describe('AgentSession', () => {
 	});
 
 	describe('Error Handling with Rich Context', () => {
-		test('should capture processing state when handleMessageSend fails', async () => {
+		test('should capture processing state when message sending fails', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: '/test/error-handling',
 			});

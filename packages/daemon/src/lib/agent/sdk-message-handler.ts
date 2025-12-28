@@ -20,8 +20,8 @@ import {
 	isSDKCompactBoundary,
 	isSDKSystemMessage,
 } from '@liuboer/shared/sdk/type-guards';
-import { Database } from '../storage/database';
-import { Logger } from './logger';
+import { Database } from '../../storage/database';
+import { Logger } from '../logger';
 import { ProcessingStateManager } from './processing-state-manager';
 import { ContextTracker } from './context-tracker';
 import { ContextFetcher } from './context-fetcher';

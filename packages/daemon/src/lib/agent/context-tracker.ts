@@ -23,7 +23,7 @@ import type {
 	EventBus,
 } from '@liuboer/shared';
 import type { ModelUsage } from '@liuboer/shared/sdk';
-import { Logger } from './logger';
+import { Logger } from '../logger';
 
 interface UsageData {
 	input_tokens: number;

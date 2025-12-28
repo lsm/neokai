@@ -24,9 +24,9 @@ import type {
 	EventHandler,
 	UnsubscribeFn,
 } from '@liuboer/shared/message-hub/types';
-import { ProcessingStateManager } from '../processing-state-manager';
-import { SDKMessageHandler } from '../sdk-message-handler';
-import { ContextTracker } from '../context-tracker';
+import { ProcessingStateManager } from '../agent/processing-state-manager';
+import { SDKMessageHandler } from '../agent/sdk-message-handler';
+import { ContextTracker } from '../agent/context-tracker';
 import { generateUUID } from '@liuboer/shared';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';

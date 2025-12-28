@@ -23,6 +23,7 @@ describe('EventBus', () => {
 			});
 
 			await eventBus.emit('session:created', {
+				sessionId: 'test-session',
 				session: {
 					id: 'test-session',
 					workspacePath: '/test',
@@ -75,6 +76,7 @@ describe('EventBus', () => {
 			});
 
 			await eventBus.emit('session:created', {
+				sessionId: 'test',
 				session: {
 					id: 'test',
 					workspacePath: '/test',
@@ -225,6 +227,7 @@ describe('EventBus', () => {
 
 			await eventBus.emit('session:deleted', { sessionId: 'test' });
 			await eventBus.emit('session:created', {
+				sessionId: 'test',
 				session: {
 					id: 'test',
 					workspacePath: '/test',

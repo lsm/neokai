@@ -26,6 +26,7 @@ import {
 	waitForWebSocketMessage,
 	hasAnyCredentials,
 } from '../test-utils';
+import { sendMessageSync } from '../helpers/test-message-sender';
 
 /**
  * CRITICAL: Restore any mocks before running these tests.
@@ -72,7 +73,7 @@ describe('AgentSession SDK Integration', () => {
 		);
 	}
 
-	describe('handleMessageSend', () => {
+	describe('sendMessageSync', () => {
 		test.skipIf(!hasAnyCredentials())(
 			'should send message and receive real SDK response',
 			async () => {
@@ -85,7 +86,7 @@ describe('AgentSession SDK Integration', () => {
 				expect(agentSession).toBeDefined();
 
 				// Send a simple message
-				const result = await agentSession!.handleMessageSend({
+				const result = await sendMessageSync(agentSession!, {
 					content: 'What is 1+1? Answer with just the number.',
 				});
 
@@ -117,7 +118,7 @@ describe('AgentSession SDK Integration', () => {
 				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
 
 				// 1x1 red pixel PNG
-				const result = await agentSession!.handleMessageSend({
+				const result = await sendMessageSync(agentSession!, {
 					content: 'What color is this image? Answer with just the color name.',
 					images: [
 						{
@@ -152,7 +153,7 @@ describe('AgentSession SDK Integration', () => {
 				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
 
 				// Send first message to start the query
-				await agentSession!.handleMessageSend({
+				await sendMessageSync(agentSession!, {
 					content: 'What is 2+2? Just the number.',
 				});
 
@@ -160,7 +161,7 @@ describe('AgentSession SDK Integration', () => {
 				await waitForIdle(agentSession!);
 
 				// Send second message
-				const result = await agentSession!.handleMessageSend({
+				const result = await sendMessageSync(agentSession!, {
 					content: 'What is 3+3? Just the number.',
 				});
 
@@ -190,7 +191,7 @@ describe('AgentSession SDK Integration', () => {
 				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
 
 				// Start a message that might take a while
-				await agentSession!.handleMessageSend({
+				await sendMessageSync(agentSession!, {
 					content: 'List all files in the current directory.',
 				});
 
@@ -235,7 +236,7 @@ describe('AgentSession SDK Integration', () => {
 
 				// Send a message to trigger SDK events
 				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-				await agentSession!.handleMessageSend({
+				await sendMessageSync(agentSession!, {
 					content: 'Say hello. Just respond "Hello".',
 				});
 
@@ -268,7 +269,7 @@ describe('AgentSession SDK Integration', () => {
 				expect(agentSession!.getProcessingState().status).toBe('idle');
 
 				// Send message
-				await agentSession!.handleMessageSend({
+				await sendMessageSync(agentSession!, {
 					content: 'What is 5+5? Just the number.',
 				});
 
@@ -297,9 +298,9 @@ describe('AgentSession SDK Integration', () => {
 				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
 
 				// Send multiple messages
-				const promise1 = agentSession!.handleMessageSend({ content: 'Count to 1' });
+				const promise1 = sendMessageSync(agentSession!, { content: 'Count to 1' });
 				await Bun.sleep(100);
-				const promise2 = agentSession!.handleMessageSend({ content: 'Count to 2' });
+				const promise2 = sendMessageSync(agentSession!, { content: 'Count to 2' });
 
 				const results = await Promise.all([promise1, promise2]);
 
@@ -355,13 +356,11 @@ describe('AgentSession SDK Integration', () => {
 
 				// Send a message to put session in queued/processing state
 				// Don't await - we want to interrupt while processing
-				const messagePromise = agentSession!
-					.handleMessageSend({
-						content: 'Count to 100 slowly.',
-					})
-					.catch(() => {
-						// Message will be interrupted - this is expected
-					});
+				const messagePromise = sendMessageSync(agentSession!, {
+					content: 'Count to 100 slowly.',
+				}).catch(() => {
+					// Message will be interrupted - this is expected
+				});
 
 				// Wait for state to change from idle before interrupting
 				const startTime = Date.now();

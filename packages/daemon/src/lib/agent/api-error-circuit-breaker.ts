@@ -16,7 +16,7 @@
  * - Any error appearing 3+ times within 30 seconds
  */
 
-import { Logger } from './logger';
+import { Logger } from '../logger';
 
 /**
  * Tracked error occurrence
@@ -64,6 +64,9 @@ const FATAL_ERROR_PATTERNS = [
 	/prompt is too long:\s*\d+\s*tokens?\s*>\s*\d+\s*maximum/i,
 	// Invalid request that won't succeed on retry
 	/invalid_request_error/i,
+	// Connection errors - indicate network/API unavailability
+	/Error:\s*Connection\s+error/i,
+	/Connection\s+error/i,
 ];
 
 export class ApiErrorCircuitBreaker {
@@ -114,6 +117,12 @@ export class ApiErrorCircuitBreaker {
 					if (promptTooLongMatch) {
 						return `prompt_too_long:${promptTooLongMatch[2]}`; // Normalize by max tokens
 					}
+
+					// Connection error
+					if (/Connection\s+error/i.test(errorContent)) {
+						return 'connection_error';
+					}
+
 					return 'invalid_request_error';
 				}
 			}
@@ -299,6 +308,21 @@ export class ApiErrorCircuitBreaker {
 
 		if (this.state.tripReason === 'invalid_request_error') {
 			return 'The API rejected the request. This usually means the conversation context is too large or malformed.';
+		}
+
+		if (this.state.tripReason === 'connection_error') {
+			return `Connection error detected repeatedly.
+
+**Possible causes:**
+- Network connectivity issues
+- API service temporarily unavailable
+- Firewall or proxy blocking the connection
+
+**What to do:**
+- Check your internet connection
+- Verify your API key is valid and has not expired
+- Try again in a few moments
+- If the problem persists, check the Anthropic API status page`;
 		}
 
 		if (this.state.tripReason.startsWith('api_error:')) {

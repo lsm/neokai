@@ -18,6 +18,7 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import type { TestContext } from '../test-utils';
 import { createTestApp, hasAnyCredentials } from '../test-utils';
+import { sendMessageSync } from '../helpers/test-message-sender';
 
 describe('Auto-Title Generation', () => {
 	let ctx: TestContext;
@@ -105,7 +106,7 @@ describe('Auto-Title Generation', () => {
 			expect(sessionData.metadata.titleGenerated).toBe(false);
 
 			// Send first message (triggers workspace initialization with title generation)
-			await agentSession!.handleMessageSend({
+			await sendMessageSync(agentSession!, {
 				content: 'What is 2+2?',
 			});
 
@@ -143,7 +144,7 @@ describe('Auto-Title Generation', () => {
 			expect(agentSession).toBeDefined();
 
 			// Send first message
-			await agentSession!.handleMessageSend({
+			await sendMessageSync(agentSession!, {
 				content: 'What is 2+2?',
 			});
 
@@ -157,7 +158,7 @@ describe('Auto-Title Generation', () => {
 			expect(sessionData.metadata.titleGenerated).toBe(true);
 
 			// Send second message
-			await agentSession!.handleMessageSend({
+			await sendMessageSync(agentSession!, {
 				content: 'What is 3+3?',
 			});
 
@@ -172,7 +173,7 @@ describe('Auto-Title Generation', () => {
 			expect(sessionData2.title).toBe(firstTitle);
 
 			// Send third message
-			await agentSession!.handleMessageSend({
+			await sendMessageSync(agentSession!, {
 				content: 'What is 5+5?',
 			});
 
@@ -207,7 +208,7 @@ describe('Auto-Title Generation', () => {
 			expect(sessionData.workspacePath).toBe(ctx.config.workspaceRoot);
 
 			// Send first message (title generation should happen after this)
-			await agentSession!.handleMessageSend({
+			await sendMessageSync(agentSession!, {
 				content: 'What is 1+1?',
 			});
 
@@ -237,7 +238,7 @@ describe('Auto-Title Generation', () => {
 			expect(agentSession).toBeDefined();
 
 			// Send first message with minimal content
-			await agentSession!.handleMessageSend({
+			await sendMessageSync(agentSession!, {
 				content: 'ok',
 			});
 
@@ -251,7 +252,7 @@ describe('Auto-Title Generation', () => {
 			expect(sessionData.metadata.titleGenerated).toBeBoolean();
 
 			// Send another message to verify session is still working
-			await agentSession!.handleMessageSend({
+			await sendMessageSync(agentSession!, {
 				content: 'What is 5+5?',
 			});
 

@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, test, beforeEach, afterEach, mock } from 'bun:test';
-import { AgentSession } from '../../src/lib/agent-session';
+import { AgentSession } from '../../src/lib/agent';
 import { Database } from '../../src/storage/database';
 import { EventBus } from '@liuboer/shared';
 import type { MessageHub, Session } from '@liuboer/shared';
@@ -14,6 +14,7 @@ import { generateUUID } from '@liuboer/shared';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { mkdirSync, rmSync } from 'fs';
+import { sendMessageSync } from '../helpers/test-message-sender';
 
 describe('Instant Message Persistence UX', () => {
 	let db: Database;
@@ -98,12 +99,12 @@ describe('Instant Message Persistence UX', () => {
 		}
 	});
 
-	test('persistAndQueueMessage saves to DB and publishes to UI immediately', async () => {
+	test('sendMessageSync saves to DB and publishes to UI immediately', async () => {
 		const messageContent = 'Test message for instant persistence';
 
 		// Measure time to persist
 		const startTime = Date.now();
-		const { messageId } = await agentSession.persistAndQueueMessage({
+		const { messageId } = await sendMessageSync(agentSession, {
 			content: messageContent,
 		});
 		const duration = Date.now() - startTime;
@@ -163,7 +164,7 @@ describe('Instant Message Persistence UX', () => {
 
 		// Send message
 		const startTime = Date.now();
-		await uninitializedAgentSession.persistAndQueueMessage({
+		await sendMessageSync(uninitializedAgentSession, {
 			content: 'Message before workspace init',
 		});
 		const persistDuration = Date.now() - startTime;
@@ -178,7 +179,7 @@ describe('Instant Message Persistence UX', () => {
 	});
 
 	test('messages with images are persisted correctly', async () => {
-		const { messageId } = await agentSession.persistAndQueueMessage({
+		const { messageId } = await sendMessageSync(agentSession, {
 			content: 'Message with image',
 			images: [
 				{

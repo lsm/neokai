@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { ContextFetcher } from '../context-fetcher';
+import { ContextFetcher } from '../agent/context-fetcher';
 
 describe('ContextFetcher', () => {
 	const fetcher = new ContextFetcher('test-session');

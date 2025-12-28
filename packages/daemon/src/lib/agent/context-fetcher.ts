@@ -15,7 +15,7 @@
 
 import type { ContextInfo, ContextCategoryBreakdown } from '@liuboer/shared';
 import type { SDKMessage } from '@liuboer/shared/sdk';
-import { Logger } from './logger';
+import { Logger } from '../logger';
 
 interface ParsedContextInfo {
 	model: string;

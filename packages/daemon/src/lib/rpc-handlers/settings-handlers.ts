@@ -29,13 +29,13 @@ export function registerSettingsHandlers(
 		'settings.global.update',
 		async (data: { updates: Partial<GlobalSettings> }) => {
 			const updated = settingsManager.updateGlobalSettings(data.updates);
-			// Emit event for StateManager to broadcast
-			eventBus.emit('settings:updated', { settings: updated });
+			// Emit event for StateManager to broadcast (global event)
+			eventBus.emit('settings:updated', { sessionId: 'global', settings: updated });
 
 			// SPECIAL CASE: If showArchived changed, also broadcast sessions change
 			// because the filtered session list needs to update
 			if ('showArchived' in data.updates) {
-				eventBus.emit('sessions:filter-changed', {});
+				eventBus.emit('sessions:filter-changed', { sessionId: 'global' });
 			}
 
 			return { success: true, settings: updated };
@@ -47,8 +47,8 @@ export function registerSettingsHandlers(
 	 */
 	messageHub.handle('settings.global.save', async (data: { settings: GlobalSettings }) => {
 		settingsManager.saveGlobalSettings(data.settings);
-		// Emit event for StateManager to broadcast
-		eventBus.emit('settings:updated', { settings: data.settings });
+		// Emit event for StateManager to broadcast (global event)
+		eventBus.emit('settings:updated', { sessionId: 'global', settings: data.settings });
 		return { success: true };
 	});
 
@@ -59,9 +59,9 @@ export function registerSettingsHandlers(
 		'settings.mcp.toggle',
 		async (data: { serverName: string; enabled: boolean }) => {
 			await settingsManager.toggleMcpServer(data.serverName, data.enabled);
-			// Emit event for StateManager to broadcast
+			// Emit event for StateManager to broadcast (global event)
 			const settings = settingsManager.getGlobalSettings();
-			eventBus.emit('settings:updated', { settings });
+			eventBus.emit('settings:updated', { sessionId: 'global', settings });
 			return { success: true };
 		}
 	);
@@ -80,9 +80,9 @@ export function registerSettingsHandlers(
 	 */
 	messageHub.handle('settings.mcp.setDisabled', async (data: { disabledServers: string[] }) => {
 		await settingsManager.setDisabledMcpServers(data.disabledServers);
-		// Emit event for StateManager to broadcast
+		// Emit event for StateManager to broadcast (global event)
 		const settings = settingsManager.getGlobalSettings();
-		eventBus.emit('settings:updated', { settings });
+		eventBus.emit('settings:updated', { sessionId: 'global', settings });
 		return { success: true };
 	});
 
@@ -133,9 +133,9 @@ export function registerSettingsHandlers(
 		'settings.mcp.updateServerSettings',
 		async (data: { serverName: string; settings: { allowed?: boolean; defaultOn?: boolean } }) => {
 			settingsManager.updateMcpServerSettings(data.serverName, data.settings);
-			// Emit event for StateManager to broadcast
+			// Emit event for StateManager to broadcast (global event)
 			const settings = settingsManager.getGlobalSettings();
-			eventBus.emit('settings:updated', { settings });
+			eventBus.emit('settings:updated', { sessionId: 'global', settings });
 			return { success: true };
 		}
 	);

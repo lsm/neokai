@@ -1,12 +1,15 @@
-import type { Session, WorktreeMetadata, MessageContent } from '@liuboer/shared';
+import type { Session, WorktreeMetadata, MessageContent, MessageImage } from '@liuboer/shared';
 import type { MessageHub, EventBus } from '@liuboer/shared';
 import { generateUUID } from '@liuboer/shared';
+import type { SDKUserMessage } from '@liuboer/shared/sdk';
+import type { UUID } from 'crypto';
 import { Database } from '../storage/database';
-import { AgentSession } from './agent-session';
+import { AgentSession } from './agent';
 import type { AuthManager } from './auth-manager';
 import type { SettingsManager } from './settings-manager';
 import { WorktreeManager } from './worktree-manager';
 import { Logger } from './logger';
+import { expandBuiltInCommand } from './built-in-commands';
 
 export class SessionManager {
 	private sessions: Map<string, AgentSession> = new Map();
@@ -43,88 +46,57 @@ export class SessionManager {
 
 	/**
 	 * Setup EventBus subscriptions for async message processing
-	 * ARCHITECTURE: Heavy operations are handled here instead of RPC handlers
+	 * ARCHITECTURE: EventBus-centric pattern - SessionManager handles message persistence
 	 */
 	private setupEventSubscriptions(): void {
-		// Handle user message persisted event - process heavy operations async
-		this.eventBus.on(
-			'user-message:persisted',
-			async (data: {
-				sessionId: string;
-				messageId: string;
-				messageContent: string | MessageContent[];
-				userMessageText: string;
-				needsWorkspaceInit: boolean;
-				hasDraftToClear: boolean;
-				skipQueryStart?: boolean;
-			}) => {
-				const {
-					sessionId,
-					messageId,
-					messageContent,
-					userMessageText,
-					needsWorkspaceInit,
-					hasDraftToClear,
-					skipQueryStart,
-				} = data;
+		// Subscribe to message send requests (from RPC handler)
+		// Handles message persistence: expand commands → build content → save DB → publish UI
+		this.eventBus.on('message:send:request', async (data) => {
+			// Session isolation: only handle events for sessions managed by this SessionManager
+			// Note: In current architecture, there's one SessionManager instance managing all sessions
+			// But we still check if session exists for safety
+			const { sessionId, messageId, content, images } = data;
+
+			this.logger.info(`[SessionManager] Processing message:send:request for session ${sessionId}`);
+
+			await this.handleMessagePersistence({ sessionId, messageId, content, images });
+		});
+
+		// Subscribe to message persisted events (for title generation + draft clearing)
+		// AgentSession also subscribes to this event for query feeding
+		this.eventBus.on('message:persisted', async (data) => {
+			const { sessionId, userMessageText, needsWorkspaceInit, hasDraftToClear } = data;
+
+			this.logger.info(`[SessionManager] Processing message:persisted for session ${sessionId}`);
+
+			try {
+				// STEP 1: Generate title and rename branch (if needed)
+				// Only run if workspace initialization is needed (first message)
+				if (needsWorkspaceInit) {
+					await this.generateTitleAndRenameBranch(sessionId, userMessageText).catch((error) => {
+						// Title generation failure is non-fatal
+						this.logger.error(`[SessionManager] Title generation failed:`, error);
+					});
+				}
+
+				// STEP 2: Clear draft if it matches the sent message content
+				if (hasDraftToClear) {
+					await this.updateSession(sessionId, {
+						metadata: { inputDraft: undefined },
+					} as Partial<Session>);
+				}
 
 				this.logger.info(
-					`[SessionManager] Processing user-message:persisted for session ${sessionId}`
+					`[SessionManager] Post-persistence processing complete for session ${sessionId}`
 				);
-
-				try {
-					const agentSession = await this.getSessionAsync(sessionId);
-					if (!agentSession) {
-						this.logger.error(
-							`[SessionManager] Session ${sessionId} not found for message processing`
-						);
-						return;
-					}
-
-					// SDK query and title generation can now run in PARALLEL
-					// because worktree is created during session creation with correct cwd
-
-					// STEP 1: Start SDK query (if not started) and enqueue message for processing
-					// Skip if caller will handle query start (e.g., handleMessageSend direct calls)
-					const sdkQueryPromise = skipQueryStart
-						? Promise.resolve()
-						: agentSession.startQueryAndEnqueue(messageId, messageContent);
-
-					// STEP 2: Generate title and rename branch (runs in parallel with SDK query)
-					// Only run if workspace initialization is needed (first message)
-					const titlePromise = needsWorkspaceInit
-						? this.generateTitleAndRenameBranch(sessionId, userMessageText).catch((error) => {
-								// Title generation failure is non-fatal
-								this.logger.error(`[SessionManager] Title generation failed:`, error);
-							})
-						: Promise.resolve();
-
-					// STEP 3: Clear draft if it matches the sent message content
-					if (hasDraftToClear) {
-						await this.updateSession(sessionId, {
-							metadata: { inputDraft: undefined },
-						} as Partial<Session>);
-					}
-
-					// Wait for SDK query to start (title gen can continue in background)
-					await sdkQueryPromise;
-
-					// Wait for title generation to complete (non-blocking for user)
-					await titlePromise;
-
-					this.logger.info(
-						`[SessionManager] Message ${messageId} processing initiated for session ${sessionId}`
-					);
-				} catch (error) {
-					this.logger.error(
-						`[SessionManager] Error processing message for session ${sessionId}:`,
-						error
-					);
-					// Errors are non-fatal - the user message is already persisted and visible
-					// The SDK query may retry or the user can send another message
-				}
+			} catch (error) {
+				this.logger.error(
+					`[SessionManager] Error in post-persistence processing for session ${sessionId}:`,
+					error
+				);
+				// Errors are non-fatal - the user message is already persisted and visible
 			}
-		);
+		});
 
 		this.logger.info('[SessionManager] EventBus subscriptions setup complete');
 	}
@@ -220,7 +192,7 @@ export class SessionManager {
 
 		// Emit event via EventBus (StateManager will handle publishing to MessageHub)
 		this.logger.info('[SessionManager] Emitting session:created event for session:', sessionId);
-		await this.eventBus.emit('session:created', { session });
+		await this.eventBus.emit('session:created', { sessionId, session });
 		this.logger.info('[SessionManager] Event emitted, returning sessionId:', sessionId);
 
 		return sessionId;
@@ -832,5 +804,116 @@ ${messageText.slice(0, 2000)}`,
 		const path = workspacePath || this.config.workspaceRoot;
 		this.logger.info(`[SessionManager] Cleaning up orphaned worktrees in ${path}`);
 		return await this.worktreeManager.cleanupOrphanedWorktrees(path);
+	}
+
+	/**
+	 * Handle message persistence (moved from AgentSession.persistUserMessage)
+	 * ARCHITECTURE: EventBus-centric - SessionManager owns message persistence logic
+	 *
+	 * Responsibilities:
+	 * 1. Expand built-in commands
+	 * 2. Build message content (text + images)
+	 * 3. Create SDK user message
+	 * 4. Save to database
+	 * 5. Publish to UI via state channel
+	 * 6. Emit 'message:persisted' event for downstream processing
+	 */
+	private async handleMessagePersistence(data: {
+		sessionId: string;
+		messageId: string;
+		content: string;
+		images?: MessageImage[];
+	}): Promise<void> {
+		const { sessionId, messageId, content, images } = data;
+
+		const agentSession = await this.getSessionAsync(sessionId);
+		if (!agentSession) {
+			this.logger.error(`[SessionManager] Session ${sessionId} not found for message persistence`);
+			return;
+		}
+
+		const session = agentSession.getSessionData();
+
+		try {
+			// 1. Expand built-in commands (e.g., /merge-session → full prompt)
+			const expandedContent = expandBuiltInCommand(content);
+			const finalContent = expandedContent || content;
+
+			if (expandedContent) {
+				this.logger.info(`[SessionManager] Expanding built-in command: ${content.trim()}`);
+			}
+
+			// 2. Build message content (text + images)
+			const messageContent = this.buildMessageContent(finalContent, images);
+
+			// 3. Create SDK user message
+			const sdkUserMessage: SDKUserMessage = {
+				type: 'user' as const,
+				uuid: messageId as UUID,
+				session_id: sessionId,
+				parent_tool_use_id: null,
+				message: {
+					role: 'user' as const,
+					content:
+						typeof messageContent === 'string'
+							? [{ type: 'text' as const, text: messageContent }]
+							: messageContent,
+				},
+			};
+
+			// 4. Save to database
+			this.db.saveSDKMessage(sessionId, sdkUserMessage);
+
+			// 5. Publish to UI (fire-and-forget)
+			this.messageHub
+				.publish(
+					'state.sdkMessages.delta',
+					{ added: [sdkUserMessage], timestamp: Date.now() },
+					{ sessionId }
+				)
+				.catch((err) => {
+					this.logger.error('[SessionManager] Error publishing message to UI:', err);
+				});
+
+			this.logger.info(`[SessionManager] User message ${messageId} persisted and published to UI`);
+
+			// 6. Emit 'message:persisted' event for downstream processing
+			// AgentSession will start query and enqueue message
+			// SessionManager will handle title generation and draft clearing
+			await this.eventBus.emit('message:persisted', {
+				sessionId,
+				messageId,
+				messageContent,
+				userMessageText: content, // Original content (before expansion)
+				needsWorkspaceInit: !session.metadata.titleGenerated,
+				hasDraftToClear: session.metadata?.inputDraft === content.trim(),
+			});
+		} catch (error) {
+			this.logger.error('[SessionManager] Error persisting message:', error);
+			throw error;
+		}
+	}
+
+	/**
+	 * Build message content from text and optional images
+	 */
+	private buildMessageContent(content: string, images?: MessageImage[]): string | MessageContent[] {
+		if (!images || images.length === 0) {
+			return content;
+		}
+
+		// Multi-modal message: array of content blocks
+		// Images first, then text (SDK format)
+		return [
+			{ type: 'text' as const, text: content },
+			...images.map((img) => ({
+				type: 'image' as const,
+				source: {
+					type: 'base64' as const,
+					media_type: img.media_type,
+					data: img.data,
+				},
+			})),
+		];
 	}
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
-import { ApiErrorCircuitBreaker } from '../api-error-circuit-breaker';
+import { ApiErrorCircuitBreaker } from '../agent/api-error-circuit-breaker';
 
 describe('ApiErrorCircuitBreaker', () => {
 	let circuitBreaker: ApiErrorCircuitBreaker;
@@ -102,6 +102,41 @@ describe('ApiErrorCircuitBreaker', () => {
 			const tripped = await circuitBreaker.checkMessage(message);
 
 			expect(tripped).toBe(true);
+		});
+
+		it('should detect connection errors', async () => {
+			const message = {
+				type: 'user',
+				message: {
+					content: '<local-command-stderr>Error: Connection error.</local-command-stderr>',
+				},
+			};
+
+			// Send 3 errors to trip
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
+			const tripped = await circuitBreaker.checkMessage(message);
+
+			expect(tripped).toBe(true);
+			expect(circuitBreaker.isTripped()).toBe(true);
+		});
+
+		it('should provide connection error message', async () => {
+			const message = {
+				type: 'user',
+				message: {
+					content: '<local-command-stderr>Error: Connection error.</local-command-stderr>',
+				},
+			};
+
+			// Trip the circuit breaker
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
+
+			const tripMessage = circuitBreaker.getTripMessage();
+			expect(tripMessage).toContain('Connection error detected repeatedly');
+			expect(tripMessage).toContain('Network connectivity issues');
 		});
 	});
 

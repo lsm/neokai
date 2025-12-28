@@ -23,6 +23,7 @@ import { join } from 'node:path';
 import type { TestContext } from '../test-utils';
 import { createTestApp, hasAnyCredentials } from '../test-utils';
 import { Database } from '../../src/storage/database';
+import { sendMessageSync } from '../helpers/test-message-sender';
 
 /**
  * Helper: Wait for agent session to return to idle state
@@ -319,7 +320,7 @@ describe('Message Persistence Bug Fix', () => {
 				expect(agentSession).toBeDefined();
 
 				// Send a message to the real SDK
-				const result = await agentSession!.handleMessageSend({
+				const result = await sendMessageSync(agentSession!, {
 					content: 'What is 2+2? Answer with just the number.',
 				});
 
@@ -362,7 +363,7 @@ describe('Message Persistence Bug Fix', () => {
 				expect(agentSession).toBeDefined();
 
 				// Send a message
-				await agentSession!.handleMessageSend({
+				await sendMessageSync(agentSession!, {
 					content: 'Count from 1 to 100 slowly.',
 				});
 

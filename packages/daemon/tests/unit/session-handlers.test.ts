@@ -166,7 +166,8 @@ describe('Session RPC Handlers', () => {
 			const response = await responsePromise;
 
 			expect(response.type).toBe('RESULT');
-			expect(response.data.success).toBe(true);
+			// EventBus-centric: RPC returns accepted, actual result via EventBus
+			expect(response.data.accepted).toBe(true);
 
 			ws.close();
 		});
@@ -264,7 +265,8 @@ describe('Session RPC Handlers', () => {
 			ws.close();
 		});
 
-		test('should return error for invalid model', async () => {
+		test('should accept model switch request for invalid model', async () => {
+			// EventBus-centric: RPC accepts request, validation happens async via EventBus
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: '/test/model-switch',
 			});
@@ -293,13 +295,14 @@ describe('Session RPC Handlers', () => {
 			const response = await responsePromise;
 
 			expect(response.type).toBe('RESULT');
-			expect(response.data.success).toBe(false);
-			expect(response.data.error).toContain('Invalid model');
+			// EventBus-centric: RPC returns accepted, error emitted via model:switched event
+			expect(response.data.accepted).toBe(true);
 
 			ws.close();
 		});
 
-		test('should indicate already using model if same model', async () => {
+		test('should accept model switch request for same model', async () => {
+			// EventBus-centric: RPC accepts request, "already using" result emitted via model:switched event
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: '/test/model-switch',
 			});
@@ -345,8 +348,8 @@ describe('Session RPC Handlers', () => {
 			const response = await switchPromise;
 
 			expect(response.type).toBe('RESULT');
-			expect(response.data.success).toBe(true);
-			expect(response.data.error).toContain('Already using');
+			// EventBus-centric: RPC returns accepted, "already using" result via model:switched event
+			expect(response.data.accepted).toBe(true);
 
 			ws.close();
 		});
@@ -565,7 +568,8 @@ describe('Session RPC Handlers', () => {
 			ws.close();
 		});
 
-		test('should reset agent query for existing session', async () => {
+		test('should accept reset query request for existing session', async () => {
+			// EventBus-centric: RPC accepts request, reset happens async via EventBus
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: '/test/reset-query',
 			});
@@ -591,13 +595,14 @@ describe('Session RPC Handlers', () => {
 			const response = await responsePromise;
 
 			expect(response.type).toBe('RESULT');
-			expect(response.data.success).toBe(true);
-			expect(response.data.error).toBeUndefined();
+			// EventBus-centric: RPC returns accepted, result via agent:reset event
+			expect(response.data.accepted).toBe(true);
 
 			ws.close();
 		});
 
-		test('should reset without restarting query when restartQuery=false', async () => {
+		test('should accept reset request without restarting query when restartQuery=false', async () => {
+			// EventBus-centric: RPC accepts request, reset happens async via EventBus
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: '/test/reset-no-restart',
 			});
@@ -623,12 +628,14 @@ describe('Session RPC Handlers', () => {
 			const response = await responsePromise;
 
 			expect(response.type).toBe('RESULT');
-			expect(response.data.success).toBe(true);
+			// EventBus-centric: RPC returns accepted
+			expect(response.data.accepted).toBe(true);
 
 			ws.close();
 		});
 
 		test('should reset agent state to idle after reset', async () => {
+			// EventBus-centric: Wait for reset to complete before checking state
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: '/test/reset-state',
 			});
@@ -654,7 +661,11 @@ describe('Session RPC Handlers', () => {
 
 			const resetResponse = await resetPromise;
 			expect(resetResponse.type).toBe('RESULT');
-			expect(resetResponse.data.success).toBe(true);
+			// EventBus-centric: RPC returns accepted
+			expect(resetResponse.data.accepted).toBe(true);
+
+			// Wait a bit for async reset to complete
+			await Bun.sleep(100);
 
 			// Verify state is idle
 			const statePromise = waitForWebSocketMessage(ws);

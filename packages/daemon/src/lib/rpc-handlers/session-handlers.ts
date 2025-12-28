@@ -8,6 +8,7 @@
  */
 
 import type { MessageHub, MessageImage, Session, EventBus } from '@liuboer/shared';
+import { generateUUID } from '@liuboer/shared';
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@liuboer/shared';
 import { clearModelsCache } from '../model-service';
@@ -157,7 +158,8 @@ export function setupSessionHandlers(
 	});
 
 	// Handle message sending to a session
-	// ARCHITECTURE: Fast RPC handler - defers heavy work to EventBus
+	// ARCHITECTURE: Fast RPC handler - emits event, returns immediately
+	// EventBus-centric pattern: RPC → emit event → SessionManager handles persistence
 	messageHub.handle('message.send', async (data) => {
 		const {
 			sessionId: targetSessionId,
@@ -169,54 +171,50 @@ export function setupSessionHandlers(
 			images?: MessageImage[];
 		};
 
+		// Verify session exists before emitting event
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
 		if (!agentSession) {
 			throw new Error('Session not found');
 		}
 
-		const session = agentSession.getSessionData();
+		// Generate messageId immediately for return
+		const messageId = generateUUID();
 
-		// STEP 1: Persist user message and publish to UI IMMEDIATELY (instant UX)
-		// User sees their message instantly (<10ms) before any blocking operations
-		const { messageId, messageContent } = await agentSession.persistUserMessage({
-			content,
-			images,
-		});
-
-		// STEP 2: Emit event for async processing (truly non-blocking fire-and-forget)
-		// Heavy operations (title gen, branch rename, SDK query, draft clearing) handled by EventBus subscriber
-		// DO NOT await - this ensures RPC returns quickly (<100ms) and avoids timeout issues
-		// Title generation alone can take 15+ seconds if SDK is slow
-		// NOTE: Workspace (worktree) is already created during session creation
+		// Fire-and-forget: emit event, SessionManager handles persistence
+		// All heavy operations (message persistence, title gen, SDK query) handled by EventBus subscribers
 		eventBus
-			.emit('user-message:persisted', {
+			.emit('message:send:request', {
 				sessionId: targetSessionId,
 				messageId,
-				messageContent,
-				userMessageText: content,
-				needsWorkspaceInit: !session.metadata.titleGenerated, // Triggers title gen on first message
-				hasDraftToClear: session.metadata?.inputDraft === content.trim(),
+				content,
+				images,
 			})
 			.catch((err) => {
-				console.error('[message.send] Error in async message processing:', err);
+				console.error('[message.send] Error emitting message send event:', err);
 			});
 
-		// STEP 3: Return immediately with messageId
+		// Return immediately with messageId
 		// Client gets instant feedback, heavy processing continues async
 		return { messageId };
 	});
 
 	// Handle session interruption
+	// ARCHITECTURE: Fire-and-forget via EventBus, AgentSession subscribes
 	messageHub.handle('client.interrupt', async (data) => {
 		const { sessionId: targetSessionId } = data as { sessionId: string };
 
+		// Verify session exists before emitting event
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
 		if (!agentSession) {
 			throw new Error('Session not found');
 		}
 
-		await agentSession.handleInterrupt();
-		return { success: true };
+		// Fire-and-forget: emit event, AgentSession handles it
+		eventBus.emit('agent:interrupt:request', { sessionId: targetSessionId }).catch((err) => {
+			console.error('[client.interrupt] Error emitting interrupt event:', err);
+		});
+
+		return { accepted: true };
 	});
 
 	// Handle getting current model information
@@ -242,29 +240,26 @@ export function setupSessionHandlers(
 	});
 
 	// Handle model switching
+	// ARCHITECTURE: Fire-and-forget via EventBus, AgentSession subscribes
 	messageHub.handle('session.model.switch', async (data) => {
 		const { sessionId: targetSessionId, model } = data as {
 			sessionId: string;
 			model: string;
 		};
 
+		// Verify session exists before emitting event
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
 		if (!agentSession) {
 			throw new Error('Session not found');
 		}
 
-		const result = await agentSession.handleModelSwitch(model);
+		// Fire-and-forget: emit event, AgentSession handles it
+		// Model switch result is broadcast via 'model:switched' event → StateManager → clients
+		eventBus.emit('model:switch:request', { sessionId: targetSessionId, model }).catch((err) => {
+			console.error('[session.model.switch] Error emitting model switch event:', err);
+		});
 
-		// If successful, broadcast the model switch event
-		if (result.success) {
-			await messageHub.publish(
-				'session.updated',
-				{ model: result.model },
-				{ sessionId: targetSessionId }
-			);
-		}
-
-		return result;
+		return { accepted: true };
 	});
 
 	// Handle thinking level changes
@@ -374,28 +369,27 @@ export function setupSessionHandlers(
 	// Handle resetting the SDK agent query
 	// This forcefully terminates and restarts the SDK query stream
 	// Use case: Recovering from stuck "queued" state or unresponsive SDK
+	// ARCHITECTURE: Fire-and-forget via EventBus, AgentSession subscribes
 	messageHub.handle('session.resetQuery', async (data) => {
 		const { sessionId: targetSessionId, restartQuery = true } = data as {
 			sessionId: string;
 			restartQuery?: boolean;
 		};
 
+		// Verify session exists before emitting event
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
 		if (!agentSession) {
 			throw new Error('Session not found');
 		}
 
-		const result = await agentSession.resetQuery({ restartQuery });
+		// Fire-and-forget: emit event, AgentSession handles it
+		// Reset result is broadcast via 'agent:reset' event → StateManager → clients
+		eventBus
+			.emit('agent:reset:request', { sessionId: targetSessionId, restartQuery })
+			.catch((err) => {
+				console.error('[session.resetQuery] Error emitting reset event:', err);
+			});
 
-		if (result.success) {
-			// Notify all clients about the reset
-			await messageHub.publish(
-				'session.reset',
-				{ message: 'Agent has been reset successfully' },
-				{ sessionId: targetSessionId }
-			);
-		}
-
-		return result;
+		return { accepted: true };
 	});
 }
