@@ -16,13 +16,10 @@ import {
 	callRPCHandler,
 	hasAnyCredentials,
 	type TestContext,
-} from '../../../test-utils';
+} from '../../test-utils';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import type { Session } from '@liuboer/shared';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 describe.skipIf(!hasAnyCredentials())('MCP Tools Toggle Integration', () => {
 	let ctx: TestContext;
