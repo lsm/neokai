@@ -66,8 +66,14 @@ describe('message.send EventBus Integration', () => {
 	});
 
 	afterEach(async () => {
-		// Cleanup
+		// Cleanup session resources (interrupts SDK queries)
 		await sessionManager.cleanup();
+
+		// Wait for async operations to complete after interrupt
+		// This prevents "Cannot use a closed database" errors
+		await new Promise((resolve) => setTimeout(resolve, 100));
+
+		// Now safe to close database
 		db.close();
 		eventBus.clear();
 

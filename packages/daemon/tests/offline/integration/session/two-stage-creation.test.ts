@@ -77,13 +77,18 @@ describe('Session Creation and Title Generation', () => {
 	});
 
 	afterEach(async () => {
-		// Cleanup
+		// Cleanup session resources (interrupts SDK queries)
 		try {
 			await sessionManager.cleanup();
 		} catch {
 			// Ignore cleanup errors
 		}
 
+		// Wait for async operations to complete after interrupt
+		// This prevents "Cannot use a closed database" errors
+		await new Promise((resolve) => setTimeout(resolve, 100));
+
+		// Now safe to close database
 		try {
 			db.close();
 		} catch {
