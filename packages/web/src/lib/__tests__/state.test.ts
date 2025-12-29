@@ -45,17 +45,8 @@ mock.module('@liuboer/shared', () => ({
 	},
 }));
 
-// Mock globalStore module
-mock.module('../global-store', () => ({
-	globalStore: {
-		sessions: signal([]),
-		systemState: signal(null),
-		settings: signal(null),
-		addSession: mock(() => {}),
-		removeSession: mock(() => {}),
-		updateSession: mock(() => {}),
-	},
-}));
+// Note: We don't mock global-store because it affects other tests via mock.module's global scope
+// The tests that need globalStore should set up their own mocks via spyOn or constructor injection
 
 // Import after mocking
 import { appState, initializeApplicationState, mergeSdkMessagesWithDedup } from '../state';
