@@ -8,12 +8,17 @@
  * - Data synchronization after background period
  */
 
-import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, mock, spyOn } from 'bun:test';
 import { ConnectionManager } from '../connection-manager';
 import { GlobalStore } from '../global-store';
 import { connectionManager } from '../connection-manager';
 import { StateChannel } from '../state-channel';
 import type { MessageHub } from '@liuboer/shared';
+
+// Restore any mocks from other test files to prevent pollution
+beforeAll(() => {
+	mock.restore();
+});
 
 describe('Safari Background Tab - Integration Tests', () => {
 	describe('StateChannel Reconnection Behavior', () => {

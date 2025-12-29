@@ -4,7 +4,7 @@
  * Tests the non-blocking access patterns and event-driven connection handling.
  */
 
-import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { ConnectionManager } from '../connection-manager';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from '../errors';
 
@@ -215,6 +215,11 @@ describe('ConnectionManager', () => {
 
 			expect(connectionManager.isConnected()).toBe(true);
 		});
+	});
+
+	// Restore mocks after all tests to prevent leakage to other test files
+	afterAll(() => {
+		mock.restore();
 	});
 
 	describe('disconnect', () => {
