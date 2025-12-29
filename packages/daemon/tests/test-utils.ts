@@ -179,7 +179,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 
 	// Create Bun server with native WebSocket support
 	const server = Bun.serve({
-		hostname: 'localhost',
+		hostname: '127.0.0.1', // Use IP instead of hostname for better CI compatibility
 		port: 0, // OS assigns free port
 
 		fetch(req, server) {
@@ -281,7 +281,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 	await Bun.sleep(100);
 
 	const port = server.port;
-	const baseUrl = `http://localhost:${port}`;
+	const baseUrl = `http://127.0.0.1:${port}`;
 
 	// Verify server is ready with retry loop (longer timeouts for CI)
 	let retries = 20; // More retries for CI environments
