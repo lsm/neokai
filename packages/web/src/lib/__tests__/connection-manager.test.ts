@@ -8,6 +8,9 @@ import { describe, it, expect, mock, beforeEach, afterEach, afterAll } from 'bun
 import { ConnectionManager } from '../connection-manager';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from '../errors';
 
+// Import the original module to re-export unchanged items
+import * as originalShared from '@liuboer/shared';
+
 // Mock the imports
 const mockMessageHub = {
 	isConnected: mock(() => false),
@@ -22,8 +25,12 @@ const mockTransport = {
 	close: mock(() => {}),
 };
 
-// Mock the modules
+// Mock the modules - IMPORTANT: Re-export all original exports to avoid breaking other tests
+// Only override MessageHub and WebSocketClientTransport
 mock.module('@liuboer/shared', () => ({
+	// Re-export everything from the original module
+	...originalShared,
+	// Override only the classes we need to mock
 	MessageHub: class MockMessageHub {
 		isConnected = mockMessageHub.isConnected;
 		onConnection = mockMessageHub.onConnection;
