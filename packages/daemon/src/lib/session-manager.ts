@@ -19,6 +19,7 @@ export class SessionManager {
 	private debug: boolean;
 	private worktreeManager: WorktreeManager;
 	private logger: Logger;
+	private eventBusUnsubscribers: Array<() => void> = [];
 
 	constructor(
 		private db: Database,
@@ -51,7 +52,7 @@ export class SessionManager {
 	private setupEventSubscriptions(): void {
 		// Subscribe to message send requests (from RPC handler)
 		// Handles message persistence: expand commands → build content → save DB → publish UI
-		this.eventBus.on('message:send:request', async (data) => {
+		const unsubMessageSendRequest = this.eventBus.on('message:send:request', async (data) => {
 			// Session isolation: only handle events for sessions managed by this SessionManager
 			// Note: In current architecture, there's one SessionManager instance managing all sessions
 			// But we still check if session exists for safety
@@ -61,10 +62,11 @@ export class SessionManager {
 
 			await this.handleMessagePersistence({ sessionId, messageId, content, images });
 		});
+		this.eventBusUnsubscribers.push(unsubMessageSendRequest);
 
 		// Subscribe to message persisted events (for title generation + draft clearing)
 		// AgentSession also subscribes to this event for query feeding
-		this.eventBus.on('message:persisted', async (data) => {
+		const unsubMessagePersisted = this.eventBus.on('message:persisted', async (data) => {
 			const { sessionId, userMessageText, needsWorkspaceInit, hasDraftToClear } = data;
 
 			this.logger.info(`[SessionManager] Processing message:persisted for session ${sessionId}`);
@@ -97,6 +99,7 @@ export class SessionManager {
 				// Errors are non-fatal - the user message is already persisted and visible
 			}
 		});
+		this.eventBusUnsubscribers.push(unsubMessagePersisted);
 
 		this.logger.info('[SessionManager] EventBus subscriptions setup complete');
 	}
@@ -782,14 +785,32 @@ ${messageText.slice(0, 2000)}`,
 	async cleanup(): Promise<void> {
 		this.logger.info(`[SessionManager] Cleaning up ${this.sessions.size} active sessions...`);
 
-		// Cleanup all in-memory sessions
-		for (const [sessionId, agentSession] of this.sessions) {
+		// STEP 1: Unsubscribe from EventBus FIRST
+		// This prevents new events from being processed during cleanup
+		for (const unsubscribe of this.eventBusUnsubscribers) {
 			try {
-				agentSession.cleanup();
+				unsubscribe();
 			} catch (error) {
-				this.logger.error(`[SessionManager] Error cleaning up session ${sessionId}:`, error);
+				this.logger.error(`[SessionManager] Error during EventBus unsubscribe:`, error);
 			}
 		}
+		this.eventBusUnsubscribers = [];
+		this.logger.info(`[SessionManager] EventBus subscriptions removed`);
+
+		// STEP 2: Cleanup all in-memory sessions in parallel
+		// CRITICAL: Must await cleanup() to ensure SDK queries are fully stopped
+		// before database is closed. Each cleanup() has a 5s timeout for the SDK query.
+		const cleanupPromises: Promise<void>[] = [];
+		for (const [sessionId, agentSession] of this.sessions) {
+			cleanupPromises.push(
+				agentSession.cleanup().catch((error) => {
+					this.logger.error(`[SessionManager] Error cleaning up session ${sessionId}:`, error);
+				})
+			);
+		}
+
+		// Wait for all cleanups to complete
+		await Promise.all(cleanupPromises);
 
 		// Clear session map
 		this.sessions.clear();

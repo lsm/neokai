@@ -339,12 +339,9 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 		workspacePath: config.workspaceRoot,
 		config,
 		cleanup: async () => {
-			// Cleanup session resources (interrupts SDK queries)
+			// Cleanup session resources (interrupts SDK queries and waits for them to stop)
+			// SessionManager.cleanup() now properly awaits all AgentSession.cleanup() calls
 			await sessionManager.cleanup();
-
-			// Wait for SDK queries to gracefully stop after interrupt
-			// This prevents "Cannot use a closed database" errors in CI
-			await Bun.sleep(100);
 
 			// Now cleanup MessageHub (removes RPC handlers)
 			messageHub.cleanup();
