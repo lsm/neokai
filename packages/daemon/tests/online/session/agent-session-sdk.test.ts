@@ -18,14 +18,14 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import type { TestContext } from '../test-utils';
+import type { TestContext } from '../../test-utils';
 import {
 	createTestApp,
 	createWebSocketWithFirstMessage,
 	waitForWebSocketState,
 	waitForWebSocketMessage,
-} from '../test-utils';
-import { sendMessageSync } from '../helpers/test-message-sender';
+} from '../../test-utils';
+import { sendMessageSync } from '../../helpers/test-message-sender';
 
 /**
  * CRITICAL: Restore any mocks before running these tests.

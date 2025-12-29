@@ -25,10 +25,10 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import type { TestContext } from '../test-utils';
-import { createTestApp } from '../test-utils';
-import { Database } from '../../src/storage/database';
-import { sendMessageSync } from '../helpers/test-message-sender';
+import type { TestContext } from '../../test-utils';
+import { createTestApp } from '../../test-utils';
+import { Database } from '../../../src/storage/database';
+import { sendMessageSync } from '../../helpers/test-message-sender';
 
 /**
  * Helper: Wait for agent session to return to idle state

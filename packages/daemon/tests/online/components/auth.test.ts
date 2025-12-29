@@ -11,8 +11,8 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import type { TestContext } from '../test-utils';
-import { createTestApp, callRPCHandler } from '../test-utils';
+import type { TestContext } from '../../test-utils';
+import { createTestApp, callRPCHandler } from '../../test-utils';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';

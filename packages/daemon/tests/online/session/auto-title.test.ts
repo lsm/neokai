@@ -16,9 +16,9 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import type { TestContext } from '../test-utils';
-import { createTestApp } from '../test-utils';
-import { sendMessageSync } from '../helpers/test-message-sender';
+import type { TestContext } from '../../test-utils';
+import { createTestApp } from '../../test-utils';
+import { sendMessageSync } from '../../helpers/test-message-sender';
 
 describe('Auto-Title Generation', () => {
 	let ctx: TestContext;
