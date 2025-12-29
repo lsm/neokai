@@ -375,7 +375,7 @@ jobs:
 
       - name: Run online tests (session)
         working-directory: packages/daemon
-        run: bun test tests/online/session --exclude sdk-streaming-failures.test.ts
+        run: bun test tests/online/session/agent-session-sdk.test.ts tests/online/session/message-persistence.test.ts tests/online/session/session-resume.test.ts
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
