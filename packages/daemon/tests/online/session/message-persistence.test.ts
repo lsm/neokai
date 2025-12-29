@@ -332,8 +332,22 @@ describe('Message Persistence Bug Fix', () => {
 			// Wait for processing to complete
 			await waitForIdle(agentSession!);
 
+			// Poll for messages to be persisted to DB
+			// On fast CI machines, DB writes may complete slightly after waitForIdle returns
+			let dbMessages: ReturnType<typeof ctx.db.getSDKMessages> = [];
+			let assistantMessage: (typeof dbMessages)[number] | undefined;
+			const pollTimeout = 5000;
+			const pollStart = Date.now();
+			while (Date.now() - pollStart < pollTimeout) {
+				dbMessages = ctx.db.getSDKMessages(sessionId);
+				assistantMessage = dbMessages.find((msg) => msg.type === 'assistant');
+				if (assistantMessage) {
+					break;
+				}
+				await Bun.sleep(100);
+			}
+
 			// Check messages were persisted to DB
-			const dbMessages = ctx.db.getSDKMessages(sessionId);
 			expect(dbMessages.length).toBeGreaterThan(0);
 
 			// Verify user message is saved
@@ -341,7 +355,6 @@ describe('Message Persistence Bug Fix', () => {
 			expect(userMessage).toBeDefined();
 
 			// Verify assistant response is saved
-			const assistantMessage = dbMessages.find((msg) => msg.type === 'assistant');
 			expect(assistantMessage).toBeDefined();
 
 			// Simulate page refresh - reload session and check messages still there

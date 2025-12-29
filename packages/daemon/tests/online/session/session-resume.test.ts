@@ -72,8 +72,19 @@ describe('Session Resume (API-dependent)', () => {
 		// Wait for SDK to process and return to idle
 		await waitForIdle(agentSession!);
 
+		// Poll for SDK session ID to be captured (it's set asynchronously from SDK messages)
+		// On fast CI machines, we may need to wait a bit for the DB update to complete
+		const timeout = 5000;
+		const start = Date.now();
+		while (Date.now() - start < timeout) {
+			session = ctx.db.getSession(sessionId);
+			if (session?.sdkSessionId) {
+				break;
+			}
+			await Bun.sleep(100);
+		}
+
 		// Now check for SDK session ID - it should be captured after SDK responds
-		session = ctx.db.getSession(sessionId);
 		expect(session?.sdkSessionId).toBeDefined();
 		expect(typeof session?.sdkSessionId).toBe('string');
 	}, 30000);
