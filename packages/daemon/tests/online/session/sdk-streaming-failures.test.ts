@@ -23,6 +23,7 @@ import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import type { TestContext } from '../../test-utils';
 import { createTestApp } from '../../test-utils';
 import { sendMessageSync } from '../../helpers/test-message-sender';
+import { agent } from '@anthropic-ai/agent-sdk';
 
 describe('SDK Streaming CI Failures', () => {
 	let ctx: TestContext;
@@ -54,6 +55,48 @@ describe('SDK Streaming CI Failures', () => {
 		}
 		throw new Error(`Timeout waiting for idle state after ${timeoutMs}ms`);
 	}
+
+	describe('Direct SDK Call with Bypass Permissions', () => {
+		test('should call SDK directly with bypass permissions', async () => {
+			console.log('[DIRECT SDK TEST] Starting direct SDK call test');
+
+			// Call SDK agent directly with minimal configuration
+			// This bypasses all our infrastructure to isolate the SDK subprocess issue
+			const agentInstance = agent({
+				model: 'claude-sonnet-4-5-20250929',
+				cwd: process.cwd(),
+				permissionMode: 'bypassPermissions',
+				allowDangerouslySkipPermissions: true,
+				settingSources: [], // Empty to match test environment
+				systemPrompt: undefined, // No system prompt to match test environment
+				mcpServers: {}, // Disable MCP to match test environment
+			});
+
+			console.log('[DIRECT SDK TEST] Agent instance created');
+
+			try {
+				// Simple ask query (NOT streaming AsyncGenerator)
+				console.log('[DIRECT SDK TEST] Calling agent.ask()');
+				const response = await agentInstance.ask('What is 1+1? Answer with just the number.');
+
+				console.log('[DIRECT SDK TEST] Response received:', response);
+				console.log('[DIRECT SDK TEST] Response type:', typeof response);
+				console.log('[DIRECT SDK TEST] Response length:', response.length);
+
+				// Verify we got a response
+				expect(response).toBeDefined();
+				expect(typeof response).toBe('string');
+				expect(response.length).toBeGreaterThan(0);
+
+				console.log('[DIRECT SDK TEST] Test passed - SDK works with bypass permissions');
+			} catch (error) {
+				console.error('[DIRECT SDK TEST] SDK call failed:', error);
+				console.error('[DIRECT SDK TEST] Error message:', (error as Error).message);
+				console.error('[DIRECT SDK TEST] Error stack:', (error as Error).stack);
+				throw error;
+			}
+		}, 20000);
+	});
 
 	describe('Session Resume', () => {
 		test('should capture SDK session ID on first message', async () => {
