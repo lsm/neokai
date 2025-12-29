@@ -21,6 +21,10 @@ export class SessionManager {
 	private logger: Logger;
 	private eventBusUnsubscribers: Array<() => void> = [];
 
+	// Track pending background tasks (like title generation) for cleanup
+	// These are fire-and-forget operations that must complete before DB closes
+	private pendingBackgroundTasks: Set<Promise<unknown>> = new Set();
+
 	constructor(
 		private db: Database,
 		private messageHub: MessageHub,
@@ -74,11 +78,24 @@ export class SessionManager {
 			try {
 				// STEP 1: Generate title and rename branch (if needed)
 				// Only run if workspace initialization is needed (first message)
+				// CRITICAL: Track this as a background task for cleanup
+				// The RPC handler fires this event as fire-and-forget, so we must track
+				// the promise to ensure DB isn't closed before title generation completes
 				if (needsWorkspaceInit) {
-					await this.generateTitleAndRenameBranch(sessionId, userMessageText).catch((error) => {
-						// Title generation failure is non-fatal
-						this.logger.error(`[SessionManager] Title generation failed:`, error);
+					const titleGenTask = this.generateTitleAndRenameBranch(sessionId, userMessageText).catch(
+						(error) => {
+							// Title generation failure is non-fatal
+							this.logger.error(`[SessionManager] Title generation failed:`, error);
+						}
+					);
+
+					// Track task for cleanup
+					this.pendingBackgroundTasks.add(titleGenTask);
+					titleGenTask.finally(() => {
+						this.pendingBackgroundTasks.delete(titleGenTask);
 					});
+
+					await titleGenTask;
 				}
 
 				// STEP 2: Clear draft if it matches the sent message content
@@ -797,7 +814,21 @@ ${messageText.slice(0, 2000)}`,
 		this.eventBusUnsubscribers = [];
 		this.logger.info(`[SessionManager] EventBus subscriptions removed`);
 
-		// STEP 2: Cleanup all in-memory sessions in parallel
+		// STEP 2: Wait for pending background tasks (like title generation)
+		// These are fire-and-forget operations from EventBus handlers that may still be running
+		// We must wait for them to complete before closing the database
+		if (this.pendingBackgroundTasks.size > 0) {
+			this.logger.info(
+				`[SessionManager] Waiting for ${this.pendingBackgroundTasks.size} pending background tasks...`
+			);
+			await Promise.all(Array.from(this.pendingBackgroundTasks)).catch((error) => {
+				this.logger.error(`[SessionManager] Error waiting for background tasks:`, error);
+			});
+			this.pendingBackgroundTasks.clear();
+			this.logger.info(`[SessionManager] Background tasks completed`);
+		}
+
+		// STEP 3: Cleanup all in-memory sessions in parallel
 		// CRITICAL: Must await cleanup() to ensure SDK queries are fully stopped
 		// before database is closed. Each cleanup() has a 5s timeout for the SDK query.
 		const cleanupPromises: Promise<void>[] = [];
