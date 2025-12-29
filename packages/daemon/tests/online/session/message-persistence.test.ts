@@ -30,25 +30,6 @@ import { createTestApp } from '../../test-utils';
 import { Database } from '../../../src/storage/database';
 import { sendMessageSync } from '../../helpers/test-message-sender';
 
-/**
- * Helper: Wait for agent session to return to idle state
- * Polls the processing state until it's idle or timeout
- */
-async function waitForIdle(
-	agentSession: NonNullable<Awaited<ReturnType<typeof ctx.sessionManager.getSessionAsync>>>,
-	timeoutMs = 15000 // 15s is sufficient for SDK init + API call
-): Promise<void> {
-	const startTime = Date.now();
-	while (Date.now() - startTime < timeoutMs) {
-		const state = agentSession.getProcessingState();
-		if (state.status === 'idle') {
-			return;
-		}
-		await Bun.sleep(100); // Poll every 100ms
-	}
-	throw new Error(`Timeout waiting for idle state after ${timeoutMs}ms`);
-}
-
 // Use temp directory for test database
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
@@ -313,72 +294,8 @@ describe('Message Persistence Bug Fix', () => {
 	});
 
 	describe('Real SDK Integration with Persistence', () => {
-		test('should persist messages during real SDK interaction', async () => {
-			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: process.cwd(),
-				config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
-			});
-
-			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-			expect(agentSession).toBeDefined();
-
-			// Send a message to the real SDK
-			const result = await sendMessageSync(agentSession!, {
-				content: 'What is 2+2? Answer with just the number.',
-			});
-
-			expect(result.messageId).toBeString();
-
-			// Wait for processing to complete
-			await waitForIdle(agentSession!);
-
-			// Poll for messages to be persisted to DB
-			// On fast CI machines, DB writes may complete slightly after waitForIdle returns
-			let dbMessages: ReturnType<typeof ctx.db.getSDKMessages> = [];
-			let assistantMessage: (typeof dbMessages)[number] | undefined;
-			const pollTimeout = 5000;
-			const pollStart = Date.now();
-			while (Date.now() - pollStart < pollTimeout) {
-				dbMessages = ctx.db.getSDKMessages(sessionId);
-				assistantMessage = dbMessages.find((msg) => msg.type === 'assistant');
-				if (assistantMessage) {
-					break;
-				}
-				await Bun.sleep(100);
-			}
-
-			// Check messages were persisted to DB
-			expect(dbMessages.length).toBeGreaterThan(0);
-
-			// Verify user message is saved
-			const userMessage = dbMessages.find((msg) => msg.type === 'user');
-			expect(userMessage).toBeDefined();
-
-			// Debug: Log all message types if assistant is not found
-			if (!assistantMessage) {
-				console.log('[DEBUG] Messages in DB after polling:');
-				console.log('[DEBUG] Total count:', dbMessages.length);
-				console.log('[DEBUG] Types:', dbMessages.map((m) => m.type).join(', '));
-				console.log(
-					'[DEBUG] Full messages:',
-					JSON.stringify(
-						dbMessages.map((m) => ({ type: m.type, uuid: m.uuid })),
-						null,
-						2
-					)
-				);
-			}
-
-			// Verify assistant response is saved
-			expect(assistantMessage).toBeDefined();
-
-			// Simulate page refresh - reload session and check messages still there
-			const reloadedSession = await ctx.sessionManager.getSessionAsync(sessionId);
-			const afterReloadMessages = reloadedSession!.getSDKMessages();
-
-			expect(afterReloadMessages.length).toBe(dbMessages.length);
-			expect(afterReloadMessages.length).toBeGreaterThan(0);
-		}, 20000); // 20 second timeout
+		// NOTE: The failing test "should persist messages during real SDK interaction"
+		// has been moved to sdk-streaming-failures.test.ts for separate debugging.
 
 		test('should handle interruption without losing saved messages', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
