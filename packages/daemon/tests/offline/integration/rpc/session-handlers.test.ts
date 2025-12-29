@@ -256,14 +256,15 @@ describe('Session RPC Handlers', () => {
 			const response = await responsePromise;
 
 			expect(response.type).toBe('RESULT');
-			// EventBus-centric: RPC returns accepted, error emitted via model:switched event
-			expect(response.data.accepted).toBe(true);
+			// Synchronous: RPC returns {success: false, error} for invalid model
+			expect(response.data.success).toBe(false);
+			expect(response.data.error).toBeDefined();
 
 			ws.close();
 		});
 
 		test('should accept model switch request for same model', async () => {
-			// EventBus-centric: RPC accepts request, "already using" result emitted via model:switched event
+			// Synchronous: RPC returns {success: true, model} for same model (already using)
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: '/test/model-switch',
 			});
@@ -309,8 +310,9 @@ describe('Session RPC Handlers', () => {
 			const response = await switchPromise;
 
 			expect(response.type).toBe('RESULT');
-			// EventBus-centric: RPC returns accepted, "already using" result via model:switched event
-			expect(response.data.accepted).toBe(true);
+			// Synchronous: RPC returns {success: true, model} for same model
+			expect(response.data.success).toBe(true);
+			expect(response.data.model).toBe(currentModel);
 
 			ws.close();
 		});
