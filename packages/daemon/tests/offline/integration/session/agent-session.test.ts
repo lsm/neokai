@@ -251,34 +251,9 @@ describe('AgentSession', () => {
 			expect(result.error).toContain('Invalid model');
 		});
 
-		test('should indicate already using model if same model', async () => {
-			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: '/test/agent-session',
-			});
-
-			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-			const currentModel = agentSession!.getCurrentModel().id;
-
-			const result = await agentSession!.handleModelSwitch(currentModel);
-
-			expect(result.success).toBe(true);
-			expect(result.error).toContain('Already using');
-		});
-
-		test('should resolve model aliases', async () => {
-			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: '/test/agent-session',
-			});
-
-			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-
-			// Try with alias - this may or may not work depending on current model
-			// The alias 'sonnet' should resolve to a valid model ID
-			const result = await agentSession!.handleModelSwitch('sonnet');
-
-			// Either success or already using (if session already has sonnet)
-			expect(result.success).toBe(true);
-		});
+		// NOTE: Tests for "already using model" and "resolve model aliases" have been
+		// moved to tests/online/model-switching.test.ts because they require API
+		// credentials to populate the model cache (isValidModel requires cached models)
 	});
 
 	// enqueueMessage() test removed - it's now a private method in MessageQueue
