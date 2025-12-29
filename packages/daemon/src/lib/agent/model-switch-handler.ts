@@ -94,8 +94,11 @@ export class ModelSwitchHandler {
 			const resolvedModel = await resolveModelAlias(newModel);
 			const modelInfo = await getModelInfo(resolvedModel);
 
-			// Check if already using this model
-			if (session.config.model === resolvedModel) {
+			// Resolve the current model in case it's also an alias
+			const currentResolvedModel = await resolveModelAlias(session.config.model);
+
+			// Check if already using this model (compare resolved IDs)
+			if (currentResolvedModel === resolvedModel) {
 				logger.log(`Already using model: ${resolvedModel}`);
 				return {
 					success: true,
