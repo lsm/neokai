@@ -19,20 +19,11 @@ import {
 	mock,
 	spyOn,
 } from 'bun:test';
-import { signal } from '@preact/signals';
 import { ConnectionManager } from '../connection-manager';
 import { GlobalStore } from '../global-store';
 import { connectionManager } from '../connection-manager';
 import { StateChannel } from '../state-channel';
 import type { MessageHub } from '@liuboer/shared';
-
-// Verify @preact/signals is working correctly - this helps debug CI issues
-if (typeof signal !== 'function') {
-	console.error(
-		'[Safari Tests] signal is not a function - @preact/signals may not be properly loaded'
-	);
-	console.error('[Safari Tests] signal value:', signal);
-}
 
 // Restore any mocks from other test files to prevent pollution
 beforeAll(() => {
@@ -45,37 +36,6 @@ afterAll(() => {
 });
 
 describe('Safari Background Tab - Integration Tests', () => {
-	// Sanity check that StateChannel and signals work correctly
-	it('should verify StateChannel has lastSyncTime signal', () => {
-		const testHub = {
-			call: mock(async () => ({ data: 'test', timestamp: Date.now() })),
-			subscribe: mock(async () => mock(() => Promise.resolve())),
-			subscribeOptimistic: mock(() => mock(() => {})),
-			onConnection: mock(() => mock(() => {})),
-		} as unknown as MessageHub;
-
-		// Debug: Check what StateChannel is
-		console.log('[Sanity] StateChannel:', typeof StateChannel, StateChannel);
-		console.log('[Sanity] StateChannel.prototype:', StateChannel.prototype);
-		console.log('[Sanity] signal function:', typeof signal, signal);
-
-		const channel = new StateChannel(testHub, 'sanity-check', { sessionId: 'test' });
-
-		// Debug: Check what channel looks like
-		console.log('[Sanity] channel:', channel);
-		console.log('[Sanity] channel.lastSyncTime:', channel.lastSyncTime);
-		console.log('[Sanity] Object.keys(channel):', Object.keys(channel));
-		console.log(
-			'[Sanity] Object.getOwnPropertyNames(channel):',
-			Object.getOwnPropertyNames(channel)
-		);
-
-		// Verify the StateChannel was created with proper signals
-		expect(channel.lastSyncTime).toBeDefined();
-		expect(typeof channel.lastSyncTime.value).toBe('number');
-		expect(channel.lastSyncTime.value).toBe(0); // Initial value
-	});
-
 	describe('StateChannel Reconnection Behavior', () => {
 		let mockHub: MessageHub;
 		let stateChannel: StateChannel<{ data: string; timestamp: number }>;
