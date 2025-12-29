@@ -69,6 +69,10 @@ describe('Daemon-style SDK Usage', () => {
 					permissionMode: 'bypassPermissions',
 					allowDangerouslySkipPermissions: true,
 					maxTurns: 1,
+					// Capture stderr to debug CLI crashes in CI
+					stderr: (message: string) => {
+						console.log('[TEST] CLI STDERR:', message);
+					},
 				},
 			});
 			console.log('[TEST] Query stream created successfully');
@@ -155,6 +159,10 @@ describe('Daemon-style SDK Usage', () => {
 					permissionMode: 'bypassPermissions',
 					allowDangerouslySkipPermissions: true,
 					maxTurns: 1,
+					// Capture stderr to debug CLI crashes in CI
+					stderr: (message: string) => {
+						console.log('[TEST] CLI STDERR:', message);
+					},
 				},
 			});
 			console.log('[TEST] Query stream created successfully');
