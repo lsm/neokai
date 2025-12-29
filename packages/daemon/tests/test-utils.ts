@@ -277,18 +277,18 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 		}
 	}
 
-	// Reduced initial wait - most servers are ready much faster
-	await Bun.sleep(50);
+	// Initial wait for server binding
+	await Bun.sleep(100);
 
 	const port = server.port;
 	const baseUrl = `http://localhost:${port}`;
 
-	// Verify server is ready with optimized retry loop
-	let retries = 10; // More retries but shorter delays
+	// Verify server is ready with retry loop (longer timeouts for CI)
+	let retries = 20; // More retries for CI environments
 	while (retries > 0) {
 		try {
 			const response = await fetch(baseUrl, {
-				signal: AbortSignal.timeout(100), // Add timeout to fail fast
+				signal: AbortSignal.timeout(500), // Longer timeout for slow CI
 			});
 			if (response.ok) break;
 		} catch (error) {
@@ -296,7 +296,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 			if (retries === 0) {
 				throw new Error(`Server failed to start at ${baseUrl}: ${error}`);
 			}
-			await Bun.sleep(20); // Reduced from 100ms
+			await Bun.sleep(100); // More time between retries
 		}
 	}
 
