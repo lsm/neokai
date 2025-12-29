@@ -226,11 +226,12 @@ export function setupSessionHandlers(
 			throw new Error('Session not found');
 		}
 
-		// Get current model ID
-		const currentModelId = agentSession.getCurrentModel().id;
+		// Get current model ID (may be an alias like "default")
+		const rawModelId = agentSession.getCurrentModel().id;
 
-		// Fetch full model info from SDK asynchronously
-		const { getModelInfo } = await import('../model-service');
+		// Resolve alias to full model ID for consistency with session.model.switch
+		const { resolveModelAlias, getModelInfo } = await import('../model-service');
+		const currentModelId = await resolveModelAlias(rawModelId);
 		const modelInfo = await getModelInfo(currentModelId);
 
 		return {
