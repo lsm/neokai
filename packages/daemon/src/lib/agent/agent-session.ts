@@ -631,6 +631,9 @@ export class AgentSession {
 			}
 
 			for await (const message of this.queryObject) {
+				// DEBUG: Log SDK message received (CI debugging)
+				console.log(`[AgentSession] SDK message received - type: ${(message as SDKMessage).type}`);
+
 				// Mark that we've received at least one message from SDK
 				// This indicates ProcessTransport is ready for control methods (setModel, interrupt, etc.)
 				this.firstMessageReceived = true;
@@ -663,7 +666,9 @@ export class AgentSession {
 			}
 
 			this.logger.log(`SDK stream ended`);
+			console.log(`[AgentSession] SDK stream ended normally`);
 		} catch (error) {
+			console.log(`[AgentSession] SDK stream error:`, error);
 			this.logger.error(`Streaming query error:`, error);
 
 			// Clear pending messages
