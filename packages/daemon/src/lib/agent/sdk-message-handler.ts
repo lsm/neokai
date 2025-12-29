@@ -109,6 +109,9 @@ export class SDKMessageHandler {
 	 * complete messages, not incremental stream_event tokens.
 	 */
 	async handleMessage(message: SDKMessage): Promise<void> {
+		// DEBUG: Log every message received for CI debugging
+		console.log(`[SDKMessageHandler] handleMessage called - type: ${message.type}`);
+
 		// Check for API error patterns that indicate an infinite loop
 		// This MUST happen BEFORE any other processing to catch errors early
 		const circuitBreakerTripped = await this.circuitBreaker.checkMessage(message);
@@ -162,11 +165,16 @@ export class SDKMessageHandler {
 
 		// Save to DB FIRST before broadcasting to clients
 		// This ensures we only broadcast messages that are successfully persisted
+		console.log(
+			`[SDKMessageHandler] Saving message to DB - type: ${message.type}, sessionId: ${this.session.id}`
+		);
 		const savedSuccessfully = this.db.saveSDKMessage(this.session.id, message);
+		console.log(`[SDKMessageHandler] Save result: ${savedSuccessfully}`);
 
 		if (!savedSuccessfully) {
 			// Log warning but continue - message is already in SDK's memory
 			this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
+			console.log(`[SDKMessageHandler] WARNING: Failed to save, returning early`);
 			// Don't broadcast to clients if DB save failed
 			return;
 		}
