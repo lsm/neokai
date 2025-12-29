@@ -56,7 +56,10 @@ export class QueryOptionsBuilder {
 			permissionMode: 'bypassPermissions',
 			allowDangerouslySkipPermissions: true,
 			maxTurns: Infinity,
-			settingSources,
+			// In test/CI environments, disable setting sources (CLAUDE.md, .claude/settings.json)
+			// to prevent subprocess crashes due to missing or misconfigured settings files.
+			// This matches the title generation behavior which also uses empty settingSources.
+			settingSources: process.env.NODE_ENV === 'test' ? [] : settingSources,
 			systemPrompt: systemPromptConfig,
 			disallowedTools: disallowedTools.length > 0 ? disallowedTools : undefined,
 			// MCP servers: In test/CI environments, disable MCP to prevent subprocess crashes
