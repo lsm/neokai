@@ -11,7 +11,7 @@ describe('Simple WebSocket Test', () => {
 	test('should send and receive message', async () => {
 		// Create minimal Bun server with WebSocket
 		const server = Bun.serve({
-			hostname: 'localhost',
+			hostname: '127.0.0.1',
 			port: 0,
 
 			fetch(req, server) {
@@ -45,7 +45,7 @@ describe('Simple WebSocket Test', () => {
 		log(`Server started on port ${port}`);
 
 		// Create WebSocket client
-		const ws = new WebSocket(`ws://localhost:${port}/`);
+		const ws = new WebSocket(`ws://127.0.0.1:${port}/`);
 
 		// Set up message listener IMMEDIATELY
 		const messagePromise = new Promise((resolve, reject) => {
@@ -80,7 +80,7 @@ describe('Simple WebSocket Test', () => {
 
 	test('should handle message echo', async () => {
 		const server = Bun.serve({
-			hostname: 'localhost',
+			hostname: '127.0.0.1',
 			port: 0,
 
 			fetch(req, server) {
@@ -101,7 +101,7 @@ describe('Simple WebSocket Test', () => {
 		await Bun.sleep(100);
 		const port = server.port;
 
-		const ws = new WebSocket(`ws://localhost:${port}/`);
+		const ws = new WebSocket(`ws://127.0.0.1:${port}/`);
 
 		// Wait for connection
 		await new Promise((resolve) => {
