@@ -2,59 +2,30 @@
  * Tests for Application State Management
  *
  * Tests signal subscription leak fixes and state channel management.
+ *
+ * IMPORTANT: This file does NOT use mock.module() for StateChannel because:
+ * 1. mock.module() affects the global module cache
+ * 2. Bun runs test files in parallel
+ * 3. Other tests (like aaa-reconnection-safari.test.ts) need the REAL StateChannel
+ * 4. mock.restore() in afterAll doesn't help when tests run concurrently
+ *
+ * Instead, we mock at the MessageHub level, which is sufficient for testing
+ * ApplicationState behavior without polluting the module cache.
  */
 
-import { describe, it, expect, mock, spyOn, beforeEach, afterEach, afterAll } from 'bun:test';
+import { describe, it, expect, mock, spyOn, beforeEach, afterEach } from 'bun:test';
 import { signal } from '@preact/signals';
+import { appState, initializeApplicationState, mergeSdkMessagesWithDedup } from '../state';
 
-// Mock the MessageHub and StateChannel
+// Mock MessageHub - this is passed to initializeApplicationState and used by StateChannel
+// No need for mock.module - we just pass this mock directly
 const mockHub = {
 	isConnected: mock(() => true),
-	subscribe: mock(() => Promise.resolve(() => {})),
+	subscribe: mock(() => Promise.resolve(() => Promise.resolve())),
 	subscribeOptimistic: mock(() => () => {}),
 	call: mock(() => Promise.resolve({})),
+	onConnection: mock(() => () => {}),
 };
-
-const mockStateChannel = {
-	start: mock(() => Promise.resolve()),
-	stop: mock(() => {}),
-	$: signal(null),
-};
-
-// Mock the state-channel module
-mock.module('../state-channel', () => ({
-	StateChannel: class MockStateChannel {
-		$ = signal(null);
-		start = mockStateChannel.start;
-		stop = mockStateChannel.stop;
-	},
-	DeltaMergers: {
-		array: mock((current: unknown[], _delta: unknown) => current),
-		append: mock((current: unknown[], _delta: unknown) => current),
-	},
-}));
-
-// Mock the @liuboer/shared module
-mock.module('@liuboer/shared', () => ({
-	STATE_CHANNELS: {
-		GLOBAL_SESSIONS: 'state.sessions',
-		GLOBAL_SYSTEM: 'state.system',
-		GLOBAL_SETTINGS: 'state.settings',
-		SESSION: 'state.session',
-		SESSION_SDK_MESSAGES: 'state.sdkMessages',
-	},
-}));
-
-// Note: We don't mock global-store because it affects other tests via mock.module's global scope
-// The tests that need globalStore should set up their own mocks via spyOn or constructor injection
-
-// IMPORTANT: Restore mocks after all tests to prevent pollution to other test files
-afterAll(() => {
-	mock.restore();
-});
-
-// Import after mocking
-import { appState, initializeApplicationState, mergeSdkMessagesWithDedup } from '../state';
 
 // Helper to wait for debounced session switching (150ms debounce + buffer)
 const waitForSessionSwitch = () => new Promise((resolve) => setTimeout(resolve, 200));
@@ -63,9 +34,15 @@ describe('ApplicationState', () => {
 	let currentSessionId: import('@preact/signals').Signal<string | null>;
 
 	beforeEach(() => {
-		// Reset mocks
-		mockStateChannel.start.mockReset();
-		mockStateChannel.stop.mockReset();
+		// Reset MessageHub mocks
+		mockHub.subscribe.mockReset();
+		mockHub.call.mockReset();
+		mockHub.onConnection.mockReset();
+
+		// Restore default mock implementations
+		mockHub.subscribe.mockImplementation(() => Promise.resolve(() => Promise.resolve()));
+		mockHub.call.mockImplementation(() => Promise.resolve({}));
+		mockHub.onConnection.mockImplementation(() => () => {});
 
 		// Create fresh session ID signal for each test with explicit type
 		currentSessionId = signal(null) as import('@preact/signals').Signal<string | null>;
