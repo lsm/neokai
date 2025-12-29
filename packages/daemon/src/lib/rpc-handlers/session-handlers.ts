@@ -240,26 +240,31 @@ export function setupSessionHandlers(
 	});
 
 	// Handle model switching
-	// ARCHITECTURE: Fire-and-forget via EventBus, AgentSession subscribes
+	// Returns synchronous result for test compatibility and immediate feedback
 	messageHub.handle('session.model.switch', async (data) => {
 		const { sessionId: targetSessionId, model } = data as {
 			sessionId: string;
 			model: string;
 		};
 
-		// Verify session exists before emitting event
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
 		if (!agentSession) {
 			throw new Error('Session not found');
 		}
 
-		// Fire-and-forget: emit event, AgentSession handles it
-		// Model switch result is broadcast via 'model:switched' event → StateManager → clients
-		eventBus.emit('model:switch:request', { sessionId: targetSessionId, model }).catch((err) => {
-			console.error('[session.model.switch] Error emitting model switch event:', err);
-		});
+		// Call handleModelSwitch directly - returns {success, model, error}
+		const result = await agentSession.handleModelSwitch(model);
 
-		return { accepted: true };
+		// Broadcast model switch result via state channels for UI updates
+		if (result.success) {
+			await messageHub.publish(
+				'session.updated',
+				{ model: result.model },
+				{ sessionId: targetSessionId }
+			);
+		}
+
+		return result;
 	});
 
 	// Handle thinking level changes
