@@ -630,7 +630,11 @@ export class AgentSession {
 				throw new Error('Query object is null after initialization');
 			}
 
+			console.log(`[AgentSession] Starting for-await loop over SDK query...`);
 			for await (const message of this.queryObject) {
+				console.log(
+					`[AgentSession] SDK message received - type: ${(message as { type?: string }).type}`
+				);
 				// Mark that we've received at least one message from SDK
 				// This indicates ProcessTransport is ready for control methods (setModel, interrupt, etc.)
 				this.firstMessageReceived = true;
@@ -662,6 +666,7 @@ export class AgentSession {
 				}
 			}
 
+			console.log(`[AgentSession] SDK stream ended`);
 			this.logger.log(`SDK stream ended`);
 		} catch (error) {
 			this.logger.error(`Streaming query error:`, error);
