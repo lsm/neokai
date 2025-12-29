@@ -61,13 +61,15 @@ describe('Daemon-style SDK Usage', () => {
 
 		try {
 			console.log('[TEST] Creating query stream...');
+			// Use acceptEdits instead of bypassPermissions because GitHub Actions
+			// self-hosted runner runs as root, and --dangerously-skip-permissions
+			// is rejected when running as root for security reasons
 			queryStream = query({
 				prompt: 'What is 2+2? Answer with just the number.',
 				options: {
 					model: 'haiku', // Use Haiku for faster, cheaper tests
 					cwd: process.cwd(), // DAEMON SETS THIS
-					permissionMode: 'bypassPermissions',
-					allowDangerouslySkipPermissions: true,
+					permissionMode: 'acceptEdits', // Safe for root, auto-accepts tool edits
 					maxTurns: 1,
 					// Capture stderr to debug CLI crashes in CI
 					stderr: (message: string) => {
@@ -151,13 +153,15 @@ describe('Daemon-style SDK Usage', () => {
 
 		try {
 			console.log('[TEST] Creating query stream WITHOUT cwd...');
+			// Use acceptEdits instead of bypassPermissions because GitHub Actions
+			// self-hosted runner runs as root, and --dangerously-skip-permissions
+			// is rejected when running as root for security reasons
 			queryStream = query({
 				prompt: 'What is 2+2? Answer with just the number.',
 				options: {
 					model: 'haiku', // Use Haiku for faster, cheaper tests
 					// NO cwd option
-					permissionMode: 'bypassPermissions',
-					allowDangerouslySkipPermissions: true,
+					permissionMode: 'acceptEdits', // Safe for root, auto-accepts tool edits
 					maxTurns: 1,
 					// Capture stderr to debug CLI crashes in CI
 					stderr: (message: string) => {

@@ -272,36 +272,23 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 		} else {
 			// For offline tests without authentication, set up mock models
 			// This allows model-related RPC handlers to work correctly
+			// IMPORTANT: Must match SDK's ModelInfo type: { value, displayName, description }
+			// The model-service's convertSDKModelToModelInfo() will extract family/alias from these
 			const mockModels = [
 				{
-					id: 'default',
-					name: 'Sonnet 4.5',
-					alias: 'default',
-					family: 'sonnet',
-					contextWindow: 200000,
+					value: 'default', // SDK's model ID field
+					displayName: 'Sonnet 4.5',
 					description: 'Sonnet 4.5 · Best for everyday tasks',
-					releaseDate: '',
-					available: true,
 				},
 				{
-					id: 'opus',
-					name: 'Opus 4.5',
-					alias: 'opus',
-					family: 'opus',
-					contextWindow: 200000,
+					value: 'opus',
+					displayName: 'Opus 4.5',
 					description: 'Opus 4.5 · Most capable model',
-					releaseDate: '',
-					available: true,
 				},
 				{
-					id: 'haiku',
-					name: 'Haiku 3.5',
-					alias: 'haiku',
-					family: 'haiku',
-					contextWindow: 200000,
+					value: 'haiku',
+					displayName: 'Haiku 3.5',
 					description: 'Haiku 3.5 · Fast and efficient',
-					releaseDate: '',
-					available: true,
 				},
 			];
 			const mockCache = new Map<string, typeof mockModels>();
