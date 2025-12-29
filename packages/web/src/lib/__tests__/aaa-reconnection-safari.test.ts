@@ -54,7 +54,21 @@ describe('Safari Background Tab - Integration Tests', () => {
 			onConnection: mock(() => mock(() => {})),
 		} as unknown as MessageHub;
 
+		// Debug: Check what StateChannel is
+		console.log('[Sanity] StateChannel:', typeof StateChannel, StateChannel);
+		console.log('[Sanity] StateChannel.prototype:', StateChannel.prototype);
+		console.log('[Sanity] signal function:', typeof signal, signal);
+
 		const channel = new StateChannel(testHub, 'sanity-check', { sessionId: 'test' });
+
+		// Debug: Check what channel looks like
+		console.log('[Sanity] channel:', channel);
+		console.log('[Sanity] channel.lastSyncTime:', channel.lastSyncTime);
+		console.log('[Sanity] Object.keys(channel):', Object.keys(channel));
+		console.log(
+			'[Sanity] Object.getOwnPropertyNames(channel):',
+			Object.getOwnPropertyNames(channel)
+		);
 
 		// Verify the StateChannel was created with proper signals
 		expect(channel.lastSyncTime).toBeDefined();
