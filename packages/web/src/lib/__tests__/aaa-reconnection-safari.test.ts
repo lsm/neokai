@@ -8,7 +8,17 @@
  * - Data synchronization after background period
  */
 
-import { describe, it, expect, beforeEach, afterEach, beforeAll, mock, spyOn } from 'bun:test';
+import {
+	describe,
+	it,
+	expect,
+	beforeEach,
+	afterEach,
+	beforeAll,
+	afterAll,
+	mock,
+	spyOn,
+} from 'bun:test';
 import { ConnectionManager } from '../connection-manager';
 import { GlobalStore } from '../global-store';
 import { connectionManager } from '../connection-manager';
@@ -17,6 +27,11 @@ import type { MessageHub } from '@liuboer/shared';
 
 // Restore any mocks from other test files to prevent pollution
 beforeAll(() => {
+	mock.restore();
+});
+
+// Cleanup after all tests
+afterAll(() => {
 	mock.restore();
 });
 
@@ -51,6 +66,15 @@ describe('Safari Background Tab - Integration Tests', () => {
 				debug: true,
 			});
 		});
+
+		afterEach(async () => {
+			// Cleanup StateChannel to prevent test pollution
+			if (stateChannel) {
+				await stateChannel.stop();
+			}
+			reconnectionHandler = null;
+		});
+
 		it('should call hybridRefresh on reconnection', async () => {
 			await stateChannel.start();
 
