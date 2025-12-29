@@ -64,6 +64,9 @@ export class AgentSession {
 	// Track query promise for proper cleanup
 	private queryPromise: Promise<void> | null = null;
 
+	// Flag indicating cleanup has started - prevents DB writes after cleanup
+	private isCleaningUp = false;
+
 	// Pending restart flag - tracks if restart is needed after agent becomes idle
 	// Reason: 'settings.local.json' when MCP configuration changed
 	private pendingRestartReason: 'settings.local.json' | null = null;
@@ -724,7 +727,10 @@ export class AgentSession {
 			this.queryPromise = null;
 
 			// Ensure state is reset to idle when streaming stops (normal or error)
-			await this.stateManager.setIdle();
+			// Skip if cleanup is in progress to avoid "closed database" errors
+			if (!this.isCleaningUp) {
+				await this.stateManager.setIdle();
+			}
 
 			this.logger.log(`Streaming query stopped`);
 		}
@@ -1156,6 +1162,9 @@ export class AgentSession {
 	 */
 	async cleanup(): Promise<void> {
 		this.logger.log(`Cleaning up resources...`);
+
+		// Set cleanup flag to prevent DB writes from runQuery finally block
+		this.isCleaningUp = true;
 
 		// Unsubscribe from all MessageHub events
 		for (const unsubscribe of this.unsubscribers) {
