@@ -9,9 +9,6 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { TestContext } from '../../../test-utils';
 import { createTestApp, callRPCHandler, hasApiKey, hasOAuthToken } from '../../../test-utils';
 
-// Use temp directory for test workspaces
-const TMP_DIR = process.env.TMPDIR || '/tmp';
-
 describe('Authentication Integration', () => {
 	let ctx: TestContext;
 
@@ -120,20 +117,9 @@ describe('Authentication Integration', () => {
 	});
 
 	describe('Session Creation with Auth', () => {
-		test.skipIf(!hasApiKey() && !hasOAuthToken())(
-			'should create session only if authenticated',
-			async () => {
-				const result = await callRPCHandler(ctx.messageHub, 'session.create', {
-					workspacePath: `${TMP_DIR}/test-auth`,
-				});
-
-				expect(result.sessionId).toBeString();
-
-				// Verify session was created
-				const session = ctx.db.getSession(result.sessionId);
-				expect(session).toBeDefined();
-			}
-		);
+		// NOTE: The test 'should create session only if authenticated' has been moved to
+		// tests/online/auth.test.ts because it requires API credentials to verify
+		// that authenticated sessions can be created successfully.
 
 		test('should expose auth method in system state', async () => {
 			const system = await callRPCHandler(ctx.messageHub, 'state.system', {});
