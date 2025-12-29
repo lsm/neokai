@@ -254,12 +254,12 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 		},
 	});
 
-	// Initialize model service if authentication is available
-	if (authStatus.isAuthenticated) {
-		try {
-			const { initializeModels, setModelsCache, getModelsCache } =
-				await import('../src/lib/model-service');
+	// Initialize model service
+	try {
+		const { initializeModels, setModelsCache, getModelsCache } =
+			await import('../src/lib/model-service');
 
+		if (authStatus.isAuthenticated) {
 			// If we have a cached copy, reuse it to save 100-200ms
 			if (globalModelsCache) {
 				setModelsCache(globalModelsCache as Map<string, never>);
@@ -269,11 +269,49 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 				// Save for future tests
 				globalModelsCache = getModelsCache();
 			}
-		} catch (error) {
-			// Silently fail - tests will handle missing models gracefully
-			if (process.env.TEST_VERBOSE) {
-				console.log('[TEST] Model initialization skipped:', error);
-			}
+		} else {
+			// For offline tests without authentication, set up mock models
+			// This allows model-related RPC handlers to work correctly
+			const mockModels = [
+				{
+					id: 'default',
+					name: 'Sonnet 4.5',
+					alias: 'default',
+					family: 'sonnet',
+					contextWindow: 200000,
+					description: 'Sonnet 4.5 · Best for everyday tasks',
+					releaseDate: '',
+					available: true,
+				},
+				{
+					id: 'opus',
+					name: 'Opus 4.5',
+					alias: 'opus',
+					family: 'opus',
+					contextWindow: 200000,
+					description: 'Opus 4.5 · Most capable model',
+					releaseDate: '',
+					available: true,
+				},
+				{
+					id: 'haiku',
+					name: 'Haiku 3.5',
+					alias: 'haiku',
+					family: 'haiku',
+					contextWindow: 200000,
+					description: 'Haiku 3.5 · Fast and efficient',
+					releaseDate: '',
+					available: true,
+				},
+			];
+			const mockCache = new Map<string, typeof mockModels>();
+			mockCache.set('global', mockModels);
+			setModelsCache(mockCache as Map<string, never>);
+		}
+	} catch (error) {
+		// Silently fail - tests will handle missing models gracefully
+		if (process.env.TEST_VERBOSE) {
+			console.log('[TEST] Model initialization skipped:', error);
 		}
 	}
 
