@@ -59,9 +59,10 @@ export class QueryOptionsBuilder {
 			settingSources,
 			systemPrompt: systemPromptConfig,
 			disallowedTools: disallowedTools.length > 0 ? disallowedTools : undefined,
-			// MCP servers: always undefined to allow SDK auto-loading
-			// Filtering is applied via settings.local.json (disabledMcpjsonServers)
-			mcpServers: undefined,
+			// MCP servers: In test/CI environments, disable MCP to prevent subprocess crashes
+			// due to missing MCP dependencies or configuration issues.
+			// In production, allow auto-loading (undefined).
+			mcpServers: process.env.NODE_ENV === 'test' ? {} : undefined,
 			hooks,
 		};
 
