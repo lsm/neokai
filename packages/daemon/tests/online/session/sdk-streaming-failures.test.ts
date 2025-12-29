@@ -23,7 +23,7 @@ import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import type { TestContext } from '../../test-utils';
 import { createTestApp } from '../../test-utils';
 import { sendMessageSync } from '../../helpers/test-message-sender';
-import { agent } from '@anthropic-ai/agent-sdk';
+import { query } from '@anthropic-ai/claude-agent-sdk';
 
 describe('SDK Streaming CI Failures', () => {
 	let ctx: TestContext;
@@ -60,33 +60,51 @@ describe('SDK Streaming CI Failures', () => {
 		test('should call SDK directly with bypass permissions', async () => {
 			console.log('[DIRECT SDK TEST] Starting direct SDK call test');
 
-			// Call SDK agent directly with minimal configuration
-			// This bypasses all our infrastructure to isolate the SDK subprocess issue
-			const agentInstance = agent({
-				model: 'claude-sonnet-4-5-20250929',
-				cwd: process.cwd(),
-				permissionMode: 'bypassPermissions',
-				allowDangerouslySkipPermissions: true,
-				settingSources: [], // Empty to match test environment
-				systemPrompt: undefined, // No system prompt to match test environment
-				mcpServers: {}, // Disable MCP to match test environment
-			});
+			// Message generator - just one simple message
+			async function* messageGenerator() {
+				yield {
+					type: 'user' as const,
+					uuid: crypto.randomUUID(),
+					session_id: 'direct-test-session',
+					parent_tool_use_id: null,
+					message: {
+						role: 'user' as const,
+						content: [{ type: 'text' as const, text: 'What is 1+1? Answer with just the number.' }],
+					},
+				};
+			}
 
-			console.log('[DIRECT SDK TEST] Agent instance created');
+			console.log('[DIRECT SDK TEST] Starting SDK query with bypass permissions');
 
 			try {
-				// Simple ask query (NOT streaming AsyncGenerator)
-				console.log('[DIRECT SDK TEST] Calling agent.ask()');
-				const response = await agentInstance.ask('What is 1+1? Answer with just the number.');
+				let messageCount = 0;
+				let hasAssistantMessage = false;
 
-				console.log('[DIRECT SDK TEST] Response received:', response);
-				console.log('[DIRECT SDK TEST] Response type:', typeof response);
-				console.log('[DIRECT SDK TEST] Response length:', response.length);
+				// Call SDK query directly with the same config we use in tests
+				for await (const message of query(messageGenerator(), {
+					model: 'claude-sonnet-4-5-20250929',
+					cwd: process.cwd(),
+					permissionMode: 'bypassPermissions',
+					allowDangerouslySkipPermissions: true,
+					settingSources: [], // Empty to match test environment
+					systemPrompt: undefined, // No system prompt to match test environment
+					mcpServers: {}, // Disable MCP to match test environment
+					maxTurns: 1, // Only one turn for this test
+				})) {
+					messageCount++;
+					console.log(`[DIRECT SDK TEST] Message ${messageCount} received - type: ${message.type}`);
 
-				// Verify we got a response
-				expect(response).toBeDefined();
-				expect(typeof response).toBe('string');
-				expect(response.length).toBeGreaterThan(0);
+					if (message.type === 'assistant') {
+						hasAssistantMessage = true;
+						console.log('[DIRECT SDK TEST] Assistant message received');
+					}
+				}
+
+				console.log(`[DIRECT SDK TEST] Query completed - received ${messageCount} messages`);
+
+				// Verify we got at least one message and at least one assistant message
+				expect(messageCount).toBeGreaterThan(0);
+				expect(hasAssistantMessage).toBe(true);
 
 				console.log('[DIRECT SDK TEST] Test passed - SDK works with bypass permissions');
 			} catch (error) {
