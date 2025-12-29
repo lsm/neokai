@@ -718,6 +718,11 @@ export class AgentSession {
 		} finally {
 			this.messageQueue.stop();
 
+			// Clear queryPromise so ensureQueryStarted() can restart if needed
+			// This is essential for multi-message sequences where the SDK query
+			// finishes after first message and needs to restart for subsequent messages
+			this.queryPromise = null;
+
 			// Ensure state is reset to idle when streaming stops (normal or error)
 			await this.stateManager.setIdle();
 
