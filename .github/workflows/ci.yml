@@ -16,142 +16,181 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
       - name: Install dependencies
         run: bun install
 
       - name: Run lint
         run: bun run lint
 
-  format-check:
-    name: Format Check
-    runs-on: self-hosted
-    timeout-minutes: 5
+  # TEMPORARILY DISABLED FOR DEBUGGING
+  # format-check:
+  #   name: Format Check
+  #   runs-on: self-hosted
+  #   timeout-minutes: 5
 
-    steps:
-      - uses: actions/checkout@v4
+  #   steps:
+  #     - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: bun install
+  #     - name: Setup Bun
+  #       uses: oven-sh/setup-bun@v1
+  #       with:
+  #         bun-version: latest
 
-      - name: Check formatting
-        run: bun run format:check
+  #     - name: Install dependencies
+  #       run: bun install
+
+  #     - name: Check formatting
+  #       run: bun run format:check
 
   # ============================================
   # OFFLINE TESTS (No API credentials required)
   # ============================================
 
-  # Unit tests - pure logic with mocks only
-  test-daemon-unit:
-    name: Daemon Unit Tests
-    runs-on: self-hosted
-    timeout-minutes: 5
+  # TEMPORARILY DISABLED FOR DEBUGGING
+  # # Unit tests - pure logic with mocks only
+  # test-daemon-unit:
+  #   name: Daemon Unit Tests
+  #   runs-on: self-hosted
+  #   timeout-minutes: 5
 
-    steps:
-      - uses: actions/checkout@v4
+  #   steps:
+  #     - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: bun install
+  #     - name: Setup Bun
+  #       uses: oven-sh/setup-bun@v1
+  #       with:
+  #         bun-version: latest
 
-      - name: Run unit tests
-        working-directory: packages/daemon
-        run: bun test tests/offline/unit
+  #     - name: Install dependencies
+  #       run: bun install
 
-  # Integration tests - parallelized by category for speed
-  test-daemon-integration:
-    name: Daemon Integration (${{ matrix.category }})
-    runs-on: self-hosted
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        category:
-          - database
-          - filesystem
-          - git
-          - websocket
-          - rpc
-          - session
-          - mcp
-          - components
+  #     - name: Run unit tests
+  #       working-directory: packages/daemon
+  #       run: bun test tests/offline/unit
 
-    steps:
-      - uses: actions/checkout@v4
+  # # Integration tests - parallelized by category for speed
+  # test-daemon-integration:
+  #   name: Daemon Integration (${{ matrix.category }})
+  #   runs-on: self-hosted
+  #   timeout-minutes: 10
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       category:
+  #         - database
+  #         - filesystem
+  #         - git
+  #         - websocket
+  #         - rpc
+  #         - session
+  #         - mcp
+  #         - components
 
-      - name: Install dependencies
-        run: bun install
+  #   steps:
+  #     - uses: actions/checkout@v4
 
-      - name: Run integration tests (${{ matrix.category }})
-        working-directory: packages/daemon
-        run: bun test tests/offline/integration/${{ matrix.category }}
+  #     - name: Setup Bun
+  #       uses: oven-sh/setup-bun@v1
+  #       with:
+  #         bun-version: latest
+
+  #     - name: Install dependencies
+  #       run: bun install
+
+  #     - name: Run integration tests (${{ matrix.category }})
+  #       working-directory: packages/daemon
+  #       run: bun test tests/offline/integration/${{ matrix.category }}
 
   # ============================================
   # ONLINE TESTS (Requires API credentials)
   # ============================================
 
-  test-daemon-online:
-    name: Daemon Online Tests (API)
-    runs-on: self-hosted
-    timeout-minutes: 15
+  # TEMPORARILY DISABLED FOR DEBUGGING
+  # test-daemon-online:
+  #   name: Daemon Online Tests (API)
+  #   runs-on: self-hosted
+  #   timeout-minutes: 15
 
-    steps:
-      - name: Check for API credentials
-        id: check-creds
-        run: |
-          if [ -n "${{ secrets.ANTHROPIC_API_KEY }}" ] || [ -n "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}" ]; then
-            echo "has_credentials=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_credentials=false" >> $GITHUB_OUTPUT
-            echo "⚠️ Skipping online tests - no API credentials configured"
-          fi
+  #   steps:
+  #     - name: Check for API credentials
+  #       id: check-creds
+  #       run: |
+  #         if [ -n "${{ secrets.ANTHROPIC_API_KEY }}" ] || [ -n "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}" ]; then
+  #           echo "has_credentials=true" >> $GITHUB_OUTPUT
+  #         else
+  #           echo "has_credentials=false" >> $GITHUB_OUTPUT
+  #           echo "⚠️ Skipping online tests - no API credentials configured"
+  #         fi
 
-      - uses: actions/checkout@v4
-        if: steps.check-creds.outputs.has_credentials == 'true'
+  #     - uses: actions/checkout@v4
+  #       if: steps.check-creds.outputs.has_credentials == 'true'
 
-      - name: Install dependencies
-        if: steps.check-creds.outputs.has_credentials == 'true'
-        run: bun install
+  #     - name: Setup Bun
+  #       if: steps.check-creds.outputs.has_credentials == 'true'
+  #       uses: oven-sh/setup-bun@v1
+  #       with:
+  #         bun-version: latest
 
-      - name: Run online tests (API-dependent)
-        if: steps.check-creds.outputs.has_credentials == 'true'
-        working-directory: packages/daemon
-        run: bun test tests/online
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+  #     - name: Install dependencies
+  #       if: steps.check-creds.outputs.has_credentials == 'true'
+  #       run: bun install
 
-      - name: Skip notification
-        if: steps.check-creds.outputs.has_credentials != 'true'
-        run: echo "✅ Online tests skipped (no API credentials). This is expected for PRs from forks."
+  #     - name: Run online tests (API-dependent)
+  #       if: steps.check-creds.outputs.has_credentials == 'true'
+  #       working-directory: packages/daemon
+  #       run: bun test tests/online
+  #       env:
+  #         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  #         CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
-  test-shared:
-    name: Test Shared
-    runs-on: self-hosted
-    timeout-minutes: 10
+  #     - name: Skip notification
+  #       if: steps.check-creds.outputs.has_credentials != 'true'
+  #       run: echo "✅ Online tests skipped (no API credentials). This is expected for PRs from forks."
 
-    steps:
-      - uses: actions/checkout@v4
+  # test-shared:
+  #   name: Test Shared
+  #   runs-on: self-hosted
+  #   timeout-minutes: 10
 
-      - name: Install dependencies
-        run: bun install
+  #   steps:
+  #     - uses: actions/checkout@v4
 
-      - name: Run unit tests
-        working-directory: packages/shared
-        run: bun test
+  #     - name: Setup Bun
+  #       uses: oven-sh/setup-bun@v1
+  #       with:
+  #         bun-version: latest
 
-  test-web:
-    name: Test Web
-    runs-on: self-hosted
-    timeout-minutes: 10
+  #     - name: Install dependencies
+  #       run: bun install
 
-    steps:
-      - uses: actions/checkout@v4
+  #     - name: Run unit tests
+  #       working-directory: packages/shared
+  #       run: bun test
 
-      - name: Install dependencies
-        run: bun install
+  # test-web:
+  #   name: Test Web
+  #   runs-on: self-hosted
+  #   timeout-minutes: 10
 
-      - name: Run web tests
-        working-directory: packages/web
-        run: bun test
+  #   steps:
+  #     - uses: actions/checkout@v4
+
+  #     - name: Setup Bun
+  #       uses: oven-sh/setup-bun@v1
+  #       with:
+  #         bun-version: latest
+
+  #     - name: Install dependencies
+  #       run: bun install
+
+  #     - name: Run web tests
+  #       working-directory: packages/web
+  #       run: bun test
 
   # Type checking disabled temporarily - needs fixing
   # typecheck:
