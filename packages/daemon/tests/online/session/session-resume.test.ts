@@ -84,6 +84,20 @@ describe('Session Resume (API-dependent)', () => {
 			await Bun.sleep(100);
 		}
 
+		// Debug: If sdkSessionId not found, log what messages we have
+		if (!session?.sdkSessionId) {
+			const messages = ctx.db.getSDKMessages(sessionId);
+			console.log('[DEBUG] sdkSessionId not found after polling');
+			console.log('[DEBUG] Messages in DB:', messages.length);
+			console.log('[DEBUG] Message types:', messages.map((m) => m.type).join(', '));
+			// Check for system message which should contain session_id
+			const systemMsg = messages.find((m) => m.type === 'system');
+			console.log('[DEBUG] System message found:', !!systemMsg);
+			if (systemMsg) {
+				console.log('[DEBUG] System message:', JSON.stringify(systemMsg));
+			}
+		}
+
 		// Now check for SDK session ID - it should be captured after SDK responds
 		expect(session?.sdkSessionId).toBeDefined();
 		expect(typeof session?.sdkSessionId).toBe('string');

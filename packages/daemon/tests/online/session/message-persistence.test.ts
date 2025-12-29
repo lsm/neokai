@@ -354,6 +354,21 @@ describe('Message Persistence Bug Fix', () => {
 			const userMessage = dbMessages.find((msg) => msg.type === 'user');
 			expect(userMessage).toBeDefined();
 
+			// Debug: Log all message types if assistant is not found
+			if (!assistantMessage) {
+				console.log('[DEBUG] Messages in DB after polling:');
+				console.log('[DEBUG] Total count:', dbMessages.length);
+				console.log('[DEBUG] Types:', dbMessages.map((m) => m.type).join(', '));
+				console.log(
+					'[DEBUG] Full messages:',
+					JSON.stringify(
+						dbMessages.map((m) => ({ type: m.type, uuid: m.uuid })),
+						null,
+						2
+					)
+				);
+			}
+
 			// Verify assistant response is saved
 			expect(assistantMessage).toBeDefined();
 
