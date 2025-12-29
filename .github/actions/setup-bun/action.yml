@@ -1,0 +1,29 @@
+name: 'Setup Bun'
+description: 'Install Bun runtime with local caching (bash-based, no Node.js)'
+author: 'lsm'
+
+inputs:
+  bun-version:
+    description: 'Bun version to install (e.g., "1.3.5", "latest")'
+    required: false
+    default: 'latest'
+
+outputs:
+  bun-version:
+    description: 'Installed Bun version'
+    value: ${{ steps.setup.outputs.bun-version }}
+  bun-path:
+    description: 'Path to Bun executable'
+    value: ${{ steps.setup.outputs.bun-path }}
+  cache-hit:
+    description: 'Whether Bun was found in local cache'
+    value: ${{ steps.setup.outputs.cache-hit }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: setup
+      shell: bash
+      env:
+        BUN_VERSION: ${{ inputs.bun-version }}
+      run: ${{ github.action_path }}/setup.sh
