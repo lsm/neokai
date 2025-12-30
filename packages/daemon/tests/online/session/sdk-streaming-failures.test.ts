@@ -56,9 +56,9 @@ describe('SDK Streaming CI Failures', () => {
 		throw new Error(`Timeout waiting for idle state after ${timeoutMs}ms`);
 	}
 
-	describe('Direct SDK Call with Different Permission Modes', () => {
-		test('should call SDK directly with bypassPermissions mode', async () => {
-			console.log('[BYPASS TEST] Starting direct SDK call test with bypassPermissions');
+	describe('Direct SDK Call with Different API Patterns', () => {
+		test('should call SDK with AsyncGenerator + bypassPermissions (FAILING)', async () => {
+			console.log('[ASYNC+BYPASS TEST] AsyncGenerator with bypassPermissions');
 
 			// Message generator - just one simple message
 			async function* messageGenerator() {
@@ -74,49 +74,42 @@ describe('SDK Streaming CI Failures', () => {
 				};
 			}
 
-			console.log('[BYPASS TEST] Starting SDK query with bypassPermissions');
-
 			try {
 				let messageCount = 0;
 				let hasAssistantMessage = false;
 
-				// Call SDK query directly with the same config we use in tests
+				// AsyncGenerator pattern with bypassPermissions
 				for await (const message of query(messageGenerator(), {
-					model: 'claude-sonnet-4-5-20250929',
+					model: 'haiku',
 					cwd: process.cwd(),
 					permissionMode: 'bypassPermissions',
 					allowDangerouslySkipPermissions: true,
-					settingSources: [], // Empty to match test environment
-					systemPrompt: undefined, // No system prompt to match test environment
-					mcpServers: {}, // Disable MCP to match test environment
-					maxTurns: 1, // Only one turn for this test
+					settingSources: [],
+					systemPrompt: undefined,
+					mcpServers: {},
+					maxTurns: 1,
 				})) {
 					messageCount++;
-					console.log(`[BYPASS TEST] Message ${messageCount} received - type: ${message.type}`);
+					console.log(`[ASYNC+BYPASS TEST] Message ${messageCount} - type: ${message.type}`);
 
 					if (message.type === 'assistant') {
 						hasAssistantMessage = true;
-						console.log('[BYPASS TEST] Assistant message received');
 					}
 				}
 
-				console.log(`[BYPASS TEST] Query completed - received ${messageCount} messages`);
-
-				// Verify we got at least one message and at least one assistant message
+				console.log(`[ASYNC+BYPASS TEST] Completed - ${messageCount} messages`);
 				expect(messageCount).toBeGreaterThan(0);
 				expect(hasAssistantMessage).toBe(true);
-
-				console.log('[BYPASS TEST] Test passed - SDK works with bypassPermissions');
 			} catch (error) {
-				console.error('[BYPASS TEST] SDK call failed:', error);
-				console.error('[BYPASS TEST] Error message:', (error as Error).message);
-				console.error('[BYPASS TEST] Error stack:', (error as Error).stack);
+				console.error('[ASYNC+BYPASS TEST] FAILED:', error);
+				console.error('[ASYNC+BYPASS TEST] Message:', (error as Error).message);
+				console.error('[ASYNC+BYPASS TEST] Stack:', (error as Error).stack);
 				throw error;
 			}
 		}, 20000);
 
-		test('should call SDK directly with acceptEdits mode', async () => {
-			console.log('[ACCEPT_EDITS TEST] Starting direct SDK call test with acceptEdits');
+		test('should call SDK with AsyncGenerator + acceptEdits', async () => {
+			console.log('[ASYNC+ACCEPT TEST] AsyncGenerator with acceptEdits');
 
 			// Message generator - just one simple message
 			async function* messageGenerator() {
@@ -132,44 +125,75 @@ describe('SDK Streaming CI Failures', () => {
 				};
 			}
 
-			console.log('[ACCEPT_EDITS TEST] Starting SDK query with acceptEdits');
+			try {
+				let messageCount = 0;
+				let hasAssistantMessage = false;
+
+				// AsyncGenerator pattern with acceptEdits
+				for await (const message of query(messageGenerator(), {
+					model: 'haiku',
+					cwd: process.cwd(),
+					permissionMode: 'acceptEdits',
+					settingSources: [],
+					systemPrompt: undefined,
+					mcpServers: {},
+					maxTurns: 1,
+				})) {
+					messageCount++;
+					console.log(`[ASYNC+ACCEPT TEST] Message ${messageCount} - type: ${message.type}`);
+
+					if (message.type === 'assistant') {
+						hasAssistantMessage = true;
+					}
+				}
+
+				console.log(`[ASYNC+ACCEPT TEST] Completed - ${messageCount} messages`);
+				expect(messageCount).toBeGreaterThan(0);
+				expect(hasAssistantMessage).toBe(true);
+			} catch (error) {
+				console.error('[ASYNC+ACCEPT TEST] FAILED:', error);
+				console.error('[ASYNC+ACCEPT TEST] Message:', (error as Error).message);
+				console.error('[ASYNC+ACCEPT TEST] Stack:', (error as Error).stack);
+				throw error;
+			}
+		}, 20000);
+
+		test('should call SDK with simple prompt pattern (like PASSING tests)', async () => {
+			console.log('[SIMPLE PROMPT TEST] Simple string prompt with acceptEdits');
 
 			try {
 				let messageCount = 0;
 				let hasAssistantMessage = false;
 
-				// Call SDK query with acceptEdits permission mode instead of bypassPermissions
-				for await (const message of query(messageGenerator(), {
-					model: 'claude-sonnet-4-5-20250929',
-					cwd: process.cwd(),
-					permissionMode: 'acceptEdits', // Use acceptEdits instead of bypassPermissions
-					settingSources: [], // Empty to match test environment
-					systemPrompt: undefined, // No system prompt to match test environment
-					mcpServers: {}, // Disable MCP to match test environment
-					maxTurns: 1, // Only one turn for this test
+				// Simple prompt pattern (SAME AS PASSING TESTS)
+				for await (const message of query({
+					prompt: 'What is 3+3? Answer with just the number.',
+					options: {
+						model: 'haiku',
+						cwd: process.cwd(),
+						permissionMode: 'acceptEdits',
+						maxTurns: 1,
+						stderr: (msg: string) => {
+							console.log('[SIMPLE PROMPT TEST] STDERR:', msg);
+						},
+					},
 				})) {
 					messageCount++;
-					console.log(
-						`[ACCEPT_EDITS TEST] Message ${messageCount} received - type: ${message.type}`
-					);
+					console.log(`[SIMPLE PROMPT TEST] Message ${messageCount} - type: ${message.type}`);
 
 					if (message.type === 'assistant') {
 						hasAssistantMessage = true;
-						console.log('[ACCEPT_EDITS TEST] Assistant message received');
 					}
 				}
 
-				console.log(`[ACCEPT_EDITS TEST] Query completed - received ${messageCount} messages`);
-
-				// Verify we got at least one message and at least one assistant message
+				console.log(`[SIMPLE PROMPT TEST] Completed - ${messageCount} messages`);
 				expect(messageCount).toBeGreaterThan(0);
 				expect(hasAssistantMessage).toBe(true);
-
-				console.log('[ACCEPT_EDITS TEST] Test passed - SDK works with acceptEdits');
+				console.log('[SIMPLE PROMPT TEST] ✓ PASSED - Simple prompt pattern works');
 			} catch (error) {
-				console.error('[ACCEPT_EDITS TEST] SDK call failed:', error);
-				console.error('[ACCEPT_EDITS TEST] Error message:', (error as Error).message);
-				console.error('[ACCEPT_EDITS TEST] Error stack:', (error as Error).stack);
+				console.error('[SIMPLE PROMPT TEST] FAILED:', error);
+				console.error('[SIMPLE PROMPT TEST] Message:', (error as Error).message);
+				console.error('[SIMPLE PROMPT TEST] Stack:', (error as Error).stack);
 				throw error;
 			}
 		}, 20000);
