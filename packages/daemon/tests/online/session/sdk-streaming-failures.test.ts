@@ -59,9 +59,8 @@ describe('SDK Streaming CI Failures', () => {
 	describe('Direct SDK Call with Different API Patterns', () => {
 		test('should call SDK with AsyncGenerator + bypassPermissions (DIAGNOSTIC - expected to fail on CI)', async () => {
 			console.log('[ASYNC+BYPASS TEST] AsyncGenerator with bypassPermissions');
-			console.log(
-				'[ASYNC+BYPASS TEST] NOTE: This test is EXPECTED to fail on CI (root restriction)'
-			);
+			const isCI = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
+			console.log(`[ASYNC+BYPASS TEST] Running in ${isCI ? 'CI' : 'local'} environment`);
 
 			// Message generator - just one simple message
 			async function* messageGenerator() {
@@ -109,22 +108,36 @@ describe('SDK Streaming CI Failures', () => {
 				}
 
 				console.log(`[ASYNC+BYPASS TEST] Completed - ${messageCount} messages`);
-				expect(messageCount).toBeGreaterThan(0);
-				expect(hasAssistantMessage).toBe(true);
-			} catch (error) {
-				console.error('[ASYNC+BYPASS TEST] FAILED:', error);
-				console.error('[ASYNC+BYPASS TEST] Message:', (error as Error).message);
-				console.error('[ASYNC+BYPASS TEST] Stack:', (error as Error).stack);
 
-				// Check if this is the expected root restriction error
-				const errorMsg = (error as Error).message;
-				if (errorMsg.includes('root') && errorMsg.includes('--dangerously-skip-permissions')) {
-					console.log('[ASYNC+BYPASS TEST] ✓ Expected failure - root restriction confirmed');
-					// Don't throw - this is expected behavior on CI
-					return;
+				if (isCI) {
+					// On CI (running as root), we expect the call to throw, not succeed
+					throw new Error('Expected bypassPermissions to fail on CI (root user) but it succeeded');
 				}
 
-				// Unexpected error - rethrow
+				// Local environment - verify success
+				expect(messageCount).toBeGreaterThan(0);
+				expect(hasAssistantMessage).toBe(true);
+				console.log('[ASYNC+BYPASS TEST] ✓ PASSED - Successfully completed (non-root environment)');
+			} catch (error) {
+				const errorMsg = (error as Error).message;
+				console.error('[ASYNC+BYPASS TEST] Caught error:', errorMsg);
+
+				// Check if this is the expected root restriction error
+				if (errorMsg.includes('root') && errorMsg.includes('--dangerously-skip-permissions')) {
+					if (isCI) {
+						console.log('[ASYNC+BYPASS TEST] ✓ PASSED - Got expected root restriction error on CI');
+						// Expected on CI - test passes
+						return;
+					} else {
+						console.error(
+							'[ASYNC+BYPASS TEST] ✗ FAILED - Got root restriction error in non-CI environment'
+						);
+						throw error;
+					}
+				}
+
+				// Unexpected error
+				console.error('[ASYNC+BYPASS TEST] Stack:', (error as Error).stack);
 				throw error;
 			}
 		}, 20000);
