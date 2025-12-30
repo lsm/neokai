@@ -501,4 +501,217 @@ describe('ProcessingStateManager', () => {
 			expect(state.status).toBe('idle');
 		});
 	});
+
+	describe('waiting_for_input state (AskUserQuestion)', () => {
+		const samplePendingQuestion = {
+			toolUseId: 'tool-ask-123',
+			questions: [
+				{
+					question: 'Which database should we use?',
+					header: 'Database Choice',
+					options: [
+						{ label: 'PostgreSQL', description: 'Robust relational database' },
+						{ label: 'SQLite', description: 'Lightweight embedded database' },
+					],
+					multiSelect: false,
+				},
+			],
+			askedAt: Date.now(),
+		};
+
+		it('should transition to waiting_for_input state', async () => {
+			await stateManager.setWaitingForInput(samplePendingQuestion);
+
+			const state = stateManager.getState();
+			expect(state.status).toBe('waiting_for_input');
+			expect(stateManager.isWaitingForInput()).toBe(true);
+			expect(stateManager.isProcessing()).toBe(false);
+			expect(stateManager.isIdle()).toBe(false);
+		});
+
+		it('should store pending question in state', async () => {
+			await stateManager.setWaitingForInput(samplePendingQuestion);
+
+			const pendingQuestion = stateManager.getPendingQuestion();
+			expect(pendingQuestion).not.toBeNull();
+			expect(pendingQuestion?.toolUseId).toBe('tool-ask-123');
+			expect(pendingQuestion?.questions).toHaveLength(1);
+			expect(pendingQuestion?.questions[0].header).toBe('Database Choice');
+		});
+
+		it('should emit event when entering waiting_for_input state', async () => {
+			emitSpy.mockClear();
+
+			await stateManager.setWaitingForInput(samplePendingQuestion);
+
+			expect(emitSpy).toHaveBeenCalledWith('session:updated', {
+				sessionId: testSessionId,
+				source: 'processing-state',
+				processingState: {
+					status: 'waiting_for_input',
+					pendingQuestion: samplePendingQuestion,
+				},
+			});
+		});
+
+		it('should return null for getPendingQuestion when not waiting', async () => {
+			// Initially idle
+			expect(stateManager.getPendingQuestion()).toBeNull();
+
+			// In processing state
+			await stateManager.setProcessing('msg-123', 'thinking');
+			expect(stateManager.getPendingQuestion()).toBeNull();
+		});
+
+		it('should transition from waiting_for_input back to idle', async () => {
+			await stateManager.setWaitingForInput(samplePendingQuestion);
+			expect(stateManager.isWaitingForInput()).toBe(true);
+
+			await stateManager.setIdle();
+
+			expect(stateManager.isIdle()).toBe(true);
+			expect(stateManager.isWaitingForInput()).toBe(false);
+			expect(stateManager.getPendingQuestion()).toBeNull();
+		});
+	});
+
+	describe('draft responses for AskUserQuestion', () => {
+		const samplePendingQuestion = {
+			toolUseId: 'tool-ask-456',
+			questions: [
+				{
+					question: 'Select features',
+					header: 'Features',
+					options: [
+						{ label: 'TypeScript', description: 'Type safety' },
+						{ label: 'Testing', description: 'Unit tests' },
+					],
+					multiSelect: true,
+				},
+			],
+			askedAt: Date.now(),
+		};
+
+		it('should update draft responses in waiting_for_input state', async () => {
+			await stateManager.setWaitingForInput(samplePendingQuestion);
+
+			const draftResponses = [{ questionIndex: 0, selectedLabels: ['TypeScript'] }];
+			await stateManager.updateQuestionDraft(draftResponses);
+
+			const pendingQuestion = stateManager.getPendingQuestion();
+			expect(pendingQuestion?.draftResponses).toBeDefined();
+			expect(pendingQuestion?.draftResponses).toHaveLength(1);
+			expect(pendingQuestion?.draftResponses?.[0].selectedLabels).toContain('TypeScript');
+		});
+
+		it('should emit event when updating draft responses', async () => {
+			await stateManager.setWaitingForInput(samplePendingQuestion);
+			emitSpy.mockClear();
+
+			const draftResponses = [
+				{ questionIndex: 0, selectedLabels: ['Testing'], customText: 'maybe ESLint too' },
+			];
+			await stateManager.updateQuestionDraft(draftResponses);
+
+			expect(emitSpy).toHaveBeenCalledTimes(1);
+			const [eventName, payload] = emitSpy.mock.calls[0];
+			expect(eventName).toBe('session:updated');
+			expect(payload.processingState.pendingQuestion.draftResponses).toEqual(draftResponses);
+		});
+
+		it('should not update draft when not in waiting_for_input state', async () => {
+			// Should not throw, just log warning
+			const draftResponses = [{ questionIndex: 0, selectedLabels: ['TypeScript'] }];
+			await stateManager.updateQuestionDraft(draftResponses);
+
+			// Still idle, no pending question
+			expect(stateManager.isIdle()).toBe(true);
+			expect(stateManager.getPendingQuestion()).toBeNull();
+		});
+	});
+
+	describe('waiting_for_input persistence', () => {
+		let db: Database;
+		let eventBus: EventBus;
+		const sessionId = 'test-session-waiting';
+
+		const samplePendingQuestion = {
+			toolUseId: 'tool-persist-789',
+			questions: [
+				{
+					question: 'Which option?',
+					header: 'Options',
+					options: [
+						{ label: 'A', description: 'Option A' },
+						{ label: 'B', description: 'Option B' },
+					],
+					multiSelect: false,
+				},
+			],
+			askedAt: Date.now(),
+			draftResponses: [{ questionIndex: 0, selectedLabels: ['A'] }],
+		};
+
+		beforeEach(async () => {
+			db = await createTestDb();
+			eventBus = new EventBus({ debug: false });
+
+			// Create a test session
+			const session = createTestSession(sessionId);
+			db.createSession(session);
+		});
+
+		it('should persist waiting_for_input state to database', async () => {
+			const manager = new ProcessingStateManager(sessionId, eventBus, db);
+
+			await manager.setWaitingForInput(samplePendingQuestion);
+
+			// Verify persisted to database
+			const session = db.getSession(sessionId);
+			const persistedState = JSON.parse(session!.processingState as string);
+			expect(persistedState.status).toBe('waiting_for_input');
+			expect(persistedState.pendingQuestion.toolUseId).toBe('tool-persist-789');
+		});
+
+		it('should persist draft responses to database', async () => {
+			const manager = new ProcessingStateManager(sessionId, eventBus, db);
+
+			await manager.setWaitingForInput({
+				...samplePendingQuestion,
+				draftResponses: undefined,
+			});
+
+			// Update draft
+			const draftResponses = [{ questionIndex: 0, selectedLabels: ['B'] }];
+			await manager.updateQuestionDraft(draftResponses);
+
+			// Verify persisted to database
+			const session = db.getSession(sessionId);
+			const persistedState = JSON.parse(session!.processingState as string);
+			expect(persistedState.pendingQuestion.draftResponses).toEqual(draftResponses);
+		});
+
+		it('should restore waiting_for_input state from database (preserves across restart)', async () => {
+			// Set up persisted waiting_for_input state
+			db.updateSession(sessionId, {
+				processingState: JSON.stringify({
+					status: 'waiting_for_input',
+					pendingQuestion: samplePendingQuestion,
+				}),
+			});
+
+			const manager = new ProcessingStateManager(sessionId, eventBus, db);
+			manager.restoreFromDatabase();
+
+			// Should preserve waiting_for_input state (unlike processing/queued which reset)
+			const state = manager.getState();
+			expect(state.status).toBe('waiting_for_input');
+			expect(manager.isWaitingForInput()).toBe(true);
+
+			// Should preserve pending question with draft
+			const pendingQuestion = manager.getPendingQuestion();
+			expect(pendingQuestion?.toolUseId).toBe('tool-persist-789');
+			expect(pendingQuestion?.draftResponses?.[0].selectedLabels).toContain('A');
+		});
+	});
 });

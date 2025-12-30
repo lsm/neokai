@@ -1,7 +1,14 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type { UUID } from 'crypto';
-import type { AgentProcessingState, MessageContent, Session, ContextInfo } from '@liuboer/shared';
+import type {
+	AgentProcessingState,
+	MessageContent,
+	Session,
+	ContextInfo,
+	QuestionDraftResponse,
+	PendingUserQuestion,
+} from '@liuboer/shared';
 import type { EventBus, MessageHub, CurrentModelInfo } from '@liuboer/shared';
 import { generateUUID } from '@liuboer/shared';
 import type { SDKMessage, SlashCommand } from '@liuboer/shared/sdk';
@@ -18,6 +25,7 @@ import { SDKMessageHandler } from './sdk-message-handler';
 import { QueryOptionsBuilder } from './query-options-builder';
 import { QueryLifecycleManager } from './query-lifecycle-manager';
 import { ModelSwitchHandler } from './model-switch-handler';
+import { AskUserQuestionHandler } from './ask-user-question-handler';
 import { getBuiltInCommandNames } from '../built-in-commands';
 
 /**
@@ -49,6 +57,7 @@ export class AgentSession {
 	private messageHandler: SDKMessageHandler;
 	private lifecycleManager: QueryLifecycleManager;
 	private modelSwitchHandler: ModelSwitchHandler;
+	private askUserQuestionHandler: AskUserQuestionHandler;
 
 	// SDK query object with control methods
 	private queryObject: SDKQueryObject = null;
@@ -147,6 +156,14 @@ export class AgentSession {
 			getQueryObject: () => this.queryObject,
 			isTransportReady: () => this.firstMessageReceived,
 		});
+
+		// Initialize AskUserQuestion handler for interactive tool handling
+		// This handler manages the canUseTool callback for AskUserQuestion
+		this.askUserQuestionHandler = new AskUserQuestionHandler(
+			session.id,
+			this.stateManager,
+			this.eventBus
+		);
 
 		// Set queue callback for automatic /context fetching
 		this.messageHandler.setQueueMessageCallback(async (content: string, internal: boolean) => {
@@ -600,6 +617,11 @@ export class AgentSession {
 
 			// Build query options using QueryOptionsBuilder
 			const optionsBuilder = new QueryOptionsBuilder(this.session, this.settingsManager);
+
+			// Set the canUseTool callback for AskUserQuestion handling
+			// This enables interactive question prompts in the UI
+			optionsBuilder.setCanUseTool(this.askUserQuestionHandler.createCanUseToolCallback());
+
 			let queryOptions = await optionsBuilder.build();
 
 			// Add session state options (resume, thinking tokens)
@@ -840,6 +862,94 @@ export class AgentSession {
 		// Set state back to 'idle' after interrupt completes
 		await this.stateManager.setIdle();
 		this.logger.log(`Interrupt complete, state reset to idle`);
+	}
+
+	/**
+	 * Handle user's response to an AskUserQuestion tool call
+	 *
+	 * Delegates to AskUserQuestionHandler which resolves the pending Promise
+	 * in the canUseTool callback, allowing the SDK to continue.
+	 *
+	 * @param toolUseId - The tool use ID from the AskUserQuestion call
+	 * @param responses - Array of user responses for each question
+	 */
+	async handleQuestionResponse(
+		toolUseId: string,
+		responses: QuestionDraftResponse[]
+	): Promise<void> {
+		// Get the pending question before handling (needed for saving resolved state)
+		const currentState = this.stateManager.getState();
+		let pendingQuestion: PendingUserQuestion | null = null;
+		if (currentState.status === 'waiting_for_input') {
+			pendingQuestion = currentState.pendingQuestion;
+		}
+
+		// Handle the response (this resolves the Promise in canUseTool)
+		await this.askUserQuestionHandler.handleQuestionResponse(toolUseId, responses);
+
+		// Save the resolved question to session metadata for persistence
+		if (pendingQuestion) {
+			const resolvedQuestions = { ...this.session.metadata?.resolvedQuestions };
+			resolvedQuestions[toolUseId] = {
+				question: pendingQuestion,
+				state: 'submitted',
+				responses,
+				resolvedAt: Date.now(),
+			};
+			// updateMetadata handles partial metadata merges internally
+			this.updateMetadata({
+				metadata: {
+					...this.session.metadata,
+					resolvedQuestions,
+				},
+			});
+			this.logger.log(`Saved resolved question (submitted): ${toolUseId}`);
+		}
+	}
+
+	/**
+	 * Update draft responses for pending question (for saving partial input)
+	 * Called by question.saveDraft RPC to preserve user selections before submit
+	 */
+	async updateQuestionDraft(draftResponses: QuestionDraftResponse[]): Promise<void> {
+		await this.askUserQuestionHandler.updateQuestionDraft(draftResponses);
+	}
+
+	/**
+	 * Handle user cancelling a pending question
+	 *
+	 * Delegates to AskUserQuestionHandler which denies the tool use,
+	 * telling Claude the user declined to answer.
+	 */
+	async handleQuestionCancel(toolUseId: string): Promise<void> {
+		// Get the pending question before handling (needed for saving resolved state)
+		const currentState = this.stateManager.getState();
+		let pendingQuestion: PendingUserQuestion | null = null;
+		if (currentState.status === 'waiting_for_input') {
+			pendingQuestion = currentState.pendingQuestion;
+		}
+
+		// Handle the cancellation (this denies the tool use)
+		await this.askUserQuestionHandler.handleQuestionCancel(toolUseId);
+
+		// Save the resolved question to session metadata for persistence
+		if (pendingQuestion) {
+			const resolvedQuestions = { ...this.session.metadata?.resolvedQuestions };
+			resolvedQuestions[toolUseId] = {
+				question: pendingQuestion,
+				state: 'cancelled',
+				responses: [],
+				resolvedAt: Date.now(),
+			};
+			// updateMetadata handles partial metadata merges internally
+			this.updateMetadata({
+				metadata: {
+					...this.session.metadata,
+					resolvedQuestions,
+				},
+			});
+			this.logger.log(`Saved resolved question (cancelled): ${toolUseId}`);
+		}
 	}
 
 	/**

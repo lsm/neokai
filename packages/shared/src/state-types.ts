@@ -73,6 +73,63 @@ export interface SettingsState {
  */
 
 /**
+ * Question option for AskUserQuestion tool
+ */
+export interface QuestionOption {
+	label: string;
+	description: string;
+}
+
+/**
+ * Question from AskUserQuestion tool
+ */
+export interface UserQuestion {
+	question: string;
+	header: string;
+	options: QuestionOption[];
+	multiSelect: boolean;
+}
+
+/**
+ * Pending user question from AskUserQuestion tool
+ * When agent calls AskUserQuestion, this is populated and processing pauses
+ */
+export interface PendingUserQuestion {
+	/** Tool use ID - needed to send response as tool_result */
+	toolUseId: string;
+	/** The questions from AskUserQuestion input */
+	questions: UserQuestion[];
+	/** When the question was asked */
+	askedAt: number;
+	/** Draft responses (saved as user interacts, before submit) */
+	draftResponses?: QuestionDraftResponse[];
+}
+
+/**
+ * Draft response for a question (saved before final submit)
+ */
+export interface QuestionDraftResponse {
+	questionIndex: number;
+	selectedLabels: string[];
+	customText?: string;
+}
+
+/**
+ * Resolved question - saved after user submits or cancels
+ * Used to persist question UI state across page refreshes
+ */
+export interface ResolvedQuestion {
+	/** The original question data */
+	question: PendingUserQuestion;
+	/** How the question was resolved */
+	state: 'submitted' | 'cancelled';
+	/** User's responses (empty for cancelled) */
+	responses: QuestionDraftResponse[];
+	/** When the question was resolved */
+	resolvedAt: number;
+}
+
+/**
  * Agent processing state
  * Tracks what the agent is currently doing with fine-grained phase information
  * Moved from daemon/agent-session.ts to shared for type consistency
@@ -87,6 +144,7 @@ export type AgentProcessingState =
 			streamingStartedAt?: number; // Timestamp when streaming began
 			isCompacting?: boolean; // True during context compaction
 	  }
+	| { status: 'waiting_for_input'; pendingQuestion: PendingUserQuestion }
 	| { status: 'interrupted' };
 
 /**

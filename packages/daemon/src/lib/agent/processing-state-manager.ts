@@ -8,7 +8,7 @@
  * Now persists state to database for recovery after restarts.
  */
 
-import type { AgentProcessingState, EventBus } from '@liuboer/shared';
+import type { AgentProcessingState, EventBus, PendingUserQuestion } from '@liuboer/shared';
 import type { SDKMessage } from '@liuboer/shared/sdk';
 import { isSDKAssistantMessage, isToolUseBlock } from '@liuboer/shared/sdk/type-guards';
 import type { Database } from '../../storage/database';
@@ -54,12 +54,18 @@ export class ProcessingStateManager {
 		try {
 			const restoredState = JSON.parse(session.processingState) as AgentProcessingState;
 
-			// Only restore if state is not idle or interrupted
-			// After restart, we should reset to idle for safety
+			// Handle different states appropriately after restart
 			if (restoredState.status === 'processing' || restoredState.status === 'queued') {
+				// Active processing states should reset to idle after restart
+				// The SDK query will need to be restarted anyway
 				this.logger.log('Restored processing state from database:', restoredState);
 				this.logger.log('Resetting to idle after restart for safety');
 				this.processingState = { status: 'idle' };
+			} else if (restoredState.status === 'waiting_for_input') {
+				// IMPORTANT: Preserve waiting_for_input state across restarts
+				// The user's pending question should still be answerable after page refresh
+				this.processingState = restoredState;
+				this.logger.log('Restored waiting_for_input state - user can still answer the question');
 			} else {
 				this.processingState = restoredState;
 				this.logger.log('Restored processing state from database:', restoredState);
@@ -153,6 +159,60 @@ export class ProcessingStateManager {
 	 */
 	async setInterrupted(): Promise<void> {
 		await this.setState({ status: 'interrupted' });
+	}
+
+	/**
+	 * Set state to waiting_for_input
+	 * Called when agent uses AskUserQuestion tool and needs user response
+	 */
+	async setWaitingForInput(pendingQuestion: PendingUserQuestion): Promise<void> {
+		await this.setState({ status: 'waiting_for_input', pendingQuestion });
+		this.logger.log(`Waiting for user input: ${pendingQuestion.questions.length} question(s)`);
+	}
+
+	/**
+	 * Check if currently waiting for user input
+	 */
+	isWaitingForInput(): boolean {
+		return this.processingState.status === 'waiting_for_input';
+	}
+
+	/**
+	 * Get pending question if in waiting_for_input state
+	 */
+	getPendingQuestion(): PendingUserQuestion | null {
+		if (this.processingState.status === 'waiting_for_input') {
+			return this.processingState.pendingQuestion;
+		}
+		return null;
+	}
+
+	/**
+	 * Update draft responses for pending question (for saving partial input)
+	 */
+	async updateQuestionDraft(draftResponses: PendingUserQuestion['draftResponses']): Promise<void> {
+		if (this.processingState.status !== 'waiting_for_input') {
+			this.logger.warn('Cannot update draft - not in waiting_for_input state');
+			return;
+		}
+
+		this.processingState = {
+			...this.processingState,
+			pendingQuestion: {
+				...this.processingState.pendingQuestion,
+				draftResponses,
+			},
+		};
+
+		// Persist and broadcast
+		this.persistToDatabase();
+		await this.eventBus.emit('session:updated', {
+			sessionId: this.sessionId,
+			source: 'processing-state',
+			processingState: this.processingState,
+		});
+
+		this.logger.log('Updated question draft responses');
 	}
 
 	/**

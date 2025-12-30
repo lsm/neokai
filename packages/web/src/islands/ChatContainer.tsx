@@ -52,6 +52,7 @@ import { Spinner } from '../components/ui/Spinner.tsx';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
 import { ErrorBanner } from '../components/ErrorBanner.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
+import type { ResolvedQuestion } from '@liuboer/shared';
 
 interface ChatContainerProps {
 	sessionId: string;
@@ -72,6 +73,13 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const [isInitialLoad, setIsInitialLoad] = useState(true);
 	const [localError, setLocalError] = useState<string | null>(null);
 	const [autoScroll, setAutoScroll] = useState(false);
+
+	// Track resolved questions to keep showing them in disabled state
+	// Map of toolUseId -> resolved question data
+	// Initialized from session metadata and synced when session updates
+	const [resolvedQuestions, setResolvedQuestions] = useState<Map<string, ResolvedQuestion>>(
+		new Map()
+	);
 
 	// ========================================
 	// Modals
@@ -118,12 +126,25 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		setStoreError(sessionStore.error.value);
 	});
 
+	// Sync resolved questions from session metadata when session loads/updates
+	useEffect(() => {
+		if (session?.metadata?.resolvedQuestions) {
+			const map = new Map<string, ResolvedQuestion>();
+			for (const [toolUseId, resolved] of Object.entries(session.metadata.resolvedQuestions)) {
+				map.set(toolUseId, resolved);
+			}
+			setResolvedQuestions(map);
+		}
+	}, [session?.metadata?.resolvedQuestions]);
+
 	// Derived processing state
 	const isProcessing = agentState.status === 'processing' || agentState.status === 'queued';
 	const isCompacting =
 		agentState.status === 'processing' &&
 		'isCompacting' in agentState &&
 		agentState.isCompacting === true;
+	const isWaitingForInput = agentState.status === 'waiting_for_input';
+	const pendingQuestion = isWaitingForInput ? agentState.pendingQuestion : null;
 
 	// ========================================
 	// Model Switcher
@@ -459,7 +480,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 								</div>
 							)}
 
-							{/* Messages */}
+							{/* Messages - QuestionPrompt rendered inline with AskUserQuestion tool blocks */}
 							{messages.map((msg, idx) => (
 								<SDKMessageRenderer
 									key={msg.uuid || `msg-${idx}`}
@@ -471,6 +492,25 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 											? (maps.sessionInfoMap.get(msg.uuid) as SDKSystemMessage | undefined)
 											: undefined
 									}
+									sessionId={sessionId}
+									resolvedQuestions={resolvedQuestions}
+									pendingQuestion={pendingQuestion}
+									onQuestionResolved={(state, responses) => {
+										// Move question to resolved state locally for immediate UI feedback
+										// (Server also persists this via question.respond/cancel RPC)
+										if (pendingQuestion) {
+											setResolvedQuestions((prev) => {
+												const next = new Map(prev);
+												next.set(pendingQuestion.toolUseId, {
+													question: pendingQuestion,
+													state,
+													responses,
+													resolvedAt: Date.now(),
+												});
+												return next;
+											});
+										}
+									}}
 								/>
 							))}
 						</ContentContainer>
@@ -545,7 +585,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 						<MessageInput
 							sessionId={sessionId}
 							onSend={handleSendMessage}
-							disabled={isProcessing || isCompacting || !isConnected}
+							disabled={isProcessing || isCompacting || isWaitingForInput || !isConnected}
 							autoScroll={autoScroll}
 							onAutoScrollChange={handleAutoScrollChange}
 							onOpenTools={toolsModal.open}

@@ -156,6 +156,61 @@ export type ContentBlock =
 	| { type: 'thinking'; thinking: string };
 
 /**
+ * AskUserQuestion tool input type
+ * Matches the SDK's AskUserQuestionInput schema
+ */
+export interface AskUserQuestionInput {
+	questions: Array<{
+		question: string;
+		header: string;
+		options: Array<{
+			label: string;
+			description: string;
+		}>;
+		multiSelect: boolean;
+	}>;
+}
+
+/**
+ * Check if a tool use block is an AskUserQuestion call
+ */
+export function isAskUserQuestionToolUse(
+	block: ContentBlock
+): block is Extract<ContentBlock, { type: 'tool_use' }> & { name: 'AskUserQuestion' } {
+	return block.type === 'tool_use' && block.name === 'AskUserQuestion';
+}
+
+/**
+ * Extract AskUserQuestion data from an assistant message
+ * Returns null if the message doesn't contain an AskUserQuestion tool call
+ */
+export function extractAskUserQuestion(msg: SDKMessage): {
+	toolUseId: string;
+	input: AskUserQuestionInput;
+} | null {
+	if (!isSDKAssistantMessage(msg)) return null;
+
+	const content = msg.message.content;
+	for (const block of content) {
+		if (isAskUserQuestionToolUse(block)) {
+			return {
+				toolUseId: block.id,
+				input: block.input as unknown as AskUserQuestionInput,
+			};
+		}
+	}
+
+	return null;
+}
+
+/**
+ * Check if an assistant message contains an AskUserQuestion tool call
+ */
+export function hasAskUserQuestion(msg: SDKMessage): boolean {
+	return extractAskUserQuestion(msg) !== null;
+}
+
+/**
  * Check if content block is a text block
  */
 export function isTextBlock(block: ContentBlock): block is Extract<ContentBlock, { type: 'text' }> {

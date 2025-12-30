@@ -326,6 +326,9 @@ export class SDKMessageHandler {
 
 	/**
 	 * Handle assistant message (track tool calls)
+	 *
+	 * NOTE: AskUserQuestion is now handled via the canUseTool callback in
+	 * AskUserQuestionHandler, not here. The SDK intercepts it BEFORE execution.
 	 */
 	private async handleAssistantMessage(message: SDKMessage): Promise<void> {
 		if (!isSDKAssistantMessage(message)) return;

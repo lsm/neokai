@@ -11,7 +11,7 @@
  * - Hooks (output limiter)
  */
 
-import type { Options } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type { Session, ThinkingLevel } from '@liuboer/shared';
 import { THINKING_LEVEL_TOKENS } from '@liuboer/shared';
 import type { PermissionMode } from '@liuboer/shared/types/settings';
@@ -21,12 +21,21 @@ import { Logger } from '../logger';
 
 export class QueryOptionsBuilder {
 	private logger: Logger;
+	private canUseTool?: CanUseTool;
 
 	constructor(
 		private session: Session,
 		private settingsManager: SettingsManager
 	) {
 		this.logger = new Logger(`QueryOptionsBuilder ${session.id}`);
+	}
+
+	/**
+	 * Set the canUseTool callback for handling tool permissions
+	 * This is used for AskUserQuestion and other interactive tools
+	 */
+	setCanUseTool(callback: CanUseTool): void {
+		this.canUseTool = callback;
 	}
 
 	/**
@@ -69,6 +78,8 @@ export class QueryOptionsBuilder {
 			// In production, allow auto-loading (undefined).
 			mcpServers: process.env.NODE_ENV === 'test' ? {} : undefined,
 			hooks,
+			// canUseTool callback for handling interactive tools like AskUserQuestion
+			canUseTool: this.canUseTool,
 		};
 
 		// DEBUG: Log query options for verification
