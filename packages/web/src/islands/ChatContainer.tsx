@@ -53,6 +53,14 @@ import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
 import { ErrorBanner } from '../components/ErrorBanner.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
 import { QuestionPrompt } from '../components/QuestionPrompt.tsx';
+import type { PendingUserQuestion, QuestionDraftResponse } from '@liuboer/shared';
+
+/** Resolved question state for tracking submitted/cancelled questions */
+interface ResolvedQuestion {
+	question: PendingUserQuestion;
+	state: 'submitted' | 'cancelled';
+	responses: QuestionDraftResponse[];
+}
 
 interface ChatContainerProps {
 	sessionId: string;
@@ -73,6 +81,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const [isInitialLoad, setIsInitialLoad] = useState(true);
 	const [localError, setLocalError] = useState<string | null>(null);
 	const [autoScroll, setAutoScroll] = useState(false);
+
+	// Track resolved questions to keep showing them in disabled state
+	// Map of toolUseId -> resolved question data
+	const [resolvedQuestions, setResolvedQuestions] = useState<Map<string, ResolvedQuestion>>(
+		new Map()
+	);
 
 	// ========================================
 	// Modals
@@ -470,9 +484,35 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 								/>
 							))}
 
-							{/* Question Prompt - shown when agent is waiting for user input */}
-							{pendingQuestion && (
-								<QuestionPrompt sessionId={sessionId} pendingQuestion={pendingQuestion} />
+							{/* Resolved Question Prompts - shown after submission/cancellation */}
+							{[...resolvedQuestions.values()].map((resolved) => (
+								<QuestionPrompt
+									key={resolved.question.toolUseId}
+									sessionId={sessionId}
+									pendingQuestion={resolved.question}
+									resolvedState={resolved.state}
+									finalResponses={resolved.responses}
+								/>
+							))}
+
+							{/* Active Question Prompt - shown when agent is waiting for user input */}
+							{pendingQuestion && !resolvedQuestions.has(pendingQuestion.toolUseId) && (
+								<QuestionPrompt
+									sessionId={sessionId}
+									pendingQuestion={pendingQuestion}
+									onResolved={(state, responses) => {
+										// Move question to resolved state
+										setResolvedQuestions((prev) => {
+											const next = new Map(prev);
+											next.set(pendingQuestion.toolUseId, {
+												question: pendingQuestion,
+												state,
+												responses,
+											});
+											return next;
+										});
+									}}
+								/>
 							)}
 						</ContentContainer>
 					)}
