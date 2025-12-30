@@ -20,6 +20,7 @@ export interface UseFileAttachmentsResult {
 	attachments: AttachmentWithMetadata[];
 	fileInputRef: RefObject<HTMLInputElement>;
 	handleFileSelect: (e: Event) => Promise<void>;
+	handleFileDrop: (files: FileList) => Promise<void>;
 	handleRemove: (index: number) => void;
 	clear: () => void;
 	openFilePicker: () => void;
@@ -33,11 +34,7 @@ export function useFileAttachments(): UseFileAttachmentsResult {
 	const [attachments, setAttachments] = useState<AttachmentWithMetadata[]>([]);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
-	const handleFileSelect = useCallback(async (e: Event) => {
-		const input = e.target as HTMLInputElement;
-		const files = input.files;
-		if (!files || files.length === 0) return;
-
+	const processFiles = useCallback(async (files: FileList | File[]) => {
 		for (const file of Array.from(files)) {
 			const error = validateImageFile(file);
 			if (error) {
@@ -61,9 +58,26 @@ export function useFileAttachments(): UseFileAttachmentsResult {
 				toast.error(`Failed to read ${file.name}`);
 			}
 		}
-
-		input.value = '';
 	}, []);
+
+	const handleFileSelect = useCallback(
+		async (e: Event) => {
+			const input = e.target as HTMLInputElement;
+			const files = input.files;
+			if (!files || files.length === 0) return;
+
+			await processFiles(files);
+			input.value = '';
+		},
+		[processFiles]
+	);
+
+	const handleFileDrop = useCallback(
+		async (files: FileList) => {
+			await processFiles(files);
+		},
+		[processFiles]
+	);
 
 	const handleRemove = useCallback((index: number) => {
 		setAttachments((prev) => prev.filter((_, i) => i !== index));
@@ -87,6 +101,7 @@ export function useFileAttachments(): UseFileAttachmentsResult {
 		attachments,
 		fileInputRef,
 		handleFileSelect,
+		handleFileDrop,
 		handleRemove,
 		clear,
 		openFilePicker,
