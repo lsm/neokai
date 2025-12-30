@@ -57,7 +57,7 @@ describe('SDK Streaming CI Failures', () => {
 	}
 
 	describe('Direct SDK Call with Different API Patterns', () => {
-		test('should call SDK with AsyncGenerator + bypassPermissions (FAILING)', async () => {
+		test('should call SDK with AsyncGenerator + bypassPermissions (CORRECT API)', async () => {
 			console.log('[ASYNC+BYPASS TEST] AsyncGenerator with bypassPermissions');
 
 			// Message generator - just one simple message
@@ -78,16 +78,19 @@ describe('SDK Streaming CI Failures', () => {
 				let messageCount = 0;
 				let hasAssistantMessage = false;
 
-				// AsyncGenerator pattern with bypassPermissions
-				for await (const message of query(messageGenerator(), {
-					model: 'haiku',
-					cwd: process.cwd(),
-					permissionMode: 'bypassPermissions',
-					allowDangerouslySkipPermissions: true,
-					settingSources: [],
-					systemPrompt: undefined,
-					mcpServers: {},
-					maxTurns: 1,
+				// CORRECT API: Wrap AsyncGenerator in object with 'prompt' field
+				for await (const message of query({
+					prompt: messageGenerator(),
+					options: {
+						model: 'haiku',
+						cwd: process.cwd(),
+						permissionMode: 'bypassPermissions',
+						allowDangerouslySkipPermissions: true,
+						settingSources: [],
+						systemPrompt: undefined,
+						mcpServers: {},
+						maxTurns: 1,
+					},
 				})) {
 					messageCount++;
 					console.log(`[ASYNC+BYPASS TEST] Message ${messageCount} - type: ${message.type}`);
@@ -108,7 +111,7 @@ describe('SDK Streaming CI Failures', () => {
 			}
 		}, 20000);
 
-		test('should call SDK with AsyncGenerator + acceptEdits', async () => {
+		test('should call SDK with AsyncGenerator + acceptEdits (CORRECT API)', async () => {
 			console.log('[ASYNC+ACCEPT TEST] AsyncGenerator with acceptEdits');
 
 			// Message generator - just one simple message
@@ -129,15 +132,18 @@ describe('SDK Streaming CI Failures', () => {
 				let messageCount = 0;
 				let hasAssistantMessage = false;
 
-				// AsyncGenerator pattern with acceptEdits
-				for await (const message of query(messageGenerator(), {
-					model: 'haiku',
-					cwd: process.cwd(),
-					permissionMode: 'acceptEdits',
-					settingSources: [],
-					systemPrompt: undefined,
-					mcpServers: {},
-					maxTurns: 1,
+				// CORRECT API: Wrap AsyncGenerator in object with 'prompt' field
+				for await (const message of query({
+					prompt: messageGenerator(),
+					options: {
+						model: 'haiku',
+						cwd: process.cwd(),
+						permissionMode: 'acceptEdits',
+						settingSources: [],
+						systemPrompt: undefined,
+						mcpServers: {},
+						maxTurns: 1,
+					},
 				})) {
 					messageCount++;
 					console.log(`[ASYNC+ACCEPT TEST] Message ${messageCount} - type: ${message.type}`);
