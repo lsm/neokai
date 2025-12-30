@@ -261,7 +261,9 @@ export class SDKMessageHandler {
 			totalTokens: (this.session.metadata?.totalTokens || 0) + totalTokens,
 			inputTokens: (this.session.metadata?.inputTokens || 0) + usage.input_tokens,
 			outputTokens: (this.session.metadata?.outputTokens || 0) + usage.output_tokens,
-			totalCost: (this.session.metadata?.totalCost || 0) + cost,
+			// SDK result message contains cumulative cost for entire session
+			// See docs/cost-tracking.md: "The final result message contains the total cumulative usage"
+			totalCost: cost,
 			toolCallCount: this.session.metadata?.toolCallCount || 0,
 		};
 

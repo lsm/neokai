@@ -298,23 +298,30 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// Display Stats
 	// ========================================
 	const displayStats = useMemo(() => {
+		// Get the last result message which contains cumulative totals from SDK
+		const lastResult = messages.findLast(
+			(msg) => msg.type === 'result' && msg.subtype === 'success'
+		);
+
+		// For tokens, accumulate as before (keeping existing behavior)
 		const accumulatedStats = messages.reduce(
 			(acc, msg) => {
 				if (msg.type === 'result' && msg.subtype === 'success') {
 					acc.inputTokens += msg.usage.input_tokens;
 					acc.outputTokens += msg.usage.output_tokens;
-					acc.totalCost += msg.total_cost_usd;
 				}
 				return acc;
 			},
-			{ inputTokens: 0, outputTokens: 0, totalCost: 0 }
+			{ inputTokens: 0, outputTokens: 0 }
 		);
 
 		return {
 			totalTokens:
 				session?.metadata?.totalTokens ??
 				accumulatedStats.inputTokens + accumulatedStats.outputTokens,
-			totalCost: session?.metadata?.totalCost ?? accumulatedStats.totalCost,
+			// SDK result message contains cumulative cost for entire session
+			// See docs/cost-tracking.md: "The final result message contains the total cumulative usage"
+			totalCost: session?.metadata?.totalCost ?? lastResult?.total_cost_usd ?? 0,
 		};
 	}, [messages, session?.metadata?.totalTokens, session?.metadata?.totalCost]);
 
