@@ -77,6 +77,7 @@ describe('SDK Streaming CI Failures', () => {
 			try {
 				let messageCount = 0;
 				let hasAssistantMessage = false;
+				const stderrOutput: string[] = [];
 
 				// CORRECT API: Wrap AsyncGenerator in object with 'prompt' field
 				for await (const message of query({
@@ -90,6 +91,10 @@ describe('SDK Streaming CI Failures', () => {
 						systemPrompt: undefined,
 						mcpServers: {},
 						maxTurns: 1,
+						stderr: (msg: string) => {
+							console.log('[ASYNC+BYPASS TEST] STDERR:', msg);
+							stderrOutput.push(msg);
+						},
 					},
 				})) {
 					messageCount++;
@@ -131,6 +136,7 @@ describe('SDK Streaming CI Failures', () => {
 			try {
 				let messageCount = 0;
 				let hasAssistantMessage = false;
+				const stderrOutput: string[] = [];
 
 				// CORRECT API: Wrap AsyncGenerator in object with 'prompt' field
 				for await (const message of query({
@@ -143,6 +149,10 @@ describe('SDK Streaming CI Failures', () => {
 						systemPrompt: undefined,
 						mcpServers: {},
 						maxTurns: 1,
+						stderr: (msg: string) => {
+							console.log('[ASYNC+ACCEPT TEST] STDERR:', msg);
+							stderrOutput.push(msg);
+						},
 					},
 				})) {
 					messageCount++;
@@ -207,136 +217,179 @@ describe('SDK Streaming CI Failures', () => {
 
 	describe('Session Resume', () => {
 		test('should capture SDK session ID on first message', async () => {
-			// Create a new session using cwd (avoid temp path issues on CI)
-			// Explicitly set permissionMode to acceptEdits for CI (bypass permissions fails on root)
-			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: process.cwd(),
-				config: {
-					permissionMode: 'acceptEdits',
-				},
-			});
+			console.log('[SESSION RESUME TEST] Starting test...');
 
-			expect(sessionId).toBeDefined();
+			try {
+				// Create a new session using cwd (avoid temp path issues on CI)
+				// Explicitly set permissionMode to acceptEdits for CI (bypass permissions fails on root)
+				const sessionId = await ctx.sessionManager.createSession({
+					workspacePath: process.cwd(),
+					config: {
+						model: 'haiku', // Explicitly set model for CI
+						permissionMode: 'acceptEdits',
+					},
+				});
 
-			// Get session from database - initially no SDK session ID
-			let session = ctx.db.getSession(sessionId);
-			expect(session).toBeDefined();
-			expect(session?.sdkSessionId).toBeUndefined();
+				expect(sessionId).toBeDefined();
+				console.log('[SESSION RESUME TEST] Session created:', sessionId);
 
-			// Get the agent session
-			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-			expect(agentSession).toBeDefined();
+				// Get session from database - initially no SDK session ID
+				let session = ctx.db.getSession(sessionId);
+				expect(session).toBeDefined();
+				expect(session?.sdkSessionId).toBeUndefined();
 
-			// Send a message using sendMessageSync - this properly waits for message to be enqueued
-			// and the SDK query to start
-			await sendMessageSync(agentSession!, {
-				content: 'What is 1+1? Just the number.',
-			});
+				// Get the agent session
+				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+				expect(agentSession).toBeDefined();
+				console.log('[SESSION RESUME TEST] Agent session retrieved');
 
-			// Wait for SDK to process and return to idle
-			await waitForIdle(agentSession!);
+				// Send a message using sendMessageSync - this properly waits for message to be enqueued
+				// and the SDK query to start
+				console.log('[SESSION RESUME TEST] Sending message...');
+				await sendMessageSync(agentSession!, {
+					content: 'What is 1+1? Just the number.',
+				});
 
-			// Poll for SDK session ID to be captured (it's set asynchronously from SDK messages)
-			// On fast CI machines, we may need to wait a bit for the DB update to complete
-			const timeout = 5000;
-			const start = Date.now();
-			while (Date.now() - start < timeout) {
-				session = ctx.db.getSession(sessionId);
-				if (session?.sdkSessionId) {
-					break;
+				// Wait for SDK to process and return to idle
+				console.log('[SESSION RESUME TEST] Waiting for idle...');
+				await waitForIdle(agentSession!);
+				console.log('[SESSION RESUME TEST] Returned to idle');
+
+				// Poll for SDK session ID to be captured (it's set asynchronously from SDK messages)
+				// On fast CI machines, we may need to wait a bit for the DB update to complete
+				const timeout = 5000;
+				const start = Date.now();
+				while (Date.now() - start < timeout) {
+					session = ctx.db.getSession(sessionId);
+					if (session?.sdkSessionId) {
+						break;
+					}
+					await Bun.sleep(100);
 				}
-				await Bun.sleep(100);
-			}
 
-			// Debug: If sdkSessionId not found, log what messages we have
-			if (!session?.sdkSessionId) {
-				const messages = ctx.db.getSDKMessages(sessionId);
-				console.log('[DEBUG] sdkSessionId not found after polling');
-				console.log('[DEBUG] Messages in DB:', messages.length);
-				console.log('[DEBUG] Message types:', messages.map((m) => m.type).join(', '));
-				// Check for system message which should contain session_id
-				const systemMsg = messages.find((m) => m.type === 'system');
-				console.log('[DEBUG] System message found:', !!systemMsg);
-				if (systemMsg) {
-					console.log('[DEBUG] System message:', JSON.stringify(systemMsg));
+				// Debug: If sdkSessionId not found, log what messages we have
+				if (!session?.sdkSessionId) {
+					const messages = ctx.db.getSDKMessages(sessionId);
+					console.log('[SESSION RESUME TEST] sdkSessionId not found after polling');
+					console.log('[SESSION RESUME TEST] Messages in DB:', messages.length);
+					console.log(
+						'[SESSION RESUME TEST] Message types:',
+						messages.map((m) => m.type).join(', ')
+					);
+					// Check for system message which should contain session_id
+					const systemMsg = messages.find((m) => m.type === 'system');
+					console.log('[SESSION RESUME TEST] System message found:', !!systemMsg);
+					if (systemMsg) {
+						console.log('[SESSION RESUME TEST] System message:', JSON.stringify(systemMsg));
+					}
 				}
-			}
 
-			// Now check for SDK session ID - it should be captured after SDK responds
-			expect(session?.sdkSessionId).toBeDefined();
-			expect(typeof session?.sdkSessionId).toBe('string');
+				// Now check for SDK session ID - it should be captured after SDK responds
+				expect(session?.sdkSessionId).toBeDefined();
+				expect(typeof session?.sdkSessionId).toBe('string');
+				console.log(
+					'[SESSION RESUME TEST] ✓ PASSED - SDK session ID captured:',
+					session?.sdkSessionId
+				);
+			} catch (error) {
+				console.error('[SESSION RESUME TEST] FAILED:', error);
+				console.error('[SESSION RESUME TEST] Message:', (error as Error).message);
+				console.error('[SESSION RESUME TEST] Stack:', (error as Error).stack);
+				throw error;
+			}
 		}, 30000);
 	});
 
 	describe('Message Persistence', () => {
 		test('should persist messages during real SDK interaction', async () => {
-			const sessionId = await ctx.sessionManager.createSession({
-				workspacePath: process.cwd(),
-				config: {
-					model: 'haiku', // Use Haiku for faster, cheaper tests
-					permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
-				},
-			});
+			console.log('[MESSAGE PERSISTENCE TEST] Starting test...');
 
-			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-			expect(agentSession).toBeDefined();
+			try {
+				const sessionId = await ctx.sessionManager.createSession({
+					workspacePath: process.cwd(),
+					config: {
+						model: 'haiku', // Use Haiku for faster, cheaper tests
+						permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
+					},
+				});
 
-			// Send a message to the real SDK
-			const result = await sendMessageSync(agentSession!, {
-				content: 'What is 2+2? Answer with just the number.',
-			});
+				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+				expect(agentSession).toBeDefined();
+				console.log('[MESSAGE PERSISTENCE TEST] Session created:', sessionId);
 
-			expect(result.messageId).toBeString();
+				// Send a message to the real SDK
+				console.log('[MESSAGE PERSISTENCE TEST] Sending message...');
+				const result = await sendMessageSync(agentSession!, {
+					content: 'What is 2+2? Answer with just the number.',
+				});
 
-			// Wait for processing to complete
-			await waitForIdle(agentSession!);
+				expect(result.messageId).toBeString();
+				console.log('[MESSAGE PERSISTENCE TEST] Message sent:', result.messageId);
 
-			// Poll for messages to be persisted to DB
-			// On fast CI machines, DB writes may complete slightly after waitForIdle returns
-			let dbMessages: ReturnType<typeof ctx.db.getSDKMessages> = [];
-			let assistantMessage: (typeof dbMessages)[number] | undefined;
-			const pollTimeout = 5000;
-			const pollStart = Date.now();
-			while (Date.now() - pollStart < pollTimeout) {
-				dbMessages = ctx.db.getSDKMessages(sessionId);
-				assistantMessage = dbMessages.find((msg) => msg.type === 'assistant');
-				if (assistantMessage) {
-					break;
+				// Wait for processing to complete
+				console.log('[MESSAGE PERSISTENCE TEST] Waiting for idle...');
+				await waitForIdle(agentSession!);
+				console.log('[MESSAGE PERSISTENCE TEST] Returned to idle');
+
+				// Poll for messages to be persisted to DB
+				// On fast CI machines, DB writes may complete slightly after waitForIdle returns
+				let dbMessages: ReturnType<typeof ctx.db.getSDKMessages> = [];
+				let assistantMessage: (typeof dbMessages)[number] | undefined;
+				const pollTimeout = 5000;
+				const pollStart = Date.now();
+				while (Date.now() - pollStart < pollTimeout) {
+					dbMessages = ctx.db.getSDKMessages(sessionId);
+					assistantMessage = dbMessages.find((msg) => msg.type === 'assistant');
+					if (assistantMessage) {
+						break;
+					}
+					await Bun.sleep(100);
 				}
-				await Bun.sleep(100);
-			}
 
-			// Check messages were persisted to DB
-			expect(dbMessages.length).toBeGreaterThan(0);
+				// Check messages were persisted to DB
+				expect(dbMessages.length).toBeGreaterThan(0);
 
-			// Verify user message is saved
-			const userMessage = dbMessages.find((msg) => msg.type === 'user');
-			expect(userMessage).toBeDefined();
+				// Verify user message is saved
+				const userMessage = dbMessages.find((msg) => msg.type === 'user');
+				expect(userMessage).toBeDefined();
 
-			// Debug: Log all message types if assistant is not found
-			if (!assistantMessage) {
-				console.log('[DEBUG] Messages in DB after polling:');
-				console.log('[DEBUG] Total count:', dbMessages.length);
-				console.log('[DEBUG] Types:', dbMessages.map((m) => m.type).join(', '));
+				// Debug: Log all message types if assistant is not found
+				if (!assistantMessage) {
+					console.log('[MESSAGE PERSISTENCE TEST] Messages in DB after polling:');
+					console.log('[MESSAGE PERSISTENCE TEST] Total count:', dbMessages.length);
+					console.log(
+						'[MESSAGE PERSISTENCE TEST] Types:',
+						dbMessages.map((m) => m.type).join(', ')
+					);
+					console.log(
+						'[MESSAGE PERSISTENCE TEST] Full messages:',
+						JSON.stringify(
+							dbMessages.map((m) => ({ type: m.type, uuid: m.uuid })),
+							null,
+							2
+						)
+					);
+				}
+
+				// Verify assistant response is saved
+				expect(assistantMessage).toBeDefined();
+
+				// Simulate page refresh - reload session and check messages still there
+				const reloadedSession = await ctx.sessionManager.getSessionAsync(sessionId);
+				const afterReloadMessages = reloadedSession!.getSDKMessages();
+
+				expect(afterReloadMessages.length).toBe(dbMessages.length);
+				expect(afterReloadMessages.length).toBeGreaterThan(0);
 				console.log(
-					'[DEBUG] Full messages:',
-					JSON.stringify(
-						dbMessages.map((m) => ({ type: m.type, uuid: m.uuid })),
-						null,
-						2
-					)
+					'[MESSAGE PERSISTENCE TEST] ✓ PASSED - Messages persisted:',
+					afterReloadMessages.length
 				);
+			} catch (error) {
+				console.error('[MESSAGE PERSISTENCE TEST] FAILED:', error);
+				console.error('[MESSAGE PERSISTENCE TEST] Message:', (error as Error).message);
+				console.error('[MESSAGE PERSISTENCE TEST] Stack:', (error as Error).stack);
+				throw error;
 			}
-
-			// Verify assistant response is saved
-			expect(assistantMessage).toBeDefined();
-
-			// Simulate page refresh - reload session and check messages still there
-			const reloadedSession = await ctx.sessionManager.getSessionAsync(sessionId);
-			const afterReloadMessages = reloadedSession!.getSDKMessages();
-
-			expect(afterReloadMessages.length).toBe(dbMessages.length);
-			expect(afterReloadMessages.length).toBeGreaterThan(0);
 		}, 20000); // 20 second timeout
 	});
 });
