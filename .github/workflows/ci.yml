@@ -379,14 +379,12 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
-  # Standalone job for isolated SDK streaming failure debugging
-  # These tests are isolated because they fail on CI due to SDK subprocess crashes
+  # Standalone job for SDK streaming tests with different permission modes
+  # Includes diagnostic test for bypassPermissions (expected to fail gracefully on CI as root)
   test-daemon-sdk-streaming-failures:
-    name: Daemon Online (SDK streaming failures - DEBUG)
+    name: Daemon Online (SDK streaming tests)
     runs-on: self-hosted
     timeout-minutes: 15
-    # Allow this job to fail without blocking other jobs
-    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v4
