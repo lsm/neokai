@@ -123,7 +123,15 @@ describe('SDK Streaming CI Failures', () => {
 				console.error('[ASYNC+BYPASS TEST] Caught error:', errorMsg);
 
 				// Check if this is the expected root restriction error
-				if (errorMsg.includes('root') && errorMsg.includes('--dangerously-skip-permissions')) {
+				// The error message is "Claude Code process exited with code 1"
+				// But stderr contains the actual root restriction message
+				const stderrText = stderrOutput.join('\n');
+				const isRootRestrictionError =
+					errorMsg.includes('exited with code 1') &&
+					stderrText.includes('--dangerously-skip-permissions') &&
+					stderrText.includes('root');
+
+				if (isRootRestrictionError) {
 					if (isCI) {
 						console.log('[ASYNC+BYPASS TEST] ✓ PASSED - Got expected root restriction error on CI');
 						// Expected on CI - test passes
