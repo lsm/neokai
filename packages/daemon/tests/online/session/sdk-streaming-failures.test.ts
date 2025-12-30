@@ -76,10 +76,11 @@ describe('SDK Streaming CI Failures', () => {
 				};
 			}
 
+			let stderrOutput: string[] = [];
+
 			try {
 				let messageCount = 0;
 				let hasAssistantMessage = false;
-				const stderrOutput: string[] = [];
 
 				// CORRECT API: Wrap AsyncGenerator in object with 'prompt' field
 				for await (const message of query({
