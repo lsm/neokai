@@ -226,8 +226,8 @@ export interface SessionMetadata {
 	removedOutputs?: string[]; // UUIDs of messages whose tool_result outputs were removed from SDK session file
 }
 
-// Message content types for streaming input (supports images)
-export type MessageContent = TextContent | ImageContent;
+// Message content types for streaming input (supports images and tool results)
+export type MessageContent = TextContent | ImageContent | ToolResultContent;
 
 export interface TextContent {
 	type: 'text';
@@ -241,6 +241,16 @@ export interface ImageContent {
 		media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
 		data: string; // base64 encoded
 	};
+}
+
+/**
+ * Tool result content for responding to tool use requests (e.g., AskUserQuestion)
+ * Used when sending tool results through the streaming input queue
+ */
+export interface ToolResultContent {
+	type: 'tool_result';
+	tool_use_id: string;
+	content: string;
 }
 
 /**

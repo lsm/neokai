@@ -9,9 +9,30 @@
  */
 
 import type { UUID } from 'crypto';
-import type { MessageContent } from '@liuboer/shared';
+import type { MessageContent, ToolResultContent } from '@liuboer/shared';
 import type { SDKUserMessage } from '@liuboer/shared/sdk';
 import { generateUUID } from '@liuboer/shared';
+
+/**
+ * Check if content is a tool_result content block
+ */
+function isToolResultContent(content: MessageContent): content is ToolResultContent {
+	return content.type === 'tool_result' && 'tool_use_id' in content;
+}
+
+/**
+ * Extract the parent_tool_use_id from message content
+ * Returns the tool_use_id from a tool_result block if present, otherwise null
+ */
+function extractParentToolUseId(content: string | MessageContent[]): string | null {
+	if (typeof content === 'string') {
+		return null;
+	}
+
+	// Look for a tool_result block in the content
+	const toolResult = content.find(isToolResultContent);
+	return toolResult?.tool_use_id ?? null;
+}
 
 /**
  * Default timeout for queued messages (30 seconds)
@@ -170,12 +191,16 @@ export class MessageQueue {
 				break;
 			}
 
+			// Extract parent_tool_use_id from tool_result content blocks
+			// This is required when responding to AskUserQuestion and other tool calls
+			const parentToolUseId = extractParentToolUseId(queuedMessage.content);
+
 			// Prepare the SDK user message
 			const sdkUserMessage: SDKUserMessage & { internal?: boolean } = {
 				type: 'user' as const,
 				uuid: queuedMessage.id as UUID,
 				session_id: sessionId,
-				parent_tool_use_id: null,
+				parent_tool_use_id: parentToolUseId,
 				message: {
 					role: 'user' as const,
 					content:

@@ -52,6 +52,7 @@ import { Spinner } from '../components/ui/Spinner.tsx';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
 import { ErrorBanner } from '../components/ErrorBanner.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
+import { QuestionPrompt } from '../components/QuestionPrompt.tsx';
 
 interface ChatContainerProps {
 	sessionId: string;
@@ -124,6 +125,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		agentState.status === 'processing' &&
 		'isCompacting' in agentState &&
 		agentState.isCompacting === true;
+	const isWaitingForInput = agentState.status === 'waiting_for_input';
+	const pendingQuestion = isWaitingForInput ? agentState.pendingQuestion : null;
 
 	// ========================================
 	// Model Switcher
@@ -466,6 +469,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 									}
 								/>
 							))}
+
+							{/* Question Prompt - shown when agent is waiting for user input */}
+							{pendingQuestion && (
+								<QuestionPrompt sessionId={sessionId} pendingQuestion={pendingQuestion} />
+							)}
 						</ContentContainer>
 					)}
 
@@ -538,7 +546,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 						<MessageInput
 							sessionId={sessionId}
 							onSend={handleSendMessage}
-							disabled={isProcessing || isCompacting || !isConnected}
+							disabled={isProcessing || isCompacting || isWaitingForInput || !isConnected}
 							autoScroll={autoScroll}
 							onAutoScrollChange={handleAutoScrollChange}
 							onOpenTools={toolsModal.open}

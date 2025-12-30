@@ -90,6 +90,12 @@ export interface EventMap {
 	'title:generated': { sessionId: string; title: string };
 	'title:generation:failed': { sessionId: string; error: Error; attempts: number };
 
+	// AskUserQuestion events - emitted when agent asks user a question
+	'question:asked': {
+		sessionId: string;
+		pendingQuestion: import('./state-types.ts').PendingUserQuestion;
+	};
+
 	// User message processing events (3-layer communication pattern)
 	// Emitted by RPC handler after persisting message, processed async by SessionManager
 	'user-message:persisted': {

@@ -44,7 +44,10 @@ describe('setupRPCHandlers - Handler Registration', () => {
 			messageHub,
 			sessionManager,
 			authManager,
+			settingsManager,
 			config,
+			eventBus,
+			db,
 		});
 
 		// Verify handlers were registered
@@ -90,7 +93,10 @@ describe('setupRPCHandlers - Handler Registration', () => {
 			messageHub,
 			sessionManager,
 			authManager,
+			settingsManager,
 			config,
+			eventBus,
+			db,
 		});
 
 		const handlers = (messageHub as unknown).rpcHandlers;
@@ -120,6 +126,11 @@ describe('setupRPCHandlers - Handler Registration', () => {
 
 		// Auth handlers
 		expect(handlers.has('auth.status')).toBe(true);
+
+		// Question handlers (AskUserQuestion feature)
+		expect(handlers.has('question.respond')).toBe(true);
+		expect(handlers.has('question.saveDraft')).toBe(true);
+		expect(handlers.has('question.cancel')).toBe(true);
 
 		// Cleanup
 		db.close();
