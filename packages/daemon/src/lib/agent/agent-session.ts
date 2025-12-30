@@ -7,6 +7,7 @@ import type {
 	Session,
 	ContextInfo,
 	QuestionDraftResponse,
+	PendingUserQuestion,
 } from '@liuboer/shared';
 import type { EventBus, MessageHub, CurrentModelInfo } from '@liuboer/shared';
 import { generateUUID } from '@liuboer/shared';
@@ -876,7 +877,34 @@ export class AgentSession {
 		toolUseId: string,
 		responses: QuestionDraftResponse[]
 	): Promise<void> {
+		// Get the pending question before handling (needed for saving resolved state)
+		const currentState = this.stateManager.getState();
+		let pendingQuestion: PendingUserQuestion | null = null;
+		if (currentState.status === 'waiting_for_input') {
+			pendingQuestion = currentState.pendingQuestion;
+		}
+
+		// Handle the response (this resolves the Promise in canUseTool)
 		await this.askUserQuestionHandler.handleQuestionResponse(toolUseId, responses);
+
+		// Save the resolved question to session metadata for persistence
+		if (pendingQuestion) {
+			const resolvedQuestions = { ...this.session.metadata?.resolvedQuestions };
+			resolvedQuestions[toolUseId] = {
+				question: pendingQuestion,
+				state: 'submitted',
+				responses,
+				resolvedAt: Date.now(),
+			};
+			// updateMetadata handles partial metadata merges internally
+			this.updateMetadata({
+				metadata: {
+					...this.session.metadata,
+					resolvedQuestions,
+				},
+			});
+			this.logger.log(`Saved resolved question (submitted): ${toolUseId}`);
+		}
 	}
 
 	/**
@@ -894,7 +922,34 @@ export class AgentSession {
 	 * telling Claude the user declined to answer.
 	 */
 	async handleQuestionCancel(toolUseId: string): Promise<void> {
+		// Get the pending question before handling (needed for saving resolved state)
+		const currentState = this.stateManager.getState();
+		let pendingQuestion: PendingUserQuestion | null = null;
+		if (currentState.status === 'waiting_for_input') {
+			pendingQuestion = currentState.pendingQuestion;
+		}
+
+		// Handle the cancellation (this denies the tool use)
 		await this.askUserQuestionHandler.handleQuestionCancel(toolUseId);
+
+		// Save the resolved question to session metadata for persistence
+		if (pendingQuestion) {
+			const resolvedQuestions = { ...this.session.metadata?.resolvedQuestions };
+			resolvedQuestions[toolUseId] = {
+				question: pendingQuestion,
+				state: 'cancelled',
+				responses: [],
+				resolvedAt: Date.now(),
+			};
+			// updateMetadata handles partial metadata merges internally
+			this.updateMetadata({
+				metadata: {
+					...this.session.metadata,
+					resolvedQuestions,
+				},
+			});
+			this.logger.log(`Saved resolved question (cancelled): ${toolUseId}`);
+		}
 	}
 
 	/**

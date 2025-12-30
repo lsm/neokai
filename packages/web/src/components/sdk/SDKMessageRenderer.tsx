@@ -3,6 +3,7 @@
  */
 
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
+import type { PendingUserQuestion, QuestionDraftResponse, ResolvedQuestion } from '@liuboer/shared';
 import {
 	isSDKAssistantMessage,
 	isSDKResultMessage,
@@ -30,6 +31,14 @@ interface Props {
 	toolResultsMap?: Map<string, unknown>;
 	toolInputsMap?: Map<string, unknown>;
 	sessionInfo?: SystemInitMessage; // Optional session init info to attach to user messages
+	// Question handling props for inline QuestionPrompt rendering
+	sessionId?: string;
+	resolvedQuestions?: Map<string, ResolvedQuestion>;
+	pendingQuestion?: PendingUserQuestion | null;
+	onQuestionResolved?: (
+		state: 'submitted' | 'cancelled',
+		responses: QuestionDraftResponse[]
+	) => void;
 }
 
 /**
@@ -44,7 +53,16 @@ function isSubagentMessage(message: SDKMessage): boolean {
 /**
  * Main SDK message renderer - routes to appropriate sub-renderer
  */
-export function SDKMessageRenderer({ message, toolResultsMap, toolInputsMap, sessionInfo }: Props) {
+export function SDKMessageRenderer({
+	message,
+	toolResultsMap,
+	toolInputsMap,
+	sessionInfo,
+	sessionId,
+	resolvedQuestions,
+	pendingQuestion,
+	onQuestionResolved,
+}: Props) {
 	// Skip messages that shouldn't be shown to user (e.g., stream events)
 	if (!isUserVisibleMessage(message)) {
 		return null;
@@ -71,7 +89,16 @@ export function SDKMessageRenderer({ message, toolResultsMap, toolInputsMap, ses
 	}
 
 	if (isSDKAssistantMessage(message)) {
-		return <SDKAssistantMessage message={message} toolResultsMap={toolResultsMap} />;
+		return (
+			<SDKAssistantMessage
+				message={message}
+				toolResultsMap={toolResultsMap}
+				sessionId={sessionId}
+				resolvedQuestions={resolvedQuestions}
+				pendingQuestion={pendingQuestion}
+				onQuestionResolved={onQuestionResolved}
+			/>
+		);
 	}
 
 	if (isSDKResultMessage(message)) {

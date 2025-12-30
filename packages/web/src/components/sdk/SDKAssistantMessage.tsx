@@ -5,9 +5,11 @@
  * - Text blocks (markdown)
  * - Tool use blocks (expandable with input/output)
  * - Thinking blocks (visible by default, expandable for long content)
+ * - AskUserQuestion tool blocks with inline QuestionPrompt
  */
 
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
+import type { PendingUserQuestion, QuestionDraftResponse, ResolvedQuestion } from '@liuboer/shared';
 import {
 	isTextBlock,
 	isToolUseBlock,
@@ -24,6 +26,7 @@ import { cn } from '../../lib/utils.ts';
 import { ToolResultCard } from './tools/index.ts';
 import { ThinkingBlock } from './ThinkingBlock.tsx';
 import { SubagentBlock } from './SubagentBlock.tsx';
+import { QuestionPrompt } from '../QuestionPrompt.tsx';
 import type { AgentInput } from '@liuboer/shared/sdk/sdk-tools.d.ts';
 
 type AssistantMessage = Extract<SDKMessage, { type: 'assistant' }>;
@@ -31,9 +34,24 @@ type AssistantMessage = Extract<SDKMessage, { type: 'assistant' }>;
 interface Props {
 	message: AssistantMessage;
 	toolResultsMap?: Map<string, unknown>;
+	// Question handling props for inline QuestionPrompt rendering
+	sessionId?: string;
+	resolvedQuestions?: Map<string, ResolvedQuestion>;
+	pendingQuestion?: PendingUserQuestion | null;
+	onQuestionResolved?: (
+		state: 'submitted' | 'cancelled',
+		responses: QuestionDraftResponse[]
+	) => void;
 }
 
-export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
+export function SDKAssistantMessage({
+	message,
+	toolResultsMap,
+	sessionId,
+	resolvedQuestions,
+	pendingQuestion,
+	onQuestionResolved,
+}: Props) {
 	const { message: apiMessage } = message;
 	const hasError = 'error' in message && message.error !== undefined;
 
@@ -101,7 +119,17 @@ export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
 			{/* Tool use blocks - full width like result messages */}
 			{toolBlocks.map((block: Extract<ContentBlock, { type: 'tool_use' }>, idx: number) => {
 				const toolResult = toolResultsMap?.get(block.id);
-				return <ToolUseBlock key={`tool-${idx}`} block={block} toolResult={toolResult} />;
+				return (
+					<ToolUseBlock
+						key={`tool-${idx}`}
+						block={block}
+						toolResult={toolResult}
+						sessionId={sessionId}
+						resolvedQuestions={resolvedQuestions}
+						pendingQuestion={pendingQuestion}
+						onQuestionResolved={onQuestionResolved}
+					/>
+				);
 			})}
 
 			{/* Thinking blocks - visible by default with expand/collapse for long content */}
@@ -188,13 +216,25 @@ export function SDKAssistantMessage({ message, toolResultsMap }: Props) {
 /**
  * Tool Use Block Component
  * Uses SubagentBlock for Task tool, ToolResultCard for others
+ * Renders QuestionPrompt inline for AskUserQuestion tool
  */
 function ToolUseBlock({
 	block,
 	toolResult,
+	sessionId: propSessionId,
+	resolvedQuestions,
+	pendingQuestion,
+	onQuestionResolved,
 }: {
 	block: Extract<ContentBlock, { type: 'tool_use' }>;
 	toolResult?: unknown;
+	sessionId?: string;
+	resolvedQuestions?: Map<string, ResolvedQuestion>;
+	pendingQuestion?: PendingUserQuestion | null;
+	onQuestionResolved?: (
+		state: 'submitted' | 'cancelled',
+		responses: QuestionDraftResponse[]
+	) => void;
 }) {
 	// Extract content and metadata from enhanced toolResult structure
 	const resultData = toolResult as
@@ -202,7 +242,7 @@ function ToolUseBlock({
 		| undefined;
 	const content = resultData?.content;
 	const messageUuid = resultData?.messageUuid;
-	const sessionId = resultData?.sessionId;
+	const sessionId = resultData?.sessionId || propSessionId;
 	const isOutputRemoved = resultData?.isOutputRemoved || false;
 
 	// Use SubagentBlock for Task tool (no delete button)
@@ -214,6 +254,45 @@ function ToolUseBlock({
 				isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
 				toolId={block.id}
 			/>
+		);
+	}
+
+	// Handle AskUserQuestion tool - render tool card AND QuestionPrompt inline
+	if (block.name === 'AskUserQuestion' && sessionId) {
+		const toolUseId = block.id;
+		const resolved = resolvedQuestions?.get(toolUseId);
+		const isPending = pendingQuestion?.toolUseId === toolUseId;
+
+		return (
+			<div>
+				<ToolResultCard
+					toolName={block.name}
+					toolId={block.id}
+					input={block.input}
+					output={content}
+					isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
+					variant="default"
+					messageUuid={messageUuid}
+					sessionId={sessionId}
+					isOutputRemoved={isOutputRemoved}
+				/>
+				{/* Render QuestionPrompt inline - either resolved or pending */}
+				{resolved && (
+					<QuestionPrompt
+						sessionId={sessionId}
+						pendingQuestion={resolved.question}
+						resolvedState={resolved.state}
+						finalResponses={resolved.responses}
+					/>
+				)}
+				{isPending && pendingQuestion && !resolved && (
+					<QuestionPrompt
+						sessionId={sessionId}
+						pendingQuestion={pendingQuestion}
+						onResolved={onQuestionResolved}
+					/>
+				)}
+			</div>
 		);
 	}
 

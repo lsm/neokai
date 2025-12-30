@@ -115,6 +115,21 @@ export interface QuestionDraftResponse {
 }
 
 /**
+ * Resolved question - saved after user submits or cancels
+ * Used to persist question UI state across page refreshes
+ */
+export interface ResolvedQuestion {
+	/** The original question data */
+	question: PendingUserQuestion;
+	/** How the question was resolved */
+	state: 'submitted' | 'cancelled';
+	/** User's responses (empty for cancelled) */
+	responses: QuestionDraftResponse[];
+	/** When the question was resolved */
+	resolvedAt: number;
+}
+
+/**
  * Agent processing state
  * Tracks what the agent is currently doing with fine-grained phase information
  * Moved from daemon/agent-session.ts to shared for type consistency

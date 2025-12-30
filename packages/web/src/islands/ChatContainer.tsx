@@ -52,15 +52,7 @@ import { Spinner } from '../components/ui/Spinner.tsx';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
 import { ErrorBanner } from '../components/ErrorBanner.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
-import { QuestionPrompt } from '../components/QuestionPrompt.tsx';
-import type { PendingUserQuestion, QuestionDraftResponse } from '@liuboer/shared';
-
-/** Resolved question state for tracking submitted/cancelled questions */
-interface ResolvedQuestion {
-	question: PendingUserQuestion;
-	state: 'submitted' | 'cancelled';
-	responses: QuestionDraftResponse[];
-}
+import type { ResolvedQuestion } from '@liuboer/shared';
 
 interface ChatContainerProps {
 	sessionId: string;
@@ -84,6 +76,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 	// Track resolved questions to keep showing them in disabled state
 	// Map of toolUseId -> resolved question data
+	// Initialized from session metadata and synced when session updates
 	const [resolvedQuestions, setResolvedQuestions] = useState<Map<string, ResolvedQuestion>>(
 		new Map()
 	);
@@ -132,6 +125,17 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	useSignalEffect(() => {
 		setStoreError(sessionStore.error.value);
 	});
+
+	// Sync resolved questions from session metadata when session loads/updates
+	useEffect(() => {
+		if (session?.metadata?.resolvedQuestions) {
+			const map = new Map<string, ResolvedQuestion>();
+			for (const [toolUseId, resolved] of Object.entries(session.metadata.resolvedQuestions)) {
+				map.set(toolUseId, resolved);
+			}
+			setResolvedQuestions(map);
+		}
+	}, [session?.metadata?.resolvedQuestions]);
 
 	// Derived processing state
 	const isProcessing = agentState.status === 'processing' || agentState.status === 'queued';
@@ -469,7 +473,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 								</div>
 							)}
 
-							{/* Messages */}
+							{/* Messages - QuestionPrompt rendered inline with AskUserQuestion tool blocks */}
 							{messages.map((msg, idx) => (
 								<SDKMessageRenderer
 									key={msg.uuid || `msg-${idx}`}
@@ -481,39 +485,27 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 											? (maps.sessionInfoMap.get(msg.uuid) as SDKSystemMessage | undefined)
 											: undefined
 									}
-								/>
-							))}
-
-							{/* Resolved Question Prompts - shown after submission/cancellation */}
-							{[...resolvedQuestions.values()].map((resolved) => (
-								<QuestionPrompt
-									key={resolved.question.toolUseId}
 									sessionId={sessionId}
-									pendingQuestion={resolved.question}
-									resolvedState={resolved.state}
-									finalResponses={resolved.responses}
-								/>
-							))}
-
-							{/* Active Question Prompt - shown when agent is waiting for user input */}
-							{pendingQuestion && !resolvedQuestions.has(pendingQuestion.toolUseId) && (
-								<QuestionPrompt
-									sessionId={sessionId}
+									resolvedQuestions={resolvedQuestions}
 									pendingQuestion={pendingQuestion}
-									onResolved={(state, responses) => {
-										// Move question to resolved state
-										setResolvedQuestions((prev) => {
-											const next = new Map(prev);
-											next.set(pendingQuestion.toolUseId, {
-												question: pendingQuestion,
-												state,
-												responses,
+									onQuestionResolved={(state, responses) => {
+										// Move question to resolved state locally for immediate UI feedback
+										// (Server also persists this via question.respond/cancel RPC)
+										if (pendingQuestion) {
+											setResolvedQuestions((prev) => {
+												const next = new Map(prev);
+												next.set(pendingQuestion.toolUseId, {
+													question: pendingQuestion,
+													state,
+													responses,
+													resolvedAt: Date.now(),
+												});
+												return next;
 											});
-											return next;
-										});
+										}
 									}}
 								/>
-							)}
+							))}
 						</ContentContainer>
 					)}
 

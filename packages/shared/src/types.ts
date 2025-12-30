@@ -1,4 +1,5 @@
 import type { SettingSource } from './types/settings.ts';
+import type { ResolvedQuestion } from './state-types.ts';
 
 // Core session types
 export interface SessionInfo {
@@ -224,6 +225,7 @@ export interface SessionMetadata {
 	lastContextInfo?: ContextInfo | null; // Last known context info (persisted)
 	inputDraft?: string; // Draft input text (persisted across sessions and devices)
 	removedOutputs?: string[]; // UUIDs of messages whose tool_result outputs were removed from SDK session file
+	resolvedQuestions?: Record<string, ResolvedQuestion>; // Resolved AskUserQuestion responses, keyed by toolUseId
 }
 
 // Message content types for streaming input (supports images and tool results)
