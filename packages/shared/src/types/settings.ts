@@ -8,7 +8,13 @@
 
 export type SettingSource = 'user' | 'project' | 'local';
 
-export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk';
+export type PermissionMode =
+	| 'default'
+	| 'acceptEdits'
+	| 'bypassPermissions'
+	| 'plan'
+	| 'delegate'
+	| 'dontAsk';
 
 /**
  * Settings that can be passed to the SDK via query options

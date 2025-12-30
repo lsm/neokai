@@ -14,6 +14,7 @@
 import type { Options } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type { Session, ThinkingLevel } from '@liuboer/shared';
 import { THINKING_LEVEL_TOKENS } from '@liuboer/shared';
+import type { PermissionMode } from '@liuboer/shared/types/settings';
 import type { SettingsManager } from '../settings-manager';
 import { createOutputLimiterHook, getOutputLimiterConfigFromSettings } from './output-limiter-hook';
 import { Logger } from '../logger';
@@ -43,6 +44,7 @@ export class QueryOptionsBuilder {
 		const settingSources = this.getSettingSources();
 		const additionalDirectories = this.getAdditionalDirectories();
 		const hooks = this.buildHooks();
+		const permissionMode = this.getPermissionMode();
 
 		// Build final query options
 		// Settings-derived options first, then session-specific overrides
@@ -53,8 +55,8 @@ export class QueryOptionsBuilder {
 			model: this.session.config.model,
 			cwd: this.getCwd(),
 			additionalDirectories,
-			permissionMode: 'bypassPermissions',
-			allowDangerouslySkipPermissions: true,
+			permissionMode,
+			allowDangerouslySkipPermissions: permissionMode === 'bypassPermissions',
 			maxTurns: Infinity,
 			// In test/CI environments, disable setting sources (CLAUDE.md, .claude/settings.json)
 			// to prevent subprocess crashes due to missing or misconfigured settings files.
@@ -73,6 +75,8 @@ export class QueryOptionsBuilder {
 		const useClaudeCodePreset = toolsConfig?.useClaudeCodePreset ?? true;
 		this.logger.log(`Query options:`, {
 			model: queryOptions.model,
+			permissionMode: queryOptions.permissionMode,
+			allowDangerouslySkipPermissions: queryOptions.allowDangerouslySkipPermissions,
 			useClaudeCodePreset,
 			settingSources: queryOptions.settingSources,
 			disallowedTools: queryOptions.disallowedTools,
@@ -261,6 +265,40 @@ CRITICAL RULES:
 	 */
 	private getAdditionalDirectories(): string[] | undefined {
 		return this.session.worktree ? [] : undefined;
+	}
+
+	/**
+	 * Get permission mode with 2-layer priority system
+	 *
+	 * Priority:
+	 * 1. Session config (highest priority)
+	 * 2. Global settings
+	 * 3. Default: 'bypassPermissions' (most permissive)
+	 *
+	 * @returns Permission mode for SDK operations
+	 */
+	private getPermissionMode(): PermissionMode {
+		// Layer 1: Session config (highest priority)
+		if (this.session.config.permissionMode) {
+			// Map 'default' to 'bypassPermissions' for clarity
+			if (this.session.config.permissionMode === 'default') {
+				return 'bypassPermissions';
+			}
+			return this.session.config.permissionMode;
+		}
+
+		// Layer 2: Global settings
+		const globalSettings = this.settingsManager.getGlobalSettings();
+		if (globalSettings.permissionMode) {
+			// Map 'default' to 'bypassPermissions' for clarity
+			if (globalSettings.permissionMode === 'default') {
+				return 'bypassPermissions';
+			}
+			return globalSettings.permissionMode;
+		}
+
+		// Layer 3: Default (most permissive)
+		return 'bypassPermissions';
 	}
 
 	/**

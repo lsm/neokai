@@ -80,6 +80,23 @@ export interface SessionConfig {
 	 * @deprecated Use thinkingLevel instead
 	 */
 	maxThinkingTokens?: number | null;
+	/**
+	 * Permission mode for SDK operations
+	 * - 'bypassPermissions': Most permissive, skips all permission checks (default)
+	 * - 'acceptEdits': Auto-accepts tool edits, works in CI environments
+	 * - 'default': SDK default behavior
+	 * - 'plan': Planning mode
+	 * - 'delegate': Delegate permissions
+	 * - 'dontAsk': Don't prompt, deny if not pre-approved
+	 * @default 'bypassPermissions'
+	 */
+	permissionMode?:
+		| 'default'
+		| 'acceptEdits'
+		| 'bypassPermissions'
+		| 'plan'
+		| 'delegate'
+		| 'dontAsk';
 	// Tools configuration
 	tools?: ToolsConfig;
 }

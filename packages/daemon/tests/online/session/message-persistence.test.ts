@@ -300,7 +300,10 @@ describe('Message Persistence Bug Fix', () => {
 		test('should handle interruption without losing saved messages', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
-				config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
+				config: {
+					model: 'haiku', // Use Haiku for faster, cheaper tests
+					permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
+				},
 			});
 
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);

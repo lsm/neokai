@@ -76,7 +76,10 @@ describe('AgentSession SDK Integration', () => {
 		test('should send message and receive real SDK response', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
-				config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
+				config: {
+					model: 'haiku', // Use Haiku for faster, cheaper tests
+					permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
+				},
 			});
 
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
@@ -105,7 +108,10 @@ describe('AgentSession SDK Integration', () => {
 		test('should handle message with images', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
-				config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
+				config: {
+					model: 'haiku', // Use Haiku for faster, cheaper tests
+					permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
+				},
 			});
 
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
@@ -136,7 +142,10 @@ describe('AgentSession SDK Integration', () => {
 		test('should enqueue multiple messages in sequence', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
-				config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
+				config: {
+					model: 'haiku', // Use Haiku for faster, cheaper tests
+					permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
+				},
 			});
 
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
@@ -170,7 +179,10 @@ describe('AgentSession SDK Integration', () => {
 		test('should interrupt ongoing processing', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
-				config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
+				config: {
+					model: 'haiku', // Use Haiku for faster, cheaper tests
+					permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
+				},
 			});
 
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
@@ -195,7 +207,10 @@ describe('AgentSession SDK Integration', () => {
 		test('should broadcast sdk.message events via WebSocket', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
-				config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
+				config: {
+					model: 'haiku', // Use Haiku for faster, cheaper tests
+					permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
+				},
 			});
 
 			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, sessionId);
@@ -242,7 +257,10 @@ describe('AgentSession SDK Integration', () => {
 		test('should transition through processing states', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
-				config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
+				config: {
+					model: 'haiku', // Use Haiku for faster, cheaper tests
+					permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
+				},
 			});
 
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
@@ -270,7 +288,10 @@ describe('AgentSession SDK Integration', () => {
 		test('should handle multiple messages in sequence', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
-				config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
+				config: {
+					model: 'haiku', // Use Haiku for faster, cheaper tests
+					permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
+				},
 			});
 
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);

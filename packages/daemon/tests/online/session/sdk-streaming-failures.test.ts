@@ -208,8 +208,12 @@ describe('SDK Streaming CI Failures', () => {
 	describe('Session Resume', () => {
 		test('should capture SDK session ID on first message', async () => {
 			// Create a new session using cwd (avoid temp path issues on CI)
+			// Explicitly set permissionMode to acceptEdits for CI (bypass permissions fails on root)
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
+				config: {
+					permissionMode: 'acceptEdits',
+				},
 			});
 
 			expect(sessionId).toBeDefined();
@@ -268,7 +272,10 @@ describe('SDK Streaming CI Failures', () => {
 		test('should persist messages during real SDK interaction', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
-				config: { model: 'haiku' }, // Use Haiku for faster, cheaper tests
+				config: {
+					model: 'haiku', // Use Haiku for faster, cheaper tests
+					permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
+				},
 			});
 
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
