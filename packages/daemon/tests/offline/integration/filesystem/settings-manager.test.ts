@@ -3,8 +3,9 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdirSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { Database } from '../../../../src/storage/database';
 import { SettingsManager } from '../../../../src/lib/settings-manager';
 import { DEFAULT_GLOBAL_SETTINGS } from '@liuboer/shared';
@@ -332,6 +333,107 @@ describe('SettingsManager', () => {
 			const settingsPath = join(workspacePath, '.claude/settings.local.json');
 			const content = JSON.parse(readFileSync(settingsPath, 'utf-8'));
 			expect(content.disabledMcpjsonServers).toEqual(['server1', 'server2']);
+		});
+	});
+
+	describe('attribution fallback', () => {
+		let userSettingsPath: string;
+		let originalUserSettings: string | null = null;
+
+		beforeEach(() => {
+			// Setup user settings path
+			userSettingsPath = join(homedir(), '.claude', 'settings.json');
+
+			// Backup existing user settings if they exist
+			if (existsSync(userSettingsPath)) {
+				originalUserSettings = readFileSync(userSettingsPath, 'utf-8');
+			}
+		});
+
+		afterEach(() => {
+			// Restore original user settings
+			if (originalUserSettings !== null) {
+				mkdirSync(join(homedir(), '.claude'), { recursive: true });
+				writeFileSync(userSettingsPath, originalUserSettings);
+			} else {
+				// Remove if it didn't exist before
+				try {
+					rmSync(userSettingsPath);
+				} catch {
+					// Ignore if file doesn't exist
+				}
+			}
+		});
+
+		test('falls back to user settings attribution when not in database', async () => {
+			// Create user settings with attribution
+			mkdirSync(join(homedir(), '.claude'), { recursive: true });
+			const userSettings = {
+				attribution: {
+					commit: '',
+					pr: '',
+				},
+			};
+			writeFileSync(userSettingsPath, JSON.stringify(userSettings, null, 2));
+
+			// Prepare SDK options (attribution not in database)
+			await settingsManager.prepareSDKOptions();
+
+			// Verify attribution was written to local settings
+			const localSettingsPath = join(workspacePath, '.claude/settings.local.json');
+			const localSettings = JSON.parse(readFileSync(localSettingsPath, 'utf-8'));
+
+			expect(localSettings.attribution).toEqual({
+				commit: '',
+				pr: '',
+			});
+		});
+
+		test('prefers database attribution over user settings', async () => {
+			// Create user settings with different attribution
+			mkdirSync(join(homedir(), '.claude'), { recursive: true });
+			const userSettings = {
+				attribution: {
+					commit: 'User attribution',
+					pr: 'User PR',
+				},
+			};
+			writeFileSync(userSettingsPath, JSON.stringify(userSettings, null, 2));
+
+			// Update database with different attribution
+			settingsManager.updateGlobalSettings({
+				attribution: {
+					commit: 'Database attribution',
+					pr: 'Database PR',
+				},
+			});
+
+			await settingsManager.prepareSDKOptions();
+
+			// Verify database attribution was used
+			const localSettingsPath = join(workspacePath, '.claude/settings.local.json');
+			const localSettings = JSON.parse(readFileSync(localSettingsPath, 'utf-8'));
+
+			expect(localSettings.attribution).toEqual({
+				commit: 'Database attribution',
+				pr: 'Database PR',
+			});
+		});
+
+		test('does not write attribution if not in database or user settings', async () => {
+			// Ensure no user settings file exists
+			try {
+				rmSync(userSettingsPath);
+			} catch {
+				// Ignore if file doesn't exist
+			}
+
+			await settingsManager.prepareSDKOptions();
+
+			const localSettingsPath = join(workspacePath, '.claude/settings.local.json');
+			const localSettings = JSON.parse(readFileSync(localSettingsPath, 'utf-8'));
+
+			expect(localSettings.attribution).toBeUndefined();
 		});
 	});
 });
