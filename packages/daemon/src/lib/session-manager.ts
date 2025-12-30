@@ -178,6 +178,7 @@ export class SessionManager {
 				maxTokens: params.config?.maxTokens || this.config.maxTokens,
 				temperature: params.config?.temperature || this.config.temperature,
 				autoScroll: params.config?.autoScroll,
+				permissionMode: params.config?.permissionMode,
 				// Tools config: Use global defaults for new sessions
 				// SDK built-in tools are always enabled (not configurable)
 				// MCP and Liuboer tools are configurable based on global settings
