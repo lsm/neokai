@@ -150,6 +150,26 @@ export class SettingsManager {
 	}
 
 	/**
+	 * Read attribution from user settings (~/.claude/settings.json)
+	 * Returns undefined if not found or if there's an error reading the file
+	 */
+	private readUserAttribution(): { commit?: string; pr?: string } | undefined {
+		const userSettingsPath = join(homedir(), '.claude', 'settings.json');
+
+		try {
+			if (!existsSync(userSettingsPath)) {
+				return undefined;
+			}
+			const content = readFileSync(userSettingsPath, 'utf-8');
+			const userSettings = JSON.parse(content) as Record<string, unknown>;
+			return userSettings.attribution as { commit?: string; pr?: string } | undefined;
+		} catch (error) {
+			this.logger.log('Failed to read user attribution:', error);
+			return undefined;
+		}
+	}
+
+	/**
 	 * Write file-only settings to .claude/settings.local.json
 	 *
 	 * These settings have no SDK option equivalent and must be written
@@ -215,8 +235,20 @@ export class SettingsManager {
 		}
 
 		// Attribution
+		// WORKAROUND: SDK has a bug where attribution settings don't properly cascade
+		// from user settings to local settings. To ensure user-level attribution preferences
+		// are respected, we explicitly read from user settings and write to local settings.
+		// See: https://github.com/anthropics/claude-code/issues/11135
 		if (settings.attribution !== undefined) {
+			// User has configured attribution in Liuboer's database, use it
 			localSettings.attribution = settings.attribution;
+		} else {
+			// No attribution in database, fall back to user settings to work around SDK bug
+			const userAttribution = this.readUserAttribution();
+			if (userAttribution !== undefined) {
+				localSettings.attribution = userAttribution;
+				this.logger.log('Using attribution from user settings:', userAttribution);
+			}
 		}
 
 		// Ensure directory exists
