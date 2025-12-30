@@ -319,32 +319,14 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// Display Stats
 	// ========================================
 	const displayStats = useMemo(() => {
-		// Get the last result message which contains cumulative totals from SDK
-		const lastResult = messages.findLast(
-			(msg) => msg.type === 'result' && msg.subtype === 'success'
-		);
-
-		// For tokens, accumulate as before (keeping existing behavior)
-		const accumulatedStats = messages.reduce(
-			(acc, msg) => {
-				if (msg.type === 'result' && msg.subtype === 'success') {
-					acc.inputTokens += msg.usage.input_tokens;
-					acc.outputTokens += msg.usage.output_tokens;
-				}
-				return acc;
-			},
-			{ inputTokens: 0, outputTokens: 0 }
-		);
-
+		// All stats are calculated and persisted by daemon in session.metadata
+		// UI should only display, never calculate
+		// This ensures cost/token tracking is centralized in one place
 		return {
-			totalTokens:
-				session?.metadata?.totalTokens ??
-				accumulatedStats.inputTokens + accumulatedStats.outputTokens,
-			// SDK result message contains cumulative cost for entire session
-			// See docs/cost-tracking.md: "The final result message contains the total cumulative usage"
-			totalCost: session?.metadata?.totalCost ?? lastResult?.total_cost_usd ?? 0,
+			totalTokens: session?.metadata?.totalTokens ?? 0,
+			totalCost: session?.metadata?.totalCost ?? 0,
 		};
-	}, [messages, session?.metadata?.totalTokens, session?.metadata?.totalCost]);
+	}, [session?.metadata?.totalTokens, session?.metadata?.totalCost]);
 
 	// ========================================
 	// Derive currentAction and streamingPhase from agentState

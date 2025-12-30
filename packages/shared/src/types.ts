@@ -226,6 +226,10 @@ export interface SessionMetadata {
 	inputDraft?: string; // Draft input text (persisted across sessions and devices)
 	removedOutputs?: string[]; // UUIDs of messages whose tool_result outputs were removed from SDK session file
 	resolvedQuestions?: Record<string, ResolvedQuestion>; // Resolved AskUserQuestion responses, keyed by toolUseId
+	// Cost tracking: SDK reports cumulative cost per run, but resets on agent restart
+	// We track lastSdkCost to detect resets and costBaseline to preserve pre-reset totals
+	lastSdkCost?: number; // Last SDK-reported total_cost_usd (resets when agent restarts)
+	costBaseline?: number; // Accumulated cost from previous runs before last reset
 }
 
 // Message content types for streaming input (supports images and tool results)

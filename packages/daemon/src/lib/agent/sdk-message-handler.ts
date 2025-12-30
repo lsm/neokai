@@ -252,7 +252,24 @@ export class SDKMessageHandler {
 		// Update session metadata with token usage and costs
 		const usage = message.usage;
 		const totalTokens = usage.input_tokens + usage.output_tokens;
-		const cost = message.total_cost_usd || 0;
+
+		// SDK's total_cost_usd is CUMULATIVE within a single run, but RESETS when agent restarts
+		// (e.g., after errors or manual reset). We detect resets by comparing to lastSdkCost.
+		// Example sequence: 0.42 -> 0.73 -> 1.1 (cumulative) -> RESET -> 0.25 -> 0.50 (cumulative again)
+		const sdkCost = message.total_cost_usd || 0;
+		const lastSdkCost = this.session.metadata?.lastSdkCost || 0;
+		const costBaseline = this.session.metadata?.costBaseline || 0;
+
+		// Detect SDK reset: if current cost < last cost, SDK was restarted
+		// Save previous cumulative cost as new baseline
+		let newCostBaseline = costBaseline;
+		if (sdkCost < lastSdkCost && lastSdkCost > 0) {
+			// SDK reset detected - add previous SDK cost to baseline
+			newCostBaseline = costBaseline + lastSdkCost;
+		}
+
+		// Total cost = baseline (from previous runs) + current SDK cost (cumulative within this run)
+		const totalCost = newCostBaseline + sdkCost;
 
 		this.session.lastActiveAt = new Date().toISOString();
 		this.session.metadata = {
@@ -261,10 +278,12 @@ export class SDKMessageHandler {
 			totalTokens: (this.session.metadata?.totalTokens || 0) + totalTokens,
 			inputTokens: (this.session.metadata?.inputTokens || 0) + usage.input_tokens,
 			outputTokens: (this.session.metadata?.outputTokens || 0) + usage.output_tokens,
-			// SDK result message contains cumulative cost for entire session
-			// See docs/cost-tracking.md: "The final result message contains the total cumulative usage"
-			totalCost: cost,
+			// Total cost across all runs (baseline + current SDK cumulative)
+			totalCost,
 			toolCallCount: this.session.metadata?.toolCallCount || 0,
+			// Track SDK state for reset detection
+			lastSdkCost: sdkCost,
+			costBaseline: newCostBaseline,
 		};
 
 		this.db.updateSession(this.session.id, {
@@ -318,6 +337,10 @@ export class SDKMessageHandler {
 		// Mark successful API interaction - resets circuit breaker error tracking
 		// This indicates the API is responding normally
 		this.circuitBreaker.markSuccess();
+
+		// Clear any session errors since we successfully completed a turn
+		// This resolves persistent error banners that weren't being cleared
+		await this.eventBus.emit('session:error:clear', { sessionId: this.session.id });
 
 		// Set state back to idle
 		// Note: Title generation now handled by TitleGenerationQueue (decoupled via EventBus)

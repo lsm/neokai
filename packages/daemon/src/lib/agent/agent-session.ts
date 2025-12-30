@@ -1243,6 +1243,25 @@ export class AgentSession {
 		return await this.lifecycleManager.reset({
 			restartAfter: restartQuery,
 			onBeforeStop: async () => {
+				// IMPORTANT: Save current SDK cost to baseline before reset
+				// This handles the case where new run's cost exceeds old run's cost
+				// (which we can't detect from cost decrease alone)
+				const lastSdkCost = this.session.metadata?.lastSdkCost || 0;
+				const costBaseline = this.session.metadata?.costBaseline || 0;
+				if (lastSdkCost > 0) {
+					const newCostBaseline = costBaseline + lastSdkCost;
+					this.logger.log(
+						`Reset: saving cost baseline ${costBaseline} + ${lastSdkCost} = ${newCostBaseline}`
+					);
+					this.session.metadata = {
+						...this.session.metadata,
+						costBaseline: newCostBaseline,
+						lastSdkCost: 0, // Reset for new SDK run
+						// totalCost stays as-is (baseline + 0 = same value)
+					};
+					this.db.updateSession(this.session.id, { metadata: this.session.metadata });
+				}
+
 				// Clear pending messages
 				const queueSize = this.messageQueue.size();
 				if (queueSize > 0) {
