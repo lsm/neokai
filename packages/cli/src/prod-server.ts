@@ -3,7 +3,7 @@ import { serveStatic } from 'hono/bun';
 import { createDaemonApp } from '@liuboer/daemon/app';
 import type { Config } from '@liuboer/daemon/config';
 import { resolve } from 'path';
-import { createLogger } from '@liuboer/shared';
+import { createLogger, UnixSocketTransport } from '@liuboer/shared';
 
 const log = createLogger('liuboer:cli:prod-server');
 
@@ -19,6 +19,39 @@ export async function startProdServer(config: Config) {
 
 	// Stop the daemon's internal server (we'll create a unified one)
 	daemonContext.server.stop();
+
+	// Initialize IPC socket if configured (for yuanshen orchestrator)
+	let ipcTransport: UnixSocketTransport | undefined;
+	if (config.ipcSocketPath) {
+		log.info(`🔌 Starting IPC socket server at ${config.ipcSocketPath}...`);
+		ipcTransport = new UnixSocketTransport({
+			name: 'ipc-server',
+			socketPath: config.ipcSocketPath,
+			mode: 'server',
+			debug: false, // Less verbose in production
+		});
+		await ipcTransport.initialize();
+
+		// Handle messages from yuanshen orchestrator
+		// MVP: Log messages and forward events to the router
+		ipcTransport.onMessage(async (message) => {
+			log.info(`[IPC] Received: ${message.type} ${message.method}`);
+
+			// For MVP, we'll handle messages based on type
+			// TODO: Full integration with MessageHub for RPC support
+			if (message.type === 'EVENT') {
+				// Forward events to subscribed WebSocket clients via router
+				const router = daemonContext.messageHub.getRouter();
+				if (router) {
+					router.routeEvent(message);
+				}
+			}
+			// CALL messages would need MessageHub handler integration
+			// For now, just acknowledge receipt
+		});
+
+		log.info(`✅ IPC socket server ready at ${config.ipcSocketPath}`);
+	}
 
 	// Get path to web dist folder
 	const distPath = resolve(import.meta.dir, '../../web/dist');
@@ -126,14 +159,36 @@ export async function startProdServer(config: Config) {
 	log.info(`\n✨ Production server running!`);
 	log.info(`   🌐 UI: http://localhost:${config.port}`);
 	log.info(`   🔌 WebSocket: ws://localhost:${config.port}/ws`);
+	if (config.ipcSocketPath) {
+		log.info(`   🔗 IPC Socket: ${config.ipcSocketPath}`);
+	}
 	log.info(`\n📝 Press Ctrl+C to stop\n`);
 
 	// Graceful shutdown
+	let isShuttingDown = false;
+
 	const shutdown = async (signal: string) => {
+		// Prevent multiple shutdown handlers from running concurrently
+		if (isShuttingDown) {
+			log.warn(`Shutdown already in progress, ignoring ${signal}`);
+			return;
+		}
+		isShuttingDown = true;
+
 		log.info(`\n👋 Received ${signal}, shutting down gracefully...`);
 		try {
+			log.info('🛑 Stopping server...');
 			server.stop();
+
+			if (ipcTransport) {
+				log.info('🛑 Closing IPC socket...');
+				await ipcTransport.close();
+			}
+
+			log.info('🛑 Cleaning up daemon...');
 			await daemonContext.cleanup();
+
+			log.info('✨ Shutdown complete');
 			process.exit(0);
 		} catch (error) {
 			log.error('❌ Error during shutdown:', error);

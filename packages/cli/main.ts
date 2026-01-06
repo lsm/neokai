@@ -10,6 +10,7 @@ interface CliOptions {
 	workspace?: string;
 	host?: string;
 	dbPath?: string;
+	ipcSocket?: string;
 	help?: boolean;
 }
 
@@ -48,6 +49,12 @@ function parseArgs(): CliOptions {
 				console.error('Error: --db-path requires a path');
 				process.exit(1);
 			}
+		} else if (arg === '--ipc-socket') {
+			options.ipcSocket = args[++i];
+			if (!options.ipcSocket) {
+				console.error('Error: --ipc-socket requires a path');
+				process.exit(1);
+			}
 		} else {
 			console.error(`Error: Unknown option: ${arg}`);
 			options.help = true;
@@ -68,6 +75,7 @@ Options:
   -w, --workspace <path>    Workspace root directory (default: tmp/workspace in dev, cwd in prod)
   --host <host>             Host to bind to (default: 0.0.0.0)
   --db-path <path>          Database file path (default: ./data/daemon.db)
+  --ipc-socket <path>       Unix socket path for IPC (enables yuanshen orchestrator connection)
   -h, --help                Show this help message
 
 Environment Variables:

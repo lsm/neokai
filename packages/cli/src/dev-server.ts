@@ -3,7 +3,7 @@ import type { Config } from '@liuboer/daemon/config';
 import { createServer as createViteServer } from 'vite';
 import { resolve } from 'path';
 import * as net from 'net';
-import { createLogger } from '@liuboer/shared';
+import { createLogger, UnixSocketTransport } from '@liuboer/shared';
 
 const log = createLogger('liuboer:cli:dev-server');
 
@@ -38,6 +38,39 @@ export async function startDevServer(config: Config) {
 
 	// Stop the daemon's internal server (we'll create a unified one)
 	daemonContext.server.stop();
+
+	// Initialize IPC socket if configured (for yuanshen orchestrator)
+	let ipcTransport: UnixSocketTransport | undefined;
+	if (config.ipcSocketPath) {
+		log.info(`🔌 Starting IPC socket server at ${config.ipcSocketPath}...`);
+		ipcTransport = new UnixSocketTransport({
+			name: 'ipc-server',
+			socketPath: config.ipcSocketPath,
+			mode: 'server',
+			debug: true,
+		});
+		await ipcTransport.initialize();
+
+		// Handle messages from yuanshen orchestrator
+		// MVP: Log messages and forward events to the router
+		ipcTransport.onMessage(async (message) => {
+			log.info(`[IPC] Received: ${message.type} ${message.method}`);
+
+			// For MVP, we'll handle messages based on type
+			// TODO: Full integration with MessageHub for RPC support
+			if (message.type === 'EVENT') {
+				// Forward events to subscribed WebSocket clients via router
+				const router = daemonContext.messageHub.getRouter();
+				if (router) {
+					router.routeEvent(message);
+				}
+			}
+			// CALL messages would need MessageHub handler integration
+			// For now, just acknowledge receipt
+		});
+
+		log.info(`✅ IPC socket server ready at ${config.ipcSocketPath}`);
+	}
 
 	// Find an available port for Vite dev server
 	log.info('📦 Starting Vite dev server...');
@@ -179,6 +212,11 @@ export async function startDevServer(config: Config) {
 
 			log.info('🛑 Stopping Vite dev server...');
 			await vite.close();
+
+			if (ipcTransport) {
+				log.info('🛑 Closing IPC socket...');
+				await ipcTransport.close();
+			}
 
 			log.info('🛑 Cleaning up daemon...');
 			// Call cleanup but it will try to stop daemon's server (already stopped above)

@@ -175,4 +175,36 @@ describe('getConfig', () => {
 
 		expect(config.dbPath).toBe('/custom/database.db');
 	});
+
+	test('ipcSocketPath is undefined when not provided', () => {
+		process.env.LIUBOER_WORKSPACE_PATH = '/workspace';
+
+		const config = getConfig();
+
+		expect(config.ipcSocketPath).toBeUndefined();
+	});
+
+	test('ipcSocketPath is set when provided via CLI override', () => {
+		process.env.LIUBOER_WORKSPACE_PATH = '/workspace';
+
+		const config = getConfig({ ipcSocket: '/tmp/liuboer-test.sock' });
+
+		expect(config.ipcSocketPath).toBe('/tmp/liuboer-test.sock');
+	});
+
+	test('ipcSocketPath handles various socket path formats', () => {
+		process.env.LIUBOER_WORKSPACE_PATH = '/workspace';
+
+		// Unix socket path with daemon name
+		let config = getConfig({ ipcSocket: '/tmp/liuboer-yuanshen.sock' });
+		expect(config.ipcSocketPath).toBe('/tmp/liuboer-yuanshen.sock');
+
+		// Custom socket path in var/run
+		config = getConfig({ ipcSocket: '/var/run/liuboer.sock' });
+		expect(config.ipcSocketPath).toBe('/var/run/liuboer.sock');
+
+		// Home directory socket path
+		config = getConfig({ ipcSocket: '~/.liuboer/ipc.sock' });
+		expect(config.ipcSocketPath).toBe('~/.liuboer/ipc.sock');
+	});
 });
