@@ -56,3 +56,6 @@ export type {
 // Transports
 export { WebSocketClientTransport } from './websocket-client-transport.ts';
 export type { WebSocketClientTransportOptions } from './websocket-client-transport.ts';
+
+export { InProcessTransport, InProcessTransportBus } from './in-process-transport.ts';
+export type { InProcessTransportOptions } from './in-process-transport.ts';
