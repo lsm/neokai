@@ -49,7 +49,7 @@ export async function sendMessageSync(
 	// Emit message.sendRequest event (same as production RPC handler)
 	// SessionManager will persist and emit message.persisted
 	// AgentSession will start query and enqueue message
-	await session.eventBus.emit('message.sendRequest', {
+	await session.daemonHub.emit('message.sendRequest', {
 		sessionId: session.session.id,
 		messageId,
 		content: data.content,
