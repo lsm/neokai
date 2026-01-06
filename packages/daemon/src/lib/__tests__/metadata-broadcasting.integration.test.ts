@@ -14,7 +14,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../storage/database';
-import { EventBus } from '@liuboer/shared';
+import { createDaemonHub, type DaemonHub } from '../daemon-hub';
 import type { MessageHub, Session, SessionMetadata, ContextInfo } from '@liuboer/shared';
 import type {
 	PublishOptions,
@@ -104,7 +104,7 @@ class MockMessageHub {
 
 describe('Metadata and State Broadcasting Integration', () => {
 	let db: Database;
-	let eventBus: EventBus;
+	let daemonHub: DaemonHub;
 	let mockMessageHub: MockMessageHub;
 	let tempDir: string;
 	let testWorkspace: string;
@@ -118,8 +118,9 @@ describe('Metadata and State Broadcasting Integration', () => {
 		db = new Database(':memory:');
 		await db.initialize();
 
-		// Initialize EventBus
-		eventBus = new EventBus();
+		// Initialize DaemonHub
+		daemonHub = createDaemonHub('test');
+		await daemonHub.initialize();
 
 		// Initialize mock MessageHub
 		mockMessageHub = new MockMessageHub();
@@ -128,7 +129,7 @@ describe('Metadata and State Broadcasting Integration', () => {
 	afterEach(async () => {
 		// Cleanup
 		db.close();
-		eventBus.clear();
+		// DaemonHub doesn't have a destroy method, just clear it by letting it go out of scope
 
 		// Remove temp directory
 		if (tempDir) {
@@ -163,17 +164,17 @@ describe('Metadata and State Broadcasting Integration', () => {
 
 			db.createSession(session);
 
-			// Track EventBus emissions
+			// Track DaemonHub emissions
 			const emittedEvents: Array<{ event: string; data: unknown }> = [];
-			eventBus.on('session:updated', (data) => {
-				emittedEvents.push({ event: 'session:updated', data });
+			daemonHub.on('session.updated', (data) => {
+				emittedEvents.push({ event: 'session.updated', data });
 			});
 
 			// Create ProcessingStateManager
-			const stateManager = new ProcessingStateManager(session.id, eventBus, db);
+			const stateManager = new ProcessingStateManager(session.id, daemonHub, db);
 
 			// Create ContextTracker (without persistence callback to avoid race conditions in test)
-			const contextTracker = new ContextTracker(session.id, session.config.model, eventBus, () => {
+			const contextTracker = new ContextTracker(session.id, session.config.model, daemonHub, () => {
 				// No-op callback for test to avoid DB race conditions
 			});
 
@@ -186,7 +187,7 @@ describe('Metadata and State Broadcasting Integration', () => {
 				workingSession,
 				db,
 				mockMessageHub as unknown as MessageHub,
-				eventBus,
+				daemonHub,
 				stateManager,
 				contextTracker
 			);
@@ -234,8 +235,8 @@ describe('Metadata and State Broadcasting Integration', () => {
 			expect(updatedSession!.metadata.outputTokens).toBe(500);
 			expect(updatedSession!.metadata.totalCost).toBe(0.015);
 
-			// Verify EventBus emitted session:updated
-			const sessionUpdatedEvents = emittedEvents.filter((e) => e.event === 'session:updated');
+			// Verify DaemonHub emitted session.updated
+			const sessionUpdatedEvents = emittedEvents.filter((e) => e.event === 'session.updated');
 			expect(sessionUpdatedEvents.length).toBeGreaterThan(0);
 
 			// Event-sourced: events include their data directly (no fetching by StateManager)
@@ -277,17 +278,17 @@ describe('Metadata and State Broadcasting Integration', () => {
 
 			db.createSession(session);
 
-			// Track EventBus emissions
+			// Track DaemonHub emissions
 			const emittedEvents: Array<{ event: string; data: unknown }> = [];
-			eventBus.on('session:updated', (data) => {
-				emittedEvents.push({ event: 'session:updated', data });
+			daemonHub.on('session.updated', (data) => {
+				emittedEvents.push({ event: 'session.updated', data });
 			});
 
 			// Create ProcessingStateManager
-			const stateManager = new ProcessingStateManager(session.id, eventBus, db);
+			const stateManager = new ProcessingStateManager(session.id, daemonHub, db);
 
 			// Create ContextTracker (without persistence callback to avoid race conditions in test)
-			const contextTracker = new ContextTracker(session.id, session.config.model, eventBus, () => {
+			const contextTracker = new ContextTracker(session.id, session.config.model, daemonHub, () => {
 				// No-op callback for test to avoid DB race conditions
 			});
 
@@ -299,7 +300,7 @@ describe('Metadata and State Broadcasting Integration', () => {
 				workingSession,
 				db,
 				mockMessageHub as unknown as MessageHub,
-				eventBus,
+				daemonHub,
 				stateManager,
 				contextTracker
 			);
@@ -338,8 +339,8 @@ describe('Metadata and State Broadcasting Integration', () => {
 			expect(updatedSession).not.toBeNull();
 			expect(updatedSession!.metadata.toolCallCount).toBe(2);
 
-			// Verify EventBus emitted session:updated
-			const sessionUpdatedEvents = emittedEvents.filter((e) => e.event === 'session:updated');
+			// Verify DaemonHub emitted session.updated
+			const sessionUpdatedEvents = emittedEvents.filter((e) => e.event === 'session.updated');
 			expect(sessionUpdatedEvents.length).toBeGreaterThan(0);
 
 			// Event-sourced: events include their data directly (no fetching by StateManager)
@@ -383,14 +384,14 @@ describe('Metadata and State Broadcasting Integration', () => {
 
 			db.createSession(session);
 
-			// Track EventBus emissions
+			// Track DaemonHub emissions
 			const emittedEvents: Array<{ event: string; data: unknown }> = [];
-			eventBus.on('session:updated', (data) => {
-				emittedEvents.push({ event: 'session:updated', data });
+			daemonHub.on('session.updated', (data) => {
+				emittedEvents.push({ event: 'session.updated', data });
 			});
 
 			// Create ProcessingStateManager
-			const stateManager = new ProcessingStateManager(sessionId, eventBus, db);
+			const stateManager = new ProcessingStateManager(sessionId, daemonHub, db);
 
 			// Test state transitions
 			const messageId = generateUUID();
@@ -405,11 +406,11 @@ describe('Metadata and State Broadcasting Integration', () => {
 			expect(queuedState.status).toBe('queued');
 			expect(queuedState.messageId).toBe(messageId);
 
-			// Verify EventBus emitted session:updated with processing-state source
+			// Verify DaemonHub emitted session.updated with processing-state source
 			expect(emittedEvents.length).toBeGreaterThan(0);
 			const queuedEvent = emittedEvents.find(
 				(e) =>
-					e.event === 'session:updated' &&
+					e.event === 'session.updated' &&
 					typeof e.data === 'object' &&
 					e.data !== null &&
 					'source' in e.data &&
@@ -466,10 +467,10 @@ describe('Metadata and State Broadcasting Integration', () => {
 
 			db.createSession(session);
 
-			// Track EventBus emissions
+			// Track DaemonHub emissions
 			const emittedEvents: Array<{ event: string; data: unknown }> = [];
-			eventBus.on('commands:updated', (data) => {
-				emittedEvents.push({ event: 'commands:updated', data });
+			daemonHub.on('commands.updated', (data) => {
+				emittedEvents.push({ event: 'commands.updated', data });
 			});
 
 			// Simulate command update
@@ -479,7 +480,7 @@ describe('Metadata and State Broadcasting Integration', () => {
 			db.updateSession(sessionId, { availableCommands: commands });
 
 			// Emit event
-			await eventBus.emit('commands:updated', {
+			await daemonHub.emit('commands.updated', {
 				sessionId,
 				commands,
 			});
@@ -488,10 +489,10 @@ describe('Metadata and State Broadcasting Integration', () => {
 			const updatedSession = db.getSession(sessionId);
 			expect(updatedSession?.availableCommands).toEqual(commands);
 
-			// Verify EventBus emitted event
+			// Verify DaemonHub emitted event
 			expect(emittedEvents.length).toBe(1);
 			const commandsEvent = emittedEvents[0];
-			expect(commandsEvent.event).toBe('commands:updated');
+			expect(commandsEvent.event).toBe('commands.updated');
 			expect(typeof commandsEvent.data === 'object' && commandsEvent.data !== null).toBe(true);
 			if (typeof commandsEvent.data === 'object' && commandsEvent.data !== null) {
 				expect('commands' in commandsEvent.data).toBe(true);
@@ -543,7 +544,7 @@ describe('Metadata and State Broadcasting Integration', () => {
 			db.createSession(session);
 
 			// Create and persist processing state
-			const stateManager = new ProcessingStateManager(sessionId, eventBus, db);
+			const stateManager = new ProcessingStateManager(sessionId, daemonHub, db);
 			const messageId = generateUUID();
 			await stateManager.setQueued(messageId);
 
@@ -584,7 +585,7 @@ describe('Metadata and State Broadcasting Integration', () => {
 			expect(messages[1].type).toBe('assistant');
 
 			// Create new ProcessingStateManager (simulates AgentSession reconstruction)
-			const newStateManager = new ProcessingStateManager(sessionId, eventBus, db);
+			const newStateManager = new ProcessingStateManager(sessionId, daemonHub, db);
 
 			// Verify state was restored (would be reset to idle after restart)
 			newStateManager.restoreFromDatabase();
@@ -652,7 +653,7 @@ describe('Metadata and State Broadcasting Integration', () => {
 			const contextTracker = new ContextTracker(
 				sessionId,
 				session.config.model,
-				eventBus,
+				daemonHub,
 				(info: ContextInfo) => {
 					session.metadata.lastContextInfo = info;
 				}
@@ -673,7 +674,7 @@ describe('Metadata and State Broadcasting Integration', () => {
 	});
 
 	describe('Context Info Broadcasting', () => {
-		it('should update context and emit event via EventBus', async () => {
+		it('should update context and emit event via DaemonHub', async () => {
 			const sessionId = generateUUID();
 
 			// Create session
@@ -701,17 +702,17 @@ describe('Metadata and State Broadcasting Integration', () => {
 
 			db.createSession(session);
 
-			// Track EventBus emissions
+			// Track DaemonHub emissions
 			const emittedEvents: Array<{ event: string; data: unknown }> = [];
-			eventBus.on('context:updated', (data) => {
-				emittedEvents.push({ event: 'context:updated', data });
+			daemonHub.on('context.updated', (data) => {
+				emittedEvents.push({ event: 'context.updated', data });
 			});
 
 			// Create ContextTracker with persistence callback
 			const contextTracker = new ContextTracker(
 				sessionId,
 				session.config.model,
-				eventBus,
+				daemonHub,
 				(contextInfo: ContextInfo) => {
 					session.metadata.lastContextInfo = contextInfo;
 					db.updateSession(sessionId, { metadata: session.metadata });
@@ -758,12 +759,12 @@ describe('Metadata and State Broadcasting Integration', () => {
 			expect(updatedSession?.metadata.lastContextInfo).toBeDefined();
 			expect(updatedSession?.metadata.lastContextInfo?.totalUsed).toBe(5000);
 
-			// Verify EventBus emitted context:updated event
+			// Verify DaemonHub emitted context.updated event
 			// Note: processStreamEvent triggers throttled update, so we may need to wait
 			await new Promise((resolve) => setTimeout(resolve, 300)); // Wait for throttle
 
 			expect(emittedEvents.length).toBeGreaterThan(0);
-			const contextEvent = emittedEvents.find((e) => e.event === 'context:updated');
+			const contextEvent = emittedEvents.find((e) => e.event === 'context.updated');
 			expect(contextEvent).toBeDefined();
 		});
 	});
@@ -938,13 +939,13 @@ describe('Metadata and State Broadcasting Integration', () => {
 
 			db.createSession(session);
 
-			// Track EventBus emissions
+			// Track DaemonHub emissions
 			const emittedEvents: Array<{ event: string; data: unknown }> = [];
-			eventBus.on('session:updated', (data) => {
-				emittedEvents.push({ event: 'session:updated', data });
+			daemonHub.on('session.updated', (data) => {
+				emittedEvents.push({ event: 'session.updated', data });
 			});
 
-			// Update draft (should trigger session:updated event)
+			// Update draft (should trigger session.updated event)
 			db.updateSession(sessionId, {
 				metadata: {
 					inputDraft: 'New draft',
@@ -952,14 +953,14 @@ describe('Metadata and State Broadcasting Integration', () => {
 			});
 
 			// Manually emit event (in real code, this would be done by SessionManager)
-			eventBus.emit('session:updated', {
+			daemonHub.emit('session.updated', {
 				sessionId,
 				source: 'metadata',
 			});
 
-			// Verify EventBus emitted event
+			// Verify DaemonHub emitted event
 			expect(emittedEvents.length).toBeGreaterThan(0);
-			const updateEvent = emittedEvents.find((e) => e.event === 'session:updated');
+			const updateEvent = emittedEvents.find((e) => e.event === 'session.updated');
 			expect(updateEvent).toBeDefined();
 		});
 	});

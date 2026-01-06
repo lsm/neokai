@@ -7,7 +7,7 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
-import { EventBus } from '@liuboer/shared';
+import { createDaemonHub, type DaemonHub } from '../../../../src/lib/daemon-hub';
 import { generateUUID } from '@liuboer/shared';
 import { Database } from '../../../../src/storage/database';
 import type { Session } from '@liuboer/shared';
@@ -44,16 +44,16 @@ function createTestSession(id: string): Session {
 
 describe('ProcessingStateManager', () => {
 	let stateManager: ProcessingStateManager;
-	let mockEventBus: EventBus;
+	let mockEventBus: DaemonHub;
 	let emitSpy: ReturnType<typeof mock>;
 	const testSessionId = generateUUID();
 
 	beforeEach(() => {
-		// Create mock EventBus
+		// Create mock DaemonHub
 		emitSpy = mock(async () => {});
 		mockEventBus = {
 			emit: emitSpy,
-		} as unknown as EventBus;
+		} as unknown as DaemonHub;
 
 		// Create mock Database
 		const mockDb = {
@@ -89,7 +89,7 @@ describe('ProcessingStateManager', () => {
 			expect(stateManager.isIdle()).toBe(false);
 
 			// Should emit event with processingState included (event-sourced architecture)
-			expect(emitSpy).toHaveBeenCalledWith('session:updated', {
+			expect(emitSpy).toHaveBeenCalledWith('session.updated', {
 				sessionId: testSessionId,
 				source: 'processing-state',
 				processingState: { status: 'queued', messageId: 'msg-123' },
@@ -218,7 +218,7 @@ describe('ProcessingStateManager', () => {
 		});
 	});
 
-	describe('EventBus integration', () => {
+	describe('DaemonHub integration', () => {
 		it('should emit event on every state change', async () => {
 			emitSpy.mockClear();
 
@@ -243,7 +243,7 @@ describe('ProcessingStateManager', () => {
 			// Verify event was emitted with correct structure
 			expect(emitSpy).toHaveBeenCalledTimes(1);
 			const [eventName, payload] = emitSpy.mock.calls[0];
-			expect(eventName).toBe('session:updated');
+			expect(eventName).toBe('session.updated');
 			expect(payload.sessionId).toBe(testSessionId);
 			expect(payload.source).toBe('processing-state');
 			// processingState included for event-sourced architecture
@@ -286,12 +286,13 @@ describe('ProcessingStateManager', () => {
 
 	describe('state persistence', () => {
 		let db: Database;
-		let eventBus: EventBus;
+		let eventBus: DaemonHub;
 		const sessionId = 'test-session-persist';
 
 		beforeEach(async () => {
 			db = await createTestDb();
-			eventBus = new EventBus({ debug: false });
+			eventBus = createDaemonHub('test-hub');
+			await eventBus.initialize();
 
 			// Create a test session
 			const session = createTestSession(sessionId);
@@ -404,12 +405,13 @@ describe('ProcessingStateManager', () => {
 
 	describe('state restoration', () => {
 		let db: Database;
-		let eventBus: EventBus;
+		let eventBus: DaemonHub;
 		const sessionId = 'test-session-restore';
 
 		beforeEach(async () => {
 			db = await createTestDb();
-			eventBus = new EventBus({ debug: false });
+			eventBus = createDaemonHub('test-hub');
+			await eventBus.initialize();
 
 			// Create a test session
 			const session = createTestSession(sessionId);
@@ -544,7 +546,7 @@ describe('ProcessingStateManager', () => {
 
 			await stateManager.setWaitingForInput(samplePendingQuestion);
 
-			expect(emitSpy).toHaveBeenCalledWith('session:updated', {
+			expect(emitSpy).toHaveBeenCalledWith('session.updated', {
 				sessionId: testSessionId,
 				source: 'processing-state',
 				processingState: {
@@ -615,7 +617,7 @@ describe('ProcessingStateManager', () => {
 
 			expect(emitSpy).toHaveBeenCalledTimes(1);
 			const [eventName, payload] = emitSpy.mock.calls[0];
-			expect(eventName).toBe('session:updated');
+			expect(eventName).toBe('session.updated');
 			expect(payload.processingState.pendingQuestion.draftResponses).toEqual(draftResponses);
 		});
 
@@ -632,7 +634,7 @@ describe('ProcessingStateManager', () => {
 
 	describe('waiting_for_input persistence', () => {
 		let db: Database;
-		let eventBus: EventBus;
+		let eventBus: DaemonHub;
 		const sessionId = 'test-session-waiting';
 
 		const samplePendingQuestion = {
@@ -654,7 +656,8 @@ describe('ProcessingStateManager', () => {
 
 		beforeEach(async () => {
 			db = await createTestDb();
-			eventBus = new EventBus({ debug: false });
+			eventBus = createDaemonHub('test-hub');
+			await eventBus.initialize();
 
 			// Create a test session
 			const session = createTestSession(sessionId);

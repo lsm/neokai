@@ -10,7 +10,8 @@ import { SDKMessageHandler } from '../../../../src/lib/agent/sdk-message-handler
 import { ProcessingStateManager } from '../../../../src/lib/processing-state-manager';
 import { ContextTracker } from '../../../../src/lib/context-tracker';
 import { Database } from '../../../../src/storage/database';
-import type { Session, EventBus, MessageHub } from '@liuboer/shared';
+import type { Session, MessageHub } from '@liuboer/shared';
+import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { SDKMessage } from '@liuboer/shared/sdk';
 import { generateUUID } from '@liuboer/shared';
 
@@ -19,7 +20,7 @@ describe('SDKMessageHandler', () => {
 	let mockSession: Session;
 	let mockDb: Database;
 	let mockMessageHub: MessageHub;
-	let mockEventBus: EventBus;
+	let mockEventBus: DaemonHub;
 	let mockStateManager: ProcessingStateManager;
 	let mockContextTracker: ContextTracker;
 
@@ -69,11 +70,11 @@ describe('SDKMessageHandler', () => {
 			publish: hubPublishSpy,
 		} as unknown as MessageHub;
 
-		// Mock EventBus
+		// Mock DaemonHub
 		eventBusEmitSpy = mock(async () => {});
 		mockEventBus = {
 			emit: eventBusEmitSpy,
-		} as unknown as EventBus;
+		} as unknown as DaemonHub;
 
 		// Mock ProcessingStateManager
 		stateSetIdleSpy = mock(async () => {});
@@ -447,7 +448,7 @@ describe('SDKMessageHandler', () => {
 			await handler.handleMessage(systemMessage);
 
 			// Event includes session data for event-sourced architecture
-			expect(eventBusEmitSpy).toHaveBeenCalledWith('session:updated', {
+			expect(eventBusEmitSpy).toHaveBeenCalledWith('session.updated', {
 				sessionId: testSessionId,
 				source: 'sdk-session',
 				session: { sdkSessionId },

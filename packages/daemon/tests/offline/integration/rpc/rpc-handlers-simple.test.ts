@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'bun:test';
-import { MessageHub, EventBus } from '@liuboer/shared';
+import { MessageHub } from '@liuboer/shared';
+import { createDaemonHub } from '../../../../src/lib/daemon-hub';
 import { setupRPCHandlers } from '../../../../src/lib/rpc-handlers';
 import { getConfig } from '../../../../src/config';
 import { Database } from '../../../../src/storage/database';
@@ -20,7 +21,8 @@ describe('setupRPCHandlers - Handler Registration', () => {
 		const settingsManager = new SettingsManager(db, config.workspaceRoot);
 
 		const messageHub = new MessageHub({ defaultSessionId: 'global' });
-		const eventBus = new EventBus({ debug: false });
+		const eventBus = createDaemonHub('test-hub');
+		await eventBus.initialize();
 
 		const sessionManager = new SessionManager(
 			db,
@@ -72,7 +74,8 @@ describe('setupRPCHandlers - Handler Registration', () => {
 		const settingsManager = new SettingsManager(db, config.workspaceRoot);
 
 		const messageHub = new MessageHub({ defaultSessionId: 'global' });
-		const eventBus = new EventBus({ debug: false });
+		const eventBus = createDaemonHub('test-hub-2');
+		await eventBus.initialize();
 
 		const sessionManager = new SessionManager(
 			db,

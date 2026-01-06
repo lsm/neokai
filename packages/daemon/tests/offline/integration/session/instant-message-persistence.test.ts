@@ -8,7 +8,7 @@
 import { describe, expect, test, beforeEach, afterEach, mock } from 'bun:test';
 import { SessionManager } from '../../../../src/lib/session-manager';
 import { Database } from '../../../../src/storage/database';
-import { EventBus } from '@liuboer/shared';
+import { createDaemonHub, type DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { MessageHub, Session } from '@liuboer/shared';
 import { generateUUID } from '@liuboer/shared';
 import { tmpdir } from 'os';
@@ -18,7 +18,7 @@ import { mkdirSync, rmSync } from 'fs';
 describe('Instant Message Persistence UX', () => {
 	let db: Database;
 	let messageHub: MessageHub;
-	let eventBus: EventBus;
+	let eventBus: DaemonHub;
 	let _sessionManager: SessionManager;
 	let testDir: string;
 	let session: Session;
@@ -49,8 +49,9 @@ describe('Instant Message Persistence UX', () => {
 			_publishedMessages: [], // Fresh array for each test
 		} as unknown as MessageHub;
 
-		// Create EventBus
-		eventBus = new EventBus();
+		// Create DaemonHub
+		eventBus = createDaemonHub('test-hub');
+		await eventBus.initialize();
 
 		// Create test session with unique ID for each test
 		session = {
@@ -129,8 +130,8 @@ describe('Instant Message Persistence UX', () => {
 			resolvePersisted = resolve;
 		});
 
-		// Subscribe to message:persisted event
-		eventBus.once('message:persisted', () => {
+		// Subscribe to message.persisted event
+		eventBus.once('message.persisted', () => {
 			if (resolvePersisted) {
 				resolvePersisted();
 			}
@@ -139,8 +140,8 @@ describe('Instant Message Persistence UX', () => {
 		// Measure time to persist
 		const startTime = Date.now();
 
-		// Emit message:send:request event (same as production RPC handler)
-		await eventBus.emit('message:send:request', {
+		// Emit message.sendRequest event (same as production RPC handler)
+		await eventBus.emit('message.sendRequest', {
 			sessionId: session.id,
 			messageId,
 			content: messageContent,
@@ -196,15 +197,15 @@ describe('Instant Message Persistence UX', () => {
 			resolvePersisted = resolve;
 		});
 
-		// Subscribe to message:persisted event
-		eventBus.once('message:persisted', () => {
+		// Subscribe to message.persisted event
+		eventBus.once('message.persisted', () => {
 			if (resolvePersisted) {
 				resolvePersisted();
 			}
 		});
 
-		// Emit message:send:request event with images
-		await eventBus.emit('message:send:request', {
+		// Emit message.sendRequest event with images
+		await eventBus.emit('message.sendRequest', {
 			sessionId: session.id,
 			messageId,
 			content: messageContent,

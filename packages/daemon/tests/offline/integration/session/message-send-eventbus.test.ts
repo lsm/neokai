@@ -12,7 +12,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { EventBus } from '@liuboer/shared';
+import { createDaemonHub, type DaemonHub } from '../../../../src/lib/daemon-hub';
 import { Database } from '../../../../src/storage/database';
 import { SessionManager } from '../../../../src/lib/session-manager';
 import { SettingsManager } from '../../../../src/lib/settings-manager';
@@ -25,7 +25,7 @@ import { tmpdir } from 'node:os';
 
 describe('message.send EventBus Integration', () => {
 	let db: Database;
-	let eventBus: EventBus;
+	let eventBus: DaemonHub;
 	let sessionManager: SessionManager;
 	let authManager: AuthManager;
 	let settingsManager: SettingsManager;
@@ -49,8 +49,9 @@ describe('message.send EventBus Integration', () => {
 		// Setup SettingsManager
 		settingsManager = new SettingsManager(db, testWorkspace);
 
-		// Setup EventBus
-		eventBus = new EventBus({ debug: false });
+		// Setup DaemonHub
+		eventBus = createDaemonHub('test-hub');
+		await eventBus.initialize();
 
 		// Setup MessageHub (minimal for SessionManager constructor)
 		const messageHub = new MessageHub({ defaultSessionId: 'global', debug: false });
@@ -75,7 +76,7 @@ describe('message.send EventBus Integration', () => {
 
 		// Now safe to close database
 		db.close();
-		eventBus.clear();
+		await eventBus.close();
 
 		// Remove test workspace
 		try {
@@ -85,13 +86,37 @@ describe('message.send EventBus Integration', () => {
 		}
 	});
 
-	test('SessionManager subscribes to message:persisted event', () => {
-		// Verify EventBus has the handler registered
-		const handlerCount = eventBus.getHandlerCount('message:persisted');
-		expect(handlerCount).toBeGreaterThan(0);
+	test('SessionManager subscribes to message.persisted event', async () => {
+		// Create a session to test with
+		const sessionId = await sessionManager.createSession({
+			workspacePath: testWorkspace,
+		});
+
+		// Verify the handler works by emitting an event with hasDraftToClear
+		// If the handler is registered, it should process the event and clear the draft
+		await sessionManager.updateSession(sessionId, {
+			metadata: { inputDraft: 'verify-handler', workspaceInitialized: true },
+		} as Partial<import('@liuboer/shared').Session>);
+
+		await eventBus.emit('message.persisted', {
+			sessionId,
+			messageId: 'handler-test',
+			messageContent: 'Test',
+			userMessageText: 'Test',
+			needsWorkspaceInit: false,
+			hasDraftToClear: true,
+		});
+
+		// Wait for handler to process
+		await new Promise((resolve) => setTimeout(resolve, 100));
+
+		// Verify handler ran by checking draft was cleared
+		const agentSession = sessionManager.getSession(sessionId);
+		const session = agentSession!.getSessionData();
+		expect(session.metadata.inputDraft).toBeUndefined();
 	});
 
-	test('message:persisted event triggers title generation', async () => {
+	test('message.persisted event triggers title generation', async () => {
 		const sessionId = await sessionManager.createSession({
 			workspacePath: testWorkspace,
 		});
@@ -111,7 +136,7 @@ describe('message.send EventBus Integration', () => {
 		};
 
 		// Emit the event directly (simulating what RPC handler does)
-		await eventBus.emit('message:persisted', {
+		await eventBus.emit('message.persisted', {
 			sessionId,
 			messageId: 'test-msg-1',
 			messageContent: 'Test message for title',
@@ -131,7 +156,7 @@ describe('message.send EventBus Integration', () => {
 		expect(session.title).toBe('Test message for tit'); // First 20 chars
 	});
 
-	test('message:persisted event does not regenerate title if already generated', async () => {
+	test('message.persisted event does not regenerate title if already generated', async () => {
 		const sessionId = await sessionManager.createSession({
 			workspacePath: testWorkspace,
 		});
@@ -153,7 +178,7 @@ describe('message.send EventBus Integration', () => {
 		const originalTitle = session.title;
 
 		// Emit event with needsWorkspaceInit=false (title already generated)
-		await eventBus.emit('message:persisted', {
+		await eventBus.emit('message.persisted', {
 			sessionId,
 			messageId: 'test-msg-2',
 			messageContent: 'Second message',
@@ -186,7 +211,7 @@ describe('message.send EventBus Integration', () => {
 		expect(session.metadata.inputDraft).toBe('Test draft');
 
 		// Emit event with hasDraftToClear=true
-		await eventBus.emit('message:persisted', {
+		await eventBus.emit('message.persisted', {
 			sessionId,
 			messageId: 'test-msg-3',
 			messageContent: 'Test draft',
@@ -212,8 +237,8 @@ describe('message.send EventBus Integration', () => {
 		});
 
 		// Emit event with invalid session ID (should not throw)
-		// EventBus subscriber logs error but doesn't throw
-		await eventBus.emit('message:persisted', {
+		// DaemonHub subscriber logs error but doesn't throw
+		await eventBus.emit('message.persisted', {
 			sessionId: 'non-existent-session',
 			messageId: 'test-msg-4',
 			messageContent: 'Test',

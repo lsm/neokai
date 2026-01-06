@@ -7,12 +7,13 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { ErrorManager, ErrorCategory } from '../../../src/lib/error-manager';
-import { MessageHub, EventBus } from '@liuboer/shared';
+import { MessageHub } from '@liuboer/shared';
+import type { DaemonHub } from '../../../src/lib/daemon-hub';
 
 describe('ErrorManager', () => {
 	let errorManager: ErrorManager;
 	let mockMessageHub: MessageHub;
-	let mockEventBus: EventBus;
+	let mockEventBus: DaemonHub;
 	let publishSpy: ReturnType<typeof mock>;
 	let emitSpy: ReturnType<typeof mock>;
 
@@ -23,13 +24,13 @@ describe('ErrorManager', () => {
 			publish: publishSpy,
 		} as unknown as MessageHub;
 
-		// Create mock EventBus (errors now emit via EventBus, not direct publish)
+		// Create mock DaemonHub (errors now emit via DaemonHub, not direct publish)
 		emitSpy = mock(async () => {});
 		mockEventBus = {
 			emit: emitSpy,
 			on: mock(() => {}),
 			off: mock(() => {}),
-		} as unknown as EventBus;
+		} as unknown as DaemonHub;
 
 		errorManager = new ErrorManager(mockMessageHub, mockEventBus);
 	});
@@ -290,15 +291,15 @@ describe('ErrorManager', () => {
 	});
 
 	describe('broadcastError', () => {
-		it('should emit error via EventBus for StateManager', async () => {
+		it('should emit error via DaemonHub for StateManager', async () => {
 			const sessionId = 'test-session-123';
 			const error = errorManager.createError(new Error('test'), ErrorCategory.SYSTEM);
 
 			await errorManager.broadcastError(sessionId, error);
 
-			// Errors now emit via EventBus for StateManager to fold into state.session
+			// Errors now emit via DaemonHub for StateManager to fold into state.session
 			expect(emitSpy).toHaveBeenCalledTimes(1);
-			expect(emitSpy.mock.calls[0][0]).toBe('session:error');
+			expect(emitSpy.mock.calls[0][0]).toBe('session.error');
 			expect(emitSpy.mock.calls[0][1]).toMatchObject({
 				sessionId,
 				error: error.userMessage,
@@ -319,7 +320,7 @@ describe('ErrorManager', () => {
 
 			expect(result.message).toBe(errorMessage);
 			expect(result.category).toBe(ErrorCategory.MESSAGE);
-			// Errors now emit via EventBus
+			// Errors now emit via DaemonHub
 			expect(emitSpy).toHaveBeenCalledTimes(1);
 		});
 
@@ -537,9 +538,9 @@ describe('ErrorManager', () => {
 				metadata
 			);
 
-			// Errors now emit via EventBus for StateManager to fold into state.session
+			// Errors now emit via DaemonHub for StateManager to fold into state.session
 			expect(emitSpy).toHaveBeenCalledTimes(1);
-			expect(emitSpy.mock.calls[0][0]).toBe('session:error');
+			expect(emitSpy.mock.calls[0][0]).toBe('session.error');
 			const emittedData = emitSpy.mock.calls[0][1];
 
 			expect(emittedData.sessionId).toBe(sessionId);

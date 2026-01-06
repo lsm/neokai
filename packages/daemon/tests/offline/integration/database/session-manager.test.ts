@@ -11,7 +11,8 @@ import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { SessionManager } from '../../../../src/lib/session-manager';
 import { Database } from '../../../../src/storage/database';
 import { AuthManager } from '../../../../src/lib/auth-manager';
-import { MessageHub, MessageHubRouter, EventBus } from '@liuboer/shared';
+import { MessageHub, MessageHubRouter } from '@liuboer/shared';
+import { createDaemonHub, type DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 
 describe('SessionManager', () => {
@@ -19,7 +20,7 @@ describe('SessionManager', () => {
 	let messageHub: MessageHub;
 	let authManager: AuthManager;
 	let settingsManager: SettingsManager;
-	let eventBus: EventBus;
+	let eventBus: DaemonHub;
 	let sessionManager: SessionManager;
 	let originalEnv: string | undefined;
 
@@ -36,8 +37,9 @@ describe('SessionManager', () => {
 		messageHub = new MessageHub({ defaultSessionId: 'global', debug: false });
 		messageHub.registerRouter(router);
 
-		// Setup EventBus
-		eventBus = new EventBus();
+		// Setup DaemonHub
+		eventBus = createDaemonHub('test-hub');
+		await eventBus.initialize();
 
 		// Setup AuthManager
 		authManager = new AuthManager(db, {
@@ -116,9 +118,9 @@ describe('SessionManager', () => {
 			expect(session?.config.temperature).toBe(0.5);
 		});
 
-		test('emits session:created event', async () => {
+		test('emits session.created event', async () => {
 			let receivedEvent = false;
-			eventBus.on('session:created', () => {
+			eventBus.on('session.created', () => {
 				receivedEvent = true;
 			});
 
@@ -407,11 +409,11 @@ describe('SessionManager', () => {
 			expect(session?.title).toBe('New Title');
 		});
 
-		test('emits session:updated event', async () => {
+		test('emits session.updated event', async () => {
 			const sessionId = await sessionManager.createSession({});
 
 			let receivedSessionId = '';
-			eventBus.on('session:updated', (data) => {
+			eventBus.on('session.updated', (data) => {
 				receivedSessionId = data.sessionId;
 			});
 
@@ -431,11 +433,11 @@ describe('SessionManager', () => {
 			expect(session).toBeNull();
 		});
 
-		test('emits session:deleted event', async () => {
+		test('emits session.deleted event', async () => {
 			const sessionId = await sessionManager.createSession({});
 
 			let deletedSessionId = '';
-			eventBus.on('session:deleted', (data) => {
+			eventBus.on('session.deleted', (data) => {
 				deletedSessionId = data.sessionId;
 			});
 

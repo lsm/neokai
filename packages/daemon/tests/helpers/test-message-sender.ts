@@ -1,11 +1,11 @@
 /**
  * Test helper for sending messages synchronously in tests
  *
- * ARCHITECTURE: Uses EventBus pattern to replicate production flow
- * Production code: RPC → emit message:send:request → SessionManager persists → emit message:persisted → AgentSession processes
+ * ARCHITECTURE: Uses DaemonHub pattern to replicate production flow
+ * Production code: RPC → emit message.sendRequest → SessionManager persists → emit message.persisted → AgentSession processes
  *
  * Tests need synchronous await pattern, so we:
- * 1. Wait for message:persisted event to complete persistence
+ * 1. Wait for message.persisted event to complete persistence
  * 2. Wait for message to be enqueued to SDK queue
  */
 
@@ -46,10 +46,10 @@ export async function sendMessageSync(
 		}
 	};
 
-	// Emit message:send:request event (same as production RPC handler)
-	// SessionManager will persist and emit message:persisted
+	// Emit message.sendRequest event (same as production RPC handler)
+	// SessionManager will persist and emit message.persisted
 	// AgentSession will start query and enqueue message
-	await session.eventBus.emit('message:send:request', {
+	await session.eventBus.emit('message.sendRequest', {
 		sessionId: session.session.id,
 		messageId,
 		content: data.content,

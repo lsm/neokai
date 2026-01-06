@@ -7,23 +7,24 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { ContextTracker } from '../../../src/lib/agent/context-tracker';
-import type { EventBus, ContextInfo } from '@liuboer/shared';
+import type { ContextInfo } from '@liuboer/shared';
 import { generateUUID } from '@liuboer/shared';
+import type { DaemonHub } from '../../../src/lib/daemon-hub';
 
 describe('ContextTracker', () => {
 	let tracker: ContextTracker;
-	let mockEventBus: EventBus;
+	let mockEventBus: DaemonHub;
 	let emitSpy: ReturnType<typeof mock>;
 	let persistSpy: ReturnType<typeof mock>;
 	const testSessionId = generateUUID();
 	const testModel = 'claude-sonnet-4-5-20250929';
 
 	beforeEach(() => {
-		// Create mock EventBus
+		// Create mock DaemonHub
 		emitSpy = mock(async () => {});
 		mockEventBus = {
 			emit: emitSpy,
-		} as unknown as EventBus;
+		} as unknown as DaemonHub;
 
 		// Create persist callback spy
 		persistSpy = mock(() => {});
@@ -82,7 +83,7 @@ describe('ContextTracker', () => {
 			await tracker.processStreamEvent(messageStartEvent);
 
 			// Should emit context update
-			expect(emitSpy).toHaveBeenCalledWith('context:updated', {
+			expect(emitSpy).toHaveBeenCalledWith('context.updated', {
 				sessionId: testSessionId,
 				contextInfo: expect.objectContaining({
 					model: testModel,
@@ -260,7 +261,7 @@ describe('ContextTracker', () => {
 				output_tokens: 500,
 			});
 
-			expect(emitSpy).toHaveBeenCalledWith('context:updated', expect.any(Object));
+			expect(emitSpy).toHaveBeenCalledWith('context.updated', expect.any(Object));
 		});
 
 		it('should persist context info via callback', async () => {
@@ -316,8 +317,8 @@ describe('ContextTracker', () => {
 		});
 	});
 
-	describe('EventBus integration', () => {
-		it('should emit context:updated event with session ID and context info', async () => {
+	describe('DaemonHub integration', () => {
+		it('should emit context.updated event with session ID and context info', async () => {
 			emitSpy.mockClear();
 
 			await tracker.handleResultUsage({
@@ -325,7 +326,7 @@ describe('ContextTracker', () => {
 				output_tokens: 500,
 			});
 
-			expect(emitSpy).toHaveBeenCalledWith('context:updated', {
+			expect(emitSpy).toHaveBeenCalledWith('context.updated', {
 				sessionId: testSessionId,
 				contextInfo: expect.objectContaining({
 					model: testModel,
@@ -344,7 +345,7 @@ describe('ContextTracker', () => {
 				cache_read_input_tokens: 2000,
 			});
 
-			expect(emitSpy).toHaveBeenCalledWith('context:updated', {
+			expect(emitSpy).toHaveBeenCalledWith('context.updated', {
 				sessionId: testSessionId,
 				contextInfo: expect.objectContaining({
 					breakdown: expect.any(Object),

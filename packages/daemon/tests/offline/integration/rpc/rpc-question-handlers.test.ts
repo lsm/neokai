@@ -6,7 +6,8 @@
  */
 
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import { MessageHub, EventBus } from '@liuboer/shared';
+import { MessageHub } from '@liuboer/shared';
+import { createDaemonHub, type DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { QuestionDraftResponse } from '@liuboer/shared';
 import { setupQuestionHandlers } from '../../../../src/lib/rpc-handlers/question-handlers';
 
@@ -28,12 +29,13 @@ function createMockSessionManager(agentSession: ReturnType<typeof createMockAgen
 
 describe('Question RPC Handlers', () => {
 	let messageHub: MessageHub;
-	let eventBus: EventBus;
+	let eventBus: DaemonHub;
 	let mockAgentSession: ReturnType<typeof createMockAgentSession>;
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		messageHub = new MessageHub({ defaultSessionId: 'global' });
-		eventBus = new EventBus({ debug: false });
+		eventBus = createDaemonHub('test-hub');
+		await eventBus.initialize();
 		mockAgentSession = createMockAgentSession();
 	});
 

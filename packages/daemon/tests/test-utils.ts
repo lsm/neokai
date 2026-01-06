@@ -129,11 +129,10 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 	// Initialize settings manager
 	const settingsManager = new SettingsManager(db, config.workspaceRoot);
 
-	// Initialize EventBus (breaks circular dependency!)
-	const { EventBus } = await import('@liuboer/shared');
-	const eventBus = new EventBus({
-		debug: process.env.TEST_VERBOSE === '1', // Enable debug with TEST_VERBOSE=1
-	});
+	// Initialize DaemonHub (breaks circular dependency!)
+	const { createDaemonHub } = await import('../src/lib/daemon-hub');
+	const eventBus = createDaemonHub('test-daemon');
+	await eventBus.initialize();
 
 	// Create session manager with EventBus and SettingsManager
 	const sessionManager = new SessionManager(
@@ -168,7 +167,8 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 		authManager,
 		settingsManager,
 		config,
-		eventBus,
+		daemonHub: eventBus,
+		db,
 	});
 
 	// Initialize Subscription Manager

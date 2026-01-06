@@ -59,11 +59,11 @@ describe('Session RPC Integration', () => {
 			expect(session?.config.temperature).toBe(0.5);
 		});
 
-		test('should broadcast session.created event via EventBus', async () => {
+		test('should broadcast session.created event via DaemonHub', async () => {
 			// Subscribe to session creation event
 			let createdSession = null;
 			const eventPromise = new Promise((resolve) => {
-				(ctx.stateManager as unknown).eventBus.on('session:created', (data: unknown) => {
+				(ctx.stateManager as unknown).eventBus.on('session.created', (data: unknown) => {
 					createdSession = data.session;
 					resolve(data);
 				});
@@ -152,14 +152,14 @@ describe('Session RPC Integration', () => {
 			expect(session?.title).toBe('Updated Title');
 		});
 
-		test('should emit session:updated event via EventBus', async () => {
+		test('should emit session.updated event via DaemonHub', async () => {
 			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-workspace`,
 			});
 
 			let eventReceived = false;
 			const eventPromise = new Promise((resolve) => {
-				(ctx.stateManager as unknown).eventBus.on('session:updated', (data: unknown) => {
+				(ctx.stateManager as unknown).eventBus.on('session.updated', (data: unknown) => {
 					if (data.sessionId === created.sessionId) {
 						eventReceived = true;
 						resolve(data);
@@ -243,14 +243,14 @@ describe('Session RPC Integration', () => {
 			expect(session).toBeNull();
 		}, 15000);
 
-		test('should emit session:deleted event via EventBus', async () => {
+		test('should emit session.deleted event via DaemonHub', async () => {
 			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-workspace`,
 			});
 
 			let deletedSessionId = null;
 			const eventPromise = new Promise((resolve) => {
-				(ctx.stateManager as unknown).eventBus.on('session:deleted', (data: unknown) => {
+				(ctx.stateManager as unknown).eventBus.on('session.deleted', (data: unknown) => {
 					deletedSessionId = data.sessionId;
 					resolve(data);
 				});

@@ -11,7 +11,8 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { SessionManager } from '../../../../src/lib/session-manager';
 import { Database } from '../../../../src/storage/database';
-import { MessageHub, EventBus } from '@liuboer/shared';
+import { MessageHub } from '@liuboer/shared';
+import { createDaemonHub, type DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { AuthManager } from '../../../../src/lib/auth-manager';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -21,7 +22,7 @@ describe('Session Creation and Title Generation', () => {
 	let sessionManager: SessionManager;
 	let db: Database;
 	let messageHub: MessageHub;
-	let eventBus: EventBus;
+	let eventBus: DaemonHub;
 	let mockAuthManager: AuthManager;
 	let testWorkspace: string;
 	let dbPath: string;
@@ -40,8 +41,9 @@ describe('Session Creation and Title Generation', () => {
 		// Initialize MessageHub
 		messageHub = new MessageHub();
 
-		// Initialize EventBus
-		eventBus = new EventBus();
+		// Initialize DaemonHub
+		eventBus = createDaemonHub('test-hub');
+		await eventBus.initialize();
 
 		// Mock AuthManager
 		mockAuthManager = {

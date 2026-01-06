@@ -53,7 +53,7 @@ describe('Archive Session Integration', () => {
 			expect(archivedDate.getTime()).toBeGreaterThan(0);
 		});
 
-		test('should broadcast session:updated event when archiving', async () => {
+		test('should broadcast session.updated event when archiving', async () => {
 			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-event`,
 				useWorktree: false,
@@ -63,7 +63,7 @@ describe('Archive Session Integration', () => {
 			let eventReceived = false;
 			const eventPromise = new Promise((resolve) => {
 				(ctx.stateManager as unknown as Record<string, unknown>).eventBus.on(
-					'session:updated',
+					'session.updated',
 					(data: unknown) => {
 						const eventData = data as Record<string, unknown>;
 						if (eventData.sessionId === created.sessionId) {

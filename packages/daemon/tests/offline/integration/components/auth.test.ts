@@ -99,17 +99,21 @@ describe('Authentication Integration', () => {
 	});
 
 	describe('Auth Events', () => {
-		test('should broadcast auth change via EventBus', async () => {
+		test('should broadcast auth change via DaemonHub', async () => {
 			let eventReceived = false;
 			const eventPromise = new Promise((resolve) => {
-				ctx.stateManager.eventBus.on('auth:changed', () => {
+				ctx.stateManager.eventBus.on('auth.changed', () => {
 					eventReceived = true;
 					resolve(true);
 				});
 			});
 
 			// Trigger auth change (would normally happen on credential update)
-			ctx.stateManager.eventBus.emit('auth:changed', {});
+			ctx.stateManager.eventBus.emit('auth.changed', {
+				sessionId: 'global',
+				method: 'api_key',
+				isAuthenticated: true,
+			});
 
 			await eventPromise;
 			expect(eventReceived).toBe(true);

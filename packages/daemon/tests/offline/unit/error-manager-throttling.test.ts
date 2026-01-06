@@ -7,15 +7,16 @@
 
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { ErrorManager, ErrorCategory } from '../../../src/lib/error-manager';
-import { MessageHub, EventBus } from '@liuboer/shared';
+import { MessageHub } from '@liuboer/shared';
+import { createDaemonHub, type DaemonHub } from '../../../src/lib/daemon-hub';
 
 describe('ErrorManager - Error Throttling', () => {
 	let errorManager: ErrorManager;
 	let messageHub: MessageHub;
-	let eventBus: EventBus;
+	let eventBus: DaemonHub;
 	let broadcastedErrors: unknown[] = [];
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		broadcastedErrors = [];
 
 		// Mock MessageHub (still needed for API connection status)
@@ -23,9 +24,10 @@ describe('ErrorManager - Error Throttling', () => {
 			publish: async () => {},
 		} as unknown as MessageHub;
 
-		// Create real EventBus and track emitted errors
-		eventBus = new EventBus();
-		eventBus.on('session:error', (data: unknown) => {
+		// Create DaemonHub and track emitted errors
+		eventBus = createDaemonHub('test-hub');
+		await eventBus.initialize();
+		eventBus.on('session.error', (data: unknown) => {
 			broadcastedErrors.push(data);
 		});
 
