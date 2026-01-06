@@ -60,6 +60,9 @@ export type { WebSocketClientTransportOptions } from './websocket-client-transpo
 export { InProcessTransport, InProcessTransportBus } from './in-process-transport.ts';
 export type { InProcessTransportOptions } from './in-process-transport.ts';
 
+export { StdioTransport, createStdioPair } from './stdio-transport.ts';
+export type { StdioTransportOptions } from './stdio-transport.ts';
+
 // TypedHub - Type-safe wrapper over MessageHub + InProcessTransportBus
 // Recommended for new code migrating from EventBus
 // Works for both in-process (InProcessTransportBus) and cross-process (WebSocket) communication
