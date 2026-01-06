@@ -195,7 +195,10 @@ describe('TypedHub', () => {
 			await new Promise((resolve) => setTimeout(resolve, 20));
 
 			// Participant publishes - participant receives via local dispatch
-			await participant.publish('session.created', { sessionId: 'from-participant', title: 'From Participant' });
+			await participant.publish('session.created', {
+				sessionId: 'from-participant',
+				title: 'From Participant',
+			});
 			await new Promise((resolve) => setTimeout(resolve, 20));
 
 			// Local dispatch ensures each hub receives its own events

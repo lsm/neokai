@@ -62,10 +62,6 @@ export type { InProcessTransportOptions } from './in-process-transport.ts';
 
 // TypedHub - Type-safe wrapper over MessageHub + InProcessTransportBus
 // Recommended for new code migrating from EventBus
+// Works for both in-process (InProcessTransportBus) and cross-process (WebSocket) communication
 export { TypedHub } from './typed-hub.ts';
 export type { TypedHubOptions, TypedSubscribeOptions, BaseEventData } from './typed-hub.ts';
-
-// InProcessHub - Simpler typed async pub/sub (doesn't use MessageHub internally)
-// Use TypedHub instead for cluster-ready code
-export { InProcessHub, ParticipantHub } from './in-process-hub.ts';
-export type { InProcessHubOptions, HubSubscribeOptions } from './in-process-hub.ts';

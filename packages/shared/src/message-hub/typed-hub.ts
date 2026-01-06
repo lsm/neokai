@@ -109,10 +109,8 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 	// Track local handlers for direct dispatch (like EventBus)
 	// event → sessionId → handlers
 	// This enables EventBus-like behavior where publisher receives own events
-	private localHandlers: Map<
-		string,
-		Map<string, Set<(data: unknown) => void | Promise<void>>>
-	> = new Map();
+	private localHandlers: Map<string, Map<string, Set<(data: unknown) => void | Promise<void>>>> =
+		new Map();
 
 	// Track MessageHub subscriptions for cleanup
 	private hubSubscriptions: Map<string, UnsubscribeFn[]> = new Map();
@@ -332,6 +330,24 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 
 		unsub = this.subscribe(event, wrappedHandler, options);
 		return unsub;
+	}
+
+	/**
+	 * Alias for publish() - EventBus compatibility
+	 */
+	emit<K extends keyof TEventMap & string>(event: K, data: TEventMap[K]): Promise<void> {
+		return this.publish(event, data);
+	}
+
+	/**
+	 * Alias for subscribe() - EventBus compatibility
+	 */
+	on<K extends keyof TEventMap & string>(
+		event: K,
+		handler: (data: TEventMap[K]) => void | Promise<void>,
+		options?: TypedSubscribeOptions
+	): UnsubscribeFn {
+		return this.subscribe(event, handler, options);
 	}
 
 	/**

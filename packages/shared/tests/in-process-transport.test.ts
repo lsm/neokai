@@ -117,7 +117,7 @@ describe('InProcessTransport', () => {
 			const [client, server] = InProcessTransport.createPair();
 			await client.initialize();
 
-			let disconnectedClientId: string | null = null;
+			let disconnectedClientId = '';
 			server.onClientDisconnect((clientId) => {
 				disconnectedClientId = clientId;
 			});
@@ -130,7 +130,7 @@ describe('InProcessTransport', () => {
 		});
 
 		it('should notify connection state handlers', async () => {
-			const [client, server] = InProcessTransport.createPair();
+			const [client, _server] = InProcessTransport.createPair();
 
 			const clientStates: string[] = [];
 			client.onConnectionChange((state) => clientStates.push(state));
