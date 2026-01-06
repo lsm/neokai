@@ -63,6 +63,9 @@ export type { InProcessTransportOptions } from './in-process-transport.ts';
 export { StdioTransport, createStdioPair } from './stdio-transport.ts';
 export type { StdioTransportOptions } from './stdio-transport.ts';
 
+export { UnixSocketTransport, getDaemonSocketPath } from './unix-socket-transport.ts';
+export type { UnixSocketTransportOptions } from './unix-socket-transport.ts';
+
 // TypedHub - Type-safe wrapper over MessageHub + InProcessTransportBus
 // Recommended for new code migrating from EventBus
 // Works for both in-process (InProcessTransportBus) and cross-process (WebSocket) communication
