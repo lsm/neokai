@@ -242,14 +242,16 @@ export class SettingsManager {
 		if (settings.attribution !== undefined) {
 			// User has configured attribution in Liuboer's database, use it
 			localSettings.attribution = settings.attribution;
-		} else {
-			// No attribution in database, fall back to user settings to work around SDK bug
+		} else if (localSettings.attribution === undefined) {
+			// No attribution in database AND no existing attribution in local file,
+			// fall back to user settings to work around SDK bug
 			const userAttribution = this.readUserAttribution();
 			if (userAttribution !== undefined) {
 				localSettings.attribution = userAttribution;
 				this.logger.log('Using attribution from user settings:', userAttribution);
 			}
 		}
+		// If localSettings.attribution is already set, preserve it
 
 		// Ensure directory exists
 		try {
