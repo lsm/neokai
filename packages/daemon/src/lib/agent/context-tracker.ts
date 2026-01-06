@@ -16,12 +16,8 @@
  * This is exactly what we need to calculate context window usage!
  */
 
-import type {
-	ContextInfo,
-	ContextCategoryBreakdown,
-	ContextAPIUsage,
-	EventBus,
-} from '@liuboer/shared';
+import type { ContextInfo, ContextCategoryBreakdown, ContextAPIUsage } from '@liuboer/shared';
+import type { DaemonHub } from '../daemon-hub';
 import type { ModelUsage } from '@liuboer/shared/sdk';
 import { Logger } from '../logger';
 
@@ -69,7 +65,7 @@ export class ContextTracker {
 	constructor(
 		private sessionId: string,
 		private model: string,
-		private eventBus: EventBus,
+		private daemonHub: DaemonHub,
 		private persistContext: (info: ContextInfo) => void
 	) {
 		this.logger = new Logger(`ContextTracker ${sessionId}`);
@@ -253,9 +249,9 @@ export class ContextTracker {
 		// Persist to session metadata (callback provided by AgentSession)
 		this.persistContext(this.currentContextInfo);
 
-		// Emit context update event via EventBus
+		// Emit context update event via DaemonHub
 		// StateManager will broadcast this via state.session channel
-		await this.eventBus.emit('context:updated', {
+		await this.daemonHub.emit('context.updated', {
 			sessionId: this.sessionId,
 			contextInfo: this.currentContextInfo,
 		});

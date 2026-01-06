@@ -5,7 +5,8 @@
  * and error categorization for better debugging and user experience.
  */
 
-import type { MessageHub, EventBus } from '@liuboer/shared';
+import type { MessageHub } from '@liuboer/shared';
+import type { DaemonHub } from './daemon-hub';
 import { Logger } from './logger';
 
 export enum ErrorCategory {
@@ -60,7 +61,7 @@ export class ErrorManager {
 
 	constructor(
 		private messageHub: MessageHub,
-		private eventBus?: EventBus
+		private daemonHub?: DaemonHub
 	) {}
 
 	/**
@@ -403,10 +404,10 @@ export class ErrorManager {
 		if (newStatus !== this.currentApiStatus) {
 			this.currentApiStatus = newStatus;
 
-			// Emit via EventBus for internal server-side listeners (StateManager)
+			// Emit via DaemonHub for internal server-side listeners (StateManager)
 			// API connection is a global event (not session-specific)
-			if (this.eventBus) {
-				this.eventBus.emit('api:connection', {
+			if (this.daemonHub) {
+				this.daemonHub.emit('api.connection', {
 					sessionId: 'global',
 					status: newStatus,
 					errorCount: this.apiConnectionErrors,
@@ -435,10 +436,10 @@ export class ErrorManager {
 		if (hadErrors && this.currentApiStatus !== 'connected') {
 			this.currentApiStatus = 'connected';
 
-			// Emit via EventBus for internal server-side listeners (StateManager)
+			// Emit via DaemonHub for internal server-side listeners (StateManager)
 			// API connection is a global event (not session-specific)
-			if (this.eventBus) {
-				this.eventBus.emit('api:connection', {
+			if (this.daemonHub) {
+				this.daemonHub.emit('api.connection', {
 					sessionId: 'global',
 					status: 'connected',
 					errorCount: 0,
@@ -478,9 +479,9 @@ export class ErrorManager {
 			return;
 		}
 
-		// Emit via EventBus for StateManager to fold into state.session
-		if (this.eventBus) {
-			this.eventBus.emit('session:error', {
+		// Emit via DaemonHub for StateManager to fold into state.session
+		if (this.daemonHub) {
+			this.daemonHub.emit('session.error', {
 				sessionId,
 				error: error.userMessage,
 				details: error,

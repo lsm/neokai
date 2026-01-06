@@ -4,7 +4,8 @@
  * Provides RPC methods for managing global and session-specific settings.
  */
 
-import type { MessageHub, EventBus } from '@liuboer/shared';
+import type { MessageHub } from '@liuboer/shared';
+import type { DaemonHub } from '../daemon-hub';
 import type { GlobalSettings, SessionSettings } from '@liuboer/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { Database } from '../../storage/database';
@@ -12,7 +13,7 @@ import type { Database } from '../../storage/database';
 export function registerSettingsHandlers(
 	messageHub: MessageHub,
 	settingsManager: SettingsManager,
-	eventBus: EventBus,
+	daemonHub: DaemonHub,
 	db: Database
 ) {
 	/**
@@ -30,12 +31,12 @@ export function registerSettingsHandlers(
 		async (data: { updates: Partial<GlobalSettings> }) => {
 			const updated = settingsManager.updateGlobalSettings(data.updates);
 			// Emit event for StateManager to broadcast (global event)
-			eventBus.emit('settings:updated', { sessionId: 'global', settings: updated });
+			daemonHub.emit('settings.updated', { sessionId: 'global', settings: updated });
 
 			// SPECIAL CASE: If showArchived changed, also broadcast sessions change
 			// because the filtered session list needs to update
 			if ('showArchived' in data.updates) {
-				eventBus.emit('sessions:filter-changed', { sessionId: 'global' });
+				daemonHub.emit('sessions.filterChanged', { sessionId: 'global' });
 			}
 
 			return { success: true, settings: updated };
@@ -48,7 +49,7 @@ export function registerSettingsHandlers(
 	messageHub.handle('settings.global.save', async (data: { settings: GlobalSettings }) => {
 		settingsManager.saveGlobalSettings(data.settings);
 		// Emit event for StateManager to broadcast (global event)
-		eventBus.emit('settings:updated', { sessionId: 'global', settings: data.settings });
+		daemonHub.emit('settings.updated', { sessionId: 'global', settings: data.settings });
 		return { success: true };
 	});
 
@@ -61,7 +62,7 @@ export function registerSettingsHandlers(
 			await settingsManager.toggleMcpServer(data.serverName, data.enabled);
 			// Emit event for StateManager to broadcast (global event)
 			const settings = settingsManager.getGlobalSettings();
-			eventBus.emit('settings:updated', { sessionId: 'global', settings });
+			daemonHub.emit('settings.updated', { sessionId: 'global', settings });
 			return { success: true };
 		}
 	);
@@ -82,7 +83,7 @@ export function registerSettingsHandlers(
 		await settingsManager.setDisabledMcpServers(data.disabledServers);
 		// Emit event for StateManager to broadcast (global event)
 		const settings = settingsManager.getGlobalSettings();
-		eventBus.emit('settings:updated', { sessionId: 'global', settings });
+		daemonHub.emit('settings.updated', { sessionId: 'global', settings });
 		return { success: true };
 	});
 
@@ -135,7 +136,7 @@ export function registerSettingsHandlers(
 			settingsManager.updateMcpServerSettings(data.serverName, data.settings);
 			// Emit event for StateManager to broadcast (global event)
 			const settings = settingsManager.getGlobalSettings();
-			eventBus.emit('settings:updated', { sessionId: 'global', settings });
+			daemonHub.emit('settings.updated', { sessionId: 'global', settings });
 			return { success: true };
 		}
 	);

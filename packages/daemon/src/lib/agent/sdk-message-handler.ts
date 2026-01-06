@@ -10,7 +10,8 @@
  * - Automatic phase detection for state tracking
  */
 
-import type { Session, EventBus, MessageHub } from '@liuboer/shared';
+import type { Session, MessageHub } from '@liuboer/shared';
+import type { DaemonHub } from '../daemon-hub';
 import type { SDKMessage, SDKUserMessage } from '@liuboer/shared/sdk';
 import {
 	isSDKResultSuccess,
@@ -51,7 +52,7 @@ export class SDKMessageHandler {
 		private session: Session,
 		private db: Database,
 		private messageHub: MessageHub,
-		private eventBus: EventBus,
+		private daemonHub: DaemonHub,
 		private stateManager: ProcessingStateManager,
 		private contextTracker: ContextTracker
 	) {
@@ -232,9 +233,9 @@ export class SDKMessageHandler {
 				sdkSessionId: message.session_id,
 			});
 
-			// Emit session:updated event so StateManager broadcasts the change
+			// Emit session.updated event so StateManager broadcasts the change
 			// Include data for decoupled state management
-			await this.eventBus.emit('session:updated', {
+			await this.daemonHub.emit('session.updated', {
 				sessionId: this.session.id,
 				source: 'sdk-session',
 				session: { sdkSessionId: message.session_id },
@@ -291,9 +292,9 @@ export class SDKMessageHandler {
 			metadata: this.session.metadata,
 		});
 
-		// Emit session:updated event so StateManager broadcasts the change
+		// Emit session.updated event so StateManager broadcasts the change
 		// Include data for decoupled state management
-		await this.eventBus.emit('session:updated', {
+		await this.daemonHub.emit('session.updated', {
 			sessionId: this.session.id,
 			source: 'metadata',
 			session: {
@@ -340,7 +341,7 @@ export class SDKMessageHandler {
 
 		// Clear any session errors since we successfully completed a turn
 		// This resolves persistent error banners that weren't being cleared
-		await this.eventBus.emit('session:error:clear', { sessionId: this.session.id });
+		await this.daemonHub.emit('session.errorClear', { sessionId: this.session.id });
 
 		// Set state back to idle
 		// Note: Title generation now handled by TitleGenerationQueue (decoupled via EventBus)
@@ -366,9 +367,9 @@ export class SDKMessageHandler {
 				metadata: this.session.metadata,
 			});
 
-			// Emit session:updated event so StateManager broadcasts the change
+			// Emit session.updated event so StateManager broadcasts the change
 			// Include data for decoupled state management
-			await this.eventBus.emit('session:updated', {
+			await this.daemonHub.emit('session.updated', {
 				sessionId: this.session.id,
 				source: 'metadata',
 				session: { metadata: this.session.metadata },
@@ -434,9 +435,9 @@ export class SDKMessageHandler {
 		// The tracker will persist to session metadata and emit the context:updated event
 		this.contextTracker.updateWithDetailedBreakdown(mergedContext);
 
-		// Emit context update event via EventBus
+		// Emit context update event via DaemonHub
 		// StateManager will broadcast this via state.session channel
-		await this.eventBus.emit('context:updated', {
+		await this.daemonHub.emit('context.updated', {
 			sessionId: this.session.id,
 			contextInfo: mergedContext,
 		});

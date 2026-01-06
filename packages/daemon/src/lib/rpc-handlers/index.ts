@@ -5,7 +5,8 @@
  * Organized by domain for better maintainability.
  */
 
-import type { MessageHub, EventBus } from '@liuboer/shared';
+import type { MessageHub } from '@liuboer/shared';
+import type { DaemonHub } from '../daemon-hub';
 import type { SessionManager } from '../session-manager';
 import type { AuthManager } from '../auth-manager';
 import type { SettingsManager } from '../settings-manager';
@@ -28,7 +29,7 @@ export interface RPCHandlerDependencies {
 	authManager: AuthManager;
 	settingsManager: SettingsManager;
 	config: Config;
-	eventBus: EventBus;
+	daemonHub: DaemonHub;
 	db: Database;
 }
 
@@ -36,13 +37,13 @@ export interface RPCHandlerDependencies {
  * Register all RPC handlers on MessageHub
  */
 export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
-	setupSessionHandlers(deps.messageHub, deps.sessionManager, deps.eventBus);
+	setupSessionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
 	setupMessageHandlers(deps.messageHub, deps.sessionManager);
 	setupCommandHandlers(deps.messageHub, deps.sessionManager);
 	setupFileHandlers(deps.messageHub, deps.sessionManager);
 	setupSystemHandlers(deps.messageHub, deps.sessionManager, deps.authManager, deps.config);
 	setupAuthHandlers(deps.messageHub, deps.authManager);
-	setupQuestionHandlers(deps.messageHub, deps.sessionManager, deps.eventBus);
+	setupQuestionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
 	registerMcpHandlers(deps.messageHub, deps.sessionManager);
-	registerSettingsHandlers(deps.messageHub, deps.settingsManager, deps.eventBus, deps.db);
+	registerSettingsHandlers(deps.messageHub, deps.settingsManager, deps.daemonHub, deps.db);
 }

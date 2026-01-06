@@ -7,7 +7,8 @@
  * - State updates are broadcast via State Channels
  */
 
-import type { MessageHub, MessageImage, Session, EventBus } from '@liuboer/shared';
+import type { MessageHub, MessageImage, Session } from '@liuboer/shared';
+import type { DaemonHub } from '../daemon-hub';
 import { generateUUID } from '@liuboer/shared';
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@liuboer/shared';
@@ -16,7 +17,7 @@ import { clearModelsCache } from '../model-service';
 export function setupSessionHandlers(
 	messageHub: MessageHub,
 	sessionManager: SessionManager,
-	eventBus: EventBus
+	daemonHub: DaemonHub
 ): void {
 	messageHub.handle('session.create', async (data) => {
 		const req = data as CreateSessionRequest;
@@ -181,9 +182,9 @@ export function setupSessionHandlers(
 		const messageId = generateUUID();
 
 		// Fire-and-forget: emit event, SessionManager handles persistence
-		// All heavy operations (message persistence, title gen, SDK query) handled by EventBus subscribers
-		eventBus
-			.emit('message:send:request', {
+		// All heavy operations (message persistence, title gen, SDK query) handled by DaemonHub subscribers
+		daemonHub
+			.emit('message.sendRequest', {
 				sessionId: targetSessionId,
 				messageId,
 				content,
@@ -210,7 +211,7 @@ export function setupSessionHandlers(
 		}
 
 		// Fire-and-forget: emit event, AgentSession handles it
-		eventBus.emit('agent:interrupt:request', { sessionId: targetSessionId }).catch((err) => {
+		daemonHub.emit('agent.interruptRequest', { sessionId: targetSessionId }).catch((err) => {
 			console.error('[client.interrupt] Error emitting interrupt event:', err);
 		});
 
@@ -389,9 +390,9 @@ export function setupSessionHandlers(
 		}
 
 		// Fire-and-forget: emit event, AgentSession handles it
-		// Reset result is broadcast via 'agent:reset' event → StateManager → clients
-		eventBus
-			.emit('agent:reset:request', { sessionId: targetSessionId, restartQuery })
+		// Reset result is broadcast via 'agent.reset' event → StateManager → clients
+		daemonHub
+			.emit('agent.resetRequest', { sessionId: targetSessionId, restartQuery })
 			.catch((err) => {
 				console.error('[session.resetQuery] Error emitting reset event:', err);
 			});

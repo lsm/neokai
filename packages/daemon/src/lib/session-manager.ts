@@ -1,5 +1,11 @@
-import type { Session, WorktreeMetadata, MessageContent, MessageImage } from '@liuboer/shared';
-import type { MessageHub, EventBus } from '@liuboer/shared';
+import type {
+	Session,
+	WorktreeMetadata,
+	MessageContent,
+	MessageImage,
+	MessageHub,
+} from '@liuboer/shared';
+import type { DaemonHub } from './daemon-hub';
 import { generateUUID } from '@liuboer/shared';
 import type { SDKUserMessage } from '@liuboer/shared/sdk';
 import type { UUID } from 'crypto';
@@ -30,7 +36,7 @@ export class SessionManager {
 		private messageHub: MessageHub,
 		private authManager: AuthManager,
 		private settingsManager: SettingsManager,
-		private eventBus: EventBus, // FIX: Use EventBus instead of StateManager
+		private eventBus: DaemonHub, // TypedHub-based event coordination
 		private config: {
 			defaultModel: string;
 			maxTokens: number;
@@ -56,7 +62,7 @@ export class SessionManager {
 	private setupEventSubscriptions(): void {
 		// Subscribe to message send requests (from RPC handler)
 		// Handles message persistence: expand commands → build content → save DB → publish UI
-		const unsubMessageSendRequest = this.eventBus.on('message:send:request', async (data) => {
+		const unsubMessageSendRequest = this.eventBus.on('message.sendRequest', async (data) => {
 			// Session isolation: only handle events for sessions managed by this SessionManager
 			// Note: In current architecture, there's one SessionManager instance managing all sessions
 			// But we still check if session exists for safety
@@ -70,7 +76,7 @@ export class SessionManager {
 
 		// Subscribe to message persisted events (for title generation + draft clearing)
 		// AgentSession also subscribes to this event for query feeding
-		const unsubMessagePersisted = this.eventBus.on('message:persisted', async (data) => {
+		const unsubMessagePersisted = this.eventBus.on('message.persisted', async (data) => {
 			const { sessionId, userMessageText, needsWorkspaceInit, hasDraftToClear } = data;
 
 			this.logger.info(`[SessionManager] Processing message:persisted for session ${sessionId}`);
@@ -213,7 +219,7 @@ export class SessionManager {
 
 		// Emit event via EventBus (StateManager will handle publishing to MessageHub)
 		this.logger.info('[SessionManager] Emitting session:created event for session:', sessionId);
-		await this.eventBus.emit('session:created', { sessionId, session });
+		await this.eventBus.emit('session.created', { sessionId, session });
 		this.logger.info('[SessionManager] Event emitted, returning sessionId:', sessionId);
 
 		return sessionId;
@@ -297,7 +303,7 @@ export class SessionManager {
 			agentSession.updateMetadata(updatedSession);
 
 			// Broadcast updates - include session data for decoupled state management
-			await this.eventBus.emit('session:updated', {
+			await this.eventBus.emit('session.updated', {
 				sessionId,
 				source: 'title-generated',
 				session: updatedSession,
@@ -322,7 +328,7 @@ export class SessionManager {
 			agentSession.updateMetadata(fallbackSession);
 
 			// Include session data for decoupled state management
-			await this.eventBus.emit('session:updated', {
+			await this.eventBus.emit('session.updated', {
 				sessionId,
 				source: 'title-generated',
 				session: fallbackSession,
@@ -603,7 +609,7 @@ ${messageText.slice(0, 2000)}`,
 		}
 
 		// FIX: Emit event via EventBus - include data for decoupled state management
-		await this.eventBus.emit('session:updated', { sessionId, source: 'update', session: updates });
+		await this.eventBus.emit('session.updated', { sessionId, source: 'update', session: updates });
 	}
 
 	/**
@@ -699,7 +705,7 @@ ${messageText.slice(0, 2000)}`,
 				);
 
 				// Emit event via EventBus
-				await this.eventBus.emit('session:deleted', { sessionId });
+				await this.eventBus.emit('session.deleted', { sessionId });
 			} catch (error) {
 				this.logger.error('[SessionManager] Failed to broadcast deletion:', error);
 				// Don't rollback - session is already deleted
@@ -869,7 +875,7 @@ ${messageText.slice(0, 2000)}`,
 	 * 3. Create SDK user message
 	 * 4. Save to database
 	 * 5. Publish to UI via state channel
-	 * 6. Emit 'message:persisted' event for downstream processing
+	 * 6. Emit 'message.persisted' event for downstream processing
 	 */
 	private async handleMessagePersistence(data: {
 		sessionId: string;
@@ -930,10 +936,10 @@ ${messageText.slice(0, 2000)}`,
 
 			this.logger.info(`[SessionManager] User message ${messageId} persisted and published to UI`);
 
-			// 6. Emit 'message:persisted' event for downstream processing
+			// 6. Emit 'message.persisted' event for downstream processing
 			// AgentSession will start query and enqueue message
 			// SessionManager will handle title generation and draft clearing
-			await this.eventBus.emit('message:persisted', {
+			await this.eventBus.emit('message.persisted', {
 				sessionId,
 				messageId,
 				messageContent,

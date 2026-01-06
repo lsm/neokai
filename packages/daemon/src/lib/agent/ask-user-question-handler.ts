@@ -13,7 +13,8 @@
  * See: https://platform.claude.com/docs/en/agent-sdk/permissions#handling-the-askuserquestion-tool
  */
 
-import type { PendingUserQuestion, QuestionDraftResponse, EventBus } from '@liuboer/shared';
+import type { PendingUserQuestion, QuestionDraftResponse } from '@liuboer/shared';
+import type { DaemonHub } from '../daemon-hub';
 import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type { ProcessingStateManager } from './processing-state-manager';
 import { Logger } from '../logger';
@@ -51,7 +52,7 @@ export class AskUserQuestionHandler {
 	constructor(
 		private sessionId: string,
 		private stateManager: ProcessingStateManager,
-		private eventBus: EventBus
+		private daemonHub: DaemonHub
 	) {
 		this.logger = new Logger(`AskUserQuestionHandler ${sessionId}`);
 	}
@@ -106,7 +107,7 @@ export class AskUserQuestionHandler {
 			await this.stateManager.setWaitingForInput(pendingQuestion);
 
 			// Emit event for logging/debugging
-			await this.eventBus.emit('question:asked', {
+			await this.daemonHub.emit('question.asked', {
 				sessionId: this.sessionId,
 				pendingQuestion,
 			});

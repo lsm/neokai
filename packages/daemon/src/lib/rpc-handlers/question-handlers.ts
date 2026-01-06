@@ -4,7 +4,8 @@
  * Handles user responses to AskUserQuestion tool calls.
  */
 
-import type { MessageHub, EventBus, QuestionDraftResponse } from '@liuboer/shared';
+import type { MessageHub, QuestionDraftResponse } from '@liuboer/shared';
+import type { DaemonHub } from '../daemon-hub';
 import type { SessionManager } from '../session-manager';
 
 /**
@@ -35,7 +36,7 @@ interface QuestionCancelPayload {
 export function setupQuestionHandlers(
 	messageHub: MessageHub,
 	sessionManager: SessionManager,
-	_eventBus: EventBus
+	_daemonHub: DaemonHub
 ): void {
 	/**
 	 * question.respond - Send user's response to pending question

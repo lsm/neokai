@@ -11,7 +11,8 @@
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type { Session, CurrentModelInfo } from '@liuboer/shared';
-import type { EventBus, MessageHub } from '@liuboer/shared';
+import type { MessageHub } from '@liuboer/shared';
+import type { DaemonHub } from '../daemon-hub';
 import { Database } from '../../storage/database';
 import { ErrorCategory, ErrorManager } from '../error-manager';
 import { Logger } from '../logger';
@@ -26,7 +27,7 @@ export interface ModelSwitchDependencies {
 	session: Session;
 	db: Database;
 	messageHub: MessageHub;
-	eventBus: EventBus;
+	daemonHub: DaemonHub;
 	contextTracker: ContextTracker;
 	stateManager: ProcessingStateManager;
 	errorManager: ErrorManager;
@@ -72,7 +73,7 @@ export class ModelSwitchHandler {
 			session,
 			db,
 			messageHub,
-			eventBus,
+			daemonHub,
 			contextTracker,
 			stateManager,
 			errorManager,
@@ -136,8 +137,8 @@ export class ModelSwitchHandler {
 				// Update context tracker model
 				contextTracker.setModel(resolvedModel);
 
-				// Emit session:updated event - include data for decoupled state management
-				await eventBus.emit('session:updated', {
+				// Emit session.updated event - include data for decoupled state management
+				await daemonHub.emit('session.updated', {
 					sessionId: session.id,
 					source: 'model-switch',
 					session: { config: session.config },
@@ -156,8 +157,8 @@ export class ModelSwitchHandler {
 				// Update context tracker model
 				contextTracker.setModel(resolvedModel);
 
-				// Emit session:updated event - include data for decoupled state management
-				await eventBus.emit('session:updated', {
+				// Emit session.updated event - include data for decoupled state management
+				await daemonHub.emit('session.updated', {
 					sessionId: session.id,
 					source: 'model-switch',
 					session: { config: session.config },

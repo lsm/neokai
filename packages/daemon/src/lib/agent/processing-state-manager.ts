@@ -8,7 +8,8 @@
  * Now persists state to database for recovery after restarts.
  */
 
-import type { AgentProcessingState, EventBus, PendingUserQuestion } from '@liuboer/shared';
+import type { AgentProcessingState, PendingUserQuestion } from '@liuboer/shared';
+import type { DaemonHub } from '../daemon-hub';
 import type { SDKMessage } from '@liuboer/shared/sdk';
 import { isSDKAssistantMessage, isToolUseBlock } from '@liuboer/shared/sdk/type-guards';
 import type { Database } from '../../storage/database';
@@ -26,7 +27,7 @@ export class ProcessingStateManager {
 
 	constructor(
 		private sessionId: string,
-		private eventBus: EventBus,
+		private daemonHub: DaemonHub,
 		private db: Database
 	) {
 		this.logger = new Logger(`ProcessingStateManager ${sessionId}`);
@@ -206,7 +207,7 @@ export class ProcessingStateManager {
 
 		// Persist and broadcast
 		this.persistToDatabase();
-		await this.eventBus.emit('session:updated', {
+		await this.daemonHub.emit('session.updated', {
 			sessionId: this.sessionId,
 			source: 'processing-state',
 			processingState: this.processingState,
@@ -231,7 +232,7 @@ export class ProcessingStateManager {
 
 			// Persist and broadcast
 			this.persistToDatabase();
-			await this.eventBus.emit('session:updated', {
+			await this.daemonHub.emit('session.updated', {
 				sessionId: this.sessionId,
 				source: 'processing-state',
 				processingState: this.processingState,
@@ -275,9 +276,9 @@ export class ProcessingStateManager {
 		// DB-first: Persist to database before broadcasting
 		this.persistToDatabase();
 
-		// Broadcast updated state via unified session:updated event
+		// Broadcast updated state via unified session.updated event
 		// Include processingState so StateManager can cache it (decoupled)
-		await this.eventBus.emit('session:updated', {
+		await this.daemonHub.emit('session.updated', {
 			sessionId: this.sessionId,
 			source: 'processing-state',
 			processingState: this.processingState,
@@ -343,9 +344,9 @@ export class ProcessingStateManager {
 		// DB-first: Persist to database before broadcasting
 		this.persistToDatabase();
 
-		// Emit event via EventBus (StateManager caches processingState)
+		// Emit event via DaemonHub (StateManager caches processingState)
 		// Include data so StateManager doesn't need to fetch from us (decoupled)
-		await this.eventBus.emit('session:updated', {
+		await this.daemonHub.emit('session.updated', {
 			sessionId: this.sessionId,
 			source: 'processing-state',
 			processingState: newState,

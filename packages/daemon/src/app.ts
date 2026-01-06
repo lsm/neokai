@@ -7,7 +7,8 @@ import { AuthManager } from './lib/auth-manager';
 import { SettingsManager } from './lib/settings-manager';
 import { StateManager } from './lib/state-manager';
 import { SubscriptionManager } from './lib/subscription-manager';
-import { MessageHub, MessageHubRouter, EventBus } from '@liuboer/shared';
+import { MessageHub, MessageHubRouter } from '@liuboer/shared';
+import { createDaemonHub } from './lib/daemon-hub';
 import { setupRPCHandlers } from './lib/rpc-handlers';
 import { WebSocketServerTransport } from './lib/websocket-server-transport';
 import { createWebSocketHandlers } from './routes/setup-websocket';
@@ -135,11 +136,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	log('✅ MessageHub initialized with corrected architecture');
 	log('   Flow: MessageHub (protocol) → Router (routing) → ClientConnection (I/O)');
 
-	// FIX: Initialize EventBus (breaks circular dependency!)
-	const eventBus = new EventBus({
-		debug: config.nodeEnv === 'development',
-	});
-	log('✅ EventBus initialized (mediator pattern for component coordination)');
+	// Initialize DaemonHub (TypedHub-based event coordination)
+	const eventBus = createDaemonHub('daemon');
+	await eventBus.initialize();
+	log('✅ DaemonHub initialized (async event coordination)');
 
 	// Initialize session manager (with EventBus, SettingsManager, no StateManager dependency!)
 	const sessionManager = new SessionManager(
@@ -177,7 +177,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		authManager,
 		settingsManager,
 		config,
-		eventBus,
+		daemonHub: eventBus,
 		db,
 	});
 	log('✅ RPC handlers registered');

@@ -9,7 +9,8 @@ import type {
 	QuestionDraftResponse,
 	PendingUserQuestion,
 } from '@liuboer/shared';
-import type { EventBus, MessageHub, CurrentModelInfo } from '@liuboer/shared';
+import type { MessageHub, CurrentModelInfo } from '@liuboer/shared';
+import type { DaemonHub } from '../daemon-hub';
 import { generateUUID } from '@liuboer/shared';
 import type { SDKMessage, SlashCommand } from '@liuboer/shared/sdk';
 import { Database } from '../../storage/database';
@@ -92,11 +93,11 @@ export class AgentSession {
 		private session: Session,
 		private db: Database,
 		private messageHub: MessageHub,
-		private eventBus: EventBus,
+		private daemonHub: DaemonHub,
 		private getApiKey: () => Promise<string | null>
 	) {
-		// Initialize error manager and logger (with EventBus for internal events)
-		this.errorManager = new ErrorManager(this.messageHub, this.eventBus);
+		// Initialize error manager and logger (with DaemonHub for internal events)
+		this.errorManager = new ErrorManager(this.messageHub, this.daemonHub);
 		this.logger = new Logger(`AgentSession ${session.id}`);
 
 		// CRITICAL: Create session-specific SettingsManager with session's workspace path
@@ -106,11 +107,11 @@ export class AgentSession {
 
 		// Initialize extracted components
 		this.messageQueue = new MessageQueue();
-		this.stateManager = new ProcessingStateManager(session.id, eventBus, db);
+		this.stateManager = new ProcessingStateManager(session.id, daemonHub, db);
 		this.contextTracker = new ContextTracker(
 			session.id,
 			session.config.model,
-			eventBus,
+			daemonHub,
 			// Callback to persist context info to session metadata
 			(contextInfo: ContextInfo) => {
 				this.session.metadata.lastContextInfo = contextInfo;
@@ -123,7 +124,7 @@ export class AgentSession {
 			session,
 			db,
 			messageHub,
-			eventBus,
+			daemonHub,
 			this.stateManager,
 			this.contextTracker
 		);
@@ -148,7 +149,7 @@ export class AgentSession {
 			session: this.session,
 			db: this.db,
 			messageHub: this.messageHub,
-			eventBus: this.eventBus,
+			daemonHub: this.daemonHub,
 			contextTracker: this.contextTracker,
 			stateManager: this.stateManager,
 			errorManager: this.errorManager,
@@ -162,7 +163,7 @@ export class AgentSession {
 		this.askUserQuestionHandler = new AskUserQuestionHandler(
 			session.id,
 			this.stateManager,
-			this.eventBus
+			this.daemonHub
 		);
 
 		// Set queue callback for automatic /context fetching
@@ -217,15 +218,15 @@ export class AgentSession {
 	 */
 	private setupEventSubscriptions(): void {
 		// Model switch request handler
-		// ARCHITECTURE: Uses EventBus native session filtering (no manual if-check needed)
-		const unsubModelSwitch = this.eventBus.on(
-			'model:switch:request',
+		// ARCHITECTURE: Uses DaemonHub native session filtering (no manual if-check needed)
+		const unsubModelSwitch = this.daemonHub.on(
+			'model.switchRequest',
 			async ({ sessionId, model }) => {
-				this.logger.log(`Received model:switch:request for model: ${model}`);
+				this.logger.log(`Received model.switchRequest for model: ${model}`);
 				const result = await this.modelSwitchHandler.switchModel(model);
 
 				// Emit result for StateManager/clients
-				await this.eventBus.emit('model:switched', {
+				await this.daemonHub.emit('model.switched', {
 					sessionId,
 					success: result.success,
 					model: result.model,
@@ -237,28 +238,28 @@ export class AgentSession {
 		this.unsubscribers.push(unsubModelSwitch);
 
 		// Interrupt request handler
-		const unsubInterrupt = this.eventBus.on(
-			'agent:interrupt:request',
+		const unsubInterrupt = this.daemonHub.on(
+			'agent.interruptRequest',
 			async ({ sessionId }) => {
-				this.logger.log(`Received agent:interrupt:request`);
+				this.logger.log(`Received agent.interruptRequest`);
 				await this.handleInterrupt();
 
 				// Emit completion event
-				await this.eventBus.emit('agent:interrupted', { sessionId });
+				await this.daemonHub.emit('agent.interrupted', { sessionId });
 			},
 			{ sessionId: this.session.id }
 		);
 		this.unsubscribers.push(unsubInterrupt);
 
 		// Reset query request handler
-		const unsubReset = this.eventBus.on(
-			'agent:reset:request',
+		const unsubReset = this.daemonHub.on(
+			'agent.resetRequest',
 			async ({ sessionId, restartQuery }) => {
-				this.logger.log(`Received agent:reset:request (restartQuery: ${restartQuery})`);
+				this.logger.log(`Received agent.resetRequest (restartQuery: ${restartQuery})`);
 				const result = await this.resetQuery({ restartQuery });
 
 				// Emit result for StateManager/clients
-				await this.eventBus.emit('agent:reset', {
+				await this.daemonHub.emit('agent.reset', {
 					sessionId,
 					success: result.success,
 					error: result.error,
@@ -270,10 +271,10 @@ export class AgentSession {
 
 		// Message persisted handler (for query feeding)
 		// ARCHITECTURE: SessionManager emits this after persisting message to DB
-		const unsubMessagePersisted = this.eventBus.on(
-			'message:persisted',
+		const unsubMessagePersisted = this.daemonHub.on(
+			'message.persisted',
 			async (data) => {
-				this.logger.log(`Received message:persisted event (messageId: ${data.messageId})`);
+				this.logger.log(`Received message.persisted event (messageId: ${data.messageId})`);
 
 				// Start query and enqueue message for processing
 				await this.startQueryAndEnqueue(data.messageId, data.messageContent);
@@ -282,7 +283,7 @@ export class AgentSession {
 		);
 		this.unsubscribers.push(unsubMessagePersisted);
 
-		this.logger.log(`EventBus subscriptions initialized with session filtering`);
+		this.logger.log(`DaemonHub subscriptions initialized with session filtering`);
 	}
 
 	/**
@@ -366,8 +367,8 @@ export class AgentSession {
 				availableCommands: this.slashCommands,
 			});
 
-			// THEN emit event via EventBus (StateManager will broadcast unified session state)
-			await this.eventBus.emit('commands:updated', {
+			// THEN emit event via DaemonHub (StateManager will broadcast unified session state)
+			await this.daemonHub.emit('commands.updated', {
 				sessionId: this.session.id,
 				commands: this.slashCommands,
 			});
@@ -461,9 +462,9 @@ export class AgentSession {
 			}
 		});
 
-		// Emit event for title generation (decoupled via EventBus)
-		this.eventBus.emit('message:sent', { sessionId: this.session.id }).catch((err) => {
-			this.logger.warn('Failed to emit message:sent event:', err);
+		// Emit event for title generation (decoupled via DaemonHub)
+		this.daemonHub.emit('message.sent', { sessionId: this.session.id }).catch((err) => {
+			this.logger.warn('Failed to emit message.sent event:', err);
 		});
 	}
 
@@ -1139,7 +1140,7 @@ export class AgentSession {
 
 			// 4. Emit event for StateManager to broadcast updated session state
 			// Include data for decoupled state management
-			await this.eventBus.emit('session:updated', {
+			await this.daemonHub.emit('session.updated', {
 				sessionId: this.session.id,
 				source: 'config',
 				session: { config: this.session.config },

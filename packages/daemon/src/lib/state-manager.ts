@@ -11,7 +11,8 @@
  * - Broadcasts immediately on event (no debouncing needed - LLM is slow)
  */
 
-import type { MessageHub, EventBus, AgentProcessingState } from '@liuboer/shared';
+import type { MessageHub, AgentProcessingState } from '@liuboer/shared';
+import type { DaemonHub } from './daemon-hub';
 import type { SessionManager } from './session-manager';
 import type { AuthManager } from './auth-manager';
 import type { SettingsManager } from './settings-manager';
@@ -63,7 +64,7 @@ export class StateManager {
 		private authManager: AuthManager,
 		private settingsManager: SettingsManager,
 		private config: Config,
-		private eventBus: EventBus
+		private eventBus: DaemonHub
 	) {
 		this.setupHandlers();
 		this.setupEventListeners();
@@ -79,7 +80,7 @@ export class StateManager {
 	 */
 	private setupEventListeners(): void {
 		// API connection state updates from ErrorManager
-		this.eventBus.on('api:connection', (data) => {
+		this.eventBus.on('api.connection', (data) => {
 			this.apiConnectionState = data as import('@liuboer/shared').ApiConnectionState;
 			this.logger.log('API connection state updated:', this.apiConnectionState.status);
 			this.broadcastSystemChange().catch((err: unknown) => {
@@ -88,7 +89,7 @@ export class StateManager {
 		});
 
 		// Session created - cache and broadcast
-		this.eventBus.on('session:created', async (data) => {
+		this.eventBus.on('session.created', async (data) => {
 			const { session } = data;
 			this.logger.log('Session created, caching and broadcasting:', session.id);
 
@@ -111,7 +112,7 @@ export class StateManager {
 		});
 
 		// Session updated - update cache from event data and broadcast immediately
-		this.eventBus.on('session:updated', async (data) => {
+		this.eventBus.on('session.updated', async (data) => {
 			const { sessionId, session, processingState } = data;
 
 			// Update caches from event data (decoupled - no fetching)
@@ -132,7 +133,7 @@ export class StateManager {
 		});
 
 		// Session deleted - clear cache and broadcast
-		this.eventBus.on('session:deleted', async (data) => {
+		this.eventBus.on('session.deleted', async (data) => {
 			const { sessionId } = data;
 
 			// Clear caches
@@ -150,23 +151,23 @@ export class StateManager {
 		});
 
 		// Auth events
-		this.eventBus.on('auth:changed', async () => {
+		this.eventBus.on('auth.changed', async () => {
 			await this.broadcastSystemChange();
 		});
 
 		// Settings events
-		this.eventBus.on('settings:updated', async () => {
+		this.eventBus.on('settings.updated', async () => {
 			await this.broadcastSettingsChange();
 		});
 
 		// Sessions filter changed (when showArchived setting changes)
-		this.eventBus.on('sessions:filter-changed', async () => {
+		this.eventBus.on('sessions.filterChanged', async () => {
 			await this.broadcastSessionsChange();
 		});
 
 		// Commands updated - cache and broadcast
 		this.eventBus.on(
-			'commands:updated',
+			'commands.updated',
 			async (data: { sessionId: string; commands: string[] }) => {
 				this.commandsCache.set(data.sessionId, data.commands);
 				await this.broadcastSessionStateChange(data.sessionId);
@@ -175,7 +176,7 @@ export class StateManager {
 
 		// Context updated - cache and broadcast
 		this.eventBus.on(
-			'context:updated',
+			'context.updated',
 			async (data: { sessionId: string; contextInfo: ContextInfo }) => {
 				this.contextCache.set(data.sessionId, data.contextInfo);
 
@@ -192,7 +193,7 @@ export class StateManager {
 		// Session error events - update error cache and broadcast via state.session
 		// This folds the separate session.error event into the unified session state
 		this.eventBus.on(
-			'session:error',
+			'session.error',
 			async (data: { sessionId: string; error: string; details?: unknown }) => {
 				this.logger.log(`Session error for ${data.sessionId}: ${data.error}`);
 
@@ -209,7 +210,7 @@ export class StateManager {
 		);
 
 		// Clear error when session becomes idle or processing continues successfully
-		this.eventBus.on('session:error:clear', async (data: { sessionId: string }) => {
+		this.eventBus.on('session.errorClear', async (data: { sessionId: string }) => {
 			this.logger.log(`Clearing session error for ${data.sessionId}`);
 			this.errorCache.set(data.sessionId, null);
 			await this.broadcastSessionStateChange(data.sessionId);
