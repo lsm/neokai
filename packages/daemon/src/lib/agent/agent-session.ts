@@ -1044,6 +1044,144 @@ export class AgentSession {
 		return this.modelSwitchHandler.getCurrentModel();
 	}
 
+	// ============================================================================
+	// SDK Config Runtime Methods
+	// These methods allow changing SDK configuration at runtime
+	// ============================================================================
+
+	/**
+	 * Set max thinking tokens at runtime
+	 * Uses SDK's native setMaxThinkingTokens() method
+	 *
+	 * @param tokens - Max tokens for thinking (null to disable)
+	 * @returns Success status with optional error message
+	 */
+	async setMaxThinkingTokens(tokens: number | null): Promise<{ success: boolean; error?: string }> {
+		this.logger.log(`Setting max thinking tokens to: ${tokens}`);
+
+		try {
+			// If query not running or transport not ready, just update config
+			if (!this.queryObject || !this.firstMessageReceived) {
+				this.session.config.maxThinkingTokens = tokens;
+				this.db.updateSession(this.session.id, { config: this.session.config });
+				this.logger.log(`Max thinking tokens saved to config (query not active)`);
+				return { success: true };
+			}
+
+			// Use SDK's native method
+			if ('setMaxThinkingTokens' in this.queryObject) {
+				await (
+					this.queryObject as Query & { setMaxThinkingTokens: (t: number | null) => Promise<void> }
+				).setMaxThinkingTokens(tokens);
+			}
+
+			// Update config
+			this.session.config.maxThinkingTokens = tokens;
+			this.db.updateSession(this.session.id, { config: this.session.config });
+
+			// Emit event for UI update
+			await this.daemonHub.emit('session.updated', {
+				sessionId: this.session.id,
+				source: 'thinking-tokens',
+				session: { config: this.session.config },
+			});
+
+			this.logger.log(`Max thinking tokens set successfully`);
+			return { success: true };
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			this.logger.error(`Failed to set max thinking tokens:`, error);
+			return { success: false, error: errorMessage };
+		}
+	}
+
+	/**
+	 * Set permission mode at runtime
+	 * Uses SDK's native setPermissionMode() method
+	 *
+	 * @param mode - Permission mode to set
+	 * @returns Success status with optional error message
+	 */
+	async setPermissionMode(mode: string): Promise<{ success: boolean; error?: string }> {
+		this.logger.log(`Setting permission mode to: ${mode}`);
+
+		try {
+			// If query not running or transport not ready, just update config
+			if (!this.queryObject || !this.firstMessageReceived) {
+				this.session.config.permissionMode = mode as Session['config']['permissionMode'];
+				this.db.updateSession(this.session.id, { config: this.session.config });
+				this.logger.log(`Permission mode saved to config (query not active)`);
+				return { success: true };
+			}
+
+			// Use SDK's native method
+			if ('setPermissionMode' in this.queryObject) {
+				await (
+					this.queryObject as Query & { setPermissionMode: (m: string) => Promise<void> }
+				).setPermissionMode(mode);
+			}
+
+			// Update config
+			this.session.config.permissionMode = mode as Session['config']['permissionMode'];
+			this.db.updateSession(this.session.id, { config: this.session.config });
+
+			// Emit event for UI update
+			await this.daemonHub.emit('session.updated', {
+				sessionId: this.session.id,
+				source: 'permission-mode',
+				session: { config: this.session.config },
+			});
+
+			this.logger.log(`Permission mode set successfully`);
+			return { success: true };
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			this.logger.error(`Failed to set permission mode:`, error);
+			return { success: false, error: errorMessage };
+		}
+	}
+
+	/**
+	 * Get MCP server status from SDK
+	 *
+	 * @returns Array of MCP server statuses, or empty array if not available
+	 */
+	async getMcpServerStatus(): Promise<Array<{ name: string; status: string; error?: string }>> {
+		if (!this.queryObject || !this.firstMessageReceived) {
+			return [];
+		}
+
+		try {
+			if ('mcpServerStatus' in this.queryObject) {
+				const status = await (
+					this.queryObject as Query & { mcpServerStatus: () => Promise<unknown[]> }
+				).mcpServerStatus();
+				return status as Array<{ name: string; status: string; error?: string }>;
+			}
+			return [];
+		} catch (error) {
+			this.logger.warn(`Failed to get MCP server status:`, error);
+			return [];
+		}
+	}
+
+	/**
+	 * Update session config and persist to database
+	 *
+	 * @param configUpdates - Partial config updates to merge
+	 */
+	async updateConfig(configUpdates: Partial<Session['config']>): Promise<void> {
+		this.session.config = { ...this.session.config, ...configUpdates };
+		this.db.updateSession(this.session.id, { config: this.session.config });
+
+		// Emit event for UI update
+		await this.daemonHub.emit('session.updated', {
+			sessionId: this.session.id,
+			source: 'config-update',
+			session: { config: this.session.config },
+		});
+	}
+
 	/**
 	 * Get SDK messages for this session
 	 */

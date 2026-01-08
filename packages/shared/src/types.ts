@@ -1,5 +1,37 @@
 import type { SettingSource } from './types/settings.ts';
 import type { ResolvedQuestion } from './state-types.ts';
+import type { SDKConfig, ToolsPresetConfig } from './types/sdk-config.ts';
+
+// Re-export SDK config types for convenience
+export type {
+	SDKConfig,
+	SystemPromptConfig,
+	ClaudeCodePreset,
+	ToolsPresetConfig,
+	ToolsPreset,
+	ToolsSettings,
+	AgentModel,
+	AgentDefinition,
+	AgentMcpServerSpec,
+	AgentsConfig,
+	SandboxSettings,
+	NetworkSandboxSettings,
+	SandboxIgnoreViolations,
+	McpServerConfig,
+	McpStdioServerConfig,
+	McpSSEServerConfig,
+	McpHttpServerConfig,
+	McpSettings,
+	OutputFormatConfig,
+	PluginConfig,
+	SdkBeta,
+	ModelSettings,
+	EnvironmentSettings,
+	SessionResumptionSettings,
+	ConfigUpdateResult,
+	ValidationResult,
+} from './types/sdk-config.ts';
+export { CONFIG_CHANGE_BEHAVIOR } from './types/sdk-config.ts';
 
 // Core session types
 export interface SessionInfo {
@@ -85,37 +117,49 @@ export const THINKING_LEVEL_TOKENS: Record<ThinkingLevel, number | undefined> = 
 	think32k: 31999,
 };
 
-export interface SessionConfig {
+/**
+ * Session configuration extending SDKConfig with UI-specific settings
+ *
+ * This interface combines all SDK options from SDKConfig with
+ * Liuboer-specific UI settings like autoScroll and queryMode.
+ *
+ * For backward compatibility:
+ * - The existing `tools?: ToolsConfig` field is preserved for Liuboer-specific UI settings
+ * - SDKConfig's `tools` field (for tool selection) is available as `sdkToolsPreset`
+ * - Other SDKConfig properties like `allowedTools`, `disallowedTools` are inherited directly
+ */
+export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
+	/**
+	 * Model ID (required)
+	 * @example 'claude-sonnet-4-5-20250929'
+	 */
 	model: string;
+
+	/**
+	 * Maximum output tokens (legacy, not currently passed to SDK)
+	 * @deprecated Use SDK's default token limits
+	 */
 	maxTokens: number;
+
+	/**
+	 * Temperature for model responses (legacy, not currently passed to SDK)
+	 * @deprecated SDK manages temperature internally
+	 */
 	temperature: number;
+
+	/**
+	 * Auto-scroll to bottom when new messages arrive (UI-only)
+	 * @default true
+	 */
 	autoScroll?: boolean;
+
 	/**
 	 * Thinking level for extended thinking
+	 * Maps to maxThinkingTokens in SDK options
 	 * @default 'auto'
 	 */
 	thinkingLevel?: ThinkingLevel;
-	/**
-	 * @deprecated Use thinkingLevel instead
-	 */
-	maxThinkingTokens?: number | null;
-	/**
-	 * Permission mode for SDK operations
-	 * - 'bypassPermissions': Most permissive, skips all permission checks (default)
-	 * - 'acceptEdits': Auto-accepts tool edits, works in CI environments
-	 * - 'default': SDK default behavior
-	 * - 'plan': Planning mode
-	 * - 'delegate': Delegate permissions
-	 * - 'dontAsk': Don't prompt, deny if not pre-approved
-	 * @default 'bypassPermissions'
-	 */
-	permissionMode?:
-		| 'default'
-		| 'acceptEdits'
-		| 'bypassPermissions'
-		| 'plan'
-		| 'delegate'
-		| 'dontAsk';
+
 	/**
 	 * Query mode for message sending behavior
 	 * - 'immediate': Messages sent to Claude immediately (default)
@@ -126,8 +170,48 @@ export interface SessionConfig {
 	 * @default 'immediate'
 	 */
 	queryMode?: 'immediate' | 'manual';
-	// Tools configuration
+
+	/**
+	 * Legacy tools configuration for session (Liuboer-specific UI settings)
+	 * Controls system prompt preset, setting sources, MCP tools, and Liuboer tools
+	 *
+	 * This is different from SDK's tool selection. For SDK tool selection, use:
+	 * - sdkToolsPreset: Select which tools to enable (array or preset)
+	 * - allowedTools: Auto-allow specific tools without permission prompts
+	 * - disallowedTools: Disable specific tools entirely
+	 */
 	tools?: ToolsConfig;
+
+	/**
+	 * SDK tool selection configuration
+	 * Specifies which tools are available for the agent
+	 *
+	 * @example
+	 * // Use Claude Code preset (all default tools)
+	 * sdkToolsPreset: { type: 'preset', preset: 'claude_code' }
+	 *
+	 * @example
+	 * // Use specific tools only
+	 * sdkToolsPreset: ['Read', 'Write', 'Bash']
+	 */
+	sdkToolsPreset?: ToolsPresetConfig;
+
+	// Note: The following are inherited from SDKConfig and available:
+	// - systemPrompt: Custom system prompt or Claude Code preset
+	// - allowedTools: Auto-allow specific tools without permission prompts
+	// - disallowedTools: Disable specific tools entirely
+	// - agents: Custom subagent definitions
+	// - sandbox: Sandbox configuration
+	// - mcpServers: MCP server configuration
+	// - outputFormat: Structured output JSON schema
+	// - plugins: Plugin configurations
+	// - betas: Beta feature flags
+	// - settingSources: Setting file sources
+	// - env: Environment variables
+	// - maxTurns: Maximum conversation turns
+	// - maxBudgetUsd: Cost limit
+	// - fallbackModel: Fallback model ID
+	// - permissionMode: Permission mode for SDK operations
 }
 
 /**

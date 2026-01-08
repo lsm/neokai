@@ -3,16 +3,21 @@
  *
  * Extracted from AgentSession.runQuery() to improve maintainability.
  * Handles all SDK options construction including:
- * - System prompt configuration (Claude Code preset + worktree isolation)
- * - Tool configuration (disallowed tools based on session config)
- * - Setting sources (project, local)
+ * - System prompt configuration (custom string or Claude Code preset)
+ * - Tool configuration (tools preset, allowed/disallowed tools)
+ * - Agents/subagents configuration
+ * - Sandbox configuration
  * - MCP servers configuration
+ * - Output format (JSON schema)
+ * - Beta features
+ * - Environment settings
+ * - Setting sources (project, local)
  * - Additional directories (worktree isolation)
  * - Hooks (output limiter)
  */
 
 import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk/sdk';
-import type { Session, ThinkingLevel } from '@liuboer/shared';
+import type { Session, ThinkingLevel, SystemPromptConfig, ClaudeCodePreset } from '@liuboer/shared';
 import { THINKING_LEVEL_TOKENS } from '@liuboer/shared';
 import type { PermissionMode } from '@liuboer/shared/types/settings';
 import type { SettingsManager } from '../settings-manager';
@@ -40,66 +45,130 @@ export class QueryOptionsBuilder {
 
 	/**
 	 * Build complete SDK query options
+	 *
+	 * Maps all SessionConfig (which extends SDKConfig) options to SDK Options
 	 */
 	async build(): Promise<Options> {
-		const toolsConfig = this.session.config.tools;
+		const config = this.session.config;
+		const legacyToolsConfig = config.tools; // Legacy Liuboer-specific tools config
 
-		// Get settings-derived options
+		// Get settings-derived options (from global settings)
 		const sdkSettingsOptions = await this.getSettingsOptions();
 
 		// Build all configuration components
 		const systemPromptConfig = this.buildSystemPrompt();
 		const disallowedTools = this.getDisallowedTools();
+		const allowedTools = this.getAllowedTools();
 		const settingSources = this.getSettingSources();
 		const additionalDirectories = this.getAdditionalDirectories();
 		const hooks = this.buildHooks();
 		const permissionMode = this.getPermissionMode();
+		const mcpServers = this.getMcpServers();
 
 		// Build final query options
 		// Settings-derived options first, then session-specific overrides
 		const queryOptions: Options = {
 			// Start with settings-derived options (from global settings)
 			...sdkSettingsOptions,
-			// Override with session-specific options (these take precedence)
-			model: this.session.config.model,
-			cwd: this.getCwd(),
-			additionalDirectories,
+
+			// ============ Model & Execution ============
+			model: config.model,
+			fallbackModel: config.fallbackModel,
+			maxTurns: config.maxTurns ?? Infinity,
+			maxBudgetUsd: config.maxBudgetUsd,
+
+			// ============ System Prompt ============
+			systemPrompt: systemPromptConfig,
+
+			// ============ Tools ============
+			// sdkToolsPreset maps to SDK's tools option
+			tools: config.sdkToolsPreset,
+			allowedTools: allowedTools.length > 0 ? allowedTools : undefined,
+			disallowedTools: disallowedTools.length > 0 ? disallowedTools : undefined,
+
+			// ============ Agents/Subagents ============
+			// Cast to SDK type - our AgentDefinition is compatible
+			agents: config.agents as Options['agents'],
+
+			// ============ Permissions ============
 			permissionMode,
 			allowDangerouslySkipPermissions: permissionMode === 'bypassPermissions',
-			maxTurns: Infinity,
+
+			// ============ Sandbox ============
+			// Cast to SDK type - our SandboxSettings is compatible
+			sandbox: config.sandbox as Options['sandbox'],
+
+			// ============ MCP Servers ============
+			// Cast to SDK type - mcpServers uses compatible structure
+			mcpServers: mcpServers as Options['mcpServers'],
+			strictMcpConfig: config.strictMcpConfig,
+
+			// ============ Output Format ============
+			outputFormat: config.outputFormat,
+
+			// ============ Plugins ============
+			plugins: config.plugins,
+
+			// ============ Beta Features ============
+			betas: config.betas,
+
+			// ============ Environment ============
+			cwd: this.getCwd(),
+			additionalDirectories,
+			env: config.env,
+			executable: config.executable,
+			executableArgs: config.executableArgs,
+
+			// ============ Settings ============
 			// In test/CI environments, disable setting sources (CLAUDE.md, .claude/settings.json)
 			// to prevent subprocess crashes due to missing or misconfigured settings files.
-			// This matches the title generation behavior which also uses empty settingSources.
 			settingSources: process.env.NODE_ENV === 'test' ? [] : settingSources,
-			systemPrompt: systemPromptConfig,
-			disallowedTools: disallowedTools.length > 0 ? disallowedTools : undefined,
-			// MCP servers: In test/CI environments, disable MCP to prevent subprocess crashes
-			// due to missing MCP dependencies or configuration issues.
-			// In production, allow auto-loading (undefined).
-			mcpServers: process.env.NODE_ENV === 'test' ? {} : undefined,
+
+			// ============ Streaming ============
+			includePartialMessages: config.includePartialMessages,
+
+			// ============ Hooks ============
 			hooks,
-			// canUseTool callback for handling interactive tools like AskUserQuestion
+
+			// ============ Callbacks ============
 			canUseTool: this.canUseTool,
 		};
 
+		// Remove undefined values to use SDK defaults
+		const cleanedOptions = Object.fromEntries(
+			Object.entries(queryOptions).filter(([_, v]) => v !== undefined)
+		) as Options;
+
 		// DEBUG: Log query options for verification
-		const useClaudeCodePreset = toolsConfig?.useClaudeCodePreset ?? true;
+		const useClaudeCodePreset = legacyToolsConfig?.useClaudeCodePreset ?? true;
 		this.logger.log(`Query options:`, {
-			model: queryOptions.model,
-			permissionMode: queryOptions.permissionMode,
-			allowDangerouslySkipPermissions: queryOptions.allowDangerouslySkipPermissions,
+			model: cleanedOptions.model,
+			fallbackModel: cleanedOptions.fallbackModel,
+			maxTurns: cleanedOptions.maxTurns,
+			maxBudgetUsd: cleanedOptions.maxBudgetUsd,
+			permissionMode: cleanedOptions.permissionMode,
+			allowDangerouslySkipPermissions: cleanedOptions.allowDangerouslySkipPermissions,
 			useClaudeCodePreset,
-			settingSources: queryOptions.settingSources,
-			disallowedTools: queryOptions.disallowedTools,
-			mcpServers: queryOptions.mcpServers === undefined ? 'auto-load' : 'disabled',
+			settingSources: cleanedOptions.settingSources,
+			tools: cleanedOptions.tools,
+			allowedTools: cleanedOptions.allowedTools,
+			disallowedTools: cleanedOptions.disallowedTools,
+			agents: cleanedOptions.agents ? Object.keys(cleanedOptions.agents) : undefined,
+			sandbox: cleanedOptions.sandbox?.enabled,
+			mcpServers:
+				cleanedOptions.mcpServers === undefined
+					? 'auto-load'
+					: Object.keys(cleanedOptions.mcpServers),
+			outputFormat: cleanedOptions.outputFormat?.type,
+			betas: cleanedOptions.betas,
 			additionalDirectories:
-				queryOptions.additionalDirectories === undefined
+				cleanedOptions.additionalDirectories === undefined
 					? 'unrestricted'
-					: `restricted to cwd (${queryOptions.additionalDirectories.length} additional dirs)`,
-			toolsConfig,
+					: `restricted to cwd (${cleanedOptions.additionalDirectories.length} additional dirs)`,
+			legacyToolsConfig,
 		});
 
-		return queryOptions;
+		return cleanedOptions;
 	}
 
 	/**
@@ -138,8 +207,10 @@ export class QueryOptionsBuilder {
 	/**
 	 * Build system prompt configuration
 	 *
-	 * When Claude Code preset is enabled: Use preset with optional worktree append
-	 * When disabled: Use minimal system prompt (or undefined)
+	 * Priority:
+	 * 1. SDKConfig systemPrompt (from session.config.systemPrompt)
+	 * 2. Legacy tools config (useClaudeCodePreset)
+	 * 3. Default: Claude Code preset
 	 *
 	 * NOTE: In test environments, we skip the Claude Code preset to avoid subprocess
 	 * crashes due to missing system resources or configuration.
@@ -153,21 +224,29 @@ export class QueryOptionsBuilder {
 			return undefined;
 		}
 
-		const toolsConfig = this.session.config.tools;
-		const useClaudeCodePreset = toolsConfig?.useClaudeCodePreset ?? true;
+		const config = this.session.config;
+
+		// Priority 1: Check if SDKConfig systemPrompt is explicitly set
+		if (config.systemPrompt !== undefined) {
+			return this.buildCustomSystemPrompt(config.systemPrompt);
+		}
+
+		// Priority 2: Fall back to legacy tools config
+		const legacyToolsConfig = config.tools;
+		const useClaudeCodePreset = legacyToolsConfig?.useClaudeCodePreset ?? true;
 
 		if (useClaudeCodePreset) {
-			const config: Options['systemPrompt'] = {
+			const presetConfig: Options['systemPrompt'] = {
 				type: 'preset',
 				preset: 'claude_code',
 			};
 
 			// Append worktree isolation instructions if session uses a worktree
 			if (this.session.worktree) {
-				config.append = this.getWorktreeIsolationText();
+				presetConfig.append = this.getWorktreeIsolationText();
 			}
 
-			return config;
+			return presetConfig;
 		}
 
 		// No Claude Code preset - use minimal system prompt or undefined
@@ -177,6 +256,48 @@ export class QueryOptionsBuilder {
 		}
 
 		// If no worktree, systemPromptConfig remains undefined (SDK default behavior)
+		return undefined;
+	}
+
+	/**
+	 * Build system prompt from SDKConfig systemPrompt
+	 *
+	 * Handles both custom string prompts and Claude Code preset configuration
+	 */
+	private buildCustomSystemPrompt(systemPrompt: SystemPromptConfig): Options['systemPrompt'] {
+		// Custom string prompt
+		if (typeof systemPrompt === 'string') {
+			// Append worktree isolation if needed
+			if (this.session.worktree) {
+				return systemPrompt + '\n\n' + this.getWorktreeIsolationText();
+			}
+			return systemPrompt;
+		}
+
+		// Claude Code preset configuration
+		if (systemPrompt.type === 'preset' && systemPrompt.preset === 'claude_code') {
+			const presetConfig: ClaudeCodePreset = {
+				type: 'preset',
+				preset: 'claude_code',
+			};
+
+			// Combine existing append with worktree isolation
+			let append = systemPrompt.append || '';
+			if (this.session.worktree) {
+				if (append) {
+					append += '\n\n';
+				}
+				append += this.getWorktreeIsolationText();
+			}
+
+			if (append) {
+				presetConfig.append = append;
+			}
+
+			return presetConfig;
+		}
+
+		// Unknown format - return as-is
 		return undefined;
 	}
 
@@ -240,21 +361,67 @@ CRITICAL RULES:
 	/**
 	 * Get list of disallowed tools based on session config
 	 *
-	 * Strategy:
-	 * - MCP tools: Controlled via file-based settings (not disallowedTools)
-	 * - SDK built-in tools: Always enabled
-	 * - Liuboer tools: Based on liuboerTools config
+	 * Combines:
+	 * 1. SDKConfig disallowedTools (explicit tools to disable)
+	 * 2. Legacy liuboerTools config (memory tool control)
 	 */
 	private getDisallowedTools(): string[] {
-		const toolsConfig = this.session.config.tools;
+		const config = this.session.config;
 		const disallowedTools: string[] = [];
 
-		// Disable Liuboer memory tool if not enabled
-		if (!toolsConfig?.liuboerTools?.memory) {
+		// Add SDKConfig disallowedTools
+		if (config.disallowedTools && config.disallowedTools.length > 0) {
+			disallowedTools.push(...config.disallowedTools);
+		}
+
+		// Legacy: Disable Liuboer memory tool if not enabled
+		const legacyToolsConfig = config.tools;
+		if (!legacyToolsConfig?.liuboerTools?.memory) {
 			disallowedTools.push('liuboer__memory__*');
 		}
 
-		return disallowedTools;
+		// Deduplicate
+		return [...new Set(disallowedTools)];
+	}
+
+	/**
+	 * Get list of allowed tools based on session config
+	 *
+	 * These tools will be auto-approved without permission prompts
+	 */
+	private getAllowedTools(): string[] {
+		const config = this.session.config;
+
+		if (config.allowedTools && config.allowedTools.length > 0) {
+			return [...config.allowedTools];
+		}
+
+		return [];
+	}
+
+	/**
+	 * Get MCP servers configuration
+	 *
+	 * Priority:
+	 * 1. SDKConfig mcpServers (programmatic configuration)
+	 * 2. Undefined to let SDK auto-load from settings files
+	 *
+	 * In test/CI environments, disable MCP to prevent subprocess crashes
+	 */
+	private getMcpServers(): Record<string, unknown> | undefined {
+		// In test/CI environments, disable MCP
+		if (process.env.NODE_ENV === 'test') {
+			return {};
+		}
+
+		// Use SDKConfig mcpServers if explicitly set
+		const config = this.session.config;
+		if (config.mcpServers !== undefined) {
+			return config.mcpServers;
+		}
+
+		// Let SDK auto-load from settings files
+		return undefined;
 	}
 
 	/**
