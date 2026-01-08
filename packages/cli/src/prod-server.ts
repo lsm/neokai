@@ -3,7 +3,8 @@ import { serveStatic } from 'hono/bun';
 import { createDaemonApp } from '@liuboer/daemon/app';
 import type { Config } from '@liuboer/daemon/config';
 import { resolve } from 'path';
-import { createLogger, UnixSocketTransport, generateUUID } from '@liuboer/shared';
+import { createLogger, generateUUID } from '@liuboer/shared';
+import { UnixSocketTransport } from '@liuboer/shared/message-hub/unix-socket-transport';
 import type { ClientConnection, HubMessage } from '@liuboer/shared';
 import type { HubMessageWithMetadata } from '@liuboer/shared/message-hub/protocol';
 

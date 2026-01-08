@@ -60,11 +60,10 @@ export type { WebSocketClientTransportOptions } from './websocket-client-transpo
 export { InProcessTransport, InProcessTransportBus } from './in-process-transport.ts';
 export type { InProcessTransportOptions } from './in-process-transport.ts';
 
-export { StdioTransport, createStdioPair } from './stdio-transport.ts';
-export type { StdioTransportOptions } from './stdio-transport.ts';
-
-export { UnixSocketTransport, getDaemonSocketPath } from './unix-socket-transport.ts';
-export type { UnixSocketTransportOptions } from './unix-socket-transport.ts';
+// Node.js-only transports (StdioTransport, UnixSocketTransport) are NOT exported here
+// to prevent browser builds from failing. Import them directly:
+//   import { StdioTransport } from '@liuboer/shared/message-hub/stdio-transport';
+//   import { UnixSocketTransport } from '@liuboer/shared/message-hub/unix-socket-transport';
 
 // TypedHub - Type-safe wrapper over MessageHub + InProcessTransportBus
 // Recommended for new code migrating from EventBus

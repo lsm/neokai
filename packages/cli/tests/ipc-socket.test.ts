@@ -6,7 +6,7 @@
  */
 
 import { describe, test, expect, afterEach } from 'bun:test';
-import { UnixSocketTransport } from '@liuboer/shared';
+import { UnixSocketTransport } from '@liuboer/shared/message-hub/unix-socket-transport';
 import { existsSync, unlinkSync } from 'fs';
 import type { HubMessage } from '@liuboer/shared/message-hub/protocol';
 

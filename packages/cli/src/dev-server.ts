@@ -3,7 +3,8 @@ import type { Config } from '@liuboer/daemon/config';
 import { createServer as createViteServer } from 'vite';
 import { resolve } from 'path';
 import * as net from 'net';
-import { createLogger, UnixSocketTransport, generateUUID } from '@liuboer/shared';
+import { createLogger, generateUUID } from '@liuboer/shared';
+import { UnixSocketTransport } from '@liuboer/shared/message-hub/unix-socket-transport';
 import type { ClientConnection, HubMessage } from '@liuboer/shared';
 import type { HubMessageWithMetadata } from '@liuboer/shared/message-hub/protocol';
 
