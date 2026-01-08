@@ -92,6 +92,9 @@ class SessionStore {
 	/** Subscription cleanup functions */
 	private cleanupFunctions: Array<() => void> = [];
 
+	/** Track the session switch time to avoid showing stale errors */
+	private sessionSwitchTime: number = 0;
+
 	// ========================================
 	// Session Selection (with Promise-Chain Lock)
 	// ========================================
@@ -125,6 +128,9 @@ class SessionStore {
 		// 2. Clear state
 		this.sessionState.value = null;
 		this.sdkMessages.value = [];
+		// Record session switch time to only show errors that occur AFTER this point
+		// This prevents showing stale errors that were already in the session state
+		this.sessionSwitchTime = Date.now();
 
 		// 3. Update active session
 		this.activeSessionId.value = sessionId;
@@ -167,8 +173,9 @@ class SessionStore {
 						slashCommandsSignal.value = state.commandsData.availableCommands;
 					}
 
-					// Handle error (show toast)
-					if (state.error) {
+					// Handle error (show toast only for NEW errors that occurred after session was opened)
+					// Prevents showing stale errors from previous sessions or from before session switch
+					if (state.error && state.error.occurredAt > this.sessionSwitchTime) {
 						toast.error(state.error.message);
 					}
 				},

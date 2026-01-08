@@ -27,7 +27,8 @@ export class QueryLifecycleManager {
 		private setQueryObject: (q: Query | null) => void,
 		private getQueryPromise: () => Promise<void> | null,
 		private setQueryPromise: (p: Promise<void> | null) => void,
-		private startStreamingQuery: () => Promise<void>
+		private startStreamingQuery: () => Promise<void>,
+		private isTransportReady: () => boolean
 	) {
 		this.logger = new Logger(`QueryLifecycleManager ${sessionId}`);
 	}
@@ -48,15 +49,25 @@ export class QueryLifecycleManager {
 		this.messageQueue.stop();
 		this.logger.log('Message queue stopped');
 
-		// 2. Interrupt current query
+		// 2. Interrupt current query (only if transport is ready)
+		// ProcessTransport must be ready before calling interrupt() - otherwise we get
+		// "ProcessTransport is not ready for writing" error that corrupts session state
 		const queryObject = this.getQueryObject();
 		if (queryObject && typeof queryObject.interrupt === 'function') {
-			try {
-				await queryObject.interrupt();
-				this.logger.log('Query interrupted successfully');
-			} catch (error) {
-				this.logger.warn('Query interrupt failed:', error);
-				// Continue - query might already be stopped
+			if (this.isTransportReady()) {
+				try {
+					await queryObject.interrupt();
+					this.logger.log('Query interrupted successfully');
+				} catch (error) {
+					this.logger.warn('Query interrupt failed:', error);
+					// Continue - query might already be stopped
+				}
+			} else {
+				// Transport not ready - skip interrupt, just clear references
+				// The SDK subprocess will be terminated when we clear the query object
+				this.logger.log(
+					'Skipping interrupt - ProcessTransport not ready (no messages received yet)'
+				);
 			}
 		}
 

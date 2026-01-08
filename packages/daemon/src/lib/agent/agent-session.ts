@@ -142,7 +142,8 @@ export class AgentSession {
 			(p) => {
 				this.queryPromise = p;
 			},
-			() => this.startStreamingQuery()
+			() => this.startStreamingQuery(),
+			() => this.firstMessageReceived
 		);
 
 		// Initialize model switch handler with dependencies
@@ -1436,9 +1437,15 @@ export class AgentSession {
 				this.pendingRestartReason = null;
 				// Reset circuit breaker
 				this.messageHandler.resetCircuitBreaker();
+
+				// Clear any stale session errors on reset
+				// This prevents "unexpected error" from showing repeatedly when opening the session
+				await this.daemonHub.emit('session.errorClear', { sessionId: this.session.id });
 			},
 			onAfterStop: async () => {
-				// Reset transport readiness flag
+				// Reset transport readiness flag AFTER stop completes
+				// This flag is checked by stop() to decide whether to call interrupt()
+				// so it must be reset AFTER that check, not before
 				this.firstMessageReceived = false;
 				// Reset state to idle
 				await this.stateManager.setIdle();
