@@ -130,8 +130,9 @@ describe('message.send EventBus Integration', () => {
 		expect(session.metadata.titleGenerated).toBe(false);
 
 		// Mock the title generation to avoid API call
-		const manager = sessionManager as unknown as Record<string, unknown>;
-		manager.generateTitleFromMessage = async (text: string) => {
+		// After refactoring, generateTitleFromMessage is on SessionLifecycle
+		const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
+		lifecycle.generateTitleFromMessage = async (text: string) => {
 			return text.substring(0, 20);
 		};
 
@@ -162,8 +163,9 @@ describe('message.send EventBus Integration', () => {
 		});
 
 		// Mock title generation
-		const manager = sessionManager as unknown as Record<string, unknown>;
-		manager.generateTitleFromMessage = async (text: string) => {
+		// After refactoring, generateTitleFromMessage is on SessionLifecycle
+		const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
+		lifecycle.generateTitleFromMessage = async (text: string) => {
 			return text.substring(0, 20);
 		};
 

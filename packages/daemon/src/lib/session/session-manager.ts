@@ -206,6 +206,14 @@ export class SessionManager {
 	}
 
 	/**
+	 * Get the session lifecycle manager (exposed for testing)
+	 * @internal
+	 */
+	getSessionLifecycle(): SessionLifecycle {
+		return this.sessionLifecycle;
+	}
+
+	/**
 	 * Get session asynchronously (preferred for concurrent access)
 	 *
 	 * FIX: Handles concurrent requests properly with locking
