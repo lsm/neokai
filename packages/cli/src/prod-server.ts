@@ -3,7 +3,9 @@ import { serveStatic } from 'hono/bun';
 import { createDaemonApp } from '@liuboer/daemon/app';
 import type { Config } from '@liuboer/daemon/config';
 import { resolve } from 'path';
-import { createLogger, UnixSocketTransport } from '@liuboer/shared';
+import { createLogger, UnixSocketTransport, generateUUID } from '@liuboer/shared';
+import type { ClientConnection, HubMessage } from '@liuboer/shared';
+import type { HubMessageWithMetadata } from '@liuboer/shared/message-hub/protocol';
 
 const log = createLogger('liuboer:cli:prod-server');
 
@@ -22,6 +24,7 @@ export async function startProdServer(config: Config) {
 
 	// Initialize IPC socket if configured (for yuanshen orchestrator)
 	let ipcTransport: UnixSocketTransport | undefined;
+	let ipcClientId: string | undefined;
 	if (config.ipcSocketPath) {
 		log.info(`🔌 Starting IPC socket server at ${config.ipcSocketPath}...`);
 		ipcTransport = new UnixSocketTransport({
@@ -32,22 +35,42 @@ export async function startProdServer(config: Config) {
 		});
 		await ipcTransport.initialize();
 
+		// Generate a unique client ID for the IPC connection
+		ipcClientId = generateUUID();
+
+		// Register IPC as a ClientConnection with the router
+		// This allows the yuanshen orchestrator to receive events
+		const router = daemonContext.messageHub.getRouter();
+		if (router) {
+			const ipcConnection: ClientConnection = {
+				id: ipcClientId,
+				send: (data: string) => {
+					try {
+						const message = JSON.parse(data) as HubMessage;
+						ipcTransport!.send(message);
+					} catch (error) {
+						log.error('[IPC] Failed to send message:', error);
+					}
+				},
+				isOpen: () => ipcTransport?.isReady() ?? false,
+				canAccept: () => true,
+				metadata: { type: 'ipc', role: 'yuanshen-orchestrator' },
+			};
+			router.registerConnection(ipcConnection);
+			log.info(`[IPC] Registered as client: ${ipcClientId}`);
+		}
+
 		// Handle messages from yuanshen orchestrator
-		// MVP: Log messages and forward events to the router
-		ipcTransport.onMessage(async (message) => {
+		// Forward ALL messages through the transport's message handler path
+		ipcTransport.onMessage((message) => {
 			log.info(`[IPC] Received: ${message.type} ${message.method}`);
 
-			// For MVP, we'll handle messages based on type
-			// TODO: Full integration with MessageHub for RPC support
-			if (message.type === 'EVENT') {
-				// Forward events to subscribed WebSocket clients via router
-				const router = daemonContext.messageHub.getRouter();
-				if (router) {
-					router.routeEvent(message);
-				}
-			}
-			// CALL messages would need MessageHub handler integration
-			// For now, just acknowledge receipt
+			// Add clientId to message for proper routing/response handling
+			(message as HubMessageWithMetadata).clientId = ipcClientId;
+
+			// Forward to the transport's handler which notifies MessageHub
+			// This enables full RPC support (CALL/RESULT/EVENT/SUBSCRIBE)
+			daemonContext.transport.handleClientMessage(message, ipcClientId);
 		});
 
 		log.info(`✅ IPC socket server ready at ${config.ipcSocketPath}`);
