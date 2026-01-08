@@ -10,6 +10,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { SessionManager } from '../../../../src/lib/session-manager';
+import { generateBranchName } from '../../../../src/lib/session/session-lifecycle';
 import { Database } from '../../../../src/storage/database';
 import { MessageHub } from '@liuboer/shared';
 import { createDaemonHub, type DaemonHub } from '../../../../src/lib/daemon-hub';
@@ -174,9 +175,6 @@ describe('Session Creation and Title Generation', () => {
 
 	describe('Branch Name Generation', () => {
 		test('generateBranchName creates valid git branch names', () => {
-			// Access private method via type assertion for testing
-			const manager = sessionManager as unknown as Record<string, unknown>;
-
 			const testCases = [
 				{
 					title: 'Fix login bug',
@@ -201,20 +199,13 @@ describe('Session Creation and Title Generation', () => {
 			];
 
 			for (const { title, sessionId, expected } of testCases) {
-				const result = (manager.generateBranchName as (title: string, sessionId: string) => string)(
-					title,
-					sessionId
-				);
+				const result = generateBranchName(title, sessionId);
 				expect(result).toBe(expected);
 			}
 		});
 
 		test('generateBranchName handles special characters', () => {
-			const manager = sessionManager as unknown as Record<string, unknown>;
-
-			const branchName = (
-				manager.generateBranchName as (title: string, sessionId: string) => string
-			)('Fix @#$%^&*() special chars!!!', 'abc123');
+			const branchName = generateBranchName('Fix @#$%^&*() special chars!!!', 'abc123');
 
 			// Should only contain lowercase alphanumeric and hyphens
 			expect(branchName).toMatch(/^session\/[a-z0-9-]+-[a-z0-9]+$/);
@@ -222,13 +213,9 @@ describe('Session Creation and Title Generation', () => {
 		});
 
 		test('generateBranchName truncates long titles', () => {
-			const manager = sessionManager as unknown as Record<string, unknown>;
-
 			const longTitle =
 				'This is a very long title that exceeds the maximum length allowed for git branch names and should be truncated appropriately';
-			const branchName = (
-				manager.generateBranchName as (title: string, sessionId: string) => string
-			)(longTitle, 'abc123');
+			const branchName = generateBranchName(longTitle, 'abc123');
 
 			// Branch name should be reasonable length
 			expect(branchName.length).toBeLessThan(70); // 50 for slug + "session/" + "-abc123"
@@ -237,11 +224,7 @@ describe('Session Creation and Title Generation', () => {
 		});
 
 		test('generateBranchName handles empty title', () => {
-			const manager = sessionManager as unknown as Record<string, unknown>;
-
-			const branchName = (
-				manager.generateBranchName as (title: string, sessionId: string) => string
-			)('', 'abc123');
+			const branchName = generateBranchName('', 'abc123');
 
 			// Should still have session prefix and UUID
 			expect(branchName).toBe('session/-abc123');
@@ -255,16 +238,17 @@ describe('Session Creation and Title Generation', () => {
 			});
 
 			// Mock title generation to avoid API call
-			const manager = sessionManager as unknown as Record<string, unknown>;
-			const originalGenerate = manager.generateTitleFromMessage;
-			manager.generateTitleFromMessage = async (text: string) => {
+			// After refactoring, generateTitleFromMessage is on SessionLifecycle
+			const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
+			const originalGenerate = lifecycle.generateTitleFromMessage;
+			lifecycle.generateTitleFromMessage = async (text: string) => {
 				return text.substring(0, 20);
 			};
 
 			await sessionManager.generateTitleAndRenameBranch(sessionId, 'Fix login bug');
 
 			// Restore original method
-			manager.generateTitleFromMessage = originalGenerate;
+			lifecycle.generateTitleFromMessage = originalGenerate;
 
 			const agentSession = sessionManager.getSession(sessionId);
 			const session = agentSession!.getSessionData();
@@ -278,9 +262,10 @@ describe('Session Creation and Title Generation', () => {
 			});
 
 			// Mock title generation to avoid API call
-			const manager = sessionManager as unknown as Record<string, unknown>;
-			const originalGenerate = manager.generateTitleFromMessage;
-			manager.generateTitleFromMessage = async (_text: string) => {
+			// After refactoring, generateTitleFromMessage is on SessionLifecycle
+			const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
+			const originalGenerate = lifecycle.generateTitleFromMessage;
+			lifecycle.generateTitleFromMessage = async (_text: string) => {
 				// Simulate AI-generated title based on message
 				return 'Fix Login Bug';
 			};
@@ -289,7 +274,7 @@ describe('Session Creation and Title Generation', () => {
 			await sessionManager.generateTitleAndRenameBranch(sessionId, userMessage);
 
 			// Restore original method
-			manager.generateTitleFromMessage = originalGenerate;
+			lifecycle.generateTitleFromMessage = originalGenerate;
 
 			const agentSession = sessionManager.getSession(sessionId);
 			const session = agentSession!.getSessionData();
@@ -306,9 +291,10 @@ describe('Session Creation and Title Generation', () => {
 			});
 
 			// Mock title generation to avoid API call
-			const manager = sessionManager as unknown as Record<string, unknown>;
-			const originalGenerate = manager.generateTitleFromMessage;
-			manager.generateTitleFromMessage = async (_text: string) => {
+			// After refactoring, generateTitleFromMessage is on SessionLifecycle
+			const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
+			const originalGenerate = lifecycle.generateTitleFromMessage;
+			lifecycle.generateTitleFromMessage = async (_text: string) => {
 				// Simulate AI-generated title
 				return 'First Generated Title';
 			};
@@ -318,7 +304,7 @@ describe('Session Creation and Title Generation', () => {
 			await sessionManager.generateTitleAndRenameBranch(sessionId, 'Another message');
 
 			// Restore original method
-			manager.generateTitleFromMessage = originalGenerate;
+			lifecycle.generateTitleFromMessage = originalGenerate;
 
 			const agentSession = sessionManager.getSession(sessionId);
 			const session = agentSession!.getSessionData();
@@ -335,8 +321,9 @@ describe('Session Creation and Title Generation', () => {
 			});
 
 			// Mock title generation to fail
-			const manager = sessionManager as unknown as Record<string, unknown>;
-			manager.generateTitleFromMessage = async () => {
+			// After refactoring, generateTitleFromMessage is on SessionLifecycle
+			const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
+			lifecycle.generateTitleFromMessage = async () => {
 				throw new Error('API error');
 			};
 
@@ -360,9 +347,10 @@ describe('Session Creation and Title Generation', () => {
 			});
 
 			// Mock title generation to avoid API call
-			const manager = sessionManager as unknown as Record<string, unknown>;
-			const originalGenerate = manager.generateTitleFromMessage;
-			manager.generateTitleFromMessage = async (_text: string) => {
+			// After refactoring, generateTitleFromMessage is on SessionLifecycle
+			const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
+			const originalGenerate = lifecycle.generateTitleFromMessage;
+			lifecycle.generateTitleFromMessage = async (_text: string) => {
 				// Simulate AI-generated title
 				return 'Test Title Generated';
 			};
@@ -371,7 +359,7 @@ describe('Session Creation and Title Generation', () => {
 			await sessionManager.generateTitleAndRenameBranch(sessionId, userMessage);
 
 			// Restore original method
-			manager.generateTitleFromMessage = originalGenerate;
+			lifecycle.generateTitleFromMessage = originalGenerate;
 
 			// Verify in database - should have AI-generated title
 			const dbSession = db.getSession(sessionId);
@@ -386,8 +374,9 @@ describe('Session Creation and Title Generation', () => {
 			});
 
 			// Mock title generation to avoid API call
-			const manager = sessionManager as unknown as Record<string, unknown>;
-			manager.generateTitleFromMessage = async (text: string) => {
+			// After refactoring, generateTitleFromMessage is on SessionLifecycle
+			const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
+			lifecycle.generateTitleFromMessage = async (text: string) => {
 				return text.substring(0, 20);
 			};
 
@@ -415,8 +404,9 @@ describe('Session Creation and Title Generation', () => {
 			});
 
 			// Mock title generation
-			const manager = sessionManager as unknown as Record<string, unknown>;
-			manager.generateTitleFromMessage = async (text: string) => {
+			// After refactoring, generateTitleFromMessage is on SessionLifecycle
+			const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
+			lifecycle.generateTitleFromMessage = async (text: string) => {
 				return text || 'New Session';
 			};
 
@@ -445,8 +435,9 @@ describe('Session Creation and Title Generation', () => {
 			db.updateSession(sessionId, session);
 
 			// Mock title generation
-			const manager = sessionManager as unknown as Record<string, unknown>;
-			manager.generateTitleFromMessage = async (text: string) => {
+			// After refactoring, generateTitleFromMessage is on SessionLifecycle
+			const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
+			lifecycle.generateTitleFromMessage = async (text: string) => {
 				return text.substring(0, 20);
 			};
 
