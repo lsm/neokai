@@ -104,10 +104,18 @@ web:
 
 sync-sdk-types:
 	@echo "Syncing Claude SDK type definitions..."
-	@mkdir -p packages/shared/src/sdk/entrypoints
-	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/entrypoints/agentSdkTypes.d.ts packages/shared/src/sdk/entrypoints/
+	@mkdir -p packages/shared/src/sdk/entrypoints/sdk
+	@mkdir -p packages/shared/src/sdk/transport
+	@# Copy main entry files
 	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts packages/shared/src/sdk/
 	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk-tools.d.ts packages/shared/src/sdk/
+	@# Copy entrypoints
+	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/entrypoints/agentSdkTypes.d.ts packages/shared/src/sdk/entrypoints/
+	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/entrypoints/sandboxTypes.d.ts packages/shared/src/sdk/entrypoints/
+	@# Copy SDK type modules
+	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/entrypoints/sdk/*.d.ts packages/shared/src/sdk/entrypoints/sdk/
+	@# Copy transport types
+	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/transport/*.d.ts packages/shared/src/sdk/transport/
 	@echo "✓ SDK types synced to packages/shared/src/sdk/"
 
 sync-claude-prompts:

@@ -33,7 +33,7 @@
       "name": "@liuboer/daemon",
       "version": "0.1.0",
       "dependencies": {
-        "@anthropic-ai/claude-agent-sdk": "0.1.76",
+        "@anthropic-ai/claude-agent-sdk": "0.2.1",
         "@liuboer/shared": "workspace:*",
         "dotenv": "^17.2.3",
         "simple-git": "3.30.0",
@@ -76,9 +76,13 @@
         "vite": "7.3.0",
       },
     },
+    "packages/yuanshen": {
+      "name": "@liuboer/yuanshen",
+      "version": "0.1.0",
+    },
   },
   "packages": {
-    "@anthropic-ai/claude-agent-sdk": ["@anthropic-ai/claude-agent-sdk@0.1.76", "", { "optionalDependencies": { "@img/sharp-darwin-arm64": "^0.33.5", "@img/sharp-darwin-x64": "^0.33.5", "@img/sharp-linux-arm": "^0.33.5", "@img/sharp-linux-arm64": "^0.33.5", "@img/sharp-linux-x64": "^0.33.5", "@img/sharp-linuxmusl-arm64": "^0.33.5", "@img/sharp-linuxmusl-x64": "^0.33.5", "@img/sharp-win32-x64": "^0.33.5" }, "peerDependencies": { "zod": "^3.24.1 || ^4.0.0" } }, "sha512-s7RvpXoFaLXLG7A1cJBAPD8ilwOhhc/12fb5mJXRuD561o4FmPtQ+WRfuy9akMmrFRfLsKv8Ornw3ClGAPL2fw=="],
+    "@anthropic-ai/claude-agent-sdk": ["@anthropic-ai/claude-agent-sdk@0.2.1", "", { "optionalDependencies": { "@img/sharp-darwin-arm64": "^0.33.5", "@img/sharp-darwin-x64": "^0.33.5", "@img/sharp-linux-arm": "^0.33.5", "@img/sharp-linux-arm64": "^0.33.5", "@img/sharp-linux-x64": "^0.33.5", "@img/sharp-linuxmusl-arm64": "^0.33.5", "@img/sharp-linuxmusl-x64": "^0.33.5", "@img/sharp-win32-x64": "^0.33.5" }, "peerDependencies": { "zod": "^4.0.0" } }, "sha512-ZJO/TWcrFHGQTGHJDJl03mWozirWMBqdNpbuAgxZpLaHj2N5vyMxoeYiJC+7M0+gOSs7bjwKJLKTZcHGtGa34g=="],
 
     "@babel/code-frame": ["@babel/code-frame@7.27.1", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.27.1", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-cjQ7ZlQ0Mv3b47hABuTevyTuYN4i+loJKGeV9flcCgIK37cCXRh+L1bd3iBHlynerhQ7BhCkn2BPbQUL+rGqFg=="],
 
@@ -235,6 +239,8 @@
     "@liuboer/shared": ["@liuboer/shared@workspace:packages/shared"],
 
     "@liuboer/web": ["@liuboer/web@workspace:packages/web"],
+
+    "@liuboer/yuanshen": ["@liuboer/yuanshen@workspace:packages/yuanshen"],
 
     "@napi-rs/wasm-runtime": ["@napi-rs/wasm-runtime@1.1.0", "", { "dependencies": { "@emnapi/core": "^1.7.1", "@emnapi/runtime": "^1.7.1", "@tybys/wasm-util": "^0.10.1" } }, "sha512-Fq6DJW+Bb5jaWE69/qOE0D1TUN9+6uWhCeZpdnSBk14pjLcCWR7Q8n49PTSPHazM37JqrsdpEthXy2xn6jWWiA=="],
 
