@@ -1,9 +1,19 @@
 /**
  * Message RPC Handlers Tests
+ *
+ * Unit tests use mocks for fast execution.
+ * Integration tests use real WebSocket connections.
  */
 
-import { describe, expect, it, beforeAll, mock } from 'bun:test';
+import { describe, expect, it, test, beforeAll, beforeEach, afterEach, mock } from 'bun:test';
 import { setupMessageHandlers } from '../../../../src/lib/rpc-handlers/message-handlers';
+import type { TestContext } from '../../../test-utils';
+import {
+	createTestApp,
+	waitForWebSocketState,
+	waitForWebSocketMessage,
+	createWebSocketWithFirstMessage,
+} from '../../../test-utils';
 
 describe('Message RPC Handlers', () => {
 	let handlers: Map<string, Function>;
@@ -135,5 +145,54 @@ describe('Message RPC Handlers', () => {
 				})
 			).rejects.toThrow('Session not found');
 		});
+	});
+});
+
+describe('Message RPC Handlers (Integration)', () => {
+	let ctx: TestContext;
+
+	beforeEach(async () => {
+		ctx = await createTestApp();
+	});
+
+	afterEach(async () => {
+		await ctx.cleanup();
+	});
+
+	describe('message.send', () => {
+		test('should return error for non-existent session', async () => {
+			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+			await waitForWebSocketState(ws, WebSocket.OPEN);
+			await firstMessagePromise;
+
+			const responsePromise = waitForWebSocketMessage(ws);
+
+			ws.send(
+				JSON.stringify({
+					id: 'msg-1',
+					type: 'CALL',
+					method: 'message.send',
+					data: {
+						sessionId: 'non-existent',
+						content: 'Hello',
+					},
+					sessionId: 'global',
+					timestamp: new Date().toISOString(),
+					version: '1.0.0',
+				})
+			);
+
+			const response = await responsePromise;
+
+			expect(response.type).toBe('ERROR');
+			// Could be either SESSION_NOT_FOUND from setup-websocket.ts or "Session not found" from handler
+			expect(
+				response.errorCode === 'SESSION_NOT_FOUND' || response.error?.includes('Session not found')
+			).toBe(true);
+
+			ws.close();
+		});
+
+		// Note: Test for successful message.send with real SDK is in tests/online/session-handlers.test.ts
 	});
 });
