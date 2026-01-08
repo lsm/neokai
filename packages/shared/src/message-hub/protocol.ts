@@ -601,7 +601,8 @@ export function isValidMessage(msg: unknown): msg is HubMessage {
 	}
 
 	// FIX P2.3: Validate protocol version if present (warn on mismatch, but don't reject)
-	if (m.version !== undefined) {
+	// Note: Accept both undefined and null for optional fields (Zig serializes optionals as null)
+	if (m.version !== undefined && m.version !== null) {
 		if (typeof m.version !== 'string') {
 			return false;
 		}

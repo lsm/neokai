@@ -365,6 +365,7 @@ export class MessageHubRouter {
 	 * Route an EVENT message to subscribed clients
 	 * Returns delivery statistics for observability
 	 * FIX P2.1: Handle serialization errors (circular refs, etc.)
+	 * Also sends to "global" subscribers for cross-session orchestration
 	 */
 	routeEvent(message: HubMessage): RouteResult {
 		if (!isEventMessage(message)) {
@@ -378,20 +379,39 @@ export class MessageHubRouter {
 			};
 		}
 
+		// Collect all subscriber clientIds (session-specific + global)
+		const allSubscribers = new Set<string>();
+
+		// Add session-specific subscribers
 		const sessionSubs = this.subscriptions.get(message.sessionId);
-		if (!sessionSubs) {
-			this.log(`No subscriptions for session: ${message.sessionId}`);
-			return {
-				sent: 0,
-				failed: 0,
-				totalSubscribers: 0,
-				sessionId: message.sessionId,
-				method: message.method,
-			};
+		if (sessionSubs) {
+			const methodSubs = sessionSubs.get(message.method);
+			if (methodSubs) {
+				for (const clientId of methodSubs) {
+					allSubscribers.add(clientId);
+				}
+			}
 		}
 
-		const methodSubs = sessionSubs.get(message.method);
-		if (!methodSubs || methodSubs.size === 0) {
+		// Also add "global" subscribers (for orchestrators that want all events)
+		if (message.sessionId !== 'global') {
+			const globalSubs = this.subscriptions.get('global');
+			if (globalSubs) {
+				const globalMethodSubs = globalSubs.get(message.method);
+				if (globalMethodSubs) {
+					for (const clientId of globalMethodSubs) {
+						allSubscribers.add(clientId);
+					}
+				}
+			}
+		}
+
+		// Debug logging for event routing
+		this.log(
+			`[routeEvent] ${message.sessionId}:${message.method} - session subs: ${sessionSubs?.get(message.method)?.size ?? 0}, global subs: ${this.subscriptions.get('global')?.get(message.method)?.size ?? 0}, total: ${allSubscribers.size}`
+		);
+
+		if (allSubscribers.size === 0) {
 			this.log(`No subscribers for ${message.sessionId}:${message.method}`);
 			return {
 				sent: 0,
@@ -401,6 +421,9 @@ export class MessageHubRouter {
 				method: message.method,
 			};
 		}
+
+		// Use allSubscribers instead of methodSubs
+		const methodSubs = allSubscribers;
 
 		// FIX P2.1: Handle serialization errors (circular refs, BigInt, etc.)
 		let json: string;
