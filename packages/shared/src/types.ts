@@ -17,10 +17,28 @@ export interface SessionInfo {
 	availableCommands?: string[]; // Available slash commands for this session (persisted)
 	processingState?: string; // Persisted agent processing state (JSON serialized AgentProcessingState)
 	archivedAt?: string; // ISO timestamp when session was archived
+	// Sub-session fields
+	parentId?: string; // ID of parent session (null/undefined for root sessions)
+	labels?: string[]; // Labels for categorization
+	subSessionOrder?: number; // Order among siblings (for UI ordering)
 }
 
 // Backward compatibility alias (use SessionInfo in new code)
 export type Session = SessionInfo;
+
+/**
+ * Configuration for creating sub-sessions
+ * Controls inheritance and categorization options
+ */
+export interface SubSessionConfig {
+	// Inherit options from parent
+	inheritModel?: boolean; // Default: true
+	inheritPermissionMode?: boolean; // Default: true
+	inheritWorktree?: boolean; // Default: false (sub-sessions get own worktree by default)
+
+	// Labels for categorization
+	labels?: string[];
+}
 
 export interface WorktreeMetadata {
 	isWorktree: true;
@@ -98,6 +116,16 @@ export interface SessionConfig {
 		| 'plan'
 		| 'delegate'
 		| 'dontAsk';
+	/**
+	 * Query mode for message sending behavior
+	 * - 'immediate': Messages sent to Claude immediately (default)
+	 * - 'manual': Messages saved but not sent until explicitly triggered
+	 *
+	 * Note: Auto-queue behavior (messages queued during processing) is automatic
+	 * and doesn't require a separate mode setting.
+	 * @default 'immediate'
+	 */
+	queryMode?: 'immediate' | 'manual';
 	// Tools configuration
 	tools?: ToolsConfig;
 }

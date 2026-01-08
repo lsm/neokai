@@ -399,13 +399,45 @@ export class Database {
 				this.db.exec('PRAGMA foreign_keys = ON');
 			}
 		}
+
+		// Migration 10: Add send_status column to sdk_messages for query mode support
+		// send_status tracks whether a message has been saved, queued, or sent to SDK
+		try {
+			this.db.prepare(`SELECT send_status FROM sdk_messages LIMIT 1`).all();
+		} catch {
+			this.logger.log('🔧 Running migration: Adding send_status column to sdk_messages table');
+			this.db.exec(
+				`ALTER TABLE sdk_messages ADD COLUMN send_status TEXT DEFAULT 'sent' CHECK(send_status IN ('saved', 'queued', 'sent'))`
+			);
+			// Add index for efficient status queries
+			this.db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status ON sdk_messages(session_id, send_status)`
+			);
+		}
+
+		// Migration 11: Add sub-session columns for parent-child session relationships
+		// - parent_id: References parent session (null for root sessions)
+		// - labels: JSON array of strings for categorization
+		// - sub_session_order: Integer for ordering siblings in UI
+		try {
+			this.db.prepare(`SELECT parent_id FROM sessions LIMIT 1`).all();
+		} catch {
+			this.logger.log('🔧 Running migration: Adding sub-session columns to sessions table');
+			// Note: SQLite doesn't support adding FK constraints via ALTER TABLE,
+			// but the application layer will enforce the constraint
+			this.db.exec(`ALTER TABLE sessions ADD COLUMN parent_id TEXT`);
+			this.db.exec(`ALTER TABLE sessions ADD COLUMN labels TEXT`);
+			this.db.exec(`ALTER TABLE sessions ADD COLUMN sub_session_order INTEGER DEFAULT 0`);
+			// Add index for efficient parent lookups
+			this.db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_id)`);
+		}
 	}
 
 	// Session operations
 	createSession(session: Session): void {
 		const stmt = this.db.prepare(
-			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state, archived_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state, archived_at, parent_id, labels, sub_session_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 		stmt.run(
 			session.id,
@@ -424,7 +456,10 @@ export class Database {
 			session.sdkSessionId ?? null,
 			session.availableCommands ? JSON.stringify(session.availableCommands) : null,
 			session.processingState ?? null,
-			session.archivedAt ?? null
+			session.archivedAt ?? null,
+			session.parentId ?? null,
+			session.labels ? JSON.stringify(session.labels) : null,
+			session.subSessionOrder ?? 0
 		);
 	}
 
@@ -434,6 +469,14 @@ export class Database {
 
 		if (!row) return null;
 
+		return this.rowToSession(row);
+	}
+
+	/**
+	 * Convert a database row to a Session object
+	 * Shared helper for getSession and listSessions
+	 */
+	private rowToSession(row: Record<string, unknown>): Session {
 		const isWorktree = row.is_worktree === 1;
 		const worktree = isWorktree
 			? {
@@ -447,6 +490,11 @@ export class Database {
 		const availableCommands =
 			row.available_commands && typeof row.available_commands === 'string'
 				? (JSON.parse(row.available_commands) as string[])
+				: undefined;
+
+		const labels =
+			row.labels && typeof row.labels === 'string'
+				? (JSON.parse(row.labels) as string[])
 				: undefined;
 
 		return {
@@ -464,6 +512,9 @@ export class Database {
 			availableCommands,
 			processingState: (row.processing_state as string | null) ?? undefined,
 			archivedAt: (row.archived_at as string | null) ?? undefined,
+			parentId: (row.parent_id as string | null) ?? undefined,
+			labels,
+			subSessionOrder: (row.sub_session_order as number | null) ?? undefined,
 		};
 	}
 
@@ -471,39 +522,7 @@ export class Database {
 		const stmt = this.db.prepare(`SELECT * FROM sessions ORDER BY last_active_at DESC`);
 		const rows = stmt.all() as Record<string, unknown>[];
 
-		return rows.map((r) => {
-			const isWorktree = r.is_worktree === 1;
-			const worktree = isWorktree
-				? {
-						isWorktree: true as const,
-						worktreePath: r.worktree_path as string,
-						mainRepoPath: r.main_repo_path as string,
-						branch: r.worktree_branch as string,
-					}
-				: undefined;
-
-			const availableCommands =
-				r.available_commands && typeof r.available_commands === 'string'
-					? (JSON.parse(r.available_commands) as string[])
-					: undefined;
-
-			return {
-				id: r.id as string,
-				title: r.title as string,
-				workspacePath: r.workspace_path as string,
-				createdAt: r.created_at as string,
-				lastActiveAt: r.last_active_at as string,
-				status: r.status as 'active' | 'paused' | 'ended' | 'archived',
-				config: JSON.parse(r.config as string),
-				metadata: JSON.parse(r.metadata as string),
-				worktree,
-				gitBranch: (r.git_branch as string | null) ?? undefined,
-				sdkSessionId: (r.sdk_session_id as string | null) ?? undefined,
-				availableCommands,
-				processingState: (r.processing_state as string | null) ?? undefined,
-				archivedAt: (r.archived_at as string | null) ?? undefined,
-			};
-		});
+		return rows.map((r) => this.rowToSession(r));
 	}
 
 	updateSession(id: string, updates: Partial<Session>): void {
@@ -590,6 +609,19 @@ export class Database {
 					updates.worktree.branch
 				);
 			}
+		}
+		// Handle sub-session fields
+		if (updates.parentId !== undefined) {
+			fields.push('parent_id = ?');
+			values.push(updates.parentId ?? null);
+		}
+		if (updates.labels !== undefined) {
+			fields.push('labels = ?');
+			values.push(updates.labels ? JSON.stringify(updates.labels) : null);
+		}
+		if (updates.subSessionOrder !== undefined) {
+			fields.push('sub_session_order = ?');
+			values.push(updates.subSessionOrder ?? 0);
 		}
 
 		if (fields.length > 0) {
@@ -882,6 +914,210 @@ export class Database {
 		const stmt = this.db.prepare(`SELECT COUNT(*) as count FROM sdk_messages WHERE session_id = ?`);
 		const result = stmt.get(sessionId) as { count: number };
 		return result.count;
+	}
+
+	// ============================================================================
+	// Message Query Mode operations
+	// ============================================================================
+	// Message send status types for query mode feature:
+	// - 'saved': Message persisted but not yet sent to SDK (Manual mode)
+	// - 'queued': Message in queue waiting to be sent (during processing)
+	// - 'sent': Message has been yielded to SDK
+
+	/**
+	 * Save a user message with explicit send status
+	 *
+	 * Used by query modes to track message lifecycle:
+	 * - Immediate mode: saves with status 'sent' (after yielding to SDK)
+	 * - Auto-queue mode: saves with status 'queued' (pending SDK consumption)
+	 * - Manual mode: saves with status 'saved' (until user triggers send)
+	 *
+	 * @returns The generated message ID
+	 */
+	saveUserMessage(
+		sessionId: string,
+		message: SDKMessage,
+		sendStatus: 'saved' | 'queued' | 'sent' = 'sent'
+	): string {
+		const id = generateUUID();
+		const messageType = message.type;
+		const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
+		const timestamp = new Date().toISOString();
+
+		const stmt = this.db.prepare(
+			`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+		);
+
+		stmt.run(
+			id,
+			sessionId,
+			messageType,
+			messageSubtype,
+			JSON.stringify(message),
+			timestamp,
+			sendStatus
+		);
+		return id;
+	}
+
+	/**
+	 * Get messages by send status for a session
+	 *
+	 * Used to retrieve:
+	 * - 'saved' messages for manual trigger
+	 * - 'queued' messages for auto-send on turn_end
+	 *
+	 * Returns messages in chronological order (oldest first).
+	 */
+	getMessagesByStatus(
+		sessionId: string,
+		status: 'saved' | 'queued' | 'sent'
+	): Array<SDKMessage & { dbId: string; timestamp: number }> {
+		const stmt = this.db.prepare(
+			`SELECT id, sdk_message, timestamp FROM sdk_messages
+       WHERE session_id = ? AND send_status = ?
+       ORDER BY timestamp ASC`
+		);
+		const rows = stmt.all(sessionId, status) as Array<{
+			id: string;
+			sdk_message: string;
+			timestamp: string;
+		}>;
+
+		return rows.map((row) => ({
+			...(JSON.parse(row.sdk_message) as SDKMessage),
+			dbId: row.id,
+			timestamp: new Date(row.timestamp).getTime(),
+		}));
+	}
+
+	/**
+	 * Update send status for messages
+	 *
+	 * Used to transition messages through the lifecycle:
+	 * - 'saved' -> 'queued' (when user triggers manual send)
+	 * - 'queued' -> 'sent' (when message is yielded to SDK)
+	 */
+	updateMessageStatus(messageIds: string[], newStatus: 'saved' | 'queued' | 'sent'): void {
+		if (messageIds.length === 0) return;
+
+		// Use parameterized query to prevent SQL injection
+		const placeholders = messageIds.map(() => '?').join(',');
+		const stmt = this.db.prepare(
+			`UPDATE sdk_messages SET send_status = ? WHERE id IN (${placeholders})`
+		);
+		stmt.run(newStatus, ...messageIds);
+	}
+
+	/**
+	 * Get count of messages by status for a session
+	 * Useful for UI display (e.g., "3 messages pending")
+	 */
+	getMessageCountByStatus(sessionId: string, status: 'saved' | 'queued' | 'sent'): number {
+		const stmt = this.db.prepare(
+			`SELECT COUNT(*) as count FROM sdk_messages WHERE session_id = ? AND send_status = ?`
+		);
+		const result = stmt.get(sessionId, status) as { count: number };
+		return result.count;
+	}
+
+	// ============================================================================
+	// Sub-Session operations
+	// ============================================================================
+
+	/**
+	 * Get sub-sessions for a parent session
+	 *
+	 * @param parentId - The parent session ID
+	 * @param labels - Optional labels to filter by (matches any)
+	 * @returns Sub-sessions ordered by sub_session_order, then by created_at
+	 */
+	getSubSessions(parentId: string, labels?: string[]): Session[] {
+		let query = `SELECT * FROM sessions WHERE parent_id = ?`;
+		const params: SQLiteValue[] = [parentId];
+
+		// If labels provided, filter to sessions that have at least one matching label
+		// Note: This uses JSON to check if labels overlap - SQLite JSON functions
+		if (labels && labels.length > 0) {
+			// Build a condition that checks if any of the provided labels exist in the session's labels
+			// Using JSON extraction to check membership
+			const labelConditions = labels.map(() => `json_extract(labels, '$') LIKE ?`);
+			query += ` AND (${labelConditions.join(' OR ')})`;
+			// Wrap each label in wildcards for LIKE matching within JSON array
+			labels.forEach((label) => params.push(`%"${label}"%`));
+		}
+
+		query += ` ORDER BY sub_session_order ASC, created_at ASC`;
+
+		const stmt = this.db.prepare(query);
+		const rows = stmt.all(...params) as Record<string, unknown>[];
+
+		return rows.map((r) => this.rowToSession(r));
+	}
+
+	/**
+	 * Create a sub-session under a parent
+	 * Validates that parent exists and is not already a sub-session
+	 *
+	 * @param session - The session to create (must have parentId set)
+	 * @throws Error if parent doesn't exist or is already a sub-session
+	 */
+	createSubSession(session: Session): void {
+		if (!session.parentId) {
+			throw new Error('Sub-session must have a parentId');
+		}
+
+		// Validate parent exists
+		const parent = this.getSession(session.parentId);
+		if (!parent) {
+			throw new Error(`Parent session ${session.parentId} not found`);
+		}
+
+		// Validate parent is not a sub-session (one level deep only)
+		if (parent.parentId) {
+			throw new Error('Cannot create sub-session under another sub-session (one level deep only)');
+		}
+
+		// Set order to be after existing sub-sessions
+		const existingSubSessions = this.getSubSessions(session.parentId);
+		const maxOrder = existingSubSessions.reduce(
+			(max, s) => Math.max(max, s.subSessionOrder ?? 0),
+			-1
+		);
+		session.subSessionOrder = maxOrder + 1;
+
+		// Create the session
+		this.createSession(session);
+	}
+
+	/**
+	 * Update the order of sub-sessions within a parent
+	 *
+	 * @param parentId - The parent session ID
+	 * @param orderedIds - Array of sub-session IDs in desired order
+	 */
+	updateSubSessionOrder(parentId: string, orderedIds: string[]): void {
+		// Use a transaction for atomic updates
+		const updateStmt = this.db.prepare(
+			`UPDATE sessions SET sub_session_order = ? WHERE id = ? AND parent_id = ?`
+		);
+
+		orderedIds.forEach((id, index) => {
+			updateStmt.run(index, id, parentId);
+		});
+	}
+
+	/**
+	 * Check if a session has any sub-sessions
+	 *
+	 * @param sessionId - The session ID to check
+	 * @returns true if the session has sub-sessions
+	 */
+	hasSubSessions(sessionId: string): boolean {
+		const stmt = this.db.prepare(`SELECT COUNT(*) as count FROM sessions WHERE parent_id = ?`);
+		const result = stmt.get(sessionId) as { count: number };
+		return result.count > 0;
 	}
 
 	/**

@@ -13,6 +13,7 @@ import type { MessageHub, CurrentModelInfo } from '@liuboer/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { generateUUID } from '@liuboer/shared';
 import type { SDKMessage, SlashCommand } from '@liuboer/shared/sdk';
+import { isSDKUserMessage } from '@liuboer/shared/sdk/type-guards';
 import { Database } from '../../storage/database';
 import { ErrorCategory, ErrorManager } from '../error-manager';
 import { Logger } from '../logger';
@@ -282,6 +283,30 @@ export class AgentSession {
 			{ sessionId: this.session.id }
 		);
 		this.unsubscribers.push(unsubMessagePersisted);
+
+		// Query trigger handler (for Manual mode)
+		// When user explicitly triggers sending saved messages
+		const unsubQueryTrigger = this.daemonHub.on(
+			'query.trigger',
+			async () => {
+				this.logger.log(`Received query.trigger event`);
+				await this.handleQueryTrigger();
+			},
+			{ sessionId: this.session.id }
+		);
+		this.unsubscribers.push(unsubQueryTrigger);
+
+		// Send queued messages on turn end (Auto-queue mode)
+		// When agent finishes a turn, automatically send any queued messages
+		const unsubSendQueuedOnTurnEnd = this.daemonHub.on(
+			'query.sendQueuedOnTurnEnd',
+			async () => {
+				this.logger.log(`Received query.sendQueuedOnTurnEnd event`);
+				await this.sendQueuedMessagesOnTurnEnd();
+			},
+			{ sessionId: this.session.id }
+		);
+		this.unsubscribers.push(unsubSendQueuedOnTurnEnd);
 
 		this.logger.log(`DaemonHub subscriptions initialized with session filtering`);
 	}
@@ -1347,6 +1372,152 @@ export class AgentSession {
 		}
 
 		this.logger.log(`Cleanup complete`);
+	}
+
+	// ============================================================================
+	// Query Mode Methods
+	// ============================================================================
+
+	/**
+	 * Handle manual query trigger (Manual mode)
+	 *
+	 * Retrieves all 'saved' messages from the database and sends them to Claude.
+	 * Called when user explicitly clicks "Send" in Manual mode.
+	 */
+	async handleQueryTrigger(): Promise<{ success: boolean; messageCount: number; error?: string }> {
+		this.logger.log(`Handling query trigger (Manual mode)`);
+
+		try {
+			// Get all saved messages for this session
+			const savedMessages = this.db.getMessagesByStatus(this.session.id, 'saved');
+
+			if (savedMessages.length === 0) {
+				this.logger.log(`No saved messages to send`);
+				return { success: true, messageCount: 0 };
+			}
+
+			this.logger.log(`Found ${savedMessages.length} saved messages to send`);
+
+			// Update status to 'queued' before sending
+			const dbIds = savedMessages.map((m) => m.dbId);
+			this.db.updateMessageStatus(dbIds, 'queued');
+
+			// Emit status change event
+			await this.daemonHub.emit('messages.statusChanged', {
+				sessionId: this.session.id,
+				messageIds: dbIds,
+				status: 'queued',
+			});
+
+			// Ensure query is started
+			await this.ensureQueryStarted();
+
+			// Enqueue each message for processing
+			for (const msg of savedMessages) {
+				// Only process user messages - skip system messages, etc.
+				if (!isSDKUserMessage(msg)) {
+					continue;
+				}
+
+				const content = msg.message.content;
+				if (content) {
+					// Extract text content from the message
+					const textContent =
+						typeof content === 'string'
+							? content
+							: Array.isArray(content)
+								? content
+										.filter((c): c is { type: 'text'; text: string } => c.type === 'text')
+										.map((c) => c.text)
+										.join('\n')
+								: '';
+
+					if (textContent) {
+						await this.messageQueue.enqueueWithId(msg.uuid as string, textContent);
+					}
+				}
+			}
+
+			// Update status to 'sent' after enqueuing
+			this.db.updateMessageStatus(dbIds, 'sent');
+
+			// Emit status change event
+			await this.daemonHub.emit('messages.statusChanged', {
+				sessionId: this.session.id,
+				messageIds: dbIds,
+				status: 'sent',
+			});
+
+			this.logger.log(`Successfully triggered ${savedMessages.length} messages`);
+			return { success: true, messageCount: savedMessages.length };
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			this.logger.error(`Failed to trigger query:`, error);
+			return { success: false, messageCount: 0, error: errorMessage };
+		}
+	}
+
+	/**
+	 * Send queued messages when agent turn ends (Auto-queue mode)
+	 *
+	 * Called after agent finishes processing a turn. Checks for any 'queued' messages
+	 * that were added during processing and sends them automatically.
+	 */
+	async sendQueuedMessagesOnTurnEnd(): Promise<void> {
+		this.logger.log(`Checking for queued messages on turn end`);
+
+		try {
+			// Get all queued messages for this session
+			const queuedMessages = this.db.getMessagesByStatus(this.session.id, 'queued');
+
+			if (queuedMessages.length === 0) {
+				this.logger.log(`No queued messages to send on turn end`);
+				return;
+			}
+
+			this.logger.log(`Found ${queuedMessages.length} queued messages to send on turn end`);
+
+			// Enqueue each message for processing
+			for (const msg of queuedMessages) {
+				// Only process user messages - skip system messages, etc.
+				if (!isSDKUserMessage(msg)) {
+					continue;
+				}
+
+				const content = msg.message.content;
+				if (content) {
+					// Extract text content from the message
+					const textContent =
+						typeof content === 'string'
+							? content
+							: Array.isArray(content)
+								? content
+										.filter((c): c is { type: 'text'; text: string } => c.type === 'text')
+										.map((c) => c.text)
+										.join('\n')
+								: '';
+
+					if (textContent) {
+						await this.messageQueue.enqueueWithId(msg.uuid as string, textContent);
+					}
+				}
+			}
+
+			// Update status to 'sent' after enqueuing
+			const dbIds = queuedMessages.map((m) => m.dbId);
+			this.db.updateMessageStatus(dbIds, 'sent');
+
+			// Emit status change event
+			await this.daemonHub.emit('messages.statusChanged', {
+				sessionId: this.session.id,
+				messageIds: dbIds,
+				status: 'sent',
+			});
+
+			this.logger.log(`Successfully sent ${queuedMessages.length} queued messages on turn end`);
+		} catch (error) {
+			this.logger.error(`Failed to send queued messages on turn end:`, error);
+		}
 	}
 
 	/**
