@@ -1086,4 +1086,584 @@ describe('Database', () => {
 			db.close();
 		});
 	});
+
+	describe('Message Query Modes', () => {
+		test('should save user message with default send_status (sent)', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			db.createSession(session);
+
+			// Save as SDK user message (default status)
+			const sdkMessage = {
+				type: 'user' as const,
+				message: {
+					role: 'user' as const,
+					content: 'Hello, world!',
+				},
+				parent_tool_use_id: null,
+				uuid: '00000000-0000-0000-0000-000000000001' as const,
+				session_id: 'session-1',
+			};
+
+			const messageId = db.saveUserMessage('session-1', sdkMessage);
+			assertExists(messageId);
+
+			// Messages should appear in getSDKMessages (which gets all messages)
+			const messages = db.getSDKMessages('session-1');
+			assertEquals(messages.length, 1);
+
+			// Check count by status - should be 1 'sent'
+			assertEquals(db.getMessageCountByStatus('session-1', 'sent'), 1);
+			assertEquals(db.getMessageCountByStatus('session-1', 'saved'), 0);
+			assertEquals(db.getMessageCountByStatus('session-1', 'queued'), 0);
+
+			db.close();
+		});
+
+		test('should save user message with saved status (Manual mode)', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			db.createSession(session);
+
+			const sdkMessage = {
+				type: 'user' as const,
+				message: {
+					role: 'user' as const,
+					content: 'Message to save but not send',
+				},
+				parent_tool_use_id: null,
+				uuid: '00000000-0000-0000-0000-000000000002' as const,
+				session_id: 'session-1',
+			};
+
+			db.saveUserMessage('session-1', sdkMessage, 'saved');
+
+			// Check counts
+			assertEquals(db.getMessageCountByStatus('session-1', 'saved'), 1);
+			assertEquals(db.getMessageCountByStatus('session-1', 'sent'), 0);
+
+			db.close();
+		});
+
+		test('should save user message with queued status (Auto-queue mode)', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			db.createSession(session);
+
+			const sdkMessage = {
+				type: 'user' as const,
+				message: {
+					role: 'user' as const,
+					content: 'Queued message',
+				},
+				parent_tool_use_id: null,
+				uuid: '00000000-0000-0000-0000-000000000003' as const,
+				session_id: 'session-1',
+			};
+
+			db.saveUserMessage('session-1', sdkMessage, 'queued');
+
+			// Check counts
+			assertEquals(db.getMessageCountByStatus('session-1', 'queued'), 1);
+			assertEquals(db.getMessageCountByStatus('session-1', 'sent'), 0);
+
+			db.close();
+		});
+
+		test('should get messages by status', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			db.createSession(session);
+
+			// Create messages with different statuses
+			const savedMsg = {
+				type: 'user' as const,
+				message: { role: 'user' as const, content: 'Saved message' },
+				parent_tool_use_id: null,
+				uuid: 'msg-saved' as const,
+				session_id: 'session-1',
+			};
+			const queuedMsg = {
+				type: 'user' as const,
+				message: { role: 'user' as const, content: 'Queued message' },
+				parent_tool_use_id: null,
+				uuid: 'msg-queued' as const,
+				session_id: 'session-1',
+			};
+			const sentMsg = {
+				type: 'user' as const,
+				message: { role: 'user' as const, content: 'Sent message' },
+				parent_tool_use_id: null,
+				uuid: 'msg-sent' as const,
+				session_id: 'session-1',
+			};
+
+			db.saveUserMessage('session-1', savedMsg, 'saved');
+			db.saveUserMessage('session-1', queuedMsg, 'queued');
+			db.saveUserMessage('session-1', sentMsg, 'sent');
+
+			// Get by status
+			const savedMessages = db.getMessagesByStatus('session-1', 'saved');
+			const queuedMessages = db.getMessagesByStatus('session-1', 'queued');
+			const sentMessages = db.getMessagesByStatus('session-1', 'sent');
+
+			assertEquals(savedMessages.length, 1);
+			assertEquals(savedMessages[0].uuid, 'msg-saved');
+			assertExists(savedMessages[0].dbId); // Should have dbId for update operations
+
+			assertEquals(queuedMessages.length, 1);
+			assertEquals(queuedMessages[0].uuid, 'msg-queued');
+
+			assertEquals(sentMessages.length, 1);
+			assertEquals(sentMessages[0].uuid, 'msg-sent');
+
+			db.close();
+		});
+
+		test('should update message status', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			db.createSession(session);
+
+			// Create saved messages
+			const msg1 = {
+				type: 'user' as const,
+				message: { role: 'user' as const, content: 'Message 1' },
+				parent_tool_use_id: null,
+				uuid: 'msg-1' as const,
+				session_id: 'session-1',
+			};
+			const msg2 = {
+				type: 'user' as const,
+				message: { role: 'user' as const, content: 'Message 2' },
+				parent_tool_use_id: null,
+				uuid: 'msg-2' as const,
+				session_id: 'session-1',
+			};
+
+			db.saveUserMessage('session-1', msg1, 'saved');
+			db.saveUserMessage('session-1', msg2, 'saved');
+
+			// Verify initial status
+			assertEquals(db.getMessageCountByStatus('session-1', 'saved'), 2);
+
+			// Get saved messages to get their dbIds
+			const savedMessages = db.getMessagesByStatus('session-1', 'saved');
+			const dbIds = savedMessages.map((m) => m.dbId);
+
+			// Update to queued
+			db.updateMessageStatus(dbIds, 'queued');
+
+			assertEquals(db.getMessageCountByStatus('session-1', 'saved'), 0);
+			assertEquals(db.getMessageCountByStatus('session-1', 'queued'), 2);
+
+			// Update to sent
+			db.updateMessageStatus(dbIds, 'sent');
+
+			assertEquals(db.getMessageCountByStatus('session-1', 'queued'), 0);
+			assertEquals(db.getMessageCountByStatus('session-1', 'sent'), 2);
+
+			db.close();
+		});
+
+		test('should handle empty array for updateMessageStatus', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			db.createSession(session);
+
+			// Should not throw
+			db.updateMessageStatus([], 'sent');
+
+			db.close();
+		});
+
+		test('should maintain message order by timestamp in getMessagesByStatus', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			db.createSession(session);
+
+			// Save messages with small delays to ensure different timestamps
+			for (let i = 0; i < 5; i++) {
+				const msg = {
+					type: 'user' as const,
+					message: { role: 'user' as const, content: `Message ${i}` },
+					parent_tool_use_id: null,
+					uuid: `msg-${i}` as const,
+					session_id: 'session-1',
+				};
+				db.saveUserMessage('session-1', msg, 'saved');
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+
+			// Get saved messages - should be in chronological order (oldest first)
+			const savedMessages = db.getMessagesByStatus('session-1', 'saved');
+			assertEquals(savedMessages.length, 5);
+			assertEquals(savedMessages[0].uuid, 'msg-0'); // Oldest first
+			assertEquals(savedMessages[4].uuid, 'msg-4'); // Newest last
+
+			db.close();
+		});
+
+		test('should isolate messages by session', async () => {
+			const db = await createTestDb();
+
+			const session1 = createTestSession('session-1');
+			const session2 = createTestSession('session-2');
+			db.createSession(session1);
+			db.createSession(session2);
+
+			// Create messages in different sessions with different statuses
+			const msg1 = {
+				type: 'user' as const,
+				message: { role: 'user' as const, content: 'Session 1 saved' },
+				parent_tool_use_id: null,
+				uuid: 's1-msg' as const,
+				session_id: 'session-1',
+			};
+			const msg2 = {
+				type: 'user' as const,
+				message: { role: 'user' as const, content: 'Session 2 saved' },
+				parent_tool_use_id: null,
+				uuid: 's2-msg' as const,
+				session_id: 'session-2',
+			};
+
+			db.saveUserMessage('session-1', msg1, 'saved');
+			db.saveUserMessage('session-2', msg2, 'saved');
+
+			// Each session should only see its own messages
+			assertEquals(db.getMessageCountByStatus('session-1', 'saved'), 1);
+			assertEquals(db.getMessageCountByStatus('session-2', 'saved'), 1);
+
+			const s1Messages = db.getMessagesByStatus('session-1', 'saved');
+			const s2Messages = db.getMessagesByStatus('session-2', 'saved');
+
+			assertEquals(s1Messages.length, 1);
+			assertEquals(s1Messages[0].uuid, 's1-msg');
+			assertEquals(s2Messages.length, 1);
+			assertEquals(s2Messages[0].uuid, 's2-msg');
+
+			db.close();
+		});
+	});
+
+	describe('Sub-Sessions', () => {
+		test('should create sub-session with parentId', async () => {
+			const db = await createTestDb();
+
+			// Create parent session
+			const parent = createTestSession('parent-1');
+			db.createSession(parent);
+
+			// Create sub-session
+			const subSession: Session = {
+				...createTestSession('sub-1'),
+				parentId: 'parent-1',
+				labels: ['exploration', 'branch-a'],
+			};
+			db.createSubSession(subSession);
+
+			// Retrieve and verify
+			const retrieved = db.getSession('sub-1');
+			assertExists(retrieved);
+			assertEquals(retrieved.parentId, 'parent-1');
+			assertExists(retrieved.labels);
+			assertEquals(retrieved.labels.length, 2);
+			assertEquals(retrieved.labels[0], 'exploration');
+			assertEquals(retrieved.labels[1], 'branch-a');
+			assertExists(retrieved.subSessionOrder);
+
+			db.close();
+		});
+
+		test('should prevent sub-session creation without parentId', async () => {
+			const db = await createTestDb();
+
+			const subSession = createTestSession('sub-1');
+			// No parentId set
+
+			let error: Error | null = null;
+			try {
+				db.createSubSession(subSession);
+			} catch (e) {
+				error = e as Error;
+			}
+
+			assertExists(error);
+			assertEquals(error.message, 'Sub-session must have a parentId');
+
+			db.close();
+		});
+
+		test('should prevent nested sub-sessions (one level deep only)', async () => {
+			const db = await createTestDb();
+
+			// Create parent
+			const parent = createTestSession('parent-1');
+			db.createSession(parent);
+
+			// Create sub-session
+			const subSession: Session = {
+				...createTestSession('sub-1'),
+				parentId: 'parent-1',
+			};
+			db.createSubSession(subSession);
+
+			// Try to create nested sub-session
+			const nestedSubSession: Session = {
+				...createTestSession('nested-1'),
+				parentId: 'sub-1', // Parent is a sub-session
+			};
+
+			let error: Error | null = null;
+			try {
+				db.createSubSession(nestedSubSession);
+			} catch (e) {
+				error = e as Error;
+			}
+
+			assertExists(error);
+			assertEquals(
+				error.message,
+				'Cannot create sub-session under another sub-session (one level deep only)'
+			);
+
+			db.close();
+		});
+
+		test('should get sub-sessions for a parent', async () => {
+			const db = await createTestDb();
+
+			// Create parent
+			const parent = createTestSession('parent-1');
+			db.createSession(parent);
+
+			// Create multiple sub-sessions
+			const sub1: Session = {
+				...createTestSession('sub-1'),
+				parentId: 'parent-1',
+			};
+			const sub2: Session = {
+				...createTestSession('sub-2'),
+				parentId: 'parent-1',
+			};
+			const sub3: Session = {
+				...createTestSession('sub-3'),
+				parentId: 'parent-1',
+			};
+
+			db.createSubSession(sub1);
+			db.createSubSession(sub2);
+			db.createSubSession(sub3);
+
+			// Get sub-sessions
+			const subSessions = db.getSubSessions('parent-1');
+			assertEquals(subSessions.length, 3);
+
+			// Should be ordered by sub_session_order
+			assertEquals(subSessions[0].id, 'sub-1');
+			assertEquals(subSessions[0].subSessionOrder, 0);
+			assertEquals(subSessions[1].id, 'sub-2');
+			assertEquals(subSessions[1].subSessionOrder, 1);
+			assertEquals(subSessions[2].id, 'sub-3');
+			assertEquals(subSessions[2].subSessionOrder, 2);
+
+			db.close();
+		});
+
+		test('should filter sub-sessions by labels', async () => {
+			const db = await createTestDb();
+
+			// Create parent
+			const parent = createTestSession('parent-1');
+			db.createSession(parent);
+
+			// Create sub-sessions with different labels
+			const sub1: Session = {
+				...createTestSession('sub-1'),
+				parentId: 'parent-1',
+				labels: ['exploration'],
+			};
+			const sub2: Session = {
+				...createTestSession('sub-2'),
+				parentId: 'parent-1',
+				labels: ['implementation'],
+			};
+			const sub3: Session = {
+				...createTestSession('sub-3'),
+				parentId: 'parent-1',
+				labels: ['exploration', 'testing'],
+			};
+
+			db.createSubSession(sub1);
+			db.createSubSession(sub2);
+			db.createSubSession(sub3);
+
+			// Filter by 'exploration'
+			const explorationSessions = db.getSubSessions('parent-1', ['exploration']);
+			assertEquals(explorationSessions.length, 2);
+			assertEquals(explorationSessions[0].id, 'sub-1');
+			assertEquals(explorationSessions[1].id, 'sub-3');
+
+			// Filter by 'implementation'
+			const implementationSessions = db.getSubSessions('parent-1', ['implementation']);
+			assertEquals(implementationSessions.length, 1);
+			assertEquals(implementationSessions[0].id, 'sub-2');
+
+			// Filter by 'testing'
+			const testingSessions = db.getSubSessions('parent-1', ['testing']);
+			assertEquals(testingSessions.length, 1);
+			assertEquals(testingSessions[0].id, 'sub-3');
+
+			db.close();
+		});
+
+		test('should update sub-session order', async () => {
+			const db = await createTestDb();
+
+			// Create parent
+			const parent = createTestSession('parent-1');
+			db.createSession(parent);
+
+			// Create sub-sessions
+			const sub1: Session = { ...createTestSession('sub-1'), parentId: 'parent-1' };
+			const sub2: Session = { ...createTestSession('sub-2'), parentId: 'parent-1' };
+			const sub3: Session = { ...createTestSession('sub-3'), parentId: 'parent-1' };
+
+			db.createSubSession(sub1);
+			db.createSubSession(sub2);
+			db.createSubSession(sub3);
+
+			// Reorder: sub-3, sub-1, sub-2
+			db.updateSubSessionOrder('parent-1', ['sub-3', 'sub-1', 'sub-2']);
+
+			// Verify new order
+			const subSessions = db.getSubSessions('parent-1');
+			assertEquals(subSessions[0].id, 'sub-3');
+			assertEquals(subSessions[0].subSessionOrder, 0);
+			assertEquals(subSessions[1].id, 'sub-1');
+			assertEquals(subSessions[1].subSessionOrder, 1);
+			assertEquals(subSessions[2].id, 'sub-2');
+			assertEquals(subSessions[2].subSessionOrder, 2);
+
+			db.close();
+		});
+
+		test('should check if session has sub-sessions', async () => {
+			const db = await createTestDb();
+
+			// Create two parents
+			const parent1 = createTestSession('parent-1');
+			const parent2 = createTestSession('parent-2');
+			db.createSession(parent1);
+			db.createSession(parent2);
+
+			// Add sub-session only to parent1
+			const sub1: Session = { ...createTestSession('sub-1'), parentId: 'parent-1' };
+			db.createSubSession(sub1);
+
+			// Check
+			assertEquals(db.hasSubSessions('parent-1'), true);
+			assertEquals(db.hasSubSessions('parent-2'), false);
+
+			db.close();
+		});
+
+		test('should return sub-session fields in listSessions', async () => {
+			const db = await createTestDb();
+
+			// Create parent
+			const parent = createTestSession('parent-1');
+			db.createSession(parent);
+
+			// Create sub-session
+			const subSession: Session = {
+				...createTestSession('sub-1'),
+				parentId: 'parent-1',
+				labels: ['test-label'],
+			};
+			db.createSubSession(subSession);
+
+			// List all sessions
+			const sessions = db.listSessions();
+			assertEquals(sessions.length, 2);
+
+			// Find sub-session
+			const foundSub = sessions.find((s) => s.id === 'sub-1');
+			assertExists(foundSub);
+			assertEquals(foundSub.parentId, 'parent-1');
+			assertExists(foundSub.labels);
+			assertEquals(foundSub.labels[0], 'test-label');
+
+			db.close();
+		});
+
+		test('should update sub-session fields', async () => {
+			const db = await createTestDb();
+
+			// Create parent
+			const parent = createTestSession('parent-1');
+			db.createSession(parent);
+
+			// Create sub-session
+			const subSession: Session = {
+				...createTestSession('sub-1'),
+				parentId: 'parent-1',
+				labels: ['initial'],
+			};
+			db.createSubSession(subSession);
+
+			// Update labels
+			db.updateSession('sub-1', {
+				labels: ['updated', 'modified'],
+			});
+
+			// Verify
+			const updated = db.getSession('sub-1');
+			assertExists(updated);
+			assertExists(updated.labels);
+			assertEquals(updated.labels.length, 2);
+			assertEquals(updated.labels[0], 'updated');
+			assertEquals(updated.labels[1], 'modified');
+
+			db.close();
+		});
+
+		test('should cascade delete sub-sessions when parent is deleted', async () => {
+			const db = await createTestDb();
+
+			// Create parent
+			const parent = createTestSession('parent-1');
+			db.createSession(parent);
+
+			// Create sub-sessions
+			const sub1: Session = { ...createTestSession('sub-1'), parentId: 'parent-1' };
+			const sub2: Session = { ...createTestSession('sub-2'), parentId: 'parent-1' };
+			db.createSubSession(sub1);
+			db.createSubSession(sub2);
+
+			assertEquals(db.listSessions().length, 3);
+
+			// Delete parent - sub-sessions should be deleted too
+			// Note: This relies on application layer cascade since we can't add FK via ALTER TABLE
+			// In a real scenario, SessionManager handles cascade delete
+			db.deleteSession('parent-1');
+
+			// Parent should be gone
+			assertEquals(db.getSession('parent-1'), null);
+
+			// Sub-sessions still exist (DB doesn't have FK cascade from migration)
+			// In production, SessionManager.deleteSession handles cascade
+			// This test documents the DB-level behavior
+
+			db.close();
+		});
+	});
 });

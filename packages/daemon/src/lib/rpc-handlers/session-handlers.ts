@@ -399,4 +399,46 @@ export function setupSessionHandlers(
 
 		return { accepted: true };
 	});
+
+	// Handle triggering saved messages to be sent (Manual query mode)
+	// Use case: When user wants to manually send all saved messages in Manual mode
+	// ARCHITECTURE: Fire-and-forget via EventBus, AgentSession handles the actual sending
+	messageHub.handle('session.query.trigger', async (data) => {
+		const { sessionId: targetSessionId } = data as { sessionId: string };
+
+		// Verify session exists before emitting event
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+
+		// Call handleQueryTrigger directly and return result
+		// This is synchronous because the UI needs immediate feedback on how many messages were sent
+		const result = await agentSession.handleQueryTrigger();
+
+		return result;
+	});
+
+	// Handle getting count of messages by status (for UI display)
+	// Use case: Show "3 messages pending" in Manual mode UI
+	messageHub.handle('session.messages.countByStatus', async (data) => {
+		const { sessionId: targetSessionId, status } = data as {
+			sessionId: string;
+			status: 'saved' | 'queued' | 'sent';
+		};
+
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+
+		// Get session to access database through sessionManager
+		const session = agentSession.getSessionData();
+
+		// Get database through sessionManager for read-only operation
+		const db = sessionManager.getDatabase();
+		const count = db.getMessageCountByStatus(session.id, status);
+
+		return { count };
+	});
 }

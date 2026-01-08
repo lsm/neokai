@@ -129,6 +129,23 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		needsWorkspaceInit: boolean;
 		hasDraftToClear: boolean;
 	};
+
+	// Query mode events
+	// Trigger to send saved messages (Manual mode)
+	'query.trigger': { sessionId: string };
+	// Notification when message statuses change
+	'messages.statusChanged': {
+		sessionId: string;
+		messageIds: string[];
+		status: 'saved' | 'queued' | 'sent';
+	};
+	// Send queued messages on turn end (Auto-queue mode)
+	'query.sendQueuedOnTurnEnd': { sessionId: string };
+
+	// Sub-session lifecycle events
+	'subSession.created': { sessionId: string; parentId: string; session: Session };
+	'subSession.deleted': { sessionId: string; parentId: string };
+	'subSession.reordered': { sessionId: string; parentId: string; orderedIds: string[] };
 }
 
 /**

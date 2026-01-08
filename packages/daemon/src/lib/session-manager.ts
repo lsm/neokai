@@ -4,6 +4,7 @@ import type {
 	MessageContent,
 	MessageImage,
 	MessageHub,
+	SubSessionConfig,
 } from '@liuboer/shared';
 import type { DaemonHub } from './daemon-hub';
 import { generateUUID } from '@liuboer/shared';
@@ -804,6 +805,178 @@ ${messageText.slice(0, 2000)}`,
 	}
 
 	/**
+	 * Create a sub-session under a parent session
+	 *
+	 * Sub-sessions:
+	 * - Are child sessions that belong to a parent
+	 * - Each has its own SDK instance (independent conversation)
+	 * - Can only be one level deep (no nested sub-sessions)
+	 * - Can inherit config from parent based on SubSessionConfig
+	 * - Are automatically deleted when parent is deleted (cascade)
+	 */
+	async createSubSession(params: {
+		parentId: string;
+		title?: string;
+		config?: Partial<Session['config']>;
+		subSessionConfig?: SubSessionConfig;
+	}): Promise<string> {
+		const { parentId, title, config: configOverrides, subSessionConfig } = params;
+
+		// Get parent session
+		const parent = this.db.getSession(parentId);
+		if (!parent) {
+			throw new Error(`Parent session ${parentId} not found`);
+		}
+
+		// Validate parent is not a sub-session (one level deep only)
+		if (parent.parentId) {
+			throw new Error('Cannot create sub-session under another sub-session (one level deep only)');
+		}
+
+		const sessionId = generateUUID();
+
+		// Determine inheritance options (default to true for model and permissionMode)
+		const inheritModel = subSessionConfig?.inheritModel ?? true;
+		const inheritPermissionMode = subSessionConfig?.inheritPermissionMode ?? true;
+		const inheritWorktree = subSessionConfig?.inheritWorktree ?? false;
+
+		// Build session config
+		// Start with defaults, apply parent inheritance, then apply overrides
+		const sessionConfig: Session['config'] = {
+			model: inheritModel ? parent.config.model : this.config.defaultModel,
+			maxTokens: configOverrides?.maxTokens ?? parent.config.maxTokens ?? this.config.maxTokens,
+			temperature:
+				configOverrides?.temperature ?? parent.config.temperature ?? this.config.temperature,
+			permissionMode: inheritPermissionMode
+				? parent.config.permissionMode
+				: configOverrides?.permissionMode,
+			tools: configOverrides?.tools ?? this.getDefaultToolsConfig(),
+			...configOverrides,
+		};
+
+		// Handle worktree
+		let worktreeMetadata: WorktreeMetadata | undefined;
+		let sessionWorkspacePath = parent.workspacePath;
+
+		if (!this.config.disableWorktrees && !inheritWorktree) {
+			// Create a new worktree for the sub-session
+			try {
+				const result = await this.worktreeManager.createWorktree({
+					sessionId,
+					repoPath: parent.worktree?.mainRepoPath ?? parent.workspacePath,
+					branchName: `session/${sessionId}`,
+					baseBranch: parent.worktree?.branch ?? 'HEAD',
+				});
+
+				if (result) {
+					worktreeMetadata = result;
+					sessionWorkspacePath = result.worktreePath;
+					this.logger.info(
+						`[SessionManager] Created worktree for sub-session at ${result.worktreePath}`
+					);
+				}
+			} catch (error) {
+				this.logger.error('[SessionManager] Failed to create worktree for sub-session:', error);
+				// Continue without worktree - fallback to parent workspace
+			}
+		} else if (inheritWorktree && parent.worktree) {
+			// Share parent's worktree
+			worktreeMetadata = parent.worktree;
+			sessionWorkspacePath = parent.worktree.worktreePath;
+		}
+
+		const session: Session = {
+			id: sessionId,
+			title: title || `Sub-session of ${parent.title}`,
+			workspacePath: sessionWorkspacePath,
+			createdAt: new Date().toISOString(),
+			lastActiveAt: new Date().toISOString(),
+			status: 'active',
+			config: sessionConfig,
+			metadata: {
+				messageCount: 0,
+				totalTokens: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				totalCost: 0,
+				toolCallCount: 0,
+				titleGenerated: !!title, // If title provided, skip auto-generation
+				workspaceInitialized: true,
+			},
+			worktree: worktreeMetadata,
+			gitBranch: worktreeMetadata?.branch,
+			// Sub-session specific fields
+			parentId,
+			labels: subSessionConfig?.labels,
+		};
+
+		// Save to database using createSubSession (validates and sets order)
+		this.db.createSubSession(session);
+
+		// Create agent session
+		const agentSession = new AgentSession(session, this.db, this.messageHub, this.eventBus, () =>
+			this.authManager.getCurrentApiKey()
+		);
+
+		this.sessions.set(sessionId, agentSession);
+
+		// Emit sub-session created event
+		await this.eventBus.emit('subSession.created', {
+			sessionId,
+			parentId,
+			session,
+		});
+
+		// Also emit regular session created event for state management
+		await this.eventBus.emit('session.created', { sessionId, session });
+
+		return sessionId;
+	}
+
+	/**
+	 * Delete a sub-session
+	 * Same as deleteSession, but also emits subSession.deleted event
+	 */
+	async deleteSubSession(sessionId: string): Promise<void> {
+		const session = this.db.getSession(sessionId);
+		if (!session) {
+			throw new Error(`Session ${sessionId} not found`);
+		}
+
+		if (!session.parentId) {
+			throw new Error(`Session ${sessionId} is not a sub-session`);
+		}
+
+		const parentId = session.parentId;
+
+		// Delete using standard delete logic
+		await this.deleteSession(sessionId);
+
+		// Emit sub-session specific event
+		await this.eventBus.emit('subSession.deleted', { sessionId, parentId });
+	}
+
+	/**
+	 * Get sub-sessions for a parent
+	 */
+	getSubSessions(parentId: string, labels?: string[]): Session[] {
+		return this.db.getSubSessions(parentId, labels);
+	}
+
+	/**
+	 * Reorder sub-sessions
+	 */
+	async reorderSubSessions(parentId: string, orderedIds: string[]): Promise<void> {
+		this.db.updateSubSessionOrder(parentId, orderedIds);
+
+		await this.eventBus.emit('subSession.reordered', {
+			sessionId: 'global', // Global event, not scoped to a session
+			parentId,
+			orderedIds,
+		});
+	}
+
+	/**
 	 * Cleanup all sessions (called during shutdown)
 	 */
 	async cleanup(): Promise<void> {
@@ -974,5 +1147,13 @@ ${messageText.slice(0, 2000)}`,
 			})),
 			{ type: 'text' as const, text: content },
 		];
+	}
+
+	/**
+	 * Get the database instance
+	 * Used by RPC handlers that need direct DB access for query mode operations
+	 */
+	getDatabase(): Database {
+		return this.db;
 	}
 }
