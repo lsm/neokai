@@ -25,9 +25,9 @@
 	"devDependencies": {
 		"@testing-library/preact": "^3.2.4",
 		"dotenv": "17.2.3",
-		"happy-dom": "^20.0.11",
-		"knip": "^5.77.1",
-		"oxlint": "1.35.0",
+		"happy-dom": "^20.1.0",
+		"knip": "^5.80.0",
+		"oxlint": "^1.38.0",
 		"prettier": "3.7.4",
 		"typescript": "5.9.3"
 	}
