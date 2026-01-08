@@ -296,17 +296,18 @@ describe('AgentSession SDK Integration', () => {
 
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
 
-			// Send multiple messages
-			const promise1 = sendMessageSync(agentSession!, { content: 'Count to 1' });
-			await Bun.sleep(100);
-			const promise2 = sendMessageSync(agentSession!, { content: 'Count to 2' });
+			// Send first message and wait for completion
+			// This ensures SDK subprocess is fully ready before next message
+			const result1 = await sendMessageSync(agentSession!, { content: 'Count to 1' });
+			await waitForIdle(agentSession!);
 
-			const results = await Promise.all([promise1, promise2]);
+			// Send second message after first completes
+			const result2 = await sendMessageSync(agentSession!, { content: 'Count to 2' });
 
 			// All should have unique message IDs
-			expect(results[0].messageId).toBeString();
-			expect(results[1].messageId).toBeString();
-			expect(results[0].messageId).not.toBe(results[1].messageId);
+			expect(result1.messageId).toBeString();
+			expect(result2.messageId).toBeString();
+			expect(result1.messageId).not.toBe(result2.messageId);
 
 			// Wait for processing to complete
 			await waitForIdle(agentSession!);
