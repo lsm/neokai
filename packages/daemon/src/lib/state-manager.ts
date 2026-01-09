@@ -572,8 +572,9 @@ export class StateManager {
 	 * FIX: Uses per-channel versioning
 	 */
 	async broadcastSessionStateChange(sessionId: string): Promise<void> {
+		const version = this.incrementVersion(`${STATE_CHANNELS.SESSION}:${sessionId}`);
+
 		try {
-			const version = this.incrementVersion(`${STATE_CHANNELS.SESSION}:${sessionId}`);
 			const state = { ...(await this.getSessionState(sessionId)), version };
 
 			await this.messageHub.publish(STATE_CHANNELS.SESSION, state, {
@@ -582,11 +583,39 @@ export class StateManager {
 		} catch (error) {
 			// Session may have been deleted or database may be closed during cleanup
 			// This is expected behavior, don't throw
-			if (process.env.TEST_VERBOSE) {
-				this.logger.warn(
-					`[StateManager] Failed to broadcast session state for ${sessionId}:`,
-					error instanceof Error ? error.message : error
-				);
+			// ALWAYS log to help diagnose state sync issues (e.g., button not updating after interrupt)
+			this.logger.warn(
+				`[StateManager] Failed to broadcast session state for ${sessionId}:`,
+				error instanceof Error ? error.message : error
+			);
+
+			// If we have cached processing state, try to broadcast a minimal state update
+			// This ensures UI state (like stop/send button) stays in sync even if full state fetch fails
+			const cachedProcessingState = this.processingStateCache.get(sessionId);
+			const cachedSession = this.sessionCache.get(sessionId);
+			if (cachedProcessingState && cachedSession) {
+				try {
+					const fallbackState = {
+						sessionInfo: cachedSession,
+						agentState: cachedProcessingState,
+						commandsData: { availableCommands: [] },
+						contextInfo: null,
+						error: null,
+						timestamp: Date.now(),
+						version,
+					};
+					await this.messageHub.publish(STATE_CHANNELS.SESSION, fallbackState, {
+						sessionId,
+					});
+					this.logger.log(
+						`[StateManager] Used fallback state for ${sessionId} (agentState: ${cachedProcessingState.status})`
+					);
+				} catch (fallbackError) {
+					this.logger.error(
+						`[StateManager] Fallback broadcast also failed for ${sessionId}:`,
+						fallbackError instanceof Error ? fallbackError.message : fallbackError
+					);
+				}
 			}
 		}
 	}
