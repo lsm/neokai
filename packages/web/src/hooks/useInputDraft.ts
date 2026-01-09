@@ -5,6 +5,16 @@
  * Handles loading drafts on session change, debounced saving,
  * and immediate clearing when content is empty.
  *
+ * IMPORTANT: Uses Preact Signals instead of useState to prevent lost keystrokes.
+ *
+ * Why signals? When server pushes state updates (e.g., agent working status),
+ * components that read .value in render re-render immediately. With useState,
+ * these re-renders can use stale content values (before React flushes pending
+ * state updates), causing typed characters to be lost. Signals are synchronous
+ * and always return the current value, eliminating this race condition.
+ *
+ * See: packages/web/src/components/__tests__/MessageInput.signal-state-race.test.tsx
+ *
  * @example
  * ```typescript
  * const { content, setContent } = useInputDraft(sessionId);
@@ -16,7 +26,8 @@
  * ```
  */
 
-import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
+import { useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
+import { useSignal, useSignalEffect } from '@preact/signals';
 import { connectionManager } from '../lib/connection-manager';
 
 export interface UseInputDraftResult {
@@ -31,11 +42,15 @@ export interface UseInputDraftResult {
 /**
  * Hook for managing message input draft persistence
  *
+ * Uses Preact Signals for content state to prevent race conditions
+ * between signal-triggered re-renders and React state updates.
+ *
  * @param sessionId - Current session ID
  * @param debounceMs - Debounce delay for saving (default: 250ms)
  */
 export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraftResult {
-	const [content, setContentState] = useState('');
+	// Use signal for content to prevent lost keystrokes during signal-triggered re-renders
+	const contentSignal = useSignal('');
 	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const prevSessionIdRef = useRef<string | null>(null);
 
@@ -43,12 +58,12 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 	useEffect(() => {
 		// Clear content immediately when sessionId changes
 		if (!sessionId) {
-			setContentState('');
+			contentSignal.value = '';
 			return;
 		}
 
 		// Clear content immediately to prevent showing stale draft
-		setContentState('');
+		contentSignal.value = '';
 
 		const loadDraft = async () => {
 			const hub = connectionManager.getHubIfConnected();
@@ -61,7 +76,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 				);
 				const draft = response.session?.metadata?.inputDraft;
 				if (draft) {
-					setContentState(draft);
+					contentSignal.value = draft;
 				}
 			} catch (error) {
 				console.error('Failed to load draft:', error);
@@ -69,10 +84,12 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 		};
 
 		loadDraft();
-	}, [sessionId]);
+	}, [sessionId, contentSignal]);
 
-	// Save draft with debouncing
-	useEffect(() => {
+	// Save draft with debouncing - uses useSignalEffect to react to signal changes
+	useSignalEffect(() => {
+		const content = contentSignal.value;
+
 		// Clear existing timeout
 		if (draftSaveTimeoutRef.current) {
 			clearTimeout(draftSaveTimeoutRef.current);
@@ -143,19 +160,31 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 				draftSaveTimeoutRef.current = null;
 			}
 		};
-	}, [content, sessionId, debounceMs]);
+	});
 
-	const setContent = useCallback((newContent: string) => {
-		setContentState(newContent);
-	}, []);
+	// Stable setter that updates the signal
+	const setContent = useCallback(
+		(newContent: string) => {
+			contentSignal.value = newContent;
+		},
+		[contentSignal]
+	);
 
+	// Stable clear function
 	const clear = useCallback(() => {
-		setContentState('');
-	}, []);
+		contentSignal.value = '';
+	}, [contentSignal]);
 
-	return {
-		content,
-		setContent,
-		clear,
-	};
+	// Return the current signal value as content
+	// useMemo ensures we return a consistent object reference when only content changes
+	return useMemo(
+		() => ({
+			get content() {
+				return contentSignal.value;
+			},
+			setContent,
+			clear,
+		}),
+		[contentSignal, setContent, clear]
+	);
 }
