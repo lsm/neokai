@@ -9,7 +9,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
-import { isAgentWorking } from '../lib/state.ts';
 import CommandAutocomplete from './CommandAutocomplete.tsx';
 
 export interface InputTextareaProps {
@@ -25,6 +24,8 @@ export interface InputTextareaProps {
 	selectedCommandIndex?: number;
 	onCommandSelect?: (command: string) => void;
 	onCommandClose?: () => void;
+	// Agent state - passed as prop to avoid direct signal reads that cause re-renders
+	isAgentWorking?: boolean;
 	// Interrupt
 	interrupting?: boolean;
 	onInterrupt?: () => void;
@@ -45,6 +46,7 @@ export function InputTextarea({
 	selectedCommandIndex = 0,
 	onCommandSelect,
 	onCommandClose,
+	isAgentWorking = false,
 	interrupting = false,
 	onInterrupt,
 }: InputTextareaProps) {
@@ -81,7 +83,6 @@ export function InputTextarea({
 	const charCount = content.length;
 	const showCharCount = charCount > maxChars * 0.8;
 	const hasContent = content.trim().length > 0;
-	const agentWorking = isAgentWorking.value;
 
 	return (
 		<div class="relative flex-1">
@@ -137,7 +138,7 @@ export function InputTextarea({
 				)}
 
 				{/* Send/Stop Button */}
-				{agentWorking ? (
+				{isAgentWorking ? (
 					<button
 						type="button"
 						onClick={onInterrupt}
@@ -166,7 +167,7 @@ export function InputTextarea({
 					<button
 						type="button"
 						onClick={onSubmit}
-						disabled={isAgentWorking.value || !hasContent}
+						disabled={isAgentWorking || !hasContent}
 						title={isMobileDevice.current ? 'Send message' : 'Send message (Enter or Cmd+Enter)'}
 						aria-label="Send message"
 						data-testid="send-button"

@@ -278,6 +278,7 @@ export default function MessageInput({
 							selectedCommandIndex={commandAutocomplete.selectedIndex}
 							onCommandSelect={commandAutocomplete.handleSelect}
 							onCommandClose={commandAutocomplete.close}
+							isAgentWorking={isAgentWorking.value}
 							interrupting={interrupting}
 							onInterrupt={handleInterrupt}
 						/>
