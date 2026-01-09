@@ -376,28 +376,30 @@ export function setupSessionHandlers(
 	// Handle resetting the SDK agent query
 	// This forcefully terminates and restarts the SDK query stream
 	// Use case: Recovering from stuck "queued" state or unresponsive SDK
-	// ARCHITECTURE: Fire-and-forget via EventBus, AgentSession subscribes
 	messageHub.handle('session.resetQuery', async (data) => {
 		const { sessionId: targetSessionId, restartQuery = true } = data as {
 			sessionId: string;
 			restartQuery?: boolean;
 		};
 
-		// Verify session exists before emitting event
+		// Verify session exists
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
 		if (!agentSession) {
 			throw new Error('Session not found');
 		}
 
-		// Fire-and-forget: emit event, AgentSession handles it
-		// Reset result is broadcast via 'agent.reset' event → StateManager → clients
-		daemonHub
-			.emit('agent.resetRequest', { sessionId: targetSessionId, restartQuery })
-			.catch((err) => {
-				console.error('[session.resetQuery] Error emitting reset event:', err);
-			});
+		// Call resetQuery directly and return the result
+		// This allows the client to get immediate feedback on success/failure
+		const result = await agentSession.resetQuery({ restartQuery });
 
-		return { accepted: true };
+		// Also emit event for StateManager to update clients
+		await daemonHub.emit('agent.reset', {
+			sessionId: targetSessionId,
+			success: result.success,
+			error: result.error,
+		});
+
+		return result;
 	});
 
 	// Handle triggering saved messages to be sent (Manual query mode)

@@ -29,6 +29,7 @@ import { QueryLifecycleManager } from './query-lifecycle-manager';
 import { ModelSwitchHandler } from './model-switch-handler';
 import { AskUserQuestionHandler } from './ask-user-question-handler';
 import { getBuiltInCommandNames } from '../built-in-commands';
+import { validateAndRepairSDKSession } from '../sdk-session-file-manager';
 
 /**
  * SDK query object with control methods
@@ -501,6 +502,19 @@ export class AgentSession {
 	private async ensureQueryStarted(): Promise<void> {
 		if (this.messageQueue.isRunning() || this.queryPromise) {
 			return; // Already started
+		}
+
+		// Validate and auto-repair SDK session file before resuming
+		// This fixes orphaned tool_result blocks caused by SDK context compaction
+		if (this.session.sdkSessionId) {
+			validateAndRepairSDKSession(
+				this.session.workspacePath,
+				this.session.sdkSessionId,
+				this.session.id,
+				this.db
+			);
+			// Note: We proceed even if repair fails - the SDK will report the error
+			// and the user can manually fix or start a new session
 		}
 
 		this.logger.log(`Lazy-starting streaming query...`);

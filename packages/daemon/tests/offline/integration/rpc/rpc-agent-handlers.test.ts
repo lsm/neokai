@@ -144,14 +144,13 @@ describe('Agent RPC Handlers', () => {
 			const response = await responsePromise;
 
 			expect(response.type).toBe('RESULT');
-			// EventBus-centric: RPC returns accepted, result via agent:reset event
-			expect(response.data.accepted).toBe(true);
+			// RPC returns success/failure directly
+			expect(response.data.success).toBe(true);
 
 			ws.close();
 		});
 
 		test('should accept reset request without restarting query when restartQuery=false', async () => {
-			// EventBus-centric: RPC accepts request, reset happens async via EventBus
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: '/test/reset-no-restart',
 			});
@@ -177,14 +176,13 @@ describe('Agent RPC Handlers', () => {
 			const response = await responsePromise;
 
 			expect(response.type).toBe('RESULT');
-			// EventBus-centric: RPC returns accepted
-			expect(response.data.accepted).toBe(true);
+			// RPC returns success/failure directly
+			expect(response.data.success).toBe(true);
 
 			ws.close();
 		});
 
 		test('should reset agent state to idle after reset', async () => {
-			// EventBus-centric: Wait for reset to complete before checking state
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: '/test/reset-state',
 			});
@@ -210,11 +208,8 @@ describe('Agent RPC Handlers', () => {
 
 			const resetResponse = await resetPromise;
 			expect(resetResponse.type).toBe('RESULT');
-			// EventBus-centric: RPC returns accepted
-			expect(resetResponse.data.accepted).toBe(true);
-
-			// Wait a bit for async reset to complete
-			await Bun.sleep(100);
+			// RPC returns success/failure directly
+			expect(resetResponse.data.success).toBe(true);
 
 			// Verify state is idle
 			const statePromise = waitForWebSocketMessage(ws);
