@@ -89,7 +89,7 @@ export class ContextFetcher {
 
 		const markdown = match[1];
 
-		// Parse model and tokens
+		// Parse model and capacity from tokens line
 		// Example: **Model:** claude-sonnet-4-5-20250929
 		// Example: **Tokens:** 62.5k / 200.0k (31%)
 		const modelMatch = markdown.match(/\*\*Model:\*\*\s*(\S+)/);
@@ -100,12 +100,19 @@ export class ContextFetcher {
 		}
 
 		const model = modelMatch?.[1] || 'unknown';
-		const totalUsed = parseFloat(tokensMatch[1]) * 1000;
 		const totalCapacity = parseFloat(tokensMatch[2]) * 1000;
-		const percentUsed = parseInt(tokensMatch[3]);
 
 		// Parse category breakdown table
 		const breakdown = this.parseCategoryTable(markdown);
+
+		// Recalculate totalUsed from breakdown to be consistent with displayed categories
+		// SDK's reported totalUsed excludes Autocompact buffer, but we want to include it
+		// Sum all categories except "Free space"
+		const totalUsed = Object.entries(breakdown)
+			.filter(([category]) => !category.toLowerCase().includes('free space'))
+			.reduce((sum, [, data]) => sum + data.tokens, 0);
+
+		const percentUsed = Math.round((totalUsed / totalCapacity) * 100);
 
 		// Parse SlashCommand tool info (optional)
 		const slashCommandTool = this.parseSlashCommandInfo(markdown);

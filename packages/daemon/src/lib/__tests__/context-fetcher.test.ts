@@ -47,7 +47,7 @@ describe('ContextFetcher', () => {
 	});
 
 	describe('parseContextResponse', () => {
-		it('should parse valid context response', () => {
+		it('should parse valid context response and calculate totalUsed from breakdown', () => {
 			const message = {
 				type: 'user',
 				isReplay: true,
@@ -80,8 +80,12 @@ describe('ContextFetcher', () => {
 
 			expect(result).not.toBeNull();
 			expect(result?.model).toBe('claude-sonnet-4-5-20250929');
-			expect(result?.totalUsed).toBe(62500);
+
+			// totalUsed is now calculated from breakdown (sum of all non-free-space categories)
+			// 3200 + 14300 + 25 + 45000 = 62525
+			expect(result?.totalUsed).toBe(62525);
 			expect(result?.totalCapacity).toBe(200000);
+			// percentUsed = Math.round(62525 / 200000 * 100) = 31%
 			expect(result?.percentUsed).toBe(31);
 
 			// Check breakdown
@@ -139,17 +143,22 @@ describe('ContextFetcher', () => {
 			const result = fetcher.parseContextResponse(message as never);
 
 			expect(result).not.toBeNull();
+			// totalUsed = 3000 (only System prompt, excludes Free space)
+			expect(result?.totalUsed).toBe(3000);
+			// percentUsed = Math.round(3000 / 200000 * 100) = 2%
+			expect(result?.percentUsed).toBe(2);
 			expect(result?.slashCommandTool).toBeUndefined();
 		});
 	});
 
 	describe('mergeWithStreamContext', () => {
 		it('should merge parsed context with stream context', () => {
+			// totalUsed is sum of all non-free-space categories: 3200 + 25 = 3225
 			const parsedContext = {
 				model: 'claude-sonnet-4-5-20250929',
-				totalUsed: 62500,
+				totalUsed: 3225,
 				totalCapacity: 200000,
-				percentUsed: 31,
+				percentUsed: 2,
 				breakdown: {
 					'System prompt': { tokens: 3200, percent: 1.6 },
 					Messages: { tokens: 25, percent: 0.0 },
@@ -175,8 +184,8 @@ describe('ContextFetcher', () => {
 
 			const merged = fetcher.mergeWithStreamContext(parsedContext, streamContext);
 
-			// Should use parsed context numbers (more detailed)
-			expect(merged.totalUsed).toBe(62500);
+			// Should use parsed context numbers (calculated from breakdown)
+			expect(merged.totalUsed).toBe(3225);
 			expect(merged.breakdown).toEqual(parsedContext.breakdown);
 
 			// Should keep API usage from stream
@@ -188,11 +197,12 @@ describe('ContextFetcher', () => {
 		});
 
 		it('should work with null stream context', () => {
+			// totalUsed is sum of non-free-space categories: 3200
 			const parsedContext = {
 				model: 'claude-sonnet-4-5-20250929',
-				totalUsed: 62500,
+				totalUsed: 3200,
 				totalCapacity: 200000,
-				percentUsed: 31,
+				percentUsed: 2,
 				breakdown: {
 					'System prompt': { tokens: 3200, percent: 1.6 },
 				},
@@ -200,7 +210,7 @@ describe('ContextFetcher', () => {
 
 			const merged = fetcher.mergeWithStreamContext(parsedContext, null);
 
-			expect(merged.totalUsed).toBe(62500);
+			expect(merged.totalUsed).toBe(3200);
 			expect(merged.apiUsage).toBeUndefined();
 			expect(merged.source).toBe('merged');
 		});
