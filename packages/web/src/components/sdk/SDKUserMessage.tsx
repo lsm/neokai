@@ -15,6 +15,7 @@ import { SessionIndicator } from './SessionIndicator.tsx';
 import { messageSpacing, messageColors, borderRadius } from '../../lib/design-tokens.ts';
 import { SlashCommandOutput, isHiddenCommandOutput } from './SlashCommandOutput.tsx';
 import { SyntheticMessageBlock } from './SyntheticMessageBlock.tsx';
+import { ErrorOutput, hasErrorOutput } from './ErrorOutput.tsx';
 
 type UserMessage = Extract<SDKMessage, { type: 'user' }>;
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
@@ -123,6 +124,12 @@ export function SDKUserMessage({
 		return /<local-command-stdout>[\s\S]*?<\/local-command-stdout>/.test(textContent);
 	};
 
+	// Check if this contains an error output (has <local-command-stderr> tags)
+	// This can happen in both replay and synthetic messages (SDK injects errors as user messages)
+	const containsErrorOutput = (): boolean => {
+		return hasErrorOutput(textContent);
+	};
+
 	const handleCopy = async () => {
 		const success = await copyToClipboard(textContent);
 		if (success) {
@@ -159,6 +166,16 @@ export function SDKUserMessage({
 		return (
 			<div class={cn(messageSpacing.assistant.container.combined)}>
 				<SlashCommandOutput content={textContent} />
+			</div>
+		);
+	}
+
+	// If this contains error output (<local-command-stderr>), render as error message
+	// This takes priority over generic synthetic message rendering
+	if (containsErrorOutput()) {
+		return (
+			<div class={cn(messageSpacing.assistant.container.combined)}>
+				<ErrorOutput content={textContent} />
 			</div>
 		);
 	}

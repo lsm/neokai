@@ -336,8 +336,12 @@ export class SDKMessageHandler {
 		}
 
 		// Mark successful API interaction - resets circuit breaker error tracking
-		// This indicates the API is responding normally
-		this.circuitBreaker.markSuccess();
+		// Only reset when actual tokens were consumed (indicating a real API call)
+		// Zero-token results happen when SDK processes synthetic error messages without
+		// making an API call - these should NOT reset the circuit breaker
+		if (usage.input_tokens > 0 || usage.output_tokens > 0) {
+			this.circuitBreaker.markSuccess();
+		}
 
 		// Clear any session errors since we successfully completed a turn
 		// This resolves persistent error banners that weren't being cleared

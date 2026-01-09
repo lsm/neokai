@@ -372,6 +372,98 @@ describe('SDKMessageHandler', () => {
 	// Stream event tests removed - the SDK's query() with AsyncGenerator yields
 	// complete messages, not incremental stream_event tokens
 
+	describe('circuit breaker integration', () => {
+		it('should call markSuccess when result has actual tokens', async () => {
+			const markSuccessSpy = mock(() => {});
+			// Access the circuit breaker directly via the handler
+			(
+				handler as unknown as { circuitBreaker: { markSuccess: () => void } }
+			).circuitBreaker.markSuccess = markSuccessSpy;
+
+			const resultMessage = {
+				type: 'result',
+				subtype: 'success',
+				success: true,
+				usage: {
+					input_tokens: 10000,
+					output_tokens: 500,
+				},
+				total_cost_usd: 0.05,
+				is_error: false,
+				num_turns: 1,
+				result: 'success',
+				duration_ms: 5000,
+				duration_api_ms: 4500,
+				session_id: testSessionId,
+			};
+
+			await handler.handleMessage(resultMessage);
+
+			expect(markSuccessSpy).toHaveBeenCalled();
+		});
+
+		it('should NOT call markSuccess when result has zero tokens', async () => {
+			const markSuccessSpy = mock(() => {});
+			// Access the circuit breaker directly via the handler
+			(
+				handler as unknown as { circuitBreaker: { markSuccess: () => void } }
+			).circuitBreaker.markSuccess = markSuccessSpy;
+
+			// This simulates the dead loop scenario: SDK processes synthetic error message
+			// and "completes" with 0 tokens without making an actual API call
+			const resultMessage = {
+				type: 'result',
+				subtype: 'success',
+				success: true,
+				usage: {
+					input_tokens: 0,
+					output_tokens: 0,
+				},
+				total_cost_usd: 0,
+				is_error: false,
+				num_turns: 52,
+				result: 'success',
+				duration_ms: 10,
+				duration_api_ms: 0, // No API call
+				session_id: testSessionId,
+			};
+
+			await handler.handleMessage(resultMessage);
+
+			// markSuccess should NOT be called - this prevents the dead loop
+			// where circuit breaker error count is reset on fake "success" results
+			expect(markSuccessSpy).not.toHaveBeenCalled();
+		});
+
+		it('should call markSuccess when only input tokens are present', async () => {
+			const markSuccessSpy = mock(() => {});
+			(
+				handler as unknown as { circuitBreaker: { markSuccess: () => void } }
+			).circuitBreaker.markSuccess = markSuccessSpy;
+
+			const resultMessage = {
+				type: 'result',
+				subtype: 'success',
+				success: true,
+				usage: {
+					input_tokens: 5000,
+					output_tokens: 0, // Some edge case with input-only
+				},
+				total_cost_usd: 0.02,
+				is_error: false,
+				num_turns: 1,
+				result: 'success',
+				duration_ms: 1000,
+				duration_api_ms: 800,
+				session_id: testSessionId,
+			};
+
+			await handler.handleMessage(resultMessage);
+
+			expect(markSuccessSpy).toHaveBeenCalled();
+		});
+	});
+
 	describe('phase detection integration', () => {
 		it('should detect phase from all messages', async () => {
 			const detectPhaseSpy = mockStateManager.detectPhaseFromMessage as ReturnType<typeof mock>;
