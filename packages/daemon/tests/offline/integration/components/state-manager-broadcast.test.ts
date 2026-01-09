@@ -285,4 +285,46 @@ describe('StateManager Broadcast Methods', () => {
 			ctx.stateManager.broadcastSessionStateChange('non-existent-session')
 		).resolves.toBeUndefined();
 	});
+
+	test('broadcastSessionStateChange should broadcast correct agentState after state changes', async () => {
+		// This test verifies that the broadcast correctly reflects agent state changes
+		// The fallback mechanism (for race conditions) is an internal safeguard
+		const sessionId = await ctx.sessionManager.createSession({
+			workspacePath: '/test/agentstate-test',
+		});
+
+		const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+		await waitForWebSocketState(ws, WebSocket.OPEN);
+		await firstMessagePromise;
+
+		// Subscribe to session state
+		const subPromise = waitForWebSocketMessage(ws);
+		ws.send(
+			JSON.stringify({
+				id: 'sub-agentstate',
+				type: 'SUBSCRIBE',
+				method: STATE_CHANNELS.SESSION,
+				sessionId,
+				timestamp: new Date().toISOString(),
+				version: '1.0.0',
+			})
+		);
+		await subPromise;
+
+		// Set up event listener
+		const eventPromise = waitForWebSocketMessage(ws, 2000);
+
+		// Trigger broadcast - should include agentState with idle status
+		await ctx.stateManager.broadcastSessionStateChange(sessionId);
+
+		const event = await eventPromise;
+
+		expect(event.type).toBe('EVENT');
+		expect(event.method).toBe(STATE_CHANNELS.SESSION);
+		expect(event.data.agentState).toBeDefined();
+		// New sessions should have idle status
+		expect(event.data.agentState.status).toBe('idle');
+
+		ws.close();
+	});
 });
