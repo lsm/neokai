@@ -32,6 +32,7 @@ export interface TestContext {
 	stateManager: StateManager;
 	subscriptionManager: SubscriptionManager;
 	authManager: AuthManager;
+	eventBus: Awaited<ReturnType<typeof import('../src/lib/daemon-hub').createDaemonHub>>;
 	baseUrl: string;
 	workspacePath: string;
 	config: Config;
@@ -335,6 +336,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 		stateManager,
 		subscriptionManager,
 		authManager,
+		eventBus,
 		baseUrl,
 		workspacePath: config.workspaceRoot,
 		config,

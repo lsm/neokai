@@ -116,13 +116,16 @@ export class StateManager {
 			const { sessionId, session, processingState } = data;
 
 			// Update caches from event data (decoupled - no fetching)
+			// FIX: Only merge into existing cache entries, don't create new entries from partial data
+			// This prevents sidebar cost display from resetting to $0.00 when clicking sessions.
+			// Initial full session data comes from getSessionsState() which reads from DB.
 			if (session) {
 				const existing = this.sessionCache.get(sessionId);
 				if (existing) {
 					this.sessionCache.set(sessionId, { ...existing, ...session });
-				} else {
-					this.sessionCache.set(sessionId, session as Session);
 				}
+				// Skip storing partial session data if no existing entry - broadcastSessionUpdateFromCache
+				// will handle this case by skipping the broadcast
 			}
 			if (processingState) {
 				this.processingStateCache.set(sessionId, processingState);
