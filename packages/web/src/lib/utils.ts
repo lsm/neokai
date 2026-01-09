@@ -9,11 +9,48 @@ export function cn(...inputs: ClassValue[]) {
 
 /**
  * Copy text to clipboard
+ *
+ * Uses modern Clipboard API when available (requires secure context: HTTPS or localhost).
+ * Falls back to legacy execCommand('copy') for insecure contexts (e.g., HTTP on LAN IP).
  */
 export async function copyToClipboard(text: string): Promise<boolean> {
+	// Try modern Clipboard API first (requires secure context)
+	if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+		try {
+			await navigator.clipboard.writeText(text);
+			return true;
+		} catch (err) {
+			console.warn('Clipboard API failed, trying fallback:', err);
+			// Fall through to legacy method
+		}
+	}
+
+	// Fallback: legacy execCommand('copy') for insecure contexts
 	try {
-		await navigator.clipboard.writeText(text);
-		return true;
+		const textarea = document.createElement('textarea');
+		textarea.value = text;
+		// Avoid scrolling to bottom
+		textarea.style.position = 'fixed';
+		textarea.style.top = '0';
+		textarea.style.left = '0';
+		textarea.style.width = '2em';
+		textarea.style.height = '2em';
+		textarea.style.padding = '0';
+		textarea.style.border = 'none';
+		textarea.style.outline = 'none';
+		textarea.style.boxShadow = 'none';
+		textarea.style.background = 'transparent';
+		document.body.appendChild(textarea);
+		textarea.focus();
+		textarea.select();
+
+		const successful = document.execCommand('copy');
+		document.body.removeChild(textarea);
+
+		if (!successful) {
+			console.error('execCommand copy failed');
+		}
+		return successful;
 	} catch (err) {
 		console.error('Failed to copy to clipboard:', err);
 		return false;
