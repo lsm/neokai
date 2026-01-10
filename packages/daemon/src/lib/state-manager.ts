@@ -232,18 +232,23 @@ export class StateManager {
 		try {
 			// Get cached session data
 			const session = this.sessionCache.get(sessionId);
-			if (!session) {
-				this.logger.warn(`No cached session for ${sessionId}, skipping broadcast`);
-				return;
-			}
 
 			// Get cached processing state (default to idle if not cached)
 			const processingState = this.processingStateCache.get(sessionId) || {
 				status: 'idle' as const,
 			};
 
-			// Broadcast unified session state (for current session subscribers)
+			// CRITICAL: Always broadcast session state change, even if session is not cached
+			// This ensures agent state (stop/send button) is always in sync with server
+			// broadcastSessionStateChange has a fallback mechanism using cached processing state
 			await this.broadcastSessionStateChange(sessionId);
+
+			// Skip sessions delta update if session is not cached
+			// (we need session data for sidebar updates)
+			if (!session) {
+				this.logger.log(`Session ${sessionId} not in cache, skipped sessions delta broadcast`);
+				return;
+			}
 
 			// Also update global sessions list delta (for sidebar)
 			// Check if session should be filtered out based on current settings
