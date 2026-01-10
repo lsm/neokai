@@ -16,7 +16,7 @@
  * - disabledMcpServers array maps to disabledMcpjsonServers in the file
  */
 
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from '../fixtures';
 import { readFileSync, existsSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import {

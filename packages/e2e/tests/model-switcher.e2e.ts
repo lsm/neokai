@@ -5,7 +5,7 @@
  * Tests user interactions, model switching flow, and visual feedback.
  */
 
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from '../fixtures';
 import {
 	waitForSessionCreated,
 	waitForWebSocketConnected,

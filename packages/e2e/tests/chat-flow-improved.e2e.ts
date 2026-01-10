@@ -5,7 +5,7 @@
  * for more reliable and faster test execution.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import {
 	// waitForWebSocketConnected,
 	waitForSessionCreated,

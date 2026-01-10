@@ -9,8 +9,8 @@
  * - Authentication failures
  */
 
-import { test, expect } from '@playwright/test';
-import type { Page } from '@playwright/test';
+import { test, expect } from '../fixtures';
+import type { Page } from '../fixtures';
 import {
 	setupMessageHubTesting,
 	waitForSessionCreated,

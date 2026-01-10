@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { cleanupTestSession, waitForSessionCreated } from './helpers/wait-helpers';
 import * as path from 'path';
 import * as fs from 'fs';

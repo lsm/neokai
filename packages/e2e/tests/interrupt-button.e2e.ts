@@ -9,7 +9,7 @@
  * - Button transitions between send/stop states
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import {
 	setupMessageHubTesting,
 	waitForSessionCreated,

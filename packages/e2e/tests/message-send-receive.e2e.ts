@@ -5,7 +5,7 @@
  * Tests the complete flow from user input → server processing → UI updates.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import {
 	// waitForWebSocketConnected,
 	waitForSessionCreated,

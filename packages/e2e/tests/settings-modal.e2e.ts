@@ -14,7 +14,7 @@
  * IMPORTANT: Tests actual UI behavior - does not bypass via RPC
  */
 
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from '../fixtures';
 import { waitForWebSocketConnected } from './helpers/wait-helpers';
 
 /**
