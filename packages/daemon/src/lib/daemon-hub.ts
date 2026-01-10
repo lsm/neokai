@@ -141,11 +141,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	};
 	// Send queued messages on turn end (Auto-queue mode)
 	'query.sendQueuedOnTurnEnd': { sessionId: string };
-
-	// Sub-session lifecycle events
-	'subSession.created': { sessionId: string; parentId: string; session: Session };
-	'subSession.deleted': { sessionId: string; parentId: string };
-	'subSession.reordered': { sessionId: string; parentId: string; orderedIds: string[] };
 }
 
 /**

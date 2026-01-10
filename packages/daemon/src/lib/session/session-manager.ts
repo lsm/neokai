@@ -4,7 +4,6 @@
  * Main entry point for session operations. Orchestrates:
  * - SessionCache: In-memory session storage
  * - SessionLifecycle: CRUD operations and title generation
- * - SubSessionManager: Sub-session operations
  * - ToolsConfigManager: Global tools configuration
  * - MessagePersistence: User message handling
  *
@@ -29,7 +28,6 @@ import {
 	type SessionLifecycleConfig,
 	type CreateSessionParams,
 } from './session-lifecycle';
-import { SubSessionManager, type CreateSubSessionParams } from './sub-session-manager';
 import { ToolsConfigManager } from './tools-config';
 import { MessagePersistence } from './message-persistence';
 
@@ -45,7 +43,6 @@ export class SessionManager {
 	// Extracted modules
 	private sessionCache: SessionCache;
 	private sessionLifecycle: SessionLifecycle;
-	private subSessionManager: SubSessionManager;
 	private toolsConfigManager: ToolsConfigManager;
 	private messagePersistence: MessagePersistence;
 
@@ -82,18 +79,6 @@ export class SessionManager {
 			this.sessionCache,
 			eventBus,
 			messageHub,
-			config,
-			this.toolsConfigManager,
-			createAgentSession
-		);
-
-		// Initialize sub-session manager
-		this.subSessionManager = new SubSessionManager(
-			db,
-			this.sessionCache,
-			this.worktreeManager,
-			eventBus,
-			this.sessionLifecycle,
 			config,
 			this.toolsConfigManager,
 			createAgentSession
@@ -272,36 +257,6 @@ export class SessionManager {
 	 */
 	saveGlobalToolsConfig(config: ReturnType<typeof this.toolsConfigManager.getGlobal>) {
 		this.toolsConfigManager.saveGlobal(config);
-	}
-
-	// ==================== Sub-Session Operations ====================
-
-	/**
-	 * Create a sub-session under a parent session
-	 */
-	async createSubSession(params: CreateSubSessionParams): Promise<string> {
-		return this.subSessionManager.create(params);
-	}
-
-	/**
-	 * Delete a sub-session
-	 */
-	async deleteSubSession(sessionId: string): Promise<void> {
-		return this.subSessionManager.delete(sessionId);
-	}
-
-	/**
-	 * Get sub-sessions for a parent
-	 */
-	getSubSessions(parentId: string, labels?: string[]): Session[] {
-		return this.subSessionManager.list(parentId, labels);
-	}
-
-	/**
-	 * Reorder sub-sessions
-	 */
-	async reorderSubSessions(parentId: string, orderedIds: string[]): Promise<void> {
-		return this.subSessionManager.reorder(parentId, orderedIds);
 	}
 
 	// ==================== Cleanup ====================

@@ -12,14 +12,12 @@ import { DatabaseCore } from './database-core';
 import { SessionRepository } from './repositories/session-repository';
 import { SDKMessageRepository, type SendStatus } from './repositories/sdk-message-repository';
 import { SettingsRepository } from './repositories/settings-repository';
-import { SubSessionRepository } from './repositories/sub-session-repository';
 
 // Re-export components for direct access if needed
 export { DatabaseCore } from './database-core';
 export { SessionRepository } from './repositories/session-repository';
 export { SDKMessageRepository, type SendStatus } from './repositories/sdk-message-repository';
 export { SettingsRepository } from './repositories/settings-repository';
-export { SubSessionRepository } from './repositories/sub-session-repository';
 export type { SQLiteValue } from './types';
 
 /**
@@ -33,7 +31,6 @@ export class Database {
 	private sessionRepo!: SessionRepository;
 	private sdkMessageRepo!: SDKMessageRepository;
 	private settingsRepo!: SettingsRepository;
-	private subSessionRepo!: SubSessionRepository;
 
 	constructor(dbPath: string) {
 		this.core = new DatabaseCore(dbPath);
@@ -47,7 +44,6 @@ export class Database {
 		this.sessionRepo = new SessionRepository(db);
 		this.sdkMessageRepo = new SDKMessageRepository(db);
 		this.settingsRepo = new SettingsRepository(db);
-		this.subSessionRepo = new SubSessionRepository(db);
 	}
 
 	// ============================================================================
@@ -141,26 +137,6 @@ export class Database {
 
 	updateGlobalSettings(updates: Partial<GlobalSettings>): GlobalSettings {
 		return this.settingsRepo.updateGlobalSettings(updates);
-	}
-
-	// ============================================================================
-	// Sub-Session operations (delegated to SubSessionRepository)
-	// ============================================================================
-
-	getSubSessions(parentId: string, labels?: string[]): Session[] {
-		return this.subSessionRepo.getSubSessions(parentId, labels);
-	}
-
-	createSubSession(session: Session): void {
-		this.subSessionRepo.createSubSession(session);
-	}
-
-	updateSubSessionOrder(parentId: string, orderedIds: string[]): void {
-		this.subSessionRepo.updateSubSessionOrder(parentId, orderedIds);
-	}
-
-	hasSubSessions(sessionId: string): boolean {
-		return this.subSessionRepo.hasSubSessions(sessionId);
 	}
 
 	// ============================================================================

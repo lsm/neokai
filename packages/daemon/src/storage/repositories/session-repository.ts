@@ -19,8 +19,8 @@ export class SessionRepository {
 	 */
 	createSession(session: Session): void {
 		const stmt = this.db.prepare(
-			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state, archived_at, parent_id, labels, sub_session_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state, archived_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 		stmt.run(
 			session.id,
@@ -39,10 +39,7 @@ export class SessionRepository {
 			session.sdkSessionId ?? null,
 			session.availableCommands ? JSON.stringify(session.availableCommands) : null,
 			session.processingState ?? null,
-			session.archivedAt ?? null,
-			session.parentId ?? null,
-			session.labels ? JSON.stringify(session.labels) : null,
-			session.subSessionOrder ?? 0
+			session.archivedAt ?? null
 		);
 	}
 
@@ -158,19 +155,6 @@ export class SessionRepository {
 				);
 			}
 		}
-		// Handle sub-session fields
-		if (updates.parentId !== undefined) {
-			fields.push('parent_id = ?');
-			values.push(updates.parentId ?? null);
-		}
-		if (updates.labels !== undefined) {
-			fields.push('labels = ?');
-			values.push(updates.labels ? JSON.stringify(updates.labels) : null);
-		}
-		if (updates.subSessionOrder !== undefined) {
-			fields.push('sub_session_order = ?');
-			values.push(updates.subSessionOrder ?? 0);
-		}
 
 		if (fields.length > 0) {
 			values.push(id);
@@ -207,11 +191,6 @@ export class SessionRepository {
 				? (JSON.parse(row.available_commands) as string[])
 				: undefined;
 
-		const labels =
-			row.labels && typeof row.labels === 'string'
-				? (JSON.parse(row.labels) as string[])
-				: undefined;
-
 		return {
 			id: row.id as string,
 			title: row.title as string,
@@ -227,9 +206,6 @@ export class SessionRepository {
 			availableCommands,
 			processingState: (row.processing_state as string | null) ?? undefined,
 			archivedAt: (row.archived_at as string | null) ?? undefined,
-			parentId: (row.parent_id as string | null) ?? undefined,
-			labels,
-			subSessionOrder: (row.sub_session_order as number | null) ?? undefined,
 		};
 	}
 }

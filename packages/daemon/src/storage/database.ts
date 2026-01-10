@@ -19,6 +19,5 @@ export {
 	SessionRepository,
 	SDKMessageRepository,
 	SettingsRepository,
-	SubSessionRepository,
 	type SendStatus,
 } from './index';
