@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 
 test.describe('Home Page', () => {
 	test('should display the welcome screen when no session is selected', async ({ page }) => {

@@ -1,4 +1,49 @@
 import { defineConfig, devices } from '@playwright/test';
+import type { CoverageReportOptions } from 'monocart-reporter';
+
+/**
+ * Monocart Coverage Reporter Configuration
+ * See https://github.com/nicolo-ribaudo/monocart-reporter
+ *
+ * Coverage collection for frontend code (V8 coverage from browser)
+ */
+const coverageOptions: CoverageReportOptions = {
+	// Output directory for coverage reports
+	outputDir: './coverage',
+
+	// Report formats (similar to Istanbul)
+	reports: [
+		// HTML report for visual browsing
+		['v8'],
+		['html-spa', { subdir: 'html' }],
+		// LCOV for CI integration (Codecov, Coveralls, etc.)
+		['lcovonly', { file: 'lcov.info' }],
+		// Console summary
+		['console-summary'],
+		// JSON for programmatic access
+		['json', { file: 'coverage.json' }],
+	],
+
+	// Source filter - only collect coverage for our app code
+	sourceFilter: (sourcePath: string) => {
+		// Exclude node_modules and external libraries
+		if (sourcePath.includes('node_modules')) return false;
+		// Exclude Vite internals
+		if (sourcePath.includes('/@vite/')) return false;
+		if (sourcePath.includes('/@preact/')) return false;
+		// Include our application source
+		if (sourcePath.includes('/src/')) return true;
+		return false;
+	},
+
+	// Watermarks for coverage thresholds (yellow/green)
+	watermarks: {
+		statements: [50, 80],
+		functions: [50, 80],
+		branches: [50, 80],
+		lines: [50, 80],
+	},
+};
 
 /**
  * Playwright E2E Testing Configuration
@@ -8,7 +53,15 @@ import { defineConfig, devices } from '@playwright/test';
  * - Project 1: "read-only" - Tests that don't create sessions (fully parallel)
  * - Project 2: "isolated-sessions" - Tests with proper cleanup (parallel)
  * - Project 3: "serial" - Complex tests requiring serial execution
+ *
+ * Coverage:
+ * - Uses monocart-reporter for V8 coverage from browser
+ * - Run with `bun run test:coverage` to generate coverage reports
  */
+
+// Check if coverage is enabled
+const collectCoverage = process.env.COVERAGE === 'true';
+
 export default defineConfig({
 	testDir: './tests',
 	testMatch: '**/*.e2e.ts',
@@ -25,8 +78,10 @@ export default defineConfig({
 	/* Allow multiple workers for parallel execution */
 	workers: process.env.CI ? 2 : 4,
 
-	/* Reporter to use */
-	reporter: [['html', { outputFolder: 'playwright-report' }], ['list']],
+	/* Reporter to use - add monocart when coverage is enabled */
+	reporter: collectCoverage
+		? [['monocart-reporter', { name: 'Liuboer E2E Coverage', coverage: coverageOptions }], ['list']]
+		: [['html', { outputFolder: 'playwright-report' }], ['list']],
 
 	/* Shared settings for all the projects below */
 	use: {

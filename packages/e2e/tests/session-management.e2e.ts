@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { cleanupTestSession } from './helpers/wait-helpers';
 
 test.describe('Session Management', () => {
