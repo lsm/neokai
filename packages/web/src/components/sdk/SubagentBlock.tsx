@@ -5,13 +5,23 @@
  * showing:
  * - Header: [icon] [subagent_type] [description]
  * - Input: The prompt sent to the sub-agent
- * - Output: The sub-agent's response (markdown rendered)
+ * - Messages: All nested messages from the sub-agent execution
+ * - Output: The sub-agent's final response (markdown rendered)
  */
 
 import { useState } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import type { AgentInput } from '@liuboer/shared/sdk/sdk-tools.d.ts';
+import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
+import {
+	isTextBlock,
+	isToolUseBlock,
+	isThinkingBlock,
+	type ContentBlock,
+} from '@liuboer/shared/sdk/type-guards';
+import { ToolResultCard } from './tools/index.ts';
+import { ThinkingBlock } from './ThinkingBlock.tsx';
 
 interface SubagentBlockProps {
 	/** The Task tool input containing subagent_type, description, prompt */
@@ -22,6 +32,10 @@ interface SubagentBlockProps {
 	isError?: boolean;
 	/** The tool use ID */
 	toolId: string;
+	/** All messages from the sub-agent execution */
+	nestedMessages?: SDKMessage[];
+	/** Map of tool use IDs to their results (for nested tool calls) */
+	toolResultsMap?: Map<string, unknown>;
 	/** Additional CSS classes */
 	className?: string;
 }
@@ -201,6 +215,8 @@ export function SubagentBlock({
 	output,
 	isError = false,
 	toolId: _toolId,
+	nestedMessages = [],
+	toolResultsMap,
 	className,
 }: SubagentBlockProps) {
 	const [isExpanded, setIsExpanded] = useState(false);
@@ -271,6 +287,24 @@ export function SubagentBlock({
 						</div>
 					</div>
 
+					{/* Nested messages section */}
+					{nestedMessages.length > 0 && (
+						<div class="border-b border-gray-200 dark:border-gray-700 p-3">
+							<div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
+								Messages ({nestedMessages.length})
+							</div>
+							<div class="space-y-3">
+								{nestedMessages.map((msg, idx) => (
+									<NestedMessageRenderer
+										key={msg.uuid || `nested-${idx}`}
+										message={msg}
+										toolResultsMap={toolResultsMap}
+									/>
+								))}
+							</div>
+						</div>
+					)}
+
 					{/* Output section */}
 					<div class="p-3">
 						<div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">Output</div>
@@ -293,6 +327,171 @@ export function SubagentBlock({
 					</div>
 				</div>
 			)}
+		</div>
+	);
+}
+
+/**
+ * Renders a single nested message from the sub-agent execution
+ */
+function NestedMessageRenderer({
+	message,
+	toolResultsMap,
+}: {
+	message: SDKMessage;
+	toolResultsMap?: Map<string, unknown>;
+}) {
+	// Handle assistant messages
+	if (message.type === 'assistant') {
+		const apiMessage = message.message;
+		const content = apiMessage.content as ContentBlock[];
+
+		const textBlocks = content.filter((block) => isTextBlock(block));
+		const toolBlocks = content.filter((block) => isToolUseBlock(block));
+		const thinkingBlocks = content.filter((block) => isThinkingBlock(block));
+
+		return (
+			<div class="space-y-2">
+				{/* Thinking blocks */}
+				{thinkingBlocks.map((block, idx) => (
+					<ThinkingBlock
+						key={`thinking-${idx}`}
+						content={(block as { thinking: string }).thinking}
+					/>
+				))}
+
+				{/* Tool use blocks */}
+				{toolBlocks.map((block, idx) => {
+					const toolBlock = block as { type: 'tool_use'; id: string; name: string; input: unknown };
+					const resultData = toolResultsMap?.get(toolBlock.id) as
+						| { content: unknown; isOutputRemoved?: boolean }
+						| undefined;
+					return (
+						<ToolResultCard
+							key={`tool-${idx}`}
+							toolName={toolBlock.name}
+							toolId={toolBlock.id}
+							input={toolBlock.input}
+							output={resultData?.content}
+							isError={
+								((resultData?.content as Record<string, unknown>)?.is_error as boolean) || false
+							}
+							variant="default"
+							isOutputRemoved={resultData?.isOutputRemoved || false}
+						/>
+					);
+				})}
+
+				{/* Text blocks */}
+				{textBlocks.length > 0 && (
+					<div class="bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700">
+						{textBlocks.map((block, idx) => (
+							<div key={idx} class="prose prose-sm dark:prose-invert max-w-none">
+								<MarkdownRenderer content={(block as { text: string }).text} />
+							</div>
+						))}
+					</div>
+				)}
+			</div>
+		);
+	}
+
+	// Handle user messages (typically tool results)
+	if (message.type === 'user') {
+		const apiMessage = message.message;
+		const content = apiMessage.content;
+
+		// Skip rendering user messages that only contain tool results
+		// as they are already shown with the tool use block
+		if (Array.isArray(content)) {
+			const hasNonToolResultContent = content.some((block) => {
+				const blockObj = block as Record<string, unknown>;
+				return blockObj.type !== 'tool_result';
+			});
+
+			if (!hasNonToolResultContent) {
+				return null;
+			}
+
+			// Render non-tool-result content blocks
+			return (
+				<div class="bg-blue-50 dark:bg-blue-900/20 p-3 rounded border border-blue-200 dark:border-blue-800">
+					{content.map((block, idx) => {
+						const blockObj = block as Record<string, unknown>;
+						if (blockObj.type === 'text' && typeof blockObj.text === 'string') {
+							return (
+								<div key={idx} class="text-sm text-blue-900 dark:text-blue-100">
+									{blockObj.text}
+								</div>
+							);
+						}
+						return null;
+					})}
+				</div>
+			);
+		}
+
+		// Handle string content
+		if (typeof content === 'string') {
+			return (
+				<div class="bg-blue-50 dark:bg-blue-900/20 p-3 rounded border border-blue-200 dark:border-blue-800 text-sm text-blue-900 dark:text-blue-100">
+					{content}
+				</div>
+			);
+		}
+
+		return null;
+	}
+
+	// Handle result messages
+	if (message.type === 'result') {
+		const resultMessage = message as SDKMessage & {
+			subtype: string;
+			result?: string;
+			is_error?: boolean;
+		};
+
+		if (resultMessage.result) {
+			return (
+				<div
+					class={cn(
+						'bg-gray-50 dark:bg-gray-800 p-3 rounded border',
+						resultMessage.is_error
+							? 'border-red-200 dark:border-red-800 text-red-600 dark:text-red-400'
+							: 'border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300'
+					)}
+				>
+					<div class="text-xs font-semibold mb-1">Result</div>
+					<pre class="text-sm whitespace-pre-wrap">{resultMessage.result}</pre>
+				</div>
+			);
+		}
+		return null;
+	}
+
+	// Handle system messages
+	if (message.type === 'system') {
+		const systemMessage = message as SDKMessage & { subtype?: string };
+
+		// Skip init messages
+		if (systemMessage.subtype === 'init') {
+			return null;
+		}
+
+		return (
+			<div class="bg-gray-100 dark:bg-gray-800 p-2 rounded text-xs text-gray-600 dark:text-gray-400 italic">
+				System: {systemMessage.subtype || 'message'}
+			</div>
+		);
+	}
+
+	// Fallback for unknown message types - show raw data
+	return (
+		<div class="bg-gray-100 dark:bg-gray-800 p-2 rounded text-xs">
+			<details>
+				<summary class="cursor-pointer text-gray-500">Unknown message type: {message.type}</summary>
+				<pre class="mt-2 overflow-x-auto">{JSON.stringify(message, null, 2)}</pre>
+			</details>
 		</div>
 	);
 }

@@ -36,6 +36,8 @@ export interface UseMessageMapsResult {
 	toolInputsMap: Map<string, unknown>;
 	/** Map of user message UUIDs to their attached session init info */
 	sessionInfoMap: Map<string, SDKSystemMessage>;
+	/** Map of parent tool use IDs to their sub-agent messages */
+	subagentMessagesMap: Map<string, SDKMessage[]>;
 }
 
 /**
@@ -112,9 +114,25 @@ export function useMessageMaps(
 		return map;
 	}, [messages]);
 
+	// Map of parent tool use IDs to their sub-agent messages
+	// Sub-agent messages have parent_tool_use_id set to the Task tool's ID
+	const subagentMessagesMap = useMemo(() => {
+		const map = new Map<string, SDKMessage[]>();
+		messages.forEach((msg) => {
+			const msgWithParent = msg as SDKMessage & { parent_tool_use_id?: string | null };
+			if (msgWithParent.parent_tool_use_id) {
+				const existing = map.get(msgWithParent.parent_tool_use_id) || [];
+				existing.push(msg);
+				map.set(msgWithParent.parent_tool_use_id, existing);
+			}
+		});
+		return map;
+	}, [messages]);
+
 	return {
 		toolResultsMap,
 		toolInputsMap,
 		sessionInfoMap,
+		subagentMessagesMap,
 	};
 }

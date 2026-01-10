@@ -34,6 +34,7 @@ type AssistantMessage = Extract<SDKMessage, { type: 'assistant' }>;
 interface Props {
 	message: AssistantMessage;
 	toolResultsMap?: Map<string, unknown>;
+	subagentMessagesMap?: Map<string, SDKMessage[]>;
 	// Question handling props for inline QuestionPrompt rendering
 	sessionId?: string;
 	resolvedQuestions?: Map<string, ResolvedQuestion>;
@@ -47,6 +48,7 @@ interface Props {
 export function SDKAssistantMessage({
 	message,
 	toolResultsMap,
+	subagentMessagesMap,
 	sessionId,
 	resolvedQuestions,
 	pendingQuestion,
@@ -119,11 +121,14 @@ export function SDKAssistantMessage({
 			{/* Tool use blocks - full width like result messages */}
 			{toolBlocks.map((block: Extract<ContentBlock, { type: 'tool_use' }>, idx: number) => {
 				const toolResult = toolResultsMap?.get(block.id);
+				const nestedMessages = subagentMessagesMap?.get(block.id) || [];
 				return (
 					<ToolUseBlock
 						key={`tool-${idx}`}
 						block={block}
 						toolResult={toolResult}
+						nestedMessages={nestedMessages}
+						toolResultsMap={toolResultsMap}
 						sessionId={sessionId}
 						resolvedQuestions={resolvedQuestions}
 						pendingQuestion={pendingQuestion}
@@ -221,6 +226,8 @@ export function SDKAssistantMessage({
 function ToolUseBlock({
 	block,
 	toolResult,
+	nestedMessages,
+	toolResultsMap,
 	sessionId: propSessionId,
 	resolvedQuestions,
 	pendingQuestion,
@@ -228,6 +235,8 @@ function ToolUseBlock({
 }: {
 	block: Extract<ContentBlock, { type: 'tool_use' }>;
 	toolResult?: unknown;
+	nestedMessages?: SDKMessage[];
+	toolResultsMap?: Map<string, unknown>;
 	sessionId?: string;
 	resolvedQuestions?: Map<string, ResolvedQuestion>;
 	pendingQuestion?: PendingUserQuestion | null;
@@ -253,6 +262,8 @@ function ToolUseBlock({
 				output={content}
 				isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
 				toolId={block.id}
+				nestedMessages={nestedMessages}
+				toolResultsMap={toolResultsMap}
 			/>
 		);
 	}

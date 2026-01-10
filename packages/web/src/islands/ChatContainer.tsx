@@ -469,6 +469,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 									message={msg}
 									toolResultsMap={maps.toolResultsMap}
 									toolInputsMap={maps.toolInputsMap}
+									subagentMessagesMap={maps.subagentMessagesMap}
 									sessionInfo={
 										msg.uuid
 											? (maps.sessionInfoMap.get(msg.uuid) as SDKSystemMessage | undefined)

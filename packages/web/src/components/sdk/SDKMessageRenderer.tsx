@@ -30,6 +30,7 @@ interface Props {
 	message: SDKMessage;
 	toolResultsMap?: Map<string, unknown>;
 	toolInputsMap?: Map<string, unknown>;
+	subagentMessagesMap?: Map<string, SDKMessage[]>;
 	sessionInfo?: SystemInitMessage; // Optional session init info to attach to user messages
 	// Question handling props for inline QuestionPrompt rendering
 	sessionId?: string;
@@ -57,6 +58,7 @@ export function SDKMessageRenderer({
 	message,
 	toolResultsMap,
 	toolInputsMap,
+	subagentMessagesMap,
 	sessionInfo,
 	sessionId,
 	resolvedQuestions,
@@ -93,6 +95,7 @@ export function SDKMessageRenderer({
 			<SDKAssistantMessage
 				message={message}
 				toolResultsMap={toolResultsMap}
+				subagentMessagesMap={subagentMessagesMap}
 				sessionId={sessionId}
 				resolvedQuestions={resolvedQuestions}
 				pendingQuestion={pendingQuestion}
