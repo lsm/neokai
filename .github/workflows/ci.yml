@@ -448,7 +448,7 @@ jobs:
         run: bun test
 
   test-yuanshen:
-    name: Test Yuanshen (Zig)
+    name: Test Yuanshen (Zig unit)
     runs-on: self-hosted
     timeout-minutes: 10
 
@@ -460,9 +460,117 @@ jobs:
         with:
           zig-version: 0.15.2
 
-      - name: Run Zig tests
+      - name: Run Zig unit tests
         working-directory: packages/yuanshen
         run: zig build test
+
+  test-yuanshen-integration:
+    name: Test Yuanshen (Zig integration)
+    runs-on: self-hosted
+    timeout-minutes: 2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.5
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run Zig integration tests
+        working-directory: packages/yuanshen
+        run: zig build test-integration
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+  test-yuanshen-hub-rpc:
+    name: Test Yuanshen (MessageHub RPC)
+    runs-on: self-hosted
+    timeout-minutes: 2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.5
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run MessageHub RPC tests
+        working-directory: packages/yuanshen
+        run: zig build test-hub-rpc
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+  test-yuanshen-hub-events:
+    name: Test Yuanshen (MessageHub Events)
+    runs-on: self-hosted
+    timeout-minutes: 2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.5
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run MessageHub Events tests
+        working-directory: packages/yuanshen
+        run: zig build test-hub-events
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+  test-yuanshen-message-hub:
+    name: Test Yuanshen (MessageHubClient)
+    runs-on: self-hosted
+    timeout-minutes: 2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.5
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run MessageHubClient tests
+        working-directory: packages/yuanshen
+        run: zig build test-message-hub
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
   test-web:
     name: Test Web

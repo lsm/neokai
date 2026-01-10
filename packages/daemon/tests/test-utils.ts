@@ -183,7 +183,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 		hostname: '127.0.0.1', // Use IP instead of hostname for better CI compatibility
 		port: 0, // OS assigns free port
 
-		fetch(req, server) {
+		async fetch(req, server) {
 			const url = new URL(req.url);
 
 			// CORS preflight

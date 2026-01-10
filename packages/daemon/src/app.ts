@@ -194,7 +194,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		hostname: config.host,
 		port: config.port,
 
-		fetch(req, server) {
+		async fetch(req, server) {
 			const url = new URL(req.url);
 
 			// CORS preflight

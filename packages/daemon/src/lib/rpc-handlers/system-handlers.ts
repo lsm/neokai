@@ -47,4 +47,17 @@ export function setupSystemHandlers(
 
 		return response;
 	});
+
+	// Echo handler for testing WebSocket pub/sub flow
+	// 1. Receives a message
+	// 2. Publishes an event with the message
+	// 3. Returns the message
+	messageHub.handle('test.echo', async (data: { message: string }) => {
+		const echoMessage = data.message || 'echo';
+
+		// Publish event to all subscribers of 'test.echo' on 'global' session
+		await messageHub.publish('test.echo', { echo: echoMessage }, { sessionId: 'global' });
+
+		return { echoed: echoMessage };
+	});
 }
