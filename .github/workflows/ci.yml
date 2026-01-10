@@ -460,6 +460,9 @@ jobs:
         with:
           zig-version: 0.15.2
 
+      - name: Install SQLite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
       - name: Run Zig unit tests
         working-directory: packages/yuanshen
         run: zig build test
@@ -476,6 +479,9 @@ jobs:
         uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.15.2
+
+      - name: Install SQLite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
@@ -504,6 +510,9 @@ jobs:
         with:
           version: 0.15.2
 
+      - name: Install SQLite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
@@ -531,6 +540,9 @@ jobs:
         with:
           version: 0.15.2
 
+      - name: Install SQLite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
@@ -557,6 +569,9 @@ jobs:
         uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.15.2
+
+      - name: Install SQLite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
