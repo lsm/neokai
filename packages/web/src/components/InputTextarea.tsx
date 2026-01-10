@@ -4,9 +4,27 @@
  * iOS 26-style floating textarea input pill with auto-resize,
  * character counter, and send/stop buttons.
  * Extracted from MessageInput.tsx for better separation of concerns.
+ *
+ * CURSOR PRESERVATION FIX:
+ * This component uses an "uncontrolled with sync" pattern instead of the
+ * standard controlled input pattern (`value={content}`). This is intentional.
+ *
+ * PROBLEM: Controlled inputs cause cursor position reset on every re-render.
+ * When any prop changes (isAgentWorking, etc.) or when the parent re-renders,
+ * Preact sets textarea.value = content. Even if the DOM already has the correct
+ * value, setting element.value programmatically resets cursor position.
+ *
+ * SYMPTOMS:
+ * - Lost keystrokes when typing fast
+ * - Arrow keys "stop working" after a few presses (cursor keeps resetting)
+ *
+ * SOLUTION: Use useLayoutEffect to sync content to DOM only when they differ.
+ * After user types, DOM already has the new value (browser updated it).
+ * Our onInput updates the signal to match. On re-render, DOM === content,
+ * so we skip the DOM write and cursor position is preserved.
  */
 
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import CommandAutocomplete from './CommandAutocomplete.tsx';
@@ -64,6 +82,34 @@ export function InputTextarea({
 		isMobileDevice.current = isTouchDevice;
 	}, []);
 
+	// Sync content prop to textarea DOM only when they differ
+	// This prevents cursor position reset during re-renders caused by signal changes
+	// or other prop updates. Using useLayoutEffect for synchronous DOM updates.
+	//
+	// KEY INSIGHT: When user types, the browser updates DOM value immediately.
+	// Our onInput handler then updates the signal/state to match DOM.
+	// On the next render, content === textarea.value, so we skip the DOM write.
+	// This preserves cursor position because we never programmatically set value
+	// when it already matches.
+	useLayoutEffect(() => {
+		const textarea = textareaRef.current;
+		if (!textarea) return;
+
+		// Only update DOM if the value actually differs
+		if (textarea.value !== content) {
+			// Save cursor position before updating
+			const { selectionStart, selectionEnd } = textarea;
+
+			// Update value
+			textarea.value = content;
+
+			// Restore cursor position (clamped to valid range)
+			// This handles external content changes (e.g., loading draft, clearing)
+			const maxPos = content.length;
+			textarea.setSelectionRange(Math.min(selectionStart, maxPos), Math.min(selectionEnd, maxPos));
+		}
+	}, [content]);
+
 	// Auto-resize textarea
 	useEffect(() => {
 		const textarea = textareaRef.current;
@@ -105,10 +151,13 @@ export function InputTextarea({
 						: `${borderColors.ui.input} focus-within:bg-dark-800/80`
 				)}
 			>
-				{/* Textarea */}
+				{/* Textarea - Uncontrolled with sync pattern
+				    We DON'T use value={content} here because controlled inputs cause
+				    cursor position reset on every re-render. Instead, we sync content
+				    to the DOM via useLayoutEffect only when they actually differ.
+				    See the useLayoutEffect above for details. */}
 				<textarea
 					ref={textareaRef}
-					value={content}
 					onInput={(e) => onContentChange((e.target as HTMLTextAreaElement).value)}
 					onKeyDown={onKeyDown}
 					placeholder="Ask or make anything..."

@@ -392,4 +392,169 @@ describe('InputTextarea', () => {
 			expect(containerDiv?.className).toContain('border-dark-700');
 		});
 	});
+
+	describe('Cursor Position Preservation', () => {
+		/**
+		 * These tests verify the "uncontrolled with sync" pattern that prevents
+		 * cursor position reset during re-renders.
+		 *
+		 * ROOT CAUSE OF BUG:
+		 * With controlled inputs (value={content}), Preact sets textarea.value
+		 * on every render. Even when DOM already has the correct value, setting
+		 * element.value programmatically resets cursor position.
+		 *
+		 * SYMPTOMS:
+		 * - Lost keystrokes when typing fast
+		 * - Arrow keys "stop working" after a few presses (cursor keeps resetting)
+		 *
+		 * FIX: Use useLayoutEffect to sync content to DOM only when they differ.
+		 */
+
+		it('should not update DOM value when content matches textarea.value', () => {
+			const { container, rerender } = render(
+				<InputTextarea
+					content="hello"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					isAgentWorking={false}
+				/>
+			);
+
+			const textarea = container.querySelector('textarea')!;
+
+			// Set cursor position in the middle
+			textarea.setSelectionRange(2, 2);
+			expect(textarea.selectionStart).toBe(2);
+			expect(textarea.selectionEnd).toBe(2);
+
+			// Re-render with same content but different isAgentWorking
+			// This simulates signal-triggered re-renders from server push
+			rerender(
+				<InputTextarea
+					content="hello"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					isAgentWorking={true}
+				/>
+			);
+
+			// Cursor position should be preserved because:
+			// 1. content prop didn't change
+			// 2. textarea.value === content, so no DOM write happens
+			expect(textarea.selectionStart).toBe(2);
+			expect(textarea.selectionEnd).toBe(2);
+		});
+
+		it('should preserve cursor position during rapid prop changes', () => {
+			const { container, rerender } = render(
+				<InputTextarea
+					content="hello world"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					isAgentWorking={false}
+				/>
+			);
+
+			const textarea = container.querySelector('textarea')!;
+
+			// Position cursor at "hello |world"
+			textarea.setSelectionRange(6, 6);
+
+			// Simulate multiple rapid re-renders (like from WebSocket state updates)
+			for (let i = 0; i < 5; i++) {
+				rerender(
+					<InputTextarea
+						content="hello world"
+						onContentChange={() => {}}
+						onKeyDown={() => {}}
+						onSubmit={() => {}}
+						isAgentWorking={i % 2 === 0}
+					/>
+				);
+			}
+
+			// Cursor should still be at position 6
+			expect(textarea.selectionStart).toBe(6);
+			expect(textarea.selectionEnd).toBe(6);
+		});
+
+		it('should update DOM and set cursor to valid position when content changes externally', () => {
+			const { container, rerender } = render(
+				<InputTextarea
+					content="hello world"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+
+			const textarea = container.querySelector('textarea')!;
+
+			// Position cursor at end of "hello world" (position 11)
+			textarea.setSelectionRange(11, 11);
+
+			// External content change (e.g., loading a draft)
+			// New content is shorter, so cursor needs to be clamped
+			rerender(
+				<InputTextarea
+					content="hi"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+
+			// Value should be updated
+			expect(textarea.value).toBe('hi');
+
+			// Cursor should be clamped to valid range (max is 2)
+			expect(textarea.selectionStart).toBeLessThanOrEqual(2);
+			expect(textarea.selectionEnd).toBeLessThanOrEqual(2);
+		});
+
+		it('should correctly sync when user types (DOM ahead of prop)', () => {
+			const values: string[] = [];
+			const onContentChange = mock((value: string) => {
+				values.push(value);
+			});
+
+			const { container, rerender } = render(
+				<InputTextarea
+					content="hello"
+					onContentChange={onContentChange}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+
+			const textarea = container.querySelector('textarea')!;
+
+			// Position cursor at position 5 (end of "hello")
+			textarea.setSelectionRange(5, 5);
+
+			// Simulate user typing "x" - browser updates DOM before our handler runs
+			// This mimics what happens in a real browser
+			fireEvent.input(textarea, { target: { value: 'hellox' } });
+
+			// onContentChange should have been called with new value
+			expect(onContentChange).toHaveBeenCalledWith('hellox');
+
+			// Now simulate the re-render with updated content
+			// (in real app, signal updates synchronously)
+			rerender(
+				<InputTextarea
+					content="hellox"
+					onContentChange={onContentChange}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+
+			// Value should match
+			expect(textarea.value).toBe('hellox');
+		});
+	});
 });
