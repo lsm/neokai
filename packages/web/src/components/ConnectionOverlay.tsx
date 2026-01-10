@@ -3,6 +3,18 @@
  *
  * Displays a blocking overlay when WebSocket connection is lost or failed.
  * Provides clear messaging and reconnection options to the user.
+ *
+ * FIX: Only show overlay for 'failed' state (all auto-reconnect attempts exhausted).
+ * Previously showed for 'disconnected' and 'error' too, which caused flashing
+ * during auto-reconnect cycles when Safari resumes from background.
+ *
+ * Auto-reconnect state flow:
+ * - 'connected' → 'disconnected' → 'reconnecting' → 'connecting' → (success/fail)
+ * - On failure: cycles back through 'disconnected' → 'reconnecting' up to 10 times
+ * - After 10 attempts: 'failed' state is set permanently until manual reconnect
+ *
+ * The overlay should only appear when auto-reconnect has given up ('failed'),
+ * not during the transient states while auto-reconnect is still trying.
  */
 
 import { connectionState } from '../lib/state.ts';
@@ -12,20 +24,22 @@ import { useState } from 'preact/hooks';
 
 /**
  * Helper to check if connection state requires overlay
+ * FIX: Only 'failed' shows overlay - all auto-reconnect attempts exhausted
  */
-function isOfflineState(
-	state: typeof connectionState.value
-): state is 'disconnected' | 'failed' | 'error' {
-	return state === 'disconnected' || state === 'failed' || state === 'error';
+function shouldShowOverlay(state: typeof connectionState.value): state is 'failed' {
+	// Only show overlay when all auto-reconnect attempts have failed
+	// 'disconnected', 'error', 'reconnecting', 'connecting' are transient states
+	// during auto-reconnect and should NOT show the blocking overlay
+	return state === 'failed';
 }
 
 export function ConnectionOverlay() {
 	const state = connectionState.value;
 	const [reconnecting, setReconnecting] = useState(false);
 
-	// Only show overlay for offline/failed states
-	// Don't show for 'connecting' or 'reconnecting' as those are transient
-	if (!isOfflineState(state)) {
+	// FIX: Only show overlay for 'failed' state
+	// This prevents flashing during auto-reconnect cycles when Safari resumes
+	if (!shouldShowOverlay(state)) {
 		return null;
 	}
 
@@ -44,28 +58,13 @@ export function ConnectionOverlay() {
 		window.location.reload();
 	};
 
+	// FIX: Simplified since we only show for 'failed' state now
 	const getMessage = () => {
-		switch (state) {
-			case 'failed':
-				return {
-					title: 'Connection Failed',
-					description: 'Unable to establish connection after multiple attempts.',
-					icon: '🔌',
-				};
-			case 'error':
-				return {
-					title: 'Connection Error',
-					description: 'An error occurred with the server connection.',
-					icon: '⚠️',
-				};
-			case 'disconnected':
-			default:
-				return {
-					title: 'Connection Lost',
-					description: 'The connection to the server was interrupted.',
-					icon: '📡',
-				};
-		}
+		return {
+			title: 'Connection Failed',
+			description: 'Unable to establish connection after multiple attempts.',
+			icon: '🔌',
+		};
 	};
 
 	const { title, description, icon } = getMessage();
@@ -86,11 +85,10 @@ export function ConnectionOverlay() {
 					</Button>
 				</div>
 
-				{state === 'failed' && (
-					<p class="text-xs text-gray-500 mt-4">
-						If the problem persists, check your network connection or try restarting the server.
-					</p>
-				)}
+				{/* FIX: Always show hint since we only display for 'failed' state now */}
+				<p class="text-xs text-gray-500 mt-4">
+					If the problem persists, check your network connection or try restarting the server.
+				</p>
 			</div>
 		</div>
 	);

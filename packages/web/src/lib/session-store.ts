@@ -185,11 +185,20 @@ class SessionStore {
 
 			// 2. SDK messages delta (for incremental updates)
 			// Set up BEFORE fetching initial state to avoid race conditions
+			// FIX: Add deduplication to prevent double messages after Safari reconnection
+			// This can happen when events are queued during reconnection and replayed,
+			// while the server also resends them after subscription re-establishment.
 			const unsubSDKMessagesDelta = hub.subscribeOptimistic<{ added?: SDKMessage[] }>(
 				'state.sdkMessages.delta',
 				(delta) => {
 					if (delta.added?.length) {
-						this.sdkMessages.value = [...this.sdkMessages.value, ...delta.added];
+						// Deduplicate: only add messages not already in the list
+						// Use `uuid` which is common to all SDKMessage types
+						const existingIds = new Set(this.sdkMessages.value.map((m) => m.uuid));
+						const newMessages = delta.added.filter((m) => !existingIds.has(m.uuid));
+						if (newMessages.length > 0) {
+							this.sdkMessages.value = [...this.sdkMessages.value, ...newMessages];
+						}
 					}
 				},
 				{ sessionId }
@@ -250,6 +259,34 @@ class SessionStore {
 			}
 		}
 		this.cleanupFunctions = [];
+	}
+
+	// ========================================
+	// Refresh (for reconnection)
+	// ========================================
+
+	/**
+	 * Refresh current session state from server
+	 * FIX: Called after reconnection to sync agent state, context, etc.
+	 *
+	 * This ensures the status bar shows the correct agent state (Thinking, Streaming)
+	 * instead of staying at "Online" after Safari background tab resume.
+	 */
+	async refresh(): Promise<void> {
+		const sessionId = this.activeSessionId.value;
+		if (!sessionId) {
+			console.log('[SessionStore] No active session to refresh');
+			return;
+		}
+
+		try {
+			const hub = await connectionManager.getHub();
+			await this.fetchInitialState(hub, sessionId);
+			console.log('[SessionStore] State refreshed after reconnection');
+		} catch (err) {
+			console.error('[SessionStore] Failed to refresh state:', err);
+			// Don't throw - subscriptions will still receive updates
+		}
 	}
 
 	// ========================================

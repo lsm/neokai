@@ -31,6 +31,7 @@
 import { MessageHub, WebSocketClientTransport } from '@liuboer/shared';
 import { appState, connectionState } from './state';
 import { globalStore } from './global-store';
+import { sessionStore } from './session-store';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from './errors';
 import { createDeferred } from './timeout';
 
@@ -486,9 +487,11 @@ export class ConnectionManager {
 			// The debounce in resubscribeAll() prevents subscription storms.
 			this.messageHub.forceResubscribe();
 
-			// CRITICAL: Refresh ALL state (both session and global)
+			// CRITICAL: Refresh ALL state (session store, app state, and global state)
 			// This ensures UI is in sync even if events were missed during background
-			await Promise.all([appState.refreshAll(), globalStore.refresh()]);
+			// FIX: Added sessionStore.refresh() to sync agent state for status bar
+			// Without this, status bar would show "Online" instead of actual state
+			await Promise.all([sessionStore.refresh(), appState.refreshAll(), globalStore.refresh()]);
 
 			console.log('[ConnectionManager] Subscriptions and state refreshed after validation');
 		} catch (error) {

@@ -1401,18 +1401,17 @@ export class MessageHub {
 			});
 		}
 
-		// FIX P0.7: Replay queued events after subscription rebuild
+		// FIX: Clear queued events instead of replaying them
+		// Root cause of double messages: Events queued during resubscription would be
+		// replayed, but the server ALSO resends recent events after receiving SUBSCRIBE.
+		// This caused the same event to be processed twice (once from server resend,
+		// once from queue replay). Since we're doing a fresh subscription, the server
+		// will send us any events we missed - we don't need to replay queued ones.
 		if (this.pendingEvents.length > 0) {
-			this.logDebug(`Replaying ${this.pendingEvents.length} queued events`);
-			const events = [...this.pendingEvents];
+			this.logDebug(
+				`Clearing ${this.pendingEvents.length} queued events (server will resend after subscription)`
+			);
 			this.pendingEvents = [];
-
-			for (const event of events) {
-				// Replay event asynchronously (don't block reconnection)
-				this.handleEvent(event).catch((error) => {
-					log.error(`Error replaying queued event:`, error);
-				});
-			}
 		}
 	}
 

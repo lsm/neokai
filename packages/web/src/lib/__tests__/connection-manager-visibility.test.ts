@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import { ConnectionManager } from '../connection-manager';
 import { globalStore } from '../global-store';
+import { sessionStore } from '../session-store';
 import { appState } from '../state';
 
 describe('ConnectionManager - Page Visibility Handling', () => {
@@ -115,6 +116,15 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 
 		afterEach(() => {
 			// Restore all mocks to prevent test pollution
+			const sessionStoreRefresh = sessionStore.refresh as unknown;
+			if (
+				typeof sessionStoreRefresh === 'object' &&
+				sessionStoreRefresh !== null &&
+				'mockRestore' in sessionStoreRefresh &&
+				typeof (sessionStoreRefresh as { mockRestore: unknown }).mockRestore === 'function'
+			) {
+				(sessionStoreRefresh as { mockRestore: () => void }).mockRestore();
+			}
 			const appStateRefresh = appState.refreshAll as unknown;
 			if (
 				typeof appStateRefresh === 'object' &&
@@ -188,7 +198,8 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 			expect(mockMessageHub.forceResubscribe).toHaveBeenCalled();
 		});
 
-		it('should refresh both appState and globalStore', async () => {
+		it('should refresh sessionStore, appState, and globalStore', async () => {
+			const sessionStoreRefreshSpy = spyOn(sessionStore, 'refresh').mockResolvedValue(undefined);
 			const appStateRefreshSpy = spyOn(appState, 'refreshAll').mockResolvedValue(undefined);
 			const globalStoreRefreshSpy = spyOn(globalStore, 'refresh').mockResolvedValue(undefined);
 
@@ -204,12 +215,21 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 			// Wait for async validation
 			await new Promise((resolve) => setTimeout(resolve, 100));
 
+			// FIX: sessionStore.refresh() is now called to sync agent state for status bar
+			expect(sessionStoreRefreshSpy).toHaveBeenCalled();
 			expect(appStateRefreshSpy).toHaveBeenCalled();
 			expect(globalStoreRefreshSpy).toHaveBeenCalled();
 		});
 
 		it('should call refreshes in parallel (Promise.all)', async () => {
 			const refreshStartTimes: number[] = [];
+
+			const _sessionStoreRefreshSpy = spyOn(sessionStore, 'refresh').mockImplementation(
+				async () => {
+					refreshStartTimes.push(Date.now());
+					await new Promise((resolve) => setTimeout(resolve, 50));
+				}
+			);
 
 			const _appStateRefreshSpy = spyOn(appState, 'refreshAll').mockImplementation(async () => {
 				refreshStartTimes.push(Date.now());
@@ -233,10 +253,10 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 			// Wait for completion
 			await new Promise((resolve) => setTimeout(resolve, 200));
 
-			// Both should start within 10ms of each other (parallel execution)
-			expect(refreshStartTimes.length).toBe(2);
-			const timeDiff = Math.abs(refreshStartTimes[0] - refreshStartTimes[1]);
-			expect(timeDiff).toBeLessThan(10);
+			// All 3 should start within 10ms of each other (parallel execution)
+			expect(refreshStartTimes.length).toBe(3);
+			const maxDiff = Math.max(...refreshStartTimes) - Math.min(...refreshStartTimes);
+			expect(maxDiff).toBeLessThan(10);
 		});
 	});
 
