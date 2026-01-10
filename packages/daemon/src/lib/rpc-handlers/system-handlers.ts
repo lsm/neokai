@@ -48,7 +48,7 @@ export function setupSystemHandlers(
 		return response;
 	});
 
-	// Echo handler for testing IPC pub/sub flow
+	// Echo handler for testing WebSocket pub/sub flow
 	// 1. Receives a message
 	// 2. Publishes an event with the message
 	// 3. Returns the message
