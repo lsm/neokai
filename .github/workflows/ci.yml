@@ -467,7 +467,7 @@ jobs:
   test-yuanshen-integration:
     name: Test Yuanshen (Zig integration)
     runs-on: self-hosted
-    timeout-minutes: 15
+    timeout-minutes: 2
 
     steps:
       - uses: actions/checkout@v4
@@ -494,7 +494,7 @@ jobs:
   test-yuanshen-hub-rpc:
     name: Test Yuanshen (MessageHub RPC)
     runs-on: self-hosted
-    timeout-minutes: 15
+    timeout-minutes: 2
 
     steps:
       - uses: actions/checkout@v4
@@ -521,7 +521,7 @@ jobs:
   test-yuanshen-hub-events:
     name: Test Yuanshen (MessageHub Events)
     runs-on: self-hosted
-    timeout-minutes: 15
+    timeout-minutes: 2
 
     steps:
       - uses: actions/checkout@v4
