@@ -12,7 +12,7 @@
  *   COVERAGE=true bun run test
  */
 
-import { test as base, expect } from '@playwright/test';
+import { test as base, expect, devices } from '@playwright/test';
 import { addCoverageReport } from 'monocart-reporter';
 
 const collectCoverage = process.env.COVERAGE === 'true';
@@ -29,8 +29,8 @@ export const test = base.extend({
 			if (collectCoverage) {
 				// Start V8 coverage collection via CDP
 				await page.coverage.startJSCoverage({
-					// Collect coverage for anonymous scripts too (useful for inline scripts)
-					reportAnonymousScripts: true,
+					// Don't collect coverage for anonymous scripts (Playwright internals)
+					reportAnonymousScripts: false,
 					// Reset coverage on navigation (recommended for SPA)
 					resetOnNavigation: false,
 				});
@@ -43,14 +43,16 @@ export const test = base.extend({
 				// Stop coverage collection and get results
 				const coverage = await page.coverage.stopJSCoverage();
 
-				// Add coverage data to monocart reporter
+				// Add coverage data to monocart reporter (only if we have data)
 				// The testInfo provides context for monocart to merge coverage
-				await addCoverageReport(coverage, testInfo);
+				if (coverage && coverage.length > 0) {
+					await addCoverageReport(coverage, testInfo);
+				}
 			}
 		},
 		{ auto: true, scope: 'test' },
 	],
 });
 
-// Re-export expect for convenience
-export { expect };
+// Re-export expect and devices for convenience
+export { expect, devices };

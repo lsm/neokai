@@ -24,15 +24,51 @@ const coverageOptions: CoverageReportOptions = {
 		['json', { file: 'coverage.json' }],
 	],
 
+	// Include all source files for coverage (even if not executed)
+	all: ['../web/src/**/*.{ts,tsx}'],
+
 	// Source filter - only collect coverage for our app code
 	sourceFilter: (sourcePath: string) => {
+		// Debug: log source paths to understand what we're receiving
+		if (process.env.DEBUG_COVERAGE) {
+			console.log('Coverage source path:', sourcePath);
+		}
+
+		// FIRST: Exclude anonymous/inline scripts (Playwright internals) - check before any includes
+		// The path might be just "anonymous-1.js" or a URL containing it
+		if (sourcePath.includes('anonymous')) return false;
+
 		// Exclude node_modules and external libraries
 		if (sourcePath.includes('node_modules')) return false;
-		// Exclude Vite internals
+		// Exclude Vite internals and chunks
 		if (sourcePath.includes('/@vite/')) return false;
 		if (sourcePath.includes('/@preact/')) return false;
-		// Include our application source
-		if (sourcePath.includes('/src/')) return true;
+		if (sourcePath.includes('chunk-')) return false;
+		if (sourcePath.includes('.jsv=')) return false;
+		// Exclude .js files (only want .ts/.tsx source files)
+		if (sourcePath.endsWith('.js') && !sourcePath.endsWith('.tsx.js')) return false;
+
+		// Exclude shared package files (message-hub, transport, etc.)
+		// These are infrastructure files that aren't directly tested by UI tests
+		if (
+			sourcePath.includes('message-hub') ||
+			sourcePath.includes('transport') ||
+			sourcePath.includes('event-bus') ||
+			sourcePath.includes('typed-hub') ||
+			sourcePath.includes('router.ts')
+		)
+			return false;
+
+		// Include our application source files only
+		// These are actual source files, not anonymous scripts
+		if (sourcePath.endsWith('.tsx')) return true;
+		if (
+			sourcePath.endsWith('.ts') &&
+			!sourcePath.endsWith('.test.ts') &&
+			!sourcePath.endsWith('.d.ts')
+		)
+			return true;
+
 		return false;
 	},
 
