@@ -123,15 +123,15 @@ export default function MessageInput({
 					handleSubmit();
 				}
 			} else if (e.key === 'Escape') {
+				// Escape interrupts the agent if it's working
+				// Note: Escape does NOT clear the input when idle - that would be unexpected UX
 				if (isAgentWorking.value && !interrupting) {
 					e.preventDefault();
 					handleInterrupt();
-				} else if (!isAgentWorking.value) {
-					clearDraft();
 				}
 			}
 		},
-		[commandAutocomplete, handleSubmit, interrupting, handleInterrupt, clearDraft]
+		[commandAutocomplete, handleSubmit, interrupting, handleInterrupt]
 	);
 
 	// Model switch handler
