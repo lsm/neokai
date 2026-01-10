@@ -32,6 +32,17 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
 				hljs.highlightElement(block as HTMLElement);
 			});
 
+			// Wrap tables in scrollable container to prevent horizontal overflow
+			const tables = containerRef.current.querySelectorAll('table');
+			tables.forEach((table) => {
+				if (!table.parentElement?.classList.contains('prose-table-wrapper')) {
+					const wrapper = document.createElement('div');
+					wrapper.className = 'prose-table-wrapper';
+					table.parentNode?.insertBefore(wrapper, table);
+					wrapper.appendChild(table);
+				}
+			});
+
 			// Remove top margin from first paragraph and bottom margin from last paragraph
 			const paragraphs = containerRef.current.querySelectorAll('p');
 			if (paragraphs.length > 0) {

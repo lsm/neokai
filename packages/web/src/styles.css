@@ -138,6 +138,9 @@ html {
 	background: rgb(var(--color-dark-800));
 	padding: 0.2em 0.4em;
 	border-radius: 0.25rem;
+	/* Prevent long inline code from overflowing */
+	word-break: break-all;
+	overflow-wrap: anywhere;
 }
 
 .prose code::before,
@@ -201,10 +204,16 @@ html {
 	margin-bottom: 0.5em;
 }
 
+/* Table wrapper for horizontal scrolling on mobile */
+.prose-table-wrapper {
+	overflow-x: auto;
+	margin: 1.7em 0;
+}
+
 .prose table {
 	width: 100%;
 	border-collapse: collapse;
-	margin: 1.7em 0;
+	margin: 0;
 }
 
 .prose th {

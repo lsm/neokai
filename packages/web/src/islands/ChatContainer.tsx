@@ -521,7 +521,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 			{/* Footer - Floating Status Bar */}
 			<div class="absolute bottom-0 left-0 right-0 z-10 pointer-events-none">
-				<div class="pointer-events-auto pt-4 bg-gradient-to-t from-dark-900 from-[calc(100%-32px)] to-dark-900/0">
+				<div
+					class="pointer-events-auto pt-4 bg-gradient-to-t from-dark-900 from-[calc(100%-32px)] to-dark-900/0"
+					style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+				>
 					<SessionStatusBar
 						sessionId={sessionId}
 						isProcessing={isProcessing}

@@ -175,7 +175,7 @@ export function SDKAssistantMessage({
 							>
 								<MarkdownRenderer
 									content={block.text}
-									class="dark:prose-invert max-w-none prose-pre:bg-gray-900 prose-pre:text-gray-100"
+									class="dark:prose-invert prose-pre:bg-gray-900 prose-pre:text-gray-100"
 								/>
 							</div>
 						))}

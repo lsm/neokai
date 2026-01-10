@@ -192,7 +192,7 @@ export default function MessageInput({
 	);
 
 	return (
-		<ContentContainer className="pb-4">
+		<ContentContainer className="pb-2">
 			<div
 				class="relative"
 				onDragEnter={handleDragEnter}
