@@ -282,7 +282,7 @@ export function SubagentBlock({
 					{/* Input section */}
 					<div class="border-b border-gray-200 dark:border-gray-700 p-3">
 						<div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">Input</div>
-						<div class="text-sm bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 whitespace-pre-wrap text-gray-700 dark:text-gray-300">
+						<div class="text-sm bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 whitespace-pre-wrap break-words text-gray-700 dark:text-gray-300">
 							{input.prompt}
 						</div>
 					</div>
@@ -312,7 +312,7 @@ export function SubagentBlock({
 							<div
 								class={cn(
 									'bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700',
-									'prose prose-sm dark:prose-invert max-w-none',
+									'prose prose-sm dark:prose-invert max-w-full overflow-x-auto',
 									'prose-pre:bg-gray-900 prose-pre:text-gray-100',
 									isError && 'text-red-600 dark:text-red-400'
 								)}
@@ -384,9 +384,9 @@ function NestedMessageRenderer({
 
 				{/* Text blocks */}
 				{textBlocks.length > 0 && (
-					<div class="bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700">
+					<div class="bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 overflow-x-auto">
 						{textBlocks.map((block, idx) => (
-							<div key={idx} class="prose prose-sm dark:prose-invert max-w-none">
+							<div key={idx} class="prose prose-sm dark:prose-invert max-w-full">
 								<MarkdownRenderer content={(block as { text: string }).text} />
 							</div>
 						))}
@@ -420,7 +420,10 @@ function NestedMessageRenderer({
 						const blockObj = block as Record<string, unknown>;
 						if (blockObj.type === 'text' && typeof blockObj.text === 'string') {
 							return (
-								<div key={idx} class="text-sm text-blue-900 dark:text-blue-100">
+								<div
+									key={idx}
+									class="text-sm text-blue-900 dark:text-blue-100 whitespace-pre-wrap break-words"
+								>
 									{blockObj.text}
 								</div>
 							);
@@ -434,7 +437,7 @@ function NestedMessageRenderer({
 		// Handle string content
 		if (typeof content === 'string') {
 			return (
-				<div class="bg-blue-50 dark:bg-blue-900/20 p-3 rounded border border-blue-200 dark:border-blue-800 text-sm text-blue-900 dark:text-blue-100">
+				<div class="bg-blue-50 dark:bg-blue-900/20 p-3 rounded border border-blue-200 dark:border-blue-800 text-sm text-blue-900 dark:text-blue-100 whitespace-pre-wrap break-words">
 					{content}
 				</div>
 			);
@@ -462,7 +465,9 @@ function NestedMessageRenderer({
 					)}
 				>
 					<div class="text-xs font-semibold mb-1">Result</div>
-					<pre class="text-sm whitespace-pre-wrap">{resultMessage.result}</pre>
+					<pre class="text-sm whitespace-pre-wrap break-words overflow-x-auto">
+						{resultMessage.result}
+					</pre>
 				</div>
 			);
 		}

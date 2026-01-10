@@ -122,12 +122,14 @@ export function SyntheticMessageBlock({ content, timestamp, uuid }: Props) {
 						{contentBlocks.map((block, idx) => (
 							<div key={idx} class="text-sm">
 								{block.type === 'text' && (
-									<div class="text-gray-100 whitespace-pre-wrap">{block.text as string}</div>
+									<div class="text-gray-100 whitespace-pre-wrap break-words">
+										{block.text as string}
+									</div>
 								)}
 								{block.type === 'image' && (
 									<div class="space-y-1">
 										<div class="text-xs text-purple-400">Image:</div>
-										<div class="font-mono text-xs text-gray-300">
+										<div class="font-mono text-xs text-gray-300 bg-gray-900/50 p-2 rounded overflow-x-auto">
 											{JSON.stringify(block, null, 2)}
 										</div>
 									</div>
@@ -135,7 +137,7 @@ export function SyntheticMessageBlock({ content, timestamp, uuid }: Props) {
 								{block.type === 'tool_use' && (
 									<div class="space-y-1">
 										<div class="text-xs text-purple-400">Tool Use: {block.name as string}</div>
-										<div class="font-mono text-xs text-gray-300 bg-gray-900/50 p-2 rounded">
+										<div class="font-mono text-xs text-gray-300 bg-gray-900/50 p-2 rounded overflow-x-auto">
 											{JSON.stringify(block.input, null, 2)}
 										</div>
 									</div>
@@ -145,7 +147,7 @@ export function SyntheticMessageBlock({ content, timestamp, uuid }: Props) {
 										<div class="text-xs text-purple-400">
 											Tool Result: {(block.tool_use_id as string).slice(0, 12)}...
 										</div>
-										<div class="font-mono text-xs text-gray-300 bg-gray-900/50 p-2 rounded max-h-48 overflow-y-auto">
+										<div class="font-mono text-xs text-gray-300 bg-gray-900/50 p-2 rounded max-h-48 overflow-auto">
 											{block.content !== undefined && block.content !== null
 												? typeof block.content === 'string'
 													? block.content
@@ -157,7 +159,7 @@ export function SyntheticMessageBlock({ content, timestamp, uuid }: Props) {
 								{!['text', 'image', 'tool_use', 'tool_result'].includes(block.type as string) && (
 									<div class="space-y-1">
 										<div class="text-xs text-purple-400">{block.type as string}:</div>
-										<div class="font-mono text-xs text-gray-300 bg-gray-900/50 p-2 rounded">
+										<div class="font-mono text-xs text-gray-300 bg-gray-900/50 p-2 rounded overflow-x-auto">
 											{JSON.stringify(block, null, 2)}
 										</div>
 									</div>

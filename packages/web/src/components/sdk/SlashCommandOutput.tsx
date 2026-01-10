@@ -77,7 +77,7 @@ export function SlashCommandOutput({ content, className }: SlashCommandOutputPro
 			<div
 				class={cn(
 					`bg-dark-800/60 border ${borderColors.ui.default} rounded-lg p-4`,
-					'prose prose-invert max-w-none'
+					'prose prose-invert max-w-full overflow-x-auto'
 				)}
 			>
 				<MarkdownRenderer content={output} class="text-sm" />
