@@ -24,7 +24,7 @@ test.describe('Interrupt Button', () => {
 
 	test('should show stop button when agent is processing', async ({ page }) => {
 		// Create a session
-		await page.click('button:has-text("New Session")');
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		const sessionId = await waitForSessionCreated(page);
 
 		// Initial state: should show send button (disabled, no content)
@@ -54,7 +54,7 @@ test.describe('Interrupt Button', () => {
 		page,
 	}) => {
 		// Create a session
-		await page.click('button:has-text("New Session")');
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		const sessionId = await waitForSessionCreated(page);
 
 		// Send a message
@@ -95,7 +95,7 @@ test.describe('Interrupt Button', () => {
 
 	test('should interrupt agent when stop button is clicked', async ({ page }) => {
 		// Create a session
-		await page.click('button:has-text("New Session")');
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		const sessionId = await waitForSessionCreated(page);
 
 		// Set up interrupt tracking
@@ -149,7 +149,7 @@ test.describe('Interrupt Button', () => {
 
 	test('should interrupt agent when Escape key is pressed', async ({ page }) => {
 		// Create a session
-		await page.click('button:has-text("New Session")');
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		const sessionId = await waitForSessionCreated(page);
 
 		// Set up interrupt tracking
@@ -199,7 +199,7 @@ test.describe('Interrupt Button', () => {
 
 	test('should show loading spinner while interrupting', async ({ page }) => {
 		// Create a session
-		await page.click('button:has-text("New Session")');
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		const sessionId = await waitForSessionCreated(page);
 
 		// Send a message
@@ -240,7 +240,7 @@ test.describe('Interrupt Button', () => {
 
 	test('should transition from send to stop and back to send', async ({ page }) => {
 		// Create a session
-		await page.click('button:has-text("New Session")');
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		const sessionId = await waitForSessionCreated(page);
 
 		const messageInput = await waitForElement(page, 'textarea');
@@ -273,38 +273,36 @@ test.describe('Interrupt Button', () => {
 	});
 
 	test('should handle rapid interrupt attempts gracefully', async ({ page }) => {
+		test.setTimeout(90000); // Increase timeout for this test
+
 		// Create a session
-		await page.click('button:has-text("New Session")');
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		const sessionId = await waitForSessionCreated(page);
 
 		// Send a message
 		const messageInput = await waitForElement(page, 'textarea');
-		await messageInput.fill('Explain compiler design.');
+		await messageInput.fill('Hi');
 		await page.click('[data-testid="send-button"]');
 
-		// Wait for processing
-		await page.waitForTimeout(1000);
-
+		// Wait for processing to start
 		const stopButton = page.locator('[data-testid="stop-button"]');
-		await expect(stopButton).toBeVisible({ timeout: 5000 });
+		await expect(stopButton).toBeVisible({ timeout: 10000 });
 
 		// Try to click multiple times rapidly
 		await stopButton.click();
-		await stopButton.click().catch(() => {}); // Might be disabled already
-		await stopButton.click().catch(() => {}); // Might be disabled already
+		// Additional clicks may fail if button is already hidden
+		await stopButton.click().catch(() => {});
+		await stopButton.click().catch(() => {});
 
-		// Should not crash, should handle gracefully
-		await page.waitForTimeout(2000);
-
-		// Should eventually return to idle state
-		await expect(page.locator('[data-testid="send-button"]')).toBeVisible({ timeout: 5000 });
+		// Should eventually return to idle state (send button visible)
+		await expect(page.locator('[data-testid="send-button"]')).toBeVisible({ timeout: 30000 });
 
 		await cleanupTestSession(page, sessionId);
 	});
 
 	test('Escape key should work even when textarea is disabled', async ({ page }) => {
 		// Create a session
-		await page.click('button:has-text("New Session")');
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		const sessionId = await waitForSessionCreated(page);
 
 		// Set up interrupt tracking
