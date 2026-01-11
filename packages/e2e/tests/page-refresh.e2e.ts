@@ -243,7 +243,7 @@ test.describe('Page Refresh Persistence', () => {
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await messageInput.fill('Tell me a short story.');
 
-		const sendButton = page.locator('button[type="submit"]');
+		const sendButton = page.locator('[data-testid="send-button"]');
 		await sendButton.click();
 
 		// Wait for processing to start

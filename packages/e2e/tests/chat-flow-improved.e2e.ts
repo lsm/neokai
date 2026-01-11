@@ -34,7 +34,7 @@ test.describe('Chat Flow - Improved', () => {
 		await messageInput.fill("Hello, can you respond with just 'Hi!'?");
 
 		// Send the message
-		const sendButton = await waitForElement(page, 'button[type="submit"]');
+		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
 		await sendButton.click();
 
 		// Wait for message processing to complete
@@ -65,7 +65,7 @@ test.describe('Chat Flow - Improved', () => {
 		await expect(messageInput).toBeEnabled();
 
 		// Check for send button
-		const sendButton = await waitForElement(page, 'button[type="submit"]');
+		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
 		await expect(sendButton).toBeVisible();
 
 		// Cleanup
@@ -83,7 +83,7 @@ test.describe('Chat Flow - Improved', () => {
 		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
 		await messageInput.fill('test message for sidebar');
 
-		const sendButton = await waitForElement(page, 'button[type="submit"]');
+		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
 		await sendButton.click();
 
 		await waitForMessageProcessed(page, 'test message for sidebar');
@@ -116,7 +116,7 @@ test.describe('Chat Flow - Improved', () => {
 		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
 		await messageInput.fill('Test message for input state');
 
-		const sendButton = await waitForElement(page, 'button[type="submit"]');
+		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
 
 		// Set up promise to check disabled state immediately after click
 		const checkDisabledPromise = sendButton.click().then(async () => {
@@ -150,7 +150,7 @@ test.describe('Chat Flow - Improved', () => {
 		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
 		await messageInput.fill('Quick test for status indicator');
 
-		const sendButton = await waitForElement(page, 'button[type="submit"]');
+		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
 
 		// Set up promise to capture status indicator
 		const statusPromise = sendButton.click().then(async () => {
@@ -191,7 +191,7 @@ test.describe('Chat Flow - Improved', () => {
 			const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
 			await messageInput.fill(msg);
 
-			const sendButton = await waitForElement(page, 'button[type="submit"]');
+			const sendButton = await waitForElement(page, '[data-testid="send-button"]');
 			await sendButton.click();
 
 			// Wait for each message to be processed before sending the next
@@ -223,7 +223,7 @@ test.describe('Chat Flow - Improved', () => {
 		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
 		await messageInput.fill('My name is TestUser. Please remember this.');
 
-		const sendButton = await waitForElement(page, 'button[type="submit"]');
+		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
 		await sendButton.click();
 
 		await waitForMessageProcessed(page, 'My name is TestUser. Please remember this.');

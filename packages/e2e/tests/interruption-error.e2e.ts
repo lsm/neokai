@@ -60,7 +60,7 @@ test.describe.skip('Session Interruption', () => {
 		);
 
 		// Start sending
-		void page.click('button[type="submit"]');
+		void page.click('[data-testid="send-button"]');
 
 		// Wait for processing to start
 		await page.waitForSelector('text=/Sending|Processing|Queued/i', { timeout: 3000 });
@@ -113,14 +113,14 @@ test.describe.skip('Session Interruption', () => {
 
 		// Send first message
 		await messageInput.fill('First message in queue');
-		await page.click('button[type="submit"]');
+		await page.click('[data-testid="send-button"]');
 
 		// Immediately queue more messages (while first is processing)
 		await messageInput.fill('Second message in queue');
-		void page.click('button[type="submit"]');
+		void page.click('[data-testid="send-button"]');
 
 		await messageInput.fill('Third message in queue');
-		void page.click('button[type="submit"]');
+		void page.click('[data-testid="send-button"]');
 
 		// Trigger interrupt
 		await page.evaluate((sid) => {
@@ -150,7 +150,7 @@ test.describe.skip('Session Interruption', () => {
 
 		// Send a message
 		await page.locator('textarea').first().fill('Test cleanup');
-		await page.click('button[type="submit"]');
+		await page.click('[data-testid="send-button"]');
 
 		// Navigate away abruptly
 		await page.click('h1:has-text("Liuboer")');
@@ -164,7 +164,7 @@ test.describe.skip('Session Interruption', () => {
 
 		// Session should still be functional
 		await page.locator('textarea').first().fill('After navigation');
-		await page.click('button[type="submit"]');
+		await page.click('[data-testid="send-button"]');
 
 		// Should process normally
 		await page.waitForTimeout(3000);
@@ -201,7 +201,7 @@ test.describe('Error Handling', () => {
 
 		// Try to send a message while disconnected
 		await messageInput.fill('This message should not send');
-		await page.click('button[type="submit"]');
+		await page.click('[data-testid="send-button"]');
 
 		// Should show connection error toast (not error banner)
 		// The handleSendMessage function checks connectionState and shows toast.error
@@ -232,7 +232,7 @@ test.describe('Error Handling', () => {
 		await simulateNetworkFailure(page);
 
 		// Try to send message
-		await page.click('button[type="submit"]');
+		await page.click('[data-testid="send-button"]');
 
 		// Should show connection error
 		await page.waitForTimeout(2000);
@@ -386,7 +386,7 @@ test.describe('Error Handling', () => {
 
 		for (let i = 0; i < messageCount; i++) {
 			await messageInput.fill(`Rapid message ${i + 1}`);
-			await page.click('button[type="submit"]');
+			await page.click('[data-testid="send-button"]');
 			// No wait between messages
 		}
 
@@ -574,7 +574,7 @@ test.describe('Recovery Mechanisms', () => {
 
 		// Send a message
 		await page.locator('textarea').first().fill('Message before refresh');
-		await page.click('button[type="submit"]');
+		await page.click('[data-testid="send-button"]');
 
 		// Wait for processing to start
 		await page.waitForSelector('text=/Sending|Processing/i', { timeout: 2000 });
@@ -614,7 +614,7 @@ test.describe('Recovery Mechanisms', () => {
 		const textarea = page.locator('textarea').first();
 		if (await textarea.isVisible({ timeout: 2000 }).catch(() => false)) {
 			await textarea.fill('Message after refresh');
-			await page.click('button[type="submit"]');
+			await page.click('[data-testid="send-button"]');
 
 			await page.waitForTimeout(3000);
 		}

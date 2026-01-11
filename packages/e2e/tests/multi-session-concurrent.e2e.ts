@@ -54,7 +54,7 @@ test.describe('Multi-Session Concurrent Operations', () => {
 			const messagePromises = pages.map(async (page, index) => {
 				const messageInput = await waitForElement(page, 'textarea');
 				await messageInput.fill(`Message from session ${index + 1}`);
-				await page.click('button[type="submit"]');
+				await page.click('[data-testid="send-button"]');
 				return waitForMessageProcessed(page, `Message from session ${index + 1}`);
 			});
 
@@ -117,7 +117,7 @@ test.describe('Multi-Session Concurrent Operations', () => {
 				await messageInput.fill(
 					`My name is ${context.name} and I want to discuss ${context.topic}`
 				);
-				await page.click('button[type="submit"]');
+				await page.click('[data-testid="send-button"]');
 				await waitForMessageProcessed(page, `My name is ${context.name}`);
 			}
 
@@ -127,7 +127,7 @@ test.describe('Multi-Session Concurrent Operations', () => {
 
 				const messageInput = await waitForElement(page, 'textarea');
 				await messageInput.fill('What is my name and what topic did I mention?');
-				await page.click('button[type="submit"]');
+				await page.click('[data-testid="send-button"]');
 				await waitForMessageProcessed(page, 'What is my name');
 			}
 
@@ -238,14 +238,14 @@ test.describe('Multi-Session Concurrent Operations', () => {
 			const message1Promise = (async () => {
 				const input = await waitForElement(page1, 'textarea');
 				await input.fill('Concurrent message 1');
-				await page1.click('button[type="submit"]');
+				await page1.click('[data-testid="send-button"]');
 				return waitForMessageProcessed(page1, 'Concurrent message 1');
 			})();
 
 			const message2Promise = (async () => {
 				const input = await waitForElement(page2, 'textarea');
 				await input.fill('Concurrent message 2');
-				await page2.click('button[type="submit"]');
+				await page2.click('[data-testid="send-button"]');
 				return waitForMessageProcessed(page2, 'Concurrent message 2');
 			})();
 
@@ -281,7 +281,7 @@ test.describe('Multi-Session Concurrent Operations', () => {
 			const message = `Session ${i + 1} unique message`;
 			const input = await waitForElement(page, 'textarea');
 			await input.fill(message);
-			await page.click('button[type="submit"]');
+			await page.click('[data-testid="send-button"]');
 			await waitForMessageProcessed(page, message);
 
 			sessionData.push({ id: sessionId, message });
@@ -338,7 +338,7 @@ test.describe('Multi-Session Concurrent Operations', () => {
 				for (let j = 0; j < messageCount; j++) {
 					const input = await waitForElement(page, 'textarea');
 					await input.fill(`Session ${i + 1} Message ${j + 1}`);
-					await page.click('button[type="submit"]');
+					await page.click('[data-testid="send-button"]');
 					// Small delay to ensure messages are queued separately
 					await page.waitForTimeout(100);
 				}
@@ -461,7 +461,7 @@ test.describe('Multi-Session Concurrent Operations', () => {
 			// Send a message
 			const input = await waitForElement(page, 'textarea');
 			await input.fill(`Message in session ${i + 1}`);
-			await page.click('button[type="submit"]');
+			await page.click('[data-testid="send-button"]');
 			await waitForMessageProcessed(page, `Message in session ${i + 1}`);
 
 			// Go back home

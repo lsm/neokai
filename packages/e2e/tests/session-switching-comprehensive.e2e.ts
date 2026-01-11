@@ -234,7 +234,7 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
 
 		// Send a message (DON'T wait for completion)
 		await textarea1.fill('Write a long detailed explanation of quantum computing');
-		await page.click('button[type="submit"]');
+		await page.click('[data-testid="send-button"]');
 
 		// Wait for message to start processing (sending state)
 		await page.waitForTimeout(1000);
@@ -246,7 +246,7 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
 		// Send a message in session 2
 		const textarea2 = page.locator('textarea').first();
 		await textarea2.fill('Hello from session 2');
-		await page.click('button[type="submit"]');
+		await page.click('[data-testid="send-button"]');
 
 		// Wait for processing
 		await page.waitForTimeout(2000);
@@ -286,7 +286,7 @@ test.describe('Session Switching - Comprehensive Coverage', () => {
 			const message = `Unique message ${i + 1} - ${Math.random().toString(36).substring(7)}`;
 			const textarea = await waitForElement(page, 'textarea');
 			await textarea.fill(message);
-			await page.click('button[type="submit"]');
+			await page.click('[data-testid="send-button"]');
 
 			// Wait for message to appear
 			await expect(page.locator(`text="${message}"`)).toBeVisible({ timeout: 5000 });
