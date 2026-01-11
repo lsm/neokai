@@ -1,11 +1,3 @@
 [test]
 # Enable DOM environment for browser-related tests
 preload = ["./src/lib/__tests__/setup.ts"]
-
-# Alias to ensure single Preact instance (prevents "undefined __k" errors in CI)
-# https://github.com/vitest-dev/vitest/issues/5915
-# https://github.com/preactjs/preact/issues/3657
-[test.alias]
-"preact" = "../../node_modules/preact"
-"preact/hooks" = "../../node_modules/preact/hooks"
-"preact/test-utils" = "../../node_modules/preact/test-utils"

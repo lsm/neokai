@@ -13,7 +13,9 @@
 		"paths": {
 			"@/*": ["./*"],
 			"@liuboer/shared": ["../shared/src/mod.ts"],
-			"@liuboer/shared/*": ["../shared/src/*"]
+			"@liuboer/shared/*": ["../shared/src/*"],
+			"preact": ["../../node_modules/preact"],
+			"preact/*": ["../../node_modules/preact/*"]
 		}
 	},
 	"include": ["src/**/*", "build.ts", "../shared/src/**/*"],
