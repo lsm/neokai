@@ -201,6 +201,7 @@ export default defineConfig({
 				'**/scroll-responsiveness.e2e.ts', // Scroll responsiveness tests
 				'**/thinking-level-selector.e2e.ts', // Thinking level selector tests
 				'**/context-usage-dropdown.e2e.ts', // Context usage dropdown tests
+				'**/recent-sessions-home.e2e.ts', // Recent sessions home page tests
 			],
 			use: { ...devices['Desktop Chrome'] },
 		},
