@@ -19,7 +19,14 @@ const mockToastsSignal = signal<MockToast[]>([]);
 
 // Mock the toast module
 mock.module('../../lib/toast.ts', () => ({
+	toast: {
+		success: mock(() => {}),
+		error: mock(() => {}),
+		info: mock(() => {}),
+		warning: mock(() => {}),
+	},
 	toastsSignal: mockToastsSignal,
+	dismissToast: mock(() => {}),
 }));
 
 // Mock ToastItem component

@@ -17,9 +17,34 @@ const mockGlobalSettings = signal<{
 	settingSources: ['user', 'project', 'local'],
 });
 
-// Mock state
+// Mock state - include all exports to avoid breaking other tests
+const mockAppState = {
+	initialize: mock(() => Promise.resolve()),
+	cleanup: mock(() => {}),
+	getSessionChannels: mock(() => null),
+};
 mock.module('../lib/state.ts', () => ({
 	globalSettings: mockGlobalSettings,
+	// Additional required exports
+	appState: mockAppState,
+	initializeApplicationState: mock(() => Promise.resolve()),
+	mergeSdkMessagesWithDedup: (existing: unknown[], added: unknown[]) => [
+		...(existing || []),
+		...(added || []),
+	],
+	sessions: signal([]),
+	connectionState: signal('connected'),
+	authStatus: signal(null),
+	apiConnectionStatus: signal(null),
+	hasArchivedSessions: signal(false),
+	currentSession: signal(null),
+	currentAgentState: signal({ status: 'idle', phase: null }),
+	currentContextInfo: signal(null),
+	isAgentWorking: signal(false),
+	activeSessions: signal(0),
+	recentSessions: signal([]),
+	systemState: signal(null),
+	healthStatus: signal(null),
 }));
 
 // Mock api-helpers
@@ -42,9 +67,13 @@ mock.module('../lib/api-helpers.ts', () => ({
 const mockToast = {
 	success: mock(() => {}),
 	error: mock(() => {}),
+	info: mock(() => {}),
+	warning: mock(() => {}),
 };
 mock.module('../lib/toast.ts', () => ({
 	toast: mockToast,
+	toastsSignal: { value: [] },
+	dismissToast: mock(() => {}),
 }));
 
 describe('GlobalSettingsEditor', () => {

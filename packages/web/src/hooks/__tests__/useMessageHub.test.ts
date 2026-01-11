@@ -51,17 +51,57 @@ mock.module('../lib/connection-manager', () => ({
 	connectionManager: mockConnectionManager,
 }));
 
-// Mock the state module
+// Mock the state module - include all exports to avoid breaking other tests
+const mockAppState = {
+	initialize: mock(() => Promise.resolve()),
+	cleanup: mock(() => {}),
+	getSessionChannels: mock(() => null),
+};
 mock.module('../lib/state', () => ({
 	connectionState: connectionStateValue,
+	// Additional required exports
+	appState: mockAppState,
+	initializeApplicationState: mock(() => Promise.resolve()),
+	mergeSdkMessagesWithDedup: (existing: unknown[], added: unknown[]) => [
+		...(existing || []),
+		...(added || []),
+	],
+	sessions: signal([]),
+	authStatus: signal(null),
+	apiConnectionStatus: signal(null),
+	globalSettings: signal(null),
+	hasArchivedSessions: signal(false),
+	currentSession: signal(null),
+	currentAgentState: signal({ status: 'idle', phase: null }),
+	currentContextInfo: signal(null),
+	isAgentWorking: signal(false),
+	activeSessions: signal(0),
+	recentSessions: signal([]),
+	systemState: signal(null),
+	healthStatus: signal(null),
 }));
 
-// Mock the errors module
+// Mock the errors module - include all exports
+class MockConnectionError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'ConnectionError';
+	}
+}
 mock.module('../lib/errors', () => ({
-	ConnectionNotReadyError: class ConnectionNotReadyError extends Error {
-		constructor(message: string) {
+	ConnectionError: MockConnectionError,
+	ConnectionNotReadyError: class ConnectionNotReadyError extends MockConnectionError {
+		constructor(message = 'Connection not ready') {
 			super(message);
 			this.name = 'ConnectionNotReadyError';
+		}
+	},
+	ConnectionTimeoutError: class ConnectionTimeoutError extends MockConnectionError {
+		timeoutMs: number;
+		constructor(timeoutMs: number, message?: string) {
+			super(message || `Connection timed out after ${timeoutMs}ms`);
+			this.name = 'ConnectionTimeoutError';
+			this.timeoutMs = timeoutMs;
 		}
 	},
 }));

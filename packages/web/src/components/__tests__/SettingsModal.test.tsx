@@ -22,10 +22,15 @@ mock.module('../lib/api-helpers.ts', () => ({
 
 // Mock toast
 const mockToast = {
+	success: mock(() => {}),
 	error: mock(() => {}),
+	info: mock(() => {}),
+	warning: mock(() => {}),
 };
 mock.module('../lib/toast.ts', () => ({
 	toast: mockToast,
+	toastsSignal: { value: [] },
+	dismissToast: mock(() => {}),
 }));
 
 describe('SettingsModal', () => {

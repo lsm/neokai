@@ -35,9 +35,13 @@ mock.module('../lib/connection-manager.ts', () => ({
 const mockToast = {
 	success: mock(() => {}),
 	error: mock(() => {}),
+	info: mock(() => {}),
+	warning: mock(() => {}),
 };
 mock.module('../lib/toast.ts', () => ({
 	toast: mockToast,
+	toastsSignal: { value: [] },
+	dismissToast: mock(() => {}),
 }));
 
 // Mock api-helpers
