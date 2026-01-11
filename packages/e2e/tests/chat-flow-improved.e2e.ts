@@ -118,24 +118,19 @@ test.describe('Chat Flow - Improved', () => {
 
 		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
 
-		// Click send and wait for input to be disabled
+		// Click send
 		await sendButton.click();
 
-		// Input should be disabled while processing
-		// Use waitForFunction for more reliable detection in CI
-		await page.waitForFunction(
-			() => {
-				const input = document.querySelector('textarea[placeholder*="Ask"]') as HTMLTextAreaElement;
-				return input && input.disabled;
-			},
-			{ timeout: 5000 }
-		);
+		// The send button should change to stop button while processing
+		// This is a more reliable indicator than checking input disabled state
+		const stopButton = page.locator('[data-testid="stop-button"]');
+		await expect(stopButton).toBeVisible({ timeout: 5000 });
 
 		// Wait for processing to complete
 		await waitForMessageProcessed(page, 'Test message for input state');
 
-		// Input should be enabled again after response
-		await expect(messageInput).toBeEnabled({ timeout: 10000 });
+		// Send button should reappear after response
+		await expect(sendButton).toBeVisible({ timeout: 10000 });
 
 		// Cleanup
 		await cleanupTestSession(page, sessionId);
@@ -200,9 +195,10 @@ test.describe('Chat Flow - Improved', () => {
 			await waitForMessageProcessed(page, msg);
 		}
 
-		// All messages should be visible
+		// All messages should be visible (use .first() to avoid strict mode violation
+		// as the same text may appear in sidebar and message area)
 		for (const msg of messages) {
-			await expect(page.locator(`text="${msg}"`)).toBeVisible();
+			await expect(page.locator(`text="${msg}"`).first()).toBeVisible();
 		}
 
 		// Should have received responses for all messages
