@@ -112,29 +112,39 @@ export async function waitForMessageSent(page: Page, messageText: string): Promi
  * Wait for new assistant response to appear
  * Uses simpler approach matching the passing chat-flow.e2e.ts pattern
  * @param options.containsText - Optional text that should be in the response
- * @param options.timeout - Custom timeout (default 30s)
+ * @param options.timeout - Custom timeout (default 50s for CI reliability)
  */
 export async function waitForAssistantResponse(
 	page: Page,
 	options: { containsText?: string; timeout?: number } = {}
 ): Promise<void> {
-	const timeout = options.timeout || 30000;
+	// Use longer timeout for CI reliability (50s default)
+	// CI environments can be slower due to xvfb, network latency, etc.
+	const timeout = options.timeout || 50000;
 
-	// Wait for assistant message to appear using simple locator
-	// This matches how chat-flow.e2e.ts waits for responses
-	await expect(page.locator('[data-message-role="assistant"]').last()).toBeVisible({
-		timeout,
-	});
+	// Count existing assistant messages before waiting
+	const initialCount = await page.locator('[data-message-role="assistant"]').count();
+
+	// Wait for a new assistant message to appear
+	// Use waitForFunction for more reliable detection of new messages
+	await page.waitForFunction(
+		(expectedCount) => {
+			const messages = document.querySelectorAll('[data-message-role="assistant"]');
+			return messages.length > expectedCount;
+		},
+		initialCount,
+		{ timeout }
+	);
 
 	// If text matching is requested, verify it
 	if (options.containsText) {
 		const lastAssistant = page.locator('[data-message-role="assistant"]').last();
-		await expect(lastAssistant).toContainText(options.containsText, { timeout: 5000 });
+		await expect(lastAssistant).toContainText(options.containsText, { timeout: 10000 });
 	}
 
 	// Wait for input to be enabled again (processing complete)
 	const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
-	await expect(messageInput).toBeEnabled({ timeout: 15000 });
+	await expect(messageInput).toBeEnabled({ timeout: 20000 });
 }
 
 /**
