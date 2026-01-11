@@ -12,6 +12,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 async function globalSetup() {
+	// Skip cleanup in CI - handled by fresh checkout each time
+	if (process.env.CI) {
+		console.log('\n🔵 CI environment detected - skipping worktree cleanup\n');
+		return;
+	}
+
 	console.log('\n🧹 Pre-Test Cleanup (preventing nested worktrees)');
 	console.log('================================================\n');
 

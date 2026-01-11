@@ -122,14 +122,23 @@ jobs:
       - name: Verify Playwright can launch browser
         working-directory: packages/e2e
         run: |
-          echo "Testing if Playwright can launch browser..."
-          timeout 30 bunx playwright test --list 2>&1 || echo "Failed to list tests"
-          echo "Listing projects..."
-          timeout 30 bunx playwright test --list --project=read-only 2>&1 | head -20 || echo "Failed"
+          echo "Testing if Playwright can find chromium..."
+          ls -la $PLAYWRIGHT_BROWSERS_PATH/chromium-*/chrome-linux64/ || echo "Chrome not found"
+          echo ""
+          echo "Testing browser launch..."
+          timeout 30 node -e "
+            const { chromium } = require('@playwright/test');
+            (async () => {
+              console.log('Launching browser...');
+              const browser = await chromium.launch({ headless: true });
+              console.log('Browser launched successfully');
+              await browser.close();
+              console.log('Browser closed');
+            })().catch(e => { console.error('Failed:', e.message); process.exit(1); });
+          " 2>&1 || echo "Failed to launch browser"
         env:
           PLAYWRIGHT_BROWSERS_PATH: /home/runner/_work/_tool/e2e_tools
           CI: true
-          PW_TEST_REUSE_CONTEXT: 1
 
       - name: Run E2E test (${{ matrix.test }})
         working-directory: packages/e2e
