@@ -199,6 +199,7 @@ export default defineConfig({
 				'**/mobile-responsive.e2e.ts', // Mobile responsiveness tests
 				'**/session-status-indicators.e2e.ts', // Session status indicators tests
 				'**/scroll-responsiveness.e2e.ts', // Scroll responsiveness tests
+				'**/thinking-level-selector.e2e.ts', // Thinking level selector tests
 			],
 			use: { ...devices['Desktop Chrome'] },
 		},
