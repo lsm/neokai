@@ -228,9 +228,10 @@ test.describe('Message Send and Receive', () => {
 			await expect(messageInput).toBeEnabled({ timeout: 5000 });
 		}
 
-		// All messages should be visible
+		// All messages should be visible (use .first() to avoid strict mode violation
+		// as same text may appear in sidebar, header, and message area)
 		for (const msg of messages) {
-			await expect(page.locator(`text="${msg}"`)).toBeVisible();
+			await expect(page.locator(`text="${msg}"`).first()).toBeVisible();
 		}
 
 		// Should have at least as many assistant messages as user messages
