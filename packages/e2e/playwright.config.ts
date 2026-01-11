@@ -133,16 +133,16 @@ export default defineConfig({
 		/* Video on failure */
 		video: 'retain-on-failure',
 
-		/* Action timeout - increased for AI API calls and waitForFunction */
-		actionTimeout: 35000,
+		/* Action timeout - increased for AI API calls and waitForFunction in CI */
+		actionTimeout: 60000,
 	},
 
-	/* Global timeout for each test - increased for AI API calls */
-	timeout: 60000,
+	/* Global timeout for each test - increased for AI API calls in CI */
+	timeout: 120000,
 
-	/* Expect timeout for assertions - increased for AI API calls */
+	/* Expect timeout for assertions - increased for AI API calls in CI */
 	expect: {
-		timeout: 35000,
+		timeout: 60000,
 	},
 
 	/* Global setup - runs before ALL tests start */
