@@ -11,7 +11,7 @@ jobs:
   e2e:
     name: E2E (${{ matrix.test }})
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 2
     strategy:
       fail-fast: false
       matrix:
@@ -85,10 +85,12 @@ jobs:
 
       - name: Run E2E test (${{ matrix.test }})
         working-directory: packages/e2e
-        run: bun run test tests/${{ matrix.test }}.e2e.ts
+        run: bun run test tests/${{ matrix.test }}.e2e.ts --reporter=list
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           PLAYWRIGHT_BROWSERS_PATH: /home/runner/_work/_tool/e2e_tools
+          DEBUG: pw:api,pw:browser*
+          CI: true
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
