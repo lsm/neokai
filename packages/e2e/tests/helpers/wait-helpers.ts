@@ -30,10 +30,9 @@ export async function waitForWebSocketConnected(page: Page): Promise<void> {
 
 /**
  * Wait for session to be created and loaded
- * Uses simpler approach matching the passing chat-flow.e2e.ts pattern
  */
 export async function waitForSessionCreated(page: Page): Promise<string> {
-	// Wait for session to be created and loaded - simple timeout like chat-flow.e2e.ts
+	// Wait for session to be created and loaded
 	await page.waitForTimeout(1500);
 
 	// Verify we're in a chat view (message input should be visible)
@@ -41,10 +40,27 @@ export async function waitForSessionCreated(page: Page): Promise<string> {
 	await expect(messageInput).toBeVisible({ timeout: 10000 });
 	await expect(messageInput).toBeEnabled({ timeout: 5000 });
 
-	// Get session ID from URL path
+	// Get and return the session ID - try multiple methods for robustness
 	const sessionId = await page.evaluate(() => {
-		const pathId = window.location.pathname.split('/').filter(Boolean)[0];
-		return pathId && pathId !== 'undefined' ? pathId : null;
+		// 1. From URL path (format: /{sessionId} or /session/{id})
+		const pathParts = window.location.pathname.split('/').filter(Boolean);
+		const pathId = pathParts[0] === 'session' ? pathParts[1] : pathParts[0];
+		if (pathId && pathId !== 'undefined' && pathId !== 'null') return pathId;
+
+		// 2. From appState's currentSessionIdSignal (if exposed)
+		const appStateSessionId = window.appState?.currentSessionIdSignal?.value;
+		if (appStateSessionId) return appStateSessionId;
+
+		// 3. From localStorage
+		const localStorageId = localStorage.getItem('currentSessionId');
+		if (localStorageId) return localStorageId;
+
+		// 4. From latest session in sessions list
+		const sessions = window.appState?.global?.value?.sessions?.$.value?.sessions || [];
+		const latestSession = sessions[sessions.length - 1] as { id?: string } | undefined;
+		if (latestSession?.id) return latestSession.id;
+
+		return null;
 	});
 
 	if (!sessionId) {
