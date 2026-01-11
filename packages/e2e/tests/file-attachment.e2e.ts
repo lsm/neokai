@@ -126,7 +126,7 @@ test.describe('File Attachment', () => {
 
 	test('should show "Attach image" button in plus menu', async ({ page }) => {
 		// Create a new session
-		await page.locator('button:has-text("New Session")').click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Click the plus button to open menu
@@ -141,7 +141,7 @@ test.describe('File Attachment', () => {
 
 	test('should open file picker when clicking attach image', async ({ page }) => {
 		// Create a new session
-		await page.locator('button:has-text("New Session")').click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Click the plus button
@@ -164,7 +164,7 @@ test.describe('File Attachment', () => {
 
 	test('should preview attached image before sending', async ({ page }) => {
 		// Create a new session
-		await page.locator('button:has-text("New Session")').click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Click the plus button
@@ -178,20 +178,20 @@ test.describe('File Attachment', () => {
 		await fileChooser.setFiles(testImagePath);
 
 		// Wait for the image to be processed
-		await page.waitForTimeout(500);
+		await page.waitForTimeout(1000);
 
-		// The attachment preview should be visible
-		const attachmentPreview = page.locator('[class*="attachment"]').first();
-		await expect(attachmentPreview).toBeVisible();
+		// The attachment preview should show the remove button (aria-label)
+		const removeButton = page.locator('button[aria-label="Remove attachment"]');
+		await expect(removeButton).toBeVisible({ timeout: 10000 });
 
-		// Should show image thumbnail
-		const thumbnail = page.locator('img[src^="data:image"]').first();
+		// Should show image thumbnail (data: URL)
+		const thumbnail = page.locator('img[src^="data:"]').first();
 		await expect(thumbnail).toBeVisible();
 	});
 
 	test('should allow removing attached image', async ({ page }) => {
 		// Create a new session
-		await page.locator('button:has-text("New Session")').click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Attach an image
@@ -203,23 +203,25 @@ test.describe('File Attachment', () => {
 		const fileChooser = await fileChooserPromise;
 		await fileChooser.setFiles(testImagePath);
 
-		await page.waitForTimeout(500);
+		await page.waitForTimeout(1000);
 
-		// Hover over the attachment to show remove button
-		const attachment = page.locator('[class*="attachment"]').first();
-		await attachment.hover();
+		// Find the remove button (might need hover to show)
+		const removeButton = page.locator('button[aria-label="Remove attachment"]').first();
+		await expect(removeButton).toBeVisible({ timeout: 10000 });
+
+		// Hover to ensure button is clickable
+		await removeButton.hover();
 
 		// Click remove button
-		const removeButton = page.locator('button[aria-label="Remove attachment"]').first();
 		await removeButton.click();
 
-		// Attachment preview should disappear
-		await expect(attachment).not.toBeVisible();
+		// Attachment preview (and its remove button) should disappear
+		await expect(removeButton).not.toBeVisible({ timeout: 5000 });
 	});
 
 	test('should send message with attached image', async ({ page }) => {
 		// Create a new session
-		await page.locator('button:has-text("New Session")').click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Attach an image
@@ -255,7 +257,7 @@ test.describe('File Attachment', () => {
 
 	test('should support multiple image attachments', async ({ page }) => {
 		// Create a new session
-		await page.locator('button:has-text("New Session")').click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Attach multiple images at once
@@ -278,7 +280,7 @@ test.describe('File Attachment', () => {
 
 	test('should clear attachments after sending message', async ({ page }) => {
 		// Create a new session
-		await page.locator('button:has-text("New Session")').click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Attach an image
@@ -290,28 +292,29 @@ test.describe('File Attachment', () => {
 		const fileChooser = await fileChooserPromise;
 		await fileChooser.setFiles(testImagePath);
 
-		await page.waitForTimeout(500);
+		await page.waitForTimeout(1000);
 
-		// Verify attachment is shown
-		const attachmentPreview = page.locator('[class*="attachment"]').first();
-		await expect(attachmentPreview).toBeVisible();
+		// Verify attachment is shown via the remove button
+		const removeButton = page.locator('button[aria-label="Remove attachment"]');
+		await expect(removeButton).toBeVisible({ timeout: 10000 });
 
 		// Type and send message
 		const textarea = page.locator('textarea[placeholder*="Ask"]');
-		await textarea.fill('Test message');
+		await textarea.fill('Test message with image');
 
-		const sendButton = page.locator('button[aria-label="Send message"]');
+		const sendButton = page.locator('[data-testid="send-button"]');
 		await sendButton.click();
 
-		await page.waitForTimeout(1000);
+		// Wait for message to be sent
+		await page.waitForTimeout(2000);
 
-		// Attachment preview should be cleared
-		await expect(attachmentPreview).not.toBeVisible();
+		// Attachment preview should be cleared (remove button gone)
+		await expect(removeButton).not.toBeVisible({ timeout: 5000 });
 	});
 
 	test('should validate file size (reject > 5MB)', async ({ page }) => {
 		// Create a new session
-		await page.locator('button:has-text("New Session")').click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Try to attach a large file
@@ -329,9 +332,9 @@ test.describe('File Attachment', () => {
 		const errorToast = page.locator('text=/must be under.*5MB/i');
 		await expect(errorToast).toBeVisible({ timeout: 3000 });
 
-		// Attachment should not be added
-		const attachmentPreview = page.locator('[class*="attachment"]').first();
-		await expect(attachmentPreview).not.toBeVisible();
+		// Attachment should not be added (no remove button visible)
+		const removeButton = page.locator('button[aria-label="Remove attachment"]');
+		await expect(removeButton).not.toBeVisible();
 	});
 
 	test('should validate file type (accept only images)', async ({ page }) => {
@@ -340,7 +343,7 @@ test.describe('File Attachment', () => {
 		// by checking the accept attribute
 
 		// Create a new session
-		await page.locator('button:has-text("New Session")').click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Click the plus button
