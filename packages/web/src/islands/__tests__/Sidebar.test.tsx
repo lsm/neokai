@@ -1,350 +1,348 @@
 // @ts-nocheck
 /**
- * Tests for Sidebar Component
+ * Tests for Sidebar Component Logic
+ *
+ * Tests pure logic without mock.module to avoid polluting other tests.
  */
 
-import { describe, it, expect, mock, beforeEach } from 'bun:test';
+import { describe, it, expect, mock } from 'bun:test';
 import { signal } from '@preact/signals';
 
-// Mock signals
-const mockCurrentSessionId = signal<string | null>(null);
-const mockSidebarOpen = signal<boolean>(false);
-
-// Mock state
-const mockSessions = signal<Array<{ id: string; title: string; status: string }>>([]);
-const mockAuthStatus = signal<{
-	isAuthenticated: boolean;
-	method?: string;
-	source?: string;
-} | null>(null);
-const mockConnectionState = signal<string>('connected');
-const mockApiConnectionStatus = signal<{ status: string; errorCount?: number } | null>(null);
-const mockGlobalSettings = signal<{ showArchived?: boolean } | null>(null);
-const mockHasArchivedSessions = signal<boolean>(false);
-
-// Mock the signals module
-mock.module('../../lib/signals.ts', () => ({
-	currentSessionIdSignal: mockCurrentSessionId,
-	sidebarOpenSignal: mockSidebarOpen,
-}));
-
-// Mock the state module - include all exports to avoid breaking other tests
-const mockAppState = {
-	initialize: mock(() => Promise.resolve()),
-	cleanup: mock(() => {}),
-	getSessionChannels: mock(() => null),
-};
-mock.module('../../lib/state.ts', () => ({
-	sessions: mockSessions,
-	authStatus: mockAuthStatus,
-	connectionState: mockConnectionState,
-	apiConnectionStatus: mockApiConnectionStatus,
-	globalSettings: mockGlobalSettings,
-	hasArchivedSessions: mockHasArchivedSessions,
-	// Additional required exports
-	appState: mockAppState,
-	initializeApplicationState: mock(() => Promise.resolve()),
-	mergeSdkMessagesWithDedup: (existing: unknown[], added: unknown[]) => [
-		...(existing || []),
-		...(added || []),
-	],
-	currentSession: signal(null),
-	currentAgentState: signal({ status: 'idle', phase: null }),
-	currentContextInfo: signal(null),
-	isAgentWorking: signal(false),
-	activeSessions: signal(0),
-	recentSessions: signal([]),
-	systemState: signal(null),
-	healthStatus: signal(null),
-}));
-
-// Mock api-helpers
-const mockCreateSession = mock(() =>
-	Promise.resolve({ sessionId: 'new-session-id', session: { id: 'new-session-id' } })
-);
-const mockUpdateGlobalSettings = mock(() => Promise.resolve());
-mock.module('../../lib/api-helpers.ts', () => ({
-	createSession: mockCreateSession,
-	updateGlobalSettings: mockUpdateGlobalSettings,
-}));
-
-// Mock connection manager
-const mockReconnect = mock(() => {});
-mock.module('../../lib/connection-manager.ts', () => ({
-	connectionManager: {
-		reconnect: mockReconnect,
-	},
-}));
-
-// Mock toast
-const mockToast = {
-	success: mock(() => {}),
-	error: mock(() => {}),
-	info: mock(() => {}),
-	warning: mock(() => {}),
-};
-mock.module('../../lib/toast.ts', () => ({
-	toast: mockToast,
-	toastsSignal: { value: [] },
-	dismissToast: mock(() => {}),
-}));
-
-// Mock errors - include all exports to avoid breaking other tests
-class MockConnectionError extends Error {
-	constructor(message: string) {
-		super(message);
-		this.name = 'ConnectionError';
-	}
-}
-mock.module('../../lib/errors.ts', () => ({
-	ConnectionError: MockConnectionError,
-	ConnectionNotReadyError: class ConnectionNotReadyError extends MockConnectionError {
-		constructor(message = 'Connection not ready') {
-			super(message);
-			this.name = 'ConnectionNotReadyError';
-		}
-	},
-	ConnectionTimeoutError: class ConnectionTimeoutError extends MockConnectionError {
-		timeoutMs: number;
-		constructor(timeoutMs: number, message?: string) {
-			super(message || `Connection timed out after ${timeoutMs}ms`);
-			this.name = 'ConnectionTimeoutError';
-			this.timeoutMs = timeoutMs;
-		}
-	},
-}));
-
-describe('Sidebar', () => {
-	beforeEach(() => {
-		// Reset signals
-		mockCurrentSessionId.value = null;
-		mockSidebarOpen.value = false;
-		mockSessions.value = [];
-		mockAuthStatus.value = { isAuthenticated: true, method: 'api_key' };
-		mockConnectionState.value = 'connected';
-		mockApiConnectionStatus.value = { status: 'connected' };
-		mockGlobalSettings.value = { showArchived: false };
-		mockHasArchivedSessions.value = false;
-
-		// Reset mocks
-		mockCreateSession.mockClear();
-		mockUpdateGlobalSettings.mockClear();
-		mockReconnect.mockClear();
-		mockToast.success.mockClear();
-		mockToast.error.mockClear();
-	});
-
+describe('Sidebar Logic', () => {
 	describe('Session Creation', () => {
-		it('should not allow session creation when not connected', async () => {
-			mockConnectionState.value = 'disconnected';
+		it('should not allow session creation when not connected', () => {
+			const connectionState = 'disconnected';
+			const toastError = mock(() => {});
 
-			// Simulate handleCreateSession guard check
-			if (mockConnectionState.value !== 'connected') {
-				mockToast.error('Not connected to server. Please wait...');
-				return;
+			if (connectionState !== 'connected') {
+				toastError('Not connected to server. Please wait...');
 			}
 
-			expect(mockToast.error).toHaveBeenCalledWith('Not connected to server. Please wait...');
-			expect(mockCreateSession).not.toHaveBeenCalled();
+			expect(toastError).toHaveBeenCalledWith('Not connected to server. Please wait...');
 		});
 
-		it('should create session when connected', async () => {
-			mockConnectionState.value = 'connected';
+		it('should allow session creation when connected', () => {
+			const connectionState = 'connected';
+			const createSession = mock(() =>
+				Promise.resolve({ sessionId: 'new-session-id', session: { id: 'new-session-id' } })
+			);
 
-			// Simulate handleCreateSession
-			if (mockConnectionState.value === 'connected') {
-				const response = await mockCreateSession({ workspacePath: undefined });
-				if (response?.sessionId) {
-					mockCurrentSessionId.value = response.sessionId;
-					mockToast.success('Session created successfully');
-				}
+			if (connectionState === 'connected') {
+				createSession({ workspacePath: undefined });
 			}
 
-			expect(mockCreateSession).toHaveBeenCalled();
-			expect(mockCurrentSessionId.value).toBe('new-session-id');
-			expect(mockToast.success).toHaveBeenCalledWith('Session created successfully');
+			expect(createSession).toHaveBeenCalled();
 		});
 	});
 
 	describe('Session Selection', () => {
 		it('should update current session when clicked', () => {
+			const currentSessionId = signal<string | null>(null);
 			const sessionId = 'session-123';
-			mockCurrentSessionId.value = sessionId;
-			expect(mockCurrentSessionId.value).toBe(sessionId);
+
+			currentSessionId.value = sessionId;
+
+			expect(currentSessionId.value).toBe(sessionId);
 		});
 
 		it('should close sidebar on mobile when session is clicked', () => {
-			mockSidebarOpen.value = true;
+			const sidebarOpen = signal(true);
+			const isMobile = true;
 
-			// Simulate mobile width check and close
-			const isMobile = true; // window.innerWidth < 768
 			if (isMobile) {
-				mockSidebarOpen.value = false;
+				sidebarOpen.value = false;
 			}
 
-			expect(mockSidebarOpen.value).toBe(false);
+			expect(sidebarOpen.value).toBe(false);
+		});
+
+		it('should not close sidebar on desktop when session is clicked', () => {
+			const sidebarOpen = signal(true);
+			const isMobile = false;
+
+			if (isMobile) {
+				sidebarOpen.value = false;
+			}
+
+			expect(sidebarOpen.value).toBe(true);
 		});
 	});
 
 	describe('Pagination', () => {
 		it('should show visible sessions up to limit', () => {
 			const SESSIONS_PER_PAGE = 20;
-			mockSessions.value = Array.from({ length: 50 }, (_, i) => ({
-				id: `session-${i}`,
-				title: `Session ${i}`,
-				status: 'active',
-			}));
-
-			let visibleCount = SESSIONS_PER_PAGE;
-			let visibleSessions = mockSessions.value.slice(0, visibleCount);
-
-			expect(visibleSessions.length).toBe(20);
-		});
-
-		it('should load more sessions when requested', () => {
-			const SESSIONS_PER_PAGE = 20;
-			mockSessions.value = Array.from({ length: 50 }, (_, i) => ({
-				id: `session-${i}`,
-				title: `Session ${i}`,
-				status: 'active',
-			}));
-
-			let visibleCount = SESSIONS_PER_PAGE;
-
-			// Simulate handleLoadMore
-			visibleCount += SESSIONS_PER_PAGE;
-			const visibleSessions = mockSessions.value.slice(0, visibleCount);
-
-			expect(visibleSessions.length).toBe(40);
-		});
-
-		it('should detect hasMore correctly', () => {
-			const SESSIONS_PER_PAGE = 20;
-			mockSessions.value = Array.from({ length: 50 }, (_, i) => ({
+			const sessions = Array.from({ length: 50 }, (_, i) => ({
 				id: `session-${i}`,
 				title: `Session ${i}`,
 				status: 'active',
 			}));
 
 			const visibleCount = SESSIONS_PER_PAGE;
-			const hasMore = mockSessions.value.length > visibleCount;
+			const visibleSessions = sessions.slice(0, visibleCount);
+
+			expect(visibleSessions.length).toBe(20);
+		});
+
+		it('should load more sessions when requested', () => {
+			const SESSIONS_PER_PAGE = 20;
+			const sessions = Array.from({ length: 50 }, (_, i) => ({
+				id: `session-${i}`,
+				title: `Session ${i}`,
+				status: 'active',
+			}));
+
+			let visibleCount = SESSIONS_PER_PAGE;
+			visibleCount += SESSIONS_PER_PAGE;
+			const visibleSessions = sessions.slice(0, visibleCount);
+
+			expect(visibleSessions.length).toBe(40);
+		});
+
+		it('should detect hasMore correctly', () => {
+			const SESSIONS_PER_PAGE = 20;
+			const sessions = Array.from({ length: 50 }, (_, i) => ({
+				id: `session-${i}`,
+				title: `Session ${i}`,
+				status: 'active',
+			}));
+
+			const visibleCount = SESSIONS_PER_PAGE;
+			const hasMore = sessions.length > visibleCount;
 
 			expect(hasMore).toBe(true);
+		});
+
+		it('should detect no more sessions correctly', () => {
+			const SESSIONS_PER_PAGE = 20;
+			const sessions = Array.from({ length: 15 }, (_, i) => ({
+				id: `session-${i}`,
+				title: `Session ${i}`,
+				status: 'active',
+			}));
+
+			const visibleCount = SESSIONS_PER_PAGE;
+			const hasMore = sessions.length > visibleCount;
+
+			expect(hasMore).toBe(false);
 		});
 	});
 
 	describe('Archive Toggle', () => {
-		it('should show archive toggle when there are archived sessions', () => {
-			mockHasArchivedSessions.value = true;
-			expect(mockHasArchivedSessions.value).toBe(true);
-		});
-
-		it('should hide archive toggle when no archived sessions', () => {
-			mockHasArchivedSessions.value = false;
-			expect(mockHasArchivedSessions.value).toBe(false);
-		});
-
 		it('should toggle showArchived setting', async () => {
-			mockGlobalSettings.value = { showArchived: false };
+			const updateGlobalSettings = mock(() => Promise.resolve());
+			const globalSettings = { showArchived: false };
 
-			// Simulate handleToggleShowArchived
-			const currentShowArchived = mockGlobalSettings.value?.showArchived ?? false;
-			await mockUpdateGlobalSettings({ showArchived: !currentShowArchived });
+			const currentShowArchived = globalSettings.showArchived ?? false;
+			await updateGlobalSettings({ showArchived: !currentShowArchived });
 
-			expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({ showArchived: true });
+			expect(updateGlobalSettings).toHaveBeenCalledWith({ showArchived: true });
+		});
+
+		it('should toggle from true to false', async () => {
+			const updateGlobalSettings = mock(() => Promise.resolve());
+			const globalSettings = { showArchived: true };
+
+			const currentShowArchived = globalSettings.showArchived ?? false;
+			await updateGlobalSettings({ showArchived: !currentShowArchived });
+
+			expect(updateGlobalSettings).toHaveBeenCalledWith({ showArchived: false });
 		});
 	});
 
 	describe('Connection Status', () => {
-		it('should show connected status', () => {
-			mockConnectionState.value = 'connected';
-			expect(mockConnectionState.value).toBe('connected');
+		it('should identify connected state', () => {
+			const connectionState = 'connected';
+			expect(connectionState).toBe('connected');
 		});
 
-		it('should show connecting status', () => {
-			mockConnectionState.value = 'connecting';
-			expect(mockConnectionState.value).toBe('connecting');
+		it('should identify connecting state', () => {
+			const connectionState = 'connecting';
+			expect(connectionState).toBe('connecting');
 		});
 
-		it('should show reconnecting status', () => {
-			mockConnectionState.value = 'reconnecting';
-			expect(mockConnectionState.value).toBe('reconnecting');
+		it('should identify reconnecting state', () => {
+			const connectionState = 'reconnecting';
+			expect(connectionState).toBe('reconnecting');
 		});
 
-		it('should show reconnect button when disconnected', () => {
-			mockConnectionState.value = 'disconnected';
+		it('should trigger reconnect when disconnected', () => {
+			const connectionState = 'disconnected';
+			const reconnect = mock(() => {});
 
-			// Simulate clicking reconnect
 			if (
-				mockConnectionState.value === 'disconnected' ||
-				mockConnectionState.value === 'error' ||
-				mockConnectionState.value === 'failed'
+				connectionState === 'disconnected' ||
+				connectionState === 'error' ||
+				connectionState === 'failed'
 			) {
-				mockReconnect();
+				reconnect();
 			}
 
-			expect(mockReconnect).toHaveBeenCalled();
+			expect(reconnect).toHaveBeenCalled();
+		});
+
+		it('should trigger reconnect when in error state', () => {
+			const connectionState = 'error';
+			const reconnect = mock(() => {});
+
+			if (
+				connectionState === 'disconnected' ||
+				connectionState === 'error' ||
+				connectionState === 'failed'
+			) {
+				reconnect();
+			}
+
+			expect(reconnect).toHaveBeenCalled();
+		});
+
+		it('should trigger reconnect when in failed state', () => {
+			const connectionState = 'failed';
+			const reconnect = mock(() => {});
+
+			if (
+				connectionState === 'disconnected' ||
+				connectionState === 'error' ||
+				connectionState === 'failed'
+			) {
+				reconnect();
+			}
+
+			expect(reconnect).toHaveBeenCalled();
 		});
 	});
 
 	describe('Auth Status', () => {
-		it('should show authenticated with API key', () => {
-			mockAuthStatus.value = { isAuthenticated: true, method: 'api_key', source: 'env' };
-			expect(mockAuthStatus.value.isAuthenticated).toBe(true);
-			expect(mockAuthStatus.value.method).toBe('api_key');
+		it('should identify authenticated with API key', () => {
+			const authStatus = { isAuthenticated: true, method: 'api_key', source: 'env' };
+			expect(authStatus.isAuthenticated).toBe(true);
+			expect(authStatus.method).toBe('api_key');
+			expect(authStatus.source).toBe('env');
 		});
 
-		it('should show authenticated with OAuth', () => {
-			mockAuthStatus.value = { isAuthenticated: true, method: 'oauth' };
-			expect(mockAuthStatus.value.method).toBe('oauth');
+		it('should identify authenticated with OAuth', () => {
+			const authStatus = { isAuthenticated: true, method: 'oauth' };
+			expect(authStatus.isAuthenticated).toBe(true);
+			expect(authStatus.method).toBe('oauth');
 		});
 
-		it('should show not configured when not authenticated', () => {
-			mockAuthStatus.value = { isAuthenticated: false };
-			expect(mockAuthStatus.value.isAuthenticated).toBe(false);
+		it('should identify authenticated with OAuth token', () => {
+			const authStatus = { isAuthenticated: true, method: 'oauth_token' };
+			expect(authStatus.isAuthenticated).toBe(true);
+			expect(authStatus.method).toBe('oauth_token');
+		});
+
+		it('should identify not authenticated', () => {
+			const authStatus = { isAuthenticated: false };
+			expect(authStatus.isAuthenticated).toBe(false);
 		});
 	});
 
 	describe('API Connection Status', () => {
-		it('should show API connected', () => {
-			mockApiConnectionStatus.value = { status: 'connected' };
-			expect(mockApiConnectionStatus.value?.status).toBe('connected');
+		it('should identify API connected', () => {
+			const apiConnectionStatus = { status: 'connected' };
+			expect(apiConnectionStatus.status).toBe('connected');
 		});
 
-		it('should show API degraded', () => {
-			mockApiConnectionStatus.value = { status: 'degraded', errorCount: 3 };
-			expect(mockApiConnectionStatus.value?.status).toBe('degraded');
-			expect(mockApiConnectionStatus.value?.errorCount).toBe(3);
+		it('should identify API degraded', () => {
+			const apiConnectionStatus = { status: 'degraded', errorCount: 3 };
+			expect(apiConnectionStatus.status).toBe('degraded');
+			expect(apiConnectionStatus.errorCount).toBe(3);
 		});
 
-		it('should show API disconnected', () => {
-			mockApiConnectionStatus.value = { status: 'disconnected' };
-			expect(mockApiConnectionStatus.value?.status).toBe('disconnected');
+		it('should identify API disconnected', () => {
+			const apiConnectionStatus = { status: 'disconnected' };
+			expect(apiConnectionStatus.status).toBe('disconnected');
 		});
 	});
 
 	describe('Mobile Sidebar Toggle', () => {
 		it('should open sidebar', () => {
-			mockSidebarOpen.value = true;
-			expect(mockSidebarOpen.value).toBe(true);
+			const sidebarOpen = signal(false);
+			sidebarOpen.value = true;
+			expect(sidebarOpen.value).toBe(true);
 		});
 
 		it('should close sidebar', () => {
-			mockSidebarOpen.value = true;
-			mockSidebarOpen.value = false;
-			expect(mockSidebarOpen.value).toBe(false);
+			const sidebarOpen = signal(true);
+			sidebarOpen.value = false;
+			expect(sidebarOpen.value).toBe(false);
+		});
+
+		it('should toggle sidebar', () => {
+			const sidebarOpen = signal(false);
+			sidebarOpen.value = !sidebarOpen.value;
+			expect(sidebarOpen.value).toBe(true);
+			sidebarOpen.value = !sidebarOpen.value;
+			expect(sidebarOpen.value).toBe(false);
 		});
 	});
 
 	describe('Empty State', () => {
 		it('should show empty state when no sessions', () => {
-			mockSessions.value = [];
-			expect(mockSessions.value.length).toBe(0);
+			const sessions: unknown[] = [];
+			expect(sessions.length).toBe(0);
 		});
 
 		it('should not show empty state when sessions exist', () => {
-			mockSessions.value = [{ id: 'session-1', title: 'Session 1', status: 'active' }];
-			expect(mockSessions.value.length).toBeGreaterThan(0);
+			const sessions = [{ id: 'session-1', title: 'Session 1', status: 'active' }];
+			expect(sessions.length).toBeGreaterThan(0);
+		});
+	});
+
+	describe('Session Filtering', () => {
+		it('should filter active sessions when showArchived is false', () => {
+			const sessions = [
+				{ id: 's1', title: 'Active 1', status: 'active' },
+				{ id: 's2', title: 'Archived 1', status: 'archived' },
+				{ id: 's3', title: 'Active 2', status: 'active' },
+			];
+			const showArchived = false;
+
+			const visibleSessions = showArchived
+				? sessions
+				: sessions.filter((s) => s.status !== 'archived');
+
+			expect(visibleSessions.length).toBe(2);
+			expect(visibleSessions.every((s) => s.status === 'active')).toBe(true);
+		});
+
+		it('should show all sessions when showArchived is true', () => {
+			const sessions = [
+				{ id: 's1', title: 'Active 1', status: 'active' },
+				{ id: 's2', title: 'Archived 1', status: 'archived' },
+				{ id: 's3', title: 'Active 2', status: 'active' },
+			];
+			const showArchived = true;
+
+			const visibleSessions = showArchived
+				? sessions
+				: sessions.filter((s) => s.status !== 'archived');
+
+			expect(visibleSessions.length).toBe(3);
+		});
+	});
+
+	describe('Has Archived Sessions Detection', () => {
+		it('should detect archived sessions exist', () => {
+			const sessions = [
+				{ id: 's1', status: 'active' },
+				{ id: 's2', status: 'archived' },
+			];
+
+			const hasArchivedSessions = sessions.some((s) => s.status === 'archived');
+
+			expect(hasArchivedSessions).toBe(true);
+		});
+
+		it('should detect no archived sessions', () => {
+			const sessions = [
+				{ id: 's1', status: 'active' },
+				{ id: 's2', status: 'active' },
+			];
+
+			const hasArchivedSessions = sessions.some((s) => s.status === 'archived');
+
+			expect(hasArchivedSessions).toBe(false);
 		});
 	});
 });
