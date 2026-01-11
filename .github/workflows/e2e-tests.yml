@@ -65,6 +65,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
@@ -167,7 +172,8 @@ jobs:
         working-directory: packages/e2e
         run: |
           echo "Listing tests..."
-          timeout 30 bunx playwright test --list --project=read-only 2>&1 | head -20 || echo "List failed"
+          echo "Node version: $(node --version)"
+          timeout 30 npx playwright test --list --project=read-only 2>&1 | head -20 || echo "List failed"
         env:
           PLAYWRIGHT_BROWSERS_PATH: /home/runner/_work/_tool/e2e_tools
           CI: true
@@ -177,9 +183,9 @@ jobs:
         working-directory: packages/e2e
         run: |
           echo "Running test: tests/${{ matrix.test }}.e2e.ts"
-          # Use xvfb-run to provide virtual display
+          # Use npx directly with node for better compatibility
           timeout 180 xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
-            bun run test tests/${{ matrix.test }}.e2e.ts --reporter=list 2>&1
+            npx playwright test tests/${{ matrix.test }}.e2e.ts --reporter=list 2>&1
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           PLAYWRIGHT_BROWSERS_PATH: /home/runner/_work/_tool/e2e_tools
