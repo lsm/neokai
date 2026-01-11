@@ -1,144 +1,155 @@
 // @ts-nocheck
 /**
- * Tests for useMessageHub Hook
+ * Tests for useMessageHub Hook Logic
  *
- * Tests the non-blocking connection access patterns and reactive state.
+ * Tests pure logic without mock.module to avoid polluting other tests.
+ * IMPORTANT: Bun's mock.module() persists across test files, so we test
+ * the underlying logic without using module mocks.
  */
 
 import { describe, it, expect, mock, beforeEach } from 'bun:test';
 import { signal } from '@preact/signals';
 
-// Track state for assertions
-let connectionStateValue = signal<string>('disconnected');
-let hubIsConnected = false;
-let hubCallResult: unknown = null;
-let subscribeOptimisticCalled = false;
-
-// Mock connection manager
-const mockConnectionManager = {
-	getHubIfConnected: mock(() => {
-		if (!hubIsConnected) return null;
-		return {
-			call: mock((__method: string, _data: unknown, _options: unknown) =>
-				Promise.resolve(hubCallResult)
-			),
-			subscribeOptimistic: mock((__method: string, _handler: unknown, _options: unknown) => {
-				subscribeOptimisticCalled = true;
-				return () => {};
-			}),
-		};
-	}),
-	getHubOrThrow: mock(() => {
-		if (!hubIsConnected) throw new Error('Not connected');
-		return {};
-	}),
-	onConnected: mock((timeout: number) => {
-		if (hubIsConnected) return Promise.resolve();
-		return new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeout));
-	}),
-	onceConnected: mock((callback: () => void) => {
-		if (hubIsConnected) {
-			callback();
-			return () => {};
-		}
-		return () => {};
-	}),
-	isConnected: mock(() => hubIsConnected),
-};
-
-// Mock the connection-manager module
-mock.module('../lib/connection-manager', () => ({
-	connectionManager: mockConnectionManager,
-}));
-
-// Mock the state module - include all exports to avoid breaking other tests
-const mockAppState = {
-	initialize: mock(() => Promise.resolve()),
-	cleanup: mock(() => {}),
-	getSessionChannels: mock(() => null),
-};
-mock.module('../lib/state', () => ({
-	connectionState: connectionStateValue,
-	// Additional required exports
-	appState: mockAppState,
-	initializeApplicationState: mock(() => Promise.resolve()),
-	mergeSdkMessagesWithDedup: (existing: unknown[], added: unknown[]) => [
-		...(existing || []),
-		...(added || []),
-	],
-	sessions: signal([]),
-	authStatus: signal(null),
-	apiConnectionStatus: signal(null),
-	globalSettings: signal(null),
-	hasArchivedSessions: signal(false),
-	currentSession: signal(null),
-	currentAgentState: signal({ status: 'idle', phase: null }),
-	currentContextInfo: signal(null),
-	isAgentWorking: signal(false),
-	activeSessions: signal(0),
-	recentSessions: signal([]),
-	systemState: signal(null),
-	healthStatus: signal(null),
-}));
-
-// Mock the errors module - include all exports
-class MockConnectionError extends Error {
+// Error classes for testing
+class ConnectionNotReadyError extends Error {
 	constructor(message: string) {
 		super(message);
-		this.name = 'ConnectionError';
+		this.name = 'ConnectionNotReadyError';
 	}
 }
-mock.module('../lib/errors', () => ({
-	ConnectionError: MockConnectionError,
-	ConnectionNotReadyError: class ConnectionNotReadyError extends MockConnectionError {
-		constructor(message = 'Connection not ready') {
-			super(message);
-			this.name = 'ConnectionNotReadyError';
-		}
-	},
-	ConnectionTimeoutError: class ConnectionTimeoutError extends MockConnectionError {
-		timeoutMs: number;
-		constructor(timeoutMs: number, message?: string) {
-			super(message || `Connection timed out after ${timeoutMs}ms`);
-			this.name = 'ConnectionTimeoutError';
-			this.timeoutMs = timeoutMs;
-		}
-	},
-}));
 
-// Import after mocking
-import { ConnectionNotReadyError } from '../../lib/errors';
+// Type definitions
+interface MockHub {
+	call: (method: string, data?: unknown, options?: unknown) => Promise<unknown>;
+	subscribeOptimistic: (method: string, handler: unknown, options?: unknown) => () => void;
+}
 
-// Helper to create a minimal hook context
-function createHookContext() {
-	// Since we can't use Preact hooks outside components in tests,
-	// we'll test the underlying logic directly
+interface MockConnectionManager {
+	hubIsConnected: boolean;
+	hubCallResult: unknown;
+	onceConnectedCallbacks: (() => void)[];
+	subscribeOptimisticCalled: boolean;
+
+	getHubIfConnected: () => MockHub | null;
+	getHubOrThrow: () => MockHub;
+	onConnected: (timeout: number) => Promise<void>;
+	onceConnected: (callback: () => void) => () => void;
+	isConnected: () => boolean;
+}
+
+// Create a mock connection manager
+function createMockConnectionManager(): MockConnectionManager {
+	const state = {
+		hubIsConnected: false,
+		hubCallResult: null as unknown,
+		onceConnectedCallbacks: [] as (() => void)[],
+		subscribeOptimisticCalled: false,
+	};
+
+	const createHub = (): MockHub => ({
+		call: mock((__method: string, _data: unknown, _options: unknown) =>
+			Promise.resolve(state.hubCallResult)
+		),
+		subscribeOptimistic: mock((__method: string, _handler: unknown, _options: unknown) => {
+			state.subscribeOptimisticCalled = true;
+			return () => {};
+		}),
+	});
+
 	return {
-		getHub: () => mockConnectionManager.getHubIfConnected(),
-		call: async (method: string, data?: unknown, options?: { timeout?: number }) => {
-			const hub = mockConnectionManager.getHubIfConnected();
+		get hubIsConnected() {
+			return state.hubIsConnected;
+		},
+		set hubIsConnected(value: boolean) {
+			state.hubIsConnected = value;
+			if (value) {
+				// Call pending callbacks
+				state.onceConnectedCallbacks.forEach((cb) => cb());
+				state.onceConnectedCallbacks = [];
+			}
+		},
+		get hubCallResult() {
+			return state.hubCallResult;
+		},
+		set hubCallResult(value: unknown) {
+			state.hubCallResult = value;
+		},
+		get onceConnectedCallbacks() {
+			return state.onceConnectedCallbacks;
+		},
+		get subscribeOptimisticCalled() {
+			return state.subscribeOptimisticCalled;
+		},
+		set subscribeOptimisticCalled(value: boolean) {
+			state.subscribeOptimisticCalled = value;
+		},
+
+		getHubIfConnected: () => {
+			if (!state.hubIsConnected) return null;
+			return createHub();
+		},
+
+		getHubOrThrow: () => {
+			if (!state.hubIsConnected) throw new Error('Not connected');
+			return createHub();
+		},
+
+		onConnected: (timeout: number) => {
+			if (state.hubIsConnected) return Promise.resolve();
+			return new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeout));
+		},
+
+		onceConnected: (callback: () => void) => {
+			if (state.hubIsConnected) {
+				callback();
+				return () => {};
+			}
+			state.onceConnectedCallbacks.push(callback);
+			return () => {
+				const index = state.onceConnectedCallbacks.indexOf(callback);
+				if (index > -1) {
+					state.onceConnectedCallbacks.splice(index, 1);
+				}
+			};
+		},
+
+		isConnected: () => state.hubIsConnected,
+	};
+}
+
+// Helper to create a simulated hook context
+function createHookContext(connectionManager: MockConnectionManager) {
+	return {
+		getHub: () => connectionManager.getHubIfConnected(),
+
+		call: async (method: string, data?: unknown, _options?: { timeout?: number }) => {
+			const hub = connectionManager.getHubIfConnected();
 			if (!hub) {
 				throw new ConnectionNotReadyError(`Cannot call '${method}': not connected to server`);
 			}
-			return hub.call(method, data, options);
+			return hub.call(method, data, _options);
 		},
+
 		callIfConnected: async (method: string, data?: unknown, options?: { timeout?: number }) => {
-			const hub = mockConnectionManager.getHubIfConnected();
+			const hub = connectionManager.getHubIfConnected();
 			if (!hub) return null;
 			return hub.call(method, data, options);
 		},
+
 		subscribe: (method: string, handler: unknown, options?: unknown) => {
-			const hub = mockConnectionManager.getHubIfConnected();
+			const hub = connectionManager.getHubIfConnected();
 			if (!hub) {
 				let actualUnsub: (() => void) | null = null;
 				let cancelled = false;
-				const connectionUnsub = mockConnectionManager.onceConnected(() => {
+
+				const connectionUnsub = connectionManager.onceConnected(() => {
 					if (cancelled) return;
-					const connectedHub = mockConnectionManager.getHubIfConnected();
+					const connectedHub = connectionManager.getHubIfConnected();
 					if (connectedHub) {
 						actualUnsub = connectedHub.subscribeOptimistic(method, handler, options);
 					}
 				});
+
 				return () => {
 					cancelled = true;
 					connectionUnsub();
@@ -150,23 +161,20 @@ function createHookContext() {
 	};
 }
 
+// Test state
+let connectionStateValue: ReturnType<typeof signal<string>>;
+let mockConnectionManager: MockConnectionManager;
+
 describe('useMessageHub', () => {
 	beforeEach(() => {
-		// Reset state
-		connectionStateValue.value = 'disconnected';
-		hubIsConnected = false;
-		hubCallResult = null;
-		subscribeOptimisticCalled = false;
-
-		// Reset mocks
-		mockConnectionManager.getHubIfConnected.mockClear();
-		mockConnectionManager.onceConnected.mockClear();
+		connectionStateValue = signal('disconnected');
+		mockConnectionManager = createMockConnectionManager();
 	});
 
 	describe('getHub', () => {
 		it('should return null when not connected', () => {
-			hubIsConnected = false;
-			const ctx = createHookContext();
+			mockConnectionManager.hubIsConnected = false;
+			const ctx = createHookContext(mockConnectionManager);
 
 			const hub = ctx.getHub();
 
@@ -174,8 +182,8 @@ describe('useMessageHub', () => {
 		});
 
 		it('should return hub when connected', () => {
-			hubIsConnected = true;
-			const ctx = createHookContext();
+			mockConnectionManager.hubIsConnected = true;
+			const ctx = createHookContext(mockConnectionManager);
 
 			const hub = ctx.getHub();
 
@@ -185,8 +193,8 @@ describe('useMessageHub', () => {
 
 	describe('call', () => {
 		it('should throw ConnectionNotReadyError when not connected', async () => {
-			hubIsConnected = false;
-			const ctx = createHookContext();
+			mockConnectionManager.hubIsConnected = false;
+			const ctx = createHookContext(mockConnectionManager);
 
 			try {
 				await ctx.call('test.method', { data: 'value' });
@@ -199,9 +207,9 @@ describe('useMessageHub', () => {
 		});
 
 		it('should make RPC call when connected', async () => {
-			hubIsConnected = true;
-			hubCallResult = { success: true, data: 'result' };
-			const ctx = createHookContext();
+			mockConnectionManager.hubIsConnected = true;
+			mockConnectionManager.hubCallResult = { success: true, data: 'result' };
+			const ctx = createHookContext(mockConnectionManager);
 
 			const result = await ctx.call('test.method', { input: 'data' });
 
@@ -209,8 +217,8 @@ describe('useMessageHub', () => {
 		});
 
 		it('should not block when not connected', async () => {
-			hubIsConnected = false;
-			const ctx = createHookContext();
+			mockConnectionManager.hubIsConnected = false;
+			const ctx = createHookContext(mockConnectionManager);
 
 			const start = Date.now();
 
@@ -227,8 +235,8 @@ describe('useMessageHub', () => {
 
 	describe('callIfConnected', () => {
 		it('should return null when not connected', async () => {
-			hubIsConnected = false;
-			const ctx = createHookContext();
+			mockConnectionManager.hubIsConnected = false;
+			const ctx = createHookContext(mockConnectionManager);
 
 			const result = await ctx.callIfConnected('test.method', { data: 'value' });
 
@@ -236,9 +244,9 @@ describe('useMessageHub', () => {
 		});
 
 		it('should make RPC call when connected', async () => {
-			hubIsConnected = true;
-			hubCallResult = { success: true };
-			const ctx = createHookContext();
+			mockConnectionManager.hubIsConnected = true;
+			mockConnectionManager.hubCallResult = { success: true };
+			const ctx = createHookContext(mockConnectionManager);
 
 			const result = await ctx.callIfConnected('test.method');
 
@@ -246,8 +254,8 @@ describe('useMessageHub', () => {
 		});
 
 		it('should not throw when not connected', async () => {
-			hubIsConnected = false;
-			const ctx = createHookContext();
+			mockConnectionManager.hubIsConnected = false;
+			const ctx = createHookContext(mockConnectionManager);
 
 			// Should not throw
 			const result = await ctx.callIfConnected('test.method');
@@ -257,8 +265,8 @@ describe('useMessageHub', () => {
 
 	describe('subscribe', () => {
 		it('should queue subscription when not connected', () => {
-			hubIsConnected = false;
-			const ctx = createHookContext();
+			mockConnectionManager.hubIsConnected = false;
+			const ctx = createHookContext(mockConnectionManager);
 
 			const handler = () => {};
 			const unsub = ctx.subscribe('test.event', handler);
@@ -266,13 +274,13 @@ describe('useMessageHub', () => {
 			// Should return unsubscribe function immediately
 			expect(typeof unsub).toBe('function');
 
-			// Should have called onceConnected
-			expect(mockConnectionManager.onceConnected).toHaveBeenCalled();
+			// Should have added to pending callbacks
+			expect(mockConnectionManager.onceConnectedCallbacks.length).toBe(1);
 		});
 
 		it('should subscribe immediately when connected', () => {
-			hubIsConnected = true;
-			const ctx = createHookContext();
+			mockConnectionManager.hubIsConnected = true;
+			const ctx = createHookContext(mockConnectionManager);
 
 			const handler = () => {};
 			const unsub = ctx.subscribe('test.event', handler);
@@ -281,12 +289,12 @@ describe('useMessageHub', () => {
 			expect(typeof unsub).toBe('function');
 
 			// Should have called subscribeOptimistic
-			expect(subscribeOptimisticCalled).toBe(true);
+			expect(mockConnectionManager.subscribeOptimisticCalled).toBe(true);
 		});
 
 		it('should return synchronous unsubscribe function', () => {
-			hubIsConnected = true;
-			const ctx = createHookContext();
+			mockConnectionManager.hubIsConnected = true;
+			const ctx = createHookContext(mockConnectionManager);
 
 			const start = Date.now();
 			const unsub = ctx.subscribe('test.event', () => {});
@@ -297,8 +305,8 @@ describe('useMessageHub', () => {
 		});
 
 		it('should cancel queued subscription on unsubscribe', () => {
-			hubIsConnected = false;
-			const ctx = createHookContext();
+			mockConnectionManager.hubIsConnected = false;
+			const ctx = createHookContext(mockConnectionManager);
 
 			const handler = mock(() => {});
 			const unsub = ctx.subscribe('test.event', handler);
@@ -307,7 +315,7 @@ describe('useMessageHub', () => {
 			unsub();
 
 			// Now connect - handler should NOT be called
-			hubIsConnected = true;
+			mockConnectionManager.hubIsConnected = true;
 
 			// Handler should not have been called
 			expect(handler).not.toHaveBeenCalled();
@@ -317,9 +325,9 @@ describe('useMessageHub', () => {
 	describe('connection state reactivity', () => {
 		it('should reflect connected state', () => {
 			connectionStateValue.value = 'connected';
-			hubIsConnected = true;
+			mockConnectionManager.hubIsConnected = true;
 
-			const ctx = createHookContext();
+			const ctx = createHookContext(mockConnectionManager);
 			const hub = ctx.getHub();
 
 			expect(hub).not.toBeNull();
@@ -327,20 +335,20 @@ describe('useMessageHub', () => {
 
 		it('should reflect disconnected state', () => {
 			connectionStateValue.value = 'disconnected';
-			hubIsConnected = false;
+			mockConnectionManager.hubIsConnected = false;
 
-			const ctx = createHookContext();
+			const ctx = createHookContext(mockConnectionManager);
 			const hub = ctx.getHub();
 
 			expect(hub).toBeNull();
 		});
 
 		it('should handle state transitions', () => {
-			const ctx = createHookContext();
+			const ctx = createHookContext(mockConnectionManager);
 
 			// Start disconnected
 			connectionStateValue.value = 'disconnected';
-			hubIsConnected = false;
+			mockConnectionManager.hubIsConnected = false;
 			expect(ctx.getHub()).toBeNull();
 
 			// Transition to connecting
@@ -349,12 +357,12 @@ describe('useMessageHub', () => {
 
 			// Transition to connected
 			connectionStateValue.value = 'connected';
-			hubIsConnected = true;
+			mockConnectionManager.hubIsConnected = true;
 			expect(ctx.getHub()).not.toBeNull();
 
 			// Transition to reconnecting
 			connectionStateValue.value = 'reconnecting';
-			hubIsConnected = false;
+			mockConnectionManager.hubIsConnected = false;
 			expect(ctx.getHub()).toBeNull();
 		});
 	});
@@ -362,12 +370,12 @@ describe('useMessageHub', () => {
 
 describe('useMessageHub - Non-blocking guarantees', () => {
 	beforeEach(() => {
-		connectionStateValue.value = 'disconnected';
-		hubIsConnected = false;
+		connectionStateValue = signal('disconnected');
+		mockConnectionManager = createMockConnectionManager();
 	});
 
 	it('getHub should never block', () => {
-		const ctx = createHookContext();
+		const ctx = createHookContext(mockConnectionManager);
 
 		const start = Date.now();
 		for (let i = 0; i < 100; i++) {
@@ -379,7 +387,7 @@ describe('useMessageHub - Non-blocking guarantees', () => {
 	});
 
 	it('call should fail fast when not connected', async () => {
-		const ctx = createHookContext();
+		const ctx = createHookContext(mockConnectionManager);
 
 		const start = Date.now();
 		try {
@@ -393,7 +401,7 @@ describe('useMessageHub - Non-blocking guarantees', () => {
 	});
 
 	it('callIfConnected should return immediately when not connected', async () => {
-		const ctx = createHookContext();
+		const ctx = createHookContext(mockConnectionManager);
 
 		const start = Date.now();
 		await ctx.callIfConnected('method');
@@ -403,7 +411,7 @@ describe('useMessageHub - Non-blocking guarantees', () => {
 	});
 
 	it('subscribe should return immediately even when not connected', () => {
-		const ctx = createHookContext();
+		const ctx = createHookContext(mockConnectionManager);
 
 		const start = Date.now();
 		const unsub = ctx.subscribe('event', () => {});
@@ -416,20 +424,20 @@ describe('useMessageHub - Non-blocking guarantees', () => {
 
 describe('useMessageHub - Edge cases', () => {
 	beforeEach(() => {
-		connectionStateValue.value = 'disconnected';
-		hubIsConnected = false;
+		connectionStateValue = signal('disconnected');
+		mockConnectionManager = createMockConnectionManager();
 	});
 
 	it('should handle rapid connect/disconnect cycles', () => {
-		const ctx = createHookContext();
+		const ctx = createHookContext(mockConnectionManager);
 
 		for (let i = 0; i < 10; i++) {
-			hubIsConnected = true;
+			mockConnectionManager.hubIsConnected = true;
 			connectionStateValue.value = 'connected';
 			const hub = ctx.getHub();
 			expect(hub).not.toBeNull();
 
-			hubIsConnected = false;
+			mockConnectionManager.hubIsConnected = false;
 			connectionStateValue.value = 'disconnected';
 			const noHub = ctx.getHub();
 			expect(noHub).toBeNull();
@@ -437,7 +445,7 @@ describe('useMessageHub - Edge cases', () => {
 	});
 
 	it('should handle multiple concurrent calls when not connected', async () => {
-		const ctx = createHookContext();
+		const ctx = createHookContext(mockConnectionManager);
 
 		const promises = Array.from({ length: 5 }, () => ctx.call('method').catch((e) => e));
 
@@ -450,7 +458,7 @@ describe('useMessageHub - Edge cases', () => {
 	});
 
 	it('should handle multiple concurrent subscriptions when not connected', () => {
-		const ctx = createHookContext();
+		const ctx = createHookContext(mockConnectionManager);
 
 		const unsubs = Array.from({ length: 10 }, (_, i) => ctx.subscribe(`event.${i}`, () => {}));
 

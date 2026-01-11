@@ -8,7 +8,7 @@
 
 import './setup';
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { render, cleanup } from '@testing-library/preact';
+import { render, cleanup, fireEvent } from '@testing-library/preact';
 import type { ContextInfo } from '@liuboer/shared';
 import ContextUsageBar from '../ContextUsageBar';
 

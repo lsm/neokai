@@ -1,19 +1,12 @@
 // @ts-nocheck
 /**
  * Setup Happy-DOM for SDK tool component tests
+ *
+ * IMPORTANT: This file does NOT use mock.module() to avoid polluting other tests.
+ * Bun's mock.module() persists across test files in the same run.
  */
 
 import { Window } from 'happy-dom';
-import { mock } from 'bun:test';
-
-// Mock highlight.js before any components are imported
-mock.module('highlight.js', () => ({
-	default: {
-		highlightAuto: (code: string) => ({ value: code, language: 'plaintext' }),
-		highlight: (code: string, _opts: unknown) => ({ value: code }),
-		getLanguage: () => true,
-	},
-}));
 
 // Create a global window with Happy-DOM
 const window = new Window({

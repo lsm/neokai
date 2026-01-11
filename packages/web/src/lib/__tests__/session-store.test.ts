@@ -6,7 +6,7 @@
  * Uses a fresh instance for each test to isolate state.
  */
 
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect, beforeEach } from 'bun:test';
 import { signal } from '@preact/signals';
 import type { SessionState, AgentProcessingState } from '@liuboer/shared';
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
