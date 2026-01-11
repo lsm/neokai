@@ -49,7 +49,7 @@ async function clickArchiveSession(page: Page): Promise<void> {
  */
 async function createSessionWithMessage(page: Page): Promise<string> {
 	// Create new session
-	const newSessionButton = page.locator("button:has-text('New Session')");
+	const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 	await newSessionButton.click();
 	const sessionId = await waitForSessionCreated(page);
 
@@ -72,7 +72,7 @@ test.describe('Session Archive - Menu Option', () => {
 		await waitForWebSocketConnected(page);
 
 		// Create a session
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 		sessionId = await waitForSessionCreated(page);
 	});
@@ -413,7 +413,7 @@ test.describe('Session Archive - Edge Cases', () => {
 
 	test('should preserve messages after archiving', async ({ page }) => {
 		// Create session with a specific message
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 		sessionId = await waitForSessionCreated(page);
 

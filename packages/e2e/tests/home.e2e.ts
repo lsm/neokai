@@ -28,7 +28,7 @@ test.describe('Home Page', () => {
 		await expect(sidebarTitle).toBeVisible();
 
 		// Check for New Session button in sidebar
-		await expect(page.locator("button:has-text('New Session')")).toBeVisible();
+		await expect(page.getByRole('button', { name: 'New Session', exact: true })).toBeVisible();
 	});
 
 	test('should have proper page title', async ({ page }) => {

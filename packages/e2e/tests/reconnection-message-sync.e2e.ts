@@ -24,7 +24,7 @@ test.describe('Reconnection Message Sync', () => {
 
 	test('should sync messages generated during disconnection', async ({ page }) => {
 		// 1. Create a new session
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 		await page.waitForTimeout(1000);
 
@@ -94,7 +94,7 @@ test.describe('Reconnection Message Sync', () => {
 
 	test('should handle multiple disconnect/reconnect cycles', async ({ page }) => {
 		// 1. Create session and send message
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 		await page.waitForTimeout(1000);
 
@@ -166,7 +166,7 @@ test.describe('Reconnection Message Sync', () => {
 
 	test('should handle reconnection with long disconnection period', async ({ page }) => {
 		// 1. Create session
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 		await page.waitForTimeout(1000);
 
@@ -236,7 +236,7 @@ test.describe('Reconnection Message Sync', () => {
 
 	test('should preserve message order after reconnection', async ({ page }) => {
 		// 1. Create session and send message
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 		await page.waitForTimeout(1000);
 

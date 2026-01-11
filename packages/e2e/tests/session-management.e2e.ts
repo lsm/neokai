@@ -28,7 +28,7 @@ test.describe('Session Management', () => {
 	});
 
 	test("should have a 'New Session' button", async ({ page }) => {
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await expect(newSessionButton).toBeVisible();
 		await expect(newSessionButton).toBeEnabled();
 	});
@@ -45,7 +45,7 @@ test.describe('Session Management', () => {
 	});
 
 	test("should create a new session when clicking 'New Session'", async ({ page }) => {
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 
 		// Wait for session creation and navigation

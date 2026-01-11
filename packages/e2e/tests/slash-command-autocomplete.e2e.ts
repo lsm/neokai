@@ -69,7 +69,7 @@ test.describe('Slash Command Autocomplete - Basic Functionality', () => {
 		await waitForWebSocketConnected(page);
 
 		// Create a new session
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 		sessionId = await waitForSessionCreated(page);
 
@@ -151,7 +151,7 @@ test.describe('Slash Command Autocomplete - Navigation', () => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 		sessionId = await waitForSessionCreated(page);
 
@@ -246,7 +246,7 @@ test.describe('Slash Command Autocomplete - Command Selection', () => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 		sessionId = await waitForSessionCreated(page);
 
@@ -320,7 +320,7 @@ test.describe('Slash Command Autocomplete - Built-in Commands', () => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 		sessionId = await waitForSessionCreated(page);
 
@@ -381,7 +381,7 @@ test.describe('Slash Command Autocomplete - Edge Cases', () => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 		sessionId = await waitForSessionCreated(page);
 

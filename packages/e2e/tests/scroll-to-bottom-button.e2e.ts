@@ -38,7 +38,7 @@ test.describe('Scroll to Bottom Button', () => {
 
 	test('should not show button when at bottom of empty session', async ({ page }) => {
 		// Create a new session
-		await page.locator('button:has-text("New Session")').first().click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).first().click();
 		sessionId = await waitForSessionCreated(page);
 
 		// At bottom (empty session), button should not be visible to the user
@@ -48,7 +48,7 @@ test.describe('Scroll to Bottom Button', () => {
 
 	test('should show button when scrolled away from bottom with real content', async ({ page }) => {
 		// Create a new session
-		await page.locator('button:has-text("New Session")').first().click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).first().click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Send multiple messages to create scrollable content
@@ -115,7 +115,7 @@ test.describe('Scroll to Bottom Button', () => {
 
 	test('should scroll to bottom when button is clicked', async ({ page }) => {
 		// Create a new session
-		await page.locator('button:has-text("New Session")').first().click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).first().click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Send multiple messages to create scrollable content
@@ -169,7 +169,7 @@ test.describe('Scroll to Bottom Button', () => {
 
 	test('should hide button when user scrolls to bottom', async ({ page }) => {
 		// Create session and content
-		await page.locator('button:has-text("New Session")').first().click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).first().click();
 		sessionId = await waitForSessionCreated(page);
 
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
@@ -214,7 +214,7 @@ test.describe('Scroll to Bottom Button', () => {
 
 	test('should verify parent container has position relative', async ({ page }) => {
 		// This tests the bug fix: parent must have position:relative for absolute button
-		await page.locator('button:has-text("New Session")').first().click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).first().click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Check the chat container has position: relative

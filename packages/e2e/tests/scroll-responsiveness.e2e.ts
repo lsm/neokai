@@ -57,7 +57,7 @@ test.describe('Scroll Responsiveness', () => {
 
 	test('should have scrollable message container with correct CSS', async ({ page }) => {
 		// Create a session to get the message container
-		await page.locator('button:has-text("New Session")').first().click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).first().click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Verify message container has correct scroll-related CSS
@@ -81,7 +81,7 @@ test.describe('Scroll Responsiveness', () => {
 
 	test('should allow scrolling during "Starting..." phase', async ({ page }) => {
 		// Create session with some content first
-		await page.locator('button:has-text("New Session")').first().click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).first().click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Send a message to get some content
@@ -136,7 +136,7 @@ test.describe('Scroll Responsiveness', () => {
 
 	test('scroll event listeners should be passive', async ({ page }) => {
 		// Create a session
-		await page.locator('button:has-text("New Session")').first().click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).first().click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Test that scroll events are not blocking
@@ -194,7 +194,7 @@ test.describe('Scroll Responsiveness', () => {
 
 	test('buttons should remain clickable during scroll', async ({ page }) => {
 		// Create a session
-		await page.locator('button:has-text("New Session")').first().click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).first().click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Send a message to get content and scroll button
@@ -239,7 +239,7 @@ test.describe('Scroll Responsiveness', () => {
 
 	test('message input should remain responsive during state transitions', async ({ page }) => {
 		// Create a session
-		await page.locator('button:has-text("New Session")').first().click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).first().click();
 		sessionId = await waitForSessionCreated(page);
 
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();

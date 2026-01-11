@@ -8,7 +8,7 @@ test.describe('UI Components', () => {
 
 	test.describe('Buttons', () => {
 		test('should have hover effects on interactive elements', async ({ page }) => {
-			const newSessionButton = page.locator("button:has-text('New Session')");
+			const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 
 			// Hover over button
 			await newSessionButton.hover();
@@ -25,7 +25,7 @@ test.describe('UI Components', () => {
 	test.describe('Transitions and Animations', () => {
 		test('should have smooth transitions', async ({ page }) => {
 			// Hover over new session button
-			const button = page.locator("button:has-text('New Session')");
+			const button = page.getByRole('button', { name: 'New Session', exact: true });
 			await button.hover();
 
 			// Element should still be visible after hover (basic check)
@@ -47,7 +47,7 @@ test.describe('UI Components', () => {
 
 			// Main elements should still be visible
 			await expect(page.locator("h1:has-text('Liuboer')")).toBeVisible();
-			await expect(page.locator("button:has-text('New Session')")).toBeVisible();
+			await expect(page.getByRole('button', { name: 'New Session', exact: true })).toBeVisible();
 		});
 
 		test('should be usable on tablet viewports', async ({ page }) => {
@@ -76,7 +76,7 @@ test.describe('UI Components', () => {
 		});
 
 		test('should have focusable interactive elements', async ({ page }) => {
-			const newSessionButton = page.locator("button:has-text('New Session')");
+			const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 
 			// Focus the button
 			await newSessionButton.focus();

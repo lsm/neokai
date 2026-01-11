@@ -268,8 +268,8 @@ test.describe('Message Send and Receive', () => {
 		await messageInput.fill('Second message after recovery');
 		await sendButton.click();
 
-		// Should complete successfully
-		await expect(page.locator('text="Second message after recovery"')).toBeVisible({
+		// Should complete successfully (use .first() to handle duplicate text in sidebar)
+		await expect(page.locator('text="Second message after recovery"').first()).toBeVisible({
 			timeout: 5000,
 		});
 		await expect(messageInput).toBeEnabled({ timeout: 15000 });

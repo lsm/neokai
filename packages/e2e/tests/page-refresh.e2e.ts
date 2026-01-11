@@ -40,7 +40,7 @@ test.describe('Page Refresh Persistence', () => {
 
 	test('should restore context info percentage after refresh', async ({ page }) => {
 		// Create session and send message
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 
 		sessionId = await waitForSessionCreated(page);
@@ -127,7 +127,7 @@ test.describe('Page Refresh Persistence', () => {
 
 	test('should persist token counts and metadata after refresh', async ({ page }) => {
 		// Create session and send message
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 
 		sessionId = await waitForSessionCreated(page);
@@ -234,7 +234,7 @@ test.describe('Page Refresh Persistence', () => {
 
 	test('should reset agent state to idle after refresh (expected behavior)', async ({ page }) => {
 		// Create session
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 
 		sessionId = await waitForSessionCreated(page);
@@ -298,7 +298,7 @@ test.describe('Page Refresh Persistence', () => {
 
 	test('should restore slash commands immediately after refresh', async ({ page }) => {
 		// Create session
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 
 		sessionId = await waitForSessionCreated(page);
@@ -376,7 +376,7 @@ test.describe('Page Refresh Persistence', () => {
 
 	test('should restore full session state including messages and title', async ({ page }) => {
 		// Create session
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 
 		sessionId = await waitForSessionCreated(page);
@@ -457,7 +457,7 @@ test.describe('Page Refresh Persistence', () => {
 
 	test('should restore context breakdown details after refresh', async ({ page }) => {
 		// Create session and send message
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 
 		sessionId = await waitForSessionCreated(page);
