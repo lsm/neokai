@@ -1,110 +1,85 @@
 // @ts-nocheck
 /**
- * Tests for GlobalToolsSettings Component
+ * Tests for GlobalToolsSettings Component Logic
+ *
+ * Tests pure logic without mock.module to avoid polluting other tests.
  */
 
-import { describe, it, expect, mock, beforeEach } from 'bun:test';
+import { describe, it, expect, mock } from 'bun:test';
 import { signal } from '@preact/signals';
 
-// Mock GlobalToolsConfig type
-interface MockGlobalToolsConfig {
-	systemPrompt?: {
-		claudeCodePreset?: {
-			allowed?: boolean;
-			defaultEnabled?: boolean;
+describe('GlobalToolsSettings Logic', () => {
+	// Mock GlobalToolsConfig type
+	interface MockGlobalToolsConfig {
+		systemPrompt?: {
+			claudeCodePreset?: {
+				allowed?: boolean;
+				defaultEnabled?: boolean;
+			};
 		};
-	};
-	settingSources?: {
-		project?: {
-			allowed?: boolean;
-			defaultEnabled?: boolean;
+		settingSources?: {
+			project?: {
+				allowed?: boolean;
+				defaultEnabled?: boolean;
+			};
 		};
-	};
-	mcp?: {
-		allowProjectMcp?: boolean;
-		defaultProjectMcp?: boolean;
-	};
-	liuboerTools?: {
-		memory?: {
-			allowed?: boolean;
-			defaultEnabled?: boolean;
+		mcp?: {
+			allowProjectMcp?: boolean;
+			defaultProjectMcp?: boolean;
 		};
+		liuboerTools?: {
+			memory?: {
+				allowed?: boolean;
+				defaultEnabled?: boolean;
+			};
+		};
+	}
+
+	const DEFAULT_CONFIG: MockGlobalToolsConfig = {
+		systemPrompt: {
+			claudeCodePreset: {
+				allowed: true,
+				defaultEnabled: true,
+			},
+		},
+		settingSources: {
+			project: {
+				allowed: true,
+				defaultEnabled: true,
+			},
+		},
+		mcp: {
+			allowProjectMcp: true,
+			defaultProjectMcp: false,
+		},
+		liuboerTools: {
+			memory: {
+				allowed: true,
+				defaultEnabled: false,
+			},
+		},
 	};
-}
-
-const DEFAULT_CONFIG: MockGlobalToolsConfig = {
-	systemPrompt: {
-		claudeCodePreset: {
-			allowed: true,
-			defaultEnabled: true,
-		},
-	},
-	settingSources: {
-		project: {
-			allowed: true,
-			defaultEnabled: true,
-		},
-	},
-	mcp: {
-		allowProjectMcp: true,
-		defaultProjectMcp: false,
-	},
-	liuboerTools: {
-		memory: {
-			allowed: true,
-			defaultEnabled: false,
-		},
-	},
-};
-
-// Mock connection manager
-const mockHub = {
-	call: mock(() => Promise.resolve({ config: DEFAULT_CONFIG })),
-};
-mock.module('../lib/connection-manager.ts', () => ({
-	connectionManager: {
-		getHub: mock(() => Promise.resolve(mockHub)),
-	},
-}));
-
-// Mock toast
-const mockToast = {
-	success: mock(() => {}),
-	error: mock(() => {}),
-	info: mock(() => {}),
-	warning: mock(() => {}),
-};
-mock.module('../lib/toast.ts', () => ({
-	toast: mockToast,
-	toastsSignal: { value: [] },
-	dismissToast: mock(() => {}),
-}));
-
-describe('GlobalToolsSettings', () => {
-	beforeEach(() => {
-		mockHub.call.mockClear();
-		mockToast.success.mockClear();
-		mockToast.error.mockClear();
-	});
 
 	describe('Loading State', () => {
-		it('should show loading state initially', () => {
+		it('should track loading state', () => {
 			const loading = signal(true);
 			expect(loading.value).toBe(true);
+			loading.value = false;
+			expect(loading.value).toBe(false);
 		});
 
-		it('should load config on mount', async () => {
-			mockHub.call.mockResolvedValueOnce({ config: DEFAULT_CONFIG });
-			await mockHub.call('globalTools.getConfig');
-			expect(mockHub.call).toHaveBeenCalled();
+		it('should support async config loading', async () => {
+			const loadConfig = mock(() => Promise.resolve({ config: DEFAULT_CONFIG }));
+			const result = await loadConfig();
+			expect(result.config).toEqual(DEFAULT_CONFIG);
 		});
 
 		it('should use default config on error', async () => {
-			mockHub.call.mockRejectedValueOnce(new Error('Network error'));
+			const loadConfig = mock(() => Promise.reject(new Error('Network error')));
 
 			let config = DEFAULT_CONFIG;
 			try {
-				await mockHub.call('globalTools.getConfig');
+				await loadConfig();
 			} catch {
 				config = DEFAULT_CONFIG;
 			}
@@ -115,13 +90,11 @@ describe('GlobalToolsSettings', () => {
 
 	describe('System Prompt Settings', () => {
 		it('should have Claude Code preset allowed by default', () => {
-			const config = DEFAULT_CONFIG;
-			expect(config.systemPrompt?.claudeCodePreset?.allowed).toBe(true);
+			expect(DEFAULT_CONFIG.systemPrompt?.claudeCodePreset?.allowed).toBe(true);
 		});
 
 		it('should have Claude Code preset enabled by default', () => {
-			const config = DEFAULT_CONFIG;
-			expect(config.systemPrompt?.claudeCodePreset?.defaultEnabled).toBe(true);
+			expect(DEFAULT_CONFIG.systemPrompt?.claudeCodePreset?.defaultEnabled).toBe(true);
 		});
 
 		it('should update allowed setting', () => {
@@ -141,8 +114,6 @@ describe('GlobalToolsSettings', () => {
 
 		it('should disable defaultEnabled when disabling allowed', () => {
 			let config: MockGlobalToolsConfig = { ...DEFAULT_CONFIG };
-			const key = 'allowed';
-			const value = false;
 
 			config = {
 				...config,
@@ -150,13 +121,13 @@ describe('GlobalToolsSettings', () => {
 					...config.systemPrompt,
 					claudeCodePreset: {
 						...config.systemPrompt?.claudeCodePreset,
-						[key]: value,
+						allowed: false,
 					},
 				},
 			};
 
 			// If disabling permission, also disable default
-			if (key === 'allowed' && !value) {
+			if (!config.systemPrompt?.claudeCodePreset?.allowed) {
 				config.systemPrompt!.claudeCodePreset!.defaultEnabled = false;
 			}
 
@@ -166,13 +137,11 @@ describe('GlobalToolsSettings', () => {
 
 	describe('Liuboer Tools Settings', () => {
 		it('should have memory allowed by default', () => {
-			const config = DEFAULT_CONFIG;
-			expect(config.liuboerTools?.memory?.allowed).toBe(true);
+			expect(DEFAULT_CONFIG.liuboerTools?.memory?.allowed).toBe(true);
 		});
 
 		it('should have memory disabled by default', () => {
-			const config = DEFAULT_CONFIG;
-			expect(config.liuboerTools?.memory?.defaultEnabled).toBe(false);
+			expect(DEFAULT_CONFIG.liuboerTools?.memory?.defaultEnabled).toBe(false);
 		});
 
 		it('should update memory allowed setting', () => {
@@ -207,8 +176,6 @@ describe('GlobalToolsSettings', () => {
 
 		it('should disable defaultEnabled when disabling allowed for memory', () => {
 			let config: MockGlobalToolsConfig = { ...DEFAULT_CONFIG };
-			const key = 'allowed';
-			const value = false;
 
 			config = {
 				...config,
@@ -216,13 +183,13 @@ describe('GlobalToolsSettings', () => {
 					...config.liuboerTools,
 					memory: {
 						...config.liuboerTools?.memory,
-						[key]: value,
+						allowed: false,
 					},
 				},
 			};
 
 			// If disabling permission, also disable default
-			if (key === 'allowed' && !value) {
+			if (!config.liuboerTools?.memory?.allowed) {
 				config.liuboerTools!.memory!.defaultEnabled = false;
 			}
 
@@ -231,36 +198,38 @@ describe('GlobalToolsSettings', () => {
 	});
 
 	describe('Save Functionality', () => {
-		it('should save config successfully', async () => {
-			mockHub.call.mockResolvedValueOnce({ success: true });
-			await mockHub.call('globalTools.saveConfig', { config: DEFAULT_CONFIG });
-			mockToast.success('Global tools settings saved');
+		it('should support async save', async () => {
+			const saveFn = mock(() => Promise.resolve({ success: true }));
+			const toastFn = mock(() => {});
 
-			expect(mockHub.call).toHaveBeenCalled();
-			expect(mockToast.success).toHaveBeenCalled();
+			await saveFn({ config: DEFAULT_CONFIG });
+			toastFn('Global tools settings saved');
+
+			expect(saveFn).toHaveBeenCalled();
+			expect(toastFn).toHaveBeenCalled();
 		});
 
-		it('should show error toast on save failure', async () => {
-			mockHub.call.mockRejectedValueOnce(new Error('Save failed'));
+		it('should handle save failure', async () => {
+			const saveFn = mock(() => Promise.reject(new Error('Save failed')));
+			const toastFn = mock(() => {});
 
 			try {
-				await mockHub.call('globalTools.saveConfig', { config: DEFAULT_CONFIG });
+				await saveFn({ config: DEFAULT_CONFIG });
 			} catch {
-				mockToast.error('Failed to save global tools settings');
+				toastFn('Failed to save global tools settings');
 			}
 
-			expect(mockToast.error).toHaveBeenCalled();
+			expect(toastFn).toHaveBeenCalledWith('Failed to save global tools settings');
 		});
 	});
 
 	describe('Disabled State', () => {
-		it('should disable checkboxes while saving', () => {
+		it('should track saving state', () => {
 			const saving = signal(true);
 			expect(saving.value).toBe(true);
-			// Checkboxes are disabled when saving.value is true
 		});
 
-		it('should disable defaultEnabled checkbox when allowed is false', () => {
+		it('should check if defaultEnabled should be disabled', () => {
 			const config: MockGlobalToolsConfig = {
 				systemPrompt: {
 					claudeCodePreset: {
@@ -272,27 +241,28 @@ describe('GlobalToolsSettings', () => {
 
 			const isAllowed = config.systemPrompt?.claudeCodePreset?.allowed ?? true;
 			expect(isAllowed).toBe(false);
-			// defaultEnabled checkbox should be disabled
 		});
 	});
 
 	describe('SDK Built-in Tools Info', () => {
-		it('should display read-only SDK tools info', () => {
+		it('should list SDK tools', () => {
 			const sdkTools = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash'];
 			expect(sdkTools.length).toBeGreaterThan(0);
+			expect(sdkTools).toContain('Read');
 		});
 
-		it('should display slash commands info', () => {
+		it('should list slash commands', () => {
 			const slashCommands = ['/help', '/context', '/clear', '/config', '/bug'];
 			expect(slashCommands.length).toBeGreaterThan(0);
+			expect(slashCommands).toContain('/help');
 		});
 
-		it('should display task agents info', () => {
+		it('should list task agents', () => {
 			const taskAgents = ['general-purpose', 'Explore', 'Plan'];
 			expect(taskAgents.length).toBeGreaterThan(0);
 		});
 
-		it('should display web tools info', () => {
+		it('should list web tools', () => {
 			const webTools = ['WebSearch', 'WebFetch'];
 			expect(webTools.length).toBe(2);
 		});

@@ -1,17 +1,15 @@
 // @ts-nocheck
 /**
  * Tests for InputActionsMenu Component
+ *
+ * Tests without mock.module to avoid polluting other tests.
+ * Note: useClickOutside is tested separately in its own test file.
  */
 
 import './setup';
 import { describe, it, expect, mock, beforeEach } from 'bun:test';
 import { render } from '@testing-library/preact';
 import { InputActionsMenu } from '../InputActionsMenu';
-
-// Mock useClickOutside hook
-mock.module('../../hooks/useClickOutside', () => ({
-	useClickOutside: mock(() => {}),
-}));
 
 describe('InputActionsMenu', () => {
 	const defaultProps = {
@@ -81,13 +79,6 @@ describe('InputActionsMenu', () => {
 			expect(button?.disabled).toBe(true);
 		});
 
-		it('should not toggle when disabled', () => {
-			const { container } = render(<InputActionsMenu {...defaultProps} disabled={true} />);
-			const button = container.querySelector('button');
-			button?.click();
-			// onToggle not called because disabled check happens first
-		});
-
 		it('should have disabled styling', () => {
 			const { container } = render(<InputActionsMenu {...defaultProps} disabled={true} />);
 			const button = container.querySelector('button');
@@ -121,9 +112,7 @@ describe('InputActionsMenu', () => {
 			const { container } = render(
 				<InputActionsMenu {...defaultProps} isOpen={true} autoScroll={true} />
 			);
-			// When autoScroll is true, checkmark SVG is rendered
 			const checkmarks = container.querySelectorAll('svg');
-			// Multiple SVGs: plus icon, auto-scroll icon, checkmark, tools icon, attach icon
 			expect(checkmarks.length).toBeGreaterThan(3);
 		});
 
@@ -131,7 +120,6 @@ describe('InputActionsMenu', () => {
 			const { container } = render(
 				<InputActionsMenu {...defaultProps} isOpen={true} autoScroll={false} />
 			);
-			// When autoScroll is false, no checkmark
 			const text = container.textContent;
 			expect(text).toContain('Auto-scroll');
 		});
@@ -150,7 +138,6 @@ describe('InputActionsMenu', () => {
 			);
 
 			const buttons = container.querySelectorAll('button');
-			// Find auto-scroll button (second button after plus)
 			const autoScrollButton = Array.from(buttons).find((b) =>
 				b.textContent?.includes('Auto-scroll')
 			);

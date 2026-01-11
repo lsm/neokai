@@ -1,71 +1,28 @@
 // @ts-nocheck
 /**
- * Tests for ToolsModal Component
+ * Tests for ToolsModal Component Logic
+ *
+ * Tests pure logic without mock.module to avoid polluting other tests.
  */
 
-import { describe, it, expect, mock, beforeEach } from 'bun:test';
+import { describe, it, expect, mock } from 'bun:test';
 import { signal } from '@preact/signals';
 
-// Mock Session type
-interface MockSession {
-	id: string;
-	config: {
-		tools?: {
-			useClaudeCodePreset?: boolean;
-			settingSources?: Array<'user' | 'project' | 'local'>;
-			disabledMcpServers?: string[];
-			liuboerTools?: {
-				memory?: boolean;
+describe('ToolsModal Logic', () => {
+	// Mock Session type
+	interface MockSession {
+		id: string;
+		config: {
+			tools?: {
+				useClaudeCodePreset?: boolean;
+				settingSources?: Array<'user' | 'project' | 'local'>;
+				disabledMcpServers?: string[];
+				liuboerTools?: {
+					memory?: boolean;
+				};
 			};
 		};
-	};
-}
-
-// Mock connection manager
-const mockHub = {
-	call: mock(() => Promise.resolve({ success: true })),
-};
-mock.module('../lib/connection-manager.ts', () => ({
-	connectionManager: {
-		getHub: mock(() => Promise.resolve(mockHub)),
-	},
-}));
-
-// Mock toast
-const mockToast = {
-	success: mock(() => {}),
-	error: mock(() => {}),
-	info: mock(() => {}),
-	warning: mock(() => {}),
-};
-mock.module('../lib/toast.ts', () => ({
-	toast: mockToast,
-	toastsSignal: { value: [] },
-	dismissToast: mock(() => {}),
-}));
-
-// Mock api-helpers
-const mockListMcpServersFromSources = mock(() =>
-	Promise.resolve({
-		servers: {
-			user: [{ name: 'server1', command: 'npx server1' }],
-			project: [],
-			local: [],
-		},
-		serverSettings: {},
-	})
-);
-mock.module('../lib/api-helpers.ts', () => ({
-	listMcpServersFromSources: mockListMcpServersFromSources,
-}));
-
-describe('ToolsModal', () => {
-	beforeEach(() => {
-		mockHub.call.mockClear();
-		mockToast.success.mockClear();
-		mockToast.error.mockClear();
-		mockListMcpServersFromSources.mockClear();
-	});
+	}
 
 	describe('Initial State', () => {
 		it('should have Claude Code preset enabled by default', () => {
@@ -130,16 +87,22 @@ describe('ToolsModal', () => {
 	});
 
 	describe('MCP Server Loading', () => {
-		it('should load MCP servers from sources', async () => {
-			await mockListMcpServersFromSources('session-1');
-			expect(mockListMcpServersFromSources).toHaveBeenCalled();
-		});
+		it('should support async server loading', async () => {
+			const loadServers = mock(() =>
+				Promise.resolve({
+					servers: {
+						user: [{ name: 'server1', command: 'npx server1' }],
+						project: [],
+						local: [],
+					},
+					serverSettings: {},
+				})
+			);
 
-		it('should group servers by source', async () => {
-			const response = await mockListMcpServersFromSources('session-1');
-			expect(response.servers.user).toBeDefined();
-			expect(response.servers.project).toBeDefined();
-			expect(response.servers.local).toBeDefined();
+			const result = await loadServers();
+			expect(result.servers.user).toBeDefined();
+			expect(result.servers.project).toBeDefined();
+			expect(result.servers.local).toBeDefined();
 		});
 	});
 
@@ -194,10 +157,11 @@ describe('ToolsModal', () => {
 	});
 
 	describe('Save Functionality', () => {
-		it('should save tools config', async () => {
-			mockHub.call.mockResolvedValueOnce({ success: true });
+		it('should support async save', async () => {
+			const saveFn = mock(() => Promise.resolve({ success: true }));
+			const toastFn = mock(() => {});
 
-			await mockHub.call('tools.save', {
+			await saveFn({
 				sessionId: 'session-1',
 				tools: {
 					useClaudeCodePreset: true,
@@ -207,20 +171,22 @@ describe('ToolsModal', () => {
 				},
 			});
 
-			expect(mockHub.call).toHaveBeenCalled();
+			toastFn('Tools configuration saved');
+
+			expect(saveFn).toHaveBeenCalled();
+			expect(toastFn).toHaveBeenCalled();
 		});
 
-		it('should show success toast on save', async () => {
-			mockHub.call.mockResolvedValueOnce({ success: true });
-			await mockHub.call('tools.save', { sessionId: 'session-1', tools: {} });
-			mockToast.success('Tools configuration saved');
-			expect(mockToast.success).toHaveBeenCalled();
-		});
+		it('should handle save failure', async () => {
+			const saveFn = mock(() => Promise.resolve({ success: false, error: 'Failed to save' }));
+			const toastFn = mock(() => {});
 
-		it('should show error toast on failed save', async () => {
-			mockHub.call.mockResolvedValueOnce({ success: false, error: 'Failed to save' });
-			mockToast.error('Failed to save tools configuration');
-			expect(mockToast.error).toHaveBeenCalled();
+			const result = await saveFn({ sessionId: 'session-1', tools: {} });
+			if (!result.success) {
+				toastFn('Failed to save tools configuration');
+			}
+
+			expect(toastFn).toHaveBeenCalledWith('Failed to save tools configuration');
 		});
 	});
 

@@ -4,6 +4,9 @@
  *
  * Tests the question prompt with options selection, custom input,
  * submit/cancel actions, and resolved states.
+ *
+ * Note: Tests UI behavior without mocking useMessageHub.
+ * The component renders correctly without network calls.
  */
 
 import './setup';
@@ -11,15 +14,6 @@ import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { QuestionPrompt } from '../QuestionPrompt';
 import type { PendingUserQuestion, QuestionDraftResponse } from '@liuboer/shared';
-
-// Mock the useMessageHub hook
-const mockCallIfConnected = mock(() => Promise.resolve({}));
-
-mock.module('../hooks/useMessageHub', () => ({
-	useMessageHub: () => ({
-		callIfConnected: mockCallIfConnected,
-	}),
-}));
 
 describe('QuestionPrompt', () => {
 	const mockOnResolved = mock(
@@ -63,7 +57,6 @@ describe('QuestionPrompt', () => {
 	beforeEach(() => {
 		cleanup();
 		mockOnResolved.mockClear();
-		mockCallIfConnected.mockClear();
 	});
 
 	afterEach(() => {

@@ -4,48 +4,15 @@
  *
  * Tests the session status bar with connection status, model switcher,
  * thinking level, auto-scroll toggle, and context usage display.
+ *
+ * Note: Tests without mock.module to avoid polluting other tests.
  */
 
 import './setup';
 import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
-import { signal } from '@preact/signals';
 import type { ContextInfo, ModelInfo } from '@liuboer/shared';
 import SessionStatusBar from '../SessionStatusBar';
-
-// Mock the connection state signal
-const mockConnectionState = signal<
-	'connecting' | 'connected' | 'disconnected' | 'error' | 'reconnecting' | 'failed'
->('connected');
-
-mock.module('../lib/state', () => ({
-	connectionState: mockConnectionState,
-}));
-
-// Mock useMessageHub
-const mockCallIfConnected = mock(() => Promise.resolve({}));
-mock.module('../hooks', () => ({
-	useModal: () => {
-		const isOpenSignal = signal(false);
-		return {
-			isOpen: isOpenSignal.value,
-			open: () => {
-				isOpenSignal.value = true;
-			},
-			close: () => {
-				isOpenSignal.value = false;
-			},
-		};
-	},
-	MODEL_FAMILY_ICONS: {
-		opus: '🔮',
-		sonnet: '💎',
-		haiku: '✨',
-	},
-	useMessageHub: () => ({
-		callIfConnected: mockCallIfConnected,
-	}),
-}));
 
 describe('SessionStatusBar', () => {
 	const mockOnModelSwitch = mock(() => Promise.resolve());
@@ -91,10 +58,8 @@ describe('SessionStatusBar', () => {
 
 	beforeEach(() => {
 		cleanup();
-		mockConnectionState.value = 'connected';
 		mockOnModelSwitch.mockClear();
 		mockOnAutoScrollChange.mockClear();
-		mockCallIfConnected.mockClear();
 	});
 
 	afterEach(() => {
@@ -137,10 +102,6 @@ describe('SessionStatusBar', () => {
 	});
 
 	describe('Connection Status Display', () => {
-		// Note: Signal mocking doesn't work reliably in this test environment
-		// The component reads from the real connectionState signal
-		// These tests verify the component structure instead
-
 		it('should render connection status section', () => {
 			const { container } = render(<SessionStatusBar {...defaultProps} />);
 

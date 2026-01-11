@@ -1,60 +1,37 @@
 // @ts-nocheck
 /**
- * Tests for SettingsModal Component
+ * Tests for SettingsModal Component Logic
+ *
+ * Tests pure logic without mock.module to avoid polluting other tests.
  */
 
-import { describe, it, expect, mock, beforeEach } from 'bun:test';
+import { describe, it, expect, mock } from 'bun:test';
 
-// Mock AuthStatus type
-interface MockAuthStatus {
-	isAuthenticated: boolean;
-	method?: 'api_key' | 'oauth' | 'oauth_token';
-	source?: 'env' | 'local';
-}
-
-// Mock api-helpers
-const mockGetAuthStatus = mock(() =>
-	Promise.resolve({ authStatus: { isAuthenticated: true, method: 'api_key', source: 'env' } })
-);
-mock.module('../lib/api-helpers.ts', () => ({
-	getAuthStatus: mockGetAuthStatus,
-}));
-
-// Mock toast
-const mockToast = {
-	success: mock(() => {}),
-	error: mock(() => {}),
-	info: mock(() => {}),
-	warning: mock(() => {}),
-};
-mock.module('../lib/toast.ts', () => ({
-	toast: mockToast,
-	toastsSignal: { value: [] },
-	dismissToast: mock(() => {}),
-}));
-
-describe('SettingsModal', () => {
-	beforeEach(() => {
-		mockGetAuthStatus.mockClear();
-		mockToast.error.mockClear();
-	});
+describe('SettingsModal Logic', () => {
+	// Mock AuthStatus type
+	interface MockAuthStatus {
+		isAuthenticated: boolean;
+		method?: 'api_key' | 'oauth' | 'oauth_token';
+		source?: 'env' | 'local';
+	}
 
 	describe('Loading State', () => {
-		it('should show loading state initially', async () => {
+		it('should show loading state initially', () => {
 			const loading = true;
 			expect(loading).toBe(true);
-			// Component shows "Loading..." text when loading is true
 		});
 
-		it('should load auth status when modal opens', async () => {
-			// Simulate modal opening (isOpen changes to true)
-			await mockGetAuthStatus();
-			expect(mockGetAuthStatus).toHaveBeenCalled();
+		it('should support async auth status loading', async () => {
+			const getAuthStatus = mock(() =>
+				Promise.resolve({ authStatus: { isAuthenticated: true, method: 'api_key', source: 'env' } })
+			);
+			await getAuthStatus();
+			expect(getAuthStatus).toHaveBeenCalled();
 		});
 	});
 
 	describe('Auth Status Display', () => {
-		it('should display authenticated status with API key', async () => {
+		it('should display authenticated status with API key', () => {
 			const authStatus: MockAuthStatus = {
 				isAuthenticated: true,
 				method: 'api_key',
@@ -64,22 +41,22 @@ describe('SettingsModal', () => {
 			expect(authStatus.method).toBe('api_key');
 		});
 
-		it('should display authenticated status with OAuth', async () => {
+		it('should display authenticated status with OAuth', () => {
 			const authStatus: MockAuthStatus = { isAuthenticated: true, method: 'oauth' };
 			expect(authStatus.method).toBe('oauth');
 		});
 
-		it('should display authenticated status with OAuth token', async () => {
+		it('should display authenticated status with OAuth token', () => {
 			const authStatus: MockAuthStatus = { isAuthenticated: true, method: 'oauth_token' };
 			expect(authStatus.method).toBe('oauth_token');
 		});
 
-		it('should display not authenticated status', async () => {
+		it('should display not authenticated status', () => {
 			const authStatus: MockAuthStatus = { isAuthenticated: false };
 			expect(authStatus.isAuthenticated).toBe(false);
 		});
 
-		it('should show env badge when source is env', async () => {
+		it('should show env badge when source is env', () => {
 			const authStatus: MockAuthStatus = {
 				isAuthenticated: true,
 				method: 'api_key',
@@ -90,16 +67,17 @@ describe('SettingsModal', () => {
 	});
 
 	describe('Error Handling', () => {
-		it('should show toast error on failed auth status load', async () => {
-			mockGetAuthStatus.mockImplementationOnce(() => Promise.reject(new Error('Network error')));
+		it('should handle async errors gracefully', async () => {
+			const getAuthStatus = mock(() => Promise.reject(new Error('Network error')));
+			const toastFn = mock(() => {});
 
 			try {
-				await mockGetAuthStatus();
+				await getAuthStatus();
 			} catch {
-				mockToast.error('Failed to load authentication status');
+				toastFn('Failed to load authentication status');
 			}
 
-			expect(mockToast.error).toHaveBeenCalled();
+			expect(toastFn).toHaveBeenCalledWith('Failed to load authentication status');
 		});
 	});
 
@@ -115,14 +93,12 @@ describe('SettingsModal', () => {
 	});
 
 	describe('Child Components', () => {
-		it('should render GlobalSettingsEditor', () => {
-			// Component renders GlobalSettingsEditor when authStatus is loaded
+		it('should render GlobalSettingsEditor when auth status loaded', () => {
 			const hasAuthStatus = true;
 			expect(hasAuthStatus).toBe(true);
 		});
 
-		it('should render GlobalToolsSettings', () => {
-			// Component renders GlobalToolsSettings when authStatus is loaded
+		it('should render GlobalToolsSettings when auth status loaded', () => {
 			const hasAuthStatus = true;
 			expect(hasAuthStatus).toBe(true);
 		});
@@ -130,7 +106,6 @@ describe('SettingsModal', () => {
 
 	describe('Instructions Panel', () => {
 		it('should display authentication instructions', () => {
-			// The component shows an information panel with auth setup instructions
 			const instructionText = 'Authentication must be configured via environment variables';
 			expect(instructionText).toContain('environment variables');
 		});

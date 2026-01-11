@@ -4,42 +4,15 @@
  *
  * Tests the session list item with status indicators, metadata display,
  * worktree badge, and archived status.
+ *
+ * Note: Tests without mock.module to avoid polluting other tests.
  */
 
 import './setup';
 import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
-import { signal, computed } from '@preact/signals';
-import type { Session, AgentProcessingState } from '@liuboer/shared';
+import type { Session } from '@liuboer/shared';
 import SessionListItem from '../SessionListItem';
-
-// Mock the signals module
-const mockCurrentSessionIdSignal = signal<string | null>(null);
-
-// Mock session status tracking
-const mockAllSessionStatuses = computed(() => new Map());
-
-mock.module('../lib/signals', () => ({
-	currentSessionIdSignal: mockCurrentSessionIdSignal,
-}));
-
-mock.module('../lib/session-status', () => ({
-	allSessionStatuses: mockAllSessionStatuses,
-	getProcessingPhaseColor: (state: AgentProcessingState) => {
-		if (state.status === 'idle') return null;
-		if (state.status === 'processing') {
-			switch (state.phase) {
-				case 'thinking':
-					return { dot: 'bg-blue-500', text: 'text-blue-400' };
-				case 'streaming':
-					return { dot: 'bg-green-500', text: 'text-green-400' };
-				default:
-					return { dot: 'bg-purple-500', text: 'text-purple-400' };
-			}
-		}
-		return null;
-	},
-}));
 
 describe('SessionListItem', () => {
 	const mockSession: Session = {
@@ -60,7 +33,6 @@ describe('SessionListItem', () => {
 
 	beforeEach(() => {
 		cleanup();
-		mockCurrentSessionIdSignal.value = null;
 		mockOnSessionClick.mockClear();
 	});
 
@@ -179,7 +151,6 @@ describe('SessionListItem', () => {
 		});
 
 		it('should have hover styling for inactive session', () => {
-			mockCurrentSessionIdSignal.value = 'other-session';
 			const { container } = render(
 				<SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
 			);
