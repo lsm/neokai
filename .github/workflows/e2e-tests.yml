@@ -72,9 +72,25 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Get Playwright version
+        id: playwright-version
+        run: echo "version=$(cat packages/e2e/package.json | jq -r '.dependencies["@playwright/test"] // .devDependencies["@playwright/test"]')" >> $GITHUB_OUTPUT
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
+
       - name: Install Playwright Browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         working-directory: packages/e2e
         run: bunx playwright install --with-deps chromium
+
+      - name: Install Playwright dependencies (cached)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: bunx playwright install-deps chromium
 
       - name: Run E2E test (${{ matrix.test }})
         working-directory: packages/e2e
