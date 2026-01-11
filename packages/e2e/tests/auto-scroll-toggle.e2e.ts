@@ -54,7 +54,7 @@ test.describe('Auto-Scroll Toggle', () => {
 
 	test('should display auto-scroll toggle in plus menu', async ({ page }) => {
 		// Create a new session
-		await page.locator('button:has-text("New Session")').click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Open the plus menu
@@ -67,7 +67,7 @@ test.describe('Auto-Scroll Toggle', () => {
 
 	test('should toggle auto-scroll state on click', async ({ page }) => {
 		// Create a new session
-		await page.locator('button:has-text("New Session")').click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Open the plus menu
@@ -98,7 +98,7 @@ test.describe('Auto-Scroll Toggle', () => {
 
 	test('should persist auto-scroll setting across page reload', async ({ page }) => {
 		// Create a new session
-		await page.locator('button:has-text("New Session")').click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Open the plus menu
@@ -120,8 +120,13 @@ test.describe('Auto-Scroll Toggle', () => {
 		await page.reload();
 		await page.waitForTimeout(1500);
 
-		// Wait for session to load
-		await expect(page.locator('textarea[placeholder*="Ask"]')).toBeVisible({ timeout: 10000 });
+		// After reload, page goes to home. Click on the session card to re-select it
+		const sessionCard = page.locator(
+			`[data-testid="session-card"][data-session-id="${sessionId}"]`
+		);
+		await expect(sessionCard).toBeVisible({ timeout: 5000 });
+		await sessionCard.click();
+		await page.waitForTimeout(1000);
 
 		// Open the plus menu again
 		await openPlusMenu(page);
@@ -140,7 +145,7 @@ test.describe('Auto-Scroll Toggle', () => {
 
 	test('should have visual distinction between enabled and disabled states', async ({ page }) => {
 		// Create a new session
-		await page.locator('button:has-text("New Session")').click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Open the plus menu
@@ -173,7 +178,7 @@ test.describe('Auto-Scroll Toggle', () => {
 
 	test('should show checkmark when enabled', async ({ page }) => {
 		// Create a new session
-		await page.locator('button:has-text("New Session")').click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Open the plus menu
@@ -194,8 +199,8 @@ test.describe('Auto-Scroll Toggle', () => {
 			await openPlusMenu(page);
 		}
 
-		// Now should have checkmark
-		const checkmark = getAutoScrollToggle(page).locator('svg[class*="text-blue-400"]');
+		// Now should have checkmark (use first() to avoid strict mode violation with multiple SVGs)
+		const checkmark = getAutoScrollToggle(page).locator('svg[class*="text-blue-400"]').first();
 		await expect(checkmark).toBeVisible();
 	});
 });
