@@ -22,7 +22,7 @@ test.describe('Session List Ordering', () => {
 
 	test('should show newly created session at top of session list', async ({ page }) => {
 		// Create first session
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 		await page.waitForTimeout(1500);
 
@@ -73,7 +73,7 @@ test.describe('Session List Ordering', () => {
 
 		// Create 3 sessions in sequence
 		for (let i = 0; i < 3; i++) {
-			const newSessionButton = page.locator("button:has-text('New Session')");
+			const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 			await newSessionButton.click();
 			await page.waitForTimeout(1500);
 
