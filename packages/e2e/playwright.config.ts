@@ -200,6 +200,7 @@ export default defineConfig({
 				'**/session-status-indicators.e2e.ts', // Session status indicators tests
 				'**/scroll-responsiveness.e2e.ts', // Scroll responsiveness tests
 				'**/thinking-level-selector.e2e.ts', // Thinking level selector tests
+				'**/context-usage-dropdown.e2e.ts', // Context usage dropdown tests
 			],
 			use: { ...devices['Desktop Chrome'] },
 		},
