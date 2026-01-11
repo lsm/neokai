@@ -95,6 +95,30 @@ jobs:
         env:
           PLAYWRIGHT_BROWSERS_PATH: /home/runner/_work/_tool/e2e_tools
 
+      - name: Start dev server
+        working-directory: packages/cli
+        run: |
+          echo "Starting dev server..."
+          NODE_ENV=test nohup bun run dev > /tmp/server.log 2>&1 &
+          echo "Server PID: $!"
+          echo "Waiting for server to be ready..."
+          for i in {1..30}; do
+            if curl -s http://localhost:9283 > /dev/null 2>&1; then
+              echo "Server is ready!"
+              break
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 2
+          done
+          if ! curl -s http://localhost:9283 > /dev/null 2>&1; then
+            echo "Server failed to start!"
+            echo "=== Server logs ==="
+            cat /tmp/server.log
+            exit 1
+          fi
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
       - name: Run E2E test (${{ matrix.test }})
         working-directory: packages/e2e
         run: bun run test tests/${{ matrix.test }}.e2e.ts --reporter=list
@@ -103,6 +127,7 @@ jobs:
           PLAYWRIGHT_BROWSERS_PATH: /home/runner/_work/_tool/e2e_tools
           DEBUG: pw:api,pw:browser*
           CI: true
+          PW_TEST_REUSE_CONTEXT: 1
 
       - name: Upload test results
         uses: actions/upload-artifact@v4

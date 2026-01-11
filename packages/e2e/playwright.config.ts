@@ -222,7 +222,9 @@ export default defineConfig({
 	webServer: {
 		command: 'cd ../cli && NODE_ENV=test bun run dev',
 		url: 'http://localhost:9283',
-		reuseExistingServer: !process.env.CI,
+		// In CI, we start the server separately to get better logging
+		// Use PW_TEST_REUSE_CONTEXT=1 to skip server startup in CI
+		reuseExistingServer: !!process.env.PW_TEST_REUSE_CONTEXT || !process.env.CI,
 		stdout: 'ignore',
 		stderr: 'pipe',
 		timeout: 120 * 1000,
