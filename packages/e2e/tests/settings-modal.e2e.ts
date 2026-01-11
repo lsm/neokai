@@ -35,8 +35,8 @@ async function openSettingsModal(page: Page): Promise<void> {
  * Close the Settings modal
  */
 async function closeSettingsModal(page: Page): Promise<void> {
-	// Click the close button (X) in the modal header
-	const closeButton = page.locator('[role="dialog"] button:has(svg path[d*="M6 18L18 6"])');
+	// Click the close button (X) in the modal header using aria-label
+	const closeButton = page.locator('[role="dialog"] button[aria-label="Close modal"]');
 	await closeButton.click();
 
 	// Wait for modal to close

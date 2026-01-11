@@ -24,7 +24,8 @@ export async function waitForWebSocketConnected(page: Page): Promise<void> {
 
 	// Also wait for visual indicator in the sidebar footer
 	// The sidebar shows "Daemon: Connected" when WebSocket is connected
-	await page.locator('text=Connected').waitFor({ state: 'visible', timeout: 5000 });
+	// Use .first() since there may be multiple "Connected" indicators (Daemon and Claude API)
+	await page.locator('text=Connected').first().waitFor({ state: 'visible', timeout: 5000 });
 }
 
 /**
