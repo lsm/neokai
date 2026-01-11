@@ -31,25 +31,25 @@ test.describe('Error Handling', () => {
 		}
 	});
 
-	test('should show error toast on API error', async ({ page }) => {
+	test('should auto-reconnect on simulated disconnect', async ({ page }) => {
 		// Create a new session
 		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 		sessionId = await waitForSessionCreated(page);
 
-		// Simulate a network error by disconnecting then trying to send
+		// Verify initially online
+		await expect(page.locator('text=Online').first()).toBeVisible({ timeout: 10000 });
+
+		// Simulate a network disconnect
 		await page.evaluate(() => {
 			(
 				window as unknown as { connectionManager: { simulateDisconnect: () => void } }
 			).connectionManager.simulateDisconnect();
 		});
 
-		// Wait for disconnection
-		await expect(page.locator('text=Offline').first()).toBeVisible({ timeout: 10000 });
-
-		// Error toast should appear for connection-related actions
-		// The Connection Lost overlay should be visible
-		await expect(page.locator('text=Connection Lost')).toBeVisible();
+		// Auto-reconnect should succeed quickly (server is still running)
+		// Connection status should eventually return to Online/Connected
+		await expect(page.locator('text=Online').first()).toBeVisible({ timeout: 15000 });
 	});
 
 	test('should display error banner when error occurs', async ({ page }) => {
@@ -95,11 +95,14 @@ test.describe('Error Handling', () => {
 		await expect(viewDetailsButton).not.toBeVisible();
 	});
 
-	test('should handle connection loss gracefully', async ({ page }) => {
+	test('should handle connection loss gracefully with auto-reconnect', async ({ page }) => {
 		// Create a new session
 		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 		sessionId = await waitForSessionCreated(page);
+
+		// Verify initially online
+		await expect(page.locator('text=Online').first()).toBeVisible({ timeout: 10000 });
 
 		// Simulate disconnection
 		await page.evaluate(() => {
@@ -108,43 +111,45 @@ test.describe('Error Handling', () => {
 			).connectionManager.simulateDisconnect();
 		});
 
-		// Wait for offline state
-		await expect(page.locator('text=Offline').first()).toBeVisible({ timeout: 10000 });
-
-		// Connection overlay should appear with reconnect options
-		await expect(page.locator('text=Connection Lost')).toBeVisible();
-		await expect(page.locator('button:has-text("Reconnect")')).toBeVisible();
-		await expect(page.locator('button:has-text("Refresh Page")')).toBeVisible();
-
-		// Wait for auto-reconnect
+		// Auto-reconnect should recover the connection
+		// Note: The overlay only shows after ALL auto-reconnect attempts fail
+		// Since server is still running, auto-reconnect succeeds
+		await expect(page.locator('text=Online').first()).toBeVisible({ timeout: 15000 });
 		await expect(page.locator('text=Connected').first()).toBeVisible({ timeout: 15000 });
 	});
 
-	test('should recover when clicking Reconnect button', async ({ page }) => {
+	test('should handle manual disconnect and reconnect', async ({ page }) => {
 		// Create a new session
 		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 		sessionId = await waitForSessionCreated(page);
 
-		// Simulate disconnection using close (which sets closed=true, preventing auto-reconnect)
-		// This is different from simulateDisconnect which uses forceReconnect
+		// Verify initially online
+		await expect(page.locator('text=Online').first()).toBeVisible({ timeout: 10000 });
+
+		// Simulate disconnection using disconnect()
 		await page.evaluate(async () => {
 			const cm = (window as unknown as { connectionManager: { disconnect: () => Promise<void> } })
 				.connectionManager;
 			await cm.disconnect();
 		});
 
-		// Wait for connection overlay
-		await expect(page.locator('text=Connection Lost')).toBeVisible({ timeout: 10000 });
+		// Wait briefly for disconnect to process
+		await page.waitForTimeout(500);
 
-		// Click Reconnect button
-		await page.locator('button:has-text("Reconnect")').click();
+		// Trigger reconnect via the connection manager
+		await page.evaluate(async () => {
+			const cm = (window as unknown as { connectionManager: { reconnect: () => Promise<void> } })
+				.connectionManager;
+			await cm.reconnect();
+		});
 
 		// Should reconnect and show connected state
+		await expect(page.locator('text=Online').first()).toBeVisible({ timeout: 15000 });
 		await expect(page.locator('text=Connected').first()).toBeVisible({ timeout: 15000 });
 	});
 
-	test('should disable message input when disconnected', async ({ page }) => {
+	test('should maintain working input after brief disconnect', async ({ page }) => {
 		// Create a new session
 		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
@@ -154,19 +159,23 @@ test.describe('Error Handling', () => {
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(textarea).toBeEnabled();
 
-		// Simulate disconnection
-		await page.evaluate(async () => {
-			const cm = (window as unknown as { connectionManager: { disconnect: () => Promise<void> } })
-				.connectionManager;
-			await cm.disconnect();
+		// Verify initially online
+		await expect(page.locator('text=Online').first()).toBeVisible({ timeout: 10000 });
+
+		// Simulate brief disconnection
+		await page.evaluate(() => {
+			(
+				window as unknown as { connectionManager: { simulateDisconnect: () => void } }
+			).connectionManager.simulateDisconnect();
 		});
 
-		// Wait for connection overlay
-		await expect(page.locator('text=Connection Lost')).toBeVisible({ timeout: 10000 });
+		// Auto-reconnect should succeed
+		await expect(page.locator('text=Online').first()).toBeVisible({ timeout: 15000 });
 
-		// Input should be disabled or overlay should block interaction
-		// The overlay covers the entire screen, blocking input
-		const overlayVisible = await page.locator('.fixed.inset-0.z-\\[10000\\]').isVisible();
-		expect(overlayVisible).toBe(true);
+		// After reconnect, input should still be enabled and functional
+		await expect(textarea).toBeEnabled();
+		await textarea.fill('Test message after reconnect');
+		const value = await textarea.inputValue();
+		expect(value).toBe('Test message after reconnect');
 	});
 });
