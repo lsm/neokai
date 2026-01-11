@@ -112,15 +112,16 @@ export async function waitForMessageSent(page: Page, messageText: string): Promi
  * Wait for new assistant response to appear
  * Uses simpler approach matching the passing chat-flow.e2e.ts pattern
  * @param options.containsText - Optional text that should be in the response
- * @param options.timeout - Custom timeout (default 50s for CI reliability)
+ * @param options.timeout - Custom timeout (default 90s for CI reliability)
  */
 export async function waitForAssistantResponse(
 	page: Page,
 	options: { containsText?: string; timeout?: number } = {}
 ): Promise<void> {
-	// Use longer timeout for CI reliability (50s default)
-	// CI environments can be slower due to xvfb, network latency, etc.
-	const timeout = options.timeout || 50000;
+	// Use longer timeout for CI reliability (90s default)
+	// CI environments can be significantly slower due to xvfb, network latency,
+	// and Claude API response times that can exceed 50s
+	const timeout = options.timeout || 90000;
 
 	// Count existing assistant messages before waiting
 	const initialCount = await page.locator('[data-message-role="assistant"]').count();
