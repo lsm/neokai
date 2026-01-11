@@ -73,6 +73,13 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Install Playwright system dependencies
+        working-directory: packages/e2e
+        run: |
+          # System deps must be installed every time (ephemeral containers)
+          # This is fast since it just runs apt-get for missing packages
+          sudo bunx playwright install-deps chromium
+
       - name: Install Playwright Browsers
         working-directory: packages/e2e
         env:
@@ -81,7 +88,7 @@ jobs:
           # Use shared tool cache for browsers across all self-hosted runners
           # Once one runner installs, all runners can reuse the same browsers
           mkdir -p $PLAYWRIGHT_BROWSERS_PATH
-          bunx playwright install --with-deps chromium
+          bunx playwright install chromium
           echo "Installed browsers:"
           ls -la $PLAYWRIGHT_BROWSERS_PATH || true
 
@@ -90,8 +97,10 @@ jobs:
           echo "PLAYWRIGHT_BROWSERS_PATH: $PLAYWRIGHT_BROWSERS_PATH"
           echo "Checking chromium executable..."
           find /home/runner/_work/_tool/e2e_tools -name "chrome" -o -name "chromium" 2>/dev/null | head -5 || true
-          echo "Checking if xvfb is available..."
-          which Xvfb || echo "Xvfb not found"
+          echo "Checking libxkbcommon (was missing before)..."
+          ldconfig -p | grep xkbcommon || echo "libxkbcommon not in ldconfig"
+          echo "Checking Chrome can find its libs..."
+          ldd /home/runner/_work/_tool/e2e_tools/chromium-*/chrome-linux64/chrome 2>&1 | grep "not found" || echo "All libs found!"
         env:
           PLAYWRIGHT_BROWSERS_PATH: /home/runner/_work/_tool/e2e_tools
 
