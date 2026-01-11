@@ -45,8 +45,8 @@ test.describe('Message Output Removal', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response with tool output
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-			timeout: 30000,
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
 		});
 
 		// Look for tool use block in the response
@@ -56,7 +56,7 @@ test.describe('Message Output Removal', () => {
 
 		// The response should contain some indication of tool usage
 		// Even if no explicit tool block, we verify the assistant responded
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible();
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible();
 	});
 
 	test('should display message content after tool execution', async ({ page }) => {
@@ -71,12 +71,12 @@ test.describe('Message Output Removal', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-			timeout: 30000,
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
 		});
 
 		// The assistant message should be visible
-		const assistantMessage = page.locator('[data-testid="assistant-message"]').first();
+		const assistantMessage = page.locator('[data-message-role="assistant"]').first();
 		await expect(assistantMessage).toBeVisible();
 
 		// Message should have some content
@@ -97,8 +97,8 @@ test.describe('Message Output Removal', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for first response
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-			timeout: 30000,
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
 		});
 
 		// Send follow-up message
@@ -109,7 +109,7 @@ test.describe('Message Output Removal', () => {
 		await page.waitForTimeout(2000);
 
 		// Should have multiple messages in conversation
-		const assistantMessages = page.locator('[data-testid="assistant-message"]');
+		const assistantMessages = page.locator('[data-message-role="assistant"]');
 		const count = await assistantMessages.count();
 		expect(count).toBeGreaterThanOrEqual(1);
 	});
@@ -126,7 +126,7 @@ test.describe('Message Output Removal', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
 			timeout: 45000,
 		});
 
@@ -141,6 +141,6 @@ test.describe('Message Output Removal', () => {
 		const _collapsibleCount = await collapsibleElements.count();
 
 		// Whether or not collapsible outputs exist, the response should be present
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible();
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible();
 	});
 });

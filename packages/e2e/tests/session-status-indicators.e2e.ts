@@ -60,8 +60,8 @@ test.describe('Session Status Indicators', () => {
 			await expect(pulsingIndicator).toBeVisible({ timeout: 5000 });
 
 			// Wait for processing to complete
-			await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-				timeout: 30000,
+			await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+				timeout: 60000,
 			});
 
 			// After processing completes, the pulsing indicator should disappear
@@ -118,8 +118,8 @@ test.describe('Session Status Indicators', () => {
 			expect(hasPhaseColor).toBe(true);
 
 			// Wait for completion
-			await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-				timeout: 30000,
+			await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+				timeout: 60000,
 			});
 
 			// Indicator should be gone after completion
@@ -142,8 +142,8 @@ test.describe('Session Status Indicators', () => {
 			await page.keyboard.press('Meta+Enter');
 
 			// Wait for response
-			await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-				timeout: 30000,
+			await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+				timeout: 60000,
 			});
 
 			// Give extra time for state to settle
@@ -233,8 +233,8 @@ test.describe('Session Status Indicators', () => {
 			await textarea.fill('Hello from session 1');
 			await page.keyboard.press('Meta+Enter');
 
-			await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-				timeout: 30000,
+			await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+				timeout: 60000,
 			});
 
 			// Create second session
@@ -259,8 +259,8 @@ test.describe('Session Status Indicators', () => {
 			await textarea.fill('Hello from session 2');
 			await page.keyboard.press('Meta+Enter');
 
-			await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-				timeout: 30000,
+			await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+				timeout: 60000,
 			});
 
 			// Clean up second session
@@ -281,8 +281,8 @@ test.describe('Session Status Indicators', () => {
 			await textarea.fill('Test message');
 			await page.keyboard.press('Meta+Enter');
 
-			await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-				timeout: 30000,
+			await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+				timeout: 60000,
 			});
 
 			// Navigate home
@@ -332,8 +332,8 @@ test.describe('Session Status Indicators', () => {
 			await page.keyboard.press('Meta+Enter');
 
 			// Wait for response
-			await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-				timeout: 30000,
+			await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+				timeout: 60000,
 			});
 
 			// Wait for worktree initialization to complete
@@ -362,8 +362,8 @@ test.describe('Session Status Indicators', () => {
 			await textarea.fill('Test worktree alignment');
 			await page.keyboard.press('Meta+Enter');
 
-			await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-				timeout: 30000,
+			await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+				timeout: 60000,
 			});
 
 			// Wait for worktree to initialize

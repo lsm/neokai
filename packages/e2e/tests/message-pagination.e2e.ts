@@ -45,8 +45,8 @@ test.describe('Message Pagination', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-			timeout: 30000,
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
 		});
 
 		// Send second message
@@ -78,8 +78,8 @@ test.describe('Message Pagination', () => {
 
 		await textarea.fill('Count to 3');
 		await page.keyboard.press('Meta+Enter');
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-			timeout: 30000,
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
 		});
 
 		await textarea.fill('Now count to 5');
@@ -87,7 +87,7 @@ test.describe('Message Pagination', () => {
 		await page.waitForTimeout(3000);
 
 		// Verify multiple exchanges exist
-		const assistantMessages = page.locator('[data-testid="assistant-message"]');
+		const assistantMessages = page.locator('[data-message-role="assistant"]');
 		const assistantCount = await assistantMessages.count();
 		expect(assistantCount).toBeGreaterThanOrEqual(1);
 
@@ -114,8 +114,8 @@ test.describe('Message Pagination', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response to start
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-			timeout: 30000,
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
 		});
 
 		// When autoscroll is enabled, the view should follow new content
@@ -125,7 +125,7 @@ test.describe('Message Pagination', () => {
 		await expect(page.locator('text=Online').first()).toBeVisible({ timeout: 45000 });
 
 		// Verify the message area is still visible
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible();
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible();
 	});
 
 	test('should display Load More button when history exceeds page size', async ({ page }) => {
@@ -149,8 +149,8 @@ test.describe('Message Pagination', () => {
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await textarea.fill('Hello');
 		await page.keyboard.press('Meta+Enter');
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-			timeout: 30000,
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
 		});
 
 		// With just one exchange, still shouldn't need Load More

@@ -47,8 +47,8 @@ test.describe('Worktree Isolation', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-			timeout: 30000,
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
 		});
 
 		// After workspace initialization, worktree info might be visible
@@ -72,8 +72,8 @@ test.describe('Worktree Isolation', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-			timeout: 30000,
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
 		});
 
 		// Open session options menu to see session info
@@ -97,8 +97,8 @@ test.describe('Worktree Isolation', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-			timeout: 30000,
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
 		});
 
 		// Remember the session ID before deletion
@@ -139,8 +139,8 @@ test.describe('Worktree Isolation', () => {
 		let textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await textarea.fill('First session message');
 		await page.keyboard.press('Meta+Enter');
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-			timeout: 30000,
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
 		});
 
 		// Navigate home and create second session
@@ -156,8 +156,8 @@ test.describe('Worktree Isolation', () => {
 		textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await textarea.fill('Second session message');
 		await page.keyboard.press('Meta+Enter');
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-			timeout: 30000,
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
 		});
 
 		// Sessions should have different IDs (isolated)
@@ -195,8 +195,8 @@ test.describe('Worktree Isolation', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-			timeout: 30000,
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
 		});
 
 		// Wait for workspace to initialize

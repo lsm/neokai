@@ -43,8 +43,8 @@ test.describe('Context Dropdown', () => {
 		await page.keyboard.press('Meta+Enter'); // Cmd+Enter on Mac
 
 		// Wait for response to complete (look for the assistant message)
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-			timeout: 30000,
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
 		});
 
 		// Context percentage should be visible
@@ -64,8 +64,8 @@ test.describe('Context Dropdown', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-			timeout: 30000,
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
 		});
 
 		// Click on context percentage to open dropdown
@@ -90,8 +90,8 @@ test.describe('Context Dropdown', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-			timeout: 30000,
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
 		});
 
 		// Click on context percentage

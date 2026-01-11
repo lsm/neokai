@@ -59,7 +59,7 @@ test.describe('Message Send and Receive', () => {
 
 		// Wait for assistant response (with generous timeout for API call)
 		await expect(page.locator('text=/TEST_OK|test_ok/i')).toBeVisible({
-			timeout: 30000,
+			timeout: 60000,
 		});
 
 		// Wait for processing to complete (send button should return)
@@ -106,7 +106,7 @@ test.describe('Message Send and Receive', () => {
 		});
 
 		// 3. Wait for response to complete (send button returns)
-		await expect(page.locator('[data-testid="send-button"]')).toBeVisible({ timeout: 30000 });
+		await expect(page.locator('[data-testid="send-button"]')).toBeVisible({ timeout: 60000 });
 
 		// 4. Stop button should disappear
 		await expect(stopButton).not.toBeVisible({ timeout: 5000 });

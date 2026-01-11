@@ -209,12 +209,12 @@ test.describe('Mobile Responsiveness', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-			timeout: 30000,
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
 		});
 
 		// Check that messages don't overflow horizontally
-		const messageContainer = page.locator('[data-testid="assistant-message"]').first();
+		const messageContainer = page.locator('[data-message-role="assistant"]').first();
 		const containerBox = await messageContainer.boundingBox();
 		if (containerBox) {
 			// Message should fit within viewport width
@@ -286,12 +286,12 @@ test.describe('Tablet Responsiveness', () => {
 		await page.keyboard.press('Meta+Enter');
 
 		// Wait for response
-		await expect(page.locator('[data-testid="assistant-message"]').first()).toBeVisible({
-			timeout: 30000,
+		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+			timeout: 60000,
 		});
 
 		// Verify assistant message is displayed - this confirms layout works correctly
-		const assistantMessage = page.locator('[data-testid="assistant-message"]').first();
+		const assistantMessage = page.locator('[data-message-role="assistant"]').first();
 		await expect(assistantMessage).toBeVisible();
 	});
 });
