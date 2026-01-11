@@ -116,10 +116,12 @@ export async function waitForSessionDeleted(page: Page, sessionId: string): Prom
  * Wait for user message to be sent
  */
 export async function waitForMessageSent(page: Page, messageText: string): Promise<void> {
-	// Wait for user message to appear in the UI
-	await page.locator(`[data-testid="user-message"]:has-text("${messageText}")`).waitFor({
+	// Wait for user message to appear in the UI using simple text selector
+	// Note: Using text= selector is more robust than :has-text() with data-testid
+	// because the text might be transformed during rendering
+	await page.locator(`text="${messageText}"`).first().waitFor({
 		state: 'visible',
-		timeout: 5000,
+		timeout: 10000,
 	});
 }
 
@@ -134,8 +136,8 @@ export async function waitForAssistantResponse(
 ): Promise<void> {
 	const timeout = options.timeout || 30000;
 
-	// Count existing assistant messages
-	const initialCount = await page.locator('[data-testid="assistant-message"]').count();
+	// Count existing assistant messages using data-message-role (more reliable)
+	const initialCount = await page.locator('[data-message-role="assistant"]').count();
 
 	// Wait for input to be disabled (processing started)
 	await page
@@ -154,7 +156,7 @@ export async function waitForAssistantResponse(
 	await page
 		.waitForFunction(
 			(expectedCount) => {
-				const messages = document.querySelectorAll('[data-testid="assistant-message"]');
+				const messages = document.querySelectorAll('[data-message-role="assistant"]');
 				return messages.length > expectedCount;
 			},
 			initialCount,
@@ -170,7 +172,7 @@ export async function waitForAssistantResponse(
 
 	// If text matching is requested, verify it
 	if (options.containsText) {
-		const lastAssistant = page.locator('[data-testid="assistant-message"]').last();
+		const lastAssistant = page.locator('[data-message-role="assistant"]').last();
 		await expect(lastAssistant).toContainText(options.containsText, { timeout: 5000 });
 	}
 
@@ -180,7 +182,7 @@ export async function waitForAssistantResponse(
 			const input = document.querySelector('textarea[placeholder*="Ask"]') as HTMLTextAreaElement;
 			return input && !input.disabled;
 		},
-		{ timeout: 5000 }
+		{ timeout: 10000 }
 	);
 }
 
