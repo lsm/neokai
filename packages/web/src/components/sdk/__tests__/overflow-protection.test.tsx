@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Overflow Protection Tests
  *

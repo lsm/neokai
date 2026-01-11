@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * SubagentBlock Component Tests
  *

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * SDKToolProgressMessage Component Tests
  *

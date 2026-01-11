@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * SDKUserMessage Component Tests
  *

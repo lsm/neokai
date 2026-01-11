@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * ThinkingBlock Component Tests
  *

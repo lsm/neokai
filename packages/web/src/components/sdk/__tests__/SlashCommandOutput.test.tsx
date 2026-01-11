@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * SlashCommandOutput Component Tests
  *

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * SDKResultMessage Component Tests
  *

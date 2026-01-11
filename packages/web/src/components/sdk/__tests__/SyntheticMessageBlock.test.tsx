@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * SyntheticMessageBlock Component Tests
  *

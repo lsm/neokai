@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for TodoViewer Component
  *

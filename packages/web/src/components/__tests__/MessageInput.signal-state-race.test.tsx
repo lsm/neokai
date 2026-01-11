@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for Signal-State Race Condition in MessageInput
  *

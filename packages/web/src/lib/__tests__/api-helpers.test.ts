@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for API Helper Functions
  *

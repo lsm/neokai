@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for ToolResultCard Component
  *

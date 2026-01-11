@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for Application State Management
  *

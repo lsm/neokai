@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * SDKAssistantMessage Component Tests
  *

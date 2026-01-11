@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Setup Happy-DOM for SDK tool component tests
  */

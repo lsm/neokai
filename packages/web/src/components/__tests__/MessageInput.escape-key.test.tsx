@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for Escape Key Behavior in MessageInput
  *

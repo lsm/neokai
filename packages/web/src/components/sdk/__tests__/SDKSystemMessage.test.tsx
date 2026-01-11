@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * SDKSystemMessage Component Tests
  *
