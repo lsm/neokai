@@ -116,10 +116,9 @@ export async function waitForSessionDeleted(page: Page, sessionId: string): Prom
  * Wait for user message to be sent
  */
 export async function waitForMessageSent(page: Page, messageText: string): Promise<void> {
-	// Wait for user message to appear in the UI using simple text selector
-	// Note: Using text= selector is more robust than :has-text() with data-testid
-	// because the text might be transformed during rendering
-	await page.locator(`text="${messageText}"`).first().waitFor({
+	// Wait for user message to appear in the UI
+	// Use getByText which handles special characters better than text= selector
+	await page.getByText(messageText, { exact: false }).first().waitFor({
 		state: 'visible',
 		timeout: 10000,
 	});
