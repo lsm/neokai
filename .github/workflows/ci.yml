@@ -12,7 +12,7 @@ jobs:
   lint:
     name: Lint
     runs-on: self-hosted
-    timeout-minutes: 5
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -31,7 +31,7 @@ jobs:
   format-check:
     name: Format Check
     runs-on: self-hosted
-    timeout-minutes: 5
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -54,7 +54,7 @@ jobs:
   test-daemon-integration-database:
     name: Daemon Integration (database)
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -74,7 +74,7 @@ jobs:
   test-daemon-integration-filesystem:
     name: Daemon Integration (filesystem)
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -94,7 +94,7 @@ jobs:
   test-daemon-integration-git:
     name: Daemon Integration (git)
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -114,7 +114,7 @@ jobs:
   test-daemon-integration-websocket:
     name: Daemon Integration (websocket)
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -134,7 +134,7 @@ jobs:
   test-daemon-integration-rpc:
     name: Daemon Integration (rpc)
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -154,7 +154,7 @@ jobs:
   test-daemon-integration-session:
     name: Daemon Integration (session)
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -174,7 +174,7 @@ jobs:
   test-daemon-integration-components:
     name: Daemon Integration (components)
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -194,7 +194,7 @@ jobs:
   test-daemon-integration-mcp:
     name: Daemon Integration (mcp)
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -215,7 +215,7 @@ jobs:
   test-daemon-unit:
     name: Daemon Unit Tests
     runs-on: self-hosted
-    timeout-minutes: 5
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -236,7 +236,7 @@ jobs:
   # test-daemon-integration:
   #   name: Daemon Integration (${{ matrix.category }})
   #   runs-on: self-hosted
-  #   timeout-minutes: 10
+  #   timeout-minutes: 3
   #   strategy:
   #     fail-fast: false
   #     matrix:
@@ -273,7 +273,7 @@ jobs:
   test-daemon-online-components:
     name: Daemon Online (components)
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -295,7 +295,7 @@ jobs:
   test-daemon-online-mcp:
     name: Daemon Online (mcp)
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -317,7 +317,7 @@ jobs:
   test-daemon-online-rpc:
     name: Daemon Online (rpc)
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -339,7 +339,7 @@ jobs:
   test-daemon-online-sdk:
     name: Daemon Online (sdk)
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -361,7 +361,7 @@ jobs:
   test-daemon-online-session:
     name: Daemon Online (session)
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -385,7 +385,7 @@ jobs:
   test-daemon-sdk-streaming-failures:
     name: Daemon Online (SDK streaming tests)
     runs-on: self-hosted
-    timeout-minutes: 15
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -410,7 +410,7 @@ jobs:
   test-shared:
     name: Test Shared
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -430,7 +430,7 @@ jobs:
   test-cli:
     name: Test CLI
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -450,7 +450,7 @@ jobs:
   test-yuanshen:
     name: Test Yuanshen (Zig unit)
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -470,7 +470,7 @@ jobs:
   test-yuanshen-integration:
     name: Test Yuanshen (Zig integration)
     runs-on: self-hosted
-    timeout-minutes: 2
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -500,7 +500,7 @@ jobs:
   test-yuanshen-hub-rpc:
     name: Test Yuanshen (MessageHub RPC)
     runs-on: self-hosted
-    timeout-minutes: 2
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -530,7 +530,7 @@ jobs:
   test-yuanshen-hub-events:
     name: Test Yuanshen (MessageHub Events)
     runs-on: self-hosted
-    timeout-minutes: 2
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -560,7 +560,7 @@ jobs:
   test-yuanshen-message-hub:
     name: Test Yuanshen (MessageHubClient)
     runs-on: self-hosted
-    timeout-minutes: 2
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -590,7 +590,7 @@ jobs:
   test-web:
     name: Test Web
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
@@ -610,7 +610,7 @@ jobs:
   typecheck:
     name: Type Check
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
