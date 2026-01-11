@@ -6,7 +6,7 @@
  * Note: Tests that require mocking file utils are limited due to module initialization order.
  */
 
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect, mock } from 'bun:test';
 import { renderHook, act } from '@testing-library/preact';
 import { useFileAttachments } from '../useFileAttachments.ts';
 

@@ -6,7 +6,7 @@
  * and excluded refs functionality.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { renderHook } from '@testing-library/preact';
 import type { RefObject } from 'preact';
 import { useClickOutside } from '../useClickOutside.ts';

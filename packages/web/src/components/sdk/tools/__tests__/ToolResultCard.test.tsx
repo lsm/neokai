@@ -6,7 +6,7 @@
  */
 
 import './setup';
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect, mock } from 'bun:test';
 import { render } from '@testing-library/preact';
 import { ToolResultCard } from '../ToolResultCard';
 

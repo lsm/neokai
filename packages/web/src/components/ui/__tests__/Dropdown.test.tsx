@@ -4,7 +4,7 @@
  */
 
 import './setup'; // Setup Happy-DOM
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { render, cleanup } from '@testing-library/preact';
 import { Dropdown, DropdownMenuItem } from '../Dropdown';
 
