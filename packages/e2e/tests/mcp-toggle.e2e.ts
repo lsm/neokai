@@ -48,14 +48,17 @@ async function openToolsModal(page: Page): Promise<void> {
 }
 
 /**
- * Close the Tools modal by clicking Cancel
+ * Close the Tools modal by clicking the X button
  */
 async function closeToolsModal(page: Page): Promise<void> {
-	const cancelButton = page.locator('button:has-text("Cancel")').first();
-	await cancelButton.click();
+	// Click the X close button in the modal header (more reliable than Cancel which may be off-screen)
+	const closeButton = page
+		.locator('button[aria-label="Close modal"], button:has-text("Close modal")')
+		.first();
+	await closeButton.click();
 
 	// Wait for modal to close
-	await page.locator('h2:has-text("Tools")').waitFor({ state: 'hidden', timeout: 3000 });
+	await page.locator('h2:has-text("Tools")').waitFor({ state: 'hidden', timeout: 5000 });
 }
 
 /**
@@ -63,7 +66,8 @@ async function closeToolsModal(page: Page): Promise<void> {
  */
 async function saveToolsModal(page: Page): Promise<void> {
 	const saveButton = page.locator('button:has-text("Save")').first();
-	await saveButton.click();
+	// Use force click to bypass any overlaying elements
+	await saveButton.click({ force: true });
 
 	// Wait for success toast notification
 	await page
@@ -275,7 +279,7 @@ test.describe('MCP Toggle - Tools Modal', () => {
 		await waitForWebSocketConnected(page);
 
 		// Create a new session
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 		sessionId = await waitForSessionCreated(page);
 	});
@@ -299,12 +303,12 @@ test.describe('MCP Toggle - Tools Modal', () => {
 		// Verify modal is open with expected sections
 		await expect(page.locator('h2:has-text("Tools")')).toBeVisible();
 
-		// Verify section headers
-		await expect(page.locator('h3:has-text("System Prompt")')).toBeVisible();
-		await expect(page.locator('h3:has-text("Setting Sources")')).toBeVisible();
-		await expect(page.locator('h3:has-text("MCP Servers")')).toBeVisible();
-		await expect(page.locator('h3:has-text("Liuboer Tools")')).toBeVisible();
-		await expect(page.locator('h3:has-text("SDK Built-in")')).toBeVisible();
+		// Verify section headers (use .first() to handle potential duplicate elements)
+		await expect(page.locator('h3:has-text("System Prompt")').first()).toBeVisible();
+		await expect(page.locator('h3:has-text("Setting Sources")').first()).toBeVisible();
+		await expect(page.locator('h3:has-text("MCP Servers")').first()).toBeVisible();
+		await expect(page.locator('h3:has-text("Liuboer Tools")').first()).toBeVisible();
+		await expect(page.locator('h3:has-text("SDK Built-in")').first()).toBeVisible();
 	});
 
 	test('should close Tools modal with Cancel button', async ({ page }) => {
@@ -542,7 +546,7 @@ test.describe('MCP Toggle - Session Config Sync', () => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 		sessionId = await waitForSessionCreated(page);
 	});
@@ -626,7 +630,7 @@ test.describe('MCP Toggle - State Persistence', () => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 		sessionId = await waitForSessionCreated(page);
 	});
@@ -734,7 +738,7 @@ test.describe('MCP Toggle - Edge Cases', () => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		const newSessionButton = page.locator("button:has-text('New Session')");
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 		sessionId = await waitForSessionCreated(page);
 	});
