@@ -74,9 +74,12 @@ jobs:
 
       - name: Install Playwright Browsers
         working-directory: packages/e2e
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: /home/runner/_work/_tool/e2e_tools
         run: |
-          # On self-hosted runners, browsers persist in ~/.cache/ms-playwright
-          # playwright install only downloads if missing or version mismatch
+          # Use shared tool cache for browsers across all self-hosted runners
+          # Once one runner installs, all runners can reuse the same browsers
+          mkdir -p $PLAYWRIGHT_BROWSERS_PATH
           bunx playwright install --with-deps chromium
 
       - name: Run E2E test (${{ matrix.test }})
@@ -84,6 +87,7 @@ jobs:
         run: bun run test tests/${{ matrix.test }}.e2e.ts
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          PLAYWRIGHT_BROWSERS_PATH: /home/runner/_work/_tool/e2e_tools
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
