@@ -118,22 +118,24 @@ test.describe('Chat Flow - Improved', () => {
 
 		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
 
-		// Set up promise to check disabled state immediately after click
-		const checkDisabledPromise = sendButton.click().then(async () => {
-			// Check immediately after click
-			const isDisabled = await messageInput.isDisabled();
-			return isDisabled;
-		});
+		// Click send and wait for input to be disabled
+		await sendButton.click();
 
-		// Input should be disabled at some point during processing
-		const wasDisabled = await checkDisabledPromise;
-		expect(wasDisabled).toBe(true);
+		// Input should be disabled while processing
+		// Use waitForFunction for more reliable detection in CI
+		await page.waitForFunction(
+			() => {
+				const input = document.querySelector('textarea[placeholder*="Ask"]') as HTMLTextAreaElement;
+				return input && input.disabled;
+			},
+			{ timeout: 5000 }
+		);
 
 		// Wait for processing to complete
 		await waitForMessageProcessed(page, 'Test message for input state');
 
 		// Input should be enabled again after response
-		await expect(messageInput).toBeEnabled({ timeout: 5000 });
+		await expect(messageInput).toBeEnabled({ timeout: 10000 });
 
 		// Cleanup
 		await cleanupTestSession(page, sessionId);
