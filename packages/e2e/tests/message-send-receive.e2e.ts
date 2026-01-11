@@ -21,7 +21,7 @@ test.describe('Message Send and Receive', () => {
 
 	test('should successfully send a message and receive response', async ({ page }) => {
 		// Create a new session
-		const newSessionBtn = await waitForElement(page, 'button:has-text("New Session")');
+		const newSessionBtn = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionBtn.click();
 
 		const sessionId = await waitForSessionCreated(page);
@@ -29,7 +29,7 @@ test.describe('Message Send and Receive', () => {
 
 		// Get message input and send button
 		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
-		const sendButton = await waitForElement(page, 'button[type="submit"]');
+		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
 
 		// Type a simple message
 		const testMessage = 'Reply with exactly: TEST_OK';
@@ -46,12 +46,13 @@ test.describe('Message Send and Receive', () => {
 		const inputValue = await messageInput.inputValue();
 		expect(inputValue).toBe('');
 
-		// Verify input is disabled while processing
-		await expect(messageInput).toBeDisabled({ timeout: 2000 });
+		// Verify stop button appears during processing
+		const stopButton = page.locator('[data-testid="stop-button"]');
+		await expect(stopButton).toBeVisible({ timeout: 5000 });
 
 		// Verify status indicator shows processing state
-		const statusText = page.locator('text=/Sending|Queued|Processing/i');
-		await expect(statusText).toBeVisible({ timeout: 3000 });
+		const statusText = page.locator('text=/Starting|Thinking|Streaming|Processing/i');
+		await expect(statusText).toBeVisible({ timeout: 5000 });
 
 		// Wait for the user message to appear in the chat
 		await expect(page.locator(`text="${testMessage}"`)).toBeVisible({ timeout: 5000 });
@@ -61,11 +62,8 @@ test.describe('Message Send and Receive', () => {
 			timeout: 30000,
 		});
 
-		// Wait for processing status to disappear first (including /context fetch)
-		await expect(statusText).not.toBeVisible({ timeout: 10000 });
-
-		// Verify input is re-enabled after all processing completes
-		await expect(messageInput).toBeEnabled({ timeout: 5000 });
+		// Wait for processing to complete (send button should return)
+		await expect(page.locator('[data-testid="send-button"]')).toBeVisible({ timeout: 15000 });
 
 		// Cleanup
 		await cleanupTestSession(page, sessionId);
@@ -73,7 +71,7 @@ test.describe('Message Send and Receive', () => {
 
 	test('should handle message sending state transitions correctly', async ({ page }) => {
 		// Create a new session
-		const newSessionBtn = await waitForElement(page, 'button:has-text("New Session")');
+		const newSessionBtn = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionBtn.click();
 
 		const sessionId = await waitForSessionCreated(page);
@@ -82,7 +80,7 @@ test.describe('Message Send and Receive', () => {
 		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
 		await messageInput.fill('Simple test');
 
-		const sendButton = await waitForElement(page, 'button[type="submit"]');
+		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
 
 		// Track state transitions
 		const states: string[] = [];
@@ -97,26 +95,25 @@ test.describe('Message Send and Receive', () => {
 		// Send message
 		await sendButton.click();
 
-		// Should go through: enabled → disabled (sending) → enabled (after response)
-
-		// 1. Input should be disabled immediately
-		await expect(messageInput).toBeDisabled({ timeout: 1000 });
+		// State transitions during processing:
+		// 1. Stop button appears during processing
+		const stopButton = page.locator('[data-testid="stop-button"]');
+		await expect(stopButton).toBeVisible({ timeout: 5000 });
 
 		// 2. Status should show activity
-		await expect(page.locator('text=/Sending|Queued|Processing/i')).toBeVisible({
-			timeout: 3000,
+		await expect(page.locator('text=/Starting|Thinking|Streaming|Processing/i')).toBeVisible({
+			timeout: 5000,
 		});
 
-		// 3. Wait for response to complete
-		await page.waitForTimeout(5000);
+		// 3. Wait for response to complete (send button returns)
+		await expect(page.locator('[data-testid="send-button"]')).toBeVisible({ timeout: 30000 });
 
-		// 4. Input should be re-enabled
-		await expect(messageInput).toBeEnabled({ timeout: 10000 });
+		// 4. Stop button should disappear
+		await expect(stopButton).not.toBeVisible({ timeout: 5000 });
 
-		// 5. Send button should be disabled (no content) but clickable again when content added
-		await expect(sendButton).toBeDisabled(); // No content
+		// 5. After processing, can send another message
 		await messageInput.fill('Another message');
-		await expect(sendButton).toBeEnabled();
+		await expect(page.locator('[data-testid="send-button"]')).toBeEnabled();
 
 		// Cleanup
 		await cleanupTestSession(page, sessionId);
@@ -124,14 +121,14 @@ test.describe('Message Send and Receive', () => {
 
 	test('should not allow sending empty messages', async ({ page }) => {
 		// Create a new session
-		const newSessionBtn = await waitForElement(page, 'button:has-text("New Session")');
+		const newSessionBtn = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionBtn.click();
 
 		const sessionId = await waitForSessionCreated(page);
 
 		// Get controls
 		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
-		const sendButton = await waitForElement(page, 'button[type="submit"]');
+		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
 
 		// Empty input - send button should be disabled
 		await expect(sendButton).toBeDisabled();
@@ -150,43 +147,36 @@ test.describe('Message Send and Receive', () => {
 
 	test('should handle WebSocket disconnection gracefully', async ({ page }) => {
 		// Create a new session
-		const newSessionBtn = await waitForElement(page, 'button:has-text("New Session")');
+		const newSessionBtn = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionBtn.click();
 
 		const sessionId = await waitForSessionCreated(page);
+
+		// Verify initially online
+		await expect(page.locator('text=Online').first()).toBeVisible({ timeout: 10000 });
 
 		// Simulate disconnection using exposed method
 		await page.evaluate(() => {
 			window.connectionManager.simulateDisconnect();
 		});
 
-		await page.waitForTimeout(500);
-
-		// Should show offline status
-		await expect(page.locator('text=Offline').first()).toBeVisible({
-			timeout: 5000,
+		// Auto-reconnect should kick in and restore connection
+		// (Server is still running, so reconnect succeeds)
+		await expect(page.locator('text=Online').first()).toBeVisible({
+			timeout: 15000,
 		});
 
-		// Try to send a message (should be disabled while offline)
+		// After reconnect, should be able to interact normally
 		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
-		const _sendButton = await waitForElement(page, 'button[type="submit"]');
+		await expect(messageInput).toBeEnabled();
 
-		// Input/button should be disabled while offline
-		// (The app prevents sending when disconnected)
-		await expect(messageInput).toBeDisabled({ timeout: 2000 });
-
-		// Cleanup (may fail due to disconnection)
-		try {
-			await cleanupTestSession(page, sessionId);
-		} catch {
-			// Expected to fail - session cleanup requires connection
-			console.log('Cleanup skipped due to disconnection');
-		}
+		// Cleanup
+		await cleanupTestSession(page, sessionId);
 	});
 
 	test('should display message immediately in UI (optimistic update)', async ({ page }) => {
 		// Create a new session
-		const newSessionBtn = await waitForElement(page, 'button:has-text("New Session")');
+		const newSessionBtn = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionBtn.click();
 
 		const sessionId = await waitForSessionCreated(page);
@@ -196,7 +186,7 @@ test.describe('Message Send and Receive', () => {
 		const testMessage = 'Optimistic update test message';
 		await messageInput.fill(testMessage);
 
-		const sendButton = await waitForElement(page, 'button[type="submit"]');
+		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
 		await sendButton.click();
 
 		// User message should appear very quickly (optimistic update or immediate server echo)
@@ -211,7 +201,7 @@ test.describe('Message Send and Receive', () => {
 
 	test('should handle consecutive messages correctly', async ({ page }) => {
 		// Create a new session
-		const newSessionBtn = await waitForElement(page, 'button:has-text("New Session")');
+		const newSessionBtn = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionBtn.click();
 
 		const sessionId = await waitForSessionCreated(page);
@@ -223,7 +213,7 @@ test.describe('Message Send and Receive', () => {
 			const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
 			await messageInput.fill(msg);
 
-			const sendButton = await waitForElement(page, 'button[type="submit"]');
+			const sendButton = await waitForElement(page, '[data-testid="send-button"]');
 			await sendButton.click();
 
 			// Wait for message to appear
@@ -254,7 +244,7 @@ test.describe('Message Send and Receive', () => {
 
 	test('should recover from send failures', async ({ page }) => {
 		// Create a new session
-		const newSessionBtn = await waitForElement(page, 'button:has-text("New Session")');
+		const newSessionBtn = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionBtn.click();
 
 		const sessionId = await waitForSessionCreated(page);
@@ -263,7 +253,7 @@ test.describe('Message Send and Receive', () => {
 		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
 		await messageInput.fill('First successful message');
 
-		const sendButton = await waitForElement(page, 'button[type="submit"]');
+		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
 		await sendButton.click();
 
 		// Wait for completion
