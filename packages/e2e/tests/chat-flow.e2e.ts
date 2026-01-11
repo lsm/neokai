@@ -35,7 +35,7 @@ test.describe('Chat Flow', () => {
 
 	test('should create a new session and send a message', async ({ page }) => {
 		// Click "New Session" button
-		const newSessionBtn = page.locator('button:has-text("New Session")');
+		const newSessionBtn = page.getByRole('button', { name: 'New Session', exact: true });
 		await expect(newSessionBtn).toBeVisible();
 		await newSessionBtn.click();
 
@@ -57,7 +57,7 @@ test.describe('Chat Flow', () => {
 		await messageInput.fill("Hello, can you respond with just 'Hi!'?");
 
 		// Send the message (click send button or press Cmd+Enter)
-		const sendButton = page.locator('button[type="submit"]').first();
+		const sendButton = page.locator('[data-testid="send-button"]').first();
 		await expect(sendButton).toBeVisible();
 		await expect(sendButton).toBeEnabled();
 		await sendButton.click();
@@ -80,7 +80,7 @@ test.describe('Chat Flow', () => {
 
 	test('should display message input and send button', async ({ page }) => {
 		// Create a new session first
-		await page.locator('button:has-text("New Session")').click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		await page.waitForTimeout(1500);
 
 		// Track session ID for cleanup
@@ -95,13 +95,13 @@ test.describe('Chat Flow', () => {
 		await expect(messageInput).toBeEnabled();
 
 		// Check for send button
-		const sendButton = page.locator('button[type="submit"]').first();
+		const sendButton = page.locator('[data-testid="send-button"]').first();
 		await expect(sendButton).toBeVisible();
 	});
 
 	test('should show session in sidebar after creation', async ({ page }) => {
 		// Create a new session
-		await page.locator('button:has-text("New Session")').click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 
 		// Wait for session to be created and get sessionId
 		sessionId = await waitForSessionCreated(page);
@@ -113,9 +113,9 @@ test.describe('Chat Flow', () => {
 		await expect(sessionCard).toBeVisible({ timeout: 10000 });
 	});
 
-	test('should disable input while message is being sent', async ({ page }) => {
+	test('should show stop button while message is being processed', async ({ page }) => {
 		// Create a new session
-		await page.locator('button:has-text("New Session")').click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		await page.waitForTimeout(1500);
 
 		// Track session ID for cleanup
@@ -128,22 +128,23 @@ test.describe('Chat Flow', () => {
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await messageInput.fill('Test message');
 
-		const sendButton = page.locator('button[type="submit"]').first();
+		const sendButton = page.locator('[data-testid="send-button"]').first();
 		await sendButton.click();
 
-		// Input should be disabled immediately after clicking send
-		await expect(messageInput).toBeDisabled({ timeout: 1000 });
+		// Stop button should appear while processing
+		const stopButton = page.locator('[data-testid="stop-button"]');
+		await expect(stopButton).toBeVisible({ timeout: 2000 });
 
-		// Wait for response
+		// Wait for response to complete
 		await page.waitForTimeout(5000);
 
-		// Input should be enabled again after response
-		await expect(messageInput).toBeEnabled({ timeout: 10000 });
+		// Send button should reappear after response
+		await expect(sendButton).toBeVisible({ timeout: 10000 });
 	});
 
 	test('should show status indicator when processing', async ({ page }) => {
 		// Create a new session
-		await page.locator('button:has-text("New Session")').click();
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		await page.waitForTimeout(1500);
 
 		// Track session ID for cleanup
@@ -155,9 +156,11 @@ test.describe('Chat Flow', () => {
 		// Send a message
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await messageInput.fill('Quick test');
-		await page.locator('button[type="submit"]').first().click();
+		await page.locator('[data-testid="send-button"]').first().click();
 
-		// Status should show "Sending..." or processing state
-		await expect(page.locator('text=/Sending|Processing|Queued/i')).toBeVisible({ timeout: 2000 });
+		// Status should show processing state (Starting, Thinking, Streaming, etc.)
+		await expect(page.locator('text=/Starting|Thinking|Streaming|Processing/i')).toBeVisible({
+			timeout: 2000,
+		});
 	});
 });
