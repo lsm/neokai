@@ -5,6 +5,7 @@
  * Tests the toast utility functions and signals.
  */
 
+import './setup';
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { toastsSignal, dismissToast, toast } from '../toast';
 

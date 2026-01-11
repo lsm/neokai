@@ -8,6 +8,7 @@
  * - State refresh after validation
  */
 
+import './setup';
 import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import { ConnectionManager } from '../connection-manager';
 import { globalStore } from '../global-store';
@@ -18,38 +19,40 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 	let connectionManager: ConnectionManager;
 	let visibilityChangeHandler: ((event: Event) => void) | null = null;
 	let pageHideHandler: ((event: Event) => void) | null = null;
-	let originalAddEventListener: typeof document.addEventListener;
-	let originalRemoveEventListener: typeof document.removeEventListener;
+	let originalAddEventListener: unknown;
+	let originalRemoveEventListener: unknown;
 
 	beforeEach(() => {
-		// Capture event listeners for visibilitychange and pagehide
-		originalAddEventListener = document.addEventListener;
-		originalRemoveEventListener = document.removeEventListener;
+		// Capture original methods
+		originalAddEventListener = global.document?.addEventListener;
+		originalRemoveEventListener = global.document?.removeEventListener;
 
-		document.addEventListener = mock((type: string, listener: EventListener) => {
+		// Mock to capture event listeners
+		global.document.addEventListener = mock((type: string, listener: EventListener) => {
 			if (type === 'visibilitychange') {
 				visibilityChangeHandler = listener as (event: Event) => void;
 			} else if (type === 'pagehide') {
 				pageHideHandler = listener as (event: Event) => void;
 			}
-			return originalAddEventListener.call(document, type, listener);
-		}) as typeof document.addEventListener;
+			// Don't call original - just track handlers
+		}) as unknown as typeof global.document.addEventListener;
 
-		document.removeEventListener = mock((type: string, listener: EventListener) => {
+		global.document.removeEventListener = mock((type: string, listener: EventListener) => {
 			if (type === 'visibilitychange' && listener === visibilityChangeHandler) {
 				visibilityChangeHandler = null;
 			} else if (type === 'pagehide' && listener === pageHideHandler) {
 				pageHideHandler = null;
 			}
-			return originalRemoveEventListener.call(document, type, listener);
-		}) as typeof document.removeEventListener;
+			// Don't call original - just track handlers
+		}) as unknown as typeof global.document.addEventListener;
 
 		connectionManager = new ConnectionManager();
 	});
 
 	afterEach(() => {
-		document.addEventListener = originalAddEventListener;
-		document.removeEventListener = originalRemoveEventListener;
+		if (originalAddEventListener) global.document.addEventListener = originalAddEventListener;
+		if (originalRemoveEventListener)
+			global.document.removeEventListener = originalRemoveEventListener;
 		visibilityChangeHandler = null;
 		pageHideHandler = null;
 	});

@@ -9,6 +9,7 @@
  * - Data synchronization after background period
  */
 
+import './setup';
 import {
 	describe,
 	it,
@@ -225,9 +226,21 @@ describe('Safari Background Tab - Integration Tests', () => {
 		let mockTransport: Record<string, unknown>;
 		let mockMessageHub: Record<string, unknown>;
 		let subscriptionCalls: string[] = [];
+		let originalAddEventListener: unknown;
+		let originalRemoveEventListener: unknown;
 
 		beforeEach(() => {
 			subscriptionCalls = [];
+
+			// Mock document event listeners
+			originalAddEventListener = global.document?.addEventListener;
+			originalRemoveEventListener = global.document?.removeEventListener;
+			global.document.addEventListener = mock(
+				() => {}
+			) as unknown as typeof global.document.addEventListener;
+			global.document.removeEventListener = mock(
+				() => {}
+			) as unknown as typeof global.document.addEventListener;
 
 			// Mock transport
 			mockTransport = {
@@ -264,6 +277,12 @@ describe('Safari Background Tab - Integration Tests', () => {
 			connectionManager = new ConnectionManager();
 			(connectionManager as unknown as Record<string, unknown>).transport = mockTransport;
 			(connectionManager as unknown as Record<string, unknown>).messageHub = mockMessageHub;
+		});
+
+		afterEach(() => {
+			if (originalAddEventListener) global.document.addEventListener = originalAddEventListener;
+			if (originalRemoveEventListener)
+				global.document.removeEventListener = originalRemoveEventListener;
 		});
 
 		it('should execute reconnection flow in correct order', async () => {
