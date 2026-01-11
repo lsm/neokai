@@ -184,7 +184,8 @@ jobs:
           echo "Running test: tests/${{ matrix.test }}.e2e.ts"
           # xvfb-run uses /bin/sh which doesn't have npx in PATH
           # So we use bash -c to ensure we have the full environment
-          timeout 180 xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
+          # 300s timeout to allow for slow Claude API responses in CI
+          timeout 300 xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
             bash -c "npx playwright test tests/${{ matrix.test }}.e2e.ts --reporter=list" 2>&1
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
