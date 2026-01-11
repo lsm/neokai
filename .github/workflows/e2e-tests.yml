@@ -11,7 +11,7 @@ jobs:
   e2e:
     name: E2E (${{ matrix.test }})
     runs-on: self-hosted
-    timeout-minutes: 2
+    timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
@@ -82,6 +82,18 @@ jobs:
           # Once one runner installs, all runners can reuse the same browsers
           mkdir -p $PLAYWRIGHT_BROWSERS_PATH
           bunx playwright install --with-deps chromium
+          echo "Installed browsers:"
+          ls -la $PLAYWRIGHT_BROWSERS_PATH || true
+
+      - name: Debug environment
+        run: |
+          echo "PLAYWRIGHT_BROWSERS_PATH: $PLAYWRIGHT_BROWSERS_PATH"
+          echo "Checking chromium executable..."
+          find /home/runner/_work/_tool/e2e_tools -name "chrome" -o -name "chromium" 2>/dev/null | head -5 || true
+          echo "Checking if xvfb is available..."
+          which Xvfb || echo "Xvfb not found"
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: /home/runner/_work/_tool/e2e_tools
 
       - name: Run E2E test (${{ matrix.test }})
         working-directory: packages/e2e
