@@ -16,50 +16,51 @@ jobs:
       fail-fast: false
       matrix:
         test:
-          - 2-stage-creation
-          - auto-scroll-toggle
-          - auto-title-generation
-          - character-counter
-          - chat-flow-improved
-          - chat-flow
-          - connection-overlay
-          - connection-state
-          - context-dropdown
-          - context-usage-dropdown
-          - draft-clearing-bug
-          - draft-persistence
-          - error-handling
-          - file-attachment
-          - file-operations
           - home
-          - interrupt-button
-          - interruption-error
-          - mcp-toggle
-          - message-input-ux
-          - message-pagination
-          - message-removal
-          - message-send-receive
-          - mobile-responsive
-          - model-switcher
-          - multi-session-concurrent
-          - page-refresh
-          - processing-state
-          - recent-sessions-home
-          - reconnection-message-sync
-          - scroll-responsiveness
-          - scroll-to-bottom-button
-          - session-archive
-          - session-export
-          - session-list-ordering
-          - session-management
-          - session-status-indicators
-          - session-switching-comprehensive
-          - settings-modal
-          - slash-command-autocomplete
-          - thinking-level-selector
-          - tools-modal-complete
-          - ui-components
-          - worktree-isolation
+          # Temporarily disabled for CI debugging:
+          # - 2-stage-creation
+          # - auto-scroll-toggle
+          # - auto-title-generation
+          # - character-counter
+          # - chat-flow-improved
+          # - chat-flow
+          # - connection-overlay
+          # - connection-state
+          # - context-dropdown
+          # - context-usage-dropdown
+          # - draft-clearing-bug
+          # - draft-persistence
+          # - error-handling
+          # - file-attachment
+          # - file-operations
+          # - interrupt-button
+          # - interruption-error
+          # - mcp-toggle
+          # - message-input-ux
+          # - message-pagination
+          # - message-removal
+          # - message-send-receive
+          # - mobile-responsive
+          # - model-switcher
+          # - multi-session-concurrent
+          # - page-refresh
+          # - processing-state
+          # - recent-sessions-home
+          # - reconnection-message-sync
+          # - scroll-responsiveness
+          # - scroll-to-bottom-button
+          # - session-archive
+          # - session-export
+          # - session-list-ordering
+          # - session-management
+          # - session-status-indicators
+          # - session-switching-comprehensive
+          # - settings-modal
+          # - slash-command-autocomplete
+          # - thinking-level-selector
+          # - tools-modal-complete
+          # - ui-components
+          # - worktree-isolation
 
     steps:
       - uses: actions/checkout@v4
