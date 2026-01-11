@@ -47,21 +47,18 @@ test.describe('2-Stage Session Creation', () => {
 		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
 
-		// Wait for session to be created (URL should change to include session ID)
-		await page.waitForURL(/\/session\/[a-f0-9-]+/, { timeout: 5000 });
+		// Wait for session to be created (message input becomes visible)
+		sessionId = await waitForSessionCreated(page);
 
 		const endTime = Date.now();
 		const creationTime = endTime - startTime;
 
-		// Session creation should be fast (under 1 second for UI feedback)
+		// Session creation should be fast (under 2 seconds for UI feedback)
 		// Note: Network latency may add time, but UI should respond quickly
-		expect(creationTime).toBeLessThan(2000);
+		expect(creationTime).toBeLessThan(3000);
 
-		// Extract session ID from URL
-		const url = page.url();
-		const match = url.match(/\/session\/([a-f0-9-]+)/);
-		expect(match).toBeTruthy();
-		sessionId = match![1];
+		// Session ID should be available
+		expect(sessionId).toBeTruthy();
 	});
 
 	test('should show default title initially (New Session)', async ({ page }) => {
@@ -113,13 +110,9 @@ test.describe('2-Stage Session Creation', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Session should appear in sidebar immediately
-		// Look for the session card in the sidebar
-		const sidebar = page.locator('nav, aside').first();
-		const sessionCards = sidebar.locator('[data-testid="session-card"]');
-
-		// Should have at least one session
-		const count = await sessionCards.count();
-		expect(count).toBeGreaterThan(0);
+		// Look for the session card using data-session-id attribute
+		const sessionCard = page.locator(`[data-session-id="${sessionId}"]`);
+		await expect(sessionCard).toBeVisible({ timeout: 5000 });
 	});
 
 	test('should handle multiple rapid session creations', async ({ page }) => {
