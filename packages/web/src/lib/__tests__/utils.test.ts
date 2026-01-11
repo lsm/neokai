@@ -1,0 +1,288 @@
+/**
+ * Tests for Utility Functions
+ *
+ * Tests the public API: cn, copyToClipboard, formatRelativeTime, formatTokens
+ */
+
+import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
+import { cn, copyToClipboard, formatRelativeTime, formatTokens } from '../utils';
+
+describe('cn', () => {
+	it('should merge single class name', () => {
+		expect(cn('foo')).toBe('foo');
+	});
+
+	it('should merge multiple class names', () => {
+		expect(cn('foo', 'bar', 'baz')).toBe('foo bar baz');
+	});
+
+	it('should handle conditional classes', () => {
+		const showBar = true;
+		const showBaz = false;
+		expect(cn('foo', showBar && 'bar', showBaz && 'baz')).toBe('foo bar');
+	});
+
+	it('should handle arrays of classes', () => {
+		expect(cn(['foo', 'bar'])).toBe('foo bar');
+	});
+
+	it('should handle objects with class conditions', () => {
+		expect(cn({ foo: true, bar: false, baz: true })).toBe('foo baz');
+	});
+
+	it('should handle mixed inputs', () => {
+		expect(cn('base', ['array-class'], { conditional: true })).toBe('base array-class conditional');
+	});
+
+	it('should filter out falsy values', () => {
+		expect(cn('foo', null, undefined, '', 'bar')).toBe('foo bar');
+	});
+
+	it('should handle empty inputs', () => {
+		expect(cn()).toBe('');
+	});
+
+	it('should handle nested arrays', () => {
+		expect(cn(['foo', ['bar', 'baz']])).toBe('foo bar baz');
+	});
+});
+
+describe('copyToClipboard', () => {
+	let originalClipboard: typeof navigator.clipboard;
+	let originalDocument: typeof document;
+	let warnSpy: ReturnType<typeof spyOn>;
+	let errorSpy: ReturnType<typeof spyOn>;
+
+	beforeEach(() => {
+		originalClipboard = navigator.clipboard;
+		originalDocument = global.document;
+		warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+		errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		Object.defineProperty(navigator, 'clipboard', {
+			value: originalClipboard,
+			configurable: true,
+		});
+		warnSpy.mockRestore();
+		errorSpy.mockRestore();
+	});
+
+	it('should use Clipboard API when available', async () => {
+		const mockWriteText = mock(() => Promise.resolve());
+		Object.defineProperty(navigator, 'clipboard', {
+			value: { writeText: mockWriteText },
+			configurable: true,
+		});
+
+		const result = await copyToClipboard('test text');
+		expect(result).toBe(true);
+		expect(mockWriteText).toHaveBeenCalledWith('test text');
+	});
+
+	it('should return false when Clipboard API fails and fallback fails', async () => {
+		const mockWriteText = mock(() => Promise.reject(new Error('Permission denied')));
+		Object.defineProperty(navigator, 'clipboard', {
+			value: { writeText: mockWriteText },
+			configurable: true,
+		});
+
+		// Mock document methods for fallback
+		const mockExecCommand = mock(() => false);
+		const mockTextarea = {
+			value: '',
+			style: {},
+			focus: mock(() => {}),
+			select: mock(() => {}),
+		};
+		const mockCreateElement = mock(() => mockTextarea);
+		const mockAppendChild = mock(() => {});
+		const mockRemoveChild = mock(() => {});
+
+		global.document = {
+			...originalDocument,
+			createElement: mockCreateElement,
+			body: {
+				...originalDocument.body,
+				appendChild: mockAppendChild,
+				removeChild: mockRemoveChild,
+			},
+			execCommand: mockExecCommand,
+		} as unknown as Document;
+
+		const result = await copyToClipboard('test text');
+		expect(result).toBe(false);
+	});
+
+	it('should use fallback execCommand when Clipboard API is not available', async () => {
+		Object.defineProperty(navigator, 'clipboard', {
+			value: undefined,
+			configurable: true,
+		});
+
+		const mockExecCommand = mock(() => true);
+		const mockTextarea = {
+			value: '',
+			style: {},
+			focus: mock(() => {}),
+			select: mock(() => {}),
+		};
+		const mockCreateElement = mock(() => mockTextarea);
+		const mockAppendChild = mock(() => {});
+		const mockRemoveChild = mock(() => {});
+
+		global.document = {
+			...originalDocument,
+			createElement: mockCreateElement,
+			body: {
+				...originalDocument.body,
+				appendChild: mockAppendChild,
+				removeChild: mockRemoveChild,
+			},
+			execCommand: mockExecCommand,
+		} as unknown as Document;
+
+		const result = await copyToClipboard('fallback test');
+		expect(result).toBe(true);
+		expect(mockExecCommand).toHaveBeenCalledWith('copy');
+	});
+
+	it('should set textarea value to the text to copy', async () => {
+		Object.defineProperty(navigator, 'clipboard', {
+			value: undefined,
+			configurable: true,
+		});
+
+		let capturedValue = '';
+		const mockTextarea = {
+			value: '',
+			style: {},
+			focus: mock(() => {}),
+			select: mock(() => {}),
+		};
+		Object.defineProperty(mockTextarea, 'value', {
+			set: (v: string) => {
+				capturedValue = v;
+			},
+			get: () => capturedValue,
+		});
+
+		const mockCreateElement = mock(() => mockTextarea);
+		const mockAppendChild = mock(() => {});
+		const mockRemoveChild = mock(() => {});
+		const mockExecCommand = mock(() => true);
+
+		global.document = {
+			...originalDocument,
+			createElement: mockCreateElement,
+			body: {
+				...originalDocument.body,
+				appendChild: mockAppendChild,
+				removeChild: mockRemoveChild,
+			},
+			execCommand: mockExecCommand,
+		} as unknown as Document;
+
+		await copyToClipboard('capture this');
+		expect(capturedValue).toBe('capture this');
+	});
+});
+
+describe('formatRelativeTime', () => {
+	it('should return "Just now" for times less than 60 seconds ago', () => {
+		const now = new Date();
+		const date = new Date(now.getTime() - 30 * 1000); // 30 seconds ago
+		expect(formatRelativeTime(date)).toBe('Just now');
+	});
+
+	it('should return "Just now" for current time', () => {
+		expect(formatRelativeTime(new Date())).toBe('Just now');
+	});
+
+	it('should return minutes ago for times less than 1 hour ago', () => {
+		const now = new Date();
+		const date = new Date(now.getTime() - 5 * 60 * 1000); // 5 minutes ago
+		expect(formatRelativeTime(date)).toBe('5m ago');
+	});
+
+	it('should return hours ago for times less than 24 hours ago', () => {
+		const now = new Date();
+		const date = new Date(now.getTime() - 3 * 60 * 60 * 1000); // 3 hours ago
+		expect(formatRelativeTime(date)).toBe('3h ago');
+	});
+
+	it('should return "Yesterday" for times 24-48 hours ago', () => {
+		const now = new Date();
+		const date = new Date(now.getTime() - 24 * 60 * 60 * 1000); // 24 hours ago (1 day)
+		expect(formatRelativeTime(date)).toBe('Yesterday');
+	});
+
+	it('should return days ago for times 2-7 days ago', () => {
+		const now = new Date();
+		const date = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000); // 3 days ago
+		expect(formatRelativeTime(date)).toBe('3d ago');
+	});
+
+	it('should return formatted date for times more than 7 days ago', () => {
+		const now = new Date();
+		const date = new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000); // 10 days ago
+		const result = formatRelativeTime(date);
+		// Should be a formatted date string (locale-dependent)
+		expect(result).not.toMatch(/ago$/);
+		expect(result).not.toBe('Yesterday');
+		expect(result).not.toBe('Just now');
+	});
+
+	it('should handle exactly 1 minute ago', () => {
+		const now = new Date();
+		const date = new Date(now.getTime() - 60 * 1000);
+		expect(formatRelativeTime(date)).toBe('1m ago');
+	});
+
+	it('should handle exactly 1 hour ago', () => {
+		const now = new Date();
+		const date = new Date(now.getTime() - 60 * 60 * 1000);
+		expect(formatRelativeTime(date)).toBe('1h ago');
+	});
+
+	it('should handle exactly 7 days ago', () => {
+		const now = new Date();
+		const date = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+		// 7 days should show formatted date (not "7d ago")
+		const result = formatRelativeTime(date);
+		expect(result).not.toMatch(/ago$/);
+	});
+});
+
+describe('formatTokens', () => {
+	it('should return plain number for tokens less than 1000', () => {
+		expect(formatTokens(0)).toBe('0');
+		expect(formatTokens(1)).toBe('1');
+		expect(formatTokens(500)).toBe('500');
+		expect(formatTokens(999)).toBe('999');
+	});
+
+	it('should return k format for tokens >= 1000', () => {
+		expect(formatTokens(1000)).toBe('1.0k');
+		expect(formatTokens(1500)).toBe('1.5k');
+		expect(formatTokens(2000)).toBe('2.0k');
+	});
+
+	it('should show 1 decimal place precision', () => {
+		expect(formatTokens(1234)).toBe('1.2k');
+		expect(formatTokens(1250)).toBe('1.3k'); // 1.25 rounds to 1.3
+		expect(formatTokens(1240)).toBe('1.2k'); // 1.24 rounds to 1.2
+		expect(formatTokens(16500)).toBe('16.5k');
+	});
+
+	it('should handle large token counts', () => {
+		expect(formatTokens(100000)).toBe('100.0k');
+		expect(formatTokens(999999)).toBe('1000.0k');
+		expect(formatTokens(1000000)).toBe('1000.0k');
+	});
+
+	it('should handle exactly 1000 tokens', () => {
+		expect(formatTokens(1000)).toBe('1.0k');
+	});
+});

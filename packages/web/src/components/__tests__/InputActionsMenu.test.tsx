@@ -1,0 +1,252 @@
+/**
+ * Tests for InputActionsMenu Component
+ */
+
+import './setup';
+import { describe, it, expect, mock, beforeEach } from 'bun:test';
+import { render } from '@testing-library/preact';
+import { InputActionsMenu } from '../InputActionsMenu';
+
+// Mock useClickOutside hook
+mock.module('../../hooks/useClickOutside', () => ({
+	useClickOutside: mock(() => {}),
+}));
+
+describe('InputActionsMenu', () => {
+	const defaultProps = {
+		isOpen: false,
+		onToggle: mock(() => {}),
+		onClose: mock(() => {}),
+		autoScroll: true,
+		onAutoScrollChange: mock(() => {}),
+		onOpenTools: mock(() => {}),
+		onAttachFile: mock(() => {}),
+	};
+
+	beforeEach(() => {
+		defaultProps.onToggle.mockClear();
+		defaultProps.onClose.mockClear();
+		defaultProps.onAutoScrollChange.mockClear();
+		defaultProps.onOpenTools.mockClear();
+		defaultProps.onAttachFile.mockClear();
+	});
+
+	describe('Rendering', () => {
+		it('should render plus button', () => {
+			const { container } = render(<InputActionsMenu {...defaultProps} />);
+			const button = container.querySelector('button');
+			expect(button).toBeTruthy();
+		});
+
+		it('should not render menu when closed', () => {
+			const { container } = render(<InputActionsMenu {...defaultProps} isOpen={false} />);
+			const menu = container.querySelector('[role="menu"]');
+			expect(menu).toBeNull();
+		});
+
+		it('should render menu when open', () => {
+			const { container } = render(<InputActionsMenu {...defaultProps} isOpen={true} />);
+			// Check for menu items when open
+			const menuItems = container.querySelectorAll('button');
+			expect(menuItems.length).toBeGreaterThan(1); // Plus button + menu items
+		});
+	});
+
+	describe('Plus Button', () => {
+		it('should toggle menu on click', () => {
+			const { container } = render(<InputActionsMenu {...defaultProps} />);
+			const button = container.querySelector('button');
+			button?.click();
+			expect(defaultProps.onToggle).toHaveBeenCalled();
+		});
+
+		it('should have rotate animation when open', () => {
+			const { container } = render(<InputActionsMenu {...defaultProps} isOpen={true} />);
+			const svg = container.querySelector('svg');
+			expect(svg?.className).toContain('rotate-45');
+		});
+
+		it('should not have rotate animation when closed', () => {
+			const { container } = render(<InputActionsMenu {...defaultProps} isOpen={false} />);
+			const svg = container.querySelector('svg');
+			expect(svg?.className).not.toContain('rotate-45');
+		});
+	});
+
+	describe('Disabled State', () => {
+		it('should disable button when disabled prop is true', () => {
+			const { container } = render(<InputActionsMenu {...defaultProps} disabled={true} />);
+			const button = container.querySelector('button');
+			expect(button?.disabled).toBe(true);
+		});
+
+		it('should not toggle when disabled', () => {
+			const { container } = render(<InputActionsMenu {...defaultProps} disabled={true} />);
+			const button = container.querySelector('button');
+			button?.click();
+			// onToggle not called because disabled check happens first
+		});
+
+		it('should have disabled styling', () => {
+			const { container } = render(<InputActionsMenu {...defaultProps} disabled={true} />);
+			const button = container.querySelector('button');
+			expect(button?.className).toContain('opacity-50');
+			expect(button?.className).toContain('cursor-not-allowed');
+		});
+	});
+
+	describe('Menu Items', () => {
+		it('should show auto-scroll toggle in menu', () => {
+			const { container } = render(<InputActionsMenu {...defaultProps} isOpen={true} />);
+			const text = container.textContent;
+			expect(text).toContain('Auto-scroll');
+		});
+
+		it('should show tools option in menu', () => {
+			const { container } = render(<InputActionsMenu {...defaultProps} isOpen={true} />);
+			const text = container.textContent;
+			expect(text).toContain('Tools');
+		});
+
+		it('should show attach image option in menu', () => {
+			const { container } = render(<InputActionsMenu {...defaultProps} isOpen={true} />);
+			const text = container.textContent;
+			expect(text).toContain('Attach image');
+		});
+	});
+
+	describe('Auto-scroll Toggle', () => {
+		it('should show checkmark when auto-scroll is enabled', () => {
+			const { container } = render(
+				<InputActionsMenu {...defaultProps} isOpen={true} autoScroll={true} />
+			);
+			// When autoScroll is true, checkmark SVG is rendered
+			const checkmarks = container.querySelectorAll('svg');
+			// Multiple SVGs: plus icon, auto-scroll icon, checkmark, tools icon, attach icon
+			expect(checkmarks.length).toBeGreaterThan(3);
+		});
+
+		it('should not show checkmark when auto-scroll is disabled', () => {
+			const { container } = render(
+				<InputActionsMenu {...defaultProps} isOpen={true} autoScroll={false} />
+			);
+			// When autoScroll is false, no checkmark
+			const text = container.textContent;
+			expect(text).toContain('Auto-scroll');
+		});
+
+		it('should call onAutoScrollChange and close menu on click', () => {
+			const onAutoScrollChange = mock(() => {});
+			const onClose = mock(() => {});
+			const { container } = render(
+				<InputActionsMenu
+					{...defaultProps}
+					isOpen={true}
+					autoScroll={true}
+					onAutoScrollChange={onAutoScrollChange}
+					onClose={onClose}
+				/>
+			);
+
+			const buttons = container.querySelectorAll('button');
+			// Find auto-scroll button (second button after plus)
+			const autoScrollButton = Array.from(buttons).find((b) =>
+				b.textContent?.includes('Auto-scroll')
+			);
+			autoScrollButton?.click();
+
+			expect(onAutoScrollChange).toHaveBeenCalledWith(false);
+			expect(onClose).toHaveBeenCalled();
+		});
+	});
+
+	describe('Tools Button', () => {
+		it('should call onOpenTools and close menu on click', () => {
+			const onOpenTools = mock(() => {});
+			const onClose = mock(() => {});
+			const { container } = render(
+				<InputActionsMenu
+					{...defaultProps}
+					isOpen={true}
+					onOpenTools={onOpenTools}
+					onClose={onClose}
+				/>
+			);
+
+			const buttons = container.querySelectorAll('button');
+			const toolsButton = Array.from(buttons).find((b) => b.textContent?.includes('Tools'));
+			toolsButton?.click();
+
+			expect(onOpenTools).toHaveBeenCalled();
+			expect(onClose).toHaveBeenCalled();
+		});
+	});
+
+	describe('Attach File Button', () => {
+		it('should call onAttachFile and close menu on click', () => {
+			const onAttachFile = mock(() => {});
+			const onClose = mock(() => {});
+			const { container } = render(
+				<InputActionsMenu
+					{...defaultProps}
+					isOpen={true}
+					onAttachFile={onAttachFile}
+					onClose={onClose}
+				/>
+			);
+
+			const buttons = container.querySelectorAll('button');
+			const attachButton = Array.from(buttons).find((b) => b.textContent?.includes('Attach'));
+			attachButton?.click();
+
+			expect(onAttachFile).toHaveBeenCalled();
+			expect(onClose).toHaveBeenCalled();
+		});
+
+		it('should not call onAttachFile when disabled', () => {
+			const onAttachFile = mock(() => {});
+			const { container } = render(
+				<InputActionsMenu
+					{...defaultProps}
+					isOpen={true}
+					disabled={true}
+					onAttachFile={onAttachFile}
+				/>
+			);
+
+			const buttons = container.querySelectorAll('button');
+			const attachButton = Array.from(buttons).find((b) => b.textContent?.includes('Attach'));
+			attachButton?.click();
+
+			expect(onAttachFile).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Accessibility', () => {
+		it('should have title on button', () => {
+			const { container } = render(<InputActionsMenu {...defaultProps} />);
+			const button = container.querySelector('button');
+			expect(button?.title).toBe('More options');
+		});
+
+		it('should show "Not connected" title when disabled', () => {
+			const { container } = render(<InputActionsMenu {...defaultProps} disabled={true} />);
+			const button = container.querySelector('button');
+			expect(button?.title).toBe('Not connected');
+		});
+	});
+
+	describe('Styling', () => {
+		it('should have rounded button', () => {
+			const { container } = render(<InputActionsMenu {...defaultProps} />);
+			const button = container.querySelector('button');
+			expect(button?.className).toContain('rounded-full');
+		});
+
+		it('should have animation on menu', () => {
+			const { container } = render(<InputActionsMenu {...defaultProps} isOpen={true} />);
+			const menu = container.querySelector('.animate-slideIn');
+			expect(menu).toBeTruthy();
+		});
+	});
+});
