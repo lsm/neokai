@@ -7,8 +7,8 @@
  * - MessageHub broadcasting
  */
 
-import { Database } from '../../storage/database';
-import { createDaemonHub, type DaemonHub } from '../daemon-hub';
+import { Database } from '../../src/storage/database';
+import { createDaemonHub, type DaemonHub } from '../../src/lib/daemon-hub';
 import type { Session, SessionConfig, SessionMetadata } from '@liuboer/shared';
 import type {
 	PublishOptions,
