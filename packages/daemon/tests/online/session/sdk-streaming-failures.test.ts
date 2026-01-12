@@ -86,7 +86,7 @@ describe('SDK Streaming CI Failures', () => {
 				for await (const message of query({
 					prompt: messageGenerator(),
 					options: {
-						model: 'haiku',
+						model: 'glm-4.5-air',
 						cwd: process.cwd(),
 						permissionMode: 'bypassPermissions',
 						allowDangerouslySkipPermissions: true,
@@ -177,7 +177,7 @@ describe('SDK Streaming CI Failures', () => {
 				for await (const message of query({
 					prompt: messageGenerator(),
 					options: {
-						model: 'haiku',
+						model: 'glm-4.5-air',
 						cwd: process.cwd(),
 						permissionMode: 'acceptEdits',
 						settingSources: [],
@@ -220,7 +220,7 @@ describe('SDK Streaming CI Failures', () => {
 				for await (const message of query({
 					prompt: 'What is 3+3? Answer with just the number.',
 					options: {
-						model: 'haiku',
+						model: 'glm-4.5-air',
 						cwd: process.cwd(),
 						permissionMode: 'acceptEdits',
 						maxTurns: 1,
@@ -260,7 +260,7 @@ describe('SDK Streaming CI Failures', () => {
 				const sessionId = await ctx.sessionManager.createSession({
 					workspacePath: process.cwd(),
 					config: {
-						model: 'haiku', // Explicitly set model for CI
+						model: 'glm-4.5-air', // Explicitly set model for CI
 						permissionMode: 'acceptEdits',
 					},
 				});
@@ -343,7 +343,7 @@ describe('SDK Streaming CI Failures', () => {
 				const sessionId = await ctx.sessionManager.createSession({
 					workspacePath: process.cwd(),
 					config: {
-						model: 'haiku', // Use Haiku for faster, cheaper tests
+						model: 'glm-4.5-air', // Use Haiku for faster, cheaper tests
 						permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
 					},
 				});

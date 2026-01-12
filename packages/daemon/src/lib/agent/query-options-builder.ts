@@ -23,6 +23,7 @@ import type { PermissionMode } from '@liuboer/shared/types/settings';
 import type { SettingsManager } from '../settings-manager';
 import { createOutputLimiterHook, getOutputLimiterConfigFromSettings } from './output-limiter-hook';
 import { Logger } from '../logger';
+import { getProviderService } from '../provider-service';
 
 export class QueryOptionsBuilder {
 	private logger: Logger;
@@ -64,6 +65,7 @@ export class QueryOptionsBuilder {
 		const hooks = this.buildHooks();
 		const permissionMode = this.getPermissionMode();
 		const mcpServers = this.getMcpServers();
+		const mergedEnv = this.getMergedEnvironmentVars();
 
 		// Build final query options
 		// Settings-derived options first, then session-specific overrides
@@ -115,7 +117,7 @@ export class QueryOptionsBuilder {
 			// ============ Environment ============
 			cwd: this.getCwd(),
 			additionalDirectories,
-			env: config.env,
+			env: mergedEnv,
 			executable: config.executable,
 			executableArgs: config.executableArgs,
 
@@ -443,6 +445,59 @@ CRITICAL RULES:
 	 */
 	private getAdditionalDirectories(): string[] | undefined {
 		return this.session.worktree ? [] : undefined;
+	}
+
+	/**
+	 * Get merged environment variables for SDK subprocess
+	 *
+	 * Uses model-based provider detection:
+	 * - Models starting with "glm-" automatically get GLM env vars
+	 * - All other models use Anthropic (default, no env override)
+	 *
+	 * Merges:
+	 * 1. Provider env vars (based on model ID detection)
+	 * 2. Session config env vars (user overrides)
+	 *
+	 * Session env vars take priority over provider env vars.
+	 */
+	private getMergedEnvironmentVars(): Record<string, string> | undefined {
+		const providerService = getProviderService();
+
+		// Use model-based detection for provider env vars
+		const modelId = this.session.config.model || 'default';
+		const providerEnvVars = providerService.getEnvVarsForModel(modelId);
+		const sessionEnv = this.session.config.env;
+
+		// If no provider env vars and no session env, return undefined
+		if (Object.keys(providerEnvVars).length === 0 && !sessionEnv) {
+			return undefined;
+		}
+
+		// Merge: provider vars first, then session vars override
+		const mergedEnv: Record<string, string> = {};
+
+		// Add provider env vars
+		for (const [key, value] of Object.entries(providerEnvVars)) {
+			if (value !== undefined) {
+				mergedEnv[key] = value;
+			}
+		}
+
+		// Add session env vars (override provider vars)
+		if (sessionEnv) {
+			for (const [key, value] of Object.entries(sessionEnv)) {
+				if (value !== undefined) {
+					mergedEnv[key] = value;
+				}
+			}
+		}
+
+		// Log if using GLM model
+		if (providerService.isGlmModel(modelId) && mergedEnv.ANTHROPIC_BASE_URL) {
+			this.logger.log(`Using GLM model ${modelId} with base URL: ${mergedEnv.ANTHROPIC_BASE_URL}`);
+		}
+
+		return Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined;
 	}
 
 	/**

@@ -67,7 +67,7 @@ describe('Daemon-style SDK Usage', () => {
 			queryStream = query({
 				prompt: 'What is 2+2? Answer with just the number.',
 				options: {
-					model: 'haiku', // Use Haiku for faster, cheaper tests
+					model: 'glm-4.5-air', // Use GLM Air for faster, cheaper tests
 					cwd: process.cwd(), // DAEMON SETS THIS
 					permissionMode: 'acceptEdits', // Safe for root, auto-accepts tool edits
 					maxTurns: 1,
@@ -159,7 +159,7 @@ describe('Daemon-style SDK Usage', () => {
 			queryStream = query({
 				prompt: 'What is 2+2? Answer with just the number.',
 				options: {
-					model: 'haiku', // Use Haiku for faster, cheaper tests
+					model: 'glm-4.5-air', // Use GLM Air for faster, cheaper tests
 					// NO cwd option
 					permissionMode: 'acceptEdits', // Safe for root, auto-accepts tool edits
 					maxTurns: 1,

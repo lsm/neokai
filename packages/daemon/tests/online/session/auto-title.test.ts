@@ -92,7 +92,7 @@ describe('Auto-Title Generation', () => {
 		// Create session with workspace path
 		const sessionId = await ctx.sessionManager.createSession({
 			workspacePath: ctx.config.workspaceRoot,
-			config: { model: 'haiku' },
+			config: { model: 'glm-4.5-air' },
 		});
 
 		const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
@@ -131,7 +131,7 @@ describe('Auto-Title Generation', () => {
 		// Create session
 		const sessionId = await ctx.sessionManager.createSession({
 			workspacePath: ctx.config.workspaceRoot,
-			config: { model: 'haiku' },
+			config: { model: 'glm-4.5-air' },
 		});
 
 		const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
@@ -187,7 +187,7 @@ describe('Auto-Title Generation', () => {
 		// Create session with explicit workspace path
 		const sessionId = await ctx.sessionManager.createSession({
 			workspacePath: ctx.config.workspaceRoot,
-			config: { model: 'haiku' },
+			config: { model: 'glm-4.5-air' },
 		});
 
 		const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
@@ -217,7 +217,7 @@ describe('Auto-Title Generation', () => {
 		// Create session
 		const sessionId = await ctx.sessionManager.createSession({
 			workspacePath: ctx.config.workspaceRoot,
-			config: { model: 'haiku' },
+			config: { model: 'glm-4.5-air' },
 		});
 
 		const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);

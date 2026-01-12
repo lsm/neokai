@@ -44,10 +44,11 @@ export const MODEL_FAMILY_ICONS = {
 	opus: '🧠',
 	sonnet: '💎',
 	haiku: '⚡',
+	glm: '🌐',
 } as const;
 
 /** Model family sort order */
-const FAMILY_ORDER = { opus: 0, sonnet: 1, haiku: 2 };
+const FAMILY_ORDER: Record<string, number> = { opus: 0, sonnet: 1, haiku: 2, glm: 3 };
 
 /**
  * Hook for managing model switching
@@ -86,9 +87,10 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 			};
 
 			const modelInfos: ModelInfo[] = models.map((m) => {
-				let family: 'opus' | 'sonnet' | 'haiku' = 'sonnet';
+				let family: 'opus' | 'sonnet' | 'haiku' | 'glm' = 'sonnet';
 				if (m.id.includes('opus')) family = 'opus';
 				else if (m.id.includes('haiku')) family = 'haiku';
+				else if (m.id.toLowerCase().startsWith('glm-')) family = 'glm';
 
 				return {
 					id: m.id,

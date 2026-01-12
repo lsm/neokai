@@ -2,7 +2,7 @@
  * InputActionsMenu Component
  *
  * Plus button with dropdown menu for message input actions.
- * Includes model switching, auto-scroll toggle, tools, and file attachment.
+ * Includes auto-scroll toggle, tools, and file attachment.
  * Extracted from MessageInput.tsx for better separation of concerns.
  */
 
@@ -20,7 +20,7 @@ export interface InputActionsMenuProps {
 	onToggle: () => void;
 	/** Close the menu */
 	onClose: () => void;
-	/** Model switcher state */
+	/** Model switcher state (unused but kept for future model switching in menu) */
 	currentModel?: string;
 	currentModelInfo?: ModelInfo | null;
 	availableModels?: ModelInfo[];

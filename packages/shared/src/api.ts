@@ -4,6 +4,8 @@ import type {
 	FileInfo,
 	FileTree,
 	HealthStatus,
+	Provider,
+	ProviderInfo,
 	Session,
 	SessionConfig,
 	Tool,
@@ -158,7 +160,7 @@ export interface GetCurrentModelResponse {
 		id: string;
 		name: string;
 		alias: string;
-		family: 'opus' | 'sonnet' | 'haiku';
+		family: 'opus' | 'sonnet' | 'haiku' | 'glm';
 		contextWindow: number;
 		description: string;
 	} | null;
@@ -495,4 +497,45 @@ export interface APIClient {
 	// Models
 	getCurrentModel(sessionId: string): Promise<GetCurrentModelResponse>;
 	switchModel(sessionId: string, model: string): Promise<SwitchModelResponse>;
+
+	// Providers
+	listProviders(): Promise<ListProvidersResponse>;
+	getSessionProvider(sessionId: string): Promise<GetSessionProviderResponse>;
+	switchProvider(
+		sessionId: string,
+		provider: Provider,
+		apiKey?: string
+	): Promise<SwitchProviderResponse>;
+}
+
+// ============================================================================
+// Provider API Types
+// ============================================================================
+
+export interface ListProvidersResponse {
+	providers: ProviderInfo[];
+}
+
+export interface GetSessionProviderRequest {
+	sessionId: string;
+}
+
+export interface GetSessionProviderResponse {
+	provider: Provider;
+	providerInfo: ProviderInfo | null;
+}
+
+export interface SwitchProviderRequest {
+	sessionId: string;
+	provider: Provider;
+	/** Optional per-session API key (uses global env var if not provided) */
+	apiKey?: string;
+}
+
+export interface SwitchProviderResponse {
+	success: boolean;
+	provider: Provider;
+	error?: string;
+	/** Warning about query restart requirement */
+	warning?: string;
 }

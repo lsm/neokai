@@ -10,8 +10,35 @@
  */
 
 import type { ModelInfo as SDKModelInfo } from '@liuboer/shared/sdk';
-import type { ModelInfo } from '@liuboer/shared';
+import type { ModelInfo, Provider } from '@liuboer/shared';
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+
+/**
+ * GLM models - static list since we can't load from SDK
+ * GLM uses Anthropic-compatible API, so these are the known models
+ */
+const GLM_MODELS: ModelInfo[] = [
+	{
+		id: 'glm-4.7',
+		name: 'GLM-4.7',
+		alias: 'glm',
+		family: 'glm',
+		contextWindow: 128000,
+		description: 'GLM-4.7 · Best for coding and software development',
+		releaseDate: '',
+		available: true,
+	},
+	{
+		id: 'glm-4.5-air',
+		name: 'GLM-4.5-Air',
+		alias: 'glm-air',
+		family: 'glm',
+		contextWindow: 128000,
+		description: 'GLM-4.5-Air · Fast and efficient model',
+		releaseDate: '',
+		available: true,
+	},
+];
 
 /**
  * Legacy model ID mappings to SDK model IDs
@@ -100,12 +127,22 @@ function extractDisplayName(sdkModel: SDKModelInfo): string {
 
 	// Try to extract "Model X.Y" from description (format: "Model X.Y · description")
 	const separatorIndex = description.indexOf(' · ');
+	let displayName = description;
 	if (separatorIndex > 0) {
-		return description.substring(0, separatorIndex);
+		displayName = description.substring(0, separatorIndex);
+	} else {
+		displayName = sdkModel.displayName || sdkModel.value;
 	}
 
-	// Fallback to SDK's displayName or model ID
-	return sdkModel.displayName || sdkModel.value;
+	// Handle SDK's verbose default model display name
+	// SDK returns: "Use the default model (currently Sonnet 4.5)"
+	// Extract just "Sonnet 4.5" from parentheses
+	const currentlyMatch = displayName.match(/currently\s+([^)]+)/);
+	if (currentlyMatch) {
+		return currentlyMatch[1].trim();
+	}
+
+	return displayName;
 }
 
 /**
@@ -201,17 +238,23 @@ function isCacheStale(cacheKey: string): boolean {
 }
 
 /**
- * Get all available models from SDK cache
+ * Check if GLM API key is available
+ */
+function isGlmApiKeyAvailable(): boolean {
+	return !!(process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY);
+}
+
+/**
+ * Get all available models - unified list including GLM when available
+ *
  * Implements lazy refresh: returns cache immediately, triggers background refresh if stale
  *
- * Filtering logic:
- * 1. Exclude "Custom model" entries (these are for explicit model ID selection)
- * 2. Keep only the recommended models (default, opus, haiku)
- * 3. One model per family
+ * Returns:
+ * - Anthropic models from SDK cache (opus, sonnet, haiku)
+ * - GLM models (when GLM_API_KEY is available)
  *
  * @param cacheKey - Cache key to look up dynamic models
- * @returns Array of ModelInfo from SDK
- * @throws Error if models have not been initialized
+ * @returns Array of ModelInfo including all available providers
  */
 export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
 	const dynamicModels = modelsCache.get(cacheKey);
@@ -246,7 +289,17 @@ export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
 		}
 	}
 
-	return Array.from(byFamily.values());
+	const anthropicModels = Array.from(byFamily.values());
+
+	// Include GLM models if GLM API key is available
+	if (isGlmApiKeyAvailable()) {
+		console.info(
+			`[model-service] GLM API key detected, adding ${GLM_MODELS.length} GLM model(s) to available models`
+		);
+		return [...anthropicModels, ...GLM_MODELS];
+	}
+
+	return anthropicModels;
 }
 
 /**
@@ -397,4 +450,77 @@ export async function resolveModelAlias(
 
 	// Return as-is if nothing found
 	return idOrAlias;
+}
+
+/**
+ * Get available models for a specific provider
+ *
+ * - For 'anthropic': Returns models from SDK cache (dynamic)
+ * - For 'glm': Returns static GLM_MODELS list
+ *
+ * @param provider - The AI provider
+ * @param cacheKey - Cache key for Anthropic models (default: 'global')
+ * @returns Array of ModelInfo for the provider
+ */
+export function getModelsForProvider(
+	provider: Provider = 'anthropic',
+	cacheKey: string = 'global'
+): ModelInfo[] {
+	if (provider === 'glm') {
+		return [...GLM_MODELS];
+	}
+
+	// Default to Anthropic models from SDK
+	return getAvailableModels(cacheKey);
+}
+
+/**
+ * Get model info by ID for a specific provider
+ *
+ * @param provider - The AI provider
+ * @param idOrAlias - Model ID or alias to look up
+ * @param cacheKey - Cache key for Anthropic models
+ * @returns ModelInfo or null if not found
+ */
+export async function getModelInfoForProvider(
+	provider: Provider,
+	idOrAlias: string,
+	cacheKey: string = 'global'
+): Promise<ModelInfo | null> {
+	const models = getModelsForProvider(provider, cacheKey);
+
+	// Try exact ID match
+	let model = models.find((m) => m.id === idOrAlias);
+
+	// Try alias match
+	if (!model) {
+		model = models.find((m) => m.alias === idOrAlias);
+	}
+
+	// For Anthropic, also try legacy mappings
+	if (!model && provider === 'anthropic') {
+		const legacyMappedId = LEGACY_MODEL_MAPPINGS[idOrAlias];
+		if (legacyMappedId) {
+			model = models.find((m) => m.id === legacyMappedId);
+		}
+	}
+
+	return model || null;
+}
+
+/**
+ * Check if a model is valid for a specific provider
+ *
+ * @param provider - The AI provider
+ * @param idOrAlias - Model ID or alias to validate
+ * @param cacheKey - Cache key for Anthropic models
+ * @returns true if the model is valid for the provider
+ */
+export async function isValidModelForProvider(
+	provider: Provider,
+	idOrAlias: string,
+	cacheKey: string = 'global'
+): Promise<boolean> {
+	const modelInfo = await getModelInfoForProvider(provider, idOrAlias, cacheKey);
+	return modelInfo !== null;
 }

@@ -301,7 +301,7 @@ describe('Message Persistence Bug Fix', () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
 				config: {
-					model: 'haiku', // Use Haiku for faster, cheaper tests
+					model: 'glm-4.5-air', // Use GLM Air for faster, cheaper tests
 					permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
 				},
 			});

@@ -76,6 +76,44 @@ export interface WorktreeCommitStatus {
 
 export type SessionStatus = 'active' | 'paused' | 'ended' | 'archived';
 
+// ============================================================================
+// Provider Types
+// ============================================================================
+
+/**
+ * Supported AI providers
+ * - 'anthropic': Default Claude API provider
+ * - 'glm': GLM (智谱AI) via Anthropic-compatible API
+ */
+export type Provider = 'anthropic' | 'glm';
+
+/**
+ * Provider-specific configuration
+ * Allows per-session API key overrides
+ */
+export interface ProviderConfig {
+	/** Provider-specific API key (optional, uses global env var if not set) */
+	apiKey?: string;
+	/** Custom base URL override (optional, uses provider default if not set) */
+	baseUrl?: string;
+}
+
+/**
+ * Information about an available provider
+ */
+export interface ProviderInfo {
+	/** Provider identifier */
+	id: Provider;
+	/** Display name */
+	name: string;
+	/** API base URL (undefined for default Anthropic) */
+	baseUrl?: string;
+	/** Available model IDs for this provider */
+	models: string[];
+	/** Whether this provider is configured (has API key) */
+	available: boolean;
+}
+
 /**
  * Thinking level options for extended thinking
  *
@@ -111,6 +149,18 @@ export const THINKING_LEVEL_TOKENS: Record<ThinkingLevel, number | undefined> = 
  * - Other SDKConfig properties like `allowedTools`, `disallowedTools` are inherited directly
  */
 export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
+	/**
+	 * AI provider to use for this session
+	 * @default 'anthropic'
+	 */
+	provider?: Provider;
+
+	/**
+	 * Provider-specific configuration (optional)
+	 * Allows per-session API key overrides
+	 */
+	providerConfig?: ProviderConfig;
+
 	/**
 	 * Model ID (required)
 	 * @example 'claude-sonnet-4-5-20250929'

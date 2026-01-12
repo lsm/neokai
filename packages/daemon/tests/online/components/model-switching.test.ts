@@ -41,28 +41,28 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-id`,
 				config: {
-					model: 'default', // SDK alias for Sonnet
+					model: 'glm-4.5-air',
 				},
 			});
 
-			// Switch to Haiku
+			// Switch to another GLM model
 			const result = await callRPCHandler(ctx.messageHub, 'session.model.switch', {
 				sessionId,
-				model: 'haiku', // SDK alias
+				model: 'glm-4.7', // Another GLM model
 			});
 
 			expect(result.success).toBe(true);
-			expect(result.model).toBe('haiku'); // SDK alias
+			expect(result.model).toBe('glm-4.7');
 			expect(result.error).toBeUndefined();
 
 			// Verify model was updated in session
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
 			const sessionData = agentSession!.getSessionData();
-			expect(sessionData.config.model).toBe('haiku');
+			expect(sessionData.config.model).toBe('glm-4.7');
 
 			// Verify model was updated in database
 			const dbSession = ctx.db.getSession(sessionId);
-			expect(dbSession?.config.model).toBe('haiku');
+			expect(dbSession?.config.model).toBe('glm-4.7');
 		});
 
 		test('should switch between model families', async () => {
@@ -70,18 +70,18 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-alias`,
 				config: {
-					model: 'default', // SDK alias for Sonnet
+					model: 'glm-4.5-air',
 				},
 			});
 
-			// Switch using alias
+			// Switch to another GLM model
 			const result = await callRPCHandler(ctx.messageHub, 'session.model.switch', {
 				sessionId,
-				model: 'opus',
+				model: 'glm-4.7',
 			});
 
 			expect(result.success).toBe(true);
-			expect(result.model).toBe('opus'); // SDK alias
+			expect(result.model).toBe('glm-4.7');
 			expect(result.error).toBeUndefined();
 		});
 
@@ -90,18 +90,18 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-same`,
 				config: {
-					model: 'default', // SDK alias for Sonnet
+					model: 'glm-4.5-air',
 				},
 			});
 
 			// Switch to same model
 			const result = await callRPCHandler(ctx.messageHub, 'session.model.switch', {
 				sessionId,
-				model: 'default',
+				model: 'glm-4.5-air',
 			});
 
 			expect(result.success).toBe(true);
-			expect(result.model).toBe('default');
+			expect(result.model).toBe('glm-4.5-air');
 			expect(result.error).toBeDefined(); // Should have message about already using model
 		});
 
@@ -149,33 +149,33 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-families`,
 				config: {
-					model: 'default', // SDK alias for Sonnet
+					model: 'glm-4.5-air',
 				},
 			});
 
-			// Switch to Opus
+			// Switch to glm-4.7
 			let result = await callRPCHandler(ctx.messageHub, 'session.model.switch', {
 				sessionId,
-				model: 'opus',
+				model: 'glm-4.7',
 			});
 			expect(result.success).toBe(true);
-			expect(result.model).toBe('opus');
+			expect(result.model).toBe('glm-4.7');
 
-			// Switch to Haiku
+			// Switch to glm-4.7
 			result = await callRPCHandler(ctx.messageHub, 'session.model.switch', {
 				sessionId,
-				model: 'haiku',
+				model: 'glm-4.7',
 			});
 			expect(result.success).toBe(true);
-			expect(result.model).toBe('haiku');
+			expect(result.model).toBe('glm-4.7');
 
-			// Switch back to Sonnet
+			// Switch back to glm-4.5-air
 			result = await callRPCHandler(ctx.messageHub, 'session.model.switch', {
 				sessionId,
-				model: 'default',
+				model: 'glm-4.5-air',
 			});
 			expect(result.success).toBe(true);
-			expect(result.model).toBe('default');
+			expect(result.model).toBe('glm-4.5-air');
 		});
 
 		test('should preserve session state during model switch', async () => {
@@ -183,7 +183,7 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-state`,
 				config: {
-					model: 'default', // SDK alias for Sonnet
+					model: 'glm-4.5-air',
 				},
 			});
 
@@ -196,7 +196,7 @@ describe('Model Switching Integration', () => {
 			// Switch model
 			await callRPCHandler(ctx.messageHub, 'session.model.switch', {
 				sessionId,
-				model: 'haiku',
+				model: 'glm-4.7',
 			});
 
 			// Get state after switch (same instance, but config should be updated)
@@ -214,7 +214,7 @@ describe('Model Switching Integration', () => {
 
 			// Only model should change
 			expect(sessionDataAfter.config.model).not.toBe(modelBefore);
-			expect(sessionDataAfter.config.model).toBe('haiku');
+			expect(sessionDataAfter.config.model).toBe('glm-4.7');
 		});
 
 		test('should update database immediately on switch', async () => {
@@ -222,20 +222,20 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-db`,
 				config: {
-					model: 'default', // SDK alias for Sonnet
+					model: 'glm-4.5-air',
 				},
 			});
 
 			// Switch model
 			await callRPCHandler(ctx.messageHub, 'session.model.switch', {
 				sessionId,
-				model: 'opus',
+				model: 'glm-4.7',
 			});
 
 			// Verify database was updated
 			const dbSession = ctx.db.getSession(sessionId);
 			expect(dbSession).toBeDefined();
-			expect(dbSession?.config.model).toBe('opus');
+			expect(dbSession?.config.model).toBe('glm-4.7');
 		});
 	});
 
@@ -263,25 +263,25 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-agent-session-model-switch`,
 				config: {
-					model: 'default', // SDK alias for Sonnet
+					model: 'glm-4.5-air',
 				},
 			});
 
 			// Get initial model
 			let agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
 			let modelInfo = agentSession!.getCurrentModel();
-			expect(modelInfo.id).toBe('default');
+			expect(modelInfo.id).toBe('glm-4.5-air');
 
 			// Switch model
 			await callRPCHandler(ctx.messageHub, 'session.model.switch', {
 				sessionId,
-				model: 'haiku',
+				model: 'glm-4.7',
 			});
 
 			// Verify model changed
 			agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
 			modelInfo = agentSession!.getCurrentModel();
-			expect(modelInfo.id).toBe('haiku');
+			expect(modelInfo.id).toBe('glm-4.7');
 		});
 	});
 
@@ -291,16 +291,16 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-rapid-switches`,
 				config: {
-					model: 'default', // SDK alias for Sonnet
+					model: 'glm-4.5-air',
 				},
 			});
 
 			// Perform rapid switches
 			const switches = [
-				{ model: 'opus' },
-				{ model: 'haiku' },
-				{ model: 'default' },
-				{ model: 'opus' },
+				{ model: 'glm-4.7' },
+				{ model: 'glm-4.7' },
+				{ model: 'glm-4.5-air' },
+				{ model: 'glm-4.7' },
 			];
 
 			const results = await Promise.all(
@@ -317,10 +317,10 @@ describe('Model Switching Integration', () => {
 				expect(result.success).toBe(true);
 			});
 
-			// Final model should be opus
+			// Final model should be glm-4.7
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
 			const modelInfo = agentSession!.getCurrentModel();
-			expect(modelInfo.id).toBe('opus');
+			expect(modelInfo.id).toBe('glm-4.7');
 		});
 
 		test('should handle model switch before query starts', async () => {
@@ -328,23 +328,23 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-pre-query-switch`,
 				config: {
-					model: 'default', // SDK alias for Sonnet
+					model: 'glm-4.5-air',
 				},
 			});
 
 			// Switch model before sending any messages
 			const result = await callRPCHandler(ctx.messageHub, 'session.model.switch', {
 				sessionId,
-				model: 'haiku',
+				model: 'glm-4.7',
 			});
 
 			expect(result.success).toBe(true);
-			expect(result.model).toBe('haiku');
+			expect(result.model).toBe('glm-4.7');
 
 			// Verify config was updated
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
 			const sessionData = agentSession!.getSessionData();
-			expect(sessionData.config.model).toBe('haiku');
+			expect(sessionData.config.model).toBe('glm-4.7');
 		});
 	});
 

@@ -235,7 +235,16 @@ export async function startDevServer(config: Config) {
 			server.stop();
 
 			log.info('🛑 Stopping Vite dev server...');
-			await vite.close();
+			// Add timeout for Vite close - it can hang on active HMR connections
+			await Promise.race([
+				vite.close(),
+				new Promise<void>((resolve) => {
+					setTimeout(() => {
+						log.warn('⚠️  Vite close timed out after 3s, continuing...');
+						resolve();
+					}, 3000);
+				}),
+			]);
 
 			if (ipcTransport) {
 				log.info('🛑 Closing IPC socket...');
@@ -245,7 +254,16 @@ export async function startDevServer(config: Config) {
 			log.info('🛑 Cleaning up daemon...');
 			// Call cleanup but it will try to stop daemon's server (already stopped above)
 			// Daemon cleanup handles: pending RPC calls, MessageHub, sessions, database
-			await daemonContext.cleanup();
+			// Add timeout for daemon cleanup as well
+			await Promise.race([
+				daemonContext.cleanup(),
+				new Promise<void>((resolve) => {
+					setTimeout(() => {
+						log.warn('⚠️  Daemon cleanup timed out after 5s, continuing...');
+						resolve();
+					}, 5000);
+				}),
+			]);
 
 			log.info('✨ Shutdown complete');
 			process.exit(0);

@@ -1,9 +1,17 @@
 /**
- * Claude Model Type Definitions
+ * Model Type Definitions
  *
  * This file defines the types for model information.
  * The actual model list is fetched dynamically from the SDK via supportedModels().
+ * GLM models are defined statically as they use an Anthropic-compatible API.
  */
+
+/**
+ * Model family type
+ * - opus, sonnet, haiku: Anthropic Claude models
+ * - glm: GLM (智谱AI) models
+ */
+export type ModelFamily = 'opus' | 'sonnet' | 'haiku' | 'glm';
 
 export interface ModelInfo {
 	/** Full model identifier */
@@ -12,8 +20,8 @@ export interface ModelInfo {
 	name: string;
 	/** Short alias for quick reference */
 	alias: string;
-	/** Model family (opus, sonnet, haiku) */
-	family: 'opus' | 'sonnet' | 'haiku';
+	/** Model family */
+	family: ModelFamily;
 	/** Context window size in tokens */
 	contextWindow: number;
 	/** Brief description of the model */
