@@ -29,6 +29,9 @@ import { sendMessageSync } from '../../../helpers/test-message-sender';
 // Check for GLM credentials
 const GLM_API_KEY = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
 
+// Check for GLM credentials
+const GLM_API_KEY = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
+
 /**
  * CRITICAL: Restore any mocks before running these tests.
  * This prevents mock leakage from unit tests that mock the SDK.
