@@ -153,8 +153,10 @@ test.describe('Chat Flow', () => {
 			return pathId && pathId !== 'undefined' ? pathId : null;
 		});
 
-		// Send a message
+		// Wait for textarea to be ready
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+		await expect(messageInput).toBeVisible({ timeout: 10000 });
+		await expect(messageInput).toBeEnabled({ timeout: 5000 });
 		await messageInput.fill('Quick test');
 		await page.locator('[data-testid="send-button"]').first().click();
 

@@ -12,12 +12,14 @@ import { cleanupTestSession } from './helpers/wait-helpers';
 test.describe('Draft Clearing Bug Fix', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('http://localhost:9283');
-		await page.waitForSelector('button:has-text("New Session")', { timeout: 10000 });
+		await page
+			.getByRole('button', { name: 'New Session', exact: true })
+			.waitFor({ timeout: 10000 });
 	});
 
 	test('should NOT restore sent message as draft after session switch', async ({ page }) => {
 		// Create first session
-		await page.click('button:has-text("New Session")');
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		await page.waitForSelector('textarea[placeholder*="Ask"]', { timeout: 10000 });
 
 		// Type and send message
@@ -38,7 +40,7 @@ test.describe('Draft Clearing Bug Fix', () => {
 		const firstSessionId = await firstSessionButton.getAttribute('data-session-id');
 
 		// Create another session to switch away
-		await page.click('button:has-text("New Session")');
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		await page.waitForSelector('textarea[placeholder*="Ask"]', { timeout: 10000 });
 		await page.waitForTimeout(500);
 
@@ -61,7 +63,7 @@ test.describe('Draft Clearing Bug Fix', () => {
 
 	test('should NOT restore sent message as draft after page reload', async ({ page }) => {
 		// Create new session
-		await page.click('button:has-text("New Session")');
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		await page.waitForSelector('textarea[placeholder*="Ask"]', { timeout: 10000 });
 
 		// Type and send message
@@ -80,7 +82,9 @@ test.describe('Draft Clearing Bug Fix', () => {
 
 		// Reload the page
 		await page.reload();
-		await page.waitForSelector('button:has-text("New Session")', { timeout: 10000 });
+		await page
+			.getByRole('button', { name: 'New Session', exact: true })
+			.waitFor({ timeout: 10000 });
 		await page.waitForTimeout(500);
 
 		// Navigate to the session by clicking its button
@@ -98,7 +102,7 @@ test.describe('Draft Clearing Bug Fix', () => {
 
 	test('should handle rapid send without draft race condition', async ({ page }) => {
 		// Create new session
-		await page.click('button:has-text("New Session")');
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		await page.waitForSelector('textarea[placeholder*="Ask"]', { timeout: 10000 });
 
 		const textarea = page.locator('textarea[placeholder*="Ask"]');
@@ -115,7 +119,7 @@ test.describe('Draft Clearing Bug Fix', () => {
 		await expect(textarea).toHaveValue('', { timeout: 2000 });
 
 		// Switch away and back quickly
-		await page.click('button:has-text("New Session")');
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		await page.waitForTimeout(100);
 
 		// Get second session ID for cleanup

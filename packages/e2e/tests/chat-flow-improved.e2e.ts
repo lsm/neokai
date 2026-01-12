@@ -22,7 +22,7 @@ test.describe('Chat Flow - Improved', () => {
 
 	test('should create a new session and send a message', async ({ page }) => {
 		// Click "New Session" button
-		const newSessionBtn = await waitForElement(page, 'button:has-text("New Session")');
+		const newSessionBtn = await page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionBtn.click();
 
 		// Wait for session to be created properly
@@ -55,7 +55,7 @@ test.describe('Chat Flow - Improved', () => {
 
 	test('should display message input and send button', async ({ page }) => {
 		// Create a new session
-		const newSessionBtn = await waitForElement(page, 'button:has-text("New Session")');
+		const newSessionBtn = await page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionBtn.click();
 
 		const sessionId = await waitForSessionCreated(page);
@@ -74,7 +74,7 @@ test.describe('Chat Flow - Improved', () => {
 
 	test('should show session in sidebar after creation', async ({ page }) => {
 		// Create a new session
-		const newSessionBtn = await waitForElement(page, 'button:has-text("New Session")');
+		const newSessionBtn = await page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionBtn.click();
 
 		const sessionId = await waitForSessionCreated(page);
@@ -107,7 +107,7 @@ test.describe('Chat Flow - Improved', () => {
 
 	test('should disable input while message is being sent', async ({ page }) => {
 		// Create a new session
-		const newSessionBtn = await waitForElement(page, 'button:has-text("New Session")');
+		const newSessionBtn = await page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionBtn.click();
 
 		const sessionId = await waitForSessionCreated(page);
@@ -138,7 +138,7 @@ test.describe('Chat Flow - Improved', () => {
 
 	test('should show status indicator when processing', async ({ page }) => {
 		// Create a new session
-		const newSessionBtn = await waitForElement(page, 'button:has-text("New Session")');
+		const newSessionBtn = await page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionBtn.click();
 
 		const sessionId = await waitForSessionCreated(page);
@@ -176,7 +176,7 @@ test.describe('Chat Flow - Improved', () => {
 
 	test('should handle rapid message sending', async ({ page }) => {
 		// Create a new session
-		const newSessionBtn = await waitForElement(page, 'button:has-text("New Session")');
+		const newSessionBtn = await page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionBtn.click();
 
 		const sessionId = await waitForSessionCreated(page);
@@ -212,7 +212,7 @@ test.describe('Chat Flow - Improved', () => {
 
 	test('should maintain conversation context', async ({ page }) => {
 		// Create a new session
-		const newSessionBtn = await waitForElement(page, 'button:has-text("New Session")');
+		const newSessionBtn = await page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionBtn.click();
 
 		const sessionId = await waitForSessionCreated(page);

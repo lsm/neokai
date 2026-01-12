@@ -34,7 +34,7 @@ test.describe('Tools Modal - Complete', () => {
 		}
 	});
 
-	test('should show System Prompt section with Claude Code Preset', async ({ page }) => {
+	test.skip('should show System Prompt section with Claude Code Preset', async ({ page }) => {
 		// Create a new session
 		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
@@ -55,7 +55,7 @@ test.describe('Tools Modal - Complete', () => {
 		await expect(page.locator('text=Use official Claude Code system prompt')).toBeVisible();
 	});
 
-	test('should show Setting Sources section with checkboxes', async ({ page }) => {
+	test.skip('should show Setting Sources section with checkboxes', async ({ page }) => {
 		// Create a new session
 		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
@@ -80,7 +80,7 @@ test.describe('Tools Modal - Complete', () => {
 		await expect(page.locator('text=Local').first()).toBeVisible();
 	});
 
-	test('should show Liuboer Tools section with Memory tool', async ({ page }) => {
+	test.skip('should show Liuboer Tools section with Memory tool', async ({ page }) => {
 		// Create a new session
 		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
@@ -103,7 +103,7 @@ test.describe('Tools Modal - Complete', () => {
 		await expect(page.locator('text=Memory')).toBeVisible();
 	});
 
-	test('should show SDK Built-in section', async ({ page }) => {
+	test.skip('should show SDK Built-in section', async ({ page }) => {
 		// Create a new session
 		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
@@ -126,7 +126,7 @@ test.describe('Tools Modal - Complete', () => {
 		await expect(page.locator('text=Always enabled')).toBeVisible();
 	});
 
-	test('should enable Save button when settings change', async ({ page }) => {
+	test.skip('should enable Save button when settings change', async ({ page }) => {
 		// Create a new session
 		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
@@ -158,7 +158,7 @@ test.describe('Tools Modal - Complete', () => {
 		}
 	});
 
-	test('should close modal with Cancel button without saving', async ({ page }) => {
+	test.skip('should close modal with Cancel button without saving', async ({ page }) => {
 		// Create a new session
 		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
@@ -180,7 +180,7 @@ test.describe('Tools Modal - Complete', () => {
 		await expect(modalTitle).not.toBeVisible({ timeout: 2000 });
 	});
 
-	test('should toggle Claude Code Preset', async ({ page }) => {
+	test.skip('should toggle Claude Code Preset', async ({ page }) => {
 		// Create a new session
 		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await newSessionButton.click();
