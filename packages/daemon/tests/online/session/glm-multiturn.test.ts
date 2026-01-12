@@ -117,12 +117,20 @@ describe('GLM-4.7 Multi-Turn Conversation', () => {
 		expect(sdkMessages.length).toBeGreaterThan(0);
 
 		// Find the last assistant message (should contain "42")
-		const assistantMessages = sdkMessages.filter((m) => m.role === 'assistant');
+		// SDK messages have structure { type: 'assistant', message: { role: 'assistant', ... } }
+		const assistantMessages = sdkMessages.filter((m) => m.type === 'assistant');
 		expect(assistantMessages.length).toBeGreaterThan(0);
 
 		// The last response should mention 42
-		const lastResponse = JSON.stringify(assistantMessages[assistantMessages.length - 1]);
-		console.log('[GLM-4.7 Test] Last assistant response:', lastResponse.substring(0, 200));
+		const lastAssistant = assistantMessages[assistantMessages.length - 1] as {
+			message: { content: Array<{ type: string; text: string }> };
+		};
+		const lastResponseText = lastAssistant.message.content
+			.filter((c) => c.type === 'text')
+			.map((c) => c.text)
+			.join('');
+		console.log('[GLM-4.7 Test] Last assistant response:', lastResponseText.substring(0, 200));
+		expect(lastResponseText).toContain('42');
 
 		// Turn 3: Do a simple calculation using the remembered number
 		console.log('[GLM-4.7 Test] Turn 3: Ask GLM to do math with the remembered number');
@@ -172,7 +180,7 @@ describe('GLM-4.7 Multi-Turn Conversation', () => {
 
 		// Verify we got a response about the function
 		const sdkMessages = agentSession!.getSDKMessages();
-		const assistantMessages = sdkMessages.filter((m) => m.role === 'assistant');
+		const assistantMessages = sdkMessages.filter((m) => m.type === 'assistant');
 		expect(assistantMessages.length).toBeGreaterThanOrEqual(2);
 
 		// Turn 3: Ask follow-up about the code
@@ -232,7 +240,7 @@ describe('GLM-4.7 Multi-Turn Conversation', () => {
 
 		// Count user and assistant messages
 		const userMessages = sdkMessages.filter((m) => m.role === 'user');
-		const assistantMessages = sdkMessages.filter((m) => m.role === 'assistant');
+		const assistantMessages = sdkMessages.filter((m) => m.type === 'assistant');
 
 		// Should have 3 user messages and 3 assistant responses
 		expect(userMessages.length).toBeGreaterThanOrEqual(3);

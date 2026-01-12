@@ -69,10 +69,49 @@ describe('GLM Provider Integration', () => {
 
 				// Verify all required env vars are set
 				expect(envVars.ANTHROPIC_BASE_URL).toBe('https://open.bigmodel.cn/api/anthropic');
-				expect(envVars.ANTHROPIC_API_KEY).toBe('test-glm-api-key');
+				// Changed from ANTHROPIC_API_KEY to ANTHROPIC_AUTH_TOKEN (matches Claude Code behavior)
 				expect(envVars.ANTHROPIC_AUTH_TOKEN).toBe('test-glm-api-key');
-				expect(envVars.API_TIMEOUT_MS).toBe('3000000');
+				// ANTHROPIC_API_KEY is NOT set (only ANTHROPIC_AUTH_TOKEN is used)
+				expect(envVars.ANTHROPIC_API_KEY).toBeUndefined();
+				// ANTHROPIC_MODEL is NOT set - model ID is passed directly to SDK
+				expect(envVars.ANTHROPIC_MODEL).toBeUndefined();
 				expect(envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');
+				// API_TIMEOUT_MS is set for GLM (50 minutes)
+				expect(envVars.API_TIMEOUT_MS).toBe('3000000');
+				// Model mapping should be set
+				expect(envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-4.7');
+				expect(envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-4.7');
+			} finally {
+				if (originalGlmKey !== undefined) {
+					process.env.GLM_API_KEY = originalGlmKey;
+				} else {
+					delete process.env.GLM_API_KEY;
+				}
+			}
+		});
+
+		it('should return correct env vars for glm-4.5-air', () => {
+			const providerService = new ProviderService();
+
+			// Mock GLM_API_KEY
+			const originalGlmKey = process.env.GLM_API_KEY;
+			process.env.GLM_API_KEY = 'test-glm-api-key';
+
+			try {
+				const envVars = providerService.getEnvVarsForModel('glm-4.5-air');
+
+				// Verify base env vars are set
+				expect(envVars.ANTHROPIC_BASE_URL).toBe('https://open.bigmodel.cn/api/anthropic');
+				// Changed from ANTHROPIC_API_KEY to ANTHROPIC_AUTH_TOKEN
+				expect(envVars.ANTHROPIC_AUTH_TOKEN).toBe('test-glm-api-key');
+				// ANTHROPIC_API_KEY is NOT set (only ANTHROPIC_AUTH_TOKEN is used)
+				expect(envVars.ANTHROPIC_API_KEY).toBeUndefined();
+				// ANTHROPIC_MODEL is NOT set - model ID is passed directly to SDK
+				expect(envVars.ANTHROPIC_MODEL).toBeUndefined();
+				// glm-4.5-air maps to Haiku tier
+				expect(envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-4.5-air');
+				// Extended timeout
+				expect(envVars.API_TIMEOUT_MS).toBe('3000000');
 			} finally {
 				if (originalGlmKey !== undefined) {
 					process.env.GLM_API_KEY = originalGlmKey;
@@ -340,13 +379,13 @@ describe('GLM Provider Integration', () => {
 				const builder = new QueryOptionsBuilder(session, settingsManager);
 				const options = await builder.build();
 
-				// Verify env vars are set in options
-				expect(options.env).toBeDefined();
-				expect(options.env!.ANTHROPIC_BASE_URL).toBe('https://open.bigmodel.cn/api/anthropic');
-				expect(options.env!.ANTHROPIC_API_KEY).toBe('test-glm-key');
-				expect(options.env!.ANTHROPIC_AUTH_TOKEN).toBe('test-glm-key');
-				expect(options.env!.API_TIMEOUT_MS).toBe('3000000');
-				expect(options.env!.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');
+				// IMPORTANT: Provider env vars are NO LONGER passed via options.env
+				// They are now applied to process.env before SDK query creation
+				// So options.env should be undefined for Anthropic-only sessions
+				expect(options.env).toBeUndefined();
+
+				// The model ID is translated to SDK-recognized ID
+				expect(options.model).toBe('default'); // glm-4.7 → default (Sonnet tier)
 			} finally {
 				if (originalGlmKey !== undefined) {
 					process.env.GLM_API_KEY = originalGlmKey;
@@ -356,14 +395,14 @@ describe('GLM Provider Integration', () => {
 			}
 		});
 
-		it('should allow session env vars to override GLM defaults', async () => {
+		it('should allow session env vars to be passed through', async () => {
 			const settingsManager = new SettingsManager(env.db, env.testWorkspace);
 
 			const session = createTestSession(env.testWorkspace, {
 				config: {
 					model: 'glm-4.7',
 					env: {
-						API_TIMEOUT_MS: '1000000', // Override provider default
+						API_TIMEOUT_MS: '1000000', // Custom timeout
 						CUSTOM_VAR: 'custom-value', // Additional var
 					},
 				},
@@ -376,12 +415,14 @@ describe('GLM Provider Integration', () => {
 				const builder = new QueryOptionsBuilder(session, settingsManager);
 				const options = await builder.build();
 
+				// Session env vars should still be in options.env
+				expect(options.env).toBeDefined();
 				// Session override should take effect
 				expect(options.env!.API_TIMEOUT_MS).toBe('1000000');
 				// Custom var should be added
 				expect(options.env!.CUSTOM_VAR).toBe('custom-value');
-				// Provider vars should still be set
-				expect(options.env!.ANTHROPIC_BASE_URL).toBe('https://open.bigmodel.cn/api/anthropic');
+				// Note: Provider vars (ANTHROPIC_BASE_URL, etc.) are NO LONGER in options.env
+				// They are applied to process.env before SDK query creation
 			} finally {
 				if (originalGlmKey !== undefined) {
 					process.env.GLM_API_KEY = originalGlmKey;
