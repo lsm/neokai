@@ -460,51 +460,28 @@ CRITICAL RULES:
 	/**
 	 * Get merged environment variables for SDK subprocess
 	 *
-	 * Uses model-based provider detection:
-	 * - Models starting with "glm-" automatically get GLM env vars
-	 * - All other models use Anthropic (default, no env override)
+	 * IMPORTANT: Provider env vars (GLM, etc.) are now applied to process.env
+	 * before SDK query creation, NOT passed via options.env.
 	 *
-	 * Merges:
-	 * 1. Provider env vars (based on model ID detection)
-	 * 2. Session config env vars (user overrides)
+	 * This method only returns session-specific env vars from session.config.env.
+	 * Provider vars are handled by applyEnvVarsToProcess() in AgentSession.
 	 *
-	 * Session env vars take priority over provider env vars.
+	 * @returns Session env vars only (provider vars applied separately)
 	 */
 	private getMergedEnvironmentVars(): Record<string, string> | undefined {
-		const providerService = getProviderService();
-
-		// Use model-based detection for provider env vars
-		const modelId = this.session.config.model || 'default';
-		const providerEnvVars = providerService.getEnvVarsForModel(modelId);
 		const sessionEnv = this.session.config.env;
 
-		// If no provider env vars and no session env, return undefined
-		if (Object.keys(providerEnvVars).length === 0 && !sessionEnv) {
+		// If no session env, return undefined
+		if (!sessionEnv || Object.keys(sessionEnv).length === 0) {
 			return undefined;
 		}
 
-		// Merge: provider vars first, then session vars override
+		// Return session env vars only
 		const mergedEnv: Record<string, string> = {};
-
-		// Add provider env vars
-		for (const [key, value] of Object.entries(providerEnvVars)) {
+		for (const [key, value] of Object.entries(sessionEnv)) {
 			if (value !== undefined) {
 				mergedEnv[key] = value;
 			}
-		}
-
-		// Add session env vars (override provider vars)
-		if (sessionEnv) {
-			for (const [key, value] of Object.entries(sessionEnv)) {
-				if (value !== undefined) {
-					mergedEnv[key] = value;
-				}
-			}
-		}
-
-		// Log if using GLM model
-		if (providerService.isGlmModel(modelId) && mergedEnv.ANTHROPIC_BASE_URL) {
-			this.logger.log(`Using GLM model ${modelId} with base URL: ${mergedEnv.ANTHROPIC_BASE_URL}`);
 		}
 
 		return Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined;
