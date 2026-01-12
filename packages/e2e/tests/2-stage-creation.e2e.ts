@@ -97,10 +97,11 @@ test.describe('2-Stage Session Creation', () => {
 		await expect(stopButton).toBeVisible({ timeout: 5000 });
 
 		// Wait for response
-		// Note: This will timeout if API credentials are not configured
-		// or if there's an issue with the SDK
+		// Note: This will timeout if API credentials are not configured,
+		// SDK subprocess crashes, or there's an SDK/permission issue
+		// 30s timeout is sufficient for most API responses (local: ~10s, CI: ~20s)
 		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
-			timeout: 60000,
+			timeout: 30000,
 		});
 
 		// Verify we got a response (not just an error)

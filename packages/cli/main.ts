@@ -96,7 +96,9 @@ if (cliOptions.help) {
 	process.exit(0);
 }
 
-const isDev = process.env.NODE_ENV !== 'production';
+const nodeEnv = process.env.NODE_ENV || 'development';
+const isDev = nodeEnv === 'development';
+const isTest = nodeEnv === 'test';
 
 // Provide default workspace if not specified via CLI or LIUBOER_WORKSPACE_PATH env var
 if (!cliOptions.workspace && !process.env.LIUBOER_WORKSPACE_PATH) {
@@ -107,24 +109,25 @@ if (!cliOptions.workspace && !process.env.LIUBOER_WORKSPACE_PATH) {
 		const projectRoot = join(__dirname, '..', '..');
 		cliOptions.workspace = join(projectRoot, 'tmp', 'workspace');
 	} else {
-		// Production: use current working directory
+		// Production/Test: use current working directory
 		cliOptions.workspace = process.cwd();
 	}
 }
 
 const config = getConfig(cliOptions);
 
-console.log(`\n🚀 Liuboer ${isDev ? 'Development' : 'Production'} Server`);
+const serverMode = isDev ? 'Development' : isTest ? 'Test' : 'Production';
+console.log(`\n🚀 Liuboer ${serverMode} Server`);
 console.log(`   Mode: ${config.nodeEnv}`);
 console.log(`   Model: ${config.defaultModel}`);
 console.log(`   Workspace: ${config.workspaceRoot}\n`);
 
 if (isDev) {
-	// Development mode: Vite dev server + Daemon
+	// Development mode: Vite dev server + Daemon (for local development with HMR)
 	const { startDevServer } = await import('./src/dev-server');
 	await startDevServer(config);
 } else {
-	// Production mode: Static files + Daemon
+	// Production/Test mode: Static files + Daemon (production-like, no HMR)
 	const { startProdServer } = await import('./src/prod-server');
 	await startProdServer(config);
 }

@@ -119,11 +119,17 @@ jobs:
         env:
           PLAYWRIGHT_BROWSERS_PATH: /home/runner/_work/_tool/e2e_tools
 
-      - name: Start dev server
+      - name: Build web package
+        working-directory: packages/web
+        run: |
+          echo "Building web package..."
+          bun run build
+
+      - name: Start test server
         working-directory: packages/cli
         run: |
-          echo "Starting dev server..."
-          NODE_ENV=test nohup bun run dev > /tmp/server.log 2>&1 &
+          echo "Starting production-like test server (no HMR)..."
+          NODE_ENV=test nohup bun run main.ts > /tmp/server.log 2>&1 &
           echo "Server PID: $!"
           echo "Waiting for server to be ready..."
           for i in {1..30}; do

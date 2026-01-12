@@ -410,6 +410,11 @@ export class SessionLifecycle {
 			const generateTitle = async (): Promise<string> => {
 				// Use Agent SDK with maxTurns: 1 for simple title generation
 				// Disable MCP servers and other features that might cause hanging
+				// Use acceptEdits in test/CI to avoid subprocess crashes when running as root
+				const permissionMode =
+					process.env.NODE_ENV === 'test' ? 'acceptEdits' : 'bypassPermissions';
+				const allowDangerouslySkipPermissions = process.env.NODE_ENV !== 'test';
+
 				const result = await query({
 					prompt: `Based on the user's request below, generate a concise 3-7 word title that captures the main intent or topic.
 
@@ -425,8 +430,8 @@ ${messageText.slice(0, 2000)}`,
 					options: {
 						model: 'haiku',
 						maxTurns: 1,
-						permissionMode: 'bypassPermissions',
-						allowDangerouslySkipPermissions: true,
+						permissionMode,
+						allowDangerouslySkipPermissions,
 						cwd: workspacePath,
 						// Disable features that might cause hanging in test/CI environments
 						mcpServers: {},

@@ -506,16 +506,21 @@ CRITICAL RULES:
 	 * Priority:
 	 * 1. Session config (highest priority)
 	 * 2. Global settings
-	 * 3. Default: 'bypassPermissions' (most permissive)
+	 * 3. Default: 'bypassPermissions' (production) or 'acceptEdits' (test/CI)
+	 *
+	 * In test/CI environments (NODE_ENV=test), 'default' and final fallback
+	 * resolve to 'acceptEdits' to avoid SDK subprocess crashes when running as root.
 	 *
 	 * @returns Permission mode for SDK operations
 	 */
 	private getPermissionMode(): PermissionMode {
 		// Layer 1: Session config (highest priority)
 		if (this.session.config.permissionMode) {
-			// Map 'default' to 'bypassPermissions' for clarity
+			// Map 'default' based on environment
 			if (this.session.config.permissionMode === 'default') {
-				return 'bypassPermissions';
+				// In test/CI environments, use 'acceptEdits' to avoid root user crashes
+				// (bypassPermissions crashes SDK subprocess when running as root)
+				return process.env.NODE_ENV === 'test' ? 'acceptEdits' : 'bypassPermissions';
 			}
 			return this.session.config.permissionMode;
 		}
@@ -523,15 +528,17 @@ CRITICAL RULES:
 		// Layer 2: Global settings
 		const globalSettings = this.settingsManager.getGlobalSettings();
 		if (globalSettings.permissionMode) {
-			// Map 'default' to 'bypassPermissions' for clarity
+			// Map 'default' based on environment
 			if (globalSettings.permissionMode === 'default') {
-				return 'bypassPermissions';
+				// In test/CI environments, use 'acceptEdits' to avoid root user crashes
+				return process.env.NODE_ENV === 'test' ? 'acceptEdits' : 'bypassPermissions';
 			}
 			return globalSettings.permissionMode;
 		}
 
-		// Layer 3: Default (most permissive)
-		return 'bypassPermissions';
+		// Layer 3: Default (environment-aware)
+		// In test/CI environments, use 'acceptEdits' to avoid root user crashes
+		return process.env.NODE_ENV === 'test' ? 'acceptEdits' : 'bypassPermissions';
 	}
 
 	/**

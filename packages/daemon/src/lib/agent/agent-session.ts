@@ -765,6 +765,13 @@ export class AgentSession {
 						category = ErrorCategory.TIMEOUT;
 					} else if (errorMessage.includes('model_not_found')) {
 						category = ErrorCategory.MODEL;
+					} else if (
+						errorMessage.includes('cannot be run as root') ||
+						errorMessage.includes('dangerously-skip-permissions') ||
+						errorMessage.includes('permission') ||
+						errorMessage.includes('Exit code: 1')
+					) {
+						category = ErrorCategory.PERMISSION;
 					}
 
 					// Capture state before reset

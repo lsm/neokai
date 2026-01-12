@@ -108,8 +108,8 @@ export default defineConfig({
 	/* Fail the build on CI if you accidentally left test.only in the source code */
 	forbidOnly: !!process.env.CI,
 
-	/* Retry on CI only */
-	retries: process.env.CI ? 2 : 0,
+	/* Retry on CI only (reduced to 1 for faster feedback) */
+	retries: process.env.CI ? 1 : 0,
 
 	/* Allow multiple workers for parallel execution */
 	workers: process.env.CI ? 2 : 4,
@@ -219,9 +219,11 @@ export default defineConfig({
 		},
 	],
 
-	/* Run your local dev server before starting the tests */
+	/* Run your local test server before starting the tests */
 	webServer: {
-		command: 'cd ../cli && NODE_ENV=test bun run dev',
+		// Build web package first, then start production-like server for E2E tests
+		// This avoids HMR overhead and tests against production-like environment
+		command: 'cd ../web && bun run build && cd ../cli && NODE_ENV=test bun run main.ts',
 		url: 'http://localhost:9283',
 		// In CI, we start the server separately to get better logging
 		// Use PW_TEST_REUSE_CONTEXT=1 to skip server startup in CI
