@@ -510,12 +510,26 @@ ${messageText.slice(0, 2000)}`,
 					);
 				}
 
-				// Find default model (prefer Sonnet)
+				// Use configured default model (from DEFAULT_MODEL env var or 'default')
+				// Try to find it by alias or ID in available models
+				const configuredDefault = this.config.defaultModel;
+				const defaultByConfig = availableModels.find(
+					(m) => m.id === configuredDefault || m.alias === configuredDefault
+				);
+
+				if (defaultByConfig) {
+					this.logger.info(
+						`[SessionLifecycle] Using configured default model: ${defaultByConfig.id} (from ${configuredDefault})`
+					);
+					return defaultByConfig.id;
+				}
+
+				// Fallback: prefer Sonnet family if no configured default found
 				const defaultModel =
 					availableModels.find((m) => m.family === 'sonnet') || availableModels[0];
 
 				if (defaultModel) {
-					this.logger.info(`[SessionLifecycle] Using default model: ${defaultModel.id}`);
+					this.logger.info(`[SessionLifecycle] Using fallback default model: ${defaultModel.id}`);
 					return defaultModel.id;
 				}
 			} else {

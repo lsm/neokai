@@ -190,6 +190,7 @@ export default defineConfig({
 				'**/error-handling.e2e.ts', // Error handling tests
 				'**/tools-modal-complete.e2e.ts', // Tools modal complete tests
 				'**/2-stage-creation.e2e.ts', // 2-stage session creation tests
+				'**/default-model-haiku.e2e.ts', // Default model configuration tests
 				'**/worktree-isolation.e2e.ts', // Worktree isolation tests
 				'**/message-removal.e2e.ts', // Message output removal tests
 				'**/connection-overlay.e2e.ts', // Connection overlay tests
