@@ -401,107 +401,113 @@ describe.skipIf(!GLM_API_KEY)('Model Switching Integration', () => {
 	});
 
 	describe('Cross-Provider Switching', () => {
-		test.skipIf(!GLM_API_KEY || !ANTHROPIC_API_KEY)('should restart query when switching from GLM to Claude', async () => {
-			// This test requires both GLM and Anthropic API keys
-			// Skip if either key is missing
-			if (!GLM_API_KEY || !ANTHROPIC_API_KEY) {
-				console.log('Skipping cross-provider test - need both GLM_API_KEY and ANTHROPIC_API_KEY');
-				return;
-			}
+		test.skipIf(!GLM_API_KEY || !ANTHROPIC_API_KEY)(
+			'should restart query when switching from GLM to Claude',
+			async () => {
+				// This test requires both GLM and Anthropic API keys
+				// Skip if either key is missing
+				if (!GLM_API_KEY || !ANTHROPIC_API_KEY) {
+					console.log('Skipping cross-provider test - need both GLM_API_KEY and ANTHROPIC_API_KEY');
+					return;
+				}
 
-			// Create session with GLM model
-			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
-				workspacePath: `${TMP_DIR}/test-cross-provider-glm-to-claude`,
-				config: {
-					model: 'glm-4.7',
-				},
-			});
+				// Create session with GLM model
+				const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
+					workspacePath: `${TMP_DIR}/test-cross-provider-glm-to-claude`,
+					config: {
+						model: 'glm-4.7',
+					},
+				});
 
-			// Send a message to start the query (makes transport ready)
-			await callRPCHandler(ctx.messageHub, 'message.send', {
-				sessionId,
-				content: 'Hello',
-			});
+				// Send a message to start the query (makes transport ready)
+				await callRPCHandler(ctx.messageHub, 'message.send', {
+					sessionId,
+					content: 'Hello',
+				});
 
-			// Wait for query to start and transport to be ready
-			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-			await new Promise((resolve) => setTimeout(resolve, 2000));
+				// Wait for query to start and transport to be ready
+				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+				await new Promise((resolve) => setTimeout(resolve, 2000));
 
-			// Verify query is running
-			const queryObject = agentSession!.getQueryObject();
-			expect(queryObject).toBeDefined();
+				// Verify query is running
+				const queryObject = agentSession!.getQueryObject();
+				expect(queryObject).toBeDefined();
 
-			// Get firstMessageReceived flag
-			const firstMessageReceivedBefore = agentSession!.getFirstMessageReceived();
-			expect(firstMessageReceivedBefore).toBe(true);
+				// Get firstMessageReceived flag
+				const firstMessageReceivedBefore = agentSession!.getFirstMessageReceived();
+				expect(firstMessageReceivedBefore).toBe(true);
 
-			// Switch to Claude model (cross-provider switch)
-			const result = await callRPCHandler(ctx.messageHub, 'session.model.switch', {
-				sessionId,
-				model: 'haiku',
-			});
-
-			expect(result.success).toBe(true);
-			expect(result.model).toBe('haiku');
-
-			// Wait for restart to complete
-			await new Promise((resolve) => setTimeout(resolve, 1000));
-
-			// Verify model was updated
-			const sessionDataAfter = agentSession!.getSessionData();
-			expect(sessionDataAfter.config.model).toBe('haiku');
-		});
-
-		test.skipIf(!GLM_API_KEY || !ANTHROPIC_API_KEY)('should restart query when switching from Claude to GLM', async () => {
-			// This test requires both GLM and Anthropic API keys
-			// Skip if either key is missing
-			if (!GLM_API_KEY || !ANTHROPIC_API_KEY) {
-				console.log('Skipping cross-provider test - need both GLM_API_KEY and ANTHROPIC_API_KEY');
-				return;
-			}
-
-			// Create session with Claude model (haiku)
-			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
-				workspacePath: `${TMP_DIR}/test-cross-provider-claude-to-glm`,
-				config: {
+				// Switch to Claude model (cross-provider switch)
+				const result = await callRPCHandler(ctx.messageHub, 'session.model.switch', {
+					sessionId,
 					model: 'haiku',
-				},
-			});
+				});
 
-			// Send a message to start the query (makes transport ready)
-			await callRPCHandler(ctx.messageHub, 'message.send', {
-				sessionId,
-				content: 'Hello',
-			});
+				expect(result.success).toBe(true);
+				expect(result.model).toBe('haiku');
 
-			// Wait for query to start and transport to be ready
-			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-			await new Promise((resolve) => setTimeout(resolve, 2000));
+				// Wait for restart to complete
+				await new Promise((resolve) => setTimeout(resolve, 1000));
 
-			// Verify query is running
-			const queryObject = agentSession!.getQueryObject();
-			expect(queryObject).toBeDefined();
+				// Verify model was updated
+				const sessionDataAfter = agentSession!.getSessionData();
+				expect(sessionDataAfter.config.model).toBe('haiku');
+			}
+		);
 
-			// Get firstMessageReceived flag
-			const firstMessageReceivedBefore = agentSession!.getFirstMessageReceived();
-			expect(firstMessageReceivedBefore).toBe(true);
+		test.skipIf(!GLM_API_KEY || !ANTHROPIC_API_KEY)(
+			'should restart query when switching from Claude to GLM',
+			async () => {
+				// This test requires both GLM and Anthropic API keys
+				// Skip if either key is missing
+				if (!GLM_API_KEY || !ANTHROPIC_API_KEY) {
+					console.log('Skipping cross-provider test - need both GLM_API_KEY and ANTHROPIC_API_KEY');
+					return;
+				}
 
-			// Switch to GLM model (cross-provider switch)
-			const result = await callRPCHandler(ctx.messageHub, 'session.model.switch', {
-				sessionId,
-				model: 'glm-4.7',
-			});
+				// Create session with Claude model (haiku)
+				const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
+					workspacePath: `${TMP_DIR}/test-cross-provider-claude-to-glm`,
+					config: {
+						model: 'haiku',
+					},
+				});
 
-			expect(result.success).toBe(true);
-			expect(result.model).toBe('glm-4.7');
+				// Send a message to start the query (makes transport ready)
+				await callRPCHandler(ctx.messageHub, 'message.send', {
+					sessionId,
+					content: 'Hello',
+				});
 
-			// Wait for restart to complete
-			await new Promise((resolve) => setTimeout(resolve, 1000));
+				// Wait for query to start and transport to be ready
+				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+				await new Promise((resolve) => setTimeout(resolve, 2000));
 
-			// Verify model was updated
-			const sessionDataAfter = agentSession!.getSessionData();
-			expect(sessionDataAfter.config.model).toBe('glm-4.7');
-		});
+				// Verify query is running
+				const queryObject = agentSession!.getQueryObject();
+				expect(queryObject).toBeDefined();
+
+				// Get firstMessageReceived flag
+				const firstMessageReceivedBefore = agentSession!.getFirstMessageReceived();
+				expect(firstMessageReceivedBefore).toBe(true);
+
+				// Switch to GLM model (cross-provider switch)
+				const result = await callRPCHandler(ctx.messageHub, 'session.model.switch', {
+					sessionId,
+					model: 'glm-4.7',
+				});
+
+				expect(result.success).toBe(true);
+				expect(result.model).toBe('glm-4.7');
+
+				// Wait for restart to complete
+				await new Promise((resolve) => setTimeout(resolve, 1000));
+
+				// Verify model was updated
+				const sessionDataAfter = agentSession!.getSessionData();
+				expect(sessionDataAfter.config.model).toBe('glm-4.7');
+			}
+		);
 
 		test('should use setModel for same-provider switches', async () => {
 			// Create session with a GLM model
