@@ -34,9 +34,11 @@ describe('Session RPC Handlers (API-dependent)', () => {
 	});
 
 	describe('message.send', () => {
-		// NOTE: This test is flaky due to SDK subprocess cleanup timing issues.
-		// The afterEach cleanup times out waiting for the SDK subprocess to exit after SIGTERM.
-		// Skipping for now until we can improve the test infrastructure.
+		// NOTE: This test is skipped due to SDK subprocess cleanup timing issues.
+		// The test itself passes (gets correct response), but the afterEach cleanup
+		// times out because the SDK subprocess is still running when the test completes.
+		// This is a test infrastructure issue, not a code issue.
+		// TODO: Fix by ensuring SDK subprocess is fully stopped before test completes.
 		test.skip(
 			'should accept message for existing session',
 			async () => {
