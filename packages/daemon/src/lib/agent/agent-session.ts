@@ -148,6 +148,7 @@ export class AgentSession {
 		);
 
 		// Initialize model switch handler with dependencies
+		// Pass restartQuery callback for cross-provider model switches
 		this.modelSwitchHandler = new ModelSwitchHandler({
 			session: this.session,
 			db: this.db,
@@ -159,6 +160,9 @@ export class AgentSession {
 			logger: this.logger,
 			getQueryObject: () => this.queryObject,
 			isTransportReady: () => this.firstMessageReceived,
+			// Cross-provider switches (e.g., Claude ↔ GLM) require query restart
+			// because the SDK subprocess needs different env vars (ANTHROPIC_BASE_URL, etc.)
+			restartQuery: () => this.lifecycleManager.restart(),
 		});
 
 		// Initialize AskUserQuestion handler for interactive tool handling
@@ -1064,6 +1068,22 @@ export class AgentSession {
 	 */
 	getCurrentModel(): CurrentModelInfo {
 		return this.modelSwitchHandler.getCurrentModel();
+	}
+
+	/**
+	 * Get the current SDK query object (for testing)
+	 * Returns null if query hasn't been created yet
+	 */
+	getQueryObject(): Query | null {
+		return this.queryObject;
+	}
+
+	/**
+	 * Check if first message has been received from SDK
+	 * This indicates ProcessTransport is ready for control methods
+	 */
+	getFirstMessageReceived(): boolean {
+		return this.firstMessageReceived;
 	}
 
 	// ============================================================================

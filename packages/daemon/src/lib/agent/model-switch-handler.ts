@@ -17,6 +17,7 @@ import { Database } from '../../storage/database';
 import { ErrorCategory, ErrorManager } from '../error-manager';
 import { Logger } from '../logger';
 import { isValidModel, resolveModelAlias, getModelInfo } from '../model-service';
+import { getProviderService } from '../provider-service';
 import type { ContextTracker } from './context-tracker';
 import type { ProcessingStateManager } from './processing-state-manager';
 
@@ -34,6 +35,12 @@ export interface ModelSwitchDependencies {
 	logger: Logger;
 	getQueryObject: () => Query | null;
 	isTransportReady: () => boolean;
+	/**
+	 * Callback to restart the query with new environment variables
+	 * Required when switching between providers (e.g., Anthropic ↔ GLM)
+	 * since the SDK subprocess needs different env vars (ANTHROPIC_BASE_URL, etc.)
+	 */
+	restartQuery?: () => Promise<void>;
 }
 
 /**
@@ -66,7 +73,10 @@ export class ModelSwitchHandler {
 	}
 
 	/**
-	 * Switch to a different Claude model mid-session
+	 * Switch to a different model mid-session
+	 *
+	 * Handles same-provider switches using SDK's setModel() and cross-provider
+	 * switches by restarting the query with new environment variables.
 	 */
 	async switchModel(newModel: string): Promise<ModelSwitchResult> {
 		const {
@@ -78,6 +88,7 @@ export class ModelSwitchHandler {
 			stateManager,
 			errorManager,
 			logger,
+			restartQuery,
 		} = this.deps;
 
 		logger.log(`Handling model switch to: ${newModel}`);
@@ -124,6 +135,18 @@ export class ModelSwitchHandler {
 			const queryObject = this.deps.getQueryObject();
 			const transportReady = this.deps.isTransportReady();
 
+			// Detect if this is a cross-provider switch (e.g., Anthropic → GLM)
+			// Cross-provider switches require query restart because the SDK subprocess
+			// needs different environment variables (ANTHROPIC_BASE_URL, API keys, etc.)
+			const providerService = getProviderService();
+			const currentProvider = providerService.detectProviderFromModel(currentResolvedModel);
+			const newProvider = providerService.detectProviderFromModel(resolvedModel);
+			const isCrossProviderSwitch = currentProvider !== newProvider;
+
+			if (isCrossProviderSwitch) {
+				logger.log(`Cross-provider switch detected: ${currentProvider} → ${newProvider}`);
+			}
+
 			if (!queryObject || !transportReady) {
 				// Query not started yet OR transport not ready - just update config
 				logger.log(
@@ -143,8 +166,37 @@ export class ModelSwitchHandler {
 					source: 'model-switch',
 					session: { config: session.config },
 				});
+			} else if (isCrossProviderSwitch) {
+				// Cross-provider switch: need to restart the query to get new env vars
+				// The SDK subprocess was created with provider-specific env vars
+				// (ANTHROPIC_BASE_URL, API keys, etc.) that cannot be changed dynamically
+				if (!restartQuery) {
+					const error = `Cross-provider switch requires query restart, but restartQuery callback not provided`;
+					logger.error(error);
+					return { success: false, model: session.config.model, error };
+				}
+
+				logger.log(
+					`Restarting query for cross-provider switch to ${resolvedModel} (${newProvider})`
+				);
+
+				// Update session config first (will be used when query restarts)
+				session.config.model = resolvedModel;
+				db.updateSession(session.id, {
+					config: session.config,
+				});
+
+				// Update context tracker model
+				contextTracker.setModel(resolvedModel);
+
+				// Restart the query with new environment variables
+				// This will spawn a new SDK subprocess with the correct provider env vars
+				await restartQuery();
+
+				logger.log(`Query restarted for cross-provider switch to ${resolvedModel}`);
 			} else {
-				// Use SDK's native setModel() method (transport is ready)
+				// Same-provider switch: Use SDK's native setModel() method
+				// This is fast (<500ms) and doesn't require restarting the subprocess
 				logger.log(`Using SDK setModel() to switch to: ${resolvedModel}`);
 				await queryObject.setModel(resolvedModel);
 
