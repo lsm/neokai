@@ -15,17 +15,38 @@
  * - message-persistence.test.ts: 'should persist messages during real SDK interaction'
  *
  * REQUIREMENTS:
- * - Requires ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
+ * - Requires GLM_API_KEY (or ZHIPU_API_KEY)
  * - Makes real API calls (costs money, uses rate limits)
+ * - Tests will SKIP if credentials are not available
+ *
+ * MODEL MAPPING:
+ * - Uses 'haiku' model (provider-agnostic)
+ * - With GLM_API_KEY: haiku → glm-4.5-air (via ANTHROPIC_DEFAULT_HAIKU_MODEL)
+ * - With ANTHROPIC_API_KEY: haiku → Claude Haiku
+ * - This makes tests provider-agnostic and easy to switch
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import 'dotenv/config';
+
+// Check for GLM credentials
+const GLM_API_KEY = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
+
+// Set up GLM provider environment if GLM_API_KEY is available
+// This makes 'haiku' model automatically map to glm-4.5-air
+if (GLM_API_KEY) {
+	process.env.ANTHROPIC_AUTH_TOKEN = GLM_API_KEY;
+	process.env.ANTHROPIC_BASE_URL = 'https://open.bigmodel.cn/api/anthropic';
+	process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.5-air';
+	process.env.API_TIMEOUT_MS = '3000000';
+}
 import type { TestContext } from '../../test-utils';
 import { createTestApp } from '../../test-utils';
 import { sendMessageSync } from '../../helpers/test-message-sender';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
-describe('SDK Streaming CI Failures', () => {
+// Skip all tests if GLM credentials are not available
+describe.skipIf(!GLM_API_KEY)('SDK Streaming CI Failures', () => {
 	let ctx: TestContext;
 
 	beforeEach(async () => {
@@ -86,7 +107,7 @@ describe('SDK Streaming CI Failures', () => {
 				for await (const message of query({
 					prompt: messageGenerator(),
 					options: {
-						model: 'glm-4.5-air',
+						model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 						cwd: process.cwd(),
 						permissionMode: 'bypassPermissions',
 						allowDangerouslySkipPermissions: true,
@@ -177,7 +198,7 @@ describe('SDK Streaming CI Failures', () => {
 				for await (const message of query({
 					prompt: messageGenerator(),
 					options: {
-						model: 'glm-4.5-air',
+						model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 						cwd: process.cwd(),
 						permissionMode: 'acceptEdits',
 						settingSources: [],
@@ -220,7 +241,7 @@ describe('SDK Streaming CI Failures', () => {
 				for await (const message of query({
 					prompt: 'What is 3+3? Answer with just the number.',
 					options: {
-						model: 'glm-4.5-air',
+						model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 						cwd: process.cwd(),
 						permissionMode: 'acceptEdits',
 						maxTurns: 1,
@@ -260,7 +281,7 @@ describe('SDK Streaming CI Failures', () => {
 				const sessionId = await ctx.sessionManager.createSession({
 					workspacePath: process.cwd(),
 					config: {
-						model: 'glm-4.5-air', // Explicitly set model for CI
+						model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 						permissionMode: 'acceptEdits',
 					},
 				});
@@ -343,7 +364,7 @@ describe('SDK Streaming CI Failures', () => {
 				const sessionId = await ctx.sessionManager.createSession({
 					workspacePath: process.cwd(),
 					config: {
-						model: 'glm-4.5-air', // Use Haiku for faster, cheaper tests
+						model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 						permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
 					},
 				});

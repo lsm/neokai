@@ -12,15 +12,15 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import type { MessageHub } from '@liuboer/shared';
 import { generateUUID } from '@liuboer/shared';
-import { ProcessingStateManager } from '../agent/processing-state-manager';
-import { SDKMessageHandler } from '../agent/sdk-message-handler';
-import { ContextTracker } from '../agent/context-tracker';
+import { ProcessingStateManager } from '../../../src/lib/agent/processing-state-manager';
+import { SDKMessageHandler } from '../../../src/lib/agent/sdk-message-handler';
+import { ContextTracker } from '../../../src/lib/agent/context-tracker';
 import {
 	setupIntegrationTestEnv,
 	cleanupIntegrationTestEnv,
 	createTestSession,
 	type IntegrationTestEnv,
-} from './integration-test-utils';
+} from '../../integration-test-utils';
 
 describe('SDK Message Metadata Broadcasting', () => {
 	let env: IntegrationTestEnv;

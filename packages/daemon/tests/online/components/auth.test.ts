@@ -5,9 +5,9 @@
  * These tests verify that authenticated sessions work correctly.
  *
  * REQUIREMENTS:
- * - Requires ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
+ * - Requires GLM_API_KEY (or ZHIPU_API_KEY)
  * - Makes real API calls (costs money, uses rate limits)
- * - Tests will FAIL if credentials are not available (no skip)
+ * - Tests will SKIP if credentials are not available
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
@@ -17,7 +17,11 @@ import { createTestApp, callRPCHandler } from '../../test-utils';
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
-describe('Authentication Integration (API-dependent)', () => {
+// Check for GLM credentials
+const GLM_API_KEY = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
+
+// Skip all tests if GLM credentials are not available
+describe.skipIf(!GLM_API_KEY)('Authentication Integration (API-dependent)', () => {
 	let ctx: TestContext;
 
 	beforeEach(async () => {

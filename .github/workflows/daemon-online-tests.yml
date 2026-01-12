@@ -1,0 +1,87 @@
+name: Daemon Online Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+# Limit concurrency to avoid overwhelming the GLM API
+concurrency:
+  group: daemon-online-tests
+  limit: 4
+
+jobs:
+  # ============================================
+  # ONLINE TESTS (Requires API credentials)
+  # Parallelized by category with max concurrency 4
+  #
+  # Primary: GLM_API_KEY for all tests (provider-agnostic)
+  # Optional: ANTHROPIC_API_KEY for cross-provider tests
+  # ============================================
+
+  test-daemon-online:
+    name: Daemon Online (${{ matrix.category }})
+    runs-on: self-hosted
+    timeout-minutes: 10
+
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        category:
+          - sdk
+          - session
+          - components
+          - rpc
+          - mcp
+          - glm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.5
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run online tests (${{ matrix.category }})
+        working-directory: packages/daemon
+        run: bun test tests/online/${{ matrix.category }}
+        env:
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+          # Optional: for cross-provider tests in model-switching.test.ts
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+  # Standalone job for SDK streaming tests with different permission modes
+  # Includes diagnostic test for bypassPermissions (expected to fail gracefully on CI as root)
+  test-daemon-sdk-streaming-failures:
+    name: Daemon Online (SDK streaming tests)
+    runs-on: self-hosted
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.5
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run SDK streaming failure tests (isolated)
+        working-directory: packages/daemon
+        run: bun test tests/online/session/sdk-streaming-failures.test.ts
+        env:
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+          # Optional: for cross-provider tests
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Enable verbose logging for debugging
+          NODE_ENV: test
+          DEBUG: '*'

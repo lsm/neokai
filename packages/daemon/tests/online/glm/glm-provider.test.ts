@@ -6,20 +6,25 @@
  * 2. QueryOptionsBuilder model-based env var injection
  * 3. Actual API call to GLM
  *
- * Run with: bun test packages/daemon/src/lib/__tests__/glm-provider.integration.test.ts
+ * Run with: GLM_API_KEY=xxx bun test packages/daemon/tests/online/glm/glm-provider.test.ts
+ *
+ * REQUIREMENTS:
+ * - GLM_API_KEY environment variable (or ZHIPU_API_KEY)
+ * - Makes real API calls for some tests
+ * - Tests will SKIP if credentials are not available
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { ProviderService } from '../provider-service';
-import { QueryOptionsBuilder } from '../agent/query-options-builder';
-import { SettingsManager } from '../settings-manager';
-import { getAvailableModels, setModelsCache, getModelsCache } from '../model-service';
+import { ProviderService } from '../../../src/lib/provider-service';
+import { QueryOptionsBuilder } from '../../../src/lib/agent/query-options-builder';
+import { SettingsManager } from '../../../src/lib/settings-manager';
+import { getAvailableModels, setModelsCache, getModelsCache } from '../../../src/lib/model-service';
 import {
 	setupIntegrationTestEnv,
 	cleanupIntegrationTestEnv,
 	createTestSession,
 	type IntegrationTestEnv,
-} from './integration-test-utils';
+} from '../../../src/lib/__tests__/integration-test-utils';
 
 describe('GLM Provider Integration', () => {
 	let env: IntegrationTestEnv;
@@ -90,7 +95,7 @@ describe('GLM Provider Integration', () => {
 			}
 		});
 
-		it('should return correct env vars for glm-4.5-air', () => {
+		it('should return correct env vars for glm-4.5-air (haiku tier)', () => {
 			const providerService = new ProviderService();
 
 			// Mock GLM_API_KEY
@@ -352,8 +357,6 @@ describe('GLM Provider Integration', () => {
 				}
 				if (originalZhipuKey !== undefined) {
 					process.env.ZHIPU_API_KEY = originalZhipuKey;
-				} else {
-					delete process.env.ZHIPU_API_KEY;
 				}
 				setModelsCache(originalCache);
 			}
@@ -473,7 +476,7 @@ describe('GLM Provider Integration', () => {
 		it('should make actual API call to GLM', async () => {
 			const glmApiKey = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
 
-			// Skip test if no API key is available (e.g., in CI)
+			// Skip test if no API key is available
 			if (!glmApiKey) {
 				console.log('Skipping GLM API call test - no GLM_API_KEY set');
 				return;

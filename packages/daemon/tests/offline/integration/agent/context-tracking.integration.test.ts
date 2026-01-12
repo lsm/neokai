@@ -12,13 +12,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import type { ContextInfo } from '@liuboer/shared';
 import { generateUUID } from '@liuboer/shared';
-import { ContextTracker } from '../agent/context-tracker';
+import { ContextTracker } from '../../../src/lib/agent/context-tracker';
 import {
 	setupIntegrationTestEnv,
 	cleanupIntegrationTestEnv,
 	createTestSession,
 	type IntegrationTestEnv,
-} from './integration-test-utils';
+} from '../../integration-test-utils';
 
 describe('Context Tracking Integration', () => {
 	let env: IntegrationTestEnv;

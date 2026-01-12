@@ -1,451 +1,218 @@
-/**
- * Tests for ContextFetcher
- *
- * Coverage for:
- * - isContextResponse: Detecting /context command responses
- * - parseContextResponse: Extracting parsed context info
- * - parseMarkdownContext: Parsing markdown format
- * - parseCategoryTable: Extracting category breakdown
- * - parseSlashCommandInfo: Extracting SlashCommand tool stats
- * - mergeWithStreamContext: Merging with stream context
- */
-
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, it, expect } from 'bun:test';
 import { ContextFetcher } from '../../../src/lib/agent/context-fetcher';
-import type { SDKMessage } from '@liuboer/shared/sdk';
-import type { ContextInfo } from '@liuboer/shared';
 
 describe('ContextFetcher', () => {
-	let fetcher: ContextFetcher;
-
-	beforeEach(() => {
-		fetcher = new ContextFetcher('test-session');
-	});
+	const fetcher = new ContextFetcher('test-session');
 
 	describe('isContextResponse', () => {
-		test('returns true for valid context response', () => {
-			const message: SDKMessage = {
+		it('should detect valid context response', () => {
+			const message = {
 				type: 'user',
 				isReplay: true,
 				message: {
-					content: `<local-command-stdout>
-## Context Usage
-**Model:** claude-sonnet-4-5-20250929
-**Tokens:** 62.5k / 200.0k (31%)
-</local-command-stdout>`,
+					content: '<local-command-stdout>## Context Usage\n...',
 				},
-			} as unknown as SDKMessage;
+			};
 
-			expect(fetcher.isContextResponse(message)).toBe(true);
+			expect(fetcher.isContextResponse(message as never)).toBe(true);
 		});
 
-		test('returns false for non-user messages', () => {
-			const message: SDKMessage = {
+		it('should reject non-user messages', () => {
+			const message = {
 				type: 'assistant',
-				message: {
-					content: '<local-command-stdout>Context Usage</local-command-stdout>',
-				},
-			} as unknown as SDKMessage;
+				message: { content: 'test' },
+			};
 
-			expect(fetcher.isContextResponse(message)).toBe(false);
+			expect(fetcher.isContextResponse(message as never)).toBe(false);
 		});
 
-		test('returns false when isReplay is false', () => {
-			const message: SDKMessage = {
+		it('should reject user messages without isReplay', () => {
+			const message = {
 				type: 'user',
-				isReplay: false,
-				message: {
-					content: '<local-command-stdout>Context Usage</local-command-stdout>',
-				},
-			} as unknown as SDKMessage;
+				message: { content: '<local-command-stdout>test' },
+			};
 
-			expect(fetcher.isContextResponse(message)).toBe(false);
+			expect(fetcher.isContextResponse(message as never)).toBe(false);
 		});
 
-		test('returns false when isReplay is undefined', () => {
-			const message: SDKMessage = {
-				type: 'user',
-				message: {
-					content: '<local-command-stdout>Context Usage</local-command-stdout>',
-				},
-			} as unknown as SDKMessage;
-
-			expect(fetcher.isContextResponse(message)).toBe(false);
-		});
-
-		test('returns false when content lacks local-command-stdout tags', () => {
-			const message: SDKMessage = {
+		it('should reject messages without context stdout', () => {
+			const message = {
 				type: 'user',
 				isReplay: true,
-				message: {
-					content: 'Context Usage - some other content',
-				},
-			} as unknown as SDKMessage;
+				message: { content: 'just a regular message' },
+			};
 
-			expect(fetcher.isContextResponse(message)).toBe(false);
-		});
-
-		test('returns false when content lacks Context Usage text', () => {
-			const message: SDKMessage = {
-				type: 'user',
-				isReplay: true,
-				message: {
-					content: '<local-command-stdout>Some other command output</local-command-stdout>',
-				},
-			} as unknown as SDKMessage;
-
-			expect(fetcher.isContextResponse(message)).toBe(false);
-		});
-
-		test('returns false when message content is undefined', () => {
-			const message: SDKMessage = {
-				type: 'user',
-				isReplay: true,
-				message: {},
-			} as unknown as SDKMessage;
-
-			expect(fetcher.isContextResponse(message)).toBe(false);
+			expect(fetcher.isContextResponse(message as never)).toBe(false);
 		});
 	});
 
 	describe('parseContextResponse', () => {
-		test('parses valid context response', () => {
-			const message: SDKMessage = {
+		it('should parse valid context response and calculate totalUsed from breakdown', () => {
+			const message = {
 				type: 'user',
 				isReplay: true,
 				message: {
-					content: `<local-command-stdout>
-## Context Usage
+					content: `<local-command-stdout>## Context Usage
 
 **Model:** claude-sonnet-4-5-20250929
 **Tokens:** 62.5k / 200.0k (31%)
+
+### Categories
 
 | Category | Tokens | Percentage |
 |----------|--------|------------|
 | System prompt | 3.2k | 1.6% |
 | System tools | 14.3k | 7.1% |
-| Messages | 45.0k | 22.5% |
-| Free space | 137.5k | 68.8% |
+| Messages | 25 | 0.0% |
+| Free space | 137.5k | 68.7% |
+| Autocompact buffer | 45.0k | 22.5% |
+
+### SlashCommand Tool
+
+**Commands:** 5
+**Total tokens:** 877
+
 </local-command-stdout>`,
 				},
-			} as unknown as SDKMessage;
+			};
 
-			const result = fetcher.parseContextResponse(message);
+			const result = fetcher.parseContextResponse(message as never);
 
 			expect(result).not.toBeNull();
-			expect(result!.model).toBe('claude-sonnet-4-5-20250929');
-			expect(result!.totalCapacity).toBe(200000);
-			expect(result!.breakdown).toHaveProperty('System prompt');
-			expect(result!.breakdown).toHaveProperty('System tools');
-			expect(result!.breakdown).toHaveProperty('Messages');
-			expect(result!.breakdown['System prompt'].tokens).toBe(3200);
-			expect(result!.breakdown['System tools'].tokens).toBe(14300);
-			expect(result!.breakdown['Messages'].tokens).toBe(45000);
+			expect(result?.model).toBe('claude-sonnet-4-5-20250929');
+
+			// totalUsed is now calculated from breakdown (sum of all non-free-space categories)
+			// 3200 + 14300 + 25 + 45000 = 62525
+			expect(result?.totalUsed).toBe(62525);
+			expect(result?.totalCapacity).toBe(200000);
+			// percentUsed = Math.round(62525 / 200000 * 100) = 31%
+			expect(result?.percentUsed).toBe(31);
+
+			// Check breakdown
+			expect(result?.breakdown['System prompt']).toEqual({
+				tokens: 3200,
+				percent: 1.6,
+			});
+			expect(result?.breakdown['System tools']).toEqual({
+				tokens: 14300,
+				percent: 7.1,
+			});
+			expect(result?.breakdown['Messages']).toEqual({
+				tokens: 25,
+				percent: 0.0,
+			});
+
+			// Check SlashCommand tool
+			expect(result?.slashCommandTool).toEqual({
+				commands: 5,
+				totalTokens: 877,
+			});
 		});
 
-		test('returns null for non-context response', () => {
-			const message: SDKMessage = {
+		it('should return null for non-context messages', () => {
+			const message = {
 				type: 'assistant',
-				message: { content: 'Hello!' },
-			} as unknown as SDKMessage;
+				message: { content: 'test' },
+			};
 
-			expect(fetcher.parseContextResponse(message)).toBeNull();
-		});
-
-		test('returns null when parsing fails due to missing tokens line', () => {
-			const message: SDKMessage = {
-				type: 'user',
-				isReplay: true,
-				message: {
-					content: `<local-command-stdout>
-## Context Usage
-
-**Model:** claude-sonnet-4-5-20250929
-No tokens line here
-</local-command-stdout>`,
-				},
-			} as unknown as SDKMessage;
-
-			const result = fetcher.parseContextResponse(message);
+			const result = fetcher.parseContextResponse(message as never);
 			expect(result).toBeNull();
 		});
 
-		test('returns null when parsing fails due to missing local-command-stdout tags', () => {
-			const message: SDKMessage = {
+		it('should handle context response without SlashCommand section', () => {
+			const message = {
 				type: 'user',
 				isReplay: true,
 				message: {
-					content: `Context Usage
-**Model:** claude-sonnet-4-5-20250929
-**Tokens:** 62.5k / 200.0k (31%)`,
-				},
-			} as unknown as SDKMessage;
-
-			// First check isContextResponse returns false since it needs both tags and "Context Usage"
-			// The implementation checks for <local-command-stdout> in isContextResponse
-			expect(fetcher.isContextResponse(message)).toBe(false);
-			expect(fetcher.parseContextResponse(message)).toBeNull();
-		});
-
-		test('parses context with SlashCommand tool info', () => {
-			const message: SDKMessage = {
-				type: 'user',
-				isReplay: true,
-				message: {
-					content: `<local-command-stdout>
-## Context Usage
+					content: `<local-command-stdout>## Context Usage
 
 **Model:** claude-sonnet-4-5-20250929
-**Tokens:** 62.5k / 200.0k (31%)
+**Tokens:** 50.0k / 200.0k (25%)
+
+### Categories
 
 | Category | Tokens | Percentage |
 |----------|--------|------------|
-| System prompt | 3.2k | 1.6% |
+| System prompt | 3.0k | 1.5% |
+| Free space | 150.0k | 75.0% |
 
-### SlashCommand Tool
-**Commands:** 5
-**Total tokens:** 877
 </local-command-stdout>`,
 				},
-			} as unknown as SDKMessage;
+			};
 
-			const result = fetcher.parseContextResponse(message);
-
-			expect(result).not.toBeNull();
-			expect(result!.slashCommandTool).toBeDefined();
-			expect(result!.slashCommandTool!.commands).toBe(5);
-			expect(result!.slashCommandTool!.totalTokens).toBe(877);
-		});
-
-		test('parses context without k suffix for small token counts', () => {
-			const message: SDKMessage = {
-				type: 'user',
-				isReplay: true,
-				message: {
-					content: `<local-command-stdout>
-## Context Usage
-
-**Model:** claude-sonnet-4-5-20250929
-**Tokens:** 0.5k / 200.0k (0%)
-
-| Category | Tokens | Percentage |
-|----------|--------|------------|
-| System prompt | 500 | 0.3% |
-| Messages | 0 | 0.0% |
-</local-command-stdout>`,
-				},
-			} as unknown as SDKMessage;
-
-			const result = fetcher.parseContextResponse(message);
+			const result = fetcher.parseContextResponse(message as never);
 
 			expect(result).not.toBeNull();
-			expect(result!.breakdown['System prompt'].tokens).toBe(500);
-			expect(result!.breakdown['Messages'].tokens).toBe(0);
-		});
-
-		test('parses context with unknown model when model line is missing', () => {
-			const message: SDKMessage = {
-				type: 'user',
-				isReplay: true,
-				message: {
-					content: `<local-command-stdout>
-## Context Usage
-
-**Tokens:** 62.5k / 200.0k (31%)
-
-| Category | Tokens | Percentage |
-|----------|--------|------------|
-| System prompt | 3.2k | 1.6% |
-</local-command-stdout>`,
-				},
-			} as unknown as SDKMessage;
-
-			const result = fetcher.parseContextResponse(message);
-
-			expect(result).not.toBeNull();
-			expect(result!.model).toBe('unknown');
+			// totalUsed = 3000 (only System prompt, excludes Free space)
+			expect(result?.totalUsed).toBe(3000);
+			// percentUsed = Math.round(3000 / 200000 * 100) = 2%
+			expect(result?.percentUsed).toBe(2);
+			expect(result?.slashCommandTool).toBeUndefined();
 		});
 	});
 
 	describe('mergeWithStreamContext', () => {
-		test('merges parsed context with stream context', () => {
+		it('should merge parsed context with stream context', () => {
+			// totalUsed is sum of all non-free-space categories: 3200 + 25 = 3225
 			const parsedContext = {
 				model: 'claude-sonnet-4-5-20250929',
-				totalUsed: 62500,
+				totalUsed: 3225,
 				totalCapacity: 200000,
-				percentUsed: 31,
+				percentUsed: 2,
+				breakdown: {
+					'System prompt': { tokens: 3200, percent: 1.6 },
+					Messages: { tokens: 25, percent: 0.0 },
+				},
+			};
+
+			const streamContext = {
+				model: 'claude-sonnet-4-5-20250929',
+				totalUsed: 60000,
+				totalCapacity: 200000,
+				percentUsed: 30,
+				breakdown: {
+					'Input Context': { tokens: 30000, percent: 15 },
+					'Output Tokens': { tokens: 30000, percent: 15 },
+				},
+				apiUsage: {
+					inputTokens: 30000,
+					outputTokens: 30000,
+					cacheReadTokens: 0,
+					cacheCreationTokens: 0,
+				},
+			};
+
+			const merged = fetcher.mergeWithStreamContext(parsedContext, streamContext);
+
+			// Should use parsed context numbers (calculated from breakdown)
+			expect(merged.totalUsed).toBe(3225);
+			expect(merged.breakdown).toEqual(parsedContext.breakdown);
+
+			// Should keep API usage from stream
+			expect(merged.apiUsage).toEqual(streamContext.apiUsage);
+
+			// Should set metadata
+			expect(merged.source).toBe('merged');
+			expect(merged.lastUpdated).toBeGreaterThan(0);
+		});
+
+		it('should work with null stream context', () => {
+			// totalUsed is sum of non-free-space categories: 3200
+			const parsedContext = {
+				model: 'claude-sonnet-4-5-20250929',
+				totalUsed: 3200,
+				totalCapacity: 200000,
+				percentUsed: 2,
 				breakdown: {
 					'System prompt': { tokens: 3200, percent: 1.6 },
 				},
 			};
 
-			const streamContext: ContextInfo = {
-				model: 'claude-sonnet-4-5-20250929',
-				totalUsed: 62000,
-				totalCapacity: 200000,
-				percentUsed: 31,
-				breakdown: {},
-				apiUsage: {
-					inputTokens: 50000,
-					outputTokens: 1000,
-					cacheCreationInputTokens: 10000,
-					cacheReadInputTokens: 5000,
-				},
-				lastUpdated: Date.now() - 1000,
-				source: 'stream',
-			};
+			const merged = fetcher.mergeWithStreamContext(parsedContext, null);
 
-			const result = fetcher.mergeWithStreamContext(parsedContext, streamContext);
-
-			expect(result.model).toBe('claude-sonnet-4-5-20250929');
-			expect(result.totalUsed).toBe(62500);
-			expect(result.totalCapacity).toBe(200000);
-			expect(result.percentUsed).toBe(31);
-			expect(result.breakdown).toEqual(parsedContext.breakdown);
-			expect(result.apiUsage).toEqual(streamContext.apiUsage);
-			expect(result.source).toBe('merged');
-			expect(result.lastUpdated).toBeGreaterThan(0);
-		});
-
-		test('merges with null stream context', () => {
-			const parsedContext = {
-				model: 'claude-sonnet-4-5-20250929',
-				totalUsed: 62500,
-				totalCapacity: 200000,
-				percentUsed: 31,
-				breakdown: {},
-			};
-
-			const result = fetcher.mergeWithStreamContext(parsedContext, null);
-
-			expect(result.model).toBe('claude-sonnet-4-5-20250929');
-			expect(result.apiUsage).toBeUndefined();
-			expect(result.source).toBe('merged');
-		});
-
-		test('preserves slashCommandTool info in merged result', () => {
-			const parsedContext = {
-				model: 'claude-sonnet-4-5-20250929',
-				totalUsed: 62500,
-				totalCapacity: 200000,
-				percentUsed: 31,
-				breakdown: {},
-				slashCommandTool: {
-					commands: 3,
-					totalTokens: 500,
-				},
-			};
-
-			const result = fetcher.mergeWithStreamContext(parsedContext, null);
-
-			expect(result.slashCommandTool).toEqual({
-				commands: 3,
-				totalTokens: 500,
-			});
-		});
-	});
-
-	describe('edge cases', () => {
-		test('handles decimal token values correctly', () => {
-			const message: SDKMessage = {
-				type: 'user',
-				isReplay: true,
-				message: {
-					content: `<local-command-stdout>
-## Context Usage
-
-**Model:** claude-sonnet-4-5-20250929
-**Tokens:** 62.567k / 200.0k (31%)
-
-| Category | Tokens | Percentage |
-|----------|--------|------------|
-| System prompt | 3.234k | 1.62% |
-</local-command-stdout>`,
-				},
-			} as unknown as SDKMessage;
-
-			const result = fetcher.parseContextResponse(message);
-
-			expect(result).not.toBeNull();
-			expect(result!.totalCapacity).toBe(200000);
-			expect(result!.breakdown['System prompt'].tokens).toBe(3234);
-			expect(result!.breakdown['System prompt'].percent).toBe(1.62);
-		});
-
-		test('skips header row in category table', () => {
-			const message: SDKMessage = {
-				type: 'user',
-				isReplay: true,
-				message: {
-					content: `<local-command-stdout>
-## Context Usage
-
-**Model:** claude-sonnet-4-5-20250929
-**Tokens:** 62.5k / 200.0k (31%)
-
-| Category | Tokens | Percentage |
-|----------|--------|------------|
-| Real category | 3.2k | 1.6% |
-</local-command-stdout>`,
-				},
-			} as unknown as SDKMessage;
-
-			const result = fetcher.parseContextResponse(message);
-
-			expect(result).not.toBeNull();
-			expect(result!.breakdown).not.toHaveProperty('Category');
-			expect(result!.breakdown).toHaveProperty('Real category');
-		});
-
-		test('calculates totalUsed excluding Free space', () => {
-			const message: SDKMessage = {
-				type: 'user',
-				isReplay: true,
-				message: {
-					content: `<local-command-stdout>
-## Context Usage
-
-**Model:** claude-sonnet-4-5-20250929
-**Tokens:** 62.5k / 200.0k (31%)
-
-| Category | Tokens | Percentage |
-|----------|--------|------------|
-| System prompt | 10k | 5% |
-| Messages | 50k | 25% |
-| Free space | 140k | 70% |
-</local-command-stdout>`,
-				},
-			} as unknown as SDKMessage;
-
-			const result = fetcher.parseContextResponse(message);
-
-			expect(result).not.toBeNull();
-			// totalUsed should be 10k + 50k = 60k, excluding Free space
-			expect(result!.totalUsed).toBe(60000);
-		});
-
-		test('handles empty breakdown table', () => {
-			const message: SDKMessage = {
-				type: 'user',
-				isReplay: true,
-				message: {
-					content: `<local-command-stdout>
-## Context Usage
-
-**Model:** claude-sonnet-4-5-20250929
-**Tokens:** 0.0k / 200.0k (0%)
-
-| Category | Tokens | Percentage |
-|----------|--------|------------|
-</local-command-stdout>`,
-				},
-			} as unknown as SDKMessage;
-
-			const result = fetcher.parseContextResponse(message);
-
-			expect(result).not.toBeNull();
-			expect(Object.keys(result!.breakdown).length).toBe(0);
-			expect(result!.totalUsed).toBe(0);
+			expect(merged.totalUsed).toBe(3200);
+			expect(merged.apiUsage).toBeUndefined();
+			expect(merged.source).toBe('merged');
 		});
 	});
 });

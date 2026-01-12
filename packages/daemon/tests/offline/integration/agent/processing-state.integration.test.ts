@@ -10,13 +10,13 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { generateUUID } from '@liuboer/shared';
-import { ProcessingStateManager } from '../agent/processing-state-manager';
+import { ProcessingStateManager } from '../../../src/lib/agent/processing-state-manager';
 import {
 	setupIntegrationTestEnv,
 	cleanupIntegrationTestEnv,
 	createTestSession,
 	type IntegrationTestEnv,
-} from './integration-test-utils';
+} from '../../integration-test-utils';
 
 describe('Processing State Broadcasting', () => {
 	let env: IntegrationTestEnv;

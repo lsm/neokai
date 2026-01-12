@@ -10,19 +10,40 @@
  * - Without credentials, the cache is empty and all models appear "invalid"
  *
  * REQUIREMENTS:
- * - Requires ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
+ * - Requires GLM_API_KEY (or ZHIPU_API_KEY)
  * - Makes real API calls (costs money, uses rate limits)
- * - Tests will FAIL if credentials are not available (no skip)
+ * - Tests will SKIP if credentials are not available
+ *
+ * MODEL MAPPING:
+ * - Uses 'haiku' model (provider-agnostic)
+ * - With GLM_API_KEY: haiku → glm-4.5-air (via ANTHROPIC_DEFAULT_HAIKU_MODEL)
+ * - With ANTHROPIC_API_KEY: haiku → Claude Haiku
+ * - This makes tests provider-agnostic and easy to switch
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import 'dotenv/config';
 import type { TestContext } from '../../test-utils';
 import { createTestApp, callRPCHandler } from '../../test-utils';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
-describe('Model Switching Integration', () => {
+// Check for GLM credentials
+const GLM_API_KEY = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN;
+
+// Set up GLM provider environment if GLM_API_KEY is available
+// This makes 'haiku' model automatically map to glm-4.5-air
+if (GLM_API_KEY) {
+	process.env.ANTHROPIC_AUTH_TOKEN = GLM_API_KEY;
+	process.env.ANTHROPIC_BASE_URL = 'https://open.bigmodel.cn/api/anthropic';
+	process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.5-air';
+	process.env.API_TIMEOUT_MS = '3000000';
+}
+
+// Skip all tests if GLM credentials are not available
+describe.skipIf(!GLM_API_KEY)('Model Switching Integration', () => {
 	let ctx: TestContext;
 
 	beforeEach(async () => {
@@ -41,7 +62,7 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-id`,
 				config: {
-					model: 'glm-4.5-air',
+					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				},
 			});
 
@@ -70,14 +91,14 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-alias`,
 				config: {
-					model: 'glm-4.5-air',
+					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				},
 			});
 
 			// Switch to another GLM model
 			const result = await callRPCHandler(ctx.messageHub, 'session.model.switch', {
 				sessionId,
-				model: 'glm-4.7',
+				model: 'glm-4.7', // Another GLM model
 			});
 
 			expect(result.success).toBe(true);
@@ -90,18 +111,18 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-same`,
 				config: {
-					model: 'glm-4.5-air',
+					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				},
 			});
 
 			// Switch to same model
 			const result = await callRPCHandler(ctx.messageHub, 'session.model.switch', {
 				sessionId,
-				model: 'glm-4.5-air',
+				model: 'haiku',
 			});
 
 			expect(result.success).toBe(true);
-			expect(result.model).toBe('glm-4.5-air');
+			expect(result.model).toBe('haiku');
 			expect(result.error).toBeDefined(); // Should have message about already using model
 		});
 
@@ -149,7 +170,7 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-families`,
 				config: {
-					model: 'glm-4.5-air',
+					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				},
 			});
 
@@ -169,13 +190,13 @@ describe('Model Switching Integration', () => {
 			expect(result.success).toBe(true);
 			expect(result.model).toBe('glm-4.7');
 
-			// Switch back to glm-4.5-air
+			// Switch back to haiku
 			result = await callRPCHandler(ctx.messageHub, 'session.model.switch', {
 				sessionId,
-				model: 'glm-4.5-air',
+				model: 'haiku',
 			});
 			expect(result.success).toBe(true);
-			expect(result.model).toBe('glm-4.5-air');
+			expect(result.model).toBe('haiku');
 		});
 
 		test('should preserve session state during model switch', async () => {
@@ -183,7 +204,7 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-state`,
 				config: {
-					model: 'glm-4.5-air',
+					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				},
 			});
 
@@ -222,7 +243,7 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-db`,
 				config: {
-					model: 'glm-4.5-air',
+					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				},
 			});
 
@@ -263,14 +284,14 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-agent-session-model-switch`,
 				config: {
-					model: 'glm-4.5-air',
+					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				},
 			});
 
 			// Get initial model
 			let agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
 			let modelInfo = agentSession!.getCurrentModel();
-			expect(modelInfo.id).toBe('glm-4.5-air');
+			expect(modelInfo.id).toBe('haiku');
 
 			// Switch model
 			await callRPCHandler(ctx.messageHub, 'session.model.switch', {
@@ -291,7 +312,7 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-rapid-switches`,
 				config: {
-					model: 'glm-4.5-air',
+					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				},
 			});
 
@@ -299,7 +320,7 @@ describe('Model Switching Integration', () => {
 			const switches = [
 				{ model: 'glm-4.7' },
 				{ model: 'glm-4.7' },
-				{ model: 'glm-4.5-air' },
+				{ model: 'haiku' },
 				{ model: 'glm-4.7' },
 			];
 
@@ -328,7 +349,7 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-pre-query-switch`,
 				config: {
-					model: 'glm-4.5-air',
+					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				},
 			});
 
@@ -380,12 +401,10 @@ describe('Model Switching Integration', () => {
 	});
 
 	describe('Cross-Provider Switching', () => {
-		test('should restart query when switching from GLM to Claude', async () => {
+		test.skipIf(!GLM_API_KEY || !ANTHROPIC_API_KEY)('should restart query when switching from GLM to Claude', async () => {
 			// This test requires both GLM and Anthropic API keys
-			const glmApiKey = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
-			const anthropicKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN;
-
-			if (!glmApiKey || !anthropicKey) {
+			// Skip if either key is missing
+			if (!GLM_API_KEY || !ANTHROPIC_API_KEY) {
 				console.log('Skipping cross-provider test - need both GLM_API_KEY and ANTHROPIC_API_KEY');
 				return;
 			}
@@ -433,12 +452,10 @@ describe('Model Switching Integration', () => {
 			expect(sessionDataAfter.config.model).toBe('haiku');
 		});
 
-		test('should restart query when switching from Claude to GLM', async () => {
+		test.skipIf(!GLM_API_KEY || !ANTHROPIC_API_KEY)('should restart query when switching from Claude to GLM', async () => {
 			// This test requires both GLM and Anthropic API keys
-			const glmApiKey = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
-			const anthropicKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN;
-
-			if (!glmApiKey || !anthropicKey) {
+			// Skip if either key is missing
+			if (!GLM_API_KEY || !ANTHROPIC_API_KEY) {
 				console.log('Skipping cross-provider test - need both GLM_API_KEY and ANTHROPIC_API_KEY');
 				return;
 			}
@@ -491,7 +508,7 @@ describe('Model Switching Integration', () => {
 			const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-same-provider-switch`,
 				config: {
-					model: 'glm-4.5-air',
+					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				},
 			});
 
