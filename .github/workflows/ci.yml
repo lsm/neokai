@@ -588,9 +588,6 @@ jobs:
       - name: Install dependencies
         run: bun install --backend=copyfile
 
-      - name: Remove .bun directory to prevent dual Preact instances
-        run: rm -rf node_modules/.bun
-
       - name: Run web tests
         working-directory: packages/web
         run: bun test
