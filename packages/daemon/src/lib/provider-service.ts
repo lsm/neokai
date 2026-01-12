@@ -15,17 +15,34 @@
 import type { Provider, ProviderInfo, Session } from '@liuboer/shared';
 
 /**
- * Environment variables to pass to SDK subprocess for provider routing
+ * Environment variables for provider routing
+ *
+ * IMPORTANT: These must be set in process.env (parent process) before SDK query creation.
+ * The SDK subprocess inherits these environment variables when spawned.
+ * Passing via options.env does NOT work for GLM.
  */
 export interface ProviderEnvVars {
 	ANTHROPIC_BASE_URL?: string;
 	ANTHROPIC_API_KEY?: string;
 	ANTHROPIC_AUTH_TOKEN?: string;
+	ANTHROPIC_MODEL?: string; // Override default model
+	ANTHROPIC_DEFAULT_HAIKU_MODEL?: string; // Map haiku tier to GLM model
+	ANTHROPIC_DEFAULT_SONNET_MODEL?: string; // Map default/sonnet tier to GLM model
+	ANTHROPIC_DEFAULT_OPUS_MODEL?: string; // Map opus tier to GLM model
 	API_TIMEOUT_MS?: string;
 	CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC?: string;
-	// GLM-specific: map Anthropic model aliases to GLM models
-	ANTHROPIC_DEFAULT_HAIKU_MODEL?: string;
+}
+
+/**
+ * Stores original environment variable values for restoration
+ */
+interface OriginalEnvVars {
+	ANTHROPIC_AUTH_TOKEN?: string;
+	ANTHROPIC_BASE_URL?: string;
+	API_TIMEOUT_MS?: string;
+	CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC?: string;
 	ANTHROPIC_DEFAULT_SONNET_MODEL?: string;
+	ANTHROPIC_DEFAULT_HAIKU_MODEL?: string;
 	ANTHROPIC_DEFAULT_OPUS_MODEL?: string;
 }
 
@@ -266,6 +283,16 @@ export class ProviderService {
 	 * This is the primary method for model-based provider detection.
 	 * It automatically detects GLM models and returns appropriate env vars.
 	 *
+	 * When a GLM model is requested (e.g., "glm-4.7"), we:
+	 * 1. Translate it to an SDK-recognized tier ID (default, haiku, opus)
+	 * 2. Set ANTHROPIC_DEFAULT_*_MODEL env var to map that tier back to the GLM model
+	 *
+	 * Example flow for glm-4.7:
+	 * - User requests model: "glm-4.7"
+	 * - translateModelIdForSdk("glm-4.7") → "default" (Sonnet tier)
+	 * - SDK receives model: "default"
+	 * - ANTHROPIC_DEFAULT_SONNET_MODEL="glm-4.7" tells SDK to use glm-4.7
+	 *
 	 * @param modelId - The model ID (e.g., "glm-4.7", "default", "opus")
 	 * @returns Environment variables for the SDK subprocess
 	 */
@@ -286,18 +313,133 @@ export class ProviderService {
 		}
 
 		const definition = PROVIDER_DEFINITIONS.glm;
-
-		return {
+		const envVars: ProviderEnvVars = {
 			ANTHROPIC_BASE_URL: definition.baseUrl,
-			ANTHROPIC_API_KEY: apiKey,
-			// ANTHROPIC_AUTH_TOKEN: apiKey,
+			// Use ANTHROPIC_AUTH_TOKEN for GLM (matching Claude Code behavior)
+			// Note: ANTHROPIC_API_KEY does NOT work when passed via options.env
+			ANTHROPIC_AUTH_TOKEN: apiKey,
+			// Extended timeout for GLM (50 minutes)
 			API_TIMEOUT_MS: '3000000',
+			// Disable non-essential traffic (telemetry, etc.)
 			CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-			// Map Anthropic model aliases to GLM models
-			// ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-4.5-air',
-			// ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-4.7',
-			// ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-4.7',
 		};
+
+		// Map Anthropic tier IDs to GLM model IDs
+		// When SDK uses 'haiku', 'default', or 'opus', translate to the actual GLM model
+		if (modelId === 'glm-4.5-air') {
+			envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.5-air';
+		} else {
+			// glm-4.7 and other GLM models map to default (Sonnet) and Opus tiers
+			envVars.ANTHROPIC_DEFAULT_SONNET_MODEL = modelId;
+			envVars.ANTHROPIC_DEFAULT_OPUS_MODEL = modelId;
+		}
+
+		return envVars;
+	}
+
+	/**
+	 * Apply provider environment variables to process.env
+	 *
+	 * IMPORTANT: These must be set in the parent process before SDK query creation.
+	 * The SDK subprocess inherits these environment variables when spawned.
+	 *
+	 * This method saves the original values and returns them for restoration.
+	 *
+	 * @param modelId - The model ID to get env vars for
+	 * @returns Original env vars that should be restored after SDK query
+	 */
+	applyEnvVarsToProcess(modelId: string): OriginalEnvVars {
+		const envVars = this.getEnvVarsForModel(modelId);
+
+		// No env vars needed for Anthropic
+		if (Object.keys(envVars).length === 0) {
+			return {};
+		}
+
+		const original: OriginalEnvVars = {};
+
+		// Save and set each env var
+		if (envVars.ANTHROPIC_AUTH_TOKEN !== undefined) {
+			original.ANTHROPIC_AUTH_TOKEN = process.env.ANTHROPIC_AUTH_TOKEN;
+			process.env.ANTHROPIC_AUTH_TOKEN = envVars.ANTHROPIC_AUTH_TOKEN;
+		}
+		if (envVars.ANTHROPIC_BASE_URL !== undefined) {
+			original.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
+			process.env.ANTHROPIC_BASE_URL = envVars.ANTHROPIC_BASE_URL;
+		}
+		if (envVars.API_TIMEOUT_MS !== undefined) {
+			original.API_TIMEOUT_MS = process.env.API_TIMEOUT_MS;
+			process.env.API_TIMEOUT_MS = envVars.API_TIMEOUT_MS;
+		}
+		if (envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !== undefined) {
+			original.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
+				process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+			process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
+				envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+		}
+		if (envVars.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
+			original.ANTHROPIC_DEFAULT_SONNET_MODEL = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+			process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = envVars.ANTHROPIC_DEFAULT_SONNET_MODEL;
+		}
+		if (envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL !== undefined) {
+			original.ANTHROPIC_DEFAULT_HAIKU_MODEL = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+			process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+		}
+		if (envVars.ANTHROPIC_DEFAULT_OPUS_MODEL !== undefined) {
+			original.ANTHROPIC_DEFAULT_OPUS_MODEL = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+			process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = envVars.ANTHROPIC_DEFAULT_OPUS_MODEL;
+		}
+
+		return original;
+	}
+
+	/**
+	 * Restore original environment variables after SDK query completes
+	 *
+	 * @param original - The original env vars returned by applyEnvVarsToProcess
+	 */
+	restoreEnvVars(original: OriginalEnvVars): void {
+		if (Object.keys(original).length === 0) {
+			return;
+		}
+
+		// Restore each env var or delete if it wasn't originally set
+		if (original.ANTHROPIC_AUTH_TOKEN !== undefined) {
+			process.env.ANTHROPIC_AUTH_TOKEN = original.ANTHROPIC_AUTH_TOKEN;
+		} else {
+			delete process.env.ANTHROPIC_AUTH_TOKEN;
+		}
+		if (original.ANTHROPIC_BASE_URL !== undefined) {
+			process.env.ANTHROPIC_BASE_URL = original.ANTHROPIC_BASE_URL;
+		} else {
+			delete process.env.ANTHROPIC_BASE_URL;
+		}
+		if (original.API_TIMEOUT_MS !== undefined) {
+			process.env.API_TIMEOUT_MS = original.API_TIMEOUT_MS;
+		} else {
+			delete process.env.API_TIMEOUT_MS;
+		}
+		if (original.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !== undefined) {
+			process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
+				original.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+		} else {
+			delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+		}
+		if (original.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
+			process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = original.ANTHROPIC_DEFAULT_SONNET_MODEL;
+		} else {
+			delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+		}
+		if (original.ANTHROPIC_DEFAULT_HAIKU_MODEL !== undefined) {
+			process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = original.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+		} else {
+			delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+		}
+		if (original.ANTHROPIC_DEFAULT_OPUS_MODEL !== undefined) {
+			process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = original.ANTHROPIC_DEFAULT_OPUS_MODEL;
+		} else {
+			delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+		}
 	}
 
 	/**
