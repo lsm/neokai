@@ -230,6 +230,7 @@ export default defineConfig({
 		timeout: 120 * 1000,
 		env: {
 			NODE_ENV: 'test',
+			DEFAULT_MODEL: 'haiku', // Use Haiku for faster and cheaper tests
 		},
 	},
 });

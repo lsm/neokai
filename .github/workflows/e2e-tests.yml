@@ -15,6 +15,7 @@ jobs:
           - home
           - 2-stage-creation
           - auto-scroll-toggle
+          - default-model-haiku
           - auto-title-generation
           - character-counter
           - chat-flow-improved
@@ -141,6 +142,7 @@ jobs:
           fi
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          DEFAULT_MODEL: haiku
 
       - name: Verify Playwright can launch browser
         working-directory: packages/e2e
@@ -185,6 +187,7 @@ jobs:
             bash -c "npx playwright test tests/${{ matrix.test }}.e2e.ts --reporter=list" 2>&1
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          DEFAULT_MODEL: haiku
           PLAYWRIGHT_BROWSERS_PATH: /home/runner/_work/_tool/e2e_tools
           CI: true
           PW_TEST_REUSE_CONTEXT: 1
