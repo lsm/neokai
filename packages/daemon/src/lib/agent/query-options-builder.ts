@@ -56,6 +56,15 @@ export class QueryOptionsBuilder {
 		// Get settings-derived options (from global settings)
 		const sdkSettingsOptions = await this.getSettingsOptions();
 
+		// Translate model ID for SDK compatibility
+		// GLM model IDs (glm-4.7, glm-4.5-air) need to be mapped to SDK-recognized IDs
+		// (default, haiku, opus) since the SDK only knows Anthropic model IDs
+		const providerService = getProviderService();
+		const sdkModelId = providerService.translateModelIdForSdk(config.model || 'default');
+		const sdkFallbackModel = config.fallbackModel
+			? providerService.translateModelIdForSdk(config.fallbackModel)
+			: undefined;
+
 		// Build all configuration components
 		const systemPromptConfig = this.buildSystemPrompt();
 		const disallowedTools = this.getDisallowedTools();
@@ -74,8 +83,8 @@ export class QueryOptionsBuilder {
 			...sdkSettingsOptions,
 
 			// ============ Model & Execution ============
-			model: config.model,
-			fallbackModel: config.fallbackModel,
+			model: sdkModelId,
+			fallbackModel: sdkFallbackModel,
 			maxTurns: config.maxTurns ?? Infinity,
 			maxBudgetUsd: config.maxBudgetUsd,
 
@@ -144,7 +153,8 @@ export class QueryOptionsBuilder {
 		// DEBUG: Log query options for verification
 		const useClaudeCodePreset = legacyToolsConfig?.useClaudeCodePreset ?? true;
 		this.logger.log(`Query options:`, {
-			model: cleanedOptions.model,
+			originalModel: config.model || 'default',
+			sdkModel: cleanedOptions.model,
 			fallbackModel: cleanedOptions.fallbackModel,
 			maxTurns: cleanedOptions.maxTurns,
 			maxBudgetUsd: cleanedOptions.maxBudgetUsd,

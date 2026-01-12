@@ -233,6 +233,34 @@ export class ProviderService {
 	}
 
 	/**
+	 * Translate a model ID to an SDK-recognized model ID
+	 *
+	 * GLM model IDs (glm-4.7, glm-4.5-air) are not recognized by the SDK.
+	 * The SDK only knows Anthropic model IDs: default, opus, haiku.
+	 *
+	 * For GLM models, we map them to Anthropic IDs:
+	 * - glm-4.7 → default (Sonnet tier, SDK's default)
+	 * - glm-4.5-air → haiku (Haiku tier, faster)
+	 *
+	 * The actual GLM model is selected via ANTHROPIC_DEFAULT_SONNET_MODEL env var.
+	 *
+	 * @param modelId - The model ID to translate
+	 * @returns SDK-recognized model ID
+	 */
+	translateModelIdForSdk(modelId: string): string {
+		if (this.isGlmModel(modelId)) {
+			// Map GLM models to Anthropic-style IDs that SDK recognizes
+			if (modelId === 'glm-4.5-air') {
+				return 'haiku';
+			}
+			// glm-4.7 and any other GLM models use 'default' (Sonnet tier)
+			return 'default';
+		}
+		// Anthropic models pass through
+		return modelId;
+	}
+
+	/**
 	 * Get environment variables for SDK subprocess based on model ID
 	 *
 	 * This is the primary method for model-based provider detection.
@@ -262,13 +290,13 @@ export class ProviderService {
 		return {
 			ANTHROPIC_BASE_URL: definition.baseUrl,
 			ANTHROPIC_API_KEY: apiKey,
-			ANTHROPIC_AUTH_TOKEN: apiKey,
+			// ANTHROPIC_AUTH_TOKEN: apiKey,
 			API_TIMEOUT_MS: '3000000',
 			CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
 			// Map Anthropic model aliases to GLM models
-			ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-4.5-air',
-			ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-4.7',
-			ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-4.7',
+			// ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-4.5-air',
+			// ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-4.7',
+			// ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-4.7',
 		};
 	}
 
