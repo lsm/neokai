@@ -80,15 +80,33 @@ test.describe('2-Stage Session Creation', () => {
 		// Verify initial title is "New Session"
 		await expect(page.locator('h2:has-text("New Session")')).toBeVisible();
 
-		// Send a message
+		// Send a message using the send button (more reliable than keyboard shortcut)
+		const testMessage = 'Reply with exactly: TEST_OK';
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
-		await textarea.fill('Help me write a Python function to calculate factorial');
-		await page.keyboard.press('Meta+Enter');
+		await textarea.fill(testMessage);
+
+		const sendButton = page.locator('[data-testid="send-button"]').first();
+		await expect(sendButton).toBeEnabled();
+		await sendButton.click();
+
+		// Verify user message appears in chat (confirms message was sent)
+		await expect(page.locator(`text="${testMessage}"`).first()).toBeVisible({ timeout: 5000 });
+
+		// Verify processing state appears
+		const stopButton = page.locator('[data-testid="stop-button"]');
+		await expect(stopButton).toBeVisible({ timeout: 5000 });
 
 		// Wait for response
+		// Note: This will timeout if API credentials are not configured
+		// or if there's an issue with the SDK
 		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
 			timeout: 60000,
 		});
+
+		// Verify we got a response (not just an error)
+		const assistantMessage = page.locator('[data-message-role="assistant"]').first();
+		const messageText = await assistantMessage.textContent();
+		expect(messageText).toBeTruthy();
 
 		// After first message, title should be generated (not "New Session")
 		// Wait for title to update (auto-title generation runs after first response)
