@@ -24,7 +24,7 @@ jobs:
   test-daemon-online:
     name: Daemon Online (${{ matrix.category }})
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     strategy:
       fail-fast: false
@@ -62,7 +62,7 @@ jobs:
   test-daemon-sdk-streaming-failures:
     name: Daemon Online (SDK streaming tests)
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v4
