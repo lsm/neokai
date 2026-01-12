@@ -401,7 +401,7 @@ jobs:
         run: bun test tests/online/session/glm-multiturn.test.ts
         env:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
-          # CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
   # Standalone job for SDK streaming tests with different permission modes
   # Includes diagnostic test for bypassPermissions (expected to fail gracefully on CI as root)
