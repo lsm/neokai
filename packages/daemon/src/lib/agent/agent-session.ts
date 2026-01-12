@@ -37,6 +37,19 @@ import { validateAndRepairSDKSession } from '../sdk-session-file-manager';
 type SDKQueryObject = Query | null;
 
 /**
+ * Original environment variables for restoration after SDK query
+ */
+interface OriginalEnvVars {
+	ANTHROPIC_AUTH_TOKEN?: string;
+	ANTHROPIC_BASE_URL?: string;
+	API_TIMEOUT_MS?: string;
+	CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC?: string;
+	ANTHROPIC_DEFAULT_SONNET_MODEL?: string;
+	ANTHROPIC_DEFAULT_HAIKU_MODEL?: string;
+	ANTHROPIC_DEFAULT_OPUS_MODEL?: string;
+}
+
+/**
  * Agent Session - wraps a single session with Claude using Claude Agent SDK
  *
  * Uses STREAMING INPUT mode - a single persistent SDK query with AsyncGenerator
@@ -88,6 +101,9 @@ export class AgentSession {
 
 	// Session-specific settings manager (created per-session for worktree isolation)
 	private settingsManager: SettingsManager;
+
+	// Original env vars to restore after SDK query completes
+	private originalEnvVars: OriginalEnvVars = {};
 
 	private logger: Logger;
 
@@ -626,11 +642,20 @@ export class AgentSession {
 	 */
 	private async runQuery(): Promise<void> {
 		try {
-			// Verify authentication
-			const hasAuth = !!(process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY);
+			// Verify authentication - check for any available provider credentials
+			// Supports Anthropic (ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN) and GLM (GLM_API_KEY, ZHIPU_API_KEY)
+			const { getProviderService } = await import('../provider-service');
+			const providerService = getProviderService();
+
+			const hasAnthropicAuth = !!(
+				process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY
+			);
+			const hasGlmAuth = providerService.isGlmAvailable();
+			const hasAuth = hasAnthropicAuth || hasGlmAuth;
+
 			if (!hasAuth) {
 				const authError = new Error(
-					'No authentication configured. Please set up OAuth or API key.'
+					'No authentication configured. Please set up API key for Anthropic or GLM.'
 				);
 				await this.errorManager.handleError(
 					this.session.id,
@@ -672,16 +697,38 @@ export class AgentSession {
 			// Add session state options (resume, thinking tokens)
 			queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
 
+			// DEBUG: Log query options before creating SDK query
+			console.log('[AgentSession] Creating SDK query with options:', {
+				model: queryOptions.model,
+				env: queryOptions.env ? Object.keys(queryOptions.env) : 'none',
+				permissionMode: queryOptions.permissionMode,
+				allowDangerouslySkipPermissions: queryOptions.allowDangerouslySkipPermissions,
+				// Don't log the actual env values to avoid leaking secrets
+			});
+
+			// IMPORTANT: Apply provider env vars to process.env before creating SDK query
+			// This is required for GLM to work - the SDK subprocess inherits these env vars
+			const modelId = this.session.config.model || 'default';
+			this.originalEnvVars = providerService.applyEnvVarsToProcess(modelId);
+
+			// Log if we're using GLM (for debugging)
+			if (providerService.isGlmModel(modelId)) {
+				this.logger.log(`Applied GLM env vars for model ${modelId} to process.env`);
+			}
+
 			// Create query with AsyncGenerator from MessageQueue
+			console.log('[AgentSession] About to call query() function...');
 			this.queryObject = query({
 				prompt: this.createMessageGeneratorWrapper(),
 				options: queryOptions,
 			});
+			console.log('[AgentSession] Query object created successfully!');
 
 			// Process SDK messages - MUST start immediately!
 			// The SDK methods (supportedCommands, supportedModels) require the query to be
 			// actively consumed, so we start processing first and fetch metadata in the background.
 			this.logger.log(`Processing SDK stream...`);
+			console.log('[AgentSession] About to iterate over queryObject...');
 
 			// Fire-and-forget: fetch slash commands and models in background
 			// These don't block message processing and will complete when the SDK is ready
@@ -697,9 +744,14 @@ export class AgentSession {
 				throw new Error('Query object is null after initialization');
 			}
 
+			console.log('[AgentSession] Starting for-await loop over queryObject...');
+			let messageCount = 0;
+
 			for await (const message of this.queryObject) {
-				// DEBUG: Log SDK message received (CI debugging)
-				console.log(`[AgentSession] SDK message received - type: ${(message as SDKMessage).type}`);
+				messageCount++;
+				console.log(
+					`[AgentSession] SDK message #${messageCount} received - type: ${(message as SDKMessage).type}`
+				);
 
 				// Mark that we've received at least one message from SDK
 				// This indicates ProcessTransport is ready for control methods (setModel, interrupt, etc.)
@@ -804,6 +856,19 @@ export class AgentSession {
 			// This is essential for multi-message sequences where the SDK query
 			// finishes after first message and needs to restart for subsequent messages
 			this.queryPromise = null;
+
+			// Restore original env vars after SDK query completes
+			// This is critical for GLM support - we apply provider env vars before
+			// the query and must restore them after to avoid affecting other sessions
+			if (Object.keys(this.originalEnvVars).length > 0) {
+				// Re-import getProviderService since we're in a different scope
+				const { getProviderService: getProviderServiceRestore } =
+					await import('../provider-service');
+				const providerServiceRestore = getProviderServiceRestore();
+				providerServiceRestore.restoreEnvVars(this.originalEnvVars);
+				this.originalEnvVars = {};
+				this.logger.log('Restored original environment variables after SDK query');
+			}
 
 			// Ensure state is reset to idle when streaming stops (normal or error)
 			// Skip if cleanup is in progress to avoid "closed database" errors
