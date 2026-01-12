@@ -9,8 +9,8 @@ on:
 
 # Limit concurrency to avoid overwhelming the GLM API
 concurrency:
-  group: daemon-online-tests
-  limit: 4
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   # ============================================
