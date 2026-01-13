@@ -104,19 +104,12 @@ web:
 
 sync-sdk-types:
 	@echo "Syncing Claude SDK type definitions..."
-	@mkdir -p packages/shared/src/sdk/entrypoints/sdk
-	@mkdir -p packages/shared/src/sdk/transport
-	@# Copy main entry files
+	@mkdir -p packages/shared/src/sdk
+	@# Copy main SDK type files (SDK 0.2.5 only has these at the root)
 	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts packages/shared/src/sdk/
 	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk-tools.d.ts packages/shared/src/sdk/
-	@# Copy entrypoints
-	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/entrypoints/agentSdkTypes.d.ts packages/shared/src/sdk/entrypoints/
-	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/entrypoints/sandboxTypes.d.ts packages/shared/src/sdk/entrypoints/
-	@# Copy SDK type modules
-	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/entrypoints/sdk/*.d.ts packages/shared/src/sdk/entrypoints/sdk/
-	@# Copy transport types
-	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/transport/*.d.ts packages/shared/src/sdk/transport/
 	@echo "✓ SDK types synced to packages/shared/src/sdk/"
+	@echo "  NOTE: SDK 0.2.5 only provides sdk.d.ts and sdk-tools.d.ts at root level"
 
 sync-claude-prompts:
 	@echo "📥 Syncing Claude Code system prompts..."
