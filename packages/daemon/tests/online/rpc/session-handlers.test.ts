@@ -44,6 +44,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 				const sessionId = await ctx.sessionManager.createSession({
 					workspacePath: `${tmpDir}/liuboer-test-message-send-${Date.now()}`,
 					useWorktree: false, // Disable worktrees for test speed
+					config: { model: 'haiku' }, // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				});
 
 				const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');

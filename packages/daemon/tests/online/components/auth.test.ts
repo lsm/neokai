@@ -38,6 +38,7 @@ describe.skipIf(!GLM_API_KEY)('Authentication Integration (API-dependent)', () =
 		test('should create session only if authenticated', async () => {
 			const result = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-auth`,
+				config: { model: 'haiku' }, // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 			});
 
 			expect(result.sessionId).toBeString();
