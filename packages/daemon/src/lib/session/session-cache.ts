@@ -95,6 +95,12 @@ export class SessionCache {
 				this.sessions.set(sessionId, agentSession);
 			}
 			return agentSession;
+		} catch (error) {
+			// FIX: Log the specific error for debugging
+			// When createAgentSession() throws, we need to know WHY
+			console.error(`[SessionCache] Failed to load session ${sessionId}:`, error);
+			// Return null instead of throwing so caller can handle gracefully
+			return null;
 		} finally {
 			this.sessionLoadLocks.delete(sessionId);
 		}

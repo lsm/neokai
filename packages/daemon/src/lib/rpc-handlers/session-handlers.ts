@@ -65,6 +65,22 @@ export function setupSessionHandlers(
 		};
 	});
 
+	// FIX: Session health check to detect and report stuck sessions
+	// Use case: Diagnose sessions that can't be loaded (zombie sessions)
+	// Returns: valid (boolean), error (string if invalid)
+	messageHub.handle('session.validate', async (data) => {
+		const { sessionId: targetSessionId } = data as { sessionId: string };
+		try {
+			const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+			return { valid: agentSession !== null, error: null };
+		} catch (error) {
+			return {
+				valid: false,
+				error: error instanceof Error ? error.message : String(error),
+			};
+		}
+	});
+
 	messageHub.handle('session.update', async (data, _ctx) => {
 		const { sessionId: targetSessionId, ...updates } = data as UpdateSessionRequest & {
 			sessionId: string;

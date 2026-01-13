@@ -56,10 +56,11 @@ export class MessagePersistence {
 
 		const agentSession = await this.sessionCache.getAsync(sessionId);
 		if (!agentSession) {
-			this.logger.error(
-				`[MessagePersistence] Session ${sessionId} not found for message persistence`
-			);
-			return;
+			const error = `[MessagePersistence] Session ${sessionId} not found for message persistence`;
+			this.logger.error(error);
+			// FIX: Throw instead of returning early so error is propagated
+			// This prevents messages from being silently lost when session fails to load
+			throw new Error(error);
 		}
 
 		const session = agentSession.getSessionData();
