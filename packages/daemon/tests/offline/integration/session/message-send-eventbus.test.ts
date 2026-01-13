@@ -130,10 +130,11 @@ describe('message.send EventBus Integration', () => {
 		expect(session.metadata.titleGenerated).toBe(false);
 
 		// Mock the title generation to avoid API call
-		// After refactoring, generateTitleFromMessage is on SessionLifecycle
+		// After refactoring, generateTitleFromMessage returns { title, isFallback }
 		const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
+		const originalGenerate = lifecycle.generateTitleFromMessage;
 		lifecycle.generateTitleFromMessage = async (text: string) => {
-			return text.substring(0, 20);
+			return { title: text.substring(0, 20), isFallback: false };
 		};
 
 		// Emit the event directly (simulating what RPC handler does)
@@ -152,6 +153,9 @@ describe('message.send EventBus Integration', () => {
 		// Get updated session
 		session = agentSession!.getSessionData();
 
+		// Restore original method
+		lifecycle.generateTitleFromMessage = originalGenerate;
+
 		// Verify title was generated
 		expect(session.metadata.titleGenerated).toBe(true);
 		expect(session.title).toBe('Test message for tit'); // First 20 chars
@@ -163,10 +167,11 @@ describe('message.send EventBus Integration', () => {
 		});
 
 		// Mock title generation
-		// After refactoring, generateTitleFromMessage is on SessionLifecycle
+		// After refactoring, generateTitleFromMessage returns { title, isFallback }
 		const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
+		const originalGenerate = lifecycle.generateTitleFromMessage;
 		lifecycle.generateTitleFromMessage = async (text: string) => {
-			return text.substring(0, 20);
+			return { title: text.substring(0, 20), isFallback: false };
 		};
 
 		// Generate title first
@@ -196,6 +201,9 @@ describe('message.send EventBus Integration', () => {
 		const updatedSession = agentSession!.getSessionData();
 		expect(updatedSession.metadata.titleGenerated).toBe(true);
 		expect(updatedSession.title).toBe(originalTitle);
+
+		// Restore original method
+		lifecycle.generateTitleFromMessage = originalGenerate;
 	});
 
 	test('EventBus subscriber handles draft clearing', async () => {
