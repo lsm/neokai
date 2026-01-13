@@ -5,8 +5,9 @@
  * Allows users to select predefined options or enter custom text.
  *
  * Features:
- * - Single and multi-select support
- * - "Other" option for custom text input
+ * - Single and multi-select support with checkbox indicators
+ * - "Other" option for custom text input (multi-line textarea)
+ * - Collapsible header like other tool cards
  * - Draft saving for persistence across refreshes
  * - Cancel/dismiss option
  * - Shows resolved state (submitted/cancelled) in disabled form
@@ -18,6 +19,34 @@ import { useMessageHub } from '../hooks/useMessageHub.ts';
 import { Button } from './ui/Button.tsx';
 import { cn } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
+
+// Rose/pink color scheme to differentiate from ThinkingBlock's amber
+const questionColors = {
+	// Active/pending state
+	active: {
+		bg: 'bg-rose-950/30',
+		border: 'border-rose-200 dark:border-rose-800',
+		text: 'text-rose-200',
+		iconColor: 'text-rose-400',
+		selectedBg: 'bg-rose-900/60 border-rose-500 text-rose-100',
+		unselectedBg: 'bg-dark-800/60',
+		unselectedText: 'text-gray-300',
+	},
+	// Submitted state
+	submitted: {
+		bg: 'bg-green-950/20',
+		border: borderColors.semantic.success,
+		text: 'text-green-200',
+		iconColor: 'text-green-400',
+	},
+	// Cancelled state
+	cancelled: {
+		bg: 'bg-gray-900/30',
+		border: borderColors.ui.secondary,
+		text: 'text-gray-400',
+		iconColor: 'text-gray-400',
+	},
+};
 
 export type ResolvedState = 'submitted' | 'cancelled' | null;
 
@@ -42,6 +71,9 @@ export function QuestionPrompt({
 	const { questions, toolUseId, draftResponses } = pendingQuestion;
 	const { callIfConnected } = useMessageHub();
 	const isResolved = resolvedState !== null;
+
+	// Collapse state for the question block (expand by default for pending, collapsed for resolved)
+	const [isExpanded, setIsExpanded] = useState(!isResolved);
 
 	// Track selections for each question (map of questionIndex -> Set of selected labels)
 	const [selections, setSelections] = useState<Map<number, Set<string>>>(() => {
@@ -238,193 +270,360 @@ export function QuestionPrompt({
 		return hasSelection || hasCustom;
 	});
 
-	// Determine header based on state
-	const getHeaderContent = () => {
-		if (resolvedState === 'submitted') {
-			return (
-				<>
-					<span class="text-green-400 text-lg">✓</span>
-					<span class="font-medium text-green-200">Response submitted</span>
-				</>
-			);
-		}
-		if (resolvedState === 'cancelled') {
-			return (
-				<>
-					<span class="text-gray-400 text-lg">✕</span>
-					<span class="font-medium text-gray-400">Question skipped</span>
-				</>
-			);
-		}
-		return (
-			<>
-				<span class="text-amber-400 text-lg">?</span>
-				<span class="font-medium text-amber-200">Claude needs your input</span>
-			</>
-		);
-	};
-
 	// Get container styling based on state
 	const getContainerClasses = () => {
 		if (resolvedState === 'submitted') {
 			return cn(
-				'rounded-xl border p-4 my-4 mx-auto max-w-2xl',
-				'bg-green-950/20 opacity-80',
-				borderColors.semantic.success
+				'rounded-lg border overflow-hidden my-4',
+				questionColors.submitted.bg,
+				questionColors.submitted.border,
+				'opacity-80'
 			);
 		}
 		if (resolvedState === 'cancelled') {
 			return cn(
-				'rounded-xl border p-4 my-4 mx-auto max-w-2xl',
-				'bg-gray-900/30 opacity-60',
-				borderColors.ui.secondary
+				'rounded-lg border overflow-hidden my-4',
+				questionColors.cancelled.bg,
+				questionColors.cancelled.border,
+				'opacity-60'
 			);
 		}
 		return cn(
-			'rounded-xl border p-4 my-4 mx-auto max-w-2xl',
-			'bg-amber-950/30',
-			borderColors.semantic.warning
+			'rounded-lg border overflow-hidden my-4',
+			questionColors.active.bg,
+			questionColors.active.border
 		);
+	};
+
+	// Get header icon based on state
+	const getHeaderIcon = () => {
+		if (resolvedState === 'submitted') {
+			return (
+				<svg
+					class={cn('w-4 h-4 flex-shrink-0', questionColors.submitted.iconColor)}
+					fill="none"
+					stroke="currentColor"
+					viewBox="0 0 24 24"
+				>
+					<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+				</svg>
+			);
+		}
+		if (resolvedState === 'cancelled') {
+			return (
+				<svg
+					class={cn('w-4 h-4 flex-shrink-0', questionColors.cancelled.iconColor)}
+					fill="none"
+					stroke="currentColor"
+					viewBox="0 0 24 24"
+				>
+					<path
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						strokeWidth={2}
+						d="M6 18L18 6M6 6l12 12"
+					/>
+				</svg>
+			);
+		}
+		return (
+			<svg
+				class={cn('w-4 h-4 flex-shrink-0', questionColors.active.iconColor)}
+				fill="none"
+				stroke="currentColor"
+				viewBox="0 0 24 24"
+			>
+				<path
+					strokeLinecap="round"
+					strokeLinejoin="round"
+					strokeWidth={2}
+					d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+				/>
+			</svg>
+		);
+	};
+
+	// Get header title based on state
+	const getHeaderTitle = () => {
+		if (resolvedState === 'submitted') return 'Response submitted';
+		if (resolvedState === 'cancelled') return 'Question skipped';
+		return 'Claude needs your input';
+	};
+
+	// Get header text color based on state
+	const getHeaderTextColor = () => {
+		if (resolvedState === 'submitted') return questionColors.submitted.text;
+		if (resolvedState === 'cancelled') return questionColors.cancelled.text;
+		return questionColors.active.text;
+	};
+
+	// Get header icon color based on state
+	const getChevronColor = () => {
+		if (resolvedState === 'submitted') return questionColors.submitted.iconColor;
+		if (resolvedState === 'cancelled') return questionColors.cancelled.iconColor;
+		return questionColors.active.iconColor;
 	};
 
 	return (
 		<div class={getContainerClasses()}>
-			{/* Header */}
-			<div class="flex items-center gap-2 mb-4">{getHeaderContent()}</div>
-
-			{/* Questions */}
-			{questions.map((question, qIndex) => (
-				<div key={qIndex} class="mb-6 last:mb-4">
-					{/* Question header and text */}
-					<div class="mb-3">
-						<span
-							class={cn(
-								'inline-block px-2 py-0.5 text-xs rounded mr-2',
-								resolvedState === 'cancelled'
-									? 'bg-gray-800/50 text-gray-500 border border-gray-700'
-									: cn('bg-amber-900/50 text-amber-300 border', borderColors.semantic.warning)
-							)}
-						>
-							{question.header}
+			{/* Collapsible Header - like ToolResultCard */}
+			<button
+				onClick={() => !isResolved && setIsExpanded(!isExpanded)}
+				class={cn(
+					'w-full flex items-center justify-between p-3 transition-colors',
+					isResolved ? 'cursor-default' : 'hover:bg-opacity-80 dark:hover:bg-opacity-80'
+				)}
+				disabled={isResolved}
+			>
+				<div class="flex items-center gap-2 min-w-0 flex-1">
+					{getHeaderIcon()}
+					<span class={cn('font-semibold text-sm flex-shrink-0', getHeaderTextColor())}>
+						{getHeaderTitle()}
+					</span>
+					{!isResolved && questions.length > 0 && (
+						<span class={cn('text-xs text-gray-500 truncate')}>
+							{questions.length} question{questions.length > 1 ? 's' : ''}
 						</span>
-						<span class={cn('text-gray-200', resolvedState === 'cancelled' && 'text-gray-500')}>
-							{question.question}
-						</span>
-					</div>
-
-					{/* Options */}
-					<div class="flex flex-wrap gap-2">
-						{question.options.map((option) => {
-							const isSelected = selections.get(qIndex)?.has(option.label);
-							return (
-								<button
-									key={option.label}
-									onClick={() => handleOptionClick(qIndex, option.label)}
-									disabled={isResolved}
-									class={cn(
-										'px-3 py-2 rounded-lg border transition-all text-left',
-										!isResolved && 'hover:scale-[1.02] active:scale-[0.98]',
-										isResolved && 'cursor-default',
-										isSelected
-											? resolvedState === 'cancelled'
-												? 'bg-gray-800/40 border-gray-600 text-gray-400'
-												: 'bg-amber-900/60 border-amber-500 text-amber-100'
-											: cn(
-													'bg-dark-800/60',
-													resolvedState === 'cancelled' ? 'text-gray-600' : 'text-gray-300',
-													borderColors.ui.secondary,
-													!isResolved && 'hover:border-amber-600/50'
-												)
-									)}
-									title={option.description}
-								>
-									<div class="font-medium text-sm">{option.label}</div>
-									<div
-										class={cn(
-											'text-xs mt-0.5',
-											resolvedState === 'cancelled' ? 'text-gray-700' : 'text-gray-500'
-										)}
-									>
-										{option.description}
-									</div>
-								</button>
-							);
-						})}
-
-						{/* Other option button - hide for cancelled state with no custom input */}
-						{!(resolvedState === 'cancelled' && !showOther.has(qIndex)) && (
-							<button
-								onClick={() => handleOtherClick(qIndex)}
-								disabled={isResolved}
-								class={cn(
-									'px-3 py-2 rounded-lg border transition-all',
-									!isResolved && 'hover:scale-[1.02] active:scale-[0.98]',
-									isResolved && 'cursor-default',
-									showOther.has(qIndex)
-										? resolvedState === 'cancelled'
-											? 'bg-gray-800/40 border-gray-600 text-gray-400'
-											: 'bg-amber-900/60 border-amber-500 text-amber-100'
-										: cn(
-												'bg-dark-800/60',
-												resolvedState === 'cancelled' ? 'text-gray-600' : 'text-gray-400',
-												borderColors.ui.secondary,
-												!isResolved && 'hover:border-amber-600/50'
-											)
-								)}
-							>
-								<div class="font-medium text-sm">Other...</div>
-								<div
-									class={cn(
-										'text-xs mt-0.5',
-										resolvedState === 'cancelled' ? 'text-gray-700' : 'text-gray-500'
-									)}
-								>
-									Enter custom answer
-								</div>
-							</button>
-						)}
-					</div>
-
-					{/* Custom text input when "Other" is selected */}
-					{showOther.has(qIndex) && (
-						<input
-							type="text"
-							placeholder="Enter your response..."
-							value={customInputs.get(qIndex) || ''}
-							onInput={(e) => handleCustomInput(qIndex, (e.target as HTMLInputElement).value)}
-							disabled={isResolved}
-							class={cn(
-								'mt-3 w-full px-3 py-2 rounded-lg border',
-								'bg-dark-800/80 placeholder-gray-500',
-								isResolved ? 'text-gray-400 cursor-default' : 'text-gray-100',
-								'focus:outline-none focus:border-amber-500',
-								borderColors.ui.secondary
-							)}
-						/>
 					)}
 				</div>
-			))}
+				{!isResolved && (
+					<svg
+						class={cn(
+							'w-5 h-5 transition-transform flex-shrink-0',
+							getChevronColor(),
+							isExpanded ? 'rotate-180' : ''
+						)}
+						fill="none"
+						stroke="currentColor"
+						viewBox="0 0 24 24"
+					>
+						<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+					</svg>
+				)}
+			</button>
 
-			{/* Action buttons - only show for pending state */}
-			{!isResolved && (
-				<div class="flex items-center gap-3 pt-2 border-t border-dark-700">
-					<Button
-						variant="primary"
-						onClick={handleSubmit}
-						disabled={!isValid || isSubmitting || isCancelling}
-						loading={isSubmitting}
-						class="bg-amber-600 hover:bg-amber-700"
-					>
-						Submit Response
-					</Button>
-					<Button
-						variant="ghost"
-						onClick={handleCancel}
-						disabled={isSubmitting || isCancelling}
-						loading={isCancelling}
-					>
-						Skip Question
-					</Button>
+			{/* Expanded content area */}
+			{isExpanded && (
+				<div class="p-4 border-t bg-white dark:bg-gray-900 space-y-4 border-rose-200 dark:border-rose-800">
+					{questions.map((question, qIndex) => (
+						<div
+							key={qIndex}
+							class={cn('space-y-3', qIndex > 0 && 'pt-4 border-t border-dark-700')}
+						>
+							{/* Question header and text */}
+							<div class="flex items-start gap-2">
+								<span
+									class={cn(
+										'inline-block px-2 py-0.5 text-xs rounded flex-shrink-0',
+										resolvedState === 'cancelled'
+											? 'bg-gray-800/50 text-gray-500 border border-gray-700'
+											: cn('bg-rose-900/50 text-rose-300 border', questionColors.active.border)
+									)}
+								>
+									{question.header}
+								</span>
+								<div class="flex items-center gap-2">
+									<span
+										class={cn(
+											'text-sm text-gray-200',
+											resolvedState === 'cancelled' && 'text-gray-500'
+										)}
+									>
+										{question.question}
+									</span>
+									{question.multiSelect && !isResolved && (
+										<span
+											class={cn(
+												'inline-flex items-center px-1.5 py-0.5 text-xs rounded',
+												'bg-rose-900/30 text-rose-400 border border-rose-700/50'
+											)}
+										>
+											<svg
+												class="w-3 h-3 mr-1"
+												fill="none"
+												viewBox="0 0 24 24"
+												stroke="currentColor"
+											>
+												<path
+													strokeLinecap="round"
+													strokeLinejoin="round"
+													strokeWidth={2}
+													d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+												/>
+											</svg>
+											Multi-select
+										</span>
+									)}
+								</div>
+							</div>
+
+							{/* Options grid layout */}
+							<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+								{question.options.map((option) => {
+									const isSelected = selections.get(qIndex)?.has(option.label);
+									return (
+										<button
+											key={option.label}
+											onClick={() => handleOptionClick(qIndex, option.label)}
+											disabled={isResolved}
+											class={cn(
+												'p-3 rounded-lg border transition-all text-left relative',
+												!isResolved && 'hover:scale-[1.01] active:scale-[0.99]',
+												isResolved && 'cursor-default',
+												isSelected
+													? resolvedState === 'cancelled'
+														? 'bg-gray-800/40 border-gray-600 text-gray-400'
+														: questionColors.active.selectedBg
+													: cn(
+															questionColors.active.unselectedBg,
+															resolvedState === 'cancelled'
+																? 'text-gray-600'
+																: questionColors.active.unselectedText,
+															borderColors.ui.secondary,
+															!isResolved && 'hover:border-rose-600/50'
+														)
+											)}
+											title={option.description}
+										>
+											{/* Checkbox indicator for multi-select */}
+											{question.multiSelect && (
+												<div
+													class={cn(
+														'absolute top-2 right-2 w-4 h-4 rounded border flex items-center justify-center',
+														isSelected ? 'bg-rose-500 border-rose-500' : 'border-gray-500'
+													)}
+												>
+													{isSelected && (
+														<svg
+															class="w-3 h-3 text-white"
+															fill="none"
+															viewBox="0 0 24 24"
+															stroke="currentColor"
+														>
+															<path
+																strokeLinecap="round"
+																strokeLinejoin="round"
+																strokeWidth={3}
+																d="M5 13l4 4L19 7"
+															/>
+														</svg>
+													)}
+												</div>
+											)}
+											{/* Radio indicator for single select */}
+											{!question.multiSelect && (
+												<div
+													class={cn(
+														'absolute top-2 right-2 w-4 h-4 rounded-full border flex items-center justify-center',
+														isSelected ? 'border-rose-500' : 'border-gray-500'
+													)}
+												>
+													{isSelected && <div class="w-2 h-2 rounded-full bg-rose-500" />}
+												</div>
+											)}
+											<div class="pr-6">
+												<div class="font-medium text-sm">{option.label}</div>
+												<div
+													class={cn(
+														'text-xs mt-0.5',
+														resolvedState === 'cancelled' ? 'text-gray-700' : 'text-gray-500'
+													)}
+												>
+													{option.description}
+												</div>
+											</div>
+										</button>
+									);
+								})}
+
+								{/* Other option button */}
+								{!(resolvedState === 'cancelled' && !showOther.has(qIndex)) && (
+									<button
+										onClick={() => handleOtherClick(qIndex)}
+										disabled={isResolved}
+										class={cn(
+											'p-3 rounded-lg border transition-all text-left relative',
+											!isResolved && 'hover:scale-[1.01] active:scale-[0.99]',
+											isResolved && 'cursor-default',
+											showOther.has(qIndex)
+												? resolvedState === 'cancelled'
+													? 'bg-gray-800/40 border-gray-600 text-gray-400'
+													: questionColors.active.selectedBg
+												: cn(
+														questionColors.active.unselectedBg,
+														resolvedState === 'cancelled' ? 'text-gray-600' : 'text-gray-400',
+														borderColors.ui.secondary,
+														!isResolved && 'hover:border-rose-600/50'
+													)
+										)}
+									>
+										<div
+											class={cn(
+												'absolute top-2 right-2 w-4 h-4 rounded-full border flex items-center justify-center',
+												showOther.has(qIndex) ? 'border-rose-500' : 'border-gray-500'
+											)}
+										>
+											{showOther.has(qIndex) && <div class="w-2 h-2 rounded-full bg-rose-500" />}
+										</div>
+										<div class="pr-6">
+											<div class="font-medium text-sm">Other...</div>
+											<div
+												class={cn(
+													'text-xs mt-0.5',
+													resolvedState === 'cancelled' ? 'text-gray-700' : 'text-gray-500'
+												)}
+											>
+												Enter custom answer
+											</div>
+										</div>
+									</button>
+								)}
+							</div>
+
+							{/* Custom text input when "Other" is selected - multi-line textarea */}
+							{showOther.has(qIndex) && (
+								<textarea
+									placeholder="Enter your response..."
+									value={customInputs.get(qIndex) || ''}
+									onInput={(e) =>
+										handleCustomInput(qIndex, (e.target as HTMLTextAreaElement).value)
+									}
+									disabled={isResolved}
+									rows={3}
+									class={cn(
+										'w-full px-3 py-2 rounded-lg border resize-y min-h-[80px] max-h-[200px]',
+										'bg-dark-800/80 placeholder-gray-500',
+										isResolved ? 'text-gray-400 cursor-default' : 'text-gray-100',
+										'focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500/50',
+										borderColors.ui.secondary
+									)}
+								/>
+							)}
+						</div>
+					))}
+
+					{/* Action buttons - only show for pending state */}
+					{!isResolved && (
+						<div class="flex items-center gap-3 pt-4 border-t border-dark-700">
+							<Button
+								variant="primary"
+								onClick={handleSubmit}
+								disabled={!isValid || isSubmitting || isCancelling}
+								loading={isSubmitting}
+								class="bg-rose-600 hover:bg-rose-700"
+							>
+								Submit Response
+							</Button>
+							<Button
+								variant="ghost"
+								onClick={handleCancel}
+								disabled={isSubmitting || isCancelling}
+								loading={isCancelling}
+							>
+								Skip Question
+							</Button>
+						</div>
+					)}
 				</div>
 			)}
 		</div>

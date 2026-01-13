@@ -139,7 +139,7 @@ describe('QuestionPrompt', () => {
 			fireEvent.click(editButton);
 
 			// Button should have selected styling
-			expect(editButton.className).toContain('bg-amber-900/60');
+			expect(editButton.className).toContain('bg-rose-900/60');
 		});
 
 		it('should deselect previous option when new option is selected', () => {
@@ -158,8 +158,8 @@ describe('QuestionPrompt', () => {
 			fireEvent.click(deleteButton);
 
 			// Delete should be selected, Edit should not
-			expect(deleteButton.className).toContain('bg-amber-900/60');
-			expect(editButton.className).not.toContain('bg-amber-900/60');
+			expect(deleteButton.className).toContain('bg-rose-900/60');
+			expect(editButton.className).not.toContain('bg-rose-900/60');
 		});
 
 		it('should clear selection when "Other" is clicked', () => {
@@ -178,7 +178,7 @@ describe('QuestionPrompt', () => {
 			fireEvent.click(otherButton);
 
 			// Edit should be deselected
-			expect(editButton.className).not.toContain('bg-amber-900/60');
+			expect(editButton.className).not.toContain('bg-rose-900/60');
 		});
 	});
 
@@ -199,8 +199,8 @@ describe('QuestionPrompt', () => {
 			fireEvent.click(notificationsBtn);
 
 			// Both should be selected
-			expect(darkModeBtn.className).toContain('bg-amber-900/60');
-			expect(notificationsBtn.className).toContain('bg-amber-900/60');
+			expect(darkModeBtn.className).toContain('bg-rose-900/60');
+			expect(notificationsBtn.className).toContain('bg-rose-900/60');
 		});
 
 		it('should toggle selection on repeated clicks', () => {
@@ -213,15 +213,15 @@ describe('QuestionPrompt', () => {
 			)!;
 
 			fireEvent.click(darkModeBtn);
-			expect(darkModeBtn.className).toContain('bg-amber-900/60');
+			expect(darkModeBtn.className).toContain('bg-rose-900/60');
 
 			fireEvent.click(darkModeBtn);
-			expect(darkModeBtn.className).not.toContain('bg-amber-900/60');
+			expect(darkModeBtn.className).not.toContain('bg-rose-900/60');
 		});
 	});
 
 	describe('Custom Input', () => {
-		it('should show custom input when "Other" is clicked', () => {
+		it('should show custom textarea when "Other" is clicked', () => {
 			const { container } = render(
 				<QuestionPrompt sessionId="session-1" pendingQuestion={mockPendingQuestion} />
 			);
@@ -231,8 +231,8 @@ describe('QuestionPrompt', () => {
 			)!;
 			fireEvent.click(otherButton);
 
-			const input = container.querySelector('input[type="text"]');
-			expect(input).toBeTruthy();
+			const textarea = container.querySelector('textarea');
+			expect(textarea).toBeTruthy();
 		});
 
 		it('should accept custom input text', () => {
@@ -245,10 +245,10 @@ describe('QuestionPrompt', () => {
 			)!;
 			fireEvent.click(otherButton);
 
-			const input = container.querySelector('input[type="text"]')! as HTMLInputElement;
-			fireEvent.input(input, { target: { value: 'Custom response' } });
+			const textarea = container.querySelector('textarea')! as HTMLTextAreaElement;
+			fireEvent.input(textarea, { target: { value: 'Custom response' } });
 
-			expect(input.value).toBe('Custom response');
+			expect(textarea.value).toBe('Custom response');
 		});
 	});
 
@@ -369,7 +369,7 @@ describe('QuestionPrompt', () => {
 			)!;
 
 			// Edit should have selected styling
-			expect(editButton.className).toContain('bg-amber-900/60');
+			expect(editButton.className).toContain('bg-rose-900/60');
 		});
 	});
 
@@ -388,7 +388,7 @@ describe('QuestionPrompt', () => {
 				btn.textContent?.includes('Delete')
 			)!;
 
-			expect(deleteButton.className).toContain('bg-amber-900/60');
+			expect(deleteButton.className).toContain('bg-rose-900/60');
 		});
 
 		it('should initialize custom text from draft responses', () => {
@@ -401,8 +401,8 @@ describe('QuestionPrompt', () => {
 				<QuestionPrompt sessionId="session-1" pendingQuestion={questionWithDraft} />
 			);
 
-			const input = container.querySelector('input[type="text"]')! as HTMLInputElement;
-			expect(input.value).toBe('My custom answer');
+			const textarea = container.querySelector('textarea')! as HTMLTextAreaElement;
+			expect(textarea.value).toBe('My custom answer');
 		});
 	});
 
