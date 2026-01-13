@@ -158,6 +158,12 @@ main() {
     # Add to PATH
     echo "${BUN_BIN}" >> "$GITHUB_PATH"
 
+    # Set BUN_INSTALL_CACHE_DIR for package extraction
+    # This is needed for bun install to have a writable tempdir
+    local cache_dir="${BUN_INSTALL}/cache"
+    mkdir -p "$cache_dir"
+    echo "BUN_INSTALL_CACHE_DIR=${cache_dir}" >> "$GITHUB_ENV"
+
     # Set outputs
     output "bun-version" "$final_version"
     output "bun-path" "$BUN_PATH"
