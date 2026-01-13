@@ -4,7 +4,7 @@
  */
 
 import { render, cleanup, waitFor } from '@testing-library/preact';
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { Portal } from '../Portal';
 
 describe('Portal', () => {

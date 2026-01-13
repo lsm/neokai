@@ -4,7 +4,7 @@
  */
 
 import { render } from '@testing-library/preact';
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { IconButton } from '../IconButton';
 
 describe('IconButton', () => {
@@ -118,7 +118,7 @@ describe('IconButton', () => {
 
 	describe('Interactions', () => {
 		it('should call onClick when clicked', () => {
-			const onClick = mock(() => {});
+			const onClick = vi.fn(() => {});
 			const { container } = render(
 				<IconButton onClick={onClick}>
 					<span>Icon</span>
@@ -132,7 +132,7 @@ describe('IconButton', () => {
 		});
 
 		it('should not call onClick when disabled', () => {
-			const onClick = mock(() => {});
+			const onClick = vi.fn(() => {});
 			const { container } = render(
 				<IconButton onClick={onClick} disabled>
 					<span>Icon</span>

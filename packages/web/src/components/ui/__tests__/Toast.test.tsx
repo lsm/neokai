@@ -4,12 +4,12 @@
  */
 
 import { render, cleanup } from '@testing-library/preact';
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { ToastItem } from '../Toast';
 import type { Toast } from '../../../lib/toast';
 
 // Mock the dismissToast function
-const mockDismissToast = mock(() => {});
+const mockDismissToast = vi.fn(() => {});
 
 // We need to mock the toast module
 const originalModule = await import('../../../lib/toast');

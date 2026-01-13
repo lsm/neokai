@@ -4,7 +4,7 @@
  *
  * Tests SDK message routing and rendering logic
  */
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import { render } from '@testing-library/preact';
 import { SDKMessageRenderer } from '../SDKMessageRenderer';

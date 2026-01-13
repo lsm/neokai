@@ -4,7 +4,7 @@
  */
 
 import { render } from '@testing-library/preact';
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { Button } from '../Button';
 
 describe('Button', () => {
@@ -122,7 +122,7 @@ describe('Button', () => {
 
 	describe('Interactions', () => {
 		it('should call onClick when clicked', () => {
-			const onClick = mock(() => {});
+			const onClick = vi.fn(() => {});
 			const { container } = render(<Button onClick={onClick}>Clickable</Button>);
 			const button = container.querySelector('button');
 
@@ -132,7 +132,7 @@ describe('Button', () => {
 		});
 
 		it('should not call onClick when disabled', () => {
-			const onClick = mock(() => {});
+			const onClick = vi.fn(() => {});
 			const { container } = render(
 				<Button onClick={onClick} disabled>
 					Disabled
@@ -147,7 +147,7 @@ describe('Button', () => {
 		});
 
 		it('should not call onClick when loading', () => {
-			const onClick = mock(() => {});
+			const onClick = vi.fn(() => {});
 			const { container } = render(
 				<Button onClick={onClick} loading>
 					Loading

@@ -4,15 +4,15 @@
  *
  * Tests the command autocomplete dropdown with navigation,
  * selection, and keyboard handling.
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
  */
 
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import CommandAutocomplete from '../CommandAutocomplete';
 
 describe('CommandAutocomplete', () => {
-	const mockOnSelect = mock(() => {});
-	const mockOnClose = mock(() => {});
+	const mockOnSelect = vi.fn(() => {});
+	const mockOnClose = vi.fn(() => {});
 
 	const mockCommands = ['/help', '/clear', '/reset', '/context', '/model'];
 

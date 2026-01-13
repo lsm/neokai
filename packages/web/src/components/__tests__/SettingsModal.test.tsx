@@ -4,8 +4,7 @@
  *
  * Tests pure logic without mock.module to avoid polluting other tests.
  */
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
-
+import { describe, it, expect } from 'vitest';
 
 describe('SettingsModal Logic', () => {
 	// Mock AuthStatus type
@@ -22,7 +21,7 @@ describe('SettingsModal Logic', () => {
 		});
 
 		it('should support async auth status loading', async () => {
-			const getAuthStatus = mock(() =>
+			const getAuthStatus = vi.fn(() =>
 				Promise.resolve({ authStatus: { isAuthenticated: true, method: 'api_key', source: 'env' } })
 			);
 			await getAuthStatus();
@@ -68,8 +67,8 @@ describe('SettingsModal Logic', () => {
 
 	describe('Error Handling', () => {
 		it('should handle async errors gracefully', async () => {
-			const getAuthStatus = mock(() => Promise.reject(new Error('Network error')));
-			const toastFn = mock(() => {});
+			const getAuthStatus = vi.fn(() => Promise.reject(new Error('Network error')));
+			const toastFn = vi.fn(() => {});
 
 			try {
 				await getAuthStatus();

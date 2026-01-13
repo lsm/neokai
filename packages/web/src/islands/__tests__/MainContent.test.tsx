@@ -4,7 +4,7 @@
  *
  * Tests pure logic without mock.module to avoid polluting other tests.
  */
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import { signal } from '@preact/signals';
 

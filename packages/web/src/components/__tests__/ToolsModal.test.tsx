@@ -4,7 +4,7 @@
  *
  * Tests pure logic without mock.module to avoid polluting other tests.
  */
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import { signal } from '@preact/signals';
 
@@ -88,7 +88,7 @@ describe('ToolsModal Logic', () => {
 
 	describe('MCP Server Loading', () => {
 		it('should support async server loading', async () => {
-			const loadServers = mock(() =>
+			const loadServers = vi.fn(() =>
 				Promise.resolve({
 					servers: {
 						user: [{ name: 'server1', command: 'npx server1' }],
@@ -158,8 +158,8 @@ describe('ToolsModal Logic', () => {
 
 	describe('Save Functionality', () => {
 		it('should support async save', async () => {
-			const saveFn = mock(() => Promise.resolve({ success: true }));
-			const toastFn = mock(() => {});
+			const saveFn = vi.fn(() => Promise.resolve({ success: true }));
+			const toastFn = vi.fn(() => {});
 
 			await saveFn({
 				sessionId: 'session-1',
@@ -178,8 +178,8 @@ describe('ToolsModal Logic', () => {
 		});
 
 		it('should handle save failure', async () => {
-			const saveFn = mock(() => Promise.resolve({ success: false, error: 'Failed to save' }));
-			const toastFn = mock(() => {});
+			const saveFn = vi.fn(() => Promise.resolve({ success: false, error: 'Failed to save' }));
+			const toastFn = vi.fn(() => {});
 
 			const result = await saveFn({ sessionId: 'session-1', tools: {} });
 			if (!result.success) {

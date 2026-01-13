@@ -4,7 +4,7 @@
  *
  * Tests slash command output parsing and rendering
  */
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import { render } from '@testing-library/preact';
 import { SlashCommandOutput, isHiddenCommandOutput } from '../SlashCommandOutput';

@@ -4,7 +4,7 @@
  *
  * BUG FIX: Previously, pressing Escape while the agent was idle would
  * clear all text in the input box. This was unexpected UX - users expect
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
  * Escape to:
  * 1. Close autocomplete menu (if open)
  * 2. Interrupt the agent (if working)
@@ -244,7 +244,7 @@ describe('MessageInput Escape Key Behavior', () => {
 	describe('Interrupt logic', () => {
 		it('should only interrupt when isAgentWorking is true', () => {
 			const interrupting = signal(false);
-			const onInterrupt = mock(() => {});
+			const onInterrupt = vi.fn(() => {});
 
 			// Test with isAgentWorking = false
 			const handler1 = createEscapeHandler(signal(false), interrupting, onInterrupt);
@@ -260,7 +260,7 @@ describe('MessageInput Escape Key Behavior', () => {
 		it('should not interrupt when already interrupting', () => {
 			const isAgentWorking = signal(true);
 			const interrupting = signal(true);
-			const onInterrupt = mock(() => {});
+			const onInterrupt = vi.fn(() => {});
 
 			const handler = createEscapeHandler(isAgentWorking, interrupting, onInterrupt);
 			handler('Escape');

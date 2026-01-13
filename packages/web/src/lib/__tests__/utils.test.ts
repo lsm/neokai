@@ -56,8 +56,8 @@ describe('copyToClipboard', () => {
 	beforeEach(() => {
 		originalClipboard = navigator.clipboard;
 		originalDocument = global.document;
-		warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
-		errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+		warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 	});
 
 	afterEach(() => {
@@ -70,7 +70,7 @@ describe('copyToClipboard', () => {
 	});
 
 	it('should use Clipboard API when available', async () => {
-		const mockWriteText = mock(() => Promise.resolve());
+		const mockWriteText = vi.fn(() => Promise.resolve());
 		Object.defineProperty(navigator, 'clipboard', {
 			value: { writeText: mockWriteText },
 			configurable: true,
@@ -82,23 +82,23 @@ describe('copyToClipboard', () => {
 	});
 
 	it('should return false when Clipboard API fails and fallback fails', async () => {
-		const mockWriteText = mock(() => Promise.reject(new Error('Permission denied')));
+		const mockWriteText = vi.fn(() => Promise.reject(new Error('Permission denied')));
 		Object.defineProperty(navigator, 'clipboard', {
 			value: { writeText: mockWriteText },
 			configurable: true,
 		});
 
 		// Mock document methods for fallback
-		const mockExecCommand = mock(() => false);
+		const mockExecCommand = vi.fn(() => false);
 		const mockTextarea = {
 			value: '',
 			style: {},
-			focus: mock(() => {}),
-			select: mock(() => {}),
+			focus: vi.fn(() => {}),
+			select: vi.fn(() => {}),
 		};
-		const mockCreateElement = mock(() => mockTextarea);
-		const mockAppendChild = mock(() => {});
-		const mockRemoveChild = mock(() => {});
+		const mockCreateElement = vi.fn(() => mockTextarea);
+		const mockAppendChild = vi.fn(() => {});
+		const mockRemoveChild = vi.fn(() => {});
 
 		global.document = {
 			...originalDocument,
@@ -121,16 +121,16 @@ describe('copyToClipboard', () => {
 			configurable: true,
 		});
 
-		const mockExecCommand = mock(() => true);
+		const mockExecCommand = vi.fn(() => true);
 		const mockTextarea = {
 			value: '',
 			style: {},
-			focus: mock(() => {}),
-			select: mock(() => {}),
+			focus: vi.fn(() => {}),
+			select: vi.fn(() => {}),
 		};
-		const mockCreateElement = mock(() => mockTextarea);
-		const mockAppendChild = mock(() => {});
-		const mockRemoveChild = mock(() => {});
+		const mockCreateElement = vi.fn(() => mockTextarea);
+		const mockAppendChild = vi.fn(() => {});
+		const mockRemoveChild = vi.fn(() => {});
 
 		global.document = {
 			...originalDocument,
@@ -158,8 +158,8 @@ describe('copyToClipboard', () => {
 		const mockTextarea = {
 			value: '',
 			style: {},
-			focus: mock(() => {}),
-			select: mock(() => {}),
+			focus: vi.fn(() => {}),
+			select: vi.fn(() => {}),
 		};
 		Object.defineProperty(mockTextarea, 'value', {
 			set: (v: string) => {
@@ -168,10 +168,10 @@ describe('copyToClipboard', () => {
 			get: () => capturedValue,
 		});
 
-		const mockCreateElement = mock(() => mockTextarea);
-		const mockAppendChild = mock(() => {});
-		const mockRemoveChild = mock(() => {});
-		const mockExecCommand = mock(() => true);
+		const mockCreateElement = vi.fn(() => mockTextarea);
+		const mockAppendChild = vi.fn(() => {});
+		const mockRemoveChild = vi.fn(() => {});
+		const mockExecCommand = vi.fn(() => true);
 
 		global.document = {
 			...originalDocument,

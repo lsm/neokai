@@ -21,10 +21,10 @@ describe('api-helpers', () => {
 	beforeEach(() => {
 		// Create fresh mocks for each test
 		mockHub = {
-			call: mock(() => Promise.resolve({ success: true })),
+			call: vi.fn(() => Promise.resolve({ success: true })),
 		};
-		_mockGetHubIfConnected = mock(() => mockHub);
-		_mockGetHub = mock(() => Promise.resolve(mockHub));
+		_mockGetHubIfConnected = vi.fn(() => mockHub);
+		_mockGetHub = vi.fn(() => Promise.resolve(mockHub));
 	});
 
 	describe('ConnectionNotReadyError', () => {

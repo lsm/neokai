@@ -18,7 +18,7 @@ describe('useCommandAutocomplete', () => {
 
 	describe('initialization', () => {
 		it('should initialize with autocomplete hidden', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '',
@@ -32,7 +32,7 @@ describe('useCommandAutocomplete', () => {
 		});
 
 		it('should provide required functions', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '',
@@ -49,7 +49,7 @@ describe('useCommandAutocomplete', () => {
 
 	describe('slash command detection', () => {
 		it('should show autocomplete when content starts with /', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '/',
@@ -68,7 +68,7 @@ describe('useCommandAutocomplete', () => {
 		});
 
 		it('should show autocomplete when content has leading whitespace and starts with /', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '  /',
@@ -80,7 +80,7 @@ describe('useCommandAutocomplete', () => {
 		});
 
 		it('should not show autocomplete when content does not start with /', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: 'hello',
@@ -92,7 +92,7 @@ describe('useCommandAutocomplete', () => {
 		});
 
 		it('should not show autocomplete when / is in the middle of text', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: 'hello /world',
@@ -106,7 +106,7 @@ describe('useCommandAutocomplete', () => {
 
 	describe('command filtering', () => {
 		it('should filter commands based on input', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '/he',
@@ -119,7 +119,7 @@ describe('useCommandAutocomplete', () => {
 		});
 
 		it('should filter commands case-insensitively', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '/HE',
@@ -131,7 +131,7 @@ describe('useCommandAutocomplete', () => {
 		});
 
 		it('should show all commands when just / is typed', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '/',
@@ -143,7 +143,7 @@ describe('useCommandAutocomplete', () => {
 		});
 
 		it('should hide autocomplete when no commands match', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '/xyz',
@@ -156,7 +156,7 @@ describe('useCommandAutocomplete', () => {
 		});
 
 		it('should match partial command names', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '/co',
@@ -170,7 +170,7 @@ describe('useCommandAutocomplete', () => {
 
 	describe('handleSelect', () => {
 		it('should call onSelect and close autocomplete', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '/',
@@ -189,7 +189,7 @@ describe('useCommandAutocomplete', () => {
 
 	describe('close', () => {
 		it('should close autocomplete when close is called', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '/',
@@ -209,7 +209,7 @@ describe('useCommandAutocomplete', () => {
 
 	describe('setSelectedIndex', () => {
 		it('should allow setting selectedIndex directly', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '/',
@@ -227,7 +227,7 @@ describe('useCommandAutocomplete', () => {
 
 	describe('handleKeyDown', () => {
 		it('should not handle keyboard events when autocomplete is hidden', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '',
@@ -246,7 +246,7 @@ describe('useCommandAutocomplete', () => {
 		});
 
 		it('should handle ArrowDown to navigate', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '/',
@@ -257,7 +257,7 @@ describe('useCommandAutocomplete', () => {
 			expect(result.current.selectedIndex).toBe(0);
 
 			const event = new KeyboardEvent('keydown', { key: 'ArrowDown' });
-			const preventDefault = mock(() => {});
+			const preventDefault = vi.fn(() => {});
 			Object.defineProperty(event, 'preventDefault', { value: preventDefault });
 
 			act(() => {
@@ -270,7 +270,7 @@ describe('useCommandAutocomplete', () => {
 		});
 
 		it('should handle ArrowUp to navigate', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '/',
@@ -284,7 +284,7 @@ describe('useCommandAutocomplete', () => {
 			});
 
 			const event = new KeyboardEvent('keydown', { key: 'ArrowUp' });
-			const preventDefault = mock(() => {});
+			const preventDefault = vi.fn(() => {});
 			Object.defineProperty(event, 'preventDefault', { value: preventDefault });
 
 			act(() => {
@@ -295,7 +295,7 @@ describe('useCommandAutocomplete', () => {
 		});
 
 		it('should wrap around when navigating past end', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '/',
@@ -319,7 +319,7 @@ describe('useCommandAutocomplete', () => {
 		});
 
 		it('should wrap around when navigating before start', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '/',
@@ -340,7 +340,7 @@ describe('useCommandAutocomplete', () => {
 		});
 
 		it('should select command with Enter', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '/',
@@ -349,7 +349,7 @@ describe('useCommandAutocomplete', () => {
 			);
 
 			const event = new KeyboardEvent('keydown', { key: 'Enter' });
-			const preventDefault = mock(() => {});
+			const preventDefault = vi.fn(() => {});
 			Object.defineProperty(event, 'preventDefault', { value: preventDefault });
 
 			act(() => {
@@ -362,7 +362,7 @@ describe('useCommandAutocomplete', () => {
 		});
 
 		it('should not handle Enter with metaKey', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '/',
@@ -381,7 +381,7 @@ describe('useCommandAutocomplete', () => {
 		});
 
 		it('should not handle Enter with ctrlKey', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '/',
@@ -400,7 +400,7 @@ describe('useCommandAutocomplete', () => {
 		});
 
 		it('should close autocomplete with Escape', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '/',
@@ -411,7 +411,7 @@ describe('useCommandAutocomplete', () => {
 			expect(result.current.showAutocomplete).toBe(true);
 
 			const event = new KeyboardEvent('keydown', { key: 'Escape' });
-			const preventDefault = mock(() => {});
+			const preventDefault = vi.fn(() => {});
 			Object.defineProperty(event, 'preventDefault', { value: preventDefault });
 
 			act(() => {
@@ -427,7 +427,7 @@ describe('useCommandAutocomplete', () => {
 		it('should not show autocomplete when commands list is empty', () => {
 			slashCommandsSignal.value = [];
 
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useCommandAutocomplete({
 					content: '/',
@@ -441,7 +441,7 @@ describe('useCommandAutocomplete', () => {
 
 	describe('content changes', () => {
 		it('should update filtered commands when content changes', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result, rerender } = renderHook(
 				({ content }) =>
 					useCommandAutocomplete({
@@ -459,7 +459,7 @@ describe('useCommandAutocomplete', () => {
 		});
 
 		it('should reset selectedIndex when content changes', () => {
-			const onSelect = mock(() => {});
+			const onSelect = vi.fn(() => {});
 			const { result, rerender } = renderHook(
 				({ content }) =>
 					useCommandAutocomplete({

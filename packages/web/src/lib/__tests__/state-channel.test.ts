@@ -12,10 +12,10 @@ import type { MessageHub } from '@liuboer/shared';
 // Create mock MessageHub
 function createMockHub() {
 	return {
-		call: mock(() => Promise.resolve(null)),
-		subscribe: mock(() => Promise.resolve(() => Promise.resolve())),
-		subscribeOptimistic: mock(() => () => {}),
-		onConnection: mock(() => () => {}),
+		call: vi.fn(() => Promise.resolve(null)),
+		subscribe: vi.fn(() => Promise.resolve(() => Promise.resolve())),
+		subscribeOptimistic: vi.fn(() => () => {}),
+		onConnection: vi.fn(() => () => {}),
 	};
 }
 
@@ -172,8 +172,8 @@ describe('StateChannel', () => {
 
 	describe('stop', () => {
 		it('should call all unsubscribe functions', async () => {
-			const unsubscribe1 = mock(() => Promise.resolve());
-			const unsubscribe2 = mock(() => Promise.resolve());
+			const unsubscribe1 = vi.fn(() => Promise.resolve());
+			const unsubscribe2 = vi.fn(() => Promise.resolve());
 			mockHub.subscribe.mockImplementation(() => Promise.resolve(unsubscribe1));
 			mockHub.onConnection.mockImplementation(() => unsubscribe2);
 			mockHub.call.mockImplementation(() => Promise.resolve({ data: 'test' }));
@@ -271,7 +271,7 @@ describe('StateChannel', () => {
 
 		it('should warn when state is null', () => {
 			channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel');
-			const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
 			channel.updateOptimistic('update-1', (current) => current);
 

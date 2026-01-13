@@ -4,7 +4,7 @@
  */
 
 import { render, cleanup } from '@testing-library/preact';
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { ConfirmModal } from '../ConfirmModal';
 
 describe('ConfirmModal', () => {
@@ -19,8 +19,8 @@ describe('ConfirmModal', () => {
 
 	describe('Rendering', () => {
 		it('should render title', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -35,8 +35,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should render message', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -51,8 +51,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should not render when closed', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={false}
@@ -67,8 +67,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should render confirm and cancel buttons', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -83,8 +83,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should not show close button (X) in header', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -102,8 +102,8 @@ describe('ConfirmModal', () => {
 
 	describe('Button Text', () => {
 		it('should use default confirm text "Confirm"', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -119,8 +119,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should use default cancel text "Cancel"', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -136,8 +136,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should use custom confirm text', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -154,8 +154,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should use custom cancel text', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -174,8 +174,8 @@ describe('ConfirmModal', () => {
 
 	describe('Button Variants', () => {
 		it('should use danger variant by default for confirm button', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -191,8 +191,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should support danger variant explicitly', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -210,8 +210,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should support primary variant', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -229,8 +229,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should style cancel button consistently', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -248,8 +248,8 @@ describe('ConfirmModal', () => {
 
 	describe('Loading State', () => {
 		it('should show "Processing..." text when loading', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -269,8 +269,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should disable confirm button when loading', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -289,8 +289,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should disable cancel button when loading', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -309,8 +309,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should not show "Processing..." when not loading', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -329,8 +329,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should apply disabled styles when loading', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -351,8 +351,8 @@ describe('ConfirmModal', () => {
 
 	describe('Interactions', () => {
 		it('should call onConfirm when confirm button is clicked', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -369,8 +369,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should call onClose when cancel button is clicked', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -387,8 +387,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should call onClose when Escape is pressed', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -406,8 +406,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should call onClose when backdrop is clicked', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -425,8 +425,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should not call onConfirm when loading', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -451,8 +451,8 @@ describe('ConfirmModal', () => {
 
 	describe('Modal Size', () => {
 		it('should use small size', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -470,8 +470,8 @@ describe('ConfirmModal', () => {
 
 	describe('Styling', () => {
 		it('should have proper button layout', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -488,8 +488,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should have message styling', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -505,8 +505,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should have white text on confirm button', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -524,8 +524,8 @@ describe('ConfirmModal', () => {
 
 	describe('Accessibility', () => {
 		it('should have proper button types', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}
@@ -542,8 +542,8 @@ describe('ConfirmModal', () => {
 		});
 
 		it('should be rendered in portal', () => {
-			const onClose = mock(() => {});
-			const onConfirm = mock(() => {});
+			const onClose = vi.fn(() => {});
+			const onConfirm = vi.fn(() => {});
 			render(
 				<ConfirmModal
 					isOpen={true}

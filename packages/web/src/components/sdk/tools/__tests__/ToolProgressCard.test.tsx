@@ -4,7 +4,7 @@
  *
  * ToolProgressCard displays real-time tool execution progress.
  */
-import { describe, it, expect, mock, spyOn } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import { render } from '@testing-library/preact';
 import { ToolProgressCard } from '../ToolProgressCard';

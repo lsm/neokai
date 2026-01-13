@@ -26,7 +26,7 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 		originalRemoveEventListener = global.document?.removeEventListener;
 
 		// Mock to capture event listeners
-		global.document.addEventListener = mock((type: string, listener: EventListener) => {
+		global.document.addEventListener = vi.fn((type: string, listener: EventListener) => {
 			if (type === 'visibilitychange') {
 				visibilityChangeHandler = listener as (event: Event) => void;
 			} else if (type === 'pagehide') {
@@ -35,7 +35,7 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 			// Don't call original - just track handlers
 		}) as unknown as typeof global.document.addEventListener;
 
-		global.document.removeEventListener = mock((type: string, listener: EventListener) => {
+		global.document.removeEventListener = vi.fn((type: string, listener: EventListener) => {
 			if (type === 'visibilitychange' && listener === visibilityChangeHandler) {
 				visibilityChangeHandler = null;
 			} else if (type === 'pagehide' && listener === pageHideHandler) {
@@ -76,7 +76,7 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 
 	describe('Page Hidden Event', () => {
 		it('should log when page becomes hidden', () => {
-			const consoleSpy = spyOn(console, 'log');
+			const consoleSpy = vi.spyOn(console, 'log');
 
 			// Simulate page becoming hidden
 			Object.defineProperty(document, 'hidden', {
@@ -98,17 +98,17 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 		beforeEach(() => {
 			// Create mock transport with resetReconnectState
 			mockTransport = {
-				isReady: mock(() => true),
-				resetReconnectState: mock(() => {}),
-				forceReconnect: mock(() => {}),
-				close: mock(() => {}),
+				isReady: vi.fn(() => true),
+				resetReconnectState: vi.fn(() => {}),
+				forceReconnect: vi.fn(() => {}),
+				close: vi.fn(() => {}),
 			};
 
 			// Create mock MessageHub
 			mockMessageHub = {
-				call: mock(() => Promise.resolve({ status: 'ok' })),
-				forceResubscribe: mock(() => {}),
-				isConnected: mock(() => true),
+				call: vi.fn(() => Promise.resolve({ status: 'ok' })),
+				forceResubscribe: vi.fn(() => {}),
+				isConnected: vi.fn(() => true),
 			};
 
 			// Inject mocks into connection manager
@@ -161,7 +161,7 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 		});
 
 		it('should trigger validateConnectionOnResume when page becomes visible', async () => {
-			const validateSpy = spyOn(
+			const validateSpy = vi.spyOn(
 				connectionManager as unknown as Record<string, unknown>,
 				'validateConnectionOnResume'
 			);
@@ -182,8 +182,8 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 		});
 
 		it('should call forceResubscribe when health check succeeds', async () => {
-			const _appStateRefreshSpy = spyOn(appState, 'refreshAll').mockResolvedValue(undefined);
-			const _globalStoreRefreshSpy = spyOn(globalStore, 'refresh').mockResolvedValue(undefined);
+			const _appStateRefreshSpy = vi.spyOn(appState, 'refreshAll').mockResolvedValue(undefined);
+			const _globalStoreRefreshSpy = vi.spyOn(globalStore, 'refresh').mockResolvedValue(undefined);
 
 			// Simulate page becoming visible
 			Object.defineProperty(document, 'hidden', {
@@ -201,9 +201,9 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 		});
 
 		it('should refresh sessionStore, appState, and globalStore', async () => {
-			const sessionStoreRefreshSpy = spyOn(sessionStore, 'refresh').mockResolvedValue(undefined);
-			const appStateRefreshSpy = spyOn(appState, 'refreshAll').mockResolvedValue(undefined);
-			const globalStoreRefreshSpy = spyOn(globalStore, 'refresh').mockResolvedValue(undefined);
+			const sessionStoreRefreshSpy = vi.spyOn(sessionStore, 'refresh').mockResolvedValue(undefined);
+			const appStateRefreshSpy = vi.spyOn(appState, 'refreshAll').mockResolvedValue(undefined);
+			const globalStoreRefreshSpy = vi.spyOn(globalStore, 'refresh').mockResolvedValue(undefined);
 
 			// Simulate page becoming visible
 			Object.defineProperty(document, 'hidden', {
@@ -226,22 +226,24 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 		it('should call refreshes in parallel (Promise.all)', async () => {
 			const refreshStartTimes: number[] = [];
 
-			const _sessionStoreRefreshSpy = spyOn(sessionStore, 'refresh').mockImplementation(
-				async () => {
+			const _sessionStoreRefreshSpy = vi
+				.spyOn(sessionStore, 'refresh')
+				.mockImplementation(async () => {
 					refreshStartTimes.push(Date.now());
 					await new Promise((resolve) => setTimeout(resolve, 50));
-				}
-			);
+				});
 
-			const _appStateRefreshSpy = spyOn(appState, 'refreshAll').mockImplementation(async () => {
+			const _appStateRefreshSpy = vi.spyOn(appState, 'refreshAll').mockImplementation(async () => {
 				refreshStartTimes.push(Date.now());
 				await new Promise((resolve) => setTimeout(resolve, 50));
 			});
 
-			const _globalStoreRefreshSpy = spyOn(globalStore, 'refresh').mockImplementation(async () => {
-				refreshStartTimes.push(Date.now());
-				await new Promise((resolve) => setTimeout(resolve, 50));
-			});
+			const _globalStoreRefreshSpy = vi
+				.spyOn(globalStore, 'refresh')
+				.mockImplementation(async () => {
+					refreshStartTimes.push(Date.now());
+					await new Promise((resolve) => setTimeout(resolve, 50));
+				});
 
 			// Simulate page becoming visible
 			Object.defineProperty(document, 'hidden', {
@@ -270,19 +272,19 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 
 		beforeEach(() => {
 			// Set up spies in beforeEach to track all calls in this describe block
-			appStateRefreshSpy = spyOn(appState, 'refreshAll').mockResolvedValue(undefined);
-			globalStoreRefreshSpy = spyOn(globalStore, 'refresh').mockResolvedValue(undefined);
+			appStateRefreshSpy = vi.spyOn(appState, 'refreshAll').mockResolvedValue(undefined);
+			globalStoreRefreshSpy = vi.spyOn(globalStore, 'refresh').mockResolvedValue(undefined);
 
 			mockTransport = {
-				isReady: mock(() => true),
-				resetReconnectState: mock(() => {}),
-				forceReconnect: mock(() => {}),
+				isReady: vi.fn(() => true),
+				resetReconnectState: vi.fn(() => {}),
+				forceReconnect: vi.fn(() => {}),
 			};
 
 			mockMessageHub = {
-				call: mock(() => Promise.reject(new Error('Health check failed'))),
-				forceResubscribe: mock(() => {}),
-				isConnected: mock(() => true),
+				call: vi.fn(() => Promise.reject(new Error('Health check failed'))),
+				forceResubscribe: vi.fn(() => {}),
+				isConnected: vi.fn(() => true),
 			};
 
 			(connectionManager as unknown as Record<string, unknown>).transport = mockTransport;
@@ -343,7 +345,7 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 		});
 
 		it('should attempt reconnect when no connection exists', async () => {
-			const reconnectSpy = spyOn(connectionManager, 'reconnect').mockResolvedValue(undefined);
+			const reconnectSpy = vi.spyOn(connectionManager, 'reconnect').mockResolvedValue(undefined);
 
 			// Simulate page becoming visible
 			Object.defineProperty(document, 'hidden', {

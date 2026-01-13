@@ -28,9 +28,9 @@ describe('useSendMessage', () => {
 					sessionId: 'session-1',
 					session: defaultSession,
 					isSending: false,
-					onSendStart: mock(() => {}),
-					onSendComplete: mock(() => {}),
-					onError: mock(() => {}),
+					onSendStart: vi.fn(() => {}),
+					onSendComplete: vi.fn(() => {}),
+					onError: vi.fn(() => {}),
 				})
 			);
 
@@ -43,9 +43,9 @@ describe('useSendMessage', () => {
 					sessionId: 'session-1',
 					session: defaultSession,
 					isSending: false,
-					onSendStart: mock(() => {}),
-					onSendComplete: mock(() => {}),
-					onError: mock(() => {}),
+					onSendStart: vi.fn(() => {}),
+					onSendComplete: vi.fn(() => {}),
+					onError: vi.fn(() => {}),
 				})
 			);
 
@@ -55,7 +55,7 @@ describe('useSendMessage', () => {
 
 	describe('sendMessage validation', () => {
 		it('should not send empty message', async () => {
-			const onSendStart = mock(() => {});
+			const onSendStart = vi.fn(() => {});
 
 			const { result } = renderHook(() =>
 				useSendMessage({
@@ -63,8 +63,8 @@ describe('useSendMessage', () => {
 					session: defaultSession,
 					isSending: false,
 					onSendStart,
-					onSendComplete: mock(() => {}),
-					onError: mock(() => {}),
+					onSendComplete: vi.fn(() => {}),
+					onError: vi.fn(() => {}),
 				})
 			);
 
@@ -76,7 +76,7 @@ describe('useSendMessage', () => {
 		});
 
 		it('should not send whitespace-only message', async () => {
-			const onSendStart = mock(() => {});
+			const onSendStart = vi.fn(() => {});
 
 			const { result } = renderHook(() =>
 				useSendMessage({
@@ -84,8 +84,8 @@ describe('useSendMessage', () => {
 					session: defaultSession,
 					isSending: false,
 					onSendStart,
-					onSendComplete: mock(() => {}),
-					onError: mock(() => {}),
+					onSendComplete: vi.fn(() => {}),
+					onError: vi.fn(() => {}),
 				})
 			);
 
@@ -97,7 +97,7 @@ describe('useSendMessage', () => {
 		});
 
 		it('should not send if already sending', async () => {
-			const onSendStart = mock(() => {});
+			const onSendStart = vi.fn(() => {});
 
 			const { result } = renderHook(() =>
 				useSendMessage({
@@ -105,8 +105,8 @@ describe('useSendMessage', () => {
 					session: defaultSession,
 					isSending: true,
 					onSendStart,
-					onSendComplete: mock(() => {}),
-					onError: mock(() => {}),
+					onSendComplete: vi.fn(() => {}),
+					onError: vi.fn(() => {}),
 				})
 			);
 
@@ -125,7 +125,7 @@ describe('useSendMessage', () => {
 				status: 'archived',
 			};
 
-			const onSendStart = mock(() => {});
+			const onSendStart = vi.fn(() => {});
 
 			const { result } = renderHook(() =>
 				useSendMessage({
@@ -133,8 +133,8 @@ describe('useSendMessage', () => {
 					session: archivedSession,
 					isSending: false,
 					onSendStart,
-					onSendComplete: mock(() => {}),
-					onError: mock(() => {}),
+					onSendComplete: vi.fn(() => {}),
+					onError: vi.fn(() => {}),
 				})
 			);
 
@@ -154,9 +154,9 @@ describe('useSendMessage', () => {
 					sessionId: 'session-1',
 					session: defaultSession,
 					isSending: false,
-					onSendStart: mock(() => {}),
-					onSendComplete: mock(() => {}),
-					onError: mock(() => {}),
+					onSendStart: vi.fn(() => {}),
+					onSendComplete: vi.fn(() => {}),
+					onError: vi.fn(() => {}),
 				})
 			);
 
@@ -174,9 +174,9 @@ describe('useSendMessage', () => {
 					sessionId: 'session-1',
 					session: defaultSession,
 					isSending: false,
-					onSendStart: mock(() => {}),
-					onSendComplete: mock(() => {}),
-					onError: mock(() => {}),
+					onSendStart: vi.fn(() => {}),
+					onSendComplete: vi.fn(() => {}),
+					onError: vi.fn(() => {}),
 				})
 			);
 
@@ -197,9 +197,9 @@ describe('useSendMessage', () => {
 					sessionId: 'session-1',
 					session: defaultSession,
 					isSending: false,
-					onSendStart: mock(() => {}),
-					onSendComplete: mock(() => {}),
-					onError: mock(() => {}),
+					onSendStart: vi.fn(() => {}),
+					onSendComplete: vi.fn(() => {}),
+					onError: vi.fn(() => {}),
 				})
 			);
 
@@ -218,9 +218,9 @@ describe('useSendMessage', () => {
 					sessionId: 'session-1',
 					session: null,
 					isSending: false,
-					onSendStart: mock(() => {}),
-					onSendComplete: mock(() => {}),
-					onError: mock(() => {}),
+					onSendStart: vi.fn(() => {}),
+					onSendComplete: vi.fn(() => {}),
+					onError: vi.fn(() => {}),
 				})
 			);
 
@@ -241,9 +241,9 @@ describe('useSendMessage', () => {
 						sessionId,
 						session: defaultSession,
 						isSending: false,
-						onSendStart: mock(() => {}),
-						onSendComplete: mock(() => {}),
-						onError: mock(() => {}),
+						onSendStart: vi.fn(() => {}),
+						onSendComplete: vi.fn(() => {}),
+						onError: vi.fn(() => {}),
 					}),
 				{ initialProps: { sessionId: 'session-1' } }
 			);

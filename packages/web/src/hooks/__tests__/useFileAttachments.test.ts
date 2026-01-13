@@ -137,7 +137,7 @@ describe('useFileAttachments', () => {
 		it('should call click on fileInputRef', () => {
 			const { result } = renderHook(() => useFileAttachments());
 
-			const clickMock = mock(() => {});
+			const clickMock = vi.fn(() => {});
 			const mockInput = { click: clickMock } as unknown as HTMLInputElement;
 
 			// Set the ref manually

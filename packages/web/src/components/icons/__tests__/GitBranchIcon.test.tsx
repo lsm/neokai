@@ -4,7 +4,7 @@
 
 import { render } from '@testing-library/preact';
 import { GitBranchIcon } from '../GitBranchIcon';
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 describe('GitBranchIcon', () => {
 	describe('Rendering', () => {

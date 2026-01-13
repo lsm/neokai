@@ -310,8 +310,8 @@ describe('GlobalStore', () => {
 				cleanupFunctions: Array<() => void>;
 			};
 
-			const cleanup1 = mock(() => {});
-			const cleanup2 = mock(() => {});
+			const cleanup1 = vi.fn(() => {});
+			const cleanup2 = vi.fn(() => {});
 			privateStore.cleanupFunctions = [cleanup1, cleanup2];
 
 			store.destroy();
@@ -325,10 +325,10 @@ describe('GlobalStore', () => {
 				cleanupFunctions: Array<() => void>;
 			};
 
-			const cleanupError = mock(() => {
+			const cleanupError = vi.fn(() => {
 				throw new Error('Cleanup error');
 			});
-			const cleanup2 = mock(() => {});
+			const cleanup2 = vi.fn(() => {});
 			privateStore.cleanupFunctions = [cleanupError, cleanup2];
 
 			// Should not throw

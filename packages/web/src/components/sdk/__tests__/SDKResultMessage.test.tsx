@@ -4,7 +4,7 @@
  *
  * Tests result message rendering with statistics and expandable details
  */
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import { render, fireEvent } from '@testing-library/preact';
 import { SDKResultMessage } from '../SDKResultMessage';

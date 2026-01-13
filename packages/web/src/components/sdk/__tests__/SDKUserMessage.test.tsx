@@ -4,7 +4,7 @@
  *
  * Tests user message rendering including text, images, and special cases
  */
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import { render } from '@testing-library/preact';
 import { SDKUserMessage } from '../SDKUserMessage';

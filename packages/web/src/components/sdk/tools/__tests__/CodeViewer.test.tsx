@@ -4,7 +4,7 @@
  *
  * CodeViewer displays syntax-highlighted code using highlight.js.
  */
-import { describe, it, expect, mock, spyOn } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import { render } from '@testing-library/preact';
 import { CodeViewer } from '../CodeViewer';

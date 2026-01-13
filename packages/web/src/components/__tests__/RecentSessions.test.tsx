@@ -4,7 +4,7 @@
  *
  * Tests the recent sessions welcome page with session cards,
  * mobile menu, and empty state.
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
  */
 
 import { render, cleanup } from '@testing-library/preact';

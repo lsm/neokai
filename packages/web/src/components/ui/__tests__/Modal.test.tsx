@@ -4,7 +4,7 @@
  */
 
 import { render, cleanup } from '@testing-library/preact';
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { Modal } from '../Modal';
 
 describe('Modal', () => {
@@ -20,7 +20,7 @@ describe('Modal', () => {
 
 	describe('Rendering', () => {
 		it('should render children when open', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose}>
 					<p>Modal Content</p>
@@ -31,7 +31,7 @@ describe('Modal', () => {
 		});
 
 		it('should not render when closed', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			const { container } = render(
 				<Modal isOpen={false} onClose={onClose}>
 					<p>Modal Content</p>
@@ -43,7 +43,7 @@ describe('Modal', () => {
 		});
 
 		it('should render title when provided', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose} title="Test Title">
 					<p>Content</p>
@@ -54,7 +54,7 @@ describe('Modal', () => {
 		});
 
 		it('should render close button by default', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose} title="Test">
 					<p>Content</p>
@@ -65,7 +65,7 @@ describe('Modal', () => {
 		});
 
 		it('should not render close button when showCloseButton is false', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose} showCloseButton={false}>
 					<p>Content</p>
@@ -76,7 +76,7 @@ describe('Modal', () => {
 		});
 
 		it('should not render header when no title and no close button', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose} showCloseButton={false}>
 					<p>Content</p>
@@ -90,7 +90,7 @@ describe('Modal', () => {
 
 	describe('Sizes', () => {
 		it('should render medium size by default', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose}>
 					<p>Content</p>
@@ -101,7 +101,7 @@ describe('Modal', () => {
 		});
 
 		it('should render small size', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose} size="sm">
 					<p>Content</p>
@@ -112,7 +112,7 @@ describe('Modal', () => {
 		});
 
 		it('should render large size', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose} size="lg">
 					<p>Content</p>
@@ -123,7 +123,7 @@ describe('Modal', () => {
 		});
 
 		it('should render extra large size', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose} size="xl">
 					<p>Content</p>
@@ -136,7 +136,7 @@ describe('Modal', () => {
 
 	describe('Interactions', () => {
 		it('should call onClose when Escape key is pressed', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose}>
 					<p>Content</p>
@@ -150,7 +150,7 @@ describe('Modal', () => {
 		});
 
 		it('should not call onClose for other keys', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose}>
 					<p>Content</p>
@@ -164,7 +164,7 @@ describe('Modal', () => {
 		});
 
 		it('should call onClose when backdrop is clicked', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose}>
 					<p>Content</p>
@@ -178,7 +178,7 @@ describe('Modal', () => {
 		});
 
 		it('should not call onClose when modal content is clicked', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose}>
 					<p data-testid="content">Content</p>
@@ -192,7 +192,7 @@ describe('Modal', () => {
 		});
 
 		it('should call onClose when close button is clicked', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose} title="Test">
 					<p>Content</p>
@@ -206,7 +206,7 @@ describe('Modal', () => {
 		});
 
 		it('should set body overflow to hidden when open', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose}>
 					<p>Content</p>
@@ -219,7 +219,7 @@ describe('Modal', () => {
 
 	describe('Accessibility', () => {
 		it('should have close button with aria-label', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose} title="Test">
 					<p>Content</p>
@@ -230,7 +230,7 @@ describe('Modal', () => {
 		});
 
 		it('should render in a portal', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose}>
 					<p>Content</p>
@@ -242,7 +242,7 @@ describe('Modal', () => {
 		});
 
 		it('should have proper z-index for stacking', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose}>
 					<p>Content</p>
@@ -253,7 +253,7 @@ describe('Modal', () => {
 		});
 
 		it('should have role-based focus trap elements', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose} title="Test">
 					<button>First Button</button>
@@ -272,7 +272,7 @@ describe('Modal', () => {
 
 	describe('Animations', () => {
 		it('should have fadeIn animation class', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose}>
 					<p>Content</p>
@@ -283,7 +283,7 @@ describe('Modal', () => {
 		});
 
 		it('should have scaleIn animation class on modal', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose}>
 					<p>Content</p>
@@ -296,7 +296,7 @@ describe('Modal', () => {
 
 	describe('Styling', () => {
 		it('should have rounded corners', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose}>
 					<p>Content</p>
@@ -307,7 +307,7 @@ describe('Modal', () => {
 		});
 
 		it('should have shadow', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose}>
 					<p>Content</p>
@@ -318,7 +318,7 @@ describe('Modal', () => {
 		});
 
 		it('should have backdrop blur on overlay', () => {
-			const onClose = mock(() => {});
+			const onClose = vi.fn(() => {});
 			render(
 				<Modal isOpen={true} onClose={onClose}>
 					<p>Content</p>

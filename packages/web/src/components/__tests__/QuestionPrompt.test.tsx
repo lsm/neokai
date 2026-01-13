@@ -4,7 +4,7 @@
  *
  * Tests the question prompt with options selection, custom input,
  * submit/cancel actions, and resolved states.
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
  *
  * Note: Tests UI behavior without mocking useMessageHub.
  * The component renders correctly without network calls.
@@ -15,7 +15,7 @@ import { QuestionPrompt } from '../QuestionPrompt';
 import type { PendingUserQuestion, QuestionDraftResponse } from '@liuboer/shared';
 
 describe('QuestionPrompt', () => {
-	const mockOnResolved = mock(
+	const mockOnResolved = vi.fn(
 		(_state: 'submitted' | 'cancelled', _responses: QuestionDraftResponse[]) => {}
 	);
 

@@ -4,7 +4,7 @@
  *
  * Tests the session status bar with connection status, model switcher,
  * thinking level, auto-scroll toggle, and context usage display.
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
  *
  * Note: Tests without mock.module to avoid polluting other tests.
  */
@@ -14,8 +14,8 @@ import type { ContextInfo, ModelInfo } from '@liuboer/shared';
 import SessionStatusBar from '../SessionStatusBar';
 
 describe('SessionStatusBar', () => {
-	const mockOnModelSwitch = mock(() => Promise.resolve());
-	const mockOnAutoScrollChange = mock(() => {});
+	const mockOnModelSwitch = vi.fn(() => Promise.resolve());
+	const mockOnAutoScrollChange = vi.fn(() => {});
 
 	const mockModelInfo: ModelInfo = {
 		id: 'claude-sonnet-4-20250514',

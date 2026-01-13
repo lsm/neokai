@@ -4,7 +4,7 @@
  *
  * Tests that content overflow protection classes are applied correctly
  * to prevent horizontal scrolling on mobile devices.
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
  *
  * Bug context: Synthetic user message content was bleeding out of containers
  * and triggering mobile horizontal scrolling.

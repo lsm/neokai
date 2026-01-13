@@ -4,7 +4,7 @@
  *
  * Tests pure logic without mock.module to avoid polluting other tests.
  */
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import { signal } from '@preact/signals';
 
@@ -69,13 +69,13 @@ describe('GlobalToolsSettings Logic', () => {
 		});
 
 		it('should support async config loading', async () => {
-			const loadConfig = mock(() => Promise.resolve({ config: DEFAULT_CONFIG }));
+			const loadConfig = vi.fn(() => Promise.resolve({ config: DEFAULT_CONFIG }));
 			const result = await loadConfig();
 			expect(result.config).toEqual(DEFAULT_CONFIG);
 		});
 
 		it('should use default config on error', async () => {
-			const loadConfig = mock(() => Promise.reject(new Error('Network error')));
+			const loadConfig = vi.fn(() => Promise.reject(new Error('Network error')));
 
 			let config = DEFAULT_CONFIG;
 			try {
@@ -199,8 +199,8 @@ describe('GlobalToolsSettings Logic', () => {
 
 	describe('Save Functionality', () => {
 		it('should support async save', async () => {
-			const saveFn = mock(() => Promise.resolve({ success: true }));
-			const toastFn = mock(() => {});
+			const saveFn = vi.fn(() => Promise.resolve({ success: true }));
+			const toastFn = vi.fn(() => {});
 
 			await saveFn({ config: DEFAULT_CONFIG });
 			toastFn('Global tools settings saved');
@@ -210,8 +210,8 @@ describe('GlobalToolsSettings Logic', () => {
 		});
 
 		it('should handle save failure', async () => {
-			const saveFn = mock(() => Promise.reject(new Error('Save failed')));
-			const toastFn = mock(() => {});
+			const saveFn = vi.fn(() => Promise.reject(new Error('Save failed')));
+			const toastFn = vi.fn(() => {});
 
 			try {
 				await saveFn({ config: DEFAULT_CONFIG });

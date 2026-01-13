@@ -9,32 +9,12 @@
  * - Data synchronization after background period
  */
 
-import {
-	describe,
-	it,
-	expect,
-	beforeEach,
-	afterEach,
-	beforeAll,
-	afterAll,
-	mock,
-	spyOn,
-} from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ConnectionManager } from '../connection-manager';
 import { GlobalStore } from '../global-store';
 import { connectionManager } from '../connection-manager';
 import { StateChannel } from '../state-channel';
 import type { MessageHub } from '@liuboer/shared';
-
-// Restore any mocks from other test files to prevent pollution
-beforeAll(() => {
-	mock.restore();
-});
-
-// Cleanup after all tests
-afterAll(() => {
-	mock.restore();
-});
 
 describe('Safari Background Tab - Integration Tests', () => {
 	describe('StateChannel Reconnection Behavior', () => {
@@ -47,19 +27,19 @@ describe('Safari Background Tab - Integration Tests', () => {
 			const connectionHandlers: Array<(state: string) => void> = [];
 
 			mockHub = {
-				call: mock(async () => ({
+				call: vi.fn(async () => ({
 					data: 'test',
 					timestamp: Date.now(),
 				})) as unknown,
-				subscribe: mock(async () => mock(() => Promise.resolve())),
-				subscribeOptimistic: mock(() => mock(() => {})),
-				onConnection: mock((handler: (state: string) => void) => {
+				subscribe: vi.fn(async () => vi.fn(() => Promise.resolve())),
+				subscribeOptimistic: vi.fn(() => vi.fn(() => {})),
+				onConnection: vi.fn((handler: (state: string) => void) => {
 					connectionHandlers.push(handler);
 					reconnectionHandler = handler;
-					return mock(() => {});
+					return vi.fn(() => {});
 				}),
-				publish: mock(async () => {}),
-				isConnected: mock(() => true),
+				publish: vi.fn(async () => {}),
+				isConnected: vi.fn(() => true),
 			} as unknown as MessageHub;
 
 			stateChannel = new StateChannel(mockHub, 'test.channel', {
@@ -95,7 +75,7 @@ describe('Safari Background Tab - Integration Tests', () => {
 
 		it('should use server timestamp from snapshot', async () => {
 			const serverTime = Date.now() - 5000; // 5 seconds ago
-			mockHub.call = mock(async () => ({
+			mockHub.call = vi.fn(async () => ({
 				data: 'test',
 				timestamp: serverTime,
 			})) as unknown as typeof mockHub.call;
@@ -140,7 +120,7 @@ describe('Safari Background Tab - Integration Tests', () => {
 
 		beforeEach(() => {
 			mockHub = {
-				call: mock(async (channel: string) => {
+				call: vi.fn(async (channel: string) => {
 					if (channel === 'state.global.snapshot') {
 						return {
 							sessions: {
@@ -153,11 +133,11 @@ describe('Safari Background Tab - Integration Tests', () => {
 					}
 					return {};
 				}),
-				subscribeOptimistic: mock(() => mock(() => {})),
+				subscribeOptimistic: vi.fn(() => vi.fn(() => {})),
 			} as unknown as MessageHub;
 
 			// Mock connectionManager.getHub() to return our mock hub
-			getHubSpy = spyOn(connectionManager, 'getHub').mockResolvedValue(mockHub);
+			getHubSpy = vi.spyOn(connectionManager, 'getHub').mockResolvedValue(mockHub);
 
 			// Create new GlobalStore instance for isolated testing
 			globalStore = new GlobalStore();
@@ -203,7 +183,7 @@ describe('Safari Background Tab - Integration Tests', () => {
 			await globalStore.initialize();
 
 			// Then set up mock to reject for refresh() call
-			mockHub.call = mock(() => Promise.reject(new Error('Network error')));
+			mockHub.call = vi.fn(() => Promise.reject(new Error('Network error')));
 
 			// Should throw the network error
 			await expect(globalStore.refresh()).rejects.toThrow('Network error');
@@ -234,24 +214,24 @@ describe('Safari Background Tab - Integration Tests', () => {
 			// Mock document event listeners
 			originalAddEventListener = global.document?.addEventListener;
 			originalRemoveEventListener = global.document?.removeEventListener;
-			global.document.addEventListener = mock(
+			global.document.addEventListener = vi.fn(
 				() => {}
 			) as unknown as typeof global.document.addEventListener;
-			global.document.removeEventListener = mock(
+			global.document.removeEventListener = vi.fn(
 				() => {}
 			) as unknown as typeof global.document.addEventListener;
 
 			// Mock transport
 			mockTransport = {
-				isReady: mock(() => true),
-				resetReconnectState: mock(() => {}),
-				forceReconnect: mock(() => {}),
-				close: mock(() => {}),
+				isReady: vi.fn(() => true),
+				resetReconnectState: vi.fn(() => {}),
+				forceReconnect: vi.fn(() => {}),
+				close: vi.fn(() => {}),
 			};
 
 			// Mock MessageHub with tracking
 			mockMessageHub = {
-				call: mock(async (method: string) => {
+				call: vi.fn(async (method: string) => {
 					if (method === 'system.health') {
 						return { status: 'ok' };
 					}
@@ -264,13 +244,13 @@ describe('Safari Background Tab - Integration Tests', () => {
 					}
 					return {};
 				}),
-				forceResubscribe: mock(() => {
+				forceResubscribe: vi.fn(() => {
 					subscriptionCalls.push('forceResubscribe');
 				}),
-				resubscribeAll: mock(() => {
+				resubscribeAll: vi.fn(() => {
 					subscriptionCalls.push('resubscribeAll');
 				}),
-				isConnected: mock(() => true),
+				isConnected: vi.fn(() => true),
 			};
 
 			connectionManager = new ConnectionManager();
@@ -288,7 +268,7 @@ describe('Safari Background Tab - Integration Tests', () => {
 			const executionOrder: string[] = [];
 
 			// Spy on key methods
-			mockMessageHub.call = mock(async (method: string) => {
+			mockMessageHub.call = vi.fn(async (method: string) => {
 				executionOrder.push(`call:${method}`);
 				if (method === 'system.health') {
 					return { status: 'ok' };
@@ -296,7 +276,7 @@ describe('Safari Background Tab - Integration Tests', () => {
 				return {};
 			});
 
-			mockMessageHub.forceResubscribe = mock(() => {
+			mockMessageHub.forceResubscribe = vi.fn(() => {
 				executionOrder.push('forceResubscribe');
 			});
 
@@ -324,7 +304,7 @@ describe('Safari Background Tab - Integration Tests', () => {
 
 		it('should call forceResubscribe even when health check succeeds', async () => {
 			// This is the critical fix - resubscribe even when connection appears healthy
-			mockMessageHub.call = mock(async () => ({ status: 'ok' }));
+			mockMessageHub.call = vi.fn(async () => ({ status: 'ok' }));
 
 			Object.defineProperty(document, 'hidden', { value: false, configurable: true });
 
@@ -338,7 +318,7 @@ describe('Safari Background Tab - Integration Tests', () => {
 		});
 
 		it('should NOT call forceResubscribe when health check fails', async () => {
-			mockMessageHub.call = mock(() => Promise.reject(new Error('Health check failed')));
+			mockMessageHub.call = vi.fn(() => Promise.reject(new Error('Health check failed')));
 
 			Object.defineProperty(document, 'hidden', { value: false, configurable: true });
 
@@ -400,7 +380,7 @@ describe('Safari Background Tab - Integration Tests', () => {
 
 			// Simulate StateChannel using server timestamp
 			const mockHub = {
-				call: mock(async () => ({ data: 'test', timestamp: serverTime })),
+				call: vi.fn(async () => ({ data: 'test', timestamp: serverTime })),
 			} as unknown as MessageHub;
 
 			const _channel = new StateChannel(mockHub, 'test', {});
@@ -418,7 +398,7 @@ describe('Safari Background Tab - Integration Tests', () => {
 			const endTimes: number[] = [];
 
 			const mockAppState = {
-				refreshAll: mock(async () => {
+				refreshAll: vi.fn(async () => {
 					startTimes.push(Date.now());
 					await new Promise((resolve) => setTimeout(resolve, 100));
 					endTimes.push(Date.now());
@@ -426,7 +406,7 @@ describe('Safari Background Tab - Integration Tests', () => {
 			};
 
 			const mockGlobalStore = {
-				refresh: mock(async () => {
+				refresh: vi.fn(async () => {
 					startTimes.push(Date.now());
 					await new Promise((resolve) => setTimeout(resolve, 100));
 					endTimes.push(Date.now());

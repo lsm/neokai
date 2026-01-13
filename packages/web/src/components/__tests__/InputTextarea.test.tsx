@@ -4,7 +4,7 @@
  *
  * Key bug fix covered: Signal-based re-renders causing lost keystrokes
  *
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
  * Previously, InputTextarea directly read `isAgentWorking.value` signal inside
  * the component. When signals updated from server-pushed state changes,
  * the component re-rendered with stale `content` prop (from parent's last render),
@@ -54,7 +54,7 @@ describe('InputTextarea', () => {
 
 	describe('Input Handling - Bug Fix Coverage', () => {
 		it('should call onContentChange with new value when typing', () => {
-			const onContentChange = mock(() => {});
+			const onContentChange = vi.fn(() => {});
 			const { container } = render(
 				<InputTextarea
 					content=""
@@ -73,7 +73,7 @@ describe('InputTextarea', () => {
 		it('should preserve content value when isAgentWorking prop changes', () => {
 			// This test verifies the bug fix: changing isAgentWorking should not
 			// affect the content value since both are now controlled by props
-			const onContentChange = mock(() => {});
+			const onContentChange = vi.fn(() => {});
 			const { container, rerender } = render(
 				<InputTextarea
 					content="typed text"
@@ -104,7 +104,7 @@ describe('InputTextarea', () => {
 
 		it('should handle rapid content updates without losing characters', () => {
 			const values: string[] = [];
-			const onContentChange = mock((value: string) => {
+			const onContentChange = vi.fn((value: string) => {
 				values.push(value);
 			});
 
@@ -162,7 +162,7 @@ describe('InputTextarea', () => {
 		it('should not re-render due to signal when isAgentWorking is passed as prop', () => {
 			// This test documents the expected behavior: isAgentWorking is a prop,
 			// not read from a signal, so re-renders are controlled by the parent
-			const onContentChange = mock(() => {});
+			const onContentChange = vi.fn(() => {});
 
 			const { container } = render(
 				<InputTextarea
@@ -258,7 +258,7 @@ describe('InputTextarea', () => {
 
 	describe('Keyboard Events', () => {
 		it('should call onKeyDown when a key is pressed', () => {
-			const onKeyDown = mock(() => {});
+			const onKeyDown = vi.fn(() => {});
 			const { container } = render(
 				<InputTextarea
 					content=""
@@ -275,7 +275,7 @@ describe('InputTextarea', () => {
 		});
 
 		it('should call onKeyDown for arrow keys', () => {
-			const onKeyDown = mock(() => {});
+			const onKeyDown = vi.fn(() => {});
 			const { container } = render(
 				<InputTextarea
 					content="test content"
@@ -298,7 +298,7 @@ describe('InputTextarea', () => {
 
 	describe('Submit Button', () => {
 		it('should call onSubmit when send button is clicked', () => {
-			const onSubmit = mock(() => {});
+			const onSubmit = vi.fn(() => {});
 			const { container } = render(
 				<InputTextarea
 					content="hello"
@@ -316,7 +316,7 @@ describe('InputTextarea', () => {
 		});
 
 		it('should call onInterrupt when stop button is clicked', () => {
-			const onInterrupt = mock(() => {});
+			const onInterrupt = vi.fn(() => {});
 			const { container } = render(
 				<InputTextarea
 					content="hello"
@@ -517,7 +517,7 @@ describe('InputTextarea', () => {
 
 		it('should correctly sync when user types (DOM ahead of prop)', () => {
 			const values: string[] = [];
-			const onContentChange = mock((value: string) => {
+			const onContentChange = vi.fn((value: string) => {
 				values.push(value);
 			});
 

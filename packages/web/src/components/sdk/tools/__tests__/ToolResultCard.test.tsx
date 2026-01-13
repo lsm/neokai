@@ -4,10 +4,9 @@
  *
  * Tests pure logic without mock.module to avoid polluting other tests.
  * IMPORTANT: Bun's mock.module() persists across test files, so we test
-import { describe, it, expect, mock, spyOn } from 'vitest';
+import { describe, it, expect } from 'vitest';
  * the underlying logic without using module mocks.
  */
-
 
 // Tool color configuration matching the component
 const TOOL_COLORS = {

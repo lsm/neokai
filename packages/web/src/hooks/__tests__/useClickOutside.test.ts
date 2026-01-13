@@ -17,7 +17,7 @@ function createMockRef(element: Partial<HTMLElement> | null = {}): RefObject<HTM
 	}
 
 	const mockElement = {
-		contains: mock((_node: Node) => false),
+		contains: vi.fn((_node: Node) => false),
 		...element,
 	} as unknown as HTMLElement;
 
@@ -70,9 +70,9 @@ describe('useClickOutside', () => {
 
 	describe('click outside detection', () => {
 		it('should call handler when clicking outside the element', () => {
-			const handler = mock(() => {});
+			const handler = vi.fn(() => {});
 			const ref = createMockRef({
-				contains: mock(() => false),
+				contains: vi.fn(() => false),
 			});
 
 			renderHook(() => useClickOutside(ref, handler, true));
@@ -88,11 +88,11 @@ describe('useClickOutside', () => {
 		});
 
 		it('should not call handler when clicking inside the element', () => {
-			const handler = mock(() => {});
+			const handler = vi.fn(() => {});
 			const insideElement = document.createElement('div');
 
 			const ref = createMockRef({
-				contains: mock((node) => node === insideElement),
+				contains: vi.fn((node) => node === insideElement),
 			});
 
 			renderHook(() => useClickOutside(ref, handler, true));
@@ -107,9 +107,9 @@ describe('useClickOutside', () => {
 		});
 
 		it('should not call handler when disabled', () => {
-			const handler = mock(() => {});
+			const handler = vi.fn(() => {});
 			const ref = createMockRef({
-				contains: mock(() => false),
+				contains: vi.fn(() => false),
 			});
 
 			renderHook(() => useClickOutside(ref, handler, false));
@@ -127,7 +127,7 @@ describe('useClickOutside', () => {
 
 	describe('escape key handling', () => {
 		it('should call handler when pressing Escape', () => {
-			const handler = mock(() => {});
+			const handler = vi.fn(() => {});
 			const ref = createMockRef();
 
 			renderHook(() => useClickOutside(ref, handler, true));
@@ -142,7 +142,7 @@ describe('useClickOutside', () => {
 		});
 
 		it('should not call handler for other keys', () => {
-			const handler = mock(() => {});
+			const handler = vi.fn(() => {});
 			const ref = createMockRef();
 
 			renderHook(() => useClickOutside(ref, handler, true));
@@ -161,15 +161,15 @@ describe('useClickOutside', () => {
 
 	describe('excluded refs', () => {
 		it('should not call handler when clicking inside excluded ref', () => {
-			const handler = mock(() => {});
+			const handler = vi.fn(() => {});
 			const excludedElement = document.createElement('div');
 
 			const mainRef = createMockRef({
-				contains: mock(() => false),
+				contains: vi.fn(() => false),
 			});
 
 			const excludedRef = createMockRef({
-				contains: mock((node) => node === excludedElement),
+				contains: vi.fn((node) => node === excludedElement),
 			});
 
 			renderHook(() => useClickOutside(mainRef, handler, true, [excludedRef]));
@@ -184,20 +184,20 @@ describe('useClickOutside', () => {
 		});
 
 		it('should handle multiple excluded refs', () => {
-			const handler = mock(() => {});
+			const handler = vi.fn(() => {});
 			const excluded1 = document.createElement('div');
 			const excluded2 = document.createElement('div');
 
 			const mainRef = createMockRef({
-				contains: mock(() => false),
+				contains: vi.fn(() => false),
 			});
 
 			const excludedRef1 = createMockRef({
-				contains: mock((node) => node === excluded1),
+				contains: vi.fn((node) => node === excluded1),
 			});
 
 			const excludedRef2 = createMockRef({
-				contains: mock((node) => node === excluded2),
+				contains: vi.fn((node) => node === excluded2),
 			});
 
 			renderHook(() => useClickOutside(mainRef, handler, true, [excludedRef1, excludedRef2]));
@@ -220,10 +220,10 @@ describe('useClickOutside', () => {
 		});
 
 		it('should handle null excluded refs', () => {
-			const handler = mock(() => {});
+			const handler = vi.fn(() => {});
 
 			const mainRef = createMockRef({
-				contains: mock(() => false),
+				contains: vi.fn(() => false),
 			});
 
 			const nullExcludedRef = { current: null } as RefObject<HTMLElement>;
@@ -242,7 +242,7 @@ describe('useClickOutside', () => {
 
 	describe('null ref handling', () => {
 		it('should handle null main ref gracefully', () => {
-			const handler = mock(() => {});
+			const handler = vi.fn(() => {});
 			const nullRef = { current: null } as RefObject<HTMLElement>;
 
 			// Should not throw
@@ -260,10 +260,10 @@ describe('useClickOutside', () => {
 
 	describe('cleanup', () => {
 		it('should remove event listeners on unmount', () => {
-			const handler = mock(() => {});
+			const handler = vi.fn(() => {});
 			const ref = createMockRef();
 
-			const removeEventListenerSpy = mock(() => {});
+			const removeEventListenerSpy = vi.fn(() => {});
 			const originalRemoveEventListener = document.removeEventListener;
 			document.removeEventListener = removeEventListenerSpy;
 
@@ -277,10 +277,10 @@ describe('useClickOutside', () => {
 		});
 
 		it('should remove event listeners when disabled changes', () => {
-			const handler = mock(() => {});
+			const handler = vi.fn(() => {});
 			const ref = createMockRef();
 
-			const removeEventListenerSpy = mock(() => {});
+			const removeEventListenerSpy = vi.fn(() => {});
 			const originalRemoveEventListener = document.removeEventListener;
 			document.removeEventListener = removeEventListenerSpy;
 
@@ -301,9 +301,9 @@ describe('useClickOutside', () => {
 
 	describe('delayed activation', () => {
 		it('should delay adding listeners to avoid triggering from opening click', () => {
-			const handler = mock(() => {});
+			const handler = vi.fn(() => {});
 			const ref = createMockRef({
-				contains: mock(() => false),
+				contains: vi.fn(() => false),
 			});
 
 			renderHook(() => useClickOutside(ref, handler, true));
@@ -322,9 +322,9 @@ describe('useClickOutside', () => {
 
 	describe('enabled toggle', () => {
 		it('should start listening when enabled changes from false to true', () => {
-			const handler = mock(() => {});
+			const handler = vi.fn(() => {});
 			const ref = createMockRef({
-				contains: mock(() => false),
+				contains: vi.fn(() => false),
 			});
 
 			const { rerender } = renderHook(({ enabled }) => useClickOutside(ref, handler, enabled), {

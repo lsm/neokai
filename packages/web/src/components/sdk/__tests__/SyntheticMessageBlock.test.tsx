@@ -4,7 +4,7 @@
  *
  * Tests synthetic (system-generated) user message rendering
  */
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import { render } from '@testing-library/preact';
 import { SyntheticMessageBlock } from '../SyntheticMessageBlock';

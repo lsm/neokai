@@ -14,9 +14,9 @@ import { useAutoScroll } from '../useAutoScroll.ts';
 
 // Helper to create mock refs
 function createMockRefs() {
-	const scrollIntoViewMock = mock(() => {});
-	const addEventListenerMock = mock(() => {});
-	const removeEventListenerMock = mock(() => {});
+	const scrollIntoViewMock = vi.fn(() => {});
+	const addEventListenerMock = vi.fn(() => {});
+	const removeEventListenerMock = vi.fn(() => {});
 
 	const containerRef = {
 		current: {

@@ -4,7 +4,7 @@
  *
  * Tests without mock.module to avoid polluting other tests.
  * Note: useClickOutside is tested separately in its own test file.
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
  */
 
 import { render } from '@testing-library/preact';
@@ -13,12 +13,12 @@ import { InputActionsMenu } from '../InputActionsMenu';
 describe('InputActionsMenu', () => {
 	const defaultProps = {
 		isOpen: false,
-		onToggle: mock(() => {}),
-		onClose: mock(() => {}),
+		onToggle: vi.fn(() => {}),
+		onClose: vi.fn(() => {}),
 		autoScroll: true,
-		onAutoScrollChange: mock(() => {}),
-		onOpenTools: mock(() => {}),
-		onAttachFile: mock(() => {}),
+		onAutoScrollChange: vi.fn(() => {}),
+		onOpenTools: vi.fn(() => {}),
+		onAttachFile: vi.fn(() => {}),
 	};
 
 	beforeEach(() => {
@@ -124,8 +124,8 @@ describe('InputActionsMenu', () => {
 		});
 
 		it('should call onAutoScrollChange and close menu on click', () => {
-			const onAutoScrollChange = mock(() => {});
-			const onClose = mock(() => {});
+			const onAutoScrollChange = vi.fn(() => {});
+			const onClose = vi.fn(() => {});
 			const { container } = render(
 				<InputActionsMenu
 					{...defaultProps}
@@ -149,8 +149,8 @@ describe('InputActionsMenu', () => {
 
 	describe('Tools Button', () => {
 		it('should call onOpenTools and close menu on click', () => {
-			const onOpenTools = mock(() => {});
-			const onClose = mock(() => {});
+			const onOpenTools = vi.fn(() => {});
+			const onClose = vi.fn(() => {});
 			const { container } = render(
 				<InputActionsMenu
 					{...defaultProps}
@@ -171,8 +171,8 @@ describe('InputActionsMenu', () => {
 
 	describe('Attach File Button', () => {
 		it('should call onAttachFile and close menu on click', () => {
-			const onAttachFile = mock(() => {});
-			const onClose = mock(() => {});
+			const onAttachFile = vi.fn(() => {});
+			const onClose = vi.fn(() => {});
 			const { container } = render(
 				<InputActionsMenu
 					{...defaultProps}
@@ -191,7 +191,7 @@ describe('InputActionsMenu', () => {
 		});
 
 		it('should not call onAttachFile when disabled', () => {
-			const onAttachFile = mock(() => {});
+			const onAttachFile = vi.fn(() => {});
 			const { container } = render(
 				<InputActionsMenu
 					{...defaultProps}

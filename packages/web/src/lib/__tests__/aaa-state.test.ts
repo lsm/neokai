@@ -20,11 +20,11 @@ import { appState, initializeApplicationState, mergeSdkMessagesWithDedup } from 
 // Mock MessageHub - this is passed to initializeApplicationState and used by StateChannel
 // No need for mock.module - we just pass this mock directly
 const mockHub = {
-	isConnected: mock(() => true),
-	subscribe: mock(() => Promise.resolve(() => Promise.resolve())),
-	subscribeOptimistic: mock(() => () => {}),
-	call: mock(() => Promise.resolve({})),
-	onConnection: mock(() => () => {}),
+	isConnected: vi.fn(() => true),
+	subscribe: vi.fn(() => Promise.resolve(() => Promise.resolve())),
+	subscribeOptimistic: vi.fn(() => () => {}),
+	call: vi.fn(() => Promise.resolve({})),
+	onConnection: vi.fn(() => () => {}),
 };
 
 // Helper to wait for debounced session switching (150ms debounce + buffer)
@@ -217,7 +217,7 @@ describe('ApplicationState', () => {
 			);
 
 			// Spy on console.warn
-			const warnSpy = spyOn(console, 'warn');
+			const warnSpy = vi.spyOn(console, 'warn');
 
 			// Try to initialize again
 			await initializeApplicationState(

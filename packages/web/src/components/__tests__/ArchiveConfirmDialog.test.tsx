@@ -4,7 +4,7 @@
  *
  * Tests the archive confirmation modal with uncommitted changes display,
  * confirm/cancel buttons, and archiving state.
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
  */
 
 import { render, fireEvent, cleanup } from '@testing-library/preact';
@@ -12,8 +12,8 @@ import type { ArchiveSessionResponse } from '@liuboer/shared';
 import { ArchiveConfirmDialog } from '../ArchiveConfirmDialog';
 
 describe('ArchiveConfirmDialog', () => {
-	const mockOnConfirm = mock(() => {});
-	const mockOnCancel = mock(() => {});
+	const mockOnConfirm = vi.fn(() => {});
+	const mockOnCancel = vi.fn(() => {});
 
 	const mockCommitStatus: ArchiveSessionResponse['commitStatus'] = {
 		hasUnpushedCommits: true,

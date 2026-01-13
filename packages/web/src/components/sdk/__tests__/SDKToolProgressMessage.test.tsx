@@ -4,7 +4,7 @@
  *
  * Tests tool progress message rendering with elapsed time
  */
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import { render } from '@testing-library/preact';
 import { SDKToolProgressMessage } from '../SDKToolProgressMessage';

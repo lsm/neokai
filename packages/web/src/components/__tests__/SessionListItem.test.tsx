@@ -4,7 +4,7 @@
  *
  * Tests the session list item with status indicators, metadata display,
  * worktree badge, and archived status.
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
  *
  * Note: Tests without mock.module to avoid polluting other tests.
  */
@@ -28,7 +28,7 @@ describe('SessionListItem', () => {
 		},
 	};
 
-	const mockOnSessionClick = mock(() => {});
+	const mockOnSessionClick = vi.fn(() => {});
 
 	beforeEach(() => {
 		cleanup();

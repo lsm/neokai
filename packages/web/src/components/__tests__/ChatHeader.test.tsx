@@ -4,7 +4,7 @@
  *
  * Tests the chat header with session title, stats, action menu, and mobile hamburger menu.
  */
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import { render, cleanup } from '@testing-library/preact';
 import type { Session } from '@liuboer/shared';
@@ -35,11 +35,11 @@ describe('ChatHeader', () => {
 			totalTokens: 5000,
 			totalCost: 0.05,
 		},
-		onToolsClick: mock(() => {}),
-		onExportClick: mock(() => {}),
-		onResetClick: mock(() => {}),
-		onArchiveClick: mock(() => {}),
-		onDeleteClick: mock(() => {}),
+		onToolsClick: vi.fn(() => {}),
+		onExportClick: vi.fn(() => {}),
+		onResetClick: vi.fn(() => {}),
+		onArchiveClick: vi.fn(() => {}),
+		onDeleteClick: vi.fn(() => {}),
 	};
 
 	beforeEach(() => {

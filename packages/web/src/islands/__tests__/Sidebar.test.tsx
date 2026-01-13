@@ -4,7 +4,7 @@
  *
  * Tests pure logic without mock.module to avoid polluting other tests.
  */
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import { signal } from '@preact/signals';
 
@@ -12,7 +12,7 @@ describe('Sidebar Logic', () => {
 	describe('Session Creation', () => {
 		it('should not allow session creation when not connected', () => {
 			const connectionState = 'disconnected';
-			const toastError = mock(() => {});
+			const toastError = vi.fn(() => {});
 
 			if (connectionState !== 'connected') {
 				toastError('Not connected to server. Please wait...');
@@ -23,7 +23,7 @@ describe('Sidebar Logic', () => {
 
 		it('should allow session creation when connected', () => {
 			const connectionState = 'connected';
-			const createSession = mock(() =>
+			const createSession = vi.fn(() =>
 				Promise.resolve({ sessionId: 'new-session-id', session: { id: 'new-session-id' } })
 			);
 
@@ -129,7 +129,7 @@ describe('Sidebar Logic', () => {
 
 	describe('Archive Toggle', () => {
 		it('should toggle showArchived setting', async () => {
-			const updateGlobalSettings = mock(() => Promise.resolve());
+			const updateGlobalSettings = vi.fn(() => Promise.resolve());
 			const globalSettings = { showArchived: false };
 
 			const currentShowArchived = globalSettings.showArchived ?? false;
@@ -139,7 +139,7 @@ describe('Sidebar Logic', () => {
 		});
 
 		it('should toggle from true to false', async () => {
-			const updateGlobalSettings = mock(() => Promise.resolve());
+			const updateGlobalSettings = vi.fn(() => Promise.resolve());
 			const globalSettings = { showArchived: true };
 
 			const currentShowArchived = globalSettings.showArchived ?? false;
@@ -167,7 +167,7 @@ describe('Sidebar Logic', () => {
 
 		it('should trigger reconnect when disconnected', () => {
 			const connectionState = 'disconnected';
-			const reconnect = mock(() => {});
+			const reconnect = vi.fn(() => {});
 
 			if (
 				connectionState === 'disconnected' ||
@@ -182,7 +182,7 @@ describe('Sidebar Logic', () => {
 
 		it('should trigger reconnect when in error state', () => {
 			const connectionState = 'error';
-			const reconnect = mock(() => {});
+			const reconnect = vi.fn(() => {});
 
 			if (
 				connectionState === 'disconnected' ||
@@ -197,7 +197,7 @@ describe('Sidebar Logic', () => {
 
 		it('should trigger reconnect when in failed state', () => {
 			const connectionState = 'failed';
-			const reconnect = mock(() => {});
+			const reconnect = vi.fn(() => {});
 
 			if (
 				connectionState === 'disconnected' ||

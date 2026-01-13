@@ -4,9 +4,8 @@
  *
  * Tests pure logic without mock.module to avoid polluting other tests.
  * These tests validate the business logic used in GlobalSettingsEditor.
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
  */
-
 
 describe('GlobalSettingsEditor Logic', () => {
 	describe('Model Selection', () => {
@@ -23,13 +22,13 @@ describe('GlobalSettingsEditor Logic', () => {
 		});
 
 		it('should support model update calls', () => {
-			const updateFn = mock(() => Promise.resolve());
+			const updateFn = vi.fn(() => Promise.resolve());
 			updateFn({ model: 'claude-opus-4-5-20251101' });
 			expect(updateFn).toHaveBeenCalledWith({ model: 'claude-opus-4-5-20251101' });
 		});
 
 		it('should use undefined for default model', () => {
-			const updateFn = mock(() => Promise.resolve());
+			const updateFn = vi.fn(() => Promise.resolve());
 			updateFn({ model: undefined });
 			expect(updateFn).toHaveBeenCalledWith({ model: undefined });
 		});
@@ -49,7 +48,7 @@ describe('GlobalSettingsEditor Logic', () => {
 		});
 
 		it('should support permission mode update', () => {
-			const updateFn = mock(() => Promise.resolve());
+			const updateFn = vi.fn(() => Promise.resolve());
 			updateFn({ permissionMode: 'acceptEdits' });
 			expect(updateFn).toHaveBeenCalledWith({ permissionMode: 'acceptEdits' });
 		});
@@ -161,8 +160,8 @@ describe('GlobalSettingsEditor Logic', () => {
 
 	describe('Error Handling Logic', () => {
 		it('should handle async errors gracefully', async () => {
-			const updateFn = mock(() => Promise.reject(new Error('Network error')));
-			const toastFn = mock(() => {});
+			const updateFn = vi.fn(() => Promise.reject(new Error('Network error')));
+			const toastFn = vi.fn(() => {});
 
 			try {
 				await updateFn({ model: 'invalid' });

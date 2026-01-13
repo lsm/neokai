@@ -4,7 +4,7 @@
  *
  * Tests system message rendering for init, compact_boundary, status, and hook_response
  */
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import { render, fireEvent } from '@testing-library/preact';
 import { SDKSystemMessage } from '../SDKSystemMessage';

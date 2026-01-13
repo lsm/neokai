@@ -4,7 +4,7 @@
  */
 
 import { render } from '@testing-library/preact';
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { ContentContainer } from '../ContentContainer';
 
 describe('ContentContainer', () => {

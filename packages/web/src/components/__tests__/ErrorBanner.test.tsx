@@ -4,14 +4,14 @@
  *
  * Tests the error banner with error message, view details button, and dismiss functionality.
  */
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { ErrorBanner } from '../ErrorBanner';
 
 describe('ErrorBanner', () => {
-	const mockOnDismiss = mock(() => {});
-	const mockOnViewDetails = mock(() => {});
+	const mockOnDismiss = vi.fn(() => {});
+	const mockOnViewDetails = vi.fn(() => {});
 
 	beforeEach(() => {
 		cleanup();

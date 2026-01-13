@@ -46,10 +46,10 @@ function createMockConnectionManager(): MockConnectionManager {
 	};
 
 	const createHub = (): MockHub => ({
-		call: mock((__method: string, _data: unknown, _options: unknown) =>
+		call: vi.fn((__method: string, _data: unknown, _options: unknown) =>
 			Promise.resolve(state.hubCallResult)
 		),
-		subscribeOptimistic: mock((__method: string, _handler: unknown, _options: unknown) => {
+		subscribeOptimistic: vi.fn((__method: string, _handler: unknown, _options: unknown) => {
 			state.subscribeOptimisticCalled = true;
 			return () => {};
 		}),
@@ -307,7 +307,7 @@ describe('useMessageHub', () => {
 			mockConnectionManager.hubIsConnected = false;
 			const ctx = createHookContext(mockConnectionManager);
 
-			const handler = mock(() => {});
+			const handler = vi.fn(() => {});
 			const unsub = ctx.subscribe('test.event', handler);
 
 			// Unsubscribe before connection

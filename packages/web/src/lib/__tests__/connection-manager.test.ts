@@ -7,7 +7,6 @@
  * the underlying logic without using module mocks.
  */
 
-
 // Type definitions for testing
 interface MockHub {
 	isConnected: () => boolean;
@@ -117,7 +116,7 @@ describe('ConnectionManager Logic', () => {
 			'ws://localhost:9283',
 			() => ({
 				isConnected: () => hubIsConnected,
-				call: mock(() => Promise.resolve({})),
+				call: vi.fn(() => Promise.resolve({})),
 			}),
 			() => ({
 				isReady: () => transportIsReady,
@@ -299,7 +298,7 @@ describe('ConnectionManager - Non-blocking behavior', () => {
 			'ws://localhost:9283',
 			() => ({
 				isConnected: () => false,
-				call: mock(() => Promise.resolve({})),
+				call: vi.fn(() => Promise.resolve({})),
 			}),
 			() => ({
 				isReady: () => false,

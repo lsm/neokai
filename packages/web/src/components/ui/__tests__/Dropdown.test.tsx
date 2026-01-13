@@ -4,14 +4,14 @@
  */
 
 import { render, cleanup, waitFor } from '@testing-library/preact';
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { Dropdown, DropdownMenuItem } from '../Dropdown';
 
 describe('Dropdown', () => {
 	const defaultItems: DropdownMenuItem[] = [
-		{ label: 'Item 1', onClick: mock(() => {}) },
-		{ label: 'Item 2', onClick: mock(() => {}) },
-		{ label: 'Item 3', onClick: mock(() => {}) },
+		{ label: 'Item 1', onClick: vi.fn(() => {}) },
+		{ label: 'Item 2', onClick: vi.fn(() => {}) },
+		{ label: 'Item 3', onClick: vi.fn(() => {}) },
 	];
 
 	beforeEach(() => {
@@ -59,7 +59,7 @@ describe('Dropdown', () => {
 			const itemsWithIcons: DropdownMenuItem[] = [
 				{
 					label: 'Item with Icon',
-					onClick: mock(() => {}),
+					onClick: vi.fn(() => {}),
 					icon: <span class="test-icon">Icon</span>,
 				},
 			];
@@ -77,9 +77,9 @@ describe('Dropdown', () => {
 
 		it('should render dividers', async () => {
 			const itemsWithDivider: DropdownMenuItem[] = [
-				{ label: 'Item 1', onClick: mock(() => {}) },
+				{ label: 'Item 1', onClick: vi.fn(() => {}) },
 				{ type: 'divider' },
-				{ label: 'Item 2', onClick: mock(() => {}) },
+				{ label: 'Item 2', onClick: vi.fn(() => {}) },
 			];
 
 			const { container } = render(
@@ -203,7 +203,7 @@ describe('Dropdown', () => {
 		});
 
 		it('should call onClick handler when item is clicked', async () => {
-			const onClick = mock(() => {});
+			const onClick = vi.fn(() => {});
 			const items: DropdownMenuItem[] = [{ label: 'Click Me', onClick }];
 
 			const { container } = render(<Dropdown trigger={<button>Open</button>} items={items} />);
@@ -224,7 +224,7 @@ describe('Dropdown', () => {
 		});
 
 		it('should close menu after item is clicked', async () => {
-			const items: DropdownMenuItem[] = [{ label: 'Click Me', onClick: mock(() => {}) }];
+			const items: DropdownMenuItem[] = [{ label: 'Click Me', onClick: vi.fn(() => {}) }];
 
 			const { container } = render(<Dropdown trigger={<button>Open</button>} items={items} />);
 			container.querySelector('button')?.click();
@@ -244,7 +244,7 @@ describe('Dropdown', () => {
 		});
 
 		it('should not call onClick for disabled items', async () => {
-			const onClick = mock(() => {});
+			const onClick = vi.fn(() => {});
 			const items: DropdownMenuItem[] = [{ label: 'Disabled', onClick, disabled: true }];
 
 			const { container } = render(<Dropdown trigger={<button>Open</button>} items={items} />);
@@ -309,7 +309,7 @@ describe('Dropdown', () => {
 
 	describe('Controlled Mode', () => {
 		it('should respect controlled isOpen prop', async () => {
-			const onOpenChange = mock(() => {});
+			const onOpenChange = vi.fn(() => {});
 			const { rerender } = render(
 				<Dropdown
 					trigger={<button>Open</button>}
@@ -340,7 +340,7 @@ describe('Dropdown', () => {
 		});
 
 		it('should call onOpenChange when toggling', async () => {
-			const onOpenChange = mock(() => {});
+			const onOpenChange = vi.fn(() => {});
 			const { container } = render(
 				<Dropdown
 					trigger={<button>Open</button>}
@@ -367,7 +367,7 @@ describe('Dropdown', () => {
 
 		it('should style danger items differently', async () => {
 			const dangerItems: DropdownMenuItem[] = [
-				{ label: 'Delete', onClick: mock(() => {}), danger: true },
+				{ label: 'Delete', onClick: vi.fn(() => {}), danger: true },
 			];
 
 			const { container } = render(
@@ -383,7 +383,7 @@ describe('Dropdown', () => {
 
 		it('should style disabled items differently', async () => {
 			const disabledItems: DropdownMenuItem[] = [
-				{ label: 'Disabled', onClick: mock(() => {}), disabled: true },
+				{ label: 'Disabled', onClick: vi.fn(() => {}), disabled: true },
 			];
 
 			const { container } = render(
@@ -438,7 +438,7 @@ describe('Dropdown', () => {
 
 		it('should have disabled attribute on disabled items', async () => {
 			const disabledItems: DropdownMenuItem[] = [
-				{ label: 'Disabled', onClick: mock(() => {}), disabled: true },
+				{ label: 'Disabled', onClick: vi.fn(() => {}), disabled: true },
 			];
 
 			const { container } = render(

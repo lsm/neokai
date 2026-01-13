@@ -4,13 +4,13 @@
  *
  * Tests the floating scroll-to-bottom button with click handling and accessibility.
  */
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 
 describe('ScrollToBottomButton', () => {
-	const mockOnClick = mock(() => {});
+	const mockOnClick = vi.fn(() => {});
 
 	beforeEach(() => {
 		cleanup();

@@ -27,8 +27,8 @@ describe('useSessionActions', () => {
 				useSessionActions({
 					sessionId: 'session-1',
 					session: defaultSession,
-					onDeleteModalClose: mock(() => {}),
-					onStateReset: mock(() => {}),
+					onDeleteModalClose: vi.fn(() => {}),
+					onStateReset: vi.fn(() => {}),
 				})
 			);
 
@@ -42,8 +42,8 @@ describe('useSessionActions', () => {
 				useSessionActions({
 					sessionId: 'session-1',
 					session: defaultSession,
-					onDeleteModalClose: mock(() => {}),
-					onStateReset: mock(() => {}),
+					onDeleteModalClose: vi.fn(() => {}),
+					onStateReset: vi.fn(() => {}),
 				})
 			);
 
@@ -62,8 +62,8 @@ describe('useSessionActions', () => {
 				useSessionActions({
 					sessionId: 'session-1',
 					session: defaultSession,
-					onDeleteModalClose: mock(() => {}),
-					onStateReset: mock(() => {}),
+					onDeleteModalClose: vi.fn(() => {}),
+					onStateReset: vi.fn(() => {}),
 				})
 			);
 
@@ -78,13 +78,13 @@ describe('useSessionActions', () => {
 
 	describe('action handlers are callable', () => {
 		it('handleDeleteSession should be callable', async () => {
-			const onDeleteModalClose = mock(() => {});
+			const onDeleteModalClose = vi.fn(() => {});
 			const { result } = renderHook(() =>
 				useSessionActions({
 					sessionId: 'session-1',
 					session: defaultSession,
 					onDeleteModalClose,
-					onStateReset: mock(() => {}),
+					onStateReset: vi.fn(() => {}),
 				})
 			);
 
@@ -106,8 +106,8 @@ describe('useSessionActions', () => {
 				useSessionActions({
 					sessionId: 'session-1',
 					session: defaultSession,
-					onDeleteModalClose: mock(() => {}),
-					onStateReset: mock(() => {}),
+					onDeleteModalClose: vi.fn(() => {}),
+					onStateReset: vi.fn(() => {}),
 				})
 			);
 
@@ -128,8 +128,8 @@ describe('useSessionActions', () => {
 				useSessionActions({
 					sessionId: 'session-1',
 					session: defaultSession,
-					onDeleteModalClose: mock(() => {}),
-					onStateReset: mock(() => {}),
+					onDeleteModalClose: vi.fn(() => {}),
+					onStateReset: vi.fn(() => {}),
 				})
 			);
 
@@ -149,8 +149,8 @@ describe('useSessionActions', () => {
 				useSessionActions({
 					sessionId: 'session-1',
 					session: defaultSession,
-					onDeleteModalClose: mock(() => {}),
-					onStateReset: mock(() => {}),
+					onDeleteModalClose: vi.fn(() => {}),
+					onStateReset: vi.fn(() => {}),
 				})
 			);
 
@@ -170,8 +170,8 @@ describe('useSessionActions', () => {
 				useSessionActions({
 					sessionId: 'session-1',
 					session: defaultSession,
-					onDeleteModalClose: mock(() => {}),
-					onStateReset: mock(() => {}),
+					onDeleteModalClose: vi.fn(() => {}),
+					onStateReset: vi.fn(() => {}),
 				})
 			);
 
@@ -194,8 +194,8 @@ describe('useSessionActions', () => {
 					useSessionActions({
 						sessionId,
 						session: defaultSession,
-						onDeleteModalClose: mock(() => {}),
-						onStateReset: mock(() => {}),
+						onDeleteModalClose: vi.fn(() => {}),
+						onStateReset: vi.fn(() => {}),
 					}),
 				{ initialProps: { sessionId: 'session-1' } }
 			);
@@ -214,8 +214,8 @@ describe('useSessionActions', () => {
 				useSessionActions({
 					sessionId: 'session-1',
 					session: null,
-					onDeleteModalClose: mock(() => {}),
-					onStateReset: mock(() => {}),
+					onDeleteModalClose: vi.fn(() => {}),
+					onStateReset: vi.fn(() => {}),
 				})
 			);
 
@@ -230,8 +230,8 @@ describe('useSessionActions', () => {
 				useSessionActions({
 					sessionId: 'session-1',
 					session: defaultSession,
-					onDeleteModalClose: mock(() => {}),
-					onStateReset: mock(() => {}),
+					onDeleteModalClose: vi.fn(() => {}),
+					onStateReset: vi.fn(() => {}),
 				})
 			);
 

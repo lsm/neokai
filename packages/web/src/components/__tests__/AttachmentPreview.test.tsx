@@ -4,7 +4,7 @@
  *
  * Tests the attachment preview with image thumbnails, file info overlay,
  * and remove button functionality.
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
  */
 
 import { render, fireEvent, cleanup } from '@testing-library/preact';
@@ -14,7 +14,7 @@ import { AttachmentPreview } from '../AttachmentPreview';
 type AttachmentWithMeta = MessageImage & { name: string; size: number };
 
 describe('AttachmentPreview', () => {
-	const mockOnRemove = mock(() => {});
+	const mockOnRemove = vi.fn(() => {});
 
 	// Create a minimal base64 PNG (1x1 transparent pixel)
 	const minimalPngBase64 =

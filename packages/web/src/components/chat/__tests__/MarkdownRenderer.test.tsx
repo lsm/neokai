@@ -4,7 +4,7 @@
  *
  * Tests actual rendering behavior without mocking marked library.
  * This prevents global mock pollution that breaks other tests.
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
  *
  * Note: Uses synchronous tests where possible since Happy-DOM
  * may have timing issues with async markdown parsing.

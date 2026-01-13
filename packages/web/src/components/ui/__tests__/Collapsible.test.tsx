@@ -4,7 +4,7 @@
  */
 
 import { render, cleanup, waitFor } from '@testing-library/preact';
-import { describe, it, expect, mock, spyOn, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { Collapsible } from '../Collapsible';
 
 describe('Collapsible', () => {
@@ -154,7 +154,7 @@ describe('Collapsible', () => {
 		});
 
 		it('should call onOpenChange when toggling', () => {
-			const onOpenChange = mock(() => {});
+			const onOpenChange = vi.fn(() => {});
 			const { container } = render(
 				<Collapsible trigger={<span>Trigger</span>} onOpenChange={onOpenChange}>
 					<p>Content</p>
@@ -168,7 +168,7 @@ describe('Collapsible', () => {
 		});
 
 		it('should call onOpenChange with false when closing', () => {
-			const onOpenChange = mock(() => {});
+			const onOpenChange = vi.fn(() => {});
 			const { container } = render(
 				<Collapsible trigger={<span>Trigger</span>} defaultOpen={true} onOpenChange={onOpenChange}>
 					<p>Content</p>
@@ -182,7 +182,7 @@ describe('Collapsible', () => {
 		});
 
 		it('should not update internal state in controlled mode', () => {
-			const onOpenChange = mock(() => {});
+			const onOpenChange = vi.fn(() => {});
 			const { container } = render(
 				<Collapsible trigger={<span>Trigger</span>} open={false} onOpenChange={onOpenChange}>
 					<p>Content</p>
