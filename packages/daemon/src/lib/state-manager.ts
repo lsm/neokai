@@ -540,10 +540,10 @@ export class StateManager {
 	async broadcastSessionsDelta(update: SessionsUpdate): Promise<void> {
 		const version = this.incrementVersion(`${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`);
 		const channel = `${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`;
-		this.logger.log(' Broadcasting to channel:', channel);
-		this.logger.log(' Delta payload:', JSON.stringify({ ...update, version }, null, 2));
+		this.logger.info(' Broadcasting to channel:', channel);
+		this.logger.debug(' Delta payload:', JSON.stringify({ ...update, version }, null, 2));
 		await this.messageHub.publish(channel, { ...update, version }, { sessionId: 'global' });
-		this.logger.log(' Delta published successfully to:', channel);
+		this.logger.info(' Delta published successfully to:', channel);
 	}
 
 	/**

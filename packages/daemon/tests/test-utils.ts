@@ -353,7 +353,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 
 			// Close database and stop server
 			db.close();
-			server.stop();
+			await server.stop();
 		},
 	};
 }

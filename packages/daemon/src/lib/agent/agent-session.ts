@@ -1572,12 +1572,14 @@ export class AgentSession {
 	 * Cleanup resources when session is destroyed
 	 */
 	async cleanup(): Promise<void> {
-		this.logger.log(`Cleaning up resources...`);
+		const cleanupStart = Date.now();
+		this.logger.log(`[AgentSession] Starting cleanup...`);
 
 		// Set cleanup flag to prevent DB writes from runQuery finally block
 		this.isCleaningUp = true;
 
-		// Unsubscribe from all MessageHub events
+		// STEP 1: Unsubscribe from all MessageHub events
+		const step1Start = Date.now();
 		for (const unsubscribe of this.unsubscribers) {
 			try {
 				unsubscribe();
@@ -1586,36 +1588,49 @@ export class AgentSession {
 			}
 		}
 		this.unsubscribers = [];
+		this.logger.debug(
+			`[AgentSession] STEP 1: Unsubscribed from ${this.unsubscribers.length} events (${Date.now() - step1Start}ms)`
+		);
 
-		// Clear models cache for this session
+		// STEP 2: Clear models cache for this session
+		const step2Start = Date.now();
 		try {
 			const { clearModelsCache } = await import('../model-service');
 			clearModelsCache(this.session.id);
 		} catch {
 			// Ignore - not critical
 		}
+		this.logger.debug(`[AgentSession] STEP 2: Models cache cleared (${Date.now() - step2Start}ms)`);
 
-		// Signal queue to stop
+		// STEP 3: Signal queue to stop
+		const step3Start = Date.now();
 		this.messageQueue.stop();
+		this.logger.debug(`[AgentSession] STEP 3: MessageQueue stopped (${Date.now() - step3Start}ms)`);
 
-		// NOTE: We don't call interrupt() here because:
-		// 1. The query should already be complete by the time cleanup is called
-		// 2. Calling interrupt() can cause afterEach timeouts in tests
-		// 3. The finally block in runQuery will handle cleanup
-
-		// Clear queryPromise reference without waiting
-		// The query should already be complete by the time cleanup is called
-		// Waiting for it causes afterEach timeouts in tests
+		// STEP 4: Wait for queryPromise to resolve or reject, then wait a bit more for subprocess
+		// The queryPromise resolves before the subprocess fully exits
+		const step4Start = Date.now();
 		if (this.queryPromise) {
-			this.queryPromise.catch((error) => {
-				// Query might reject due to SIGTERM or other errors - that's expected
-				this.logger.debug(`Query promise rejected during cleanup:`, error);
-			});
-			// Don't await - just clear the reference
+			try {
+				await Promise.race([
+					this.queryPromise.catch((err) => {
+						this.logger.debug(`Query promise rejected: ${err}`);
+					}),
+					new Promise<void>((resolve) => setTimeout(resolve, 3000)),
+				]);
+				this.logger.debug(`[AgentSession] queryPromise resolved, waiting for subprocess exit...`);
+				// Add a small delay to let the subprocess exit gracefully
+				await new Promise((resolve) => setTimeout(resolve, 500));
+			} catch (error) {
+				this.logger.debug(`Error waiting for queryPromise: ${error}`);
+			}
 			this.queryPromise = null;
 		}
+		this.logger.debug(
+			`[AgentSession] STEP 4: Query cleanup complete (${Date.now() - step4Start}ms)`
+		);
 
-		this.logger.log(`Cleanup complete`);
+		this.logger.log(`[AgentSession] Cleanup complete (${Date.now() - cleanupStart}ms total)`);
 	}
 
 	// ============================================================================
