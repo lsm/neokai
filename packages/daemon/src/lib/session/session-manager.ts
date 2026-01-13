@@ -168,7 +168,10 @@ export class SessionManager {
 	 * Generate title and rename branch for a session
 	 * @deprecated Use sessionLifecycle.generateTitleAndRenameBranch directly
 	 */
-	async generateTitleAndRenameBranch(sessionId: string, userMessageText: string): Promise<void> {
+	async generateTitleAndRenameBranch(
+		sessionId: string,
+		userMessageText: string
+	): Promise<{ title: string; isFallback: boolean }> {
 		return this.sessionLifecycle.generateTitleAndRenameBranch(sessionId, userMessageText);
 	}
 
@@ -176,7 +179,10 @@ export class SessionManager {
 	 * @deprecated Use generateTitleAndRenameBranch instead
 	 * Kept for backward compatibility - now just calls generateTitleAndRenameBranch
 	 */
-	async initializeSessionWorkspace(sessionId: string, userMessageText: string): Promise<void> {
+	async initializeSessionWorkspace(
+		sessionId: string,
+		userMessageText: string
+	): Promise<{ title: string; isFallback: boolean }> {
 		return this.generateTitleAndRenameBranch(sessionId, userMessageText);
 	}
 
@@ -265,12 +271,14 @@ export class SessionManager {
 	 * Cleanup all sessions (called during shutdown)
 	 */
 	async cleanup(): Promise<void> {
+		const cleanupStart = Date.now();
 		this.logger.info(
 			`[SessionManager] Cleaning up ${this.sessionCache.getActiveCount()} active sessions...`
 		);
 
 		// STEP 1: Unsubscribe from EventBus FIRST
 		// This prevents new events from being processed during cleanup
+		const step1Start = Date.now();
 		for (const unsubscribe of this.eventBusUnsubscribers) {
 			try {
 				unsubscribe();
@@ -279,11 +287,14 @@ export class SessionManager {
 			}
 		}
 		this.eventBusUnsubscribers = [];
-		this.logger.info(`[SessionManager] EventBus subscriptions removed`);
+		this.logger.info(
+			`[SessionManager] STEP 1: EventBus unsubscribed (${Date.now() - step1Start}ms)`
+		);
 
 		// STEP 2: Wait for pending background tasks (like title generation)
 		// These are fire-and-forget operations from EventBus handlers that may still be running
 		// We must wait for them to complete before closing the database
+		const step2Start = Date.now();
 		if (this.pendingBackgroundTasks.size > 0) {
 			this.logger.info(
 				`[SessionManager] Waiting for ${this.pendingBackgroundTasks.size} pending background tasks...`
@@ -292,27 +303,45 @@ export class SessionManager {
 				this.logger.error(`[SessionManager] Error waiting for background tasks:`, error);
 			});
 			this.pendingBackgroundTasks.clear();
-			this.logger.info(`[SessionManager] Background tasks completed`);
+			this.logger.info(
+				`[SessionManager] STEP 2: Background tasks completed (${Date.now() - step2Start}ms)`
+			);
+		} else {
+			this.logger.info(
+				`[SessionManager] STEP 2: No background tasks (${Date.now() - step2Start}ms)`
+			);
 		}
 
 		// STEP 3: Cleanup all in-memory sessions in parallel
 		// CRITICAL: Must await cleanup() to ensure SDK queries are fully stopped
 		// before database is closed. Each cleanup() has a 5s timeout for the SDK query.
+		const step3Start = Date.now();
 		const cleanupPromises: Promise<void>[] = [];
 		for (const [sessionId, agentSession] of this.sessionCache.entries()) {
+			const sessionStart = Date.now();
 			cleanupPromises.push(
-				agentSession.cleanup().catch((error) => {
-					this.logger.error(`[SessionManager] Error cleaning up session ${sessionId}:`, error);
-				})
+				agentSession
+					.cleanup()
+					.then(() => {
+						this.logger.debug(
+							`[SessionManager] Session ${sessionId.slice(0, 8)}... cleanup took ${Date.now() - sessionStart}ms`
+						);
+					})
+					.catch((error) => {
+						this.logger.error(`[SessionManager] Error cleaning up session ${sessionId}:`, error);
+					})
 			);
 		}
 
 		// Wait for all cleanups to complete
 		await Promise.all(cleanupPromises);
+		this.logger.info(
+			`[SessionManager] STEP 3: All ${this.sessionCache.getActiveCount()} sessions cleaned (${Date.now() - step3Start}ms)`
+		);
 
 		// Clear session map
 		this.sessionCache.clear();
-		this.logger.info(`[SessionManager] All sessions cleaned up`);
+		this.logger.info(`[SessionManager] Total cleanup time: ${Date.now() - cleanupStart}ms`);
 	}
 
 	/**
