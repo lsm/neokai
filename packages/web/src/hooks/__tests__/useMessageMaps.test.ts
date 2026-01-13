@@ -3,6 +3,7 @@
  * Tests for useMessageMaps hook
  */
 
+import './setup';
 import { describe, expect, it } from 'bun:test';
 import { renderHook } from '@testing-library/preact';
 import { useMessageMaps } from '../useMessageMaps.ts';

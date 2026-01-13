@@ -6,6 +6,7 @@
  * and excluded refs functionality.
  */
 
+import './setup';
 import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { renderHook } from '@testing-library/preact';
 import type { RefObject } from 'preact';

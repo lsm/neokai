@@ -6,6 +6,7 @@
  * Note: Slash commands signal must be populated for filtering to work.
  */
 
+import './setup';
 import { describe, it, expect, mock, beforeEach } from 'bun:test';
 import { renderHook, act } from '@testing-library/preact';
 import { useCommandAutocomplete } from '../useCommandAutocomplete.ts';

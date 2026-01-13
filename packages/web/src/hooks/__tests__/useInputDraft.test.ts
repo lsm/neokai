@@ -7,6 +7,7 @@
  * Note: Tests that require connection mocking are limited due to module initialization order.
  */
 
+import './setup';
 import { describe, it, expect } from 'bun:test';
 import { renderHook, act } from '@testing-library/preact';
 import { useInputDraft } from '../useInputDraft.ts';
