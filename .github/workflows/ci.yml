@@ -40,6 +40,20 @@ jobs:
           echo ""
           echo "=== Write permissions ==="
           touch test-write.$$ && echo "Write OK" && rm test-write.$$ || echo "Write FAILED"
+          echo ""
+          echo "=== Temp directory ==="
+          echo "TMPDIR: $TMPDIR"
+          echo "TEMP: $TEMP"
+          echo "TMP: $TMP"
+          ls -la "${TMPDIR:-/tmp}" 2>/dev/null | head -10 || echo "Cannot list tempdir"
+          echo ""
+          echo "=== Bun install location ==="
+          which bun
+          bun --version
+          ls -la "$HOME/.bun" 2>/dev/null || echo "No .bun directory"
+          echo ""
+          echo "=== Bun tempdir test ==="
+          mkdir -p /tmp/test-bun-$$ && echo "Can write to /tmp" && rm -rf /tmp/test-bun-$$ || echo "Cannot write to /tmp"
 
       - name: Install dependencies
         run: bun install --verbose
