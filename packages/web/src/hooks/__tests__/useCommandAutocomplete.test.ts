@@ -6,7 +6,6 @@
  * Note: Slash commands signal must be populated for filtering to work.
  */
 
-import './setup';
 import { renderHook, act } from '@testing-library/preact';
 import { useCommandAutocomplete } from '../useCommandAutocomplete.ts';
 import { slashCommandsSignal } from '../../lib/signals.ts';

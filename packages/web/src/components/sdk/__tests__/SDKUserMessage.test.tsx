@@ -4,8 +4,8 @@
  *
  * Tests user message rendering including text, images, and special cases
  */
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
 
-import '../../ui/__tests__/setup'; // Setup Happy-DOM
 import { render } from '@testing-library/preact';
 import { SDKUserMessage } from '../SDKUserMessage';
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';

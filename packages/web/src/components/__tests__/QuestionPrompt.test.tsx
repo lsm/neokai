@@ -4,12 +4,12 @@
  *
  * Tests the question prompt with options selection, custom input,
  * submit/cancel actions, and resolved states.
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
  *
  * Note: Tests UI behavior without mocking useMessageHub.
  * The component renders correctly without network calls.
  */
 
-import './setup';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { QuestionPrompt } from '../QuestionPrompt';
 import type { PendingUserQuestion, QuestionDraftResponse } from '@liuboer/shared';

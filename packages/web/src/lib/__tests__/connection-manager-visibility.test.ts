@@ -8,7 +8,6 @@
  * - State refresh after validation
  */
 
-import './setup';
 import { ConnectionManager } from '../connection-manager';
 import { globalStore } from '../global-store';
 import { sessionStore } from '../session-store';

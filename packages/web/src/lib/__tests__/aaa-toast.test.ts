@@ -5,7 +5,6 @@
  * Tests the toast utility functions and signals.
  */
 
-import './setup';
 import { toastsSignal, dismissToast, toast } from '../toast';
 
 describe('toastsSignal', () => {

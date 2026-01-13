@@ -3,8 +3,8 @@
  * Tests for Skeleton Components
  */
 
-import './setup'; // Setup Happy-DOM
 import { render } from '@testing-library/preact';
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
 import { Skeleton, SkeletonMessage } from '../Skeleton';
 
 describe('Skeleton', () => {

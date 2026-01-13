@@ -3,8 +3,8 @@
  * Tests for IconButton Component
  */
 
-import './setup'; // Setup Happy-DOM
 import { render } from '@testing-library/preact';
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
 import { IconButton } from '../IconButton';
 
 describe('IconButton', () => {

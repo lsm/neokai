@@ -3,8 +3,8 @@
  * Tests for ToastItem Component
  */
 
-import './setup'; // Setup Happy-DOM
 import { render, cleanup } from '@testing-library/preact';
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
 import { ToastItem } from '../Toast';
 import type { Toast } from '../../../lib/toast';
 

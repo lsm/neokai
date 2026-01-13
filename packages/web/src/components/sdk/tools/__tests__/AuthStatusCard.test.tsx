@@ -4,8 +4,8 @@
  *
  * AuthStatusCard displays authentication status with various states.
  */
+import { describe, it, expect, mock, spyOn } from 'vitest';
 
-import './setup';
 import { render } from '@testing-library/preact';
 import { AuthStatusCard } from '../AuthStatusCard';
 

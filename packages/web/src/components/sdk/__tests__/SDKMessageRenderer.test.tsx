@@ -4,8 +4,8 @@
  *
  * Tests SDK message routing and rendering logic
  */
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
 
-import '../../ui/__tests__/setup'; // Setup Happy-DOM
 import { render } from '@testing-library/preact';
 import { SDKMessageRenderer } from '../SDKMessageRenderer';
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';

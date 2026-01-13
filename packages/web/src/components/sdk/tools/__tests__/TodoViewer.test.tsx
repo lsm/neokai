@@ -4,8 +4,8 @@
  *
  * TodoViewer displays todos with status indicators and progress tracking.
  */
+import { describe, it, expect, mock, spyOn } from 'vitest';
 
-import './setup';
 import { render } from '@testing-library/preact';
 import { TodoViewer } from '../TodoViewer';
 

@@ -4,9 +4,9 @@
  *
  * Tests the archive confirmation modal with uncommitted changes display,
  * confirm/cancel buttons, and archiving state.
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
  */
 
-import './setup';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import type { ArchiveSessionResponse } from '@liuboer/shared';
 import { ArchiveConfirmDialog } from '../ArchiveConfirmDialog';

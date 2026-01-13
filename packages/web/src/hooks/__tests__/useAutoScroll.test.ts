@@ -6,7 +6,6 @@
  * and automatic scrolling when new content arrives.
  */
 
-import './setup';
 import { renderHook, act } from '@testing-library/preact';
 import type { RefObject } from 'preact';
 

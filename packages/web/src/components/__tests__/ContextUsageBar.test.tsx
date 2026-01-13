@@ -4,9 +4,9 @@
  *
  * Tests the context usage display with percentage, progress bar,
  * color coding, and expandable dropdown with breakdown.
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
  */
 
-import './setup';
 import { render, cleanup, fireEvent } from '@testing-library/preact';
 import type { ContextInfo } from '@liuboer/shared';
 import ContextUsageBar from '../ContextUsageBar';

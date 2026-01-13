@@ -3,8 +3,8 @@
  * Tests for ConfirmModal Component
  */
 
-import './setup'; // Setup Happy-DOM
 import { render, cleanup } from '@testing-library/preact';
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
 import { ConfirmModal } from '../ConfirmModal';
 
 describe('ConfirmModal', () => {

@@ -4,9 +4,9 @@
  *
  * Tests without mock.module to avoid polluting other tests.
  * Note: useClickOutside is tested separately in its own test file.
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
  */
 
-import './setup';
 import { render } from '@testing-library/preact';
 import { InputActionsMenu } from '../InputActionsMenu';
 

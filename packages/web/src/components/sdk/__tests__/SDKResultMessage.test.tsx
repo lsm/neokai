@@ -4,8 +4,8 @@
  *
  * Tests result message rendering with statistics and expandable details
  */
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
 
-import '../../ui/__tests__/setup'; // Setup Happy-DOM
 import { render, fireEvent } from '@testing-library/preact';
 import { SDKResultMessage } from '../SDKResultMessage';
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';

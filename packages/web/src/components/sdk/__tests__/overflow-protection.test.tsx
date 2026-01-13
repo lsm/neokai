@@ -4,12 +4,12 @@
  *
  * Tests that content overflow protection classes are applied correctly
  * to prevent horizontal scrolling on mobile devices.
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
  *
  * Bug context: Synthetic user message content was bleeding out of containers
  * and triggering mobile horizontal scrolling.
  */
 
-import '../../../components/ui/__tests__/setup'; // Setup Happy-DOM
 import { render } from '@testing-library/preact';
 import { SyntheticMessageBlock } from '../SyntheticMessageBlock';
 import { SubagentBlock } from '../SubagentBlock';

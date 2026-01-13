@@ -4,6 +4,7 @@
  *
  * Tests pure logic without mock.module to avoid polluting other tests.
  * IMPORTANT: Bun's mock.module() persists across test files, so we test
+import { describe, it, expect, mock, spyOn } from 'vitest';
  * the underlying logic without using module mocks.
  */
 

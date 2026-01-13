@@ -4,11 +4,11 @@
  *
  * Tests the session list item with status indicators, metadata display,
  * worktree badge, and archived status.
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
  *
  * Note: Tests without mock.module to avoid polluting other tests.
  */
 
-import './setup';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import type { Session } from '@liuboer/shared';
 import SessionListItem from '../SessionListItem';

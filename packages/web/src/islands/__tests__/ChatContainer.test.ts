@@ -6,9 +6,11 @@
  */
 
 
+
+import { describe, it, expect, vi } from 'vitest';
 // Mock requestAnimationFrame for testing
 const rafCallbacks: Array<() => void> = [];
-const mockRaf = mock((callback: () => void) => {
+const mockRaf = vi.fn((callback: () => void) => {
 	rafCallbacks.push(callback);
 	return rafCallbacks.length;
 });
@@ -28,7 +30,7 @@ function flushRAF(): void {
 describe('ChatContainer State Batching', () => {
 	beforeEach(() => {
 		rafCallbacks.length = 0;
-		mockRaf.mockClear();
+		mockRaf.mockReset();
 	});
 
 	describe('requestAnimationFrame batching', () => {
@@ -36,11 +38,11 @@ describe('ChatContainer State Batching', () => {
 			// Simulate the state.session handler behavior
 			const stateUpdates: string[] = [];
 
-			const mockSetSession = mock((val: unknown) => stateUpdates.push(`session:${val}`));
-			const mockSetContextUsage = mock((val: unknown) => stateUpdates.push(`context:${val}`));
-			const mockSetSending = mock((val: unknown) => stateUpdates.push(`sending:${val}`));
-			const mockSetCurrentAction = mock((val: unknown) => stateUpdates.push(`action:${val}`));
-			const mockSetStreamingPhase = mock((val: unknown) => stateUpdates.push(`phase:${val}`));
+			const mockSetSession = vi.fn((val: unknown) => stateUpdates.push(`session:${val}`));
+			const mockSetContextUsage = vi.fn((val: unknown) => stateUpdates.push(`context:${val}`));
+			const mockSetSending = vi.fn((val: unknown) => stateUpdates.push(`sending:${val}`));
+			const mockSetCurrentAction = vi.fn((val: unknown) => stateUpdates.push(`action:${val}`));
+			const mockSetStreamingPhase = vi.fn((val: unknown) => stateUpdates.push(`phase:${val}`));
 
 			// Simulate receiving state.session event
 			const data = {
@@ -214,7 +216,7 @@ describe('Scroll Behavior', () => {
 		it('should use instant scroll by default', () => {
 			let scrollOptions: ScrollIntoViewOptions | undefined;
 
-			const mockScrollIntoView = mock((options: ScrollIntoViewOptions) => {
+			const mockScrollIntoView = vi.fn((options: ScrollIntoViewOptions) => {
 				scrollOptions = options;
 			});
 
@@ -230,7 +232,7 @@ describe('Scroll Behavior', () => {
 		it('should use smooth scroll when explicitly requested', () => {
 			let scrollOptions: ScrollIntoViewOptions | undefined;
 
-			const mockScrollIntoView = mock((options: ScrollIntoViewOptions) => {
+			const mockScrollIntoView = vi.fn((options: ScrollIntoViewOptions) => {
 				scrollOptions = options;
 			});
 
@@ -308,7 +310,7 @@ describe('ResizeObserver Integration', () => {
 
 		// Simulate the useEffect behavior
 		const container = { tagName: 'DIV' } as unknown as Element;
-		const handleScroll = mock(() => {});
+		const handleScroll = vi.fn(() => {});
 
 		const resizeObserver = new MockResizeObserver(() => {
 			handleScroll();
@@ -331,7 +333,7 @@ describe('Passive Event Listener', () => {
 		}> = [];
 
 		const mockContainer = {
-			addEventListener: mock(
+			addEventListener: vi.fn(
 				(
 					type: string,
 					_handler: EventListener,
@@ -340,7 +342,7 @@ describe('Passive Event Listener', () => {
 					addEventListenerCalls.push({ type, options });
 				}
 			),
-			removeEventListener: mock(() => {}),
+			removeEventListener: vi.fn(() => {}),
 			scrollTop: 0,
 			scrollHeight: 1000,
 			clientHeight: 500,

@@ -453,7 +453,7 @@ jobs:
 
       - name: Run web tests
         working-directory: packages/web
-        run: bun run test
+        run: bunx vitest run
 
   typecheck:
     name: Type Check

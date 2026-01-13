@@ -4,8 +4,8 @@
  *
  * ToolIcon displays icons for different tool types.
  */
+import { describe, it, expect, mock, spyOn } from 'vitest';
 
-import './setup';
 import { render } from '@testing-library/preact';
 import { ToolIcon } from '../ToolIcon';
 

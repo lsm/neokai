@@ -4,6 +4,7 @@
  *
  * ROOT CAUSE:
  * When a Preact Signal updates, any component that reads .value in its render path
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
  * re-renders IMMEDIATELY. If that component uses useState for input content, the
  * re-render may happen BEFORE React flushes pending state updates, resulting in
  * stale content being passed to controlled inputs.
@@ -26,7 +27,6 @@
  * Signals are synchronous and always return the latest value.
  */
 
-import './setup';
 import { render, cleanup, act } from '@testing-library/preact';
 import { signal, useSignal } from '@preact/signals';
 import { useState, useCallback } from 'preact/hooks';

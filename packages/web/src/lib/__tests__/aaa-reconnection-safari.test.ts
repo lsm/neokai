@@ -9,7 +9,6 @@
  * - Data synchronization after background period
  */
 
-import './setup';
 import {
 	describe,
 	it,

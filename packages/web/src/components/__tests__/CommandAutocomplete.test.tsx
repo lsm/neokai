@@ -4,9 +4,9 @@
  *
  * Tests the command autocomplete dropdown with navigation,
  * selection, and keyboard handling.
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
  */
 
-import './setup';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import CommandAutocomplete from '../CommandAutocomplete';
 

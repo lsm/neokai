@@ -5,7 +5,6 @@
  * Tests modal open/close state management.
  */
 
-import './setup';
 import { renderHook, act } from '@testing-library/preact';
 import { useModal } from '../useModal.ts';
 

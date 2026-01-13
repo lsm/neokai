@@ -4,6 +4,7 @@
  *
  * Key bug fix covered: Signal-based re-renders causing lost keystrokes
  *
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
  * Previously, InputTextarea directly read `isAgentWorking.value` signal inside
  * the component. When signals updated from server-pushed state changes,
  * the component re-rendered with stale `content` prop (from parent's last render),
@@ -15,7 +16,6 @@
  * re-renders when its parent re-renders, keeping content and isAgentWorking in sync.
  */
 
-import './setup';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { InputTextarea } from '../InputTextarea';
 

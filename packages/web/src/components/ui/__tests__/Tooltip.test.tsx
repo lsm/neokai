@@ -3,8 +3,8 @@
  * Tests for Tooltip Component
  */
 
-import './setup'; // Setup Happy-DOM
 import { render, cleanup, fireEvent, waitFor } from '@testing-library/preact';
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
 import { Tooltip } from '../Tooltip';
 
 describe('Tooltip', () => {

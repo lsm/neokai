@@ -3,7 +3,6 @@
  * Tests for useMessageMaps hook
  */
 
-import './setup';
 import { renderHook } from '@testing-library/preact';
 import { useMessageMaps } from '../useMessageMaps.ts';
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';

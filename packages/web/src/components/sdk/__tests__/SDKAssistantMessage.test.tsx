@@ -4,8 +4,8 @@
  *
  * Tests assistant message rendering with text, tools, and thinking blocks
  */
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
 
-import '../../ui/__tests__/setup'; // Setup Happy-DOM
 import { render } from '@testing-library/preact';
 import { SDKAssistantMessage } from '../SDKAssistantMessage';
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';

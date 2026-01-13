@@ -4,8 +4,8 @@
  *
  * DiffViewer displays side-by-side or unified diff view for file changes.
  */
+import { describe, it, expect, mock, spyOn } from 'vitest';
 
-import './setup';
 import { render } from '@testing-library/preact';
 import { DiffViewer } from '../DiffViewer';
 

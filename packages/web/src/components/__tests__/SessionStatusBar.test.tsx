@@ -4,11 +4,11 @@
  *
  * Tests the session status bar with connection status, model switcher,
  * thinking level, auto-scroll toggle, and context usage display.
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
  *
  * Note: Tests without mock.module to avoid polluting other tests.
  */
 
-import './setup';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import type { ContextInfo, ModelInfo } from '@liuboer/shared';
 import SessionStatusBar from '../SessionStatusBar';

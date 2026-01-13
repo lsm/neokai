@@ -3,8 +3,8 @@
  * Tests for Modal Component
  */
 
-import './setup'; // Setup Happy-DOM
 import { render, cleanup } from '@testing-library/preact';
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
 import { Modal } from '../Modal';
 
 describe('Modal', () => {

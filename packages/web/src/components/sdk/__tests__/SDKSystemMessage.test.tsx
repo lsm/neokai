@@ -4,8 +4,8 @@
  *
  * Tests system message rendering for init, compact_boundary, status, and hook_response
  */
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
 
-import '../../ui/__tests__/setup'; // Setup Happy-DOM
 import { render, fireEvent } from '@testing-library/preact';
 import { SDKSystemMessage } from '../SDKSystemMessage';
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';

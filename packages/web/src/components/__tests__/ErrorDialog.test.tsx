@@ -4,10 +4,10 @@
  *
  * Note: The ErrorDialog uses a Portal component which renders content
  * outside the normal DOM tree. These tests focus on the component's
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
  * basic behavior that can be tested in this environment.
  */
 
-import './setup';
 import { cleanup } from '@testing-library/preact';
 import type { StructuredError } from '../../types/error';
 

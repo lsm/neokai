@@ -4,6 +4,7 @@
  *
  * BUG FIX: Previously, pressing Escape while the agent was idle would
  * clear all text in the input box. This was unexpected UX - users expect
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
  * Escape to:
  * 1. Close autocomplete menu (if open)
  * 2. Interrupt the agent (if working)

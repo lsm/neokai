@@ -4,8 +4,8 @@
  *
  * Tests the chat header with session title, stats, action menu, and mobile hamburger menu.
  */
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
 
-import './setup';
 import { render, cleanup } from '@testing-library/preact';
 import type { Session } from '@liuboer/shared';
 import { ChatHeader } from '../ChatHeader';

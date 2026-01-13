@@ -4,8 +4,8 @@
  *
  * Tests subagent (Task tool) block rendering with nested messages
  */
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
 
-import '../../ui/__tests__/setup'; // Setup Happy-DOM
 import { render, fireEvent } from '@testing-library/preact';
 import { SubagentBlock } from '../SubagentBlock';
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';

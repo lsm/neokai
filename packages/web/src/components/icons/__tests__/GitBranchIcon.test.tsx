@@ -2,9 +2,9 @@
  * Tests for GitBranchIcon Component
  */
 
-import '../../../lib/__tests__/setup';
 import { render } from '@testing-library/preact';
 import { GitBranchIcon } from '../GitBranchIcon';
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
 
 describe('GitBranchIcon', () => {
 	describe('Rendering', () => {

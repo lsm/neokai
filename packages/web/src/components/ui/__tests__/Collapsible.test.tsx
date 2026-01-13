@@ -3,8 +3,8 @@
  * Tests for Collapsible Component
  */
 
-import './setup'; // Setup Happy-DOM
 import { render, cleanup, waitFor } from '@testing-library/preact';
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
 import { Collapsible } from '../Collapsible';
 
 describe('Collapsible', () => {

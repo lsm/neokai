@@ -4,8 +4,8 @@
  *
  * ToolSummary displays a summary of tool input parameters.
  */
+import { describe, it, expect, mock, spyOn } from 'vitest';
 
-import './setup';
 import { render } from '@testing-library/preact';
 import { ToolSummary } from '../ToolSummary';
 

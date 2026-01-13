@@ -4,9 +4,9 @@
  *
  * Tests the attachment preview with image thumbnails, file info overlay,
  * and remove button functionality.
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
  */
 
-import './setup';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import type { MessageImage } from '@liuboer/shared/types';
 import { AttachmentPreview } from '../AttachmentPreview';

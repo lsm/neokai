@@ -3,8 +3,8 @@
  * Tests for ContentContainer Component
  */
 
-import './setup'; // Setup Happy-DOM
 import { render } from '@testing-library/preact';
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
 import { ContentContainer } from '../ContentContainer';
 
 describe('ContentContainer', () => {

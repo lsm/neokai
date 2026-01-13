@@ -7,7 +7,6 @@
  * happy-dom doesn't support FileReader correctly in CI environments.
  */
 
-import './setup';
 import { renderHook, act } from '@testing-library/preact';
 import { useFileAttachments } from '../useFileAttachments.ts';
 

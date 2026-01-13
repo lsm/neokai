@@ -6,7 +6,6 @@
  * and excluded refs functionality.
  */
 
-import './setup';
 import { renderHook } from '@testing-library/preact';
 import type { RefObject } from 'preact';
 import { useClickOutside } from '../useClickOutside.ts';

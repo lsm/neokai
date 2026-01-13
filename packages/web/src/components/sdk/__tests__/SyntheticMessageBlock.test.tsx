@@ -4,8 +4,8 @@
  *
  * Tests synthetic (system-generated) user message rendering
  */
+import { describe, it, expect, mock, spyOn, vi } from 'vitest';
 
-import '../../ui/__tests__/setup'; // Setup Happy-DOM
 import { render } from '@testing-library/preact';
 import { SyntheticMessageBlock } from '../SyntheticMessageBlock';
 

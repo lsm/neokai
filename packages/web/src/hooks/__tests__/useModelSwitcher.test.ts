@@ -6,7 +6,6 @@
  * Note: Tests that require connection mocking are limited due to module initialization order.
  */
 
-import './setup';
 import { renderHook, act } from '@testing-library/preact';
 import { useModelSwitcher, MODEL_FAMILY_ICONS } from '../useModelSwitcher.ts';
 
