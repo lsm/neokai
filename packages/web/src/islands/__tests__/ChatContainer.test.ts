@@ -5,7 +5,7 @@
  * These tests verify the fixes for UI freeze during state transitions.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 // Mock requestAnimationFrame for testing
 const rafCallbacks: Array<() => void> = [];
 const mockRaf = vi.fn((callback: () => void) => {
