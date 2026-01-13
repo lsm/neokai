@@ -9,7 +9,7 @@
  * - Title generation and branch renaming
  */
 
-import type { Session, WorktreeMetadata, MessageHub } from '@liuboer/shared';
+import type { Session, WorktreeMetadata, MessageHub, Provider } from '@liuboer/shared';
 import { generateUUID } from '@liuboer/shared';
 import type { Database } from '../../storage/database';
 import type { DaemonHub } from '../daemon-hub';
@@ -17,6 +17,7 @@ import type { WorktreeManager } from '../worktree-manager';
 import { Logger } from '../logger';
 import type { SessionCache, AgentSessionFactory } from './session-cache';
 import type { ToolsConfigManager } from './tools-config';
+import { getProviderService } from '../provider-service';
 
 export interface SessionLifecycleConfig {
 	defaultModel: string;
@@ -279,8 +280,13 @@ export class SessionLifecycle {
 	 *
 	 * NOTE: Worktree is already created during session creation with session/{uuid} branch.
 	 * This method only generates title and renames the branch.
+	 *
+	 * @returns Object with title and isFallback flag indicating if title was actually generated
 	 */
-	async generateTitleAndRenameBranch(sessionId: string, userMessageText: string): Promise<void> {
+	async generateTitleAndRenameBranch(
+		sessionId: string,
+		userMessageText: string
+	): Promise<{ title: string; isFallback: boolean }> {
 		const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
 		if (!agentSession) {
 			throw new Error(`Session ${sessionId} not found`);
@@ -291,15 +297,17 @@ export class SessionLifecycle {
 		// Check if title already generated
 		if (session.metadata.titleGenerated) {
 			this.logger.info(`[SessionLifecycle] Session ${sessionId} title already generated`);
-			return;
+			return { title: session.title, isFallback: false };
 		}
 
 		this.logger.info(`[SessionLifecycle] Generating title for session ${sessionId}...`);
 
 		try {
 			// Step 1: Generate title from user message using Haiku model
-			const title = await this.generateTitleFromMessage(userMessageText, session.workspacePath);
-			this.logger.info(`[SessionLifecycle] Generated title: "${title}"`);
+			const { title, isFallback } = await this.generateTitleFromMessage(
+				userMessageText,
+				session.workspacePath
+			);
 
 			// Step 2: Rename branch if we have a worktree
 			let newBranchName = session.worktree?.branch;
@@ -337,7 +345,8 @@ export class SessionLifecycle {
 				gitBranch: newBranchName || session.gitBranch,
 				metadata: {
 					...session.metadata,
-					titleGenerated: true,
+					// Only mark as generated if not a fallback
+					titleGenerated: !isFallback,
 				},
 			};
 
@@ -354,7 +363,16 @@ export class SessionLifecycle {
 				session: updatedSession,
 			});
 
-			this.logger.info(`[SessionLifecycle] Title generated for session ${sessionId}: "${title}"`);
+			if (isFallback) {
+				this.logger.warn(
+					`[SessionLifecycle] Used fallback title for session ${sessionId}: "${title}"`
+				);
+			} else {
+				this.logger.info(`[SessionLifecycle] Title generated for session ${sessionId}: "${title}"`);
+			}
+
+			// Return result so caller can check if it was a fallback
+			return { title, isFallback };
 		} catch (error) {
 			this.logger.error('[SessionLifecycle] Failed to generate title:', error);
 
@@ -382,41 +400,81 @@ export class SessionLifecycle {
 			this.logger.info(
 				`[SessionLifecycle] Used fallback title "${fallbackTitle}" for session ${sessionId}`
 			);
+
+			// Return result so caller can check if it was a fallback
+			return { title: fallbackTitle, isFallback: true };
 		}
 	}
 
 	/**
-	 * Generate title from first user message
+	 * Generate title from first user message using direct API call
+	 * This bypasses the SDK subprocess and calls the Anthropic-like API directly
+	 *
+	 * @returns Object with title and isFallback flag
 	 */
 	private async generateTitleFromMessage(
 		messageText: string,
-		workspacePath: string
-	): Promise<string> {
-		// Timeout for title generation (15 seconds) - prevents blocking if SDK hangs
-		const TITLE_GENERATION_TIMEOUT = 15000;
+		_sessionWorkspacePath: string
+	): Promise<{ title: string; isFallback: boolean }> {
+		// Get provider service to detect provider and get API configuration
+		const providerService = getProviderService();
+		const provider = providerService.getDefaultProvider();
+		const apiKey = providerService.getProviderApiKey(provider);
+
+		if (!apiKey) {
+			this.logger.warn(
+				`[SessionLifecycle] No API key for provider ${provider}, using fallback title`
+			);
+			return {
+				title: messageText.substring(0, 50).trim() || 'New Session',
+				isFallback: true,
+			};
+		}
+
+		// Get title generation configuration from provider service
+		const { modelId } = providerService.getTitleGenerationConfig(provider);
+
+		this.logger.info(
+			`[SessionLifecycle] Generating title with ${provider} provider using model ${modelId}...`
+		);
 
 		try {
-			// Use the same approach as title-generator.ts but simplified
-			const { query } = await import('@anthropic-ai/claude-agent-sdk');
+			const title = await this.generateTitleWithSdk(provider, modelId, messageText);
+			return { title, isFallback: false };
+		} catch (error) {
+			this.logger.error('[SessionLifecycle] SDK title generation failed:', error);
+			// Fallback to first 50 chars of message
+			return {
+				title: messageText.substring(0, 50).trim() || 'New Session',
+				isFallback: true,
+			};
+		}
+	}
 
-			this.logger.info('[SessionLifecycle] Generating title with Haiku...');
+	/**
+	 * Generate title using SDK query with proper environment setup
+	 *
+	 * Uses ProviderService to configure environment variables for the provider,
+	 * then calls the SDK's query function to generate the title.
+	 */
+	private async generateTitleWithSdk(
+		provider: Provider,
+		modelId: string,
+		messageText: string
+	): Promise<string> {
+		const { query } = await import('@anthropic-ai/claude-agent-sdk');
+		const providerService = getProviderService();
 
-			// Create a promise that rejects after timeout
-			const timeoutPromise = new Promise<never>((_, reject) => {
-				setTimeout(() => reject(new Error('Title generation timed out')), TITLE_GENERATION_TIMEOUT);
-			});
+		// Apply provider-specific environment variables to process.env
+		// Use explicit provider to avoid model ID detection issues with shorthands like 'haiku'
+		const originalEnv = providerService.applyEnvVarsToProcessForProvider(provider, modelId);
 
-			// Race between title generation and timeout
-			const generateTitle = async (): Promise<string> => {
-				// Use Agent SDK with maxTurns: 1 for simple title generation
-				// Disable MCP servers and other features that might cause hanging
-				// Use acceptEdits in test/CI to avoid subprocess crashes when running as root
-				const permissionMode =
-					process.env.NODE_ENV === 'test' ? 'acceptEdits' : 'bypassPermissions';
-				const allowDangerouslySkipPermissions = process.env.NODE_ENV !== 'test';
+		this.logger.debug(
+			`[SessionLifecycle] Env vars applied for provider ${provider}, model ${modelId}`
+		);
 
-				const result = await query({
-					prompt: `Based on the user's request below, generate a concise 3-7 word title that captures the main intent or topic.
+		try {
+			const prompt = `Based on the user's request below, generate a concise 3-7 word title that captures the main intent or topic.
 
 IMPORTANT: Return ONLY the title text itself, with NO formatting whatsoever:
 - NO quotes around the title
@@ -426,65 +484,65 @@ IMPORTANT: Return ONLY the title text itself, with NO formatting whatsoever:
 - Just plain text words
 
 User's request:
-${messageText.slice(0, 2000)}`,
-					options: {
-						model: 'haiku',
-						maxTurns: 1,
-						permissionMode,
-						allowDangerouslySkipPermissions,
-						cwd: workspacePath,
-						// Disable features that might cause hanging in test/CI environments
-						mcpServers: {},
-						settingSources: [],
-					},
-				});
+${messageText.slice(0, 2000)}`;
 
-				// Extract and clean title from SDK response
-				const { isSDKAssistantMessage } = await import('@liuboer/shared/sdk/type-guards');
+			const agentQuery = query({
+				prompt,
+				options: {
+					model: provider === 'glm' ? 'haiku' : modelId,
+					maxTurns: 1,
+					permissionMode: 'acceptEdits',
+					allowDangerouslySkipPermissions: false,
+					mcpServers: {},
+					settingSources: [],
+					tools: [],
+				},
+			});
 
-				for await (const message of result) {
-					if (isSDKAssistantMessage(message)) {
-						const textBlocks = message.message.content.filter(
-							(b: { type: string }) => b.type === 'text'
-						);
-						let title = textBlocks
-							.map((b: { text?: string }) => b.text)
-							.join(' ')
-							.trim();
+			// Extract title from the response
+			const { isSDKAssistantMessage } = await import('@liuboer/shared/sdk/type-guards');
+			let title = '';
 
-						if (title) {
-							// Strip any markdown formatting
-							title = title.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1');
+			for await (const message of agentQuery) {
+				if (isSDKAssistantMessage(message)) {
+					const textBlocks = message.message.content.filter(
+						(b: { type: string }) => b.type === 'text'
+					);
+					title = textBlocks
+						.map((b: { text?: string }) => b.text)
+						.join(' ')
+						.trim();
 
-							// Remove wrapping quotes
-							while (
-								(title.startsWith('"') && title.endsWith('"')) ||
-								(title.startsWith("'") && title.endsWith("'"))
-							) {
-								title = title.slice(1, -1).trim();
-							}
-
-							// Remove backticks
-							title = title.replace(/`/g, '');
-
-							if (title) {
-								this.logger.info(`[SessionLifecycle] Generated title: "${title}"`);
-								return title;
-							}
-						}
+					if (title) {
+						break; // Got the title, exit early
 					}
 				}
+			}
 
-				// Fallback if no title extracted
-				return messageText.substring(0, 50).trim() || 'New Session';
-			};
+			if (!title) {
+				throw new Error('No text content in SDK response');
+			}
 
-			// Race between generation and timeout
-			return await Promise.race([generateTitle(), timeoutPromise]);
-		} catch (error) {
-			this.logger.info('[SessionLifecycle] Title generation failed:', error);
-			// Fallback to first 50 chars of message
-			return messageText.substring(0, 50).trim() || 'New Session';
+			// Clean up the title
+			title = title.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1');
+
+			// Remove wrapping quotes
+			while (
+				(title.startsWith('"') && title.endsWith('"')) ||
+				(title.startsWith("'") && title.endsWith("'"))
+			) {
+				title = title.slice(1, -1).trim();
+			}
+
+			// Remove backticks
+			title = title.replace(/`/g, '');
+
+			this.logger.info(`[SessionLifecycle] Generated title: "${title}"`);
+			return title;
+		} finally {
+			// Always restore original environment variables
+			providerService.restoreEnvVars(originalEnv);
+			this.logger.debug(`[SessionLifecycle] Env vars restored`);
 		}
 	}
 
