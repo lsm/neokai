@@ -1,18 +1,17 @@
 /**
  * SDK Streaming CI Failures - Isolated Tests
  *
- * These tests are isolated because they fail on CI due to SDK subprocess crashes.
- * The SDK subprocess exits with code 1 before yielding any messages when using
- * streaming AsyncGenerator queries.
+ * These tests are isolated because they test SDK behavior with bypassPermissions mode,
+ * which fails when running as root due to SDK restrictions.
  *
- * Root cause:
- * - User messages ARE saved (by SessionManager before SDK)
- * - SDK messages are NOT saved (subprocess crashes before yielding them)
- * - CI logs show: "Claude Code process exited with code 1"
+ * The SDK subprocess exits with code 1 when:
+ * - Running as root (UID 0)
+ * - Using bypassPermissions mode with --dangerously-skip-permissions
  *
- * Tests isolated from:
- * - session-resume.test.ts: 'should capture SDK session ID on first message'
- * - message-persistence.test.ts: 'should persist messages during real SDK interaction'
+ * Test behavior:
+ * - Detects if running as root using process.getuid() === 0 (not just CI environment)
+ * - When running as root: expects SDK to throw root restriction error (test passes)
+ * - When NOT running as root: expects SDK to succeed normally (test passes)
  *
  * REQUIREMENTS:
  * - Requires GLM_API_KEY (or ZHIPU_API_KEY)
@@ -81,10 +80,13 @@ describe.skipIf(!GLM_API_KEY)('SDK Streaming CI Failures', () => {
 	}
 
 	describe('Direct SDK Call with Different API Patterns', () => {
-		test('should call SDK with AsyncGenerator + bypassPermissions (DIAGNOSTIC - expected to fail on CI)', async () => {
+		test('should call SDK with AsyncGenerator + bypassPermissions (DIAGNOSTIC - SDK fails as root)', async () => {
 			console.log('[ASYNC+BYPASS TEST] AsyncGenerator with bypassPermissions');
+			const isRunningAsRoot = process.getuid && process.getuid() === 0;
 			const isCI = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
-			console.log(`[ASYNC+BYPASS TEST] Running in ${isCI ? 'CI' : 'local'} environment`);
+			console.log(
+				`[ASYNC+BYPASS TEST] Running in ${isCI ? 'CI' : 'local'} environment, as root: ${isRunningAsRoot}`
+			);
 
 			// Message generator - just one simple message
 			async function* messageGenerator() {
@@ -107,6 +109,7 @@ describe.skipIf(!GLM_API_KEY)('SDK Streaming CI Failures', () => {
 				let hasAssistantMessage = false;
 
 				// CORRECT API: Wrap AsyncGenerator in object with 'prompt' field
+				// SDK should throw when running as root with bypassPermissions
 				for await (const message of query({
 					prompt: messageGenerator(),
 					options: {
@@ -134,12 +137,14 @@ describe.skipIf(!GLM_API_KEY)('SDK Streaming CI Failures', () => {
 
 				console.log(`[ASYNC+BYPASS TEST] Completed - ${messageCount} messages`);
 
-				if (isCI) {
-					// On CI (running as root), we expect the call to throw, not succeed
-					throw new Error('Expected bypassPermissions to fail on CI (root user) but it succeeded');
+				// If running as root, the SDK should have thrown before reaching here
+				if (isRunningAsRoot) {
+					throw new Error(
+						'SDK succeeded with bypassPermissions while running as root - expected SDK to throw root restriction error'
+					);
 				}
 
-				// Local environment - verify success
+				// Non-root environment - verify success
 				expect(messageCount).toBeGreaterThan(0);
 				expect(hasAssistantMessage).toBe(true);
 				console.log('[ASYNC+BYPASS TEST] ✓ PASSED - Successfully completed (non-root environment)');
@@ -147,7 +152,7 @@ describe.skipIf(!GLM_API_KEY)('SDK Streaming CI Failures', () => {
 				const errorMsg = (error as Error).message;
 				console.error('[ASYNC+BYPASS TEST] Caught error:', errorMsg);
 
-				// Check if this is the expected root restriction error
+				// Check if this is the expected root restriction error from the SDK
 				// The error message is "Claude Code process exited with code 1"
 				// But stderr contains the actual root restriction message
 				const stderrText = stderrOutput.join('\n');
@@ -157,19 +162,21 @@ describe.skipIf(!GLM_API_KEY)('SDK Streaming CI Failures', () => {
 					stderrText.includes('root');
 
 				if (isRootRestrictionError) {
-					if (isCI) {
-						console.log('[ASYNC+BYPASS TEST] ✓ PASSED - Got expected root restriction error on CI');
-						// Expected on CI - test passes
+					if (isRunningAsRoot) {
+						console.log(
+							'[ASYNC+BYPASS TEST] ✓ PASSED - Got expected root restriction error from SDK'
+						);
+						// SDK correctly threw the root restriction error - test passes
 						return;
 					} else {
 						console.error(
-							'[ASYNC+BYPASS TEST] ✗ FAILED - Got root restriction error in non-CI environment'
+							'[ASYNC+BYPASS TEST] ✗ FAILED - Got root restriction error in non-root environment'
 						);
 						throw error;
 					}
 				}
 
-				// Unexpected error
+				// Unexpected error - rethrow
 				console.error('[ASYNC+BYPASS TEST] Stack:', (error as Error).stack);
 				throw error;
 			}
