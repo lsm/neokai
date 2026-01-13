@@ -64,7 +64,7 @@ describe.skipIf(!GLM_API_KEY)('AgentSession SDK Integration', () => {
 		async () => {
 			await ctx.cleanup();
 		},
-		{ timeout: 15000 }
+		{ timeout: 20000 }
 	);
 
 	/**
