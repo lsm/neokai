@@ -55,9 +55,12 @@ describe.skipIf(!GLM_API_KEY)('SDK Streaming CI Failures', () => {
 		ctx = await createTestApp();
 	});
 
-	afterEach(async () => {
-		await ctx.cleanup();
-	});
+	afterEach(
+		async () => {
+			await ctx.cleanup();
+		},
+		{ timeout: 20000 }
+	);
 
 	/**
 	 * Helper: Wait for agent session to return to idle state
