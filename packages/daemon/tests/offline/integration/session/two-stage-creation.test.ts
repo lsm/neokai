@@ -238,11 +238,11 @@ describe('Session Creation and Title Generation', () => {
 			});
 
 			// Mock title generation to avoid API call
-			// After refactoring, generateTitleFromMessage is on SessionLifecycle
+			// After refactoring, generateTitleFromMessage returns { title, isFallback }
 			const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
 			const originalGenerate = lifecycle.generateTitleFromMessage;
 			lifecycle.generateTitleFromMessage = async (text: string) => {
-				return text.substring(0, 20);
+				return { title: text.substring(0, 20), isFallback: false };
 			};
 
 			await sessionManager.generateTitleAndRenameBranch(sessionId, 'Fix login bug');
@@ -262,12 +262,12 @@ describe('Session Creation and Title Generation', () => {
 			});
 
 			// Mock title generation to avoid API call
-			// After refactoring, generateTitleFromMessage is on SessionLifecycle
+			// After refactoring, generateTitleFromMessage returns { title, isFallback }
 			const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
 			const originalGenerate = lifecycle.generateTitleFromMessage;
 			lifecycle.generateTitleFromMessage = async (_text: string) => {
 				// Simulate AI-generated title based on message
-				return 'Fix Login Bug';
+				return { title: 'Fix Login Bug', isFallback: false };
 			};
 
 			const userMessage = 'I need to fix the login bug';
@@ -291,12 +291,12 @@ describe('Session Creation and Title Generation', () => {
 			});
 
 			// Mock title generation to avoid API call
-			// After refactoring, generateTitleFromMessage is on SessionLifecycle
+			// After refactoring, generateTitleFromMessage returns { title, isFallback }
 			const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
 			const originalGenerate = lifecycle.generateTitleFromMessage;
 			lifecycle.generateTitleFromMessage = async (_text: string) => {
 				// Simulate AI-generated title
-				return 'First Generated Title';
+				return { title: 'First Generated Title', isFallback: false };
 			};
 
 			// Call twice with different messages
@@ -321,7 +321,7 @@ describe('Session Creation and Title Generation', () => {
 			});
 
 			// Mock title generation to fail
-			// After refactoring, generateTitleFromMessage is on SessionLifecycle
+			// After refactoring, generateTitleFromMessage returns { title, isFallback }
 			const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
 			lifecycle.generateTitleFromMessage = async () => {
 				throw new Error('API error');
@@ -347,12 +347,12 @@ describe('Session Creation and Title Generation', () => {
 			});
 
 			// Mock title generation to avoid API call
-			// After refactoring, generateTitleFromMessage is on SessionLifecycle
+			// After refactoring, generateTitleFromMessage returns { title, isFallback }
 			const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
 			const originalGenerate = lifecycle.generateTitleFromMessage;
 			lifecycle.generateTitleFromMessage = async (_text: string) => {
 				// Simulate AI-generated title
-				return 'Test Title Generated';
+				return { title: 'Test Title Generated', isFallback: false };
 			};
 
 			const userMessage = 'Test message';
@@ -374,10 +374,10 @@ describe('Session Creation and Title Generation', () => {
 			});
 
 			// Mock title generation to avoid API call
-			// After refactoring, generateTitleFromMessage is on SessionLifecycle
+			// After refactoring, generateTitleFromMessage returns { title, isFallback }
 			const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
 			lifecycle.generateTitleFromMessage = async (text: string) => {
-				return text.substring(0, 20);
+				return { title: text.substring(0, 20), isFallback: false };
 			};
 
 			// Use the deprecated alias
@@ -404,10 +404,10 @@ describe('Session Creation and Title Generation', () => {
 			});
 
 			// Mock title generation
-			// After refactoring, generateTitleFromMessage is on SessionLifecycle
+			// After refactoring, generateTitleFromMessage returns { title, isFallback }
 			const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
 			lifecycle.generateTitleFromMessage = async (text: string) => {
-				return text || 'New Session';
+				return { title: text || 'New Session', isFallback: false };
 			};
 
 			await sessionManager.generateTitleAndRenameBranch(sessionId, '');
@@ -435,10 +435,10 @@ describe('Session Creation and Title Generation', () => {
 			db.updateSession(sessionId, session);
 
 			// Mock title generation
-			// After refactoring, generateTitleFromMessage is on SessionLifecycle
+			// After refactoring, generateTitleFromMessage returns { title, isFallback }
 			const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
 			lifecycle.generateTitleFromMessage = async (text: string) => {
-				return text.substring(0, 20);
+				return { title: text.substring(0, 20), isFallback: false };
 			};
 
 			// Should still work - titleGenerated check uses falsy, so undefined works
