@@ -438,7 +438,7 @@ jobs:
   test-web:
     name: Test Web
     runs-on: self-hosted
-    timeout-minutes: 3
+    timeout-minutes: 2
 
     steps:
       - uses: actions/checkout@v4
