@@ -7,7 +7,6 @@
  */
 
 import './setup';
-import { describe, it, expect, mock } from 'bun:test';
 import { renderHook, act } from '@testing-library/preact';
 import type { Session } from '@liuboer/shared';
 import { useSendMessage } from '../useSendMessage.ts';

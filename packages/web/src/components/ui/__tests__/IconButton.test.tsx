@@ -4,7 +4,6 @@
  */
 
 import './setup'; // Setup Happy-DOM
-import { describe, it, expect, mock } from 'bun:test';
 import { render } from '@testing-library/preact';
 import { IconButton } from '../IconButton';
 

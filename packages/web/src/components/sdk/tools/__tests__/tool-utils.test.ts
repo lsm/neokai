@@ -7,7 +7,6 @@
  * hasCustomRenderer, getCustomRenderer, shouldExpandByDefault
  */
 
-import { describe, it, expect } from 'bun:test';
 import {
 	getToolSummary,
 	getToolDisplayName,

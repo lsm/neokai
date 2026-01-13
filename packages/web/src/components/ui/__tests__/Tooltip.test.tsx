@@ -4,7 +4,6 @@
  */
 
 import './setup'; // Setup Happy-DOM
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { render, cleanup, fireEvent, waitFor } from '@testing-library/preact';
 import { Tooltip } from '../Tooltip';
 

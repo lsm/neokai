@@ -7,7 +7,6 @@
  * the underlying logic without using module mocks.
  */
 
-import { describe, it, expect, mock } from 'bun:test';
 
 // Type definitions for testing
 interface MockHub {

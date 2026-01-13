@@ -5,7 +5,6 @@
  * Tests the centralized design system tokens for spacing, sizing, and styling.
  */
 
-import { describe, it, expect } from 'bun:test';
 import {
 	messageSpacing,
 	borderRadius,

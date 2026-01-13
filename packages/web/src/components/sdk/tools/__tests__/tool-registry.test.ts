@@ -5,7 +5,6 @@
  * Tests for getToolConfig, getCategoryColors, and tool configurations
  */
 
-import { describe, it, expect } from 'bun:test';
 import { getToolConfig, getCategoryColors } from '../tool-registry';
 import type { ToolCategory } from '../tool-types';
 

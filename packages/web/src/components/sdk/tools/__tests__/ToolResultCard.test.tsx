@@ -7,7 +7,6 @@
  * the underlying logic without using module mocks.
  */
 
-import { describe, it, expect } from 'bun:test';
 
 // Tool color configuration matching the component
 const TOOL_COLORS = {

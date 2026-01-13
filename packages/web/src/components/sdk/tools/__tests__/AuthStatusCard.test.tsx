@@ -6,7 +6,6 @@
  */
 
 import './setup';
-import { describe, it, expect } from 'bun:test';
 import { render } from '@testing-library/preact';
 import { AuthStatusCard } from '../AuthStatusCard';
 

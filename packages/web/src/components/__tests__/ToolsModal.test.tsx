@@ -5,7 +5,6 @@
  * Tests pure logic without mock.module to avoid polluting other tests.
  */
 
-import { describe, it, expect, mock } from 'bun:test';
 import { signal } from '@preact/signals';
 
 describe('ToolsModal Logic', () => {

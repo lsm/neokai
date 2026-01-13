@@ -14,7 +14,6 @@
  * ApplicationState behavior without polluting the module cache.
  */
 
-import { describe, it, expect, mock, spyOn, beforeEach, afterEach } from 'bun:test';
 import { signal } from '@preact/signals';
 import { appState, initializeApplicationState, mergeSdkMessagesWithDedup } from '../state';
 

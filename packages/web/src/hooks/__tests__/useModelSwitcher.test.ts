@@ -7,7 +7,6 @@
  */
 
 import './setup';
-import { describe, it, expect } from 'bun:test';
 import { renderHook, act } from '@testing-library/preact';
 import { useModelSwitcher, MODEL_FAMILY_ICONS } from '../useModelSwitcher.ts';
 

@@ -10,7 +10,6 @@
  */
 
 import './setup';
-import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { QuestionPrompt } from '../QuestionPrompt';
 import type { PendingUserQuestion, QuestionDraftResponse } from '@liuboer/shared';

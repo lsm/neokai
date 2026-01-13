@@ -6,7 +6,6 @@
  * These tests validate the business logic used in GlobalSettingsEditor.
  */
 
-import { describe, it, expect, mock } from 'bun:test';
 
 describe('GlobalSettingsEditor Logic', () => {
 	describe('Model Selection', () => {

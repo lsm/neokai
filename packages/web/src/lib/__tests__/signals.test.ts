@@ -5,7 +5,6 @@
  * Tests the exported signals from signals.ts
  */
 
-import { describe, it, expect, beforeEach } from 'bun:test';
 import {
 	currentSessionIdSignal,
 	sidebarOpenSignal,

@@ -5,7 +5,6 @@
  * Tests the public API: cn, copyToClipboard, formatRelativeTime, formatTokens
  */
 
-import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import { cn, copyToClipboard, formatRelativeTime, formatTokens } from '../utils';
 
 describe('cn', () => {

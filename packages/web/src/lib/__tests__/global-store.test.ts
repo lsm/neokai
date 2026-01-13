@@ -7,7 +7,6 @@
  * we test the class behavior patterns instead of the actual singleton.
  */
 
-import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { signal, computed } from '@preact/signals';
 import type { Session, AuthStatus, HealthStatus, SystemState } from '@liuboer/shared';
 

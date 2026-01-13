@@ -7,7 +7,6 @@
  * - Prevents flashing during auto-reconnect cycles (Safari background tab resume)
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { connectionState } from '../../lib/state';
 import type { ConnectionState } from '@liuboer/shared';
 

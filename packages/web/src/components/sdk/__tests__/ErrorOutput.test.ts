@@ -4,7 +4,6 @@
  * Tests parsing and detection of <local-command-stderr> content
  */
 
-import { describe, it, expect } from 'bun:test';
 import { parseErrorOutput, hasErrorOutput } from '../ErrorOutput';
 
 describe('ErrorOutput', () => {

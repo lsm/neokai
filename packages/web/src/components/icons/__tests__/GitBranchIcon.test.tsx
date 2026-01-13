@@ -3,7 +3,6 @@
  */
 
 import '../../../lib/__tests__/setup';
-import { describe, it, expect } from 'bun:test';
 import { render } from '@testing-library/preact';
 import { GitBranchIcon } from '../GitBranchIcon';
 

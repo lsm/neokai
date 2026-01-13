@@ -10,7 +10,6 @@
  * imports (session-status -> state -> global-store -> connection-manager).
  */
 
-import { describe, it, expect } from 'bun:test';
 import type { AgentProcessingState } from '@liuboer/shared';
 
 // Recreate getProcessingPhaseColor locally for testing without DOM dependencies

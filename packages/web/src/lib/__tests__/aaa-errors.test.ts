@@ -7,7 +7,6 @@
  * (isConnectionError, isRecoverableConnectionError) are implementation details.
  */
 
-import { describe, it, expect } from 'bun:test';
 import { ConnectionError, ConnectionNotReadyError, ConnectionTimeoutError } from '../errors';
 
 describe('ConnectionError', () => {

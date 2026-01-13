@@ -8,7 +8,6 @@
  */
 
 import './setup';
-import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { cleanup } from '@testing-library/preact';
 import type { StructuredError } from '../../types/error';
 

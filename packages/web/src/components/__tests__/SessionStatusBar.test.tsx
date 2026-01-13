@@ -9,7 +9,6 @@
  */
 
 import './setup';
-import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import type { ContextInfo, ModelInfo } from '@liuboer/shared';
 import SessionStatusBar from '../SessionStatusBar';

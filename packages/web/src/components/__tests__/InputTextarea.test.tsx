@@ -16,7 +16,6 @@
  */
 
 import './setup';
-import { describe, it, expect, mock, beforeEach } from 'bun:test';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { InputTextarea } from '../InputTextarea';
 

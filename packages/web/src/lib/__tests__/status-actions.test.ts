@@ -5,7 +5,6 @@
  * Tests action extraction from SDK messages for status indicator display.
  */
 
-import { describe, it, expect } from 'bun:test';
 import { getCurrentAction } from '../status-actions';
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
 

@@ -7,7 +7,6 @@
  * the underlying logic without using module mocks.
  */
 
-import { describe, it, expect, mock, beforeEach } from 'bun:test';
 import { signal } from '@preact/signals';
 
 // Error classes for testing

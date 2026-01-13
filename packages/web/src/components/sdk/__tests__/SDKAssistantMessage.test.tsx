@@ -6,7 +6,6 @@
  */
 
 import '../../ui/__tests__/setup'; // Setup Happy-DOM
-import { describe, it, expect } from 'bun:test';
 import { render } from '@testing-library/preact';
 import { SDKAssistantMessage } from '../SDKAssistantMessage';
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';

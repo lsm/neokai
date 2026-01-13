@@ -6,7 +6,6 @@
  */
 
 import './setup';
-import { describe, it, expect } from 'bun:test';
 import { renderHook, act } from '@testing-library/preact';
 import { useModal } from '../useModal.ts';
 

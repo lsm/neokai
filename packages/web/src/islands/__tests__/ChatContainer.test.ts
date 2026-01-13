@@ -5,7 +5,6 @@
  * These tests verify the fixes for UI freeze during state transitions.
  */
 
-import { describe, it, expect, mock, beforeEach } from 'bun:test';
 
 // Mock requestAnimationFrame for testing
 const rafCallbacks: Array<() => void> = [];

@@ -9,7 +9,6 @@
  */
 
 import './setup';
-import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import { ConnectionManager } from '../connection-manager';
 import { globalStore } from '../global-store';
 import { sessionStore } from '../session-store';

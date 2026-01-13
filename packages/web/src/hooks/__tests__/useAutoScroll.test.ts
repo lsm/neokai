@@ -7,7 +7,6 @@
  */
 
 import './setup';
-import { describe, it, expect, mock, beforeEach } from 'bun:test';
 import { renderHook, act } from '@testing-library/preact';
 import type { RefObject } from 'preact';
 

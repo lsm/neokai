@@ -7,7 +7,6 @@
  */
 
 import './setup';
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { render, cleanup } from '@testing-library/preact';
 import ConnectionStatus from '../ConnectionStatus';
 

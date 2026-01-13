@@ -6,7 +6,6 @@
  * Uses mocked connectionManager to avoid actual network calls.
  */
 
-import { describe, it, expect, mock, beforeEach } from 'bun:test';
 import { ConnectionNotReadyError } from '../errors';
 
 // Mock the connection manager module

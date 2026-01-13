@@ -6,7 +6,6 @@
  */
 
 import './setup';
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { toastsSignal, dismissToast, toast } from '../toast';
 
 describe('toastsSignal', () => {

@@ -7,7 +7,6 @@
  * are implementation details.
  */
 
-import { describe, it, expect } from 'bun:test';
 import { createDeferred } from '../timeout';
 
 describe('createDeferred', () => {

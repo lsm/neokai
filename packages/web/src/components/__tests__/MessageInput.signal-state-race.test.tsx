@@ -27,7 +27,6 @@
  */
 
 import './setup';
-import { describe, it, expect, beforeEach } from 'bun:test';
 import { render, cleanup, act } from '@testing-library/preact';
 import { signal, useSignal } from '@preact/signals';
 import { useState, useCallback } from 'preact/hooks';
