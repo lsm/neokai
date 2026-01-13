@@ -29,17 +29,15 @@ describe('Session RPC Handlers (API-dependent)', () => {
 		ctx = await createTestApp();
 	});
 
-	afterEach(async () => {
-		await ctx.cleanup();
-	});
+	afterEach(
+		async () => {
+			await ctx.cleanup();
+		},
+		{ timeout: 15000 }
+	);
 
 	describe('message.send', () => {
-		// NOTE: This test is skipped due to SDK subprocess cleanup timing issues.
-		// The test itself passes (gets correct response), but the afterEach cleanup
-		// times out because the SDK subprocess is still running when the test completes.
-		// This is a test infrastructure issue, not a code issue.
-		// TODO: Fix by ensuring SDK subprocess is fully stopped before test completes.
-		test.skip(
+		test(
 			'should accept message for existing session',
 			async () => {
 				const tmpDir = process.env.TMPDIR || '/tmp';

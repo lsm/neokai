@@ -13,6 +13,7 @@
  */
 
 import type { Provider, ProviderInfo, Session } from '@liuboer/shared';
+import { getAvailableModels } from './model-service';
 
 /**
  * Environment variables for provider routing
@@ -55,6 +56,7 @@ interface ProviderDefinition {
 	baseUrl?: string; // undefined = use SDK default
 	models: string[];
 	envKeyNames: string[]; // Environment variable names to check for API key
+	titleGenerationModel?: string; // Model ID to use for title generation (fast/cheap model)
 }
 
 /**
@@ -64,9 +66,10 @@ const PROVIDER_DEFINITIONS: Record<Provider, ProviderDefinition> = {
 	anthropic: {
 		id: 'anthropic',
 		name: 'Anthropic',
-		baseUrl: undefined, // Use SDK default
+		baseUrl: 'https://api.anthropic.com',
 		models: ['default', 'opus', 'haiku', 'sonnet'],
 		envKeyNames: ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'],
+		titleGenerationModel: 'haiku',
 	},
 	glm: {
 		id: 'glm',
@@ -74,19 +77,32 @@ const PROVIDER_DEFINITIONS: Record<Provider, ProviderDefinition> = {
 		baseUrl: 'https://open.bigmodel.cn/api/anthropic',
 		models: ['glm-4.7'],
 		envKeyNames: ['GLM_API_KEY', 'ZHIPU_API_KEY'],
+		titleGenerationModel: 'glm-4.5-air',
 	},
 };
 
 export class ProviderService {
 	/**
 	 * Get the default provider based on environment configuration
-	 * Returns 'anthropic' unless DEFAULT_PROVIDER is set to 'glm'
+	 *
+	 * Priority:
+	 * 1. DEFAULT_PROVIDER env var (explicit override)
+	 * 2. GLM if GLM_API_KEY or ZHIPU_API_KEY is set (auto-detect)
+	 * 3. Anthropic (default)
 	 */
 	getDefaultProvider(): Provider {
+		// 1. Check explicit DEFAULT_PROVIDER override
 		const defaultProvider = process.env.DEFAULT_PROVIDER;
-		if (defaultProvider === 'glm') {
+		if (defaultProvider === 'glm' || defaultProvider === 'anthropic') {
+			return defaultProvider;
+		}
+
+		// 2. Auto-detect: prefer GLM if API key is available
+		if (this.isProviderAvailable('glm')) {
 			return 'glm';
 		}
+
+		// 3. Default to Anthropic
 		return 'anthropic';
 	}
 
@@ -218,6 +234,43 @@ export class ProviderService {
 	getDefaultModelForProvider(provider: Provider): string {
 		const definition = PROVIDER_DEFINITIONS[provider];
 		return definition.models[0] || 'default';
+	}
+
+	/**
+	 * Get title generation configuration for a provider
+	 * Returns the model ID, base URL, and API version to use for direct API calls
+	 */
+	getTitleGenerationConfig(provider: Provider): {
+		modelId: string;
+		baseUrl: string;
+		apiVersion: string;
+	} {
+		const definition = PROVIDER_DEFINITIONS[provider];
+
+		// Use provider-specific title generation model (shorthand like 'haiku' or full ID)
+		let modelId = definition.titleGenerationModel || definition.models[0] || 'default';
+
+		// Resolve shorthand to full model ID for Anthropic
+		// For GLM, the model ID is already the full ID
+		if (
+			provider === 'anthropic' &&
+			(modelId === 'haiku' || modelId === 'sonnet' || modelId === 'opus')
+		) {
+			// Use model service to get the full model ID from the cache
+			const models = getAvailableModels('global');
+			const model = models.find((m: { family: string }) => m.family === modelId);
+			if (model) {
+				modelId = model.id;
+			}
+		}
+
+		// Base URL for direct API calls (all providers use Anthropic-compatible API)
+		const baseUrl = definition.baseUrl || 'https://api.anthropic.com';
+
+		// API version (currently all providers use v1)
+		const apiVersion = 'v1';
+
+		return { modelId, baseUrl, apiVersion };
 	}
 
 	/**
@@ -359,6 +412,87 @@ export class ProviderService {
 		const original: OriginalEnvVars = {};
 
 		// Save and set each env var
+		if (envVars.ANTHROPIC_AUTH_TOKEN !== undefined) {
+			original.ANTHROPIC_AUTH_TOKEN = process.env.ANTHROPIC_AUTH_TOKEN;
+			process.env.ANTHROPIC_AUTH_TOKEN = envVars.ANTHROPIC_AUTH_TOKEN;
+		}
+		if (envVars.ANTHROPIC_BASE_URL !== undefined) {
+			original.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
+			process.env.ANTHROPIC_BASE_URL = envVars.ANTHROPIC_BASE_URL;
+		}
+		if (envVars.API_TIMEOUT_MS !== undefined) {
+			original.API_TIMEOUT_MS = process.env.API_TIMEOUT_MS;
+			process.env.API_TIMEOUT_MS = envVars.API_TIMEOUT_MS;
+		}
+		if (envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !== undefined) {
+			original.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
+				process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+			process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
+				envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+		}
+		if (envVars.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
+			original.ANTHROPIC_DEFAULT_SONNET_MODEL = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+			process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = envVars.ANTHROPIC_DEFAULT_SONNET_MODEL;
+		}
+		if (envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL !== undefined) {
+			original.ANTHROPIC_DEFAULT_HAIKU_MODEL = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+			process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+		}
+		if (envVars.ANTHROPIC_DEFAULT_OPUS_MODEL !== undefined) {
+			original.ANTHROPIC_DEFAULT_OPUS_MODEL = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+			process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = envVars.ANTHROPIC_DEFAULT_OPUS_MODEL;
+		}
+
+		return original;
+	}
+
+	/**
+	 * Apply provider environment variables to process.env with explicit provider
+	 *
+	 * This variant takes an explicit provider parameter instead of detecting from model ID.
+	 * Use this when the model ID is a shorthand (like 'haiku') that doesn't identify the provider.
+	 *
+	 * @param provider - The provider to get env vars for
+	 * @param modelId - The model ID for setting tier mappings
+	 * @returns Original env vars that should be restored after SDK query
+	 */
+	applyEnvVarsToProcessForProvider(provider: Provider, modelId?: string): OriginalEnvVars {
+		// Anthropic uses default environment
+		if (provider === 'anthropic') {
+			return {};
+		}
+
+		// Get API key for the provider
+		const apiKey = this.getProviderApiKey(provider);
+		if (!apiKey) {
+			console.warn(`[ProviderService] No API key found for provider ${provider}`);
+			return {};
+		}
+
+		const definition = PROVIDER_DEFINITIONS[provider];
+		const envVars: ProviderEnvVars = {
+			ANTHROPIC_BASE_URL: definition.baseUrl,
+			ANTHROPIC_AUTH_TOKEN: apiKey,
+		};
+
+		// Add provider-specific settings
+		if (provider === 'glm') {
+			envVars.API_TIMEOUT_MS = '3000000';
+			envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
+
+			// Map tier IDs to GLM model IDs if a model is specified
+			if (modelId === 'glm-4.5-air') {
+				envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.5-air';
+			} else if (modelId) {
+				// Other GLM models map to default (Sonnet) and Opus tiers
+				envVars.ANTHROPIC_DEFAULT_SONNET_MODEL = modelId;
+				envVars.ANTHROPIC_DEFAULT_OPUS_MODEL = modelId;
+			}
+		}
+
+		// Apply env vars
+		const original: OriginalEnvVars = {};
+
 		if (envVars.ANTHROPIC_AUTH_TOKEN !== undefined) {
 			original.ANTHROPIC_AUTH_TOKEN = process.env.ANTHROPIC_AUTH_TOKEN;
 			process.env.ANTHROPIC_AUTH_TOKEN = envVars.ANTHROPIC_AUTH_TOKEN;
