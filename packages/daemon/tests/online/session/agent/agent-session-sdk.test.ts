@@ -60,9 +60,12 @@ describe.skipIf(!GLM_API_KEY)('AgentSession SDK Integration', () => {
 		ctx = await createTestApp();
 	});
 
-	afterEach(async () => {
-		await ctx.cleanup();
-	});
+	afterEach(
+		async () => {
+			await ctx.cleanup();
+		},
+		{ timeout: 15000 }
+	);
 
 	/**
 	 * Helper: Wait for agent session to return to idle state
