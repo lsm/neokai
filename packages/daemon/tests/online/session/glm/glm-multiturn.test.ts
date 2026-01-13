@@ -17,14 +17,14 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import type { TestContext } from '../../test-utils';
+import type { TestContext } from '../../../test-utils';
 import {
 	createTestApp,
 	waitForWebSocketState,
 	waitForWebSocketMessage,
 	createWebSocketWithFirstMessage,
-} from '../../test-utils';
-import { sendMessageSync } from '../../helpers/test-message-sender';
+} from '../../../test-utils';
+import { sendMessageSync } from '../../../helpers/test-message-sender';
 
 // Check for GLM credentials
 const GLM_API_KEY = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;

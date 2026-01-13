@@ -35,9 +35,9 @@ if (GLM_API_KEY) {
 	process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.5-air';
 	process.env.API_TIMEOUT_MS = '3000000';
 }
-import type { TestContext } from '../../test-utils';
-import { createTestApp } from '../../test-utils';
-import { sendMessageSync } from '../../helpers/test-message-sender';
+import type { TestContext } from '../../../test-utils';
+import { createTestApp } from '../../../test-utils';
+import { sendMessageSync } from '../../../helpers/test-message-sender';
 
 // Skip all tests if GLM credentials are not available
 describe.skipIf(!GLM_API_KEY)('Auto-Title Generation', () => {

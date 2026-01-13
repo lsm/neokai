@@ -37,14 +37,14 @@ if (GLM_API_KEY) {
 	process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.5-air';
 	process.env.API_TIMEOUT_MS = '3000000';
 }
-import type { TestContext } from '../../test-utils';
+import type { TestContext } from '../../../test-utils';
 import {
 	createTestApp,
 	createWebSocketWithFirstMessage,
 	waitForWebSocketState,
 	waitForWebSocketMessage,
-} from '../../test-utils';
-import { sendMessageSync } from '../../helpers/test-message-sender';
+} from '../../../test-utils';
+import { sendMessageSync } from '../../../helpers/test-message-sender';
 
 /**
  * CRITICAL: Restore any mocks before running these tests.

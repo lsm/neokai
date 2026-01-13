@@ -32,7 +32,9 @@ jobs:
       matrix:
         category:
           - sdk
-          - session
+          - session-agent
+          - session-features
+          - session-glm
           - components
           - rpc
           - mcp
