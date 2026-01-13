@@ -351,6 +351,10 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 			// Note: We don't clear globalModelsCache here - it's reused across tests
 			// Individual tests can clear it if needed for isolation
 
+			// Small delay to let pending StateManager broadcasts complete
+			// This prevents "Cannot use a closed database" errors during cleanup
+			await Bun.sleep(200);
+
 			// Close database and stop server
 			db.close();
 			server.stop();

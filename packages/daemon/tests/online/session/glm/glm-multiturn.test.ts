@@ -234,7 +234,7 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 		expect(sdkMessages.length).toBeGreaterThan(0);
 
 		// Count user and assistant messages
-		const userMessages = sdkMessages.filter((m) => m.role === 'user');
+		const userMessages = sdkMessages.filter((m) => m.type === 'user');
 		const assistantMessages = sdkMessages.filter((m) => m.type === 'assistant');
 
 		// Should have 3 user messages and 3 assistant responses
