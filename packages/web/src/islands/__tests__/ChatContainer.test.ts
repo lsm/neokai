@@ -5,16 +5,14 @@
  * These tests verify the fixes for UI freeze during state transitions.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+
 // Mock requestAnimationFrame for testing
 const rafCallbacks: Array<() => void> = [];
-const mockRaf = vi.fn((callback: () => void) => {
-	rafCallbacks.push(callback);
+const mockRaf = vi.fn((callback: FrameRequestCallback) => {
+	rafCallbacks.push(callback as unknown as () => void);
 	return rafCallbacks.length;
 });
-
-// Replace global requestAnimationFrame
-globalThis.requestAnimationFrame = mockRaf as unknown as typeof requestAnimationFrame;
 
 /**
  * Helper to flush all pending requestAnimationFrame callbacks
@@ -28,7 +26,13 @@ function flushRAF(): void {
 describe('ChatContainer State Batching', () => {
 	beforeEach(() => {
 		rafCallbacks.length = 0;
-		mockRaf.mockReset();
+		mockRaf.mockClear();
+		// Use stubGlobal to properly mock requestAnimationFrame in vitest
+		vi.stubGlobal('requestAnimationFrame', mockRaf);
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
 	});
 
 	describe('requestAnimationFrame batching', () => {
