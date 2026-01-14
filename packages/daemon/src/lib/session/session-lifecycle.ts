@@ -159,82 +159,133 @@ export class SessionLifecycle {
 	}
 
 	/**
-	 * Delete a session
+	 * Delete a session with atomic cleanup
+	 *
+	 * Uses a phased approach with state tracking to ensure cleanup succeeds
+	 * or fails gracefully without leaving orphaned resources.
+	 *
+	 * Phases:
+	 * 1. Cleanup AgentSession (stops SDK subprocess)
+	 * 2. Delete worktree and branch
+	 * 3. Delete from database
+	 * 4. Remove from cache
+	 * 5. Broadcast deletion event
+	 *
+	 * If any phase fails, the error is logged but cleanup continues.
+	 * Orphaned resources (worktrees, branches) can be cleaned up via global teardown.
 	 */
 	async delete(sessionId: string): Promise<void> {
-		// Transaction-like cleanup with proper error handling
-		const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
-		let dbDeleted = false;
+		this.logger.info(`[SessionLifecycle] Starting deletion for session ${sessionId}`);
 
-		// Get session data for worktree cleanup
+		// Get references before deletion
+		const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
 		const session = this.db.getSession(sessionId);
 
+		// Track completed phases for potential rollback
+		const completedPhases: string[] = [];
+
 		try {
-			// 1. Cleanup resources (can fail)
+			// PHASE 1: Cleanup AgentSession (stops SDK subprocess)
+			// This is critical - must complete before other cleanup
 			if (agentSession) {
-				await agentSession.cleanup();
+				this.logger.info(`[SessionLifecycle] PHASE 1: Cleaning up AgentSession`);
+				try {
+					await agentSession.cleanup();
+					completedPhases.push('agent-cleanup');
+				} catch (error) {
+					this.logger.error(`[SessionLifecycle] AgentSession cleanup failed:`, error);
+					// Continue with deletion - SDK subprocess will be terminated when process exits
+				}
 			}
 
-			// 2. Delete worktree if session uses one (before DB deletion)
+			// PHASE 2: Delete worktree and branch
+			// Must happen before DB deletion (we need the worktree metadata)
 			if (session?.worktree) {
-				this.logger.info(`[SessionLifecycle] Removing worktree for session ${sessionId}`);
-
+				this.logger.info(`[SessionLifecycle] PHASE 2: Removing worktree for session ${sessionId}`);
 				try {
 					await this.worktreeManager.removeWorktree(session.worktree, true);
 
 					// Verify worktree was actually removed
 					const stillExists = await this.worktreeManager.verifyWorktree(session.worktree);
 					if (stillExists) {
-						this.logger.error(
-							`[SessionLifecycle] WARNING: Worktree still exists after removal: ${session.worktree.worktreePath}`
+						this.logger.warn(
+							`[SessionLifecycle] Worktree still exists after removal: ${session.worktree.worktreePath}`
 						);
-						// Log to a failures list that global teardown can check
-						// For now, just log - global teardown will catch these
+						// Track for global teardown
+						completedPhases.push('worktree-cleanup-partial');
 					} else {
-						this.logger.info(`[SessionLifecycle] Successfully removed worktree`);
+						this.logger.info(`[SessionLifecycle] Worktree successfully removed`);
+						completedPhases.push('worktree-cleanup');
 					}
 				} catch (error) {
 					const errorMsg = error instanceof Error ? error.message : String(error);
 					this.logger.error(
-						`[SessionLifecycle] FAILED to remove worktree (will be cleaned by global teardown): ${errorMsg}`,
-						{ sessionId, worktreePath: session.worktree.worktreePath }
+						`[SessionLifecycle] Worktree removal failed (global teardown will handle): ${errorMsg}`
 					);
-
-					// Continue with session deletion - global teardown will handle orphaned worktrees
-					// This prevents a stuck session that can't be deleted due to git issues
+					// Don't add to completedPhases - worktree cleanup failed
 				}
 			}
 
-			// 3. Delete from DB (can fail)
-			this.db.deleteSession(sessionId);
-			dbDeleted = true;
-
-			// 4. Remove from memory (shouldn't fail)
-			this.sessionCache.remove(sessionId);
-
-			// 5. Notify clients (can fail, but don't rollback)
+			// PHASE 3: Delete from database
+			// This is the point of no return - session is considered deleted
+			this.logger.info(`[SessionLifecycle] PHASE 3: Deleting session from database`);
 			try {
-				await this.messageHub.publish(
-					`session.deleted`,
-					{ sessionId, reason: 'deleted' },
-					{ sessionId: 'global' }
-				);
-
-				// Emit event via EventBus
-				await this.eventBus.emit('session.deleted', { sessionId });
+				this.db.deleteSession(sessionId);
+				completedPhases.push('db-delete');
 			} catch (error) {
-				this.logger.error('[SessionLifecycle] Failed to broadcast deletion:', error);
-				// Don't rollback - session is already deleted
-			}
-		} catch (error) {
-			// Rollback if DB delete failed
-			if (!dbDeleted) {
-				this.logger.error('[SessionLifecycle] Session deletion failed:', error);
-				throw error;
+				this.logger.error(`[SessionLifecycle] Database deletion failed:`, error);
+				throw error; // Re-throw - if we can't delete from DB, deletion failed
 			}
 
-			// If cleanup failed but DB delete succeeded, log but don't rollback
-			this.logger.error('[SessionLifecycle] Session deleted but cleanup failed:', error);
+			// PHASE 4: Remove from cache
+			this.logger.info(`[SessionLifecycle] PHASE 4: Removing session from cache`);
+			try {
+				this.sessionCache.remove(sessionId);
+				completedPhases.push('cache-remove');
+			} catch (error) {
+				this.logger.error(`[SessionLifecycle] Cache removal failed:`, error);
+				// Non-critical - session will be garbage collected
+			}
+
+			// PHASE 5: Broadcast deletion event
+			// Best-effort notification - failure doesn't affect deletion
+			this.logger.info(`[SessionLifecycle] PHASE 5: Broadcasting deletion event`);
+			try {
+				await Promise.all([
+					this.messageHub.publish(
+						'session.deleted',
+						{ sessionId, reason: 'deleted' },
+						{ sessionId: 'global' }
+					),
+					this.eventBus.emit('session.deleted', { sessionId }),
+				]);
+				completedPhases.push('broadcast');
+			} catch (error) {
+				this.logger.error(`[SessionLifecycle] Failed to broadcast deletion:`, error);
+				// Non-critical - session is already deleted
+			}
+
+			this.logger.info(
+				`[SessionLifecycle] Session ${sessionId} deleted successfully (completed phases: ${completedPhases.join(', ')})`
+			);
+		} catch (error) {
+			// Critical failure - log what was completed
+			this.logger.error(
+				`[SessionLifecycle] Session deletion FAILED (completed phases: ${completedPhases.join(', ')}):`,
+				error
+			);
+
+			// Note: True rollback isn't feasible because:
+			// - We can't restore a deleted DB record without original data
+			// - We can't recreate a deleted worktree/branch
+			// - AgentSession can't be "uncleaned"
+			//
+			// The strategy instead is:
+			// - Track completed phases for diagnostics
+			// - Allow global teardown to clean up orphaned resources
+			// - Log clearly what succeeded and what failed
+
+			throw error;
 		}
 	}
 

@@ -14,6 +14,7 @@ import { generateUUID } from '@liuboer/shared';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { mkdirSync, rmSync } from 'fs';
+import { mockAgentSessionForOfflineTest } from '../../../test-utils';
 
 describe('Instant Message Persistence UX', () => {
 	let db: Database;
@@ -124,6 +125,13 @@ describe('Instant Message Persistence UX', () => {
 		const messageContent = 'Test message for instant persistence';
 		const messageId = generateUUID();
 
+		// Mock AgentSession to prevent SDK query creation in offline test
+		// This MUST be done before emitting message.sendRequest because:
+		// 1. SessionManager handles message.sendRequest
+		// 2. It creates/gets AgentSession which subscribes to message.persisted
+		// 3. When message.persisted is emitted, AgentSession calls startQueryAndEnqueue()
+		mockAgentSessionForOfflineTest(_sessionManager, session.id);
+
 		// Create a promise that resolves when message is persisted
 		let resolvePersisted: (() => void) | null = null;
 		const persistedPromise = new Promise<void>((resolve) => {
@@ -190,6 +198,9 @@ describe('Instant Message Persistence UX', () => {
 	test('messages with images are persisted correctly', async () => {
 		const messageContent = 'Message with image';
 		const messageId = generateUUID();
+
+		// Mock AgentSession to prevent SDK query creation in offline test
+		mockAgentSessionForOfflineTest(_sessionManager, session.id);
 
 		// Create a promise that resolves when message is persisted
 		let resolvePersisted: (() => void) | null = null;

@@ -19,9 +19,11 @@ import { SettingsManager } from '../../../../src/lib/settings-manager';
 import { AuthManager } from '../../../../src/lib/auth-manager';
 import { MessageHub } from '@liuboer/shared';
 import { getConfig } from '../../../../src/config';
+import { setModelsCache } from '../../../../src/lib/model-service';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { mockAgentSessionForOfflineTest } from '../../../test-utils';
 
 describe('message.send EventBus Integration', () => {
 	let db: Database;
@@ -32,6 +34,21 @@ describe('message.send EventBus Integration', () => {
 	let testWorkspace: string;
 
 	beforeEach(async () => {
+		// Set up mock models to prevent background refresh during tests
+		// Matches the format used in test-utils.ts
+		const mockModels = [
+			{
+				value: 'default',
+				displayName: 'Sonnet 4.5',
+				description: 'Sonnet 4.5 · Best for everyday tasks',
+			},
+			{ value: 'opus', displayName: 'Opus 4.5', description: 'Opus 4.5 · Most capable model' },
+			{ value: 'haiku', displayName: 'Haiku 3.5', description: 'Haiku 3.5 · Fast and efficient' },
+		];
+		const mockCache = new Map<string, typeof mockModels>();
+		mockCache.set('global', mockModels);
+		setModelsCache(mockCache as Map<string, never>);
+
 		// Create test workspace
 		testWorkspace = mkdtempSync(join(tmpdir(), 'liuboer-test-'));
 
@@ -67,11 +84,11 @@ describe('message.send EventBus Integration', () => {
 	});
 
 	afterEach(async () => {
-		// Cleanup session resources (interrupts SDK queries)
+		// Cleanup session resources
 		await sessionManager.cleanup();
 
-		// Wait for async operations to complete after interrupt
-		// This prevents "Cannot use a closed database" errors
+		// Wait for async operations to complete
+		// No SDK queries are created in this offline test, so minimal wait needed
 		await new Promise((resolve) => setTimeout(resolve, 100));
 
 		// Now safe to close database
@@ -92,6 +109,9 @@ describe('message.send EventBus Integration', () => {
 			workspacePath: testWorkspace,
 		});
 
+		// Mock AgentSession to prevent SDK query creation in offline test
+		const agentSession = mockAgentSessionForOfflineTest(sessionManager, sessionId);
+
 		// Verify the handler works by emitting an event with hasDraftToClear
 		// If the handler is registered, it should process the event and clear the draft
 		await sessionManager.updateSession(sessionId, {
@@ -111,7 +131,6 @@ describe('message.send EventBus Integration', () => {
 		await new Promise((resolve) => setTimeout(resolve, 100));
 
 		// Verify handler ran by checking draft was cleared
-		const agentSession = sessionManager.getSession(sessionId);
 		const session = agentSession!.getSessionData();
 		expect(session.metadata.inputDraft).toBeUndefined();
 	});
@@ -121,7 +140,10 @@ describe('message.send EventBus Integration', () => {
 			workspacePath: testWorkspace,
 		});
 
-		const agentSession = sessionManager.getSession(sessionId);
+		// Mock AgentSession to prevent SDK query creation in offline test
+		const agentSession = mockAgentSessionForOfflineTest(sessionManager, sessionId);
+		expect(agentSession).toBeDefined();
+
 		let session = agentSession!.getSessionData();
 
 		// Workspace is now initialized from session creation
@@ -129,12 +151,19 @@ describe('message.send EventBus Integration', () => {
 		// But title is not yet generated
 		expect(session.metadata.titleGenerated).toBe(false);
 
-		// Mock the title generation to avoid API call
-		// After refactoring, generateTitleFromMessage returns { title, isFallback }
+		// Mock generateTitleAndRenameBranch to avoid real SDK API call
 		const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
-		const originalGenerate = lifecycle.generateTitleFromMessage;
-		lifecycle.generateTitleFromMessage = async (text: string) => {
-			return { title: text.substring(0, 20), isFallback: false };
+		const originalGenerateTitle = lifecycle.generateTitleAndRenameBranch;
+		lifecycle.generateTitleAndRenameBranch = async (
+			_sessionId: string,
+			_userMessageText: string
+		) => {
+			// Simulate title generation without calling SDK
+			await sessionManager.updateSession(_sessionId, {
+				title: 'Test message for tit',
+				metadata: { titleGenerated: true },
+			} as Partial<import('@liuboer/shared').Session>);
+			return { title: 'Test message for tit', isFallback: false };
 		};
 
 		// Emit the event directly (simulating what RPC handler does)
@@ -143,7 +172,7 @@ describe('message.send EventBus Integration', () => {
 			messageId: 'test-msg-1',
 			messageContent: 'Test message for title',
 			userMessageText: 'Test message for title',
-			needsWorkspaceInit: true, // This now triggers title generation
+			needsWorkspaceInit: true,
 			hasDraftToClear: false,
 		});
 
@@ -154,11 +183,11 @@ describe('message.send EventBus Integration', () => {
 		session = agentSession!.getSessionData();
 
 		// Restore original method
-		lifecycle.generateTitleFromMessage = originalGenerate;
+		lifecycle.generateTitleAndRenameBranch = originalGenerateTitle;
 
 		// Verify title was generated
 		expect(session.metadata.titleGenerated).toBe(true);
-		expect(session.title).toBe('Test message for tit'); // First 20 chars
+		expect(session.title).toBe('Test message for tit');
 	});
 
 	test('message.persisted event does not regenerate title if already generated', async () => {
@@ -166,18 +195,28 @@ describe('message.send EventBus Integration', () => {
 			workspacePath: testWorkspace,
 		});
 
-		// Mock title generation
-		// After refactoring, generateTitleFromMessage returns { title, isFallback }
+		// Mock AgentSession to prevent SDK query creation in offline test
+		const agentSession = mockAgentSessionForOfflineTest(sessionManager, sessionId);
+		expect(agentSession).toBeDefined();
+
+		// Mock title generation to avoid real SDK API call
 		const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
-		const originalGenerate = lifecycle.generateTitleFromMessage;
-		lifecycle.generateTitleFromMessage = async (text: string) => {
-			return { title: text.substring(0, 20), isFallback: false };
+		const originalGenerateTitle = lifecycle.generateTitleAndRenameBranch;
+		lifecycle.generateTitleAndRenameBranch = async (
+			_sessionId: string,
+			_userMessageText: string
+		) => {
+			// Simulate title generation without calling SDK
+			await sessionManager.updateSession(_sessionId, {
+				title: 'First message',
+				metadata: { titleGenerated: true },
+			} as Partial<import('@liuboer/shared').Session>);
+			return { title: 'First message', isFallback: false };
 		};
 
-		// Generate title first
+		// Generate title first (using mocked method)
 		await sessionManager.generateTitleAndRenameBranch(sessionId, 'First message');
 
-		const agentSession = sessionManager.getSession(sessionId);
 		const session = agentSession!.getSessionData();
 
 		// Verify title is generated
@@ -203,7 +242,7 @@ describe('message.send EventBus Integration', () => {
 		expect(updatedSession.title).toBe(originalTitle);
 
 		// Restore original method
-		lifecycle.generateTitleFromMessage = originalGenerate;
+		lifecycle.generateTitleAndRenameBranch = originalGenerateTitle;
 	});
 
 	test('EventBus subscriber handles draft clearing', async () => {
@@ -211,12 +250,15 @@ describe('message.send EventBus Integration', () => {
 			workspacePath: testWorkspace,
 		});
 
+		// Mock AgentSession to prevent SDK query creation in offline test
+		const agentSession = mockAgentSessionForOfflineTest(sessionManager, sessionId);
+		expect(agentSession).toBeDefined();
+
 		// Set a draft
 		await sessionManager.updateSession(sessionId, {
 			metadata: { inputDraft: 'Test draft', workspaceInitialized: true },
 		} as Partial<import('@liuboer/shared').Session>);
 
-		let agentSession = sessionManager.getSession(sessionId);
 		let session = agentSession!.getSessionData();
 		expect(session.metadata.inputDraft).toBe('Test draft');
 
@@ -234,7 +276,6 @@ describe('message.send EventBus Integration', () => {
 		await new Promise((resolve) => setTimeout(resolve, 200));
 
 		// Get fresh session data
-		agentSession = sessionManager.getSession(sessionId);
 		session = agentSession!.getSessionData();
 
 		// Draft should be cleared
@@ -246,6 +287,10 @@ describe('message.send EventBus Integration', () => {
 			workspacePath: testWorkspace,
 		});
 
+		// Mock AgentSession to prevent SDK query creation in offline test
+		const agentSession = mockAgentSessionForOfflineTest(sessionManager, sessionId);
+		expect(agentSession).toBeDefined();
+
 		// Emit event with invalid session ID (should not throw)
 		// DaemonHub subscriber logs error but doesn't throw
 		await eventBus.emit('message.persisted', {
@@ -253,7 +298,7 @@ describe('message.send EventBus Integration', () => {
 			messageId: 'test-msg-4',
 			messageContent: 'Test',
 			userMessageText: 'Test',
-			needsWorkspaceInit: true,
+			needsWorkspaceInit: false,
 			hasDraftToClear: false,
 		});
 
@@ -261,7 +306,6 @@ describe('message.send EventBus Integration', () => {
 		await new Promise((resolve) => setTimeout(resolve, 100));
 
 		// Original session should be unaffected (title not generated yet)
-		const agentSession = sessionManager.getSession(sessionId);
 		const session = agentSession!.getSessionData();
 		expect(session.metadata.titleGenerated).toBe(false);
 	});

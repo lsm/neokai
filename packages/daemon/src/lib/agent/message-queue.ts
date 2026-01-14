@@ -184,17 +184,12 @@ export class MessageQueue {
 	async *messageGenerator(
 		sessionId: string
 	): AsyncGenerator<{ message: SDKUserMessage; onSent: () => void }> {
-		console.log('[MessageQueue] messageGenerator started, running:', this.running);
 		while (this.running) {
-			console.log('[MessageQueue] Waiting for next message, queue size:', this.queue.length);
 			const queuedMessage = await this.waitForNextMessage();
 
 			if (!queuedMessage) {
-				console.log('[MessageQueue] No queued message, exiting generator');
 				break;
 			}
-
-			console.log('[MessageQueue] Got message from queue:', queuedMessage.id);
 
 			// Extract parent_tool_use_id from tool_result content blocks
 			// This is required when responding to AskUserQuestion and other tool calls

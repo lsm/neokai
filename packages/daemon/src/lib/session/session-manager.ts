@@ -31,6 +31,23 @@ import {
 import { ToolsConfigManager } from './tools-config';
 import { MessagePersistence } from './message-persistence';
 
+/**
+ * Cleanup state machine for SessionManager
+ *
+ * Prevents race conditions during cleanup by tracking state and
+ * preventing new background tasks from starting during cleanup.
+ *
+ * States:
+ * - IDLE: Normal operation, cleanup not started
+ * - CLEANING: Cleanup in progress, barrier active for new background tasks
+ * - CLEANED: Cleanup complete, no further operations allowed
+ */
+export enum CleanupState {
+	IDLE = 'idle',
+	CLEANING = 'cleaning',
+	CLEANED = 'cleaned',
+}
+
 export class SessionManager {
 	private logger: Logger;
 	private worktreeManager: WorktreeManager;
@@ -39,6 +56,9 @@ export class SessionManager {
 	// Track pending background tasks (like title generation) for cleanup
 	// These are fire-and-forget operations that must complete before DB closes
 	private pendingBackgroundTasks: Set<Promise<unknown>> = new Set();
+
+	// Cleanup state machine - prevents race conditions during shutdown
+	private cleanupState: CleanupState = CleanupState.IDLE;
 
 	// Extracted modules
 	private sessionCache: SessionCache;
@@ -117,8 +137,17 @@ export class SessionManager {
 			try {
 				// STEP 1: Generate title and rename branch (if needed)
 				// Only run if workspace initialization is needed (first message)
-				// CRITICAL: Track this as a background task for cleanup
+				// CRITICAL: Check cleanup barrier to prevent race conditions
 				if (needsWorkspaceInit) {
+					// BARRIER: Skip new background tasks during cleanup
+					// This prevents race conditions where tasks complete during shutdown
+					if (this.cleanupState !== CleanupState.IDLE) {
+						this.logger.warn(
+							`[SessionManager] Skipping title generation during cleanup (state: ${this.cleanupState})`
+						);
+						return;
+					}
+
 					const titleGenTask = this.sessionLifecycle
 						.generateTitleAndRenameBranch(sessionId, userMessageText)
 						.catch((error) => {
@@ -126,7 +155,7 @@ export class SessionManager {
 							this.logger.error(`[SessionManager] Title generation failed:`, error);
 						});
 
-					// Track task for cleanup
+					// Track task for cleanup barrier
 					this.pendingBackgroundTasks.add(titleGenTask);
 					titleGenTask.finally(() => {
 						this.pendingBackgroundTasks.delete(titleGenTask);
@@ -269,79 +298,116 @@ export class SessionManager {
 
 	/**
 	 * Cleanup all sessions (called during shutdown)
+	 *
+	 * Uses a state machine to prevent race conditions:
+	 * - IDLE → CLEANING: Sets barrier, prevents new background tasks
+	 * - CLEANING: Executes cleanup in phases
+	 * - CLEANING → CLEANED: Final state, no more operations allowed
+	 *
+	 * If cleanup fails, state returns to IDLE to allow retry.
 	 */
 	async cleanup(): Promise<void> {
+		// State check: prevent concurrent cleanup
+		if (this.cleanupState !== CleanupState.IDLE) {
+			this.logger.warn(
+				`[SessionManager] Cleanup already in progress or complete (state: ${this.cleanupState})`
+			);
+			return;
+		}
+
 		const cleanupStart = Date.now();
 		this.logger.info(
-			`[SessionManager] Cleaning up ${this.sessionCache.getActiveCount()} active sessions...`
+			`[SessionManager] Starting cleanup for ${this.sessionCache.getActiveCount()} active sessions...`
 		);
 
-		// STEP 1: Unsubscribe from EventBus FIRST
-		// This prevents new events from being processed during cleanup
-		const step1Start = Date.now();
-		for (const unsubscribe of this.eventBusUnsubscribers) {
-			try {
-				unsubscribe();
-			} catch (error) {
-				this.logger.error(`[SessionManager] Error during EventBus unsubscribe:`, error);
+		// Transition to CLEANING state - sets the barrier for new background tasks
+		this.cleanupState = CleanupState.CLEANING;
+		this.logger.info(`[SessionManager] Cleanup state: IDLE → CLEANING`);
+
+		try {
+			// PHASE 1: Unsubscribe from EventBus FIRST
+			// This prevents new events from being processed during cleanup
+			const phase1Start = Date.now();
+			for (const unsubscribe of this.eventBusUnsubscribers) {
+				try {
+					unsubscribe();
+				} catch (error) {
+					this.logger.error(`[SessionManager] Error during EventBus unsubscribe:`, error);
+				}
 			}
-		}
-		this.eventBusUnsubscribers = [];
-		this.logger.info(
-			`[SessionManager] STEP 1: EventBus unsubscribed (${Date.now() - step1Start}ms)`
-		);
-
-		// STEP 2: Wait for pending background tasks (like title generation)
-		// These are fire-and-forget operations from EventBus handlers that may still be running
-		// We must wait for them to complete before closing the database
-		const step2Start = Date.now();
-		if (this.pendingBackgroundTasks.size > 0) {
+			this.eventBusUnsubscribers = [];
 			this.logger.info(
-				`[SessionManager] Waiting for ${this.pendingBackgroundTasks.size} pending background tasks...`
+				`[SessionManager] PHASE 1: EventBus unsubscribed (${Date.now() - phase1Start}ms)`
 			);
-			await Promise.all(Array.from(this.pendingBackgroundTasks)).catch((error) => {
-				this.logger.error(`[SessionManager] Error waiting for background tasks:`, error);
-			});
-			this.pendingBackgroundTasks.clear();
+
+			// PHASE 2: Wait for pending background tasks (like title generation)
+			// These are fire-and-forget operations from EventBus handlers
+			// The cleanup barrier prevents new tasks from starting
+			const phase2Start = Date.now();
+			if (this.pendingBackgroundTasks.size > 0) {
+				this.logger.info(
+					`[SessionManager] PHASE 2A: Waiting for ${this.pendingBackgroundTasks.size} pending background tasks...`
+				);
+				await Promise.all(Array.from(this.pendingBackgroundTasks)).catch((error) => {
+					this.logger.error(`[SessionManager] Error waiting for background tasks:`, error);
+				});
+				this.pendingBackgroundTasks.clear();
+				this.logger.info(
+					`[SessionManager] PHASE 2: Background tasks completed (${Date.now() - phase2Start}ms)`
+				);
+			} else {
+				this.logger.info(
+					`[SessionManager] PHASE 2: No background tasks (${Date.now() - phase2Start}ms)`
+				);
+			}
+
+			// PHASE 3: Cleanup all in-memory sessions in parallel
+			// CRITICAL: Each AgentSession.cleanup() now properly stops SDK queries
+			// with lifecycle manager, ensuring subprocesses exit before we continue
+			const phase3Start = Date.now();
+			const cleanupPromises: Promise<void>[] = [];
+			for (const [sessionId, agentSession] of this.sessionCache.entries()) {
+				const sessionStart = Date.now();
+				cleanupPromises.push(
+					agentSession
+						.cleanup()
+						.then(() => {
+							this.logger.debug(
+								`[SessionManager] Session ${sessionId.slice(0, 8)}... cleanup took ${Date.now() - sessionStart}ms`
+							);
+						})
+						.catch((error) => {
+							this.logger.error(`[SessionManager] Error cleaning up session ${sessionId}:`, error);
+						})
+				);
+			}
+
+			// Wait for all cleanups to complete
+			await Promise.all(cleanupPromises);
 			this.logger.info(
-				`[SessionManager] STEP 2: Background tasks completed (${Date.now() - step2Start}ms)`
+				`[SessionManager] PHASE 3: All ${this.sessionCache.getActiveCount()} sessions cleaned (${Date.now() - phase3Start}ms)`
 			);
-		} else {
-			this.logger.info(
-				`[SessionManager] STEP 2: No background tasks (${Date.now() - step2Start}ms)`
-			);
+
+			// Clear session cache
+			this.sessionCache.clear();
+
+			// Transition to CLEANED state
+			this.cleanupState = CleanupState.CLEANED;
+			this.logger.info(`[SessionManager] Cleanup state: CLEANING → CLEANED`);
+			this.logger.info(`[SessionManager] Total cleanup time: ${Date.now() - cleanupStart}ms`);
+		} catch (error) {
+			// On failure, rollback to IDLE to allow retry
+			this.cleanupState = CleanupState.IDLE;
+			this.logger.error(`[SessionManager] Cleanup failed, state rolled back to IDLE:`, error);
+			throw error;
 		}
+	}
 
-		// STEP 3: Cleanup all in-memory sessions in parallel
-		// CRITICAL: Must await cleanup() to ensure SDK queries are fully stopped
-		// before database is closed. Each cleanup() has a 5s timeout for the SDK query.
-		const step3Start = Date.now();
-		const cleanupPromises: Promise<void>[] = [];
-		for (const [sessionId, agentSession] of this.sessionCache.entries()) {
-			const sessionStart = Date.now();
-			cleanupPromises.push(
-				agentSession
-					.cleanup()
-					.then(() => {
-						this.logger.debug(
-							`[SessionManager] Session ${sessionId.slice(0, 8)}... cleanup took ${Date.now() - sessionStart}ms`
-						);
-					})
-					.catch((error) => {
-						this.logger.error(`[SessionManager] Error cleaning up session ${sessionId}:`, error);
-					})
-			);
-		}
-
-		// Wait for all cleanups to complete
-		await Promise.all(cleanupPromises);
-		this.logger.info(
-			`[SessionManager] STEP 3: All ${this.sessionCache.getActiveCount()} sessions cleaned (${Date.now() - step3Start}ms)`
-		);
-
-		// Clear session map
-		this.sessionCache.clear();
-		this.logger.info(`[SessionManager] Total cleanup time: ${Date.now() - cleanupStart}ms`);
+	/**
+	 * Get the current cleanup state (useful for testing/diagnostics)
+	 */
+	getCleanupState(): CleanupState {
+		return this.cleanupState;
 	}
 
 	/**

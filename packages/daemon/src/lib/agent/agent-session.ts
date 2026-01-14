@@ -105,6 +105,9 @@ export class AgentSession {
 	// Original env vars to restore after SDK query completes
 	private originalEnvVars: OriginalEnvVars = {};
 
+	// Startup timeout timer - aborts query if SDK doesn't respond within time limit
+	private startupTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+
 	private logger: Logger;
 
 	constructor(
@@ -697,15 +700,6 @@ export class AgentSession {
 			// Add session state options (resume, thinking tokens)
 			queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
 
-			// DEBUG: Log query options before creating SDK query
-			console.log('[AgentSession] Creating SDK query with options:', {
-				model: queryOptions.model,
-				env: queryOptions.env ? Object.keys(queryOptions.env) : 'none',
-				permissionMode: queryOptions.permissionMode,
-				allowDangerouslySkipPermissions: queryOptions.allowDangerouslySkipPermissions,
-				// Don't log the actual env values to avoid leaking secrets
-			});
-
 			// IMPORTANT: Apply provider env vars to process.env before creating SDK query
 			// This is required for GLM to work - the SDK subprocess inherits these env vars
 			const modelId = this.session.config.model || 'default';
@@ -717,18 +711,40 @@ export class AgentSession {
 			}
 
 			// Create query with AsyncGenerator from MessageQueue
-			console.log('[AgentSession] About to call query() function...');
 			this.queryObject = query({
 				prompt: this.createMessageGeneratorWrapper(),
 				options: queryOptions,
 			});
-			console.log('[AgentSession] Query object created successfully!');
+
+			// STARTUP TIMEOUT: Abort if SDK subprocess doesn't respond within time limit
+			// This prevents indefinite blocking if SDK hangs during initialization
+			// (e.g., slow CI, network issues, missing credentials)
+			const STARTUP_TIMEOUT_MS = 15000; // 15 seconds - enough for CI load
+			const queryStartTime = Date.now();
+			let startupTimeoutReached = false;
+
+			// Start timeout timer - will throw if first message doesn't arrive in time
+			this.startupTimeoutTimer = setTimeout(() => {
+				if (!this.firstMessageReceived) {
+					startupTimeoutReached = true;
+					const elapsed = Date.now() - queryStartTime;
+					this.logger.error(
+						`SDK startup timeout: SDK did not respond within ${elapsed}ms. ` +
+							`Model: ${queryOptions.model}, ` +
+							`Workspace: ${this.session.workspacePath}` +
+							(this.session.worktree ? ` (worktree: ${this.session.worktree.worktreePath})` : '')
+					);
+					// Force clear the query promise to unblock cleanup
+					this.queryPromise = null;
+					// Reset state to idle so cleanup doesn't hang
+					this.stateManager.setIdle().catch((e) => this.logger.warn('Failed to set idle:', e));
+				}
+			}, STARTUP_TIMEOUT_MS);
 
 			// Process SDK messages - MUST start immediately!
 			// The SDK methods (supportedCommands, supportedModels) require the query to be
 			// actively consumed, so we start processing first and fetch metadata in the background.
 			this.logger.log(`Processing SDK stream...`);
-			console.log('[AgentSession] About to iterate over queryObject...');
 
 			// Fire-and-forget: fetch slash commands and models in background
 			// These don't block message processing and will complete when the SDK is ready
@@ -744,14 +760,23 @@ export class AgentSession {
 				throw new Error('Query object is null after initialization');
 			}
 
-			console.log('[AgentSession] Starting for-await loop over queryObject...');
 			let messageCount = 0;
 
 			for await (const message of this.queryObject) {
+				// Check if startup timeout was reached before first message
+				if (startupTimeoutReached && messageCount === 0) {
+					throw new Error('SDK startup timeout - query aborted');
+				}
+
 				messageCount++;
-				console.log(
-					`[AgentSession] SDK message #${messageCount} received - type: ${(message as SDKMessage).type}`
-				);
+
+				// CRITICAL: Clear startup timeout on first message
+				// This prevents the timeout from firing after SDK is working
+				if (this.startupTimeoutTimer && messageCount === 1) {
+					clearTimeout(this.startupTimeoutTimer);
+					this.startupTimeoutTimer = null;
+					this.logger.log(`SDK first message received after ${Date.now() - queryStartTime}ms`);
+				}
 
 				// Mark that we've received at least one message from SDK
 				// This indicates ProcessTransport is ready for control methods (setModel, interrupt, etc.)
@@ -785,9 +810,7 @@ export class AgentSession {
 			}
 
 			this.logger.log(`SDK stream ended`);
-			console.log(`[AgentSession] SDK stream ended normally`);
 		} catch (error) {
-			console.log(`[AgentSession] SDK stream error:`, error);
 			this.logger.error(`Streaming query error:`, error);
 
 			// Clear pending messages
@@ -1570,6 +1593,15 @@ export class AgentSession {
 
 	/**
 	 * Cleanup resources when session is destroyed
+	 *
+	 * Uses a phased cleanup approach:
+	 * 1. Unsubscribe from events (prevents new work)
+	 * 2. Clear models cache (non-critical)
+	 * 3. Stop the query via lifecycle manager (deterministic termination)
+	 * 4. Allow SDK subprocess time to exit
+	 *
+	 * This addresses the race condition where test cleanup would proceed
+	 * while the SDK subprocess was still running, causing test timeouts.
 	 */
 	async cleanup(): Promise<void> {
 		const cleanupStart = Date.now();
@@ -1578,8 +1610,9 @@ export class AgentSession {
 		// Set cleanup flag to prevent DB writes from runQuery finally block
 		this.isCleaningUp = true;
 
-		// STEP 1: Unsubscribe from all MessageHub events
-		const step1Start = Date.now();
+		// PHASE 1: Unsubscribe from all DaemonHub events
+		// This prevents new events from being processed during cleanup
+		const phase1Start = Date.now();
 		for (const unsubscribe of this.unsubscribers) {
 			try {
 				unsubscribe();
@@ -1589,45 +1622,52 @@ export class AgentSession {
 		}
 		this.unsubscribers = [];
 		this.logger.debug(
-			`[AgentSession] STEP 1: Unsubscribed from ${this.unsubscribers.length} events (${Date.now() - step1Start}ms)`
+			`[AgentSession] PHASE 1: Unsubscribed from DaemonHub events (${Date.now() - phase1Start}ms)`
 		);
 
-		// STEP 2: Clear models cache for this session
-		const step2Start = Date.now();
+		// PHASE 2: Clear models cache for this session
+		// Non-critical cleanup, done before stopping the query
+		const phase2Start = Date.now();
 		try {
 			const { clearModelsCache } = await import('../model-service');
 			clearModelsCache(this.session.id);
 		} catch {
-			// Ignore - not critical
-		}
-		this.logger.debug(`[AgentSession] STEP 2: Models cache cleared (${Date.now() - step2Start}ms)`);
-
-		// STEP 3: Signal queue to stop
-		const step3Start = Date.now();
-		this.messageQueue.stop();
-		this.logger.debug(`[AgentSession] STEP 3: MessageQueue stopped (${Date.now() - step3Start}ms)`);
-
-		// STEP 4: Wait for queryPromise to resolve or reject, then wait a bit more for subprocess
-		// The queryPromise resolves before the subprocess fully exits
-		const step4Start = Date.now();
-		if (this.queryPromise) {
-			try {
-				await Promise.race([
-					this.queryPromise.catch((err) => {
-						this.logger.debug(`Query promise rejected: ${err}`);
-					}),
-					new Promise<void>((resolve) => setTimeout(resolve, 3000)),
-				]);
-				this.logger.debug(`[AgentSession] queryPromise resolved, waiting for subprocess exit...`);
-				// Add a small delay to let the subprocess exit gracefully
-				await new Promise((resolve) => setTimeout(resolve, 500));
-			} catch (error) {
-				this.logger.debug(`Error waiting for queryPromise: ${error}`);
-			}
-			this.queryPromise = null;
+			// Ignore - not critical for cleanup
 		}
 		this.logger.debug(
-			`[AgentSession] STEP 4: Query cleanup complete (${Date.now() - step4Start}ms)`
+			`[AgentSession] PHASE 2: Models cache cleared (${Date.now() - phase2Start}ms)`
+		);
+
+		// PHASE 3: Stop the query using lifecycle manager
+		// This provides deterministic cleanup:
+		// - Stops message queue
+		// - Calls SDK's interrupt() method
+		// - Waits for queryPromise with timeout
+		// - Clears query references
+		const phase3Start = Date.now();
+		try {
+			// Use longer timeout for cleanup (15s) to ensure SDK subprocess exits
+			// This is especially important in CI environments under load
+			// and for edge cases where query is stuck in initializing phase
+			await this.lifecycleManager.stop({
+				timeoutMs: 15000,
+				catchQueryErrors: true,
+			});
+			this.logger.debug(
+				`[AgentSession] PHASE 3A: Query stopped via lifecycle manager (${Date.now() - phase3Start}ms)`
+			);
+
+			// Additional delay to ensure SDK subprocess has fully exited
+			// The SDK subprocess may take time to exit after interrupt() returns
+			// This delay prevents race conditions in test cleanup
+			this.logger.debug(`[AgentSession] PHASE 3B: Waiting for SDK subprocess exit...`);
+			await new Promise((resolve) => setTimeout(resolve, 1000));
+		} catch (error) {
+			this.logger.error(`[AgentSession] Error during query stop:`, error);
+			// Continue cleanup even if stop fails
+		}
+		this.logger.debug(
+			`[AgentSession] PHASE 3: Query cleanup complete (${Date.now() - phase3Start}ms)`
 		);
 
 		this.logger.log(`[AgentSession] Cleanup complete (${Date.now() - cleanupStart}ms total)`);

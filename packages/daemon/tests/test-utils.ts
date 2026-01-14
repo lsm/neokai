@@ -560,3 +560,49 @@ export async function callRPCHandler<T = unknown>(
 	const result = await handler(data);
 	return result as T;
 }
+
+/**
+ * Mock utility for preventing SDK subprocess creation in offline tests
+ *
+ * IMPORTANT: Offline tests should NEVER create real SDK subprocesses.
+ * AgentSession subscribes to message.persisted events in its constructor,
+ * which triggers startQueryAndEnqueue() and creates SDK queries.
+ *
+ * Use this function to mock startQueryAndEnqueue in tests that:
+ * - Create AgentSession instances
+ * - Emit message.persisted events
+ * - Call message.sendRequest (which emits message.persisted)
+ *
+ * @param sessionManager - The SessionManager instance
+ * @param sessionId - The session ID to mock
+ * @returns The mocked AgentSession or null if not found
+ *
+ * @example
+ * ```ts
+ * const sessionId = await sessionManager.createSession({ workspacePath });
+ * mockAgentSessionForOfflineTest(sessionManager, sessionId);
+ * // Now it's safe to emit events that would trigger SDK queries
+ * ```
+ */
+export function mockAgentSessionForOfflineTest(
+	sessionManager: SessionManager,
+	sessionId: string
+): ReturnType<typeof sessionManager.getSession> | null {
+	const agentSession = sessionManager.getSession(sessionId);
+	if (agentSession) {
+		// Mock startQueryAndEnqueue to prevent SDK query creation
+		// Use bracket notation to access private method
+		(agentSession as Record<string, unknown>).startQueryAndEnqueue = async () => {
+			// No-op: prevent SDK query creation in offline tests
+		};
+	}
+	return agentSession || null;
+}
+
+/**
+ * Check if running in offline test mode
+ * (no API credentials available)
+ */
+export function isOfflineTest(): boolean {
+	return !hasAnyCredentials();
+}

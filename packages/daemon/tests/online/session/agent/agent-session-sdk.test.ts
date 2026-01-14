@@ -76,13 +76,8 @@ describe.skipIf(!GLM_API_KEY)('AgentSession SDK Integration', () => {
 		timeoutMs = 15000 // 15s is sufficient for SDK init + API call
 	): Promise<void> {
 		const startTime = Date.now();
-		let lastState: string = '';
 		while (Date.now() - startTime < timeoutMs) {
 			const state = agentSession.getProcessingState();
-			if (state.status !== lastState) {
-				console.log(`[waitForIdle] State changed: ${lastState} -> ${state.status}`);
-				lastState = state.status;
-			}
 			if (state.status === 'idle') {
 				return;
 			}

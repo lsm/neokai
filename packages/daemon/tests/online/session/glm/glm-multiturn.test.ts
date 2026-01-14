@@ -42,11 +42,14 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 		ctx = await createTestApp();
 	});
 
-	afterEach(async () => {
-		if (ctx) {
-			await ctx.cleanup();
-		}
-	});
+	afterEach(
+		async () => {
+			if (ctx) {
+				await ctx.cleanup();
+			}
+		},
+		{ timeout: 30000 }
+	); // 30s timeout for GLM cleanup (slower API + subprocess exit)
 
 	/**
 	 * Helper: Wait for agent session to return to idle state
@@ -54,16 +57,11 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 	 */
 	async function waitForIdle(
 		agentSession: NonNullable<Awaited<ReturnType<typeof ctx.sessionManager.getSessionAsync>>>,
-		timeoutMs = 30000 // 30s for GLM API (may be slower than Anthropic)
+		timeoutMs = 15000 // 15s for GLM API (may be slower than Anthropic)
 	): Promise<void> {
 		const startTime = Date.now();
-		let lastState: string = '';
 		while (Date.now() - startTime < timeoutMs) {
 			const state = agentSession.getProcessingState();
-			if (state.status !== lastState) {
-				console.log(`[waitForIdle] State changed: ${lastState} -> ${state.status}`);
-				lastState = state.status;
-			}
 			if (state.status === 'idle') {
 				return;
 			}
@@ -71,6 +69,16 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 		}
 		const finalState = agentSession.getProcessingState();
 		const phase = 'phase' in finalState ? finalState.phase : 'N/A';
+
+		// Log full state and SDK messages for debugging
+		console.log('[waitForIdle TIMEOUT] Full state:', JSON.stringify(finalState, null, 2));
+		const sdkMessages = agentSession.getSDKMessages();
+		console.log(`[waitForIdle TIMEOUT] SDK messages count: ${sdkMessages.length}`);
+		console.log(
+			'[waitForIdle TIMEOUT] SDK message types:',
+			sdkMessages.map((m) => m.type)
+		);
+
 		throw new Error(
 			`Timeout waiting for idle state after ${timeoutMs}ms. Final state: ${finalState.status}, phase: ${phase}`
 		);
@@ -89,7 +97,6 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 		expect(agentSession).toBeDefined();
 
 		// Turn 1: Ask for a number to remember
-		console.log('[GLM-4.7 Test] Turn 1: Ask GLM to remember a number');
 		const result1 = await sendMessageSync(agentSession!, {
 			content: 'Remember the number 42 for me. Just reply "Got it, I will remember 42."',
 		});
@@ -98,7 +105,6 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 		await waitForIdle(agentSession!);
 
 		// Turn 2: Ask what the number was (tests context retention)
-		console.log('[GLM-4.7 Test] Turn 2: Ask GLM to recall the number');
 		const result2 = await sendMessageSync(agentSession!, {
 			content: 'What number did I ask you to remember? Just reply with the number.',
 		});
@@ -124,11 +130,9 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 			.filter((c) => c.type === 'text')
 			.map((c) => c.text)
 			.join('');
-		console.log('[GLM-4.7 Test] Last assistant response:', lastResponseText.substring(0, 200));
 		expect(lastResponseText).toContain('42');
 
 		// Turn 3: Do a simple calculation using the remembered number
-		console.log('[GLM-4.7 Test] Turn 3: Ask GLM to do math with the remembered number');
 		const result3 = await sendMessageSync(agentSession!, {
 			content: 'Multiply the number you remembered by 2. Just reply with the result.',
 		});
@@ -159,14 +163,12 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 		const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
 
 		// Turn 1: Provide code context
-		console.log('[GLM-4.7 Test] Turn 1: Provide code context');
 		await sendMessageSync(agentSession!, {
 			content: 'I will show you a TypeScript function. Just reply "Ready, show me the code."',
 		});
 		await waitForIdle(agentSession!);
 
 		// Turn 2: Show actual code
-		console.log('[GLM-4.7 Test] Turn 2: Show code and ask for explanation');
 		await sendMessageSync(agentSession!, {
 			content:
 				'Here is the code:\n\n```typescript\nfunction add(a: number, b: number): number {\n  return a + b;\n}\n```\n\nWhat does this function do? Answer in one sentence.',
@@ -179,7 +181,6 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 		expect(assistantMessages.length).toBeGreaterThanOrEqual(2);
 
 		// Turn 3: Ask follow-up about the code
-		console.log('[GLM-4.7 Test] Turn 3: Ask follow-up question');
 		await sendMessageSync(agentSession!, {
 			content: 'What are the parameter types? Just list them separated by commas.',
 		});
@@ -198,7 +199,7 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 		const sessionId = await ctx.sessionManager.createSession({
 			workspacePath: process.cwd(),
 			config: {
-				model: 'glm-4.7',
+				model: 'glm-4.5-air',
 				permissionMode: 'acceptEdits',
 			},
 		});
@@ -207,8 +208,6 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 
 		// Send three simple messages in quick succession
 		// They should be queued and processed sequentially
-		console.log('[GLM-4.7 Test] Sending three messages in succession');
-
 		const msg1 = await sendMessageSync(agentSession!, {
 			content: 'First message: Say "One".',
 		});
@@ -244,7 +243,7 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 		// State should be idle
 		const finalState = agentSession!.getProcessingState();
 		expect(finalState.status).toBe('idle');
-	}, 120000); // 2 minute timeout for 3 sequential API calls
+	}, 60000); // 60 second timeout for 3 sequential API calls
 
 	describe('WebSocket multi-turn events', () => {
 		test('should broadcast SDK messages for each turn via WebSocket', async () => {
@@ -277,7 +276,6 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
 
 			// Turn 1
-			console.log('[GLM-4.7 Test] WebSocket Turn 1');
 			const event1Promise = waitForWebSocketMessage(ws, 15000);
 			await sendMessageSync(agentSession!, {
 				content: 'Say "Hello turn 1". Just that phrase.',
@@ -289,7 +287,6 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 			await waitForIdle(agentSession!);
 
 			// Turn 2
-			console.log('[GLM-4.7 Test] WebSocket Turn 2');
 			const event2Promise = waitForWebSocketMessage(ws, 15000);
 			await sendMessageSync(agentSession!, {
 				content: 'Say "Hello turn 2". Just that phrase.',
@@ -322,8 +319,6 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 
 			// Track states through 3 turns
 			for (let i = 1; i <= 3; i++) {
-				console.log(`[GLM-4.7 Test] Turn ${i}: Checking state transitions`);
-
 				// Initial state should be idle
 				const initialState = agentSession!.getProcessingState();
 				expect(initialState.status).toBe('idle');
