@@ -46,6 +46,18 @@ import {
 } from '../../../test-utils';
 import { sendMessageSync } from '../../../helpers/test-message-sender';
 
+import { SessionConfig } from '@liuboer/shared';
+
+const sessionConfig: Partial<SessionConfig> = {
+	model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
+	permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
+	tools: {
+		useClaudeCodePreset: false,
+		liuboerTools: {},
+		settingSources: [],
+	},
+};
+
 /**
  * CRITICAL: Restore any mocks before running these tests.
  * This prevents mock leakage from unit tests that mock the SDK.
@@ -94,10 +106,7 @@ describe.skipIf(!GLM_API_KEY)('AgentSession SDK Integration', () => {
 		test('should send message and receive real SDK response', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
-				config: {
-					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
-					permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
-				},
+				config: sessionConfig,
 			});
 
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
@@ -126,10 +135,7 @@ describe.skipIf(!GLM_API_KEY)('AgentSession SDK Integration', () => {
 		test('should handle message with images', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
-				config: {
-					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
-					permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
-				},
+				config: sessionConfig,
 			});
 
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
@@ -160,10 +166,7 @@ describe.skipIf(!GLM_API_KEY)('AgentSession SDK Integration', () => {
 		test('should enqueue multiple messages in sequence', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
-				config: {
-					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
-					permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
-				},
+				config: sessionConfig,
 			});
 
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
@@ -197,10 +200,7 @@ describe.skipIf(!GLM_API_KEY)('AgentSession SDK Integration', () => {
 		test('should interrupt ongoing processing', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
-				config: {
-					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
-					permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
-				},
+				config: sessionConfig,
 			});
 
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
@@ -225,10 +225,7 @@ describe.skipIf(!GLM_API_KEY)('AgentSession SDK Integration', () => {
 		test('should broadcast sdk.message events via WebSocket', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
-				config: {
-					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
-					permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
-				},
+				config: sessionConfig,
 			});
 
 			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, sessionId);
@@ -275,10 +272,7 @@ describe.skipIf(!GLM_API_KEY)('AgentSession SDK Integration', () => {
 		test('should transition through processing states', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
-				config: {
-					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
-					permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
-				},
+				config: sessionConfig,
 			});
 
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
@@ -306,10 +300,7 @@ describe.skipIf(!GLM_API_KEY)('AgentSession SDK Integration', () => {
 		test('should handle multiple messages in sequence', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
-				config: {
-					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
-					permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
-				},
+				config: sessionConfig,
 			});
 
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
