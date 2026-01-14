@@ -38,6 +38,7 @@ if (GLM_API_KEY) {
 import type { TestContext } from '../../../test-utils';
 import { createTestApp } from '../../../test-utils';
 import { sendMessageSync } from '../../../helpers/test-message-sender';
+import { waitForIdle } from '../../../helpers/test-wait-for-idle';
 
 // Skip all tests if GLM credentials are not available
 describe.skipIf(!GLM_API_KEY)('Auto-Title Generation', () => {
@@ -52,32 +53,6 @@ describe.skipIf(!GLM_API_KEY)('Auto-Title Generation', () => {
 	afterEach(async () => {
 		await ctx.cleanup();
 	});
-
-	/**
-	 * Helper: Wait for agent session to return to idle state
-	 */
-	async function waitForIdle(
-		agentSession: NonNullable<Awaited<ReturnType<typeof ctx.sessionManager.getSessionAsync>>>,
-		timeoutMs = 20000 // 20s to allow for title generation
-	): Promise<void> {
-		const startTime = Date.now();
-		let lastState: string = '';
-		while (Date.now() - startTime < timeoutMs) {
-			const state = agentSession.getProcessingState();
-			if (state.status !== lastState) {
-				lastState = state.status;
-			}
-			if (state.status === 'idle') {
-				return;
-			}
-			await Bun.sleep(100);
-		}
-		const finalState = agentSession.getProcessingState();
-		const phase = 'phase' in finalState ? finalState.phase : 'N/A';
-		throw new Error(
-			`Timeout waiting for idle state after ${timeoutMs}ms. Final state: ${finalState.status}, phase: ${phase}`
-		);
-	}
 
 	/**
 	 * Helper: Wait for title generation to complete

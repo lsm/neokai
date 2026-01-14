@@ -42,6 +42,7 @@ if (GLM_API_KEY) {
 import type { TestContext } from '../../test-utils';
 import { createTestApp } from '../../test-utils';
 import { sendMessageSync } from '../../helpers/test-message-sender';
+import { waitForIdle } from '../../helpers/test-wait-for-idle';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
 // Skip all tests if GLM credentials are not available
@@ -60,24 +61,6 @@ describe.skipIf(!GLM_API_KEY)('SDK Streaming CI Failures', () => {
 		},
 		{ timeout: 20000 }
 	);
-
-	/**
-	 * Helper: Wait for agent session to return to idle state
-	 */
-	async function waitForIdle(
-		agentSession: NonNullable<Awaited<ReturnType<typeof ctx.sessionManager.getSessionAsync>>>,
-		timeoutMs = 15000
-	): Promise<void> {
-		const startTime = Date.now();
-		while (Date.now() - startTime < timeoutMs) {
-			const state = agentSession.getProcessingState();
-			if (state.status === 'idle') {
-				return;
-			}
-			await Bun.sleep(100);
-		}
-		throw new Error(`Timeout waiting for idle state after ${timeoutMs}ms`);
-	}
 
 	describe('Direct SDK Call with Different API Patterns', () => {
 		test('should call SDK with AsyncGenerator + bypassPermissions (DIAGNOSTIC - SDK fails as root)', async () => {

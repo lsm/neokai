@@ -47,6 +47,7 @@ import {
 import { sendMessageSync } from '../../../helpers/test-message-sender';
 
 import { getTestSessionConfig } from '../../../helpers/test-session-config';
+import { waitForIdle } from '../../../helpers/test-wait-for-idle';
 
 /**
  * CRITICAL: Restore any mocks before running these tests.
@@ -68,29 +69,6 @@ describe.skipIf(!GLM_API_KEY)('AgentSession SDK Integration', () => {
 		},
 		{ timeout: 20000 }
 	);
-
-	/**
-	 * Helper: Wait for agent session to return to idle state
-	 * Polls the processing state until it's idle or timeout
-	 */
-	async function waitForIdle(
-		agentSession: NonNullable<Awaited<ReturnType<typeof ctx.sessionManager.getSessionAsync>>>,
-		timeoutMs = 15000 // 15s is sufficient for SDK init + API call
-	): Promise<void> {
-		const startTime = Date.now();
-		while (Date.now() - startTime < timeoutMs) {
-			const state = agentSession.getProcessingState();
-			if (state.status === 'idle') {
-				return;
-			}
-			await Bun.sleep(100); // Poll every 100ms
-		}
-		const finalState = agentSession.getProcessingState();
-		const phase = 'phase' in finalState ? finalState.phase : 'N/A';
-		throw new Error(
-			`Timeout waiting for idle state after ${timeoutMs}ms. Final state: ${finalState.status}, phase: ${phase}`
-		);
-	}
 
 	describe('sendMessageSync', () => {
 		test('should send message and receive real SDK response', async () => {

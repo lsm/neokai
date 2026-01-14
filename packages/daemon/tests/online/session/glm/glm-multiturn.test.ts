@@ -25,6 +25,7 @@ import {
 	createWebSocketWithFirstMessage,
 } from '../../../test-utils';
 import { sendMessageSync } from '../../../helpers/test-message-sender';
+import { waitForIdle } from '../../../helpers/test-wait-for-idle';
 
 // Check for GLM credentials
 const GLM_API_KEY = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
@@ -51,39 +52,6 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 		{ timeout: 30000 }
 	); // 30s timeout for GLM cleanup (slower API + subprocess exit)
 
-	/**
-	 * Helper: Wait for agent session to return to idle state
-	 * Polls the processing state until it's idle or timeout
-	 */
-	async function waitForIdle(
-		agentSession: NonNullable<Awaited<ReturnType<typeof ctx.sessionManager.getSessionAsync>>>,
-		timeoutMs = 15000 // 15s for GLM API (may be slower than Anthropic)
-	): Promise<void> {
-		const startTime = Date.now();
-		while (Date.now() - startTime < timeoutMs) {
-			const state = agentSession.getProcessingState();
-			if (state.status === 'idle') {
-				return;
-			}
-			await Bun.sleep(100); // Poll every 100ms
-		}
-		const finalState = agentSession.getProcessingState();
-		const phase = 'phase' in finalState ? finalState.phase : 'N/A';
-
-		// Log full state and SDK messages for debugging
-		console.log('[waitForIdle TIMEOUT] Full state:', JSON.stringify(finalState, null, 2));
-		const sdkMessages = agentSession.getSDKMessages();
-		console.log(`[waitForIdle TIMEOUT] SDK messages count: ${sdkMessages.length}`);
-		console.log(
-			'[waitForIdle TIMEOUT] SDK message types:',
-			sdkMessages.map((m) => m.type)
-		);
-
-		throw new Error(
-			`Timeout waiting for idle state after ${timeoutMs}ms. Final state: ${finalState.status}, phase: ${phase}`
-		);
-	}
-
 	test('should handle multi-turn conversation with context retention', async () => {
 		const sessionId = await ctx.sessionManager.createSession({
 			workspacePath: process.cwd(),
@@ -102,7 +70,7 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 		});
 		expect(result1.messageId).toBeString();
 
-		await waitForIdle(agentSession!);
+		await waitForIdle(agentSession!, 30000);
 
 		// Turn 2: Ask what the number was (tests context retention)
 		const result2 = await sendMessageSync(agentSession!, {
@@ -111,7 +79,7 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 		expect(result2.messageId).toBeString();
 		expect(result2.messageId).not.toBe(result1.messageId);
 
-		await waitForIdle(agentSession!);
+		await waitForIdle(agentSession!, 30000);
 
 		// Verify context was retained - check SDK messages contain the number 42 in response
 		const sdkMessages = agentSession!.getSDKMessages();
@@ -140,7 +108,7 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 		expect(result3.messageId).not.toBe(result1.messageId);
 		expect(result3.messageId).not.toBe(result2.messageId);
 
-		await waitForIdle(agentSession!);
+		await waitForIdle(agentSession!, 30000);
 
 		// Verify we have SDK messages from all turns
 		const finalMessages = agentSession!.getSDKMessages();
@@ -166,14 +134,14 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 		await sendMessageSync(agentSession!, {
 			content: 'I will show you a TypeScript function. Just reply "Ready, show me the code."',
 		});
-		await waitForIdle(agentSession!);
+		await waitForIdle(agentSession!, 30000);
 
 		// Turn 2: Show actual code
 		await sendMessageSync(agentSession!, {
 			content:
 				'Here is the code:\n\n```typescript\nfunction add(a: number, b: number): number {\n  return a + b;\n}\n```\n\nWhat does this function do? Answer in one sentence.',
 		});
-		await waitForIdle(agentSession!);
+		await waitForIdle(agentSession!, 30000);
 
 		// Verify we got a response about the function
 		const sdkMessages = agentSession!.getSDKMessages();
@@ -184,7 +152,7 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 		await sendMessageSync(agentSession!, {
 			content: 'What are the parameter types? Just list them separated by commas.',
 		});
-		await waitForIdle(agentSession!);
+		await waitForIdle(agentSession!, 30000);
 
 		// Verify we have more messages
 		const finalMessages = agentSession!.getSDKMessages();
@@ -211,17 +179,17 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 		const msg1 = await sendMessageSync(agentSession!, {
 			content: 'First message: Say "One".',
 		});
-		await waitForIdle(agentSession!);
+		await waitForIdle(agentSession!, 30000);
 
 		const msg2 = await sendMessageSync(agentSession!, {
 			content: 'Second message: Say "Two".',
 		});
-		await waitForIdle(agentSession!);
+		await waitForIdle(agentSession!, 30000);
 
 		const msg3 = await sendMessageSync(agentSession!, {
 			content: 'Third message: Say "Three".',
 		});
-		await waitForIdle(agentSession!);
+		await waitForIdle(agentSession!, 30000);
 
 		// All message IDs should be unique
 		expect(msg1.messageId).not.toBe(msg2.messageId);
@@ -284,7 +252,7 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 			expect(event1.type).toBe('EVENT');
 			expect(event1.method).toBe('state.sdkMessages.delta');
 
-			await waitForIdle(agentSession!);
+			await waitForIdle(agentSession!, 30000);
 
 			// Turn 2
 			const event2Promise = waitForWebSocketMessage(ws, 15000);
@@ -295,7 +263,7 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 			expect(event2.type).toBe('EVENT');
 			expect(event2.method).toBe('state.sdkMessages.delta');
 
-			await waitForIdle(agentSession!);
+			await waitForIdle(agentSession!, 30000);
 
 			ws.close();
 
@@ -333,7 +301,7 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 				expect(['queued', 'processing']).toContain(processingState.status);
 
 				// Wait for completion
-				await waitForIdle(agentSession!);
+				await waitForIdle(agentSession!, 30000);
 
 				// Should be back to idle
 				const finalState = agentSession!.getProcessingState();
