@@ -13,7 +13,7 @@ import type { MessageHub, CurrentModelInfo } from '@liuboer/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { generateUUID } from '@liuboer/shared';
 import type { SDKMessage, SlashCommand } from '@liuboer/shared/sdk';
-import { isSDKUserMessage } from '@liuboer/shared/sdk/type-guards';
+import { isSDKUserMessage, isSDKSystemMessage } from '@liuboer/shared/sdk/type-guards';
 import { Database } from '../../storage/database';
 import { ErrorCategory, ErrorManager } from '../error-manager';
 import { Logger } from '../logger';
@@ -223,6 +223,10 @@ export class AgentSession {
 		// Restore persisted processing state from database (if available)
 		this.stateManager.restoreFromDatabase();
 
+		// Recover orphaned sent messages (user messages marked 'sent' but never got a response)
+		// This happens when SDK crashes after receiving a message but before processing it
+		this.recoverOrphanedSentMessages();
+
 		// Subscribe to EventBus events for this session
 		// This implements the EventBus-centric architecture pattern:
 		// RPC handlers emit events → AgentSession subscribes with sessionId filtering
@@ -230,6 +234,84 @@ export class AgentSession {
 
 		// LAZY START: Don't start the streaming query here.
 		// Query will be started on first message send via ensureQueryStarted()
+	}
+
+	/**
+	 * Recover orphaned messages
+	 *
+	 * Detects messages that are stuck in 'queued' or marked as 'sent' but never
+	 * received a response from the SDK. This happens when:
+	 * 1. Message is enqueued to SDK (status: 'saved' → 'queued')
+	 * 2. SDK crashes before sending system:init
+	 * 3. No system:init or assistant response is emitted
+	 *
+	 * Recovery: Reset these messages to 'saved' status so they can be retried.
+	 */
+	private recoverOrphanedSentMessages(): void {
+		try {
+			// Get all messages with status 'queued' (never got system:init)
+			// and 'sent' (legacy case: old sessions may have messages marked 'sent' without system:init)
+			const queuedMessages = this.db.getMessagesByStatus(this.session.id, 'queued');
+			const sentMessages = this.db.getMessagesByStatus(this.session.id, 'sent');
+			const allStuckMessages = [...queuedMessages, ...sentMessages];
+
+			if (allStuckMessages.length === 0) {
+				return;
+			}
+
+			// Get all SDK messages to check for responses
+			const allMessages = this.db.getSDKMessages(this.session.id, 10000);
+
+			// Find the latest system:init message timestamp (if any)
+			let latestInitTimestamp = 0;
+			for (const msg of allMessages) {
+				if (isSDKSystemMessage(msg) && msg.subtype === 'init') {
+					const msgWithTimestamp = msg as SDKMessage & { timestamp?: number };
+					if (msgWithTimestamp.timestamp && msgWithTimestamp.timestamp > latestInitTimestamp) {
+						latestInitTimestamp = msgWithTimestamp.timestamp;
+					}
+				}
+			}
+
+			// Find orphaned user messages: user messages with no system:init after them
+			const orphanedMessages: Array<{ dbId: string; uuid: string; timestamp: number }> = [];
+
+			for (const sentMsg of allStuckMessages) {
+				// Only check user messages
+				if (!isSDKUserMessage(sentMsg)) {
+					continue;
+				}
+
+				const msgWithTimestamp = sentMsg as SDKMessage & { timestamp?: number };
+				const msgTimestamp = msgWithTimestamp.timestamp || 0;
+
+				// If there's a system:init message AFTER this user message, it was processed
+				// If no system:init after, the message is orphaned (SDK never processed it)
+				if (msgTimestamp > latestInitTimestamp) {
+					orphanedMessages.push({
+						dbId: sentMsg.dbId,
+						uuid: sentMsg.uuid || 'unknown',
+						timestamp: msgTimestamp,
+					});
+				}
+			}
+
+			if (orphanedMessages.length === 0) {
+				this.logger.log('No orphaned sent messages found');
+				return;
+			}
+
+			// Reset orphaned messages to 'saved' status for retry
+			const dbIds = orphanedMessages.map((m) => m.dbId);
+			this.db.updateMessageStatus(dbIds, 'saved');
+
+			this.logger.log(
+				`Recovered ${orphanedMessages.length} orphaned sent messages: ${orphanedMessages.map((m) => m.uuid.slice(0, 8)).join(', ')}`
+			);
+		} catch (error) {
+			this.logger.warn('Failed to recover orphaned sent messages:', error);
+			// Don't throw - recovery failure shouldn't prevent session from loading
+		}
 	}
 
 	/**
@@ -944,6 +1026,26 @@ export class AgentSession {
 	 */
 	private async handleSDKMessage(message: unknown): Promise<void> {
 		const sdkMessage = message as SDKMessage;
+
+		// Mark queued messages as 'sent' when we receive system:init
+		// This is the SDK's acknowledgment that it received and is processing the messages
+		if (isSDKSystemMessage(sdkMessage) && sdkMessage.subtype === 'init') {
+			const queuedMessages = this.db.getMessagesByStatus(this.session.id, 'queued');
+			if (queuedMessages.length > 0) {
+				const dbIds = queuedMessages.map((m) => m.dbId);
+				this.db.updateMessageStatus(dbIds, 'sent');
+				this.logger.log(
+					`Marked ${queuedMessages.length} queued messages as sent (received system:init)`
+				);
+
+				// Emit status change event
+				await this.daemonHub.emit('messages.statusChanged', {
+					sessionId: this.session.id,
+					messageIds: dbIds,
+					status: 'sent',
+				});
+			}
+		}
 
 		// Delegate to message handler
 		await this.messageHandler.handleMessage(sdkMessage);
@@ -1737,17 +1839,12 @@ export class AgentSession {
 				}
 			}
 
-			// Update status to 'sent' after enqueuing
-			this.db.updateMessageStatus(dbIds, 'sent');
-
-			// Emit status change event
-			await this.daemonHub.emit('messages.statusChanged', {
-				sessionId: this.session.id,
-				messageIds: dbIds,
-				status: 'sent',
-			});
-
-			this.logger.log(`Successfully triggered ${savedMessages.length} messages`);
+			// Don't mark as 'sent' yet - wait for system:init from SDK
+			// This ensures we only mark as sent when SDK actually acknowledges receipt
+			// If SDK crashes before sending system:init, messages stay 'queued' for recovery
+			this.logger.log(
+				`Successfully queued ${savedMessages.length} messages (waiting for system:init)`
+			);
 			return { success: true, messageCount: savedMessages.length };
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -1802,18 +1899,11 @@ export class AgentSession {
 				}
 			}
 
-			// Update status to 'sent' after enqueuing
-			const dbIds = queuedMessages.map((m) => m.dbId);
-			this.db.updateMessageStatus(dbIds, 'sent');
-
-			// Emit status change event
-			await this.daemonHub.emit('messages.statusChanged', {
-				sessionId: this.session.id,
-				messageIds: dbIds,
-				status: 'sent',
-			});
-
-			this.logger.log(`Successfully sent ${queuedMessages.length} queued messages on turn end`);
+			// Don't mark as 'sent' yet - wait for system:init from SDK
+			// This ensures we only mark as sent when SDK actually acknowledges receipt
+			this.logger.log(
+				`Successfully queued ${queuedMessages.length} messages on turn end (waiting for system:init)`
+			);
 		} catch (error) {
 			this.logger.error(`Failed to send queued messages on turn end:`, error);
 		}
