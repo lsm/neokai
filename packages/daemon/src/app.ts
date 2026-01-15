@@ -87,9 +87,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		logError('\n❌ AUTHENTICATION REQUIRED');
 		logError('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 		logError('Authentication credentials must be provided via environment variables.');
-		logError('\nOption 1: Anthropic API Key (Recommended)');
+		logError('\nOption 1: GLM API Key (Recommended for E2E tests)');
+		logError('  export GLM_API_KEY=...');
+		logError('\nOption 2: Anthropic API Key');
 		logError('  export ANTHROPIC_API_KEY=sk-ant-...');
-		logError('\nOption 2: Claude Code OAuth Token');
+		logError('\nOption 3: Claude Code OAuth Token');
 		logError('  export CLAUDE_CODE_OAUTH_TOKEN=...');
 		logError('\nGet your API key from: https://console.anthropic.com/');
 		logError('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
