@@ -238,7 +238,61 @@ class SessionStore {
 			}
 
 			if (messagesState?.sdkMessages) {
-				this.sdkMessages.value = messagesState.sdkMessages;
+				// CRITICAL FIX: Merge instead of replace to preserve newer messages
+				// that arrived via delta subscription during reconnection
+				//
+				// Root cause: When client reconnects, delta subscription becomes active
+				// immediately (subscribeOptimistic), and fetchInitialState runs in parallel.
+				// If newer messages arrive via delta BEFORE fetchInitialState completes,
+				// a simple replace would lose those newer messages.
+				//
+				// Solution: Use the server's timestamp as the synchronization point.
+				// Keep any existing messages that are newer than the server's snapshot,
+				// then merge and deduplicate by UUID.
+
+				const snapshotTimestamp = (messagesState as unknown as { timestamp?: number }).timestamp;
+				const currentMessages = this.sdkMessages.value;
+
+				if (snapshotTimestamp && currentMessages.length > 0) {
+					// Preserve newer messages that arrived via delta during reconnection
+					// Messages from DB have timestamp added, so we filter by it
+					const newerMessages = currentMessages.filter(
+						(m) => ((m as unknown as { timestamp?: number }).timestamp || 0) >= snapshotTimestamp
+					);
+
+					if (newerMessages.length > 0) {
+						// Merge: server snapshot + newer delta messages
+						const messageMap = new Map<string, SDKMessage>();
+
+						// Add snapshot messages
+						for (const msg of messagesState.sdkMessages) {
+							if (msg.uuid) {
+								messageMap.set(msg.uuid, msg);
+							}
+						}
+
+						// Newer messages override (they're more recent)
+						for (const msg of newerMessages) {
+							if (msg.uuid) {
+								messageMap.set(msg.uuid, msg);
+							}
+						}
+
+						// Convert back to array, sorted by timestamp
+						// Messages from DB have timestamp added, so we can sort by it
+						this.sdkMessages.value = Array.from(messageMap.values()).sort(
+							(a, b) =>
+								((a as unknown as { timestamp?: number }).timestamp || 0) -
+								((b as unknown as { timestamp?: number }).timestamp || 0)
+						);
+					} else {
+						// No newer messages, use snapshot directly
+						this.sdkMessages.value = messagesState.sdkMessages;
+					}
+				} else {
+					// No timestamp in response or first load, use snapshot directly
+					this.sdkMessages.value = messagesState.sdkMessages;
+				}
 			}
 		} catch (err) {
 			console.error('[SessionStore] Failed to fetch initial state:', err);

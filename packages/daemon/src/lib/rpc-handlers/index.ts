@@ -23,6 +23,7 @@ import { setupQuestionHandlers } from './question-handlers';
 import { registerMcpHandlers } from './mcp-handlers';
 import { registerSettingsHandlers } from './settings-handlers';
 import { setupConfigHandlers } from './config-handlers';
+import { setupTestHandlers } from './test-handlers';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -48,4 +49,5 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
 	registerMcpHandlers(deps.messageHub, deps.sessionManager);
 	registerSettingsHandlers(deps.messageHub, deps.settingsManager, deps.daemonHub, deps.db);
 	setupConfigHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
+	setupTestHandlers(deps.messageHub, deps.db);
 }
