@@ -19,6 +19,9 @@ describe('Daemon App Cleanup', () => {
 	const logs: string[] = [];
 
 	beforeEach(() => {
+		// Set fake API key for auth (createDaemonApp requires authentication)
+		process.env.ANTHROPIC_API_KEY = 'sk-ant-test-key-for-unit-tests';
+
 		// Capture console output for verification
 		originalConsoleLog = console.log;
 		originalConsoleError = console.error;
@@ -33,7 +36,7 @@ describe('Daemon App Cleanup', () => {
 			defaultModel: 'claude-sonnet-4-5-20250929',
 			maxTokens: 8192,
 			temperature: 1.0,
-			anthropicApiKey: 'test-key',
+			anthropicApiKey: 'sk-ant-test-key-for-unit-tests',
 			dbPath: ':memory:',
 			maxSessions: 10,
 			nodeEnv: 'test',
@@ -43,6 +46,9 @@ describe('Daemon App Cleanup', () => {
 	});
 
 	afterEach(() => {
+		// Clean up env var
+		delete process.env.ANTHROPIC_API_KEY;
+
 		// Restore console
 		console.log = originalConsoleLog;
 		console.error = originalConsoleError;
