@@ -1,8 +1,9 @@
 import type { Session } from '@liuboer/shared';
-import { currentSessionIdSignal, sidebarOpenSignal } from '../lib/signals.ts';
+import { sidebarOpenSignal } from '../lib/signals.ts';
 import { formatRelativeTime, formatTokens } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import { GitBranchIcon } from './icons/GitBranchIcon.tsx';
+import { navigateToSession } from '../lib/router.ts';
 
 interface RecentSessionsProps {
 	sessions: Session[];
@@ -15,7 +16,7 @@ export default function RecentSessions({ sessions }: RecentSessionsProps) {
 		.slice(0, 5);
 
 	const handleSessionClick = (sessionId: string) => {
-		currentSessionIdSignal.value = sessionId;
+		navigateToSession(sessionId);
 		// Close sidebar on mobile after selecting a session
 		if (window.innerWidth < 768) {
 			sidebarOpenSignal.value = false;

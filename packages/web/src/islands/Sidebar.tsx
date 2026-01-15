@@ -16,6 +16,7 @@ import { Button } from '../components/ui/Button.tsx';
 import { SettingsModal } from '../components/SettingsModal.tsx';
 import SessionListItem from '../components/SessionListItem.tsx';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
+import { navigateToSession } from '../lib/router.ts';
 
 const SESSIONS_PER_PAGE = 20;
 
@@ -66,7 +67,7 @@ export default function Sidebar() {
 
 			// Navigate immediately - the session will sync via state channels
 			console.log('[Sidebar] Navigating to session:', response.sessionId);
-			currentSessionIdSignal.value = response.sessionId;
+			navigateToSession(response.sessionId);
 
 			// Verify session appears in list after a short delay
 			setTimeout(() => {
@@ -97,7 +98,7 @@ export default function Sidebar() {
 	const handleSessionClick = (sessionId: string) => {
 		console.log('[Sidebar] Session clicked:', sessionId);
 		console.log('[Sidebar] Current signal value before update:', currentSessionIdSignal.value);
-		currentSessionIdSignal.value = sessionId;
+		navigateToSession(sessionId);
 		console.log('[Sidebar] Current signal value after update:', currentSessionIdSignal.value);
 		// Close sidebar on mobile after selecting a session
 		if (window.innerWidth < 768) {
