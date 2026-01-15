@@ -296,18 +296,24 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			const pendingCallsCount = messageHub.getPendingCallCount();
 			if (pendingCallsCount > 0) {
 				log(`       ${pendingCallsCount} pending calls detected`);
+				let checkInterval: ReturnType<typeof setInterval> | null = null;
 				await Promise.race([
 					new Promise((resolve) => {
-						const checkInterval = setInterval(() => {
+						checkInterval = setInterval(() => {
 							const remaining = messageHub.getPendingCallCount();
 							if (remaining === 0) {
-								clearInterval(checkInterval);
+								clearInterval(checkInterval!);
+								checkInterval = null;
 								resolve(null);
 							}
 						}, 100);
 					}),
 					new Promise((resolve) => setTimeout(resolve, 3000)),
 				]);
+				// CRITICAL: Clear interval if timeout fired first (prevents hang on exit)
+				if (checkInterval) {
+					clearInterval(checkInterval);
+				}
 				const remaining = messageHub.getPendingCallCount();
 				if (remaining > 0) {
 					log(`       ⚠️  Timeout: ${remaining} calls still pending`);
