@@ -1,5 +1,9 @@
 import { test, expect } from '../fixtures';
-import { cleanupTestSession, waitForSessionCreated } from './helpers/wait-helpers';
+import {
+	cleanupTestSession,
+	waitForSessionCreated,
+	waitForAssistantResponse,
+} from './helpers/wait-helpers';
 
 /**
  * Context Dropdown E2E Tests
@@ -63,19 +67,18 @@ test.describe('Context Dropdown', () => {
 		await textarea.fill('Hello, what is 2+2?');
 		await page.keyboard.press('Meta+Enter');
 
-		// Wait for response
-		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
-			timeout: 60000,
-		});
+		// Wait for assistant response using helper
+		await waitForAssistantResponse(page);
+
+		// Wait for context data to be loaded (title changes from "loading" to "click for details")
+		const contextIndicator = page.locator('[title="Click for context details"]');
+		await expect(contextIndicator).toBeVisible({ timeout: 15000 });
 
 		// Click on context percentage to open dropdown
-		const contextPercentage = page.locator('.text-xs.font-medium:has-text("%")').first();
-		await expect(contextPercentage).toBeVisible();
-		await contextPercentage.click();
+		await contextIndicator.click();
 
-		// Dropdown should appear with context categories
-		// Look for common context categories like "System prompt", "Messages", etc.
-		await expect(page.locator('text=System prompt').first()).toBeVisible({ timeout: 2000 });
+		// Dropdown should appear with "Context Usage" header
+		await expect(page.getByText('Context Usage', { exact: true })).toBeVisible({ timeout: 3000 });
 	});
 
 	test('should show context category breakdown in dropdown', async ({ page }) => {
@@ -89,20 +92,33 @@ test.describe('Context Dropdown', () => {
 		await textarea.fill('Hello, what is 2+2?');
 		await page.keyboard.press('Meta+Enter');
 
-		// Wait for response
-		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
-			timeout: 60000,
-		});
+		// Wait for assistant response using helper
+		await waitForAssistantResponse(page);
 
-		// Click on context percentage
-		const contextPercentage = page.locator('.text-xs.font-medium:has-text("%")').first();
-		await expect(contextPercentage).toBeVisible();
-		await contextPercentage.click();
+		// Wait for context data to be loaded
+		const contextIndicator = page.locator('[title="Click for context details"]');
+		await expect(contextIndicator).toBeVisible({ timeout: 15000 });
 
-		// Verify context categories are displayed
-		// These are common categories from ContextInfo type
-		await expect(page.locator('text=System prompt').first()).toBeVisible();
-		await expect(page.locator('text=Messages').first()).toBeVisible();
+		// Click on context percentage to open dropdown
+		await contextIndicator.click();
+
+		// First verify the "Context Usage" header appears (dropdown is open)
+		await expect(page.getByText('Context Usage', { exact: true })).toBeVisible({ timeout: 5000 });
+
+		// Then verify the breakdown section appears
+		await expect(page.getByText('Breakdown', { exact: true })).toBeVisible({ timeout: 3000 });
+
+		// Verify context breakdown items are displayed by checking for percentage signs in the breakdown
+		// The breakdown should have at least 3 categories: Input Context, Output Tokens, Free Space
+		// Each shows a percentage like "0.0%" or "100.0%"
+		const dropdownContent = page
+			.locator('.bg-dark-800.border.rounded-lg')
+			.filter({ hasText: 'Context Usage' });
+		const percentageCount = await dropdownContent.getByText(/\d+\.\d+%/, { exact: false }).count();
+		expect(percentageCount).toBeGreaterThanOrEqual(3); // At least 3 categories with percentages
+
+		// Also verify we see the expected context capacity text
+		await expect(dropdownContent.getByText(/200,000/)).toBeVisible();
 
 		// Take screenshot for visual verification
 		await page.screenshot({ path: 'test-results/context-dropdown.png', fullPage: true });

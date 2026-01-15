@@ -34,6 +34,16 @@ import { globalStore } from './global-store';
 import { sessionStore } from './session-store';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from './errors';
 import { createDeferred } from './timeout';
+import { currentSessionIdSignal, slashCommandsSignal } from './signals';
+
+// Expose signals immediately when module loads (for E2E testing)
+if (typeof window !== 'undefined') {
+	(
+		window as unknown as { currentSessionIdSignal?: typeof currentSessionIdSignal }
+	).currentSessionIdSignal = currentSessionIdSignal;
+	(window as unknown as { slashCommandsSignal?: typeof slashCommandsSignal }).slashCommandsSignal =
+		slashCommandsSignal;
+}
 
 /**
  * Type for connection event handlers
@@ -295,19 +305,17 @@ export class ConnectionManager {
 		});
 
 		// Expose to window for testing
-		if (
-			typeof window !== 'undefined' &&
-			(window.location.hostname === 'localhost' || process.env.NODE_ENV === 'test')
-		) {
+		if (typeof window !== 'undefined') {
 			window.__messageHub = this.messageHub;
 			window.appState = appState;
 			window.__messageHubReady = false; // Will be set to true after connection
 			window.connectionManager = this; // Expose for testing
+			window.globalStore = globalStore; // Expose for testing
+			window.sessionStore = sessionStore; // Expose for testing
 
-			// Also expose currentSessionIdSignal for testing
-			import('./signals.ts').then(({ currentSessionIdSignal }) => {
-				window.currentSessionIdSignal = currentSessionIdSignal;
-			});
+			// Also expose signals for testing (static import for immediate availability)
+			window.currentSessionIdSignal = currentSessionIdSignal;
+			window.slashCommandsSignal = slashCommandsSignal;
 		}
 
 		// Create WebSocket transport with auto-reconnect

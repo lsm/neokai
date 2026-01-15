@@ -47,16 +47,20 @@ export async function waitForSessionCreated(page: Page): Promise<string> {
 		const pathId = pathParts[0] === 'session' ? pathParts[1] : pathParts[0];
 		if (pathId && pathId !== 'undefined' && pathId !== 'null') return pathId;
 
-		// 2. From appState's currentSessionIdSignal (if exposed)
-		const appStateSessionId = window.appState?.currentSessionIdSignal?.value;
-		if (appStateSessionId) return appStateSessionId;
+		// 2. From currentSessionIdSignal (if exposed)
+		const currentSessionId = window.currentSessionIdSignal?.value;
+		if (currentSessionId) return currentSessionId;
 
-		// 3. From localStorage
+		// 3. From sessionStore (if exposed)
+		const sessionStoreId = window.sessionStore?.activeSessionId?.value;
+		if (sessionStoreId) return sessionStoreId;
+
+		// 4. From localStorage
 		const localStorageId = localStorage.getItem('currentSessionId');
 		if (localStorageId) return localStorageId;
 
-		// 4. From latest session in sessions list
-		const sessions = window.appState?.global?.value?.sessions?.$.value?.sessions || [];
+		// 5. From latest session in globalStore sessions list
+		const sessions = window.globalStore?.sessions?.value || [];
 		const latestSession = sessions[sessions.length - 1] as { id?: string } | undefined;
 		if (latestSession?.id) return latestSession.id;
 
@@ -298,7 +302,7 @@ export async function waitForTabSync(pages: Page[], timeout: number = 5000): Pro
 		const sessionCounts = await Promise.all(
 			pages.map((page) =>
 				page.evaluate(() => {
-					const sessions = window.appState?.global?.value?.sessions?.$.value?.sessions;
+					const sessions = window.globalStore?.sessions?.value;
 					return sessions?.length || 0;
 				})
 			)
@@ -320,6 +324,8 @@ export async function waitForTabSync(pages: Page[], timeout: number = 5000): Pro
 
 /**
  * Wait for agent state change
+ * NOTE: For current session, uses sessionStore.sessionState.value?.agentState
+ * For non-current sessions, uses globalStore.sessions with parsed processingState
  */
 export async function waitForAgentState(
 	page: Page,
@@ -328,8 +334,24 @@ export async function waitForAgentState(
 ): Promise<void> {
 	await page.waitForFunction(
 		({ sid, state }) => {
-			const agentState = window.appState?.sessions?.get(sid)?.agent?.$.value;
-			return agentState?.status === state;
+			// Try sessionStore first (current session - live state)
+			const sessionStoreState = window.sessionStore?.sessionState?.value;
+			if (sessionStoreState?.agentState && window.sessionStore?.activeSessionId?.value === sid) {
+				return sessionStoreState.agentState.status === state;
+			}
+
+			// Fall back to globalStore for non-current sessions
+			const session = window.globalStore?.sessions?.value?.find(
+				(s: { id: string }) => s.id === sid
+			);
+			if (!session?.processingState) return false;
+
+			try {
+				const agentState = JSON.parse(session.processingState);
+				return agentState.status === state;
+			} catch {
+				return false;
+			}
 		},
 		{ sid: sessionId, state: expectedState },
 		{ timeout: 10000 }
@@ -338,15 +360,18 @@ export async function waitForAgentState(
 
 /**
  * Wait for context update (after /context command)
+ * NOTE: Uses sessionStore.sessionState.value?.contextInfo for current session
  */
 export async function waitForContextUpdate(page: Page, sessionId: string): Promise<void> {
 	// Wait for context state channel update
 	await page.waitForFunction(
 		(sid) => {
-			const context = window.appState?.sessions?.get(sid)?.context?.$.value;
-			// Check if contextInfo exists (it's on ContextState)
-			const contextWithInfo = context as { contextInfo?: unknown } | undefined;
-			return contextWithInfo?.contextInfo !== null && contextWithInfo?.contextInfo !== undefined;
+			const sessionStoreState = window.sessionStore?.sessionState?.value;
+			if (!sessionStoreState || window.sessionStore?.activeSessionId?.value !== sid) {
+				return false;
+			}
+			// Check if contextInfo exists
+			return sessionStoreState.contextInfo !== null && sessionStoreState.contextInfo !== undefined;
 		},
 		sessionId,
 		{ timeout: 10000 }
@@ -355,17 +380,17 @@ export async function waitForContextUpdate(page: Page, sessionId: string): Promi
 
 /**
  * Wait for slash commands to be loaded
+ * NOTE: Uses sessionStore.sessionState.value?.commandsData for current session
  */
 export async function waitForSlashCommands(page: Page, sessionId: string): Promise<void> {
 	await page.waitForFunction(
 		(sid) => {
-			const commands = window.appState?.sessions?.get(sid)?.commands?.$.value;
-			// Check if availableCommands exists (it's on CommandsState)
-			const commandsWithAvailable = commands as { availableCommands?: unknown[] } | undefined;
-			return (
-				commandsWithAvailable?.availableCommands &&
-				commandsWithAvailable.availableCommands.length > 0
-			);
+			const sessionStoreState = window.sessionStore?.sessionState?.value;
+			if (!sessionStoreState || window.sessionStore?.activeSessionId?.value !== sid) {
+				return false;
+			}
+			const commands = sessionStoreState.commandsData?.availableCommands;
+			return commands && commands.length > 0;
 		},
 		sessionId,
 		{ timeout: 10000 }
@@ -463,13 +488,15 @@ export async function cleanupTestSessions(page: Page, sessionIds: string[]): Pro
 
 /**
  * Wait for session to be archived
+ * NOTE: Uses globalStore.sessions to find session by ID and check status
  */
 export async function waitForSessionArchived(page: Page, sessionId: string): Promise<void> {
 	await page.waitForFunction(
 		(sid) => {
-			const session = window.appState?.sessions?.get(sid);
-			const sessionValue = session?.session?.$.value as { isArchived?: boolean } | undefined;
-			return sessionValue?.isArchived === true;
+			const session = window.globalStore?.sessions?.value?.find(
+				(s: { id: string; status?: string }) => s.id === sid
+			);
+			return session?.status === 'archived';
 		},
 		sessionId,
 		{ timeout: 10000 }
@@ -483,6 +510,7 @@ export async function waitForSessionArchived(page: Page, sessionId: string): Pro
  * Wait for processing state change
  * @param state - Expected state: 'idle', 'queued', or 'processing'
  * @param phase - Optional phase when state is 'processing': 'initializing', 'thinking', 'streaming', 'finalizing'
+ * NOTE: For current session, uses sessionStore.sessionState.value?.agentState
  */
 export async function waitForProcessingState(
 	page: Page,
@@ -492,9 +520,26 @@ export async function waitForProcessingState(
 ): Promise<void> {
 	await page.waitForFunction(
 		({ sid, expectedState, expectedPhase }) => {
-			const agentState = window.appState?.sessions?.get(sid)?.agent?.$.value;
-			if (!agentState) return false;
+			// Try sessionStore first (current session - live state)
+			const sessionStoreState = window.sessionStore?.sessionState?.value;
+			let agentState;
+			if (sessionStoreState?.agentState && window.sessionStore?.activeSessionId?.value === sid) {
+				agentState = sessionStoreState.agentState;
+			} else {
+				// Fall back to globalStore for non-current sessions
+				const session = window.globalStore?.sessions?.value?.find(
+					(s: { id: string }) => s.id === sid
+				);
+				if (!session?.processingState) return false;
 
+				try {
+					agentState = JSON.parse(session.processingState);
+				} catch {
+					return false;
+				}
+			}
+
+			if (!agentState) return false;
 			if (agentState.status !== expectedState) return false;
 
 			// If phase is specified and state is 'processing', check the phase
@@ -585,6 +630,7 @@ export async function waitForToast(page: Page, text?: string): Promise<Locator> 
 
 /**
  * Wait for model to be switched
+ * NOTE: Uses globalStore.sessions to find session and check config.model
  */
 export async function waitForModelSwitch(
 	page: Page,
@@ -593,9 +639,10 @@ export async function waitForModelSwitch(
 ): Promise<void> {
 	await page.waitForFunction(
 		({ sid, expected }) => {
-			const session = window.appState?.sessions?.get(sid);
-			const sessionValue = session?.session?.$.value as { config?: { model?: string } } | undefined;
-			return sessionValue?.config?.model === expected;
+			const session = window.globalStore?.sessions?.value?.find(
+				(s: { id: string }) => s.id === sid
+			);
+			return session?.config?.model === expected;
 		},
 		{ sid: sessionId, expected: modelId },
 		{ timeout: 10000 }

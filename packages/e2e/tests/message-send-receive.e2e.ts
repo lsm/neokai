@@ -226,6 +226,9 @@ test.describe('Message Send and Receive', () => {
 
 			// Wait for input to be re-enabled (response complete)
 			await expect(messageInput).toBeEnabled({ timeout: 5000 });
+
+			// Wait for send button to return (stop button disappears)
+			await expect(page.locator('[data-testid="send-button"]')).toBeVisible({ timeout: 10000 });
 		}
 
 		// All messages should be visible (use .first() to avoid strict mode violation
@@ -265,8 +268,10 @@ test.describe('Message Send and Receive', () => {
 		// For this test, we'll just verify recovery from normal operation
 
 		// Send another message to ensure the system is still working
+		// Get a fresh reference to the send button after processing completes
+		const nextSendButton = await waitForElement(page, '[data-testid="send-button"]');
 		await messageInput.fill('Second message after recovery');
-		await sendButton.click();
+		await nextSendButton.click();
 
 		// Should complete successfully (use .first() to handle duplicate text in sidebar)
 		await expect(page.locator('text="Second message after recovery"').first()).toBeVisible({

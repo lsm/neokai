@@ -6,12 +6,74 @@
  */
 
 import type { MessageHub } from '@liuboer/shared/message-hub/message-hub';
-import type { Session } from '@liuboer/shared';
+import type { Session, ContextInfo, AgentProcessingState } from '@liuboer/shared';
 import type { SDKMessage } from '@liuboer/shared/sdk';
 import type { ConnectionState } from '@liuboer/shared/message-hub/types';
+import type { Signal } from '@preact/signals';
 
 /**
- * Session state signal structure (from Preact signals)
+ * SessionStore interface (simplified for E2E tests)
+ *
+ * The SessionStore has both signals and computed properties.
+ * - Core signals: activeSessionId, sessionState, sdkMessages
+ * - Computed properties (also signals): agentState, contextInfo, commandsData, error
+ */
+interface SessionStore {
+	// ========================================
+	// Core Signals
+	// ========================================
+
+	/** Current active session ID (signal) */
+	activeSessionId: Signal<string | null>;
+
+	/** Unified session state from state.session channel (signal) */
+	sessionState: Signal<{
+		sessionInfo?: Session;
+		agentState?: AgentProcessingState;
+		contextInfo?: ContextInfo | null;
+		commandsData?: { availableCommands?: string[] } | null;
+		error?: { message: string; details?: unknown; occurredAt: number } | null;
+	} | null>;
+
+	/** SDK messages from state.sdkMessages channel (signal) */
+	sdkMessages: Signal<SDKMessage[]>;
+
+	// ========================================
+	// Computed Properties (Signals)
+	// ========================================
+
+	/** Agent processing state (computed signal, returns { status: 'idle' } as default) */
+	agentState: Signal<AgentProcessingState>;
+
+	/** Context info (computed signal) */
+	contextInfo: Signal<ContextInfo | null>;
+
+	/** Available slash commands (computed signal, returns string[] directly) */
+	commandsData: Signal<string[]>;
+
+	/** Session error state (computed signal) */
+	error: Signal<{ message: string; details?: unknown; occurredAt: number } | null>;
+}
+
+/**
+ * GlobalStore interface (simplified for E2E tests)
+ */
+interface GlobalStore {
+	/** All sessions (signal) */
+	sessions: Signal<Session[]>;
+
+	/** Whether there are any archived sessions in the database (signal) */
+	hasArchivedSessions: Signal<boolean>;
+
+	/** Unified system state (signal) */
+	systemState: Signal<{ auth?: unknown; health?: unknown; apiConnection?: unknown } | null>;
+
+	/** Global settings (signal) */
+	settings: Signal<unknown | null>;
+}
+
+/**
+ * State signal structure (from Preact signals)
  */
 interface StateSignal<T> {
 	value?: T;
@@ -59,7 +121,7 @@ interface CommandsState {
 /**
  * Session-specific state map
  */
-interface SessionState {
+interface SessionStateMap {
 	agent?: StateChannelSignal<AgentState>;
 	context?: StateChannelSignal<ContextState>;
 	commands?: StateChannelSignal<CommandsState>;
@@ -74,7 +136,7 @@ interface AppState {
 	global?: StateSignal<{
 		sessions?: StateChannelSignal<SessionsState>;
 	}>;
-	sessions?: Map<string, SessionState>;
+	sessions?: Map<string, SessionStateMap>;
 }
 
 /**
@@ -120,10 +182,19 @@ declare global {
 		appState?: AppState;
 
 		/** Current session ID signal (if exposed globally) */
-		currentSessionIdSignal?: StateSignal<string>;
+		currentSessionIdSignal?: Signal<string | null>;
+
+		/** Slash commands signal */
+		slashCommandsSignal?: Signal<string[]>;
 
 		/** Connection manager for simulating connection issues */
 		connectionManager?: ConnectionManager;
+
+		/** GlobalStore for sessions list */
+		globalStore?: GlobalStore;
+
+		/** SessionStore for current session state */
+		sessionStore?: SessionStore;
 
 		/** Test-specific helper functions (set dynamically by tests) */
 		__checkInterrupt?: () => boolean;

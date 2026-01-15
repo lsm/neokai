@@ -164,10 +164,14 @@ function convertSDKModelToModelInfo(sdkModel: SDKModelInfo): ModelInfo {
 		family = 'haiku';
 	}
 
+	// Get the short alias from the mapping (e.g., 'haiku', 'opus', 'default')
+	// This allows DEFAULT_MODEL=haiku to work correctly
+	const alias = LEGACY_MODEL_MAPPINGS[modelId] || modelId;
+
 	return {
 		id: modelId,
 		name: displayName,
-		alias: modelId, // Use the model ID as alias (SDK uses short IDs like 'opus', 'default')
+		alias, // Use short alias (e.g., 'haiku', 'opus', 'default')
 		family,
 		contextWindow: 200000, // Default context window
 		description: sdkModel.description || '',
