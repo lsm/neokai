@@ -58,8 +58,8 @@ if (GLM_API_KEY) {
 	process.env.API_TIMEOUT_MS = '3000000';
 }
 
-// Skip all tests if GLM credentials are not available
-describe.skipIf(!GLM_API_KEY)('Daemon-style SDK Usage', () => {
+// Tests will FAIL if GLM credentials are not available
+describe('Daemon-style SDK Usage', () => {
 	test('should work with cwd option (like daemon does)', async () => {
 		// ENHANCED DEBUG LOGGING
 		console.log('\n========================================');

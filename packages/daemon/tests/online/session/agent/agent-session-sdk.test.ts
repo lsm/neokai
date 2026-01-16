@@ -55,9 +55,8 @@ import { waitForIdle } from '../../../helpers/test-wait-for-idle';
  * CRITICAL: Restore any mocks before running these tests.
  * This prevents mock leakage from unit tests that mock the SDK.
  */
-// Skip all tests if credentials are not available
-const hasCredentials = CLAUDE_CODE_OAUTH_TOKEN || GLM_API_KEY;
-describe.skipIf(!hasCredentials)('AgentSession SDK Integration', () => {
+// Tests will FAIL if credentials are not available
+describe('AgentSession SDK Integration', () => {
 	let ctx: TestContext;
 
 	beforeEach(async () => {

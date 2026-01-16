@@ -40,8 +40,8 @@ import { createTestApp } from '../../../test-utils';
 import { sendMessageSync } from '../../../helpers/test-message-sender';
 import { waitForIdle } from '../../../helpers/test-wait-for-idle';
 
-// Skip all tests if GLM credentials are not available
-describe.skipIf(!GLM_API_KEY)('Auto-Title Generation', () => {
+// Tests will FAIL if GLM credentials are not available
+describe('Auto-Title Generation', () => {
 	let ctx: TestContext;
 
 	beforeEach(async () => {

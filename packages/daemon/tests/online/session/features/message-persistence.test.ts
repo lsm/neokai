@@ -52,8 +52,8 @@ import { sendMessageSync } from '../../../helpers/test-message-sender';
 // Use temp directory for test database
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
-// Skip tests that require GLM credentials
-describe.skipIf(!GLM_API_KEY)('Message Persistence Bug Fix', () => {
+// Tests will FAIL if GLM credentials are not available
+describe('Message Persistence Bug Fix', () => {
 	let ctx: TestContext;
 	const testDbPath = join(TMP_DIR, 'persistence-test.db');
 

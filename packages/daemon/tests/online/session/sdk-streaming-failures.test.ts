@@ -45,8 +45,8 @@ import { sendMessageSync } from '../../helpers/test-message-sender';
 import { waitForIdle } from '../../helpers/test-wait-for-idle';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
-// Skip all tests if GLM credentials are not available
-describe.skipIf(!GLM_API_KEY)('SDK Streaming CI Failures', () => {
+// Tests will FAIL if GLM credentials are not available
+describe('SDK Streaming CI Failures', () => {
 	let ctx: TestContext;
 
 	beforeEach(async () => {
