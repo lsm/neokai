@@ -17,8 +17,8 @@ jobs:
   # ONLINE TESTS (Requires API credentials)
   # Parallelized by category with max concurrency 4
   #
-  # Primary: GLM_API_KEY for all tests (provider-agnostic)
-  # Optional: ANTHROPIC_API_KEY for cross-provider tests
+  # session/agent: CLAUDE_CODE_OAUTH_TOKEN (Claude Code API)
+  # All others: GLM_API_KEY (GLM API)
   # ============================================
 
   test-daemon-online:
@@ -39,6 +39,9 @@ jobs:
           - rpc
           - mcp
           - glm
+        include:
+          - category: session/agent
+            auth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -55,11 +58,10 @@ jobs:
         working-directory: packages/daemon
         run: bun test tests/online/${{ matrix.category }}
         env:
+          # Default: GLM_API_KEY for most tests
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
-          # Claude Code OAuth token (alternative to GLM_API_KEY for GLM provider)
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # Optional: for cross-provider tests in model-switching.test.ts
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Override: CLAUDE_CODE_OAUTH_TOKEN for session/agent
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.auth-token || '' }}
 
   # Standalone job for SDK streaming tests with different permission modes
   # Includes diagnostic test for bypassPermissions (expected to fail gracefully on CI as root)
@@ -84,10 +86,6 @@ jobs:
         run: bun test tests/online/session/sdk-streaming-failures.test.ts
         env:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
-          # Claude Code OAuth token (alternative to GLM_API_KEY for GLM provider)
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # Optional: for cross-provider tests
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # Enable verbose logging for debugging
           NODE_ENV: test
           DEBUG: '*'
