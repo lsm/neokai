@@ -223,8 +223,9 @@ describe.skipIf(!GLM_API_KEY)('Auto-Title Generation', () => {
 			content: 'ok',
 		});
 
-		// Wait for first response (title generation happens during this)
-		await waitForIdle(agentSession!);
+		// Wait for first response AND title generation
+		// This ensures title generation completes before cleanup runs
+		await waitForTitleGeneration(agentSession!);
 
 		// Session should still be functional even if title generation fails
 		let sessionData = agentSession!.getSessionData();
