@@ -56,7 +56,7 @@ jobs:
         run: bun test tests/online/${{ matrix.category }}
         env:
           # Default: GLM_API_KEY for most tests
-          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+          GLM_API_KEY: ${{ matrix.category != 'session/agent' && secrets.GLM_API_KEY || '' }}
           # Override: CLAUDE_CODE_OAUTH_TOKEN for session/agent
           CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.category == 'session/agent' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
 
