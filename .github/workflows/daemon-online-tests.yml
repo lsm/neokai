@@ -56,9 +56,9 @@ jobs:
         run: bun test tests/online/${{ matrix.category }}
         env:
           # Default: GLM_API_KEY for most tests
-          GLM_API_KEY: ${{ matrix.category != 'session/agent' && secrets.GLM_API_KEY || '' }}
-          # Override: CLAUDE_CODE_OAUTH_TOKEN for session/agent
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.category == 'session/agent' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          GLM_API_KEY: ${{ (matrix.category != 'session/agent' && matrix.category != 'session') && secrets.GLM_API_KEY || '' }}
+          # Override: CLAUDE_CODE_OAUTH_TOKEN for session/agent and session
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ (matrix.category == 'session/agent' || matrix.category == 'session') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
 
   # Standalone job for SDK streaming tests with different permission modes
   # Includes diagnostic test for bypassPermissions (expected to fail gracefully on CI as root)
