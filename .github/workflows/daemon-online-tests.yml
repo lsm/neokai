@@ -34,7 +34,7 @@ jobs:
           - sdk
           - session/agent
           - session/features
-          - session/glm
+          - session
           - components
           - rpc
           - mcp
