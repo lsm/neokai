@@ -39,9 +39,6 @@ jobs:
           - rpc
           - mcp
           - glm
-        include:
-          - category: session/agent
-            auth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -61,7 +58,7 @@ jobs:
           # Default: GLM_API_KEY for most tests
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           # Override: CLAUDE_CODE_OAUTH_TOKEN for session/agent
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.auth-token || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.category == 'session/agent' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
 
   # Standalone job for SDK streaming tests with different permission modes
   # Includes diagnostic test for bypassPermissions (expected to fail gracefully on CI as root)
