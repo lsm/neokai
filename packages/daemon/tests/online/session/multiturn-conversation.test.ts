@@ -1,17 +1,15 @@
 /**
- * GLM-4.7 Multi-Turn Conversation Tests
+ * Multi-Turn Conversation Tests
  *
- * These tests use the REAL GLM-4.7 API with actual API credentials.
- * They verify that AgentSession correctly handles multi-turn conversations with GLM:
+ * These tests verify that AgentSession correctly handles multi-turn conversations:
  * - Context retention across turns
  * - Sequential message processing
  * - SDK message persistence
  * - Processing state transitions
  *
  * REQUIREMENTS:
- * - Requires GLM_API_KEY or ZHIPU_API_KEY
+ * - Requires ANTHROPIC_API_KEY (for haiku model)
  * - Makes real API calls (costs money, uses rate limits)
- * - Tests will FAIL if credentials are not available (no skip)
  *
  * These tests run in parallel with other tests for faster CI execution.
  */
@@ -27,14 +25,11 @@ import {
 import { sendMessageSync } from '../../../helpers/test-message-sender';
 import { waitForIdle } from '../../../helpers/test-wait-for-idle';
 
-// Check for GLM credentials
-const GLM_API_KEY = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
-
 /**
  * CRITICAL: Restore any mocks before running these tests.
  * This prevents mock leakage from unit tests that mock the SDK.
  */
-describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
+describe('Multi-Turn Conversation', () => {
 	let ctx: TestContext;
 
 	beforeEach(async () => {
@@ -50,13 +45,13 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 			}
 		},
 		{ timeout: 30000 }
-	); // 30s timeout for GLM cleanup (slower API + subprocess exit)
+	); // 30s timeout for cleanup (slower API + subprocess exit)
 
 	test('should handle multi-turn conversation with context retention', async () => {
 		const sessionId = await ctx.sessionManager.createSession({
 			workspacePath: process.cwd(),
 			config: {
-				model: 'glm-4.7',
+				model: 'haiku',
 				permissionMode: 'acceptEdits',
 			},
 		});
@@ -123,7 +118,7 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 		const sessionId = await ctx.sessionManager.createSession({
 			workspacePath: process.cwd(),
 			config: {
-				model: 'glm-4.7',
+				model: 'haiku',
 				permissionMode: 'acceptEdits',
 			},
 		});
@@ -167,7 +162,7 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 		const sessionId = await ctx.sessionManager.createSession({
 			workspacePath: process.cwd(),
 			config: {
-				model: 'glm-4.5-air',
+				model: 'haiku',
 				permissionMode: 'acceptEdits',
 			},
 		});
@@ -218,7 +213,7 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
 				config: {
-					model: 'glm-4.7',
+					model: 'haiku',
 					permissionMode: 'acceptEdits',
 				},
 			});
@@ -278,7 +273,7 @@ describe.skipIf(!GLM_API_KEY)('GLM-4.7 Multi-Turn Conversation', () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
 				config: {
-					model: 'glm-4.7',
+					model: 'haiku',
 					permissionMode: 'acceptEdits',
 				},
 			});
