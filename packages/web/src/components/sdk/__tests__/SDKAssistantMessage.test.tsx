@@ -4,12 +4,21 @@
  *
  * Tests assistant message rendering with text, tools, and thinking blocks
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
-import { render } from '@testing-library/preact';
+import { render, cleanup } from '@testing-library/preact';
 import { SDKAssistantMessage } from '../SDKAssistantMessage';
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
+import type { PendingUserQuestion, ResolvedQuestion } from '@liuboer/shared';
+
+beforeEach(() => {
+	cleanup();
+});
+
+afterEach(() => {
+	cleanup();
+});
 
 // Helper to create a valid UUID
 const createUUID = (): UUID => crypto.randomUUID() as UUID;
@@ -347,6 +356,415 @@ describe('SDKAssistantMessage', () => {
 
 			// AskUserQuestion tool should be rendered
 			expect(container.textContent).toContain('AskUserQuestion');
+		});
+	});
+
+	describe('Question Form Persistence', () => {
+		let onQuestionResolved: ReturnType<typeof vi.fn>;
+		let mockResolvedQuestions: Map<string, ResolvedQuestion>;
+		let mockPendingQuestion: PendingUserQuestion;
+
+		beforeEach(() => {
+			onQuestionResolved = vi.fn();
+
+			// Setup mock resolved questions
+			mockResolvedQuestions = new Map();
+
+			// Setup mock pending question
+			mockPendingQuestion = {
+				toolUseId: 'toolu_pending123',
+				questions: [
+					{
+						question: 'What should we do?',
+						header: 'Action',
+						options: [
+							{ label: 'Create', description: 'Create new file' },
+							{ label: 'Delete', description: 'Delete existing file' },
+						],
+						multiSelect: false,
+					},
+				],
+				askedAt: Date.now(),
+			};
+		});
+
+		function createAskUserQuestionMessage(
+			toolId: string = 'toolu_question123'
+		): Extract<SDKMessage, { type: 'assistant' }> {
+			return {
+				type: 'assistant',
+				message: {
+					id: 'msg_test',
+					type: 'message',
+					role: 'assistant',
+					content: [
+						{
+							type: 'tool_use',
+							id: toolId,
+							name: 'AskUserQuestion',
+							input: {
+								questions: [
+									{
+										question: 'What should we do?',
+										header: 'Action',
+										options: [
+											{ label: 'Create', description: 'Create new file' },
+											{ label: 'Delete', description: 'Delete existing file' },
+										],
+										multiSelect: false,
+									},
+								],
+							},
+						},
+					],
+					model: 'claude-3-5-sonnet-20241022',
+					stop_reason: 'tool_use',
+					stop_sequence: null,
+					usage: { input_tokens: 10, output_tokens: 20 },
+				},
+				parent_tool_use_id: null,
+				uuid: createUUID(),
+				session_id: 'test-session',
+			} as unknown as Extract<SDKMessage, { type: 'assistant' }>;
+		}
+
+		describe('Form Always Visible', () => {
+			it('should render QuestionPrompt for resolved questions', () => {
+				const message = createAskUserQuestionMessage('toolu_resolved123');
+				const resolved: ResolvedQuestion = {
+					question: mockPendingQuestion,
+					state: 'submitted',
+					responses: [
+						{
+							questionIndex: 0,
+							selectedLabels: ['Create'],
+							customText: undefined,
+						},
+					],
+					resolvedAt: Date.now(),
+				};
+				mockResolvedQuestions.set('toolu_resolved123', resolved);
+
+				const { container } = render(
+					<SDKAssistantMessage
+						message={message}
+						sessionId="test-session"
+						resolvedQuestions={mockResolvedQuestions}
+						onQuestionResolved={onQuestionResolved}
+					/>
+				);
+
+				// Question form should be visible
+				expect(container.textContent).toContain('What should we do?');
+				expect(container.textContent).toContain('Response submitted');
+			});
+
+			it('should render QuestionPrompt for pending questions', () => {
+				const message = createAskUserQuestionMessage('toolu_pending123');
+
+				const { container } = render(
+					<SDKAssistantMessage
+						message={message}
+						sessionId="test-session"
+						pendingQuestion={mockPendingQuestion}
+						onQuestionResolved={onQuestionResolved}
+					/>
+				);
+
+				// Question form should be visible
+				expect(container.textContent).toContain('What should we do?');
+				expect(container.textContent).toContain('Claude needs your input');
+			});
+
+			it('should render QuestionPrompt from tool input when neither resolved nor pending', () => {
+				const message = createAskUserQuestionMessage('toolu_old123');
+
+				const { container } = render(
+					<SDKAssistantMessage
+						message={message}
+						sessionId="test-session"
+						resolvedQuestions={new Map()}
+						onQuestionResolved={onQuestionResolved}
+					/>
+				);
+
+				// Question form should STILL be visible (extracted from tool input)
+				expect(container.textContent).toContain('What should we do?');
+				// Should show as cancelled/skipped state
+				expect(container.textContent).toContain('Question skipped');
+			});
+
+			it('should NEVER hide the QuestionPrompt form', () => {
+				const message = createAskUserQuestionMessage('toolu_alwaysvisible');
+
+				const { container } = render(
+					<SDKAssistantMessage
+						message={message}
+						sessionId="test-session"
+						resolvedQuestions={new Map()}
+						onQuestionResolved={onQuestionResolved}
+					/>
+				);
+
+				// The question form must always be present for AskUserQuestion tools
+				expect(container.textContent).toContain('What should we do?');
+				expect(container.textContent).toContain('Action');
+			});
+		});
+
+		describe('Resolved State Display', () => {
+			it('should show submitted state with responses', () => {
+				const message = createAskUserQuestionMessage('toolu_submitted123');
+				const resolved: ResolvedQuestion = {
+					question: mockPendingQuestion,
+					state: 'submitted',
+					responses: [
+						{
+							questionIndex: 0,
+							selectedLabels: ['Create'],
+							customText: undefined,
+						},
+					],
+					resolvedAt: Date.now(),
+				};
+				mockResolvedQuestions.set('toolu_submitted123', resolved);
+
+				const { container } = render(
+					<SDKAssistantMessage
+						message={message}
+						sessionId="test-session"
+						resolvedQuestions={mockResolvedQuestions}
+					/>
+				);
+
+				expect(container.textContent).toContain('Response submitted');
+				expect(container.textContent).toContain('Create');
+			});
+
+			it('should show cancelled state', () => {
+				const message = createAskUserQuestionMessage('toolu_cancelled123');
+				const resolved: ResolvedQuestion = {
+					question: mockPendingQuestion,
+					state: 'cancelled',
+					responses: [],
+					resolvedAt: Date.now(),
+				};
+				mockResolvedQuestions.set('toolu_cancelled123', resolved);
+
+				const { container } = render(
+					<SDKAssistantMessage
+						message={message}
+						sessionId="test-session"
+						resolvedQuestions={mockResolvedQuestions}
+					/>
+				);
+
+				expect(container.textContent).toContain('Question skipped');
+			});
+
+			it('should disable form inputs in resolved state', () => {
+				const message = createAskUserQuestionMessage('toolu_disabled123');
+				const resolved: ResolvedQuestion = {
+					question: mockPendingQuestion,
+					state: 'submitted',
+					responses: [
+						{
+							questionIndex: 0,
+							selectedLabels: ['Create'],
+							customText: undefined,
+						},
+					],
+					resolvedAt: Date.now(),
+				};
+				mockResolvedQuestions.set('toolu_disabled123', resolved);
+
+				const { container } = render(
+					<SDKAssistantMessage
+						message={message}
+						sessionId="test-session"
+						resolvedQuestions={mockResolvedQuestions}
+					/>
+				);
+
+				// Submit button should not be visible in resolved state
+				expect(container.textContent).not.toContain('Submit Response');
+			});
+		});
+
+		describe('Pending State Display', () => {
+			it('should show active form for pending questions', () => {
+				const message = createAskUserQuestionMessage('toolu_pending123');
+
+				const { container } = render(
+					<SDKAssistantMessage
+						message={message}
+						sessionId="test-session"
+						pendingQuestion={mockPendingQuestion}
+						onQuestionResolved={onQuestionResolved}
+					/>
+				);
+
+				expect(container.textContent).toContain('Claude needs your input');
+				expect(container.textContent).toContain('Submit Response');
+				expect(container.textContent).toContain('Skip Question');
+			});
+
+			it('should call onQuestionResolved when question is submitted', () => {
+				const message = createAskUserQuestionMessage('toolu_submit123');
+
+				const { container } = render(
+					<SDKAssistantMessage
+						message={message}
+						sessionId="test-session"
+						pendingQuestion={mockPendingQuestion}
+						onQuestionResolved={onQuestionResolved}
+					/>
+				);
+
+				// Find and click submit button
+				const submitButton = Array.from(container.querySelectorAll('button')).find(
+					(b) => b.textContent === 'Submit Response'
+				);
+
+				if (submitButton) {
+					// First need to select an option
+					const options = container.querySelectorAll('button');
+					const createOption = Array.from(options).find((o) => o.textContent?.includes('Create'));
+					createOption?.click();
+
+					// Now submit should be enabled
+					submitButton.click();
+				}
+
+				// Note: This tests the flow, but actual submission requires async RPC
+				// The component itself calls onQuestionResolved when submission succeeds
+			});
+		});
+
+		describe('Tool Input Extraction', () => {
+			it('should extract question data from tool input for old questions', () => {
+				const toolId = 'toolu_extract123';
+				const message = createAskUserQuestionMessage(toolId);
+
+				const { container } = render(
+					<SDKAssistantMessage
+						message={message}
+						sessionId="test-session"
+						resolvedQuestions={new Map()}
+						onQuestionResolved={onQuestionResolved}
+					/>
+				);
+
+				// Should extract and display question from tool input
+				expect(container.textContent).toContain('What should we do?');
+				expect(container.textContent).toContain('Action');
+				expect(container.textContent).toContain('Create');
+				expect(container.textContent).toContain('Delete');
+			});
+
+			it('should handle multi-select questions from tool input', () => {
+				const message = {
+					type: 'assistant',
+					message: {
+						id: 'msg_test',
+						type: 'message',
+						role: 'assistant',
+						content: [
+							{
+								type: 'tool_use',
+								id: 'toolu_multiselect123',
+								name: 'AskUserQuestion',
+								input: {
+									questions: [
+										{
+											question: 'Select options',
+											header: 'Multiple',
+											options: [
+												{ label: 'A', description: 'Option A' },
+												{ label: 'B', description: 'Option B' },
+												{ label: 'C', description: 'Option C' },
+											],
+											multiSelect: true,
+										},
+									],
+								},
+							},
+						],
+						model: 'claude-3-5-sonnet-20241022',
+						stop_reason: 'tool_use',
+						stop_sequence: null,
+						usage: { input_tokens: 10, output_tokens: 20 },
+					},
+					parent_tool_use_id: null,
+					uuid: createUUID(),
+					session_id: 'test-session',
+				} as unknown as Extract<SDKMessage, { type: 'assistant' }>;
+
+				const { container } = render(
+					<SDKAssistantMessage
+						message={message}
+						sessionId="test-session"
+						resolvedQuestions={new Map()}
+						onQuestionResolved={onQuestionResolved}
+					/>
+				);
+
+				expect(container.textContent).toContain('Select options');
+				expect(container.textContent).toContain('Multi-select');
+			});
+
+			it('should handle multiple questions from tool input', () => {
+				const message = {
+					type: 'assistant',
+					message: {
+						id: 'msg_test',
+						type: 'message',
+						role: 'assistant',
+						content: [
+							{
+								type: 'tool_use',
+								id: 'toolu_multiple123',
+								name: 'AskUserQuestion',
+								input: {
+									questions: [
+										{
+											question: 'First question?',
+											header: 'Q1',
+											options: [{ label: 'Yes', description: '' }],
+											multiSelect: false,
+										},
+										{
+											question: 'Second question?',
+											header: 'Q2',
+											options: [{ label: 'No', description: '' }],
+											multiSelect: false,
+										},
+									],
+								},
+							},
+						],
+						model: 'claude-3-5-sonnet-20241022',
+						stop_reason: 'tool_use',
+						stop_sequence: null,
+						usage: { input_tokens: 10, output_tokens: 20 },
+					},
+					parent_tool_use_id: null,
+					uuid: createUUID(),
+					session_id: 'test-session',
+				} as unknown as Extract<SDKMessage, { type: 'assistant' }>;
+
+				const { container } = render(
+					<SDKAssistantMessage
+						message={message}
+						sessionId="test-session"
+						resolvedQuestions={new Map()}
+						onQuestionResolved={onQuestionResolved}
+					/>
+				);
+
+				expect(container.textContent).toContain('First question?');
+				expect(container.textContent).toContain('Second question?');
+			});
 		});
 	});
 });

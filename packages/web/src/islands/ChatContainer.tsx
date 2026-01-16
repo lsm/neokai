@@ -65,6 +65,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
 
+	// Ref for tracking resolving questions (sync updates, prevents form disappearance during transition)
+	const resolvingQuestionsRef = useRef<Map<string, ResolvedQuestion>>(new Map());
+
 	// ========================================
 	// Local State (pagination, autoScroll)
 	// ========================================
@@ -127,6 +130,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	});
 
 	// Sync resolved questions from session metadata when session loads/updates
+	// Also clears resolvingQuestionsRef for items now confirmed by server
 	useEffect(() => {
 		if (session?.metadata?.resolvedQuestions) {
 			const map = new Map<string, ResolvedQuestion>();
@@ -134,6 +138,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				map.set(toolUseId, resolved);
 			}
 			setResolvedQuestions(map);
+
+			// Clear resolvingQuestionsRef for items now confirmed by server
+			const refMap = resolvingQuestionsRef.current;
+			for (const toolUseId of map.keys()) {
+				refMap.delete(toolUseId);
+			}
 		}
 	}, [session?.metadata?.resolvedQuestions]);
 
@@ -285,6 +295,16 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// ========================================
 	const removedOutputs = session?.metadata?.removedOutputs || [];
 	const maps = useMessageMaps(messages, sessionId, removedOutputs);
+
+	// Combined resolved questions map (state + ref)
+	// Includes questions synced from server (state) and questions being resolved (ref)
+	const allResolvedQuestions = useMemo(() => {
+		const combined = new Map<string, ResolvedQuestion>(resolvedQuestions);
+		for (const [toolUseId, resolved] of resolvingQuestionsRef.current) {
+			combined.set(toolUseId, resolved);
+		}
+		return combined;
+	}, [resolvedQuestions]);
 
 	// ========================================
 	// Connection Check
@@ -476,20 +496,24 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 											: undefined
 									}
 									sessionId={sessionId}
-									resolvedQuestions={resolvedQuestions}
+									resolvedQuestions={allResolvedQuestions}
 									pendingQuestion={pendingQuestion}
 									onQuestionResolved={(state, responses) => {
 										// Move question to resolved state locally for immediate UI feedback
 										// (Server also persists this via question.respond/cancel RPC)
 										if (pendingQuestion) {
+											const resolved = {
+												question: pendingQuestion,
+												state,
+												responses,
+												resolvedAt: Date.now(),
+											};
+											// Update ref immediately (synchronous)
+											resolvingQuestionsRef.current.set(pendingQuestion.toolUseId, resolved);
+											// Also schedule update to resolvedQuestions (will be merged with server data)
 											setResolvedQuestions((prev) => {
 												const next = new Map(prev);
-												next.set(pendingQuestion.toolUseId, {
-													question: pendingQuestion,
-													state,
-													responses,
-													resolvedAt: Date.now(),
-												});
+												next.set(pendingQuestion.toolUseId, resolved);
 												return next;
 											});
 										}

@@ -274,6 +274,57 @@ function ToolUseBlock({
 		const resolved = resolvedQuestions?.get(toolUseId);
 		const isPending = pendingQuestion?.toolUseId === toolUseId;
 
+		// Extract question data from tool input if not available from resolved/pending
+		// This ensures the form is ALWAYS visible, even for old questions
+		const getQuestionData = (): PendingUserQuestion | null => {
+			if (resolved) return resolved.question;
+			if (isPending && pendingQuestion) return pendingQuestion;
+
+			// Extract from tool input as fallback
+			const input = block.input as Record<string, unknown>;
+			if (input && typeof input === 'object' && 'questions' in input) {
+				const questions = input.questions as Array<{
+					question: string;
+					header: string;
+					options: Array<{ label: string; description: string }>;
+					multiSelect: boolean;
+				}>;
+				if (Array.isArray(questions)) {
+					return {
+						toolUseId,
+						questions: questions.map((q) => ({
+							question: q.question,
+							header: q.header,
+							options: q.options,
+							multiSelect: q.multiSelect,
+						})),
+						askedAt: Date.now(),
+					};
+				}
+			}
+			return null;
+		};
+
+		const questionData = getQuestionData();
+		if (!questionData) {
+			// Should never happen, but fail gracefully
+			return (
+				<div>
+					<ToolResultCard
+						toolName={block.name}
+						toolId={block.id}
+						input={block.input}
+						output={content}
+						isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
+						variant="default"
+						messageUuid={messageUuid}
+						sessionId={sessionId}
+						isOutputRemoved={isOutputRemoved}
+					/>
+				</div>
+			);
+		}
+
 		return (
 			<div>
 				<ToolResultCard
@@ -287,20 +338,26 @@ function ToolUseBlock({
 					sessionId={sessionId}
 					isOutputRemoved={isOutputRemoved}
 				/>
-				{/* Render QuestionPrompt inline - either resolved or pending */}
-				{resolved && (
+				{/* Render QuestionPrompt inline - ALWAYS show the form */}
+				{resolved ? (
 					<QuestionPrompt
 						sessionId={sessionId}
 						pendingQuestion={resolved.question}
 						resolvedState={resolved.state}
 						finalResponses={resolved.responses}
 					/>
-				)}
-				{isPending && pendingQuestion && !resolved && (
+				) : isPending ? (
 					<QuestionPrompt
 						sessionId={sessionId}
-						pendingQuestion={pendingQuestion}
+						pendingQuestion={pendingQuestion!}
 						onResolved={onQuestionResolved}
+					/>
+				) : (
+					<QuestionPrompt
+						sessionId={sessionId}
+						pendingQuestion={questionData}
+						resolvedState={'cancelled'}
+						finalResponses={[]}
 					/>
 				)}
 			</div>
