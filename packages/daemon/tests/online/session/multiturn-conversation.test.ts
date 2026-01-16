@@ -26,10 +26,11 @@ import {
 import { sendMessageSync } from '../../helpers/test-message-sender';
 import { waitForIdle } from '../../helpers/test-wait-for-idle';
 
-// Check for API credentials (GLM or Anthropic)
+// Check for API credentials (GLM, Claude Code OAuth, or Anthropic)
 const HAS_API_KEY = !!(
 	process.env.GLM_API_KEY ||
 	process.env.ZHIPU_API_KEY ||
+	process.env.CLAUDE_CODE_OAUTH_TOKEN ||
 	process.env.ANTHROPIC_API_KEY
 );
 
