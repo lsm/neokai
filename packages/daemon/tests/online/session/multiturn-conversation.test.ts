@@ -8,9 +8,9 @@
  * - Processing state transitions
  *
  * REQUIREMENTS:
- * - Requires ANTHROPIC_API_KEY (for haiku model)
+ * - Requires GLM_API_KEY or ANTHROPIC_API_KEY
+ * - Uses 'haiku' model which auto-maps to glm-4.5-air when GLM_API_KEY is set
  * - Makes real API calls (costs money, uses rate limits)
- * - Tests will SKIP if ANTHROPIC_API_KEY is not available
  *
  * These tests run in parallel with other tests for faster CI execution.
  */
@@ -26,14 +26,18 @@ import {
 import { sendMessageSync } from '../../helpers/test-message-sender';
 import { waitForIdle } from '../../helpers/test-wait-for-idle';
 
-// Check for Anthropic API credentials
-const HAS_ANTHROPIC_KEY = !!process.env.ANTHROPIC_API_KEY;
+// Check for API credentials (GLM or Anthropic)
+const HAS_API_KEY = !!(
+	process.env.GLM_API_KEY ||
+	process.env.ZHIPU_API_KEY ||
+	process.env.ANTHROPIC_API_KEY
+);
 
 /**
  * CRITICAL: Restore any mocks before running these tests.
  * This prevents mock leakage from unit tests that mock the SDK.
  */
-describe.skipIf(!HAS_ANTHROPIC_KEY)('Multi-Turn Conversation', () => {
+describe.skipIf(!HAS_API_KEY)('Multi-Turn Conversation', () => {
 	let ctx: TestContext;
 
 	beforeEach(async () => {
