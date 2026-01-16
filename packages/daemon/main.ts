@@ -19,9 +19,20 @@ console.log(`\n📡 WebSocket: ws://${server.hostname}:${server.port}/ws`);
 console.log(`\n✨ MessageHub mode! Unified RPC + Pub/Sub over WebSocket.`);
 console.log(`   Session routing via message.sessionId field.\n`);
 
-// Graceful shutdown handler
+// Graceful shutdown - second Ctrl+C exits immediately
+let isShuttingDown = false;
+
 async function gracefulShutdown(signal: string): Promise<void> {
-	console.log(`\n👋 Received ${signal}, shutting down gracefully...`);
+	if (isShuttingDown) {
+		// Second Ctrl+C - force exit immediately
+		console.warn('⚠️  Forcing exit...');
+		process.exit(1);
+	}
+	isShuttingDown = true;
+
+	console.log(
+		`\n👋 Received ${signal}, shutting down gracefully... (Press Ctrl+C again to force exit)`
+	);
 
 	try {
 		await cleanup();

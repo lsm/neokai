@@ -217,18 +217,20 @@ export async function startDevServer(config: Config) {
 	log.info(`   🔥 HMR enabled (Vite on port ${vitePort}, proxied)`);
 	log.info(`\n📝 Press Ctrl+C to stop\n`);
 
-	// Graceful shutdown
+	// Graceful shutdown - second Ctrl+C exits immediately
 	let isShuttingDown = false;
 
 	const shutdown = async (signal: string) => {
-		// Prevent multiple shutdown handlers from running concurrently
 		if (isShuttingDown) {
-			log.warn(`Shutdown already in progress, ignoring ${signal}`);
-			return;
+			// Second Ctrl+C - force exit immediately
+			log.warn('Forcing exit...');
+			process.exit(1);
 		}
 		isShuttingDown = true;
 
-		log.info(`\n👋 Received ${signal}, shutting down gracefully...`);
+		log.info(
+			`\n👋 Received ${signal}, shutting down gracefully... (Press Ctrl+C again to force exit)`
+		);
 
 		try {
 			log.info('🛑 Stopping unified server...');

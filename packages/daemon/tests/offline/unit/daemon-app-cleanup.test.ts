@@ -4,6 +4,7 @@
  * Tests for the daemon app cleanup logic, specifically:
  * - Pending RPC calls timeout behavior
  * - setInterval cleanup to prevent hangs on exit
+ * - SIGINT (Ctrl+C) handling - graceful shutdown and force exit
  *
  * OFFLINE TESTS - No API calls required
  */
@@ -11,6 +12,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonApp } from '../../../src/app';
 import type { Config } from '../../../src/config';
+import { spawn } from 'child_process';
 
 describe('Daemon App Cleanup', () => {
 	let config: Config;
@@ -174,6 +176,188 @@ describe('Daemon App Cleanup', () => {
 
 			// Verify we didn't check many times (stopped when count hit 0)
 			expect(checkCount).toBeLessThan(10);
+		});
+	});
+
+	describe('SIGINT (Ctrl+C) handling', () => {
+		test('should exit gracefully on single SIGINT', async () => {
+			// Create a test script that will run the daemon with SIGINT handler
+			const testScript = `
+				import { createDaemonApp } from '${process.cwd()}/packages/daemon/src/app.ts';
+				const config = {
+					host: 'localhost',
+					port: 0,
+					defaultModel: 'claude-sonnet-4-5-20250929',
+					maxTokens: 8192,
+					temperature: 1.0,
+					anthropicApiKey: 'sk-ant-test-key-for-unit-tests',
+					dbPath: ':memory:',
+					maxSessions: 10,
+					nodeEnv: 'test',
+					workspaceRoot: '${process.env.TMPDIR || '/tmp'}/liuboer-test-sigint-${Date.now()}',
+					disableWorktrees: true,
+				};
+				const { cleanup } = await createDaemonApp({ config, verbose: true, standalone: false });
+
+				// Register SIGINT handler (same as main.ts)
+				let isShuttingDown = false;
+				const gracefulShutdown = async (signal: string) => {
+					if (isShuttingDown) {
+						console.warn('⚠️  Forcing exit...');
+						process.exit(1);
+					}
+					isShuttingDown = true;
+					console.log('👋 Received ' + signal + ', shutting down gracefully...');
+					try {
+						await cleanup();
+						console.log('✅ Graceful shutdown complete');
+						process.exit(0);
+					} catch (error) {
+						console.error('❌ Error during shutdown:', error);
+						process.exit(1);
+					}
+				};
+				process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+				process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
+				console.log('READY'); // Signal that we're ready
+				// Keep process alive
+				await new Promise(() => {});
+			`;
+
+			const proc = spawn('bun', ['-e', testScript], {
+				stdio: ['ignore', 'pipe', 'pipe'],
+				env: { ...process.env, ANTHROPIC_API_KEY: 'sk-ant-test-key-for-unit-tests' },
+				detached: true, // Create new process group for proper signal handling
+			});
+
+			// Wait for READY signal
+			let output = '';
+			const stdoutHandler = (data: Buffer) => {
+				output += data.toString();
+				if (output.includes('READY')) {
+					// Send SIGINT to the process group
+					proc.kill('SIGINT');
+				}
+			};
+			proc.stdout.on('data', stdoutHandler);
+
+			// Wait for process to exit
+			const exitCode = await new Promise<number>((resolve) => {
+				proc.on('exit', (code) => resolve(code ?? -1));
+			});
+
+			// Should exit with code 0 (graceful shutdown)
+			expect(exitCode).toBe(0);
+
+			// Verify cleanup completed
+			expect(output).toContain('Graceful shutdown complete');
+		});
+
+		test('should force exit on second SIGINT', async () => {
+			// Create a test script where cleanup will hang
+			const testScript = `
+				import { createDaemonApp } from '${process.cwd()}/packages/daemon/src/app.ts';
+				const config = {
+					host: 'localhost',
+					port: 0,
+					defaultModel: 'claude-sonnet-4-5-20250929',
+					maxTokens: 8192,
+					temperature: 1.0,
+					anthropicApiKey: 'sk-ant-test-key-for-unit-tests',
+					dbPath: ':memory:',
+					maxSessions: 10,
+					nodeEnv: 'test',
+					workspaceRoot: '${process.env.TMPDIR || '/tmp'}/liuboer-test-sigint-force-${Date.now()}',
+					disableWorktrees: true,
+				};
+				const { cleanup, messageHub } = await createDaemonApp({ config, verbose: true, standalone: false });
+
+				// Monkey-patch getPendingCallCount to simulate hanging cleanup
+				const original = messageHub.getPendingCallCount.bind(messageHub);
+				messageHub.getPendingCallCount = () => 999; // Always return pending calls
+
+				// Register SIGINT handler (same as main.ts)
+				let isShuttingDown = false;
+				const gracefulShutdown = async (signal: string) => {
+					if (isShuttingDown) {
+						console.warn('⚠️  Forcing exit...');
+						process.exit(1);
+					}
+					isShuttingDown = true;
+					console.log('👋 Received ' + signal + ', shutting down gracefully...');
+					try {
+						await cleanup();
+						console.log('✅ Graceful shutdown complete');
+						process.exit(0);
+					} catch (error) {
+						console.error('❌ Error during shutdown:', error);
+						process.exit(1);
+					}
+				};
+				process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+				process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
+				console.log('READY'); // Signal that we're ready
+				// Keep process alive
+				await new Promise(() => {});
+			`;
+
+			const proc = spawn('bun', ['-e', testScript], {
+				stdio: ['ignore', 'pipe', 'pipe'],
+				env: { ...process.env, ANTHROPIC_API_KEY: 'sk-ant-test-key-for-unit-tests' },
+				detached: true, // Create new process group for proper signal handling
+			});
+
+			let sigintsSent = 0;
+			let startTime = Date.now();
+			let stdoutOutput = '';
+			let stderrOutput = '';
+
+			// Wait for READY signal, then send SIGINT twice
+			proc.stdout.on('data', (data: Buffer) => {
+				stdoutOutput += data.toString();
+				if (stdoutOutput.includes('READY') && sigintsSent === 0) {
+					// First SIGINT - starts graceful shutdown (which will hang)
+					proc.kill('SIGINT');
+					sigintsSent++;
+
+					// Second SIGINT after 100ms - should force exit
+					setTimeout(() => {
+						proc.kill('SIGINT');
+						sigintsSent++;
+					}, 100);
+				}
+			});
+
+			proc.stderr.on('data', (data: Buffer) => {
+				stderrOutput += data.toString();
+			});
+
+			// Wait for process to exit with timeout
+			const exitCode = await Promise.race<number>([
+				new Promise<number>((resolve) => {
+					proc.on('exit', (code) => resolve(code ?? -1));
+				}),
+				new Promise<number>(
+					(resolve) => setTimeout(() => resolve(-999), 5000) // 5s timeout
+				),
+			]);
+
+			const duration = Date.now() - startTime;
+
+			// Should have sent both SIGINTs
+			expect(sigintsSent).toBe(2);
+
+			// Should exit with code 1 (forced exit)
+			expect(exitCode).toBe(1);
+
+			// Should exit quickly (< 2 seconds) due to force exit on second SIGINT
+			expect(duration).toBeLessThan(2000);
+
+			// Verify "Forcing exit" message was logged (goes to stderr via console.warn)
+			const combinedOutput = stdoutOutput + stderrOutput;
+			expect(combinedOutput.includes('Forcing exit')).toBeTrue();
 		});
 	});
 });
