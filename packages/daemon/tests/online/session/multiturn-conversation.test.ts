@@ -15,15 +15,15 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import type { TestContext } from '../../../test-utils';
+import type { TestContext } from '../../test-utils';
 import {
 	createTestApp,
 	waitForWebSocketState,
 	waitForWebSocketMessage,
 	createWebSocketWithFirstMessage,
-} from '../../../test-utils';
-import { sendMessageSync } from '../../../helpers/test-message-sender';
-import { waitForIdle } from '../../../helpers/test-wait-for-idle';
+} from '../../test-utils';
+import { sendMessageSync } from '../../helpers/test-message-sender';
+import { waitForIdle } from '../../helpers/test-wait-for-idle';
 
 /**
  * CRITICAL: Restore any mocks before running these tests.
