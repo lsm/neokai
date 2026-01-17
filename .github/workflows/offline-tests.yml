@@ -20,7 +20,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.5
+          bun-version: 1.3.6
 
       - name: Install dependencies
         run: bun install
@@ -39,7 +39,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.5
+          bun-version: 1.3.6
 
       - name: Install dependencies
         run: bun install
@@ -62,7 +62,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.5
+          bun-version: 1.3.6
 
       - name: Install dependencies
         run: bun install
@@ -82,7 +82,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.5
+          bun-version: 1.3.6
 
       - name: Install dependencies
         run: bun install
@@ -102,7 +102,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.5
+          bun-version: 1.3.6
 
       - name: Install dependencies
         run: bun install
@@ -122,7 +122,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.5
+          bun-version: 1.3.6
 
       - name: Install dependencies
         run: bun install
@@ -142,7 +142,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.5
+          bun-version: 1.3.6
 
       - name: Install dependencies
         run: bun install
@@ -162,7 +162,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.5
+          bun-version: 1.3.6
 
       - name: Install dependencies
         run: bun install
@@ -182,7 +182,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.5
+          bun-version: 1.3.6
 
       - name: Install dependencies
         run: bun install
@@ -202,7 +202,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.5
+          bun-version: 1.3.6
 
       - name: Install dependencies
         run: bun install
@@ -223,7 +223,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.5
+          bun-version: 1.3.6
 
       - name: Install dependencies
         run: bun install
@@ -281,7 +281,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.5
+          bun-version: 1.3.6
 
       - name: Install dependencies
         run: bun install
@@ -301,7 +301,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.5
+          bun-version: 1.3.6
 
       - name: Install dependencies
         run: bun install
@@ -343,7 +343,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.5
+          bun-version: 1.3.6
 
       - name: Install dependencies
         run: bun install
@@ -370,7 +370,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.5
+          bun-version: 1.3.6
 
       - name: Install dependencies
         run: bun install
@@ -397,7 +397,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.5
+          bun-version: 1.3.6
 
       - name: Install dependencies
         run: bun install
@@ -424,7 +424,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.5
+          bun-version: 1.3.6
 
       - name: Install dependencies
         run: bun install
@@ -446,7 +446,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.5
+          bun-version: 1.3.6
 
       - name: Install dependencies
         run: bun install
@@ -466,7 +466,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.5
+          bun-version: 1.3.6
 
       - name: Install dependencies
         run: bun install
