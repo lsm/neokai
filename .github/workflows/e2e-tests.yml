@@ -116,7 +116,7 @@ jobs:
         uses: ./.github/actions/setup-bun
         if: steps.check.outputs.should_run == 'true'
         with:
-          bun-version: 1.3.6
+          bun-version: 1.3.5
 
       - name: Install dependencies
         if: steps.check.outputs.should_run == 'true'
