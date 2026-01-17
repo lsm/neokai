@@ -85,12 +85,6 @@ html {
 	overflow-wrap: break-word;
 }
 
-@media (min-width: 768px) {
-	.prose {
-		max-width: 65ch;
-	}
-}
-
 .prose p {
 	margin-top: 1.25em;
 	margin-bottom: 1.25em;
