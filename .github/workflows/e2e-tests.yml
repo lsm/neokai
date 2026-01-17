@@ -14,7 +14,7 @@ env:
 jobs:
   e2e:
     name: E2E (${{ matrix.test }})
-    runs-on: self-hosted
+    runs-on: arc-runner-set
     timeout-minutes: 10
     strategy:
       fail-fast: false

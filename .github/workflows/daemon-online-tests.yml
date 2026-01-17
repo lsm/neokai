@@ -23,7 +23,7 @@ jobs:
 
   test-daemon-online:
     name: Daemon Online (${{ matrix.category }})
-    runs-on: self-hosted
+    runs-on: arc-runner-set
     timeout-minutes: 3
 
     strategy:
@@ -64,7 +64,7 @@ jobs:
   # Includes diagnostic test for bypassPermissions (expected to fail gracefully on CI as root)
   test-daemon-sdk-streaming-failures:
     name: Daemon Online (SDK streaming tests)
-    runs-on: self-hosted
+    runs-on: arc-runner-set
     timeout-minutes: 3
 
     steps:
