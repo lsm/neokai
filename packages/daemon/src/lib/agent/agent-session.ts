@@ -609,7 +609,12 @@ export class AgentSession {
 	 * Called on first message send to avoid connecting to SDK until needed
 	 */
 	private async ensureQueryStarted(): Promise<void> {
-		if (this.messageQueue.isRunning() || this.queryPromise) {
+		// CRITICAL: Only check if message queue is running, NOT queryPromise!
+		// After interrupt, the old query's promise might still exist while the queue is stopped.
+		// We want to start a new query in this case, so we only check the queue state.
+		// The generation counter prevents stale cleanup in the finally block.
+		if (this.messageQueue.isRunning()) {
+			this.logger.log(`Query already running, skipping start`);
 			return; // Already started
 		}
 
@@ -727,6 +732,13 @@ export class AgentSession {
 		this.queryGeneration++;
 		const currentGeneration = this.queryGeneration;
 		this.logger.log(`Starting query with generation ${currentGeneration}`);
+
+		// CRITICAL FIX: Reset firstMessageReceived flag for new query
+		// This flag indicates ProcessTransport readiness for control methods like interrupt().
+		// If not reset, a new query might incorrectly think the transport is ready when it's not.
+		// The flag will be set to true again when the first message arrives in runQuery().
+		this.firstMessageReceived = false;
+		this.logger.log(`Reset firstMessageReceived flag for new query`);
 
 		// Store query promise for cleanup
 		this.queryPromise = this.runQuery(currentGeneration);
@@ -1134,13 +1146,12 @@ export class AgentSession {
 		this.messageQueue.stop();
 		this.logger.log(`Stopped message queue to allow immediate query restart`);
 
-		// CRITICAL FIX: Clear queryPromise to unblock ensureQueryStarted()
-		// This fixes the race condition where sending a message immediately after interrupt
-		// would fail because ensureQueryStarted() sees the old queryPromise still exists
-		// and returns early without starting a new query. The old queryPromise will complete
-		// its finally block normally, but we clear it here to allow immediate restart.
-		this.queryPromise = null;
-		this.logger.log(`Cleared queryPromise to allow immediate query restart`);
+		// NOTE: We do NOT clear queryPromise here!
+		// The queryPromise must remain set until the old query's for-await loop finishes.
+		// This prevents starting a new query while the old query is still consuming messages.
+		// The queryPromise will be cleared in the finally block of runQuery() when the
+		// old query completes. Our generation counter ensures the finally block skips
+		// cleanup if a new query has already started.
 
 		// Publish interrupt event for clients
 		await this.messageHub.publish(

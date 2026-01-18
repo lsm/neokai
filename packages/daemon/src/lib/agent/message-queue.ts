@@ -59,6 +59,10 @@ export class MessageQueue {
 	private waiters: Array<() => void> = [];
 	private running: boolean = false;
 
+	// Generation counter to detect stale queries
+	// When incrementing, old generators will skip yielding messages
+	private generation: number = 0;
+
 	/**
 	 * Enqueue a message to be sent to Claude via the streaming query
 	 */
@@ -152,9 +156,20 @@ export class MessageQueue {
 
 	/**
 	 * Start the message queue (allows messages to be yielded)
+	 * Increments generation to invalidate old generators
 	 */
 	start(): void {
 		this.running = true;
+		// Increment generation when starting - this invalidates any old generators
+		this.generation++;
+	}
+
+	/**
+	 * Get the current generation counter
+	 * Generators should check this to detect if they're stale
+	 */
+	getGeneration(): number {
+		return this.generation;
 	}
 
 	/**
@@ -180,14 +195,35 @@ export class MessageQueue {
 	 *
 	 * Returns an object with the message and a callback to mark it as sent.
 	 * The callback resolves the promise returned by enqueue().
+	 *
+	 * IMPORTANT: This generator checks the generation counter to detect stale queries.
+	 * When the queue is stopped and restarted, the generation increments and old
+	 * generators will exit early instead of consuming messages meant for the new query.
 	 */
 	async *messageGenerator(
 		sessionId: string
 	): AsyncGenerator<{ message: SDKUserMessage; onSent: () => void }> {
+		// Capture the generation at the time this generator was created
+		const myGeneration = this.generation;
+
 		while (this.running) {
+			// CRITICAL: Check if this generator is stale (generation has changed)
+			// This prevents old query generators from consuming messages after interrupt
+			if (this.generation !== myGeneration) {
+				// This generator is stale - exit without consuming any more messages
+				break;
+			}
+
 			const queuedMessage = await this.waitForNextMessage();
 
 			if (!queuedMessage) {
+				break;
+			}
+
+			// Double-check generation after waiting (in case it changed while we were waiting)
+			if (this.generation !== myGeneration) {
+				// Generation changed while waiting - put message back and exit
+				this.queue.unshift(queuedMessage);
 				break;
 			}
 
