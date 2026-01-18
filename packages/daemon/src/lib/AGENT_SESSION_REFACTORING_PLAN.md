@@ -46,66 +46,68 @@ runQuery() - 375 lines
 Create `packages/daemon/src/lib/query-options-builder.ts`:
 
 ```typescript
-import type { Options } from '@anthropic-ai/claude-agent-sdk/sdk';
-import type { Session } from '@liuboer/shared';
-import type { SettingsManager } from './settings-manager';
+import type { Options } from "@anthropic-ai/claude-agent-sdk/sdk";
+import type { Session } from "@liuboer/shared";
+import type { SettingsManager } from "./settings-manager";
 
 export class QueryOptionsBuilder {
-	constructor(
-		private session: Session,
-		private settingsManager: SettingsManager,
-	) {}
+  constructor(
+    private session: Session,
+    private settingsManager: SettingsManager,
+  ) {}
 
-	async build(): Promise<Options> {
-		const toolsConfig = this.session.config.tools;
+  async build(): Promise<Options> {
+    const toolsConfig = this.session.config.tools;
 
-		return {
-			...(await this.getSettingsOptions()),
-			model: this.session.config.model,
-			cwd: this.getCwd(),
-			additionalDirectories: this.getAdditionalDirectories(),
-			permissionMode: 'bypassPermissions',
-			allowDangerouslySkipPermissions: true,
-			maxTurns: Infinity,
-			settingSources: this.getSettingSources(),
-			systemPrompt: this.buildSystemPrompt(),
-			disallowedTools: this.getDisallowedTools(),
-			hooks: this.buildHooks(),
-		};
-	}
+    return {
+      ...(await this.getSettingsOptions()),
+      model: this.session.config.model,
+      cwd: this.getCwd(),
+      additionalDirectories: this.getAdditionalDirectories(),
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      maxTurns: Infinity,
+      settingSources: this.getSettingSources(),
+      systemPrompt: this.buildSystemPrompt(),
+      disallowedTools: this.getDisallowedTools(),
+      hooks: this.buildHooks(),
+    };
+  }
 
-	private getCwd(): string {
-		return this.session.worktree ? this.session.worktree.worktreePath : this.session.workspacePath;
-	}
+  private getCwd(): string {
+    return this.session.worktree
+      ? this.session.worktree.worktreePath
+      : this.session.workspacePath;
+  }
 
-	private buildSystemPrompt(): Options['systemPrompt'] {
-		const toolsConfig = this.session.config.tools;
-		const useClaudeCodePreset = toolsConfig?.useClaudeCodePreset ?? true;
+  private buildSystemPrompt(): Options["systemPrompt"] {
+    const toolsConfig = this.session.config.tools;
+    const useClaudeCodePreset = toolsConfig?.useClaudeCodePreset ?? true;
 
-		if (useClaudeCodePreset) {
-			const config: Options['systemPrompt'] = {
-				type: 'preset',
-				preset: 'claude_code',
-			};
+    if (useClaudeCodePreset) {
+      const config: Options["systemPrompt"] = {
+        type: "preset",
+        preset: "claude_code",
+      };
 
-			if (this.session.worktree) {
-				config.append = this.getWorktreeIsolationText();
-			}
+      if (this.session.worktree) {
+        config.append = this.getWorktreeIsolationText();
+      }
 
-			return config;
-		}
+      return config;
+    }
 
-		// No Claude Code preset
-		if (this.session.worktree) {
-			return this.getMinimalWorktreePrompt();
-		}
+    // No Claude Code preset
+    if (this.session.worktree) {
+      return this.getMinimalWorktreePrompt();
+    }
 
-		return undefined;
-	}
+    return undefined;
+  }
 
-	private getWorktreeIsolationText(): string {
-		const wt = this.session.worktree!;
-		return `
+  private getWorktreeIsolationText(): string {
+    const wt = this.session.worktree!;
+    return `
 IMPORTANT: Git Worktree Isolation
 
 This session is running in an isolated git worktree at:
@@ -132,11 +134,11 @@ git --git-dir=${wt.mainRepoPath}/.git --work-tree=${wt.mainRepoPath} push origin
 These commands operate on the root repository without violating worktree isolation.
 This isolation ensures concurrent sessions don't conflict with each other.
 `.trim();
-	}
+  }
 
-	private getMinimalWorktreePrompt(): string {
-		const wt = this.session.worktree!;
-		return `
+  private getMinimalWorktreePrompt(): string {
+    const wt = this.session.worktree!;
+    return `
 You are an AI assistant helping with coding tasks.
 
 IMPORTANT: Git Worktree Isolation
@@ -152,52 +154,53 @@ CRITICAL RULES:
 2. NEVER modify files in the main repository at: ${wt.mainRepoPath}
 3. Your current working directory (cwd) is already set to the worktree path
 `.trim();
-	}
+  }
 
-	private getDisallowedTools(): string[] | undefined {
-		const toolsConfig = this.session.config.tools;
-		const disallowedTools: string[] = [];
+  private getDisallowedTools(): string[] | undefined {
+    const toolsConfig = this.session.config.tools;
+    const disallowedTools: string[] = [];
 
-		if (!toolsConfig?.liuboerTools?.memory) {
-			disallowedTools.push('liuboer__memory__*');
-		}
+    if (!toolsConfig?.liuboerTools?.memory) {
+      disallowedTools.push("liuboer__memory__*");
+    }
 
-		return disallowedTools.length > 0 ? disallowedTools : undefined;
-	}
+    return disallowedTools.length > 0 ? disallowedTools : undefined;
+  }
 
-	private getSettingSources(): Options['settingSources'] {
-		const toolsConfig = this.session.config.tools;
-		const loadSettingSources = toolsConfig?.loadSettingSources ?? true;
-		return loadSettingSources ? ['project', 'local'] : ['local'];
-	}
+  private getSettingSources(): Options["settingSources"] {
+    const toolsConfig = this.session.config.tools;
+    const loadSettingSources = toolsConfig?.loadSettingSources ?? true;
+    return loadSettingSources ? ["project", "local"] : ["local"];
+  }
 
-	private getAdditionalDirectories(): string[] | undefined {
-		// Worktree sessions: restrict to cwd only
-		// Non-worktree: allow access to any file
-		return this.session.worktree ? [] : undefined;
-	}
+  private getAdditionalDirectories(): string[] | undefined {
+    // Worktree sessions: restrict to cwd only
+    // Non-worktree: allow access to any file
+    return this.session.worktree ? [] : undefined;
+  }
 
-	private async getSettingsOptions(): Promise<Partial<Options>> {
-		const toolsConfig = this.session.config.tools;
-		return await this.settingsManager.prepareSDKOptions({
-			disabledMcpServers: toolsConfig?.disabledMcpServers ?? [],
-		});
-	}
+  private async getSettingsOptions(): Promise<Partial<Options>> {
+    const toolsConfig = this.session.config.tools;
+    return await this.settingsManager.prepareSDKOptions({
+      disabledMcpServers: toolsConfig?.disabledMcpServers ?? [],
+    });
+  }
 
-	private buildHooks(): Options['hooks'] {
-		const {
-			createOutputLimiterHook,
-			getOutputLimiterConfigFromSettings,
-		} = require('./output-limiter-hook');
+  private buildHooks(): Options["hooks"] {
+    const {
+      createOutputLimiterHook,
+      getOutputLimiterConfigFromSettings,
+    } = require("./output-limiter-hook");
 
-		const globalSettings = this.settingsManager.getGlobalSettings();
-		const outputLimiterConfig = getOutputLimiterConfigFromSettings(globalSettings);
-		const outputLimiterHook = createOutputLimiterHook(outputLimiterConfig);
+    const globalSettings = this.settingsManager.getGlobalSettings();
+    const outputLimiterConfig =
+      getOutputLimiterConfigFromSettings(globalSettings);
+    const outputLimiterHook = createOutputLimiterHook(outputLimiterConfig);
 
-		return {
-			PreToolUse: [{ hooks: [outputLimiterHook] }],
-		};
-	}
+    return {
+      PreToolUse: [{ hooks: [outputLimiterHook] }],
+    };
+  }
 }
 ```
 
@@ -276,107 +279,110 @@ Update `instant-message-persistence.test.ts` to use `handleMessageSend()` instea
 Create `packages/daemon/src/lib/query-lifecycle-manager.ts`:
 
 ```typescript
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
-import type { MessageQueue } from './message-queue';
-import type { Logger } from './logger';
+import type { Query } from "@anthropic-ai/claude-agent-sdk/sdk";
+import type { MessageQueue } from "./message-queue";
+import type { Logger } from "./logger";
 
 const TERMINATION_TIMEOUT_MS = 5000;
 const RESET_TIMEOUT_MS = 3000;
 
 export class QueryLifecycleManager {
-	constructor(
-		private messageQueue: MessageQueue,
-		private getQueryObject: () => Query | null,
-		private setQueryObject: (q: Query | null) => void,
-		private getQueryPromise: () => Promise<void> | null,
-		private setQueryPromise: (p: Promise<void> | null) => void,
-		private startStreamingQuery: () => Promise<void>,
-		private logger: Logger,
-	) {}
+  constructor(
+    private messageQueue: MessageQueue,
+    private getQueryObject: () => Query | null,
+    private setQueryObject: (q: Query | null) => void,
+    private getQueryPromise: () => Promise<void> | null,
+    private setQueryPromise: (p: Promise<void> | null) => void,
+    private startStreamingQuery: () => Promise<void>,
+    private logger: Logger,
+  ) {}
 
-	/**
-	 * Stop the current query (shared logic)
-	 */
-	async stop(timeoutMs: number = TERMINATION_TIMEOUT_MS): Promise<void> {
-		// 1. Stop message queue
-		this.messageQueue.stop();
-		this.logger.log('Message queue stopped');
+  /**
+   * Stop the current query (shared logic)
+   */
+  async stop(timeoutMs: number = TERMINATION_TIMEOUT_MS): Promise<void> {
+    // 1. Stop message queue
+    this.messageQueue.stop();
+    this.logger.log("Message queue stopped");
 
-		// 2. Interrupt current query
-		const queryObject = this.getQueryObject();
-		if (queryObject && typeof queryObject.interrupt === 'function') {
-			try {
-				await queryObject.interrupt();
-				this.logger.log('Query interrupted successfully');
-			} catch (error) {
-				this.logger.warn('Query interrupt failed:', error);
-			}
-		}
+    // 2. Interrupt current query
+    const queryObject = this.getQueryObject();
+    if (queryObject && typeof queryObject.interrupt === "function") {
+      try {
+        await queryObject.interrupt();
+        this.logger.log("Query interrupted successfully");
+      } catch (error) {
+        this.logger.warn("Query interrupt failed:", error);
+      }
+    }
 
-		// 3. Wait for termination
-		const queryPromise = this.getQueryPromise();
-		if (queryPromise) {
-			try {
-				await Promise.race([
-					queryPromise.catch((e) => this.logger.warn('Query promise rejected:', e)),
-					new Promise((resolve) => setTimeout(resolve, timeoutMs)),
-				]);
-				this.logger.log('Previous query terminated');
-			} catch (error) {
-				this.logger.warn('Error waiting for query termination:', error);
-			}
-		}
+    // 3. Wait for termination
+    const queryPromise = this.getQueryPromise();
+    if (queryPromise) {
+      try {
+        await Promise.race([
+          queryPromise.catch((e) =>
+            this.logger.warn("Query promise rejected:", e),
+          ),
+          new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+        ]);
+        this.logger.log("Previous query terminated");
+      } catch (error) {
+        this.logger.warn("Error waiting for query termination:", error);
+      }
+    }
 
-		// 4. Clear references
-		this.setQueryObject(null);
-		this.setQueryPromise(null);
-	}
+    // 4. Clear references
+    this.setQueryObject(null);
+    this.setQueryPromise(null);
+  }
 
-	/**
-	 * Restart the query (stop + start)
-	 */
-	async restart(): Promise<void> {
-		this.logger.log('Executing query restart...');
-		await this.stop();
-		await this.startStreamingQuery();
-		this.logger.log('Query restarted successfully');
-	}
+  /**
+   * Restart the query (stop + start)
+   */
+  async restart(): Promise<void> {
+    this.logger.log("Executing query restart...");
+    await this.stop();
+    await this.startStreamingQuery();
+    this.logger.log("Query restarted successfully");
+  }
 
-	/**
-	 * Full reset with additional cleanup
-	 */
-	async reset(
-		options: {
-			restartAfter?: boolean;
-			onBeforeStop?: () => Promise<void>;
-		} = {},
-	): Promise<{ success: boolean; error?: string }> {
-		const { restartAfter = true, onBeforeStop } = options;
+  /**
+   * Full reset with additional cleanup
+   */
+  async reset(
+    options: {
+      restartAfter?: boolean;
+      onBeforeStop?: () => Promise<void>;
+    } = {},
+  ): Promise<{ success: boolean; error?: string }> {
+    const { restartAfter = true, onBeforeStop } = options;
 
-		try {
-			// Execute pre-stop cleanup
-			if (onBeforeStop) {
-				await onBeforeStop();
-			}
+    try {
+      // Execute pre-stop cleanup
+      if (onBeforeStop) {
+        await onBeforeStop();
+      }
 
-			// Stop the query
-			await this.stop(RESET_TIMEOUT_MS);
+      // Stop the query
+      await this.stop(RESET_TIMEOUT_MS);
 
-			// Optionally restart
-			if (restartAfter) {
-				this.logger.log('Starting fresh query...');
-				await new Promise((resolve) => setTimeout(resolve, 100));
-				await this.startStreamingQuery();
-				this.logger.log('Fresh query started successfully');
-			}
+      // Optionally restart
+      if (restartAfter) {
+        this.logger.log("Starting fresh query...");
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        await this.startStreamingQuery();
+        this.logger.log("Fresh query started successfully");
+      }
 
-			return { success: true };
-		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-			this.logger.error('Query reset failed:', error);
-			return { success: false, error: errorMessage };
-		}
-	}
+      return { success: true };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      this.logger.error("Query reset failed:", error);
+      return { success: false, error: errorMessage };
+    }
+  }
 }
 ```
 
