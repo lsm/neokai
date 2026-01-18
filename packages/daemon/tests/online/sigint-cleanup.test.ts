@@ -14,7 +14,7 @@
  * REQUIREMENTS:
  * - Requires ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
  * - Makes real API calls (costs money, uses rate limits)
- * - Tests will SKIP if credentials are not available
+ * - Tests will FAIL if credentials are not available
  *
  * This test sends an actual SIGINT signal to reproduce the exact bug.
  */
@@ -26,11 +26,7 @@ import { createTestApp, callRPCHandler } from '../../test-utils';
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
-// Check for API credentials
-const HAS_CREDENTIALS = !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN);
-
-// Tests will SKIP if credentials are not available
-describe.skipIf(!HAS_CREDENTIALS)('SDK SIGINT Cleanup (Online)', () => {
+describe('SDK SIGINT Cleanup (Online)', () => {
 	let ctx: TestContext;
 
 	beforeEach(async () => {
