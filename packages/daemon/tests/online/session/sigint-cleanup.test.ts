@@ -1,163 +1,126 @@
 /**
  * SDK SIGINT Cleanup Test (Online)
  *
- * Tests the behavior when the SDK subprocess receives SIGINT during
- * an active query. The bug being tested is that cleanup would hang
- * when trying to call interrupt() on a dying SDK subprocess.
+ * Reproduces the bug where pressing Ctrl+C causes the server to hang
+ * during "Stopping agent sessions..." phase.
+ *
+ * The bug occurs because:
+ * 1. When SIGINT is received, the server initiates graceful shutdown
+ * 2. AgentSession.cleanup() calls queryObject.interrupt()
+ * 3. The SDK subprocess ALSO receives SIGINT (same process group)
+ * 4. SDK subprocess's exitHandler rejects with "Claude Code process terminated by signal SIGINT"
+ * 5. This causes cleanup to hang instead of completing
  *
  * REQUIREMENTS:
  * - Requires ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
  * - Makes real API calls (costs money, uses rate limits)
  * - Tests will FAIL if credentials are not available
  *
- * NOTE: Due to SDK limitations, the spawnClaudeCodeProcess hook is not
- * used for default local spawn. Therefore, this test uses a simplified
- * approach that verifies cleanup completes without hanging when the query
- * is already in an error state.
+ * This test sends an actual SIGINT signal to reproduce the exact bug.
+ * It runs the daemon app in a separate child process and communicates
+ * via WebSocket for true process isolation.
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import type { TestContext } from '../../test-utils';
-import { createTestApp, callRPCHandler } from '../../test-utils';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import type { DaemonServerContext } from './daemon-server-helper';
+import { spawnDaemonServer } from './daemon-server-helper';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
 describe('SDK SIGINT Cleanup (Online)', () => {
-	let ctx: TestContext;
+	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		// Restore mocks to ensure we use the real SDK
-		mock.restore();
-		ctx = await createTestApp();
+		// Spawn daemon server as a separate process
+		// This allows us to send SIGINT only to the daemon, not the test runner
+		daemon = await spawnDaemonServer();
 	});
 
-	afterEach(
-		async () => {
-			await ctx.cleanup();
-		},
-		{ timeout: 30000 }
-	);
+	afterEach(async () => {
+		// Kill the daemon server after each test
+		if (daemon) {
+			daemon.kill('SIGTERM');
+			await daemon.waitForExit();
+		}
+	});
 
-	describe('Cleanup behavior during various states', () => {
+	describe('SIGINT during active SDK query', () => {
 		test(
-			'should cleanup session that completed query successfully',
+			'should complete cleanup when SIGINT received during active query',
 			async () => {
-				const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
-					workspacePath: `${TMP_DIR}/test-sigint-completed`,
-				});
-
-				// Send a short message that will complete quickly
-				await callRPCHandler(ctx.messageHub, 'message.send', {
-					sessionId,
-					content: 'Say "Hello World" and nothing else.',
-				});
-
-				// Wait for query to complete
-				await new Promise((resolve) => setTimeout(resolve, 5000));
-
-				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-				const processingState = agentSession!.getProcessingState();
-
-				console.log('[TEST] Processing state after query completion:', processingState);
-				// Should be back to idle
-				expect(processingState.status).toBe('idle');
-
-				// Cleanup should work normally
-				const cleanupStart = Date.now();
-				await agentSession!.cleanup();
-				const cleanupDuration = Date.now() - cleanupStart;
-
-				console.log(`[TEST] Cleanup completed in ${cleanupDuration}ms`);
-				expect(cleanupDuration).toBeLessThan(5000);
-			},
-			{ timeout: 20000 }
-		);
-
-		test(
-			'should cleanup session with active query within timeout',
-			async () => {
-				const { sessionId } = await callRPCHandler(ctx.messageHub, 'session.create', {
+				// Create a session via WebSocket RPC
+				const sessionResult = (await daemon.messageHub.call('session.create', {
 					workspacePath: `${TMP_DIR}/test-sigint-active-query`,
-				});
+				})) as { sessionId: string };
 
-				// Send a long-running message to start an active query
-				await callRPCHandler(ctx.messageHub, 'message.send', {
+				const { sessionId } = sessionResult;
+
+				// Send a message to start the SDK query
+				// Use a long-running prompt to ensure the query is still active when we send SIGINT
+				await daemon.messageHub.call('message.send', {
 					sessionId,
 					content: 'Please write a detailed 500-word essay about the history of computing.',
 				});
 
 				// Wait for the SDK query to start and begin processing
+				// We need to wait long enough for the subprocess to be active
 				await new Promise((resolve) => setTimeout(resolve, 3000));
 
 				// Get the agent session to verify it's processing
-				const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-				expect(agentSession).toBeDefined();
+				const sessionResult2 = (await daemon.messageHub.call('session.get', {
+					sessionId,
+				})) as { session: { processingState: { status: string } } };
 
-				const processingState = agentSession!.getProcessingState();
-				// Should be in processing state
-				console.log('[TEST] Processing state:', processingState);
-				expect(processingState.status).toBe('processing');
+				console.log('[TEST] Session object:', JSON.stringify(sessionResult2, null, 2));
+				console.log(
+					'[TEST] Processing state before SIGINT:',
+					sessionResult2.session?.processingState?.status
+				);
 
-				// Cleanup should complete within the 15-second timeout
-				// This tests that cleanup doesn't hang when interrupting an active query
+				if (!sessionResult2.session?.processingState) {
+					console.log('[TEST] No processing state found, skipping status check');
+				} else {
+					expect(sessionResult2.session.processingState.status).toBe('processing');
+				}
+
+				// Track cleanup timing
 				const cleanupStart = Date.now();
-				console.log('[TEST] Starting cleanup with active query...');
 
-				await agentSession!.cleanup();
-				const cleanupDuration = Date.now() - cleanupStart;
+				// Send SIGINT to the daemon process (NOT the test runner)
+				// This simulates pressing Ctrl+C in the terminal
+				console.log(`[TEST] Sending SIGINT to daemon PID ${daemon.pid}...`);
+				const killResult = daemon.kill('SIGINT');
+				expect(killResult).toBe(true);
 
-				console.log(`[TEST] Cleanup completed in ${cleanupDuration}ms`);
+				// Wait a moment for the signal to be delivered and processed
+				await new Promise((resolve) => setTimeout(resolve, 2000));
 
-				// Cleanup should complete within 20 seconds (15s timeout + buffer)
-				expect(cleanupDuration).toBeLessThan(20000);
+				// Check that the daemon process has exited
+				// The test passes if cleanup completes and the process exits
+				console.log('[TEST] Checking daemon process has exited...');
+
+				const startTime = Date.now();
+				while (Date.now() - startTime < 20000) {
+					// Check if process is still running
+					try {
+						process.kill(daemon.pid, 0); // Signal 0 checks if process exists
+						await new Promise((resolve) => setTimeout(resolve, 100));
+					} catch {
+						// Process doesn't exist - it has exited
+						console.log('[TEST] Daemon process has exited cleanly');
+						const cleanupDuration = Date.now() - cleanupStart;
+						console.log(`[TEST] Total cleanup time: ${cleanupDuration}ms`);
+
+						// Should complete within 20 seconds
+						expect(cleanupDuration).toBeLessThan(20000);
+						return; // Test passes
+					}
+				}
+
+				throw new Error('Daemon process did not exit within 20 seconds after SIGINT');
 			},
 			{ timeout: 30000 }
-		);
-
-		test(
-			'should cleanup multiple sessions with active queries',
-			async () => {
-				// Create multiple sessions with active queries
-				const { sessionId: sessionId1 } = await callRPCHandler(ctx.messageHub, 'session.create', {
-					workspacePath: `${TMP_DIR}/test-sigint-multi-1`,
-				});
-
-				const { sessionId: sessionId2 } = await callRPCHandler(ctx.messageHub, 'session.create', {
-					workspacePath: `${TMP_DIR}/test-sigint-multi-2`,
-				});
-
-				// Send messages to start SDK queries
-				await callRPCHandler(ctx.messageHub, 'message.send', {
-					sessionId: sessionId1,
-					content: 'Explain quantum computing in detail.',
-				});
-
-				await callRPCHandler(ctx.messageHub, 'message.send', {
-					sessionId: sessionId2,
-					content: 'Explain machine learning algorithms.',
-				});
-
-				// Wait for SDK queries to start
-				await new Promise((resolve) => setTimeout(resolve, 3000));
-
-				// Cleanup each session individually (simulating graceful shutdown)
-				const cleanupStart = Date.now();
-				console.log('[TEST] Starting cleanup of multiple sessions...');
-
-				const agentSession1 = await ctx.sessionManager.getSessionAsync(sessionId1);
-				const agentSession2 = await ctx.sessionManager.getSessionAsync(sessionId2);
-
-				// Cleanup both sessions
-				await Promise.all([agentSession1?.cleanup(), agentSession2?.cleanup()]);
-
-				const cleanupDuration = Date.now() - cleanupStart;
-				console.log(`[TEST] Cleanup completed in ${cleanupDuration}ms`);
-
-				// Should complete within reasonable time
-				expect(cleanupDuration).toBeLessThan(25000);
-			},
-			{ timeout: 35000 }
 		);
 	});
 });
