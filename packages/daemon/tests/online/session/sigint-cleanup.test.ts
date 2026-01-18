@@ -141,14 +141,18 @@ describe('SDK SIGINT Cleanup (Online)', () => {
 				// Wait for SDK queries to start
 				await new Promise((resolve) => setTimeout(resolve, 3000));
 
-				// Cleanup all sessions (simulating graceful shutdown)
+				// Cleanup each session individually (simulating graceful shutdown)
 				const cleanupStart = Date.now();
-				console.log('[TEST] Starting sessionManager cleanup...');
+				console.log('[TEST] Starting cleanup of multiple sessions...');
 
-				await ctx.sessionManager.cleanup();
+				const agentSession1 = await ctx.sessionManager.getSessionAsync(sessionId1);
+				const agentSession2 = await ctx.sessionManager.getSessionAsync(sessionId2);
+
+				// Cleanup both sessions
+				await Promise.all([agentSession1?.cleanup(), agentSession2?.cleanup()]);
 
 				const cleanupDuration = Date.now() - cleanupStart;
-				console.log(`[TEST] SessionManager cleanup completed in ${cleanupDuration}ms`);
+				console.log(`[TEST] Cleanup completed in ${cleanupDuration}ms`);
 
 				// Should complete within reasonable time
 				expect(cleanupDuration).toBeLessThan(25000);
