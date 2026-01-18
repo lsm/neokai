@@ -29,6 +29,7 @@
 		"happy-dom": "^20.1.0",
 		"knip": "^5.80.2",
 		"oxlint": "^1.39.0",
+		"prettier": "^3.8.0",
 		"typescript": "5.9.3"
 	}
 }

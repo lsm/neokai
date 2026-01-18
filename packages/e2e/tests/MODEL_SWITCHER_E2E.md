@@ -130,66 +130,62 @@ bun test:e2e model-switcher -g "Visual Regression"
 ### 1. Basic UI Presence
 
 ```typescript
-test("should display model switcher in message input toolbar", async ({
-  page,
-}) => {
-  const modelSwitcher = await waitForModelSwitcher(page);
-  await expect(modelSwitcher).toBeVisible();
+test('should display model switcher in message input toolbar', async ({ page }) => {
+	const modelSwitcher = await waitForModelSwitcher(page);
+	await expect(modelSwitcher).toBeVisible();
 
-  const modelName = await getCurrentModelName(page);
-  expect(modelName).toContain("Claude");
+	const modelName = await getCurrentModelName(page);
+	expect(modelName).toContain('Claude');
 });
 ```
 
 ### 2. Model Switching Flow
 
 ```typescript
-test("should switch to a different model", async ({ page }) => {
-  const initialModel = await getCurrentModelName(page);
+test('should switch to a different model', async ({ page }) => {
+	const initialModel = await getCurrentModelName(page);
 
-  await openModelSwitcher(page);
-  await selectModel(page, "Claude Haiku 4.5");
-  await waitForModelSwitch(page);
+	await openModelSwitcher(page);
+	await selectModel(page, 'Claude Haiku 4.5');
+	await waitForModelSwitch(page);
 
-  const newModel = await getCurrentModelName(page);
-  expect(newModel).toContain("Haiku");
-  expect(newModel).not.toBe(initialModel);
+	const newModel = await getCurrentModelName(page);
+	expect(newModel).toContain('Haiku');
+	expect(newModel).not.toBe(initialModel);
 
-  await waitForToast(page, "Switched to");
+	await waitForToast(page, 'Switched to');
 });
 ```
 
 ### 3. State Preservation
 
 ```typescript
-test("should preserve conversation history after model switch", async ({
-  page,
-}) => {
-  // Send message
-  await messageInput.fill("Hello, test message");
-  await sendButton.click();
+test('should preserve conversation history after model switch', async ({ page }) => {
+	// Send message
+	await messageInput.fill('Hello, test message');
+	await sendButton.click();
 
-  // Switch model
-  await openModelSwitcher(page);
-  await selectModel(page, "Claude Haiku 4.5");
-  await waitForModelSwitch(page);
+	// Switch model
+	await openModelSwitcher(page);
+	await selectModel(page, 'Claude Haiku 4.5');
+	await waitForModelSwitch(page);
 
-  // Verify message still visible
-  await expect(page.locator("text=Hello, test message")).toBeVisible();
+	// Verify message still visible
+	await expect(page.locator('text=Hello, test message')).toBeVisible();
 });
 ```
 
 ### 4. Edge Cases
 
 ```typescript
-test("should handle clicking same model", async ({ page }) => {
-  const initialModel = await getCurrentModelName(page);
+test('should handle clicking same model', async ({ page }) => {
+	const initialModel = await getCurrentModelName(page);
 
-  await openModelSwitcher(page);
-  await selectModel(page, initialModel);
+	await openModelSwitcher(page);
+	await selectModel(page, initialModel);
 
-  // Should show "already using" message
-  await waitForToast(page, "Already using");
+	// Should show "already using" message
+	await waitForToast(page, 'Already using');
 });
 ```
 
@@ -239,7 +235,7 @@ Tests are configured to run in the `isolated-sessions` group:
 ```typescript
 // Increase timeout
 const modelSwitcher = await waitForModelSwitcher(page);
-await modelSwitcher.waitFor({ state: "visible", timeout: 15000 });
+await modelSwitcher.waitFor({ state: 'visible', timeout: 15000 });
 ```
 
 ### Test Fails: "Switching state too fast to catch"
@@ -250,9 +246,9 @@ await modelSwitcher.waitFor({ state: "visible", timeout: 15000 });
 
 ```typescript
 try {
-  await expect(switchingButton).toBeVisible({ timeout: 2000 });
+	await expect(switchingButton).toBeVisible({ timeout: 2000 });
 } catch {
-  // Loading state might be too fast - that's ok
+	// Loading state might be too fast - that's ok
 }
 ```
 
@@ -264,10 +260,10 @@ try {
 
 ```typescript
 // Trigger action
-await selectModel(page, "Claude Haiku 4.5");
+await selectModel(page, 'Claude Haiku 4.5');
 
 // Immediately wait for toast
-await waitForToast(page, "Switched to");
+await waitForToast(page, 'Switched to');
 ```
 
 ### Visual Regression Fails
@@ -302,9 +298,9 @@ await waitForModelSwitch(page); // Wait for specific condition
 
 ```typescript
 test.afterEach(async ({ page }) => {
-  if (sessionId) {
-    await cleanupTestSession(page, sessionId);
-  }
+	if (sessionId) {
+		await cleanupTestSession(page, sessionId);
+	}
 });
 ```
 
@@ -314,9 +310,9 @@ test.afterEach(async ({ page }) => {
 
 ```typescript
 try {
-  await expect(loadingState).toBeVisible({ timeout: 2000 });
+	await expect(loadingState).toBeVisible({ timeout: 2000 });
 } catch {
-  // State might be too fast - that's ok
+	// State might be too fast - that's ok
 }
 ```
 
@@ -326,11 +322,11 @@ try {
 
 ```typescript
 // Verify toast feedback
-await waitForToast(page, "Switched to");
+await waitForToast(page, 'Switched to');
 
 // Verify UI updated
 const newModel = await getCurrentModelName(page);
-expect(newModel).toContain("Haiku");
+expect(newModel).toContain('Haiku');
 ```
 
 ## Future Improvements
