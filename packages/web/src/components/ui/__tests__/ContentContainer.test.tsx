@@ -53,16 +53,6 @@ describe('ContentContainer', () => {
 	});
 
 	describe('Default Classes', () => {
-		it('should have max-w-4xl class', () => {
-			const { container } = render(
-				<ContentContainer>
-					<p>Content</p>
-				</ContentContainer>
-			);
-			const div = container.querySelector('div');
-			expect(div?.className).toContain('max-w-4xl');
-		});
-
 		it('should have mx-auto class for centering', () => {
 			const { container } = render(
 				<ContentContainer>
@@ -93,14 +83,13 @@ describe('ContentContainer', () => {
 			expect(div?.className).toContain('w-full');
 		});
 
-		it('should have all four default classes', () => {
+		it('should have all three default classes', () => {
 			const { container } = render(
 				<ContentContainer>
 					<p>Content</p>
 				</ContentContainer>
 			);
 			const div = container.querySelector('div');
-			expect(div?.className).toContain('max-w-4xl');
 			expect(div?.className).toContain('mx-auto');
 			expect(div?.className).toContain('px-4');
 			expect(div?.className).toContain('w-full');
@@ -125,7 +114,6 @@ describe('ContentContainer', () => {
 				</ContentContainer>
 			);
 			const div = container.querySelector('div');
-			expect(div?.className).toContain('max-w-4xl');
 			expect(div?.className).toContain('mx-auto');
 			expect(div?.className).toContain('px-4');
 			expect(div?.className).toContain('w-full');
@@ -151,8 +139,8 @@ describe('ContentContainer', () => {
 			);
 			const div = container.querySelector('div');
 			// Should still have default classes
-			expect(div?.className).toContain('max-w-4xl');
 			expect(div?.className).toContain('mx-auto');
+			expect(div?.className).toContain('px-4');
 		});
 
 		it('should handle undefined className', () => {
@@ -163,7 +151,7 @@ describe('ContentContainer', () => {
 			);
 			const div = container.querySelector('div');
 			// Should have default classes without extra spaces
-			expect(div?.className).toBe('max-w-4xl mx-auto px-4 w-full');
+			expect(div?.className).toBe('mx-auto px-4 w-full');
 		});
 	});
 
@@ -199,8 +187,6 @@ describe('ContentContainer', () => {
 			);
 			const message = container.querySelector('.message');
 			expect(message).toBeTruthy();
-			const wrapper = container.querySelector('.max-w-4xl');
-			expect(wrapper).toBeTruthy();
 		});
 
 		it('should work for input areas', () => {
@@ -223,7 +209,7 @@ describe('ContentContainer', () => {
 			expect(status?.textContent).toBe('Ready');
 		});
 
-		it('should constrain width appropriately', () => {
+		it('should expand width appropriately', () => {
 			const { container } = render(
 				<ContentContainer>
 					<div class="wide-content" style={{ width: '2000px' }}>
@@ -231,9 +217,9 @@ describe('ContentContainer', () => {
 					</div>
 				</ContentContainer>
 			);
-			// The max-w-4xl class should constrain the container
-			const wrapper = container.querySelector('.max-w-4xl');
-			expect(wrapper).toBeTruthy();
+			// The w-full class should expand the container
+			const wrapper = container.querySelector('div');
+			expect(wrapper?.className).toContain('w-full');
 		});
 	});
 
@@ -293,7 +279,9 @@ describe('ContentContainer', () => {
 			const div = container.querySelector('div');
 			const classes = div?.className.split(' ');
 			// Base classes should come first
-			expect(classes?.indexOf('max-w-4xl')).toBeLessThan(classes?.indexOf('custom') || 999);
+			expect(classes?.indexOf('mx-auto')).toBeLessThan(classes?.indexOf('custom') || 999);
+			expect(classes?.indexOf('px-4')).toBeLessThan(classes?.indexOf('custom') || 999);
+			expect(classes?.indexOf('w-full')).toBeLessThan(classes?.indexOf('custom') || 999);
 		});
 
 		it('should preserve class order for specificity', () => {
