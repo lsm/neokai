@@ -11,167 +11,289 @@
  * - Tests will FAIL if credentials are not available (no skip)
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import type { TestContext } from '../../test-utils';
-import {
-	createTestApp,
-	waitForWebSocketState,
-	waitForWebSocketMessage,
-	createWebSocketWithFirstMessage,
-} from '../../test-utils';
+import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import type { DaemonServerContext } from "../helpers/daemon-server-helper";
+import { spawnDaemonServer } from "../helpers/daemon-server-helper";
 
-describe('Session RPC Handlers (API-dependent)', () => {
-	let ctx: TestContext;
+// Use temp directory for test workspaces
+const TMP_DIR = process.env.TMPDIR || "/tmp";
 
-	beforeEach(async () => {
-		// Restore mocks to ensure we use the real SDK
-		mock.restore();
-		ctx = await createTestApp();
-	});
+describe("Session RPC Handlers (API-dependent)", () => {
+  let daemon: DaemonServerContext;
 
-	afterEach(
-		async () => {
-			await ctx.cleanup();
-		},
-		{ timeout: 15000 }
-	);
+  beforeEach(async () => {
+    // Restore mocks to ensure we use the real SDK
+    mock.restore();
+    daemon = await spawnDaemonServer();
+  });
 
-	describe('message.send', () => {
-		test(
-			'should accept message for existing session',
-			async () => {
-				const tmpDir = process.env.TMPDIR || '/tmp';
-				const sessionId = await ctx.sessionManager.createSession({
-					workspacePath: `${tmpDir}/liuboer-test-message-send-${Date.now()}`,
-					useWorktree: false, // Disable worktrees for test speed
-					config: { model: 'haiku' }, // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
-				});
+  afterEach(
+    async () => {
+      if (daemon) {
+        daemon.kill("SIGTERM");
+        await daemon.waitForExit();
+      }
+    },
+    { timeout: 15000 },
+  );
 
-				const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
-				await waitForWebSocketState(ws, WebSocket.OPEN);
-				await firstMessagePromise;
+  /**
+   * Create a WebSocket connection and wait for the first message
+   */
+  function createWebSocketWithFirstMessage(baseUrl: string): {
+    ws: WebSocket;
+    firstMessagePromise: Promise<unknown>;
+  } {
+    const wsUrl = baseUrl.replace("http://", "ws://");
+    const ws = new WebSocket(`${wsUrl}/ws`);
 
-				const responsePromise = waitForWebSocketMessage(ws, 12000); // Increased to 12s to match test timeout
+    const firstMessagePromise = new Promise((resolve, reject) => {
+      const messageHandler = (event: MessageEvent) => {
+        clearTimeout(timer);
+        ws.removeEventListener("message", messageHandler);
+        ws.removeEventListener("error", errorHandler);
+        try {
+          const data = JSON.parse(event.data as string);
+          resolve(data);
+        } catch {
+          reject(new Error("Failed to parse WebSocket message"));
+        }
+      };
 
-				ws.send(
-					JSON.stringify({
-						id: 'msg-2',
-						type: 'CALL',
-						method: 'message.send',
-						data: {
-							sessionId,
-							content: 'Hello, Claude!',
-						},
-						sessionId: 'global',
-						timestamp: new Date().toISOString(),
-						version: '1.0.0',
-					})
-				);
+      const errorHandler = (error: Event) => {
+        clearTimeout(timer);
+        ws.removeEventListener("message", messageHandler);
+        ws.removeEventListener("error", errorHandler);
+        reject(error);
+      };
 
-				const response = await responsePromise;
+      ws.addEventListener("message", messageHandler);
+      ws.addEventListener("error", errorHandler);
 
-				if (response.type === 'ERROR') {
-					console.error('Error response:', response.error);
-				}
-				expect(response.type).toBe('RESULT');
-				expect(response.data.messageId).toBeString();
+      const timer = setTimeout(() => {
+        ws.removeEventListener("message", messageHandler);
+        ws.removeEventListener("error", errorHandler);
+        reject(new Error("No WebSocket message received within 5000ms"));
+      }, 5000);
+    });
 
-				ws.close();
-			},
-			{ timeout: 15000 }
-		); // Increase timeout to 15s for SDK initialization
-	});
+    return { ws, firstMessagePromise };
+  }
 
-	describe('models.list', () => {
-		// Note: Now using Agent SDK's supportedModels() which supports both API key and OAuth
-		test('should return list of models with cache', async () => {
-			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
-			await waitForWebSocketState(ws, WebSocket.OPEN);
-			await firstMessagePromise;
+  /**
+   * Wait for WebSocket to be in a specific state
+   */
+  async function waitForWebSocketState(
+    ws: WebSocket,
+    state: number,
+  ): Promise<void> {
+    const startTime = Date.now();
+    while (ws.readyState !== state) {
+      if (Date.now() - startTime > 5000) {
+        throw new Error(`WebSocket did not reach state ${state} within 5000ms`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
 
-			const responsePromise = waitForWebSocketMessage(ws, 10000);
+  /**
+   * Wait for WebSocket message
+   */
+  async function waitForWebSocketMessage(
+    ws: WebSocket,
+    timeout = 5000,
+  ): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      const messageHandler = (event: MessageEvent) => {
+        clearTimeout(timer);
+        ws.removeEventListener("message", messageHandler);
+        ws.removeEventListener("error", errorHandler);
+        try {
+          const data = JSON.parse(event.data as string);
+          resolve(data);
+        } catch {
+          reject(new Error("Failed to parse WebSocket message"));
+        }
+      };
 
-			ws.send(
-				JSON.stringify({
-					id: 'models-list-1',
-					type: 'CALL',
-					method: 'models.list',
-					data: {
-						useCache: true,
-						forceRefresh: false,
-					},
-					sessionId: 'global',
-					timestamp: new Date().toISOString(),
-					version: '1.0.0',
-				})
-			);
+      const errorHandler = (error: Event) => {
+        clearTimeout(timer);
+        ws.removeEventListener("message", messageHandler);
+        ws.removeEventListener("error", errorHandler);
+        reject(error);
+      };
 
-			const response = await responsePromise;
+      ws.addEventListener("message", messageHandler);
+      ws.addEventListener("error", errorHandler);
 
-			expect(response.type).toBe('RESULT');
-			expect(response.data.models).toBeArray();
+      const timer = setTimeout(() => {
+        ws.removeEventListener("message", messageHandler);
+        ws.removeEventListener("error", errorHandler);
+        reject(
+          new Error(
+            `No WebSocket message received within ${timeout}ms (readyState: ${ws.readyState})`,
+          ),
+        );
+      }, timeout);
+    });
+  }
 
-			ws.close();
-		});
+  describe("message.send", () => {
+    test(
+      "should accept message for existing session",
+      async () => {
+        const createResult = (await daemon.messageHub.call("session.create", {
+          workspacePath: `${TMP_DIR}/liuboer-test-message-send-${Date.now()}`,
+          config: { model: "haiku" },
+        })) as { sessionId: string };
 
-		test('should return list of models without cache', async () => {
-			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
-			await waitForWebSocketState(ws, WebSocket.OPEN);
-			await firstMessagePromise;
+        const { sessionId } = createResult;
 
-			const responsePromise = waitForWebSocketMessage(ws, 10000);
+        const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(
+          daemon.baseUrl,
+        );
+        await waitForWebSocketState(ws, WebSocket.OPEN);
+        await firstMessagePromise;
 
-			ws.send(
-				JSON.stringify({
-					id: 'models-list-2',
-					type: 'CALL',
-					method: 'models.list',
-					data: {
-						useCache: false,
-					},
-					sessionId: 'global',
-					timestamp: new Date().toISOString(),
-					version: '1.0.0',
-				})
-			);
+        const responsePromise = waitForWebSocketMessage(ws, 12000);
 
-			const response = await responsePromise;
+        ws.send(
+          JSON.stringify({
+            id: "msg-2",
+            type: "CALL",
+            method: "message.send",
+            data: {
+              sessionId,
+              content: "Hello, Claude!",
+            },
+            sessionId: "global",
+            timestamp: new Date().toISOString(),
+            version: "1.0.0",
+          }),
+        );
 
-			expect(response.type).toBe('RESULT');
-			expect(response.data.models).toBeArray();
-			expect(response.data.cached).toBe(false);
+        const response = (await responsePromise) as {
+          type: string;
+          data: { messageId: string };
+          error?: unknown;
+        };
 
-			ws.close();
-		});
+        if (response.type === "ERROR") {
+          console.error("Error response:", response.error);
+        }
+        expect(response.type).toBe("RESULT");
+        expect(response.data.messageId).toBeString();
 
-		test('should force refresh cache', async () => {
-			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
-			await waitForWebSocketState(ws, WebSocket.OPEN);
-			await firstMessagePromise;
+        ws.close();
+      },
+      { timeout: 15000 },
+    );
+  });
 
-			const responsePromise = waitForWebSocketMessage(ws, 10000);
+  describe("models.list", () => {
+    test("should return list of models with cache", async () => {
+      const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(
+        daemon.baseUrl,
+      );
+      await waitForWebSocketState(ws, WebSocket.OPEN);
+      await firstMessagePromise;
 
-			ws.send(
-				JSON.stringify({
-					id: 'models-list-3',
-					type: 'CALL',
-					method: 'models.list',
-					data: {
-						useCache: true,
-						forceRefresh: true,
-					},
-					sessionId: 'global',
-					timestamp: new Date().toISOString(),
-					version: '1.0.0',
-				})
-			);
+      const responsePromise = waitForWebSocketMessage(ws, 10000);
 
-			const response = await responsePromise;
+      ws.send(
+        JSON.stringify({
+          id: "models-list-1",
+          type: "CALL",
+          method: "models.list",
+          data: {
+            useCache: true,
+            forceRefresh: false,
+          },
+          sessionId: "global",
+          timestamp: new Date().toISOString(),
+          version: "1.0.0",
+        }),
+      );
 
-			expect(response.type).toBe('RESULT');
-			expect(response.data.models).toBeArray();
+      const response = (await responsePromise) as {
+        type: string;
+        data: { models: unknown[] };
+      };
 
-			ws.close();
-		});
-	});
+      expect(response.type).toBe("RESULT");
+      expect(response.data.models).toBeArray();
+
+      ws.close();
+    });
+
+    test("should return list of models without cache", async () => {
+      const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(
+        daemon.baseUrl,
+      );
+      await waitForWebSocketState(ws, WebSocket.OPEN);
+      await firstMessagePromise;
+
+      const responsePromise = waitForWebSocketMessage(ws, 10000);
+
+      ws.send(
+        JSON.stringify({
+          id: "models-list-2",
+          type: "CALL",
+          method: "models.list",
+          data: {
+            useCache: false,
+          },
+          sessionId: "global",
+          timestamp: new Date().toISOString(),
+          version: "1.0.0",
+        }),
+      );
+
+      const response = (await responsePromise) as {
+        type: string;
+        data: { models: unknown[]; cached: boolean };
+      };
+
+      expect(response.type).toBe("RESULT");
+      expect(response.data.models).toBeArray();
+      expect(response.data.cached).toBe(false);
+
+      ws.close();
+    });
+
+    test("should force refresh cache", async () => {
+      const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(
+        daemon.baseUrl,
+      );
+      await waitForWebSocketState(ws, WebSocket.OPEN);
+      await firstMessagePromise;
+
+      const responsePromise = waitForWebSocketMessage(ws, 10000);
+
+      ws.send(
+        JSON.stringify({
+          id: "models-list-3",
+          type: "CALL",
+          method: "models.list",
+          data: {
+            useCache: true,
+            forceRefresh: true,
+          },
+          sessionId: "global",
+          timestamp: new Date().toISOString(),
+          version: "1.0.0",
+        }),
+      );
+
+      const response = (await responsePromise) as {
+        type: string;
+        data: { models: unknown[] };
+      };
+
+      expect(response.type).toBe("RESULT");
+      expect(response.data.models).toBeArray();
+
+      ws.close();
+    });
+  });
 });

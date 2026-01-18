@@ -82,7 +82,7 @@ const session = await page.locator(`[data-session-id="${sessionId}"]`);
 await page.waitForSelector('[data-messagehub-connected="true"]');
 
 // Multiple selectors
-const deleteBtn = page.getByTestId('confirm-delete-session');
+const deleteBtn = page.getByTestId("confirm-delete-session");
 ```
 
 ## Adding New Test IDs

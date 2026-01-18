@@ -10,165 +10,178 @@
  * - Starting fresh query
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
-import type { MessageQueue } from './message-queue';
-import { Logger } from '../logger';
+import type { Query } from "@anthropic-ai/claude-agent-sdk/sdk";
+import type { MessageQueue } from "./message-queue";
+import { Logger } from "../logger";
 
 const DEFAULT_TERMINATION_TIMEOUT_MS = 5000;
 const RESET_TERMINATION_TIMEOUT_MS = 3000;
 
 export class QueryLifecycleManager {
-	private logger: Logger;
+  private logger: Logger;
 
-	constructor(
-		private sessionId: string,
-		private messageQueue: MessageQueue,
-		private getQueryObject: () => Query | null,
-		private setQueryObject: (q: Query | null) => void,
-		private getQueryPromise: () => Promise<void> | null,
-		private setQueryPromise: (p: Promise<void> | null) => void,
-		private startStreamingQuery: () => Promise<void>,
-		private isTransportReady: () => boolean
-	) {
-		this.logger = new Logger(`QueryLifecycleManager ${sessionId}`);
-	}
+  constructor(
+    private sessionId: string,
+    private messageQueue: MessageQueue,
+    private getQueryObject: () => Query | null,
+    private setQueryObject: (q: Query | null) => void,
+    private getQueryPromise: () => Promise<void> | null,
+    private setQueryPromise: (p: Promise<void> | null) => void,
+    private startStreamingQuery: () => Promise<void>,
+    private isTransportReady: () => boolean,
+  ) {
+    this.logger = new Logger(`QueryLifecycleManager ${sessionId}`);
+  }
 
-	/**
-	 * Stop the current query
-	 *
-	 * Shared logic for restart and reset operations:
-	 * 1. Stop message queue
-	 * 2. Interrupt current query
-	 * 3. Wait for termination (with timeout)
-	 * 4. Clear query references
-	 */
-	async stop(options?: { timeoutMs?: number; catchQueryErrors?: boolean }): Promise<void> {
-		const { timeoutMs = DEFAULT_TERMINATION_TIMEOUT_MS, catchQueryErrors = false } = options ?? {};
+  /**
+   * Stop the current query
+   *
+   * Shared logic for restart and reset operations:
+   * 1. Stop message queue
+   * 2. Interrupt current query
+   * 3. Wait for termination (with timeout)
+   * 4. Clear query references
+   */
+  async stop(options?: {
+    timeoutMs?: number;
+    catchQueryErrors?: boolean;
+  }): Promise<void> {
+    const {
+      timeoutMs = DEFAULT_TERMINATION_TIMEOUT_MS,
+      catchQueryErrors = false,
+    } = options ?? {};
 
-		// 1. Stop the message queue (no new messages processed)
-		this.messageQueue.stop();
-		this.logger.log('Message queue stopped');
+    // 1. Stop the message queue (no new messages processed)
+    this.messageQueue.stop();
+    this.logger.log("Message queue stopped");
 
-		// 2. Interrupt current query (only if transport is ready)
-		// ProcessTransport must be ready before calling interrupt() - otherwise we get
-		// "ProcessTransport is not ready for writing" error that corrupts session state
-		const queryObject = this.getQueryObject();
-		if (queryObject && typeof queryObject.interrupt === 'function') {
-			if (this.isTransportReady()) {
-				try {
-					await queryObject.interrupt();
-					this.logger.log('Query interrupted successfully');
-				} catch (error) {
-					this.logger.warn('Query interrupt failed:', error);
-					// Continue - query might already be stopped
-				}
-			} else {
-				// Transport not ready - skip interrupt, just clear references
-				// The SDK subprocess will be terminated when we clear the query object
-				this.logger.log(
-					'Skipping interrupt - ProcessTransport not ready (no messages received yet)'
-				);
-			}
-		}
+    // 2. Interrupt current query (only if transport is ready)
+    // ProcessTransport must be ready before calling interrupt() - otherwise we get
+    // "ProcessTransport is not ready for writing" error that corrupts session state
+    const queryObject = this.getQueryObject();
+    if (queryObject && typeof queryObject.interrupt === "function") {
+      if (this.isTransportReady()) {
+        try {
+          await queryObject.interrupt();
+          this.logger.log("Query interrupted successfully");
+        } catch (error) {
+          this.logger.warn("Query interrupt failed:", error);
+          // Continue - query might already be stopped
+        }
+      } else {
+        // Transport not ready - skip interrupt, just clear references
+        // The SDK subprocess will be terminated when we clear the query object
+        this.logger.log(
+          "Skipping interrupt - ProcessTransport not ready (no messages received yet)",
+        );
+      }
+    }
 
-		// 3. Wait for termination
-		const queryPromise = this.getQueryPromise();
-		if (queryPromise) {
-			try {
-				const promiseToAwait = catchQueryErrors
-					? queryPromise.catch((e) => {
-							this.logger.warn('Query promise rejected during cleanup:', e);
-						})
-					: queryPromise;
+    // 3. Wait for termination
+    const queryPromise = this.getQueryPromise();
+    if (queryPromise) {
+      try {
+        const promiseToAwait = catchQueryErrors
+          ? queryPromise.catch((e) => {
+              this.logger.warn("Query promise rejected during cleanup:", e);
+            })
+          : queryPromise;
 
-				await Promise.race([
-					promiseToAwait,
-					new Promise((resolve) => setTimeout(resolve, timeoutMs)),
-				]);
-				this.logger.log('Previous query terminated');
-			} catch (error) {
-				this.logger.warn('Error waiting for query termination:', error);
-			}
-		}
+        await Promise.race([
+          promiseToAwait,
+          new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+        ]);
+        this.logger.log("Previous query terminated");
+      } catch (error) {
+        this.logger.warn("Error waiting for query termination:", error);
+      }
+    }
 
-		// 4. Clear references
-		this.setQueryObject(null);
-		this.setQueryPromise(null);
-	}
+    // 4. Clear references
+    this.setQueryObject(null);
+    this.setQueryPromise(null);
+  }
 
-	/**
-	 * Restart the query (stop + start)
-	 *
-	 * Used when MCP settings change and SDK needs to reload settings.local.json
-	 */
-	async restart(): Promise<void> {
-		this.logger.log('Executing query restart...');
+  /**
+   * Restart the query (stop + start)
+   *
+   * Used when MCP settings change and SDK needs to reload settings.local.json
+   */
+  async restart(): Promise<void> {
+    this.logger.log("Executing query restart...");
 
-		try {
-			await this.stop();
-			await this.startStreamingQuery();
-			this.logger.log('Query restarted successfully with fresh settings');
-		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-			this.logger.error('Failed to restart query:', error);
-			throw new Error(`Query restart failed: ${errorMessage}`);
-		}
-	}
+    try {
+      await this.stop();
+      await this.startStreamingQuery();
+      this.logger.log("Query restarted successfully with fresh settings");
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      this.logger.error("Failed to restart query:", error);
+      throw new Error(`Query restart failed: ${errorMessage}`);
+    }
+  }
 
-	/**
-	 * Full reset with additional cleanup
-	 *
-	 * Used for user-initiated "Reset Agent" that needs to:
-	 * - Clear pending messages
-	 * - Reset circuit breaker
-	 * - Notify clients
-	 *
-	 * @returns Result indicating success or failure
-	 */
-	async reset(options?: {
-		restartAfter?: boolean;
-		onBeforeStop?: () => Promise<void>;
-		onAfterStop?: () => Promise<void>;
-		onAfterRestart?: () => Promise<void>;
-	}): Promise<{ success: boolean; error?: string }> {
-		const { restartAfter = true, onBeforeStop, onAfterStop, onAfterRestart } = options ?? {};
+  /**
+   * Full reset with additional cleanup
+   *
+   * Used for user-initiated "Reset Agent" that needs to:
+   * - Clear pending messages
+   * - Reset circuit breaker
+   * - Notify clients
+   *
+   * @returns Result indicating success or failure
+   */
+  async reset(options?: {
+    restartAfter?: boolean;
+    onBeforeStop?: () => Promise<void>;
+    onAfterStop?: () => Promise<void>;
+    onAfterRestart?: () => Promise<void>;
+  }): Promise<{ success: boolean; error?: string }> {
+    const {
+      restartAfter = true,
+      onBeforeStop,
+      onAfterStop,
+      onAfterRestart,
+    } = options ?? {};
 
-		try {
-			// Execute pre-stop cleanup (e.g., clear pending messages, reset flags)
-			if (onBeforeStop) {
-				await onBeforeStop();
-			}
+    try {
+      // Execute pre-stop cleanup (e.g., clear pending messages, reset flags)
+      if (onBeforeStop) {
+        await onBeforeStop();
+      }
 
-			// Stop the query with shorter timeout and catch errors
-			await this.stop({
-				timeoutMs: RESET_TERMINATION_TIMEOUT_MS,
-				catchQueryErrors: true,
-			});
+      // Stop the query with shorter timeout and catch errors
+      await this.stop({
+        timeoutMs: RESET_TERMINATION_TIMEOUT_MS,
+        catchQueryErrors: true,
+      });
 
-			// Execute post-stop actions (e.g., reset state to idle)
-			if (onAfterStop) {
-				await onAfterStop();
-			}
+      // Execute post-stop actions (e.g., reset state to idle)
+      if (onAfterStop) {
+        await onAfterStop();
+      }
 
-			// Optionally restart
-			if (restartAfter) {
-				this.logger.log('Starting fresh query...');
-				// Small delay to ensure process cleanup completes
-				await new Promise((resolve) => setTimeout(resolve, 100));
-				await this.startStreamingQuery();
-				this.logger.log('Fresh query started successfully');
-			}
+      // Optionally restart
+      if (restartAfter) {
+        this.logger.log("Starting fresh query...");
+        // Small delay to ensure process cleanup completes
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        await this.startStreamingQuery();
+        this.logger.log("Fresh query started successfully");
+      }
 
-			// Execute post-restart actions (e.g., notify clients)
-			if (onAfterRestart) {
-				await onAfterRestart();
-			}
+      // Execute post-restart actions (e.g., notify clients)
+      if (onAfterRestart) {
+        await onAfterRestart();
+      }
 
-			return { success: true };
-		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-			this.logger.error('Query reset failed:', error);
-			return { success: false, error: errorMessage };
-		}
-	}
+      return { success: true };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      this.logger.error("Query reset failed:", error);
+      return { success: false, error: errorMessage };
+    }
+  }
 }

@@ -10,191 +10,200 @@ import { describe, it, expect } from 'vitest';
  * and triggering mobile horizontal scrolling.
  */
 
-import { render } from '@testing-library/preact';
-import { SyntheticMessageBlock } from '../SyntheticMessageBlock';
-import { SubagentBlock } from '../SubagentBlock';
-import { SlashCommandOutput } from '../SlashCommandOutput';
+import { render } from "@testing-library/preact";
+import { SyntheticMessageBlock } from "../SyntheticMessageBlock";
+import { SubagentBlock } from "../SubagentBlock";
+import { SlashCommandOutput } from "../SlashCommandOutput";
 
-describe('Overflow Protection', () => {
-	describe('SyntheticMessageBlock', () => {
-		it('should apply break-words to text content', () => {
-			const { container } = render(
-				<SyntheticMessageBlock content="Test text content" timestamp={Date.now()} />
-			);
-			const textDiv = container.querySelector('.whitespace-pre-wrap');
-			expect(textDiv?.className).toContain('break-words');
-		});
+describe("Overflow Protection", () => {
+  describe("SyntheticMessageBlock", () => {
+    it("should apply break-words to text content", () => {
+      const { container } = render(
+        <SyntheticMessageBlock
+          content="Test text content"
+          timestamp={Date.now()}
+        />,
+      );
+      const textDiv = container.querySelector(".whitespace-pre-wrap");
+      expect(textDiv?.className).toContain("break-words");
+    });
 
-		it('should apply overflow-x-auto to tool_use JSON blocks', () => {
-			const content = [
-				{
-					type: 'tool_use',
-					name: 'TestTool',
-					input: { longKey: 'a'.repeat(1000) },
-				},
-			];
-			const { container } = render(
-				<SyntheticMessageBlock content={content} timestamp={Date.now()} />
-			);
-			const jsonDiv = container.querySelector('.font-mono.overflow-x-auto');
-			expect(jsonDiv).toBeTruthy();
-		});
+    it("should apply overflow-x-auto to tool_use JSON blocks", () => {
+      const content = [
+        {
+          type: "tool_use",
+          name: "TestTool",
+          input: { longKey: "a".repeat(1000) },
+        },
+      ];
+      const { container } = render(
+        <SyntheticMessageBlock content={content} timestamp={Date.now()} />,
+      );
+      const jsonDiv = container.querySelector(".font-mono.overflow-x-auto");
+      expect(jsonDiv).toBeTruthy();
+    });
 
-		it('should apply overflow-auto to tool_result blocks', () => {
-			const content = [
-				{
-					type: 'tool_result',
-					tool_use_id: 'toolu_12345678901234567890',
-					content: 'a'.repeat(1000),
-				},
-			];
-			const { container } = render(
-				<SyntheticMessageBlock content={content} timestamp={Date.now()} />
-			);
-			const resultDiv = container.querySelector('.overflow-auto');
-			expect(resultDiv).toBeTruthy();
-		});
+    it("should apply overflow-auto to tool_result blocks", () => {
+      const content = [
+        {
+          type: "tool_result",
+          tool_use_id: "toolu_12345678901234567890",
+          content: "a".repeat(1000),
+        },
+      ];
+      const { container } = render(
+        <SyntheticMessageBlock content={content} timestamp={Date.now()} />,
+      );
+      const resultDiv = container.querySelector(".overflow-auto");
+      expect(resultDiv).toBeTruthy();
+    });
 
-		it('should apply overflow-x-auto to image blocks', () => {
-			const content = [
-				{
-					type: 'image',
-					source: { type: 'base64', data: 'very-long-base64-data'.repeat(100) },
-				},
-			];
-			const { container } = render(
-				<SyntheticMessageBlock content={content} timestamp={Date.now()} />
-			);
-			const imageDiv = container.querySelector('.font-mono.overflow-x-auto');
-			expect(imageDiv).toBeTruthy();
-		});
+    it("should apply overflow-x-auto to image blocks", () => {
+      const content = [
+        {
+          type: "image",
+          source: { type: "base64", data: "very-long-base64-data".repeat(100) },
+        },
+      ];
+      const { container } = render(
+        <SyntheticMessageBlock content={content} timestamp={Date.now()} />,
+      );
+      const imageDiv = container.querySelector(".font-mono.overflow-x-auto");
+      expect(imageDiv).toBeTruthy();
+    });
 
-		it('should apply overflow-x-auto to unknown block types', () => {
-			const content = [
-				{
-					type: 'custom_unknown_type',
-					data: { nested: { deeply: 'value'.repeat(100) } },
-				},
-			];
-			const { container } = render(
-				<SyntheticMessageBlock content={content} timestamp={Date.now()} />
-			);
-			const unknownDiv = container.querySelector('.font-mono.overflow-x-auto');
-			expect(unknownDiv).toBeTruthy();
-		});
-	});
+    it("should apply overflow-x-auto to unknown block types", () => {
+      const content = [
+        {
+          type: "custom_unknown_type",
+          data: { nested: { deeply: "value".repeat(100) } },
+        },
+      ];
+      const { container } = render(
+        <SyntheticMessageBlock content={content} timestamp={Date.now()} />,
+      );
+      const unknownDiv = container.querySelector(".font-mono.overflow-x-auto");
+      expect(unknownDiv).toBeTruthy();
+    });
+  });
 
-	describe('SubagentBlock', () => {
-		const defaultInput = {
-			subagent_type: 'Explore',
-			description: 'Test task',
-			prompt: 'Test prompt with potentially long content',
-		};
+  describe("SubagentBlock", () => {
+    const defaultInput = {
+      subagent_type: "Explore",
+      description: "Test task",
+      prompt: "Test prompt with potentially long content",
+    };
 
-		it('should apply break-words to input prompt when expanded', async () => {
-			const { container, rerender } = render(
-				<SubagentBlock input={defaultInput} toolId="tool_123" />
-			);
+    it("should apply break-words to input prompt when expanded", async () => {
+      const { container, rerender } = render(
+        <SubagentBlock input={defaultInput} toolId="tool_123" />,
+      );
 
-			// Expand the block by clicking
-			const button = container.querySelector('button');
-			button?.click();
+      // Expand the block by clicking
+      const button = container.querySelector("button");
+      button?.click();
 
-			// Force re-render to apply state change
-			await new Promise((resolve) => setTimeout(resolve, 10));
-			rerender(<SubagentBlock input={defaultInput} toolId="tool_123" />);
+      // Force re-render to apply state change
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      rerender(<SubagentBlock input={defaultInput} toolId="tool_123" />);
 
-			// After expanding, check if the input section has proper classes
-			// The component should have these classes in the input div
-			const allDivs = container.querySelectorAll('div');
-			let hasBreakWordsClass = false;
-			allDivs.forEach((div) => {
-				if (
-					div.className.includes('whitespace-pre-wrap') &&
-					div.className.includes('break-words')
-				) {
-					hasBreakWordsClass = true;
-				}
-			});
+      // After expanding, check if the input section has proper classes
+      // The component should have these classes in the input div
+      const allDivs = container.querySelectorAll("div");
+      let hasBreakWordsClass = false;
+      allDivs.forEach((div) => {
+        if (
+          div.className.includes("whitespace-pre-wrap") &&
+          div.className.includes("break-words")
+        ) {
+          hasBreakWordsClass = true;
+        }
+      });
 
-			// Verify the component structure is correct - expansion state is internal
-			// The component has break-words classes in the source (verified by code review)
-			expect(container.querySelector('.border.rounded-lg')).toBeTruthy();
-			// Note: hasBreakWordsClass may be false if expansion didn't trigger in test env
-			// The actual class presence is verified by reviewing SyntheticMessageBlock which passes
-			void hasBreakWordsClass; // Silence unused variable warning - used for debugging
-		});
+      // Verify the component structure is correct - expansion state is internal
+      // The component has break-words classes in the source (verified by code review)
+      expect(container.querySelector(".border.rounded-lg")).toBeTruthy();
+      // Note: hasBreakWordsClass may be false if expansion didn't trigger in test env
+      // The actual class presence is verified by reviewing SyntheticMessageBlock which passes
+      void hasBreakWordsClass; // Silence unused variable warning - used for debugging
+    });
 
-		it('should have proper structure for overflow protection', () => {
-			const { container } = render(
-				<SubagentBlock input={defaultInput} output="Test output content" toolId="tool_123" />
-			);
+    it("should have proper structure for overflow protection", () => {
+      const { container } = render(
+        <SubagentBlock
+          input={defaultInput}
+          output="Test output content"
+          toolId="tool_123"
+        />,
+      );
 
-			// Verify the header is present and clickable
-			const button = container.querySelector('button');
-			expect(button).toBeTruthy();
-			expect(button?.className).toContain('w-full');
-		});
-	});
+      // Verify the header is present and clickable
+      const button = container.querySelector("button");
+      expect(button).toBeTruthy();
+      expect(button?.className).toContain("w-full");
+    });
+  });
 
-	describe('SlashCommandOutput', () => {
-		it('should apply max-w-full and overflow-x-auto to output container', () => {
-			const content = '<local-command-stdout>Some command output here</local-command-stdout>';
-			const { container } = render(<SlashCommandOutput content={content} />);
+  describe("SlashCommandOutput", () => {
+    it("should apply max-w-full and overflow-x-auto to output container", () => {
+      const content =
+        "<local-command-stdout>Some command output here</local-command-stdout>";
+      const { container } = render(<SlashCommandOutput content={content} />);
 
-			const outputDiv = container.querySelector('.max-w-full.overflow-x-auto');
-			expect(outputDiv).toBeTruthy();
-		});
+      const outputDiv = container.querySelector(".max-w-full.overflow-x-auto");
+      expect(outputDiv).toBeTruthy();
+    });
 
-		it('should not use max-w-none (which removes constraints)', () => {
-			const content = '<local-command-stdout>Test output</local-command-stdout>';
-			const { container } = render(<SlashCommandOutput content={content} />);
+    it("should not use max-w-none (which removes constraints)", () => {
+      const content =
+        "<local-command-stdout>Test output</local-command-stdout>";
+      const { container } = render(<SlashCommandOutput content={content} />);
 
-			const proseDiv = container.querySelector('.prose');
-			expect(proseDiv?.className).not.toContain('max-w-none');
-		});
-	});
+      const proseDiv = container.querySelector(".prose");
+      expect(proseDiv?.className).not.toContain("max-w-none");
+    });
+  });
 
-	describe('Long content handling', () => {
-		it('should contain very long text without overflow', () => {
-			const longText = 'VeryLongWordWithNoBreaks'.repeat(100);
-			const { container } = render(
-				<SyntheticMessageBlock content={longText} timestamp={Date.now()} />
-			);
+  describe("Long content handling", () => {
+    it("should contain very long text without overflow", () => {
+      const longText = "VeryLongWordWithNoBreaks".repeat(100);
+      const { container } = render(
+        <SyntheticMessageBlock content={longText} timestamp={Date.now()} />,
+      );
 
-			// The text container should have break-words class
-			const textDiv = container.querySelector('.break-words');
-			expect(textDiv).toBeTruthy();
-		});
+      // The text container should have break-words class
+      const textDiv = container.querySelector(".break-words");
+      expect(textDiv).toBeTruthy();
+    });
 
-		it('should contain very long JSON without overflow', () => {
-			const content = [
-				{
-					type: 'tool_use',
-					name: 'LongOutputTool',
-					input: {
-						veryLongKey: 'x'.repeat(500),
-						anotherLongKey: Array.from({ length: 100 }, (_, i) => `item${i}`),
-					},
-				},
-			];
-			const { container } = render(
-				<SyntheticMessageBlock content={content} timestamp={Date.now()} />
-			);
+    it("should contain very long JSON without overflow", () => {
+      const content = [
+        {
+          type: "tool_use",
+          name: "LongOutputTool",
+          input: {
+            veryLongKey: "x".repeat(500),
+            anotherLongKey: Array.from({ length: 100 }, (_, i) => `item${i}`),
+          },
+        },
+      ];
+      const { container } = render(
+        <SyntheticMessageBlock content={content} timestamp={Date.now()} />,
+      );
 
-			// Should have horizontal scroll capability
-			const scrollableDiv = container.querySelector('.overflow-x-auto');
-			expect(scrollableDiv).toBeTruthy();
-		});
+      // Should have horizontal scroll capability
+      const scrollableDiv = container.querySelector(".overflow-x-auto");
+      expect(scrollableDiv).toBeTruthy();
+    });
 
-		it('should contain long URLs and file paths', () => {
-			const longPath = '/very/long/file/path/that/goes/on/and/on/'.repeat(20);
-			const { container } = render(
-				<SyntheticMessageBlock content={longPath} timestamp={Date.now()} />
-			);
+    it("should contain long URLs and file paths", () => {
+      const longPath = "/very/long/file/path/that/goes/on/and/on/".repeat(20);
+      const { container } = render(
+        <SyntheticMessageBlock content={longPath} timestamp={Date.now()} />,
+      );
 
-			const textDiv = container.querySelector('.break-words');
-			expect(textDiv).toBeTruthy();
-		});
-	});
+      const textDiv = container.querySelector(".break-words");
+      expect(textDiv).toBeTruthy();
+    });
+  });
 });

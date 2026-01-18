@@ -11,24 +11,24 @@
  * - DaemonHub: 'session.created'
  */
 
-import { TypedHub, type BaseEventData } from '@liuboer/shared';
+import { TypedHub, type BaseEventData } from "@liuboer/shared";
 import type {
-	Session,
-	AuthMethod,
-	ContextInfo,
-	MessageContent,
-	MessageImage,
-	GlobalSettings,
-	AgentProcessingState,
-	ApiConnectionState,
-	PendingUserQuestion,
-} from '@liuboer/shared';
-import type { SDKMessage } from '@liuboer/shared/sdk';
+  Session,
+  AuthMethod,
+  ContextInfo,
+  MessageContent,
+  MessageImage,
+  GlobalSettings,
+  AgentProcessingState,
+  ApiConnectionState,
+  PendingUserQuestion,
+} from "@liuboer/shared";
+import type { SDKMessage } from "@liuboer/shared/sdk";
 
 /**
  * Compaction trigger type
  */
-export type CompactionTrigger = 'manual' | 'auto';
+export type CompactionTrigger = "manual" | "auto";
 
 /**
  * Daemon event map - all events must include sessionId
@@ -37,118 +37,133 @@ export type CompactionTrigger = 'manual' | 'auto';
  * StateManager maintains its own state from events (no fetching from sources).
  */
 export interface DaemonEventMap extends Record<string, BaseEventData> {
-	// Session lifecycle events
-	'session.created': { sessionId: string; session: Session };
-	'session.updated': {
-		sessionId: string;
-		source?: string;
-		session?: Partial<Session>;
-		processingState?: AgentProcessingState;
-	};
-	'session.deleted': { sessionId: string };
+  // Session lifecycle events
+  "session.created": { sessionId: string; session: Session };
+  "session.updated": {
+    sessionId: string;
+    source?: string;
+    session?: Partial<Session>;
+    processingState?: AgentProcessingState;
+  };
+  "session.deleted": { sessionId: string };
 
-	// SDK events
-	'sdk.message': { sessionId: string; message: SDKMessage };
+  // SDK events
+  "sdk.message": { sessionId: string; message: SDKMessage };
 
-	// Auth events (global events - use 'global' as sessionId)
-	'auth.changed': { sessionId: string; method: AuthMethod; isAuthenticated: boolean };
+  // Auth events (global events - use 'global' as sessionId)
+  "auth.changed": {
+    sessionId: string;
+    method: AuthMethod;
+    isAuthenticated: boolean;
+  };
 
-	// API connection events - internal server-side only (global events)
-	'api.connection': { sessionId: string } & ApiConnectionState;
+  // API connection events - internal server-side only (global events)
+  "api.connection": { sessionId: string } & ApiConnectionState;
 
-	// Settings events (global events - use 'global' as sessionId)
-	'settings.updated': { sessionId: string; settings: GlobalSettings };
-	'sessions.filterChanged': { sessionId: string };
+  // Settings events (global events - use 'global' as sessionId)
+  "settings.updated": { sessionId: string; settings: GlobalSettings };
+  "sessions.filterChanged": { sessionId: string };
 
-	// Commands events
-	'commands.updated': { sessionId: string; commands: string[] };
+  // Commands events
+  "commands.updated": { sessionId: string; commands: string[] };
 
-	// Context events - real-time context window usage tracking
-	'context.updated': { sessionId: string; contextInfo: ContextInfo };
+  // Context events - real-time context window usage tracking
+  "context.updated": { sessionId: string; contextInfo: ContextInfo };
 
-	// Compaction events
-	'context.compacting': { sessionId: string; trigger: CompactionTrigger };
-	'context.compacted': {
-		sessionId: string;
-		trigger: CompactionTrigger;
-		preTokens: number;
-	};
+  // Compaction events
+  "context.compacting": { sessionId: string; trigger: CompactionTrigger };
+  "context.compacted": {
+    sessionId: string;
+    trigger: CompactionTrigger;
+    preTokens: number;
+  };
 
-	// Session error events
-	'session.error': { sessionId: string; error: string; details?: unknown };
-	'session.errorClear': { sessionId: string };
+  // Session error events
+  "session.error": { sessionId: string; error: string; details?: unknown };
+  "session.errorClear": { sessionId: string };
 
-	// Message events
-	'message.sent': { sessionId: string };
+  // Message events
+  "message.sent": { sessionId: string };
 
-	// Title generation events
-	'title.generated': { sessionId: string; title: string };
-	'title.generationFailed': { sessionId: string; error: Error; attempts: number };
+  // Title generation events
+  "title.generated": { sessionId: string; title: string };
+  "title.generationFailed": {
+    sessionId: string;
+    error: Error;
+    attempts: number;
+  };
 
-	// AskUserQuestion events
-	'question.asked': {
-		sessionId: string;
-		pendingQuestion: PendingUserQuestion;
-	};
+  // AskUserQuestion events
+  "question.asked": {
+    sessionId: string;
+    pendingQuestion: PendingUserQuestion;
+  };
 
-	// User message processing events (3-layer communication pattern)
-	'userMessage.persisted': {
-		sessionId: string;
-		messageId: string;
-		messageContent: string | MessageContent[];
-		userMessageText: string;
-		needsWorkspaceInit: boolean;
-		hasDraftToClear: boolean;
-		skipQueryStart?: boolean;
-	};
+  // User message processing events (3-layer communication pattern)
+  "userMessage.persisted": {
+    sessionId: string;
+    messageId: string;
+    messageContent: string | MessageContent[];
+    userMessageText: string;
+    needsWorkspaceInit: boolean;
+    hasDraftToClear: boolean;
+    skipQueryStart?: boolean;
+  };
 
-	// Model switch events
-	'model.switchRequest': { sessionId: string; model: string };
-	'model.switched': { sessionId: string; success: boolean; model: string; error?: string };
+  // Model switch events
+  "model.switchRequest": { sessionId: string; model: string };
+  "model.switched": {
+    sessionId: string;
+    success: boolean;
+    model: string;
+    error?: string;
+  };
 
-	// Interrupt events
-	'agent.interruptRequest': { sessionId: string };
-	'agent.interrupted': { sessionId: string };
+  // Interrupt events
+  "agent.interruptRequest": { sessionId: string };
+  "agent.interrupted": { sessionId: string };
 
-	// Reset events
-	'agent.resetRequest': { sessionId: string; restartQuery?: boolean };
-	'agent.reset': { sessionId: string; success: boolean; error?: string };
+  // Reset events
+  "agent.resetRequest": { sessionId: string; restartQuery?: boolean };
+  "agent.reset": { sessionId: string; success: boolean; error?: string };
 
-	// Message sending events
-	'message.sendRequest': {
-		sessionId: string;
-		messageId: string;
-		content: string;
-		images?: MessageImage[];
-	};
-	'message.persisted': {
-		sessionId: string;
-		messageId: string;
-		messageContent: string | MessageContent[];
-		userMessageText: string;
-		needsWorkspaceInit: boolean;
-		hasDraftToClear: boolean;
-	};
+  // Message sending events
+  "message.sendRequest": {
+    sessionId: string;
+    messageId: string;
+    content: string;
+    images?: MessageImage[];
+  };
+  "message.persisted": {
+    sessionId: string;
+    messageId: string;
+    messageContent: string | MessageContent[];
+    userMessageText: string;
+    needsWorkspaceInit: boolean;
+    hasDraftToClear: boolean;
+  };
 
-	// Query mode events
-	// Trigger to send saved messages (Manual mode)
-	'query.trigger': { sessionId: string };
-	// Notification when message statuses change
-	'messages.statusChanged': {
-		sessionId: string;
-		messageIds: string[];
-		status: 'saved' | 'queued' | 'sent';
-	};
-	// Send queued messages on turn end (Auto-queue mode)
-	'query.sendQueuedOnTurnEnd': { sessionId: string };
+  // Query mode events
+  // Trigger to send saved messages (Manual mode)
+  "query.trigger": { sessionId: string };
+  // Notification when message statuses change
+  "messages.statusChanged": {
+    sessionId: string;
+    messageIds: string[];
+    status: "saved" | "queued" | "sent";
+  };
+  // Send queued messages on turn end (Auto-queue mode)
+  "query.sendQueuedOnTurnEnd": { sessionId: string };
 }
 
 /**
  * Create a new DaemonHub instance
  * Each component that needs event coordination should use this
  */
-export function createDaemonHub(name: string = 'daemon'): TypedHub<DaemonEventMap> {
-	return new TypedHub<DaemonEventMap>({ name });
+export function createDaemonHub(
+  name: string = "daemon",
+): TypedHub<DaemonEventMap> {
+  return new TypedHub<DaemonEventMap>({ name });
 }
 
 /**

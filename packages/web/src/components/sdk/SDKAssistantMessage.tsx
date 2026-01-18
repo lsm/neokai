@@ -8,214 +8,249 @@
  * - AskUserQuestion tool blocks with inline QuestionPrompt
  */
 
-import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
-import type { PendingUserQuestion, QuestionDraftResponse, ResolvedQuestion } from '@liuboer/shared';
+import type { SDKMessage } from "@liuboer/shared/sdk/sdk.d.ts";
+import type {
+  PendingUserQuestion,
+  QuestionDraftResponse,
+  ResolvedQuestion,
+} from "@liuboer/shared";
 import {
-	isTextBlock,
-	isToolUseBlock,
-	isThinkingBlock,
-	type ContentBlock,
-} from '@liuboer/shared/sdk/type-guards';
-import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
-import { IconButton } from '../ui/IconButton.tsx';
-import { Tooltip } from '../ui/Tooltip.tsx';
-import { copyToClipboard } from '../../lib/utils.ts';
-import { toast } from '../../lib/toast.ts';
-import { messageSpacing, messageColors, borderRadius } from '../../lib/design-tokens.ts';
-import { cn } from '../../lib/utils.ts';
-import { ToolResultCard } from './tools/index.ts';
-import { ThinkingBlock } from './ThinkingBlock.tsx';
-import { SubagentBlock } from './SubagentBlock.tsx';
-import { QuestionPrompt } from '../QuestionPrompt.tsx';
-import type { AgentInput } from '@liuboer/shared/sdk/sdk-tools.d.ts';
+  isTextBlock,
+  isToolUseBlock,
+  isThinkingBlock,
+  type ContentBlock,
+} from "@liuboer/shared/sdk/type-guards";
+import MarkdownRenderer from "../chat/MarkdownRenderer.tsx";
+import { IconButton } from "../ui/IconButton.tsx";
+import { Tooltip } from "../ui/Tooltip.tsx";
+import { copyToClipboard } from "../../lib/utils.ts";
+import { toast } from "../../lib/toast.ts";
+import {
+  messageSpacing,
+  messageColors,
+  borderRadius,
+} from "../../lib/design-tokens.ts";
+import { cn } from "../../lib/utils.ts";
+import { ToolResultCard } from "./tools/index.ts";
+import { ThinkingBlock } from "./ThinkingBlock.tsx";
+import { SubagentBlock } from "./SubagentBlock.tsx";
+import { QuestionPrompt } from "../QuestionPrompt.tsx";
+import type { AgentInput } from "@liuboer/shared/sdk/sdk-tools.d.ts";
 
-type AssistantMessage = Extract<SDKMessage, { type: 'assistant' }>;
+type AssistantMessage = Extract<SDKMessage, { type: "assistant" }>;
 
 interface Props {
-	message: AssistantMessage;
-	toolResultsMap?: Map<string, unknown>;
-	subagentMessagesMap?: Map<string, SDKMessage[]>;
-	// Question handling props for inline QuestionPrompt rendering
-	sessionId?: string;
-	resolvedQuestions?: Map<string, ResolvedQuestion>;
-	pendingQuestion?: PendingUserQuestion | null;
-	onQuestionResolved?: (
-		state: 'submitted' | 'cancelled',
-		responses: QuestionDraftResponse[]
-	) => void;
+  message: AssistantMessage;
+  toolResultsMap?: Map<string, unknown>;
+  subagentMessagesMap?: Map<string, SDKMessage[]>;
+  // Question handling props for inline QuestionPrompt rendering
+  sessionId?: string;
+  resolvedQuestions?: Map<string, ResolvedQuestion>;
+  pendingQuestion?: PendingUserQuestion | null;
+  onQuestionResolved?: (
+    state: "submitted" | "cancelled",
+    responses: QuestionDraftResponse[],
+  ) => void;
 }
 
 export function SDKAssistantMessage({
-	message,
-	toolResultsMap,
-	subagentMessagesMap,
-	sessionId,
-	resolvedQuestions,
-	pendingQuestion,
-	onQuestionResolved,
+  message,
+  toolResultsMap,
+  subagentMessagesMap,
+  sessionId,
+  resolvedQuestions,
+  pendingQuestion,
+  onQuestionResolved,
 }: Props) {
-	const { message: apiMessage } = message;
-	const hasError = 'error' in message && message.error !== undefined;
+  const { message: apiMessage } = message;
+  const hasError = "error" in message && message.error !== undefined;
 
-	// Extract text content for copy functionality
-	const getTextContent = (): string => {
-		return apiMessage.content
-			.map((block: ContentBlock) => {
-				if (isTextBlock(block)) {
-					return block.text;
-				}
-				return '';
-			})
-			.filter(Boolean)
-			.join('\n');
-	};
+  // Extract text content for copy functionality
+  const getTextContent = (): string => {
+    return apiMessage.content
+      .map((block: ContentBlock) => {
+        if (isTextBlock(block)) {
+          return block.text;
+        }
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  };
 
-	const handleCopy = async () => {
-		const textContent = getTextContent();
-		const success = await copyToClipboard(textContent);
-		if (success) {
-			toast.success('Message copied to clipboard');
-		} else {
-			toast.error('Failed to copy message');
-		}
-	};
+  const handleCopy = async () => {
+    const textContent = getTextContent();
+    const success = await copyToClipboard(textContent);
+    if (success) {
+      toast.success("Message copied to clipboard");
+    } else {
+      toast.error("Failed to copy message");
+    }
+  };
 
-	// Get timestamp from message
-	const getTimestamp = (): string => {
-		// Use the timestamp injected by the database (milliseconds since epoch)
-		const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
-		const date = messageWithTimestamp.timestamp
-			? new Date(messageWithTimestamp.timestamp)
-			: new Date();
-		return date.toLocaleTimeString([], {
-			hour: '2-digit',
-			minute: '2-digit',
-		});
-	};
+  // Get timestamp from message
+  const getTimestamp = (): string => {
+    // Use the timestamp injected by the database (milliseconds since epoch)
+    const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
+    const date = messageWithTimestamp.timestamp
+      ? new Date(messageWithTimestamp.timestamp)
+      : new Date();
+    return date.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
 
-	// Get full timestamp for tooltip
-	const getFullTimestamp = (): string => {
-		const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
-		const date = messageWithTimestamp.timestamp
-			? new Date(messageWithTimestamp.timestamp)
-			: new Date();
-		return date.toLocaleString();
-	};
+  // Get full timestamp for tooltip
+  const getFullTimestamp = (): string => {
+    const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
+    const date = messageWithTimestamp.timestamp
+      ? new Date(messageWithTimestamp.timestamp)
+      : new Date();
+    return date.toLocaleString();
+  };
 
-	// Separate blocks by type - tool use and thinking blocks get full width, text blocks are constrained
-	const textBlocks = apiMessage.content.filter((block: ContentBlock) => isTextBlock(block));
-	const toolBlocks = apiMessage.content.filter((block: ContentBlock) => isToolUseBlock(block));
-	const thinkingBlocks = apiMessage.content.filter((block: ContentBlock) => isThinkingBlock(block));
+  // Separate blocks by type - tool use and thinking blocks get full width, text blocks are constrained
+  const textBlocks = apiMessage.content.filter((block: ContentBlock) =>
+    isTextBlock(block),
+  );
+  const toolBlocks = apiMessage.content.filter((block: ContentBlock) =>
+    isToolUseBlock(block),
+  );
+  const thinkingBlocks = apiMessage.content.filter((block: ContentBlock) =>
+    isThinkingBlock(block),
+  );
 
-	// Get message metadata for E2E tests
-	const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
+  // Get message metadata for E2E tests
+  const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
 
-	return (
-		<div
-			class="py-2 space-y-3"
-			data-testid="assistant-message"
-			data-message-role="assistant"
-			data-message-uuid={message.uuid}
-			data-message-timestamp={messageWithTimestamp.timestamp || 0}
-		>
-			{/* Tool use blocks - full width like result messages */}
-			{toolBlocks.map((block: Extract<ContentBlock, { type: 'tool_use' }>, idx: number) => {
-				const toolResult = toolResultsMap?.get(block.id);
-				const nestedMessages = subagentMessagesMap?.get(block.id) || [];
-				return (
-					<ToolUseBlock
-						key={`tool-${idx}`}
-						block={block}
-						toolResult={toolResult}
-						nestedMessages={nestedMessages}
-						toolResultsMap={toolResultsMap}
-						sessionId={sessionId}
-						resolvedQuestions={resolvedQuestions}
-						pendingQuestion={pendingQuestion}
-						onQuestionResolved={onQuestionResolved}
-					/>
-				);
-			})}
+  return (
+    <div
+      class="py-2 space-y-3"
+      data-testid="assistant-message"
+      data-message-role="assistant"
+      data-message-uuid={message.uuid}
+      data-message-timestamp={messageWithTimestamp.timestamp || 0}
+    >
+      {/* Tool use blocks - full width like result messages */}
+      {toolBlocks.map(
+        (block: Extract<ContentBlock, { type: "tool_use" }>, idx: number) => {
+          const toolResult = toolResultsMap?.get(block.id);
+          const nestedMessages = subagentMessagesMap?.get(block.id) || [];
+          return (
+            <ToolUseBlock
+              key={`tool-${idx}`}
+              block={block}
+              toolResult={toolResult}
+              nestedMessages={nestedMessages}
+              toolResultsMap={toolResultsMap}
+              sessionId={sessionId}
+              resolvedQuestions={resolvedQuestions}
+              pendingQuestion={pendingQuestion}
+              onQuestionResolved={onQuestionResolved}
+            />
+          );
+        },
+      )}
 
-			{/* Thinking blocks - visible by default with expand/collapse for long content */}
-			{thinkingBlocks.map((block: Extract<ContentBlock, { type: 'thinking' }>, idx: number) => (
-				<ThinkingBlock key={`thinking-${idx}`} content={block.thinking} />
-			))}
+      {/* Thinking blocks - visible by default with expand/collapse for long content */}
+      {thinkingBlocks.map(
+        (block: Extract<ContentBlock, { type: "thinking" }>, idx: number) => (
+          <ThinkingBlock key={`thinking-${idx}`} content={block.thinking} />
+        ),
+      )}
 
-			{/* Text blocks - full width like tool results */}
-			{textBlocks.length > 0 && (
-				<div class="w-full">
-					<div
-						class={cn(
-							hasError
-								? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
-								: messageColors.assistant.background,
-							borderRadius.message.bubble,
-							messageSpacing.assistant.bubble.combined,
-							'space-y-3'
-						)}
-					>
-						{hasError && (
-							<div class="flex items-center gap-2 text-red-700 dark:text-red-400 text-sm font-medium">
-								<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-									/>
-								</svg>
-								<span>API Error</span>
-							</div>
-						)}
-						{textBlocks.map((block: Extract<ContentBlock, { type: 'text' }>, idx: number) => (
-							<div
-								key={idx}
-								class={hasError ? 'text-red-900 dark:text-red-100' : messageColors.assistant.text}
-							>
-								<MarkdownRenderer
-									content={block.text}
-									class="dark:prose-invert prose-pre:bg-gray-900 prose-pre:text-gray-100"
-								/>
-							</div>
-						))}
+      {/* Text blocks - full width like tool results */}
+      {textBlocks.length > 0 && (
+        <div class="w-full">
+          <div
+            class={cn(
+              hasError
+                ? "bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800"
+                : messageColors.assistant.background,
+              borderRadius.message.bubble,
+              messageSpacing.assistant.bubble.combined,
+              "space-y-3",
+            )}
+          >
+            {hasError && (
+              <div class="flex items-center gap-2 text-red-700 dark:text-red-400 text-sm font-medium">
+                <svg
+                  class="w-5 h-5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width={2}
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                  />
+                </svg>
+                <span>API Error</span>
+              </div>
+            )}
+            {textBlocks.map(
+              (block: Extract<ContentBlock, { type: "text" }>, idx: number) => (
+                <div
+                  key={idx}
+                  class={
+                    hasError
+                      ? "text-red-900 dark:text-red-100"
+                      : messageColors.assistant.text
+                  }
+                >
+                  <MarkdownRenderer
+                    content={block.text}
+                    class="dark:prose-invert prose-pre:bg-gray-900 prose-pre:text-gray-100"
+                  />
+                </div>
+              ),
+            )}
 
-						{/* Parent tool use indicator (for sub-agent messages) */}
-						{message.parent_tool_use_id && (
-							<div class="text-xs text-gray-500 dark:text-gray-400 italic">
-								Sub-agent response (parent: {message.parent_tool_use_id.slice(0, 8)}...)
-							</div>
-						)}
-					</div>
+            {/* Parent tool use indicator (for sub-agent messages) */}
+            {message.parent_tool_use_id && (
+              <div class="text-xs text-gray-500 dark:text-gray-400 italic">
+                Sub-agent response (parent:{" "}
+                {message.parent_tool_use_id.slice(0, 8)}...)
+              </div>
+            )}
+          </div>
 
-					{/* Actions and timestamp - bottom left */}
-					<div
-						class={cn(
-							'flex items-center',
-							messageSpacing.actions.gap,
-							messageSpacing.actions.marginTop,
-							messageSpacing.actions.padding
-						)}
-					>
-						<Tooltip content={getFullTimestamp()} position="right">
-							<span class="text-xs text-gray-500">{getTimestamp()}</span>
-						</Tooltip>
+          {/* Actions and timestamp - bottom left */}
+          <div
+            class={cn(
+              "flex items-center",
+              messageSpacing.actions.gap,
+              messageSpacing.actions.marginTop,
+              messageSpacing.actions.padding,
+            )}
+          >
+            <Tooltip content={getFullTimestamp()} position="right">
+              <span class="text-xs text-gray-500">{getTimestamp()}</span>
+            </Tooltip>
 
-						<IconButton size="md" onClick={handleCopy} title="Copy message">
-							<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
-									d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-								/>
-							</svg>
-						</IconButton>
-					</div>
-				</div>
-			)}
-		</div>
-	);
+            <IconButton size="md" onClick={handleCopy} title="Copy message">
+              <svg
+                class="w-5 h-5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width={2}
+                  d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                />
+              </svg>
+            </IconButton>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -224,159 +259,173 @@ export function SDKAssistantMessage({
  * Renders QuestionPrompt inline for AskUserQuestion tool
  */
 function ToolUseBlock({
-	block,
-	toolResult,
-	nestedMessages,
-	toolResultsMap,
-	sessionId: propSessionId,
-	resolvedQuestions,
-	pendingQuestion,
-	onQuestionResolved,
+  block,
+  toolResult,
+  nestedMessages,
+  toolResultsMap,
+  sessionId: propSessionId,
+  resolvedQuestions,
+  pendingQuestion,
+  onQuestionResolved,
 }: {
-	block: Extract<ContentBlock, { type: 'tool_use' }>;
-	toolResult?: unknown;
-	nestedMessages?: SDKMessage[];
-	toolResultsMap?: Map<string, unknown>;
-	sessionId?: string;
-	resolvedQuestions?: Map<string, ResolvedQuestion>;
-	pendingQuestion?: PendingUserQuestion | null;
-	onQuestionResolved?: (
-		state: 'submitted' | 'cancelled',
-		responses: QuestionDraftResponse[]
-	) => void;
+  block: Extract<ContentBlock, { type: "tool_use" }>;
+  toolResult?: unknown;
+  nestedMessages?: SDKMessage[];
+  toolResultsMap?: Map<string, unknown>;
+  sessionId?: string;
+  resolvedQuestions?: Map<string, ResolvedQuestion>;
+  pendingQuestion?: PendingUserQuestion | null;
+  onQuestionResolved?: (
+    state: "submitted" | "cancelled",
+    responses: QuestionDraftResponse[],
+  ) => void;
 }) {
-	// Extract content and metadata from enhanced toolResult structure
-	const resultData = toolResult as
-		| { content: unknown; messageUuid?: string; sessionId?: string; isOutputRemoved?: boolean }
-		| undefined;
-	const content = resultData?.content;
-	const messageUuid = resultData?.messageUuid;
-	const sessionId = resultData?.sessionId || propSessionId;
-	const isOutputRemoved = resultData?.isOutputRemoved || false;
+  // Extract content and metadata from enhanced toolResult structure
+  const resultData = toolResult as
+    | {
+        content: unknown;
+        messageUuid?: string;
+        sessionId?: string;
+        isOutputRemoved?: boolean;
+      }
+    | undefined;
+  const content = resultData?.content;
+  const messageUuid = resultData?.messageUuid;
+  const sessionId = resultData?.sessionId || propSessionId;
+  const isOutputRemoved = resultData?.isOutputRemoved || false;
 
-	// Use SubagentBlock for Task tool (no delete button)
-	if (block.name === 'Task') {
-		return (
-			<SubagentBlock
-				input={block.input as unknown as AgentInput}
-				output={content}
-				isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
-				toolId={block.id}
-				nestedMessages={nestedMessages}
-				toolResultsMap={toolResultsMap}
-			/>
-		);
-	}
+  // Use SubagentBlock for Task tool (no delete button)
+  if (block.name === "Task") {
+    return (
+      <SubagentBlock
+        input={block.input as unknown as AgentInput}
+        output={content}
+        isError={
+          ((content as Record<string, unknown>)?.is_error as boolean) || false
+        }
+        toolId={block.id}
+        nestedMessages={nestedMessages}
+        toolResultsMap={toolResultsMap}
+      />
+    );
+  }
 
-	// Handle AskUserQuestion tool - render tool card AND QuestionPrompt inline
-	if (block.name === 'AskUserQuestion' && sessionId) {
-		const toolUseId = block.id;
-		const resolved = resolvedQuestions?.get(toolUseId);
-		const isPending = pendingQuestion?.toolUseId === toolUseId;
+  // Handle AskUserQuestion tool - render tool card AND QuestionPrompt inline
+  if (block.name === "AskUserQuestion" && sessionId) {
+    const toolUseId = block.id;
+    const resolved = resolvedQuestions?.get(toolUseId);
+    const isPending = pendingQuestion?.toolUseId === toolUseId;
 
-		// Extract question data from tool input if not available from resolved/pending
-		// This ensures the form is ALWAYS visible, even for old questions
-		const getQuestionData = (): PendingUserQuestion | null => {
-			if (resolved) return resolved.question;
-			if (isPending && pendingQuestion) return pendingQuestion;
+    // Extract question data from tool input if not available from resolved/pending
+    // This ensures the form is ALWAYS visible, even for old questions
+    const getQuestionData = (): PendingUserQuestion | null => {
+      if (resolved) return resolved.question;
+      if (isPending && pendingQuestion) return pendingQuestion;
 
-			// Extract from tool input as fallback
-			const input = block.input as Record<string, unknown>;
-			if (input && typeof input === 'object' && 'questions' in input) {
-				const questions = input.questions as Array<{
-					question: string;
-					header: string;
-					options: Array<{ label: string; description: string }>;
-					multiSelect: boolean;
-				}>;
-				if (Array.isArray(questions)) {
-					return {
-						toolUseId,
-						questions: questions.map((q) => ({
-							question: q.question,
-							header: q.header,
-							options: q.options,
-							multiSelect: q.multiSelect,
-						})),
-						askedAt: Date.now(),
-					};
-				}
-			}
-			return null;
-		};
+      // Extract from tool input as fallback
+      const input = block.input as Record<string, unknown>;
+      if (input && typeof input === "object" && "questions" in input) {
+        const questions = input.questions as Array<{
+          question: string;
+          header: string;
+          options: Array<{ label: string; description: string }>;
+          multiSelect: boolean;
+        }>;
+        if (Array.isArray(questions)) {
+          return {
+            toolUseId,
+            questions: questions.map((q) => ({
+              question: q.question,
+              header: q.header,
+              options: q.options,
+              multiSelect: q.multiSelect,
+            })),
+            askedAt: Date.now(),
+          };
+        }
+      }
+      return null;
+    };
 
-		const questionData = getQuestionData();
-		if (!questionData) {
-			// Should never happen, but fail gracefully
-			return (
-				<div>
-					<ToolResultCard
-						toolName={block.name}
-						toolId={block.id}
-						input={block.input}
-						output={content}
-						isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
-						variant="default"
-						messageUuid={messageUuid}
-						sessionId={sessionId}
-						isOutputRemoved={isOutputRemoved}
-					/>
-				</div>
-			);
-		}
+    const questionData = getQuestionData();
+    if (!questionData) {
+      // Should never happen, but fail gracefully
+      return (
+        <div>
+          <ToolResultCard
+            toolName={block.name}
+            toolId={block.id}
+            input={block.input}
+            output={content}
+            isError={
+              ((content as Record<string, unknown>)?.is_error as boolean) ||
+              false
+            }
+            variant="default"
+            messageUuid={messageUuid}
+            sessionId={sessionId}
+            isOutputRemoved={isOutputRemoved}
+          />
+        </div>
+      );
+    }
 
-		return (
-			<div>
-				<ToolResultCard
-					toolName={block.name}
-					toolId={block.id}
-					input={block.input}
-					output={content}
-					isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
-					variant="default"
-					messageUuid={messageUuid}
-					sessionId={sessionId}
-					isOutputRemoved={isOutputRemoved}
-				/>
-				{/* Render QuestionPrompt inline - ALWAYS show the form */}
-				{resolved ? (
-					<QuestionPrompt
-						sessionId={sessionId}
-						pendingQuestion={resolved.question}
-						resolvedState={resolved.state}
-						finalResponses={resolved.responses}
-					/>
-				) : isPending ? (
-					<QuestionPrompt
-						sessionId={sessionId}
-						pendingQuestion={pendingQuestion!}
-						onResolved={onQuestionResolved}
-					/>
-				) : (
-					<QuestionPrompt
-						sessionId={sessionId}
-						pendingQuestion={questionData}
-						resolvedState={'cancelled'}
-						finalResponses={[]}
-					/>
-				)}
-			</div>
-		);
-	}
+    return (
+      <div>
+        <ToolResultCard
+          toolName={block.name}
+          toolId={block.id}
+          input={block.input}
+          output={content}
+          isError={
+            ((content as Record<string, unknown>)?.is_error as boolean) || false
+          }
+          variant="default"
+          messageUuid={messageUuid}
+          sessionId={sessionId}
+          isOutputRemoved={isOutputRemoved}
+        />
+        {/* Render QuestionPrompt inline - ALWAYS show the form */}
+        {resolved ? (
+          <QuestionPrompt
+            sessionId={sessionId}
+            pendingQuestion={resolved.question}
+            resolvedState={resolved.state}
+            finalResponses={resolved.responses}
+          />
+        ) : isPending ? (
+          <QuestionPrompt
+            sessionId={sessionId}
+            pendingQuestion={pendingQuestion!}
+            onResolved={onQuestionResolved}
+          />
+        ) : (
+          <QuestionPrompt
+            sessionId={sessionId}
+            pendingQuestion={questionData}
+            resolvedState={"cancelled"}
+            finalResponses={[]}
+          />
+        )}
+      </div>
+    );
+  }
 
-	return (
-		<ToolResultCard
-			toolName={block.name}
-			toolId={block.id}
-			input={block.input}
-			output={content}
-			isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
-			variant="default"
-			messageUuid={messageUuid}
-			sessionId={sessionId}
-			isOutputRemoved={isOutputRemoved}
-		/>
-	);
+  return (
+    <ToolResultCard
+      toolName={block.name}
+      toolId={block.id}
+      input={block.input}
+      output={content}
+      isError={
+        ((content as Record<string, unknown>)?.is_error as boolean) || false
+      }
+      variant="default"
+      messageUuid={messageUuid}
+      sessionId={sessionId}
+      isOutputRemoved={isOutputRemoved}
+    />
+  );
 }
 
 // ============================================================================

@@ -61,36 +61,36 @@ Tests the complete model switching flow from RPC handlers through to the Claude 
 ### Basic Model Switching
 
 ```typescript
-const result = await hub.call('session.model.switch', {
-	sessionId,
-	model: 'opus', // Alias
+const result = await hub.call("session.model.switch", {
+  sessionId,
+  model: "opus", // Alias
 });
 
 expect(result.success).toBe(true);
-expect(result.model).toBe('claude-opus-4-5-20251101'); // Resolved
+expect(result.model).toBe("claude-opus-4-5-20251101"); // Resolved
 ```
 
 ### Validation
 
 ```typescript
-const result = await hub.call('session.model.switch', {
-	sessionId,
-	model: 'invalid-model',
+const result = await hub.call("session.model.switch", {
+  sessionId,
+  model: "invalid-model",
 });
 
 expect(result.success).toBe(false);
-expect(result.error).toContain('Invalid model');
+expect(result.error).toContain("Invalid model");
 ```
 
 ### State Preservation
 
 ```typescript
 // Switch model
-await hub.call('session.model.switch', { sessionId, model: 'haiku' });
+await hub.call("session.model.switch", { sessionId, model: "haiku" });
 
 // Verify processing state unchanged
 const state = agentSession.getProcessingState();
-expect(state.status).toBe('idle');
+expect(state.status).toBe("idle");
 
 // Verify metadata preserved
 expect(sessionData.title).toBe(originalTitle);

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       test:
-        description: 'Specific test to run (empty for all)'
+        description: "Specific test to run (empty for all)"
         required: false
         type: string
 
@@ -110,7 +110,7 @@ jobs:
         uses: actions/setup-node@v4
         if: steps.check.outputs.should_run == 'true'
         with:
-          node-version: '22'
+          node-version: "22"
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun

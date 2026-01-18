@@ -1,18 +1,21 @@
 <!doctype html>
 <html lang="en" class="dark">
-	<head>
-		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-		<title>Liuboer - Claude Agent Wrapper</title>
-		<script>
-			// Prevent errors from browser extensions trying to access window.ethereum
-			if (typeof window.ethereum === 'undefined') {
-				window.ethereum = {};
-			}
-		</script>
-	</head>
-	<body>
-		<div id="root"></div>
-		<script type="module" src="./client.tsx"></script>
-	</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <title>Liuboer - Claude Agent Wrapper</title>
+    <script>
+      // Prevent errors from browser extensions trying to access window.ethereum
+      if (typeof window.ethereum === "undefined") {
+        window.ethereum = {};
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./client.tsx"></script>
+  </body>
 </html>

@@ -11,302 +11,347 @@
  * and branch renaming on first message.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { createDaemonHub, type DaemonHub } from '../../../../src/lib/daemon-hub';
-import { Database } from '../../../../src/storage/database';
-import { SessionManager } from '../../../../src/lib/session-manager';
-import { SettingsManager } from '../../../../src/lib/settings-manager';
-import { AuthManager } from '../../../../src/lib/auth-manager';
-import { MessageHub } from '@liuboer/shared';
-import { getConfig } from '../../../../src/config';
-import { setModelsCache } from '../../../../src/lib/model-service';
-import { join } from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { mockAgentSessionForOfflineTest } from '../../../test-utils';
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import {
+  createDaemonHub,
+  type DaemonHub,
+} from "../../../../src/lib/daemon-hub";
+import { Database } from "../../../../src/storage/database";
+import { SessionManager } from "../../../../src/lib/session-manager";
+import { SettingsManager } from "../../../../src/lib/settings-manager";
+import { AuthManager } from "../../../../src/lib/auth-manager";
+import { MessageHub } from "@liuboer/shared";
+import { getConfig } from "../../../../src/config";
+import { setModelsCache } from "../../../../src/lib/model-service";
+import { join } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { mockAgentSessionForOfflineTest } from "../../../test-utils";
 
-describe('message.send EventBus Integration', () => {
-	let db: Database;
-	let eventBus: DaemonHub;
-	let sessionManager: SessionManager;
-	let authManager: AuthManager;
-	let settingsManager: SettingsManager;
-	let testWorkspace: string;
+describe("message.send EventBus Integration", () => {
+  let db: Database;
+  let eventBus: DaemonHub;
+  let sessionManager: SessionManager;
+  let authManager: AuthManager;
+  let settingsManager: SettingsManager;
+  let testWorkspace: string;
 
-	beforeEach(async () => {
-		// Set up mock models to prevent background refresh during tests
-		// Matches the format used in test-utils.ts
-		const mockModels = [
-			{
-				value: 'default',
-				displayName: 'Sonnet 4.5',
-				description: 'Sonnet 4.5 · Best for everyday tasks',
-			},
-			{ value: 'opus', displayName: 'Opus 4.5', description: 'Opus 4.5 · Most capable model' },
-			{ value: 'haiku', displayName: 'Haiku 3.5', description: 'Haiku 3.5 · Fast and efficient' },
-		];
-		const mockCache = new Map<string, typeof mockModels>();
-		mockCache.set('global', mockModels);
-		setModelsCache(mockCache as Map<string, never>);
+  beforeEach(async () => {
+    // Set up mock models to prevent background refresh during tests
+    // Matches the format used in test-utils.ts
+    const mockModels = [
+      {
+        value: "default",
+        displayName: "Sonnet 4.5",
+        description: "Sonnet 4.5 · Best for everyday tasks",
+      },
+      {
+        value: "opus",
+        displayName: "Opus 4.5",
+        description: "Opus 4.5 · Most capable model",
+      },
+      {
+        value: "haiku",
+        displayName: "Haiku 3.5",
+        description: "Haiku 3.5 · Fast and efficient",
+      },
+    ];
+    const mockCache = new Map<string, typeof mockModels>();
+    mockCache.set("global", mockModels);
+    setModelsCache(mockCache as Map<string, never>);
 
-		// Create test workspace
-		testWorkspace = mkdtempSync(join(tmpdir(), 'liuboer-test-'));
+    // Create test workspace
+    testWorkspace = mkdtempSync(join(tmpdir(), "liuboer-test-"));
 
-		// Setup database
-		db = new Database(':memory:');
-		await db.initialize();
+    // Setup database
+    db = new Database(":memory:");
+    await db.initialize();
 
-		// Get config
-		const config = getConfig({ workspace: testWorkspace });
+    // Get config
+    const config = getConfig({ workspace: testWorkspace });
 
-		// Setup AuthManager
-		authManager = new AuthManager(db, config);
-		await authManager.initialize();
+    // Setup AuthManager
+    authManager = new AuthManager(db, config);
+    await authManager.initialize();
 
-		// Setup SettingsManager
-		settingsManager = new SettingsManager(db, testWorkspace);
+    // Setup SettingsManager
+    settingsManager = new SettingsManager(db, testWorkspace);
 
-		// Setup DaemonHub
-		eventBus = createDaemonHub('test-hub');
-		await eventBus.initialize();
+    // Setup DaemonHub
+    eventBus = createDaemonHub("test-hub");
+    await eventBus.initialize();
 
-		// Setup MessageHub (minimal for SessionManager constructor)
-		const messageHub = new MessageHub({ defaultSessionId: 'global', debug: false });
+    // Setup MessageHub (minimal for SessionManager constructor)
+    const messageHub = new MessageHub({
+      defaultSessionId: "global",
+      debug: false,
+    });
 
-		// Setup SessionManager with EventBus
-		sessionManager = new SessionManager(db, messageHub, authManager, settingsManager, eventBus, {
-			defaultModel: config.defaultModel,
-			maxTokens: config.maxTokens,
-			temperature: config.temperature,
-			workspaceRoot: testWorkspace,
-			disableWorktrees: true, // Disable worktrees for faster tests
-		});
-	});
+    // Setup SessionManager with EventBus
+    sessionManager = new SessionManager(
+      db,
+      messageHub,
+      authManager,
+      settingsManager,
+      eventBus,
+      {
+        defaultModel: config.defaultModel,
+        maxTokens: config.maxTokens,
+        temperature: config.temperature,
+        workspaceRoot: testWorkspace,
+        disableWorktrees: true, // Disable worktrees for faster tests
+      },
+    );
+  });
 
-	afterEach(async () => {
-		// Cleanup session resources
-		await sessionManager.cleanup();
+  afterEach(async () => {
+    // Cleanup session resources
+    await sessionManager.cleanup();
 
-		// Wait for async operations to complete
-		// No SDK queries are created in this offline test, so minimal wait needed
-		await new Promise((resolve) => setTimeout(resolve, 100));
+    // Wait for async operations to complete
+    // No SDK queries are created in this offline test, so minimal wait needed
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
-		// Now safe to close database
-		db.close();
-		await eventBus.close();
+    // Now safe to close database
+    db.close();
+    await eventBus.close();
 
-		// Remove test workspace
-		try {
-			rmSync(testWorkspace, { recursive: true, force: true });
-		} catch {
-			// Ignore cleanup errors
-		}
-	});
+    // Remove test workspace
+    try {
+      rmSync(testWorkspace, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+  });
 
-	test('SessionManager subscribes to message.persisted event', async () => {
-		// Create a session to test with
-		const sessionId = await sessionManager.createSession({
-			workspacePath: testWorkspace,
-		});
+  test("SessionManager subscribes to message.persisted event", async () => {
+    // Create a session to test with
+    const sessionId = await sessionManager.createSession({
+      workspacePath: testWorkspace,
+    });
 
-		// Mock AgentSession to prevent SDK query creation in offline test
-		const agentSession = mockAgentSessionForOfflineTest(sessionManager, sessionId);
+    // Mock AgentSession to prevent SDK query creation in offline test
+    const agentSession = mockAgentSessionForOfflineTest(
+      sessionManager,
+      sessionId,
+    );
 
-		// Verify the handler works by emitting an event with hasDraftToClear
-		// If the handler is registered, it should process the event and clear the draft
-		await sessionManager.updateSession(sessionId, {
-			metadata: { inputDraft: 'verify-handler', workspaceInitialized: true },
-		} as Partial<import('@liuboer/shared').Session>);
+    // Verify the handler works by emitting an event with hasDraftToClear
+    // If the handler is registered, it should process the event and clear the draft
+    await sessionManager.updateSession(sessionId, {
+      metadata: { inputDraft: "verify-handler", workspaceInitialized: true },
+    } as Partial<import("@liuboer/shared").Session>);
 
-		await eventBus.emit('message.persisted', {
-			sessionId,
-			messageId: 'handler-test',
-			messageContent: 'Test',
-			userMessageText: 'Test',
-			needsWorkspaceInit: false,
-			hasDraftToClear: true,
-		});
+    await eventBus.emit("message.persisted", {
+      sessionId,
+      messageId: "handler-test",
+      messageContent: "Test",
+      userMessageText: "Test",
+      needsWorkspaceInit: false,
+      hasDraftToClear: true,
+    });
 
-		// Wait for handler to process
-		await new Promise((resolve) => setTimeout(resolve, 100));
+    // Wait for handler to process
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
-		// Verify handler ran by checking draft was cleared
-		const session = agentSession!.getSessionData();
-		expect(session.metadata.inputDraft).toBeUndefined();
-	});
+    // Verify handler ran by checking draft was cleared
+    const session = agentSession!.getSessionData();
+    expect(session.metadata.inputDraft).toBeUndefined();
+  });
 
-	test('message.persisted event triggers title generation', async () => {
-		const sessionId = await sessionManager.createSession({
-			workspacePath: testWorkspace,
-		});
+  test("message.persisted event triggers title generation", async () => {
+    const sessionId = await sessionManager.createSession({
+      workspacePath: testWorkspace,
+    });
 
-		// Mock AgentSession to prevent SDK query creation in offline test
-		const agentSession = mockAgentSessionForOfflineTest(sessionManager, sessionId);
-		expect(agentSession).toBeDefined();
+    // Mock AgentSession to prevent SDK query creation in offline test
+    const agentSession = mockAgentSessionForOfflineTest(
+      sessionManager,
+      sessionId,
+    );
+    expect(agentSession).toBeDefined();
 
-		let session = agentSession!.getSessionData();
+    let session = agentSession!.getSessionData();
 
-		// Workspace is now initialized from session creation
-		expect(session.metadata.workspaceInitialized).toBe(true);
-		// But title is not yet generated
-		expect(session.metadata.titleGenerated).toBe(false);
+    // Workspace is now initialized from session creation
+    expect(session.metadata.workspaceInitialized).toBe(true);
+    // But title is not yet generated
+    expect(session.metadata.titleGenerated).toBe(false);
 
-		// Mock generateTitleAndRenameBranch to avoid real SDK API call
-		const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
-		const originalGenerateTitle = lifecycle.generateTitleAndRenameBranch;
-		lifecycle.generateTitleAndRenameBranch = async (
-			_sessionId: string,
-			_userMessageText: string
-		) => {
-			// Simulate title generation without calling SDK
-			await sessionManager.updateSession(_sessionId, {
-				title: 'Test message for tit',
-				metadata: { titleGenerated: true },
-			} as Partial<import('@liuboer/shared').Session>);
-			return { title: 'Test message for tit', isFallback: false };
-		};
+    // Mock generateTitleAndRenameBranch to avoid real SDK API call
+    const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<
+      string,
+      unknown
+    >;
+    const originalGenerateTitle = lifecycle.generateTitleAndRenameBranch;
+    lifecycle.generateTitleAndRenameBranch = async (
+      _sessionId: string,
+      _userMessageText: string,
+    ) => {
+      // Simulate title generation without calling SDK
+      await sessionManager.updateSession(_sessionId, {
+        title: "Test message for tit",
+        metadata: { titleGenerated: true },
+      } as Partial<import("@liuboer/shared").Session>);
+      return { title: "Test message for tit", isFallback: false };
+    };
 
-		// Emit the event directly (simulating what RPC handler does)
-		await eventBus.emit('message.persisted', {
-			sessionId,
-			messageId: 'test-msg-1',
-			messageContent: 'Test message for title',
-			userMessageText: 'Test message for title',
-			needsWorkspaceInit: true,
-			hasDraftToClear: false,
-		});
+    // Emit the event directly (simulating what RPC handler does)
+    await eventBus.emit("message.persisted", {
+      sessionId,
+      messageId: "test-msg-1",
+      messageContent: "Test message for title",
+      userMessageText: "Test message for title",
+      needsWorkspaceInit: true,
+      hasDraftToClear: false,
+    });
 
-		// Wait for async processing
-		await new Promise((resolve) => setTimeout(resolve, 200));
+    // Wait for async processing
+    await new Promise((resolve) => setTimeout(resolve, 200));
 
-		// Get updated session
-		session = agentSession!.getSessionData();
+    // Get updated session
+    session = agentSession!.getSessionData();
 
-		// Restore original method
-		lifecycle.generateTitleAndRenameBranch = originalGenerateTitle;
+    // Restore original method
+    lifecycle.generateTitleAndRenameBranch = originalGenerateTitle;
 
-		// Verify title was generated
-		expect(session.metadata.titleGenerated).toBe(true);
-		expect(session.title).toBe('Test message for tit');
-	});
+    // Verify title was generated
+    expect(session.metadata.titleGenerated).toBe(true);
+    expect(session.title).toBe("Test message for tit");
+  });
 
-	test('message.persisted event does not regenerate title if already generated', async () => {
-		const sessionId = await sessionManager.createSession({
-			workspacePath: testWorkspace,
-		});
+  test("message.persisted event does not regenerate title if already generated", async () => {
+    const sessionId = await sessionManager.createSession({
+      workspacePath: testWorkspace,
+    });
 
-		// Mock AgentSession to prevent SDK query creation in offline test
-		const agentSession = mockAgentSessionForOfflineTest(sessionManager, sessionId);
-		expect(agentSession).toBeDefined();
+    // Mock AgentSession to prevent SDK query creation in offline test
+    const agentSession = mockAgentSessionForOfflineTest(
+      sessionManager,
+      sessionId,
+    );
+    expect(agentSession).toBeDefined();
 
-		// Mock title generation to avoid real SDK API call
-		const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<string, unknown>;
-		const originalGenerateTitle = lifecycle.generateTitleAndRenameBranch;
-		lifecycle.generateTitleAndRenameBranch = async (
-			_sessionId: string,
-			_userMessageText: string
-		) => {
-			// Simulate title generation without calling SDK
-			await sessionManager.updateSession(_sessionId, {
-				title: 'First message',
-				metadata: { titleGenerated: true },
-			} as Partial<import('@liuboer/shared').Session>);
-			return { title: 'First message', isFallback: false };
-		};
+    // Mock title generation to avoid real SDK API call
+    const lifecycle = sessionManager.getSessionLifecycle() as unknown as Record<
+      string,
+      unknown
+    >;
+    const originalGenerateTitle = lifecycle.generateTitleAndRenameBranch;
+    lifecycle.generateTitleAndRenameBranch = async (
+      _sessionId: string,
+      _userMessageText: string,
+    ) => {
+      // Simulate title generation without calling SDK
+      await sessionManager.updateSession(_sessionId, {
+        title: "First message",
+        metadata: { titleGenerated: true },
+      } as Partial<import("@liuboer/shared").Session>);
+      return { title: "First message", isFallback: false };
+    };
 
-		// Generate title first (using mocked method)
-		await sessionManager.generateTitleAndRenameBranch(sessionId, 'First message');
+    // Generate title first (using mocked method)
+    await sessionManager.generateTitleAndRenameBranch(
+      sessionId,
+      "First message",
+    );
 
-		const session = agentSession!.getSessionData();
+    const session = agentSession!.getSessionData();
 
-		// Verify title is generated
-		expect(session.metadata.titleGenerated).toBe(true);
-		const originalTitle = session.title;
+    // Verify title is generated
+    expect(session.metadata.titleGenerated).toBe(true);
+    const originalTitle = session.title;
 
-		// Emit event with needsWorkspaceInit=false (title already generated)
-		await eventBus.emit('message.persisted', {
-			sessionId,
-			messageId: 'test-msg-2',
-			messageContent: 'Second message',
-			userMessageText: 'Second message',
-			needsWorkspaceInit: false,
-			hasDraftToClear: false,
-		});
+    // Emit event with needsWorkspaceInit=false (title already generated)
+    await eventBus.emit("message.persisted", {
+      sessionId,
+      messageId: "test-msg-2",
+      messageContent: "Second message",
+      userMessageText: "Second message",
+      needsWorkspaceInit: false,
+      hasDraftToClear: false,
+    });
 
-		// Should complete quickly without re-generating title
-		await new Promise((resolve) => setTimeout(resolve, 100));
+    // Should complete quickly without re-generating title
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
-		// Title should remain the same
-		const updatedSession = agentSession!.getSessionData();
-		expect(updatedSession.metadata.titleGenerated).toBe(true);
-		expect(updatedSession.title).toBe(originalTitle);
+    // Title should remain the same
+    const updatedSession = agentSession!.getSessionData();
+    expect(updatedSession.metadata.titleGenerated).toBe(true);
+    expect(updatedSession.title).toBe(originalTitle);
 
-		// Restore original method
-		lifecycle.generateTitleAndRenameBranch = originalGenerateTitle;
-	});
+    // Restore original method
+    lifecycle.generateTitleAndRenameBranch = originalGenerateTitle;
+  });
 
-	test('EventBus subscriber handles draft clearing', async () => {
-		const sessionId = await sessionManager.createSession({
-			workspacePath: testWorkspace,
-		});
+  test("EventBus subscriber handles draft clearing", async () => {
+    const sessionId = await sessionManager.createSession({
+      workspacePath: testWorkspace,
+    });
 
-		// Mock AgentSession to prevent SDK query creation in offline test
-		const agentSession = mockAgentSessionForOfflineTest(sessionManager, sessionId);
-		expect(agentSession).toBeDefined();
+    // Mock AgentSession to prevent SDK query creation in offline test
+    const agentSession = mockAgentSessionForOfflineTest(
+      sessionManager,
+      sessionId,
+    );
+    expect(agentSession).toBeDefined();
 
-		// Set a draft
-		await sessionManager.updateSession(sessionId, {
-			metadata: { inputDraft: 'Test draft', workspaceInitialized: true },
-		} as Partial<import('@liuboer/shared').Session>);
+    // Set a draft
+    await sessionManager.updateSession(sessionId, {
+      metadata: { inputDraft: "Test draft", workspaceInitialized: true },
+    } as Partial<import("@liuboer/shared").Session>);
 
-		let session = agentSession!.getSessionData();
-		expect(session.metadata.inputDraft).toBe('Test draft');
+    let session = agentSession!.getSessionData();
+    expect(session.metadata.inputDraft).toBe("Test draft");
 
-		// Emit event with hasDraftToClear=true
-		await eventBus.emit('message.persisted', {
-			sessionId,
-			messageId: 'test-msg-3',
-			messageContent: 'Test draft',
-			userMessageText: 'Test draft',
-			needsWorkspaceInit: false,
-			hasDraftToClear: true,
-		});
+    // Emit event with hasDraftToClear=true
+    await eventBus.emit("message.persisted", {
+      sessionId,
+      messageId: "test-msg-3",
+      messageContent: "Test draft",
+      userMessageText: "Test draft",
+      needsWorkspaceInit: false,
+      hasDraftToClear: true,
+    });
 
-		// Wait for async processing
-		await new Promise((resolve) => setTimeout(resolve, 200));
+    // Wait for async processing
+    await new Promise((resolve) => setTimeout(resolve, 200));
 
-		// Get fresh session data
-		session = agentSession!.getSessionData();
+    // Get fresh session data
+    session = agentSession!.getSessionData();
 
-		// Draft should be cleared
-		expect(session.metadata.inputDraft).toBeUndefined();
-	});
+    // Draft should be cleared
+    expect(session.metadata.inputDraft).toBeUndefined();
+  });
 
-	test('EventBus subscriber handles errors gracefully', async () => {
-		const sessionId = await sessionManager.createSession({
-			workspacePath: testWorkspace,
-		});
+  test("EventBus subscriber handles errors gracefully", async () => {
+    const sessionId = await sessionManager.createSession({
+      workspacePath: testWorkspace,
+    });
 
-		// Mock AgentSession to prevent SDK query creation in offline test
-		const agentSession = mockAgentSessionForOfflineTest(sessionManager, sessionId);
-		expect(agentSession).toBeDefined();
+    // Mock AgentSession to prevent SDK query creation in offline test
+    const agentSession = mockAgentSessionForOfflineTest(
+      sessionManager,
+      sessionId,
+    );
+    expect(agentSession).toBeDefined();
 
-		// Emit event with invalid session ID (should not throw)
-		// DaemonHub subscriber logs error but doesn't throw
-		await eventBus.emit('message.persisted', {
-			sessionId: 'non-existent-session',
-			messageId: 'test-msg-4',
-			messageContent: 'Test',
-			userMessageText: 'Test',
-			needsWorkspaceInit: false,
-			hasDraftToClear: false,
-		});
+    // Emit event with invalid session ID (should not throw)
+    // DaemonHub subscriber logs error but doesn't throw
+    await eventBus.emit("message.persisted", {
+      sessionId: "non-existent-session",
+      messageId: "test-msg-4",
+      messageContent: "Test",
+      userMessageText: "Test",
+      needsWorkspaceInit: false,
+      hasDraftToClear: false,
+    });
 
-		// Wait for processing
-		await new Promise((resolve) => setTimeout(resolve, 100));
+    // Wait for processing
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
-		// Original session should be unaffected (title not generated yet)
-		const session = agentSession!.getSessionData();
-		expect(session.metadata.titleGenerated).toBe(false);
-	});
+    // Original session should be unaffected (title not generated yet)
+    const session = agentSession!.getSessionData();
+    expect(session.metadata.titleGenerated).toBe(false);
+  });
 });

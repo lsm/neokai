@@ -21,8 +21,16 @@
  * - This makes tests provider-agnostic and easy to switch
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import 'dotenv/config';
+import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import "dotenv/config";
+import type { DaemonServerContext } from "../../helpers/daemon-server-helper";
+import { spawnDaemonServer } from "../../helpers/daemon-server-helper";
+import {
+  sendMessage,
+  waitForIdle,
+  getProcessingState,
+  getSession,
+} from "../../helpers/daemon-test-helpers";
 
 // Check for GLM credentials
 const GLM_API_KEY = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
@@ -30,217 +38,227 @@ const GLM_API_KEY = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
 // Set up GLM provider environment if GLM_API_KEY is available
 // This makes 'haiku' model automatically map to glm-4.5-air
 if (GLM_API_KEY) {
-	process.env.ANTHROPIC_AUTH_TOKEN = GLM_API_KEY;
-	process.env.ANTHROPIC_BASE_URL = 'https://open.bigmodel.cn/api/anthropic';
-	process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.5-air';
-	process.env.API_TIMEOUT_MS = '3000000';
+  process.env.ANTHROPIC_AUTH_TOKEN = GLM_API_KEY;
+  process.env.ANTHROPIC_BASE_URL = "https://open.bigmodel.cn/api/anthropic";
+  process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = "glm-4.5-air";
+  process.env.API_TIMEOUT_MS = "3000000";
 }
-import type { TestContext } from '../../../test-utils';
-import { createTestApp } from '../../../test-utils';
-import { sendMessageSync } from '../../../helpers/test-message-sender';
-import { waitForIdle } from '../../../helpers/test-wait-for-idle';
+
+// Use temp directory for test workspaces
+const TMP_DIR = process.env.TMPDIR || "/tmp";
 
 // Tests will FAIL if GLM credentials are not available
-describe('Auto-Title Generation', () => {
-	let ctx: TestContext;
+describe("Auto-Title Generation", () => {
+  let daemon: DaemonServerContext;
 
-	beforeEach(async () => {
-		// Restore mocks to ensure we use the real SDK
-		mock.restore();
-		ctx = await createTestApp();
-	});
+  beforeEach(async () => {
+    // Restore mocks to ensure we use the real SDK
+    mock.restore();
+    daemon = await spawnDaemonServer();
+  });
 
-	afterEach(async () => {
-		await ctx.cleanup();
-	});
+  afterEach(async () => {
+    if (daemon) {
+      daemon.kill("SIGTERM");
+      await daemon.waitForExit();
+    }
+  });
 
-	/**
-	 * Helper: Wait for title generation to complete
-	 * Title generation now happens in PARALLEL with SDK query (fire-and-forget)
-	 * We need to poll until titleGenerated is true or timeout
-	 */
-	async function waitForTitleGeneration(
-		agentSession: NonNullable<Awaited<ReturnType<typeof ctx.sessionManager.getSessionAsync>>>,
-		timeoutMs = 20000
-	): Promise<void> {
-		// First wait for agent to be idle
-		await waitForIdle(agentSession, timeoutMs);
+  /**
+   * Helper: Wait for title generation to complete
+   * Title generation now happens in PARALLEL with SDK query (fire-and-forget)
+   * We need to poll until titleGenerated is true or timeout
+   */
+  async function waitForTitleGeneration(
+    sessionId: string,
+    timeoutMs = 20000,
+  ): Promise<void> {
+    // First wait for agent to be idle
+    await waitForIdle(daemon, sessionId, timeoutMs);
 
-		// Then poll for title generation (runs in parallel, may take longer)
-		const startTime = Date.now();
-		while (Date.now() - startTime < timeoutMs) {
-			const sessionData = agentSession.getSessionData();
-			if (sessionData.metadata.titleGenerated) {
-				return; // Title generated successfully
-			}
-			await Bun.sleep(100);
-		}
+    // Then poll for title generation (runs in parallel, may take longer)
+    const startTime = Date.now();
+    while (Date.now() - startTime < timeoutMs) {
+      const session = await getSession(daemon, sessionId);
+      const metadata = session.metadata as
+        | { titleGenerated?: boolean }
+        | undefined;
+      if (metadata?.titleGenerated) {
+        return; // Title generated successfully
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
 
-		// Check if we timed out
-		const sessionData = agentSession.getSessionData();
-		if (!sessionData.metadata.titleGenerated && sessionData.title === 'New Session') {
-			console.warn('Title not generated after timeout');
-		}
-	}
+    // Check if we timed out
+    const session = await getSession(daemon, sessionId);
+    const metadata = session.metadata as
+      | { titleGenerated?: boolean }
+      | undefined;
+    const title = session.title as string;
+    if (!metadata?.titleGenerated && title === "New Session") {
+      console.warn("Title not generated after timeout");
+    }
+  }
 
-	test('should auto-generate title after first user message', async () => {
-		// Create session with workspace path
-		const sessionId = await ctx.sessionManager.createSession({
-			workspacePath: ctx.config.workspaceRoot,
-			config: { model: 'haiku' }, // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
-		});
+  test("should auto-generate title after first user message", async () => {
+    const workspacePath = `${TMP_DIR}/auto-title-test-${Date.now()}`;
 
-		const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-		expect(agentSession).toBeDefined();
+    // Create session with workspace path
+    const createResult = (await daemon.messageHub.call("session.create", {
+      workspacePath,
+      config: { model: "haiku" },
+    })) as { sessionId: string };
 
-		// Get initial session data
-		let sessionData = agentSession!.getSessionData();
-		expect(sessionData.title).toBe('New Session');
-		expect(sessionData.metadata.titleGenerated).toBe(false);
+    const { sessionId } = createResult;
 
-		// Send first message (triggers workspace initialization with title generation)
-		await sendMessageSync(agentSession!, {
-			content: 'What is 2+2?',
-		});
+    // Get initial session data
+    let session = await getSession(daemon, sessionId);
+    expect(session.title).toBe("New Session");
+    expect(
+      (session.metadata as { titleGenerated?: boolean }).titleGenerated,
+    ).toBe(false);
 
-		// Wait for first response (title generated during workspace initialization)
-		await waitForTitleGeneration(agentSession!);
+    // Send first message (triggers workspace initialization with title generation)
+    await sendMessage(daemon, sessionId, "What is 2+2?");
 
-		// Title should be generated now (via background queue)
-		sessionData = agentSession!.getSessionData();
-		expect(sessionData.title).not.toBe('New Session');
-		expect(sessionData.title.length).toBeGreaterThan(0);
-		expect(sessionData.title.length).toBeLessThan(100); // Should be concise
-		expect(sessionData.metadata.titleGenerated).toBe(true);
+    // Wait for first response (title generated during workspace initialization)
+    await waitForTitleGeneration(sessionId);
 
-		// Verify title doesn't have formatting artifacts
-		expect(sessionData.title).not.toMatch(/^["'`]/); // No leading quotes
-		expect(sessionData.title).not.toMatch(/["'`]$/); // No trailing quotes
-		expect(sessionData.title).not.toMatch(/\*\*/); // No bold markdown
-		expect(sessionData.title).not.toMatch(/`/); // No backticks
+    // Title should be generated now (via background queue)
+    session = await getSession(daemon, sessionId);
+    expect(session.title).not.toBe("New Session");
+    expect((session.title as string).length).toBeGreaterThan(0);
+    expect((session.title as string).length).toBeLessThan(100); // Should be concise
+    expect(
+      (session.metadata as { titleGenerated: boolean }).titleGenerated,
+    ).toBe(true);
 
-		console.log(`Generated title: "${sessionData.title}"`);
-	}, 30000); // 30s timeout for the entire test (1 message)
+    // Verify title doesn't have formatting artifacts
+    expect(session.title).not.toMatch(/^["'`]/); // No leading quotes
+    expect(session.title).not.toMatch(/["'`]$/); // No trailing quotes
+    expect(session.title).not.toMatch(/\*\*/); // No bold markdown
+    expect(session.title).not.toMatch(/`/); // No backticks
 
-	test('should only generate title once per session', async () => {
-		// Create session
-		const sessionId = await ctx.sessionManager.createSession({
-			workspacePath: ctx.config.workspaceRoot,
-			config: { model: 'haiku' }, // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
-		});
+    console.log(`Generated title: "${session.title}"`);
+  }, 30000); // 30s timeout for the entire test (1 message)
 
-		const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-		expect(agentSession).toBeDefined();
+  test("should only generate title once per session", async () => {
+    const workspacePath = `${TMP_DIR}/auto-title-test-${Date.now()}`;
 
-		// Send first message
-		await sendMessageSync(agentSession!, {
-			content: 'What is 2+2?',
-		});
+    // Create session
+    const createResult = (await daemon.messageHub.call("session.create", {
+      workspacePath,
+      config: { model: "haiku" },
+    })) as { sessionId: string };
 
-		// Wait for first response (title generated during workspace initialization)
-		await waitForTitleGeneration(agentSession!);
+    const { sessionId } = createResult;
 
-		// Get the generated title
-		let sessionData = agentSession!.getSessionData();
-		const firstTitle = sessionData.title;
-		expect(firstTitle).not.toBe('New Session');
-		expect(sessionData.metadata.titleGenerated).toBe(true);
+    // Send first message
+    await sendMessage(daemon, sessionId, "What is 2+2?");
 
-		// Send second message
-		await sendMessageSync(agentSession!, {
-			content: 'What is 3+3?',
-		});
+    // Wait for first response (title generated during workspace initialization)
+    await waitForTitleGeneration(sessionId);
 
-		// Wait for processing
-		await waitForIdle(agentSession!);
+    // Get the generated title
+    let session = await getSession(daemon, sessionId);
+    const firstTitle = session.title as string;
+    expect(firstTitle).not.toBe("New Session");
+    expect(
+      (session.metadata as { titleGenerated: boolean }).titleGenerated,
+    ).toBe(true);
 
-		// Wait a bit to ensure no title regeneration happens
-		await Bun.sleep(2000);
+    // Send second message
+    await sendMessage(daemon, sessionId, "What is 3+3?");
 
-		// Title should remain the same (not regenerated)
-		let sessionData2 = agentSession!.getSessionData();
-		expect(sessionData2.title).toBe(firstTitle);
+    // Wait for processing
+    await waitForIdle(daemon, sessionId);
 
-		// Send third message
-		await sendMessageSync(agentSession!, {
-			content: 'What is 5+5?',
-		});
+    // Wait a bit to ensure no title regeneration happens
+    await new Promise((resolve) => setTimeout(resolve, 2000));
 
-		// Wait for processing
-		await waitForIdle(agentSession!);
+    // Title should remain the same (not regenerated)
+    session = await getSession(daemon, sessionId);
+    expect(session.title).toBe(firstTitle);
 
-		// Wait a bit to ensure no title regeneration happens
-		await Bun.sleep(2000);
+    // Send third message
+    await sendMessage(daemon, sessionId, "What is 5+5?");
 
-		// Title should still remain the same
-		const thirdTitle = agentSession!.getSessionData().title;
-		expect(thirdTitle).toBe(firstTitle);
-	}, 40000); // 40s timeout (3 messages)
+    // Wait for processing
+    await waitForIdle(daemon, sessionId);
 
-	test('should handle title generation with workspace path correctly', async () => {
-		// This test specifically verifies the workspace path fix
-		// Create session with explicit workspace path
-		const sessionId = await ctx.sessionManager.createSession({
-			workspacePath: ctx.config.workspaceRoot,
-			config: { model: 'haiku' }, // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
-		});
+    // Wait a bit to ensure no title regeneration happens
+    await new Promise((resolve) => setTimeout(resolve, 2000));
 
-		const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-		expect(agentSession).toBeDefined();
+    // Title should still remain the same
+    const thirdSession = await getSession(daemon, sessionId);
+    expect(thirdSession.title).toBe(firstTitle);
+  }, 40000); // 40s timeout (3 messages)
 
-		// Verify workspace path is set
-		const sessionData = agentSession!.getSessionData();
-		expect(sessionData.workspacePath).toBe(ctx.config.workspaceRoot);
+  test("should handle title generation with workspace path correctly", async () => {
+    // This test specifically verifies the workspace path fix
+    const workspacePath = `${TMP_DIR}/auto-title-workspace-test-${Date.now()}`;
 
-		// Send first message (title generation should happen after this)
-		await sendMessageSync(agentSession!, {
-			content: 'What is 1+1?',
-		});
+    // Create session with explicit workspace path
+    const createResult = (await daemon.messageHub.call("session.create", {
+      workspacePath,
+      config: { model: "haiku" },
+    })) as { sessionId: string };
 
-		// Wait for processing AND title generation (async via queue)
-		await waitForTitleGeneration(agentSession!);
+    const { sessionId } = createResult;
 
-		// Title should be generated (workspace path should be passed to SDK)
-		const finalSessionData = agentSession!.getSessionData();
-		expect(finalSessionData.title).not.toBe('New Session');
-		expect(finalSessionData.metadata.titleGenerated).toBe(true);
+    // Verify workspace path is set
+    const session = await getSession(daemon, sessionId);
+    expect(session.workspacePath).toBe(workspacePath);
 
-		console.log(`Generated title with workspace path: "${finalSessionData.title}"`);
-	}, 30000); // 30s timeout (1 message)
+    // Send first message (title generation should happen after this)
+    await sendMessage(daemon, sessionId, "What is 1+1?");
 
-	test('should handle title generation failure gracefully', async () => {
-		// Create session
-		const sessionId = await ctx.sessionManager.createSession({
-			workspacePath: ctx.config.workspaceRoot,
-			config: { model: 'haiku' }, // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
-		});
+    // Wait for processing AND title generation (async via queue)
+    await waitForTitleGeneration(sessionId);
 
-		const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-		expect(agentSession).toBeDefined();
+    // Title should be generated (workspace path should be passed to SDK)
+    const finalSession = await getSession(daemon, sessionId);
+    expect(finalSession.title).not.toBe("New Session");
+    expect(
+      (finalSession.metadata as { titleGenerated: boolean }).titleGenerated,
+    ).toBe(true);
 
-		// Send first message with minimal content
-		await sendMessageSync(agentSession!, {
-			content: 'ok',
-		});
+    console.log(`Generated title with workspace path: "${finalSession.title}"`);
+  }, 30000); // 30s timeout (1 message)
 
-		// Wait for first response AND title generation
-		// This ensures title generation completes before cleanup runs
-		await waitForTitleGeneration(agentSession!);
+  test("should handle title generation failure gracefully", async () => {
+    const workspacePath = `${TMP_DIR}/auto-title-graceful-test-${Date.now()}`;
 
-		// Session should still be functional even if title generation fails
-		let sessionData = agentSession!.getSessionData();
-		// Title might be generated or might remain default - either is acceptable
-		// The key is that the session is still functional
-		expect(sessionData.metadata.titleGenerated).toBeBoolean();
+    // Create session
+    const createResult = (await daemon.messageHub.call("session.create", {
+      workspacePath,
+      config: { model: "haiku" },
+    })) as { sessionId: string };
 
-		// Send another message to verify session is still working
-		await sendMessageSync(agentSession!, {
-			content: 'What is 5+5?',
-		});
+    const { sessionId } = createResult;
 
-		await waitForIdle(agentSession!);
+    // Send first message with minimal content
+    await sendMessage(daemon, sessionId, "ok");
 
-		// Session should be idle and functional
-		expect(agentSession!.getProcessingState().status).toBe('idle');
-	}, 30000); // 30s timeout (2 messages)
+    // Wait for first response AND title generation
+    // This ensures title generation completes before cleanup runs
+    await waitForTitleGeneration(sessionId);
+
+    // Session should still be functional even if title generation fails
+    let session = await getSession(daemon, sessionId);
+    // Title might be generated or might remain default - either is acceptable
+    // The key is that the session is still functional
+    expect(
+      (session.metadata as { titleGenerated?: boolean }).titleGenerated,
+    ).toBeBoolean();
+
+    // Send another message to verify session is still working
+    await sendMessage(daemon, sessionId, "What is 5+5?");
+
+    await waitForIdle(daemon, sessionId);
+
+    // Session should be idle and functional
+    const state = await getProcessingState(daemon, sessionId);
+    expect(state.status).toBe("idle");
+  }, 30000); // 30s timeout (2 messages)
 });

@@ -372,39 +372,7 @@ export interface AskUserQuestionInput {
                    * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
                    */
                   description: string;
-                }
-              ]
-            | [
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
                 },
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
-                },
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
-                }
               ]
             | [
                 {
@@ -437,6 +405,8 @@ export interface AskUserQuestionInput {
                    */
                   description: string;
                 },
+              ]
+            | [
                 {
                   /**
                    * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
@@ -446,13 +416,43 @@ export interface AskUserQuestionInput {
                    * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
                    */
                   description: string;
-                }
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
               ];
           /**
            * Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive.
            */
           multiSelect: boolean;
-        }
+        },
       ]
     | [
         {
@@ -491,39 +491,7 @@ export interface AskUserQuestionInput {
                    * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
                    */
                   description: string;
-                }
-              ]
-            | [
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
                 },
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
-                },
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
-                }
               ]
             | [
                 {
@@ -556,6 +524,8 @@ export interface AskUserQuestionInput {
                    */
                   description: string;
                 },
+              ]
+            | [
                 {
                   /**
                    * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
@@ -565,7 +535,37 @@ export interface AskUserQuestionInput {
                    * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
                    */
                   description: string;
-                }
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
               ];
           /**
            * Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive.
@@ -608,39 +608,7 @@ export interface AskUserQuestionInput {
                    * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
                    */
                   description: string;
-                }
-              ]
-            | [
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
                 },
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
-                },
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
-                }
               ]
             | [
                 {
@@ -673,6 +641,8 @@ export interface AskUserQuestionInput {
                    */
                   description: string;
                 },
+              ]
+            | [
                 {
                   /**
                    * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
@@ -682,13 +652,43 @@ export interface AskUserQuestionInput {
                    * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
                    */
                   description: string;
-                }
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
               ];
           /**
            * Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive.
            */
           multiSelect: boolean;
-        }
+        },
       ]
     | [
         {
@@ -727,39 +727,7 @@ export interface AskUserQuestionInput {
                    * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
                    */
                   description: string;
-                }
-              ]
-            | [
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
                 },
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
-                },
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
-                }
               ]
             | [
                 {
@@ -792,6 +760,8 @@ export interface AskUserQuestionInput {
                    */
                   description: string;
                 },
+              ]
+            | [
                 {
                   /**
                    * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
@@ -801,7 +771,37 @@ export interface AskUserQuestionInput {
                    * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
                    */
                   description: string;
-                }
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
               ];
           /**
            * Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive.
@@ -844,39 +844,7 @@ export interface AskUserQuestionInput {
                    * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
                    */
                   description: string;
-                }
-              ]
-            | [
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
                 },
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
-                },
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
-                }
               ]
             | [
                 {
@@ -909,6 +877,8 @@ export interface AskUserQuestionInput {
                    */
                   description: string;
                 },
+              ]
+            | [
                 {
                   /**
                    * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
@@ -918,7 +888,37 @@ export interface AskUserQuestionInput {
                    * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
                    */
                   description: string;
-                }
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
               ];
           /**
            * Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive.
@@ -961,39 +961,7 @@ export interface AskUserQuestionInput {
                    * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
                    */
                   description: string;
-                }
-              ]
-            | [
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
                 },
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
-                },
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
-                }
               ]
             | [
                 {
@@ -1026,6 +994,8 @@ export interface AskUserQuestionInput {
                    */
                   description: string;
                 },
+              ]
+            | [
                 {
                   /**
                    * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
@@ -1035,13 +1005,43 @@ export interface AskUserQuestionInput {
                    * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
                    */
                   description: string;
-                }
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
               ];
           /**
            * Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive.
            */
           multiSelect: boolean;
-        }
+        },
       ]
     | [
         {
@@ -1080,39 +1080,7 @@ export interface AskUserQuestionInput {
                    * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
                    */
                   description: string;
-                }
-              ]
-            | [
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
                 },
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
-                },
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
-                }
               ]
             | [
                 {
@@ -1145,6 +1113,8 @@ export interface AskUserQuestionInput {
                    */
                   description: string;
                 },
+              ]
+            | [
                 {
                   /**
                    * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
@@ -1154,7 +1124,37 @@ export interface AskUserQuestionInput {
                    * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
                    */
                   description: string;
-                }
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
               ];
           /**
            * Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive.
@@ -1197,39 +1197,7 @@ export interface AskUserQuestionInput {
                    * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
                    */
                   description: string;
-                }
-              ]
-            | [
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
                 },
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
-                },
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
-                }
               ]
             | [
                 {
@@ -1262,6 +1230,8 @@ export interface AskUserQuestionInput {
                    */
                   description: string;
                 },
+              ]
+            | [
                 {
                   /**
                    * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
@@ -1271,7 +1241,37 @@ export interface AskUserQuestionInput {
                    * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
                    */
                   description: string;
-                }
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
               ];
           /**
            * Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive.
@@ -1314,39 +1314,7 @@ export interface AskUserQuestionInput {
                    * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
                    */
                   description: string;
-                }
-              ]
-            | [
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
                 },
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
-                },
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
-                }
               ]
             | [
                 {
@@ -1379,6 +1347,8 @@ export interface AskUserQuestionInput {
                    */
                   description: string;
                 },
+              ]
+            | [
                 {
                   /**
                    * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
@@ -1388,7 +1358,37 @@ export interface AskUserQuestionInput {
                    * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
                    */
                   description: string;
-                }
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
               ];
           /**
            * Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive.
@@ -1431,39 +1431,7 @@ export interface AskUserQuestionInput {
                    * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
                    */
                   description: string;
-                }
-              ]
-            | [
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
                 },
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
-                },
-                {
-                  /**
-                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
-                   */
-                  label: string;
-                  /**
-                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
-                   */
-                  description: string;
-                }
               ]
             | [
                 {
@@ -1496,6 +1464,8 @@ export interface AskUserQuestionInput {
                    */
                   description: string;
                 },
+              ]
+            | [
                 {
                   /**
                    * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
@@ -1505,13 +1475,43 @@ export interface AskUserQuestionInput {
                    * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
                    */
                   description: string;
-                }
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
+                {
+                  /**
+                   * The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.
+                   */
+                  label: string;
+                  /**
+                   * Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.
+                   */
+                  description: string;
+                },
               ];
           /**
            * Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive.
            */
           multiSelect: boolean;
-        }
+        },
       ];
   /**
    * User answers collected by the permission component

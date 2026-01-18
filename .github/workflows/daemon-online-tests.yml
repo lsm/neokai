@@ -85,4 +85,4 @@ jobs:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           # Enable verbose logging for debugging
           NODE_ENV: test
-          DEBUG: '*'
+          DEBUG: "*"

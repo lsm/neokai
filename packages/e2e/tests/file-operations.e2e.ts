@@ -1,5 +1,8 @@
-import { test, expect } from '../fixtures';
-import { cleanupTestSession, waitForSessionCreated } from './helpers/wait-helpers';
+import { test, expect } from "../fixtures";
+import {
+  cleanupTestSession,
+  waitForSessionCreated,
+} from "./helpers/wait-helpers";
 
 /**
  * File Operations E2E Tests
@@ -12,178 +15,223 @@ import { cleanupTestSession, waitForSessionCreated } from './helpers/wait-helper
  *
  * RPC Methods: file.read, file.list, file.tree
  */
-test.describe('File Operations', () => {
-	let sessionId: string | null = null;
+test.describe("File Operations", () => {
+  let sessionId: string | null = null;
 
-	test.beforeEach(async ({ page }) => {
-		await page.goto('/');
-		await expect(page.getByRole('heading', { name: 'Liuboer', exact: true }).first()).toBeVisible();
-		await page.waitForTimeout(1000);
-		sessionId = null;
-	});
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/");
+    await expect(
+      page.getByRole("heading", { name: "Liuboer", exact: true }).first(),
+    ).toBeVisible();
+    await page.waitForTimeout(1000);
+    sessionId = null;
+  });
 
-	test.afterEach(async ({ page }) => {
-		if (sessionId) {
-			try {
-				await cleanupTestSession(page, sessionId);
-			} catch (error) {
-				console.warn(`Failed to cleanup session ${sessionId}:`, error);
-			}
-			sessionId = null;
-		}
-	});
+  test.afterEach(async ({ page }) => {
+    if (sessionId) {
+      try {
+        await cleanupTestSession(page, sessionId);
+      } catch (error) {
+        console.warn(`Failed to cleanup session ${sessionId}:`, error);
+      }
+      sessionId = null;
+    }
+  });
 
-	test('should be able to read files through Claude', async ({ page }) => {
-		// Create a new session
-		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+  test("should be able to read files through Claude", async ({ page }) => {
+    // Create a new session
+    const newSessionButton = page.getByRole("button", {
+      name: "New Session",
+      exact: true,
+    });
+    await newSessionButton.click();
+    sessionId = await waitForSessionCreated(page);
 
-		// Ask Claude to read a file (Claude will use file tools)
-		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
-		await textarea.fill('What is in the package.json file? Just show me the name and version.');
-		await page.keyboard.press('Meta+Enter');
+    // Ask Claude to read a file (Claude will use file tools)
+    const textarea = page.locator('textarea[placeholder*="Ask"]').first();
+    await textarea.fill(
+      "What is in the package.json file? Just show me the name and version.",
+    );
+    await page.keyboard.press("Meta+Enter");
 
-		// Wait for response
-		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
-			timeout: 45000,
-		});
+    // Wait for response
+    await expect(
+      page.locator('[data-message-role="assistant"]').first(),
+    ).toBeVisible({
+      timeout: 45000,
+    });
 
-		// The response should contain file content or mention inability to read
-		const assistantMessage = page.locator('[data-message-role="assistant"]').first();
-		const content = await assistantMessage.textContent();
-		expect(content).toBeTruthy();
+    // The response should contain file content or mention inability to read
+    const assistantMessage = page
+      .locator('[data-message-role="assistant"]')
+      .first();
+    const content = await assistantMessage.textContent();
+    expect(content).toBeTruthy();
 
-		// Response should reference the file or its contents
-		expect(
-			content!.toLowerCase().includes('package') ||
-				content!.toLowerCase().includes('name') ||
-				content!.toLowerCase().includes('version') ||
-				content!.toLowerCase().includes('file') ||
-				content!.toLowerCase().includes('json')
-		).toBe(true);
-	});
+    // Response should reference the file or its contents
+    expect(
+      content!.toLowerCase().includes("package") ||
+        content!.toLowerCase().includes("name") ||
+        content!.toLowerCase().includes("version") ||
+        content!.toLowerCase().includes("file") ||
+        content!.toLowerCase().includes("json"),
+    ).toBe(true);
+  });
 
-	test('should be able to list directory contents through Claude', async ({ page }) => {
-		// Create a new session
-		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+  test("should be able to list directory contents through Claude", async ({
+    page,
+  }) => {
+    // Create a new session
+    const newSessionButton = page.getByRole("button", {
+      name: "New Session",
+      exact: true,
+    });
+    await newSessionButton.click();
+    sessionId = await waitForSessionCreated(page);
 
-		// Ask Claude to list files
-		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
-		await textarea.fill('List the files in the current directory. Just show file names.');
-		await page.keyboard.press('Meta+Enter');
+    // Ask Claude to list files
+    const textarea = page.locator('textarea[placeholder*="Ask"]').first();
+    await textarea.fill(
+      "List the files in the current directory. Just show file names.",
+    );
+    await page.keyboard.press("Meta+Enter");
 
-		// Wait for response
-		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
-			timeout: 45000,
-		});
+    // Wait for response
+    await expect(
+      page.locator('[data-message-role="assistant"]').first(),
+    ).toBeVisible({
+      timeout: 45000,
+    });
 
-		// The response should contain file listings
-		const assistantMessage = page.locator('[data-message-role="assistant"]').first();
-		const content = await assistantMessage.textContent();
-		expect(content).toBeTruthy();
-		expect(content!.length).toBeGreaterThan(0);
-	});
+    // The response should contain file listings
+    const assistantMessage = page
+      .locator('[data-message-role="assistant"]')
+      .first();
+    const content = await assistantMessage.textContent();
+    expect(content).toBeTruthy();
+    expect(content!.length).toBeGreaterThan(0);
+  });
 
-	test('should display file content in response', async ({ page }) => {
-		// Create a new session
-		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+  test("should display file content in response", async ({ page }) => {
+    // Create a new session
+    const newSessionButton = page.getByRole("button", {
+      name: "New Session",
+      exact: true,
+    });
+    await newSessionButton.click();
+    sessionId = await waitForSessionCreated(page);
 
-		// Ask Claude to read and display file content
-		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
-		await textarea.fill(
-			'Show me the first 5 lines of README.md or any markdown file you can find.'
-		);
-		await page.keyboard.press('Meta+Enter');
+    // Ask Claude to read and display file content
+    const textarea = page.locator('textarea[placeholder*="Ask"]').first();
+    await textarea.fill(
+      "Show me the first 5 lines of README.md or any markdown file you can find.",
+    );
+    await page.keyboard.press("Meta+Enter");
 
-		// Wait for response
-		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
-			timeout: 45000,
-		});
+    // Wait for response
+    await expect(
+      page.locator('[data-message-role="assistant"]').first(),
+    ).toBeVisible({
+      timeout: 45000,
+    });
 
-		// Response should exist
-		const assistantMessage = page.locator('[data-message-role="assistant"]').first();
-		await expect(assistantMessage).toBeVisible();
+    // Response should exist
+    const assistantMessage = page
+      .locator('[data-message-role="assistant"]')
+      .first();
+    await expect(assistantMessage).toBeVisible();
 
-		// The message area should have content
-		const content = await assistantMessage.textContent();
-		expect(content).toBeTruthy();
-	});
+    // The message area should have content
+    const content = await assistantMessage.textContent();
+    expect(content).toBeTruthy();
+  });
 
-	test('should handle file not found gracefully', async ({ page }) => {
-		// Create a new session
-		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+  test("should handle file not found gracefully", async ({ page }) => {
+    // Create a new session
+    const newSessionButton = page.getByRole("button", {
+      name: "New Session",
+      exact: true,
+    });
+    await newSessionButton.click();
+    sessionId = await waitForSessionCreated(page);
 
-		// Ask Claude to read a non-existent file
-		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
-		await textarea.fill('Read the file nonexistent_file_12345.xyz');
-		await page.keyboard.press('Meta+Enter');
+    // Ask Claude to read a non-existent file
+    const textarea = page.locator('textarea[placeholder*="Ask"]').first();
+    await textarea.fill("Read the file nonexistent_file_12345.xyz");
+    await page.keyboard.press("Meta+Enter");
 
-		// Wait for response
-		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
-			timeout: 45000,
-		});
+    // Wait for response
+    await expect(
+      page.locator('[data-message-role="assistant"]').first(),
+    ).toBeVisible({
+      timeout: 45000,
+    });
 
-		// The response should handle the error gracefully
-		const assistantMessage = page.locator('[data-message-role="assistant"]').first();
-		const content = await assistantMessage.textContent();
-		expect(content).toBeTruthy();
+    // The response should handle the error gracefully
+    const assistantMessage = page
+      .locator('[data-message-role="assistant"]')
+      .first();
+    const content = await assistantMessage.textContent();
+    expect(content).toBeTruthy();
 
-		// Claude should respond about the file (either found or not found, or error)
-		// The key is that the response is meaningful and handles the request
-		// It may succeed (if the file exists in workspace) or fail gracefully
-		const contentLower = content!.toLowerCase();
-		const hasFileReference =
-			contentLower.includes('file') ||
-			contentLower.includes('not found') ||
-			contentLower.includes("doesn't exist") ||
-			contentLower.includes('does not exist') ||
-			contentLower.includes('no such') ||
-			contentLower.includes('unable') ||
-			contentLower.includes('cannot') ||
-			contentLower.includes("couldn't") ||
-			contentLower.includes("can't") ||
-			contentLower.includes('error') ||
-			contentLower.includes('nonexistent') ||
-			contentLower.includes('create') || // Claude might offer to create it
-			contentLower.includes('empty'); // File might be created empty
+    // Claude should respond about the file (either found or not found, or error)
+    // The key is that the response is meaningful and handles the request
+    // It may succeed (if the file exists in workspace) or fail gracefully
+    const contentLower = content!.toLowerCase();
+    const hasFileReference =
+      contentLower.includes("file") ||
+      contentLower.includes("not found") ||
+      contentLower.includes("doesn't exist") ||
+      contentLower.includes("does not exist") ||
+      contentLower.includes("no such") ||
+      contentLower.includes("unable") ||
+      contentLower.includes("cannot") ||
+      contentLower.includes("couldn't") ||
+      contentLower.includes("can't") ||
+      contentLower.includes("error") ||
+      contentLower.includes("nonexistent") ||
+      contentLower.includes("create") || // Claude might offer to create it
+      contentLower.includes("empty"); // File might be created empty
 
-		expect(hasFileReference).toBe(true);
-	});
+    expect(hasFileReference).toBe(true);
+  });
 
-	test('should work with relative and absolute paths', async ({ page }) => {
-		// Create a new session
-		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+  test("should work with relative and absolute paths", async ({ page }) => {
+    // Create a new session
+    const newSessionButton = page.getByRole("button", {
+      name: "New Session",
+      exact: true,
+    });
+    await newSessionButton.click();
+    sessionId = await waitForSessionCreated(page);
 
-		// Ask Claude about path handling
-		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
-		await textarea.fill("What's the current working directory? Just tell me the path.");
-		await page.keyboard.press('Meta+Enter');
+    // Ask Claude about path handling
+    const textarea = page.locator('textarea[placeholder*="Ask"]').first();
+    await textarea.fill(
+      "What's the current working directory? Just tell me the path.",
+    );
+    await page.keyboard.press("Meta+Enter");
 
-		// Wait for response
-		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
-			timeout: 45000,
-		});
+    // Wait for response
+    await expect(
+      page.locator('[data-message-role="assistant"]').first(),
+    ).toBeVisible({
+      timeout: 45000,
+    });
 
-		// The response should contain path information
-		const assistantMessage = page.locator('[data-message-role="assistant"]').first();
-		const content = await assistantMessage.textContent();
-		expect(content).toBeTruthy();
+    // The response should contain path information
+    const assistantMessage = page
+      .locator('[data-message-role="assistant"]')
+      .first();
+    const content = await assistantMessage.textContent();
+    expect(content).toBeTruthy();
 
-		// Should mention a path (likely contains slashes or workspace reference)
-		expect(
-			content!.includes('/') ||
-				content!.toLowerCase().includes('directory') ||
-				content!.toLowerCase().includes('workspace') ||
-				content!.toLowerCase().includes('path')
-		).toBe(true);
-	});
+    // Should mention a path (likely contains slashes or workspace reference)
+    expect(
+      content!.includes("/") ||
+        content!.toLowerCase().includes("directory") ||
+        content!.toLowerCase().includes("workspace") ||
+        content!.toLowerCase().includes("path"),
+    ).toBe(true);
+  });
 });

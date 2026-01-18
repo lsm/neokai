@@ -1,179 +1,179 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { LRUCache } from '../src/message-hub/cache.ts';
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { LRUCache } from "../src/message-hub/cache.ts";
 
-describe('LRUCache', () => {
-	let cache: LRUCache<string, string>;
+describe("LRUCache", () => {
+  let cache: LRUCache<string, string>;
 
-	beforeEach(() => {
-		cache = new LRUCache(3, 1000); // maxSize: 3, ttl: 1000ms
-	});
+  beforeEach(() => {
+    cache = new LRUCache(3, 1000); // maxSize: 3, ttl: 1000ms
+  });
 
-	afterEach(() => {
-		cache.destroy();
-	});
+  afterEach(() => {
+    cache.destroy();
+  });
 
-	test('basic get/set operations', () => {
-		cache.set('key1', 'value1');
-		expect(cache.get('key1')).toBe('value1');
-		expect(cache.size).toBe(1);
-	});
+  test("basic get/set operations", () => {
+    cache.set("key1", "value1");
+    expect(cache.get("key1")).toBe("value1");
+    expect(cache.size).toBe(1);
+  });
 
-	test('LRU eviction when at capacity', () => {
-		cache.set('key1', 'value1');
-		cache.set('key2', 'value2');
-		cache.set('key3', 'value3');
-		cache.set('key4', 'value4'); // Should evict key1
+  test("LRU eviction when at capacity", () => {
+    cache.set("key1", "value1");
+    cache.set("key2", "value2");
+    cache.set("key3", "value3");
+    cache.set("key4", "value4"); // Should evict key1
 
-		expect(cache.get('key1')).toBeUndefined();
-		expect(cache.get('key2')).toBe('value2');
-		expect(cache.get('key3')).toBe('value3');
-		expect(cache.get('key4')).toBe('value4');
-	});
+    expect(cache.get("key1")).toBeUndefined();
+    expect(cache.get("key2")).toBe("value2");
+    expect(cache.get("key3")).toBe("value3");
+    expect(cache.get("key4")).toBe("value4");
+  });
 
-	test('TTL expiration on get', () => {
-		const shortCache = new LRUCache(10, 50); // 50ms TTL
-		shortCache.set('key1', 'value1');
+  test("TTL expiration on get", () => {
+    const shortCache = new LRUCache(10, 50); // 50ms TTL
+    shortCache.set("key1", "value1");
 
-		expect(shortCache.get('key1')).toBe('value1');
+    expect(shortCache.get("key1")).toBe("value1");
 
-		// Wait for expiration
-		return new Promise<void>((resolve) => {
-			setTimeout(() => {
-				expect(shortCache.get('key1')).toBeUndefined();
-				shortCache.destroy();
-				resolve();
-			}, 60);
-		});
-	});
+    // Wait for expiration
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        expect(shortCache.get("key1")).toBeUndefined();
+        shortCache.destroy();
+        resolve();
+      }, 60);
+    });
+  });
 
-	test('TTL expiration on has', () => {
-		const shortCache = new LRUCache(10, 50); // 50ms TTL
-		shortCache.set('key1', 'value1');
+  test("TTL expiration on has", () => {
+    const shortCache = new LRUCache(10, 50); // 50ms TTL
+    shortCache.set("key1", "value1");
 
-		expect(shortCache.has('key1')).toBe(true);
+    expect(shortCache.has("key1")).toBe(true);
 
-		// Wait for expiration
-		return new Promise<void>((resolve) => {
-			setTimeout(() => {
-				expect(shortCache.has('key1')).toBe(false);
-				shortCache.destroy();
-				resolve();
-			}, 60);
-		});
-	});
+    // Wait for expiration
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        expect(shortCache.has("key1")).toBe(false);
+        shortCache.destroy();
+        resolve();
+      }, 60);
+    });
+  });
 
-	test('has returns false for non-existent key', () => {
-		expect(cache.has('nonexistent')).toBe(false);
-	});
+  test("has returns false for non-existent key", () => {
+    expect(cache.has("nonexistent")).toBe(false);
+  });
 
-	test('delete removes key', () => {
-		cache.set('key1', 'value1');
-		expect(cache.delete('key1')).toBe(true);
-		expect(cache.get('key1')).toBeUndefined();
-		expect(cache.delete('key1')).toBe(false);
-	});
+  test("delete removes key", () => {
+    cache.set("key1", "value1");
+    expect(cache.delete("key1")).toBe(true);
+    expect(cache.get("key1")).toBeUndefined();
+    expect(cache.delete("key1")).toBe(false);
+  });
 
-	test('clear removes all entries', () => {
-		cache.set('key1', 'value1');
-		cache.set('key2', 'value2');
-		cache.clear();
-		expect(cache.size).toBe(0);
-		expect(cache.get('key1')).toBeUndefined();
-	});
+  test("clear removes all entries", () => {
+    cache.set("key1", "value1");
+    cache.set("key2", "value2");
+    cache.clear();
+    expect(cache.size).toBe(0);
+    expect(cache.get("key1")).toBeUndefined();
+  });
 
-	test('cleanup removes expired entries', () => {
-		const shortCache = new LRUCache(10, 50); // 50ms TTL
+  test("cleanup removes expired entries", () => {
+    const shortCache = new LRUCache(10, 50); // 50ms TTL
 
-		shortCache.set('key1', 'value1');
-		shortCache.set('key2', 'value2');
+    shortCache.set("key1", "value1");
+    shortCache.set("key2", "value2");
 
-		// Manually call cleanup after expiration
-		return new Promise<void>((resolve) => {
-			setTimeout(() => {
-				// Call cleanup directly to test the functionality
-				shortCache['cleanup']();
+    // Manually call cleanup after expiration
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        // Call cleanup directly to test the functionality
+        shortCache["cleanup"]();
 
-				// Verify expired entries are removed
-				expect(shortCache.size).toBe(0);
+        // Verify expired entries are removed
+        expect(shortCache.size).toBe(0);
 
-				shortCache.destroy();
-				resolve();
-			}, 60); // Wait for TTL expiration
-		});
-	});
+        shortCache.destroy();
+        resolve();
+      }, 60); // Wait for TTL expiration
+    });
+  });
 
-	test('cleanup timer handles errors gracefully', () => {
-		// Test that cleanup errors don't crash the cache
-		let timerCallback: (() => void) | null = null;
-		const originalSetInterval = global.setInterval;
+  test("cleanup timer handles errors gracefully", () => {
+    // Test that cleanup errors don't crash the cache
+    let timerCallback: (() => void) | null = null;
+    const originalSetInterval = global.setInterval;
 
-		// Mock setInterval to capture the callback
-		global.setInterval = ((cb: () => void, _interval: number) => {
-			timerCallback = cb;
-			return 999 as unknown as NodeJS.Timeout;
-		}) as typeof setInterval;
+    // Mock setInterval to capture the callback
+    global.setInterval = ((cb: () => void, _interval: number) => {
+      timerCallback = cb;
+      return 999 as unknown as NodeJS.Timeout;
+    }) as typeof setInterval;
 
-		const errorCache = new LRUCache(10, 100);
+    const errorCache = new LRUCache(10, 100);
 
-		// Restore setInterval immediately
-		global.setInterval = originalSetInterval;
+    // Restore setInterval immediately
+    global.setInterval = originalSetInterval;
 
-		// Mock cleanup to throw an error
-		const originalCleanup = errorCache['cleanup'].bind(errorCache);
-		errorCache['cleanup'] = () => {
-			throw new Error('Cleanup error');
-		};
+    // Mock cleanup to throw an error
+    const originalCleanup = errorCache["cleanup"].bind(errorCache);
+    errorCache["cleanup"] = () => {
+      throw new Error("Cleanup error");
+    };
 
-		// Invoke the timer callback - should handle the error gracefully
-		expect(timerCallback).not.toBeNull();
-		if (timerCallback) {
-			// Should not throw
-			expect(() => timerCallback!()).not.toThrow();
-		}
+    // Invoke the timer callback - should handle the error gracefully
+    expect(timerCallback).not.toBeNull();
+    if (timerCallback) {
+      // Should not throw
+      expect(() => timerCallback!()).not.toThrow();
+    }
 
-		// Restore and cleanup
-		errorCache['cleanup'] = originalCleanup;
-		errorCache.destroy();
-	});
+    // Restore and cleanup
+    errorCache["cleanup"] = originalCleanup;
+    errorCache.destroy();
+  });
 
-	test('destroy stops cleanup timer and clears cache', () => {
-		cache.set('key1', 'value1');
-		cache.destroy();
-		expect(cache.size).toBe(0);
+  test("destroy stops cleanup timer and clears cache", () => {
+    cache.set("key1", "value1");
+    cache.destroy();
+    expect(cache.size).toBe(0);
 
-		// Verify timer is stopped (cleanupTimer should be null)
-		expect(cache['cleanupTimer']).toBeNull();
-	});
+    // Verify timer is stopped (cleanupTimer should be null)
+    expect(cache["cleanupTimer"]).toBeNull();
+  });
 
-	test('LRU ordering - recently used items stay', () => {
-		cache.set('key1', 'value1');
-		cache.set('key2', 'value2');
-		cache.set('key3', 'value3');
+  test("LRU ordering - recently used items stay", () => {
+    cache.set("key1", "value1");
+    cache.set("key2", "value2");
+    cache.set("key3", "value3");
 
-		// Access key1 to make it recently used
-		cache.get('key1');
+    // Access key1 to make it recently used
+    cache.get("key1");
 
-		// Add key4, should evict key2 (oldest)
-		cache.set('key4', 'value4');
+    // Add key4, should evict key2 (oldest)
+    cache.set("key4", "value4");
 
-		expect(cache.get('key1')).toBe('value1'); // Still there
-		expect(cache.get('key2')).toBeUndefined(); // Evicted
-		expect(cache.get('key3')).toBe('value3');
-		expect(cache.get('key4')).toBe('value4');
-	});
+    expect(cache.get("key1")).toBe("value1"); // Still there
+    expect(cache.get("key2")).toBeUndefined(); // Evicted
+    expect(cache.get("key3")).toBe("value3");
+    expect(cache.get("key4")).toBe("value4");
+  });
 
-	test('updating existing key moves it to end', () => {
-		cache.set('key1', 'value1');
-		cache.set('key2', 'value2');
-		cache.set('key3', 'value3');
+  test("updating existing key moves it to end", () => {
+    cache.set("key1", "value1");
+    cache.set("key2", "value2");
+    cache.set("key3", "value3");
 
-		// Update key1
-		cache.set('key1', 'value1-updated');
+    // Update key1
+    cache.set("key1", "value1-updated");
 
-		// Add key4, should evict key2
-		cache.set('key4', 'value4');
+    // Add key4, should evict key2
+    cache.set("key4", "value4");
 
-		expect(cache.get('key1')).toBe('value1-updated');
-		expect(cache.get('key2')).toBeUndefined();
-	});
+    expect(cache.get("key1")).toBe("value1-updated");
+    expect(cache.get("key2")).toBeUndefined();
+  });
 });

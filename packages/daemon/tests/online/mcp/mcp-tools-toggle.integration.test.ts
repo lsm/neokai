@@ -15,173 +15,196 @@
  * - Tests will FAIL if credentials are not available (no skip)
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { createTestApp, callRPCHandler, type TestContext } from '../../test-utils';
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import type { Session } from '@liuboer/shared';
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import type { DaemonServerContext } from "../helpers/daemon-server-helper";
+import { spawnDaemonServer } from "../helpers/daemon-server-helper";
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import type { Session } from "@liuboer/shared";
 
-describe('MCP Tools Toggle Integration', () => {
-	let ctx: TestContext;
-	let sessionId: string;
+// Use temp directory for test workspaces
+const TMP_DIR = process.env.TMPDIR || "/tmp";
 
-	beforeEach(async () => {
-		ctx = await createTestApp();
+describe("MCP Tools Toggle Integration", () => {
+  let daemon: DaemonServerContext;
+  let workspacePath: string;
 
-		// Setup: Create dummy MCP config in workspace root (project-level .mcp.json)
-		mkdirSync(ctx.workspacePath, { recursive: true });
-		const mcpConfig = {
-			mcpServers: {
-				'dummy-test-server': {
-					command: 'echo',
-					args: ['test-server'],
-				},
-				'another-server': {
-					command: 'echo',
-					args: ['another'],
-				},
-			},
-		};
-		writeFileSync(join(ctx.workspacePath, '.mcp.json'), JSON.stringify(mcpConfig, null, 2));
-	});
+  beforeEach(async () => {
+    daemon = await spawnDaemonServer();
+    workspacePath = join(TMP_DIR, `liuboer-test-mcp-${Date.now()}`);
 
-	afterEach(async () => {
-		await ctx.cleanup();
-	});
+    // Setup: Create dummy MCP config in workspace root (project-level .mcp.json)
+    mkdirSync(workspacePath, { recursive: true });
+    const mcpConfig = {
+      mcpServers: {
+        "dummy-test-server": {
+          command: "echo",
+          args: ["test-server"],
+        },
+        "another-server": {
+          command: "echo",
+          args: ["another"],
+        },
+      },
+    };
+    writeFileSync(
+      join(workspacePath, ".mcp.json"),
+      JSON.stringify(mcpConfig, null, 2),
+    );
+  });
 
-	test(
-		'disabledMcpServers is written to settings.local.json',
-		async () => {
-			// Step 1: Create session
-			const createResult = await callRPCHandler<{ sessionId: string }>(
-				ctx.messageHub,
-				'session.create',
-				{
-					workspacePath: ctx.workspacePath,
-				}
-			);
-			sessionId = createResult.sessionId;
+  afterEach(async () => {
+    if (daemon) {
+      daemon.kill("SIGTERM");
+      await daemon.waitForExit();
+    }
+  });
 
-			// Verify session has proper setting sources
-			const session1 = await callRPCHandler<{ session: Session }>(ctx.messageHub, 'session.get', {
-				sessionId,
-			});
-			expect(session1.session.config.tools?.settingSources).toContain('user');
-			expect(session1.session.config.tools?.settingSources).toContain('project');
-			expect(session1.session.config.tools?.settingSources).toContain('local');
+  test(
+    "disabledMcpServers is written to settings.local.json",
+    async () => {
+      // Step 1: Create session
+      const createResult = (await daemon.messageHub.call("session.create", {
+        workspacePath,
+      })) as { sessionId: string };
 
-			// Step 2: Verify MCP servers are available from settings
-			const mcpServers = await callRPCHandler<{
-				servers: Record<string, Array<{ name: string }>>;
-			}>(ctx.messageHub, 'settings.mcp.listFromSources', {});
+      const { sessionId } = createResult;
 
-			console.log('[Test] MCP servers from sources:', JSON.stringify(mcpServers, null, 2));
+      // Verify session has proper setting sources
+      const session1 = (await daemon.messageHub.call("session.get", {
+        sessionId,
+      })) as { session: Session };
+      expect(session1.session.config.tools?.settingSources).toContain("user");
+      expect(session1.session.config.tools?.settingSources).toContain(
+        "project",
+      );
+      expect(session1.session.config.tools?.settingSources).toContain("local");
 
-			const projectServers = mcpServers.servers.project || [];
-			expect(projectServers.some((s) => s.name === 'dummy-test-server')).toBe(true);
-			expect(projectServers.some((s) => s.name === 'another-server')).toBe(true);
+      // Step 2: Verify MCP servers are available from settings
+      const mcpServers = (await daemon.messageHub.call(
+        "settings.mcp.listFromSources",
+        {
+          sessionId,
+        },
+      )) as {
+        servers: Record<string, Array<{ name: string }>>;
+      };
 
-			// Step 3: Disable dummy-test-server (add to disabled list)
-			console.log('[Test] Disabling dummy-test-server via disabledMcpServers');
-			const disableResult = await callRPCHandler<{ success: boolean }>(
-				ctx.messageHub,
-				'tools.save',
-				{
-					sessionId,
-					tools: {
-						useClaudeCodePreset: true,
-						settingSources: ['user', 'project', 'local'],
-						// NEW APPROACH: List of disabled servers (unchecked in UI)
-						disabledMcpServers: ['dummy-test-server'],
-						liuboerTools: { memory: false },
-					},
-				}
-			);
-			expect(disableResult.success).toBe(true);
+      console.log(
+        "[Test] MCP servers from sources:",
+        JSON.stringify(mcpServers, null, 2),
+      );
 
-			// Step 4: Verify settings.local.json was written correctly
-			const settingsLocalPath = join(ctx.workspacePath, '.claude', 'settings.local.json');
-			expect(existsSync(settingsLocalPath)).toBe(true);
+      const projectServers = mcpServers.servers.project || [];
+      expect(projectServers.some((s) => s.name === "dummy-test-server")).toBe(
+        true,
+      );
+      expect(projectServers.some((s) => s.name === "another-server")).toBe(
+        true,
+      );
 
-			const settingsContent = readFileSync(settingsLocalPath, 'utf-8');
-			const settings = JSON.parse(settingsContent);
-			console.log('[Test] settings.local.json content:', JSON.stringify(settings, null, 2));
+      // Step 3: Disable dummy-test-server (add to disabled list)
+      console.log("[Test] Disabling dummy-test-server via disabledMcpServers");
+      const disableResult = (await daemon.messageHub.call("tools.save", {
+        sessionId,
+        tools: {
+          useClaudeCodePreset: true,
+          settingSources: ["user", "project", "local"],
+          // NEW APPROACH: List of disabled servers (unchecked in UI)
+          disabledMcpServers: ["dummy-test-server"],
+          liuboerTools: { memory: false },
+        },
+      })) as { success: boolean };
+      expect(disableResult.success).toBe(true);
 
-			// Verify disabledMcpjsonServers contains dummy-test-server
-			expect(settings.disabledMcpjsonServers).toContain('dummy-test-server');
-			// another-server should NOT be in the disabled list
-			expect(settings.disabledMcpjsonServers).not.toContain('another-server');
+      // Step 4: Verify settings.local.json was written correctly
+      const settingsLocalPath = join(
+        workspacePath,
+        ".claude",
+        "settings.local.json",
+      );
+      expect(existsSync(settingsLocalPath)).toBe(true);
 
-			// Step 5: Enable dummy-test-server (remove from disabled list)
-			console.log('[Test] Enabling dummy-test-server (removing from disabled list)');
-			const enableResult = await callRPCHandler<{ success: boolean }>(
-				ctx.messageHub,
-				'tools.save',
-				{
-					sessionId,
-					tools: {
-						useClaudeCodePreset: true,
-						settingSources: ['user', 'project', 'local'],
-						// Empty list = all servers enabled
-						disabledMcpServers: [],
-						liuboerTools: { memory: false },
-					},
-				}
-			);
-			expect(enableResult.success).toBe(true);
+      const settingsContent = readFileSync(settingsLocalPath, "utf-8");
+      const settings = JSON.parse(settingsContent);
+      console.log(
+        "[Test] settings.local.json content:",
+        JSON.stringify(settings, null, 2),
+      );
 
-			// Step 6: Verify settings.local.json was updated
-			const settingsContent2 = readFileSync(settingsLocalPath, 'utf-8');
-			const settings2 = JSON.parse(settingsContent2);
-			console.log('[Test] Updated settings.local.json:', JSON.stringify(settings2, null, 2));
+      // Verify disabledMcpjsonServers contains dummy-test-server
+      expect(settings.disabledMcpjsonServers).toContain("dummy-test-server");
+      // another-server should NOT be in the disabled list
+      expect(settings.disabledMcpjsonServers).not.toContain("another-server");
 
-			// Verify disabledMcpjsonServers is now empty
-			expect(settings2.disabledMcpjsonServers).toEqual([]);
+      // Step 5: Enable dummy-test-server (remove from disabled list)
+      console.log(
+        "[Test] Enabling dummy-test-server (removing from disabled list)",
+      );
+      const enableResult = (await daemon.messageHub.call("tools.save", {
+        sessionId,
+        tools: {
+          useClaudeCodePreset: true,
+          settingSources: ["user", "project", "local"],
+          // Empty list = all servers enabled
+          disabledMcpServers: [],
+          liuboerTools: { memory: false },
+        },
+      })) as { success: boolean };
+      expect(enableResult.success).toBe(true);
 
-			console.log('[Test] File-based MCP control test passed!');
-		},
-		{ timeout: 30000 }
-	);
+      // Step 6: Verify settings.local.json was updated
+      const settingsContent2 = readFileSync(settingsLocalPath, "utf-8");
+      const settings2 = JSON.parse(settingsContent2);
+      console.log(
+        "[Test] Updated settings.local.json:",
+        JSON.stringify(settings2, null, 2),
+      );
 
-	test(
-		'session config stores disabledMcpServers correctly',
-		async () => {
-			// Step 1: Create session
-			const createResult = await callRPCHandler<{ sessionId: string }>(
-				ctx.messageHub,
-				'session.create',
-				{
-					workspacePath: ctx.workspacePath,
-				}
-			);
-			sessionId = createResult.sessionId;
+      // Verify disabledMcpjsonServers is now empty
+      expect(settings2.disabledMcpjsonServers).toEqual([]);
 
-			// Step 2: Save tools config with disabled servers
-			await callRPCHandler<{ success: boolean }>(ctx.messageHub, 'tools.save', {
-				sessionId,
-				tools: {
-					useClaudeCodePreset: true,
-					settingSources: ['user', 'project', 'local'],
-					disabledMcpServers: ['dummy-test-server', 'another-server'],
-					liuboerTools: { memory: false },
-				},
-			});
+      console.log("[Test] File-based MCP control test passed!");
+    },
+    { timeout: 30000 },
+  );
 
-			// Step 3: Get session and verify config is stored
-			const session = await callRPCHandler<{ session: Session }>(ctx.messageHub, 'session.get', {
-				sessionId,
-			});
+  test(
+    "session config stores disabledMcpServers correctly",
+    async () => {
+      // Step 1: Create session
+      const createResult = (await daemon.messageHub.call("session.create", {
+        workspacePath,
+      })) as { sessionId: string };
 
-			console.log(
-				'[Test] Session config tools:',
-				JSON.stringify(session.session.config.tools, null, 2)
-			);
+      const { sessionId } = createResult;
 
-			expect(session.session.config.tools?.disabledMcpServers).toEqual([
-				'dummy-test-server',
-				'another-server',
-			]);
-		},
-		{ timeout: 15000 }
-	);
+      // Step 2: Save tools config with disabled servers
+      await daemon.messageHub.call("tools.save", {
+        sessionId,
+        tools: {
+          useClaudeCodePreset: true,
+          settingSources: ["user", "project", "local"],
+          disabledMcpServers: ["dummy-test-server", "another-server"],
+          liuboerTools: { memory: false },
+        },
+      });
+
+      // Step 3: Get session and verify config is stored
+      const session = (await daemon.messageHub.call("session.get", {
+        sessionId,
+      })) as { session: Session };
+
+      console.log(
+        "[Test] Session config tools:",
+        JSON.stringify(session.session.config.tools, null, 2),
+      );
+
+      expect(session.session.config.tools?.disabledMcpServers).toEqual([
+        "dummy-test-server",
+        "another-server",
+      ]);
+    },
+    { timeout: 15000 },
+  );
 });

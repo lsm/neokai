@@ -4,7 +4,7 @@
  * These type guards enable type-safe discrimination of SDK message union types.
  */
 
-import type { SDKMessage } from './sdk.d.ts';
+import type { SDKMessage } from "./sdk.d.ts";
 
 // ============================================================================
 // Message Type Guards
@@ -14,133 +14,138 @@ import type { SDKMessage } from './sdk.d.ts';
  * Check if message is an Assistant message
  */
 export function isSDKAssistantMessage(
-	msg: SDKMessage
-): msg is Extract<SDKMessage, { type: 'assistant' }> {
-	return msg.type === 'assistant';
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "assistant" }> {
+  return msg.type === "assistant";
 }
 
 /**
  * Check if message is a User message
  */
-export function isSDKUserMessage(msg: SDKMessage): msg is Extract<SDKMessage, { type: 'user' }> {
-	const msgWithReplay = msg as SDKMessage & { isReplay?: boolean };
-	return msg.type === 'user' && (!('isReplay' in msg) || msgWithReplay.isReplay === false);
+export function isSDKUserMessage(
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "user" }> {
+  const msgWithReplay = msg as SDKMessage & { isReplay?: boolean };
+  return (
+    msg.type === "user" &&
+    (!("isReplay" in msg) || msgWithReplay.isReplay === false)
+  );
 }
 
 /**
  * Check if message is a User message replay
  */
 export function isSDKUserMessageReplay(
-	msg: SDKMessage
-): msg is Extract<SDKMessage, { type: 'user'; isReplay: true }> {
-	return msg.type === 'user' && 'isReplay' in msg && msg.isReplay === true;
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "user"; isReplay: true }> {
+  return msg.type === "user" && "isReplay" in msg && msg.isReplay === true;
 }
 
 /**
  * Check if message is a Result message (any subtype)
  */
 export function isSDKResultMessage(
-	msg: SDKMessage
-): msg is Extract<SDKMessage, { type: 'result' }> {
-	return msg.type === 'result';
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "result" }> {
+  return msg.type === "result";
 }
 
 /**
  * Check if message is a successful Result message
  */
 export function isSDKResultSuccess(
-	msg: SDKMessage
-): msg is Extract<SDKMessage, { type: 'result'; subtype: 'success' }> {
-	return msg.type === 'result' && msg.subtype === 'success';
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "result"; subtype: "success" }> {
+  return msg.type === "result" && msg.subtype === "success";
 }
 
 /**
  * Check if message is an error Result message
  */
 export function isSDKResultError(msg: SDKMessage): msg is Extract<
-	SDKMessage,
-	{
-		type: 'result';
-		subtype:
-			| 'error_during_execution'
-			| 'error_max_turns'
-			| 'error_max_budget_usd'
-			| 'error_max_structured_output_retries';
-	}
+  SDKMessage,
+  {
+    type: "result";
+    subtype:
+      | "error_during_execution"
+      | "error_max_turns"
+      | "error_max_budget_usd"
+      | "error_max_structured_output_retries";
+  }
 > {
-	return msg.type === 'result' && msg.subtype !== 'success';
+  return msg.type === "result" && msg.subtype !== "success";
 }
 
 /**
  * Check if message is a System message (any subtype)
  */
 export function isSDKSystemMessage(
-	msg: SDKMessage
-): msg is Extract<SDKMessage, { type: 'system' }> {
-	return msg.type === 'system';
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "system" }> {
+  return msg.type === "system";
 }
 
 /**
  * Check if message is a System init message
  */
 export function isSDKSystemInit(
-	msg: SDKMessage
-): msg is Extract<SDKMessage, { type: 'system'; subtype: 'init' }> {
-	return msg.type === 'system' && msg.subtype === 'init';
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "system"; subtype: "init" }> {
+  return msg.type === "system" && msg.subtype === "init";
 }
 
 /**
  * Check if message is a compact boundary message
  */
 export function isSDKCompactBoundary(
-	msg: SDKMessage
-): msg is Extract<SDKMessage, { type: 'system'; subtype: 'compact_boundary' }> {
-	return msg.type === 'system' && msg.subtype === 'compact_boundary';
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "system"; subtype: "compact_boundary" }> {
+  return msg.type === "system" && msg.subtype === "compact_boundary";
 }
 
 /**
  * Check if message is a status message
  */
 export function isSDKStatusMessage(
-	msg: SDKMessage
-): msg is Extract<SDKMessage, { type: 'system'; subtype: 'status' }> {
-	return msg.type === 'system' && msg.subtype === 'status';
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "system"; subtype: "status" }> {
+  return msg.type === "system" && msg.subtype === "status";
 }
 
 /**
  * Check if message is a hook response message
  */
 export function isSDKHookResponse(
-	msg: SDKMessage
-): msg is Extract<SDKMessage, { type: 'system'; subtype: 'hook_response' }> {
-	return msg.type === 'system' && msg.subtype === 'hook_response';
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "system"; subtype: "hook_response" }> {
+  return msg.type === "system" && msg.subtype === "hook_response";
 }
 
 /**
  * Check if message is a stream event (partial assistant message)
  */
 export function isSDKStreamEvent(
-	msg: SDKMessage
-): msg is Extract<SDKMessage, { type: 'stream_event' }> {
-	return msg.type === 'stream_event';
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "stream_event" }> {
+  return msg.type === "stream_event";
 }
 
 /**
  * Check if message is a tool progress message
  */
 export function isSDKToolProgressMessage(
-	msg: SDKMessage
-): msg is Extract<SDKMessage, { type: 'tool_progress' }> {
-	return msg.type === 'tool_progress';
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "tool_progress" }> {
+  return msg.type === "tool_progress";
 }
 
 /**
  * Check if message is an auth status message
  */
 export function isSDKAuthStatusMessage(
-	msg: SDKMessage
-): msg is Extract<SDKMessage, { type: 'auth_status' }> {
-	return msg.type === 'auth_status';
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "auth_status" }> {
+  return msg.type === "auth_status";
 }
 
 // ============================================================================
@@ -151,33 +156,41 @@ export function isSDKAuthStatusMessage(
  * Type for content blocks from APIAssistantMessage
  */
 export type ContentBlock =
-	| { type: 'text'; text: string }
-	| { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
-	| { type: 'thinking'; thinking: string };
+  | { type: "text"; text: string }
+  | {
+      type: "tool_use";
+      id: string;
+      name: string;
+      input: Record<string, unknown>;
+    }
+  | { type: "thinking"; thinking: string };
 
 /**
  * AskUserQuestion tool input type
  * Matches the SDK's AskUserQuestionInput schema
  */
 export interface AskUserQuestionInput {
-	questions: Array<{
-		question: string;
-		header: string;
-		options: Array<{
-			label: string;
-			description: string;
-		}>;
-		multiSelect: boolean;
-	}>;
+  questions: Array<{
+    question: string;
+    header: string;
+    options: Array<{
+      label: string;
+      description: string;
+    }>;
+    multiSelect: boolean;
+  }>;
 }
 
 /**
  * Check if a tool use block is an AskUserQuestion call
  */
-export function isAskUserQuestionToolUse(
-	block: ContentBlock
-): block is Extract<ContentBlock, { type: 'tool_use' }> & { name: 'AskUserQuestion' } {
-	return block.type === 'tool_use' && block.name === 'AskUserQuestion';
+export function isAskUserQuestionToolUse(block: ContentBlock): block is Extract<
+  ContentBlock,
+  { type: "tool_use" }
+> & {
+  name: "AskUserQuestion";
+} {
+  return block.type === "tool_use" && block.name === "AskUserQuestion";
 }
 
 /**
@@ -185,54 +198,56 @@ export function isAskUserQuestionToolUse(
  * Returns null if the message doesn't contain an AskUserQuestion tool call
  */
 export function extractAskUserQuestion(msg: SDKMessage): {
-	toolUseId: string;
-	input: AskUserQuestionInput;
+  toolUseId: string;
+  input: AskUserQuestionInput;
 } | null {
-	if (!isSDKAssistantMessage(msg)) return null;
+  if (!isSDKAssistantMessage(msg)) return null;
 
-	const content = msg.message.content;
-	for (const block of content) {
-		if (isAskUserQuestionToolUse(block)) {
-			return {
-				toolUseId: block.id,
-				input: block.input as unknown as AskUserQuestionInput,
-			};
-		}
-	}
+  const content = msg.message.content;
+  for (const block of content) {
+    if (isAskUserQuestionToolUse(block)) {
+      return {
+        toolUseId: block.id,
+        input: block.input as unknown as AskUserQuestionInput,
+      };
+    }
+  }
 
-	return null;
+  return null;
 }
 
 /**
  * Check if an assistant message contains an AskUserQuestion tool call
  */
 export function hasAskUserQuestion(msg: SDKMessage): boolean {
-	return extractAskUserQuestion(msg) !== null;
+  return extractAskUserQuestion(msg) !== null;
 }
 
 /**
  * Check if content block is a text block
  */
-export function isTextBlock(block: ContentBlock): block is Extract<ContentBlock, { type: 'text' }> {
-	return block.type === 'text';
+export function isTextBlock(
+  block: ContentBlock,
+): block is Extract<ContentBlock, { type: "text" }> {
+  return block.type === "text";
 }
 
 /**
  * Check if content block is a tool use block
  */
 export function isToolUseBlock(
-	block: ContentBlock
-): block is Extract<ContentBlock, { type: 'tool_use' }> {
-	return block.type === 'tool_use';
+  block: ContentBlock,
+): block is Extract<ContentBlock, { type: "tool_use" }> {
+  return block.type === "tool_use";
 }
 
 /**
  * Check if content block is a thinking block
  */
 export function isThinkingBlock(
-	block: ContentBlock
-): block is Extract<ContentBlock, { type: 'thinking' }> {
-	return block.type === 'thinking';
+  block: ContentBlock,
+): block is Extract<ContentBlock, { type: "thinking" }> {
+  return block.type === "thinking";
 }
 
 // ============================================================================
@@ -243,53 +258,53 @@ export function isThinkingBlock(
  * Get a human-readable description of a message type
  */
 export function getMessageTypeDescription(msg: SDKMessage): string {
-	if (isSDKAssistantMessage(msg)) {
-		return 'Assistant Response';
-	}
-	if (isSDKUserMessage(msg)) {
-		return 'User Message';
-	}
-	if (isSDKUserMessageReplay(msg)) {
-		return 'User Message (Replay)';
-	}
-	if (isSDKResultSuccess(msg)) {
-		return 'Query Success';
-	}
-	if (isSDKResultError(msg)) {
-		return `Query Error: ${msg.subtype.replace('error_', '')}`;
-	}
-	if (isSDKSystemInit(msg)) {
-		return 'Session Initialized';
-	}
-	if (isSDKCompactBoundary(msg)) {
-		return 'Compaction Boundary';
-	}
-	if (isSDKStatusMessage(msg)) {
-		return `Status: ${msg.status || 'unknown'}`;
-	}
-	if (isSDKHookResponse(msg)) {
-		return `Hook Response: ${msg.hook_name}`;
-	}
-	if (isSDKStreamEvent(msg)) {
-		return 'Streaming Event';
-	}
-	if (isSDKToolProgressMessage(msg)) {
-		return `Tool Progress: ${msg.tool_name}`;
-	}
-	if (isSDKAuthStatusMessage(msg)) {
-		return 'Authentication Status';
-	}
-	return 'Unknown Message';
+  if (isSDKAssistantMessage(msg)) {
+    return "Assistant Response";
+  }
+  if (isSDKUserMessage(msg)) {
+    return "User Message";
+  }
+  if (isSDKUserMessageReplay(msg)) {
+    return "User Message (Replay)";
+  }
+  if (isSDKResultSuccess(msg)) {
+    return "Query Success";
+  }
+  if (isSDKResultError(msg)) {
+    return `Query Error: ${msg.subtype.replace("error_", "")}`;
+  }
+  if (isSDKSystemInit(msg)) {
+    return "Session Initialized";
+  }
+  if (isSDKCompactBoundary(msg)) {
+    return "Compaction Boundary";
+  }
+  if (isSDKStatusMessage(msg)) {
+    return `Status: ${msg.status || "unknown"}`;
+  }
+  if (isSDKHookResponse(msg)) {
+    return `Hook Response: ${msg.hook_name}`;
+  }
+  if (isSDKStreamEvent(msg)) {
+    return "Streaming Event";
+  }
+  if (isSDKToolProgressMessage(msg)) {
+    return `Tool Progress: ${msg.tool_name}`;
+  }
+  if (isSDKAuthStatusMessage(msg)) {
+    return "Authentication Status";
+  }
+  return "Unknown Message";
 }
 
 /**
  * Check if a message should be displayed to the user (vs internal system messages)
  */
 export function isUserVisibleMessage(msg: SDKMessage): boolean {
-	// User should see: assistant, user, result, tool_progress, auth_status, user replays,
-	// compact_boundary, and compacting status messages
-	// User should NOT see: stream events only
-	if (isSDKStreamEvent(msg)) return false;
+  // User should see: assistant, user, result, tool_progress, auth_status, user replays,
+  // compact_boundary, and compacting status messages
+  // User should NOT see: stream events only
+  if (isSDKStreamEvent(msg)) return false;
 
-	return true;
+  return true;
 }
