@@ -19,8 +19,8 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { TestContext } from '../../test-utils';
-import { createTestApp } from '../../test-utils';
+import type { TestContext } from '../../../test-utils';
+import { createTestApp } from '../../../test-utils';
 
 describe('SDK SIGINT Cleanup (Offline)', () => {
 	let ctx: TestContext;
