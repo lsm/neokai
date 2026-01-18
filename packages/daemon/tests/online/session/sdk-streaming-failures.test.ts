@@ -7,14 +7,14 @@
  * - Session state consistency
  *
  * REQUIREMENTS:
- * - Requires GLM_API_KEY (or ZHIPU_API_KEY)
+ * - Requires CLAUDE_CODE_OAUTH_TOKEN (preferred) or GLM_API_KEY (or ZHIPU_API_KEY)
  * - Makes real API calls (costs money, uses rate limits)
  * - Tests will FAIL if credentials are not available
  *
  * MODEL MAPPING:
- * - Uses 'haiku' model (provider-agnostic)
- * - With GLM_API_KEY: haiku → glm-4.5-air (via ANTHROPIC_DEFAULT_HAIKU_MODEL)
- * - With ANTHROPIC_API_KEY: haiku → Claude Haiku
+ * - Uses 'default' model (provider-agnostic)
+ * - With CLAUDE_CODE_OAUTH_TOKEN: default → Claude Sonnet 4.5
+ * - With GLM_API_KEY: default → Sonnet (via GLM API)
  * - This makes tests provider-agnostic and easy to switch
  */
 
@@ -29,11 +29,15 @@ import {
   getSession,
 } from "../helpers/daemon-test-helpers";
 
-// Check for GLM credentials
-const GLM_API_KEY = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
+// Check for available credentials
+// Priority: CLAUDE_CODE_OAUTH_TOKEN > GLM_API_KEY > ZHIPU_API_KEY
+const CLAUDE_CODE_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+const GLM_API_KEY =
+  !CLAUDE_CODE_OAUTH_TOKEN &&
+  (process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY);
 
 // Set up GLM provider environment if GLM_API_KEY is available
-// This makes 'haiku' model automatically map to glm-4.5-air
+// This makes 'default' model work with GLM API
 if (GLM_API_KEY) {
   process.env.ANTHROPIC_AUTH_TOKEN = GLM_API_KEY;
   process.env.ANTHROPIC_BASE_URL = "https://open.bigmodel.cn/api/anthropic";
@@ -44,7 +48,7 @@ if (GLM_API_KEY) {
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || "/tmp";
 
-// Tests will FAIL if GLM credentials are not available
+// Tests will FAIL if no credentials are available
 describe("SDK Streaming Behavior", () => {
   let daemon: DaemonServerContext;
 
@@ -71,7 +75,7 @@ describe("SDK Streaming Behavior", () => {
       const createResult = (await daemon.messageHub.call("session.create", {
         workspacePath,
         config: {
-          model: "haiku",
+          model: "default",
           permissionMode: "acceptEdits", // Works on root and non-root
         },
       })) as { sessionId: string };
@@ -107,7 +111,7 @@ describe("SDK Streaming Behavior", () => {
       const createResult = (await daemon.messageHub.call("session.create", {
         workspacePath,
         config: {
-          model: "haiku",
+          model: "default",
           permissionMode: "acceptEdits",
         },
       })) as { sessionId: string };
@@ -156,7 +160,7 @@ describe("SDK Streaming Behavior", () => {
       const createResult = (await daemon.messageHub.call("session.create", {
         workspacePath,
         config: {
-          model: "haiku",
+          model: "default",
           permissionMode: "acceptEdits",
         },
       })) as { sessionId: string };
@@ -192,7 +196,7 @@ describe("SDK Streaming Behavior", () => {
       const createResult = (await daemon.messageHub.call("session.create", {
         workspacePath,
         config: {
-          model: "haiku",
+          model: "default",
           permissionMode: "acceptEdits",
         },
       })) as { sessionId: string };
@@ -232,7 +236,7 @@ describe("SDK Streaming Behavior", () => {
       const createResult = (await daemon.messageHub.call("session.create", {
         workspacePath,
         config: {
-          model: "haiku",
+          model: "default",
           permissionMode: "acceptEdits",
         },
       })) as { sessionId: string };
