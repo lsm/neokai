@@ -25,13 +25,13 @@
 
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import "dotenv/config";
-import type { DaemonServerContext } from "../../../helpers/daemon-server-helper";
-import { spawnDaemonServer } from "../../../helpers/daemon-server-helper";
+import type { DaemonServerContext } from "../../helpers/daemon-server-helper";
+import { spawnDaemonServer } from "../../helpers/daemon-server-helper";
 import {
   sendMessage,
   waitForIdle,
   getProcessingState,
-} from "../../../helpers/daemon-test-helpers";
+} from "../../helpers/daemon-test-helpers";
 import { WebSocket } from "undici";
 
 // Check for credentials - CLAUDE_CODE_OAUTH_TOKEN takes priority
