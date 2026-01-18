@@ -12,12 +12,12 @@
  * New code should import from './storage' or './storage/index'.
  */
 
-export { Database } from "./index";
-export type { SQLiteValue } from "./types";
+export { Database } from './index';
+export type { SQLiteValue } from './types';
 export {
-  DatabaseCore,
-  SessionRepository,
-  SDKMessageRepository,
-  SettingsRepository,
-  type SendStatus,
-} from "./index";
+	DatabaseCore,
+	SessionRepository,
+	SDKMessageRepository,
+	SettingsRepository,
+	type SendStatus,
+} from './index';

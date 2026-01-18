@@ -13,7 +13,7 @@
  * before importing createDaemonApp (which initializes the SDK).
  */
 
-const PORT = parseInt(process.env.PORT || "19400", 10);
+const PORT = parseInt(process.env.PORT || '19400', 10);
 
 // Handle GLM credentials - tests set GLM_API_KEY or environment variables
 // We need to set ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL for the SDK
@@ -27,54 +27,54 @@ const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
 // If GLM_API_KEY is set directly (CI pattern), set up the GLM environment
 // for the SDK to read.
 if (GLM_API_KEY && !ANTHROPIC_AUTH_TOKEN && !ANTHROPIC_BASE_URL) {
-  process.env.ANTHROPIC_AUTH_TOKEN = GLM_API_KEY;
-  process.env.ANTHROPIC_BASE_URL = "https://open.bigmodel.cn/api/anthropic";
-  process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = "glm-4.5-air";
-  process.env.API_TIMEOUT_MS = "3000000";
+	process.env.ANTHROPIC_AUTH_TOKEN = GLM_API_KEY;
+	process.env.ANTHROPIC_BASE_URL = 'https://open.bigmodel.cn/api/anthropic';
+	process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.5-air';
+	process.env.API_TIMEOUT_MS = '3000000';
 }
 
 // Now import createDaemonApp - it will pick up the environment variables we just set
-import { createDaemonApp } from "../../../src/app";
+import { createDaemonApp } from '../../../src/app';
 
 async function main() {
-  const { cleanup } = await createDaemonApp({
-    config: {
-      host: "127.0.0.1",
-      port: PORT,
-      defaultModel: "claude-sonnet-4.5-20250929",
-      maxTokens: 8192,
-      temperature: 1.0,
-      anthropicApiKey: process.env.ANTHROPIC_API_KEY || "",
-      claudeCodeOAuthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN,
-      dbPath: ":memory:",
-      maxSessions: 10,
-      nodeEnv: "test",
-      workspaceRoot: `${process.env.TMPDIR || "/tmp"}/liuboer-daemon-test-${Date.now()}`,
-      disableWorktrees: true,
-    },
-    standalone: true,
-  });
+	const { cleanup } = await createDaemonApp({
+		config: {
+			host: '127.0.0.1',
+			port: PORT,
+			defaultModel: 'claude-sonnet-4.5-20250929',
+			maxTokens: 8192,
+			temperature: 1.0,
+			anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
+			claudeCodeOAuthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN,
+			dbPath: ':memory:',
+			maxSessions: 10,
+			nodeEnv: 'test',
+			workspaceRoot: `${process.env.TMPDIR || '/tmp'}/liuboer-daemon-test-${Date.now()}`,
+			disableWorktrees: true,
+		},
+		standalone: true,
+	});
 
-  // Handle graceful shutdown on SIGINT
-  process.on("SIGINT", async () => {
-    console.error("[DAEMON-SERVER] Received SIGINT, cleaning up...");
-    await cleanup();
-    console.error("[DAEMON-SERVER] Cleanup complete, exiting...");
-    process.exit(0);
-  });
+	// Handle graceful shutdown on SIGINT
+	process.on('SIGINT', async () => {
+		console.error('[DAEMON-SERVER] Received SIGINT, cleaning up...');
+		await cleanup();
+		console.error('[DAEMON-SERVER] Cleanup complete, exiting...');
+		process.exit(0);
+	});
 
-  // Also handle SIGTERM for cleanup
-  process.on("SIGTERM", async () => {
-    console.error("[DAEMON-SERVER] Received SIGTERM, cleaning up...");
-    await cleanup();
-    console.error("[DAEMON-SERVER] Cleanup complete, exiting...");
-    process.exit(0);
-  });
+	// Also handle SIGTERM for cleanup
+	process.on('SIGTERM', async () => {
+		console.error('[DAEMON-SERVER] Received SIGTERM, cleaning up...');
+		await cleanup();
+		console.error('[DAEMON-SERVER] Cleanup complete, exiting...');
+		process.exit(0);
+	});
 
-  console.error(`[DAEMON-SERVER] Running on port ${PORT}, PID: ${process.pid}`);
+	console.error(`[DAEMON-SERVER] Running on port ${PORT}, PID: ${process.pid}`);
 }
 
 main().catch((error) => {
-  console.error("[DAEMON-SERVER] Fatal error:", error);
-  process.exit(1);
+	console.error('[DAEMON-SERVER] Fatal error:', error);
+	process.exit(1);
 });

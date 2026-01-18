@@ -17,7 +17,7 @@
  * ```
  */
 
-import type { SessionConfig } from "@liuboer/shared";
+import type { SessionConfig } from '@liuboer/shared';
 
 /**
  * Standard test session configuration for online tests
@@ -28,13 +28,13 @@ import type { SessionConfig } from "@liuboer/shared";
  * - tools: Minimal config to reduce prompt tokens sent to SDK
  */
 export function getTestSessionConfig(): Partial<SessionConfig> {
-  return {
-    model: "haiku", // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
-    permissionMode: "acceptEdits", // Explicitly set for CI (bypass permissions fails on root)
-    tools: {
-      useClaudeCodePreset: false,
-      liuboerTools: {},
-      settingSources: [],
-    },
-  };
+	return {
+		model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
+		permissionMode: 'acceptEdits', // Explicitly set for CI (bypass permissions fails on root)
+		tools: {
+			useClaudeCodePreset: false,
+			liuboerTools: {},
+			settingSources: [],
+		},
+	};
 }

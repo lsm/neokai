@@ -6,240 +6,240 @@
  * Note: Tests that require connection mocking are limited due to module initialization order.
  */
 
-import { renderHook, act } from "@testing-library/preact";
-import type { Session } from "@liuboer/shared";
-import { useSessionActions } from "../useSessionActions.ts";
+import { renderHook, act } from '@testing-library/preact';
+import type { Session } from '@liuboer/shared';
+import { useSessionActions } from '../useSessionActions.ts';
 
-describe("useSessionActions", () => {
-  const defaultSession: Session = {
-    id: "session-1",
-    title: "Test Session",
-    status: "active",
-    createdAt: new Date().toISOString(),
-    lastActiveAt: new Date().toISOString(),
-    workspacePath: "/test",
-    config: {},
-  };
+describe('useSessionActions', () => {
+	const defaultSession: Session = {
+		id: 'session-1',
+		title: 'Test Session',
+		status: 'active',
+		createdAt: new Date().toISOString(),
+		lastActiveAt: new Date().toISOString(),
+		workspacePath: '/test',
+		config: {},
+	};
 
-  describe("initialization", () => {
-    it("should initialize with default state", () => {
-      const { result } = renderHook(() =>
-        useSessionActions({
-          sessionId: "session-1",
-          session: defaultSession,
-          onDeleteModalClose: vi.fn(() => {}),
-          onStateReset: vi.fn(() => {}),
-        }),
-      );
+	describe('initialization', () => {
+		it('should initialize with default state', () => {
+			const { result } = renderHook(() =>
+				useSessionActions({
+					sessionId: 'session-1',
+					session: defaultSession,
+					onDeleteModalClose: vi.fn(() => {}),
+					onStateReset: vi.fn(() => {}),
+				})
+			);
 
-      expect(result.current.archiving).toBe(false);
-      expect(result.current.resettingAgent).toBe(false);
-      expect(result.current.archiveConfirmDialog).toBeNull();
-    });
+			expect(result.current.archiving).toBe(false);
+			expect(result.current.resettingAgent).toBe(false);
+			expect(result.current.archiveConfirmDialog).toBeNull();
+		});
 
-    it("should provide all action handlers", () => {
-      const { result } = renderHook(() =>
-        useSessionActions({
-          sessionId: "session-1",
-          session: defaultSession,
-          onDeleteModalClose: vi.fn(() => {}),
-          onStateReset: vi.fn(() => {}),
-        }),
-      );
+		it('should provide all action handlers', () => {
+			const { result } = renderHook(() =>
+				useSessionActions({
+					sessionId: 'session-1',
+					session: defaultSession,
+					onDeleteModalClose: vi.fn(() => {}),
+					onStateReset: vi.fn(() => {}),
+				})
+			);
 
-      expect(typeof result.current.handleDeleteSession).toBe("function");
-      expect(typeof result.current.handleArchiveClick).toBe("function");
-      expect(typeof result.current.handleConfirmArchive).toBe("function");
-      expect(typeof result.current.handleCancelArchive).toBe("function");
-      expect(typeof result.current.handleResetAgent).toBe("function");
-      expect(typeof result.current.handleExportChat).toBe("function");
-    });
-  });
+			expect(typeof result.current.handleDeleteSession).toBe('function');
+			expect(typeof result.current.handleArchiveClick).toBe('function');
+			expect(typeof result.current.handleConfirmArchive).toBe('function');
+			expect(typeof result.current.handleCancelArchive).toBe('function');
+			expect(typeof result.current.handleResetAgent).toBe('function');
+			expect(typeof result.current.handleExportChat).toBe('function');
+		});
+	});
 
-  describe("handleCancelArchive", () => {
-    it("should clear archive confirm dialog", () => {
-      const { result } = renderHook(() =>
-        useSessionActions({
-          sessionId: "session-1",
-          session: defaultSession,
-          onDeleteModalClose: vi.fn(() => {}),
-          onStateReset: vi.fn(() => {}),
-        }),
-      );
+	describe('handleCancelArchive', () => {
+		it('should clear archive confirm dialog', () => {
+			const { result } = renderHook(() =>
+				useSessionActions({
+					sessionId: 'session-1',
+					session: defaultSession,
+					onDeleteModalClose: vi.fn(() => {}),
+					onStateReset: vi.fn(() => {}),
+				})
+			);
 
-      // Cancel archive should clear the dialog
-      act(() => {
-        result.current.handleCancelArchive();
-      });
+			// Cancel archive should clear the dialog
+			act(() => {
+				result.current.handleCancelArchive();
+			});
 
-      expect(result.current.archiveConfirmDialog).toBeNull();
-    });
-  });
+			expect(result.current.archiveConfirmDialog).toBeNull();
+		});
+	});
 
-  describe("action handlers are callable", () => {
-    it("handleDeleteSession should be callable", async () => {
-      const onDeleteModalClose = vi.fn(() => {});
-      const { result } = renderHook(() =>
-        useSessionActions({
-          sessionId: "session-1",
-          session: defaultSession,
-          onDeleteModalClose,
-          onStateReset: vi.fn(() => {}),
-        }),
-      );
+	describe('action handlers are callable', () => {
+		it('handleDeleteSession should be callable', async () => {
+			const onDeleteModalClose = vi.fn(() => {});
+			const { result } = renderHook(() =>
+				useSessionActions({
+					sessionId: 'session-1',
+					session: defaultSession,
+					onDeleteModalClose,
+					onStateReset: vi.fn(() => {}),
+				})
+			);
 
-      // Should be callable without throwing (may fail due to no connection)
-      await act(async () => {
-        try {
-          await result.current.handleDeleteSession();
-        } catch {
-          // Expected without connection
-        }
-      });
+			// Should be callable without throwing (may fail due to no connection)
+			await act(async () => {
+				try {
+					await result.current.handleDeleteSession();
+				} catch {
+					// Expected without connection
+				}
+			});
 
-      // onDeleteModalClose should have been called
-      expect(onDeleteModalClose).toHaveBeenCalled();
-    });
+			// onDeleteModalClose should have been called
+			expect(onDeleteModalClose).toHaveBeenCalled();
+		});
 
-    it("handleArchiveClick should be callable", async () => {
-      const { result } = renderHook(() =>
-        useSessionActions({
-          sessionId: "session-1",
-          session: defaultSession,
-          onDeleteModalClose: vi.fn(() => {}),
-          onStateReset: vi.fn(() => {}),
-        }),
-      );
+		it('handleArchiveClick should be callable', async () => {
+			const { result } = renderHook(() =>
+				useSessionActions({
+					sessionId: 'session-1',
+					session: defaultSession,
+					onDeleteModalClose: vi.fn(() => {}),
+					onStateReset: vi.fn(() => {}),
+				})
+			);
 
-      // Should be callable without throwing
-      await act(async () => {
-        try {
-          await result.current.handleArchiveClick();
-        } catch {
-          // Expected without connection
-        }
-      });
+			// Should be callable without throwing
+			await act(async () => {
+				try {
+					await result.current.handleArchiveClick();
+				} catch {
+					// Expected without connection
+				}
+			});
 
-      expect(true).toBe(true);
-    });
+			expect(true).toBe(true);
+		});
 
-    it("handleConfirmArchive should be callable", async () => {
-      const { result } = renderHook(() =>
-        useSessionActions({
-          sessionId: "session-1",
-          session: defaultSession,
-          onDeleteModalClose: vi.fn(() => {}),
-          onStateReset: vi.fn(() => {}),
-        }),
-      );
+		it('handleConfirmArchive should be callable', async () => {
+			const { result } = renderHook(() =>
+				useSessionActions({
+					sessionId: 'session-1',
+					session: defaultSession,
+					onDeleteModalClose: vi.fn(() => {}),
+					onStateReset: vi.fn(() => {}),
+				})
+			);
 
-      await act(async () => {
-        try {
-          await result.current.handleConfirmArchive();
-        } catch {
-          // Expected without connection
-        }
-      });
+			await act(async () => {
+				try {
+					await result.current.handleConfirmArchive();
+				} catch {
+					// Expected without connection
+				}
+			});
 
-      expect(true).toBe(true);
-    });
+			expect(true).toBe(true);
+		});
 
-    it("handleResetAgent should be callable", async () => {
-      const { result } = renderHook(() =>
-        useSessionActions({
-          sessionId: "session-1",
-          session: defaultSession,
-          onDeleteModalClose: vi.fn(() => {}),
-          onStateReset: vi.fn(() => {}),
-        }),
-      );
+		it('handleResetAgent should be callable', async () => {
+			const { result } = renderHook(() =>
+				useSessionActions({
+					sessionId: 'session-1',
+					session: defaultSession,
+					onDeleteModalClose: vi.fn(() => {}),
+					onStateReset: vi.fn(() => {}),
+				})
+			);
 
-      await act(async () => {
-        try {
-          await result.current.handleResetAgent();
-        } catch {
-          // Expected without connection
-        }
-      });
+			await act(async () => {
+				try {
+					await result.current.handleResetAgent();
+				} catch {
+					// Expected without connection
+				}
+			});
 
-      expect(true).toBe(true);
-    });
+			expect(true).toBe(true);
+		});
 
-    it("handleExportChat should be callable", async () => {
-      const { result } = renderHook(() =>
-        useSessionActions({
-          sessionId: "session-1",
-          session: defaultSession,
-          onDeleteModalClose: vi.fn(() => {}),
-          onStateReset: vi.fn(() => {}),
-        }),
-      );
+		it('handleExportChat should be callable', async () => {
+			const { result } = renderHook(() =>
+				useSessionActions({
+					sessionId: 'session-1',
+					session: defaultSession,
+					onDeleteModalClose: vi.fn(() => {}),
+					onStateReset: vi.fn(() => {}),
+				})
+			);
 
-      await act(async () => {
-        try {
-          await result.current.handleExportChat();
-        } catch {
-          // Expected without connection
-        }
-      });
+			await act(async () => {
+				try {
+					await result.current.handleExportChat();
+				} catch {
+					// Expected without connection
+				}
+			});
 
-      expect(true).toBe(true);
-    });
-  });
+			expect(true).toBe(true);
+		});
+	});
 
-  describe("sessionId changes", () => {
-    it("should handle sessionId change", () => {
-      const { result, rerender } = renderHook(
-        ({ sessionId }) =>
-          useSessionActions({
-            sessionId,
-            session: defaultSession,
-            onDeleteModalClose: vi.fn(() => {}),
-            onStateReset: vi.fn(() => {}),
-          }),
-        { initialProps: { sessionId: "session-1" } },
-      );
+	describe('sessionId changes', () => {
+		it('should handle sessionId change', () => {
+			const { result, rerender } = renderHook(
+				({ sessionId }) =>
+					useSessionActions({
+						sessionId,
+						session: defaultSession,
+						onDeleteModalClose: vi.fn(() => {}),
+						onStateReset: vi.fn(() => {}),
+					}),
+				{ initialProps: { sessionId: 'session-1' } }
+			);
 
-      expect(typeof result.current.handleDeleteSession).toBe("function");
+			expect(typeof result.current.handleDeleteSession).toBe('function');
 
-      rerender({ sessionId: "session-2" });
+			rerender({ sessionId: 'session-2' });
 
-      expect(typeof result.current.handleDeleteSession).toBe("function");
-    });
-  });
+			expect(typeof result.current.handleDeleteSession).toBe('function');
+		});
+	});
 
-  describe("null session handling", () => {
-    it("should handle null session", () => {
-      const { result } = renderHook(() =>
-        useSessionActions({
-          sessionId: "session-1",
-          session: null,
-          onDeleteModalClose: vi.fn(() => {}),
-          onStateReset: vi.fn(() => {}),
-        }),
-      );
+	describe('null session handling', () => {
+		it('should handle null session', () => {
+			const { result } = renderHook(() =>
+				useSessionActions({
+					sessionId: 'session-1',
+					session: null,
+					onDeleteModalClose: vi.fn(() => {}),
+					onStateReset: vi.fn(() => {}),
+				})
+			);
 
-      expect(result.current.archiving).toBe(false);
-      expect(result.current.resettingAgent).toBe(false);
-    });
-  });
+			expect(result.current.archiving).toBe(false);
+			expect(result.current.resettingAgent).toBe(false);
+		});
+	});
 
-  describe("function stability", () => {
-    it("should return stable handleCancelArchive reference", () => {
-      const { result, rerender } = renderHook(() =>
-        useSessionActions({
-          sessionId: "session-1",
-          session: defaultSession,
-          onDeleteModalClose: vi.fn(() => {}),
-          onStateReset: vi.fn(() => {}),
-        }),
-      );
+	describe('function stability', () => {
+		it('should return stable handleCancelArchive reference', () => {
+			const { result, rerender } = renderHook(() =>
+				useSessionActions({
+					sessionId: 'session-1',
+					session: defaultSession,
+					onDeleteModalClose: vi.fn(() => {}),
+					onStateReset: vi.fn(() => {}),
+				})
+			);
 
-      const firstHandleCancelArchive = result.current.handleCancelArchive;
+			const firstHandleCancelArchive = result.current.handleCancelArchive;
 
-      rerender();
+			rerender();
 
-      expect(result.current.handleCancelArchive).toBe(firstHandleCancelArchive);
-    });
-  });
+			expect(result.current.handleCancelArchive).toBe(firstHandleCancelArchive);
+		});
+	});
 });

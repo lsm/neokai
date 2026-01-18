@@ -10,45 +10,45 @@
  * - Tests will FAIL if credentials are not available (no skip)
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
-import type { DaemonServerContext } from "../helpers/daemon-server-helper";
-import { spawnDaemonServer } from "../helpers/daemon-server-helper";
+import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import type { DaemonServerContext } from '../helpers/daemon-server-helper';
+import { spawnDaemonServer } from '../helpers/daemon-server-helper';
 
 // Use temp directory for test workspaces
-const TMP_DIR = process.env.TMPDIR || "/tmp";
+const TMP_DIR = process.env.TMPDIR || '/tmp';
 
-describe("Authentication Integration (API-dependent)", () => {
-  let daemon: DaemonServerContext;
+describe('Authentication Integration (API-dependent)', () => {
+	let daemon: DaemonServerContext;
 
-  beforeEach(async () => {
-    // Restore mocks to ensure we use the real SDK
-    mock.restore();
-    daemon = await spawnDaemonServer();
-  });
+	beforeEach(async () => {
+		// Restore mocks to ensure we use the real SDK
+		mock.restore();
+		daemon = await spawnDaemonServer();
+	});
 
-  afterEach(async () => {
-    if (daemon) {
-      daemon.kill("SIGTERM");
-      await daemon.waitForExit();
-    }
-  });
+	afterEach(async () => {
+		if (daemon) {
+			daemon.kill('SIGTERM');
+			await daemon.waitForExit();
+		}
+	});
 
-  describe("Session Creation with Auth", () => {
-    test("should create session only if authenticated", async () => {
-      const result = (await daemon.messageHub.call("session.create", {
-        workspacePath: `${TMP_DIR}/test-auth`,
-        config: { model: "haiku" }, // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
-      })) as { sessionId: string };
+	describe('Session Creation with Auth', () => {
+		test('should create session only if authenticated', async () => {
+			const result = (await daemon.messageHub.call('session.create', {
+				workspacePath: `${TMP_DIR}/test-auth`,
+				config: { model: 'haiku' }, // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
+			})) as { sessionId: string };
 
-      expect(result.sessionId).toBeString();
+			expect(result.sessionId).toBeString();
 
-      // Verify session was created via RPC
-      const sessionResult = (await daemon.messageHub.call("session.get", {
-        sessionId: result.sessionId,
-      })) as { session: Record<string, unknown> };
+			// Verify session was created via RPC
+			const sessionResult = (await daemon.messageHub.call('session.get', {
+				sessionId: result.sessionId,
+			})) as { session: Record<string, unknown> };
 
-      expect(sessionResult.session).toBeDefined();
-      expect(sessionResult.session.id).toBe(result.sessionId);
-    });
-  });
+			expect(sessionResult.session).toBeDefined();
+			expect(sessionResult.session.id).toBe(result.sessionId);
+		});
+	});
 });

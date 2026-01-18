@@ -15,4 +15,4 @@
  *   bun run test:coverage
  */
 
-export { test, expect, devices } from "./coverage";
+export { test, expect, devices } from './coverage';

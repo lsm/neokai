@@ -10,452 +10,433 @@
  * - Automatic phase detection for state tracking
  */
 
-import type { Session, MessageHub } from "@liuboer/shared";
-import type { DaemonHub } from "../daemon-hub";
-import type { SDKMessage, SDKUserMessage } from "@liuboer/shared/sdk";
+import type { Session, MessageHub } from '@liuboer/shared';
+import type { DaemonHub } from '../daemon-hub';
+import type { SDKMessage, SDKUserMessage } from '@liuboer/shared/sdk';
 import {
-  isSDKResultSuccess,
-  isSDKAssistantMessage,
-  isToolUseBlock,
-  isSDKStatusMessage,
-  isSDKCompactBoundary,
-  isSDKSystemMessage,
-} from "@liuboer/shared/sdk/type-guards";
-import { Database } from "../../storage/database";
-import { Logger } from "../logger";
-import { ProcessingStateManager } from "./processing-state-manager";
-import { ContextTracker } from "./context-tracker";
-import { ContextFetcher } from "./context-fetcher";
-import { ApiErrorCircuitBreaker } from "./api-error-circuit-breaker";
+	isSDKResultSuccess,
+	isSDKAssistantMessage,
+	isToolUseBlock,
+	isSDKStatusMessage,
+	isSDKCompactBoundary,
+	isSDKSystemMessage,
+} from '@liuboer/shared/sdk/type-guards';
+import { Database } from '../../storage/database';
+import { Logger } from '../logger';
+import { ProcessingStateManager } from './processing-state-manager';
+import { ContextTracker } from './context-tracker';
+import { ContextFetcher } from './context-fetcher';
+import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
 
 export class SDKMessageHandler {
-  private sdkMessageDeltaVersion: number = 0;
-  private logger: Logger;
-  private contextFetcher: ContextFetcher;
-  private circuitBreaker: ApiErrorCircuitBreaker;
+	private sdkMessageDeltaVersion: number = 0;
+	private logger: Logger;
+	private contextFetcher: ContextFetcher;
+	private circuitBreaker: ApiErrorCircuitBreaker;
 
-  // Track whether we just processed a context response to prevent infinite loop
-  // When true, we skip queuing /context for the next result message
-  private lastMessageWasContextResponse: boolean = false;
+	// Track whether we just processed a context response to prevent infinite loop
+	// When true, we skip queuing /context for the next result message
+	private lastMessageWasContextResponse: boolean = false;
 
-  // Track UUIDs of internal /context commands to skip their result messages
-  private internalContextCommandIds: Set<string> = new Set();
+	// Track UUIDs of internal /context commands to skip their result messages
+	private internalContextCommandIds: Set<string> = new Set();
 
-  // Callback to queue messages (will be set by AgentSession)
-  // Returns the message UUID so we can track internal commands
-  private queueMessage?: (
-    content: string,
-    internal: boolean,
-  ) => Promise<string>;
+	// Callback to queue messages (will be set by AgentSession)
+	// Returns the message UUID so we can track internal commands
+	private queueMessage?: (content: string, internal: boolean) => Promise<string>;
 
-  // Callback to stop the query when circuit breaker trips
-  private onCircuitBreakerTrip?: (
-    reason: string,
-    userMessage: string,
-  ) => Promise<void>;
+	// Callback to stop the query when circuit breaker trips
+	private onCircuitBreakerTrip?: (reason: string, userMessage: string) => Promise<void>;
 
-  constructor(
-    private session: Session,
-    private db: Database,
-    private messageHub: MessageHub,
-    private daemonHub: DaemonHub,
-    private stateManager: ProcessingStateManager,
-    private contextTracker: ContextTracker,
-  ) {
-    this.logger = new Logger(`SDKMessageHandler ${session.id}`);
-    this.contextFetcher = new ContextFetcher(session.id);
-    this.circuitBreaker = new ApiErrorCircuitBreaker(session.id);
+	constructor(
+		private session: Session,
+		private db: Database,
+		private messageHub: MessageHub,
+		private daemonHub: DaemonHub,
+		private stateManager: ProcessingStateManager,
+		private contextTracker: ContextTracker
+	) {
+		this.logger = new Logger(`SDKMessageHandler ${session.id}`);
+		this.contextFetcher = new ContextFetcher(session.id);
+		this.circuitBreaker = new ApiErrorCircuitBreaker(session.id);
 
-    // Set up circuit breaker callback
-    this.circuitBreaker.setOnTripCallback(async (reason, errorCount) => {
-      const userMessage = this.circuitBreaker.getTripMessage();
-      this.logger.log(
-        `Circuit breaker tripped: ${reason} (${errorCount} errors)`,
-      );
+		// Set up circuit breaker callback
+		this.circuitBreaker.setOnTripCallback(async (reason, errorCount) => {
+			const userMessage = this.circuitBreaker.getTripMessage();
+			this.logger.log(`Circuit breaker tripped: ${reason} (${errorCount} errors)`);
 
-      if (this.onCircuitBreakerTrip) {
-        await this.onCircuitBreakerTrip(reason, userMessage);
-      }
-    });
-  }
+			if (this.onCircuitBreakerTrip) {
+				await this.onCircuitBreakerTrip(reason, userMessage);
+			}
+		});
+	}
 
-  /**
-   * Set callback to execute when circuit breaker trips
-   * Called by AgentSession to enable stopping the query on fatal errors
-   */
-  setCircuitBreakerTripCallback(
-    callback: (reason: string, userMessage: string) => Promise<void>,
-  ): void {
-    this.onCircuitBreakerTrip = callback;
-  }
+	/**
+	 * Set callback to execute when circuit breaker trips
+	 * Called by AgentSession to enable stopping the query on fatal errors
+	 */
+	setCircuitBreakerTripCallback(
+		callback: (reason: string, userMessage: string) => Promise<void>
+	): void {
+		this.onCircuitBreakerTrip = callback;
+	}
 
-  /**
-   * Reset the circuit breaker (after manual reset or successful recovery)
-   */
-  resetCircuitBreaker(): void {
-    this.circuitBreaker.reset();
-  }
+	/**
+	 * Reset the circuit breaker (after manual reset or successful recovery)
+	 */
+	resetCircuitBreaker(): void {
+		this.circuitBreaker.reset();
+	}
 
-  /**
-   * Mark successful API interaction (resets error tracking)
-   */
-  markApiSuccess(): void {
-    this.circuitBreaker.markSuccess();
-  }
+	/**
+	 * Mark successful API interaction (resets error tracking)
+	 */
+	markApiSuccess(): void {
+		this.circuitBreaker.markSuccess();
+	}
 
-  /**
-   * Set the message queue callback
-   * Called by AgentSession to enable automatic context fetching
-   */
-  setQueueMessageCallback(
-    callback: (content: string, internal: boolean) => Promise<string>,
-  ): void {
-    this.queueMessage = callback;
-  }
+	/**
+	 * Set the message queue callback
+	 * Called by AgentSession to enable automatic context fetching
+	 */
+	setQueueMessageCallback(callback: (content: string, internal: boolean) => Promise<string>): void {
+		this.queueMessage = callback;
+	}
 
-  /**
-   * Main entry point - handle incoming SDK message
-   *
-   * NOTE: Stream events removed - the SDK's query() with AsyncGenerator yields
-   * complete messages, not incremental stream_event tokens.
-   */
-  async handleMessage(message: SDKMessage): Promise<void> {
-    // Check for API error patterns that indicate an infinite loop
-    // This MUST happen BEFORE any other processing to catch errors early
-    const circuitBreakerTripped =
-      await this.circuitBreaker.checkMessage(message);
-    if (circuitBreakerTripped) {
-      // Circuit breaker tripped - skip normal processing
-      // The callback will handle stopping the query and notifying the user
-      this.logger.log("Circuit breaker tripped, skipping message processing");
-      return;
-    }
+	/**
+	 * Main entry point - handle incoming SDK message
+	 *
+	 * NOTE: Stream events removed - the SDK's query() with AsyncGenerator yields
+	 * complete messages, not incremental stream_event tokens.
+	 */
+	async handleMessage(message: SDKMessage): Promise<void> {
+		// Check for API error patterns that indicate an infinite loop
+		// This MUST happen BEFORE any other processing to catch errors early
+		const circuitBreakerTripped = await this.circuitBreaker.checkMessage(message);
+		if (circuitBreakerTripped) {
+			// Circuit breaker tripped - skip normal processing
+			// The callback will handle stopping the query and notifying the user
+			this.logger.log('Circuit breaker tripped, skipping message processing');
+			return;
+		}
 
-    // Automatically update phase based on message type
-    await this.stateManager.detectPhaseFromMessage(message);
+		// Automatically update phase based on message type
+		await this.stateManager.detectPhaseFromMessage(message);
 
-    // Check if this is a /context response BEFORE saving/emitting
-    // /context responses should be processed for context tracking but NOT saved to DB or shown in UI
-    const isContextResponse = this.contextFetcher.isContextResponse(message);
-    if (isContextResponse) {
-      await this.handleContextResponse(message);
-      // Set flag to skip:
-      // 1. Queuing another /context for the next result
-      // 2. Saving the result message that follows this context response
-      this.lastMessageWasContextResponse = true;
+		// Check if this is a /context response BEFORE saving/emitting
+		// /context responses should be processed for context tracking but NOT saved to DB or shown in UI
+		const isContextResponse = this.contextFetcher.isContextResponse(message);
+		if (isContextResponse) {
+			await this.handleContextResponse(message);
+			// Set flag to skip:
+			// 1. Queuing another /context for the next result
+			// 2. Saving the result message that follows this context response
+			this.lastMessageWasContextResponse = true;
 
-      // Clean up the tracked ID if this is the response
-      const userMsg = message as { uuid?: string };
-      if (userMsg.uuid && this.internalContextCommandIds.has(userMsg.uuid)) {
-        this.internalContextCommandIds.delete(userMsg.uuid);
-      }
+			// Clean up the tracked ID if this is the response
+			const userMsg = message as { uuid?: string };
+			if (userMsg.uuid && this.internalContextCommandIds.has(userMsg.uuid)) {
+				this.internalContextCommandIds.delete(userMsg.uuid);
+			}
 
-      // IMPORTANT: Return early to skip saving and emitting this message
-      // It's already been processed for context tracking
-      return;
-    }
+			// IMPORTANT: Return early to skip saving and emitting this message
+			// It's already been processed for context tracking
+			return;
+		}
 
-    // Check if this is a result message immediately following a /context response
-    // Skip saving/broadcasting these result messages
-    if (message.type === "result" && this.lastMessageWasContextResponse) {
-      this.logger.log("Skipping result message for internal /context command");
-      // Reset the flag - we've now handled both the context response AND its result
-      this.lastMessageWasContextResponse = false;
-      // Return early - don't save or broadcast this result
-      return;
-    }
+		// Check if this is a result message immediately following a /context response
+		// Skip saving/broadcasting these result messages
+		if (message.type === 'result' && this.lastMessageWasContextResponse) {
+			this.logger.log('Skipping result message for internal /context command');
+			// Reset the flag - we've now handled both the context response AND its result
+			this.lastMessageWasContextResponse = false;
+			// Return early - don't save or broadcast this result
+			return;
+		}
 
-    // Mark all user messages from SDK as synthetic
-    // Real user messages are saved in the message generator, not here
-    // SDK only emits user messages for synthetic purposes (compaction, subagent context, etc.)
-    if (message.type === "user") {
-      (message as SDKUserMessage & { isSynthetic: boolean }).isSynthetic = true;
-    }
+		// Mark all user messages from SDK as synthetic
+		// Real user messages are saved in the message generator, not here
+		// SDK only emits user messages for synthetic purposes (compaction, subagent context, etc.)
+		if (message.type === 'user') {
+			(message as SDKUserMessage & { isSynthetic: boolean }).isSynthetic = true;
+		}
 
-    // Save to DB FIRST before broadcasting to clients
-    // This ensures we only broadcast messages that are successfully persisted
-    const savedSuccessfully = this.db.saveSDKMessage(this.session.id, message);
+		// Save to DB FIRST before broadcasting to clients
+		// This ensures we only broadcast messages that are successfully persisted
+		const savedSuccessfully = this.db.saveSDKMessage(this.session.id, message);
 
-    if (!savedSuccessfully) {
-      // Log warning but continue - message is already in SDK's memory
-      this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
-      // Don't broadcast to clients if DB save failed
-      return;
-    }
+		if (!savedSuccessfully) {
+			// Log warning but continue - message is already in SDK's memory
+			this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
+			// Don't broadcast to clients if DB save failed
+			return;
+		}
 
-    // Broadcast SDK message delta (only channel - sdk.message removed as redundant)
-    await this.messageHub.publish(
-      "state.sdkMessages.delta",
-      {
-        added: [message],
-        timestamp: Date.now(),
-        version: ++this.sdkMessageDeltaVersion,
-      },
-      { sessionId: this.session.id },
-    );
+		// Broadcast SDK message delta (only channel - sdk.message removed as redundant)
+		await this.messageHub.publish(
+			'state.sdkMessages.delta',
+			{
+				added: [message],
+				timestamp: Date.now(),
+				version: ++this.sdkMessageDeltaVersion,
+			},
+			{ sessionId: this.session.id }
+		);
 
-    // Handle specific message types
-    if (isSDKSystemMessage(message)) {
-      await this.handleSystemMessage(message);
-    }
+		// Handle specific message types
+		if (isSDKSystemMessage(message)) {
+			await this.handleSystemMessage(message);
+		}
 
-    if (isSDKResultSuccess(message)) {
-      await this.handleResultMessage(message);
-    }
+		if (isSDKResultSuccess(message)) {
+			await this.handleResultMessage(message);
+		}
 
-    if (isSDKAssistantMessage(message)) {
-      await this.handleAssistantMessage(message);
-    }
+		if (isSDKAssistantMessage(message)) {
+			await this.handleAssistantMessage(message);
+		}
 
-    if (isSDKStatusMessage(message)) {
-      await this.handleStatusMessage(message);
-    }
+		if (isSDKStatusMessage(message)) {
+			await this.handleStatusMessage(message);
+		}
 
-    if (isSDKCompactBoundary(message)) {
-      await this.handleCompactBoundary(message);
-    }
-  }
+		if (isSDKCompactBoundary(message)) {
+			await this.handleCompactBoundary(message);
+		}
+	}
 
-  /**
-   * Handle system message (capture SDK session ID)
-   */
-  private async handleSystemMessage(message: SDKMessage): Promise<void> {
-    if (!isSDKSystemMessage(message)) return;
+	/**
+	 * Handle system message (capture SDK session ID)
+	 */
+	private async handleSystemMessage(message: SDKMessage): Promise<void> {
+		if (!isSDKSystemMessage(message)) return;
 
-    // Capture SDK's internal session ID if we don't have it yet
-    // This enables session resumption after daemon restart
-    if (!this.session.sdkSessionId && message.session_id) {
-      this.logger.log(`Captured SDK session ID: ${message.session_id}`);
+		// Capture SDK's internal session ID if we don't have it yet
+		// This enables session resumption after daemon restart
+		if (!this.session.sdkSessionId && message.session_id) {
+			this.logger.log(`Captured SDK session ID: ${message.session_id}`);
 
-      // Update in-memory session
-      this.session.sdkSessionId = message.session_id;
+			// Update in-memory session
+			this.session.sdkSessionId = message.session_id;
 
-      // Persist to database
-      this.db.updateSession(this.session.id, {
-        sdkSessionId: message.session_id,
-      });
+			// Persist to database
+			this.db.updateSession(this.session.id, {
+				sdkSessionId: message.session_id,
+			});
 
-      // Emit session.updated event so StateManager broadcasts the change
-      // Include data for decoupled state management
-      await this.daemonHub.emit("session.updated", {
-        sessionId: this.session.id,
-        source: "sdk-session",
-        session: { sdkSessionId: message.session_id },
-      });
-    }
-  }
+			// Emit session.updated event so StateManager broadcasts the change
+			// Include data for decoupled state management
+			await this.daemonHub.emit('session.updated', {
+				sessionId: this.session.id,
+				source: 'sdk-session',
+				session: { sdkSessionId: message.session_id },
+			});
+		}
+	}
 
-  /**
-   * Handle result message (end of turn)
-   */
-  private async handleResultMessage(message: SDKMessage): Promise<void> {
-    // Type guard to ensure this is a successful result
-    if (!isSDKResultSuccess(message)) return;
+	/**
+	 * Handle result message (end of turn)
+	 */
+	private async handleResultMessage(message: SDKMessage): Promise<void> {
+		// Type guard to ensure this is a successful result
+		if (!isSDKResultSuccess(message)) return;
 
-    // Update session metadata with token usage and costs
-    const usage = message.usage;
-    const totalTokens = usage.input_tokens + usage.output_tokens;
+		// Update session metadata with token usage and costs
+		const usage = message.usage;
+		const totalTokens = usage.input_tokens + usage.output_tokens;
 
-    // SDK's total_cost_usd is CUMULATIVE within a single run, but RESETS when agent restarts
-    // (e.g., after errors or manual reset). We detect resets by comparing to lastSdkCost.
-    // Example sequence: 0.42 -> 0.73 -> 1.1 (cumulative) -> RESET -> 0.25 -> 0.50 (cumulative again)
-    const sdkCost = message.total_cost_usd || 0;
-    const lastSdkCost = this.session.metadata?.lastSdkCost || 0;
-    const costBaseline = this.session.metadata?.costBaseline || 0;
+		// SDK's total_cost_usd is CUMULATIVE within a single run, but RESETS when agent restarts
+		// (e.g., after errors or manual reset). We detect resets by comparing to lastSdkCost.
+		// Example sequence: 0.42 -> 0.73 -> 1.1 (cumulative) -> RESET -> 0.25 -> 0.50 (cumulative again)
+		const sdkCost = message.total_cost_usd || 0;
+		const lastSdkCost = this.session.metadata?.lastSdkCost || 0;
+		const costBaseline = this.session.metadata?.costBaseline || 0;
 
-    // Detect SDK reset: if current cost < last cost, SDK was restarted
-    // Save previous cumulative cost as new baseline
-    let newCostBaseline = costBaseline;
-    if (sdkCost < lastSdkCost && lastSdkCost > 0) {
-      // SDK reset detected - add previous SDK cost to baseline
-      newCostBaseline = costBaseline + lastSdkCost;
-    }
+		// Detect SDK reset: if current cost < last cost, SDK was restarted
+		// Save previous cumulative cost as new baseline
+		let newCostBaseline = costBaseline;
+		if (sdkCost < lastSdkCost && lastSdkCost > 0) {
+			// SDK reset detected - add previous SDK cost to baseline
+			newCostBaseline = costBaseline + lastSdkCost;
+		}
 
-    // Total cost = baseline (from previous runs) + current SDK cost (cumulative within this run)
-    const totalCost = newCostBaseline + sdkCost;
+		// Total cost = baseline (from previous runs) + current SDK cost (cumulative within this run)
+		const totalCost = newCostBaseline + sdkCost;
 
-    this.session.lastActiveAt = new Date().toISOString();
-    this.session.metadata = {
-      ...this.session.metadata,
-      messageCount: (this.session.metadata?.messageCount || 0) + 1,
-      totalTokens: (this.session.metadata?.totalTokens || 0) + totalTokens,
-      inputTokens:
-        (this.session.metadata?.inputTokens || 0) + usage.input_tokens,
-      outputTokens:
-        (this.session.metadata?.outputTokens || 0) + usage.output_tokens,
-      // Total cost across all runs (baseline + current SDK cumulative)
-      totalCost,
-      toolCallCount: this.session.metadata?.toolCallCount || 0,
-      // Track SDK state for reset detection
-      lastSdkCost: sdkCost,
-      costBaseline: newCostBaseline,
-    };
+		this.session.lastActiveAt = new Date().toISOString();
+		this.session.metadata = {
+			...this.session.metadata,
+			messageCount: (this.session.metadata?.messageCount || 0) + 1,
+			totalTokens: (this.session.metadata?.totalTokens || 0) + totalTokens,
+			inputTokens: (this.session.metadata?.inputTokens || 0) + usage.input_tokens,
+			outputTokens: (this.session.metadata?.outputTokens || 0) + usage.output_tokens,
+			// Total cost across all runs (baseline + current SDK cumulative)
+			totalCost,
+			toolCallCount: this.session.metadata?.toolCallCount || 0,
+			// Track SDK state for reset detection
+			lastSdkCost: sdkCost,
+			costBaseline: newCostBaseline,
+		};
 
-    this.db.updateSession(this.session.id, {
-      lastActiveAt: this.session.lastActiveAt,
-      metadata: this.session.metadata,
-    });
+		this.db.updateSession(this.session.id, {
+			lastActiveAt: this.session.lastActiveAt,
+			metadata: this.session.metadata,
+		});
 
-    // Emit session.updated event so StateManager broadcasts the change
-    // Include data for decoupled state management
-    await this.daemonHub.emit("session.updated", {
-      sessionId: this.session.id,
-      source: "metadata",
-      session: {
-        lastActiveAt: this.session.lastActiveAt,
-        metadata: this.session.metadata,
-      },
-    });
+		// Emit session.updated event so StateManager broadcasts the change
+		// Include data for decoupled state management
+		await this.daemonHub.emit('session.updated', {
+			sessionId: this.session.id,
+			source: 'metadata',
+			session: {
+				lastActiveAt: this.session.lastActiveAt,
+				metadata: this.session.metadata,
+			},
+		});
 
-    // Update context tracker with final accurate usage
-    // SKIP for /context command's result - /context doesn't call the API, so it has 0 tokens
-    // We already have the correct context from parsing the /context response
-    if (!this.lastMessageWasContextResponse) {
-      await this.contextTracker.handleResultUsage(
-        {
-          input_tokens: usage.input_tokens,
-          output_tokens: usage.output_tokens,
-          cache_read_input_tokens: usage.cache_read_input_tokens,
-          cache_creation_input_tokens: usage.cache_creation_input_tokens,
-        },
-        message.modelUsage,
-      );
-    }
+		// Update context tracker with final accurate usage
+		// SKIP for /context command's result - /context doesn't call the API, so it has 0 tokens
+		// We already have the correct context from parsing the /context response
+		if (!this.lastMessageWasContextResponse) {
+			await this.contextTracker.handleResultUsage(
+				{
+					input_tokens: usage.input_tokens,
+					output_tokens: usage.output_tokens,
+					cache_read_input_tokens: usage.cache_read_input_tokens,
+					cache_creation_input_tokens: usage.cache_creation_input_tokens,
+				},
+				message.modelUsage
+			);
+		}
 
-    // Queue /context command to get detailed breakdown (unless we just got one)
-    // CRITICAL: Check flag to prevent infinite loop!
-    // /context produces its own result message, so we must skip queuing another
-    // Note: flag is reset when we process the result message (see early return above)
-    if (!this.lastMessageWasContextResponse && this.queueMessage) {
-      try {
-        // Queue as internal message (won't be saved to DB or broadcast as user message)
-        const messageId = await this.queueMessage("/context", true);
-        // Track this ID so we can skip the result message
-        this.internalContextCommandIds.add(messageId);
-        this.logger.log(
-          `Queued /context for detailed breakdown (ID: ${messageId})`,
-        );
-      } catch (error) {
-        // Non-critical - just log the error
-        this.logger.warn("Failed to queue /context:", error);
-      }
-    }
+		// Queue /context command to get detailed breakdown (unless we just got one)
+		// CRITICAL: Check flag to prevent infinite loop!
+		// /context produces its own result message, so we must skip queuing another
+		// Note: flag is reset when we process the result message (see early return above)
+		if (!this.lastMessageWasContextResponse && this.queueMessage) {
+			try {
+				// Queue as internal message (won't be saved to DB or broadcast as user message)
+				const messageId = await this.queueMessage('/context', true);
+				// Track this ID so we can skip the result message
+				this.internalContextCommandIds.add(messageId);
+				this.logger.log(`Queued /context for detailed breakdown (ID: ${messageId})`);
+			} catch (error) {
+				// Non-critical - just log the error
+				this.logger.warn('Failed to queue /context:', error);
+			}
+		}
 
-    // Mark successful API interaction - resets circuit breaker error tracking
-    // Only reset when actual tokens were consumed (indicating a real API call)
-    // Zero-token results happen when SDK processes synthetic error messages without
-    // making an API call - these should NOT reset the circuit breaker
-    if (usage.input_tokens > 0 || usage.output_tokens > 0) {
-      this.circuitBreaker.markSuccess();
-    }
+		// Mark successful API interaction - resets circuit breaker error tracking
+		// Only reset when actual tokens were consumed (indicating a real API call)
+		// Zero-token results happen when SDK processes synthetic error messages without
+		// making an API call - these should NOT reset the circuit breaker
+		if (usage.input_tokens > 0 || usage.output_tokens > 0) {
+			this.circuitBreaker.markSuccess();
+		}
 
-    // Clear any session errors since we successfully completed a turn
-    // This resolves persistent error banners that weren't being cleared
-    await this.daemonHub.emit("session.errorClear", {
-      sessionId: this.session.id,
-    });
+		// Clear any session errors since we successfully completed a turn
+		// This resolves persistent error banners that weren't being cleared
+		await this.daemonHub.emit('session.errorClear', {
+			sessionId: this.session.id,
+		});
 
-    // Set state back to idle
-    // Note: Title generation now handled by TitleGenerationQueue (decoupled via EventBus)
-    await this.stateManager.setIdle();
-  }
+		// Set state back to idle
+		// Note: Title generation now handled by TitleGenerationQueue (decoupled via EventBus)
+		await this.stateManager.setIdle();
+	}
 
-  /**
-   * Handle assistant message (track tool calls)
-   *
-   * NOTE: AskUserQuestion is now handled via the canUseTool callback in
-   * AskUserQuestionHandler, not here. The SDK intercepts it BEFORE execution.
-   */
-  private async handleAssistantMessage(message: SDKMessage): Promise<void> {
-    if (!isSDKAssistantMessage(message)) return;
+	/**
+	 * Handle assistant message (track tool calls)
+	 *
+	 * NOTE: AskUserQuestion is now handled via the canUseTool callback in
+	 * AskUserQuestionHandler, not here. The SDK intercepts it BEFORE execution.
+	 */
+	private async handleAssistantMessage(message: SDKMessage): Promise<void> {
+		if (!isSDKAssistantMessage(message)) return;
 
-    const toolCalls = message.message.content.filter(isToolUseBlock);
-    if (toolCalls.length > 0) {
-      this.session.metadata = {
-        ...this.session.metadata,
-        toolCallCount:
-          (this.session.metadata?.toolCallCount || 0) + toolCalls.length,
-      };
-      this.db.updateSession(this.session.id, {
-        metadata: this.session.metadata,
-      });
+		const toolCalls = message.message.content.filter(isToolUseBlock);
+		if (toolCalls.length > 0) {
+			this.session.metadata = {
+				...this.session.metadata,
+				toolCallCount: (this.session.metadata?.toolCallCount || 0) + toolCalls.length,
+			};
+			this.db.updateSession(this.session.id, {
+				metadata: this.session.metadata,
+			});
 
-      // Emit session.updated event so StateManager broadcasts the change
-      // Include data for decoupled state management
-      await this.daemonHub.emit("session.updated", {
-        sessionId: this.session.id,
-        source: "metadata",
-        session: { metadata: this.session.metadata },
-      });
-    }
-  }
+			// Emit session.updated event so StateManager broadcasts the change
+			// Include data for decoupled state management
+			await this.daemonHub.emit('session.updated', {
+				sessionId: this.session.id,
+				source: 'metadata',
+				session: { metadata: this.session.metadata },
+			});
+		}
+	}
 
-  /**
-   * Handle status message (detect compaction start)
-   */
-  private async handleStatusMessage(message: SDKMessage): Promise<void> {
-    if (!isSDKStatusMessage(message)) return;
+	/**
+	 * Handle status message (detect compaction start)
+	 */
+	private async handleStatusMessage(message: SDKMessage): Promise<void> {
+		if (!isSDKStatusMessage(message)) return;
 
-    const statusMsg = message as { status: string | null };
-    if (statusMsg.status === "compacting") {
-      this.logger.log("Context compaction started (auto)");
-      // Set isCompacting flag on processing state (flows through state.session)
-      await this.stateManager.setCompacting(true);
-    }
-  }
+		const statusMsg = message as { status: string | null };
+		if (statusMsg.status === 'compacting') {
+			this.logger.log('Context compaction started (auto)');
+			// Set isCompacting flag on processing state (flows through state.session)
+			await this.stateManager.setCompacting(true);
+		}
+	}
 
-  /**
-   * Handle compact boundary message (compaction completed)
-   */
-  private async handleCompactBoundary(message: SDKMessage): Promise<void> {
-    if (!isSDKCompactBoundary(message)) return;
+	/**
+	 * Handle compact boundary message (compaction completed)
+	 */
+	private async handleCompactBoundary(message: SDKMessage): Promise<void> {
+		if (!isSDKCompactBoundary(message)) return;
 
-    const compactMsg = message as {
-      compact_metadata: {
-        trigger: "manual" | "auto";
-        pre_tokens: number;
-      };
-    };
+		const compactMsg = message as {
+			compact_metadata: {
+				trigger: 'manual' | 'auto';
+				pre_tokens: number;
+			};
+		};
 
-    this.logger.log(
-      `Context compaction completed (${compactMsg.compact_metadata.trigger}), ` +
-        `pre-tokens: ${compactMsg.compact_metadata.pre_tokens}`,
-    );
+		this.logger.log(
+			`Context compaction completed (${compactMsg.compact_metadata.trigger}), ` +
+				`pre-tokens: ${compactMsg.compact_metadata.pre_tokens}`
+		);
 
-    // Clear isCompacting flag on processing state (flows through state.session)
-    await this.stateManager.setCompacting(false);
-  }
+		// Clear isCompacting flag on processing state (flows through state.session)
+		await this.stateManager.setCompacting(false);
+	}
 
-  /**
-   * Handle /context response
-   * Parse the detailed breakdown and merge with stream-based context tracking
-   */
-  private async handleContextResponse(message: SDKMessage): Promise<void> {
-    this.logger.log("Processing /context response...");
+	/**
+	 * Handle /context response
+	 * Parse the detailed breakdown and merge with stream-based context tracking
+	 */
+	private async handleContextResponse(message: SDKMessage): Promise<void> {
+		this.logger.log('Processing /context response...');
 
-    const parsedContext = this.contextFetcher.parseContextResponse(message);
-    if (!parsedContext) {
-      this.logger.warn("Failed to parse /context response");
-      return;
-    }
+		const parsedContext = this.contextFetcher.parseContextResponse(message);
+		if (!parsedContext) {
+			this.logger.warn('Failed to parse /context response');
+			return;
+		}
 
-    // Merge with stream-based context
-    const streamContext = this.contextTracker.getContextInfo();
-    const mergedContext = this.contextFetcher.mergeWithStreamContext(
-      parsedContext,
-      streamContext,
-    );
+		// Merge with stream-based context
+		const streamContext = this.contextTracker.getContextInfo();
+		const mergedContext = this.contextFetcher.mergeWithStreamContext(parsedContext, streamContext);
 
-    // Update ContextTracker with merged data
-    // This makes it the source of truth for context info
-    // The tracker will persist to session metadata and emit the context:updated event
-    this.contextTracker.updateWithDetailedBreakdown(mergedContext);
+		// Update ContextTracker with merged data
+		// This makes it the source of truth for context info
+		// The tracker will persist to session metadata and emit the context:updated event
+		this.contextTracker.updateWithDetailedBreakdown(mergedContext);
 
-    // Emit context update event via DaemonHub
-    // StateManager will broadcast this via state.session channel
-    await this.daemonHub.emit("context.updated", {
-      sessionId: this.session.id,
-      contextInfo: mergedContext,
-    });
-  }
+		// Emit context update event via DaemonHub
+		// StateManager will broadcast this via state.session channel
+		await this.daemonHub.emit('context.updated', {
+			sessionId: this.session.id,
+			contextInfo: mergedContext,
+		});
+	}
 }

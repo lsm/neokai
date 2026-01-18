@@ -4,181 +4,151 @@
  * Tests for global settings and tools settings in the Settings modal.
  */
 
-import { test, expect, type Page } from "../fixtures";
-import { waitForWebSocketConnected } from "./helpers/wait-helpers";
+import { test, expect, type Page } from '../fixtures';
+import { waitForWebSocketConnected } from './helpers/wait-helpers';
 
 /**
  * Open the Settings modal by clicking on Authentication row in sidebar footer
  */
 async function openSettingsModal(page: Page): Promise<void> {
-  // The settings button is the Authentication row in the sidebar footer
-  // It has a gear icon and shows auth status
-  const settingsButton = page
-    .locator('button:has(svg path[d*="M10.325 4.317"])')
-    .first();
-  await settingsButton.waitFor({ state: "visible", timeout: 5000 });
-  await settingsButton.click();
+	// The settings button is the Authentication row in the sidebar footer
+	// It has a gear icon and shows auth status
+	const settingsButton = page.locator('button:has(svg path[d*="M10.325 4.317"])').first();
+	await settingsButton.waitFor({ state: 'visible', timeout: 5000 });
+	await settingsButton.click();
 
-  // Wait for modal to appear
-  await page
-    .locator('h2:has-text("Settings")')
-    .waitFor({ state: "visible", timeout: 5000 });
+	// Wait for modal to appear
+	await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 5000 });
 }
 
-test.describe("Settings Modal - Global Settings", () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await waitForWebSocketConnected(page);
-  });
+test.describe('Settings Modal - Global Settings', () => {
+	test.beforeEach(async ({ page }) => {
+		await page.goto('/');
+		await waitForWebSocketConnected(page);
+	});
 
-  test.skip("should display Global Settings section", async ({ page }) => {
-    // TODO: Update test to match current SettingsModal structure
-    await openSettingsModal(page);
+	test.skip('should display Global Settings section', async ({ page }) => {
+		// TODO: Update test to match current SettingsModal structure
+		await openSettingsModal(page);
 
-    // Verify Global Settings heading
-    await expect(page.locator('h3:has-text("Global Settings")')).toBeVisible();
-  });
+		// Verify Global Settings heading
+		await expect(page.locator('h3:has-text("Global Settings")')).toBeVisible();
+	});
 
-  test.skip("should show Model selection dropdown", async ({ page }) => {
-    // TODO: Update test to match current SettingsModal structure
-    await openSettingsModal(page);
+	test.skip('should show Model selection dropdown', async ({ page }) => {
+		// TODO: Update test to match current SettingsModal structure
+		await openSettingsModal(page);
 
-    // Find the model label and select
-    const modelLabel = page.locator('label:has-text("Model")');
-    await expect(modelLabel).toBeVisible();
+		// Find the model label and select
+		const modelLabel = page.locator('label:has-text("Model")');
+		await expect(modelLabel).toBeVisible();
 
-    // Should have a select element for model
-    const modelSelect = page
-      .locator("select")
-      .filter({ has: page.locator('option:has-text("Default")') });
-    await expect(modelSelect).toBeVisible();
-  });
+		// Should have a select element for model
+		const modelSelect = page
+			.locator('select')
+			.filter({ has: page.locator('option:has-text("Default")') });
+		await expect(modelSelect).toBeVisible();
+	});
 
-  test.skip("should show Permission Mode selection", async ({ page }) => {
-    // TODO: Update test to match current SettingsModal structure
-    await openSettingsModal(page);
+	test.skip('should show Permission Mode selection', async ({ page }) => {
+		// TODO: Update test to match current SettingsModal structure
+		await openSettingsModal(page);
 
-    // Find the permission mode label
-    const permissionLabel = page.locator('label:has-text("Permission Mode")');
-    await expect(permissionLabel).toBeVisible();
+		// Find the permission mode label
+		const permissionLabel = page.locator('label:has-text("Permission Mode")');
+		await expect(permissionLabel).toBeVisible();
 
-    // Should have a select for permission mode
-    const permissionSelect = page.locator("select").filter({
-      has: page.locator('option:has-text("Default")'),
-    });
-    await expect(permissionSelect.first()).toBeVisible();
-  });
+		// Should have a select for permission mode
+		const permissionSelect = page.locator('select').filter({
+			has: page.locator('option:has-text("Default")'),
+		});
+		await expect(permissionSelect.first()).toBeVisible();
+	});
 
-  test.skip("should show Setting Sources checkboxes", async ({ page }) => {
-    // TODO: Update test to match current SettingsModal structure
-    await openSettingsModal(page);
+	test.skip('should show Setting Sources checkboxes', async ({ page }) => {
+		// TODO: Update test to match current SettingsModal structure
+		await openSettingsModal(page);
 
-    // Find Setting Sources label
-    await expect(
-      page.locator('label:has-text("Setting Sources")'),
-    ).toBeVisible();
+		// Find Setting Sources label
+		await expect(page.locator('label:has-text("Setting Sources")')).toBeVisible();
 
-    // Should show User, Project, and Local options
-    await expect(page.locator("text=User (~/.claude/)")).toBeVisible();
-    await expect(page.locator("text=Project (.claude/)")).toBeVisible();
-    await expect(
-      page.locator("text=Local (.claude/settings.local.json)"),
-    ).toBeVisible();
-  });
+		// Should show User, Project, and Local options
+		await expect(page.locator('text=User (~/.claude/)')).toBeVisible();
+		await expect(page.locator('text=Project (.claude/)')).toBeVisible();
+		await expect(page.locator('text=Local (.claude/settings.local.json)')).toBeVisible();
+	});
 
-  test.skip("should show auto-save notice", async ({ page }) => {
-    // TODO: Update test to match current SettingsModal structure
-    await openSettingsModal(page);
+	test.skip('should show auto-save notice', async ({ page }) => {
+		// TODO: Update test to match current SettingsModal structure
+		await openSettingsModal(page);
 
-    // Should show auto-save text
-    await expect(
-      page.locator("text=Changes are saved automatically"),
-    ).toBeVisible();
-  });
+		// Should show auto-save text
+		await expect(page.locator('text=Changes are saved automatically')).toBeVisible();
+	});
 });
 
-test.describe("Settings Modal - Global Tools Settings", () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await waitForWebSocketConnected(page);
-  });
+test.describe('Settings Modal - Global Tools Settings', () => {
+	test.beforeEach(async ({ page }) => {
+		await page.goto('/');
+		await waitForWebSocketConnected(page);
+	});
 
-  test.skip("should display Global Tools Settings section", async ({
-    page,
-  }) => {
-    // TODO: Update test to match current SettingsModal structure
-    await openSettingsModal(page);
+	test.skip('should display Global Tools Settings section', async ({ page }) => {
+		// TODO: Update test to match current SettingsModal structure
+		await openSettingsModal(page);
 
-    // Verify Global Tools Settings heading
-    await expect(
-      page.locator('h3:has-text("Global Tools Settings")'),
-    ).toBeVisible();
-  });
+		// Verify Global Tools Settings heading
+		await expect(page.locator('h3:has-text("Global Tools Settings")')).toBeVisible();
+	});
 
-  test.skip("should show System Prompt section with Claude Code Preset", async ({
-    page,
-  }) => {
-    // TODO: Update test to match current SettingsModal structure
-    await openSettingsModal(page);
+	test.skip('should show System Prompt section with Claude Code Preset', async ({ page }) => {
+		// TODO: Update test to match current SettingsModal structure
+		await openSettingsModal(page);
 
-    // Find System Prompt section
-    await expect(page.locator('h4:has-text("System Prompt")')).toBeVisible();
+		// Find System Prompt section
+		await expect(page.locator('h4:has-text("System Prompt")')).toBeVisible();
 
-    // Should show Claude Code Preset
-    await expect(page.locator("text=Claude Code Preset")).toBeVisible();
-    await expect(
-      page.locator("text=Use official Claude Code system prompt"),
-    ).toBeVisible();
-  });
+		// Should show Claude Code Preset
+		await expect(page.locator('text=Claude Code Preset')).toBeVisible();
+		await expect(page.locator('text=Use official Claude Code system prompt')).toBeVisible();
+	});
 
-  test.skip("should show Liuboer Tools section with Memory tool", async ({
-    page,
-  }) => {
-    // TODO: Update test to match current SettingsModal structure
-    await openSettingsModal(page);
+	test.skip('should show Liuboer Tools section with Memory tool', async ({ page }) => {
+		// TODO: Update test to match current SettingsModal structure
+		await openSettingsModal(page);
 
-    // Find Liuboer Tools section
-    await expect(page.locator('h4:has-text("Liuboer Tools")')).toBeVisible();
+		// Find Liuboer Tools section
+		await expect(page.locator('h4:has-text("Liuboer Tools")')).toBeVisible();
 
-    // Should show Memory tool
-    await expect(page.locator("text=Memory")).toBeVisible();
-    await expect(
-      page.locator("text=Persistent key-value storage"),
-    ).toBeVisible();
-  });
+		// Should show Memory tool
+		await expect(page.locator('text=Memory')).toBeVisible();
+		await expect(page.locator('text=Persistent key-value storage')).toBeVisible();
+	});
 
-  test.skip("should show SDK Built-in section", async ({ page }) => {
-    // TODO: Update test to match current SettingsModal structure
-    await openSettingsModal(page);
+	test.skip('should show SDK Built-in section', async ({ page }) => {
+		// TODO: Update test to match current SettingsModal structure
+		await openSettingsModal(page);
 
-    // Find SDK Built-in section
-    await expect(
-      page.locator('h4:has-text("Claude Agent SDK Built-in")'),
-    ).toBeVisible();
+		// Find SDK Built-in section
+		await expect(page.locator('h4:has-text("Claude Agent SDK Built-in")')).toBeVisible();
 
-    // Should list built-in tools
-    await expect(
-      page.locator("text=Read, Write, Edit, Glob, Grep, Bash"),
-    ).toBeVisible();
-    await expect(page.locator("text=/help, /context, /clear")).toBeVisible();
-  });
+		// Should list built-in tools
+		await expect(page.locator('text=Read, Write, Edit, Glob, Grep, Bash')).toBeVisible();
+		await expect(page.locator('text=/help, /context, /clear')).toBeVisible();
+	});
 
-  test.skip("should have Allowed and Default ON checkboxes for tools", async ({
-    page,
-  }) => {
-    // TODO: Update test to match current SettingsModal structure
-    await openSettingsModal(page);
+	test.skip('should have Allowed and Default ON checkboxes for tools', async ({ page }) => {
+		// TODO: Update test to match current SettingsModal structure
+		await openSettingsModal(page);
 
-    // Find Claude Code Preset row
-    const claudeCodeRow = page.locator("text=Claude Code Preset").locator("..");
+		// Find Claude Code Preset row
+		const claudeCodeRow = page.locator('text=Claude Code Preset').locator('..');
 
-    // Should have Allowed checkbox
-    await expect(claudeCodeRow.locator("text=Allowed")).toBeVisible();
-    await expect(
-      claudeCodeRow.locator('input[type="checkbox"]').first(),
-    ).toBeVisible();
+		// Should have Allowed checkbox
+		await expect(claudeCodeRow.locator('text=Allowed')).toBeVisible();
+		await expect(claudeCodeRow.locator('input[type="checkbox"]').first()).toBeVisible();
 
-    // Should have Default ON checkbox
-    await expect(claudeCodeRow.locator("text=Default ON")).toBeVisible();
-  });
+		// Should have Default ON checkbox
+		await expect(claudeCodeRow.locator('text=Default ON')).toBeVisible();
+	});
 });

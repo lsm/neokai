@@ -1,32 +1,32 @@
 {
-  "name": "@liuboer/daemon",
-  "version": "0.1.0",
-  "type": "module",
-  "main": "main.ts",
-  "exports": {
-    ".": "./main.ts",
-    "./app": "./src/app.ts",
-    "./config": "./src/config.ts",
-    "./routes/setup-websocket": "./src/routes/setup-websocket.ts"
-  },
-  "scripts": {
-    "dev": "bun run --watch main.ts",
-    "start": "NODE_ENV=production bun run main.ts",
-    "test": "bun test tests/offline tests/online",
-    "test:offline": "bun test tests/offline",
-    "test:online": "bun test tests/online",
-    "test:unit": "bun test tests/offline/unit",
-    "test:watch": "bun test --watch tests/offline",
-    "test:coverage": "bun test --coverage tests/offline tests/online",
-    "test:coverage:lcov": "bun test --coverage --coverage-reporter=lcov tests/offline tests/online"
-  },
-  "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.2.12",
-    "@liuboer/shared": "workspace:*",
-    "dotenv": "17.2.3",
-    "simple-git": "3.30.0"
-  },
-  "devDependencies": {
-    "@types/bun": "latest"
-  }
+	"name": "@liuboer/daemon",
+	"version": "0.1.0",
+	"type": "module",
+	"main": "main.ts",
+	"exports": {
+		".": "./main.ts",
+		"./app": "./src/app.ts",
+		"./config": "./src/config.ts",
+		"./routes/setup-websocket": "./src/routes/setup-websocket.ts"
+	},
+	"scripts": {
+		"dev": "bun run --watch main.ts",
+		"start": "NODE_ENV=production bun run main.ts",
+		"test": "bun test tests/offline tests/online",
+		"test:offline": "bun test tests/offline",
+		"test:online": "bun test tests/online",
+		"test:unit": "bun test tests/offline/unit",
+		"test:watch": "bun test --watch tests/offline",
+		"test:coverage": "bun test --coverage tests/offline tests/online",
+		"test:coverage:lcov": "bun test --coverage --coverage-reporter=lcov tests/offline tests/online"
+	},
+	"dependencies": {
+		"@anthropic-ai/claude-agent-sdk": "0.2.12",
+		"@liuboer/shared": "workspace:*",
+		"dotenv": "17.2.3",
+		"simple-git": "3.30.0"
+	},
+	"devDependencies": {
+		"@types/bun": "latest"
+	}
 }

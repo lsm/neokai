@@ -1,263 +1,258 @@
-import { describe, it, expect, beforeEach, mock } from "bun:test";
-import { ApiErrorCircuitBreaker } from "../../../src/lib/agent/api-error-circuit-breaker";
+import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { ApiErrorCircuitBreaker } from '../../../src/lib/agent/api-error-circuit-breaker';
 
-describe("ApiErrorCircuitBreaker", () => {
-  let circuitBreaker: ApiErrorCircuitBreaker;
+describe('ApiErrorCircuitBreaker', () => {
+	let circuitBreaker: ApiErrorCircuitBreaker;
 
-  beforeEach(() => {
-    circuitBreaker = new ApiErrorCircuitBreaker("test-session-123");
-  });
+	beforeEach(() => {
+		circuitBreaker = new ApiErrorCircuitBreaker('test-session-123');
+	});
 
-  describe("error pattern detection", () => {
-    it("should detect prompt too long errors", async () => {
-      const message = {
-        type: "user",
-        message: {
-          content:
-            '<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 205616 tokens > 200000 maximum"}}</local-command-stderr>',
-        },
-      };
+	describe('error pattern detection', () => {
+		it('should detect prompt too long errors', async () => {
+			const message = {
+				type: 'user',
+				message: {
+					content:
+						'<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 205616 tokens > 200000 maximum"}}</local-command-stderr>',
+				},
+			};
 
-      const tripped = await circuitBreaker.checkMessage(message);
-      expect(tripped).toBe(false); // First error doesn't trip
-    });
+			const tripped = await circuitBreaker.checkMessage(message);
+			expect(tripped).toBe(false); // First error doesn't trip
+		});
 
-    it("should trip after threshold errors", async () => {
-      const onTripMock = mock(async () => {});
-      circuitBreaker.setOnTripCallback(onTripMock);
+		it('should trip after threshold errors', async () => {
+			const onTripMock = mock(async () => {});
+			circuitBreaker.setOnTripCallback(onTripMock);
 
-      const message = {
-        type: "user",
-        message: {
-          content:
-            '<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 205616 tokens > 200000 maximum"}}</local-command-stderr>',
-        },
-      };
+			const message = {
+				type: 'user',
+				message: {
+					content:
+						'<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 205616 tokens > 200000 maximum"}}</local-command-stderr>',
+				},
+			};
 
-      // First two errors don't trip
-      await circuitBreaker.checkMessage(message);
-      await circuitBreaker.checkMessage(message);
-      expect(circuitBreaker.isTripped()).toBe(false);
+			// First two errors don't trip
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
+			expect(circuitBreaker.isTripped()).toBe(false);
 
-      // Third error trips
-      const tripped = await circuitBreaker.checkMessage(message);
-      expect(tripped).toBe(true);
-      expect(circuitBreaker.isTripped()).toBe(true);
-      expect(onTripMock).toHaveBeenCalled();
-    });
+			// Third error trips
+			const tripped = await circuitBreaker.checkMessage(message);
+			expect(tripped).toBe(true);
+			expect(circuitBreaker.isTripped()).toBe(true);
+			expect(onTripMock).toHaveBeenCalled();
+		});
 
-    it("should not trip on non-error messages", async () => {
-      const message = {
-        type: "user",
-        message: {
-          content: "Hello, how are you?",
-        },
-      };
+		it('should not trip on non-error messages', async () => {
+			const message = {
+				type: 'user',
+				message: {
+					content: 'Hello, how are you?',
+				},
+			};
 
-      const tripped = await circuitBreaker.checkMessage(message);
-      expect(tripped).toBe(false);
-      expect(circuitBreaker.isTripped()).toBe(false);
-    });
+			const tripped = await circuitBreaker.checkMessage(message);
+			expect(tripped).toBe(false);
+			expect(circuitBreaker.isTripped()).toBe(false);
+		});
 
-    it("should not trip on assistant messages", async () => {
-      const message = {
-        type: "assistant",
-        message: {
-          content:
-            '<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long"}}</local-command-stderr>',
-        },
-      };
+		it('should not trip on assistant messages', async () => {
+			const message = {
+				type: 'assistant',
+				message: {
+					content:
+						'<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long"}}</local-command-stderr>',
+				},
+			};
 
-      const tripped = await circuitBreaker.checkMessage(message);
-      expect(tripped).toBe(false);
-    });
+			const tripped = await circuitBreaker.checkMessage(message);
+			expect(tripped).toBe(false);
+		});
 
-    it("should detect 400 API errors", async () => {
-      const message = {
-        type: "user",
-        message: {
-          content:
-            '<local-command-stderr>Error: 400 {"type":"error"}</local-command-stderr>',
-        },
-      };
+		it('should detect 400 API errors', async () => {
+			const message = {
+				type: 'user',
+				message: {
+					content: '<local-command-stderr>Error: 400 {"type":"error"}</local-command-stderr>',
+				},
+			};
 
-      // Send 3 errors to trip
-      await circuitBreaker.checkMessage(message);
-      await circuitBreaker.checkMessage(message);
-      const tripped = await circuitBreaker.checkMessage(message);
+			// Send 3 errors to trip
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
+			const tripped = await circuitBreaker.checkMessage(message);
 
-      expect(tripped).toBe(true);
-    });
+			expect(tripped).toBe(true);
+		});
 
-    it("should detect 429 rate limit errors", async () => {
-      const message = {
-        type: "user",
-        message: {
-          content:
-            '<local-command-stderr>Error: 429 {"type":"error"}</local-command-stderr>',
-        },
-      };
+		it('should detect 429 rate limit errors', async () => {
+			const message = {
+				type: 'user',
+				message: {
+					content: '<local-command-stderr>Error: 429 {"type":"error"}</local-command-stderr>',
+				},
+			};
 
-      // Send 3 errors to trip
-      await circuitBreaker.checkMessage(message);
-      await circuitBreaker.checkMessage(message);
-      const tripped = await circuitBreaker.checkMessage(message);
+			// Send 3 errors to trip
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
+			const tripped = await circuitBreaker.checkMessage(message);
 
-      expect(tripped).toBe(true);
-    });
+			expect(tripped).toBe(true);
+		});
 
-    it("should detect connection errors", async () => {
-      const message = {
-        type: "user",
-        message: {
-          content:
-            "<local-command-stderr>Error: Connection error.</local-command-stderr>",
-        },
-      };
+		it('should detect connection errors', async () => {
+			const message = {
+				type: 'user',
+				message: {
+					content: '<local-command-stderr>Error: Connection error.</local-command-stderr>',
+				},
+			};
 
-      // Send 3 errors to trip
-      await circuitBreaker.checkMessage(message);
-      await circuitBreaker.checkMessage(message);
-      const tripped = await circuitBreaker.checkMessage(message);
+			// Send 3 errors to trip
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
+			const tripped = await circuitBreaker.checkMessage(message);
 
-      expect(tripped).toBe(true);
-      expect(circuitBreaker.isTripped()).toBe(true);
-    });
+			expect(tripped).toBe(true);
+			expect(circuitBreaker.isTripped()).toBe(true);
+		});
 
-    it("should provide connection error message", async () => {
-      const message = {
-        type: "user",
-        message: {
-          content:
-            "<local-command-stderr>Error: Connection error.</local-command-stderr>",
-        },
-      };
+		it('should provide connection error message', async () => {
+			const message = {
+				type: 'user',
+				message: {
+					content: '<local-command-stderr>Error: Connection error.</local-command-stderr>',
+				},
+			};
 
-      // Trip the circuit breaker
-      await circuitBreaker.checkMessage(message);
-      await circuitBreaker.checkMessage(message);
-      await circuitBreaker.checkMessage(message);
+			// Trip the circuit breaker
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
 
-      const tripMessage = circuitBreaker.getTripMessage();
-      expect(tripMessage).toContain("Connection error detected repeatedly");
-      expect(tripMessage).toContain("Network connectivity issues");
-    });
-  });
+			const tripMessage = circuitBreaker.getTripMessage();
+			expect(tripMessage).toContain('Connection error detected repeatedly');
+			expect(tripMessage).toContain('Network connectivity issues');
+		});
+	});
 
-  describe("reset behavior", () => {
-    it("should reset error count after reset()", async () => {
-      const message = {
-        type: "user",
-        message: {
-          content:
-            '<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 100 tokens > 50 maximum"}}</local-command-stderr>',
-        },
-      };
+	describe('reset behavior', () => {
+		it('should reset error count after reset()', async () => {
+			const message = {
+				type: 'user',
+				message: {
+					content:
+						'<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 100 tokens > 50 maximum"}}</local-command-stderr>',
+				},
+			};
 
-      // Accumulate some errors
-      await circuitBreaker.checkMessage(message);
-      await circuitBreaker.checkMessage(message);
+			// Accumulate some errors
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
 
-      // Reset
-      circuitBreaker.reset();
+			// Reset
+			circuitBreaker.reset();
 
-      // Should need 3 new errors to trip
-      await circuitBreaker.checkMessage(message);
-      await circuitBreaker.checkMessage(message);
-      expect(circuitBreaker.isTripped()).toBe(false);
+			// Should need 3 new errors to trip
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
+			expect(circuitBreaker.isTripped()).toBe(false);
 
-      await circuitBreaker.checkMessage(message);
-      expect(circuitBreaker.isTripped()).toBe(true);
-    });
+			await circuitBreaker.checkMessage(message);
+			expect(circuitBreaker.isTripped()).toBe(true);
+		});
 
-    it("should clear error count on markSuccess()", async () => {
-      const message = {
-        type: "user",
-        message: {
-          content:
-            '<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 100 tokens > 50 maximum"}}</local-command-stderr>',
-        },
-      };
+		it('should clear error count on markSuccess()', async () => {
+			const message = {
+				type: 'user',
+				message: {
+					content:
+						'<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 100 tokens > 50 maximum"}}</local-command-stderr>',
+				},
+			};
 
-      // Accumulate some errors
-      await circuitBreaker.checkMessage(message);
-      await circuitBreaker.checkMessage(message);
+			// Accumulate some errors
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
 
-      // Mark success
-      circuitBreaker.markSuccess();
+			// Mark success
+			circuitBreaker.markSuccess();
 
-      // Should need 3 new errors to trip
-      await circuitBreaker.checkMessage(message);
-      await circuitBreaker.checkMessage(message);
-      expect(circuitBreaker.isTripped()).toBe(false);
-    });
-  });
+			// Should need 3 new errors to trip
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
+			expect(circuitBreaker.isTripped()).toBe(false);
+		});
+	});
 
-  describe("trip message", () => {
-    it("should provide helpful message for prompt too long", async () => {
-      const message = {
-        type: "user",
-        message: {
-          content:
-            '<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 205616 tokens > 200000 maximum"}}</local-command-stderr>',
-        },
-      };
+	describe('trip message', () => {
+		it('should provide helpful message for prompt too long', async () => {
+			const message = {
+				type: 'user',
+				message: {
+					content:
+						'<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 205616 tokens > 200000 maximum"}}</local-command-stderr>',
+				},
+			};
 
-      // Trip the breaker
-      await circuitBreaker.checkMessage(message);
-      await circuitBreaker.checkMessage(message);
-      await circuitBreaker.checkMessage(message);
+			// Trip the breaker
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
 
-      const tripMessage = circuitBreaker.getTripMessage();
-      expect(tripMessage).toContain("Context limit exceeded");
-      expect(tripMessage).toContain("200000");
-    });
+			const tripMessage = circuitBreaker.getTripMessage();
+			expect(tripMessage).toContain('Context limit exceeded');
+			expect(tripMessage).toContain('200000');
+		});
 
-    it("should provide helpful message for rate limit", async () => {
-      const message = {
-        type: "user",
-        message: {
-          content:
-            '<local-command-stderr>Error: 429 {"type":"error"}</local-command-stderr>',
-        },
-      };
+		it('should provide helpful message for rate limit', async () => {
+			const message = {
+				type: 'user',
+				message: {
+					content: '<local-command-stderr>Error: 429 {"type":"error"}</local-command-stderr>',
+				},
+			};
 
-      // Trip the breaker
-      await circuitBreaker.checkMessage(message);
-      await circuitBreaker.checkMessage(message);
-      await circuitBreaker.checkMessage(message);
+			// Trip the breaker
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
 
-      const tripMessage = circuitBreaker.getTripMessage();
-      expect(tripMessage).toContain("Rate limit");
-    });
-  });
+			const tripMessage = circuitBreaker.getTripMessage();
+			expect(tripMessage).toContain('Rate limit');
+		});
+	});
 
-  describe("state management", () => {
-    it("should track trip count", async () => {
-      const message = {
-        type: "user",
-        message: {
-          content:
-            '<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error"}}</local-command-stderr>',
-        },
-      };
+	describe('state management', () => {
+		it('should track trip count', async () => {
+			const message = {
+				type: 'user',
+				message: {
+					content:
+						'<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error"}}</local-command-stderr>',
+				},
+			};
 
-      // First trip
-      await circuitBreaker.checkMessage(message);
-      await circuitBreaker.checkMessage(message);
-      await circuitBreaker.checkMessage(message);
+			// First trip
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
 
-      const state1 = circuitBreaker.getState();
-      expect(state1.tripCount).toBe(1);
+			const state1 = circuitBreaker.getState();
+			expect(state1.tripCount).toBe(1);
 
-      // Reset and trip again
-      circuitBreaker.reset();
-      await circuitBreaker.checkMessage(message);
-      await circuitBreaker.checkMessage(message);
-      await circuitBreaker.checkMessage(message);
+			// Reset and trip again
+			circuitBreaker.reset();
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
+			await circuitBreaker.checkMessage(message);
 
-      const state2 = circuitBreaker.getState();
-      expect(state2.tripCount).toBe(2);
-    });
-  });
+			const state2 = circuitBreaker.getState();
+			expect(state2.tripCount).toBe(2);
+		});
+	});
 });

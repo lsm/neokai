@@ -8,122 +8,108 @@
  * The global Window interface is extended there with test-specific properties.
  */
 
-import { expect, type Page, type Locator } from "@playwright/test";
+import { expect, type Page, type Locator } from '@playwright/test';
 
 /**
  * Wait for WebSocket connection to be established
  */
 export async function waitForWebSocketConnected(page: Page): Promise<void> {
-  await page.waitForFunction(
-    () => {
-      const hub = window.__messageHub || window.appState?.messageHub;
-      return hub?.getState && hub.getState() === "connected";
-    },
-    { timeout: 10000 },
-  );
+	await page.waitForFunction(
+		() => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			return hub?.getState && hub.getState() === 'connected';
+		},
+		{ timeout: 10000 }
+	);
 
-  // Also wait for visual indicator in the sidebar footer
-  // The sidebar shows "Daemon: Connected" when WebSocket is connected
-  // Use .first() since there may be multiple "Connected" indicators (Daemon and Claude API)
-  await page
-    .locator("text=Connected")
-    .first()
-    .waitFor({ state: "visible", timeout: 5000 });
+	// Also wait for visual indicator in the sidebar footer
+	// The sidebar shows "Daemon: Connected" when WebSocket is connected
+	// Use .first() since there may be multiple "Connected" indicators (Daemon and Claude API)
+	await page.locator('text=Connected').first().waitFor({ state: 'visible', timeout: 5000 });
 }
 
 /**
  * Wait for session to be created and loaded
  */
 export async function waitForSessionCreated(page: Page): Promise<string> {
-  // Wait for session to be created and loaded
-  await page.waitForTimeout(1500);
+	// Wait for session to be created and loaded
+	await page.waitForTimeout(1500);
 
-  // Verify we're in a chat view (message input should be visible)
-  const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
-  await expect(messageInput).toBeVisible({ timeout: 10000 });
-  await expect(messageInput).toBeEnabled({ timeout: 5000 });
+	// Verify we're in a chat view (message input should be visible)
+	const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+	await expect(messageInput).toBeVisible({ timeout: 10000 });
+	await expect(messageInput).toBeEnabled({ timeout: 5000 });
 
-  // Get and return the session ID - try multiple methods for robustness
-  const sessionId = await page.evaluate(() => {
-    // 1. From URL path (format: /{sessionId} or /session/{id})
-    const pathParts = window.location.pathname.split("/").filter(Boolean);
-    const pathId = pathParts[0] === "session" ? pathParts[1] : pathParts[0];
-    if (pathId && pathId !== "undefined" && pathId !== "null") return pathId;
+	// Get and return the session ID - try multiple methods for robustness
+	const sessionId = await page.evaluate(() => {
+		// 1. From URL path (format: /{sessionId} or /session/{id})
+		const pathParts = window.location.pathname.split('/').filter(Boolean);
+		const pathId = pathParts[0] === 'session' ? pathParts[1] : pathParts[0];
+		if (pathId && pathId !== 'undefined' && pathId !== 'null') return pathId;
 
-    // 2. From currentSessionIdSignal (if exposed)
-    const currentSessionId = window.currentSessionIdSignal?.value;
-    if (currentSessionId) return currentSessionId;
+		// 2. From currentSessionIdSignal (if exposed)
+		const currentSessionId = window.currentSessionIdSignal?.value;
+		if (currentSessionId) return currentSessionId;
 
-    // 3. From sessionStore (if exposed)
-    const sessionStoreId = window.sessionStore?.activeSessionId?.value;
-    if (sessionStoreId) return sessionStoreId;
+		// 3. From sessionStore (if exposed)
+		const sessionStoreId = window.sessionStore?.activeSessionId?.value;
+		if (sessionStoreId) return sessionStoreId;
 
-    // 4. From localStorage
-    const localStorageId = localStorage.getItem("currentSessionId");
-    if (localStorageId) return localStorageId;
+		// 4. From localStorage
+		const localStorageId = localStorage.getItem('currentSessionId');
+		if (localStorageId) return localStorageId;
 
-    // 5. From latest session in globalStore sessions list
-    const sessions = window.globalStore?.sessions?.value || [];
-    const latestSession = sessions[sessions.length - 1] as
-      | { id?: string }
-      | undefined;
-    if (latestSession?.id) return latestSession.id;
+		// 5. From latest session in globalStore sessions list
+		const sessions = window.globalStore?.sessions?.value || [];
+		const latestSession = sessions[sessions.length - 1] as { id?: string } | undefined;
+		if (latestSession?.id) return latestSession.id;
 
-    return null;
-  });
+		return null;
+	});
 
-  if (!sessionId) {
-    throw new Error("Session ID not found after creation");
-  }
+	if (!sessionId) {
+		throw new Error('Session ID not found after creation');
+	}
 
-  return sessionId;
+	return sessionId;
 }
 
 /**
  * Wait for session to be deleted and UI to update
  */
-export async function waitForSessionDeleted(
-  page: Page,
-  sessionId: string,
-): Promise<void> {
-  // Wait for redirect to home
-  await page.waitForFunction(
-    () =>
-      document.querySelector("h2")?.textContent?.includes("Welcome to Liuboer"),
-    { timeout: 10000 },
-  );
+export async function waitForSessionDeleted(page: Page, sessionId: string): Promise<void> {
+	// Wait for redirect to home
+	await page.waitForFunction(
+		() => document.querySelector('h2')?.textContent?.includes('Welcome to Liuboer'),
+		{ timeout: 10000 }
+	);
 
-  // Wait for session to disappear from sidebar
-  await page.waitForFunction(
-    (sid) => {
-      const sessionElements = Array.from(
-        document.querySelectorAll("[data-session-id]"),
-      );
-      for (const el of sessionElements) {
-        if (el.getAttribute("data-session-id") === sid) {
-          return false;
-        }
-      }
-      return true;
-    },
-    sessionId,
-    { timeout: 5000 },
-  );
+	// Wait for session to disappear from sidebar
+	await page.waitForFunction(
+		(sid) => {
+			const sessionElements = Array.from(document.querySelectorAll('[data-session-id]'));
+			for (const el of sessionElements) {
+				if (el.getAttribute('data-session-id') === sid) {
+					return false;
+				}
+			}
+			return true;
+		},
+		sessionId,
+		{ timeout: 5000 }
+	);
 }
 
 /**
  * Wait for user message to be sent
  */
-export async function waitForMessageSent(
-  page: Page,
-  messageText: string,
-): Promise<void> {
-  // Wait for user message to appear in the UI
-  // Use getByText which handles special characters better than text= selector
-  await page.getByText(messageText, { exact: false }).first().waitFor({
-    state: "visible",
-    timeout: 10000,
-  });
+export async function waitForMessageSent(page: Page, messageText: string): Promise<void> {
+	// Wait for user message to appear in the UI
+	// Use getByText which handles special characters better than text= selector
+	await page.getByText(messageText, { exact: false }).first().waitFor({
+		state: 'visible',
+		timeout: 10000,
+	});
 }
 
 /**
@@ -133,124 +119,111 @@ export async function waitForMessageSent(
  * @param options.timeout - Custom timeout (default 90s for CI reliability)
  */
 export async function waitForAssistantResponse(
-  page: Page,
-  options: { containsText?: string; timeout?: number } = {},
+	page: Page,
+	options: { containsText?: string; timeout?: number } = {}
 ): Promise<void> {
-  // Use longer timeout for CI reliability (90s default)
-  // CI environments can be significantly slower due to xvfb, network latency,
-  // and Claude API response times that can exceed 50s
-  const timeout = options.timeout || 90000;
+	// Use longer timeout for CI reliability (90s default)
+	// CI environments can be significantly slower due to xvfb, network latency,
+	// and Claude API response times that can exceed 50s
+	const timeout = options.timeout || 90000;
 
-  // Count existing assistant messages before waiting
-  const initialCount = await page
-    .locator('[data-message-role="assistant"]')
-    .count();
+	// Count existing assistant messages before waiting
+	const initialCount = await page.locator('[data-message-role="assistant"]').count();
 
-  // Wait for a new assistant message to appear
-  // Use waitForFunction for more reliable detection of new messages
-  await page.waitForFunction(
-    (expectedCount) => {
-      const messages = document.querySelectorAll(
-        '[data-message-role="assistant"]',
-      );
-      return messages.length > expectedCount;
-    },
-    initialCount,
-    { timeout },
-  );
+	// Wait for a new assistant message to appear
+	// Use waitForFunction for more reliable detection of new messages
+	await page.waitForFunction(
+		(expectedCount) => {
+			const messages = document.querySelectorAll('[data-message-role="assistant"]');
+			return messages.length > expectedCount;
+		},
+		initialCount,
+		{ timeout }
+	);
 
-  // If text matching is requested, verify it
-  if (options.containsText) {
-    const lastAssistant = page
-      .locator('[data-message-role="assistant"]')
-      .last();
-    await expect(lastAssistant).toContainText(options.containsText, {
-      timeout: 10000,
-    });
-  }
+	// If text matching is requested, verify it
+	if (options.containsText) {
+		const lastAssistant = page.locator('[data-message-role="assistant"]').last();
+		await expect(lastAssistant).toContainText(options.containsText, {
+			timeout: 10000,
+		});
+	}
 
-  // Wait for input to be enabled again (processing complete)
-  const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
-  await expect(messageInput).toBeEnabled({ timeout: 20000 });
+	// Wait for input to be enabled again (processing complete)
+	const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+	await expect(messageInput).toBeEnabled({ timeout: 20000 });
 }
 
 /**
  * Wait for message to be sent and get a response
  * Convenience wrapper around waitForMessageSent + waitForAssistantResponse
  */
-export async function waitForMessageProcessed(
-  page: Page,
-  messageText: string,
-): Promise<void> {
-  await waitForMessageSent(page, messageText);
-  await waitForAssistantResponse(page);
+export async function waitForMessageProcessed(page: Page, messageText: string): Promise<void> {
+	await waitForMessageSent(page, messageText);
+	await waitForAssistantResponse(page);
 }
 
 /**
  * Wait for state channel to be initialized and data loaded
  */
 export async function waitForStateChannel(
-  page: Page,
-  channel: string,
-  sessionId: string = "global",
+	page: Page,
+	channel: string,
+	sessionId: string = 'global'
 ): Promise<void> {
-  await page.waitForFunction(
-    ({ chan, sid }) => {
-      const state = window.appState;
-      if (!state) return false;
+	await page.waitForFunction(
+		({ chan, sid }) => {
+			const state = window.appState;
+			if (!state) return false;
 
-      if (sid === "global") {
-        // Access dynamic channel property
-        const globalValue = state.global?.value as
-          | Record<string, { $?: unknown }>
-          | undefined;
-        return globalValue?.[chan]?.$ !== undefined;
-      } else {
-        const sessionState = state.sessions?.get(sid) as
-          | Record<string, { $?: unknown }>
-          | undefined;
-        return sessionState?.[chan]?.$ !== undefined;
-      }
-    },
-    { chan: channel, sid: sessionId },
-    { timeout: 10000 },
-  );
+			if (sid === 'global') {
+				// Access dynamic channel property
+				const globalValue = state.global?.value as Record<string, { $?: unknown }> | undefined;
+				return globalValue?.[chan]?.$ !== undefined;
+			} else {
+				const sessionState = state.sessions?.get(sid) as
+					| Record<string, { $?: unknown }>
+					| undefined;
+				return sessionState?.[chan]?.$ !== undefined;
+			}
+		},
+		{ chan: channel, sid: sessionId },
+		{ timeout: 10000 }
+	);
 }
 
 /**
  * Wait for sessions list to be loaded in sidebar
  */
 export async function waitForSessionsList(page: Page): Promise<void> {
-  await waitForStateChannel(page, "sessions", "global");
+	await waitForStateChannel(page, 'sessions', 'global');
 
-  // Also wait for visual confirmation
-  await page.waitForFunction(
-    () => {
-      const sidebar =
-        document.querySelector("[data-sidebar]") ||
-        document.querySelector("aside");
-      return sidebar !== null;
-    },
-    { timeout: 5000 },
-  );
+	// Also wait for visual confirmation
+	await page.waitForFunction(
+		() => {
+			const sidebar = document.querySelector('[data-sidebar]') || document.querySelector('aside');
+			return sidebar !== null;
+		},
+		{ timeout: 5000 }
+	);
 }
 
 /**
  * Wait for specific SDK message type to appear
  */
 export async function waitForSDKMessage(
-  page: Page,
-  messageType: string,
-  timeout: number = 10000,
+	page: Page,
+	messageType: string,
+	timeout: number = 10000
 ): Promise<void> {
-  await page.waitForFunction(
-    (type) => {
-      const messages = window.__sdkMessages || [];
-      return messages.some((m) => m.type === type);
-    },
-    messageType,
-    { timeout },
-  );
+	await page.waitForFunction(
+		(type) => {
+			const messages = window.__sdkMessages || [];
+			return messages.some((m) => m.type === type);
+		},
+		messageType,
+		{ timeout }
+	);
 }
 
 /**
@@ -263,121 +236,112 @@ export async function waitForSDKMessage(
  * Use this instead of arbitrary timeouts to ensure proper synchronization
  */
 export async function waitForSDKSystemInitMessage(
-  page: Page,
-  timeout: number = 10000,
+	page: Page,
+	timeout: number = 10000
 ): Promise<void> {
-  // Wait for the "Session info" button to appear - this indicates system:init was received
-  // The button appears next to the user message when sessionInfo is attached
-  // Use locator.waitFor() for better retry logic with async signal-based rendering
-  // Use .last() to wait for the most recent button (handles multiple messages)
-  await page
-    .locator('button[title="Session info"]')
-    .last()
-    .waitFor({ state: "visible", timeout });
+	// Wait for the "Session info" button to appear - this indicates system:init was received
+	// The button appears next to the user message when sessionInfo is attached
+	// Use locator.waitFor() for better retry logic with async signal-based rendering
+	// Use .last() to wait for the most recent button (handles multiple messages)
+	await page.locator('button[title="Session info"]').last().waitFor({ state: 'visible', timeout });
 }
 
 /**
  * Wait for specific event to be published
  */
 export async function waitForEvent(
-  page: Page,
-  eventName: string,
-  sessionId: string = "global",
+	page: Page,
+	eventName: string,
+	sessionId: string = 'global'
 ): Promise<unknown> {
-  return page.evaluate(
-    async ({ event, sid }) => {
-      const hub = window.__messageHub || window.appState?.messageHub;
-      if (!hub) {
-        throw new Error("MessageHub not found");
-      }
+	return page.evaluate(
+		async ({ event, sid }) => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub) {
+				throw new Error('MessageHub not found');
+			}
 
-      return new Promise((resolve) => {
-        const timeout = setTimeout(() => {
-          resolve({ timeout: true });
-        }, 10000);
+			return new Promise((resolve) => {
+				const timeout = setTimeout(() => {
+					resolve({ timeout: true });
+				}, 10000);
 
-        (async () => {
-          const unsubscribe = await hub.subscribe(
-            event,
-            async (data: unknown) => {
-              clearTimeout(timeout);
-              await unsubscribe();
-              resolve(data);
-            },
-            { sessionId: sid },
-          );
-        })();
-      });
-    },
-    { event: eventName, sid: sessionId },
-  );
+				(async () => {
+					const unsubscribe = await hub.subscribe(
+						event,
+						async (data: unknown) => {
+							clearTimeout(timeout);
+							await unsubscribe();
+							resolve(data);
+						},
+						{ sessionId: sid }
+					);
+				})();
+			});
+		},
+		{ event: eventName, sid: sessionId }
+	);
 }
 
 /**
  * Wait for UI element with retry logic
  */
 export async function waitForElement(
-  page: Page,
-  selector: string,
-  options: {
-    state?: "attached" | "detached" | "visible" | "hidden";
-    timeout?: number;
-  } = {},
+	page: Page,
+	selector: string,
+	options: {
+		state?: 'attached' | 'detached' | 'visible' | 'hidden';
+		timeout?: number;
+	} = {}
 ): Promise<Locator> {
-  const element = page.locator(selector).first();
-  await element.waitFor({
-    state: options.state || "visible",
-    timeout: options.timeout || 10000,
-  });
-  return element;
+	const element = page.locator(selector).first();
+	await element.waitFor({
+		state: options.state || 'visible',
+		timeout: options.timeout || 10000,
+	});
+	return element;
 }
 
 /**
  * Wait for navigation to complete
  */
-export async function waitForNavigation(
-  page: Page,
-  url?: string | RegExp,
-): Promise<void> {
-  if (url) {
-    await page.waitForURL(url, { timeout: 10000 });
-  } else {
-    await page.waitForLoadState("networkidle", { timeout: 10000 });
-  }
+export async function waitForNavigation(page: Page, url?: string | RegExp): Promise<void> {
+	if (url) {
+		await page.waitForURL(url, { timeout: 10000 });
+	} else {
+		await page.waitForLoadState('networkidle', { timeout: 10000 });
+	}
 }
 
 /**
  * Wait for multi-tab synchronization
  */
-export async function waitForTabSync(
-  pages: Page[],
-  timeout: number = 5000,
-): Promise<void> {
-  const startTime = Date.now();
+export async function waitForTabSync(pages: Page[], timeout: number = 5000): Promise<void> {
+	const startTime = Date.now();
 
-  while (Date.now() - startTime < timeout) {
-    // Check if all tabs have the same session count
-    const sessionCounts = await Promise.all(
-      pages.map((page) =>
-        page.evaluate(() => {
-          const sessions = window.globalStore?.sessions?.value;
-          return sessions?.length || 0;
-        }),
-      ),
-    );
+	while (Date.now() - startTime < timeout) {
+		// Check if all tabs have the same session count
+		const sessionCounts = await Promise.all(
+			pages.map((page) =>
+				page.evaluate(() => {
+					const sessions = window.globalStore?.sessions?.value;
+					return sessions?.length || 0;
+				})
+			)
+		);
 
-    // If all tabs have the same count, sync is likely complete
-    if (sessionCounts.every((count) => count === sessionCounts[0])) {
-      // Wait a bit more to ensure full sync
-      await pages[0].waitForTimeout(500);
-      return;
-    }
+		// If all tabs have the same count, sync is likely complete
+		if (sessionCounts.every((count) => count === sessionCounts[0])) {
+			// Wait a bit more to ensure full sync
+			await pages[0].waitForTimeout(500);
+			return;
+		}
 
-    // Wait before checking again
-    await pages[0].waitForTimeout(100);
-  }
+		// Wait before checking again
+		await pages[0].waitForTimeout(100);
+	}
 
-  throw new Error(`Tab sync did not complete within ${timeout}ms`);
+	throw new Error(`Tab sync did not complete within ${timeout}ms`);
 }
 
 /**
@@ -386,91 +350,73 @@ export async function waitForTabSync(
  * For non-current sessions, uses globalStore.sessions with parsed processingState
  */
 export async function waitForAgentState(
-  page: Page,
-  sessionId: string,
-  expectedState: "idle" | "working" | "interrupted",
+	page: Page,
+	sessionId: string,
+	expectedState: 'idle' | 'working' | 'interrupted'
 ): Promise<void> {
-  await page.waitForFunction(
-    ({ sid, state }) => {
-      // Try sessionStore first (current session - live state)
-      const sessionStoreState = window.sessionStore?.sessionState?.value;
-      if (
-        sessionStoreState?.agentState &&
-        window.sessionStore?.activeSessionId?.value === sid
-      ) {
-        return sessionStoreState.agentState.status === state;
-      }
+	await page.waitForFunction(
+		({ sid, state }) => {
+			// Try sessionStore first (current session - live state)
+			const sessionStoreState = window.sessionStore?.sessionState?.value;
+			if (sessionStoreState?.agentState && window.sessionStore?.activeSessionId?.value === sid) {
+				return sessionStoreState.agentState.status === state;
+			}
 
-      // Fall back to globalStore for non-current sessions
-      const session = window.globalStore?.sessions?.value?.find(
-        (s: { id: string }) => s.id === sid,
-      );
-      if (!session?.processingState) return false;
+			// Fall back to globalStore for non-current sessions
+			const session = window.globalStore?.sessions?.value?.find(
+				(s: { id: string }) => s.id === sid
+			);
+			if (!session?.processingState) return false;
 
-      try {
-        const agentState = JSON.parse(session.processingState);
-        return agentState.status === state;
-      } catch {
-        return false;
-      }
-    },
-    { sid: sessionId, state: expectedState },
-    { timeout: 10000 },
-  );
+			try {
+				const agentState = JSON.parse(session.processingState);
+				return agentState.status === state;
+			} catch {
+				return false;
+			}
+		},
+		{ sid: sessionId, state: expectedState },
+		{ timeout: 10000 }
+	);
 }
 
 /**
  * Wait for context update (after /context command)
  * NOTE: Uses sessionStore.sessionState.value?.contextInfo for current session
  */
-export async function waitForContextUpdate(
-  page: Page,
-  sessionId: string,
-): Promise<void> {
-  // Wait for context state channel update
-  await page.waitForFunction(
-    (sid) => {
-      const sessionStoreState = window.sessionStore?.sessionState?.value;
-      if (
-        !sessionStoreState ||
-        window.sessionStore?.activeSessionId?.value !== sid
-      ) {
-        return false;
-      }
-      // Check if contextInfo exists
-      return (
-        sessionStoreState.contextInfo !== null &&
-        sessionStoreState.contextInfo !== undefined
-      );
-    },
-    sessionId,
-    { timeout: 10000 },
-  );
+export async function waitForContextUpdate(page: Page, sessionId: string): Promise<void> {
+	// Wait for context state channel update
+	await page.waitForFunction(
+		(sid) => {
+			const sessionStoreState = window.sessionStore?.sessionState?.value;
+			if (!sessionStoreState || window.sessionStore?.activeSessionId?.value !== sid) {
+				return false;
+			}
+			// Check if contextInfo exists
+			return sessionStoreState.contextInfo !== null && sessionStoreState.contextInfo !== undefined;
+		},
+		sessionId,
+		{ timeout: 10000 }
+	);
 }
 
 /**
  * Wait for slash commands to be loaded
  * NOTE: Uses sessionStore.sessionState.value?.commandsData for current session
  */
-export async function waitForSlashCommands(
-  page: Page,
-  sessionId: string,
-): Promise<void> {
-  await page.waitForFunction(
-    (sid) => {
-      const sessionStoreState = window.sessionStore?.sessionState?.value;
-      if (
-        !sessionStoreState ||
-        window.sessionStore?.activeSessionId?.value !== sid
-      ) {
-        return false;
-      }
-      const commands = sessionStoreState.commandsData?.availableCommands;
-      return commands && commands.length > 0;
-    },
-    sessionId,
-    { timeout: 10000 },
-  );
+export async function waitForSlashCommands(page: Page, sessionId: string): Promise<void> {
+	await page.waitForFunction(
+		(sid) => {
+			const sessionStoreState = window.sessionStore?.sessionState?.value;
+			if (!sessionStoreState || window.sessionStore?.activeSessionId?.value !== sid) {
+				return false;
+			}
+			const commands = sessionStoreState.commandsData?.availableCommands;
+			return commands && commands.length > 0;
+		},
+		sessionId,
+		{ timeout: 10000 }
+	);
 }
 
 /**
@@ -478,27 +424,25 @@ export async function waitForSlashCommands(
  * Uses simpler approach matching the passing chat-flow.e2e.ts pattern
  */
 export async function setupMessageHubTesting(page: Page): Promise<void> {
-  // Navigate to home page
-  await page.goto("/");
+	// Navigate to home page
+	await page.goto('/');
 
-  // Wait for app to initialize - check for sidebar heading
-  await expect(
-    page.getByRole("heading", { name: "Liuboer", exact: true }).first(),
-  ).toBeVisible({
-    timeout: 10000,
-  });
+	// Wait for app to initialize - check for sidebar heading
+	await expect(page.getByRole('heading', { name: 'Liuboer', exact: true }).first()).toBeVisible({
+		timeout: 10000,
+	});
 
-  // Wait for WebSocket connection - simple timeout like chat-flow.e2e.ts
-  await page.waitForTimeout(1000);
+	// Wait for WebSocket connection - simple timeout like chat-flow.e2e.ts
+	await page.waitForTimeout(1000);
 
-  // Optionally inject MessageHub tracking (for tests that need it)
-  await page.evaluate(() => {
-    window.__sdkMessages = [];
-    const hub = window.appState?.messageHub;
-    if (hub) {
-      window.__messageHub = hub;
-    }
-  });
+	// Optionally inject MessageHub tracking (for tests that need it)
+	await page.evaluate(() => {
+		window.__sdkMessages = [];
+		const hub = window.appState?.messageHub;
+		if (hub) {
+			window.__messageHub = hub;
+		}
+	});
 }
 
 /**
@@ -508,103 +452,83 @@ export async function setupMessageHubTesting(page: Page): Promise<void> {
  * For parallel execution, this helper uses RPC as primary method for reliability.
  * ALWAYS uses RPC cleanup - UI cleanup is completely removed for better reliability.
  */
-export async function cleanupTestSession(
-  page: Page,
-  sessionId: string,
-): Promise<void> {
-  if (!sessionId || sessionId === "undefined" || sessionId === "null") {
-    return; // Nothing to clean up
-  }
+export async function cleanupTestSession(page: Page, sessionId: string): Promise<void> {
+	if (!sessionId || sessionId === 'undefined' || sessionId === 'null') {
+		return; // Nothing to clean up
+	}
 
-  try {
-    // Use MessageHub RPC for reliable cleanup (works even if page is in bad state)
-    // Generous timeout: manual deletion takes ~3ms, but may take longer during agent processing
-    const result = await page.evaluate(async (sid) => {
-      try {
-        const hub = window.__messageHub || window.appState?.messageHub;
-        if (!hub || !hub.call) {
-          return { success: false, error: "MessageHub not available" };
-        }
+	try {
+		// Use MessageHub RPC for reliable cleanup (works even if page is in bad state)
+		// Generous timeout: manual deletion takes ~3ms, but may take longer during agent processing
+		const result = await page.evaluate(async (sid) => {
+			try {
+				const hub = window.__messageHub || window.appState?.messageHub;
+				if (!hub || !hub.call) {
+					return { success: false, error: 'MessageHub not available' };
+				}
 
-        // 10s timeout - if it takes longer, something is likely stuck/deadlocked
-        await hub.call(
-          "session.delete",
-          { sessionId: sid },
-          { timeout: 10000 },
-        );
-        return { success: true, error: undefined };
-      } catch (error: unknown) {
-        return {
-          success: false,
-          error: (error as Error)?.message || String(error),
-        };
-      }
-    }, sessionId);
+				// 10s timeout - if it takes longer, something is likely stuck/deadlocked
+				await hub.call('session.delete', { sessionId: sid }, { timeout: 10000 });
+				return { success: true, error: undefined };
+			} catch (error: unknown) {
+				return {
+					success: false,
+					error: (error as Error)?.message || String(error),
+				};
+			}
+		}, sessionId);
 
-    if (result.success) {
-      // Successfully deleted via RPC
-      // Navigate home if we're still on the deleted session
-      try {
-        await page.waitForTimeout(500);
-        if (page.url().includes(sessionId)) {
-          await page.goto("/").catch(() => {}); // Ignore navigation errors
-          await page.waitForTimeout(300);
-        }
-      } catch {
-        // Ignore navigation errors
-      }
-    } else {
-      // RPC deletion failed after retries, log warning but don't throw
-      console.warn(
-        `⚠️  Failed to cleanup session ${sessionId}: ${result.error}`,
-      );
-    }
-  } catch (error) {
-    // page.evaluate itself failed (page might be closed/crashed)
-    console.warn(
-      `⚠️  Cleanup error for session ${sessionId}:`,
-      (error as Error).message || error,
-    );
-  }
+		if (result.success) {
+			// Successfully deleted via RPC
+			// Navigate home if we're still on the deleted session
+			try {
+				await page.waitForTimeout(500);
+				if (page.url().includes(sessionId)) {
+					await page.goto('/').catch(() => {}); // Ignore navigation errors
+					await page.waitForTimeout(300);
+				}
+			} catch {
+				// Ignore navigation errors
+			}
+		} else {
+			// RPC deletion failed after retries, log warning but don't throw
+			console.warn(`⚠️  Failed to cleanup session ${sessionId}: ${result.error}`);
+		}
+	} catch (error) {
+		// page.evaluate itself failed (page might be closed/crashed)
+		console.warn(`⚠️  Cleanup error for session ${sessionId}:`, (error as Error).message || error);
+	}
 
-  // Never throw errors from cleanup - just log warnings
+	// Never throw errors from cleanup - just log warnings
 }
 
 /**
  * Cleanup multiple sessions at once (for test suites)
  */
-export async function cleanupTestSessions(
-  page: Page,
-  sessionIds: string[],
-): Promise<void> {
-  for (const sessionId of sessionIds) {
-    await cleanupTestSession(page, sessionId);
-  }
+export async function cleanupTestSessions(page: Page, sessionIds: string[]): Promise<void> {
+	for (const sessionId of sessionIds) {
+		await cleanupTestSession(page, sessionId);
+	}
 }
 
 /**
  * Wait for session to be archived
  * NOTE: Uses globalStore.sessions to find session by ID and check status
  */
-export async function waitForSessionArchived(
-  page: Page,
-  sessionId: string,
-): Promise<void> {
-  await page.waitForFunction(
-    (sid) => {
-      const session = window.globalStore?.sessions?.value?.find(
-        (s: { id: string; status?: string }) => s.id === sid,
-      );
-      return session?.status === "archived";
-    },
-    sessionId,
-    { timeout: 10000 },
-  );
+export async function waitForSessionArchived(page: Page, sessionId: string): Promise<void> {
+	await page.waitForFunction(
+		(sid) => {
+			const session = window.globalStore?.sessions?.value?.find(
+				(s: { id: string; status?: string }) => s.id === sid
+			);
+			return session?.status === 'archived';
+		},
+		sessionId,
+		{ timeout: 10000 }
+	);
 
-  // Also wait for visual confirmation (archived label)
-  await page
-    .locator("text=Session archived")
-    .waitFor({ state: "visible", timeout: 5000 });
+	// Also wait for visual confirmation (archived label)
+	await page.locator('text=Session archived').waitFor({ state: 'visible', timeout: 5000 });
 }
 
 /**
@@ -614,136 +538,119 @@ export async function waitForSessionArchived(
  * NOTE: For current session, uses sessionStore.sessionState.value?.agentState
  */
 export async function waitForProcessingState(
-  page: Page,
-  sessionId: string,
-  state: "idle" | "queued" | "processing",
-  phase?: "initializing" | "thinking" | "streaming" | "finalizing",
+	page: Page,
+	sessionId: string,
+	state: 'idle' | 'queued' | 'processing',
+	phase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing'
 ): Promise<void> {
-  await page.waitForFunction(
-    ({ sid, expectedState, expectedPhase }) => {
-      // Try sessionStore first (current session - live state)
-      const sessionStoreState = window.sessionStore?.sessionState?.value;
-      let agentState;
-      if (
-        sessionStoreState?.agentState &&
-        window.sessionStore?.activeSessionId?.value === sid
-      ) {
-        agentState = sessionStoreState.agentState;
-      } else {
-        // Fall back to globalStore for non-current sessions
-        const session = window.globalStore?.sessions?.value?.find(
-          (s: { id: string }) => s.id === sid,
-        );
-        if (!session?.processingState) return false;
+	await page.waitForFunction(
+		({ sid, expectedState, expectedPhase }) => {
+			// Try sessionStore first (current session - live state)
+			const sessionStoreState = window.sessionStore?.sessionState?.value;
+			let agentState;
+			if (sessionStoreState?.agentState && window.sessionStore?.activeSessionId?.value === sid) {
+				agentState = sessionStoreState.agentState;
+			} else {
+				// Fall back to globalStore for non-current sessions
+				const session = window.globalStore?.sessions?.value?.find(
+					(s: { id: string }) => s.id === sid
+				);
+				if (!session?.processingState) return false;
 
-        try {
-          agentState = JSON.parse(session.processingState);
-        } catch {
-          return false;
-        }
-      }
+				try {
+					agentState = JSON.parse(session.processingState);
+				} catch {
+					return false;
+				}
+			}
 
-      if (!agentState) return false;
-      if (agentState.status !== expectedState) return false;
+			if (!agentState) return false;
+			if (agentState.status !== expectedState) return false;
 
-      // If phase is specified and state is 'processing', check the phase
-      if (expectedPhase && expectedState === "processing") {
-        return agentState.phase === expectedPhase;
-      }
+			// If phase is specified and state is 'processing', check the phase
+			if (expectedPhase && expectedState === 'processing') {
+				return agentState.phase === expectedPhase;
+			}
 
-      return true;
-    },
-    { sid: sessionId, expectedState: state, expectedPhase: phase },
-    { timeout: 30000 },
-  );
+			return true;
+		},
+		{ sid: sessionId, expectedState: state, expectedPhase: phase },
+		{ timeout: 30000 }
+	);
 }
 
 /**
  * Wait for slash command autocomplete dropdown to appear
  */
 export async function waitForCommandAutocomplete(page: Page): Promise<Locator> {
-  const dropdown = page.locator("text=Slash Commands").locator("..");
-  await dropdown.waitFor({ state: "visible", timeout: 5000 });
-  return dropdown;
+	const dropdown = page.locator('text=Slash Commands').locator('..');
+	await dropdown.waitFor({ state: 'visible', timeout: 5000 });
+	return dropdown;
 }
 
 /**
  * Wait for slash command autocomplete dropdown to close
  */
-export async function waitForCommandAutocompleteClosed(
-  page: Page,
-): Promise<void> {
-  const dropdown = page.locator("text=Slash Commands").locator("..");
-  await dropdown.waitFor({ state: "hidden", timeout: 5000 });
+export async function waitForCommandAutocompleteClosed(page: Page): Promise<void> {
+	const dropdown = page.locator('text=Slash Commands').locator('..');
+	await dropdown.waitFor({ state: 'hidden', timeout: 5000 });
 }
 
 /**
  * Wait for error message to appear
  */
-export async function waitForError(
-  page: Page,
-  errorText?: string,
-): Promise<Locator> {
-  if (errorText) {
-    const errorElement = page.locator(
-      `[data-error-message]:has-text("${errorText}")`,
-    );
-    await errorElement.waitFor({ state: "visible", timeout: 10000 });
-    return errorElement;
-  }
+export async function waitForError(page: Page, errorText?: string): Promise<Locator> {
+	if (errorText) {
+		const errorElement = page.locator(`[data-error-message]:has-text("${errorText}")`);
+		await errorElement.waitFor({ state: 'visible', timeout: 10000 });
+		return errorElement;
+	}
 
-  const errorElement = page.locator("[data-error-message]").first();
-  await errorElement.waitFor({ state: "visible", timeout: 10000 });
-  return errorElement;
+	const errorElement = page.locator('[data-error-message]').first();
+	await errorElement.waitFor({ state: 'visible', timeout: 10000 });
+	return errorElement;
 }
 
 /**
  * Wait for Settings modal to open
  */
 export async function waitForSettingsModal(page: Page): Promise<void> {
-  await page
-    .locator('h2:has-text("Settings")')
-    .waitFor({ state: "visible", timeout: 5000 });
+	await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 5000 });
 }
 
 /**
  * Wait for Settings modal to close
  */
 export async function waitForSettingsModalClosed(page: Page): Promise<void> {
-  await page
-    .locator('h2:has-text("Settings")')
-    .waitFor({ state: "hidden", timeout: 5000 });
+	await page.locator('h2:has-text("Settings")').waitFor({ state: 'hidden', timeout: 5000 });
 }
 
 /**
  * Wait for plus menu dropdown to open
  */
 export async function waitForPlusMenu(page: Page): Promise<void> {
-  // Click the plus/more options button
-  const plusButton = page.locator('button[title="More options"]');
-  await plusButton.waitFor({ state: "visible", timeout: 5000 });
-  await plusButton.click();
-  await page.waitForTimeout(300);
+	// Click the plus/more options button
+	const plusButton = page.locator('button[title="More options"]');
+	await plusButton.waitFor({ state: 'visible', timeout: 5000 });
+	await plusButton.click();
+	await page.waitForTimeout(300);
 }
 
 /**
  * Wait for toast notification to appear
  */
-export async function waitForToast(
-  page: Page,
-  text?: string,
-): Promise<Locator> {
-  if (text) {
-    const toast = page.locator(
-      `[data-testid="toast"]:has-text("${text}"), [role="alert"]:has-text("${text}")`,
-    );
-    await toast.waitFor({ state: "visible", timeout: 5000 });
-    return toast;
-  }
+export async function waitForToast(page: Page, text?: string): Promise<Locator> {
+	if (text) {
+		const toast = page.locator(
+			`[data-testid="toast"]:has-text("${text}"), [role="alert"]:has-text("${text}")`
+		);
+		await toast.waitFor({ state: 'visible', timeout: 5000 });
+		return toast;
+	}
 
-  const toast = page.locator('[data-testid="toast"], [role="alert"]').first();
-  await toast.waitFor({ state: "visible", timeout: 5000 });
-  return toast;
+	const toast = page.locator('[data-testid="toast"], [role="alert"]').first();
+	await toast.waitFor({ state: 'visible', timeout: 5000 });
+	return toast;
 }
 
 /**
@@ -751,18 +658,18 @@ export async function waitForToast(
  * NOTE: Uses globalStore.sessions to find session and check config.model
  */
 export async function waitForModelSwitch(
-  page: Page,
-  sessionId: string,
-  modelId: string,
+	page: Page,
+	sessionId: string,
+	modelId: string
 ): Promise<void> {
-  await page.waitForFunction(
-    ({ sid, expected }) => {
-      const session = window.globalStore?.sessions?.value?.find(
-        (s: { id: string }) => s.id === sid,
-      );
-      return session?.config?.model === expected;
-    },
-    { sid: sessionId, expected: modelId },
-    { timeout: 10000 },
-  );
+	await page.waitForFunction(
+		({ sid, expected }) => {
+			const session = window.globalStore?.sessions?.value?.find(
+				(s: { id: string }) => s.id === sid
+			);
+			return session?.config?.model === expected;
+		},
+		{ sid: sessionId, expected: modelId },
+		{ timeout: 10000 }
+	);
 }
