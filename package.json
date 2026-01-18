@@ -7,8 +7,8 @@
 		"postinstall": "mkdir -p node_modules/react && ln -sf ../preact/jsx-runtime node_modules/react/jsx-runtime 2>/dev/null || true",
 		"lint": "bun node_modules/.bin/oxlint .",
 		"lint:fix": "bun node_modules/.bin/oxlint --fix .",
-		"format": "bun node_modules/.bin/prettier --write .",
-		"format:check": "bun node_modules/.bin/prettier --check .",
+		"format": "bun x biome format --write .",
+		"format:check": "bun x biome format .",
 		"typecheck": "tsc --build",
 		"knip": "knip --include files,dependencies,exports --no-config-hints",
 		"knip:all": "knip",
@@ -28,7 +28,6 @@
 		"happy-dom": "^20.1.0",
 		"knip": "^5.80.2",
 		"oxlint": "^1.39.0",
-		"prettier": "3.7.4",
 		"typescript": "5.9.3"
 	}
 }
