@@ -228,6 +228,17 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
 	 */
 	sdkToolsPreset?: ToolsPresetConfig;
 
+	/**
+	 * Custom function to spawn the Claude Code process.
+	 * Used for testing to track SDK subprocess PID.
+	 * This is a runtime-only callback, not persisted to database.
+	 * @internal
+	 * @remarks Uses 'any' type to match SDK's SpawnOptions and SpawnedProcess
+	 * interfaces which are not directly exported from the SDK package.
+	 */
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	spawnClaudeCodeProcess?: (options: any) => any;
+
 	// Note: The following are inherited from SDKConfig and available:
 	// - systemPrompt: Custom system prompt or Claude Code preset
 	// - allowedTools: Auto-allow specific tools without permission prompts

@@ -88,6 +88,10 @@ export class QueryOptionsBuilder {
 			maxTurns: config.maxTurns ?? Infinity,
 			maxBudgetUsd: config.maxBudgetUsd,
 
+			// ============ Process Spawning Hook ============
+			// Used for testing to track SDK subprocess PID
+			spawnClaudeCodeProcess: config.spawnClaudeCodeProcess,
+
 			// ============ System Prompt ============
 			systemPrompt: systemPromptConfig,
 
@@ -163,6 +167,7 @@ export class QueryOptionsBuilder {
 			useClaudeCodePreset,
 			settingSources: cleanedOptions.settingSources,
 			tools: cleanedOptions.tools,
+			spawnClaudeCodeProcess: typeof config.spawnClaudeCodeProcess, // Log if hook is present
 			allowedTools: cleanedOptions.allowedTools,
 			disallowedTools: cleanedOptions.disallowedTools,
 			agents: cleanedOptions.agents ? Object.keys(cleanedOptions.agents) : undefined,
