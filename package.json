@@ -6,8 +6,8 @@
 	"scripts": {
 		"lint": "bun node_modules/.bin/oxlint .",
 		"lint:fix": "bun node_modules/.bin/oxlint --fix .",
-		"format": "bun node_modules/.bin/prettier --write .",
-		"format:check": "bun node_modules/.bin/prettier --check .",
+		"format": "bun x biome format --write .",
+		"format:check": "bun x biome format .",
 		"typecheck": "tsc --build",
 		"knip": "knip --include files,dependencies,exports --no-config-hints",
 		"knip:all": "knip",
@@ -22,12 +22,12 @@
 		"test:e2e:clean": "bun run cleanup:all && bun run test:e2e"
 	},
 	"devDependencies": {
+		"@biomejs/biome": "^2.3.11",
 		"@testing-library/preact": "^3.2.4",
 		"dotenv": "17.2.3",
 		"happy-dom": "^20.3.1",
 		"knip": "^5.82.0",
 		"oxlint": "^1.39.0",
-		"prettier": "3.8.0",
 		"typescript": "5.9.3"
 	},
 	"dependencies": {
