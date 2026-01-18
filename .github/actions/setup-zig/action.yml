@@ -1,26 +1,26 @@
-name: "Setup Zig"
-description: "Install Zig compiler with local caching (bash-based, no Node.js)"
-author: "lsm"
+name: 'Setup Zig'
+description: 'Install Zig compiler with local caching (bash-based, no Node.js)'
+author: 'lsm'
 
 inputs:
   zig-version:
     description: 'Zig version to install (e.g., "0.13.0", "0.14.0", "0.15.2", "master")'
     required: false
-    default: "0.15.2"
+    default: '0.15.2'
 
 outputs:
   zig-version:
-    description: "Installed Zig version"
+    description: 'Installed Zig version'
     value: ${{ steps.setup.outputs.zig-version }}
   zig-path:
-    description: "Path to Zig executable"
+    description: 'Path to Zig executable'
     value: ${{ steps.setup.outputs.zig-path }}
   cache-hit:
-    description: "Whether Zig was found in local cache"
+    description: 'Whether Zig was found in local cache'
     value: ${{ steps.setup.outputs.cache-hit }}
 
 runs:
-  using: "composite"
+  using: 'composite'
   steps:
     - id: setup
       shell: bash
