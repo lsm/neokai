@@ -89,6 +89,10 @@ export class AgentSession {
 	// Track query promise for proper cleanup
 	private queryPromise: Promise<void> | null = null;
 
+	// Query generation counter - incremented each time a new query starts
+	// Used to detect stale cleanup in finally blocks when queries are interrupted
+	private queryGeneration = 0;
+
 	// Flag indicating cleanup has started - prevents DB writes after cleanup
 	private isCleaningUp = false;
 
@@ -718,14 +722,21 @@ export class AgentSession {
 		this.logger.log(`Starting streaming query...`);
 		this.messageQueue.start();
 
+		// Increment query generation for this new query
+		// This is used to detect stale cleanup in finally blocks
+		this.queryGeneration++;
+		const currentGeneration = this.queryGeneration;
+		this.logger.log(`Starting query with generation ${currentGeneration}`);
+
 		// Store query promise for cleanup
-		this.queryPromise = this.runQuery();
+		this.queryPromise = this.runQuery(currentGeneration);
 	}
 
 	/**
 	 * Run the query (extracted for promise tracking)
+	 * @param queryGeneration - The generation counter for this query (used to detect stale cleanup)
 	 */
-	private async runQuery(): Promise<void> {
+	private async runQuery(queryGeneration: number): Promise<void> {
 		try {
 			// Verify authentication - check for any available provider credentials
 			// Supports Anthropic (ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN) and GLM (GLM_API_KEY, ZHIPU_API_KEY)
@@ -955,34 +966,50 @@ export class AgentSession {
 				await this.stateManager.setIdle();
 			}
 		} finally {
-			this.messageQueue.stop();
+			// CRITICAL FIX: Use query generation to detect stale cleanup
+			// When handleInterrupt() is called, it stops the queue and clears queryPromise.
+			// If a new message is sent immediately, a new query starts (with a new generation)
+			// while the old query's finally block is still executing. We must detect this and
+			// skip all cleanup to avoid interfering with the new query.
+			// Detection: Compare the query generation passed to runQuery() with the current generation.
+			const isStaleQuery = this.queryGeneration !== queryGeneration;
 
-			// Clear queryPromise so ensureQueryStarted() can restart if needed
-			// This is essential for multi-message sequences where the SDK query
-			// finishes after first message and needs to restart for subsequent messages
-			this.queryPromise = null;
+			// Skip all cleanup if this is a stale query (new query has already started)
+			// We check this condition first to avoid any cleanup operations
+			if (!isStaleQuery) {
+				this.messageQueue.stop();
 
-			// Restore original env vars after SDK query completes
-			// This is critical for GLM support - we apply provider env vars before
-			// the query and must restore them after to avoid affecting other sessions
-			if (Object.keys(this.originalEnvVars).length > 0) {
-				// Re-import getProviderService since we're in a different scope
-				const { getProviderService: getProviderServiceRestore } = await import(
-					'../provider-service'
+				// Clear queryPromise so ensureQueryStarted() can restart if needed
+				// This is essential for multi-message sequences where the SDK query
+				// finishes after first message and needs to restart for subsequent messages
+				this.queryPromise = null;
+
+				// Restore original env vars after SDK query completes
+				// This is critical for GLM support - we apply provider env vars before
+				// the query and must restore them after to avoid affecting other sessions
+				if (Object.keys(this.originalEnvVars).length > 0) {
+					// Re-import getProviderService since we're in a different scope
+					const { getProviderService: getProviderServiceRestore } = await import(
+						'../provider-service'
+					);
+					const providerServiceRestore = getProviderServiceRestore();
+					providerServiceRestore.restoreEnvVars(this.originalEnvVars);
+					this.originalEnvVars = {};
+					this.logger.log('Restored original environment variables after SDK query');
+				}
+
+				// Ensure state is reset to idle when streaming stops (normal or error)
+				// Skip if cleanup is in progress to avoid "closed database" errors
+				if (!this.isCleaningUp) {
+					await this.stateManager.setIdle();
+				}
+
+				this.logger.log(`Streaming query stopped (generation ${queryGeneration})`);
+			} else {
+				this.logger.log(
+					`Skipping all cleanup in finally block - stale query detected (generation ${queryGeneration} != current ${this.queryGeneration})`
 				);
-				const providerServiceRestore = getProviderServiceRestore();
-				providerServiceRestore.restoreEnvVars(this.originalEnvVars);
-				this.originalEnvVars = {};
-				this.logger.log('Restored original environment variables after SDK query');
 			}
-
-			// Ensure state is reset to idle when streaming stops (normal or error)
-			// Skip if cleanup is in progress to avoid "closed database" errors
-			if (!this.isCleaningUp) {
-				await this.stateManager.setIdle();
-			}
-
-			this.logger.log(`Streaming query stopped`);
 		}
 	}
 
@@ -1092,6 +1119,28 @@ export class AgentSession {
 		} else {
 			this.logger.log(`No query object, interrupt complete (queue cleared)`);
 		}
+
+		// CRITICAL FIX: Clear queryObject to prevent reference to old SDK subprocess
+		// This ensures that when a new query starts, it will create a fresh query object
+		// without any references to the old (possibly still running) SDK subprocess.
+		this.queryObject = null;
+		this.logger.log(`Cleared queryObject reference`);
+
+		// CRITICAL FIX: Stop the message queue to unblock startStreamingQuery()
+		// This fixes the race condition where sending a message immediately after interrupt
+		// would fail because startStreamingQuery() checks messageQueue.isRunning() and
+		// returns early without starting a new query. We must stop the queue here so that
+		// ensureQueryStarted() can properly start a fresh query.
+		this.messageQueue.stop();
+		this.logger.log(`Stopped message queue to allow immediate query restart`);
+
+		// CRITICAL FIX: Clear queryPromise to unblock ensureQueryStarted()
+		// This fixes the race condition where sending a message immediately after interrupt
+		// would fail because ensureQueryStarted() sees the old queryPromise still exists
+		// and returns early without starting a new query. The old queryPromise will complete
+		// its finally block normally, but we clear it here to allow immediate restart.
+		this.queryPromise = null;
+		this.logger.log(`Cleared queryPromise to allow immediate query restart`);
 
 		// Publish interrupt event for clients
 		await this.messageHub.publish(
