@@ -967,8 +967,9 @@ export class AgentSession {
 			// the query and must restore them after to avoid affecting other sessions
 			if (Object.keys(this.originalEnvVars).length > 0) {
 				// Re-import getProviderService since we're in a different scope
-				const { getProviderService: getProviderServiceRestore } =
-					await import('../provider-service');
+				const { getProviderService: getProviderServiceRestore } = await import(
+					'../provider-service'
+				);
 				const providerServiceRestore = getProviderServiceRestore();
 				providerServiceRestore.restoreEnvVars(this.originalEnvVars);
 				this.originalEnvVars = {};

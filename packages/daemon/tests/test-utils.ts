@@ -257,8 +257,9 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 
 	// Initialize model service
 	try {
-		const { initializeModels, setModelsCache, getModelsCache } =
-			await import('../src/lib/model-service');
+		const { initializeModels, setModelsCache, getModelsCache } = await import(
+			'../src/lib/model-service'
+		);
 
 		if (authStatus.isAuthenticated) {
 			// If we have a cached copy, reuse it to save 100-200ms

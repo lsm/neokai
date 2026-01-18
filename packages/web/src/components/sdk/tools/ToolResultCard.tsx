@@ -281,8 +281,8 @@ export function ToolResultCard({
 						/>
 					) : /* Special handling for Read tool - show syntax-highlighted code */
 					toolName === 'Read' &&
-					  output &&
-					  (typeof output === 'string' ||
+						output &&
+						(typeof output === 'string' ||
 							(typeof output === 'object' &&
 								'content' in output &&
 								output.content &&
@@ -300,8 +300,8 @@ export function ToolResultCard({
 						/>
 					) : /* Special handling for Write tool - show syntax-highlighted code */
 					toolName === 'Write' &&
-					  inputRecord?.content &&
-					  typeof inputRecord.content === 'string' ? (
+						inputRecord?.content &&
+						typeof inputRecord.content === 'string' ? (
 						<div>
 							{variant === 'detailed' && (
 								<div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">

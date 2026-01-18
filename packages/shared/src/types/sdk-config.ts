@@ -316,8 +316,7 @@ export interface SessionResumptionSettings {
  * full control over agent session behavior via RPC.
  */
 export interface SDKConfig
-	extends
-		ModelSettings,
+	extends ModelSettings,
 		ToolsSettings,
 		AgentsConfig,
 		McpSettings,
