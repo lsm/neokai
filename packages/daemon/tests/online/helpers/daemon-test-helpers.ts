@@ -31,7 +31,10 @@ export async function sendMessage(
 /**
  * Wait for the agent to reach a specific processing state
  *
- * Uses state.session subscription to monitor processing state changes.
+ * Uses state.session subscription to monitor agent state changes.
+ *
+ * NOTE: The state structure uses 'agentState' (not 'processingState').
+ * See SessionState interface in @liuboer/shared/src/state-types.ts
  */
 export async function waitForProcessingState(
   daemon: DaemonServerContext,
@@ -56,8 +59,8 @@ export async function waitForProcessingState(
       .subscribe(
         "state.session",
         (data: unknown) => {
-          const state = data as { processingState?: { status: string } };
-          const currentStatus = state.processingState?.status;
+          const state = data as { agentState?: { status: string } };
+          const currentStatus = state.agentState?.status;
 
           if (currentStatus === targetStatus) {
             clearTimeout(timer);
