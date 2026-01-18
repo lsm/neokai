@@ -225,6 +225,26 @@ export async function waitForSDKMessage(
 }
 
 /**
+ * Wait for SDK system:init message to be received
+ * This indicates the SDK has accepted the message and started processing
+ *
+ * Uses UI element: the "Session info" button (circle with "i" icon) that appears
+ * next to the user message when system:init is received.
+ *
+ * Use this instead of arbitrary timeouts to ensure proper synchronization
+ */
+export async function waitForSDKSystemInitMessage(
+	page: Page,
+	timeout: number = 10000
+): Promise<void> {
+	// Wait for the "Session info" button to appear - this indicates system:init was received
+	// The button appears next to the user message when sessionInfo is attached
+	// Use locator.waitFor() for better retry logic with async signal-based rendering
+	// Use .last() to wait for the most recent button (handles multiple messages)
+	await page.locator('button[title="Session info"]').last().waitFor({ state: 'visible', timeout });
+}
+
+/**
  * Wait for specific event to be published
  */
 export async function waitForEvent(
