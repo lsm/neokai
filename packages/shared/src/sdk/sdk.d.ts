@@ -55,6 +55,14 @@ export declare type AgentDefinition = {
      * Experimental: Critical reminder added to system prompt
      */
     criticalSystemReminder_EXPERIMENTAL?: string;
+    /**
+     * Array of skill names to preload into the agent context
+     */
+    skills?: string[];
+    /**
+     * Maximum number of agentic turns (API round-trips) before stopping
+     */
+    maxTurns?: number;
 };
 
 export declare type AgentMcpServerSpec = string | Record<string, McpServerConfigForProcessTransport>;
@@ -192,6 +200,7 @@ declare namespace coreTypes {
         SDKStatusMessage,
         SDKStatus,
         SDKSystemMessage,
+        SDKTaskNotificationMessage,
         SDKToolProgressMessage,
         SDKUserMessageReplay,
         SDKUserMessage,
@@ -201,6 +210,8 @@ declare namespace coreTypes {
         SessionStartHookInput,
         SessionStartHookSpecificOutput,
         SettingSource,
+        SetupHookInput,
+        SetupHookSpecificOutput,
         SlashCommand,
         StopHookInput,
         SubagentStartHookInput,
@@ -230,7 +241,7 @@ export declare const EXIT_REASONS: readonly ["clear", "logout", "prompt_input_ex
 
 export declare type ExitReason = 'clear' | 'logout' | 'prompt_input_exit' | 'other' | 'bypass_permissions_disabled';
 
-export declare const HOOK_EVENTS: readonly ["PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification", "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop", "SubagentStart", "SubagentStop", "PreCompact", "PermissionRequest"];
+export declare const HOOK_EVENTS: readonly ["PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification", "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop", "SubagentStart", "SubagentStop", "PreCompact", "PermissionRequest", "Setup"];
 
 /**
  * Hook callback function for responding to events during execution.
@@ -249,9 +260,9 @@ export declare interface HookCallbackMatcher {
     timeout?: number;
 }
 
-export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'Notification' | 'UserPromptSubmit' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PermissionRequest';
+export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'Notification' | 'UserPromptSubmit' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PermissionRequest' | 'Setup';
 
-export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | NotificationHookInput | UserPromptSubmitHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PermissionRequestHookInput;
+export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | NotificationHookInput | UserPromptSubmitHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PermissionRequestHookInput | SetupHookInput;
 
 export declare type HookJSONOutput = AsyncHookJSONOutput | SyncHookJSONOutput;
 
@@ -403,6 +414,25 @@ export declare type Options = {
      * Paths should be absolute.
      */
     additionalDirectories?: string[];
+    /**
+     * Agent name for the main thread. When specified, the agent's system prompt,
+     * tool restrictions, and model will be applied to the main conversation.
+     * The agent must be defined either in the `agents` option or in settings.
+     *
+     * This is equivalent to the `--agent` CLI flag.
+     *
+     * @example
+     * ```typescript
+     * agent: 'code-reviewer',
+     * agents: {
+     *   'code-reviewer': {
+     *     description: 'Reviews code for best practices',
+     *     prompt: 'You are a code reviewer...'
+     *   }
+     * }
+     * ```
+     */
+    agent?: string;
     /**
      * Programmatically define custom subagents that can be invoked via the Task tool.
      * Keys are agent names, values are agent definitions.
@@ -850,6 +880,7 @@ export declare type PreToolUseHookSpecificOutput = {
     permissionDecision?: 'allow' | 'deny' | 'ask';
     permissionDecisionReason?: string;
     updatedInput?: Record<string, unknown>;
+    additionalContext?: string;
 };
 
 /**
@@ -1176,7 +1207,7 @@ export declare type SdkMcpToolDefinition<Schema extends AnyZodRawShape = AnyZodR
     handler: (args: InferShape<Schema>, extra: unknown) => Promise<CallToolResult>;
 };
 
-export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKHookResponseMessage | SDKToolProgressMessage | SDKAuthStatusMessage;
+export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKHookResponseMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage;
 
 export declare type SDKPartialAssistantMessage = {
     type: 'stream_event';
@@ -1353,6 +1384,17 @@ export declare type SDKSystemMessage = {
     session_id: string;
 };
 
+export declare type SDKTaskNotificationMessage = {
+    type: 'system';
+    subtype: 'task_notification';
+    task_id: string;
+    status: 'completed' | 'failed' | 'stopped';
+    output_file: string;
+    summary: string;
+    uuid: UUID;
+    session_id: string;
+};
+
 export declare type SDKToolProgressMessage = {
     type: 'tool_progress';
     tool_use_id: string;
@@ -1393,6 +1435,7 @@ export declare type SessionStartHookInput = BaseHookInput & {
     hook_event_name: 'SessionStart';
     source: 'startup' | 'resume' | 'clear' | 'compact';
     agent_type?: string;
+    model?: string;
 };
 
 export declare type SessionStartHookSpecificOutput = {
@@ -1404,6 +1447,16 @@ export declare type SessionStartHookSpecificOutput = {
  * Source for loading filesystem-based settings. 'user' - Global user settings (~/.claude/settings.json). 'project' - Project settings (.claude/settings.json). 'local' - Local settings (.claude/settings.local.json).
  */
 export declare type SettingSource = 'user' | 'project' | 'local';
+
+export declare type SetupHookInput = BaseHookInput & {
+    hook_event_name: 'Setup';
+    trigger: 'init' | 'maintenance';
+};
+
+export declare type SetupHookSpecificOutput = {
+    hookEventName: 'Setup';
+    additionalContext?: string;
+};
 
 /**
  * Information about an available skill (invoked via /command syntax).
@@ -1516,7 +1569,7 @@ export declare type SyncHookJSONOutput = {
     decision?: 'approve' | 'block';
     systemMessage?: string;
     reason?: string;
-    hookSpecificOutput?: PreToolUseHookSpecificOutput | UserPromptSubmitHookSpecificOutput | SessionStartHookSpecificOutput | SubagentStartHookSpecificOutput | PostToolUseHookSpecificOutput | PostToolUseFailureHookSpecificOutput | PermissionRequestHookSpecificOutput;
+    hookSpecificOutput?: PreToolUseHookSpecificOutput | UserPromptSubmitHookSpecificOutput | SessionStartHookSpecificOutput | SetupHookSpecificOutput | SubagentStartHookSpecificOutput | PostToolUseHookSpecificOutput | PostToolUseFailureHookSpecificOutput | PermissionRequestHookSpecificOutput;
 };
 
 export declare function tool<Schema extends AnyZodRawShape>(_name: string, _description: string, _inputSchema: Schema, _handler: (args: InferShape<Schema>, extra: unknown) => Promise<CallToolResult>): SdkMcpToolDefinition<Schema>;

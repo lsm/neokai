@@ -113,6 +113,31 @@ export interface TaskOutputInput {
   timeout: number;
 }
 export interface ExitPlanModeInput {
+  /**
+   * Prompt-based permissions needed to implement the plan. These describe categories of actions rather than specific commands.
+   */
+  allowedPrompts?: {
+    /**
+     * The tool this prompt applies to
+     */
+    tool: "Bash";
+    /**
+     * Semantic description of the action, e.g. "run tests", "install dependencies"
+     */
+    prompt: string;
+  }[];
+  /**
+   * Whether to push the plan to a remote Claude.ai session
+   */
+  pushToRemote?: boolean;
+  /**
+   * The remote session ID if pushed to remote
+   */
+  remoteSessionId?: string;
+  /**
+   * The remote session URL if pushed to remote
+   */
+  remoteSessionUrl?: string;
   [k: string]: unknown;
 }
 export interface FileEditInput {
