@@ -127,12 +127,15 @@ describe('Problematic Session Cleanup (SDK Integration)', () => {
 
 	test('should reproduce SDK startup timeout with problematic data', async () => {
 		// This test reproduces the actual stuck session issue where SDK hangs
-		// trying to resume a session with problematic entries
+		// trying to resume a session with problematic entries.
+		//
+		// WITHOUT THE FIX: This times out after ~15 seconds with "SDK startup timeout"
+		// WITH THE FIX: The cleanup removes problematic entries, SDK resumes successfully
 
 		// Step 1: Create a session and send a message to establish SDK session
 		const createResult = (await daemon.messageHub.call('session.create', {
 			workspacePath: testWorkspace,
-			title: 'Test Session For Reproduction',
+			title: 'Test Session For Timeout Reproduction',
 			config: {
 				model: 'haiku',
 				permissionMode: 'acceptEdits',
@@ -153,7 +156,7 @@ describe('Problematic Session Cleanup (SDK Integration)', () => {
 		console.log('[TEST] SDK session file:', sdkSessionFile);
 
 		// Step 3: Backup the original clean file
-		const backupFile = sdkSessionFile + '.clean';
+		const backupFile = sdkSessionFile + '.backup';
 		const originalContent = readFileSync(sdkSessionFile, 'utf-8');
 		writeFileSync(backupFile, originalContent, 'utf-8');
 
@@ -163,7 +166,72 @@ describe('Problematic Session Cleanup (SDK Integration)', () => {
 			// SDK wrote problematic entries to the end of a valid session file
 			const problematicContent =
 				PROBLEMATIC_SDK_DATA.map((msg) => JSON.stringify(msg)).join('\n') + '\n';
-			const originalContent = readFileSync(sdkSessionFile, 'utf-8');
+			writeFileSync(sdkSessionFile, originalContent + problematicContent, 'utf-8');
+
+			console.log('[TEST] Appended problematic data to SDK session file');
+
+			// Step 5: Send a message immediately WITHOUT interrupting
+			// This will cause the SDK to try to resume the session with the corrupted file
+			// and should timeout without the fix
+			console.log('[TEST] Sending message to trigger SDK resume with corrupted file...');
+
+			// This should timeout with "SDK startup timeout" if the fix is disabled
+			// but succeed if the fix is enabled
+			await sendMessage(daemon, sessionId, 'This will trigger resume with problematic data');
+			await waitForIdle(daemon, sessionId, 30000);
+
+			console.log('[TEST] Message succeeded - cleanup fix is working!');
+		} finally {
+			// Always restore the backup
+			if (existsSync(backupFile)) {
+				writeFileSync(sdkSessionFile, readFileSync(backupFile, 'utf-8'), 'utf-8');
+				rmSync(backupFile);
+			}
+		}
+	}, 60000);
+
+	test('should cleanup prevents timeout after interrupt and resume', async () => {
+		// This test verifies that the cleanup prevents timeout when resuming
+		// after an interrupt. It simulates the real-world scenario where:
+		// 1. A session is running
+		// 2. The SDK session file gets corrupted
+		// 3. The session is interrupted
+		// 4. A new message is sent (triggers resume with cleanup)
+		//
+		// WITH THE FIX: Cleanup removes problematic entries, SDK resumes successfully
+
+		// Step 1: Create a session and send a message to establish SDK session
+		const createResult = (await daemon.messageHub.call('session.create', {
+			workspacePath: testWorkspace,
+			title: 'Test Session For Interrupt Resume',
+			config: {
+				model: 'haiku',
+				permissionMode: 'acceptEdits',
+			},
+		})) as { sessionId: string };
+
+		const { sessionId } = createResult;
+
+		await sendMessage(daemon, sessionId, 'Hello!');
+		await waitForIdle(daemon, sessionId, 30000);
+
+		// Step 2: Get the SDK session file path
+		const { readdirSync } = require('fs');
+		const claudeBase = join(process.env.HOME || '~', '.claude', 'projects', sdkProjectDir);
+		const sdkSessionFiles = readdirSync(claudeBase).filter((f: string) => f.endsWith('.jsonl'));
+		const sdkSessionFile = join(claudeBase, sdkSessionFiles[0]);
+
+		console.log('[TEST] SDK session file:', sdkSessionFile);
+
+		// Step 3: Backup the original clean file
+		const backupFile = sdkSessionFile + '.backup';
+		const originalContent = readFileSync(sdkSessionFile, 'utf-8');
+		writeFileSync(backupFile, originalContent, 'utf-8');
+
+		try {
+			// Step 4: Corrupt the SDK session file by APPENDING problematic data
+			const problematicContent =
+				PROBLEMATIC_SDK_DATA.map((msg) => JSON.stringify(msg)).join('\n') + '\n';
 			writeFileSync(sdkSessionFile, originalContent + problematicContent, 'utf-8');
 
 			console.log('[TEST] Appended problematic data to SDK session file');
@@ -176,27 +244,15 @@ describe('Problematic Session Cleanup (SDK Integration)', () => {
 			// Wait a bit for interrupt to complete
 			await new Promise((resolve) => setTimeout(resolve, 2000));
 
-			// Step 6: Try to send another message
+			// Step 6: Send another message after interrupt
 			// This will trigger a NEW query which will try to RESUME the SDK session
-			// The SDK will try to read the corrupted file and HANG
-			//
-			// WITHOUT THE FIX: This times out after ~15 seconds with "SDK startup timeout"
-			// WITH THE FIX: The cleanup removes problematic entries, SDK resumes successfully
+			// The cleanup will run and remove problematic entries before SDK reads the file
+			console.log('[TEST] Sending message after interrupt to trigger resume with cleanup...');
 
-			// Note: We expect this to timeout without the fix
-			// The fix in cleanQueueOperationEntries should handle this
+			await sendMessage(daemon, sessionId, 'This will trigger resume after interrupt');
+			await waitForIdle(daemon, sessionId, 30000);
 
-			try {
-				console.log('[TEST] Sending message to trigger SDK resume with corrupted file...');
-				await sendMessage(daemon, sessionId, 'This will trigger resume with problematic data');
-				await waitForIdle(daemon, sessionId, 30000);
-				console.log('[TEST] Message succeeded - fix is working!');
-			} catch (error) {
-				console.log('[TEST] Message failed as expected without fix:', error);
-				// This is expected to fail without the fix
-				// The fix should make this succeed
-				throw error;
-			}
+			console.log('[TEST] Message succeeded - cleanup fix prevents timeout!');
 		} finally {
 			// Always restore the backup
 			if (existsSync(backupFile)) {
