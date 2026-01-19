@@ -617,7 +617,7 @@ describe('SDK Session File Manager', () => {
 						id: 'msg1',
 						role: 'assistant',
 						content: [{ type: 'text', text: 'Thinking...' }],
-						stop_reason: null,  // Incomplete message!
+						stop_reason: null, // Incomplete message!
 						stop_sequence: null,
 					},
 				}),
@@ -628,7 +628,7 @@ describe('SDK Session File Manager', () => {
 						id: 'msg2',
 						role: 'assistant',
 						content: [{ type: 'tool_use', id: 't1', name: 'Bash' }],
-						stop_reason: 'tool_use',  // Complete message
+						stop_reason: 'tool_use', // Complete message
 						stop_sequence: null,
 					},
 				}),

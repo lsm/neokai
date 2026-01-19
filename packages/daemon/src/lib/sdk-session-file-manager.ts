@@ -45,6 +45,48 @@ export function getSDKSessionFilePath(workspacePath: string, sdkSessionId: strin
 }
 
 /**
+ * Find the most recently modified SDK session file for a workspace
+ * Useful when we don't have the SDK session ID (e.g., before query starts)
+ *
+ * @param workspacePath - The session's workspace path
+ * @returns Path to the most recent session file if found, null otherwise
+ */
+export function findMostRecentSDKSessionFile(workspacePath: string): string | null {
+	try {
+		const sessionDir = getSDKProjectDir(workspacePath);
+
+		if (!existsSync(sessionDir)) {
+			return null;
+		}
+
+		// Find all .jsonl files
+		const files = readdirSync(sessionDir).filter((f) => f.endsWith('.jsonl'));
+
+		if (files.length === 0) {
+			return null;
+		}
+
+		// Find the most recently modified file
+		let mostRecentFile: string | null = null;
+		let mostRecentTime = 0;
+
+		for (const file of files) {
+			const filePath = join(sessionDir, file);
+			const stats = statSync(filePath);
+			if (stats.mtimeMs > mostRecentTime) {
+				mostRecentTime = stats.mtimeMs;
+				mostRecentFile = filePath;
+			}
+		}
+
+		return mostRecentFile;
+	} catch (error) {
+		console.error('[SDKSessionFileManager] Error finding most recent session file:', error);
+		return null;
+	}
+}
+
+/**
  * Find SDK session file by searching the workspace directory
  * Useful when we don't have the SDK session ID (e.g., session not currently running)
  *
@@ -531,10 +573,12 @@ export function repairSDKSessionFile(
  * @param sessionFilePath - Path to the session file
  * @returns true if any entries were removed, false otherwise
  */
-function cleanQueueOperationEntries(sessionFilePath: string): boolean {
+export function cleanQueueOperationEntries(sessionFilePath: string): boolean {
 	try {
+		console.log(`[SDKSessionFileManager] cleanQueueOperationEntries called on ${sessionFilePath}`);
 		const content = readFileSync(sessionFilePath, 'utf-8');
 		const lines = content.split('\n').filter((line) => line.trim());
+		console.log(`[SDKSessionFileManager] File has ${lines.length} lines before cleanup`);
 
 		const cleanedLines = lines.filter((line) => {
 			try {
@@ -542,6 +586,7 @@ function cleanQueueOperationEntries(sessionFilePath: string): boolean {
 
 				// Filter out queue-operation entries
 				if (msg.type === 'queue-operation') {
+					console.log(`[SDKSessionFileManager] Filtering out queue-operation entry`);
 					return false;
 				}
 
@@ -566,6 +611,7 @@ function cleanQueueOperationEntries(sessionFilePath: string): boolean {
 		});
 
 		// Check if any entries were removed
+		console.log(`[SDKSessionFileManager] File has ${cleanedLines.length} lines after cleanup`);
 		if (cleanedLines.length < lines.length) {
 			const removedCount = lines.length - cleanedLines.length;
 			console.info(
@@ -575,6 +621,7 @@ function cleanQueueOperationEntries(sessionFilePath: string): boolean {
 			return true;
 		}
 
+		console.log(`[SDKSessionFileManager] No entries removed (${lines.length} lines remain)`);
 		return false;
 	} catch (error) {
 		console.error('[SDKSessionFileManager] Failed to clean problematic entries:', error);
