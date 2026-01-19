@@ -40,12 +40,14 @@ export interface UseModelSwitcherResult {
 }
 
 /** Model family icons for visual hierarchy */
-export const MODEL_FAMILY_ICONS = {
+export const MODEL_FAMILY_ICONS: Record<string, string> = {
 	opus: '🧠',
 	sonnet: '💎',
 	haiku: '⚡',
 	glm: '🌐',
-} as const;
+	// Default icon for unknown families
+	__default__: '💎',
+};
 
 /** Model family sort order */
 const FAMILY_ORDER: Record<string, number> = {
@@ -97,15 +99,21 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 
 			const modelInfos: ModelInfo[] = models.map((m) => {
 				let family: 'opus' | 'sonnet' | 'haiku' | 'glm' = 'sonnet';
+				let provider: 'anthropic' | 'glm' = 'anthropic';
+
 				if (m.id.includes('opus')) family = 'opus';
 				else if (m.id.includes('haiku')) family = 'haiku';
-				else if (m.id.toLowerCase().startsWith('glm-')) family = 'glm';
+				else if (m.id.toLowerCase().startsWith('glm-')) {
+					family = 'glm';
+					provider = 'glm';
+				}
 
 				return {
 					id: m.id,
 					name: m.display_name,
 					alias: m.id.split('-').pop() || m.id,
 					family,
+					provider,
 					contextWindow: 200000,
 					description: m.description || '',
 					releaseDate: '',

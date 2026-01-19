@@ -1,0 +1,286 @@
+/**
+ * Anthropic Provider - Official Anthropic Claude API
+ *
+ * This provider uses the standard Claude Agent SDK with Anthropic's API.
+ * No special configuration needed - the SDK handles everything.
+ */
+
+import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type {
+	Provider,
+	ProviderCapabilities,
+	ProviderSdkConfig,
+	ModelTier,
+} from '@liuboer/shared/provider';
+import type { ModelInfo } from '@liuboer/shared';
+
+/**
+ * Anthropic provider implementation
+ */
+export class AnthropicProvider implements Provider {
+	readonly id = 'anthropic';
+	readonly displayName = 'Anthropic';
+
+	readonly capabilities: ProviderCapabilities = {
+		streaming: true,
+		extendedThinking: true,
+		maxContextWindow: 200000,
+		functionCalling: true,
+		vision: true,
+	};
+
+	/**
+	 * Cache for dynamically loaded models
+	 */
+	private modelCache: ModelInfo[] | null = null;
+
+	constructor(
+		private readonly env: NodeJS.ProcessEnv = process.env,
+		private readonly modelCacheKey: string = 'anthropic-global'
+	) {}
+
+	/**
+	 * Check if Anthropic is available
+	 * Requires either ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
+	 */
+	isAvailable(): boolean {
+		return !!(this.env.ANTHROPIC_API_KEY || this.env.CLAUDE_CODE_OAUTH_TOKEN);
+	}
+
+	/**
+	 * Get API key from environment
+	 */
+	getApiKey(): string | undefined {
+		return this.env.ANTHROPIC_API_KEY || this.env.CLAUDE_CODE_OAUTH_TOKEN;
+	}
+
+	/**
+	 * Get available models from Anthropic
+	 * Dynamically loads from SDK or returns cached models
+	 */
+	async getModels(): Promise<ModelInfo[]> {
+		// Return cached models if available
+		if (this.modelCache) {
+			return this.modelCache;
+		}
+
+		try {
+			// Try to load from SDK
+			const models = await this.loadModelsFromSdk();
+			this.modelCache = models;
+			return models;
+		} catch (error) {
+			console.warn('[AnthropicProvider] Failed to load models from SDK:', error);
+			// Return static fallback models
+			this.modelCache = this.getStaticModels();
+			return this.modelCache;
+		}
+	}
+
+	/**
+	 * Load models from SDK
+	 */
+	private async loadModelsFromSdk(): Promise<ModelInfo[]> {
+		const { query } = await import('@anthropic-ai/claude-agent-sdk');
+
+		// Create a temporary query to fetch models
+		const tmpQuery = query({
+			prompt: '',
+			options: {
+				model: 'default',
+				cwd: process.cwd(),
+				maxTurns: 0,
+			},
+		});
+
+		try {
+			const sdkModels = await tmpQuery.supportedModels();
+			return this.convertSdkModels(sdkModels);
+		} finally {
+			// Fire-and-forget interrupt
+			tmpQuery.interrupt().catch(() => {});
+		}
+	}
+
+	/**
+	 * Convert SDK models to ModelInfo format
+	 * Public for use by external helpers like getAnthropicModelsFromQuery
+	 */
+	convertSdkModels(
+		sdkModels: Array<{ value: string; displayName: string; description: string }>
+	): ModelInfo[] {
+		return sdkModels.map((sdkModel) => {
+			// Extract display name from description (format: "Model X.Y · description")
+			const description = sdkModel.description || '';
+			const separatorIndex = description.indexOf(' · ');
+			let displayName = description;
+			if (separatorIndex > 0) {
+				displayName = description.substring(0, separatorIndex);
+			} else {
+				displayName = sdkModel.displayName || sdkModel.value;
+			}
+
+			// Handle SDK's verbose default model display name
+			const currentlyMatch = displayName.match(/currently\s+([^)]+)/);
+			if (currentlyMatch) {
+				displayName = currentlyMatch[1].trim();
+			}
+
+			// Determine family from model ID or display name
+			let family: 'opus' | 'sonnet' | 'haiku' = 'sonnet';
+			const nameLower = displayName.toLowerCase();
+			if (nameLower.includes('opus')) {
+				family = 'opus';
+			} else if (nameLower.includes('haiku')) {
+				family = 'haiku';
+			}
+
+			return {
+				id: sdkModel.value,
+				name: displayName,
+				alias: sdkModel.value, // SDK uses short IDs like 'opus', 'default'
+				family,
+				provider: 'anthropic',
+				contextWindow: 200000,
+				description: sdkModel.description || '',
+				releaseDate: '',
+				available: true,
+			};
+		});
+	}
+
+	/**
+	 * Get static fallback models when SDK is unavailable
+	 */
+	private getStaticModels(): ModelInfo[] {
+		return [
+			{
+				id: 'default',
+				name: 'Sonnet 4.5',
+				alias: 'default',
+				family: 'sonnet',
+				provider: 'anthropic',
+				contextWindow: 200000,
+				description: 'Best for everyday tasks',
+				releaseDate: '2024-10-22',
+				available: true,
+			},
+			{
+				id: 'opus',
+				name: 'Opus 4.5',
+				alias: 'opus',
+				family: 'opus',
+				provider: 'anthropic',
+				contextWindow: 200000,
+				description: 'Most capable model for complex tasks',
+				releaseDate: '2025-01-19',
+				available: true,
+			},
+			{
+				id: 'haiku',
+				name: 'Haiku 3.5',
+				alias: 'haiku',
+				family: 'haiku',
+				provider: 'anthropic',
+				contextWindow: 200000,
+				description: 'Fast and efficient model',
+				releaseDate: '2024-10-22',
+				available: true,
+			},
+		];
+	}
+
+	/**
+	 * Check if a model ID belongs to Anthropic
+	 *
+	 * Anthropic owns:
+	 * - 'default', 'opus', 'haiku' (SDK short IDs)
+	 * - 'claude-*' model IDs
+	 *
+	 * Does NOT own models from other providers (glm-*, deepseek-*, etc.)
+	 */
+	ownsModel(modelId: string): boolean {
+		const lower = modelId.toLowerCase();
+
+		// SDK short IDs
+		if (['default', 'opus', 'haiku', 'sonnet'].includes(lower)) {
+			return true;
+		}
+
+		// Anthropic model IDs
+		if (lower.startsWith('claude-')) {
+			return true;
+		}
+
+		// Known other provider prefixes (exclude these)
+		const otherProviderPrefixes = ['glm-', 'deepseek-', 'openai-', 'gpt-', 'qwen-'];
+		if (otherProviderPrefixes.some((prefix) => lower.startsWith(prefix))) {
+			return false;
+		}
+
+		// Default: assume Anthropic for unknown models
+		// (this allows legacy model IDs to work)
+		return true;
+	}
+
+	/**
+	 * Get model for a specific tier
+	 */
+	getModelForTier(tier: ModelTier): string | undefined {
+		const tierMap: Record<ModelTier, string> = {
+			sonnet: 'default',
+			haiku: 'haiku',
+			opus: 'opus',
+			default: 'default',
+		};
+		return tierMap[tier];
+	}
+
+	/**
+	 * Build SDK configuration for Anthropic
+	 *
+	 * Anthropic uses default SDK behavior - no special config needed.
+	 * Returns empty env vars (SDK handles auth from environment).
+	 */
+	buildSdkConfig(): ProviderSdkConfig {
+		return {
+			envVars: {},
+			isAnthropicCompatible: true,
+			apiVersion: 'v1',
+		};
+	}
+
+	/**
+	 * Set model cache
+	 * Useful for pre-warming the cache from external model loading
+	 */
+	setModelCache(models: ModelInfo[]): void {
+		this.modelCache = models;
+	}
+
+	/**
+	 * Clear model cache
+	 */
+	clearModelCache(): void {
+		this.modelCache = null;
+	}
+}
+
+/**
+ * Helper function to get models from an existing query
+ * This is useful for getting models from an active session's query
+ */
+export async function getAnthropicModelsFromQuery(queryObject: Query | null): Promise<ModelInfo[]> {
+	if (!queryObject || typeof queryObject.supportedModels !== 'function') {
+		return [];
+	}
+
+	const provider = new AnthropicProvider();
+	try {
+		const sdkModels = await queryObject.supportedModels();
+		return provider.convertSdkModels(sdkModels);
+	} catch (error) {
+		console.warn('[AnthropicProvider] Failed to load models from query:', error);
+		return [];
+	}
+}

@@ -10,8 +10,9 @@
  * Model family type
  * - opus, sonnet, haiku: Anthropic Claude models
  * - glm: GLM (智谱AI) models
+ * - Additional families can be added for new providers
  */
-export type ModelFamily = 'opus' | 'sonnet' | 'haiku' | 'glm';
+export type ModelFamily = 'opus' | 'sonnet' | 'haiku' | 'glm' | string;
 
 export interface ModelInfo {
 	/** Full model identifier */
@@ -22,6 +23,8 @@ export interface ModelInfo {
 	alias: string;
 	/** Model family */
 	family: ModelFamily;
+	/** Provider that owns this model (e.g., 'anthropic', 'glm', 'deepseek') */
+	provider: string;
 	/** Context window size in tokens */
 	contextWindow: number;
 	/** Brief description of the model */

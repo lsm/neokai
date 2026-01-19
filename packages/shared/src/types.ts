@@ -32,6 +32,16 @@ export type {
 	ValidationResult,
 } from './types/sdk-config.ts';
 
+// Re-export new provider types (note: Provider and ProviderInfo excluded to avoid conflicts with legacy types)
+export type {
+	ProviderCapabilities,
+	ProviderContext,
+	ProviderId,
+	ProviderSdkConfig,
+	ProviderSessionConfig,
+	ModelTier,
+} from './provider/types';
+
 // Core session types
 export interface SessionInfo {
 	id: string;
@@ -95,6 +105,8 @@ export interface ProviderConfig {
 	apiKey?: string;
 	/** Custom base URL override (optional, uses provider default if not set) */
 	baseUrl?: string;
+	/** Additional provider-specific options */
+	[key: string]: unknown;
 }
 
 /**

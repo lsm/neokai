@@ -23,6 +23,7 @@ const GLM_MODELS: ModelInfo[] = [
 		name: 'GLM-4.7',
 		alias: 'glm',
 		family: 'glm',
+		provider: 'glm',
 		contextWindow: 128000,
 		description: 'GLM-4.7 · Best for coding and software development',
 		releaseDate: '',
@@ -33,6 +34,7 @@ const GLM_MODELS: ModelInfo[] = [
 		name: 'GLM-4.5-Air',
 		alias: 'glm-air',
 		family: 'glm',
+		provider: 'glm',
 		contextWindow: 128000,
 		description: 'GLM-4.5-Air · Fast and efficient model',
 		releaseDate: '',
@@ -173,6 +175,7 @@ function convertSDKModelToModelInfo(sdkModel: SDKModelInfo): ModelInfo {
 		name: displayName,
 		alias, // Use short alias (e.g., 'haiku', 'opus', 'default')
 		family,
+		provider: 'anthropic',
 		contextWindow: 200000, // Default context window
 		description: sdkModel.description || '',
 		releaseDate: '', // SDK doesn't provide this
