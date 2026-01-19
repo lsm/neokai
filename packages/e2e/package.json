@@ -1,21 +1,21 @@
 {
-  "name": "@liuboer/e2e",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "test": "playwright test",
-    "test:ui": "playwright test --ui",
-    "test:headed": "playwright test --headed",
-    "test:debug": "playwright test --debug",
-    "test:coverage": "COVERAGE=true playwright test",
-    "test:coverage:headed": "COVERAGE=true playwright test --headed",
-    "report": "playwright show-report",
-    "report:coverage": "open coverage/html/index.html"
-  },
-  "devDependencies": {
-    "@playwright/test": "1.57.0",
-    "@types/node": "^24.10.1",
-    "monocart-reporter": "^2.9.23"
-  }
+	"name": "@liuboer/e2e",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"test": "playwright test",
+		"test:ui": "playwright test --ui",
+		"test:headed": "playwright test --headed",
+		"test:debug": "playwright test --debug",
+		"test:coverage": "COVERAGE=true playwright test",
+		"test:coverage:headed": "COVERAGE=true playwright test --headed",
+		"report": "playwright show-report",
+		"report:coverage": "open coverage/html/index.html"
+	},
+	"devDependencies": {
+		"@playwright/test": "1.57.0",
+		"@types/node": "^24.10.1",
+		"monocart-reporter": "^2.9.23"
+	}
 }

@@ -11,12 +11,12 @@
  */
 
 import {
-  Logger as SharedLogger,
-  createLogger,
-  LogLevel,
-  configureLogger,
-  getLoggerConfig,
-} from "@liuboer/shared";
+	Logger as SharedLogger,
+	createLogger,
+	LogLevel,
+	configureLogger,
+	getLoggerConfig,
+} from '@liuboer/shared';
 
 /**
  * Logger class - wraps the shared logger for daemon compatibility
@@ -26,36 +26,36 @@ import {
  *   logger.info('Session created');
  */
 export class Logger {
-  private sharedLogger: SharedLogger;
+	private sharedLogger: SharedLogger;
 
-  constructor(prefix: string) {
-    // Create a shared logger with the daemon namespace prefix
-    this.sharedLogger = createLogger(`liuboer:daemon:${prefix.toLowerCase()}`);
-  }
+	constructor(prefix: string) {
+		// Create a shared logger with the daemon namespace prefix
+		this.sharedLogger = createLogger(`liuboer:daemon:${prefix.toLowerCase()}`);
+	}
 
-  log(...args: unknown[]): void {
-    this.sharedLogger.info(...args);
-  }
+	log(...args: unknown[]): void {
+		this.sharedLogger.info(...args);
+	}
 
-  error(...args: unknown[]): void {
-    this.sharedLogger.error(...args);
-  }
+	error(...args: unknown[]): void {
+		this.sharedLogger.error(...args);
+	}
 
-  warn(...args: unknown[]): void {
-    this.sharedLogger.warn(...args);
-  }
+	warn(...args: unknown[]): void {
+		this.sharedLogger.warn(...args);
+	}
 
-  info(...args: unknown[]): void {
-    this.sharedLogger.info(...args);
-  }
+	info(...args: unknown[]): void {
+		this.sharedLogger.info(...args);
+	}
 
-  debug(...args: unknown[]): void {
-    this.sharedLogger.debug(...args);
-  }
+	debug(...args: unknown[]): void {
+		this.sharedLogger.debug(...args);
+	}
 
-  trace(...args: unknown[]): void {
-    this.sharedLogger.trace(...args);
-  }
+	trace(...args: unknown[]): void {
+		this.sharedLogger.trace(...args);
+	}
 }
 
 // Re-export shared logger utilities for direct usage

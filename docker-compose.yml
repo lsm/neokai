@@ -9,7 +9,7 @@ services:
       target: production
     container_name: liuboer-self
     ports:
-      - "9983:9983"
+      - '9983:9983'
     environment:
       - NODE_ENV=production
       - PORT=9983
@@ -41,7 +41,7 @@ services:
       - liuboer_web_dist:/app/packages/web/dist
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9983/"]
+      test: ['CMD', 'curl', '-f', 'http://localhost:9983/']
       interval: 30s
       timeout: 10s
       retries: 3

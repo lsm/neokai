@@ -9,148 +9,132 @@
  * - Get/set global tools configuration
  */
 
-import type {
-  MessageHub,
-  ToolsConfig,
-  GlobalToolsConfig,
-} from "@liuboer/shared";
-import type { SessionManager } from "../session-manager";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import type { MessageHub, ToolsConfig, GlobalToolsConfig } from '@liuboer/shared';
+import type { SessionManager } from '../session-manager';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
-export function registerMcpHandlers(
-  messageHub: MessageHub,
-  sessionManager: SessionManager,
-): void {
-  /**
-   * Save tools configuration for a session
-   *
-   * This is a blocking operation that:
-   * 1. Updates session config in memory and DB
-   * 2. Restarts the SDK query to apply changes
-   * 3. Returns success/failure status
-   *
-   * Timeout: 30 seconds
-   */
-  messageHub.handle(
-    "tools.save",
-    async (data: { sessionId: string; tools: ToolsConfig }) => {
-      const { sessionId, tools } = data;
+export function registerMcpHandlers(messageHub: MessageHub, sessionManager: SessionManager): void {
+	/**
+	 * Save tools configuration for a session
+	 *
+	 * This is a blocking operation that:
+	 * 1. Updates session config in memory and DB
+	 * 2. Restarts the SDK query to apply changes
+	 * 3. Returns success/failure status
+	 *
+	 * Timeout: 30 seconds
+	 */
+	messageHub.handle('tools.save', async (data: { sessionId: string; tools: ToolsConfig }) => {
+		const { sessionId, tools } = data;
 
-      const agentSession = sessionManager.getSession(sessionId);
-      if (!agentSession) {
-        throw new Error(`Session not found: ${sessionId}`);
-      }
+		const agentSession = sessionManager.getSession(sessionId);
+		if (!agentSession) {
+			throw new Error(`Session not found: ${sessionId}`);
+		}
 
-      // Call the agent session's updateToolsConfig method
-      // This handles stopping the query, updating config, and restarting
-      const result = await agentSession.updateToolsConfig(tools);
+		// Call the agent session's updateToolsConfig method
+		// This handles stopping the query, updating config, and restarting
+		const result = await agentSession.updateToolsConfig(tools);
 
-      return result;
-    },
-  );
+		return result;
+	});
 
-  /**
-   * Update disabled MCP servers for a session (new approach)
-   * Uses disabledMcpServers which is written to settings.local.json
-   */
-  messageHub.handle(
-    "mcp.updateDisabledServers",
-    async (data: { sessionId: string; disabledServers: string[] }) => {
-      const { sessionId, disabledServers } = data;
+	/**
+	 * Update disabled MCP servers for a session (new approach)
+	 * Uses disabledMcpServers which is written to settings.local.json
+	 */
+	messageHub.handle(
+		'mcp.updateDisabledServers',
+		async (data: { sessionId: string; disabledServers: string[] }) => {
+			const { sessionId, disabledServers } = data;
 
-      const agentSession = sessionManager.getSession(sessionId);
-      if (!agentSession) {
-        throw new Error(`Session not found: ${sessionId}`);
-      }
+			const agentSession = sessionManager.getSession(sessionId);
+			if (!agentSession) {
+				throw new Error(`Session not found: ${sessionId}`);
+			}
 
-      const session = agentSession.getSessionData();
+			const session = agentSession.getSessionData();
 
-      // Update session with new disabledMcpServers list
-      const currentTools = session.config.tools ?? {};
-      const newTools: ToolsConfig = {
-        ...currentTools,
-        disabledMcpServers: disabledServers,
-      };
+			// Update session with new disabledMcpServers list
+			const currentTools = session.config.tools ?? {};
+			const newTools: ToolsConfig = {
+				...currentTools,
+				disabledMcpServers: disabledServers,
+			};
 
-      // Use updateToolsConfig to properly restart query with new settings
-      await agentSession.updateToolsConfig(newTools);
+			// Use updateToolsConfig to properly restart query with new settings
+			await agentSession.updateToolsConfig(newTools);
 
-      return { success: true };
-    },
-  );
+			return { success: true };
+		}
+	);
 
-  /**
-   * Get disabled MCP servers for a session
-   */
-  messageHub.handle(
-    "mcp.getDisabledServers",
-    async (data: { sessionId: string }) => {
-      const { sessionId } = data;
+	/**
+	 * Get disabled MCP servers for a session
+	 */
+	messageHub.handle('mcp.getDisabledServers', async (data: { sessionId: string }) => {
+		const { sessionId } = data;
 
-      const agentSession = sessionManager.getSession(sessionId);
-      if (!agentSession) {
-        throw new Error(`Session not found: ${sessionId}`);
-      }
+		const agentSession = sessionManager.getSession(sessionId);
+		if (!agentSession) {
+			throw new Error(`Session not found: ${sessionId}`);
+		}
 
-      const session = agentSession.getSessionData();
+		const session = agentSession.getSessionData();
 
-      return {
-        disabledServers: session.config.tools?.disabledMcpServers || [],
-      };
-    },
-  );
+		return {
+			disabledServers: session.config.tools?.disabledMcpServers || [],
+		};
+	});
 
-  /**
-   * List available MCP servers from .mcp.json
-   */
-  messageHub.handle("mcp.listServers", async (data: { sessionId: string }) => {
-    const { sessionId } = data;
+	/**
+	 * List available MCP servers from .mcp.json
+	 */
+	messageHub.handle('mcp.listServers', async (data: { sessionId: string }) => {
+		const { sessionId } = data;
 
-    const agentSession = sessionManager.getSession(sessionId);
-    if (!agentSession) {
-      throw new Error(`Session not found: ${sessionId}`);
-    }
+		const agentSession = sessionManager.getSession(sessionId);
+		if (!agentSession) {
+			throw new Error(`Session not found: ${sessionId}`);
+		}
 
-    const session = agentSession.getSessionData();
-    const mcpConfigPath = join(session.workspacePath, ".mcp.json");
+		const session = agentSession.getSessionData();
+		const mcpConfigPath = join(session.workspacePath, '.mcp.json');
 
-    try {
-      const content = await readFile(mcpConfigPath, "utf-8");
-      const config = JSON.parse(content) as {
-        mcpServers: Record<string, unknown>;
-      };
-      return {
-        servers: config.mcpServers || {},
-      };
-    } catch {
-      // .mcp.json doesn't exist or is invalid
-      return {
-        servers: {},
-      };
-    }
-  });
+		try {
+			const content = await readFile(mcpConfigPath, 'utf-8');
+			const config = JSON.parse(content) as {
+				mcpServers: Record<string, unknown>;
+			};
+			return {
+				servers: config.mcpServers || {},
+			};
+		} catch {
+			// .mcp.json doesn't exist or is invalid
+			return {
+				servers: {},
+			};
+		}
+	});
 
-  // ============================================================================
-  // Global Tools Configuration
-  // ============================================================================
+	// ============================================================================
+	// Global Tools Configuration
+	// ============================================================================
 
-  /**
-   * Get the global tools configuration
-   */
-  messageHub.handle("globalTools.getConfig", async () => {
-    const config = sessionManager.getGlobalToolsConfig();
-    return { config };
-  });
+	/**
+	 * Get the global tools configuration
+	 */
+	messageHub.handle('globalTools.getConfig', async () => {
+		const config = sessionManager.getGlobalToolsConfig();
+		return { config };
+	});
 
-  /**
-   * Save the global tools configuration
-   */
-  messageHub.handle(
-    "globalTools.saveConfig",
-    async (data: { config: GlobalToolsConfig }) => {
-      sessionManager.saveGlobalToolsConfig(data.config);
-      return { success: true };
-    },
-  );
+	/**
+	 * Save the global tools configuration
+	 */
+	messageHub.handle('globalTools.saveConfig', async (data: { config: GlobalToolsConfig }) => {
+		sessionManager.saveGlobalToolsConfig(data.config);
+		return { success: true };
+	});
 }

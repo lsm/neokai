@@ -62,7 +62,6 @@ jobs:
 
   # Standalone job for SDK streaming tests with different permission modes
   # Includes diagnostic test for bypassPermissions (expected to fail gracefully on CI as root)
-  # Uses CLAUDE_CODE_OAUTH_TOKEN for more reliable connection
   test-daemon-sdk-streaming-failures:
     name: Daemon Online (SDK streaming tests)
     runs-on: arc-runner-set
@@ -83,9 +82,7 @@ jobs:
         working-directory: packages/daemon
         run: bun test tests/online/session/sdk-streaming-failures.test.ts
         env:
-          # Use CLAUDE_CODE_OAUTH_TOKEN for more reliable connection
-          # GLM_API_KEY can cause hangs during model loading
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           # Enable verbose logging for debugging
           NODE_ENV: test
-          DEBUG: "*"
+          DEBUG: '*'

@@ -6,358 +6,344 @@
  * and excluded refs functionality.
  */
 
-import { renderHook } from "@testing-library/preact";
-import type { RefObject } from "preact";
-import { useClickOutside } from "../useClickOutside.ts";
+import { renderHook } from '@testing-library/preact';
+import type { RefObject } from 'preact';
+import { useClickOutside } from '../useClickOutside.ts';
 
 // Helper to create mock refs
-function createMockRef(
-  element: Partial<HTMLElement> | null = {},
-): RefObject<HTMLElement> {
-  if (element === null) {
-    return { current: null };
-  }
+function createMockRef(element: Partial<HTMLElement> | null = {}): RefObject<HTMLElement> {
+	if (element === null) {
+		return { current: null };
+	}
 
-  const mockElement = {
-    contains: vi.fn((_node: Node) => false),
-    ...element,
-  } as unknown as HTMLElement;
+	const mockElement = {
+		contains: vi.fn((_node: Node) => false),
+		...element,
+	} as unknown as HTMLElement;
 
-  return { current: mockElement };
+	return { current: mockElement };
 }
 
 // Helper to simulate click events
 function simulateClick(target: Node) {
-  const event = new MouseEvent("click", {
-    bubbles: true,
-    cancelable: true,
-  });
-  Object.defineProperty(event, "target", { value: target });
-  document.dispatchEvent(event);
+	const event = new MouseEvent('click', {
+		bubbles: true,
+		cancelable: true,
+	});
+	Object.defineProperty(event, 'target', { value: target });
+	document.dispatchEvent(event);
 }
 
 // Helper to simulate keydown events
 function simulateKeydown(key: string) {
-  const event = new KeyboardEvent("keydown", {
-    key,
-    bubbles: true,
-    cancelable: true,
-  });
-  document.dispatchEvent(event);
+	const event = new KeyboardEvent('keydown', {
+		key,
+		bubbles: true,
+		cancelable: true,
+	});
+	document.dispatchEvent(event);
 }
 
-describe("useClickOutside", () => {
-  let originalSetTimeout: typeof setTimeout;
-  let timeoutCallbacks: Array<() => void>;
+describe('useClickOutside', () => {
+	let originalSetTimeout: typeof setTimeout;
+	let timeoutCallbacks: Array<() => void>;
 
-  beforeEach(() => {
-    timeoutCallbacks = [];
-    // Mock setTimeout to execute immediately for testing
-    originalSetTimeout = globalThis.setTimeout;
-    globalThis.setTimeout = ((callback: () => void, _delay?: number) => {
-      timeoutCallbacks.push(callback);
-      return timeoutCallbacks.length as unknown as ReturnType<
-        typeof setTimeout
-      >;
-    }) as typeof setTimeout;
-  });
+	beforeEach(() => {
+		timeoutCallbacks = [];
+		// Mock setTimeout to execute immediately for testing
+		originalSetTimeout = globalThis.setTimeout;
+		globalThis.setTimeout = ((callback: () => void, _delay?: number) => {
+			timeoutCallbacks.push(callback);
+			return timeoutCallbacks.length as unknown as ReturnType<typeof setTimeout>;
+		}) as typeof setTimeout;
+	});
 
-  afterEach(() => {
-    globalThis.setTimeout = originalSetTimeout;
-  });
+	afterEach(() => {
+		globalThis.setTimeout = originalSetTimeout;
+	});
 
-  // Helper to flush pending timeouts
-  function flushTimeouts() {
-    timeoutCallbacks.forEach((cb) => cb());
-    timeoutCallbacks = [];
-  }
-
-  describe("click outside detection", () => {
-    it("should call handler when clicking outside the element", () => {
-      const handler = vi.fn(() => {});
-      const ref = createMockRef({
-        contains: vi.fn(() => false),
-      });
+	// Helper to flush pending timeouts
+	function flushTimeouts() {
+		timeoutCallbacks.forEach((cb) => cb());
+		timeoutCallbacks = [];
+	}
 
-      renderHook(() => useClickOutside(ref, handler, true));
+	describe('click outside detection', () => {
+		it('should call handler when clicking outside the element', () => {
+			const handler = vi.fn(() => {});
+			const ref = createMockRef({
+				contains: vi.fn(() => false),
+			});
 
-      // Flush the setTimeout delay
-      flushTimeouts();
+			renderHook(() => useClickOutside(ref, handler, true));
 
-      // Simulate click outside
-      const outsideElement = document.createElement("div");
-      simulateClick(outsideElement);
+			// Flush the setTimeout delay
+			flushTimeouts();
 
-      expect(handler).toHaveBeenCalled();
-    });
+			// Simulate click outside
+			const outsideElement = document.createElement('div');
+			simulateClick(outsideElement);
 
-    it("should not call handler when clicking inside the element", () => {
-      const handler = vi.fn(() => {});
-      const insideElement = document.createElement("div");
+			expect(handler).toHaveBeenCalled();
+		});
 
-      const ref = createMockRef({
-        contains: vi.fn((node) => node === insideElement),
-      });
+		it('should not call handler when clicking inside the element', () => {
+			const handler = vi.fn(() => {});
+			const insideElement = document.createElement('div');
 
-      renderHook(() => useClickOutside(ref, handler, true));
+			const ref = createMockRef({
+				contains: vi.fn((node) => node === insideElement),
+			});
 
-      // Flush the setTimeout delay
-      flushTimeouts();
+			renderHook(() => useClickOutside(ref, handler, true));
 
-      // Simulate click inside
-      simulateClick(insideElement);
+			// Flush the setTimeout delay
+			flushTimeouts();
 
-      expect(handler).not.toHaveBeenCalled();
-    });
+			// Simulate click inside
+			simulateClick(insideElement);
 
-    it("should not call handler when disabled", () => {
-      const handler = vi.fn(() => {});
-      const ref = createMockRef({
-        contains: vi.fn(() => false),
-      });
+			expect(handler).not.toHaveBeenCalled();
+		});
 
-      renderHook(() => useClickOutside(ref, handler, false));
+		it('should not call handler when disabled', () => {
+			const handler = vi.fn(() => {});
+			const ref = createMockRef({
+				contains: vi.fn(() => false),
+			});
 
-      // Even if we flush timeouts, listener shouldn't be added when disabled
-      flushTimeouts();
+			renderHook(() => useClickOutside(ref, handler, false));
 
-      // Simulate click outside
-      const outsideElement = document.createElement("div");
-      simulateClick(outsideElement);
+			// Even if we flush timeouts, listener shouldn't be added when disabled
+			flushTimeouts();
 
-      expect(handler).not.toHaveBeenCalled();
-    });
-  });
+			// Simulate click outside
+			const outsideElement = document.createElement('div');
+			simulateClick(outsideElement);
 
-  describe("escape key handling", () => {
-    it("should call handler when pressing Escape", () => {
-      const handler = vi.fn(() => {});
-      const ref = createMockRef();
+			expect(handler).not.toHaveBeenCalled();
+		});
+	});
 
-      renderHook(() => useClickOutside(ref, handler, true));
+	describe('escape key handling', () => {
+		it('should call handler when pressing Escape', () => {
+			const handler = vi.fn(() => {});
+			const ref = createMockRef();
 
-      // Flush the setTimeout delay
-      flushTimeouts();
+			renderHook(() => useClickOutside(ref, handler, true));
 
-      // Simulate Escape key
-      simulateKeydown("Escape");
+			// Flush the setTimeout delay
+			flushTimeouts();
 
-      expect(handler).toHaveBeenCalled();
-    });
+			// Simulate Escape key
+			simulateKeydown('Escape');
 
-    it("should not call handler for other keys", () => {
-      const handler = vi.fn(() => {});
-      const ref = createMockRef();
+			expect(handler).toHaveBeenCalled();
+		});
 
-      renderHook(() => useClickOutside(ref, handler, true));
+		it('should not call handler for other keys', () => {
+			const handler = vi.fn(() => {});
+			const ref = createMockRef();
 
-      // Flush the setTimeout delay
-      flushTimeouts();
+			renderHook(() => useClickOutside(ref, handler, true));
 
-      // Simulate other keys
-      simulateKeydown("Enter");
-      simulateKeydown("Tab");
-      simulateKeydown("Space");
+			// Flush the setTimeout delay
+			flushTimeouts();
 
-      expect(handler).not.toHaveBeenCalled();
-    });
-  });
+			// Simulate other keys
+			simulateKeydown('Enter');
+			simulateKeydown('Tab');
+			simulateKeydown('Space');
 
-  describe("excluded refs", () => {
-    it("should not call handler when clicking inside excluded ref", () => {
-      const handler = vi.fn(() => {});
-      const excludedElement = document.createElement("div");
+			expect(handler).not.toHaveBeenCalled();
+		});
+	});
 
-      const mainRef = createMockRef({
-        contains: vi.fn(() => false),
-      });
+	describe('excluded refs', () => {
+		it('should not call handler when clicking inside excluded ref', () => {
+			const handler = vi.fn(() => {});
+			const excludedElement = document.createElement('div');
 
-      const excludedRef = createMockRef({
-        contains: vi.fn((node) => node === excludedElement),
-      });
+			const mainRef = createMockRef({
+				contains: vi.fn(() => false),
+			});
 
-      renderHook(() => useClickOutside(mainRef, handler, true, [excludedRef]));
+			const excludedRef = createMockRef({
+				contains: vi.fn((node) => node === excludedElement),
+			});
 
-      // Flush the setTimeout delay
-      flushTimeouts();
+			renderHook(() => useClickOutside(mainRef, handler, true, [excludedRef]));
 
-      // Simulate click inside excluded element
-      simulateClick(excludedElement);
+			// Flush the setTimeout delay
+			flushTimeouts();
 
-      expect(handler).not.toHaveBeenCalled();
-    });
+			// Simulate click inside excluded element
+			simulateClick(excludedElement);
 
-    it("should handle multiple excluded refs", () => {
-      const handler = vi.fn(() => {});
-      const excluded1 = document.createElement("div");
-      const excluded2 = document.createElement("div");
+			expect(handler).not.toHaveBeenCalled();
+		});
 
-      const mainRef = createMockRef({
-        contains: vi.fn(() => false),
-      });
+		it('should handle multiple excluded refs', () => {
+			const handler = vi.fn(() => {});
+			const excluded1 = document.createElement('div');
+			const excluded2 = document.createElement('div');
 
-      const excludedRef1 = createMockRef({
-        contains: vi.fn((node) => node === excluded1),
-      });
+			const mainRef = createMockRef({
+				contains: vi.fn(() => false),
+			});
 
-      const excludedRef2 = createMockRef({
-        contains: vi.fn((node) => node === excluded2),
-      });
+			const excludedRef1 = createMockRef({
+				contains: vi.fn((node) => node === excluded1),
+			});
 
-      renderHook(() =>
-        useClickOutside(mainRef, handler, true, [excludedRef1, excludedRef2]),
-      );
+			const excludedRef2 = createMockRef({
+				contains: vi.fn((node) => node === excluded2),
+			});
 
-      // Flush the setTimeout delay
-      flushTimeouts();
+			renderHook(() => useClickOutside(mainRef, handler, true, [excludedRef1, excludedRef2]));
 
-      // Click on first excluded element
-      simulateClick(excluded1);
-      expect(handler).not.toHaveBeenCalled();
+			// Flush the setTimeout delay
+			flushTimeouts();
 
-      // Click on second excluded element
-      simulateClick(excluded2);
-      expect(handler).not.toHaveBeenCalled();
+			// Click on first excluded element
+			simulateClick(excluded1);
+			expect(handler).not.toHaveBeenCalled();
 
-      // Click outside all
-      const outsideElement = document.createElement("div");
-      simulateClick(outsideElement);
-      expect(handler).toHaveBeenCalled();
-    });
+			// Click on second excluded element
+			simulateClick(excluded2);
+			expect(handler).not.toHaveBeenCalled();
 
-    it("should handle null excluded refs", () => {
-      const handler = vi.fn(() => {});
+			// Click outside all
+			const outsideElement = document.createElement('div');
+			simulateClick(outsideElement);
+			expect(handler).toHaveBeenCalled();
+		});
 
-      const mainRef = createMockRef({
-        contains: vi.fn(() => false),
-      });
+		it('should handle null excluded refs', () => {
+			const handler = vi.fn(() => {});
 
-      const nullExcludedRef = { current: null } as RefObject<HTMLElement>;
+			const mainRef = createMockRef({
+				contains: vi.fn(() => false),
+			});
 
-      // Should not throw
-      renderHook(() =>
-        useClickOutside(mainRef, handler, true, [nullExcludedRef]),
-      );
+			const nullExcludedRef = { current: null } as RefObject<HTMLElement>;
 
-      flushTimeouts();
+			// Should not throw
+			renderHook(() => useClickOutside(mainRef, handler, true, [nullExcludedRef]));
 
-      const outsideElement = document.createElement("div");
-      simulateClick(outsideElement);
+			flushTimeouts();
 
-      expect(handler).toHaveBeenCalled();
-    });
-  });
+			const outsideElement = document.createElement('div');
+			simulateClick(outsideElement);
 
-  describe("null ref handling", () => {
-    it("should handle null main ref gracefully", () => {
-      const handler = vi.fn(() => {});
-      const nullRef = { current: null } as RefObject<HTMLElement>;
+			expect(handler).toHaveBeenCalled();
+		});
+	});
 
-      // Should not throw
-      renderHook(() => useClickOutside(nullRef, handler, true));
+	describe('null ref handling', () => {
+		it('should handle null main ref gracefully', () => {
+			const handler = vi.fn(() => {});
+			const nullRef = { current: null } as RefObject<HTMLElement>;
 
-      flushTimeouts();
+			// Should not throw
+			renderHook(() => useClickOutside(nullRef, handler, true));
 
-      const outsideElement = document.createElement("div");
-      simulateClick(outsideElement);
+			flushTimeouts();
 
-      // Should still call handler since ref is null (nothing to be "inside" of)
-      expect(handler).toHaveBeenCalled();
-    });
-  });
+			const outsideElement = document.createElement('div');
+			simulateClick(outsideElement);
 
-  describe("cleanup", () => {
-    it("should remove event listeners on unmount", () => {
-      const handler = vi.fn(() => {});
-      const ref = createMockRef();
+			// Should still call handler since ref is null (nothing to be "inside" of)
+			expect(handler).toHaveBeenCalled();
+		});
+	});
 
-      const removeEventListenerSpy = vi.fn(() => {});
-      const originalRemoveEventListener = document.removeEventListener;
-      document.removeEventListener = removeEventListenerSpy;
+	describe('cleanup', () => {
+		it('should remove event listeners on unmount', () => {
+			const handler = vi.fn(() => {});
+			const ref = createMockRef();
 
-      const { unmount } = renderHook(() => useClickOutside(ref, handler, true));
+			const removeEventListenerSpy = vi.fn(() => {});
+			const originalRemoveEventListener = document.removeEventListener;
+			document.removeEventListener = removeEventListenerSpy;
 
-      unmount();
+			const { unmount } = renderHook(() => useClickOutside(ref, handler, true));
 
-      expect(removeEventListenerSpy).toHaveBeenCalled();
+			unmount();
 
-      document.removeEventListener = originalRemoveEventListener;
-    });
+			expect(removeEventListenerSpy).toHaveBeenCalled();
 
-    it("should remove event listeners when disabled changes", () => {
-      const handler = vi.fn(() => {});
-      const ref = createMockRef();
+			document.removeEventListener = originalRemoveEventListener;
+		});
 
-      const removeEventListenerSpy = vi.fn(() => {});
-      const originalRemoveEventListener = document.removeEventListener;
-      document.removeEventListener = removeEventListenerSpy;
+		it('should remove event listeners when disabled changes', () => {
+			const handler = vi.fn(() => {});
+			const ref = createMockRef();
 
-      const { rerender } = renderHook(
-        ({ enabled }) => useClickOutside(ref, handler, enabled),
-        {
-          initialProps: { enabled: true },
-        },
-      );
+			const removeEventListenerSpy = vi.fn(() => {});
+			const originalRemoveEventListener = document.removeEventListener;
+			document.removeEventListener = removeEventListenerSpy;
 
-      flushTimeouts();
+			const { rerender } = renderHook(({ enabled }) => useClickOutside(ref, handler, enabled), {
+				initialProps: { enabled: true },
+			});
 
-      // Disable the hook
-      rerender({ enabled: false });
+			flushTimeouts();
 
-      expect(removeEventListenerSpy).toHaveBeenCalled();
+			// Disable the hook
+			rerender({ enabled: false });
 
-      document.removeEventListener = originalRemoveEventListener;
-    });
-  });
+			expect(removeEventListenerSpy).toHaveBeenCalled();
 
-  describe("delayed activation", () => {
-    it("should delay adding listeners to avoid triggering from opening click", () => {
-      const handler = vi.fn(() => {});
-      const ref = createMockRef({
-        contains: vi.fn(() => false),
-      });
+			document.removeEventListener = originalRemoveEventListener;
+		});
+	});
 
-      renderHook(() => useClickOutside(ref, handler, true));
+	describe('delayed activation', () => {
+		it('should delay adding listeners to avoid triggering from opening click', () => {
+			const handler = vi.fn(() => {});
+			const ref = createMockRef({
+				contains: vi.fn(() => false),
+			});
 
-      // Before timeout, click should not trigger handler
-      const outsideElement = document.createElement("div");
-      simulateClick(outsideElement);
-      expect(handler).not.toHaveBeenCalled();
+			renderHook(() => useClickOutside(ref, handler, true));
 
-      // After timeout, click should trigger
-      flushTimeouts();
-      simulateClick(outsideElement);
-      expect(handler).toHaveBeenCalled();
-    });
-  });
+			// Before timeout, click should not trigger handler
+			const outsideElement = document.createElement('div');
+			simulateClick(outsideElement);
+			expect(handler).not.toHaveBeenCalled();
 
-  describe("enabled toggle", () => {
-    it("should start listening when enabled changes from false to true", () => {
-      const handler = vi.fn(() => {});
-      const ref = createMockRef({
-        contains: vi.fn(() => false),
-      });
+			// After timeout, click should trigger
+			flushTimeouts();
+			simulateClick(outsideElement);
+			expect(handler).toHaveBeenCalled();
+		});
+	});
 
-      const { rerender } = renderHook(
-        ({ enabled }) => useClickOutside(ref, handler, enabled),
-        {
-          initialProps: { enabled: false },
-        },
-      );
+	describe('enabled toggle', () => {
+		it('should start listening when enabled changes from false to true', () => {
+			const handler = vi.fn(() => {});
+			const ref = createMockRef({
+				contains: vi.fn(() => false),
+			});
 
-      // Click while disabled
-      flushTimeouts();
-      const outsideElement = document.createElement("div");
-      simulateClick(outsideElement);
-      expect(handler).not.toHaveBeenCalled();
+			const { rerender } = renderHook(({ enabled }) => useClickOutside(ref, handler, enabled), {
+				initialProps: { enabled: false },
+			});
 
-      // Enable
-      rerender({ enabled: true });
-      flushTimeouts();
+			// Click while disabled
+			flushTimeouts();
+			const outsideElement = document.createElement('div');
+			simulateClick(outsideElement);
+			expect(handler).not.toHaveBeenCalled();
 
-      // Now click should work
-      simulateClick(outsideElement);
-      expect(handler).toHaveBeenCalled();
-    });
-  });
+			// Enable
+			rerender({ enabled: true });
+			flushTimeouts();
+
+			// Now click should work
+			simulateClick(outsideElement);
+			expect(handler).toHaveBeenCalled();
+		});
+	});
 });

@@ -17,7 +17,7 @@
  * ```
  */
 
-import type { AgentSession } from "../../src/lib/agent";
+import type { AgentSession } from '../../src/lib/agent';
 
 /**
  * Wait for agent session to reach idle state
@@ -30,20 +30,20 @@ import type { AgentSession } from "../../src/lib/agent";
  * @throws Error if timeout is reached before idle state
  */
 export async function waitForIdle(
-  agentSession: AgentSession,
-  timeoutMs = 15000, // 15s is sufficient for SDK init + API call
+	agentSession: AgentSession,
+	timeoutMs = 15000 // 15s is sufficient for SDK init + API call
 ): Promise<void> {
-  const startTime = Date.now();
-  while (Date.now() - startTime < timeoutMs) {
-    const state = agentSession.getProcessingState();
-    if (state.status === "idle") {
-      return;
-    }
-    await Bun.sleep(100); // Poll every 100ms
-  }
-  const finalState = agentSession.getProcessingState();
-  const phase = "phase" in finalState ? finalState.phase : "N/A";
-  throw new Error(
-    `Timeout waiting for idle state after ${timeoutMs}ms. Final state: ${finalState.status}, phase: ${phase}`,
-  );
+	const startTime = Date.now();
+	while (Date.now() - startTime < timeoutMs) {
+		const state = agentSession.getProcessingState();
+		if (state.status === 'idle') {
+			return;
+		}
+		await Bun.sleep(100); // Poll every 100ms
+	}
+	const finalState = agentSession.getProcessingState();
+	const phase = 'phase' in finalState ? finalState.phase : 'N/A';
+	throw new Error(
+		`Timeout waiting for idle state after ${timeoutMs}ms. Final state: ${finalState.status}, phase: ${phase}`
+	);
 }

@@ -51,13 +51,13 @@ For backward compatibility with existing sessions, the service maps legacy model
 
 ```typescript
 const LEGACY_MODEL_MAPPINGS = {
-  // Old alias
-  sonnet: "default",
-  // Full model IDs
-  "claude-sonnet-4-5-20250929": "default",
-  "claude-opus-4-5-20251101": "opus",
-  "claude-haiku-4-5-20251001": "haiku",
-  // ... more mappings
+	// Old alias
+	sonnet: 'default',
+	// Full model IDs
+	'claude-sonnet-4-5-20250929': 'default',
+	'claude-opus-4-5-20251101': 'opus',
+	'claude-haiku-4-5-20251001': 'haiku',
+	// ... more mappings
 };
 ```
 
@@ -79,12 +79,10 @@ const LEGACY_MODEL_MAPPINGS = {
 export async function initializeModels(): Promise<void>;
 
 // Get available models with lazy refresh
-export function getAvailableModels(cacheKey = "global"): ModelInfo[];
+export function getAvailableModels(cacheKey = 'global'): ModelInfo[];
 
 // Get model info by ID (supports legacy IDs via mapping)
-export async function getModelInfo(
-  idOrAlias: string,
-): Promise<ModelInfo | null>;
+export async function getModelInfo(idOrAlias: string): Promise<ModelInfo | null>;
 
 // Clear cache (for testing or manual refresh)
 export function clearModelsCache(cacheKey?: string): void;
@@ -96,10 +94,10 @@ Models are loaded during app initialization:
 
 ```typescript
 // Initialize dynamic models on app startup
-log("Loading dynamic models from Claude SDK...");
-const { initializeModels } = await import("./lib/model-service");
+log('Loading dynamic models from Claude SDK...');
+const { initializeModels } = await import('./lib/model-service');
 await initializeModels(); // Throws if SDK fails
-log("✅ Model service initialized");
+log('✅ Model service initialized');
 ```
 
 ### 5. Cache Refresh Flow

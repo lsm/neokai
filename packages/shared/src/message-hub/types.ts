@@ -4,7 +4,7 @@
  * Type definitions for MessageHub API
  */
 
-import type { HubMessage } from "./protocol.ts";
+import type { HubMessage } from './protocol.ts';
 
 // Re-export HubMessage for convenience
 export type { HubMessage };
@@ -31,8 +31,8 @@ export type UnsubscribeFn = () => void;
  * Handles incoming CALL messages and returns result
  */
 export type RPCHandler<TData = unknown, TResult = unknown> = (
-  data: TData,
-  context: CallContext,
+	data: TData,
+	context: CallContext
 ) => Promise<TResult> | TResult;
 
 /**
@@ -40,236 +40,230 @@ export type RPCHandler<TData = unknown, TResult = unknown> = (
  * Handles incoming EVENT messages
  */
 export type EventHandler<TData = unknown> = (
-  data: TData,
-  context: EventContext,
+	data: TData,
+	context: EventContext
 ) => void | Promise<void>;
 
 /**
  * Message handler for raw message inspection
  */
-export type MessageHandler = (
-  message: HubMessage,
-  direction: "in" | "out",
-) => void | Promise<void>;
+export type MessageHandler = (message: HubMessage, direction: 'in' | 'out') => void | Promise<void>;
 
 /**
  * Connection state change handler
  */
-export type ConnectionStateHandler = (
-  state: ConnectionState,
-  error?: Error,
-) => void;
+export type ConnectionStateHandler = (state: ConnectionState, error?: Error) => void;
 
 /**
  * Context provided to RPC handlers
  */
 export interface CallContext {
-  /**
-   * Message ID
-   */
-  messageId: string;
+	/**
+	 * Message ID
+	 */
+	messageId: string;
 
-  /**
-   * Session ID
-   */
-  sessionId: string;
+	/**
+	 * Session ID
+	 */
+	sessionId: string;
 
-  /**
-   * Method name
-   */
-  method: string;
+	/**
+	 * Method name
+	 */
+	method: string;
 
-  /**
-   * Timestamp
-   */
-  timestamp: string;
+	/**
+	 * Timestamp
+	 */
+	timestamp: string;
 }
 
 /**
  * Context provided to event handlers
  */
 export interface EventContext {
-  /**
-   * Message ID
-   */
-  messageId: string;
+	/**
+	 * Message ID
+	 */
+	messageId: string;
 
-  /**
-   * Session ID
-   */
-  sessionId: string;
+	/**
+	 * Session ID
+	 */
+	sessionId: string;
 
-  /**
-   * Method/Event name
-   */
-  method: string;
+	/**
+	 * Method/Event name
+	 */
+	method: string;
 
-  /**
-   * Timestamp
-   */
-  timestamp: string;
+	/**
+	 * Timestamp
+	 */
+	timestamp: string;
 }
 
 /**
  * Connection state
  */
 export type ConnectionState =
-  | "connecting"
-  | "connected"
-  | "disconnected"
-  | "error"
-  | "reconnecting"
-  | "failed";
+	| 'connecting'
+	| 'connected'
+	| 'disconnected'
+	| 'error'
+	| 'reconnecting'
+	| 'failed';
 
 /**
  * Options for call()
  */
 export interface CallOptions {
-  /**
-   * Override session ID
-   */
-  sessionId?: string;
+	/**
+	 * Override session ID
+	 */
+	sessionId?: string;
 
-  /**
-   * RPC timeout in milliseconds
-   * @default 10000
-   */
-  timeout?: number;
+	/**
+	 * RPC timeout in milliseconds
+	 * @default 10000
+	 */
+	timeout?: number;
 }
 
 /**
  * Options for publish()
  */
 export interface PublishOptions {
-  /**
-   * Target session ID
-   * If not specified, uses default session ID
-   */
-  sessionId?: string;
+	/**
+	 * Target session ID
+	 * If not specified, uses default session ID
+	 */
+	sessionId?: string;
 
-  /**
-   * Whether to broadcast to all connected clients
-   * @default true
-   */
-  broadcast?: boolean;
+	/**
+	 * Whether to broadcast to all connected clients
+	 * @default true
+	 */
+	broadcast?: boolean;
 }
 
 /**
  * Options for subscribe()
  */
 export interface SubscribeOptions {
-  /**
-   * Filter by session ID
-   * If not specified, subscribes to all sessions
-   */
-  sessionId?: string;
+	/**
+	 * Filter by session ID
+	 * If not specified, subscribes to all sessions
+	 */
+	sessionId?: string;
 
-  /**
-   * Subscription timeout in milliseconds (deprecated, not used)
-   * @deprecated This option is no longer used
-   */
-  timeout?: number;
+	/**
+	 * Subscription timeout in milliseconds (deprecated, not used)
+	 * @deprecated This option is no longer used
+	 */
+	timeout?: number;
 }
 
 /**
  * MessageHub configuration options
  */
 export interface MessageHubOptions {
-  /**
-   * Default session ID for operations
-   * @default "global"
-   */
-  defaultSessionId?: string;
+	/**
+	 * Default session ID for operations
+	 * @default "global"
+	 */
+	defaultSessionId?: string;
 
-  /**
-   * Enable debug logging
-   * @default false
-   */
-  debug?: boolean;
+	/**
+	 * Enable debug logging
+	 * @default false
+	 */
+	debug?: boolean;
 
-  /**
-   * Default RPC timeout in milliseconds
-   * @default 10000
-   */
-  timeout?: number;
+	/**
+	 * Default RPC timeout in milliseconds
+	 * @default 10000
+	 */
+	timeout?: number;
 
-  /**
-   * Auto-reconnect on disconnect
-   * @default true
-   */
-  autoReconnect?: boolean;
+	/**
+	 * Auto-reconnect on disconnect
+	 * @default true
+	 */
+	autoReconnect?: boolean;
 
-  /**
-   * Maximum reconnection attempts
-   * @default 5
-   */
-  maxReconnectAttempts?: number;
+	/**
+	 * Maximum reconnection attempts
+	 * @default 5
+	 */
+	maxReconnectAttempts?: number;
 
-  /**
-   * Reconnection delay in milliseconds
-   * @default 1000
-   */
-  reconnectDelay?: number;
+	/**
+	 * Reconnection delay in milliseconds
+	 * @default 1000
+	 */
+	reconnectDelay?: number;
 
-  /**
-   * Heartbeat/ping interval in milliseconds
-   * Set to 0 to disable
-   * @default 30000
-   */
-  pingInterval?: number;
+	/**
+	 * Heartbeat/ping interval in milliseconds
+	 * Set to 0 to disable
+	 * @default 30000
+	 */
+	pingInterval?: number;
 
-  /**
-   * Maximum number of pending RPC calls (backpressure)
-   * @default 1000
-   */
-  maxPendingCalls?: number;
+	/**
+	 * Maximum number of pending RPC calls (backpressure)
+	 * @default 1000
+	 */
+	maxPendingCalls?: number;
 
-  /**
-   * Maximum cache size for request deduplication
-   * @default 500
-   */
-  maxCacheSize?: number;
+	/**
+	 * Maximum cache size for request deduplication
+	 * @default 500
+	 */
+	maxCacheSize?: number;
 
-  /**
-   * Cache entry TTL in milliseconds
-   * @default 60000 (1 minute)
-   */
-  cacheTTL?: number;
+	/**
+	 * Cache entry TTL in milliseconds
+	 * @default 60000 (1 minute)
+	 */
+	cacheTTL?: number;
 
-  /**
-   * Maximum subscriptions per client (router-side)
-   * @default 1000
-   */
-  maxSubscriptionsPerClient?: number;
+	/**
+	 * Maximum subscriptions per client (router-side)
+	 * @default 1000
+	 */
+	maxSubscriptionsPerClient?: number;
 
-  /**
-   * Maximum event handler nesting depth (prevents infinite recursion)
-   * @default 10
-   */
-  maxEventDepth?: number;
+	/**
+	 * Maximum event handler nesting depth (prevents infinite recursion)
+	 * @default 10
+	 */
+	maxEventDepth?: number;
 
-  /**
-   * FIX P1.3: Warn on message sequence gaps (out-of-order or missing messages)
-   * @default true
-   */
-  warnOnSequenceGap?: boolean;
+	/**
+	 * FIX P1.3: Warn on message sequence gaps (out-of-order or missing messages)
+	 * @default true
+	 */
+	warnOnSequenceGap?: boolean;
 
-  /**
-   * FIX P1.4: Stop on first event handler error (strict mode)
-   * If false (default), all handlers execute and errors are collected
-   * If true, stops on first handler error
-   * @default false
-   */
-  stopOnEventHandlerError?: boolean;
+	/**
+	 * FIX P1.4: Stop on first event handler error (strict mode)
+	 * If false (default), all handlers execute and errors are collected
+	 * If true, stops on first handler error
+	 * @default false
+	 */
+	stopOnEventHandlerError?: boolean;
 }
 
 /**
  * Result of broadcast operation
  */
 export interface BroadcastResult {
-  sent: number;
-  failed: number;
-  totalTargets: number;
+	sent: number;
+	failed: number;
+	totalTargets: number;
 }
 
 /**
@@ -279,67 +273,64 @@ export interface BroadcastResult {
  * MessageHub is responsible for determining message recipients.
  */
 export interface IMessageTransport {
-  /**
-   * Transport name
-   */
-  readonly name: string;
+	/**
+	 * Transport name
+	 */
+	readonly name: string;
 
-  /**
-   * Initialize transport (connect)
-   */
-  initialize(): Promise<void>;
+	/**
+	 * Initialize transport (connect)
+	 */
+	initialize(): Promise<void>;
 
-  /**
-   * Send a message to a specific client (server-side transports only)
-   * @returns true if sent successfully, false otherwise
-   */
-  sendToClient?(clientId: string, message: HubMessage): Promise<boolean>;
+	/**
+	 * Send a message to a specific client (server-side transports only)
+	 * @returns true if sent successfully, false otherwise
+	 */
+	sendToClient?(clientId: string, message: HubMessage): Promise<boolean>;
 
-  /**
-   * Broadcast a message to multiple clients (server-side transports only)
-   * @returns statistics about delivery success/failure
-   */
-  broadcastToClients?(
-    clientIds: string[],
-    message: HubMessage,
-  ): Promise<BroadcastResult>;
+	/**
+	 * Broadcast a message to multiple clients (server-side transports only)
+	 * @returns statistics about delivery success/failure
+	 */
+	broadcastToClients?(clientIds: string[], message: HubMessage): Promise<BroadcastResult>;
 
-  /**
-   * Send a message (client-side: to server, server-side: broadcast to all)
-   * @deprecated Use sendToClient or broadcastToClients for server-side transports
-   */
-  send(message: HubMessage): Promise<void>;
+	/**
+	 * Send a message (client-side: to server, server-side: broadcast to all)
+	 * @deprecated Use sendToClient or broadcastToClients for server-side transports
+	 */
+	send(message: HubMessage): Promise<void>;
 
-  /**
-   * Close transport
-   */
-  close(): Promise<void>;
+	/**
+	 * Close transport
+	 */
+	close(): Promise<void>;
 
-  /**
-   * Check if transport is ready
-   */
-  isReady(): boolean;
+	/**
+	 * Check if transport is ready
+	 */
+	isReady(): boolean;
 
-  /**
-   * Get connection state
-   */
-  getState(): ConnectionState;
+	/**
+	 * Get connection state
+	 */
+	getState(): ConnectionState;
 
-  /**
-   * Register handler for incoming messages
-   */
-  onMessage(handler: (message: HubMessage) => void): UnsubscribeFn;
+	/**
+	 * Register handler for incoming messages
+	 */
+	onMessage(handler: (message: HubMessage) => void): UnsubscribeFn;
 
-  /**
-   * Register handler for connection state changes
-   */
-  onConnectionChange(handler: ConnectionStateHandler): UnsubscribeFn;
+	/**
+	 * Register handler for connection state changes
+	 */
+	onConnectionChange(handler: ConnectionStateHandler): UnsubscribeFn;
 
-  /**
-   * Register handler for client disconnect events (server-side only)
-   * Used for per-client cleanup like sequence tracking
-   */
-  onClientDisconnect?(handler: (clientId: string) => void): UnsubscribeFn;
+	/**
+	 * Register handler for client disconnect events (server-side only)
+	 * Used for per-client cleanup like sequence tracking
+	 */
+	onClientDisconnect?(handler: (clientId: string) => void): UnsubscribeFn;
 }
 
 /**
@@ -347,30 +338,30 @@ export interface IMessageTransport {
  * Generic type parameter TResult represents the expected return type of the RPC call
  */
 export interface PendingCall<TResult = unknown> {
-  /**
-   * Promise resolve function
-   */
-  resolve: (data: TResult) => void;
+	/**
+	 * Promise resolve function
+	 */
+	resolve: (data: TResult) => void;
 
-  /**
-   * Promise reject function
-   */
-  reject: (error: Error) => void;
+	/**
+	 * Promise reject function
+	 */
+	reject: (error: Error) => void;
 
-  /**
-   * Timeout timer
-   */
-  timer: TimeoutId;
+	/**
+	 * Timeout timer
+	 */
+	timer: TimeoutId;
 
-  /**
-   * Method name
-   */
-  method: string;
+	/**
+	 * Method name
+	 */
+	method: string;
 
-  /**
-   * Session ID
-   */
-  sessionId: string;
+	/**
+	 * Session ID
+	 */
+	sessionId: string;
 }
 
 /**
@@ -378,30 +369,30 @@ export interface PendingCall<TResult = unknown> {
  * Used for reliable subscribe/unsubscribe operations
  */
 export interface PendingSubscription {
-  /**
-   * Promise resolve function
-   */
-  resolve: (value: void) => void;
+	/**
+	 * Promise resolve function
+	 */
+	resolve: (value: void) => void;
 
-  /**
-   * Promise reject function
-   */
-  reject: (error: Error) => void;
+	/**
+	 * Promise reject function
+	 */
+	reject: (error: Error) => void;
 
-  /**
-   * Timeout timer
-   */
-  timer: TimeoutId;
+	/**
+	 * Timeout timer
+	 */
+	timer: TimeoutId;
 
-  /**
-   * Method/Event name
-   */
-  method: string;
+	/**
+	 * Method/Event name
+	 */
+	method: string;
 
-  /**
-   * Operation type
-   */
-  type: "subscribe" | "unsubscribe";
+	/**
+	 * Operation type
+	 */
+	type: 'subscribe' | 'unsubscribe';
 }
 
 /**
@@ -409,25 +400,25 @@ export interface PendingSubscription {
  * Stores subscription details to re-establish after reconnection
  */
 export interface PersistedSubscription<TData = unknown> {
-  /**
-   * Method/Event name
-   */
-  method: string;
+	/**
+	 * Method/Event name
+	 */
+	method: string;
 
-  /**
-   * Event handler function
-   */
-  handler: EventHandler<TData>;
+	/**
+	 * Event handler function
+	 */
+	handler: EventHandler<TData>;
 
-  /**
-   * Subscription options
-   */
-  options: SubscribeOptions;
+	/**
+	 * Subscription options
+	 */
+	options: SubscribeOptions;
 
-  /**
-   * Timestamp when subscription was created
-   */
-  createdAt: number;
+	/**
+	 * Timestamp when subscription was created
+	 */
+	createdAt: number;
 }
 
 /**

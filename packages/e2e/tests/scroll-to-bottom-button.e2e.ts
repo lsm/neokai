@@ -1,9 +1,9 @@
-import { test, expect } from "../fixtures";
+import { test, expect } from '../fixtures';
 import {
-  cleanupTestSession,
-  waitForSessionCreated,
-  waitForAssistantResponse,
-} from "./helpers/wait-helpers";
+	cleanupTestSession,
+	waitForSessionCreated,
+	waitForAssistantResponse,
+} from './helpers/wait-helpers';
 
 /**
  * Scroll to Bottom Button E2E Tests
@@ -15,302 +15,257 @@ import {
  * 3. Button works when clicked (scrolls to bottom)
  * 4. Parent container has correct positioning
  */
-test.describe("Scroll to Bottom Button", () => {
-  let sessionId: string | null = null;
+test.describe('Scroll to Bottom Button', () => {
+	let sessionId: string | null = null;
 
-  test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await expect(
-      page.getByRole("heading", { name: "Liuboer", exact: true }).first(),
-    ).toBeVisible();
-    await page.waitForTimeout(1000);
-    sessionId = null;
-  });
+	test.beforeEach(async ({ page }) => {
+		await page.goto('/');
+		await expect(page.getByRole('heading', { name: 'Liuboer', exact: true }).first()).toBeVisible();
+		await page.waitForTimeout(1000);
+		sessionId = null;
+	});
 
-  test.afterEach(async ({ page }) => {
-    if (sessionId) {
-      try {
-        await cleanupTestSession(page, sessionId);
-      } catch (error) {
-        console.warn(`Failed to cleanup session ${sessionId}:`, error);
-      }
-      sessionId = null;
-    }
-  });
+	test.afterEach(async ({ page }) => {
+		if (sessionId) {
+			try {
+				await cleanupTestSession(page, sessionId);
+			} catch (error) {
+				console.warn(`Failed to cleanup session ${sessionId}:`, error);
+			}
+			sessionId = null;
+		}
+	});
 
-  test("should not show button when at bottom of empty session", async ({
-    page,
-  }) => {
-    // Create a new session
-    await page
-      .getByRole("button", { name: "New Session", exact: true })
-      .first()
-      .click();
-    sessionId = await waitForSessionCreated(page);
+	test('should not show button when at bottom of empty session', async ({ page }) => {
+		// Create a new session
+		await page.getByRole('button', { name: 'New Session', exact: true }).first().click();
+		sessionId = await waitForSessionCreated(page);
 
-    // At bottom (empty session), button should not be visible to the user
-    const scrollButton = page.locator('button[aria-label="Scroll to bottom"]');
-    await expect(scrollButton).not.toBeVisible();
-  });
+		// At bottom (empty session), button should not be visible to the user
+		const scrollButton = page.locator('button[aria-label="Scroll to bottom"]');
+		await expect(scrollButton).not.toBeVisible();
+	});
 
-  test.skip("should show button when scrolled away from bottom with real content", async ({
-    page,
-  }) => {
-    // TODO: Assistant response timeout in test environment
-    // Create a new session
-    await page
-      .getByRole("button", { name: "New Session", exact: true })
-      .first()
-      .click();
-    sessionId = await waitForSessionCreated(page);
+	test.skip('should show button when scrolled away from bottom with real content', async ({
+		page,
+	}) => {
+		// TODO: Assistant response timeout in test environment
+		// Create a new session
+		await page.getByRole('button', { name: 'New Session', exact: true }).first().click();
+		sessionId = await waitForSessionCreated(page);
 
-    // Send multiple messages to create scrollable content
-    const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+		// Send multiple messages to create scrollable content
+		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 
-    // Send first message
-    await messageInput.fill(
-      "Please explain React hooks in detail with examples.",
-    );
-    await messageInput.press("Enter");
-    await waitForAssistantResponse(page, { timeout: 45000 });
+		// Send first message
+		await messageInput.fill('Please explain React hooks in detail with examples.');
+		await messageInput.press('Enter');
+		await waitForAssistantResponse(page, { timeout: 45000 });
 
-    // Send second message to ensure we have enough content
-    await messageInput.fill(
-      "Now explain useEffect hook with 5 detailed examples.",
-    );
-    await messageInput.press("Enter");
-    await waitForAssistantResponse(page, { timeout: 45000 });
+		// Send second message to ensure we have enough content
+		await messageInput.fill('Now explain useEffect hook with 5 detailed examples.');
+		await messageInput.press('Enter');
+		await waitForAssistantResponse(page, { timeout: 45000 });
 
-    // Wait for content to fully render
-    await page.waitForTimeout(1000);
+		// Wait for content to fully render
+		await page.waitForTimeout(1000);
 
-    // Verify we have scrollable content
-    const hasScrollableContent = await page.evaluate(() => {
-      const container = document.querySelector(
-        "[data-messages-container]",
-      ) as HTMLElement;
-      return container && container.scrollHeight > container.clientHeight;
-    });
+		// Verify we have scrollable content
+		const hasScrollableContent = await page.evaluate(() => {
+			const container = document.querySelector('[data-messages-container]') as HTMLElement;
+			return container && container.scrollHeight > container.clientHeight;
+		});
 
-    // Skip test if content isn't scrollable (this can happen with short responses)
-    if (!hasScrollableContent) {
-      test.skip();
-      return;
-    }
+		// Skip test if content isn't scrollable (this can happen with short responses)
+		if (!hasScrollableContent) {
+			test.skip();
+			return;
+		}
 
-    // Scroll to top to trigger button appearance
-    await page.evaluate(() => {
-      const container = document.querySelector(
-        "[data-messages-container]",
-      ) as HTMLElement;
-      if (container) {
-        container.scrollTop = 0;
-      }
-    });
+		// Scroll to top to trigger button appearance
+		await page.evaluate(() => {
+			const container = document.querySelector('[data-messages-container]') as HTMLElement;
+			if (container) {
+				container.scrollTop = 0;
+			}
+		});
 
-    // Wait for React to update state
-    await page.waitForTimeout(500);
+		// Wait for React to update state
+		await page.waitForTimeout(500);
 
-    // Button MUST be visible to the user now
-    const scrollButton = page.locator('button[aria-label="Scroll to bottom"]');
-    await expect(scrollButton).toBeVisible({ timeout: 5000 });
+		// Button MUST be visible to the user now
+		const scrollButton = page.locator('button[aria-label="Scroll to bottom"]');
+		await expect(scrollButton).toBeVisible({ timeout: 5000 });
 
-    // Verify button has correct visual styling (user can see these)
-    const buttonClasses = await scrollButton.getAttribute("class");
-    expect(buttonClasses).toContain("rounded-full");
-    expect(buttonClasses).toContain("w-10");
-    expect(buttonClasses).toContain("h-10");
+		// Verify button has correct visual styling (user can see these)
+		const buttonClasses = await scrollButton.getAttribute('class');
+		expect(buttonClasses).toContain('rounded-full');
+		expect(buttonClasses).toContain('w-10');
+		expect(buttonClasses).toContain('h-10');
 
-    // Verify button is positioned correctly (bottom center of viewport)
-    const buttonBox = await scrollButton.boundingBox();
-    expect(buttonBox).not.toBeNull();
+		// Verify button is positioned correctly (bottom center of viewport)
+		const buttonBox = await scrollButton.boundingBox();
+		expect(buttonBox).not.toBeNull();
 
-    // Button should be in the lower portion of the viewport
-    const viewportHeight = page.viewportSize()?.height || 0;
-    expect(buttonBox!.y).toBeGreaterThan(viewportHeight * 0.5);
+		// Button should be in the lower portion of the viewport
+		const viewportHeight = page.viewportSize()?.height || 0;
+		expect(buttonBox!.y).toBeGreaterThan(viewportHeight * 0.5);
 
-    // Verify icon is visible to user
-    const svg = scrollButton.locator("svg");
-    await expect(svg).toBeVisible();
-  });
+		// Verify icon is visible to user
+		const svg = scrollButton.locator('svg');
+		await expect(svg).toBeVisible();
+	});
 
-  test.skip("should scroll to bottom when button is clicked", async ({
-    page,
-  }) => {
-    // TODO: Programmatic scroll doesn't reliably trigger React state updates in test environment
-    // The button component and useAutoScroll hook work correctly in manual testing
-    // Create a new session
-    await page
-      .getByRole("button", { name: "New Session", exact: true })
-      .first()
-      .click();
-    sessionId = await waitForSessionCreated(page);
+	test.skip('should scroll to bottom when button is clicked', async ({ page }) => {
+		// TODO: Programmatic scroll doesn't reliably trigger React state updates in test environment
+		// The button component and useAutoScroll hook work correctly in manual testing
+		// Create a new session
+		await page.getByRole('button', { name: 'New Session', exact: true }).first().click();
+		sessionId = await waitForSessionCreated(page);
 
-    // Send multiple messages to create scrollable content
-    const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
-    const sendButton = page.locator('[data-testid="send-button"]').first();
+		// Send multiple messages to create scrollable content
+		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+		const sendButton = page.locator('[data-testid="send-button"]').first();
 
-    // First message
-    await messageInput.fill("Reply with exactly: TEST_RESPONSE_1");
-    await sendButton.click();
-    await waitForAssistantResponse(page, { timeout: 60000 });
+		// First message
+		await messageInput.fill('Reply with exactly: TEST_RESPONSE_1');
+		await sendButton.click();
+		await waitForAssistantResponse(page, { timeout: 60000 });
 
-    // Wait for send button to return
-    await expect(page.locator('[data-testid="send-button"]')).toBeVisible({
-      timeout: 10000,
-    });
+		// Wait for send button to return
+		await expect(page.locator('[data-testid="send-button"]')).toBeVisible({
+			timeout: 10000,
+		});
 
-    // Second message
-    await messageInput.fill("Reply with exactly: TEST_RESPONSE_2");
-    await sendButton.click();
-    await waitForAssistantResponse(page, { timeout: 60000 });
+		// Second message
+		await messageInput.fill('Reply with exactly: TEST_RESPONSE_2');
+		await sendButton.click();
+		await waitForAssistantResponse(page, { timeout: 60000 });
 
-    // Wait for send button to return
-    await expect(page.locator('[data-testid="send-button"]')).toBeVisible({
-      timeout: 10000,
-    });
+		// Wait for send button to return
+		await expect(page.locator('[data-testid="send-button"]')).toBeVisible({
+			timeout: 10000,
+		});
 
-    await page.waitForTimeout(1000);
+		await page.waitForTimeout(1000);
 
-    // Verify scrollable content exists
-    const hasScrollableContent = await page.evaluate(() => {
-      const container = document.querySelector(
-        "[data-messages-container]",
-      ) as HTMLElement;
-      return container && container.scrollHeight > container.clientHeight;
-    });
+		// Verify scrollable content exists
+		const hasScrollableContent = await page.evaluate(() => {
+			const container = document.querySelector('[data-messages-container]') as HTMLElement;
+			return container && container.scrollHeight > container.clientHeight;
+		});
 
-    // Skip test if content isn't scrollable
-    if (!hasScrollableContent) {
-      test.skip();
-      return;
-    }
+		// Skip test if content isn't scrollable
+		if (!hasScrollableContent) {
+			test.skip();
+			return;
+		}
 
-    // Scroll to top
-    await page.evaluate(() => {
-      const container = document.querySelector(
-        "[data-messages-container]",
-      ) as HTMLElement;
-      if (container) {
-        container.scrollTop = 0;
-        // Dispatch scroll event manually to ensure it's detected
-        container.dispatchEvent(new Event("scroll", { bubbles: true }));
-      }
-    });
-    // Wait for React state to update
-    await page.waitForTimeout(500);
+		// Scroll to top
+		await page.evaluate(() => {
+			const container = document.querySelector('[data-messages-container]') as HTMLElement;
+			if (container) {
+				container.scrollTop = 0;
+				// Dispatch scroll event manually to ensure it's detected
+				container.dispatchEvent(new Event('scroll', { bubbles: true }));
+			}
+		});
+		// Wait for React state to update
+		await page.waitForTimeout(500);
 
-    // Button should be visible to user
-    const scrollButton = page.locator('button[aria-label="Scroll to bottom"]');
-    await expect(scrollButton).toBeVisible({ timeout: 5000 });
+		// Button should be visible to user
+		const scrollButton = page.locator('button[aria-label="Scroll to bottom"]');
+		await expect(scrollButton).toBeVisible({ timeout: 5000 });
 
-    // User clicks the button
-    await scrollButton.click();
+		// User clicks the button
+		await scrollButton.click();
 
-    // Wait for smooth scroll animation to complete
-    await page.waitForTimeout(1000);
+		// Wait for smooth scroll animation to complete
+		await page.waitForTimeout(1000);
 
-    // Verify user can see the last message (button scrolled us to bottom)
-    const lastMessage = page
-      .locator("[data-messages-container] > div > *")
-      .last();
-    await expect(lastMessage).toBeInViewport();
+		// Verify user can see the last message (button scrolled us to bottom)
+		const lastMessage = page.locator('[data-messages-container] > div > *').last();
+		await expect(lastMessage).toBeInViewport();
 
-    // Button should now be hidden from user's view
-    await expect(scrollButton).not.toBeVisible();
-  });
+		// Button should now be hidden from user's view
+		await expect(scrollButton).not.toBeVisible();
+	});
 
-  test.skip("should hide button when user scrolls to bottom", async ({
-    page,
-  }) => {
-    // TODO: Programmatic scroll doesn't reliably trigger React state updates in test environment
-    // Create session and content
-    await page
-      .getByRole("button", { name: "New Session", exact: true })
-      .first()
-      .click();
-    sessionId = await waitForSessionCreated(page);
+	test.skip('should hide button when user scrolls to bottom', async ({ page }) => {
+		// TODO: Programmatic scroll doesn't reliably trigger React state updates in test environment
+		// Create session and content
+		await page.getByRole('button', { name: 'New Session', exact: true }).first().click();
+		sessionId = await waitForSessionCreated(page);
 
-    const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
-    const sendButton = page.locator('[data-testid="send-button"]').first();
+		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+		const sendButton = page.locator('[data-testid="send-button"]').first();
 
-    // Send a message to create content
-    await messageInput.fill("Reply with exactly: SCROLL_TEST_RESPONSE");
-    await sendButton.click();
-    await waitForAssistantResponse(page, { timeout: 60000 });
+		// Send a message to create content
+		await messageInput.fill('Reply with exactly: SCROLL_TEST_RESPONSE');
+		await sendButton.click();
+		await waitForAssistantResponse(page, { timeout: 60000 });
 
-    // Wait for send button to return
-    await expect(page.locator('[data-testid="send-button"]')).toBeVisible({
-      timeout: 10000,
-    });
+		// Wait for send button to return
+		await expect(page.locator('[data-testid="send-button"]')).toBeVisible({
+			timeout: 10000,
+		});
 
-    await page.waitForTimeout(1000);
+		await page.waitForTimeout(1000);
 
-    // Check if we have scrollable content
-    const hasScrollableContent = await page.evaluate(() => {
-      const container = document.querySelector(
-        "[data-messages-container]",
-      ) as HTMLElement;
-      return container && container.scrollHeight > container.clientHeight;
-    });
+		// Check if we have scrollable content
+		const hasScrollableContent = await page.evaluate(() => {
+			const container = document.querySelector('[data-messages-container]') as HTMLElement;
+			return container && container.scrollHeight > container.clientHeight;
+		});
 
-    if (!hasScrollableContent) {
-      test.skip();
-      return;
-    }
+		if (!hasScrollableContent) {
+			test.skip();
+			return;
+		}
 
-    // Scroll to top - button should appear
-    await page.evaluate(() => {
-      const container = document.querySelector(
-        "[data-messages-container]",
-      ) as HTMLElement;
-      if (container) {
-        container.scrollTop = 0;
-        // Dispatch scroll event manually to ensure it's detected
-        container.dispatchEvent(new Event("scroll", { bubbles: true }));
-      }
-    });
-    // Wait for React state to update
-    await page.waitForTimeout(500);
+		// Scroll to top - button should appear
+		await page.evaluate(() => {
+			const container = document.querySelector('[data-messages-container]') as HTMLElement;
+			if (container) {
+				container.scrollTop = 0;
+				// Dispatch scroll event manually to ensure it's detected
+				container.dispatchEvent(new Event('scroll', { bubbles: true }));
+			}
+		});
+		// Wait for React state to update
+		await page.waitForTimeout(500);
 
-    // User should see the button
-    const scrollButton = page.locator('button[aria-label="Scroll to bottom"]');
-    await expect(scrollButton).toBeVisible({ timeout: 5000 });
+		// User should see the button
+		const scrollButton = page.locator('button[aria-label="Scroll to bottom"]');
+		await expect(scrollButton).toBeVisible({ timeout: 5000 });
 
-    // User scrolls down manually (using mouse wheel simulation)
-    const messagesContainer = page.locator("[data-messages-container]");
-    await messagesContainer.evaluate((el) => {
-      el.scrollTop = el.scrollHeight;
-    });
-    await page.waitForTimeout(500);
+		// User scrolls down manually (using mouse wheel simulation)
+		const messagesContainer = page.locator('[data-messages-container]');
+		await messagesContainer.evaluate((el) => {
+			el.scrollTop = el.scrollHeight;
+		});
+		await page.waitForTimeout(500);
 
-    // Button should disappear from user's view
-    await expect(scrollButton).not.toBeVisible();
-  });
+		// Button should disappear from user's view
+		await expect(scrollButton).not.toBeVisible();
+	});
 
-  test("should verify parent container has position relative", async ({
-    page,
-  }) => {
-    // This tests the bug fix: parent must have position:relative for absolute button
-    await page
-      .getByRole("button", { name: "New Session", exact: true })
-      .first()
-      .click();
-    sessionId = await waitForSessionCreated(page);
+	test('should verify parent container has position relative', async ({ page }) => {
+		// This tests the bug fix: parent must have position:relative for absolute button
+		await page.getByRole('button', { name: 'New Session', exact: true }).first().click();
+		sessionId = await waitForSessionCreated(page);
 
-    // Check the chat container has position: relative
-    // The parent div has class="flex-1 relative min-h-0"
-    const hasRelativePosition = await page.evaluate(() => {
-      // Try to find the container with flex-1 and relative classes
-      const chatContainer = document.querySelector(
-        ".flex-1.relative",
-      ) as HTMLElement;
-      if (!chatContainer) return false;
+		// Check the chat container has position: relative
+		// The parent div has class="flex-1 relative min-h-0"
+		const hasRelativePosition = await page.evaluate(() => {
+			// Try to find the container with flex-1 and relative classes
+			const chatContainer = document.querySelector('.flex-1.relative') as HTMLElement;
+			if (!chatContainer) return false;
 
-      const computedStyle = window.getComputedStyle(chatContainer);
-      return computedStyle.position === "relative";
-    });
+			const computedStyle = window.getComputedStyle(chatContainer);
+			return computedStyle.position === 'relative';
+		});
 
-    expect(hasRelativePosition).toBe(true);
-  });
+		expect(hasRelativePosition).toBe(true);
+	});
 });

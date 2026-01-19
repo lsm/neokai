@@ -40,47 +40,47 @@ The **tool-registry.ts** file maintains configuration for all tool types:
 ### Basic Tool Progress Display
 
 ```tsx
-import { ToolProgressCard } from "./tools";
+import { ToolProgressCard } from './tools';
 
 <ToolProgressCard
-  toolName="Read"
-  toolInput={{ file_path: "/path/to/file.ts" }}
-  elapsedTime={1.5}
-  toolUseId="tool_abc123"
-  variant="default"
+	toolName="Read"
+	toolInput={{ file_path: '/path/to/file.ts' }}
+	elapsedTime={1.5}
+	toolUseId="tool_abc123"
+	variant="default"
 />;
 ```
 
 ### Tool Result Display
 
 ```tsx
-import { ToolResultCard } from "./tools";
+import { ToolResultCard } from './tools';
 
 <ToolResultCard
-  toolName="Write"
-  toolId="tool_xyz789"
-  input={{ file_path: "/path/to/file.ts", content: "..." }}
-  output={{ success: true }}
-  isError={false}
-  variant="default"
+	toolName="Write"
+	toolId="tool_xyz789"
+	input={{ file_path: '/path/to/file.ts', content: '...' }}
+	output={{ success: true }}
+	isError={false}
+	variant="default"
 />;
 ```
 
 ### Custom Tool Registration
 
 ```tsx
-import { registerTool } from "./tools";
+import { registerTool } from './tools';
 
-registerTool("MyCustomTool", {
-  displayName: "My Tool",
-  category: "file",
-  summaryExtractor: (input) => input.target,
-  colors: {
-    bg: "bg-emerald-50",
-    text: "text-emerald-900",
-    border: "border-emerald-200",
-    iconColor: "text-emerald-600",
-  },
+registerTool('MyCustomTool', {
+	displayName: 'My Tool',
+	category: 'file',
+	summaryExtractor: (input) => input.target,
+	colors: {
+		bg: 'bg-emerald-50',
+		text: 'text-emerald-900',
+		border: 'border-emerald-200',
+		iconColor: 'text-emerald-600',
+	},
 });
 ```
 
@@ -149,13 +149,13 @@ The system extracts the server name and tool name for display.
 For tools requiring special rendering, register a custom renderer:
 
 ```tsx
-registerTool("BashOutput", {
-  category: "terminal",
-  customRenderer: (props) => (
-    <div class="font-mono">
-      <TerminalOutput content={props.output} />
-    </div>
-  ),
+registerTool('BashOutput', {
+	category: 'terminal',
+	customRenderer: (props) => (
+		<div class="font-mono">
+			<TerminalOutput content={props.output} />
+		</div>
+	),
 });
 ```
 
@@ -178,12 +178,12 @@ MyTool: {
 ### Option 2: Runtime Registration
 
 ```typescript
-import { registerTool } from "./tools";
+import { registerTool } from './tools';
 
-registerTool("MyTool", {
-  displayName: "My Tool",
-  category: "web",
-  summaryExtractor: (input) => truncate(input.url, 50),
+registerTool('MyTool', {
+	displayName: 'My Tool',
+	category: 'web',
+	summaryExtractor: (input) => truncate(input.url, 50),
 });
 ```
 
@@ -215,7 +215,7 @@ Use the `compact` variant for mobile displays:
 ```tsx
 const isMobile = window.innerWidth < 768;
 
-<ToolProgressCard variant={isMobile ? "compact" : "default"} {...props} />;
+<ToolProgressCard variant={isMobile ? 'compact' : 'default'} {...props} />;
 ```
 
 ## Examples
@@ -224,10 +224,10 @@ const isMobile = window.innerWidth < 768;
 
 ```tsx
 <ToolProgressCard
-  toolName="Write"
-  toolInput={{ file_path: "/src/App.tsx" }}
-  elapsedTime={0.8}
-  toolUseId="tool_123"
+	toolName="Write"
+	toolInput={{ file_path: '/src/App.tsx' }}
+	elapsedTime={0.8}
+	toolUseId="tool_123"
 />
 ```
 
@@ -235,11 +235,11 @@ const isMobile = window.innerWidth < 768;
 
 ```tsx
 <ToolResultCard
-  toolName="Grep"
-  toolId="tool_456"
-  input={{ pattern: "useState", glob: "*.tsx" }}
-  output="Found 42 matches in 15 files"
-  variant="default"
+	toolName="Grep"
+	toolId="tool_456"
+	input={{ pattern: 'useState', glob: '*.tsx' }}
+	output="Found 42 matches in 15 files"
+	variant="default"
 />
 ```
 
@@ -247,10 +247,10 @@ const isMobile = window.innerWidth < 768;
 
 ```tsx
 <ToolProgressCard
-  toolName="mcp__chrome-devtools__click"
-  toolInput={{ uid: "button_123" }}
-  elapsedTime={0.3}
-  toolUseId="tool_789"
+	toolName="mcp__chrome-devtools__click"
+	toolInput={{ uid: 'button_123' }}
+	elapsedTime={0.3}
+	toolUseId="tool_789"
 />
 ```
 
