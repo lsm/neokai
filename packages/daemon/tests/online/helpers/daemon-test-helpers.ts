@@ -86,17 +86,6 @@ export async function waitForIdle(
 }
 
 /**
- * Wait for the agent to start processing
- */
-export async function waitForProcessing(
-	daemon: DaemonServerContext,
-	sessionId: string,
-	timeout = 10000
-): Promise<void> {
-	return waitForProcessingState(daemon, sessionId, 'processing', timeout);
-}
-
-/**
  * Collect SDK messages from the session via subscription
  *
  * Returns an async generator that yields SDK messages as they arrive.
@@ -144,41 +133,6 @@ export async function* collectSDKMessages(
 }
 
 /**
- * Wait for a specific SDK message type
- */
-export async function waitForSDKMessage(
-	daemon: DaemonServerContext,
-	sessionId: string,
-	messageType: string,
-	timeout = 30000
-): Promise<unknown> {
-	return new Promise((resolve, reject) => {
-		let unsubscribe: (() => void) | undefined;
-		const timer = setTimeout(() => {
-			unsubscribe?.();
-			reject(new Error(`Timeout waiting for SDK message type "${messageType}" after ${timeout}ms`));
-		}, timeout);
-
-		daemon.messageHub
-			.subscribe(
-				'sdk.message',
-				(data: unknown) => {
-					const msg = data as { type?: string };
-					if (msg.type === messageType) {
-						clearTimeout(timer);
-						unsubscribe?.();
-						resolve(data);
-					}
-				},
-				{ sessionId }
-			)
-			.then((fn) => {
-				unsubscribe = fn;
-			});
-	});
-}
-
-/**
  * Get current processing state via RPC
  */
 export async function getProcessingState(
@@ -213,44 +167,6 @@ export async function getSession(
 	}
 
 	return result.session;
-}
-
-/**
- * Get current model via RPC
- */
-export async function getCurrentModel(
-	daemon: DaemonServerContext,
-	sessionId: string
-): Promise<{ id: string; displayName: string }> {
-	const result = (await daemon.messageHub.call('session.model.get', {
-		sessionId,
-	})) as { currentModel: string; modelInfo: { id: string; displayName: string } } | undefined;
-
-	if (!result?.modelInfo) {
-		throw new Error(`Failed to get model for session: ${sessionId}`);
-	}
-
-	return result.modelInfo;
-}
-
-/**
- * Switch model via RPC
- */
-export async function switchModel(
-	daemon: DaemonServerContext,
-	sessionId: string,
-	model: string
-): Promise<{ success: boolean; model: string; error?: string }> {
-	const result = (await daemon.messageHub.call('session.model.switch', {
-		sessionId,
-		model,
-	})) as { success: boolean; model: string; error?: string } | undefined;
-
-	if (!result) {
-		throw new Error(`Failed to switch model for session: ${sessionId}`);
-	}
-
-	return result;
 }
 
 /**

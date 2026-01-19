@@ -31,7 +31,6 @@ export type {
 	ConfigUpdateResult,
 	ValidationResult,
 } from './types/sdk-config.ts';
-export { CONFIG_CHANGE_BEHAVIOR } from './types/sdk-config.ts';
 
 // Core session types
 export interface SessionInfo {

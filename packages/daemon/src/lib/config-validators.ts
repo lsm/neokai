@@ -556,26 +556,6 @@ export function validateBetasConfig(betas: SdkBeta[]): ValidationResult {
 // ============================================================================
 
 /**
- * Validate path exists and is a directory (async)
- */
-export async function validatePath(path: string): Promise<ValidationResult> {
-	try {
-		const fs = await import('fs/promises');
-		const stats = await fs.stat(path);
-		if (!stats.isDirectory()) {
-			return { valid: false, error: `Path is not a directory: ${path}` };
-		}
-		return { valid: true };
-	} catch (error) {
-		const errorMessage = error instanceof Error ? error.message : String(error);
-		return {
-			valid: false,
-			error: `Path does not exist or is not accessible: ${path} (${errorMessage})`,
-		};
-	}
-}
-
-/**
  * Validate environment settings configuration
  */
 export function validateEnvConfig(config: Partial<EnvironmentSettings>): ValidationResult {

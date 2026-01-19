@@ -354,64 +354,6 @@ export interface SDKConfig
 // Runtime Change Classification
 // ============================================================================
 
-/**
- * Classification of which config changes can be applied at runtime
- * vs which require SDK query restart
- */
-export const CONFIG_CHANGE_BEHAVIOR = {
-	/**
-	 * Changes that can be applied instantly via native SDK methods:
-	 * - model: query.setModel()
-	 * - maxThinkingTokens: query.setMaxThinkingTokens()
-	 * - permissionMode: query.setPermissionMode()
-	 */
-	RUNTIME_NATIVE: ['model', 'maxThinkingTokens', 'permissionMode'] as const,
-
-	/**
-	 * Changes that require SDK query restart to apply:
-	 * These are fixed at query initialization time
-	 */
-	RESTART_REQUIRED: [
-		'systemPrompt',
-		'tools',
-		'allowedTools',
-		'disallowedTools',
-		'agents',
-		'mcpServers',
-		'sandbox',
-		'outputFormat',
-		'plugins',
-		'betas',
-		'settingSources',
-		'cwd',
-		'additionalDirectories',
-		'env',
-		'executable',
-		'executableArgs',
-	] as const,
-
-	/**
-	 * UI-only settings - no SDK interaction needed
-	 */
-	UI_ONLY: ['autoScroll', 'queryMode', 'thinkingLevel'] as const,
-} as const;
-
-/**
- * Type for runtime-native config keys
- */
-export type RuntimeNativeConfigKey = (typeof CONFIG_CHANGE_BEHAVIOR.RUNTIME_NATIVE)[number];
-
-/**
- * Type for restart-required config keys
- */
-export type RestartRequiredConfigKey = (typeof CONFIG_CHANGE_BEHAVIOR.RESTART_REQUIRED)[number];
-
-/**
- * Type for UI-only config keys
- */
-export type UIOnlyConfigKey = (typeof CONFIG_CHANGE_BEHAVIOR.UI_ONLY)[number];
-
-// ============================================================================
 // Config Update Result Types
 // ============================================================================
 

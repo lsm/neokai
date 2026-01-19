@@ -304,6 +304,7 @@ export class UnixSocketTransport implements IMessageTransport {
 
 /**
  * Generate a socket path for a daemon
+ * @internal - Test utility only
  */
 export function getDaemonSocketPath(name: string): string {
 	const tmpDir = process.env.TMPDIR || '/tmp';

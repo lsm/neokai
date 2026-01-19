@@ -534,13 +534,6 @@ export function hasOAuthToken(): boolean {
 }
 
 /**
- * Check if any authentication credentials are available
- */
-export function hasAnyCredentials(): boolean {
-	return hasApiKey() || hasOAuthToken();
-}
-
-/**
  * Call RPC handler directly (for integration tests)
  * Bypasses transport layer to test handlers directly
  */
@@ -600,12 +593,4 @@ export function mockAgentSessionForOfflineTest(
 		};
 	}
 	return agentSession || null;
-}
-
-/**
- * Check if running in offline test mode
- * (no API credentials available)
- */
-export function isOfflineTest(): boolean {
-	return !hasAnyCredentials();
 }

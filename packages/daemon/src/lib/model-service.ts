@@ -10,7 +10,7 @@
  */
 
 import type { ModelInfo as SDKModelInfo } from '@liuboer/shared/sdk';
-import type { ModelInfo, Provider } from '@liuboer/shared';
+import type { ModelInfo } from '@liuboer/shared';
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
 
 /**
@@ -472,77 +472,4 @@ export async function resolveModelAlias(
 
 	// Return as-is if nothing found
 	return idOrAlias;
-}
-
-/**
- * Get available models for a specific provider
- *
- * - For 'anthropic': Returns models from SDK cache (dynamic)
- * - For 'glm': Returns static GLM_MODELS list
- *
- * @param provider - The AI provider
- * @param cacheKey - Cache key for Anthropic models (default: 'global')
- * @returns Array of ModelInfo for the provider
- */
-export function getModelsForProvider(
-	provider: Provider = 'anthropic',
-	cacheKey: string = 'global'
-): ModelInfo[] {
-	if (provider === 'glm') {
-		return [...GLM_MODELS];
-	}
-
-	// Default to Anthropic models from SDK
-	return getAvailableModels(cacheKey);
-}
-
-/**
- * Get model info by ID for a specific provider
- *
- * @param provider - The AI provider
- * @param idOrAlias - Model ID or alias to look up
- * @param cacheKey - Cache key for Anthropic models
- * @returns ModelInfo or null if not found
- */
-export async function getModelInfoForProvider(
-	provider: Provider,
-	idOrAlias: string,
-	cacheKey: string = 'global'
-): Promise<ModelInfo | null> {
-	const models = getModelsForProvider(provider, cacheKey);
-
-	// Try exact ID match
-	let model = models.find((m) => m.id === idOrAlias);
-
-	// Try alias match
-	if (!model) {
-		model = models.find((m) => m.alias === idOrAlias);
-	}
-
-	// For Anthropic, also try legacy mappings
-	if (!model && provider === 'anthropic') {
-		const legacyMappedId = LEGACY_MODEL_MAPPINGS[idOrAlias];
-		if (legacyMappedId) {
-			model = models.find((m) => m.id === legacyMappedId);
-		}
-	}
-
-	return model || null;
-}
-
-/**
- * Check if a model is valid for a specific provider
- *
- * @param provider - The AI provider
- * @param idOrAlias - Model ID or alias to validate
- * @param cacheKey - Cache key for Anthropic models
- * @returns true if the model is valid for the provider
- */
-export async function isValidModelForProvider(
-	provider: Provider,
-	idOrAlias: string,
-	cacheKey: string = 'global'
-): Promise<boolean> {
-	const modelInfo = await getModelInfoForProvider(provider, idOrAlias, cacheKey);
-	return modelInfo !== null;
 }

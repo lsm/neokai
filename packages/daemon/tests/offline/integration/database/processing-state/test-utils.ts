@@ -20,14 +20,6 @@ export function createMockDb(): Database {
 	} as unknown as Database;
 }
 
-export function createMockDaemonHub() {
-	const emitSpy = mock(async () => {});
-	return {
-		hub: { emit: emitSpy } as unknown as DaemonHub,
-		emitSpy,
-	};
-}
-
 export async function createTestDaemonHub(name: string): Promise<DaemonHub> {
 	const eventBus = createDaemonHub(name);
 	await eventBus.initialize();
