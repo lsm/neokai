@@ -264,52 +264,9 @@ export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
 	const dynamicModels = modelsCache.get(cacheKey);
 
 	if (!dynamicModels || dynamicModels.length === 0) {
-		// Models not loaded or failed to load - return static fallback models
-		// This can happen when:
-		// 1. GLM API is used (doesn't support Anthropic's model listing endpoint)
-		// 2. Custom API base URL is set
-		// 3. SDK failed to load models for any reason
-		console.warn('[model-service] Models cache is empty, returning static fallback models');
-
-		// Return static models based on available API keys
-		if (isGlmApiKeyAvailable()) {
-			console.info('[model-service] Returning GLM models as fallback');
-			return GLM_MODELS;
-		}
-
-		// Return basic Anthropic models as fallback
-		return [
-			{
-				id: 'default',
-				name: 'Claude Sonnet 4.5',
-				alias: 'default',
-				family: 'sonnet',
-				contextWindow: 200000,
-				description: 'Claude Sonnet 4.5 - Best balance of capability and speed',
-				releaseDate: '',
-				available: true,
-			},
-			{
-				id: 'opus',
-				name: 'Claude Opus 4.5',
-				alias: 'opus',
-				family: 'opus',
-				contextWindow: 200000,
-				description: 'Claude Opus 4.5 - Most capable model for complex tasks',
-				releaseDate: '',
-				available: true,
-			},
-			{
-				id: 'haiku',
-				name: 'Claude Haiku 4.5',
-				alias: 'haiku',
-				family: 'haiku',
-				contextWindow: 200000,
-				description: 'Claude Haiku 4.5 - Fastest model for simple tasks',
-				releaseDate: '',
-				available: true,
-			},
-		];
+		// Models not loaded or failed to load - return empty array
+		// Callers should initialize models first via initializeModels()
+		return [];
 	}
 
 	// Trigger background refresh if stale (non-blocking)
