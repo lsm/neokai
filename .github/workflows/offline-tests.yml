@@ -231,45 +231,7 @@ jobs:
       - name: Run unit tests
         working-directory: packages/daemon
         run: bun test tests/offline/unit
-
-  # # Integration tests - parallelized by category for speed
-  # test-daemon-integration:
-  #   name: Daemon Integration (${{ matrix.category }})
-  #   runs-on: arc-runner-set
-  #   timeout-minutes: 3
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       category:
-  #         - database
-  #         - filesystem
-  #         - git
-  #         - websocket
-  #         - rpc
-  #         - session
-  #         - mcp
-  #         - components
-
-  #   steps:
-  #     - uses: actions/checkout@v4
-
-  #     - name: Setup Bun
-  #       uses: oven-sh/setup-bun@v1
-  #       with:
-  #         bun-version: latest
-
-  #     - name: Install dependencies
-  #       run: bun install
-
-  #     - name: Run integration tests (${{ matrix.category }})
-  #       working-directory: packages/daemon
-  #       run: bun test tests/offline/integration/${{ matrix.category }}
-
-  # ============================================
-  # ONLINE TESTS moved to separate workflow
-  # See .github/workflows/daemon-online-tests.yml
-  # ============================================
-
+        
   test-shared:
     name: Test Shared
     runs-on: arc-runner-set

@@ -36,6 +36,7 @@ export interface Config {
 	nodeEnv: string;
 	workspaceRoot: string;
 	disableWorktrees?: boolean; // For testing - disables git worktree creation
+	ipcSocketPath?: string; // Optional IPC socket path for yuanshen orchestrator
 }
 
 export interface ConfigOverrides {
@@ -92,5 +93,6 @@ export function getConfig(overrides?: ConfigOverrides): Config {
 		maxSessions: parseInt(process.env.MAX_SESSIONS || '10'),
 		nodeEnv,
 		workspaceRoot,
+		ipcSocketPath: process.env.IPC_SOCKET_PATH,
 	};
 }

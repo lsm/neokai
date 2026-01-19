@@ -9,7 +9,7 @@
 		"lint:fix": "bun node_modules/.bin/oxlint --fix .",
 		"format": "bun x biome format --write .",
 		"format:check": "bun x biome format .",
-		"typecheck": "tsc --build",
+		"typecheck": "tsc --build --noEmit",
 		"knip": "knip --include files,dependencies,exports --no-config-hints",
 		"knip:all": "knip",
 		"check": "bun run lint && bun run typecheck && bun run knip",
