@@ -606,5 +606,67 @@ describe('SDK Session File Manager', () => {
 			expect(firstMsg.type).toBe('assistant');
 			expect(secondMsg.type).toBe('user');
 		});
+
+		test('should clean incomplete assistant messages with null stop_reason', () => {
+			// Create file with incomplete assistant message (interrupted mid-stream)
+			const messages = [
+				JSON.stringify({
+					type: 'assistant',
+					uuid: 'a1',
+					message: {
+						id: 'msg1',
+						role: 'assistant',
+						content: [{ type: 'text', text: 'Thinking...' }],
+						stop_reason: null,  // Incomplete message!
+						stop_sequence: null,
+					},
+				}),
+				JSON.stringify({
+					type: 'assistant',
+					uuid: 'a2',
+					message: {
+						id: 'msg2',
+						role: 'assistant',
+						content: [{ type: 'tool_use', id: 't1', name: 'Bash' }],
+						stop_reason: 'tool_use',  // Complete message
+						stop_sequence: null,
+					},
+				}),
+				JSON.stringify({
+					type: 'user',
+					uuid: 'u1',
+					message: { content: [{ type: 'tool_result', tool_use_id: 't1' }] },
+				}),
+			];
+			writeFileSync(testSessionFile, messages.join('\n') + '\n', 'utf-8');
+
+			const mockDb = {
+				getSDKMessages: () => [],
+			} as unknown as Database;
+
+			// validateAndRepairSDKSession should clean incomplete messages
+			const result = validateAndRepairSDKSession(
+				testWorkspacePath,
+				testSdkSessionId,
+				'liuboer-session-1',
+				mockDb
+			);
+
+			expect(result).toBe(true);
+
+			// Verify incomplete message was removed
+			const cleanedContent = readFileSync(testSessionFile, 'utf-8');
+			const lines = cleanedContent.split('\n').filter((l) => l.trim());
+
+			// Should only have 2 messages (complete assistant and user), not 3
+			expect(lines.length).toBe(2);
+
+			const firstMsg = JSON.parse(lines[0]);
+			const secondMsg = JSON.parse(lines[1]);
+
+			expect(firstMsg.uuid).toBe('a2');
+			expect(firstMsg.message.stop_reason).toBe('tool_use');
+			expect(secondMsg.type).toBe('user');
+		});
 	});
 });

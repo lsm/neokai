@@ -521,13 +521,12 @@ export function repairSDKSessionFile(
 }
 
 /**
- * Clean queue-operation entries from SDK session file
+ * Clean problematic entries from SDK session file
  *
- * SDK internally writes queue-operation metadata to the session file,
- * but these entries are not valid SDK messages and cause the SDK to fail
- * on session resume with "only prompt commands are supported in streaming mode".
- *
- * This function removes these entries to allow the SDK to resume properly.
+ * Removes entries that cause SDK to fail on session resume:
+ * 1. queue-operation entries - internal SDK metadata, not valid messages
+ * 2. Incomplete assistant messages - messages with null stop_reason indicate
+ *    the SDK was interrupted mid-stream and can't resume properly
  *
  * @param sessionFilePath - Path to the session file
  * @returns true if any entries were removed, false otherwise
@@ -540,8 +539,26 @@ function cleanQueueOperationEntries(sessionFilePath: string): boolean {
 		const cleanedLines = lines.filter((line) => {
 			try {
 				const msg = JSON.parse(line) as Record<string, unknown>;
+
 				// Filter out queue-operation entries
-				return msg.type !== 'queue-operation';
+				if (msg.type === 'queue-operation') {
+					return false;
+				}
+
+				// Filter out incomplete assistant messages (stop_reason: null)
+				// These indicate the SDK was interrupted mid-stream and can't resume
+				if (msg.type === 'assistant' && msg.message && typeof msg.message === 'object') {
+					const message = msg.message as Record<string, unknown>;
+					// Check if this is a message object with stop_reason
+					if ('stop_reason' in message && message.stop_reason === null) {
+						console.warn(
+							`[SDKSessionFileManager] Removing incomplete assistant message ${msg.uuid || '(no uuid)'} with null stop_reason`
+						);
+						return false;
+					}
+				}
+
+				return true;
 			} catch {
 				// Keep non-JSON lines as-is
 				return true;
@@ -552,7 +569,7 @@ function cleanQueueOperationEntries(sessionFilePath: string): boolean {
 		if (cleanedLines.length < lines.length) {
 			const removedCount = lines.length - cleanedLines.length;
 			console.info(
-				`[SDKSessionFileManager] Removing ${removedCount} queue-operation entries from SDK session file`
+				`[SDKSessionFileManager] Removed ${removedCount} problematic entries from SDK session file`
 			);
 			writeFileSync(sessionFilePath, cleanedLines.join('\n') + '\n', 'utf-8');
 			return true;
@@ -560,7 +577,7 @@ function cleanQueueOperationEntries(sessionFilePath: string): boolean {
 
 		return false;
 	} catch (error) {
-		console.error('[SDKSessionFileManager] Failed to clean queue-operation entries:', error);
+		console.error('[SDKSessionFileManager] Failed to clean problematic entries:', error);
 		return false;
 	}
 }
@@ -585,8 +602,10 @@ export function validateAndRepairSDKSession(
 ): boolean {
 	const sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
 
-	// CRITICAL: Clean queue-operation entries FIRST
-	// These entries are written by the SDK internally but cause session resume failures
+	// CRITICAL: Clean problematic entries FIRST
+	// These cause session resume failures:
+	// - queue-operation: internal SDK metadata, not valid messages
+	// - incomplete assistant messages: null stop_reason indicates interrupted mid-stream
 	if (existsSync(sessionFile)) {
 		cleanQueueOperationEntries(sessionFile);
 	}
