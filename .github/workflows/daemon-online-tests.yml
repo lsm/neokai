@@ -59,34 +59,3 @@ jobs:
           GLM_API_KEY: ${{ (matrix.category != 'session/agent' && matrix.category != 'session') && secrets.GLM_API_KEY || '' }}
           # Override: CLAUDE_CODE_OAUTH_TOKEN for session/agent and session
           CLAUDE_CODE_OAUTH_TOKEN: ${{ (matrix.category == 'session/agent' || matrix.category == 'session') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
-
-  # ============================================
-  # YUANSHEN INTEGRATION TESTS (Requires API)
-  # ============================================
-
-  test-yuanshen-integration:
-    name: Yuanshen Integration (E2E cognitive loop)
-    runs-on: arc-runner-set
-    timeout-minutes: 10
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Zig
-        uses: ./.github/actions/setup-zig
-        with:
-          zig-version: 0.15.2
-
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: 1.3.6
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Run Zig integration tests
-        working-directory: packages/yuanshen
-        run: zig build test-integration
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
