@@ -550,5 +550,61 @@ describe('SDK Session File Manager', () => {
 
 			expect(result).toBe(false);
 		});
+
+		test('should clean queue-operation entries from session file', () => {
+			// Create file with queue-operation entries
+			const messages = [
+				JSON.stringify({
+					type: 'assistant',
+					uuid: 'a1',
+					message: { content: [{ type: 'tool_use', id: 't1', name: 'Bash' }] },
+				}),
+				JSON.stringify({
+					type: 'queue-operation',
+					operation: 'enqueue',
+					timestamp: '2026-01-19T16:24:25.110Z',
+					sessionId: 'test-session-id',
+				}),
+				JSON.stringify({
+					type: 'user',
+					uuid: 'u1',
+					message: { content: [{ type: 'tool_result', tool_use_id: 't1' }] },
+				}),
+				JSON.stringify({
+					type: 'queue-operation',
+					operation: 'dequeue',
+					timestamp: '2026-01-19T16:24:56.050Z',
+					sessionId: 'test-session-id',
+				}),
+			];
+			writeFileSync(testSessionFile, messages.join('\n') + '\n', 'utf-8');
+
+			const mockDb = {
+				getSDKMessages: () => [],
+			} as unknown as Database;
+
+			// validateAndRepairSDKSession should clean queue-operation entries
+			const result = validateAndRepairSDKSession(
+				testWorkspacePath,
+				testSdkSessionId,
+				'liuboer-session-1',
+				mockDb
+			);
+
+			expect(result).toBe(true);
+
+			// Verify queue-operation entries were removed
+			const cleanedContent = readFileSync(testSessionFile, 'utf-8');
+			const lines = cleanedContent.split('\n').filter((l) => l.trim());
+
+			// Should only have 2 messages (assistant and user), not 4
+			expect(lines.length).toBe(2);
+
+			const firstMsg = JSON.parse(lines[0]);
+			const secondMsg = JSON.parse(lines[1]);
+
+			expect(firstMsg.type).toBe('assistant');
+			expect(secondMsg.type).toBe('user');
+		});
 	});
 });

@@ -521,6 +521,51 @@ export function repairSDKSessionFile(
 }
 
 /**
+ * Clean queue-operation entries from SDK session file
+ *
+ * SDK internally writes queue-operation metadata to the session file,
+ * but these entries are not valid SDK messages and cause the SDK to fail
+ * on session resume with "only prompt commands are supported in streaming mode".
+ *
+ * This function removes these entries to allow the SDK to resume properly.
+ *
+ * @param sessionFilePath - Path to the session file
+ * @returns true if any entries were removed, false otherwise
+ */
+function cleanQueueOperationEntries(sessionFilePath: string): boolean {
+	try {
+		const content = readFileSync(sessionFilePath, 'utf-8');
+		const lines = content.split('\n').filter((line) => line.trim());
+
+		const cleanedLines = lines.filter((line) => {
+			try {
+				const msg = JSON.parse(line) as Record<string, unknown>;
+				// Filter out queue-operation entries
+				return msg.type !== 'queue-operation';
+			} catch {
+				// Keep non-JSON lines as-is
+				return true;
+			}
+		});
+
+		// Check if any entries were removed
+		if (cleanedLines.length < lines.length) {
+			const removedCount = lines.length - cleanedLines.length;
+			console.info(
+				`[SDKSessionFileManager] Removing ${removedCount} queue-operation entries from SDK session file`
+			);
+			writeFileSync(sessionFilePath, cleanedLines.join('\n') + '\n', 'utf-8');
+			return true;
+		}
+
+		return false;
+	} catch (error) {
+		console.error('[SDKSessionFileManager] Failed to clean queue-operation entries:', error);
+		return false;
+	}
+}
+
+/**
  * Validate and auto-repair SDK session file before resuming
  *
  * This is the main entry point for session resume validation.
@@ -538,7 +583,15 @@ export function validateAndRepairSDKSession(
 	liuboerSessionId: string,
 	db: Database
 ): boolean {
-	// First validate
+	const sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
+
+	// CRITICAL: Clean queue-operation entries FIRST
+	// These entries are written by the SDK internally but cause session resume failures
+	if (existsSync(sessionFile)) {
+		cleanQueueOperationEntries(sessionFile);
+	}
+
+	// Then validate for orphaned tool_results
 	const validation = validateSDKSessionFile(workspacePath, sdkSessionId);
 
 	if (validation.valid) {
