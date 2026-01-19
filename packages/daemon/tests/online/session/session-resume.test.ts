@@ -38,6 +38,7 @@ describe('Session Resume', () => {
 
 		const createResult = (await daemon.messageHub.call('session.create', {
 			workspacePath,
+			title: 'Session Resume Test',
 			config: {
 				model: 'haiku',
 				permissionMode: 'acceptEdits',

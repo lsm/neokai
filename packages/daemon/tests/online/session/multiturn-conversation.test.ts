@@ -46,6 +46,7 @@ describe('Multi-Turn Conversation', () => {
 	test('should handle multi-turn conversation with context retention', async () => {
 		const createResult = (await daemon.messageHub.call('session.create', {
 			workspacePath: process.cwd(),
+			title: 'Context Retention Test',
 			config: {
 				model: 'haiku',
 				permissionMode: 'acceptEdits',
@@ -83,6 +84,7 @@ describe('Multi-Turn Conversation', () => {
 	test('should handle multi-turn conversation with code analysis', async () => {
 		const createResult = (await daemon.messageHub.call('session.create', {
 			workspacePath: process.cwd(),
+			title: 'Code Analysis Test',
 			config: {
 				model: 'haiku',
 				permissionMode: 'acceptEdits',
@@ -123,6 +125,7 @@ describe('Multi-Turn Conversation', () => {
 	test('should handle rapid successive messages correctly', async () => {
 		const createResult = (await daemon.messageHub.call('session.create', {
 			workspacePath: process.cwd(),
+			title: 'Rapid Messages Test',
 			config: {
 				model: 'haiku',
 				permissionMode: 'acceptEdits',
@@ -156,6 +159,7 @@ describe('Multi-Turn Conversation', () => {
 		test('should correctly transition through states for each turn', async () => {
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: process.cwd(),
+				title: 'State Transitions Test',
 				config: {
 					model: 'haiku',
 					permissionMode: 'acceptEdits',

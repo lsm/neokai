@@ -37,6 +37,7 @@ describe('Authentication Integration (API-dependent)', () => {
 		test('should create session only if authenticated', async () => {
 			const result = (await daemon.messageHub.call('session.create', {
 				workspacePath: `${TMP_DIR}/test-auth`,
+				title: 'Auth Test Session',
 				config: { model: 'haiku' }, // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 			})) as { sessionId: string };
 
@@ -49,6 +50,7 @@ describe('Authentication Integration (API-dependent)', () => {
 
 			expect(sessionResult.session).toBeDefined();
 			expect(sessionResult.session.id).toBe(result.sessionId);
+			expect(sessionResult.session.title).toBe('Auth Test Session');
 		});
 	});
 });

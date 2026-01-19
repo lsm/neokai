@@ -73,6 +73,7 @@ describe('SDK Streaming Behavior', () => {
 
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath,
+				title: 'Accept Edits Test',
 				config: {
 					model: 'default',
 					permissionMode: 'acceptEdits', // Works on root and non-root
@@ -107,6 +108,7 @@ describe('SDK Streaming Behavior', () => {
 
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath,
+				title: 'Message Processing Test',
 				config: {
 					model: 'default',
 					permissionMode: 'acceptEdits',
@@ -142,6 +144,7 @@ describe('SDK Streaming Behavior', () => {
 
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath,
+				title: 'Simple Prompt Test',
 				config: {
 					model: 'default',
 					permissionMode: 'acceptEdits',
@@ -176,6 +179,7 @@ describe('SDK Streaming Behavior', () => {
 
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath,
+				title: 'Session State Test',
 				config: {
 					model: 'default',
 					permissionMode: 'acceptEdits',
@@ -214,6 +218,7 @@ describe('SDK Streaming Behavior', () => {
 
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath,
+				title: 'Persistence Reload Test',
 				config: {
 					model: 'default',
 					permissionMode: 'acceptEdits',

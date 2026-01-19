@@ -27,6 +27,7 @@ export function setupSessionHandlers(
 			config: req.config,
 			useWorktree: req.useWorktree,
 			worktreeBaseBranch: req.worktreeBaseBranch,
+			title: req.title,
 		});
 
 		// Return the full session object so client can optimistically update

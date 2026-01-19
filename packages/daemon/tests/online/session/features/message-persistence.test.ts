@@ -72,6 +72,7 @@ describe('Message Persistence', () => {
 
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath,
+				title: 'Persist Messages Test',
 				config: { model: 'haiku', permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 
@@ -97,6 +98,7 @@ describe('Message Persistence', () => {
 
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath,
+				title: 'Message Order Test',
 				config: { model: 'haiku', permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 
@@ -129,6 +131,7 @@ describe('Message Persistence', () => {
 
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath,
+				title: 'Interrupt Persistence Test',
 				config: { model: 'haiku', permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 
@@ -166,6 +169,7 @@ describe('Message Persistence', () => {
 
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath,
+				title: 'State Consistency Test',
 				config: { model: 'haiku', permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 
@@ -197,6 +201,7 @@ describe('Message Persistence', () => {
 
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath,
+				title: 'Concurrent Messages Test',
 				config: { model: 'haiku', permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 

@@ -63,6 +63,7 @@ describe('Model Switching Integration', () => {
 			// Create session
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-id`,
+				title: 'Model Switch Alias Test',
 				config: {
 					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				},
@@ -92,6 +93,7 @@ describe('Model Switching Integration', () => {
 			// Create session
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-alias`,
+				title: 'Model Families Test',
 				config: {
 					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				},
@@ -114,6 +116,7 @@ describe('Model Switching Integration', () => {
 			// Create session
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-same`,
+				title: 'Same Model Switch Test',
 				config: {
 					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				},
@@ -136,6 +139,7 @@ describe('Model Switching Integration', () => {
 			// Create session
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-invalid`,
+				title: 'Invalid Model ID Test',
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
@@ -162,6 +166,7 @@ describe('Model Switching Integration', () => {
 			// Create session
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-invalid-alias`,
+				title: 'Invalid Model Alias Test',
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
@@ -181,6 +186,7 @@ describe('Model Switching Integration', () => {
 			// Create session
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-families`,
+				title: 'Different Model Families Test',
 				config: {
 					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				},
@@ -217,6 +223,7 @@ describe('Model Switching Integration', () => {
 			// Create session
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-state`,
+				title: 'Model Switch State Test',
 				config: {
 					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				},
@@ -282,6 +289,7 @@ describe('Model Switching Integration', () => {
 			// Create session
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: `${TMP_DIR}/test-model-switch-db`,
+				title: 'Model Switch DB Test',
 				config: {
 					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				},
@@ -331,6 +339,7 @@ describe('Model Switching Integration', () => {
 			// Create session
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: `${TMP_DIR}/test-agent-session-model-switch`,
+				title: 'Agent Session Model Switch Test',
 				config: {
 					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				},
@@ -369,6 +378,7 @@ describe('Model Switching Integration', () => {
 			// Create session
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: `${TMP_DIR}/test-rapid-switches`,
+				title: 'Rapid Switches Test',
 				config: {
 					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				},
@@ -404,6 +414,7 @@ describe('Model Switching Integration', () => {
 			// Create session (query not started yet)
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: `${TMP_DIR}/test-pre-query-switch`,
+				title: 'Pre Query Switch Test',
 				config: {
 					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				},
@@ -436,6 +447,7 @@ describe('Model Switching Integration', () => {
 			// Create session with GLM model
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: `${TMP_DIR}/test-cross-provider-glm-to-claude`,
+				title: 'GLM to Claude Test',
 				config: {
 					model: 'glm-4.7',
 				},
@@ -478,6 +490,7 @@ describe('Model Switching Integration', () => {
 			// Create session with Claude model (haiku)
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: `${TMP_DIR}/test-cross-provider-claude-to-glm`,
+				title: 'Claude to GLM Test',
 				config: {
 					model: 'haiku',
 				},
@@ -517,6 +530,7 @@ describe('Model Switching Integration', () => {
 			// Create session with a GLM model
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: `${TMP_DIR}/test-same-provider-switch`,
+				title: 'Same Provider Switch Test',
 				config: {
 					model: 'haiku', // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
 				},

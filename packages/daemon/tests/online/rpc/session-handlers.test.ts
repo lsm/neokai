@@ -138,6 +138,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 			async () => {
 				const createResult = (await daemon.messageHub.call('session.create', {
 					workspacePath: `${TMP_DIR}/liuboer-test-message-send-${Date.now()}`,
+					title: 'Message Send Test',
 					config: { model: 'haiku' },
 				})) as { sessionId: string };
 

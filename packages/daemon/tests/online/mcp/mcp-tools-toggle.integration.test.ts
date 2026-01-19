@@ -63,6 +63,7 @@ describe('MCP Tools Toggle Integration', () => {
 			// Step 1: Create session
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath,
+				title: 'MCP Tools Toggle Test',
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
@@ -148,6 +149,7 @@ describe('MCP Tools Toggle Integration', () => {
 			// Step 1: Create session
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath,
+				title: 'MCP Config Storage Test',
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;

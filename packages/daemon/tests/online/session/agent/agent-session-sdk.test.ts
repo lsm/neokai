@@ -167,6 +167,7 @@ describe('AgentSession SDK Integration', () => {
 		test('should send message and receive real SDK response', async () => {
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: process.cwd(),
+				title: 'Send Message Test',
 				config: { model: 'haiku', permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 
@@ -193,6 +194,7 @@ describe('AgentSession SDK Integration', () => {
 		test('should handle message with images', async () => {
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: process.cwd(),
+				title: 'Image Message Test',
 				config: { model: 'haiku', permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 
@@ -232,6 +234,7 @@ describe('AgentSession SDK Integration', () => {
 		test('should enqueue multiple messages in sequence', async () => {
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: process.cwd(),
+				title: 'Enqueue Messages Test',
 				config: { model: 'haiku', permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 
@@ -258,6 +261,7 @@ describe('AgentSession SDK Integration', () => {
 		test('should interrupt ongoing processing', async () => {
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: process.cwd(),
+				title: 'Interrupt Test',
 				config: { model: 'haiku', permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 
@@ -280,6 +284,7 @@ describe('AgentSession SDK Integration', () => {
 		test('should broadcast sdk.message events via WebSocket', async () => {
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: process.cwd(),
+				title: 'WebSocket Events Test',
 				config: { model: 'haiku', permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 
@@ -328,6 +333,7 @@ describe('AgentSession SDK Integration', () => {
 		test('should transition through processing states', async () => {
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: process.cwd(),
+				title: 'State Transitions Test',
 				config: { model: 'haiku', permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 
@@ -355,6 +361,7 @@ describe('AgentSession SDK Integration', () => {
 		test('should handle multiple messages in sequence', async () => {
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: process.cwd(),
+				title: 'Multiple Messages Test',
 				config: { model: 'haiku', permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 
@@ -381,6 +388,7 @@ describe('AgentSession SDK Integration', () => {
 		test('should handle interrupt gracefully on active session', async () => {
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath: process.cwd(),
+				title: 'Interrupt Event Test',
 				config: { model: 'haiku', permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 

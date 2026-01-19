@@ -52,6 +52,7 @@ describe('SDK SIGINT Cleanup (Online)', () => {
 				// Create a session via WebSocket RPC
 				const sessionResult = (await daemon.messageHub.call('session.create', {
 					workspacePath: `${TMP_DIR}/test-sigint-active-query`,
+					title: 'SIGINT Cleanup Test',
 				})) as { sessionId: string };
 
 				const { sessionId } = sessionResult;

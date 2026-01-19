@@ -33,6 +33,7 @@ export interface CreateSessionParams {
 	config?: Partial<Session['config']>;
 	useWorktree?: boolean;
 	worktreeBaseBranch?: string;
+	title?: string; // Optional title - if provided, skips auto-title generation
 }
 
 export class SessionLifecycle {
@@ -62,18 +63,25 @@ export class SessionLifecycle {
 		// Validate and resolve model ID using cached models
 		const modelId = await this.getValidatedModelId(params.config?.model);
 
-		// Create worktree immediately with session/{uuid} branch
-		// This allows SDK query to start without waiting for title generation
+		// Determine if title should be auto-generated
+		// If title is provided, mark as generated to skip auto-title generation
+		const providedTitle = params.title?.trim();
+		const shouldSkipAutoTitle = Boolean(providedTitle);
+
+		// Create worktree with appropriate branch name
+		// If title provided, use meaningful branch name; otherwise use session/{uuid}
 		let worktreeMetadata: WorktreeMetadata | undefined;
 		let sessionWorkspacePath = baseWorkspacePath;
+		const initialBranchName = shouldSkipAutoTitle
+			? generateBranchName(providedTitle, sessionId)
+			: `session/${sessionId}`;
 
 		if (!this.config.disableWorktrees) {
 			try {
 				const result = await this.worktreeManager.createWorktree({
 					sessionId,
 					repoPath: baseWorkspacePath,
-					// Use session/{uuid} as initial branch name (will be renamed after title gen)
-					branchName: `session/${sessionId}`,
+					branchName: initialBranchName,
 					baseBranch: params.worktreeBaseBranch || 'HEAD',
 				});
 
@@ -95,7 +103,7 @@ export class SessionLifecycle {
 
 		const session: Session = {
 			id: sessionId,
-			title: 'New Session',
+			title: providedTitle || 'New Session',
 			workspacePath: sessionWorkspacePath,
 			createdAt: new Date().toISOString(),
 			lastActiveAt: new Date().toISOString(),
@@ -118,7 +126,8 @@ export class SessionLifecycle {
 				outputTokens: 0,
 				totalCost: 0,
 				toolCallCount: 0,
-				titleGenerated: false,
+				// Mark as generated if title was provided to skip auto-title generation
+				titleGenerated: shouldSkipAutoTitle,
 				// Workspace is already initialized (worktree created or using base path)
 				workspaceInitialized: true,
 			},
