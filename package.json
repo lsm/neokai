@@ -5,10 +5,10 @@
 	],
 	"scripts": {
 		"postinstall": "mkdir -p node_modules/react && ln -sf ../preact/jsx-runtime node_modules/react/jsx-runtime 2>/dev/null || true",
-		"lint": "bun node_modules/.bin/oxlint .",
-		"lint:fix": "bun node_modules/.bin/oxlint --fix .",
-		"format": "bun x biome format --write .",
-		"format:check": "bun x biome format .",
+		"lint": "oxlint .",
+		"lint:fix": "oxlint --fix .",
+		"format": "biome format --write .",
+		"format:check": "biome format .",
 		"typecheck": "tsc --build --noEmit",
 		"knip": "knip --include files,dependencies,exports --no-config-hints",
 		"knip:all": "knip",
@@ -23,12 +23,12 @@
 		"test:e2e:clean": "bun run cleanup:all && bun run test:e2e"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.3.11",
-		"@testing-library/preact": "^3.2.4",
+		"@biomejs/biome": "2.3.11",
+		"@testing-library/preact": "3.2.4",
 		"dotenv": "17.2.3",
-		"happy-dom": "^20.1.0",
-		"knip": "^5.80.2",
-		"oxlint": "^1.39.0",
+		"happy-dom": "20.1.0",
+		"knip": "5.80.2",
+		"oxlint": "1.39.0",
 		"typescript": "5.9.3"
 	}
 }
