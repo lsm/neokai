@@ -22,32 +22,14 @@
  * - With GLM_API_KEY: haiku → glm-4.5-air (via ANTHROPIC_DEFAULT_HAIKU_MODEL)
  * - With ANTHROPIC_API_KEY: haiku → Claude Haiku
  * - This makes tests provider-agnostic and easy to switch
- *
- * MOCK LEAK PREVENTION:
- * - Explicitly restores any mocks before running these tests
- * - This prevents mock leakage from agent-session-mocked.test.ts
  */
 
-import { describe, test, expect, beforeAll, mock } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import 'dotenv/config';
 
 // Check for GLM credentials
 const GLM_API_KEY = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
-
-/**
- * CRITICAL: Restore any mocks before running these tests.
- *
- * In CI, agent-session-mocked.test.ts runs before this file and mocks
- * the Claude Agent SDK. Even though it calls mock.restore() in afterAll(),
- * there appears to be a race condition or Bun bug where the mock is still
- * active when this test file runs.
- *
- * Explicitly restoring here ensures we get the real SDK.
- */
-beforeAll(() => {
-	mock.restore();
-});
 
 // Set up GLM provider environment if GLM_API_KEY is available
 // This makes 'haiku' model automatically map to glm-4.5-air

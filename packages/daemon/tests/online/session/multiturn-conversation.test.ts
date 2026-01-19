@@ -15,21 +15,15 @@
  * These tests run in parallel with other tests for faster CI execution.
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { DaemonServerContext } from '../helpers/daemon-server-helper';
 import { spawnDaemonServer } from '../helpers/daemon-server-helper';
 import { sendMessage, waitForIdle, getProcessingState } from '../helpers/daemon-test-helpers';
 
-/**
- * CRITICAL: Restore any mocks before running these tests.
- * This prevents mock leakage from unit tests that mock the SDK.
- */
 describe('Multi-Turn Conversation', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		// Restore mocks to ensure we use the real SDK
-		mock.restore();
 		daemon = await spawnDaemonServer();
 	});
 

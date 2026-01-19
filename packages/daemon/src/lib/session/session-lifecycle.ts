@@ -73,7 +73,7 @@ export class SessionLifecycle {
 		let worktreeMetadata: WorktreeMetadata | undefined;
 		let sessionWorkspacePath = baseWorkspacePath;
 		const initialBranchName = shouldSkipAutoTitle
-			? generateBranchName(providedTitle, sessionId)
+			? generateBranchName(providedTitle!, sessionId) // Title is defined when shouldSkipAutoTitle is true
 			: `session/${sessionId}`;
 
 		if (!this.config.disableWorktrees) {

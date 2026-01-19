@@ -23,7 +23,7 @@
  * These tests run in parallel with other tests for faster CI execution.
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import 'dotenv/config';
 import type { DaemonServerContext } from '../../helpers/daemon-server-helper';
 import { spawnDaemonServer } from '../../helpers/daemon-server-helper';
@@ -139,17 +139,11 @@ async function waitForWebSocketMessage(ws: WebSocket, timeout = 5000): Promise<u
 	});
 }
 
-/**
- * CRITICAL: Restore any mocks before running these tests.
- * This prevents mock leakage from unit tests that mock the SDK.
- */
 // Tests will FAIL if credentials are not available
 describe('AgentSession SDK Integration', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		// Restore mocks to ensure we use the real SDK
-		mock.restore();
 		daemon = await spawnDaemonServer();
 	});
 

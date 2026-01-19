@@ -22,7 +22,7 @@
  * - This makes tests provider-agnostic and easy to switch
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import 'dotenv/config';
 import type { DaemonServerContext } from '../../helpers/daemon-server-helper';
 import { spawnDaemonServer } from '../../helpers/daemon-server-helper';
@@ -54,8 +54,6 @@ describe('Message Persistence', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		// Restore mocks to ensure we use the real SDK
-		mock.restore();
 		daemon = await spawnDaemonServer();
 	});
 

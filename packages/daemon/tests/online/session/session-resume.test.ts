@@ -10,7 +10,7 @@
  * the SDK session ID is preserved to allow continuous conversation.
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { DaemonServerContext } from '../helpers/daemon-server-helper';
 import { spawnDaemonServer } from '../helpers/daemon-server-helper';
 import { sendMessage, waitForIdle, getSession } from '../helpers/daemon-test-helpers';
@@ -22,7 +22,6 @@ describe('Session Resume', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		mock.restore();
 		daemon = await spawnDaemonServer();
 	});
 

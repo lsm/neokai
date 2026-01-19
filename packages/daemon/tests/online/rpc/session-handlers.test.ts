@@ -11,7 +11,7 @@
  * - Tests will FAIL if credentials are not available (no skip)
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { DaemonServerContext } from '../helpers/daemon-server-helper';
 import { spawnDaemonServer } from '../helpers/daemon-server-helper';
 
@@ -22,8 +22,6 @@ describe('Session RPC Handlers (API-dependent)', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		// Restore mocks to ensure we use the real SDK
-		mock.restore();
 		daemon = await spawnDaemonServer();
 	});
 
