@@ -151,40 +151,41 @@ export class AnthropicProvider implements Provider {
 
 	/**
 	 * Get static fallback models when SDK is unavailable
+	 * Claude 4.5 models only (200K context window)
 	 */
 	private getStaticModels(): ModelInfo[] {
 		return [
 			{
-				id: 'default',
-				name: 'Sonnet 4.5',
+				id: 'claude-sonnet-4-5-20250929',
+				name: 'Claude Sonnet 4.5 (2024-09-29)',
 				alias: 'default',
 				family: 'sonnet',
 				provider: 'anthropic',
 				contextWindow: 200000,
 				description: 'Best for everyday tasks',
-				releaseDate: '2024-10-22',
+				releaseDate: '2024-09-29',
 				available: true,
 			},
 			{
-				id: 'opus',
-				name: 'Opus 4.5',
+				id: 'claude-opus-4-5-20251124',
+				name: 'Claude Opus 4.5 (2025-11-24)',
 				alias: 'opus',
 				family: 'opus',
 				provider: 'anthropic',
 				contextWindow: 200000,
 				description: 'Most capable model for complex tasks',
-				releaseDate: '2025-01-19',
+				releaseDate: '2025-11-24',
 				available: true,
 			},
 			{
-				id: 'haiku',
-				name: 'Haiku 3.5',
+				id: 'claude-haiku-4-5-20251015',
+				name: 'Claude Haiku 4.5 (2025-10-15)',
 				alias: 'haiku',
 				family: 'haiku',
 				provider: 'anthropic',
 				contextWindow: 200000,
 				description: 'Fast and efficient model',
-				releaseDate: '2024-10-22',
+				releaseDate: '2025-10-15',
 				available: true,
 			},
 		];

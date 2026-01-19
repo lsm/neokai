@@ -39,12 +39,26 @@ export class GlmProvider implements Provider {
 	/**
 	 * Static model definitions for GLM
 	 * These cannot be loaded dynamically from SDK
+	 *
+	 * All GLM-4.5 series models have 128K context window (verified from official docs)
+	 * Source: https://docs.bigmodel.cn/cn/guide/models/text/glm-4.5
 	 */
 	static readonly MODELS: ModelInfo[] = [
 		{
+			id: 'glm-4.5',
+			name: 'GLM-4.5',
+			alias: 'glm',
+			family: 'glm',
+			provider: 'glm',
+			contextWindow: 128000,
+			description: 'GLM-4.5 · Flagship 355B MoE model for complex tasks',
+			releaseDate: '2024-10-01',
+			available: true,
+		},
+		{
 			id: 'glm-4.7',
 			name: 'GLM-4.7',
-			alias: 'glm',
+			alias: 'glm-4.7',
 			family: 'glm',
 			provider: 'glm',
 			contextWindow: 128000,
@@ -105,13 +119,17 @@ export class GlmProvider implements Provider {
 	 * Maps Anthropic tiers to GLM models
 	 */
 	getModelForTier(tier: ModelTier): string | undefined {
-		// GLM has two main models:
-		// - glm-4.5-air: Fast model (maps to haiku tier)
-		// - glm-4.7: Capable model (maps to sonnet/opus/default tiers)
+		// GLM model mapping by tier:
+		// - haiku tier -> glm-4.5-air (fastest)
+		// - sonnet/default tiers -> glm-4.5 (flagship, balanced)
+		// - opus tier -> glm-4.7 (most capable)
 		if (tier === 'haiku') {
 			return 'glm-4.5-air';
 		}
-		return 'glm-4.7';
+		if (tier === 'opus') {
+			return 'glm-4.7';
+		}
+		return 'glm-4.5'; // sonnet and default use flagship model
 	}
 
 	/**
@@ -148,8 +166,12 @@ export class GlmProvider implements Provider {
 		// When SDK uses 'haiku', 'default', or 'opus', translate to actual GLM model
 		if (modelId === 'glm-4.5-air') {
 			envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.5-air';
+		} else if (modelId === 'glm-4.7') {
+			// glm-4.7 maps to opus tier (most capable)
+			envVars.ANTHROPIC_DEFAULT_OPUS_MODEL = 'glm-4.7';
+			envVars.ANTHROPIC_DEFAULT_SONNET_MODEL = 'glm-4.7';
 		} else {
-			// glm-4.7 and other GLM models map to default (Sonnet) and Opus tiers
+			// glm-4.5 and other GLM models map to default (Sonnet) tier
 			envVars.ANTHROPIC_DEFAULT_SONNET_MODEL = modelId;
 			envVars.ANTHROPIC_DEFAULT_OPUS_MODEL = modelId;
 		}
@@ -164,18 +186,22 @@ export class GlmProvider implements Provider {
 	/**
 	 * Translate GLM model ID to SDK-compatible ID
 	 *
-	 * GLM model IDs (glm-4.7, glm-4.5-air) are not recognized by the SDK.
+	 * GLM model IDs are not recognized by the SDK.
 	 * The SDK only knows Anthropic model IDs: default, opus, haiku.
 	 *
 	 * Translation:
 	 * - glm-4.5-air → haiku (fast tier)
-	 * - glm-4.7 → default (sonnet tier)
+	 * - glm-4.5 → default (sonnet tier, flagship)
+	 * - glm-4.7 → opus (most capable)
 	 */
 	translateModelIdForSdk(modelId: string): string {
 		if (modelId === 'glm-4.5-air') {
 			return 'haiku';
 		}
-		return 'default'; // All other GLM models use 'default' (Sonnet tier)
+		if (modelId === 'glm-4.7') {
+			return 'opus';
+		}
+		return 'default'; // glm-4.5 and others use 'default' (Sonnet tier)
 	}
 
 	/**
