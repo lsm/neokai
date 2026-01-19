@@ -340,8 +340,6 @@ jobs:
       - name: Run MessageHub RPC tests
         working-directory: packages/yuanshen
         run: zig build test-hub-rpc
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
   test-yuanshen-hub-events:
     name: Test Yuanshen (MessageHub Events)
@@ -367,8 +365,6 @@ jobs:
       - name: Run MessageHub Events tests
         working-directory: packages/yuanshen
         run: zig build test-hub-events
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
   test-yuanshen-message-hub:
     name: Test Yuanshen (MessageHubClient)
@@ -394,8 +390,6 @@ jobs:
       - name: Run MessageHubClient tests
         working-directory: packages/yuanshen
         run: zig build test-message-hub
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
   test-web:
     name: Test Web
