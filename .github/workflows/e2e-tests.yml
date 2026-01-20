@@ -184,3 +184,8 @@ jobs:
             packages/e2e/test-results/
             packages/e2e/playwright-report/
           retention-days: 7
+
+      # Note: E2E server-side coverage requires running the server with c8/nyc
+      # which is complex with Bun. For now, E2E coverage is not collected.
+      # To enable, wrap server start with: npx c8 --reporter=lcov bun run main.ts
+      # and stop server gracefully to generate coverage.

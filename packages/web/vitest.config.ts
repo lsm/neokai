@@ -12,6 +12,11 @@ export default defineConfig({
 		exclude: ['node_modules', 'dist'],
 		globals: true,
 		setupFiles: [],
+		coverage: {
+			provider: 'v8',
+			reportsDirectory: 'coverage',
+			reporter: ['text', 'lcov'],
+		},
 	},
 
 	resolve: {

@@ -54,9 +54,18 @@ jobs:
 
       - name: Run online tests (${{ matrix.category }})
         working-directory: packages/daemon
-        run: bun test tests/online/${{ matrix.category }}
+        run: bun test tests/online/${{ matrix.category }} --coverage --coverage-reporter=lcov --coverage-dir=coverage
         env:
           # Default: GLM_API_KEY for most tests
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           # Override: CLAUDE_CODE_OAUTH_TOKEN for session/agent and session
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-daemon-online-${{ matrix.category }}
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore

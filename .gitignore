@@ -42,3 +42,8 @@ playwright-report/
 # Git worktrees
 .worktrees/
 **/settings.local.json
+# Coverage output
+coverage/
+coverage-merged/
+coverage-parts/
+**/coverage/

@@ -69,7 +69,16 @@ jobs:
 
       - name: Run integration tests (database)
         working-directory: packages/daemon
-        run: bun test tests/offline/integration/database
+        run: bun test tests/offline/integration/database --coverage --coverage-reporter=lcov --coverage-dir=coverage
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-daemon-integration-database
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
 
   test-daemon-integration-filesystem:
     name: Daemon Integration (filesystem)
@@ -89,7 +98,16 @@ jobs:
 
       - name: Run integration tests (filesystem)
         working-directory: packages/daemon
-        run: bun test tests/offline/integration/filesystem
+        run: bun test tests/offline/integration/filesystem --coverage --coverage-reporter=lcov --coverage-dir=coverage
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-daemon-integration-filesystem
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
 
   test-daemon-integration-git:
     name: Daemon Integration (git)
@@ -109,7 +127,16 @@ jobs:
 
       - name: Run integration tests (git)
         working-directory: packages/daemon
-        run: bun test tests/offline/integration/git
+        run: bun test tests/offline/integration/git --coverage --coverage-reporter=lcov --coverage-dir=coverage
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-daemon-integration-git
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
 
   test-daemon-integration-websocket:
     name: Daemon Integration (websocket)
@@ -129,7 +156,16 @@ jobs:
 
       - name: Run integration tests (websocket)
         working-directory: packages/daemon
-        run: bun test tests/offline/integration/websocket
+        run: bun test tests/offline/integration/websocket --coverage --coverage-reporter=lcov --coverage-dir=coverage
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-daemon-integration-websocket
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
 
   test-daemon-integration-rpc:
     name: Daemon Integration (rpc)
@@ -149,7 +185,16 @@ jobs:
 
       - name: Run integration tests (rpc)
         working-directory: packages/daemon
-        run: bun test tests/offline/integration/rpc
+        run: bun test tests/offline/integration/rpc --coverage --coverage-reporter=lcov --coverage-dir=coverage
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-daemon-integration-rpc
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
 
   test-daemon-integration-session:
     name: Daemon Integration (session)
@@ -169,7 +214,16 @@ jobs:
 
       - name: Run integration tests (session)
         working-directory: packages/daemon
-        run: bun test tests/offline/integration/session
+        run: bun test tests/offline/integration/session --coverage --coverage-reporter=lcov --coverage-dir=coverage
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-daemon-integration-session
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
 
   test-daemon-integration-components:
     name: Daemon Integration (components)
@@ -189,7 +243,16 @@ jobs:
 
       - name: Run integration tests (components)
         working-directory: packages/daemon
-        run: bun test tests/offline/integration/components
+        run: bun test tests/offline/integration/components --coverage --coverage-reporter=lcov --coverage-dir=coverage
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-daemon-integration-components
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
 
   test-daemon-integration-mcp:
     name: Daemon Integration (mcp)
@@ -209,7 +272,16 @@ jobs:
 
       - name: Run integration tests (mcp)
         working-directory: packages/daemon
-        run: bun test tests/offline/integration/mcp
+        run: bun test tests/offline/integration/mcp --coverage --coverage-reporter=lcov --coverage-dir=coverage
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-daemon-integration-mcp
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
 
   # Unit tests - pure logic with mocks only
   test-daemon-unit:
@@ -230,10 +302,19 @@ jobs:
 
       - name: Run unit tests
         working-directory: packages/daemon
-        run: bun test tests/offline/unit
+        run: bun test tests/offline/unit --coverage --coverage-reporter=lcov --coverage-dir=coverage
         env:
           GLM_API_KEY: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-daemon-unit
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
 
   test-daemon-providers:
     name: Daemon Providers
@@ -253,7 +334,16 @@ jobs:
 
       - name: Run provider tests
         working-directory: packages/daemon
-        run: bun test tests/offline/providers
+        run: bun test tests/offline/providers --coverage --coverage-reporter=lcov --coverage-dir=coverage
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-daemon-providers
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
 
   test-shared:
     name: Test Shared
@@ -273,7 +363,16 @@ jobs:
 
       - name: Run unit tests
         working-directory: packages/shared
-        run: bun test
+        run: bun test --coverage --coverage-reporter=lcov --coverage-dir=coverage
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-shared
+          path: packages/shared/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
 
   test-cli:
     name: Test CLI
@@ -293,7 +392,16 @@ jobs:
 
       - name: Run CLI tests
         working-directory: packages/cli
-        run: bun test
+        run: bun test --coverage --coverage-reporter=lcov --coverage-dir=coverage
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-cli
+          path: packages/cli/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
 
   test-web:
     name: Test Web
@@ -313,7 +421,16 @@ jobs:
 
       - name: Run web tests
         working-directory: packages/web
-        run: bunx vitest run
+        run: bunx vitest run --coverage --coverage.reporter=lcov --coverage.reportsDirectory=coverage
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-web
+          path: packages/web/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
 
   typecheck:
     name: Type Check
