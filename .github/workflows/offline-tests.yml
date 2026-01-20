@@ -72,6 +72,7 @@ jobs:
         run: bun test tests/offline/integration/database --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
       - name: Upload coverage
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -101,6 +102,7 @@ jobs:
         run: bun test tests/offline/integration/filesystem --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
       - name: Upload coverage
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -130,6 +132,7 @@ jobs:
         run: bun test tests/offline/integration/git --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
       - name: Upload coverage
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -159,6 +162,7 @@ jobs:
         run: bun test tests/offline/integration/websocket --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
       - name: Upload coverage
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -188,6 +192,7 @@ jobs:
         run: bun test tests/offline/integration/rpc --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
       - name: Upload coverage
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -217,6 +222,7 @@ jobs:
         run: bun test tests/offline/integration/session --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
       - name: Upload coverage
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -246,6 +252,7 @@ jobs:
         run: bun test tests/offline/integration/components --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
       - name: Upload coverage
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -275,6 +282,7 @@ jobs:
         run: bun test tests/offline/integration/mcp --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
       - name: Upload coverage
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -308,6 +316,7 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ""
 
       - name: Upload coverage
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -337,6 +346,7 @@ jobs:
         run: bun test tests/offline/providers --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
       - name: Upload coverage
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -366,6 +376,7 @@ jobs:
         run: bun test --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
       - name: Upload coverage
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -395,6 +406,7 @@ jobs:
         run: bun test --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
       - name: Upload coverage
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -424,6 +436,7 @@ jobs:
         run: bunx vitest run --coverage --coverage.reporter=lcov --coverage.reportsDirectory=coverage
 
       - name: Upload coverage
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         if: always()
         with:
