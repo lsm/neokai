@@ -4,6 +4,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { ProviderRegistry, resetProviderRegistry } from '../../../src/lib/providers/registry';
+import { resetProviderFactory } from '../../../src/lib/providers/factory';
 import type { Provider } from '@liuboer/shared/provider';
 import type { ModelInfo } from '@liuboer/shared';
 import type { ProviderSdkConfig } from '@liuboer/shared/provider';
@@ -66,11 +67,13 @@ describe('ProviderRegistry', () => {
 
 	beforeEach(() => {
 		resetProviderRegistry();
+		resetProviderFactory();
 		registry = new ProviderRegistry();
 	});
 
 	afterEach(() => {
 		resetProviderRegistry();
+		resetProviderFactory();
 	});
 
 	describe('register', () => {

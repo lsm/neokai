@@ -3,7 +3,7 @@
  *
  * Direct test of Claude Agent SDK with GLM using minimal settings.
  * Tests transparent provider mapping for all model tiers:
- * - 'haiku' model → GLM-4.5-Air
+ * - 'haiku' model → glm-4.7-FlashX (fast model)
  * - 'default' (sonnet) model → GLM-4.7
  * - 'opus' model → GLM-4.7
  *
@@ -31,13 +31,8 @@ import { tmpdir } from 'node:os';
 const GLM_API_KEY = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
 
 describe('GLM SDK - Minimal Direct Test', () => {
-	test('should work with GLM via haiku model (glm-4.5-air)', async () => {
-		if (!GLM_API_KEY) {
-			console.log('Skipping test - GLM_API_KEY not set');
-			return;
-		}
-
-		console.log('[GLM Test] Starting minimal SDK test with haiku → glm-4.5-air...');
+	test('should work with GLM via haiku model (glm-4.7-FlashX)', async () => {
+		console.log('[GLM Test] Starting minimal SDK test with haiku → glm-4.7-FlashX...');
 		console.log('[GLM Test] API Key:', GLM_API_KEY.substring(0, 10) + '...');
 
 		// Set env vars in parent process - SDK subprocess inherits them
@@ -52,8 +47,8 @@ describe('GLM SDK - Minimal Direct Test', () => {
 		process.env.ANTHROPIC_BASE_URL = 'https://open.bigmodel.cn/api/anthropic';
 		process.env.API_TIMEOUT_MS = '3000000';
 		process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
-		// Map 'haiku' to glm-4.5-air
-		process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.5-air';
+		// Map 'haiku' to glm-4.7-FlashX (fast model)
+		process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.7-FlashX';
 
 		console.log('[GLM Test] Env vars set in parent process:');
 		console.log(
@@ -74,7 +69,7 @@ describe('GLM SDK - Minimal Direct Test', () => {
 			const agentQuery = query({
 				prompt: 'Say "Hello from GLM" in exactly 5 words.',
 				options: {
-					model: 'haiku', // Maps to glm-4.5-air via env var
+					model: 'haiku', // Maps to glm-4.7-FlashX via env var
 					cwd: tempDir,
 					permissionMode: 'acceptEdits',
 					settingSources: [],

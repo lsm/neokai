@@ -26,6 +26,7 @@ export {
 	isProviderSystemInitialized,
 	registerCustomProvider,
 	unregisterProvider,
+	resetProviderFactory,
 } from './factory.js';
 
 // Registry

@@ -11,15 +11,12 @@
  * 4. Message order is maintained
  *
  * REQUIREMENTS:
- * - Some tests require GLM_API_KEY (or ZHIPU_API_KEY)
+ * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
  * - Makes real API calls (costs money, uses rate limits)
- * - Tests will FAIL if credentials are not available
  *
- * MODEL MAPPING:
- * - Uses 'haiku' model (provider-agnostic)
- * - With GLM_API_KEY: haiku → glm-4.5-air (via ANTHROPIC_DEFAULT_HAIKU_MODEL)
- * - With ANTHROPIC_API_KEY: haiku → Claude Haiku
- * - This makes tests provider-agnostic and easy to switch
+ * MODEL:
+ * - Uses 'haiku-4.5' (faster and cheaper than Sonnet for tests)
+ * - Note: Short alias 'haiku' doesn't work with Claude OAuth (SDK hangs)
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -33,18 +30,6 @@ import {
 	getProcessingState,
 	interrupt,
 } from '../../helpers/daemon-test-helpers';
-
-// Check for GLM credentials
-const GLM_API_KEY = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
-
-// Set up GLM provider environment if GLM_API_KEY is available
-// This makes 'haiku' model automatically map to glm-4.5-air
-if (GLM_API_KEY) {
-	process.env.ANTHROPIC_AUTH_TOKEN = GLM_API_KEY;
-	process.env.ANTHROPIC_BASE_URL = 'https://open.bigmodel.cn/api/anthropic';
-	process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.5-air';
-	process.env.API_TIMEOUT_MS = '3000000';
-}
 
 // Use temp directory for test database
 const TMP_DIR = process.env.TMPDIR || '/tmp';
@@ -71,7 +56,7 @@ describe('Message Persistence', () => {
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath,
 				title: 'Persist Messages Test',
-				config: { model: 'haiku', permissionMode: 'acceptEdits' },
+				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
@@ -97,7 +82,7 @@ describe('Message Persistence', () => {
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath,
 				title: 'Message Order Test',
-				config: { model: 'haiku', permissionMode: 'acceptEdits' },
+				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
@@ -130,7 +115,7 @@ describe('Message Persistence', () => {
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath,
 				title: 'Interrupt Persistence Test',
-				config: { model: 'haiku', permissionMode: 'acceptEdits' },
+				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
@@ -168,7 +153,7 @@ describe('Message Persistence', () => {
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath,
 				title: 'State Consistency Test',
-				config: { model: 'haiku', permissionMode: 'acceptEdits' },
+				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
@@ -200,7 +185,7 @@ describe('Message Persistence', () => {
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath,
 				title: 'Concurrent Messages Test',
-				config: { model: 'haiku', permissionMode: 'acceptEdits' },
+				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;

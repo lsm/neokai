@@ -32,6 +32,8 @@ export async function sendMessage(
  * Wait for the agent to reach a specific processing state
  *
  * Uses state.session subscription to monitor agent state changes.
+ * Also checks the current state first to handle the case where
+ * processing completes before the subscription is set up.
  *
  * NOTE: The state structure uses 'agentState' (not 'processingState').
  * See SessionState interface in @liuboer/shared/src/state-types.ts
@@ -42,11 +44,28 @@ export async function waitForProcessingState(
 	targetStatus: string,
 	timeout = 30000
 ): Promise<void> {
+	// First check if we're already in the target state
+	// This handles the race condition where processing completes before subscription
+	const currentState = await getProcessingState(daemon, sessionId);
+	if (currentState.status === targetStatus) {
+		return;
+	}
+
 	return new Promise((resolve, reject) => {
 		let unsubscribe: (() => void) | undefined;
+		let resolved = false;
+
+		const cleanup = () => {
+			if (!resolved) {
+				resolved = true;
+				clearTimeout(timer);
+				unsubscribe?.();
+			}
+		};
+
 		// Set up timeout
 		const timer = setTimeout(() => {
-			unsubscribe?.();
+			cleanup();
 			reject(
 				new Error(`Timeout waiting for processing state "${targetStatus}" after ${timeout}ms`)
 			);
@@ -57,19 +76,28 @@ export async function waitForProcessingState(
 			.subscribe(
 				'state.session',
 				(data: unknown) => {
+					if (resolved) return;
 					const state = data as { agentState?: { status: string } };
 					const currentStatus = state.agentState?.status;
 
 					if (currentStatus === targetStatus) {
-						clearTimeout(timer);
-						unsubscribe?.();
+						cleanup();
 						resolve();
 					}
 				},
 				{ sessionId }
 			)
-			.then((fn) => {
+			.then(async (fn) => {
 				unsubscribe = fn;
+				// Double-check state after subscription is set up
+				// in case the state changed between our initial check and subscription
+				if (!resolved) {
+					const state = await getProcessingState(daemon, sessionId);
+					if (state.status === targetStatus) {
+						cleanup();
+						resolve();
+					}
+				}
 			});
 	});
 }

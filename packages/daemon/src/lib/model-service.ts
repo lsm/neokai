@@ -1,46 +1,19 @@
 /**
- * Model Service - Dynamic model loading from SDK
+ * Model Service - Unified model loading from providers
  *
  * This service manages model information by:
- * 1. Loading models from SDK on app startup
+ * 1. Delegating to registered providers for model lists
  * 2. Caching models with 4-hour TTL
  * 3. Lazy background refresh when cache is stale
  *
- * The model list is solely sourced from SDK's supportedModels() API.
+ * The provider system (Phase 1) replaced ad-hoc model loading with a proper abstraction.
+ * This file now acts as a facade over the provider registry.
  */
 
-import type { ModelInfo as SDKModelInfo } from '@liuboer/shared/sdk';
 import type { ModelInfo } from '@liuboer/shared';
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
-
-/**
- * GLM models - static list since we can't load from SDK
- * GLM uses Anthropic-compatible API, so these are the known models
- */
-const GLM_MODELS: ModelInfo[] = [
-	{
-		id: 'glm-4.7',
-		name: 'GLM-4.7',
-		alias: 'glm',
-		family: 'glm',
-		provider: 'glm',
-		contextWindow: 128000,
-		description: 'GLM-4.7 · Best for coding and software development',
-		releaseDate: '',
-		available: true,
-	},
-	{
-		id: 'glm-4.5-air',
-		name: 'GLM-4.5-Air',
-		alias: 'glm-air',
-		family: 'glm',
-		provider: 'glm',
-		contextWindow: 128000,
-		description: 'GLM-4.5-Air · Fast and efficient model',
-		releaseDate: '',
-		available: true,
-	},
-];
+import { initializeProviders, getProviderRegistry } from './providers/index.js';
+import type { Provider } from '@liuboer/shared/provider';
 
 /**
  * Legacy model ID mappings to SDK model IDs
@@ -63,11 +36,11 @@ const LEGACY_MODEL_MAPPINGS: Record<string, string> = {
 };
 
 /**
- * In-memory cache of dynamically loaded models
+ * In-memory cache of loaded models
  * Key: unique cache key (e.g., 'global' or session ID)
- * Value: array of SDK model info
+ * Value: array of ModelInfo
  */
-const modelsCache = new Map<string, SDKModelInfo[]>();
+const modelsCache = new Map<string, ModelInfo[]>();
 
 /**
  * Timestamp tracking for cache freshness
@@ -88,29 +61,32 @@ const refreshInProgress = new Map<string, Promise<void>>();
 
 /**
  * Get supported models from an existing Claude SDK query object
- * This is the preferred method - uses an active query to fetch models
+ * This uses the AnthropicProvider to convert SDK models to ModelInfo
  *
  * @param queryObject - Existing SDK query object from a session
  * @param cacheKey - Unique key for caching (e.g., session ID or 'global')
- * @returns Array of SDK model info, or empty array if query doesn't support it
+ * @returns Array of ModelInfo, or empty array if query doesn't support it
  */
 export async function getSupportedModelsFromQuery(
 	queryObject: Query | null,
 	cacheKey: string = 'global'
-): Promise<SDKModelInfo[]> {
+): Promise<ModelInfo[]> {
 	// Return cached if available
 	if (modelsCache.has(cacheKey)) {
 		return modelsCache.get(cacheKey)!;
 	}
 
-	// Try to get models from query object
+	// Try to get models from query object using AnthropicProvider
 	if (queryObject && typeof queryObject.supportedModels === 'function') {
 		try {
-			const models = await queryObject.supportedModels();
-			// Cache the result with timestamp
-			modelsCache.set(cacheKey, models);
-			cacheTimestamps.set(cacheKey, Date.now());
-			return models;
+			const { getAnthropicModelsFromQuery } = await import('./providers/anthropic-provider.js');
+			const models = await getAnthropicModelsFromQuery(queryObject);
+			if (models.length > 0) {
+				// Cache the result with timestamp
+				modelsCache.set(cacheKey, models);
+				cacheTimestamps.set(cacheKey, Date.now());
+				return models;
+			}
 		} catch (error) {
 			console.warn('Failed to load models from SDK:', error);
 		}
@@ -120,67 +96,12 @@ export async function getSupportedModelsFromQuery(
 }
 
 /**
- * Extract model name with version from SDK description
- * SDK description format: "Sonnet 4.5 · Best for everyday tasks"
- * Returns the part before " · " (e.g., "Sonnet 4.5")
+ * Get all available providers
  */
-function extractDisplayName(sdkModel: SDKModelInfo): string {
-	const description = sdkModel.description || '';
-
-	// Try to extract "Model X.Y" from description (format: "Model X.Y · description")
-	const separatorIndex = description.indexOf(' · ');
-	let displayName = description;
-	if (separatorIndex > 0) {
-		displayName = description.substring(0, separatorIndex);
-	} else {
-		displayName = sdkModel.displayName || sdkModel.value;
-	}
-
-	// Handle SDK's verbose default model display name
-	// SDK returns: "Use the default model (currently Sonnet 4.5)"
-	// Extract just "Sonnet 4.5" from parentheses
-	const currentlyMatch = displayName.match(/currently\s+([^)]+)/);
-	if (currentlyMatch) {
-		return currentlyMatch[1].trim();
-	}
-
-	return displayName;
-}
-
-/**
- * Convert SDK model info to our ModelInfo format
- */
-function convertSDKModelToModelInfo(sdkModel: SDKModelInfo): ModelInfo {
-	// SDK ModelInfo has: value, displayName, description
-	const modelId = sdkModel.value;
-
-	// Extract display name dynamically from description (e.g., "Sonnet 4.5")
-	const displayName = extractDisplayName(sdkModel);
-
-	// Determine family from model ID or display name
-	let family: 'opus' | 'sonnet' | 'haiku' = 'sonnet';
-	const nameLower = displayName.toLowerCase();
-	if (nameLower.includes('opus')) {
-		family = 'opus';
-	} else if (nameLower.includes('haiku')) {
-		family = 'haiku';
-	}
-
-	// Get the short alias from the mapping (e.g., 'haiku', 'opus', 'default')
-	// This allows DEFAULT_MODEL=haiku to work correctly
-	const alias = LEGACY_MODEL_MAPPINGS[modelId] || modelId;
-
-	return {
-		id: modelId,
-		name: displayName,
-		alias, // Use short alias (e.g., 'haiku', 'opus', 'default')
-		family,
-		provider: 'anthropic',
-		contextWindow: 200000, // Default context window
-		description: sdkModel.description || '',
-		releaseDate: '', // SDK doesn't provide this
-		available: true,
-	};
+function getAvailableProviders(): Provider[] {
+	const registry = getProviderRegistry();
+	// Synchronous check - we'll filter later if needed
+	return registry.getAll();
 }
 
 /**
@@ -196,34 +117,11 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 	// Start background refresh
 	const refreshPromise = (async () => {
 		try {
-			const { query } = await import('@anthropic-ai/claude-agent-sdk');
-
-			// Create a temporary query to fetch models
-			// Use 'default' as the model since SDK uses this for Sonnet
-			const tmpQuery = query({
-				prompt: '',
-				options: {
-					model: 'default',
-					cwd: process.cwd(),
-					maxTurns: 0,
-				},
-			});
-
-			try {
-				const models = await tmpQuery.supportedModels();
-				if (models && models.length > 0) {
-					modelsCache.set(cacheKey, models);
-					cacheTimestamps.set(cacheKey, Date.now());
-					console.info(
-						`[model-service] Background refresh complete: ${models.length} models loaded`
-					);
-				}
-			} finally {
-				try {
-					await tmpQuery.interrupt();
-				} catch {
-					// Ignore cleanup errors
-				}
+			const models = await loadModelsFromProviders();
+			if (models.length > 0) {
+				modelsCache.set(cacheKey, models);
+				cacheTimestamps.set(cacheKey, Date.now());
+				console.info(`[model-service] Background refresh complete: ${models.length} models loaded`);
 			}
 		} catch (error) {
 			console.warn('[model-service] Background refresh failed:', error);
@@ -236,6 +134,28 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 }
 
 /**
+ * Load models from all available providers
+ */
+async function loadModelsFromProviders(): Promise<ModelInfo[]> {
+	const providers = getAvailableProviders();
+	const allModels: ModelInfo[] = [];
+
+	for (const provider of providers) {
+		try {
+			const available = await provider.isAvailable();
+			if (!available) continue;
+
+			const models = await provider.getModels();
+			allModels.push(...models);
+		} catch (error) {
+			console.warn(`[model-service] Failed to load models from ${provider.id}:`, error);
+		}
+	}
+
+	return allModels;
+}
+
+/**
  * Check if cache is stale (older than CACHE_TTL)
  */
 function isCacheStale(cacheKey: string): boolean {
@@ -245,28 +165,17 @@ function isCacheStale(cacheKey: string): boolean {
 }
 
 /**
- * Check if GLM API key is available
- */
-function isGlmApiKeyAvailable(): boolean {
-	return !!(process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY);
-}
-
-/**
- * Get all available models - unified list including GLM when available
+ * Get all available models - unified list from all providers
  *
  * Implements lazy refresh: returns cache immediately, triggers background refresh if stale
- *
- * Returns:
- * - Anthropic models from SDK cache (opus, sonnet, haiku)
- * - GLM models (when GLM_API_KEY is available)
  *
  * @param cacheKey - Cache key to look up dynamic models
  * @returns Array of ModelInfo including all available providers
  */
 export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
-	const dynamicModels = modelsCache.get(cacheKey);
+	const cachedModels = modelsCache.get(cacheKey);
 
-	if (!dynamicModels || dynamicModels.length === 0) {
+	if (!cachedModels || cachedModels.length === 0) {
 		// Models not loaded or failed to load - return empty array
 		// Callers should initialize models first via initializeModels()
 		return [];
@@ -279,34 +188,7 @@ export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
 		});
 	}
 
-	// Filter out "Custom model" entries - these are for explicit model ID selection
-	// Keep only the recommended models with proper descriptions
-	const recommendedModels = dynamicModels.filter(
-		(m) => m.description && !m.description.toLowerCase().includes('custom model')
-	);
-
-	// Convert SDK models to our format
-	const converted = recommendedModels.map(convertSDKModelToModelInfo);
-
-	// Keep only one model per family (shouldn't have duplicates after filtering, but just in case)
-	const byFamily = new Map<string, ModelInfo>();
-	for (const model of converted) {
-		if (!byFamily.has(model.family)) {
-			byFamily.set(model.family, model);
-		}
-	}
-
-	const anthropicModels = Array.from(byFamily.values());
-
-	// Include GLM models if GLM API key is available
-	if (isGlmApiKeyAvailable()) {
-		console.info(
-			`[model-service] GLM API key detected, adding ${GLM_MODELS.length} GLM model(s) to available models`
-		);
-		return [...anthropicModels, ...GLM_MODELS];
-	}
-
-	return anthropicModels;
+	return cachedModels;
 }
 
 /**
@@ -314,7 +196,7 @@ export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
  * MUST be called before any other model functions
  *
  * @returns Promise that resolves when models are loaded
- * @throws Error if SDK fails to load models
+ * @throws Error if all providers fail to load models
  */
 export async function initializeModels(): Promise<void> {
 	const cacheKey = 'global';
@@ -327,53 +209,24 @@ export async function initializeModels(): Promise<void> {
 
 	console.info('[model-service] Loading models on app startup...');
 
+	// Initialize the provider system (registers built-in providers)
+	initializeProviders();
+
 	try {
-		const { query } = await import('@anthropic-ai/claude-agent-sdk');
-
-		// Create a temporary query to fetch models
-		// Use 'default' as the model since SDK uses this for Sonnet
-		const tmpQuery = query({
-			prompt: '',
-			options: {
-				model: 'default',
-				cwd: process.cwd(),
-				maxTurns: 0,
-			},
-		});
-
-		try {
-			const sdkModels = await tmpQuery.supportedModels();
-			if (sdkModels && sdkModels.length > 0) {
-				// Cache the raw SDK models (will be converted to ModelInfo when retrieved)
-				modelsCache.set(cacheKey, sdkModels);
-				cacheTimestamps.set(cacheKey, Date.now());
-				console.info(
-					`[model-service] Startup initialization complete: ${sdkModels.length} models loaded`
-				);
-			} else {
-				throw new Error('No models returned from SDK');
-			}
-		} finally {
-			// Fire-and-forget interrupt - awaiting can hang indefinitely
-			// The SDK's AsyncGenerator cleanup blocks if not actively consumed
-			// This is a known SDK 0.1.69 behavior
-			tmpQuery.interrupt().catch(() => {});
+		const models = await loadModelsFromProviders();
+		if (models.length > 0) {
+			// Cache the models
+			modelsCache.set(cacheKey, models);
+			cacheTimestamps.set(cacheKey, Date.now());
+			console.info(
+				`[model-service] Startup initialization complete: ${models.length} models loaded`
+			);
+		} else {
+			throw new Error('No models returned from providers');
 		}
 	} catch (error) {
 		// Log the error but don't fail startup - use static fallback models
-		console.error('[model-service] Failed to load models from SDK:', error);
-
-		// Check if GLM API key is available - if so, this is expected since GLM API
-		// doesn't support the same model listing endpoint as Anthropic
-		const isGlmAvailable = isGlmApiKeyAvailable();
-		const hasCustomBaseUrl = !!process.env.ANTHROPIC_BASE_URL;
-
-		if (isGlmAvailable || hasCustomBaseUrl) {
-			console.info('[model-service] Using static model list for GLM/custom API provider');
-		}
-
-		// Use static fallback models - daemon can still function
-		// Models will be loaded dynamically when a query is created
+		console.error('[model-service] Failed to load models from providers:', error);
 		console.warn('[model-service] Models will be loaded on-demand during query execution');
 
 		// Set empty cache to prevent repeated initialization attempts
@@ -400,7 +253,7 @@ export function clearModelsCache(cacheKey?: string): void {
  * Get current models cache (for testing)
  * @returns Map of cached models
  */
-export function getModelsCache(): Map<string, SDKModelInfo[]> {
+export function getModelsCache(): Map<string, ModelInfo[]> {
 	return new Map(modelsCache);
 }
 
@@ -408,7 +261,7 @@ export function getModelsCache(): Map<string, SDKModelInfo[]> {
  * Set models cache (for testing - allows reusing cached models)
  * @param cache Map of cached models to restore
  */
-export function setModelsCache(cache: Map<string, SDKModelInfo[]>): void {
+export function setModelsCache(cache: Map<string, ModelInfo[]>): void {
 	modelsCache.clear();
 	cacheTimestamps.clear();
 	const now = Date.now();
@@ -420,7 +273,7 @@ export function setModelsCache(cache: Map<string, SDKModelInfo[]>): void {
 
 /**
  * Get model info by ID or alias
- * Searches SDK models with support for legacy model IDs
+ * Searches available models with support for legacy model IDs
  */
 export async function getModelInfo(
 	idOrAlias: string,

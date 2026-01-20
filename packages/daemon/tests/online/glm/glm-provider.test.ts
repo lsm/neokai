@@ -135,7 +135,7 @@ describe('GLM Provider Integration', () => {
 			expect(Object.keys(providerService.getEnvVarsForModel('haiku')).length).toBe(0);
 		});
 
-		it('should check GLM availability correctly', () => {
+		it('should check GLM availability correctly', async () => {
 			const providerService = new ProviderService();
 
 			// GLM should be available if GLM_API_KEY or ZHIPU_API_KEY is set
@@ -146,11 +146,11 @@ describe('GLM Provider Integration', () => {
 				// Remove both keys
 				delete process.env.GLM_API_KEY;
 				delete process.env.ZHIPU_API_KEY;
-				expect(providerService.isGlmAvailable()).toBe(false);
+				expect(await providerService.isGlmAvailable()).toBe(false);
 
 				// Set GLM_API_KEY
 				process.env.GLM_API_KEY = 'test-key';
-				expect(providerService.isGlmAvailable()).toBe(true);
+				expect(await providerService.isGlmAvailable()).toBe(true);
 			} finally {
 				if (originalGlmKey !== undefined) {
 					process.env.GLM_API_KEY = originalGlmKey;
@@ -163,9 +163,9 @@ describe('GLM Provider Integration', () => {
 			}
 		});
 
-		it('should list available providers correctly', () => {
+		it('should list available providers correctly', async () => {
 			const providerService = new ProviderService();
-			const providers = providerService.getAvailableProviders();
+			const providers = await providerService.getAvailableProviders();
 
 			// Should have at least Anthropic and GLM
 			expect(providers.length).toBeGreaterThanOrEqual(2);
@@ -179,21 +179,22 @@ describe('GLM Provider Integration', () => {
 			const glm = providers.find((p) => p.id === 'glm');
 			expect(glm).toBeDefined();
 			expect(glm!.name).toBe('GLM (智谱AI)');
-			expect(glm!.baseUrl).toBe('https://open.bigmodel.cn/api/anthropic');
+			// Note: baseUrl is now undefined in the new provider system (legacy field)
+			expect(glm!.baseUrl).toBeUndefined();
 		});
 
-		it('should get default model for each provider', () => {
+		it('should get default model for each provider', async () => {
 			const providerService = new ProviderService();
 
-			expect(providerService.getDefaultModelForProvider('anthropic')).toBe('default');
-			expect(providerService.getDefaultModelForProvider('glm')).toBe('glm-4.7');
+			expect(await providerService.getDefaultModelForProvider('anthropic')).toBe('default');
+			expect(await providerService.getDefaultModelForProvider('glm')).toBe('glm-4.7');
 		});
 
-		it('should validate provider switch correctly', () => {
+		it('should validate provider switch correctly', async () => {
 			const providerService = new ProviderService();
 
 			// Anthropic is always valid
-			const anthropicResult = providerService.validateProviderSwitch('anthropic');
+			const anthropicResult = await providerService.validateProviderSwitch('anthropic');
 			expect(anthropicResult.valid).toBe(true);
 
 			// GLM without API key should fail (unless GLM_API_KEY is set in env)
@@ -202,9 +203,10 @@ describe('GLM Provider Integration', () => {
 			delete process.env.ZHIPU_API_KEY;
 
 			try {
-				const glmResult = providerService.validateProviderSwitch('glm');
+				const glmResult = await providerService.validateProviderSwitch('glm');
 				expect(glmResult.valid).toBe(false);
-				expect(glmResult.error).toContain('No API key');
+				// Error message format updated in new provider system
+				expect(glmResult.error).toContain('not available');
 			} finally {
 				if (originalGlmKey !== undefined) {
 					process.env.GLM_API_KEY = originalGlmKey;
@@ -212,7 +214,7 @@ describe('GLM Provider Integration', () => {
 			}
 
 			// GLM with provided API key should pass
-			const glmWithKey = providerService.validateProviderSwitch('glm', 'some-api-key');
+			const glmWithKey = await providerService.validateProviderSwitch('glm', 'some-api-key');
 			expect(glmWithKey.valid).toBe(true);
 		});
 	});
@@ -224,26 +226,49 @@ describe('GLM Provider Integration', () => {
 			const originalCache = getModelsCache();
 
 			try {
-				// Set up mock SDK models in cache (simulating what initializeModels() does)
-				const mockSdkModels = [
+				// Set up mock models in cache using ModelInfo format
+				// This simulates what the new provider-based model service loads
+				const mockModels = [
 					{
-						value: 'default',
-						displayName: 'Sonnet',
+						id: 'default',
+						name: 'Sonnet',
+						alias: 'sonnet',
+						family: 'sonnet' as const,
+						provider: 'anthropic',
+						contextWindow: 200000,
 						description: 'Sonnet 4.5 · Best for everyday tasks',
 					},
 					{
-						value: 'opus',
-						displayName: 'Opus',
+						id: 'opus',
+						name: 'Opus',
+						alias: 'opus',
+						family: 'opus' as const,
+						provider: 'anthropic',
+						contextWindow: 200000,
 						description: 'Opus 4.5 · Most capable model',
 					},
 					{
-						value: 'haiku',
-						displayName: 'Haiku',
+						id: 'haiku',
+						name: 'Haiku',
+						alias: 'haiku',
+						family: 'haiku' as const,
+						provider: 'anthropic',
+						contextWindow: 200000,
 						description: 'Haiku 3.5 · Fast and efficient',
 					},
+					// GLM models are included when GLM_API_KEY is set
+					{
+						id: 'glm-4.7',
+						name: 'GLM-4.7',
+						alias: 'glm-4.7',
+						family: 'glm' as const,
+						provider: 'glm',
+						contextWindow: 128000,
+						description: 'GLM-4.7 by 智谱AI',
+					},
 				];
-				const mockCache = new Map<string, typeof mockSdkModels>();
-				mockCache.set('global', mockSdkModels);
+				const mockCache = new Map<string, typeof mockModels>();
+				mockCache.set('global', mockModels);
 				setModelsCache(mockCache);
 
 				// Set GLM_API_KEY
@@ -254,7 +279,7 @@ describe('GLM Provider Integration', () => {
 				const models = getAvailableModels('global');
 
 				// Should include both Anthropic and GLM models
-				expect(models.length).toBeGreaterThan(3);
+				expect(models.length).toBe(4);
 
 				// Find GLM model
 				const glmModel = models.find((m) => m.id === 'glm-4.7');
@@ -285,26 +310,38 @@ describe('GLM Provider Integration', () => {
 			const originalCache = getModelsCache();
 
 			try {
-				// Set up mock SDK models in cache
-				const mockSdkModels = [
+				// Set up mock models without GLM (simulating no GLM API key)
+				const mockModels = [
 					{
-						value: 'default',
-						displayName: 'Sonnet',
+						id: 'default',
+						name: 'Sonnet',
+						alias: 'sonnet',
+						family: 'sonnet' as const,
+						provider: 'anthropic',
+						contextWindow: 200000,
 						description: 'Sonnet 4.5 · Best for everyday tasks',
 					},
 					{
-						value: 'opus',
-						displayName: 'Opus',
+						id: 'opus',
+						name: 'Opus',
+						alias: 'opus',
+						family: 'opus' as const,
+						provider: 'anthropic',
+						contextWindow: 200000,
 						description: 'Opus 4.5 · Most capable model',
 					},
 					{
-						value: 'haiku',
-						displayName: 'Haiku',
+						id: 'haiku',
+						name: 'Haiku',
+						alias: 'haiku',
+						family: 'haiku' as const,
+						provider: 'anthropic',
+						contextWindow: 200000,
 						description: 'Haiku 3.5 · Fast and efficient',
 					},
 				];
-				const mockCache = new Map<string, typeof mockSdkModels>();
-				mockCache.set('global', mockSdkModels);
+				const mockCache = new Map<string, typeof mockModels>();
+				mockCache.set('global', mockModels);
 				setModelsCache(mockCache);
 
 				// Remove GLM API keys
@@ -324,6 +361,7 @@ describe('GLM Provider Integration', () => {
 				// Should have Anthropic models
 				const sonnetModel = models.find((m) => m.id === 'default');
 				expect(sonnetModel).toBeDefined();
+				expect(sonnetModel!.name).toBe('Sonnet');
 			} finally {
 				// Restore original state
 				if (originalGlmKey !== undefined) {
@@ -342,16 +380,29 @@ describe('GLM Provider Integration', () => {
 			const originalCache = getModelsCache();
 
 			try {
-				// Set up mock SDK models in cache
-				const mockSdkModels = [
+				// Set up mock models with GLM when ZHIPU_API_KEY is set
+				const mockModels = [
 					{
-						value: 'default',
-						displayName: 'Sonnet',
+						id: 'default',
+						name: 'Sonnet',
+						alias: 'sonnet',
+						family: 'sonnet' as const,
+						provider: 'anthropic',
+						contextWindow: 200000,
 						description: 'Sonnet 4.5 · Best for everyday tasks',
 					},
+					{
+						id: 'glm-4.7',
+						name: 'GLM-4.7',
+						alias: 'glm-4.7',
+						family: 'glm' as const,
+						provider: 'glm',
+						contextWindow: 128000,
+						description: 'GLM-4.7 by 智谱AI',
+					},
 				];
-				const mockCache = new Map<string, typeof mockSdkModels>();
-				mockCache.set('global', mockSdkModels);
+				const mockCache = new Map<string, typeof mockModels>();
+				mockCache.set('global', mockModels);
 				setModelsCache(mockCache);
 
 				// Set ZHIPU_API_KEY instead of GLM_API_KEY
@@ -365,6 +416,7 @@ describe('GLM Provider Integration', () => {
 				const glmModel = models.find((m) => m.id === 'glm-4.7');
 				expect(glmModel).toBeDefined();
 				expect(glmModel!.name).toBe('GLM-4.7');
+				expect(glmModel!.provider).toBe('glm');
 			} finally {
 				// Restore original state
 				if (originalGlmKey !== undefined) {
@@ -422,7 +474,8 @@ describe('GLM Provider Integration', () => {
 				config: {
 					model: 'glm-4.7',
 					env: {
-						API_TIMEOUT_MS: '1000000', // Custom timeout
+						// API_TIMEOUT_MS is now filtered as provider-specific var
+						// Provider env vars are managed by the provider system, not options.env
 						CUSTOM_VAR: 'custom-value', // Additional var
 					},
 				},
@@ -437,12 +490,10 @@ describe('GLM Provider Integration', () => {
 
 				// Session env vars should still be in options.env
 				expect(options.env).toBeDefined();
-				// Session override should take effect
-				expect(options.env!.API_TIMEOUT_MS).toBe('1000000');
 				// Custom var should be added
 				expect(options.env!.CUSTOM_VAR).toBe('custom-value');
-				// Note: Provider vars (ANTHROPIC_BASE_URL, etc.) are NO LONGER in options.env
-				// They are applied to process.env before SDK query creation
+				// Note: Provider vars (API_TIMEOUT_MS, ANTHROPIC_BASE_URL, etc.) are NO LONGER in options.env
+				// They are applied to process.env before SDK query creation by the provider system
 			} finally {
 				if (originalGlmKey !== undefined) {
 					process.env.GLM_API_KEY = originalGlmKey;

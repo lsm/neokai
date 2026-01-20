@@ -67,6 +67,16 @@ export function isProviderSystemInitialized(): boolean {
 }
 
 /**
+ * Reset the provider factory initialization state
+ *
+ * MUST be called alongside resetProviderRegistry() to fully reset
+ * the provider system. This is typically only needed in tests.
+ */
+export function resetProviderFactory(): void {
+	initialized = false;
+}
+
+/**
  * Register a custom provider
  *
  * Allows registering additional providers beyond the built-in ones.

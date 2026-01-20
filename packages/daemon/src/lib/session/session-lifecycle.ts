@@ -482,7 +482,7 @@ export class SessionLifecycle {
 	): Promise<{ title: string; isFallback: boolean }> {
 		// Get provider service to detect provider and get API configuration
 		const providerService = getProviderService();
-		const provider = providerService.getDefaultProvider();
+		const provider = await providerService.getDefaultProvider();
 		const apiKey = providerService.getProviderApiKey(provider);
 
 		if (!apiKey) {
@@ -496,7 +496,7 @@ export class SessionLifecycle {
 		}
 
 		// Get title generation configuration from provider service
-		const { modelId } = providerService.getTitleGenerationConfig(provider);
+		const { modelId } = await providerService.getTitleGenerationConfig(provider);
 
 		this.logger.info(
 			`[SessionLifecycle] Generating title with ${provider} provider using model ${modelId}...`

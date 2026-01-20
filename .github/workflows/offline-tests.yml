@@ -231,6 +231,9 @@ jobs:
       - name: Run unit tests
         working-directory: packages/daemon
         run: bun test tests/offline/unit
+        env:
+          GLM_API_KEY: ""
+          CLAUDE_CODE_OAUTH_TOKEN: ""
 
   test-daemon-providers:
     name: Daemon Providers

@@ -11,9 +11,9 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { spawnDaemonServer } from '../helpers/daemon-server-helper';
-import { sendMessage, waitForIdle, getSession } from '../helpers/daemon-test-helpers';
+import type { DaemonServerContext } from '../../helpers/daemon-server-helper';
+import { spawnDaemonServer } from '../../helpers/daemon-server-helper';
+import { sendMessage, waitForIdle, getSession } from '../../helpers/daemon-test-helpers';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
@@ -39,7 +39,7 @@ describe('Session Resume', () => {
 			workspacePath,
 			title: 'Session Resume Test',
 			config: {
-				model: 'haiku',
+				model: 'haiku-4.5',
 				permissionMode: 'acceptEdits',
 			},
 		})) as { sessionId: string };

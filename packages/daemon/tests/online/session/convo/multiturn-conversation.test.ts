@@ -8,17 +8,20 @@
  * - Processing state transitions
  *
  * REQUIREMENTS:
- * - Requires GLM_API_KEY or ANTHROPIC_API_KEY
- * - Uses 'haiku' model which auto-maps to glm-4.5-air when GLM_API_KEY is set
+ * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
  * - Makes real API calls (costs money, uses rate limits)
+ *
+ * MODEL:
+ * - Uses 'haiku-4.5' (faster and cheaper than Sonnet for tests)
+ * - Note: Short alias 'haiku' doesn't work with Claude OAuth (SDK hangs)
  *
  * These tests run in parallel with other tests for faster CI execution.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { spawnDaemonServer } from '../helpers/daemon-server-helper';
-import { sendMessage, waitForIdle, getProcessingState } from '../helpers/daemon-test-helpers';
+import type { DaemonServerContext } from '../../helpers/daemon-server-helper';
+import { spawnDaemonServer } from '../../helpers/daemon-server-helper';
+import { sendMessage, waitForIdle, getProcessingState } from '../../helpers/daemon-test-helpers';
 
 describe('Multi-Turn Conversation', () => {
 	let daemon: DaemonServerContext;
@@ -42,28 +45,28 @@ describe('Multi-Turn Conversation', () => {
 			workspacePath: process.cwd(),
 			title: 'Context Retention Test',
 			config: {
-				model: 'haiku',
+				model: 'haiku-4.5',
 				permissionMode: 'acceptEdits',
 			},
 		})) as { sessionId: string };
 
 		const { sessionId } = createResult;
 
-		// Turn 1: Ask for a number to remember
+		// Turn 1: Simple math question
 		const result1 = await sendMessage(
 			daemon,
 			sessionId,
-			'Remember the number 42 for me. Just reply "Got it, I will remember 42."'
+			'What is 5 + 7? Just reply with the number.'
 		);
 		expect(result1.messageId).toBeString();
 
 		await waitForIdle(daemon, sessionId, 30000);
 
-		// Turn 2: Ask what the number was (tests context retention)
+		// Turn 2: Follow-up question (tests context retention)
 		const result2 = await sendMessage(
 			daemon,
 			sessionId,
-			'What number did I ask you to remember? Just reply with the number.'
+			'Now add 3 to that result. Just reply with the number.'
 		);
 		expect(result2.messageId).toBeString();
 		expect(result2.messageId).not.toBe(result1.messageId);
@@ -73,14 +76,14 @@ describe('Multi-Turn Conversation', () => {
 		// Verify state is idle after all turns
 		const finalState = await getProcessingState(daemon, sessionId);
 		expect(finalState.status).toBe('idle');
-	}, 90000); // 90 second timeout for 3 API calls
+	}, 90000); // 90 second timeout for 2 API calls
 
 	test('should handle multi-turn conversation with code analysis', async () => {
 		const createResult = (await daemon.messageHub.call('session.create', {
 			workspacePath: process.cwd(),
 			title: 'Code Analysis Test',
 			config: {
-				model: 'haiku',
+				model: 'haiku-4.5',
 				permissionMode: 'acceptEdits',
 			},
 		})) as { sessionId: string };
@@ -121,7 +124,7 @@ describe('Multi-Turn Conversation', () => {
 			workspacePath: process.cwd(),
 			title: 'Rapid Messages Test',
 			config: {
-				model: 'haiku',
+				model: 'haiku-4.5',
 				permissionMode: 'acceptEdits',
 			},
 		})) as { sessionId: string };
@@ -155,7 +158,7 @@ describe('Multi-Turn Conversation', () => {
 				workspacePath: process.cwd(),
 				title: 'State Transitions Test',
 				config: {
-					model: 'haiku',
+					model: 'haiku-4.5',
 					permissionMode: 'acceptEdits',
 				},
 			})) as { sessionId: string };

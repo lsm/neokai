@@ -1,8 +1,8 @@
 /**
  * Model Service Tests
  *
- * Tests dynamic model loading, caching, and validation.
- * Note: These tests do NOT call the real SDK - they test the caching and utility logic.
+ * Tests the unified model service that delegates to providers.
+ * Tests mock provider responses rather than real SDK calls.
  */
 
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
@@ -17,36 +17,60 @@ import {
 	getSupportedModelsFromQuery,
 	initializeModels,
 } from '../../../src/lib/model-service';
-import type { ModelInfo as SDKModelInfo } from '@liuboer/shared/sdk';
+import type { ModelInfo } from '@liuboer/shared';
+import { resetProviderRegistry, resetProviderFactory } from '../../../src/lib/providers';
 
 describe('Model Service', () => {
-	// Sample SDK model data for testing
-	const mockSDKModels: SDKModelInfo[] = [
+	// Sample ModelInfo data for testing (as returned by providers)
+	const mockModels: ModelInfo[] = [
 		{
-			value: 'default',
-			displayName: 'Claude Sonnet',
+			id: 'default',
+			name: 'Sonnet 4.5',
+			alias: 'default',
+			family: 'sonnet',
+			provider: 'anthropic',
+			contextWindow: 200000,
 			description: 'Sonnet 4.5 · Best for everyday tasks',
+			releaseDate: '2024-09-29',
+			available: true,
 		},
 		{
-			value: 'opus',
-			displayName: 'Claude Opus',
+			id: 'opus',
+			name: 'Opus 4.5',
+			alias: 'opus',
+			family: 'opus',
+			provider: 'anthropic',
+			contextWindow: 200000,
 			description: 'Opus 4.5 · Highest capability',
+			releaseDate: '2025-11-24',
+			available: true,
 		},
 		{
-			value: 'haiku',
-			displayName: 'Claude Haiku',
+			id: 'haiku',
+			name: 'Haiku 4.5',
+			alias: 'haiku',
+			family: 'haiku',
+			provider: 'anthropic',
+			contextWindow: 200000,
 			description: 'Haiku 4.5 · Fast and efficient',
+			releaseDate: '2025-10-15',
+			available: true,
 		},
 	];
 
 	beforeEach(() => {
-		// Clear cache before each test
+		// Clear cache and reset provider system before each test
+		// Both functions must be called to fully reset the provider state
 		clearModelsCache();
+		resetProviderRegistry();
+		resetProviderFactory();
 	});
 
 	afterEach(() => {
 		// Clean up after tests
 		clearModelsCache();
+		resetProviderRegistry();
+		resetProviderFactory();
 	});
 
 	describe('cache management', () => {
@@ -56,20 +80,20 @@ describe('Model Service', () => {
 		});
 
 		it('should set and restore cache', () => {
-			const testCache = new Map<string, SDKModelInfo[]>();
-			testCache.set('global', mockSDKModels);
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
 
 			setModelsCache(testCache);
 
 			const restoredCache = getModelsCache();
 			expect(restoredCache.size).toBe(1);
-			expect(restoredCache.get('global')).toEqual(mockSDKModels);
+			expect(restoredCache.get('global')).toEqual(mockModels);
 		});
 
 		it('should clear specific cache key', () => {
-			const testCache = new Map<string, SDKModelInfo[]>();
-			testCache.set('global', mockSDKModels);
-			testCache.set('session-1', mockSDKModels);
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
+			testCache.set('session-1', mockModels);
 			setModelsCache(testCache);
 
 			clearModelsCache('global');
@@ -80,9 +104,9 @@ describe('Model Service', () => {
 		});
 
 		it('should clear all cache when no key specified', () => {
-			const testCache = new Map<string, SDKModelInfo[]>();
-			testCache.set('global', mockSDKModels);
-			testCache.set('session-1', mockSDKModels);
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
+			testCache.set('session-1', mockModels);
 			setModelsCache(testCache);
 
 			clearModelsCache();
@@ -94,8 +118,8 @@ describe('Model Service', () => {
 
 	describe('getAvailableModels', () => {
 		beforeEach(() => {
-			const testCache = new Map<string, SDKModelInfo[]>();
-			testCache.set('global', mockSDKModels);
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
 			setModelsCache(testCache);
 		});
 
@@ -110,54 +134,20 @@ describe('Model Service', () => {
 			expect(models.length).toBeGreaterThan(0);
 		});
 
-		it('should convert SDK models to ModelInfo format', () => {
+		it('should return models with correct structure', () => {
 			const models = getAvailableModels();
 
 			const sonnet = models.find((m) => m.id === 'default');
 			expect(sonnet).toBeDefined();
 			expect(sonnet?.name).toBe('Sonnet 4.5');
 			expect(sonnet?.family).toBe('sonnet');
-		});
-
-		it('should extract display name from description', () => {
-			const models = getAvailableModels();
-
-			const opus = models.find((m) => m.id === 'opus');
-			expect(opus?.name).toBe('Opus 4.5');
-
-			const haiku = models.find((m) => m.id === 'haiku');
-			expect(haiku?.name).toBe('Haiku 4.5');
-		});
-
-		it('should determine model family correctly', () => {
-			const models = getAvailableModels();
-
-			expect(models.find((m) => m.id === 'default')?.family).toBe('sonnet');
-			expect(models.find((m) => m.id === 'opus')?.family).toBe('opus');
-			expect(models.find((m) => m.id === 'haiku')?.family).toBe('haiku');
-		});
-
-		it('should filter out custom model entries', () => {
-			const modelsWithCustom = [
-				...mockSDKModels,
-				{
-					value: 'custom',
-					displayName: 'Custom Model',
-					description: 'Custom model - Specify your own model ID',
-				},
-			];
-			const testCache = new Map<string, SDKModelInfo[]>();
-			testCache.set('global', modelsWithCustom);
-			setModelsCache(testCache);
-
-			const models = getAvailableModels();
-			expect(models.find((m) => m.id === 'custom')).toBeUndefined();
+			expect(sonnet?.provider).toBe('anthropic');
 		});
 
 		it('should support different cache keys', () => {
-			const sessionModels = [mockSDKModels[0]]; // Only sonnet
-			const testCache = new Map<string, SDKModelInfo[]>();
-			testCache.set('global', mockSDKModels);
+			const sessionModels = [mockModels[0]]; // Only default
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
 			testCache.set('session-123', sessionModels);
 			setModelsCache(testCache);
 
@@ -171,8 +161,8 @@ describe('Model Service', () => {
 
 	describe('getModelInfo', () => {
 		beforeEach(() => {
-			const testCache = new Map<string, SDKModelInfo[]>();
-			testCache.set('global', mockSDKModels);
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
 			setModelsCache(testCache);
 		});
 
@@ -215,8 +205,8 @@ describe('Model Service', () => {
 
 	describe('isValidModel', () => {
 		beforeEach(() => {
-			const testCache = new Map<string, SDKModelInfo[]>();
-			testCache.set('global', mockSDKModels);
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
 			setModelsCache(testCache);
 		});
 
@@ -243,8 +233,8 @@ describe('Model Service', () => {
 
 	describe('resolveModelAlias', () => {
 		beforeEach(() => {
-			const testCache = new Map<string, SDKModelInfo[]>();
-			testCache.set('global', mockSDKModels);
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
 			setModelsCache(testCache);
 		});
 
@@ -271,12 +261,12 @@ describe('Model Service', () => {
 
 	describe('getSupportedModelsFromQuery', () => {
 		it('should return cached models if available', async () => {
-			const testCache = new Map<string, SDKModelInfo[]>();
-			testCache.set('test-key', mockSDKModels);
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('test-key', mockModels);
 			setModelsCache(testCache);
 
 			const models = await getSupportedModelsFromQuery(null, 'test-key');
-			expect(models).toEqual(mockSDKModels);
+			expect(models).toEqual(mockModels);
 		});
 
 		it('should return empty array if no cache and no query', async () => {
@@ -286,25 +276,32 @@ describe('Model Service', () => {
 
 		it('should get models from query object when available', async () => {
 			const mockQuery = {
-				supportedModels: mock(async () => mockSDKModels),
+				supportedModels: mock(async () => [
+					{ value: 'test-model', displayName: 'Test Model', description: 'Test Model · Test' },
+				]),
 			};
 
 			const models = await getSupportedModelsFromQuery(mockQuery as unknown, 'query-key');
 
-			expect(models).toEqual(mockSDKModels);
-			expect(mockQuery.supportedModels).toHaveBeenCalled();
+			// Should convert to ModelInfo format
+			expect(models.length).toBe(1);
+			expect(models[0].id).toBe('test-model');
+			expect(models[0].provider).toBe('anthropic');
 		});
 
 		it('should cache models from query', async () => {
 			const mockQuery = {
-				supportedModels: mock(async () => mockSDKModels),
+				supportedModels: mock(async () => [
+					{ value: 'cached', displayName: 'Cached', description: 'Cached · Test' },
+				]),
 			};
 
 			await getSupportedModelsFromQuery(mockQuery as unknown, 'cache-test-key');
 
 			// Should now be in cache
 			const cache = getModelsCache();
-			expect(cache.get('cache-test-key')).toEqual(mockSDKModels);
+			expect(cache.get('cache-test-key')).toBeDefined();
+			expect(cache.get('cache-test-key')?.length).toBe(1);
 		});
 
 		it('should handle query errors gracefully', async () => {
@@ -319,107 +316,56 @@ describe('Model Service', () => {
 		});
 	});
 
-	describe('model family detection', () => {
-		it('should detect opus family', () => {
-			const testCache = new Map<string, SDKModelInfo[]>();
-			testCache.set('global', [
-				{
-					value: 'test-opus',
-					displayName: 'Test',
-					description: 'Opus 4.5 · Test',
-				},
-			]);
+	describe('model properties', () => {
+		it('should include provider field', () => {
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
 			setModelsCache(testCache);
 
 			const models = getAvailableModels();
-			expect(models[0].family).toBe('opus');
+			expect(models[0].provider).toBe('anthropic');
 		});
 
-		it('should detect haiku family', () => {
-			const testCache = new Map<string, SDKModelInfo[]>();
-			testCache.set('global', [
-				{
-					value: 'test-haiku',
-					displayName: 'Test',
-					description: 'Haiku 4.5 · Test',
-				},
-			]);
+		it('should include contextWindow', () => {
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
 			setModelsCache(testCache);
 
 			const models = getAvailableModels();
-			expect(models[0].family).toBe('haiku');
+			expect(models[0].contextWindow).toBe(200000);
 		});
 
-		it('should default to sonnet family', () => {
-			const testCache = new Map<string, SDKModelInfo[]>();
-			testCache.set('global', [
-				{
-					value: 'test-unknown',
-					displayName: 'Test',
-					description: 'Unknown · Test',
-				},
-			]);
+		it('should have correct family for each model', () => {
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
 			setModelsCache(testCache);
 
 			const models = getAvailableModels();
-			expect(models[0].family).toBe('sonnet');
+
+			const defaultModel = models.find((m) => m.id === 'default');
+			expect(defaultModel?.family).toBe('sonnet');
+
+			const opusModel = models.find((m) => m.id === 'opus');
+			expect(opusModel?.family).toBe('opus');
+
+			const haikuModel = models.find((m) => m.id === 'haiku');
+			expect(haikuModel?.family).toBe('haiku');
 		});
 	});
 
 	describe('initializeModels', () => {
 		it('should skip initialization when already initialized', async () => {
 			// Pre-populate cache to simulate already initialized state
-			const testCache = new Map<string, SDKModelInfo[]>();
-			testCache.set('global', mockSDKModels);
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
 			setModelsCache(testCache);
 
-			// Should return immediately without throwing (no SDK call needed)
+			// Should return immediately without throwing
 			await expect(initializeModels()).resolves.toBeUndefined();
 
 			// Cache should still contain our models
 			const cache = getModelsCache();
-			expect(cache.get('global')).toEqual(mockSDKModels);
-		});
-	});
-
-	describe('display name extraction', () => {
-		it('should extract name before separator', () => {
-			const testCache = new Map<string, SDKModelInfo[]>();
-			testCache.set('global', [
-				{
-					value: 'test',
-					displayName: 'Test',
-					description: 'Model Name · Some description',
-				},
-			]);
-			setModelsCache(testCache);
-
-			const models = getAvailableModels();
-			expect(models[0].name).toBe('Model Name');
-		});
-
-		it('should fallback to displayName when no separator', () => {
-			const testCache = new Map<string, SDKModelInfo[]>();
-			testCache.set('global', [
-				{
-					value: 'test',
-					displayName: 'Fallback Name',
-					description: 'No separator',
-				},
-			]);
-			setModelsCache(testCache);
-
-			const models = getAvailableModels();
-			expect(models[0].name).toBe('Fallback Name');
-		});
-
-		it('should fallback to value when no displayName', () => {
-			const testCache = new Map<string, SDKModelInfo[]>();
-			testCache.set('global', [{ value: 'model-id', description: 'No separator here' } as unknown]);
-			setModelsCache(testCache);
-
-			const models = getAvailableModels();
-			expect(models[0].name).toBe('model-id');
+			expect(cache.get('global')).toEqual(mockModels);
 		});
 	});
 });

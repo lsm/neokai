@@ -34,7 +34,8 @@ jobs:
           - sdk
           - session/agent
           - session/features
-          - session
+          - session/lifecycle
+          - session/convo
           - components
           - rpc
           - mcp
@@ -56,6 +57,6 @@ jobs:
         run: bun test tests/online/${{ matrix.category }}
         env:
           # Default: GLM_API_KEY for most tests
-          GLM_API_KEY: ${{ (matrix.category != 'session/agent' && matrix.category != 'session') && secrets.GLM_API_KEY || '' }}
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           # Override: CLAUDE_CODE_OAUTH_TOKEN for session/agent and session
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ (matrix.category == 'session/agent' || matrix.category == 'session') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

@@ -17,7 +17,7 @@ import { Database } from '../../storage/database';
 import { ErrorCategory, ErrorManager } from '../error-manager';
 import { Logger } from '../logger';
 import { isValidModel, resolveModelAlias, getModelInfo } from '../model-service';
-import { getProviderService } from '../provider-service';
+import { getProviderRegistry } from '../providers/index.js';
 import type { ContextTracker } from './context-tracker';
 import type { ProcessingStateManager } from './processing-state-manager';
 
@@ -138,13 +138,15 @@ export class ModelSwitchHandler {
 			// Detect if this is a cross-provider switch (e.g., Anthropic → GLM)
 			// Cross-provider switches require query restart because the SDK subprocess
 			// needs different environment variables (ANTHROPIC_BASE_URL, API keys, etc.)
-			const providerService = getProviderService();
-			const currentProvider = providerService.detectProviderFromModel(currentResolvedModel);
-			const newProvider = providerService.detectProviderFromModel(resolvedModel);
-			const isCrossProviderSwitch = currentProvider !== newProvider;
+			const providerRegistry = getProviderRegistry();
+			const currentProviderInstance = providerRegistry.detectProvider(currentResolvedModel);
+			const newProviderInstance = providerRegistry.detectProvider(resolvedModel);
+			const isCrossProviderSwitch = currentProviderInstance?.id !== newProviderInstance?.id;
 
 			if (isCrossProviderSwitch) {
-				logger.log(`Cross-provider switch detected: ${currentProvider} → ${newProvider}`);
+				const currentProviderId = currentProviderInstance?.id || 'unknown';
+				const newProviderId = newProviderInstance?.id || 'unknown';
+				logger.log(`Cross-provider switch detected: ${currentProviderId} → ${newProviderId}`);
 			}
 
 			if (!queryObject || !transportReady) {
@@ -176,8 +178,9 @@ export class ModelSwitchHandler {
 					return { success: false, model: session.config.model, error };
 				}
 
+				const newProviderId = newProviderInstance?.id || 'unknown';
 				logger.log(
-					`Restarting query for cross-provider switch to ${resolvedModel} (${newProvider})`
+					`Restarting query for cross-provider switch to ${resolvedModel} (${newProviderId})`
 				);
 
 				// Update session config first (will be used when query restarts)

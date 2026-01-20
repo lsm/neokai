@@ -23,17 +23,22 @@ import type { PermissionMode } from '@liuboer/shared/types/settings';
 import type { SettingsManager } from '../settings-manager';
 import { createOutputLimiterHook, getOutputLimiterConfigFromSettings } from './output-limiter-hook';
 import { Logger } from '../logger';
-import { getProviderService } from '../provider-service';
+import { getProviderContextManager } from '../providers/index.js';
+import type { ProviderContext } from '@liuboer/shared/provider';
 
 export class QueryOptionsBuilder {
 	private logger: Logger;
 	private canUseTool?: CanUseTool;
+	private providerContext: ProviderContext;
 
 	constructor(
 		private session: Session,
 		private settingsManager: SettingsManager
 	) {
 		this.logger = new Logger(`QueryOptionsBuilder ${session.id}`);
+		// Create provider context for model ID translation
+		const contextManager = getProviderContextManager();
+		this.providerContext = contextManager.createContext(session);
 	}
 
 	/**
@@ -56,14 +61,22 @@ export class QueryOptionsBuilder {
 		// Get settings-derived options (from global settings)
 		const sdkSettingsOptions = await this.getSettingsOptions();
 
-		// Translate model ID for SDK compatibility
+		// Translate model ID for SDK compatibility using provider context
 		// GLM model IDs (glm-4.7, glm-4.5-air) need to be mapped to SDK-recognized IDs
 		// (default, haiku, opus) since the SDK only knows Anthropic model IDs
-		const providerService = getProviderService();
-		const sdkModelId = providerService.translateModelIdForSdk(config.model || 'default');
-		const sdkFallbackModel = config.fallbackModel
-			? providerService.translateModelIdForSdk(config.fallbackModel)
-			: undefined;
+		const sdkModelId = this.providerContext.getSdkModelId();
+		let sdkFallbackModel: string | undefined;
+		if (config.fallbackModel) {
+			// For fallback model, we need to create a separate context
+			const contextManager = getProviderContextManager();
+			// Create a temporary session config with the fallback model
+			const fallbackSession = {
+				...this.session,
+				config: { ...this.session.config, model: config.fallbackModel },
+			};
+			const fallbackContext = contextManager.createContext(fallbackSession);
+			sdkFallbackModel = fallbackContext.getSdkModelId();
+		}
 
 		// Build all configuration components
 		const systemPromptConfig = this.buildSystemPrompt();
@@ -468,24 +481,52 @@ CRITICAL RULES:
 	 * IMPORTANT: Provider env vars (GLM, etc.) are now applied to process.env
 	 * before SDK query creation, NOT passed via options.env.
 	 *
-	 * This method only returns session-specific env vars from session.config.env.
-	 * Provider vars are handled by applyEnvVarsToProcess() in AgentSession.
+	 * This method merges:
+	 * 1. Global settings env vars (from ~/.Claude/settings.json)
+	 * 2. Session config env vars (from session.config.env)
 	 *
-	 * @returns Session env vars only (provider vars applied separately)
+	 * Provider-specific env vars (ANTHROPIC_*, API_TIMEOUT_MS, etc.) are filtered out
+	 * because those are handled by applyEnvVarsToProcess() in AgentSession.
+	 *
+	 * Priority: Session env vars override global env vars.
+	 *
+	 * @returns Merged env vars (excluding provider-specific vars)
 	 */
 	private getMergedEnvironmentVars(): Record<string, string> | undefined {
+		const globalSettings = this.settingsManager.getGlobalSettings();
 		const sessionEnv = this.session.config.env;
 
-		// If no session env, return undefined
-		if (!sessionEnv || Object.keys(sessionEnv).length === 0) {
-			return undefined;
+		// Provider-specific env vars that are managed by the provider system
+		// These should NOT be passed via options.env as they won't work for GLM
+		const providerEnvVars = new Set([
+			'ANTHROPIC_BASE_URL',
+			'ANTHROPIC_API_KEY',
+			'ANTHROPIC_AUTH_TOKEN',
+			'ANTHROPIC_MODEL',
+			'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+			'ANTHROPIC_DEFAULT_SONNET_MODEL',
+			'ANTHROPIC_DEFAULT_OPUS_MODEL',
+			'API_TIMEOUT_MS',
+			'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+		]);
+
+		const mergedEnv: Record<string, string> = {};
+
+		// 1. Add global settings env vars (filtered)
+		if (globalSettings.env) {
+			for (const [key, value] of Object.entries(globalSettings.env)) {
+				if (value !== undefined && !providerEnvVars.has(key)) {
+					mergedEnv[key] = value;
+				}
+			}
 		}
 
-		// Return session env vars only
-		const mergedEnv: Record<string, string> = {};
-		for (const [key, value] of Object.entries(sessionEnv)) {
-			if (value !== undefined) {
-				mergedEnv[key] = value;
+		// 2. Add session config env vars (filtered, overrides global)
+		if (sessionEnv) {
+			for (const [key, value] of Object.entries(sessionEnv)) {
+				if (value !== undefined && !providerEnvVars.has(key)) {
+					mergedEnv[key] = value;
+				}
 			}
 		}
 

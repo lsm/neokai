@@ -5,9 +5,12 @@
  * These tests verify that authenticated sessions work correctly.
  *
  * REQUIREMENTS:
- * - Requires GLM_API_KEY (or ZHIPU_API_KEY)
+ * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
  * - Makes real API calls (costs money, uses rate limits)
- * - Tests will FAIL if credentials are not available (no skip)
+ *
+ * MODEL:
+ * - Uses 'haiku-4.5' (faster and cheaper than Sonnet for tests)
+ * - Note: Short alias 'haiku' doesn't work with Claude OAuth (SDK hangs)
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -29,14 +32,14 @@ describe('Authentication Integration (API-dependent)', () => {
 			daemon.kill('SIGTERM');
 			await daemon.waitForExit();
 		}
-	});
+	}, 15000);
 
 	describe('Session Creation with Auth', () => {
 		test('should create session only if authenticated', async () => {
 			const result = (await daemon.messageHub.call('session.create', {
 				workspacePath: `${TMP_DIR}/test-auth`,
 				title: 'Auth Test Session',
-				config: { model: 'haiku' }, // Provider-agnostic: maps to glm-4.5-air with GLM_API_KEY
+				config: { model: 'haiku-4.5' },
 			})) as { sessionId: string };
 
 			expect(result.sessionId).toBeString();

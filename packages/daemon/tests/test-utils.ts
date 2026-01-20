@@ -274,22 +274,34 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 		} else {
 			// For offline tests without authentication, set up mock models
 			// This allows model-related RPC handlers to work correctly
-			// IMPORTANT: Must match SDK's ModelInfo type: { value, displayName, description }
-			// The model-service's convertSDKModelToModelInfo() will extract family/alias from these
+			// IMPORTANT: Must match app's ModelInfo type from @liuboer/shared (NOT SDK's ModelInfo)
+			// The model-service cache stores app's ModelInfo format with id, name, family, etc.
 			const mockModels = [
 				{
-					value: 'default', // SDK's model ID field
-					displayName: 'Sonnet 4.5',
+					id: 'default',
+					name: 'Sonnet 4.5',
+					alias: 'sonnet',
+					family: 'sonnet' as const,
+					provider: 'anthropic',
+					contextWindow: 200000,
 					description: 'Sonnet 4.5 · Best for everyday tasks',
 				},
 				{
-					value: 'opus',
-					displayName: 'Opus 4.5',
+					id: 'opus',
+					name: 'Opus 4.5',
+					alias: 'opus',
+					family: 'opus' as const,
+					provider: 'anthropic',
+					contextWindow: 200000,
 					description: 'Opus 4.5 · Most capable model',
 				},
 				{
-					value: 'haiku',
-					displayName: 'Haiku 3.5',
+					id: 'haiku',
+					name: 'Haiku 3.5',
+					alias: 'haiku',
+					family: 'haiku' as const,
+					provider: 'anthropic',
+					contextWindow: 200000,
 					description: 'Haiku 3.5 · Fast and efficient',
 				},
 			];

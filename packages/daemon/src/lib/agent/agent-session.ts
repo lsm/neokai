@@ -787,11 +787,13 @@ export class AgentSession {
 			// Supports Anthropic (ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN) and GLM (GLM_API_KEY, ZHIPU_API_KEY)
 			const { getProviderService } = await import('../provider-service');
 			const providerService = getProviderService();
+			const { getProviderRegistry } = await import('../providers/index.js');
+			const providerRegistry = getProviderRegistry();
 
 			const hasAnthropicAuth = !!(
 				process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY
 			);
-			const hasGlmAuth = providerService.isGlmAvailable();
+			const hasGlmAuth = await providerService.isGlmAvailable();
 			const hasAuth = hasAnthropicAuth || hasGlmAuth;
 
 			if (!hasAuth) {
@@ -844,7 +846,9 @@ export class AgentSession {
 			this.originalEnvVars = providerService.applyEnvVarsToProcess(modelId);
 
 			// Log if we're using GLM (for debugging)
-			if (providerService.isGlmModel(modelId)) {
+			// Use provider registry to detect provider from model ID
+			const provider = providerRegistry.detectProvider(modelId);
+			if (provider && provider.id === 'glm') {
 				this.logger.log(`Applied GLM env vars for model ${modelId} to process.env`);
 			}
 

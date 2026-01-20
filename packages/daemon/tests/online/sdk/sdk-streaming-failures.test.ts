@@ -7,15 +7,11 @@
  * - Session state consistency
  *
  * REQUIREMENTS:
- * - Requires CLAUDE_CODE_OAUTH_TOKEN (preferred) or GLM_API_KEY (or ZHIPU_API_KEY)
+ * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
  * - Makes real API calls (costs money, uses rate limits)
- * - Tests will FAIL if credentials are not available
  *
- * MODEL MAPPING:
- * - Uses 'default' model (provider-agnostic)
- * - With CLAUDE_CODE_OAUTH_TOKEN: default → Claude Sonnet 4.5
- * - With GLM_API_KEY: default → Sonnet (via GLM API)
- * - This makes tests provider-agnostic and easy to switch
+ * MODEL:
+ * - Uses 'default' model which maps to Sonnet
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -28,21 +24,6 @@ import {
 	getProcessingState,
 	getSession,
 } from '../helpers/daemon-test-helpers';
-
-// Check for available credentials
-// Priority: CLAUDE_CODE_OAUTH_TOKEN > GLM_API_KEY > ZHIPU_API_KEY
-const CLAUDE_CODE_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN;
-const GLM_API_KEY =
-	!CLAUDE_CODE_OAUTH_TOKEN && (process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY);
-
-// Set up GLM provider environment if GLM_API_KEY is available
-// This makes 'default' model work with GLM API
-if (GLM_API_KEY) {
-	process.env.ANTHROPIC_AUTH_TOKEN = GLM_API_KEY;
-	process.env.ANTHROPIC_BASE_URL = 'https://open.bigmodel.cn/api/anthropic';
-	process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.5-air';
-	process.env.API_TIMEOUT_MS = '3000000';
-}
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
