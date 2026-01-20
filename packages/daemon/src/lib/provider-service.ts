@@ -379,10 +379,11 @@ export class ProviderService {
 
 		// Map Anthropic tier IDs to GLM model IDs
 		// When SDK uses 'haiku', 'default', or 'opus', translate to the actual GLM model
-		if (modelId === 'glm-4.5-air') {
-			envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.5-air';
+		if (modelId === 'glm-4.7-FlashX') {
+			envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.7-FlashX';
 		} else {
-			// glm-4.7 and other GLM models map to default (Sonnet) and Opus tiers
+			// glm-4.7 and other GLM models map to all tiers
+			envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL = modelId;
 			envVars.ANTHROPIC_DEFAULT_SONNET_MODEL = modelId;
 			envVars.ANTHROPIC_DEFAULT_OPUS_MODEL = modelId;
 		}

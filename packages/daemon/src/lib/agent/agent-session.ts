@@ -29,10 +29,7 @@ import { QueryLifecycleManager } from './query-lifecycle-manager';
 import { ModelSwitchHandler } from './model-switch-handler';
 import { AskUserQuestionHandler } from './ask-user-question-handler';
 import { getBuiltInCommandNames } from '../built-in-commands';
-import {
-	validateAndRepairSDKSession,
-	findMostRecentSDKSessionFile,
-} from '../sdk-session-file-manager';
+import { validateAndRepairSDKSession } from '../sdk-session-file-manager';
 
 /**
  * SDK query object with control methods
@@ -856,31 +853,6 @@ export class AgentSession {
 				prompt: this.createMessageGeneratorWrapper(),
 				options: queryOptions,
 			});
-
-			// CRITICAL: Clean problematic entries from SDK session file BEFORE processing messages
-			// This fixes problematic entries (queue-operation, incomplete messages) that cause
-			// the SDK to hang during session resume.
-			// We find the most recent SDK session file for this workspace and clean it.
-			console.log('[AGENT-SESSION] Looking for recent SDK session file...');
-			const recentSessionFile = findMostRecentSDKSessionFile(this.session.workspacePath);
-			if (recentSessionFile) {
-				console.log(`[AGENT-SESSION] Found recent SDK session file: ${recentSessionFile}`);
-				// Extract SDK session ID from file path
-				const sdkSessionId = recentSessionFile.split('/').pop()?.replace('.jsonl', '') || null;
-				if (sdkSessionId) {
-					console.log(
-						`[AGENT-SESSION] Cleaning SDK session file before starting query: ${sdkSessionId}`
-					);
-					validateAndRepairSDKSession(
-						this.session.workspacePath,
-						sdkSessionId,
-						this.session.id,
-						this.db
-					);
-				}
-			} else {
-				console.log('[AGENT-SESSION] No recent SDK session file found');
-			}
 
 			// STARTUP TIMEOUT: Abort if SDK subprocess doesn't respond within time limit
 			// This prevents indefinite blocking if SDK hangs during initialization

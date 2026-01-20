@@ -26,7 +26,7 @@ export class GlmProvider implements Provider {
 	readonly capabilities: ProviderCapabilities = {
 		streaming: true,
 		extendedThinking: false, // GLM doesn't support extended thinking
-		maxContextWindow: 128000,
+		maxContextWindow: 200000,
 		functionCalling: true,
 		vision: true,
 	};
@@ -40,41 +40,31 @@ export class GlmProvider implements Provider {
 	 * Static model definitions for GLM
 	 * These cannot be loaded dynamically from SDK
 	 *
-	 * All GLM-4.5 series models have 128K context window (verified from official docs)
-	 * Source: https://docs.bigmodel.cn/cn/guide/models/text/glm-4.5
+	 * All GLM-4.7 series models have 200K context window
+	 * Source: https://llm-stats.com/models/glm-4.7
+	 * Official docs: https://docs.bigmodel.cn/cn/guide/models/text/glm-4.7
 	 */
 	static readonly MODELS: ModelInfo[] = [
 		{
-			id: 'glm-4.5',
-			name: 'GLM-4.5',
+			id: 'glm-4.7',
+			name: 'GLM-4.7',
 			alias: 'glm',
 			family: 'glm',
 			provider: 'glm',
-			contextWindow: 128000,
-			description: 'GLM-4.5 · Flagship 355B MoE model for complex tasks',
-			releaseDate: '2024-10-01',
+			contextWindow: 200000,
+			description: 'GLM-4.7 · Coding-focused model for complex tasks',
+			releaseDate: '2025-12-22',
 			available: true,
 		},
 		{
-			id: 'glm-4.7',
-			name: 'GLM-4.7',
-			alias: 'glm-4.7',
+			id: 'glm-4.7-FlashX',
+			name: 'GLM-4.7-FlashX',
+			alias: 'glm-flashx',
 			family: 'glm',
 			provider: 'glm',
-			contextWindow: 128000,
-			description: 'GLM-4.7 · Best for coding and software development',
-			releaseDate: '2024-10-01',
-			available: true,
-		},
-		{
-			id: 'glm-4.5-air',
-			name: 'GLM-4.5-Air',
-			alias: 'glm-air',
-			family: 'glm',
-			provider: 'glm',
-			contextWindow: 128000,
-			description: 'GLM-4.5-Air · Fast and efficient model',
-			releaseDate: '2024-10-01',
+			contextWindow: 200000,
+			description: 'GLM-4.7-FlashX · Fast and efficient model',
+			releaseDate: '2025-12-22',
 			available: true,
 		},
 	];
@@ -120,16 +110,13 @@ export class GlmProvider implements Provider {
 	 */
 	getModelForTier(tier: ModelTier): string | undefined {
 		// GLM model mapping by tier:
-		// - haiku tier -> glm-4.5-air (fastest)
-		// - sonnet/default tiers -> glm-4.5 (flagship, balanced)
+		// - haiku tier -> glm-4.7-FlashX (fastest)
+		// - sonnet/default tiers -> glm-4.7 (flagship, balanced)
 		// - opus tier -> glm-4.7 (most capable)
 		if (tier === 'haiku') {
-			return 'glm-4.5-air';
+			return 'glm-4.7-FlashX';
 		}
-		if (tier === 'opus') {
-			return 'glm-4.7';
-		}
-		return 'glm-4.5'; // sonnet and default use flagship model
+		return 'glm-4.7'; // sonnet, default, and opus use the main model
 	}
 
 	/**
@@ -164,16 +151,13 @@ export class GlmProvider implements Provider {
 
 		// Map Anthropic tier IDs to GLM model IDs
 		// When SDK uses 'haiku', 'default', or 'opus', translate to actual GLM model
-		if (modelId === 'glm-4.5-air') {
-			envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.5-air';
-		} else if (modelId === 'glm-4.7') {
-			// glm-4.7 maps to opus tier (most capable)
-			envVars.ANTHROPIC_DEFAULT_OPUS_MODEL = 'glm-4.7';
-			envVars.ANTHROPIC_DEFAULT_SONNET_MODEL = 'glm-4.7';
+		if (modelId === 'glm-4.7-FlashX') {
+			envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.7-FlashX';
 		} else {
-			// glm-4.5 and other GLM models map to default (Sonnet) tier
-			envVars.ANTHROPIC_DEFAULT_SONNET_MODEL = modelId;
-			envVars.ANTHROPIC_DEFAULT_OPUS_MODEL = modelId;
+			// glm-4.7 maps to all tiers (flagship model)
+			envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.7';
+			envVars.ANTHROPIC_DEFAULT_SONNET_MODEL = 'glm-4.7';
+			envVars.ANTHROPIC_DEFAULT_OPUS_MODEL = 'glm-4.7';
 		}
 
 		return {
@@ -186,29 +170,25 @@ export class GlmProvider implements Provider {
 	/**
 	 * Translate GLM model ID to SDK-compatible ID
 	 *
-	 * GLM model IDs are not recognized by the SDK.
+	 * GLM model IDs (glm-4.7, glm-4.5-air) are not recognized by the SDK.
 	 * The SDK only knows Anthropic model IDs: default, opus, haiku.
 	 *
 	 * Translation:
-	 * - glm-4.5-air → haiku (fast tier)
-	 * - glm-4.5 → default (sonnet tier, flagship)
-	 * - glm-4.7 → opus (most capable)
+	 * - glm-4.7-FlashX → haiku (fast tier)
+	 * - glm-4.7 → default (flagship, balanced)
 	 */
 	translateModelIdForSdk(modelId: string): string {
-		if (modelId === 'glm-4.5-air') {
+		if (modelId === 'glm-4.7-FlashX') {
 			return 'haiku';
 		}
-		if (modelId === 'glm-4.7') {
-			return 'opus';
-		}
-		return 'default'; // glm-4.5 and others use 'default' (Sonnet tier)
+		return 'default'; // glm-4.7 uses 'default' (Sonnet tier)
 	}
 
 	/**
 	 * Get the title generation model for GLM
-	 * Uses the faster glm-4.5-air model
+	 * Uses the faster glm-4.7-FlashX model
 	 */
 	getTitleGenerationModel(): string {
-		return 'glm-4.5-air';
+		return 'glm-4.7-FlashX';
 	}
 }

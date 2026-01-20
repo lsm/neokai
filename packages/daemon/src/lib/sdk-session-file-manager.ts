@@ -45,48 +45,6 @@ export function getSDKSessionFilePath(workspacePath: string, sdkSessionId: strin
 }
 
 /**
- * Find the most recently modified SDK session file for a workspace
- * Useful when we don't have the SDK session ID (e.g., before query starts)
- *
- * @param workspacePath - The session's workspace path
- * @returns Path to the most recent session file if found, null otherwise
- */
-export function findMostRecentSDKSessionFile(workspacePath: string): string | null {
-	try {
-		const sessionDir = getSDKProjectDir(workspacePath);
-
-		if (!existsSync(sessionDir)) {
-			return null;
-		}
-
-		// Find all .jsonl files
-		const files = readdirSync(sessionDir).filter((f) => f.endsWith('.jsonl'));
-
-		if (files.length === 0) {
-			return null;
-		}
-
-		// Find the most recently modified file
-		let mostRecentFile: string | null = null;
-		let mostRecentTime = 0;
-
-		for (const file of files) {
-			const filePath = join(sessionDir, file);
-			const stats = statSync(filePath);
-			if (stats.mtimeMs > mostRecentTime) {
-				mostRecentTime = stats.mtimeMs;
-				mostRecentFile = filePath;
-			}
-		}
-
-		return mostRecentFile;
-	} catch (error) {
-		console.error('[SDKSessionFileManager] Error finding most recent session file:', error);
-		return null;
-	}
-}
-
-/**
  * Find SDK session file by searching the workspace directory
  * Useful when we don't have the SDK session ID (e.g., session not currently running)
  *
@@ -563,73 +521,6 @@ export function repairSDKSessionFile(
 }
 
 /**
- * Clean problematic entries from SDK session file
- *
- * Removes entries that cause SDK to fail on session resume:
- * 1. queue-operation entries - internal SDK metadata, not valid messages
- * 2. Incomplete assistant messages - messages with null stop_reason indicate
- *    the SDK was interrupted mid-stream and can't resume properly
- *
- * @param sessionFilePath - Path to the session file
- * @returns true if any entries were removed, false otherwise
- */
-export function cleanQueueOperationEntries(sessionFilePath: string): boolean {
-	try {
-		console.log(`[SDKSessionFileManager] cleanQueueOperationEntries called on ${sessionFilePath}`);
-		const content = readFileSync(sessionFilePath, 'utf-8');
-		const lines = content.split('\n').filter((line) => line.trim());
-		console.log(`[SDKSessionFileManager] File has ${lines.length} lines before cleanup`);
-
-		const cleanedLines = lines.filter((line) => {
-			try {
-				const msg = JSON.parse(line) as Record<string, unknown>;
-
-				// Filter out queue-operation entries
-				if (msg.type === 'queue-operation') {
-					console.log(`[SDKSessionFileManager] Filtering out queue-operation entry`);
-					return false;
-				}
-
-				// Filter out incomplete assistant messages (stop_reason: null)
-				// These indicate the SDK was interrupted mid-stream and can't resume
-				if (msg.type === 'assistant' && msg.message && typeof msg.message === 'object') {
-					const message = msg.message as Record<string, unknown>;
-					// Check if this is a message object with stop_reason
-					if ('stop_reason' in message && message.stop_reason === null) {
-						console.warn(
-							`[SDKSessionFileManager] Removing incomplete assistant message ${msg.uuid || '(no uuid)'} with null stop_reason`
-						);
-						return false;
-					}
-				}
-
-				return true;
-			} catch {
-				// Keep non-JSON lines as-is
-				return true;
-			}
-		});
-
-		// Check if any entries were removed
-		console.log(`[SDKSessionFileManager] File has ${cleanedLines.length} lines after cleanup`);
-		if (cleanedLines.length < lines.length) {
-			const removedCount = lines.length - cleanedLines.length;
-			console.info(
-				`[SDKSessionFileManager] Removed ${removedCount} problematic entries from SDK session file`
-			);
-			writeFileSync(sessionFilePath, cleanedLines.join('\n') + '\n', 'utf-8');
-			return true;
-		}
-
-		console.log(`[SDKSessionFileManager] No entries removed (${lines.length} lines remain)`);
-		return false;
-	} catch (error) {
-		console.error('[SDKSessionFileManager] Failed to clean problematic entries:', error);
-		return false;
-	}
-}
-
-/**
  * Validate and auto-repair SDK session file before resuming
  *
  * This is the main entry point for session resume validation.
@@ -647,17 +538,7 @@ export function validateAndRepairSDKSession(
 	liuboerSessionId: string,
 	db: Database
 ): boolean {
-	const sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
-
-	// CRITICAL: Clean problematic entries FIRST
-	// These cause session resume failures:
-	// - queue-operation: internal SDK metadata, not valid messages
-	// - incomplete assistant messages: null stop_reason indicates interrupted mid-stream
-	if (existsSync(sessionFile)) {
-		cleanQueueOperationEntries(sessionFile);
-	}
-
-	// Then validate for orphaned tool_results
+	// First validate
 	const validation = validateSDKSessionFile(workspacePath, sdkSessionId);
 
 	if (validation.valid) {
