@@ -61,12 +61,11 @@ jobs:
           # Override: CLAUDE_CODE_OAUTH_TOKEN for session/agent and session
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
-      - name: Upload coverage
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
         continue-on-error: true
-        uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: coverage-daemon-online-${{ matrix.category }}
-          path: packages/daemon/coverage/lcov.info
-          retention-days: 1
-          if-no-files-found: ignore
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/daemon/coverage/lcov.info
+          flags: daemon-online-${{ matrix.category }}
+          fail_ci_if_error: false

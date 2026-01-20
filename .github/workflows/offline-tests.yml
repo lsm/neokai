@@ -71,15 +71,14 @@ jobs:
         working-directory: packages/daemon
         run: bun test tests/offline/integration/database --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload coverage
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
         continue-on-error: true
-        uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: coverage-daemon-integration-database
-          path: packages/daemon/coverage/lcov.info
-          retention-days: 1
-          if-no-files-found: ignore
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/daemon/coverage/lcov.info
+          flags: coverage-daemon-integration-database
+          fail_ci_if_error: false
 
   test-daemon-integration-filesystem:
     name: Daemon Integration (filesystem)
@@ -101,15 +100,14 @@ jobs:
         working-directory: packages/daemon
         run: bun test tests/offline/integration/filesystem --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload coverage
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
         continue-on-error: true
-        uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: coverage-daemon-integration-filesystem
-          path: packages/daemon/coverage/lcov.info
-          retention-days: 1
-          if-no-files-found: ignore
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/daemon/coverage/lcov.info
+          flags: coverage-daemon-integration-filesystem
+          fail_ci_if_error: false
 
   test-daemon-integration-git:
     name: Daemon Integration (git)
@@ -131,15 +129,14 @@ jobs:
         working-directory: packages/daemon
         run: bun test tests/offline/integration/git --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload coverage
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
         continue-on-error: true
-        uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: coverage-daemon-integration-git
-          path: packages/daemon/coverage/lcov.info
-          retention-days: 1
-          if-no-files-found: ignore
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/daemon/coverage/lcov.info
+          flags: coverage-daemon-integration-git
+          fail_ci_if_error: false
 
   test-daemon-integration-websocket:
     name: Daemon Integration (websocket)
@@ -161,15 +158,14 @@ jobs:
         working-directory: packages/daemon
         run: bun test tests/offline/integration/websocket --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload coverage
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
         continue-on-error: true
-        uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: coverage-daemon-integration-websocket
-          path: packages/daemon/coverage/lcov.info
-          retention-days: 1
-          if-no-files-found: ignore
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/daemon/coverage/lcov.info
+          flags: coverage-daemon-integration-websocket
+          fail_ci_if_error: false
 
   test-daemon-integration-rpc:
     name: Daemon Integration (rpc)
@@ -191,15 +187,14 @@ jobs:
         working-directory: packages/daemon
         run: bun test tests/offline/integration/rpc --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload coverage
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
         continue-on-error: true
-        uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: coverage-daemon-integration-rpc
-          path: packages/daemon/coverage/lcov.info
-          retention-days: 1
-          if-no-files-found: ignore
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/daemon/coverage/lcov.info
+          flags: coverage-daemon-integration-rpc
+          fail_ci_if_error: false
 
   test-daemon-integration-session:
     name: Daemon Integration (session)
@@ -221,15 +216,14 @@ jobs:
         working-directory: packages/daemon
         run: bun test tests/offline/integration/session --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload coverage
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
         continue-on-error: true
-        uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: coverage-daemon-integration-session
-          path: packages/daemon/coverage/lcov.info
-          retention-days: 1
-          if-no-files-found: ignore
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/daemon/coverage/lcov.info
+          flags: coverage-daemon-integration-session
+          fail_ci_if_error: false
 
   test-daemon-integration-components:
     name: Daemon Integration (components)
@@ -251,15 +245,14 @@ jobs:
         working-directory: packages/daemon
         run: bun test tests/offline/integration/components --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload coverage
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
         continue-on-error: true
-        uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: coverage-daemon-integration-components
-          path: packages/daemon/coverage/lcov.info
-          retention-days: 1
-          if-no-files-found: ignore
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/daemon/coverage/lcov.info
+          flags: coverage-daemon-integration-components
+          fail_ci_if_error: false
 
   test-daemon-integration-mcp:
     name: Daemon Integration (mcp)
@@ -281,15 +274,14 @@ jobs:
         working-directory: packages/daemon
         run: bun test tests/offline/integration/mcp --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload coverage
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
         continue-on-error: true
-        uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: coverage-daemon-integration-mcp
-          path: packages/daemon/coverage/lcov.info
-          retention-days: 1
-          if-no-files-found: ignore
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/daemon/coverage/lcov.info
+          flags: coverage-daemon-integration-mcp
+          fail_ci_if_error: false
 
   # Unit tests - pure logic with mocks only
   test-daemon-unit:
@@ -315,15 +307,14 @@ jobs:
           GLM_API_KEY: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
 
-      - name: Upload coverage
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
         continue-on-error: true
-        uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: coverage-daemon-unit
-          path: packages/daemon/coverage/lcov.info
-          retention-days: 1
-          if-no-files-found: ignore
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/daemon/coverage/lcov.info
+          flags: coverage-daemon-unit
+          fail_ci_if_error: false
 
   test-daemon-providers:
     name: Daemon Providers
@@ -345,15 +336,14 @@ jobs:
         working-directory: packages/daemon
         run: bun test tests/offline/providers --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload coverage
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
         continue-on-error: true
-        uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: coverage-daemon-providers
-          path: packages/daemon/coverage/lcov.info
-          retention-days: 1
-          if-no-files-found: ignore
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/daemon/coverage/lcov.info
+          flags: coverage-daemon-providers
+          fail_ci_if_error: false
 
   test-shared:
     name: Test Shared
@@ -375,15 +365,14 @@ jobs:
         working-directory: packages/shared
         run: bun test --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload coverage
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
         continue-on-error: true
-        uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: coverage-shared
-          path: packages/shared/coverage/lcov.info
-          retention-days: 1
-          if-no-files-found: ignore
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/shared/coverage/lcov.info
+          flags: coverage-shared
+          fail_ci_if_error: false
 
   test-cli:
     name: Test CLI
@@ -405,15 +394,14 @@ jobs:
         working-directory: packages/cli
         run: bun test --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload coverage
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
         continue-on-error: true
-        uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: coverage-cli
-          path: packages/cli/coverage/lcov.info
-          retention-days: 1
-          if-no-files-found: ignore
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/cli/coverage/lcov.info
+          flags: coverage-cli
+          fail_ci_if_error: false
 
   test-web:
     name: Test Web
@@ -435,15 +423,14 @@ jobs:
         working-directory: packages/web
         run: bunx vitest run --coverage --coverage.reporter=lcov --coverage.reportsDirectory=coverage
 
-      - name: Upload coverage
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
         continue-on-error: true
-        uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: coverage-web
-          path: packages/web/coverage/lcov.info
-          retention-days: 1
-          if-no-files-found: ignore
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/web/coverage/lcov.info
+          flags: coverage-web
+          fail_ci_if_error: false
 
   typecheck:
     name: Type Check
@@ -463,3 +450,4 @@ jobs:
 
       - name: Type check
         run: bun run typecheck
+
