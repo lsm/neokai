@@ -13,6 +13,12 @@ import { generateUUID } from '@liuboer/shared';
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@liuboer/shared';
 import { clearModelsCache } from '../model-service';
+import {
+	archiveSDKSessionFiles,
+	deleteSDKSessionFiles,
+	scanSDKSessionFiles,
+	identifyOrphanedSDKFiles,
+} from '../sdk-session-file-manager';
 
 export function setupSessionHandlers(
 	messageHub: MessageHub,
@@ -131,9 +137,27 @@ export function setupSessionHandlers(
 
 		// No worktree - direct archive
 		if (!session.worktree) {
+			// Archive SDK session files
+			const archiveResult = archiveSDKSessionFiles(
+				session.workspacePath,
+				session.sdkSessionId ?? null,
+				targetSessionId
+			);
+
+			const updatedMetadata = {
+				...session.metadata,
+				...(archiveResult.archivePath && {
+					sdkArchivePath: archiveResult.archivePath,
+					sdkArchivedAt: new Date().toISOString(),
+					sdkArchivedFileCount: archiveResult.archivedFiles.length,
+					sdkArchivedSize: archiveResult.totalSize,
+				}),
+			};
+
 			await sessionManager.updateSession(targetSessionId, {
 				status: 'archived',
 				archivedAt: new Date().toISOString(),
+				metadata: updatedMetadata,
 			} as Partial<Session>);
 
 			return { success: true, requiresConfirmation: false };
@@ -157,10 +181,28 @@ export function setupSessionHandlers(
 		try {
 			await worktreeManager.removeWorktree(session.worktree, true);
 
+			// Archive SDK session files
+			const archiveResult = archiveSDKSessionFiles(
+				session.workspacePath,
+				session.sdkSessionId ?? null,
+				targetSessionId
+			);
+
+			const updatedMetadata = {
+				...session.metadata,
+				...(archiveResult.archivePath && {
+					sdkArchivePath: archiveResult.archivePath,
+					sdkArchivedAt: new Date().toISOString(),
+					sdkArchivedFileCount: archiveResult.archivedFiles.length,
+					sdkArchivedSize: archiveResult.totalSize,
+				}),
+			};
+
 			await sessionManager.updateSession(targetSessionId, {
 				status: 'archived',
 				archivedAt: new Date().toISOString(),
 				worktree: undefined,
+				metadata: updatedMetadata,
 			} as Partial<Session>);
 
 			return {
@@ -387,6 +429,85 @@ export function setupSessionHandlers(
 			success: true,
 			cleanedPaths,
 			message: `Cleaned up ${cleanedPaths.length} orphaned worktree(s)`,
+		};
+	});
+
+	// Scan SDK session files in ~/.claude/projects/ for a workspace
+	messageHub.handle('sdk.scan', async (data) => {
+		const { workspacePath } = data as { workspacePath: string };
+
+		// Scan SDK project directory
+		const files = scanSDKSessionFiles(workspacePath);
+
+		// Get session categories from database
+		const sessions = sessionManager.listSessions();
+		const activeIds = new Set(sessions.filter((s) => s.status === 'active').map((s) => s.id));
+		const archivedIds = new Set(sessions.filter((s) => s.status === 'archived').map((s) => s.id));
+
+		// Identify orphaned files
+		const orphaned = identifyOrphanedSDKFiles(files, activeIds, archivedIds);
+
+		return {
+			success: true,
+			workspacePath,
+			summary: {
+				totalFiles: files.length,
+				totalSize: files.reduce((sum, f) => sum + f.size, 0),
+				orphanedFiles: orphaned.length,
+				orphanedSize: orphaned.reduce((sum, f) => sum + f.size, 0),
+			},
+			files,
+			orphaned,
+		};
+	});
+
+	// Cleanup SDK session files (archive or delete)
+	messageHub.handle('sdk.cleanup', async (data) => {
+		const { workspacePath, mode, sdkSessionIds } = data as {
+			workspacePath: string;
+			mode: 'archive' | 'delete';
+			sdkSessionIds?: string[];
+		};
+
+		const errors: string[] = [];
+		let processedCount = 0;
+		let totalSize = 0;
+
+		// Get files to clean
+		let filesToClean = scanSDKSessionFiles(workspacePath);
+		if (sdkSessionIds && sdkSessionIds.length > 0) {
+			filesToClean = filesToClean.filter((f) => sdkSessionIds.includes(f.sdkSessionId));
+		}
+
+		// Process each file
+		for (const file of filesToClean) {
+			const liuboerSessionId = file.liuboerSessionIds[0] || 'orphan';
+
+			if (mode === 'delete') {
+				const result = deleteSDKSessionFiles(workspacePath, file.sdkSessionId, liuboerSessionId);
+				if (result.success) {
+					processedCount++;
+					totalSize += result.deletedSize;
+				} else {
+					errors.push(...result.errors);
+				}
+			} else {
+				const result = archiveSDKSessionFiles(workspacePath, file.sdkSessionId, liuboerSessionId);
+				if (result.success) {
+					processedCount++;
+					totalSize += result.totalSize;
+				} else {
+					errors.push(...result.errors);
+				}
+			}
+		}
+
+		return {
+			success: errors.length === 0,
+			mode,
+			processedCount,
+			totalSize,
+			errors,
 		};
 	});
 

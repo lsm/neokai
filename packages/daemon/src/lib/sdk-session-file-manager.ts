@@ -16,9 +16,11 @@ import {
 	statSync,
 	mkdirSync,
 	copyFileSync,
+	unlinkSync,
+	renameSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import type { Database } from '../storage/database';
 
 /**
@@ -565,4 +567,394 @@ export function validateAndRepairSDKSession(
 		repair.errors
 	);
 	return false;
+}
+
+// ============================================================================
+// SDK Session File Cleanup & Archive Functions
+// ============================================================================
+
+/**
+ * Result of SDK session file deletion
+ */
+export interface SDKDeleteResult {
+	success: boolean;
+	deletedFiles: string[];
+	deletedSize: number;
+	errors: string[];
+}
+
+/**
+ * Result of SDK session file archival
+ */
+export interface SDKArchiveResult {
+	success: boolean;
+	archivePath: string | null;
+	archivedFiles: string[];
+	totalSize: number;
+	errors: string[];
+}
+
+/**
+ * Information about an SDK session file
+ */
+export interface SDKSessionFileInfo {
+	path: string;
+	sdkSessionId: string;
+	liuboerSessionIds: string[];
+	size: number;
+	modifiedAt: Date;
+}
+
+/**
+ * Information about an orphaned SDK session file
+ */
+export interface OrphanedSDKFileInfo extends SDKSessionFileInfo {
+	reason: 'no-matching-session' | 'unknown-session';
+}
+
+/**
+ * Archive metadata stored alongside archived files
+ */
+interface ArchiveMetadata {
+	liuboerSessionId: string;
+	originalWorkspacePath: string;
+	originalFilePaths: string[];
+	archivedAt: string;
+	totalSize: number;
+	fileCount: number;
+}
+
+/**
+ * Get the archive directory for a Liuboer session
+ */
+function getArchiveDir(liuboerSessionId: string): string {
+	return join(homedir(), '.liuboer', 'claude-session-archives', liuboerSessionId);
+}
+
+/**
+ * Find all SDK session files for a Liuboer session
+ * Returns all files that contain the Liuboer session ID
+ */
+function findAllSDKFilesForSession(
+	workspacePath: string,
+	sdkSessionId: string | null,
+	liuboerSessionId: string
+): Array<{ path: string; size: number }> {
+	const results: Array<{ path: string; size: number }> = [];
+
+	try {
+		const sessionDir = getSDKProjectDir(workspacePath);
+
+		if (!existsSync(sessionDir)) {
+			return results;
+		}
+
+		// If we have SDK session ID, get that file directly
+		if (sdkSessionId) {
+			const filePath = getSDKSessionFilePath(workspacePath, sdkSessionId);
+			if (existsSync(filePath)) {
+				const stats = statSync(filePath);
+				results.push({ path: filePath, size: stats.size });
+			}
+		}
+
+		// Also search for any other files containing the Liuboer session ID
+		// (in case there are multiple SDK sessions for the same Liuboer session)
+		const files = readdirSync(sessionDir).filter((f) => f.endsWith('.jsonl'));
+
+		for (const file of files) {
+			const filePath = join(sessionDir, file);
+
+			// Skip if already added via SDK session ID
+			if (results.some((r) => r.path === filePath)) {
+				continue;
+			}
+
+			try {
+				const content = readFileSync(filePath, 'utf-8');
+				if (content.includes(liuboerSessionId)) {
+					const stats = statSync(filePath);
+					results.push({ path: filePath, size: stats.size });
+				}
+			} catch {
+				// Skip files we can't read
+			}
+		}
+	} catch (error) {
+		console.error('[SDKSessionFileManager] Error finding SDK files for session:', error);
+	}
+
+	return results;
+}
+
+/**
+ * Delete SDK session files for a Liuboer session
+ *
+ * @param workspacePath - The session's workspace path
+ * @param sdkSessionId - The SDK session ID (optional, will search if not provided)
+ * @param liuboerSessionId - The Liuboer session ID
+ * @returns Delete result with list of deleted files
+ */
+export function deleteSDKSessionFiles(
+	workspacePath: string,
+	sdkSessionId: string | null,
+	liuboerSessionId: string
+): SDKDeleteResult {
+	const result: SDKDeleteResult = {
+		success: true,
+		deletedFiles: [],
+		deletedSize: 0,
+		errors: [],
+	};
+
+	try {
+		const files = findAllSDKFilesForSession(workspacePath, sdkSessionId, liuboerSessionId);
+
+		if (files.length === 0) {
+			console.info(
+				`[SDKSessionFileManager] No SDK session files found for session ${liuboerSessionId.slice(0, 8)}...`
+			);
+			return result;
+		}
+
+		for (const file of files) {
+			try {
+				unlinkSync(file.path);
+				result.deletedFiles.push(file.path);
+				result.deletedSize += file.size;
+				console.info(`[SDKSessionFileManager] Deleted SDK file: ${file.path}`);
+			} catch (error) {
+				const errorMsg = error instanceof Error ? error.message : String(error);
+				result.errors.push(`Failed to delete ${file.path}: ${errorMsg}`);
+				result.success = false;
+			}
+		}
+
+		if (result.deletedFiles.length > 0) {
+			console.info(
+				`[SDKSessionFileManager] Deleted ${result.deletedFiles.length} SDK file(s), ` +
+					`${(result.deletedSize / 1024).toFixed(1)}KB freed for session ${liuboerSessionId.slice(0, 8)}...`
+			);
+		}
+	} catch (error) {
+		const errorMsg = error instanceof Error ? error.message : String(error);
+		result.errors.push(`Delete operation failed: ${errorMsg}`);
+		result.success = false;
+		console.error('[SDKSessionFileManager] Delete failed:', error);
+	}
+
+	return result;
+}
+
+/**
+ * Archive SDK session files for a Liuboer session
+ *
+ * Moves files to ~/.liuboer/claude-session-archives/{liuboerSessionId}/
+ * and creates an archive-metadata.json file.
+ *
+ * @param workspacePath - The session's workspace path
+ * @param sdkSessionId - The SDK session ID (optional, will search if not provided)
+ * @param liuboerSessionId - The Liuboer session ID
+ * @returns Archive result with archive path and list of archived files
+ */
+export function archiveSDKSessionFiles(
+	workspacePath: string,
+	sdkSessionId: string | null,
+	liuboerSessionId: string
+): SDKArchiveResult {
+	const result: SDKArchiveResult = {
+		success: true,
+		archivePath: null,
+		archivedFiles: [],
+		totalSize: 0,
+		errors: [],
+	};
+
+	try {
+		const files = findAllSDKFilesForSession(workspacePath, sdkSessionId, liuboerSessionId);
+
+		if (files.length === 0) {
+			console.info(
+				`[SDKSessionFileManager] No SDK session files found for session ${liuboerSessionId.slice(0, 8)}...`
+			);
+			return result;
+		}
+
+		// Create archive directory
+		const archiveDir = getArchiveDir(liuboerSessionId);
+		mkdirSync(archiveDir, { recursive: true });
+		result.archivePath = archiveDir;
+
+		const originalPaths: string[] = [];
+
+		// Move each file to archive
+		for (const file of files) {
+			try {
+				const fileName = basename(file.path);
+				const archivePath = join(archiveDir, fileName);
+
+				// Use rename for atomic move (or copy+delete if across filesystems)
+				try {
+					renameSync(file.path, archivePath);
+				} catch {
+					// Fallback to copy+delete if rename fails (cross-filesystem)
+					copyFileSync(file.path, archivePath);
+					unlinkSync(file.path);
+				}
+
+				result.archivedFiles.push(archivePath);
+				result.totalSize += file.size;
+				originalPaths.push(file.path);
+				console.info(`[SDKSessionFileManager] Archived SDK file: ${file.path} -> ${archivePath}`);
+			} catch (error) {
+				const errorMsg = error instanceof Error ? error.message : String(error);
+				result.errors.push(`Failed to archive ${file.path}: ${errorMsg}`);
+				result.success = false;
+			}
+		}
+
+		// Write archive metadata
+		if (result.archivedFiles.length > 0) {
+			const metadata: ArchiveMetadata = {
+				liuboerSessionId,
+				originalWorkspacePath: workspacePath,
+				originalFilePaths: originalPaths,
+				archivedAt: new Date().toISOString(),
+				totalSize: result.totalSize,
+				fileCount: result.archivedFiles.length,
+			};
+
+			const metadataPath = join(archiveDir, 'archive-metadata.json');
+			writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
+
+			console.info(
+				`[SDKSessionFileManager] Archived ${result.archivedFiles.length} SDK file(s), ` +
+					`${(result.totalSize / 1024).toFixed(1)}KB to ${archiveDir}`
+			);
+		}
+	} catch (error) {
+		const errorMsg = error instanceof Error ? error.message : String(error);
+		result.errors.push(`Archive operation failed: ${errorMsg}`);
+		result.success = false;
+		console.error('[SDKSessionFileManager] Archive failed:', error);
+	}
+
+	return result;
+}
+
+/**
+ * Scan SDK project directory for all session files
+ *
+ * @param workspacePath - The workspace path to scan
+ * @returns List of SDK session file info
+ */
+export function scanSDKSessionFiles(workspacePath: string): SDKSessionFileInfo[] {
+	const results: SDKSessionFileInfo[] = [];
+
+	try {
+		const sessionDir = getSDKProjectDir(workspacePath);
+
+		if (!existsSync(sessionDir)) {
+			return results;
+		}
+
+		const files = readdirSync(sessionDir).filter((f) => f.endsWith('.jsonl'));
+
+		for (const file of files) {
+			const filePath = join(sessionDir, file);
+
+			try {
+				const stats = statSync(filePath);
+				const sdkSessionId = file.replace('.jsonl', '');
+
+				// Extract Liuboer session IDs from file content
+				const liuboerSessionIds = extractLiuboerSessionIds(filePath);
+
+				results.push({
+					path: filePath,
+					sdkSessionId,
+					liuboerSessionIds,
+					size: stats.size,
+					modifiedAt: stats.mtime,
+				});
+			} catch {
+				// Skip files we can't stat
+			}
+		}
+	} catch (error) {
+		console.error('[SDKSessionFileManager] Error scanning SDK files:', error);
+	}
+
+	return results;
+}
+
+/**
+ * Extract Liuboer session IDs from an SDK session file
+ * Looks for UUID patterns in the file content
+ */
+function extractLiuboerSessionIds(filePath: string): string[] {
+	const ids = new Set<string>();
+
+	try {
+		const content = readFileSync(filePath, 'utf-8');
+
+		// UUID v4 pattern (Liuboer session IDs)
+		const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi;
+		const matches = content.match(uuidPattern);
+
+		if (matches) {
+			// Filter to unique IDs that appear multiple times (likely session IDs, not message UUIDs)
+			const idCounts = new Map<string, number>();
+			for (const id of matches) {
+				const lower = id.toLowerCase();
+				idCounts.set(lower, (idCounts.get(lower) || 0) + 1);
+			}
+
+			// Session IDs typically appear many times (in each message)
+			// Message UUIDs typically appear only once or twice
+			for (const [id, count] of idCounts) {
+				if (count >= 3) {
+					ids.add(id);
+				}
+			}
+		}
+	} catch {
+		// Return empty if we can't read
+	}
+
+	return Array.from(ids);
+}
+
+/**
+ * Identify orphaned SDK session files
+ *
+ * Files are considered orphaned if none of their Liuboer session IDs
+ * match any active or archived session in the database.
+ *
+ * @param files - List of SDK session file info from scanSDKSessionFiles
+ * @param activeSessionIds - Set of active Liuboer session IDs
+ * @param archivedSessionIds - Set of archived Liuboer session IDs
+ * @returns List of orphaned files with reason
+ */
+export function identifyOrphanedSDKFiles(
+	files: SDKSessionFileInfo[],
+	activeSessionIds: Set<string>,
+	archivedSessionIds: Set<string>
+): OrphanedSDKFileInfo[] {
+	const orphaned: OrphanedSDKFileInfo[] = [];
+
+	for (const file of files) {
+		// Check if any of the Liuboer session IDs match known sessions
+		const hasActiveSession = file.liuboerSessionIds.some((id) => activeSessionIds.has(id));
+		const hasArchivedSession = file.liuboerSessionIds.some((id) => archivedSessionIds.has(id));
+
+		if (!hasActiveSession && !hasArchivedSession) {
+			orphaned.push({
+				...file,
+				reason: file.liuboerSessionIds.length === 0 ? 'unknown-session' : 'no-matching-session',
+			});
+		}
+	}
+
+	return orphaned;
 }

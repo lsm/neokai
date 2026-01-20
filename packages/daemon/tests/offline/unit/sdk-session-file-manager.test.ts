@@ -15,6 +15,10 @@ import {
 	getSDKSessionFilePath,
 	repairSDKSessionFile,
 	validateAndRepairSDKSession,
+	deleteSDKSessionFiles,
+	archiveSDKSessionFiles,
+	scanSDKSessionFiles,
+	identifyOrphanedSDKFiles,
 } from '../../../src/lib/sdk-session-file-manager';
 import type { Database } from '../../../src/storage/database';
 
@@ -549,6 +553,323 @@ describe('SDK Session File Manager', () => {
 			);
 
 			expect(result).toBe(false);
+		});
+	});
+
+	// ============================================================================
+	// SDK Session File Cleanup & Archive Tests
+	// ============================================================================
+
+	describe('deleteSDKSessionFiles', () => {
+		test('should return success with empty deletedFiles when no files exist', () => {
+			const result = deleteSDKSessionFiles(
+				'/nonexistent/workspace',
+				'nonexistent-sdk-session',
+				'liuboer-session-1'
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.deletedFiles).toHaveLength(0);
+			expect(result.deletedSize).toBe(0);
+			expect(result.errors).toHaveLength(0);
+		});
+
+		test('should delete SDK session file by sdkSessionId', () => {
+			// Create a test file
+			const content = JSON.stringify({
+				type: 'user',
+				uuid: 'u1',
+				message: { content: [{ type: 'text', text: 'Hello' }] },
+			});
+			writeFileSync(testSessionFile, content + '\n', 'utf-8');
+
+			expect(existsSync(testSessionFile)).toBe(true);
+
+			const result = deleteSDKSessionFiles(
+				testWorkspacePath,
+				testSdkSessionId,
+				'liuboer-session-1'
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.deletedFiles).toHaveLength(1);
+			expect(result.deletedFiles[0]).toContain(testSdkSessionId);
+			expect(result.deletedSize).toBeGreaterThan(0);
+			expect(existsSync(testSessionFile)).toBe(false);
+		});
+
+		test('should find and delete SDK files by liuboerSessionId when sdkSessionId is null', () => {
+			const liuboerSessionId = 'test-liuboer-id-12345678';
+
+			// Create a file that contains the Liuboer session ID
+			const content = JSON.stringify({
+				type: 'user',
+				uuid: 'u1',
+				sessionId: liuboerSessionId,
+				message: { content: [{ type: 'text', text: 'Hello' }] },
+			});
+			writeFileSync(testSessionFile, content + '\n', 'utf-8');
+
+			const result = deleteSDKSessionFiles(testWorkspacePath, null, liuboerSessionId);
+
+			expect(result.success).toBe(true);
+			expect(result.deletedFiles.length).toBeGreaterThanOrEqual(1);
+		});
+	});
+
+	describe('archiveSDKSessionFiles', () => {
+		const liuboerSessionId = 'test-archive-session-id';
+		let archiveDir: string;
+
+		beforeEach(() => {
+			archiveDir = join(homedir(), '.liuboer', 'claude-session-archives', liuboerSessionId);
+		});
+
+		afterEach(() => {
+			// Cleanup archive directory
+			if (existsSync(archiveDir)) {
+				try {
+					rmSync(archiveDir, { recursive: true, force: true });
+				} catch {
+					// Ignore cleanup errors
+				}
+			}
+		});
+
+		test('should return success with empty archivedFiles when no files exist', () => {
+			const result = archiveSDKSessionFiles(
+				'/nonexistent/workspace',
+				'nonexistent-sdk-session',
+				liuboerSessionId
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.archivedFiles).toHaveLength(0);
+			expect(result.archivePath).toBeNull();
+			expect(result.totalSize).toBe(0);
+		});
+
+		test('should archive SDK session file and create metadata', () => {
+			// Create a test file
+			const content = JSON.stringify({
+				type: 'user',
+				uuid: 'u1',
+				message: { content: [{ type: 'text', text: 'Hello' }] },
+			});
+			writeFileSync(testSessionFile, content + '\n', 'utf-8');
+
+			expect(existsSync(testSessionFile)).toBe(true);
+
+			const result = archiveSDKSessionFiles(testWorkspacePath, testSdkSessionId, liuboerSessionId);
+
+			expect(result.success).toBe(true);
+			expect(result.archivePath).toBe(archiveDir);
+			expect(result.archivedFiles).toHaveLength(1);
+			expect(result.totalSize).toBeGreaterThan(0);
+
+			// Original file should be removed
+			expect(existsSync(testSessionFile)).toBe(false);
+
+			// Archive should contain the file
+			const archivedFile = join(archiveDir, `${testSdkSessionId}.jsonl`);
+			expect(existsSync(archivedFile)).toBe(true);
+
+			// Metadata file should exist
+			const metadataFile = join(archiveDir, 'archive-metadata.json');
+			expect(existsSync(metadataFile)).toBe(true);
+
+			// Verify metadata content
+			const metadata = JSON.parse(readFileSync(metadataFile, 'utf-8'));
+			expect(metadata.liuboerSessionId).toBe(liuboerSessionId);
+			expect(metadata.originalWorkspacePath).toBe(testWorkspacePath);
+			expect(metadata.fileCount).toBe(1);
+		});
+	});
+
+	describe('scanSDKSessionFiles', () => {
+		test('should return empty array for nonexistent workspace', () => {
+			const files = scanSDKSessionFiles('/nonexistent/workspace');
+			expect(files).toHaveLength(0);
+		});
+
+		test('should find SDK session files in workspace', () => {
+			// Create test files
+			const file1 = join(testSessionDir, 'sdk-session-1.jsonl');
+			const file2 = join(testSessionDir, 'sdk-session-2.jsonl');
+
+			writeFileSync(
+				file1,
+				JSON.stringify({ type: 'user', uuid: 'u1', sessionId: 'liuboer-id-1' }) + '\n',
+				'utf-8'
+			);
+			writeFileSync(
+				file2,
+				JSON.stringify({ type: 'user', uuid: 'u2', sessionId: 'liuboer-id-2' }) + '\n',
+				'utf-8'
+			);
+
+			const files = scanSDKSessionFiles(testWorkspacePath);
+
+			expect(files.length).toBeGreaterThanOrEqual(2);
+
+			const sdkSessionIds = files.map((f) => f.sdkSessionId);
+			expect(sdkSessionIds).toContain('sdk-session-1');
+			expect(sdkSessionIds).toContain('sdk-session-2');
+
+			// Each file should have size and modifiedAt
+			for (const file of files) {
+				expect(file.size).toBeGreaterThan(0);
+				expect(file.modifiedAt).toBeInstanceOf(Date);
+			}
+		});
+
+		test('should extract Liuboer session IDs from file content', () => {
+			const liuboerId = 'a1b2c3d4-e5f6-4789-abcd-ef0123456789';
+
+			// Create a file with UUID-like content (appears multiple times)
+			const content = [
+				JSON.stringify({ type: 'user', uuid: 'u1', liuboerId }),
+				JSON.stringify({ type: 'assistant', uuid: 'a1', liuboerId }),
+				JSON.stringify({ type: 'user', uuid: 'u2', liuboerId }),
+				JSON.stringify({ type: 'assistant', uuid: 'a2', liuboerId }),
+			].join('\n');
+
+			writeFileSync(testSessionFile, content + '\n', 'utf-8');
+
+			const files = scanSDKSessionFiles(testWorkspacePath);
+			const targetFile = files.find((f) => f.sdkSessionId === testSdkSessionId);
+
+			expect(targetFile).toBeDefined();
+			expect(targetFile!.liuboerSessionIds).toContain(liuboerId);
+		});
+	});
+
+	describe('identifyOrphanedSDKFiles', () => {
+		test('should return empty array when no files provided', () => {
+			const orphaned = identifyOrphanedSDKFiles([], new Set(), new Set());
+			expect(orphaned).toHaveLength(0);
+		});
+
+		test('should identify files with no matching session as orphaned', () => {
+			const files = [
+				{
+					path: '/test/path/sdk-1.jsonl',
+					sdkSessionId: 'sdk-1',
+					liuboerSessionIds: ['unknown-session-id'],
+					size: 100,
+					modifiedAt: new Date(),
+				},
+			];
+
+			const activeIds = new Set(['active-session-1', 'active-session-2']);
+			const archivedIds = new Set(['archived-session-1']);
+
+			const orphaned = identifyOrphanedSDKFiles(files, activeIds, archivedIds);
+
+			expect(orphaned).toHaveLength(1);
+			expect(orphaned[0].sdkSessionId).toBe('sdk-1');
+			expect(orphaned[0].reason).toBe('no-matching-session');
+		});
+
+		test('should not mark files with active session as orphaned', () => {
+			const files = [
+				{
+					path: '/test/path/sdk-1.jsonl',
+					sdkSessionId: 'sdk-1',
+					liuboerSessionIds: ['active-session-1'],
+					size: 100,
+					modifiedAt: new Date(),
+				},
+			];
+
+			const activeIds = new Set(['active-session-1', 'active-session-2']);
+			const archivedIds = new Set<string>();
+
+			const orphaned = identifyOrphanedSDKFiles(files, activeIds, archivedIds);
+
+			expect(orphaned).toHaveLength(0);
+		});
+
+		test('should not mark files with archived session as orphaned', () => {
+			const files = [
+				{
+					path: '/test/path/sdk-1.jsonl',
+					sdkSessionId: 'sdk-1',
+					liuboerSessionIds: ['archived-session-1'],
+					size: 100,
+					modifiedAt: new Date(),
+				},
+			];
+
+			const activeIds = new Set<string>();
+			const archivedIds = new Set(['archived-session-1']);
+
+			const orphaned = identifyOrphanedSDKFiles(files, activeIds, archivedIds);
+
+			expect(orphaned).toHaveLength(0);
+		});
+
+		test('should mark files with no liuboerSessionIds as unknown-session', () => {
+			const files = [
+				{
+					path: '/test/path/sdk-1.jsonl',
+					sdkSessionId: 'sdk-1',
+					liuboerSessionIds: [],
+					size: 100,
+					modifiedAt: new Date(),
+				},
+			];
+
+			const activeIds = new Set(['active-session-1']);
+			const archivedIds = new Set<string>();
+
+			const orphaned = identifyOrphanedSDKFiles(files, activeIds, archivedIds);
+
+			expect(orphaned).toHaveLength(1);
+			expect(orphaned[0].reason).toBe('unknown-session');
+		});
+
+		test('should handle mixed files correctly', () => {
+			const files = [
+				{
+					path: '/test/path/active.jsonl',
+					sdkSessionId: 'active',
+					liuboerSessionIds: ['active-session-1'],
+					size: 100,
+					modifiedAt: new Date(),
+				},
+				{
+					path: '/test/path/archived.jsonl',
+					sdkSessionId: 'archived',
+					liuboerSessionIds: ['archived-session-1'],
+					size: 100,
+					modifiedAt: new Date(),
+				},
+				{
+					path: '/test/path/orphan.jsonl',
+					sdkSessionId: 'orphan',
+					liuboerSessionIds: ['deleted-session'],
+					size: 100,
+					modifiedAt: new Date(),
+				},
+				{
+					path: '/test/path/unknown.jsonl',
+					sdkSessionId: 'unknown',
+					liuboerSessionIds: [],
+					size: 100,
+					modifiedAt: new Date(),
+				},
+			];
+
+			const activeIds = new Set(['active-session-1']);
+			const archivedIds = new Set(['archived-session-1']);
+
+			const orphaned = identifyOrphanedSDKFiles(files, activeIds, archivedIds);
+
+			expect(orphaned).toHaveLength(2);
+			const sdkIds = orphaned.map((o) => o.sdkSessionId);
+			expect(sdkIds).toContain('orphan');
+			expect(sdkIds).toContain('unknown');
 		});
 	});
 });

@@ -540,3 +540,69 @@ export interface SwitchProviderResponse {
 	/** Warning about query restart requirement */
 	warning?: string;
 }
+
+// ============================================================================
+// SDK Session File Management API Types
+// ============================================================================
+
+/**
+ * Information about an SDK session file in ~/.claude/projects/
+ */
+export interface SDKSessionFileInfo {
+	path: string;
+	sdkSessionId: string;
+	liuboerSessionIds: string[];
+	size: number;
+	modifiedAt: string; // ISO timestamp
+}
+
+/**
+ * Information about an orphaned SDK session file
+ */
+export interface OrphanedSDKFileInfo extends SDKSessionFileInfo {
+	reason: 'no-matching-session' | 'unknown-session';
+}
+
+/**
+ * Request to scan SDK session files
+ */
+export interface SDKScanRequest {
+	workspacePath: string;
+}
+
+/**
+ * Response from sdk.scan RPC
+ */
+export interface SDKScanResponse {
+	success: boolean;
+	workspacePath: string;
+	summary: {
+		totalFiles: number;
+		totalSize: number;
+		orphanedFiles: number;
+		orphanedSize: number;
+	};
+	files: SDKSessionFileInfo[];
+	orphaned: OrphanedSDKFileInfo[];
+}
+
+/**
+ * Request to cleanup SDK session files
+ */
+export interface SDKCleanupRequest {
+	workspacePath: string;
+	mode: 'archive' | 'delete';
+	/** Optional: specific SDK session IDs to clean (cleans all if not provided) */
+	sdkSessionIds?: string[];
+}
+
+/**
+ * Response from sdk.cleanup RPC
+ */
+export interface SDKCleanupResponse {
+	success: boolean;
+	mode: 'archive' | 'delete';
+	processedCount: number;
+	totalSize: number;
+	errors: string[];
+}

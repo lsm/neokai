@@ -18,6 +18,7 @@ import { Logger } from '../logger';
 import type { SessionCache, AgentSessionFactory } from './session-cache';
 import type { ToolsConfigManager } from './tools-config';
 import { getProviderService } from '../provider-service';
+import { deleteSDKSessionFiles } from '../sdk-session-file-manager';
 
 export interface SessionLifecycleConfig {
 	defaultModel: string;
@@ -208,6 +209,31 @@ export class SessionLifecycle {
 				} catch (error) {
 					this.logger.error(`[SessionLifecycle] AgentSession cleanup failed:`, error);
 					// Continue with deletion - SDK subprocess will be terminated when process exits
+				}
+			}
+
+			// PHASE 1.5: Delete SDK session files from ~/.claude/projects/
+			// This removes the .jsonl files created by Claude Agent SDK
+			if (session) {
+				this.logger.info(`[SessionLifecycle] PHASE 1.5: Removing SDK session files`);
+				try {
+					const deleteResult = deleteSDKSessionFiles(
+						session.workspacePath,
+						session.sdkSessionId ?? null,
+						sessionId
+					);
+					if (deleteResult.deletedFiles.length > 0) {
+						this.logger.info(
+							`[SessionLifecycle] Deleted ${deleteResult.deletedFiles.length} SDK file(s), ` +
+								`${(deleteResult.deletedSize / 1024).toFixed(1)}KB freed`
+						);
+					}
+					completedPhases.push(
+						deleteResult.success ? 'sdk-files-delete' : 'sdk-files-delete-partial'
+					);
+				} catch (error) {
+					this.logger.error(`[SessionLifecycle] SDK file deletion failed:`, error);
+					// Non-critical - continue with other cleanup
 				}
 			}
 
