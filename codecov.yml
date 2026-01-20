@@ -1,0 +1,64 @@
+# Codecov configuration
+# https://docs.codecov.com/docs/codecovyml-reference
+
+coverage:
+  precision: 2
+  round: down
+  range: "50...80"
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 2%
+        # Don't fail CI on coverage drops
+        informational: true
+    patch:
+      default:
+        target: 60%
+        threshold: 5%
+        informational: true
+
+parsers:
+  gcov:
+    branch_detection:
+      conditional: yes
+      loop: yes
+      method: no
+      macro: no
+
+comment:
+  layout: "reach,diff,flags,files"
+  behavior: default
+  require_changes: true
+  require_base: false
+  require_head: true
+
+# Ignore test files and fixtures
+ignore:
+  - "**/*.test.ts"
+  - "**/*.test.tsx"
+  - "**/*.spec.ts"
+  - "**/tests/**"
+  - "**/fixtures/**"
+  - "**/__tests__/**"
+  - "**/node_modules/**"
+  - "**/dist/**"
+
+# Flag definitions for different packages
+flags:
+  daemon:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+  shared:
+    paths:
+      - packages/shared/src/
+    carryforward: true
+  web:
+    paths:
+      - packages/web/src/
+    carryforward: true
+  cli:
+    paths:
+      - packages/cli/src/
+    carryforward: true

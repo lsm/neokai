@@ -134,12 +134,15 @@ jobs:
             coverage/html/
           retention-days: 30
 
-      - name: Upload to Codecov (optional)
+      - name: Upload to Codecov
         if: steps.check-coverage.outputs.should_merge == 'true'
         uses: codecov/codecov-action@v4
         continue-on-error: true
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage/merged.lcov
+          flags: merged
+          name: coverage-merged
           fail_ci_if_error: false
           verbose: true
 
