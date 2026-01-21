@@ -47,3 +47,5 @@ coverage/
 coverage-merged/
 coverage-parts/
 **/coverage/
+browser-coverage.json
+browser-coverage.lcov

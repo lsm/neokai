@@ -1,3 +1,13 @@
+# E2E Tests - Comprehensive E2E test suite (manual trigger)
+#
+# This workflow runs 70+ E2E tests in parallel with BOTH server and browser coverage.
+# Each test runs against an in-process daemon server for Bun's --coverage instrumentation.
+#
+# Server coverage: Bun's --coverage instruments daemon/shared code running in-process
+# Browser coverage: Playwright CDP/monocart-reporter collects V8 coverage from browser
+#
+# For automatic coverage on push/PR, see e2e-coverage.yml (quick mode - 11 tests)
+
 name: E2E Tests
 
 on:
@@ -135,45 +145,48 @@ jobs:
           echo "Building web package..."
           bun run build
 
-      - name: Start test server
+      - name: Install Playwright browsers
+        if: steps.check.outputs.should_run == 'true'
+        run: |
+          # Install for both packages since e2e-runner.ts spawns Playwright from packages/e2e
+          cd packages/cli && bunx playwright install chromium
+          cd ../e2e && bunx playwright install chromium
+
+      - name: Run E2E test with in-process server (${{ matrix.test }})
         if: steps.check.outputs.should_run == 'true'
         working-directory: packages/cli
         run: |
-          echo "Starting production-like test server (no HMR)..."
-          NODE_ENV=test nohup bun run main.ts > /tmp/server.log 2>&1 &
-          echo "Server PID: $!"
-          echo "Waiting for server to be ready..."
-          for i in {1..30}; do
-            if curl -s http://localhost:9283 > /dev/null 2>&1; then
-              echo "Server is ready!"
-              break
-            fi
-            echo "Waiting... ($i/30)"
-            sleep 2
-          done
-          if ! curl -s http://localhost:9283 > /dev/null 2>&1; then
-            echo "Server failed to start!"
-            echo "=== Server logs ==="
-            cat /tmp/server.log
-            exit 1
-          fi
-        env:
-          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
-          DEFAULT_MODEL: haiku
-
-      - name: Run E2E test (${{ matrix.test }})
-        if: steps.check.outputs.should_run == 'true'
-        working-directory: packages/e2e
-        run: |
-          echo "Running test: tests/${{ matrix.test }}.e2e.ts"
+          echo "Running test: ${{ matrix.test }} with in-process server"
+          # Run with bun --coverage to instrument daemon/shared code
+          # e2e-runner.ts starts in-process server and spawns Playwright test
           timeout 300 xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
-            bash -c "npx playwright test tests/${{ matrix.test }}.e2e.ts --reporter=list" 2>&1
+            bun --coverage --coverage-reporter=lcov --coverage-dir=coverage \
+            ./tests/e2e-coverage/e2e-runner.ts ${{ matrix.test }} 2>&1
         env:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           DEFAULT_MODEL: haiku
-          PLAYWRIGHT_BROWSERS_PATH: /home/runner/_work/_tool/e2e_tools
           CI: true
-          PW_TEST_REUSE_CONTEXT: 1
+          COVERAGE: true
+
+      - name: Upload server coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: steps.check.outputs.should_run == 'true'
+        continue-on-error: true
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/cli/coverage/lcov.info
+          flags: e2e-server
+          fail_ci_if_error: false
+
+      - name: Upload browser coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: steps.check.outputs.should_run == 'true'
+        continue-on-error: true
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/e2e/coverage/lcov.info
+          flags: e2e-browser
+          fail_ci_if_error: false
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -184,8 +197,3 @@ jobs:
             packages/e2e/test-results/
             packages/e2e/playwright-report/
           retention-days: 7
-
-      # Note: E2E server-side coverage requires running the server with c8/nyc
-      # which is complex with Bun. For now, E2E coverage is not collected.
-      # To enable, wrap server start with: npx c8 --reporter=lcov bun run main.ts
-      # and stop server gracefully to generate coverage.

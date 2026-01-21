@@ -121,7 +121,8 @@ export default defineConfig({
 	/* Shared settings for all the projects below */
 	use: {
 		/* Base URL to use in actions like `await page.goto('/')` */
-		baseURL: 'http://localhost:9283',
+		/* Can be overridden via PLAYWRIGHT_BASE_URL for in-process server testing */
+		baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:9283',
 
 		/* Collect trace when retrying the failed test */
 		trace: 'on-first-retry',
@@ -183,10 +184,12 @@ export default defineConfig({
 		// Build web package first, then start production-like server for E2E tests
 		// This avoids HMR overhead and tests against production-like environment
 		command: 'cd ../web && bun run build && cd ../cli && NODE_ENV=test bun run main.ts',
-		url: 'http://localhost:9283',
+		url: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:9283',
 		// In CI, we start the server separately to get better logging
 		// Use PW_TEST_REUSE_CONTEXT=1 to skip server startup in CI
-		reuseExistingServer: !!process.env.PW_TEST_REUSE_CONTEXT || !process.env.CI,
+		// Also skip when PLAYWRIGHT_BASE_URL is set (in-process server mode)
+		reuseExistingServer:
+			!!process.env.PW_TEST_REUSE_CONTEXT || !!process.env.PLAYWRIGHT_BASE_URL || !process.env.CI,
 		stdout: 'ignore',
 		stderr: 'pipe',
 		timeout: 120 * 1000,

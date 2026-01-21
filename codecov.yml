@@ -44,8 +44,13 @@ ignore:
   - "**/node_modules/**"
   - "**/dist/**"
 
-# Flag definitions for different packages
+# Flag definitions for coverage organization
+# Codecov automatically aggregates all uploads with the same commit SHA
+# Undefined flags still work, they just don't have path filtering
 flags:
+  # ===========================================
+  # Package-level flags (aggregate all tests)
+  # ===========================================
   daemon:
     paths:
       - packages/daemon/src/
@@ -61,4 +66,116 @@ flags:
   cli:
     paths:
       - packages/cli/src/
+    carryforward: true
+
+  # ===========================================
+  # Offline test flags (unit + integration)
+  # These cover daemon/shared/cli/web unit tests
+  # ===========================================
+  coverage-daemon-unit:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+  coverage-daemon-providers:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+  coverage-daemon-integration-database:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+  coverage-daemon-integration-filesystem:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+  coverage-daemon-integration-git:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+  coverage-daemon-integration-websocket:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+  coverage-daemon-integration-rpc:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+  coverage-daemon-integration-session:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+  coverage-daemon-integration-components:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+  coverage-daemon-integration-mcp:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+  coverage-shared:
+    paths:
+      - packages/shared/src/
+    carryforward: true
+  coverage-cli:
+    paths:
+      - packages/cli/src/
+    carryforward: true
+  coverage-web:
+    paths:
+      - packages/web/src/
+    carryforward: true
+
+  # ===========================================
+  # Online test flags (API-dependent tests)
+  # ===========================================
+  daemon-online-sdk:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+  daemon-online-session/agent:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+  daemon-online-session/features:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+  daemon-online-session/lifecycle:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+  daemon-online-session/convo:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+  daemon-online-components:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+  daemon-online-rpc:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+  daemon-online-mcp:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+  daemon-online-glm:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+
+  # ===========================================
+  # E2E test flags (browser + server coverage)
+  # ===========================================
+  # Server-side: daemon/shared code via in-process tests
+  e2e-server:
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+    carryforward: true
+  # Browser-side: web code via Playwright V8 coverage
+  e2e-browser:
+    paths:
+      - packages/web/src/
     carryforward: true

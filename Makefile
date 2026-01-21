@@ -1,4 +1,4 @@
-.PHONY: dev worktree-dev start daemon web self profile other restart sync-sdk-types sync-claude-prompts clean-cache clean-all build-prod test test-daemon test-coverage test-coverage-lcov e2e e2e-ui e2e-headed e2e-debug e2e-report docker-build docker-up docker-down docker-logs docker-self lint lint-fix format typecheck merge-session outdated update
+.PHONY: dev worktree-dev start daemon web self profile other restart sync-sdk-types sync-claude-prompts clean-cache clean-all build-prod test test-daemon test-coverage test-coverage-lcov e2e e2e-ui e2e-headed e2e-debug e2e-report e2e-coverage docker-build docker-up docker-down docker-logs docker-self lint lint-fix format typecheck merge-session outdated update
 
 # Unified server (daemon + web in single process) - RECOMMENDED
 dev:
@@ -210,6 +210,51 @@ e2e-debug:
 e2e-report:
 	@echo "📊 Opening E2E test report..."
 	@cd packages/e2e && bun run report
+
+# E2E with in-process coverage (server + browser)
+# Uses in-process server for bun --coverage instrumentation
+# Collects both server-side (daemon/shared) and browser-side (web) coverage
+e2e-coverage:
+	@echo "🎭 Running E2E tests with in-process coverage collection..."
+	@echo "📦 Checking web build..."
+	@if [ ! -f packages/web/dist/index.html ]; then \
+		echo "🔧 Building web package..."; \
+		cd packages/web && bun run build; \
+	fi
+	@echo "🧪 Running E2E coverage tests..."
+	@cd packages/cli && bun test ./tests/e2e-coverage/e2e-coverage.test.ts \
+		--coverage --coverage-reporter=lcov --coverage-dir=coverage
+	@echo ""
+	@echo "📊 Coverage reports generated:"
+	@echo "   Server LCOV: packages/cli/coverage/lcov.info"
+	@echo "   Browser LCOV: packages/cli/tests/e2e-coverage/browser-coverage.lcov"
+	@echo ""
+	@echo "💡 Tip: Upload to Codecov with:"
+	@echo "   codecov -f packages/cli/coverage/lcov.info -F e2e-server"
+	@echo "   codecov -f packages/cli/tests/e2e-coverage/browser-coverage.lcov -F e2e-browser"
+
+# Full E2E coverage (all 70+ tests with in-process server)
+# Runs ALL Playwright E2E tests against in-process daemon for complete coverage
+# Server coverage: Bun --coverage instruments daemon/shared code
+# Browser coverage: Playwright monocart-reporter collects V8 coverage
+e2e-coverage-full:
+	@echo "🎭 Running FULL E2E tests with in-process coverage collection..."
+	@echo "📦 Checking web build..."
+	@if [ ! -f packages/web/dist/index.html ]; then \
+		echo "🔧 Building web package..."; \
+		cd packages/web && bun run build; \
+	fi
+	@echo "🧪 Running full E2E suite with coverage..."
+	@cd packages/cli && bun --coverage --coverage-reporter=lcov --coverage-dir=coverage \
+		./tests/e2e-coverage/e2e-full.ts
+	@echo ""
+	@echo "📊 Coverage reports generated:"
+	@echo "   Server LCOV: packages/cli/coverage/lcov.info"
+	@echo "   Browser LCOV: packages/e2e/coverage/lcov.info"
+	@echo ""
+	@echo "💡 Tip: Upload to Codecov with:"
+	@echo "   codecov -f packages/cli/coverage/lcov.info -F e2e-server"
+	@echo "   codecov -f packages/e2e/coverage/lcov.info -F e2e-browser"
 
 # Docker commands
 docker-build:
