@@ -92,6 +92,8 @@ export function Modal({
 			{/* Modal */}
 			<div
 				ref={modalRef}
+				role="dialog"
+				aria-modal="true"
 				class={cn(
 					`relative w-full bg-dark-900 rounded-xl shadow-2xl border ${borderColors.ui.default} animate-scaleIn flex flex-col max-h-[90vh]`,
 					sizes[size]
