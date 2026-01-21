@@ -141,12 +141,12 @@ async function runPlaywrightTest(baseUrl: string, testFile: string): Promise<num
 	});
 }
 
-async function main(): Promise<void> {
+async function main(): Promise<number> {
 	const testFile = process.argv[2];
 	if (!testFile) {
 		console.error('Usage: bun ./tests/e2e-coverage/e2e-runner.ts <test-file>');
 		console.error('Example: bun ./tests/e2e-coverage/e2e-runner.ts session-routing');
-		process.exit(1);
+		return 1;
 	}
 
 	let exitCode = 1;
@@ -161,20 +161,27 @@ async function main(): Promise<void> {
 		await stopServer();
 	}
 
-	process.exit(exitCode);
+	return exitCode;
 }
 
 process.on('SIGINT', async () => {
 	await stopServer();
-	process.exit(130);
+	// Use exitCode to allow coverage to be written
+	process.exitCode = 130;
 });
 
 process.on('SIGTERM', async () => {
 	await stopServer();
-	process.exit(143);
+	// Use exitCode to allow coverage to be written
+	process.exitCode = 143;
 });
 
-main().catch((error) => {
-	console.error('Fatal error:', error);
-	process.exit(1);
-});
+// Use process.exitCode instead of process.exit() to allow Bun to write coverage
+main()
+	.then((code) => {
+		process.exitCode = code;
+	})
+	.catch((error) => {
+		console.error('Fatal error:', error);
+		process.exitCode = 1;
+	});
