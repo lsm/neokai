@@ -44,6 +44,7 @@ import { Button } from '../components/ui/Button.tsx';
 import { Modal } from '../components/ui/Modal.tsx';
 import { ContentContainer } from '../components/ui/ContentContainer.tsx';
 import { ToolsModal } from '../components/ToolsModal.tsx';
+import { SessionInfoModal } from '../components/SessionInfoModal.tsx';
 import { Skeleton, SkeletonMessage } from '../components/ui/Skeleton.tsx';
 import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
 import { ErrorDialog } from '../components/ErrorDialog.tsx';
@@ -89,6 +90,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// ========================================
 	const deleteModal = useModal();
 	const toolsModal = useModal();
+	const infoModal = useModal();
 	const errorDialog = useModal();
 
 	// ========================================
@@ -429,6 +431,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				session={session}
 				displayStats={displayStats}
 				onToolsClick={toolsModal.open}
+				onInfoClick={infoModal.open}
 				onExportClick={sessionActions.handleExportChat}
 				onResetClick={sessionActions.handleResetAgent}
 				onArchiveClick={sessionActions.handleArchiveClick}
@@ -640,6 +643,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 			{/* Tools Modal */}
 			<ToolsModal isOpen={toolsModal.isOpen} onClose={toolsModal.close} session={session} />
+
+			{/* Session Info Modal */}
+			<SessionInfoModal isOpen={infoModal.isOpen} onClose={infoModal.close} session={session} />
 
 			{/* Error Dialog */}
 			<ErrorDialog
