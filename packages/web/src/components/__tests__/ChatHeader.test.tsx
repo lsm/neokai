@@ -36,6 +36,7 @@ describe('ChatHeader', () => {
 			totalCost: 0.05,
 		},
 		onToolsClick: vi.fn(() => {}),
+		onInfoClick: vi.fn(() => {}),
 		onExportClick: vi.fn(() => {}),
 		onResetClick: vi.fn(() => {}),
 		onArchiveClick: vi.fn(() => {}),
@@ -151,6 +152,18 @@ describe('ChatHeader', () => {
 			// Should have some buttons for options
 			const buttons = container.querySelectorAll('button');
 			expect(buttons.length).toBeGreaterThan(0);
+		});
+
+		it('should render with onInfoClick handler', () => {
+			const onInfoClick = vi.fn();
+			const props = { ...defaultProps, onInfoClick };
+
+			// Component should render without error when onInfoClick is provided
+			const { container } = render(<ChatHeader {...props} />);
+
+			// Basic sanity check - component rendered
+			const header = container.querySelector('h2');
+			expect(header).toBeTruthy();
 		});
 	});
 
