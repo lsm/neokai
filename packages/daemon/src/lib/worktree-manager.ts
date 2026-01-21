@@ -536,6 +536,21 @@ export class WorktreeManager {
 				};
 			}
 
+			// First check if there's an actual diff between branches
+			// This handles squash merges where commits have different hashes but same content
+			const diffOutput = await git.raw(['diff', '--stat', `${base}..${branch}`]);
+			if (!diffOutput.trim()) {
+				// No actual diff - changes already merged (likely via squash merge)
+				this.logger.info(
+					`[WorktreeManager] Branch ${branch} has same content as ${base} (squash merged)`
+				);
+				return {
+					hasCommitsAhead: false,
+					commits: [],
+					baseBranch: base,
+				};
+			}
+
 			// Get commits: format as hash|author|date|message
 			const logFormat = '--format=%H|%an|%ai|%s';
 			const logOutput = await git.raw(['log', `${base}..${branch}`, logFormat]);
