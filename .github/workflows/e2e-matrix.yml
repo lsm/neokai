@@ -79,6 +79,7 @@ jobs:
           - archive-menu-option
           - archive-sidebar-toggle
           - session-export
+          - session-info-modal
           - session-list-ordering
           - session-management
           - session-switching-active-state
