@@ -536,13 +536,53 @@ export class WorktreeManager {
 				};
 			}
 
-			// First check if there's an actual diff between branches
-			// This handles squash merges where commits have different hashes but same content
-			const diffOutput = await git.raw(['diff', '--stat', `${base}..${branch}`]);
-			if (!diffOutput.trim()) {
-				// No actual diff - changes already merged (likely via squash merge)
+			// Check if session branch's changes are already on base (handles squash merges)
+			// Get the merge base to understand what files the session branch changed
+			const mergeBase = (await git.raw(['merge-base', base, branch])).trim();
+
+			// Get files modified by the session branch (from merge-base)
+			const sessionChangedFiles = await git.raw(['diff', '--name-only', mergeBase, branch]);
+			const changedFiles = sessionChangedFiles.trim().split('\n').filter(Boolean);
+
+			if (changedFiles.length === 0) {
+				// No files changed by session branch
+				this.logger.info(`[WorktreeManager] Branch ${branch} has no changes from ${base}`);
+				return {
+					hasCommitsAhead: false,
+					commits: [],
+					baseBranch: base,
+				};
+			}
+
+			// For each file the session branch changed, check if it matches base
+			// If session branch's version matches base's version, the changes are already on base
+			let hasUniqueChanges = false;
+			for (const file of changedFiles) {
+				try {
+					// Compare the file content between session branch and base
+					const diff = await git.raw(['diff', `${branch}:${file}`, `${base}:${file}`]);
+					if (diff.trim()) {
+						// File differs - session has changes not on base
+						hasUniqueChanges = true;
+						this.logger.info(
+							`[WorktreeManager] File ${file} differs between ${branch} and ${base}`
+						);
+						break;
+					}
+				} catch {
+					// File might not exist on one side - that's a real difference
+					hasUniqueChanges = true;
+					this.logger.info(
+						`[WorktreeManager] File ${file} exists only on one branch (${branch} vs ${base})`
+					);
+					break;
+				}
+			}
+
+			if (!hasUniqueChanges) {
+				// All files match - changes already on base (squash merged)
 				this.logger.info(
-					`[WorktreeManager] Branch ${branch} has same content as ${base} (squash merged)`
+					`[WorktreeManager] Branch ${branch} changes are all on ${base} (squash merged)`
 				);
 				return {
 					hasCommitsAhead: false,

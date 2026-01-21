@@ -255,6 +255,189 @@ describe('Archive Session Integration', () => {
 		}, 15000);
 	});
 
+	describe('session.archive - squash merged commits', () => {
+		test('should NOT require confirmation when commits are squash-merged to main', async () => {
+			// Create a git repo with main branch
+			const repoPath = path.join(TMP_DIR, `test-repo-squash-${Date.now()}`);
+			fs.mkdirSync(repoPath, { recursive: true });
+
+			execSync('git init', { cwd: repoPath });
+			execSync('git config user.email "test@test.com"', { cwd: repoPath });
+			execSync('git config user.name "Test User"', { cwd: repoPath });
+			fs.writeFileSync(path.join(repoPath, 'README.md'), '# Test');
+			execSync('git add .', { cwd: repoPath });
+			execSync('git commit -m "Initial commit"', { cwd: repoPath });
+			execSync('git branch -M main', { cwd: repoPath });
+
+			// Create session with worktree
+			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
+				workspacePath: repoPath,
+				useWorktree: true,
+			});
+
+			// Trigger workspace initialization
+			await ctx.sessionManager.initializeSessionWorkspace(created.sessionId, 'test squash');
+
+			const session = ctx.db.getSession(created.sessionId);
+			expect(session?.worktree).toBeDefined();
+			const worktreePath = session!.worktree!.worktreePath;
+			const sessionBranch = session!.worktree!.branch;
+
+			// Make multiple commits in the worktree
+			fs.writeFileSync(path.join(worktreePath, 'feature.txt'), 'feature code');
+			execSync('git add .', { cwd: worktreePath });
+			execSync('git commit -m "Add feature"', { cwd: worktreePath });
+
+			fs.writeFileSync(path.join(worktreePath, 'feature2.txt'), 'more code');
+			execSync('git add .', { cwd: worktreePath });
+			execSync('git commit -m "Add more feature"', { cwd: worktreePath });
+
+			// Simulate squash merge to main (what GitHub does when you merge a PR)
+			// 1. Checkout main in the main repo
+			execSync('git checkout main', { cwd: repoPath });
+			// 2. Squash merge the session branch
+			execSync(`git merge --squash ${sessionBranch}`, { cwd: repoPath });
+			execSync('git commit -m "feat: add feature (squash merged)"', { cwd: repoPath });
+
+			// Now the session branch has 2 commits, but main has 1 squash commit
+			// The file content should be identical
+
+			// Try to archive - should NOT require confirmation
+			const result = await callRPCHandler(ctx.messageHub, 'session.archive', {
+				sessionId: created.sessionId,
+				confirmed: false,
+			});
+
+			// Since content is same (squash merged), should not require confirmation
+			expect(result.success).toBe(true);
+			expect(result.requiresConfirmation).toBe(false);
+
+			// Cleanup
+			fs.rmSync(repoPath, { recursive: true, force: true });
+		}, 20000);
+
+		test('should NOT require confirmation when main has additional commits after squash merge', async () => {
+			// Create a git repo with main branch
+			const repoPath = path.join(TMP_DIR, `test-repo-squash-extra-${Date.now()}`);
+			fs.mkdirSync(repoPath, { recursive: true });
+
+			execSync('git init', { cwd: repoPath });
+			execSync('git config user.email "test@test.com"', { cwd: repoPath });
+			execSync('git config user.name "Test User"', { cwd: repoPath });
+			fs.writeFileSync(path.join(repoPath, 'README.md'), '# Test');
+			execSync('git add .', { cwd: repoPath });
+			execSync('git commit -m "Initial commit"', { cwd: repoPath });
+			execSync('git branch -M main', { cwd: repoPath });
+
+			// Create session with worktree
+			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
+				workspacePath: repoPath,
+				useWorktree: true,
+			});
+
+			// Trigger workspace initialization
+			await ctx.sessionManager.initializeSessionWorkspace(created.sessionId, 'test squash extra');
+
+			const session = ctx.db.getSession(created.sessionId);
+			expect(session?.worktree).toBeDefined();
+			const worktreePath = session!.worktree!.worktreePath;
+			const sessionBranch = session!.worktree!.branch;
+
+			// Make a commit in the worktree
+			fs.writeFileSync(path.join(worktreePath, 'feature.txt'), 'feature code');
+			execSync('git add .', { cwd: worktreePath });
+			execSync('git commit -m "Add feature"', { cwd: worktreePath });
+
+			// Squash merge to main
+			execSync('git checkout main', { cwd: repoPath });
+			execSync(`git merge --squash ${sessionBranch}`, { cwd: repoPath });
+			execSync('git commit -m "feat: add feature (squash merged)"', { cwd: repoPath });
+
+			// NOW add another commit to main (simulating another PR merged after)
+			fs.writeFileSync(path.join(repoPath, 'unrelated.txt'), 'other work');
+			execSync('git add .', { cwd: repoPath });
+			execSync('git commit -m "feat: unrelated change"', { cwd: repoPath });
+
+			// The session branch doesn't have this new commit, but its own changes ARE on main
+			// Archive should NOT require confirmation for the session's changes
+
+			const result = await callRPCHandler(ctx.messageHub, 'session.archive', {
+				sessionId: created.sessionId,
+				confirmed: false,
+			});
+
+			// Session's changes are on main, so no confirmation needed
+			expect(result.success).toBe(true);
+			expect(result.requiresConfirmation).toBe(false);
+
+			// Cleanup
+			fs.rmSync(repoPath, { recursive: true, force: true });
+		}, 20000);
+
+		test('should require confirmation when session has ADDITIONAL commits after squash merge', async () => {
+			// Create a git repo with main branch
+			const repoPath = path.join(TMP_DIR, `test-repo-squash-new-${Date.now()}`);
+			fs.mkdirSync(repoPath, { recursive: true });
+
+			execSync('git init', { cwd: repoPath });
+			execSync('git config user.email "test@test.com"', { cwd: repoPath });
+			execSync('git config user.name "Test User"', { cwd: repoPath });
+			fs.writeFileSync(path.join(repoPath, 'README.md'), '# Test');
+			execSync('git add .', { cwd: repoPath });
+			execSync('git commit -m "Initial commit"', { cwd: repoPath });
+			execSync('git branch -M main', { cwd: repoPath });
+
+			// Create session with worktree
+			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
+				workspacePath: repoPath,
+				useWorktree: true,
+			});
+
+			// Trigger workspace initialization
+			await ctx.sessionManager.initializeSessionWorkspace(created.sessionId, 'test squash new');
+
+			const session = ctx.db.getSession(created.sessionId);
+			expect(session?.worktree).toBeDefined();
+			const worktreePath = session!.worktree!.worktreePath;
+			const sessionBranch = session!.worktree!.branch;
+
+			// Make initial commit in the worktree
+			fs.writeFileSync(path.join(worktreePath, 'feature.txt'), 'feature code');
+			execSync('git add .', { cwd: worktreePath });
+			execSync('git commit -m "Add feature"', { cwd: worktreePath });
+
+			// Squash merge to main
+			execSync('git checkout main', { cwd: repoPath });
+			execSync(`git merge --squash ${sessionBranch}`, { cwd: repoPath });
+			execSync('git commit -m "feat: add feature (squash merged)"', { cwd: repoPath });
+
+			// NOW make another commit in the worktree (new work not on main)
+			// Note: The session branch is checked out in the worktree, so we commit there directly
+			fs.writeFileSync(path.join(worktreePath, 'new-work.txt'), 'new work');
+			execSync('git add .', { cwd: worktreePath });
+			execSync('git commit -m "Add new work"', { cwd: worktreePath });
+
+			// Archive SHOULD require confirmation because there's new work not on main
+			const result = await callRPCHandler(ctx.messageHub, 'session.archive', {
+				sessionId: created.sessionId,
+				confirmed: false,
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.requiresConfirmation).toBe(true);
+			expect(result.commitStatus?.hasCommitsAhead).toBe(true);
+			// Shows all commits on the branch (including merged ones) - this is expected
+			// The key is that we correctly detected there ARE unique changes
+			expect(result.commitStatus?.commits.length).toBeGreaterThanOrEqual(1);
+			// The new work commit should be in the list
+			const hasNewWork = result.commitStatus?.commits.some((c) => c.message === 'Add new work');
+			expect(hasNewWork).toBe(true);
+
+			// Cleanup
+			fs.rmSync(repoPath, { recursive: true, force: true });
+		}, 20000);
+	});
+
 	describe('session.archive - error handling', () => {
 		test('should return error for non-existent session', async () => {
 			await expect(
