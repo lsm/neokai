@@ -8,7 +8,7 @@
 #
 # For automatic coverage on push/PR, see e2e-coverage.yml (quick mode - 11 tests)
 
-name: E2E Tests
+name: E2E Matrix
 
 on:
   workflow_dispatch:
@@ -176,7 +176,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/cli/coverage/lcov.info
-          flags: e2e-server
+          flags: e2e-server,e2e-all,all
           fail_ci_if_error: false
 
       - name: Upload browser coverage to Codecov
@@ -186,7 +186,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/e2e/coverage/lcov.info
-          flags: e2e-browser
+          flags: e2e-browser,e2e-all,all
           fail_ci_if_error: false
 
       - name: Upload test results
