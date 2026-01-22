@@ -12,13 +12,18 @@
 	"scripts": {
 		"dev": "bun run --watch main.ts",
 		"start": "NODE_ENV=production bun run main.ts",
-		"test": "bun test tests/offline tests/online",
-		"test:offline": "bun test tests/offline",
+		"test": "bun test tests/unit tests/integration tests/providers tests/online",
+		"test:unit": "bun test tests/unit",
+		"test:integration": "bun test tests/integration",
+		"test:providers": "bun test tests/providers",
 		"test:online": "bun test tests/online",
-		"test:unit": "bun test tests/offline/unit",
-		"test:watch": "bun test --watch tests/offline",
-		"test:coverage": "bun test --coverage tests/offline tests/online",
-		"test:coverage:lcov": "bun test --coverage --coverage-reporter=lcov tests/offline tests/online"
+		"test:watch": "bun test --watch tests/unit tests/integration",
+		"test:agent": "bun test tests/unit/agent tests/integration/agent",
+		"test:session": "bun test tests/unit/session tests/integration/session",
+		"test:rpc": "bun test tests/unit/rpc tests/integration/rpc",
+		"test:core": "bun test tests/unit/core tests/integration/components",
+		"test:coverage": "bun test --coverage tests/unit tests/integration tests/providers tests/online",
+		"test:coverage:lcov": "bun test --coverage --coverage-reporter=lcov tests/unit tests/integration tests/providers tests/online"
 	},
 	"dependencies": {
 		"@anthropic-ai/claude-agent-sdk": "0.2.12",

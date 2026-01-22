@@ -1,4 +1,4 @@
-name: Daemon Online Tests
+name: Daemon Online Tests (DISABLED - online tests now in package-tests.yml)
 
 on:
   push:
@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, develop]
   workflow_dispatch:
+
+# Disabled in favor of package-tests.yml which includes online tests
+# This workflow is kept for reference only
+if: false
 
 # Limit concurrency to avoid overwhelming the GLM API
 concurrency:

@@ -1,0 +1,295 @@
+name: Package Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+jobs:
+  # ============================================
+  # CODE QUALITY CHECKS
+  # ============================================
+
+  lint:
+    name: Lint
+    runs-on: arc-runner-set
+    timeout-minutes: 3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.6
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run linter
+        run: bun run lint
+
+  format:
+    name: Format Check
+    runs-on: arc-runner-set
+    timeout-minutes: 3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.6
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Check formatting
+        run: bun run format:check
+
+  typecheck:
+    name: Type Check
+    runs-on: arc-runner-set
+    timeout-minutes: 3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.6
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run type check
+        run: bun run typecheck
+
+  # ============================================
+  # DAEMON TESTS (Matrix by module for parallelization)
+  # Each job uploads coverage with module-specific flag
+  # ============================================
+
+  test-daemon:
+    name: Daemon (${{ matrix.module }})
+    runs-on: arc-runner-set
+    timeout-minutes: 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - agent
+          - session
+          - rpc
+          - database
+          - websocket
+          - git
+          - components
+          - mcp
+          - core
+          - providers
+        include:
+          - module: agent
+            test_path: tests/unit/agent tests/integration/agent
+            flag: daemon-agent
+          - module: session
+            test_path: tests/unit/session tests/integration/session
+            flag: daemon-session
+          - module: rpc
+            test_path: tests/unit/rpc tests/integration/rpc
+            flag: daemon-rpc
+          - module: database
+            test_path: tests/integration/database
+            flag: daemon-storage
+          - module: websocket
+            test_path: tests/integration/websocket
+            flag: daemon-websocket
+          - module: git
+            test_path: tests/integration/git
+            flag: daemon-git
+          - module: components
+            test_path: tests/integration/components
+            flag: daemon-core
+          - module: mcp
+            test_path: tests/integration/mcp
+            flag: daemon-mcp
+          - module: core
+            test_path: tests/unit/core
+            flag: daemon-core
+          - module: providers
+            test_path: tests/providers
+            flag: daemon-core
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.6
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run daemon tests (${{ matrix.module }})
+        working-directory: packages/daemon
+        run: bun test ${{ matrix.test_path }} --coverage --coverage-reporter=lcov --coverage-dir=coverage
+        env:
+          GLM_API_KEY: ""
+          CLAUDE_CODE_OAUTH_TOKEN: ""
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-daemon-${{ matrix.module }}
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
+
+  # ============================================
+  # OTHER PACKAGE TESTS (Run in parallel)
+  # ============================================
+
+  test-web:
+    name: Web Tests
+    runs-on: arc-runner-set
+    timeout-minutes: 3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.6
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run web tests
+        working-directory: packages/web
+        run: bunx vitest run --coverage --coverage.reporter=lcov --coverage.reportsDirectory=coverage
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-web
+          path: packages/web/coverage/lcov.info
+          retention-days: 1
+
+  test-shared:
+    name: Shared Tests
+    runs-on: arc-runner-set
+    timeout-minutes: 2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.6
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run shared tests
+        working-directory: packages/shared
+        run: bun test --coverage --coverage-reporter=lcov --coverage-dir=coverage
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-shared
+          path: packages/shared/coverage/lcov.info
+          retention-days: 1
+
+  test-cli:
+    name: CLI Tests
+    runs-on: arc-runner-set
+    timeout-minutes: 2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.6
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run CLI tests
+        working-directory: packages/cli
+        run: bun test --coverage --coverage-reporter=lcov --coverage-dir=coverage
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-cli
+          path: packages/cli/coverage/lcov.info
+          retention-days: 1
+
+  # ============================================
+  # UPLOAD COVERAGE (Merge all artifacts and upload to Codecov)
+  # ============================================
+
+  upload-coverage:
+    name: Upload Coverage
+    runs-on: arc-runner-set
+    needs: [test-daemon, test-web, test-shared, test-cli]
+    if: always()
+
+    steps:
+      - name: Download all coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: coverage
+          merge-multiple: true
+
+      - name: List downloaded files (for debugging)
+        run: |
+          echo "Downloaded coverage files:"
+          find coverage -name "lcov.info" -type f
+
+      - name: Upload to Codecov (daemon)
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          directories: ./coverage/coverage-daemon-*/
+          flags: daemon
+          fail_ci_if_error: false
+
+      - name: Upload to Codecov (web)
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/coverage-web/lcov.info
+          flags: web
+          fail_ci_if_error: false
+
+      - name: Upload to Codecov (shared)
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/coverage-shared/lcov.info
+          flags: shared
+          fail_ci_if_error: false
+
+      - name: Upload to Codecov (cli)
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/coverage-cli/lcov.info
+          flags: cli
+          fail_ci_if_error: false

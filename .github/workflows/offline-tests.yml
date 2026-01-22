@@ -1,4 +1,4 @@
-name: Offline Tests
+name: Offline Tests (DISABLED - replaced by package-tests.yml)
 
 on:
   push:
@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, develop]
   workflow_dispatch:
+
+# Disabled in favor of package-tests.yml
+# This workflow is kept for reference only
+if: false
 
 jobs:
   # Code quality checks
@@ -69,7 +73,7 @@ jobs:
 
       - name: Run integration tests (database)
         working-directory: packages/daemon
-        run: bun test tests/offline/integration/database --coverage --coverage-reporter=lcov --coverage-dir=coverage
+        run: bun test tests/integration/database --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -97,7 +101,7 @@ jobs:
 
       - name: Run integration tests (filesystem)
         working-directory: packages/daemon
-        run: bun test tests/offline/integration/filesystem --coverage --coverage-reporter=lcov --coverage-dir=coverage
+        run: bun test tests/integration/filesystem --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -125,7 +129,7 @@ jobs:
 
       - name: Run integration tests (git)
         working-directory: packages/daemon
-        run: bun test tests/offline/integration/git --coverage --coverage-reporter=lcov --coverage-dir=coverage
+        run: bun test tests/integration/git --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -153,7 +157,7 @@ jobs:
 
       - name: Run integration tests (websocket)
         working-directory: packages/daemon
-        run: bun test tests/offline/integration/websocket --coverage --coverage-reporter=lcov --coverage-dir=coverage
+        run: bun test tests/integration/websocket --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -181,7 +185,7 @@ jobs:
 
       - name: Run integration tests (rpc)
         working-directory: packages/daemon
-        run: bun test tests/offline/integration/rpc --coverage --coverage-reporter=lcov --coverage-dir=coverage
+        run: bun test tests/integration/rpc --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -209,7 +213,7 @@ jobs:
 
       - name: Run integration tests (session)
         working-directory: packages/daemon
-        run: bun test tests/offline/integration/session --coverage --coverage-reporter=lcov --coverage-dir=coverage
+        run: bun test tests/integration/session --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -237,7 +241,7 @@ jobs:
 
       - name: Run integration tests (components)
         working-directory: packages/daemon
-        run: bun test tests/offline/integration/components --coverage --coverage-reporter=lcov --coverage-dir=coverage
+        run: bun test tests/integration/components --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -265,7 +269,7 @@ jobs:
 
       - name: Run integration tests (mcp)
         working-directory: packages/daemon
-        run: bun test tests/offline/integration/mcp --coverage --coverage-reporter=lcov --coverage-dir=coverage
+        run: bun test tests/integration/mcp --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -294,7 +298,7 @@ jobs:
 
       - name: Run unit tests
         working-directory: packages/daemon
-        run: bun test tests/offline/unit --coverage --coverage-reporter=lcov --coverage-dir=coverage
+        run: bun test tests/unit --coverage --coverage-reporter=lcov --coverage-dir=coverage
         env:
           GLM_API_KEY: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
@@ -325,7 +329,7 @@ jobs:
 
       - name: Run provider tests
         working-directory: packages/daemon
-        run: bun test tests/offline/providers --coverage --coverage-reporter=lcov --coverage-dir=coverage
+        run: bun test tests/providers --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4

@@ -56,7 +56,7 @@ ignore:
 # Undefined flags still work, they just don't have path filtering
 flags:
   # ===========================================
-  # Package-level flags (aggregate all tests)
+  # Package-level flags (primary - use these for coverage tracking)
   # ===========================================
   daemon:
     paths:
@@ -73,6 +73,53 @@ flags:
   cli:
     paths:
       - packages/cli/src/
+    carryforward: true
+  e2e:
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+      - packages/web/src/
+    carryforward: true
+
+  # ===========================================
+  # Daemon module breakdown (for finer granularity)
+  # ===========================================
+  daemon-agent:
+    paths:
+      - packages/daemon/src/lib/agent/
+    carryforward: true
+  daemon-session:
+    paths:
+      - packages/daemon/src/lib/session/
+    carryforward: true
+  daemon-rpc:
+    paths:
+      - packages/daemon/src/lib/rpc-handlers/
+    carryforward: true
+  daemon-storage:
+    paths:
+      - packages/daemon/src/storage/
+    carryforward: true
+  daemon-websocket:
+    paths:
+      - packages/daemon/src/lib/websocket-server-transport.ts
+      - packages/daemon/src/routes/
+    carryforward: true
+  daemon-git:
+    paths:
+      - packages/daemon/src/lib/worktree-manager.ts
+    carryforward: true
+  daemon-mcp:
+    paths:
+      - packages/daemon/src/lib/**/*mcp*
+    carryforward: true
+  daemon-core:
+    paths:
+      - packages/daemon/src/lib/
+    carryforward: true
+  daemon-online:
+    paths:
+      - packages/daemon/src/
     carryforward: true
 
   # ===========================================
