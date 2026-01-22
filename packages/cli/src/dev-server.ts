@@ -15,8 +15,72 @@ const log = createLogger('liuboer:cli:dev-server');
 export async function startDevServer(config: Config) {
 	log.info('🔧 Starting unified development server...');
 
+	// Register signal handlers FIRST, before any async operations
+	// This ensures Ctrl+C works even if startup hangs
+	let isShuttingDown = false;
+	let daemonContext: Awaited<ReturnType<typeof createDaemonApp>> | null = null;
+	let vite: Awaited<ReturnType<typeof createViteServer>> | null = null;
+	let server: ReturnType<typeof Bun.serve> | null = null;
+
+	const shutdown = async (signal: string) => {
+		if (isShuttingDown) {
+			// Second Ctrl+C - force exit immediately
+			log.warn('Forcing exit...');
+			process.exit(1);
+		}
+		isShuttingDown = true;
+
+		log.info(
+			`\n👋 Received ${signal}, shutting down gracefully... (Press Ctrl+C again to force exit)`
+		);
+
+		try {
+			if (server) {
+				log.info('🛑 Stopping unified server...');
+				server.stop();
+			}
+
+			if (vite) {
+				log.info('🛑 Stopping Vite dev server...');
+				// Add timeout for Vite close - it can hang on active HMR connections
+				await Promise.race([
+					vite.close(),
+					new Promise<void>((resolve) => {
+						setTimeout(() => {
+							log.warn('⚠️  Vite close timed out after 3s, continuing...');
+							resolve();
+						}, 3000);
+					}),
+				]);
+			}
+
+			if (daemonContext) {
+				log.info('🛑 Cleaning up daemon...');
+				// Add timeout for daemon cleanup as well
+				await Promise.race([
+					daemonContext.cleanup(),
+					new Promise<void>((resolve) => {
+						setTimeout(() => {
+							log.warn('⚠️  Daemon cleanup timed out after 5s, continuing...');
+							resolve();
+						}, 5000);
+					}),
+				]);
+			}
+
+			log.info('✨ Shutdown complete');
+			process.exit(0);
+		} catch (error) {
+			log.error('❌ Error during shutdown:', error);
+			process.exit(1);
+		}
+	};
+
+	process.on('SIGINT', () => shutdown('SIGINT'));
+	process.on('SIGTERM', () => shutdown('SIGTERM'));
+
 	// Create daemon app in embedded mode (no root route)
-	const daemonContext = await createDaemonApp({
+	daemonContext = await createDaemonApp({
 		config,
 		verbose: true,
 		standalone: false, // Skip root info route in embedded mode
@@ -29,7 +93,7 @@ export async function startDevServer(config: Config) {
 	log.info('📦 Starting Vite dev server...');
 	const vitePort = await findAvailablePort();
 	log.info(`   Found available Vite port: ${vitePort}`);
-	const vite = await createViteServer({
+	vite = await createViteServer({
 		configFile: resolve(import.meta.dir, '../../web/vite.config.ts'),
 		root: resolve(import.meta.dir, '../../web/src'),
 		server: {
@@ -54,7 +118,7 @@ export async function startDevServer(config: Config) {
 	);
 
 	// Create unified Bun server that combines daemon + Vite proxy
-	const server = Bun.serve({
+	server = Bun.serve({
 		hostname: config.host,
 		port: config.port,
 
@@ -128,60 +192,4 @@ export async function startDevServer(config: Config) {
 	log.info(`   🔌 WebSocket: ws://localhost:${config.port}/ws`);
 	log.info(`   🔥 HMR enabled (Vite on port ${vitePort}, proxied)`);
 	log.info(`\n📝 Press Ctrl+C to stop\n`);
-
-	// Graceful shutdown - second Ctrl+C exits immediately
-	let isShuttingDown = false;
-
-	const shutdown = async (signal: string) => {
-		if (isShuttingDown) {
-			// Second Ctrl+C - force exit immediately
-			log.warn('Forcing exit...');
-			process.exit(1);
-		}
-		isShuttingDown = true;
-
-		log.info(
-			`\n👋 Received ${signal}, shutting down gracefully... (Press Ctrl+C again to force exit)`
-		);
-
-		try {
-			log.info('🛑 Stopping unified server...');
-			server.stop();
-
-			log.info('🛑 Stopping Vite dev server...');
-			// Add timeout for Vite close - it can hang on active HMR connections
-			await Promise.race([
-				vite.close(),
-				new Promise<void>((resolve) => {
-					setTimeout(() => {
-						log.warn('⚠️  Vite close timed out after 3s, continuing...');
-						resolve();
-					}, 3000);
-				}),
-			]);
-
-			log.info('🛑 Cleaning up daemon...');
-			// Call cleanup but it will try to stop daemon's server (already stopped above)
-			// Daemon cleanup handles: pending RPC calls, MessageHub, sessions, database
-			// Add timeout for daemon cleanup as well
-			await Promise.race([
-				daemonContext.cleanup(),
-				new Promise<void>((resolve) => {
-					setTimeout(() => {
-						log.warn('⚠️  Daemon cleanup timed out after 5s, continuing...');
-						resolve();
-					}, 5000);
-				}),
-			]);
-
-			log.info('✨ Shutdown complete');
-			process.exit(0);
-		} catch (error) {
-			log.error('❌ Error during shutdown:', error);
-			process.exit(1);
-		}
-	};
-
-	process.on('SIGINT', () => shutdown('SIGINT'));
-	process.on('SIGTERM', () => shutdown('SIGTERM'));
 }

@@ -17,8 +17,57 @@ const log = createLogger('liuboer:cli:prod-server');
 export async function startProdServer(config: Config) {
 	log.info('🚀 Starting production server...');
 
+	// Register signal handlers FIRST, before any async operations
+	// This ensures Ctrl+C works even if startup hangs
+	let isShuttingDown = false;
+	let daemonContext: Awaited<ReturnType<typeof createDaemonApp>> | null = null;
+	let server: ReturnType<typeof Bun.serve> | null = null;
+
+	const shutdown = async (signal: string) => {
+		if (isShuttingDown) {
+			// Second Ctrl+C - force exit immediately
+			log.warn('Forcing exit...');
+			process.exit(1);
+		}
+		isShuttingDown = true;
+
+		log.info(
+			`\n👋 Received ${signal}, shutting down gracefully... (Press Ctrl+C again to force exit)`
+		);
+
+		try {
+			if (server) {
+				log.info('🛑 Stopping server...');
+				server.stop();
+			}
+
+			if (daemonContext) {
+				log.info('🛑 Cleaning up daemon...');
+				// Add timeout for daemon cleanup
+				await Promise.race([
+					daemonContext.cleanup(),
+					new Promise<void>((resolve) => {
+						setTimeout(() => {
+							log.warn('⚠️  Daemon cleanup timed out after 5s, continuing...');
+							resolve();
+						}, 5000);
+					}),
+				]);
+			}
+
+			log.info('✨ Shutdown complete');
+			process.exit(0);
+		} catch (error) {
+			log.error('❌ Error during shutdown:', error);
+			process.exit(1);
+		}
+	};
+
+	process.on('SIGINT', () => shutdown('SIGINT'));
+	process.on('SIGTERM', () => shutdown('SIGTERM'));
+
 	// Create daemon app (returns Bun server)
-	const daemonContext = await createDaemonApp({
+	daemonContext = await createDaemonApp({
 		config,
 		verbose: true,
 		standalone: false, // Skip root info route in embedded mode
@@ -74,7 +123,7 @@ export async function startProdServer(config: Config) {
 	});
 
 	// Create unified server with daemon + Hono static files
-	const server = Bun.serve({
+	server = Bun.serve({
 		hostname: config.host,
 		port: config.port,
 
@@ -117,37 +166,4 @@ export async function startProdServer(config: Config) {
 	log.info(`   🌐 UI: http://localhost:${config.port}`);
 	log.info(`   🔌 WebSocket: ws://localhost:${config.port}/ws`);
 	log.info(`\n📝 Press Ctrl+C to stop\n`);
-
-	// Graceful shutdown - second Ctrl+C exits immediately
-	let isShuttingDown = false;
-
-	const shutdown = async (signal: string) => {
-		if (isShuttingDown) {
-			// Second Ctrl+C - force exit immediately
-			log.warn('Forcing exit...');
-			process.exit(1);
-		}
-		isShuttingDown = true;
-
-		log.info(
-			`\n👋 Received ${signal}, shutting down gracefully... (Press Ctrl+C again to force exit)`
-		);
-
-		try {
-			log.info('🛑 Stopping server...');
-			server.stop();
-
-			log.info('🛑 Cleaning up daemon...');
-			await daemonContext.cleanup();
-
-			log.info('✨ Shutdown complete');
-			process.exit(0);
-		} catch (error) {
-			log.error('❌ Error during shutdown:', error);
-			process.exit(1);
-		}
-	};
-
-	process.on('SIGINT', () => shutdown('SIGINT'));
-	process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
