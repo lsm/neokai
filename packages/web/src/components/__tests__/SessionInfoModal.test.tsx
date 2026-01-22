@@ -162,7 +162,8 @@ describe('SessionInfoModal', () => {
 			render(<SessionInfoModal isOpen={true} onClose={() => {}} session={session} />);
 
 			const copyButtons = document.body.querySelectorAll('[data-testid="copy-button"]');
-			expect(copyButtons.length).toBe(2);
+			// Now displays many fields, so there should be multiple copy buttons
+			expect(copyButtons.length).toBeGreaterThan(2);
 		});
 	});
 
@@ -190,12 +191,12 @@ describe('SessionInfoModal', () => {
 	});
 
 	describe('Styling', () => {
-		it('should use medium size modal', () => {
+		it('should use large size modal', () => {
 			const session = createMockSession();
 			render(<SessionInfoModal isOpen={true} onClose={() => {}} session={session} />);
 
 			const modal = document.body.querySelector('.bg-dark-900');
-			expect(modal?.className).toContain('max-w-lg');
+			expect(modal?.className).toContain('max-w-2xl');
 		});
 
 		it('should render in portal', () => {
