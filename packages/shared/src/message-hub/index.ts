@@ -63,10 +63,9 @@ export {
 } from './in-process-transport.ts';
 export type { InProcessTransportOptions } from './in-process-transport.ts';
 
-// Node.js-only transports (StdioTransport, UnixSocketTransport) are NOT exported here
-// to prevent browser builds from failing. Import them directly:
+// Node.js-only transports (StdioTransport) are NOT exported here
+// to prevent browser builds from failing. Import directly:
 //   import { StdioTransport } from '@liuboer/shared/message-hub/stdio-transport';
-//   import { UnixSocketTransport } from '@liuboer/shared/message-hub/unix-socket-transport';
 
 // TypedHub - Type-safe wrapper over MessageHub + InProcessTransportBus
 // Recommended for new code migrating from EventBus

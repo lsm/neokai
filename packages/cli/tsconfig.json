@@ -8,10 +8,13 @@
 		"skipLibCheck": true,
 		"allowImportingTsExtensions": true,
 		"noEmit": true,
+		"types": ["bun"],
 		"paths": {
 			"@/*": ["./src/*"],
 			"@liuboer/shared": ["../shared/src/mod.ts"],
-			"@liuboer/shared/*": ["../shared/src/*"]
+			"@liuboer/shared/*": ["../shared/src/*"],
+			"@liuboer/daemon": ["../daemon/main.ts"],
+			"@liuboer/daemon/*": ["../daemon/src/*"]
 		}
 	},
 	"include": ["src/**/*", "main.ts"],

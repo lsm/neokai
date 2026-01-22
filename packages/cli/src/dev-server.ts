@@ -2,32 +2,15 @@ import { createDaemonApp } from '@liuboer/daemon/app';
 import type { Config } from '@liuboer/daemon/config';
 import { createServer as createViteServer } from 'vite';
 import { resolve } from 'path';
-import * as net from 'net';
-import { createLogger, generateUUID } from '@liuboer/shared';
-import { UnixSocketTransport } from '@liuboer/shared/message-hub/unix-socket-transport';
-import type { ClientConnection, HubMessage } from '@liuboer/shared';
-import type { HubMessageWithMetadata } from '@liuboer/shared/message-hub/protocol';
+import { createLogger } from '@liuboer/shared';
+import {
+	findAvailablePort,
+	createCorsPreflightResponse,
+	isWebSocketPath,
+	createJsonErrorResponse,
+} from './cli-utils';
 
 const log = createLogger('liuboer:cli:dev-server');
-
-/**
- * Find an available port by creating a temporary server
- */
-async function findAvailablePort(): Promise<number> {
-	return new Promise((resolve, reject) => {
-		const server = net.createServer();
-		server.listen(0, () => {
-			const address = server.address();
-			if (address && typeof address === 'object') {
-				const port = address.port;
-				server.close(() => resolve(port));
-			} else {
-				server.close(() => reject(new Error('Failed to get port')));
-			}
-		});
-		server.on('error', reject);
-	});
-}
 
 export async function startDevServer(config: Config) {
 	log.info('🔧 Starting unified development server...');
@@ -41,60 +24,6 @@ export async function startDevServer(config: Config) {
 
 	// Stop the daemon's internal server (we'll create a unified one)
 	daemonContext.server.stop();
-
-	// Initialize IPC socket if configured (for yuanshen orchestrator)
-	let ipcTransport: UnixSocketTransport | undefined;
-	let ipcClientId: string | undefined;
-	if (config.ipcSocketPath) {
-		log.info(`🔌 Starting IPC socket server at ${config.ipcSocketPath}...`);
-		ipcTransport = new UnixSocketTransport({
-			name: 'ipc-server',
-			socketPath: config.ipcSocketPath,
-			mode: 'server',
-			debug: true,
-		});
-		await ipcTransport.initialize();
-
-		// Generate a unique client ID for the IPC connection
-		ipcClientId = generateUUID();
-
-		// Register IPC as a ClientConnection with the router
-		// This allows the yuanshen orchestrator to receive events
-		const router = daemonContext.messageHub.getRouter();
-		if (router) {
-			const ipcConnection: ClientConnection = {
-				id: ipcClientId,
-				send: (data: string) => {
-					try {
-						const message = JSON.parse(data) as HubMessage;
-						ipcTransport!.send(message);
-					} catch (error) {
-						log.error('[IPC] Failed to send message:', error);
-					}
-				},
-				isOpen: () => ipcTransport?.isReady() ?? false,
-				canAccept: () => true,
-				metadata: { type: 'ipc', role: 'yuanshen-orchestrator' },
-			};
-			router.registerConnection(ipcConnection);
-			log.info(`[IPC] Registered as client: ${ipcClientId}`);
-		}
-
-		// Handle messages from yuanshen orchestrator
-		// Forward ALL messages through the transport's message handler path
-		ipcTransport.onMessage((message) => {
-			log.info(`[IPC] Received: ${message.type} ${message.method}`);
-
-			// Add clientId to message for proper routing/response handling
-			(message as HubMessageWithMetadata).clientId = ipcClientId;
-
-			// Forward to the transport's handler which notifies MessageHub
-			// This enables full RPC support (CALL/RESULT/EVENT/SUBSCRIBE)
-			daemonContext.transport.handleClientMessage(message, ipcClientId);
-		});
-
-		log.info(`✅ IPC socket server ready at ${config.ipcSocketPath}`);
-	}
 
 	// Find an available port for Vite dev server
 	log.info('📦 Starting Vite dev server...');
@@ -134,17 +63,11 @@ export async function startDevServer(config: Config) {
 
 			// CORS preflight
 			if (req.method === 'OPTIONS') {
-				return new Response(null, {
-					headers: {
-						'Access-Control-Allow-Origin': '*',
-						'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-						'Access-Control-Allow-Headers': 'Content-Type',
-					},
-				});
+				return createCorsPreflightResponse();
 			}
 
 			// WebSocket upgrade at /ws (daemon WebSocket)
-			if (url.pathname === '/ws') {
+			if (isWebSocketPath(url.pathname)) {
 				const upgraded = server.upgrade(req, {
 					data: {
 						connectionSessionId: 'global',
@@ -196,18 +119,7 @@ export async function startDevServer(config: Config) {
 
 		error(error) {
 			log.error('Server error:', error);
-			return new Response(
-				JSON.stringify({
-					error: 'Internal server error',
-					message: error instanceof Error ? error.message : String(error),
-				}),
-				{
-					status: 500,
-					headers: {
-						'Content-Type': 'application/json',
-					},
-				}
-			);
+			return createJsonErrorResponse(error instanceof Error ? error.message : String(error));
 		},
 	});
 
@@ -247,11 +159,6 @@ export async function startDevServer(config: Config) {
 					}, 3000);
 				}),
 			]);
-
-			if (ipcTransport) {
-				log.info('🛑 Closing IPC socket...');
-				await ipcTransport.close();
-			}
 
 			log.info('🛑 Cleaning up daemon...');
 			// Call cleanup but it will try to stop daemon's server (already stopped above)

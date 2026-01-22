@@ -3,96 +3,20 @@ import { getConfig } from '@liuboer/daemon/config';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { parseArgs, getHelpText } from './src/cli-utils';
 
 // Parse CLI arguments
-interface CliOptions {
-	port?: number;
-	workspace?: string;
-	host?: string;
-	dbPath?: string;
-	ipcSocket?: string;
-	help?: boolean;
-}
+const { options: cliOptions, error } = parseArgs(process.argv.slice(2));
 
-function parseArgs(): CliOptions {
-	const args = process.argv.slice(2);
-	const options: CliOptions = {};
-
-	for (let i = 0; i < args.length; i++) {
-		const arg = args[i];
-
-		if (arg === '--help' || arg === '-h') {
-			options.help = true;
-		} else if (arg === '--port' || arg === '-p') {
-			const portValue = args[++i];
-			if (portValue && !isNaN(Number(portValue))) {
-				options.port = parseInt(portValue, 10);
-			} else {
-				console.error(`Error: Invalid port value: ${portValue}`);
-				process.exit(1);
-			}
-		} else if (arg === '--workspace' || arg === '-w') {
-			options.workspace = args[++i];
-			if (!options.workspace) {
-				console.error('Error: --workspace requires a path');
-				process.exit(1);
-			}
-		} else if (arg === '--host') {
-			options.host = args[++i];
-			if (!options.host) {
-				console.error('Error: --host requires a value');
-				process.exit(1);
-			}
-		} else if (arg === '--db-path') {
-			options.dbPath = args[++i];
-			if (!options.dbPath) {
-				console.error('Error: --db-path requires a path');
-				process.exit(1);
-			}
-		} else if (arg === '--ipc-socket') {
-			options.ipcSocket = args[++i];
-			if (!options.ipcSocket) {
-				console.error('Error: --ipc-socket requires a path');
-				process.exit(1);
-			}
-		} else {
-			console.error(`Error: Unknown option: ${arg}`);
-			options.help = true;
-		}
+if (error) {
+	console.error(`Error: ${error}`);
+	if (!cliOptions.help) {
+		process.exit(1);
 	}
-
-	return options;
 }
-
-function printHelp() {
-	console.log(`
-Liuboer - Claude Agent SDK Web Interface
-
-Usage: liuboer [options]
-
-Options:
-  -p, --port <port>         Port to listen on (default: 9283)
-  -w, --workspace <path>    Workspace root directory (default: tmp/workspace in dev, cwd in prod)
-  --host <host>             Host to bind to (default: 0.0.0.0)
-  --db-path <path>          Database file path (default: ./data/daemon.db)
-  --ipc-socket <path>       Unix socket path for IPC (enables yuanshen orchestrator connection)
-  -h, --help                Show this help message
-
-Environment Variables:
-  LIUBOER_WORKSPACE_PATH    Workspace root directory (overridden by --workspace flag)
-
-Examples:
-  liuboer --port 9983 --workspace .
-  liuboer -p 8080 -w /path/to/workspace
-  liuboer --db-path /path/to/shared/daemon.db
-  LIUBOER_WORKSPACE_PATH=/my/workspace liuboer
-`);
-}
-
-const cliOptions = parseArgs();
 
 if (cliOptions.help) {
-	printHelp();
+	console.log(getHelpText());
 	process.exit(0);
 }
 
