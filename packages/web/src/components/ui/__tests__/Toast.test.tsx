@@ -4,7 +4,7 @@
  */
 
 import { render, cleanup } from '@testing-library/preact';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { ToastItem } from '../Toast';
 import type { Toast } from '../../../lib/toast';
 

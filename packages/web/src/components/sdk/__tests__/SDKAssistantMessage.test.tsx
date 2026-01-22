@@ -4,7 +4,7 @@
  *
  * Tests assistant message rendering with text, tools, and thinking blocks
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import { render, cleanup } from '@testing-library/preact';
 import { SDKAssistantMessage } from '../SDKAssistantMessage';

@@ -4,7 +4,7 @@
  *
  * Key bug fix covered: Signal-based re-renders causing lost keystrokes
  *
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
  * Previously, InputTextarea directly read `isAgentWorking.value` signal inside
  * the component. When signals updated from server-pushed state changes,
  * the component re-rendered with stale `content` prop (from parent's last render),

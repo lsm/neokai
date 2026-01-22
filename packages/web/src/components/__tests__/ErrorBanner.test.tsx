@@ -4,7 +4,7 @@
  *
  * Tests the error banner with error message, view details button, and dismiss functionality.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { ErrorBanner } from '../ErrorBanner';

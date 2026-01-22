@@ -4,7 +4,7 @@
  *
  * Tests pure logic without mock.module to avoid polluting other tests.
  * These tests validate the business logic used in GlobalSettingsEditor.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
  */
 
 describe('GlobalSettingsEditor Logic', () => {

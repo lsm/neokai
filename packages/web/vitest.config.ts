@@ -11,7 +11,7 @@ export default defineConfig({
 		include: ['src/**/*.{test,spec}.{js,ts,tsx}'],
 		exclude: ['node_modules', 'dist'],
 		globals: true,
-		setupFiles: [],
+		setupFiles: ['./vitest.setup.ts'],
 		coverage: {
 			provider: 'v8',
 			reportsDirectory: 'coverage',

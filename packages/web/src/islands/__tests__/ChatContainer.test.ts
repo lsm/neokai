@@ -24,15 +24,18 @@ function flushRAF(): void {
 }
 
 describe('ChatContainer State Batching', () => {
+	const originalRAF = globalThis.requestAnimationFrame;
+
 	beforeEach(() => {
 		rafCallbacks.length = 0;
 		mockRaf.mockClear();
-		// Use stubGlobal to properly mock requestAnimationFrame in vitest
-		vi.stubGlobal('requestAnimationFrame', mockRaf);
+		// Mock requestAnimationFrame globally
+		globalThis.requestAnimationFrame = mockRaf as unknown as typeof requestAnimationFrame;
 	});
 
 	afterEach(() => {
-		vi.unstubAllGlobals();
+		// Restore original requestAnimationFrame
+		globalThis.requestAnimationFrame = originalRAF;
 	});
 
 	describe('requestAnimationFrame batching', () => {

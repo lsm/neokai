@@ -4,7 +4,7 @@
  *
  * Tests the session list item with status indicators, metadata display,
  * worktree badge, and archived status.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
  *
  * Note: Tests without mock.module to avoid polluting other tests.
  */

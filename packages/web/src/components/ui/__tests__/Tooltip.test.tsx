@@ -3,8 +3,8 @@
  * Tests for Tooltip Component
  */
 
-import { render, cleanup, fireEvent, waitFor } from '@testing-library/preact';
-import { describe, it, expect } from 'vitest';
+import { render, cleanup, fireEvent, waitFor, screen } from '@testing-library/preact';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Tooltip } from '../Tooltip';
 
 describe('Tooltip', () => {
@@ -70,7 +70,7 @@ describe('Tooltip', () => {
 			fireEvent.mouseEnter(wrapper!);
 
 			await waitFor(() => {
-				const tooltip = container.querySelector('[role="tooltip"]');
+				const tooltip = screen.queryByRole('tooltip');
 				expect(tooltip?.className).toContain('bottom-full');
 			});
 		});
@@ -86,7 +86,7 @@ describe('Tooltip', () => {
 			fireEvent.mouseEnter(wrapper!);
 
 			await waitFor(() => {
-				const tooltip = container.querySelector('[role="tooltip"]');
+				const tooltip = screen.queryByRole('tooltip');
 				expect(tooltip?.className).toContain('top-full');
 			});
 		});
@@ -102,7 +102,7 @@ describe('Tooltip', () => {
 			fireEvent.mouseEnter(wrapper!);
 
 			await waitFor(() => {
-				const tooltip = container.querySelector('[role="tooltip"]');
+				const tooltip = screen.queryByRole('tooltip');
 				expect(tooltip?.className).toContain('right-full');
 			});
 		});
@@ -118,7 +118,7 @@ describe('Tooltip', () => {
 			fireEvent.mouseEnter(wrapper!);
 
 			await waitFor(() => {
-				const tooltip = container.querySelector('[role="tooltip"]');
+				const tooltip = screen.queryByRole('tooltip');
 				expect(tooltip?.className).toContain('left-full');
 			});
 		});
@@ -197,7 +197,7 @@ describe('Tooltip', () => {
 			fireEvent.mouseEnter(wrapper!);
 
 			await waitFor(() => {
-				const tooltip = container.querySelector('[role="tooltip"]');
+				const tooltip = screen.queryByRole('tooltip');
 				expect(tooltip).toBeTruthy();
 			});
 		});
@@ -213,14 +213,14 @@ describe('Tooltip', () => {
 			fireEvent.mouseEnter(wrapper!);
 
 			await waitFor(() => {
-				const tooltip = container.querySelector('[role="tooltip"]');
+				const tooltip = screen.queryByRole('tooltip');
 				expect(tooltip).toBeTruthy();
 			});
 
 			fireEvent.mouseLeave(wrapper!);
 
 			await waitFor(() => {
-				const tooltip = container.querySelector('[role="tooltip"]');
+				const tooltip = screen.queryByRole('tooltip');
 				expect(tooltip).toBeNull();
 			});
 		});
@@ -259,7 +259,7 @@ describe('Tooltip', () => {
 			fireEvent.mouseEnter(wrapper!);
 
 			await waitFor(() => {
-				const tooltip = container.querySelector('[role="tooltip"]');
+				const tooltip = screen.queryByRole('tooltip');
 				expect(tooltip?.textContent).toContain('Test content');
 			});
 		});
@@ -275,7 +275,7 @@ describe('Tooltip', () => {
 			fireEvent.mouseEnter(wrapper!);
 
 			await waitFor(() => {
-				const tooltip = container.querySelector('[role="tooltip"]');
+				const tooltip = screen.queryByRole('tooltip');
 				expect(tooltip?.className).toContain('whitespace-nowrap');
 			});
 		});
@@ -293,8 +293,8 @@ describe('Tooltip', () => {
 			fireEvent.mouseEnter(wrapper!);
 
 			await waitFor(() => {
-				const tooltip = container.querySelector('.z-50');
-				expect(tooltip).toBeTruthy();
+				const tooltip = screen.queryByRole('tooltip');
+				expect(tooltip?.classList.contains('z-50')).toBe(true);
 			});
 		});
 
@@ -309,8 +309,8 @@ describe('Tooltip', () => {
 			fireEvent.mouseEnter(wrapper!);
 
 			await waitFor(() => {
-				const tooltip = container.querySelector('.shadow-lg');
-				expect(tooltip).toBeTruthy();
+				const tooltip = screen.queryByRole('tooltip');
+				expect(tooltip?.classList.contains('shadow-lg')).toBe(true);
 			});
 		});
 
@@ -325,8 +325,8 @@ describe('Tooltip', () => {
 			fireEvent.mouseEnter(wrapper!);
 
 			await waitFor(() => {
-				const tooltip = container.querySelector('.rounded-md');
-				expect(tooltip).toBeTruthy();
+				const tooltip = screen.queryByRole('tooltip');
+				expect(tooltip?.classList.contains('rounded-md')).toBe(true);
 			});
 		});
 
@@ -341,8 +341,8 @@ describe('Tooltip', () => {
 			fireEvent.mouseEnter(wrapper!);
 
 			await waitFor(() => {
-				const tooltip = container.querySelector('.animate-fadeIn');
-				expect(tooltip).toBeTruthy();
+				const tooltip = screen.queryByRole('tooltip');
+				expect(tooltip?.classList.contains('animate-fadeIn')).toBe(true);
 			});
 		});
 
@@ -357,8 +357,8 @@ describe('Tooltip', () => {
 			fireEvent.mouseEnter(wrapper!);
 
 			await waitFor(() => {
-				const tooltip = container.querySelector('.pointer-events-none');
-				expect(tooltip).toBeTruthy();
+				const tooltip = screen.queryByRole('tooltip');
+				expect(tooltip?.classList.contains('pointer-events-none')).toBe(true);
 			});
 		});
 
@@ -373,8 +373,8 @@ describe('Tooltip', () => {
 			fireEvent.mouseEnter(wrapper!);
 
 			await waitFor(() => {
-				const tooltip = container.querySelector('.bg-dark-800');
-				expect(tooltip).toBeTruthy();
+				const tooltip = screen.queryByRole('tooltip');
+				expect(tooltip?.classList.contains('bg-dark-800')).toBe(true);
 			});
 		});
 	});
@@ -391,7 +391,7 @@ describe('Tooltip', () => {
 			fireEvent.mouseEnter(wrapper!);
 
 			await waitFor(() => {
-				const tooltip = container.querySelector('[role="tooltip"]');
+				const tooltip = screen.queryByRole('tooltip');
 				expect(tooltip).toBeTruthy();
 			});
 		});
@@ -407,8 +407,8 @@ describe('Tooltip', () => {
 			fireEvent.mouseEnter(wrapper!);
 
 			await waitFor(() => {
-				const tooltip = container.querySelector('.text-white');
-				expect(tooltip).toBeTruthy();
+				const tooltip = screen.queryByRole('tooltip');
+				expect(tooltip?.classList.contains('text-white')).toBe(true);
 			});
 		});
 
@@ -423,8 +423,8 @@ describe('Tooltip', () => {
 			fireEvent.mouseEnter(wrapper!);
 
 			await waitFor(() => {
-				const tooltip = container.querySelector('.text-xs');
-				expect(tooltip).toBeTruthy();
+				const tooltip = screen.queryByRole('tooltip');
+				expect(tooltip?.classList.contains('text-xs')).toBe(true);
 			});
 		});
 	});
@@ -441,7 +441,7 @@ describe('Tooltip', () => {
 			fireEvent.mouseEnter(wrapper!);
 
 			await waitFor(() => {
-				const tooltip = container.querySelector('[role="tooltip"]');
+				const tooltip = screen.queryByRole('tooltip');
 				const arrow = tooltip?.querySelector('.border-t-dark-800');
 				expect(arrow).toBeTruthy();
 			});

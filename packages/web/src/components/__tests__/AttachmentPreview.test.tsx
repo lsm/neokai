@@ -4,7 +4,7 @@
  *
  * Tests the attachment preview with image thumbnails, file info overlay,
  * and remove button functionality.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
  */
 
 import { render, fireEvent, cleanup } from '@testing-library/preact';

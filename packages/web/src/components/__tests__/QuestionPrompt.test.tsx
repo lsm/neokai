@@ -4,7 +4,7 @@
  *
  * Tests the question prompt with options selection, custom input,
  * submit/cancel actions, and resolved states.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
  *
  * Note: Tests UI behavior without mocking useMessageHub.
  * The component renders correctly without network calls.

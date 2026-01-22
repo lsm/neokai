@@ -4,7 +4,7 @@
  *
  * Tests the session status bar with connection status, model switcher,
  * thinking level, auto-scroll toggle, and context usage display.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
  *
  * Note: Tests without mock.module to avoid polluting other tests.
  */
