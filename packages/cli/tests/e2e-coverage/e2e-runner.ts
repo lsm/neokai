@@ -177,11 +177,18 @@ process.on('SIGTERM', async () => {
 });
 
 // Use process.exitCode instead of process.exit() to allow Bun to write coverage
+// Then force exit after a short delay to prevent hanging from open handles
 main()
 	.then((code) => {
 		process.exitCode = code;
+		// Give Bun time to write coverage, then force exit
+		setTimeout(() => {
+			console.log('⏱️ Force exiting to prevent hang...');
+			process.exit(code);
+		}, 2000);
 	})
 	.catch((error) => {
 		console.error('Fatal error:', error);
 		process.exitCode = 1;
+		setTimeout(() => process.exit(1), 2000);
 	});

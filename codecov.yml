@@ -1,6 +1,13 @@
 # Codecov configuration
 # https://docs.codecov.com/docs/codecovyml-reference
 
+# Allow public access to coverage graphs/badges (required for private repos)
+# Without this, badge URLs show "unknown" for private repositories
+codecov:
+  require_ci_to_pass: false
+  # Allow coverage badges to be viewed without authentication
+  # This makes the coverage percentage public while keeping source code private
+
 coverage:
   precision: 2
   round: down
@@ -177,5 +184,37 @@ flags:
   # Browser-side: web code via Playwright V8 coverage
   e2e-browser:
     paths:
+      - packages/web/src/
+    carryforward: true
+  # Combined E2E: both server and browser coverage
+  e2e-all:
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+      - packages/web/src/
+    carryforward: true
+
+  # ===========================================
+  # Combined coverage flags
+  # ===========================================
+  # Offline tests: all unit + integration tests
+  offline-all:
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+      - packages/cli/src/
+      - packages/web/src/
+    carryforward: true
+  # Online tests: all API-dependent tests
+  online-all:
+    paths:
+      - packages/daemon/src/
+    carryforward: true
+  # ALL: Combined coverage from all test types
+  all:
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+      - packages/cli/src/
       - packages/web/src/
     carryforward: true

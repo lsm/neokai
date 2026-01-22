@@ -1,16 +1,12 @@
-# E2E Coverage - Server + Browser coverage collection
+# E2E Quick - Fast E2E tests with coverage collection
 #
-# This workflow collects BOTH server-side and browser-side coverage by running
-# E2E tests against an in-process daemon server.
-#
-# Modes:
-#   - quick (default): Runs representative E2E tests (~11 tests, ~15 min)
-#   - full (manual): Runs ALL 70+ E2E tests (~60+ min)
+# Runs representative E2E tests (~11 tests) with BOTH server-side and browser-side coverage.
+# For full E2E test suite (70+ tests), use e2e-matrix.yml (manual trigger).
 #
 # Server coverage: Bun's --coverage instruments daemon/shared code running in-process
 # Browser coverage: Playwright CDP/monocart-reporter collects V8 coverage from browser
 
-name: E2E Coverage
+name: E2E Quick
 
 on:
   push:
@@ -18,21 +14,12 @@ on:
   pull_request:
     branches: [main, develop]
   workflow_dispatch:
-    inputs:
-      mode:
-        description: 'Coverage mode: quick (sample tests) or full (all 70+ tests)'
-        required: false
-        default: 'quick'
-        type: choice
-        options:
-          - quick
-          - full
 
 jobs:
-  e2e-coverage:
-    name: E2E Coverage (${{ inputs.mode || 'quick' }})
+  e2e-quick:
+    name: E2E Quick
     runs-on: arc-runner-set
-    timeout-minutes: ${{ inputs.mode == 'full' && 90 || 20 }}
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -62,14 +49,9 @@ jobs:
           bun run build
 
       - name: Install Playwright browsers
-        run: |
-          # Install for both packages since full mode uses packages/e2e
-          cd packages/cli && bunx playwright install chromium
-          cd ../e2e && bunx playwright install chromium
+        run: cd packages/cli && bunx playwright install chromium
 
-      # Quick mode: Run sample E2E tests (fast, automatic on push/PR)
-      - name: Run E2E quick coverage
-        if: inputs.mode != 'full'
+      - name: Run E2E quick tests
         working-directory: packages/cli
         run: |
           echo "Running E2E quick coverage tests..."
@@ -81,48 +63,22 @@ jobs:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           DEFAULT_MODEL: haiku
 
-      # Full mode: Run ALL 70+ E2E tests (comprehensive, manual trigger only)
-      - name: Run E2E full coverage
-        if: inputs.mode == 'full'
-        working-directory: packages/cli
-        run: |
-          echo "Running E2E full coverage tests..."
-          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
-            bun --coverage --coverage-reporter=lcov --coverage-dir=coverage \
-            ./tests/e2e-coverage/e2e-full.ts
-        env:
-          CI: true
-          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
-          DEFAULT_MODEL: haiku
-
       - name: Upload server-side coverage to Codecov
         uses: codecov/codecov-action@v4
         continue-on-error: true
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/cli/coverage/lcov.info
-          flags: e2e-server
+          flags: e2e-server,e2e-all,all
           fail_ci_if_error: false
 
-      # Browser coverage location depends on mode
-      - name: Upload browser-side coverage to Codecov (quick mode)
-        if: inputs.mode != 'full'
+      - name: Upload browser-side coverage to Codecov
         uses: codecov/codecov-action@v4
         continue-on-error: true
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/cli/tests/e2e-coverage/browser-coverage.lcov
-          flags: e2e-browser
-          fail_ci_if_error: false
-
-      - name: Upload browser-side coverage to Codecov (full mode)
-        if: inputs.mode == 'full'
-        uses: codecov/codecov-action@v4
-        continue-on-error: true
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/e2e/coverage/lcov.info
-          flags: e2e-browser
+          flags: e2e-browser,e2e-all,all
           fail_ci_if_error: false
 
       - name: Upload coverage artifacts
@@ -130,10 +86,9 @@ jobs:
         if: always()
         continue-on-error: true
         with:
-          name: e2e-coverage-reports-${{ inputs.mode || 'quick' }}
+          name: e2e-quick-coverage-reports
           path: |
             packages/cli/coverage/
             packages/cli/tests/e2e-coverage/browser-coverage.lcov
             packages/cli/tests/e2e-coverage/browser-coverage.json
-            packages/e2e/coverage/
           retention-days: 7

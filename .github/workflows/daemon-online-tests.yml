@@ -67,5 +67,5 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/daemon/coverage/lcov.info
-          flags: daemon-online-${{ matrix.category }}
+          flags: daemon-online-${{ matrix.category }},online-all,all
           fail_ci_if_error: false
