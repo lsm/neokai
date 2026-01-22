@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { LRUCache } from '../src/message-hub/cache.ts';
+import { LRUCache, createCacheKey } from '../src/message-hub/cache.ts';
 
 describe('LRUCache', () => {
 	let cache: LRUCache<string, string>;
@@ -175,5 +175,88 @@ describe('LRUCache', () => {
 
 		expect(cache.get('key1')).toBe('value1-updated');
 		expect(cache.get('key2')).toBeUndefined();
+	});
+});
+
+describe('createCacheKey', () => {
+	test('should handle null data', () => {
+		const key = createCacheKey('test.method', 'session123', null);
+		expect(key).toBe('test.method:session123:null');
+	});
+
+	test('should handle undefined data', () => {
+		const key = createCacheKey('test.method', 'session123', undefined);
+		expect(key).toBe('test.method:session123:null');
+	});
+
+	test('should handle string data', () => {
+		const key = createCacheKey('test.method', 'session123', 'hello world');
+		expect(key).toBe('test.method:session123:hello world');
+	});
+
+	test('should handle number data', () => {
+		const key = createCacheKey('test.method', 'session123', 42);
+		expect(key).toBe('test.method:session123:42');
+	});
+
+	test('should handle boolean data', () => {
+		const key1 = createCacheKey('test.method', 'session123', true);
+		expect(key1).toBe('test.method:session123:true');
+
+		const key2 = createCacheKey('test.method', 'session123', false);
+		expect(key2).toBe('test.method:session123:false');
+	});
+
+	test('should handle small objects directly', () => {
+		const data = { foo: 'bar' };
+		const key = createCacheKey('test.method', 'session123', data);
+		// Small object (<100 chars JSON) should be included directly
+		expect(key).toContain('test.method:session123:');
+		expect(key).toContain('foo');
+		expect(key).toContain('bar');
+	});
+
+	test('should hash large objects', () => {
+		// Create a large object (>100 chars JSON)
+		const largeObj = {
+			data: 'x'.repeat(200),
+			nested: { a: 1, b: 2, c: 3 },
+		};
+		const key = createCacheKey('test.method', 'session123', largeObj);
+		// Large object should use hash
+		expect(key).toMatch(/^test\.method:session123:hash:[a-z0-9]+$/);
+	});
+
+	test('should handle circular references gracefully', () => {
+		const circular: Record<string, unknown> = { foo: 'bar' };
+		circular.self = circular;
+
+		// Should not throw, should use fallback with timestamp
+		const key = createCacheKey('test.method', 'session123', circular);
+		expect(key).toMatch(/^test\.method:session123:error:\d+$/);
+	});
+
+	test('should produce consistent keys for same data', () => {
+		const data = { foo: 'bar', baz: [1, 2, 3] };
+		const key1 = createCacheKey('test.method', 'session123', data);
+		const key2 = createCacheKey('test.method', 'session123', data);
+		expect(key1).toBe(key2);
+	});
+
+	test('should produce different keys for different data', () => {
+		const key1 = createCacheKey('test.method', 'session123', { foo: 'bar' });
+		const key2 = createCacheKey('test.method', 'session123', { foo: 'baz' });
+		expect(key1).not.toBe(key2);
+	});
+
+	test('should handle empty objects', () => {
+		const key = createCacheKey('test.method', 'session123', {});
+		expect(key).toContain('test.method:session123:');
+	});
+
+	test('should handle arrays', () => {
+		const arr = [1, 2, 3, 4, 5];
+		const key = createCacheKey('test.method', 'session123', arr);
+		expect(key).toContain('test.method:session123:');
 	});
 });

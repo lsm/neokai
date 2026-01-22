@@ -251,6 +251,287 @@ describe('InProcessTransport', () => {
 			const transport = new InProcessTransport();
 			await expect(transport.initialize()).rejects.toThrow('not paired');
 		});
+
+		it('should handle message handler errors gracefully', async () => {
+			const [client, server] = InProcessTransport.createPair();
+			await client.initialize();
+
+			let handlerCalled = false;
+			server.onMessage(() => {
+				handlerCalled = true;
+				throw new Error('Handler error');
+			});
+
+			const testMessage: HubMessage = {
+				id: 'error-handler-test',
+				type: MessageType.EVENT,
+				method: 'test',
+				sessionId: 'global',
+				timestamp: new Date().toISOString(),
+				data: {},
+			};
+
+			// Should not throw despite handler error
+			await client.send(testMessage);
+
+			// Wait for message delivery
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Handler was called and threw, but send() didn't throw
+			expect(handlerCalled).toBe(true);
+		});
+
+		it('should handle connection handler errors gracefully', async () => {
+			const [client, _server] = InProcessTransport.createPair();
+
+			let errorThrown = false;
+			client.onConnectionChange(() => {
+				errorThrown = true;
+				throw new Error('Connection handler error');
+			});
+
+			// The initialize should complete despite handler throwing
+			await client.initialize();
+			expect(client.getState()).toBe('connected');
+			expect(errorThrown).toBe(true); // Handler was called and threw
+		});
+	});
+
+	describe('sendToClient', () => {
+		it('should send message to specific client by ID', async () => {
+			const [client, server] = InProcessTransport.createPair();
+			await client.initialize();
+
+			const receivedMessages: HubMessage[] = [];
+			client.onMessage((msg) => receivedMessages.push(msg));
+
+			const testMessage: HubMessage = {
+				id: 'send-to-client-test',
+				type: MessageType.EVENT,
+				method: 'test.event',
+				sessionId: 'global',
+				timestamp: new Date().toISOString(),
+				data: { direct: true },
+			};
+
+			const clientId = client.getClientId();
+			const success = await server.sendToClient(clientId, testMessage);
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			expect(success).toBe(true);
+			expect(receivedMessages.length).toBe(1);
+			expect(receivedMessages[0].data).toEqual({ direct: true });
+		});
+
+		it('should return false for non-existent client', async () => {
+			const [client, server] = InProcessTransport.createPair();
+			await client.initialize();
+
+			const testMessage: HubMessage = {
+				id: 'non-existent-test',
+				type: MessageType.EVENT,
+				method: 'test',
+				sessionId: 'global',
+				timestamp: new Date().toISOString(),
+				data: {},
+			};
+
+			const success = await server.sendToClient('non-existent-client-id', testMessage);
+			expect(success).toBe(false);
+		});
+
+		it('should return false for client that is not ready', async () => {
+			const [client, server] = InProcessTransport.createPair();
+			// Don't initialize client - it won't be ready
+
+			const testMessage: HubMessage = {
+				id: 'not-ready-test',
+				type: MessageType.EVENT,
+				method: 'test',
+				sessionId: 'global',
+				timestamp: new Date().toISOString(),
+				data: {},
+			};
+
+			const clientId = client.getClientId();
+			const success = await server.sendToClient(clientId, testMessage);
+			expect(success).toBe(false);
+		});
+	});
+
+	describe('broadcastToClients', () => {
+		it('should broadcast to multiple clients', async () => {
+			const server = new InProcessTransport({ name: 'server' });
+			const client1 = new InProcessTransport({ name: 'client1' });
+			const client2 = new InProcessTransport({ name: 'client2' });
+			const client3 = new InProcessTransport({ name: 'client3' });
+
+			// Manually set up peer relationships
+			client1['peer'] = server;
+			client2['peer'] = server;
+			client3['peer'] = server;
+			server['peer'] = client1;
+
+			await client1.initialize();
+			await client2.initialize();
+			await client3.initialize();
+
+			// Register clients with server
+			server['connectedClients'].set(client1.getClientId(), client1);
+			server['connectedClients'].set(client2.getClientId(), client2);
+			server['connectedClients'].set(client3.getClientId(), client3);
+
+			const received1: HubMessage[] = [];
+			const received2: HubMessage[] = [];
+			const received3: HubMessage[] = [];
+
+			client1.onMessage((msg) => received1.push(msg));
+			client2.onMessage((msg) => received2.push(msg));
+			client3.onMessage((msg) => received3.push(msg));
+
+			const clientIds = [client1.getClientId(), client2.getClientId(), client3.getClientId()];
+
+			const testMessage: HubMessage = {
+				id: 'broadcast-test',
+				type: MessageType.EVENT,
+				method: 'test.broadcast',
+				sessionId: 'global',
+				timestamp: new Date().toISOString(),
+				data: { broadcast: true },
+			};
+
+			const result = await server.broadcastToClients(clientIds, testMessage);
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			expect(result.sent).toBe(3);
+			expect(result.failed).toBe(0);
+			expect(result.totalTargets).toBe(3);
+
+			expect(received1.length).toBe(1);
+			expect(received2.length).toBe(1);
+			expect(received3.length).toBe(1);
+		});
+
+		it('should handle partial failures in broadcast', async () => {
+			const server = new InProcessTransport({ name: 'server' });
+			const client1 = new InProcessTransport({ name: 'client1' });
+			const client2 = new InProcessTransport({ name: 'client2' });
+
+			// Set up peer relationships
+			client1['peer'] = server;
+			client2['peer'] = server;
+			server['peer'] = client1;
+
+			await client1.initialize();
+			// Don't initialize client2
+
+			// Register clients with server
+			server['connectedClients'].set(client1.getClientId(), client1);
+			server['connectedClients'].set(client2.getClientId(), client2);
+
+			const clientIds = [client1.getClientId(), client2.getClientId(), 'non-existent'];
+
+			const testMessage: HubMessage = {
+				id: 'partial-fail-test',
+				type: MessageType.EVENT,
+				method: 'test',
+				sessionId: 'global',
+				timestamp: new Date().toISOString(),
+				data: {},
+			};
+
+			const result = await server.broadcastToClients(clientIds, testMessage);
+
+			expect(result.sent).toBe(1);
+			expect(result.failed).toBe(2);
+			expect(result.totalTargets).toBe(3);
+		});
+
+		it('should handle empty client list', async () => {
+			const [client, server] = InProcessTransport.createPair();
+			await client.initialize();
+
+			const testMessage: HubMessage = {
+				id: 'empty-list-test',
+				type: MessageType.EVENT,
+				method: 'test',
+				sessionId: 'global',
+				timestamp: new Date().toISOString(),
+				data: {},
+			};
+
+			const result = await server.broadcastToClients([], testMessage);
+
+			expect(result.sent).toBe(0);
+			expect(result.failed).toBe(0);
+			expect(result.totalTargets).toBe(0);
+		});
+	});
+
+	describe('getClientId and getClientCount', () => {
+		it('should return unique client IDs', () => {
+			const t1 = new InProcessTransport();
+			const t2 = new InProcessTransport();
+
+			expect(t1.getClientId()).not.toBe(t2.getClientId());
+			expect(t1.getClientId()).toMatch(/^[0-9a-f-]+$/); // UUID format
+		});
+
+		it('should track connected client count', async () => {
+			const [client, server] = InProcessTransport.createPair();
+			await client.initialize();
+
+			expect(server.getClientCount()).toBe(1);
+		});
+	});
+
+	describe('onClientDisconnect unsubscribe', () => {
+		it('should allow unsubscribing from disconnect events', async () => {
+			const [client, server] = InProcessTransport.createPair();
+			await client.initialize();
+
+			let callCount = 0;
+
+			const unsubscribe = server.onClientDisconnect(() => {
+				callCount++;
+			});
+
+			// Unsubscribe after first close
+			await client.close();
+			expect(callCount).toBe(1);
+
+			// Re-create and close - should not increment since unsubscribed
+			const [client2] = InProcessTransport.createPair();
+			await client2.initialize();
+
+			unsubscribe();
+
+			await client2.close();
+			expect(callCount).toBe(1); // Still 1, not 2
+		});
+
+		it('should handle multiple disconnect handlers', async () => {
+			const [client, server] = InProcessTransport.createPair();
+			await client.initialize();
+
+			let handler1Called = false;
+			let handler2Called = false;
+
+			server.onClientDisconnect(() => {
+				handler1Called = true;
+			});
+
+			server.onClientDisconnect(() => {
+				handler2Called = true;
+			});
+
+			await client.close();
+
+			expect(handler1Called).toBe(true);
+			expect(handler2Called).toBe(true);
+		});
 	});
 });
 
