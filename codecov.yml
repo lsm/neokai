@@ -205,11 +205,13 @@ flags:
       - packages/cli/src/
       - packages/web/src/
     carryforward: true
+    # Single upload from consolidated upload-coverage job
   # Online tests: all API-dependent tests
   online-all:
     paths:
       - packages/daemon/src/
     carryforward: true
+    # Single upload from consolidated upload-coverage job
   # ALL: Combined coverage from all test types
   all:
     paths:

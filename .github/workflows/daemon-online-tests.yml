@@ -61,11 +61,69 @@ jobs:
           # Override: CLAUDE_CODE_OAUTH_TOKEN for session/agent and session
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          # Sanitize category name: replace / with - for artifact name
+          name: coverage-online-${{ matrix.category == 'session/agent' && 'session-agent' || matrix.category == 'session/features' && 'session-features' || matrix.category == 'session/lifecycle' && 'session-lifecycle' || matrix.category == 'session/convo' && 'session-convo' || matrix.category }}
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
+
+  # ============================================
+  # UPLOAD COVERAGE (Single upload after all tests)
+  # Runs after all matrix jobs complete
+  # Merges coverage files and uploads once to Codecov
+  # ============================================
+
+  upload-coverage:
+    name: Upload Coverage
+    runs-on: arc-runner-set
+    needs: test-daemon-online
+    if: always()
+    timeout-minutes: 2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-online-*
+          path: coverage-reports
+          merge-multiple: false
+
+      - name: List downloaded coverage files
+        run: |
+          echo "Downloaded coverage files:"
+          find coverage-reports -name "*.info" -type f
+
+      - name: Merge coverage files
+        run: |
+          # Create merged coverage directory
+          mkdir -p merged-coverage
+
+          # Merge all lcov.info files
+          # lcov --add-tracefile is cumulative
+          FIRST=true
+          for f in $(find coverage-reports -name "lcov.info" -type f); do
+            echo "Adding coverage from: $f"
+            if [ "$FIRST" = true ]; then
+              cp "$f" merged-coverage/lcov.info
+              FIRST=false
+            else
+              # Use cat to concatenate LCOV files (LCOV format supports this)
+              cat "$f" >> merged-coverage/lcov.info
+            fi
+          done
+
+          echo "Merged coverage file created"
+          wc -l merged-coverage/lcov.info
+
       - name: Upload to Codecov
         uses: codecov/codecov-action@v4
-        continue-on-error: true
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/daemon/coverage/lcov.info
+          files: merged-coverage/lcov.info
           flags: online-all
           fail_ci_if_error: false

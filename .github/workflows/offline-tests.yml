@@ -71,14 +71,13 @@ jobs:
         working-directory: packages/daemon
         run: bun test tests/offline/integration/database --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
-        continue-on-error: true
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/daemon/coverage/lcov.info
-          flags: offline-all
-          fail_ci_if_error: false
+          name: coverage-offline-daemon-integration-database
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
 
   test-daemon-integration-filesystem:
     name: Daemon Integration (filesystem)
@@ -100,14 +99,13 @@ jobs:
         working-directory: packages/daemon
         run: bun test tests/offline/integration/filesystem --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
-        continue-on-error: true
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/daemon/coverage/lcov.info
-          flags: offline-all
-          fail_ci_if_error: false
+          name: coverage-offline-daemon-integration-filesystem
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
 
   test-daemon-integration-git:
     name: Daemon Integration (git)
@@ -129,14 +127,13 @@ jobs:
         working-directory: packages/daemon
         run: bun test tests/offline/integration/git --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
-        continue-on-error: true
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/daemon/coverage/lcov.info
-          flags: offline-all
-          fail_ci_if_error: false
+          name: coverage-offline-daemon-integration-git
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
 
   test-daemon-integration-websocket:
     name: Daemon Integration (websocket)
@@ -158,14 +155,13 @@ jobs:
         working-directory: packages/daemon
         run: bun test tests/offline/integration/websocket --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
-        continue-on-error: true
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/daemon/coverage/lcov.info
-          flags: offline-all
-          fail_ci_if_error: false
+          name: coverage-offline-daemon-integration-websocket
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
 
   test-daemon-integration-rpc:
     name: Daemon Integration (rpc)
@@ -187,14 +183,13 @@ jobs:
         working-directory: packages/daemon
         run: bun test tests/offline/integration/rpc --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
-        continue-on-error: true
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/daemon/coverage/lcov.info
-          flags: offline-all
-          fail_ci_if_error: false
+          name: coverage-offline-daemon-integration-rpc
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
 
   test-daemon-integration-session:
     name: Daemon Integration (session)
@@ -216,14 +211,13 @@ jobs:
         working-directory: packages/daemon
         run: bun test tests/offline/integration/session --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
-        continue-on-error: true
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/daemon/coverage/lcov.info
-          flags: offline-all
-          fail_ci_if_error: false
+          name: coverage-offline-daemon-integration-session
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
 
   test-daemon-integration-components:
     name: Daemon Integration (components)
@@ -245,14 +239,13 @@ jobs:
         working-directory: packages/daemon
         run: bun test tests/offline/integration/components --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
-        continue-on-error: true
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/daemon/coverage/lcov.info
-          flags: offline-all
-          fail_ci_if_error: false
+          name: coverage-offline-daemon-integration-components
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
 
   test-daemon-integration-mcp:
     name: Daemon Integration (mcp)
@@ -274,14 +267,13 @@ jobs:
         working-directory: packages/daemon
         run: bun test tests/offline/integration/mcp --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
-        continue-on-error: true
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/daemon/coverage/lcov.info
-          flags: offline-all
-          fail_ci_if_error: false
+          name: coverage-offline-daemon-integration-mcp
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
 
   # Unit tests - pure logic with mocks only
   test-daemon-unit:
@@ -307,14 +299,13 @@ jobs:
           GLM_API_KEY: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
 
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
-        continue-on-error: true
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/daemon/coverage/lcov.info
-          flags: offline-all
-          fail_ci_if_error: false
+          name: coverage-offline-daemon-unit
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
 
   test-daemon-providers:
     name: Daemon Providers
@@ -336,14 +327,13 @@ jobs:
         working-directory: packages/daemon
         run: bun test tests/offline/providers --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
-        continue-on-error: true
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/daemon/coverage/lcov.info
-          flags: offline-all
-          fail_ci_if_error: false
+          name: coverage-offline-daemon-providers
+          path: packages/daemon/coverage/lcov.info
+          retention-days: 1
 
   test-shared:
     name: Test Shared
@@ -365,14 +355,13 @@ jobs:
         working-directory: packages/shared
         run: bun test --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
-        continue-on-error: true
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/shared/coverage/lcov.info
-          flags: offline-all
-          fail_ci_if_error: false
+          name: coverage-offline-shared
+          path: packages/shared/coverage/lcov.info
+          retention-days: 1
 
   test-cli:
     name: Test CLI
@@ -394,14 +383,13 @@ jobs:
         working-directory: packages/cli
         run: bun test --coverage --coverage-reporter=lcov --coverage-dir=coverage
 
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
-        continue-on-error: true
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/cli/coverage/lcov.info
-          flags: offline-all
-          fail_ci_if_error: false
+          name: coverage-offline-cli
+          path: packages/cli/coverage/lcov.info
+          retention-days: 1
 
   test-web:
     name: Test Web
@@ -423,14 +411,13 @@ jobs:
         working-directory: packages/web
         run: bunx vitest run --coverage --coverage.reporter=lcov --coverage.reportsDirectory=coverage
 
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
-        continue-on-error: true
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/web/coverage/lcov.info
-          flags: offline-all
-          fail_ci_if_error: false
+          name: coverage-offline-web
+          path: packages/web/coverage/lcov.info
+          retention-days: 1
 
   typecheck:
     name: Type Check
@@ -451,3 +438,72 @@ jobs:
       - name: Type check
         run: bun run typecheck
 
+  # ============================================
+  # UPLOAD COVERAGE (Single upload after all tests)
+  # Runs after all test jobs complete
+  # Merges coverage files and uploads once to Codecov
+  # ============================================
+
+  upload-coverage:
+    name: Upload Coverage
+    runs-on: arc-runner-set
+    needs:
+      - test-daemon-integration-database
+      - test-daemon-integration-filesystem
+      - test-daemon-integration-git
+      - test-daemon-integration-websocket
+      - test-daemon-integration-rpc
+      - test-daemon-integration-session
+      - test-daemon-integration-components
+      - test-daemon-integration-mcp
+      - test-daemon-unit
+      - test-daemon-providers
+      - test-shared
+      - test-cli
+      - test-web
+    if: always()
+    timeout-minutes: 2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-offline-*
+          path: coverage-reports
+          merge-multiple: false
+
+      - name: List downloaded coverage files
+        run: |
+          echo "Downloaded coverage files:"
+          find coverage-reports -name "*.info" -type f
+
+      - name: Merge coverage files
+        run: |
+          # Create merged coverage directory
+          mkdir -p merged-coverage
+
+          # Merge all lcov.info files
+          FIRST=true
+          for f in $(find coverage-reports -name "lcov.info" -type f); do
+            echo "Adding coverage from: $f"
+            if [ "$FIRST" = true ]; then
+              cp "$f" merged-coverage/lcov.info
+              FIRST=false
+            else
+              # Use cat to concatenate LCOV files (LCOV format supports this)
+              cat "$f" >> merged-coverage/lcov.info
+            fi
+          done
+
+          echo "Merged coverage file created"
+          wc -l merged-coverage/lcov.info
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: merged-coverage/lcov.info
+          flags: offline-all
+          fail_ci_if_error: false
