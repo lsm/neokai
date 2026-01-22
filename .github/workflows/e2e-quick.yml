@@ -69,7 +69,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/cli/coverage/lcov.info
-          flags: e2e-server,e2e-all,all
+          flags: e2e-all
           fail_ci_if_error: false
 
       - name: Upload browser-side coverage to Codecov
@@ -78,7 +78,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/cli/tests/e2e-coverage/browser-coverage.lcov
-          flags: e2e-browser,e2e-all,all
+          flags: e2e-all
           fail_ci_if_error: false
 
       - name: Upload coverage artifacts

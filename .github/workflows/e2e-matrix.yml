@@ -176,7 +176,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/cli/coverage/lcov.info
-          flags: e2e-server,e2e-all,all
+          flags: e2e-all
           fail_ci_if_error: false
 
       - name: Upload browser coverage to Codecov
@@ -186,7 +186,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/e2e/coverage/lcov.info
-          flags: e2e-browser,e2e-all,all
+          flags: e2e-all
           fail_ci_if_error: false
 
       - name: Upload test results

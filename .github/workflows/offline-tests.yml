@@ -77,7 +77,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/daemon/coverage/lcov.info
-          flags: coverage-daemon-integration-database,offline-all,all
+          flags: offline-all
           fail_ci_if_error: false
 
   test-daemon-integration-filesystem:
@@ -106,7 +106,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/daemon/coverage/lcov.info
-          flags: coverage-daemon-integration-filesystem,offline-all,all
+          flags: offline-all
           fail_ci_if_error: false
 
   test-daemon-integration-git:
@@ -135,7 +135,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/daemon/coverage/lcov.info
-          flags: coverage-daemon-integration-git,offline-all,all
+          flags: offline-all
           fail_ci_if_error: false
 
   test-daemon-integration-websocket:
@@ -164,7 +164,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/daemon/coverage/lcov.info
-          flags: coverage-daemon-integration-websocket,offline-all,all
+          flags: offline-all
           fail_ci_if_error: false
 
   test-daemon-integration-rpc:
@@ -193,7 +193,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/daemon/coverage/lcov.info
-          flags: coverage-daemon-integration-rpc,offline-all,all
+          flags: offline-all
           fail_ci_if_error: false
 
   test-daemon-integration-session:
@@ -222,7 +222,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/daemon/coverage/lcov.info
-          flags: coverage-daemon-integration-session,offline-all,all
+          flags: offline-all
           fail_ci_if_error: false
 
   test-daemon-integration-components:
@@ -251,7 +251,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/daemon/coverage/lcov.info
-          flags: coverage-daemon-integration-components,offline-all,all
+          flags: offline-all
           fail_ci_if_error: false
 
   test-daemon-integration-mcp:
@@ -280,7 +280,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/daemon/coverage/lcov.info
-          flags: coverage-daemon-integration-mcp,offline-all,all
+          flags: offline-all
           fail_ci_if_error: false
 
   # Unit tests - pure logic with mocks only
@@ -313,7 +313,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/daemon/coverage/lcov.info
-          flags: coverage-daemon-unit,offline-all,all
+          flags: offline-all
           fail_ci_if_error: false
 
   test-daemon-providers:
@@ -342,7 +342,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/daemon/coverage/lcov.info
-          flags: coverage-daemon-providers,offline-all,all
+          flags: offline-all
           fail_ci_if_error: false
 
   test-shared:
@@ -371,7 +371,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/shared/coverage/lcov.info
-          flags: coverage-shared,offline-all,all
+          flags: offline-all
           fail_ci_if_error: false
 
   test-cli:
@@ -400,7 +400,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/cli/coverage/lcov.info
-          flags: coverage-cli,offline-all,all
+          flags: offline-all
           fail_ci_if_error: false
 
   test-web:
@@ -429,7 +429,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/web/coverage/lcov.info
-          flags: coverage-web,offline-all,all
+          flags: offline-all
           fail_ci_if_error: false
 
   typecheck:
