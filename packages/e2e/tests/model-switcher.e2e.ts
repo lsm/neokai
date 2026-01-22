@@ -141,8 +141,15 @@ test.describe('Model Switcher UI', () => {
 		// Verify dropdown is open
 		expect(await isDropdownOpen(page)).toBe(true);
 
-		// Click a model option
-		await page.locator('button:has-text("Opus")').first().click();
+		// Click any available model option (use the current model which is always available)
+		// Look for model icons: 🧠 (Opus), 💎 (Sonnet), ⚡ (Haiku), 🌐 (GLM)
+		const modelButtons = page.locator(
+			'button:has-text("🧠"), button:has-text("💎"), button:has-text("⚡"), button:has-text("🌐")'
+		);
+		const count = await modelButtons.count();
+		expect(count).toBeGreaterThan(0);
+
+		await modelButtons.first().click();
 		await page.waitForTimeout(500);
 
 		// Dropdown should be closed after selection

@@ -11,6 +11,7 @@ import {
 	openSessionOptionsMenu,
 	clickArchiveSession,
 	createSessionWithMessage,
+	selectSessionInSidebar,
 } from './helpers/session-archive-helpers';
 import { waitForWebSocketConnected, cleanupTestSession } from './helpers/wait-helpers';
 
@@ -77,6 +78,9 @@ test.describe('Session Archive - Archiving Flow', () => {
 
 		// Wait for archive to complete
 		await page.waitForTimeout(1500);
+
+		// Re-select the session in the sidebar (view may have changed after archiving)
+		await selectSessionInSidebar(page, sessionId);
 
 		// Open options menu again
 		await openSessionOptionsMenu(page);

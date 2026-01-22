@@ -345,21 +345,42 @@ export class SessionManager {
 				`[SessionManager] PHASE 1: EventBus unsubscribed (${Date.now() - phase1Start}ms)`
 			);
 
-			// PHASE 2: Wait for pending background tasks (like title generation)
+			// PHASE 2: Wait for pending background tasks (like title generation) with timeout
 			// These are fire-and-forget operations from EventBus handlers
 			// The cleanup barrier prevents new tasks from starting
+			// Use a timeout to prevent hanging in CI when title generation takes too long
 			const phase2Start = Date.now();
+			const BACKGROUND_TASK_TIMEOUT_MS = 5000; // 5 seconds max wait
+
 			if (this.pendingBackgroundTasks.size > 0) {
 				this.logger.info(
-					`[SessionManager] PHASE 2A: Waiting for ${this.pendingBackgroundTasks.size} pending background tasks...`
+					`[SessionManager] PHASE 2A: Waiting for ${this.pendingBackgroundTasks.size} pending background tasks (max ${BACKGROUND_TASK_TIMEOUT_MS}ms)...`
 				);
-				await Promise.all(Array.from(this.pendingBackgroundTasks)).catch((error) => {
-					this.logger.error(`[SessionManager] Error waiting for background tasks:`, error);
-				});
+
+				const timeoutPromise = new Promise<'timeout'>((resolve) =>
+					setTimeout(() => resolve('timeout'), BACKGROUND_TASK_TIMEOUT_MS)
+				);
+
+				const result = await Promise.race([
+					Promise.all(Array.from(this.pendingBackgroundTasks))
+						.then(() => 'completed' as const)
+						.catch((error) => {
+							this.logger.error(`[SessionManager] Error waiting for background tasks:`, error);
+							return 'error' as const;
+						}),
+					timeoutPromise,
+				]);
+
+				if (result === 'timeout') {
+					this.logger.warn(
+						`[SessionManager] PHASE 2: Background tasks timed out after ${BACKGROUND_TASK_TIMEOUT_MS}ms, proceeding with cleanup`
+					);
+				} else {
+					this.logger.info(
+						`[SessionManager] PHASE 2: Background tasks ${result} (${Date.now() - phase2Start}ms)`
+					);
+				}
 				this.pendingBackgroundTasks.clear();
-				this.logger.info(
-					`[SessionManager] PHASE 2: Background tasks completed (${Date.now() - phase2Start}ms)`
-				);
 			} else {
 				this.logger.info(
 					`[SessionManager] PHASE 2: No background tasks (${Date.now() - phase2Start}ms)`

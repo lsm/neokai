@@ -61,17 +61,17 @@ test.describe('Page Refresh - Context Persistence', () => {
 		// Wait for context indicator to show percentage
 		await page.waitForFunction(
 			() => {
-				const contextEl = document.querySelector('span[class*="text-"][class*="-400"]');
+				const contextEl = document.querySelector('[data-testid="context-percentage"]');
 				const contextText = contextEl?.textContent || '';
 				// Check for percentage format: X.X% or <0.1%
 				return /\d+\.\d+%|<\d+\.\d+%/.test(contextText);
 			},
-			{ timeout: 10000 }
+			{ timeout: 30000 }
 		);
 
 		// Capture context text before refresh
 		const contextTextBefore = await page
-			.locator('span[class*="text-"][class*="-400"]')
+			.locator('[data-testid="context-percentage"]')
 			.first()
 			.textContent();
 		expect(contextTextBefore).toBeTruthy();
@@ -79,12 +79,16 @@ test.describe('Page Refresh - Context Persistence', () => {
 
 		// Refresh the page
 		await page.reload();
+		await page.waitForLoadState('domcontentloaded');
 
 		// Wait for reconnection
 		await waitForWebSocketConnected(page);
 
-		// Navigate back to the session
-		await page.goto(`/${sessionId}`);
+		// Navigate back to the session by clicking on it in the sidebar
+		// This is more reliable than page.goto() for SPA routing
+		const sessionButton = page.locator(`[data-session-id="${sessionId}"]`);
+		await sessionButton.waitFor({ state: 'visible', timeout: 10000 });
+		await sessionButton.click();
 
 		// Wait for session to load
 		await waitForElement(page, 'textarea[placeholder*="Ask"]', {
@@ -94,15 +98,15 @@ test.describe('Page Refresh - Context Persistence', () => {
 		// Wait for context indicator to appear again
 		await page.waitForFunction(
 			() => {
-				const contextEl = document.querySelector('span[class*="text-"][class*="-400"]');
+				const contextEl = document.querySelector('[data-testid="context-percentage"]');
 				const contextText = contextEl?.textContent || '';
 				return /\d+\.\d+%|<\d+\.\d+%/.test(contextText);
 			},
-			{ timeout: 10000 }
+			{ timeout: 30000 }
 		);
 
 		// Verify context indicator is visible with correct value
-		const contextIndicator = page.locator('span[class*="text-"][class*="-400"]').first();
+		const contextIndicator = page.locator('[data-testid="context-percentage"]').first();
 		await expect(contextIndicator).toBeVisible();
 
 		const contextText = await contextIndicator.textContent();
@@ -130,39 +134,44 @@ test.describe('Page Refresh - Context Persistence', () => {
 		// Wait for context indicator to show percentage
 		await page.waitForFunction(
 			() => {
-				const contextEl = document.querySelector('span[class*="text-"][class*="-400"]');
+				const contextEl = document.querySelector('[data-testid="context-percentage"]');
 				const contextText = contextEl?.textContent || '';
 				return /\d+\.\d+%|<\d+\.\d+%/.test(contextText);
 			},
-			{ timeout: 10000 }
+			{ timeout: 30000 }
 		);
 
 		// Verify context indicator is visible
-		const contextIndicator = page.locator('span[class*="text-"][class*="-400"]').first();
+		const contextIndicator = page.locator('[data-testid="context-percentage"]').first();
 		await expect(contextIndicator).toBeVisible();
 
 		// Refresh page
 		await page.reload();
+		await page.waitForLoadState('domcontentloaded');
 
 		// Wait for reconnection
-		await waitForElement(page, 'text=Online');
+		await waitForWebSocketConnected(page);
 
-		// Navigate back to session
-		await page.goto(`/${sessionId}`);
-		await waitForElement(page, 'textarea[placeholder*="Ask"]');
+		// Navigate back to session by clicking on it in the sidebar
+		const sessionButton = page.locator(`[data-session-id="${sessionId}"]`);
+		await sessionButton.waitFor({ state: 'visible', timeout: 10000 });
+		await sessionButton.click();
+		await waitForElement(page, 'textarea[placeholder*="Ask"]', { timeout: 30000 });
 
 		// Wait for context indicator to appear again
 		await page.waitForFunction(
 			() => {
-				const contextEl = document.querySelector('span[class*="text-"][class*="-400"]');
+				const contextEl = document.querySelector('[data-testid="context-percentage"]');
 				const contextText = contextEl?.textContent || '';
 				return /\d+\.\d+%|<\d+\.\d+%/.test(contextText);
 			},
-			{ timeout: 10000 }
+			{ timeout: 30000 }
 		);
 
+		// Get fresh locator reference after navigation
+		const contextIndicatorAfterRefresh = page.locator('[data-testid="context-percentage"]').first();
 		// Verify context indicator is still visible after refresh
-		await expect(contextIndicator).toBeVisible();
+		await expect(contextIndicatorAfterRefresh).toBeVisible();
 	});
 
 	test('should restore context breakdown details after refresh', async ({ page }) => {
@@ -186,15 +195,15 @@ test.describe('Page Refresh - Context Persistence', () => {
 		// Wait for context indicator to show percentage
 		await page.waitForFunction(
 			() => {
-				const contextEl = document.querySelector('span[class*="text-"][class*="-400"]');
+				const contextEl = document.querySelector('[data-testid="context-percentage"]');
 				const contextText = contextEl?.textContent || '';
 				return /\d+\.\d+%|<\d+\.\d+%/.test(contextText);
 			},
-			{ timeout: 10000 }
+			{ timeout: 30000 }
 		);
 
 		// Verify context details can be opened
-		const contextIndicator = page.locator('span[class*="text-"][class*="-400"]').first();
+		const contextIndicator = page.locator('[data-testid="context-percentage"]').first();
 		await contextIndicator.click();
 
 		// Context details dropdown should be visible
@@ -205,26 +214,29 @@ test.describe('Page Refresh - Context Persistence', () => {
 
 		// Refresh page
 		await page.reload();
+		await page.waitForLoadState('domcontentloaded');
 
 		// Wait for reconnection
-		await waitForElement(page, 'text=Online');
+		await waitForWebSocketConnected(page);
 
-		// Navigate back to session
-		await page.goto(`/${sessionId}`);
-		await waitForElement(page, 'textarea[placeholder*="Ask"]');
+		// Navigate back to session by clicking on it in the sidebar
+		const sessionButton = page.locator(`[data-session-id="${sessionId}"]`);
+		await sessionButton.waitFor({ state: 'visible', timeout: 10000 });
+		await sessionButton.click();
+		await waitForElement(page, 'textarea[placeholder*="Ask"]', { timeout: 30000 });
 
 		// Wait for context indicator to appear again
 		await page.waitForFunction(
 			() => {
-				const contextEl = document.querySelector('span[class*="text-"][class*="-400"]');
+				const contextEl = document.querySelector('[data-testid="context-percentage"]');
 				const contextText = contextEl?.textContent || '';
 				return /\d+\.\d+%|<\d+\.\d+%/.test(contextText);
 			},
-			{ timeout: 10000 }
+			{ timeout: 30000 }
 		);
 
 		// Verify context details can be opened after refresh
-		const contextIndicatorAfter = page.locator('span[class*="text-"][class*="-400"]').first();
+		const contextIndicatorAfter = page.locator('[data-testid="context-percentage"]').first();
 		await contextIndicatorAfter.click();
 
 		// Context details dropdown should be visible

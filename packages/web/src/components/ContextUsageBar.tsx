@@ -250,7 +250,7 @@ export default function ContextUsageBar({
 
 				{/* Desktop: Percentage + Bar */}
 				<div class="hidden sm:flex items-center gap-3">
-					<span class={`text-xs font-medium ${getContextColor()}`}>
+					<span class={`text-xs font-medium ${getContextColor()}`} data-testid="context-percentage">
 						{contextPercentage.toFixed(1)}%
 					</span>
 					<div class="w-16 sm:w-24 h-2 bg-dark-700 rounded-full overflow-hidden">

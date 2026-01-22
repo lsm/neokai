@@ -61,12 +61,17 @@ test.describe('Page Refresh - Session State Persistence', () => {
 
 		// Refresh page during or right after sending
 		await page.reload();
+		await page.waitForLoadState('domcontentloaded');
 
 		// Wait for reconnection
 		await waitForWebSocketConnected(page);
 
-		// Navigate back to session
-		await page.goto(`/${sessionId}`);
+		// Navigate back to session by clicking on it in the sidebar
+		const sessionButton = page.locator(`[data-session-id="${sessionId}"]`);
+		await sessionButton.waitFor({ state: 'visible', timeout: 10000 });
+		await sessionButton.click();
+
+		// Wait for textarea to appear (may take time for session to load)
 		await waitForElement(page, 'textarea[placeholder*="Ask"]', {
 			timeout: 30000,
 		});
@@ -102,12 +107,17 @@ test.describe('Page Refresh - Session State Persistence', () => {
 
 		// Refresh page
 		await page.reload();
+		await page.waitForLoadState('domcontentloaded');
 
 		// Wait for reconnection
-		await waitForElement(page, 'text=Online');
+		await waitForWebSocketConnected(page);
 
-		// Navigate back to session
-		await page.goto(`/${sessionId}`);
+		// Navigate back to session by clicking on it in the sidebar
+		const sessionButton = page.locator(`[data-session-id="${sessionId}"]`);
+		await sessionButton.waitFor({ state: 'visible', timeout: 10000 });
+		await sessionButton.click();
+
+		// Wait for textarea
 		await waitForElement(page, 'textarea[placeholder*="Ask"]', {
 			timeout: 30000,
 		});
@@ -115,8 +125,11 @@ test.describe('Page Refresh - Session State Persistence', () => {
 		// Wait for page to stabilize
 		await page.waitForTimeout(2000);
 
+		// Get fresh reference to the input after navigation
+		const inputAfterRefresh = page.locator('textarea[placeholder*="Ask"]').first();
+
 		// Verify commands are still available after refresh
-		await messageInput.fill('/');
+		await inputAfterRefresh.fill('/');
 
 		// Wait briefly for autocomplete
 		await page.waitForTimeout(500);
@@ -162,12 +175,17 @@ test.describe('Page Refresh - Session State Persistence', () => {
 
 		// Refresh page
 		await page.reload();
+		await page.waitForLoadState('domcontentloaded');
 
 		// Wait for reconnection
-		await waitForElement(page, 'text=Online');
+		await waitForWebSocketConnected(page);
 
-		// Navigate back to session
-		await page.goto(`/${sessionId}`);
+		// Navigate back to session by clicking on it in the sidebar
+		const sessionButtonRefresh = page.locator(`[data-session-id="${sessionId}"]`);
+		await sessionButtonRefresh.waitFor({ state: 'visible', timeout: 10000 });
+		await sessionButtonRefresh.click();
+
+		// Wait for textarea
 		await waitForElement(page, 'textarea[placeholder*="Ask"]', {
 			timeout: 30000,
 		});

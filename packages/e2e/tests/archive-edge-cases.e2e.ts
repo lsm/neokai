@@ -11,6 +11,7 @@ import {
 	openSessionOptionsMenu,
 	clickArchiveSession,
 	createSessionWithMessage,
+	selectSessionInSidebar,
 } from './helpers/session-archive-helpers';
 import {
 	waitForWebSocketConnected,
@@ -62,6 +63,9 @@ test.describe('Session Archive - Edge Cases', () => {
 		// Wait for archive to complete
 		await page.waitForTimeout(1500);
 
+		// Re-select the session in the sidebar (view may have changed after archiving)
+		await selectSessionInSidebar(page, sessionId!);
+
 		// The original message should still be visible
 		await expect(page.locator('text=Unique test message 12345').first()).toBeVisible();
 	});
@@ -76,6 +80,9 @@ test.describe('Session Archive - Edge Cases', () => {
 
 		// Wait for archive to complete
 		await page.waitForTimeout(1500);
+
+		// Re-select the session in the sidebar (view may have changed after archiving)
+		await selectSessionInSidebar(page, sessionId!);
 
 		// Open options and click delete
 		await openSessionOptionsMenu(page);

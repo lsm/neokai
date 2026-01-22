@@ -116,13 +116,34 @@ async function stopServer(): Promise<void> {
 	console.log('✅ Cleanup complete');
 }
 
+async function findTestFile(testFile: string, e2eDir: string): Promise<string> {
+	// Check possible locations for the test file
+	const locations = [
+		`tests/${testFile}.e2e.ts`,
+		`tests/serial/${testFile}.e2e.ts`,
+		`tests/read-only/${testFile}.e2e.ts`,
+	];
+
+	for (const location of locations) {
+		const fullPath = resolve(e2eDir, location);
+		const exists = await Bun.file(fullPath).exists();
+		if (exists) {
+			return location;
+		}
+	}
+
+	// Default to main tests directory if not found
+	return `tests/${testFile}.e2e.ts`;
+}
+
 async function runPlaywrightTest(baseUrl: string, testFile: string): Promise<number> {
 	const e2eDir = resolve(import.meta.dir, '../../../e2e');
+	const testPath = await findTestFile(testFile, e2eDir);
 
-	console.log(`\n🎭 Running Playwright test: ${testFile}`);
+	console.log(`\n🎭 Running Playwright test: ${testPath}`);
 
 	return new Promise((resolveCode) => {
-		const child = spawn('npx', ['playwright', 'test', `tests/${testFile}.e2e.ts`], {
+		const child = spawn('npx', ['playwright', 'test', testPath], {
 			cwd: e2eDir,
 			stdio: 'inherit',
 			env: {

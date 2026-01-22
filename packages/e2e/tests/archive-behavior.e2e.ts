@@ -71,7 +71,8 @@ test.describe('Session Archive - Archived Session Behavior', () => {
 		await expect(page.locator('text=Session archived').first()).toBeVisible();
 
 		// Should have archive icon (a box icon typically)
+		// Use .first() to avoid matching multiple SVGs (archive icon and dismiss button)
 		const archiveIconSection = page.locator('text=Session archived').first().locator('..');
-		await expect(archiveIconSection.locator('svg')).toBeVisible();
+		await expect(archiveIconSection.locator('svg').first()).toBeVisible();
 	});
 });

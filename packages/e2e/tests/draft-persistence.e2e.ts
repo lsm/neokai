@@ -2,7 +2,8 @@ import { test, expect } from '../fixtures';
 
 test.describe('Draft Persistence', () => {
 	test.beforeEach(async ({ page }) => {
-		await page.goto('http://localhost:9283');
+		// Use baseURL from config (supports dynamic port in CI)
+		await page.goto('/');
 		await page
 			.getByRole('button', { name: 'New Session', exact: true })
 			.waitFor({ timeout: 10000 });

@@ -169,25 +169,23 @@ jobs:
           CI: true
           COVERAGE: true
 
-      - name: Upload server coverage to Codecov
-        uses: codecov/codecov-action@v4
-        if: steps.check.outputs.should_run == 'true'
-        continue-on-error: true
+      - name: Upload server coverage artifact
+        uses: actions/upload-artifact@v4
+        if: steps.check.outputs.should_run == 'true' && always()
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/cli/coverage/lcov.info
-          flags: e2e-all
-          fail_ci_if_error: false
+          name: coverage-e2e-server-${{ matrix.test }}
+          path: packages/cli/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
 
-      - name: Upload browser coverage to Codecov
-        uses: codecov/codecov-action@v4
-        if: steps.check.outputs.should_run == 'true'
-        continue-on-error: true
+      - name: Upload browser coverage artifact
+        uses: actions/upload-artifact@v4
+        if: steps.check.outputs.should_run == 'true' && always()
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/e2e/coverage/lcov.info
-          flags: e2e-all
-          fail_ci_if_error: false
+          name: coverage-e2e-browser-${{ matrix.test }}
+          path: packages/e2e/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -198,3 +196,93 @@ jobs:
             packages/e2e/test-results/
             packages/e2e/playwright-report/
           retention-days: 7
+
+  # ============================================
+  # UPLOAD COVERAGE (Single upload after all tests)
+  # Runs after all E2E matrix jobs complete
+  # Merges coverage files and uploads once to Codecov
+  # ============================================
+
+  upload-coverage:
+    name: Upload Coverage
+    runs-on: arc-runner-set
+    needs: e2e
+    if: always()
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all server coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-e2e-server-*
+          path: coverage-server
+          merge-multiple: false
+
+      - name: Download all browser coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-e2e-browser-*
+          path: coverage-browser
+          merge-multiple: false
+
+      - name: List downloaded coverage files
+        run: |
+          echo "Server coverage files:"
+          find coverage-server -name "*.info" -type f 2>/dev/null || echo "No server coverage files found"
+          echo ""
+          echo "Browser coverage files:"
+          find coverage-browser -name "*.info" -type f 2>/dev/null || echo "No browser coverage files found"
+
+      - name: Merge server coverage files
+        run: |
+          mkdir -p merged-coverage
+
+          # Merge server coverage
+          FIRST=true
+          for f in $(find coverage-server -name "lcov.info" -type f 2>/dev/null); do
+            echo "Adding server coverage from: $f"
+            if [ "$FIRST" = true ]; then
+              cp "$f" merged-coverage/server-lcov.info
+              FIRST=false
+            else
+              cat "$f" >> merged-coverage/server-lcov.info
+            fi
+          done
+
+          if [ -f merged-coverage/server-lcov.info ]; then
+            echo "Merged server coverage file created"
+            wc -l merged-coverage/server-lcov.info
+          else
+            echo "No server coverage files to merge"
+          fi
+
+      - name: Merge browser coverage files
+        run: |
+          # Merge browser coverage
+          FIRST=true
+          for f in $(find coverage-browser -name "lcov.info" -type f 2>/dev/null); do
+            echo "Adding browser coverage from: $f"
+            if [ "$FIRST" = true ]; then
+              cp "$f" merged-coverage/browser-lcov.info
+              FIRST=false
+            else
+              cat "$f" >> merged-coverage/browser-lcov.info
+            fi
+          done
+
+          if [ -f merged-coverage/browser-lcov.info ]; then
+            echo "Merged browser coverage file created"
+            wc -l merged-coverage/browser-lcov.info
+          else
+            echo "No browser coverage files to merge"
+          fi
+
+      - name: Upload merged coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: merged-coverage/server-lcov.info,merged-coverage/browser-lcov.info
+          flags: e2e-all
+          fail_ci_if_error: false
