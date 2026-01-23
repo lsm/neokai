@@ -33,6 +33,11 @@ export function RewindModal({
 	initialMode = 'files',
 	preselectedCheckpointId,
 }: RewindModalProps) {
+	// Don't render if no sessionId
+	if (!sessionId) {
+		return null;
+	}
+
 	const loading = useSignal(true);
 	const checkpoints = useSignal<Checkpoint[]>([]);
 	const selectedCheckpoint = useSignal<string | null>(preselectedCheckpointId || null);

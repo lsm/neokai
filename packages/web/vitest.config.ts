@@ -1,14 +1,15 @@
 /// <reference types="vitest" />
-import { defineConfig } from 'vite';
+
 import preact from '@preact/preset-vite';
 import { resolve } from 'path';
+import { defineConfig } from 'vite';
 
 export default defineConfig({
 	plugins: [preact()],
 
 	test: {
 		environment: 'happy-dom',
-		include: ['src/**/*.{test,spec}.{js,ts,tsx}'],
+		include: ['src/**/*.{test,spec}.{ts,tsx}'],
 		exclude: ['node_modules', 'dist'],
 		globals: true,
 		setupFiles: ['./vitest.setup.ts'],

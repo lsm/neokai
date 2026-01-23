@@ -12,12 +12,12 @@
 	"dependencies": {
 		"@liuboer/daemon": "workspace:*",
 		"@liuboer/shared": "workspace:*",
-		"hono": "^4.11.3",
-		"vite": "^7.3.1"
+		"hono": "4.11.5",
+		"vite": "7.3.1"
 	},
 	"devDependencies": {
 		"@types/bun": "latest",
-		"playwright": "^1.57.0",
-		"v8-to-istanbul": "^9.3.0"
+		"playwright": "1.57.0",
+		"v8-to-istanbul": "9.3.0"
 	}
 }

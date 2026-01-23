@@ -4,7 +4,6 @@
 		"packages/*"
 	],
 	"scripts": {
-		"postinstall": "mkdir -p node_modules/react && ln -sf ../preact/jsx-runtime node_modules/react/jsx-runtime 2>/dev/null || true",
 		"lint": "oxlint .",
 		"lint:fix": "oxlint --fix .",
 		"format": "biome format --write .",
@@ -32,9 +31,9 @@
 		"@biomejs/biome": "2.3.11",
 		"@testing-library/preact": "3.2.4",
 		"dotenv": "17.2.3",
-		"happy-dom": "20.1.0",
-		"knip": "5.80.2",
-		"oxlint": "1.39.0",
+		"happy-dom": "20.3.7",
+		"knip": "5.82.1",
+		"oxlint": "1.41.0",
 		"typescript": "5.9.3"
 	}
 }

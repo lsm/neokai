@@ -122,8 +122,10 @@ describe('RewindModal', () => {
 			render(<RewindModal isOpen={true} onClose={() => {}} sessionId="test-session" />);
 
 			await waitFor(() => {
-				const emptyState = document.body.querySelector('p');
-				expect(emptyState?.textContent).toContain('No checkpoints available');
+				const emptyState = Array.from(document.body.querySelectorAll('p')).find((p) =>
+					p.textContent?.includes('No checkpoints available')
+				);
+				expect(emptyState).toBeTruthy();
 			});
 		});
 
@@ -290,15 +292,20 @@ describe('RewindModal', () => {
 		const mockCheckpoints = createMockCheckpoints(3);
 		const mockPreview = createMockPreview();
 
-		// Helper to click on first checkpoint
-		function clickFirstCheckpoint() {
+		// Helper to wait for checkpoints to load and click on first checkpoint
+		async function clickFirstCheckpoint() {
+			await waitFor(() => {
+				const buttons = document.body.querySelectorAll('button');
+				const firstCheckpoint = Array.from(buttons).find((btn) =>
+					btn.textContent?.includes('Turn 3')
+				);
+				expect(firstCheckpoint).toBeTruthy();
+			});
 			const buttons = document.body.querySelectorAll('button');
 			const firstCheckpoint = Array.from(buttons).find((btn) =>
 				btn.textContent?.includes('Turn 3')
 			);
-			if (firstCheckpoint) {
-				firstCheckpoint.click();
-			}
+			firstCheckpoint?.click();
 		}
 
 		beforeEach(() => {
@@ -311,13 +318,15 @@ describe('RewindModal', () => {
 
 			await clickFirstCheckpoint();
 
-			expect(vi.mocked(previewRewind)).toHaveBeenCalledWith('test-session', 'checkpoint-3');
+			await waitFor(() => {
+				expect(vi.mocked(previewRewind)).toHaveBeenCalledWith('test-session', 'checkpoint-3');
+			});
 		});
 
 		it('should display preview panel with file changes', async () => {
 			render(<RewindModal isOpen={true} onClose={() => {}} sessionId="test-session" />);
 
-			clickFirstCheckpoint();
+			await clickFirstCheckpoint();
 
 			await waitFor(() => {
 				const previewHeader = Array.from(document.body.querySelectorAll('h4')).find(
@@ -330,7 +339,7 @@ describe('RewindModal', () => {
 		it('should display file count in preview', async () => {
 			render(<RewindModal isOpen={true} onClose={() => {}} sessionId="test-session" />);
 
-			clickFirstCheckpoint();
+			await clickFirstCheckpoint();
 
 			await waitFor(() => {
 				const fileCount = Array.from(document.body.querySelectorAll('span')).find((s) =>
@@ -343,7 +352,7 @@ describe('RewindModal', () => {
 		it('should display insertions and deletions counts', async () => {
 			render(<RewindModal isOpen={true} onClose={() => {}} sessionId="test-session" />);
 
-			clickFirstCheckpoint();
+			await clickFirstCheckpoint();
 
 			await waitFor(() => {
 				const insertions = Array.from(document.body.querySelectorAll('span')).find((s) =>
@@ -360,7 +369,7 @@ describe('RewindModal', () => {
 		it('should display list of files to restore', async () => {
 			render(<RewindModal isOpen={true} onClose={() => {}} sessionId="test-session" />);
 
-			clickFirstCheckpoint();
+			await clickFirstCheckpoint();
 
 			await waitFor(() => {
 				const file1 = Array.from(document.body.querySelectorAll('div')).find(
@@ -378,15 +387,20 @@ describe('RewindModal', () => {
 	describe('Preview error states', () => {
 		const mockCheckpoints = createMockCheckpoints(1);
 
-		// Helper to click on first checkpoint
+		// Helper to wait for checkpoints to load and click on first checkpoint
 		async function clickCheckpointForErrorTests() {
+			await waitFor(() => {
+				const buttons = document.body.querySelectorAll('button');
+				const firstCheckpoint = Array.from(buttons).find((btn) =>
+					btn.textContent?.includes('Turn 1')
+				);
+				expect(firstCheckpoint).toBeTruthy();
+			});
 			const buttons = document.body.querySelectorAll('button');
 			const firstCheckpoint = Array.from(buttons).find((btn) =>
 				btn.textContent?.includes('Turn 1')
 			);
-			if (firstCheckpoint) {
-				firstCheckpoint.click();
-			}
+			firstCheckpoint?.click();
 		}
 
 		beforeEach(() => {
@@ -403,8 +417,7 @@ describe('RewindModal', () => {
 
 			render(<RewindModal isOpen={true} onClose={() => {}} sessionId="test-session" />);
 
-			// Click on checkpoint to trigger preview load
-			await waitFor(() => clickCheckpointForErrorTests());
+			await clickCheckpointForErrorTests();
 
 			await waitFor(() => {
 				const errorDiv = document.body.querySelector('.bg-yellow-500\\/10');
@@ -422,14 +435,13 @@ describe('RewindModal', () => {
 
 			render(<RewindModal isOpen={true} onClose={() => {}} sessionId="test-session" />);
 
-			// Click on checkpoint to trigger preview load
-			await waitFor(() => clickCheckpointForErrorTests());
+			await clickCheckpointForErrorTests();
 
 			await waitFor(() => {
 				const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
 					(btn) => btn.textContent === 'Rewind'
 				);
-				expect(rewindButton?.getAttribute('disabled')).toBeTruthy();
+				expect(rewindButton?.hasAttribute('disabled')).toBe(true);
 			});
 		});
 	});
@@ -452,12 +464,32 @@ describe('RewindModal', () => {
 			const onClose = vi.fn();
 			render(<RewindModal isOpen={true} onClose={onClose} sessionId="test-session" />);
 
+			// Wait for checkpoints to load and click checkpoint
+			await waitFor(() => {
+				const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Turn 1')
+				);
+				expect(checkpoint).toBeTruthy();
+			});
+			const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Turn 1')
+			);
+			checkpoint?.click();
+
+			// Wait for preview to load and rewind button to be enabled
 			await waitFor(() => {
 				const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
 					(btn) => btn.textContent === 'Rewind'
 				);
-				rewindButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+				expect(rewindButton).toBeTruthy();
+				expect(rewindButton?.hasAttribute('disabled')).toBe(false);
 			});
+
+			// Click rewind button
+			const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Rewind'
+			);
+			rewindButton?.click();
 
 			await waitFor(() => {
 				expect(vi.mocked(executeRewind)).toHaveBeenCalledWith(
@@ -497,17 +529,32 @@ describe('RewindModal', () => {
 				/>
 			);
 
-			// Wait for checkpoints to load
+			// Wait for checkpoints to load and click checkpoint
 			await waitFor(() => {
-				const checkpoints = document.body.querySelectorAll('button');
-				expect(checkpoints.length).toBeGreaterThan(0);
+				const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Turn 1')
+				);
+				expect(checkpoint).toBeTruthy();
+			});
+			const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Turn 1')
+			);
+			checkpoint?.click();
+
+			// Wait for preview to load and rewind button to be enabled
+			await waitFor(() => {
+				const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
+					(btn) => btn.textContent === 'Rewind'
+				);
+				expect(rewindButton).toBeTruthy();
+				expect(rewindButton?.hasAttribute('disabled')).toBe(false);
 			});
 
 			// Click rewind button
 			const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
 				(btn) => btn.textContent === 'Rewind'
 			);
-			rewindButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+			rewindButton?.click();
 
 			// Should show confirmation
 			await waitFor(() => {
@@ -527,21 +574,44 @@ describe('RewindModal', () => {
 				/>
 			);
 
-			// Wait for checkpoints to load and click rewind
+			// Wait for checkpoints to load and click checkpoint
+			await waitFor(() => {
+				const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Turn 1')
+				);
+				expect(checkpoint).toBeTruthy();
+			});
+			const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Turn 1')
+			);
+			checkpoint?.click();
+
+			// Wait for preview to load and rewind button to be enabled
 			await waitFor(() => {
 				const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
 					(btn) => btn.textContent === 'Rewind'
 				);
-				rewindButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+				expect(rewindButton).toBeTruthy();
+				expect(rewindButton?.hasAttribute('disabled')).toBe(false);
 			});
 
-			// Click confirm button
+			// Click rewind button
+			const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Rewind'
+			);
+			rewindButton?.click();
+
+			// Wait for confirmation and click confirm button
 			await waitFor(() => {
 				const confirmButton = Array.from(document.body.querySelectorAll('button')).find(
 					(btn) => btn.textContent === 'Confirm Rewind'
 				);
-				confirmButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+				expect(confirmButton).toBeTruthy();
 			});
+			const confirmButton = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Confirm Rewind'
+			);
+			confirmButton?.click();
 
 			await waitFor(() => {
 				expect(vi.mocked(executeRewind)).toHaveBeenCalledWith(
@@ -564,21 +634,44 @@ describe('RewindModal', () => {
 				/>
 			);
 
-			// Click rewind button
+			// Wait for checkpoints to load and click checkpoint
+			await waitFor(() => {
+				const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Turn 1')
+				);
+				expect(checkpoint).toBeTruthy();
+			});
+			const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Turn 1')
+			);
+			checkpoint?.click();
+
+			// Wait for preview to load and rewind button to be enabled
 			await waitFor(() => {
 				const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
 					(btn) => btn.textContent === 'Rewind'
 				);
-				rewindButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+				expect(rewindButton).toBeTruthy();
+				expect(rewindButton?.hasAttribute('disabled')).toBe(false);
 			});
 
-			// Click cancel button
+			// Click rewind button
+			const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Rewind'
+			);
+			rewindButton?.click();
+
+			// Wait for confirmation and click cancel button
 			await waitFor(() => {
 				const cancelButton = Array.from(document.body.querySelectorAll('button')).find(
 					(btn) => btn.textContent === 'Cancel' && btn.closest('.bg-red-500\\/10')
 				);
-				cancelButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+				expect(cancelButton).toBeTruthy();
 			});
+			const cancelButton = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Cancel' && btn.closest('.bg-red-500\\/10')
+			);
+			cancelButton?.click();
 
 			await waitFor(() => {
 				expect(vi.mocked(executeRewind)).not.toHaveBeenCalled();
@@ -607,12 +700,32 @@ describe('RewindModal', () => {
 				<RewindModal isOpen={true} onClose={() => {}} sessionId="test-session" initialMode="both" />
 			);
 
+			// Wait for checkpoints to load and click checkpoint
+			await waitFor(() => {
+				const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Turn 1')
+				);
+				expect(checkpoint).toBeTruthy();
+			});
+			const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Turn 1')
+			);
+			checkpoint?.click();
+
+			// Wait for preview to load and rewind button to be enabled
 			await waitFor(() => {
 				const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
 					(btn) => btn.textContent === 'Rewind'
 				);
-				rewindButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+				expect(rewindButton).toBeTruthy();
+				expect(rewindButton?.hasAttribute('disabled')).toBe(false);
 			});
+
+			// Click rewind button
+			const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Rewind'
+			);
+			rewindButton?.click();
 
 			await waitFor(() => {
 				const confirmation = document.body.querySelector('.bg-red-500\\/10');
@@ -626,21 +739,44 @@ describe('RewindModal', () => {
 				<RewindModal isOpen={true} onClose={onClose} sessionId="test-session" initialMode="both" />
 			);
 
-			// Click rewind
+			// Wait for checkpoints to load and click checkpoint
+			await waitFor(() => {
+				const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Turn 1')
+				);
+				expect(checkpoint).toBeTruthy();
+			});
+			const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Turn 1')
+			);
+			checkpoint?.click();
+
+			// Wait for preview to load and rewind button to be enabled
 			await waitFor(() => {
 				const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
 					(btn) => btn.textContent === 'Rewind'
 				);
-				rewindButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+				expect(rewindButton).toBeTruthy();
+				expect(rewindButton?.hasAttribute('disabled')).toBe(false);
 			});
 
-			// Click confirm
+			// Click rewind button
+			const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Rewind'
+			);
+			rewindButton?.click();
+
+			// Wait for confirmation and click confirm button
 			await waitFor(() => {
 				const confirmButton = Array.from(document.body.querySelectorAll('button')).find(
 					(btn) => btn.textContent === 'Confirm Rewind'
 				);
-				confirmButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+				expect(confirmButton).toBeTruthy();
 			});
+			const confirmButton = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Confirm Rewind'
+			);
+			confirmButton?.click();
 
 			await waitFor(() => {
 				expect(vi.mocked(executeRewind)).toHaveBeenCalledWith(
@@ -684,13 +820,32 @@ describe('RewindModal', () => {
 
 			render(<RewindModal isOpen={true} onClose={() => {}} sessionId="test-session" />);
 
-			// Click rewind button
+			// Wait for checkpoints to load and click checkpoint
+			await waitFor(() => {
+				const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Turn 1')
+				);
+				expect(checkpoint).toBeTruthy();
+			});
+			const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Turn 1')
+			);
+			checkpoint?.click();
+
+			// Wait for preview to load and rewind button to be enabled
 			await waitFor(() => {
 				const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
 					(btn) => btn.textContent === 'Rewind'
 				);
-				rewindButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+				expect(rewindButton).toBeTruthy();
+				expect(rewindButton?.hasAttribute('disabled')).toBe(false);
 			});
+
+			// Click rewind button
+			const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Rewind'
+			);
+			rewindButton?.click();
 
 			await waitFor(() => {
 				expect(toast.error).toHaveBeenCalledWith('Rewind failed');
@@ -715,19 +870,22 @@ describe('RewindModal', () => {
 
 			render(<RewindModal isOpen={true} onClose={() => {}} sessionId="test-session" />);
 
-			// Wait for checkpoint selection
+			// Wait for checkpoints to load and click checkpoint
 			await waitFor(() => {
-				const checkpoints = document.body.querySelectorAll('button');
-				expect(checkpoints.length).toBeGreaterThan(0);
+				const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Turn 1')
+				);
+				expect(checkpoint).toBeTruthy();
 			});
+			const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Turn 1')
+			);
+			checkpoint?.click();
 
 			// Check if toast.error was called
-			await waitFor(
-				() => {
-					expect(toast.error).toHaveBeenCalledWith('Not connected to server');
-				},
-				{ timeout: 5000 }
-			);
+			await waitFor(() => {
+				expect(toast.error).toHaveBeenCalledWith('Not connected to server');
+			});
 		});
 	});
 
@@ -827,6 +985,18 @@ describe('RewindModal', () => {
 		it('should show message when no file changes to revert', async () => {
 			render(<RewindModal isOpen={true} onClose={() => {}} sessionId="test-session" />);
 
+			// Wait for checkpoints to load and click checkpoint
+			await waitFor(() => {
+				const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Turn 1')
+				);
+				expect(checkpoint).toBeTruthy();
+			});
+			const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Turn 1')
+			);
+			checkpoint?.click();
+
 			await waitFor(() => {
 				const message = Array.from(document.body.querySelectorAll('p')).find(
 					(p) => p.textContent === 'No file changes to revert'
@@ -859,13 +1029,32 @@ describe('RewindModal', () => {
 		it('should show executing state while rewinding', async () => {
 			render(<RewindModal isOpen={true} onClose={() => {}} sessionId="test-session" />);
 
-			// Click rewind button
+			// Wait for checkpoints to load and click checkpoint
+			await waitFor(() => {
+				const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Turn 1')
+				);
+				expect(checkpoint).toBeTruthy();
+			});
+			const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Turn 1')
+			);
+			checkpoint?.click();
+
+			// Wait for preview to load and rewind button to be enabled
 			await waitFor(() => {
 				const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
 					(btn) => btn.textContent === 'Rewind'
 				);
-				rewindButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+				expect(rewindButton).toBeTruthy();
+				expect(rewindButton?.hasAttribute('disabled')).toBe(false);
 			});
+
+			// Click rewind button
+			const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Rewind'
+			);
+			rewindButton?.click();
 
 			// Should show "Rewinding..." text
 			await waitFor(() => {
@@ -879,13 +1068,32 @@ describe('RewindModal', () => {
 		it('should disable buttons while executing', async () => {
 			render(<RewindModal isOpen={true} onClose={() => {}} sessionId="test-session" />);
 
-			// Click rewind button
+			// Wait for checkpoints to load and click checkpoint
+			await waitFor(() => {
+				const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Turn 1')
+				);
+				expect(checkpoint).toBeTruthy();
+			});
+			const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Turn 1')
+			);
+			checkpoint?.click();
+
+			// Wait for preview to load and rewind button to be enabled
 			await waitFor(() => {
 				const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
 					(btn) => btn.textContent === 'Rewind'
 				);
-				rewindButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+				expect(rewindButton).toBeTruthy();
+				expect(rewindButton?.hasAttribute('disabled')).toBe(false);
 			});
+
+			// Click rewind button
+			const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Rewind'
+			);
+			rewindButton?.click();
 
 			// Check that buttons are disabled
 			await waitFor(() => {

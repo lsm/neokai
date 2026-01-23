@@ -57,7 +57,7 @@
 			"!test-results",
 			"!coverage",
 			"!**/coverage",
-			"!settings.local.json",
+			"!**/settings.local.json",
 			"!packages/shared/src/sdk"
 		]
 	}
