@@ -118,6 +118,10 @@ export class Database {
 		return this.sdkMessageRepo.getMessageCountByStatus(sessionId, status);
 	}
 
+	deleteMessagesAfter(sessionId: string, afterTimestamp: number): number {
+		return this.sdkMessageRepo.deleteMessagesAfter(sessionId, afterTimestamp);
+	}
+
 	// ============================================================================
 	// Global Configuration operations (delegated to SettingsRepository)
 	// ============================================================================

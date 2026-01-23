@@ -28,6 +28,10 @@ import type {
 	PendingUserQuestion,
 	MessageHub,
 	CurrentModelInfo,
+	Checkpoint,
+	RewindPreview,
+	RewindResult,
+	RewindMode,
 } from '@liuboer/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { Database } from '../../storage/database';
@@ -52,6 +56,7 @@ import { EventSubscriptionSetup } from './event-subscription-setup';
 import { QueryModeHandler } from './query-mode-handler';
 import { SlashCommandManager } from './slash-command-manager';
 import { MessageRecoveryHandler } from './message-recovery-handler';
+import { CheckpointTracker } from './checkpoint-tracker';
 
 /**
  * Original environment variables for restoration after SDK query
@@ -86,6 +91,9 @@ export class AgentSession {
 	private eventSubscriptionSetup: EventSubscriptionSetup;
 	private queryModeHandler: QueryModeHandler;
 	private slashCommandManager: SlashCommandManager;
+
+	// Rewind support
+	private checkpointTracker: CheckpointTracker;
 
 	// SDK query state
 	private queryObject: Query | null = null;
@@ -277,12 +285,18 @@ export class AgentSession {
 			getQueryObject: () => this.queryObject,
 		});
 
+		// Initialize CheckpointTracker for rewind feature
+		this.checkpointTracker = new CheckpointTracker(session.id, this.daemonHub);
+
 		// Set callbacks
 		this.messageHandler.setQueueMessageCallback(async (content: string, internal: boolean) => {
 			return await this.messageQueue.enqueue(content, internal);
 		});
 		this.messageHandler.setCircuitBreakerTripCallback(async (reason, userMessage) => {
 			await this.handleCircuitBreakerTrip(reason, userMessage);
+		});
+		this.messageHandler.setCheckpointCallback((message) => {
+			this.checkpointTracker.processMessage(message);
 		});
 		this.stateManager.setOnIdleCallback(async () => {
 			await this.executeDeferredRestartIfPending();
@@ -681,6 +695,232 @@ export class AgentSession {
 		} catch (error) {
 			this.logger.error(`Deferred restart failed (${reason}):`, error);
 		}
+	}
+
+	// ============================================================================
+	// Rewind Feature
+	// ============================================================================
+
+	/**
+	 * Get all checkpoints for this session
+	 */
+	getCheckpoints(): Checkpoint[] {
+		return this.checkpointTracker.getCheckpoints();
+	}
+
+	/**
+	 * Preview a rewind operation (dry run)
+	 *
+	 * @param checkpointId - The checkpoint ID to preview rewind to
+	 * @returns Rewind preview with files that would change
+	 */
+	async previewRewind(checkpointId: string): Promise<RewindPreview> {
+		// Validate checkpoint exists
+		const checkpoint = this.checkpointTracker.getCheckpoint(checkpointId);
+		if (!checkpoint) {
+			return {
+				canRewind: false,
+				error: `Checkpoint ${checkpointId} not found`,
+			};
+		}
+
+		// Check SDK query is active and ready
+		if (!this.queryObject) {
+			return {
+				canRewind: false,
+				error: 'SDK query not active. Start a conversation first.',
+			};
+		}
+
+		if (!this.firstMessageReceived) {
+			return {
+				canRewind: false,
+				error: 'SDK not ready. Please wait for the session to initialize.',
+			};
+		}
+
+		try {
+			// Call SDK's rewindFiles with dryRun option
+			const sdkResult = await this.queryObject.rewindFiles(checkpointId, { dryRun: true });
+
+			return {
+				canRewind: sdkResult.canRewind,
+				error: sdkResult.error,
+				filesChanged: sdkResult.filesChanged,
+				insertions: sdkResult.insertions,
+				deletions: sdkResult.deletions,
+			};
+		} catch (error) {
+			this.logger.error('Rewind preview failed:', error);
+			return {
+				canRewind: false,
+				error: error instanceof Error ? error.message : 'Unknown error',
+			};
+		}
+	}
+
+	/**
+	 * Execute a rewind operation
+	 *
+	 * @param checkpointId - The checkpoint ID to rewind to
+	 * @param mode - Rewind mode: 'files' | 'conversation' | 'both'
+	 * @returns Rewind result with actual changes made
+	 */
+	async executeRewind(checkpointId: string, mode: RewindMode): Promise<RewindResult> {
+		// Validate checkpoint exists
+		const checkpoint = this.checkpointTracker.getCheckpoint(checkpointId);
+		if (!checkpoint) {
+			return {
+				success: false,
+				error: `Checkpoint ${checkpointId} not found`,
+			};
+		}
+
+		// Check SDK query is active and ready
+		if (!this.queryObject) {
+			return {
+				success: false,
+				error: 'SDK query not active. Start a conversation first.',
+			};
+		}
+
+		if (!this.firstMessageReceived) {
+			return {
+				success: false,
+				error: 'SDK not ready. Please wait for the session to initialize.',
+			};
+		}
+
+		// Emit rewind.started event
+		await this.daemonHub.emit('rewind.started', {
+			sessionId: this.session.id,
+			checkpointId,
+			mode,
+		});
+
+		try {
+			// Mode 1: files only - Rewind files without affecting conversation
+			if (mode === 'files') {
+				const sdkResult = await this.queryObject.rewindFiles(checkpointId);
+
+				if (!sdkResult.canRewind) {
+					await this.daemonHub.emit('rewind.failed', {
+						sessionId: this.session.id,
+						checkpointId,
+						mode,
+						error: sdkResult.error || 'Rewind failed',
+					});
+					return {
+						success: false,
+						error: sdkResult.error,
+					};
+				}
+
+				await this.daemonHub.emit('rewind.completed', {
+					sessionId: this.session.id,
+					checkpointId,
+					mode,
+					result: {
+						success: true,
+						filesChanged: sdkResult.filesChanged,
+						insertions: sdkResult.insertions,
+						deletions: sdkResult.deletions,
+					},
+				});
+
+				return {
+					success: true,
+					filesChanged: sdkResult.filesChanged,
+					insertions: sdkResult.insertions,
+					deletions: sdkResult.deletions,
+				};
+			}
+
+			// Mode 2: conversation only - Resume from checkpoint without file changes
+			if (mode === 'conversation') {
+				return await this.executeConversationRewind(checkpointId, checkpoint);
+			}
+
+			// Mode 3: both - Rewind files and conversation
+			// First rewind files
+			const sdkResult = await this.queryObject.rewindFiles(checkpointId);
+
+			if (!sdkResult.canRewind) {
+				await this.daemonHub.emit('rewind.failed', {
+					sessionId: this.session.id,
+					checkpointId,
+					mode,
+					error: sdkResult.error || 'File rewind failed',
+				});
+				return {
+					success: false,
+					error: sdkResult.error,
+				};
+			}
+
+			// Then rewind conversation
+			const conversationResult = await this.executeConversationRewind(checkpointId, checkpoint);
+
+			return {
+				success: conversationResult.success,
+				error: conversationResult.error,
+				filesChanged: sdkResult.filesChanged,
+				insertions: sdkResult.insertions,
+				deletions: sdkResult.deletions,
+				conversationRewound: conversationResult.conversationRewound,
+				messagesDeleted: conversationResult.messagesDeleted,
+			};
+		} catch (error) {
+			this.logger.error('Rewind execution failed:', error);
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+			await this.daemonHub.emit('rewind.failed', {
+				sessionId: this.session.id,
+				checkpointId,
+				mode,
+				error: errorMessage,
+			});
+
+			return {
+				success: false,
+				error: errorMessage,
+			};
+		}
+	}
+
+	/**
+	 * Execute conversation rewind (delete messages after checkpoint and restart)
+	 *
+	 * @param checkpointId - The checkpoint ID to rewind to
+	 * @param checkpoint - The checkpoint object
+	 * @returns Rewind result for conversation rewind
+	 */
+	private async executeConversationRewind(
+		checkpointId: string,
+		checkpoint: Checkpoint
+	): Promise<RewindResult> {
+		// Step 1: Delete messages from DB after checkpoint timestamp
+		const messagesDeleted = this.db.deleteMessagesAfter(this.session.id, checkpoint.timestamp);
+
+		// Step 2: Set resumeSessionAt in session metadata
+		this.session.metadata.resumeSessionAt = checkpointId;
+		this.db.updateSession(this.session.id, { metadata: this.session.metadata });
+
+		// Step 3: Rewind checkpoint tracker to remove later checkpoints
+		this.checkpointTracker.rewindTo(checkpointId);
+
+		// Step 4: Restart query to apply resumeSessionAt
+		await this.lifecycleManager.restart();
+
+		this.logger.log(
+			`Conversation rewound to checkpoint ${checkpointId.slice(0, 8)}..., deleted ${messagesDeleted} messages`
+		);
+
+		return {
+			success: true,
+			conversationRewound: true,
+			messagesDeleted,
+		};
 	}
 
 	// ============================================================================

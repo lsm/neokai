@@ -22,6 +22,9 @@ import type {
 	AgentProcessingState,
 	ApiConnectionState,
 	PendingUserQuestion,
+	Checkpoint,
+	RewindMode,
+	RewindResult,
 } from '@liuboer/shared';
 import type { SDKMessage } from '@liuboer/shared/sdk';
 
@@ -154,6 +157,28 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	};
 	// Send queued messages on turn end (Auto-queue mode)
 	'query.sendQueuedOnTurnEnd': { sessionId: string };
+
+	// Checkpoint events
+	'checkpoint.created': { sessionId: string; checkpoint: Checkpoint };
+
+	// Rewind events
+	'rewind.started': {
+		sessionId: string;
+		checkpointId: string;
+		mode: RewindMode;
+	};
+	'rewind.completed': {
+		sessionId: string;
+		checkpointId: string;
+		mode: RewindMode;
+		result: RewindResult;
+	};
+	'rewind.failed': {
+		sessionId: string;
+		checkpointId: string;
+		mode: RewindMode;
+		error: string;
+	};
 }
 
 /**

@@ -133,3 +133,39 @@ export async function updateMcpServerSettings(
 		settings,
 	});
 }
+
+// ==================== Rewind Operations ====================
+
+export async function getCheckpoints(
+	sessionId: string
+): Promise<{ checkpoints: import('@liuboer/shared').Checkpoint[]; error?: string }> {
+	const hub = getHubOrThrow();
+	return await hub.call<{ checkpoints: import('@liuboer/shared').Checkpoint[]; error?: string }>(
+		'rewind.checkpoints',
+		{ sessionId }
+	);
+}
+
+export async function previewRewind(
+	sessionId: string,
+	checkpointId: string
+): Promise<{ preview: import('@liuboer/shared').RewindPreview }> {
+	const hub = getHubOrThrow();
+	return await hub.call<{ preview: import('@liuboer/shared').RewindPreview }>('rewind.preview', {
+		sessionId,
+		checkpointId,
+	});
+}
+
+export async function executeRewind(
+	sessionId: string,
+	checkpointId: string,
+	mode: import('@liuboer/shared').RewindMode = 'files'
+): Promise<{ result: import('@liuboer/shared').RewindResult }> {
+	const hub = getHubOrThrow();
+	return await hub.call<{ result: import('@liuboer/shared').RewindResult }>('rewind.execute', {
+		sessionId,
+		checkpointId,
+		mode,
+	});
+}

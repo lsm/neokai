@@ -50,3 +50,6 @@ export {
 } from './output-limiter-hook';
 export { ContextFetcher } from './context-fetcher';
 export { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
+
+// Rewind support
+export { CheckpointTracker } from './checkpoint-tracker';

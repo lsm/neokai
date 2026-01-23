@@ -24,6 +24,7 @@ import { registerMcpHandlers } from './mcp-handlers';
 import { registerSettingsHandlers } from './settings-handlers';
 import { setupConfigHandlers } from './config-handlers';
 import { setupTestHandlers } from './test-handlers';
+import { setupRewindHandlers } from './rewind-handlers';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -50,4 +51,5 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
 	registerSettingsHandlers(deps.messageHub, deps.settingsManager, deps.daemonHub, deps.db);
 	setupConfigHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
 	setupTestHandlers(deps.messageHub, deps.db);
+	setupRewindHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
 }

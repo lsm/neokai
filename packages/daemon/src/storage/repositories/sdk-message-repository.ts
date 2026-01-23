@@ -234,4 +234,21 @@ export class SDKMessageRepository {
 		const result = stmt.get(sessionId, status) as { count: number };
 		return result.count;
 	}
+
+	/**
+	 * Delete messages after a specific timestamp
+	 *
+	 * Used by the rewind feature to remove messages from the conversation
+	 * when rewinding to a previous checkpoint.
+	 *
+	 * @param sessionId - The session ID to delete messages from
+	 * @param afterTimestamp - Delete messages with timestamp greater than this value (milliseconds)
+	 * @returns The number of messages deleted
+	 */
+	deleteMessagesAfter(sessionId: string, afterTimestamp: number): number {
+		const isoTimestamp = new Date(afterTimestamp).toISOString();
+		const stmt = this.db.prepare(`DELETE FROM sdk_messages WHERE session_id = ? AND timestamp > ?`);
+		const result = stmt.run(sessionId, isoTimestamp);
+		return result.changes;
+	}
 }

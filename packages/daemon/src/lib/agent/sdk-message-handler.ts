@@ -48,6 +48,9 @@ export class SDKMessageHandler {
 	// Callback to stop the query when circuit breaker trips
 	private onCircuitBreakerTrip?: (reason: string, userMessage: string) => Promise<void>;
 
+	// Callback to process message for checkpoint tracking
+	private onCheckpointMessage?: (message: SDKMessage) => void;
+
 	constructor(
 		private session: Session,
 		private db: Database,
@@ -79,6 +82,14 @@ export class SDKMessageHandler {
 		callback: (reason: string, userMessage: string) => Promise<void>
 	): void {
 		this.onCircuitBreakerTrip = callback;
+	}
+
+	/**
+	 * Set callback to process messages for checkpoint tracking
+	 * Called by AgentSession to enable checkpoint creation for rewind
+	 */
+	setCheckpointCallback(callback: (message: SDKMessage) => void): void {
+		this.onCheckpointMessage = callback;
 	}
 
 	/**
@@ -170,6 +181,17 @@ export class SDKMessageHandler {
 			this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
 			// Don't broadcast to clients if DB save failed
 			return;
+		}
+
+		// Process message for checkpoint tracking (after successful save)
+		// User messages with UUIDs become checkpoints for the rewind feature
+		if (this.onCheckpointMessage) {
+			try {
+				this.onCheckpointMessage(message);
+			} catch (error) {
+				// Log error but don't fail the message processing
+				this.logger.warn('Failed to process checkpoint:', error);
+			}
 		}
 
 		// Broadcast SDK message delta (only channel - sdk.message removed as redundant)

@@ -6,6 +6,7 @@ export * from './utils.ts';
 export * from './state-types.ts';
 export * from './models.ts';
 export * from './types/settings.ts';
+export * from './types/rewind.ts';
 
 // Unified logger
 export {

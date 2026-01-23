@@ -216,6 +216,15 @@ export class QueryOptionsBuilder {
 			this.logger.log(`Starting new SDK session`);
 		}
 
+		// Add resumeSessionAt for conversation rewind
+		// When set, only messages up to and including this UUID are resumed
+		if (this.session.metadata?.resumeSessionAt) {
+			result.resumeSessionAt = this.session.metadata.resumeSessionAt;
+			this.logger.log(
+				`Rewinding conversation to checkpoint: ${this.session.metadata.resumeSessionAt.slice(0, 8)}...`
+			);
+		}
+
 		// Add thinking token budget based on thinkingLevel config
 		const thinkingLevel = (this.session.config.thinkingLevel || 'auto') as ThinkingLevel;
 		const maxThinkingTokens = THINKING_LEVEL_TOKENS[thinkingLevel];

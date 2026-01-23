@@ -396,6 +396,7 @@ export interface SessionMetadata {
 	// We track lastSdkCost to detect resets and costBaseline to preserve pre-reset totals
 	lastSdkCost?: number; // Last SDK-reported total_cost_usd (resets when agent restarts)
 	costBaseline?: number; // Accumulated cost from previous runs before last reset
+	resumeSessionAt?: string; // Checkpoint ID to resume conversation from (for rewind feature)
 }
 
 // Message content types for streaming input (supports images and tool results)

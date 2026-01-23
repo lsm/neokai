@@ -53,6 +53,7 @@ import { Spinner } from '../components/ui/Spinner.tsx';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
 import { ErrorBanner } from '../components/ErrorBanner.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
+import { RewindModal } from '../components/RewindModal.tsx';
 import type { ResolvedQuestion } from '@liuboer/shared';
 
 interface ChatContainerProps {
@@ -92,6 +93,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const toolsModal = useModal();
 	const infoModal = useModal();
 	const errorDialog = useModal();
+	const rewindModal = useModal();
 
 	// ========================================
 	// Reactive State from sessionStore (via useSignalEffect for re-renders)
@@ -434,6 +436,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				onInfoClick={infoModal.open}
 				onExportClick={sessionActions.handleExportChat}
 				onResetClick={sessionActions.handleResetAgent}
+				onRewindClick={rewindModal.open}
 				onArchiveClick={sessionActions.handleArchiveClick}
 				onDeleteClick={deleteModal.open}
 				archiving={sessionActions.archiving}
@@ -646,6 +649,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 			{/* Session Info Modal */}
 			<SessionInfoModal isOpen={infoModal.isOpen} onClose={infoModal.close} session={session} />
+
+			{/* Rewind Modal */}
+			<RewindModal isOpen={rewindModal.isOpen} onClose={rewindModal.close} sessionId={sessionId} />
 
 			{/* Error Dialog */}
 			<ErrorDialog
