@@ -129,7 +129,7 @@ describe('AgentSession SDK Integration', () => {
 
 	beforeEach(async () => {
 		daemon = await spawnDaemonServer();
-	});
+	}, 30000);
 
 	afterEach(
 		async () => {
@@ -232,7 +232,7 @@ describe('AgentSession SDK Integration', () => {
 
 			// Wait for second message to process
 			await waitForIdle(daemon, sessionId);
-		}, 30000);
+		}, 60000);
 	});
 
 	describe('handleInterrupt', () => {
@@ -359,7 +359,7 @@ describe('AgentSession SDK Integration', () => {
 
 			// Wait for processing to complete
 			await waitForIdle(daemon, sessionId);
-		}, 25000);
+		}, 150000);
 	});
 
 	describe('session.interrupted event', () => {
@@ -390,6 +390,6 @@ describe('AgentSession SDK Integration', () => {
 			// Send another message to verify session is still functional
 			await sendMessage(daemon, sessionId, 'What is 2+2? Just the number.');
 			await waitForIdle(daemon, sessionId);
-		}, 15000);
+		}, 60000);
 	});
 });

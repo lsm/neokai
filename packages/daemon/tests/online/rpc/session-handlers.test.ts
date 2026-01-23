@@ -23,7 +23,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 
 	beforeEach(async () => {
 		daemon = await spawnDaemonServer();
-	});
+	}, 30000);
 
 	afterEach(
 		async () => {

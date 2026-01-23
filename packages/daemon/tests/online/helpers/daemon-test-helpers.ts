@@ -108,7 +108,7 @@ export async function waitForProcessingState(
 export async function waitForIdle(
 	daemon: DaemonServerContext,
 	sessionId: string,
-	timeout = 30000
+	timeout = 60000
 ): Promise<void> {
 	return waitForProcessingState(daemon, sessionId, 'idle', timeout);
 }

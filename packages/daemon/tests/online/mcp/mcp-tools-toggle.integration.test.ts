@@ -31,6 +31,9 @@ describe('MCP Tools Toggle Integration', () => {
 
 	beforeEach(async () => {
 		daemon = await spawnDaemonServer();
+	}, 30000);
+
+	beforeEach(async () => {
 		workspacePath = join(TMP_DIR, `liuboer-test-mcp-${Date.now()}`);
 
 		// Setup: Create dummy MCP config in workspace root (project-level .mcp.json)

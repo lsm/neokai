@@ -35,7 +35,7 @@ describe('SDK SIGINT Cleanup (Online)', () => {
 		// Spawn daemon server as a separate process
 		// This allows us to send SIGINT only to the daemon, not the test runner
 		daemon = await spawnDaemonServer();
-	});
+	}, 30000);
 
 	afterEach(async () => {
 		// Kill the daemon server after each test

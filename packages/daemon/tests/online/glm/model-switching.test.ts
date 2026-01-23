@@ -33,14 +33,14 @@ describe('Model Switching Integration', () => {
 
 	beforeEach(async () => {
 		daemon = await spawnDaemonServer();
-	});
+	}, 30000);
 
 	afterEach(async () => {
 		if (daemon) {
 			daemon.kill('SIGTERM');
 			await daemon.waitForExit();
 		}
-	});
+	}, 20000);
 
 	describe('session.model.switch', () => {
 		test('should switch model by alias', async () => {
@@ -510,7 +510,7 @@ describe('Model Switching Integration', () => {
 				sessionId,
 			})) as { session: { config: { model: string } } };
 			expect(sessionAfter.session.config.model).toBe('glm-4.7');
-		});
+		}, 30000);
 
 		test('should use setModel for same-provider switches', async () => {
 			// Create session with a GLM model
@@ -550,6 +550,6 @@ describe('Model Switching Integration', () => {
 				sessionId,
 			})) as { state: { status: string } };
 			expect(stateAfter.state.status).toBeDefined();
-		});
+		}, 30000);
 	});
 });

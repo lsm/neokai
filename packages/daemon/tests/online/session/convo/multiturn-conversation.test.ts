@@ -28,7 +28,7 @@ describe('Multi-Turn Conversation', () => {
 
 	beforeEach(async () => {
 		daemon = await spawnDaemonServer();
-	});
+	}, 30000);
 
 	afterEach(
 		async () => {
@@ -96,7 +96,7 @@ describe('Multi-Turn Conversation', () => {
 			sessionId,
 			'I will show you a TypeScript function. Just reply "Ready, show me the code."'
 		);
-		await waitForIdle(daemon, sessionId, 30000);
+		await waitForIdle(daemon, sessionId, 45000);
 
 		// Turn 2: Show actual code
 		await sendMessage(
@@ -104,7 +104,7 @@ describe('Multi-Turn Conversation', () => {
 			sessionId,
 			'Here is the code:\n\n```typescript\nfunction add(a: number, b: number): number {\n  return a + b;\n}\n```\n\nWhat does this function do? Answer in one sentence.'
 		);
-		await waitForIdle(daemon, sessionId, 30000);
+		await waitForIdle(daemon, sessionId, 45000);
 
 		// Turn 3: Ask follow-up about the code
 		await sendMessage(
@@ -112,12 +112,12 @@ describe('Multi-Turn Conversation', () => {
 			sessionId,
 			'What are the parameter types? Just list them separated by commas.'
 		);
-		await waitForIdle(daemon, sessionId, 30000);
+		await waitForIdle(daemon, sessionId, 45000);
 
 		// Final state should be idle
 		const finalState = await getProcessingState(daemon, sessionId);
 		expect(finalState.status).toBe('idle');
-	}, 90000);
+	}, 150000);
 
 	test('should handle rapid successive messages correctly', async () => {
 		const createResult = (await daemon.messageHub.call('session.create', {

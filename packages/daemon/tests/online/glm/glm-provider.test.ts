@@ -24,7 +24,7 @@ import {
 	cleanupIntegrationTestEnv,
 	createTestSession,
 	type IntegrationTestEnv,
-} from '../../offline/integration-test-utils';
+} from '../../integration-test-utils';
 
 describe('GLM Provider Integration', () => {
 	let env: IntegrationTestEnv;

@@ -25,7 +25,7 @@ describe('Authentication Integration (API-dependent)', () => {
 
 	beforeEach(async () => {
 		daemon = await spawnDaemonServer();
-	});
+	}, 30000);
 
 	afterEach(async () => {
 		if (daemon) {

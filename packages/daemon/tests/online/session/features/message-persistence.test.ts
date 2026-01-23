@@ -40,7 +40,7 @@ describe('Message Persistence', () => {
 
 	beforeEach(async () => {
 		daemon = await spawnDaemonServer();
-	});
+	}, 30000);
 
 	afterEach(async () => {
 		if (daemon) {

@@ -34,7 +34,7 @@ describe('SDK Streaming Behavior', () => {
 
 	beforeEach(async () => {
 		daemon = await spawnDaemonServer();
-	});
+	}, 30000);
 
 	afterEach(
 		async () => {

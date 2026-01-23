@@ -38,7 +38,7 @@ describe('Auto-Title Generation', () => {
 
 	beforeEach(async () => {
 		daemon = await spawnDaemonServer();
-	});
+	}, 30000);
 
 	afterEach(async () => {
 		if (daemon) {
