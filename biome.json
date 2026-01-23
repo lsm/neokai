@@ -35,7 +35,9 @@
 		"includes": [
 			"**",
 			"!node_modules",
+			"!**/node_modules",
 			"!dist",
+			"!**/dist",
 			"!.vite",
 			"!*.db",
 			"!*.db-shm",
@@ -53,6 +55,9 @@
 			"!*.tsbuildinfo",
 			"!playwright-report",
 			"!test-results",
+			"!coverage",
+			"!**/coverage",
+			"!settings.local.json",
 			"!packages/shared/src/sdk"
 		]
 	}

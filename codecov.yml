@@ -51,6 +51,12 @@ ignore:
   - "**/node_modules/**"
   - "**/dist/**"
 
+# Path fixing for monorepo coverage
+# e2e-quick tests run from packages/cli/ and generate relative paths like ../daemon/src/
+# This transforms them to match git structure: packages/daemon/src/
+fixes:
+  - "../::packages/"
+
 # Flag definitions for coverage organization
 # Codecov automatically aggregates all uploads with the same commit SHA
 # Undefined flags still work, they just don't have path filtering
@@ -222,22 +228,23 @@ flags:
   # ===========================================
   # E2E test flags (browser + server coverage)
   # ===========================================
-  # Server-side: daemon/shared code via in-process tests
-  e2e-server:
+  # E2E Quick: Fast E2E tests (~11 tests) with server + browser coverage
+  # Uses bun test --coverage which instruments daemon/shared code
+  e2e-quick:
     paths:
       - packages/daemon/src/
       - packages/shared/src/
+      - packages/web/src/
+    carryforward: true
+  # E2E Matrix: Comprehensive E2E tests (70+ tests) - browser coverage only
+  # Uses monocart-reporter for browser coverage (Playwright CDP)
+  e2e-matrix:
+    paths:
+      - packages/web/src/
     carryforward: true
   # Browser-side: web code via Playwright V8 coverage
   e2e-browser:
     paths:
-      - packages/web/src/
-    carryforward: true
-  # Combined E2E: both server and browser coverage
-  e2e-all:
-    paths:
-      - packages/daemon/src/
-      - packages/shared/src/
       - packages/web/src/
     carryforward: true
 

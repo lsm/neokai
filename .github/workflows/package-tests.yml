@@ -255,18 +255,29 @@ jobs:
         with:
           pattern: coverage-*
           path: coverage
-          merge-multiple: true
 
       - name: List downloaded files (for debugging)
         run: |
           echo "Downloaded coverage files:"
           find coverage -name "lcov.info" -type f
 
+      - name: Merge daemon coverage files
+        run: |
+          mkdir -p merged-coverage/daemon
+          # Merge all daemon module coverage files
+          for dir in coverage/coverage-daemon-*; do
+            if [ -f "$dir/lcov.info" ]; then
+              cat "$dir/lcov.info" >> merged-coverage/daemon/lcov.info
+            fi
+          done
+          echo "Merged daemon coverage:"
+          wc -l merged-coverage/daemon/lcov.info
+
       - name: Upload to Codecov (daemon)
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          directories: ./coverage/coverage-daemon-*/
+          files: ./merged-coverage/daemon/lcov.info
           flags: daemon
           fail_ci_if_error: false
 

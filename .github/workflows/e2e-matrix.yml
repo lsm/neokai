@@ -1,12 +1,13 @@
 # E2E Tests - Comprehensive E2E test suite (manual trigger)
 #
-# This workflow runs 70+ E2E tests in parallel with BOTH server and browser coverage.
-# Each test runs against an in-process daemon server for Bun's --coverage instrumentation.
+# This workflow runs 70+ E2E tests in parallel with browser-side coverage.
+# Each test runs against an in-process daemon server.
 #
-# Server coverage: Bun's --coverage instruments daemon/shared code running in-process
-# Browser coverage: Playwright CDP/monocart-reporter collects V8 coverage from browser
+# Note: Only browser coverage (web package) is collected during E2E tests.
+# Server-side coverage (daemon/shared) is collected by the package-tests workflow.
+# Browser coverage: Playwright monocart-reporter collects V8 coverage from browser
 #
-# For automatic coverage on push/PR, see e2e-coverage.yml (quick mode - 11 tests)
+# For automatic coverage on push/PR, see e2e-quick.yml (quick mode - 11 tests)
 
 name: E2E Matrix
 
@@ -169,15 +170,6 @@ jobs:
           CI: true
           COVERAGE: true
 
-      - name: Upload server coverage artifact
-        uses: actions/upload-artifact@v4
-        if: steps.check.outputs.should_run == 'true' && always()
-        with:
-          name: coverage-e2e-server-${{ matrix.test }}
-          path: packages/cli/coverage/lcov.info
-          retention-days: 1
-          if-no-files-found: ignore
-
       - name: Upload browser coverage artifact
         uses: actions/upload-artifact@v4
         if: steps.check.outputs.should_run == 'true' && always()
@@ -213,13 +205,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download all server coverage artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: coverage-e2e-server-*
-          path: coverage-server
-          merge-multiple: false
-
       - name: Download all browser coverage artifacts
         uses: actions/download-artifact@v4
         with:
@@ -229,37 +214,13 @@ jobs:
 
       - name: List downloaded coverage files
         run: |
-          echo "Server coverage files:"
-          find coverage-server -name "*.info" -type f 2>/dev/null || echo "No server coverage files found"
-          echo ""
           echo "Browser coverage files:"
           find coverage-browser -name "*.info" -type f 2>/dev/null || echo "No browser coverage files found"
 
-      - name: Merge server coverage files
+      - name: Merge browser coverage files
         run: |
           mkdir -p merged-coverage
 
-          # Merge server coverage
-          FIRST=true
-          for f in $(find coverage-server -name "lcov.info" -type f 2>/dev/null); do
-            echo "Adding server coverage from: $f"
-            if [ "$FIRST" = true ]; then
-              cp "$f" merged-coverage/server-lcov.info
-              FIRST=false
-            else
-              cat "$f" >> merged-coverage/server-lcov.info
-            fi
-          done
-
-          if [ -f merged-coverage/server-lcov.info ]; then
-            echo "Merged server coverage file created"
-            wc -l merged-coverage/server-lcov.info
-          else
-            echo "No server coverage files to merge"
-          fi
-
-      - name: Merge browser coverage files
-        run: |
           # Merge browser coverage
           FIRST=true
           for f in $(find coverage-browser -name "lcov.info" -type f 2>/dev/null); do
@@ -283,6 +244,6 @@ jobs:
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: merged-coverage/server-lcov.info,merged-coverage/browser-lcov.info
-          flags: e2e-all
+          files: merged-coverage/browser-lcov.info
+          flags: e2e-matrix
           fail_ci_if_error: false
