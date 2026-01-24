@@ -41,13 +41,11 @@ worktree-dev:
 self:
 	@echo "🔄 Starting self-hosting server (production mode)..."
 	@echo "   Workspace: $(shell pwd)"
-	@echo "   Database: $(shell pwd)/tmp/self-dev/daemon.db"
-	@echo "   Listening on port 9983 to avoid conflicts"
 	@echo "📦 Building web production bundle..."
 	@cd packages/web && bun run build
 	@mkdir -p $(shell pwd)/tmp/self-dev
 	@lsof -ti:9983 | xargs kill -9 2>/dev/null || true
-	@NODE_ENV=production bun run packages/cli/main.ts --port 9983 --workspace $(shell pwd) --db-path $(shell pwd)/tmp/self-dev/daemon.db
+	@NODE_ENV=production bun run packages/cli/main.ts --port 9983 --workspace $(shell pwd)
 
 # Profiling mode - production build with debugging and CPU profiling
 profile:
