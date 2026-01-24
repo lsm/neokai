@@ -11,7 +11,8 @@ import { Tooltip } from '../ui/Tooltip.tsx';
 import { copyToClipboard } from '../../lib/utils.ts';
 import { toast } from '../../lib/toast.ts';
 import { cn } from '../../lib/utils.ts';
-import { SessionIndicator } from './SessionIndicator.tsx';
+import { MessageInfoButton } from './MessageInfoButton.tsx';
+import { MessageInfoDropdown } from './MessageInfoDropdown.tsx';
 import { messageSpacing, messageColors, borderRadius } from '../../lib/design-tokens.ts';
 import { SlashCommandOutput, isHiddenCommandOutput } from './SlashCommandOutput.tsx';
 import { SyntheticMessageBlock } from './SyntheticMessageBlock.tsx';
@@ -270,20 +271,9 @@ export function SDKUserMessage({
 					{/* Session info icon (if session info is attached) */}
 					{sessionInfo && (
 						<Dropdown
-							trigger={
-								<IconButton size="md" title="Session info">
-									<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width={2}
-											d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-										/>
-									</svg>
-								</IconButton>
-							}
+							trigger={<MessageInfoButton />}
 							items={[]}
-							customContent={<SessionIndicator sessionInfo={sessionInfo} />}
+							customContent={<MessageInfoDropdown sessionInfo={sessionInfo} />}
 						/>
 					)}
 

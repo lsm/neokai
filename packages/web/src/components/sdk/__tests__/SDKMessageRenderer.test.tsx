@@ -238,7 +238,7 @@ describe('SDKMessageRenderer', () => {
 			const message = createSystemInitMessage();
 			const { container } = render(<SDKMessageRenderer message={message} />);
 
-			// System init messages are skipped - shown as SessionIndicator instead
+			// System init messages are skipped - shown as MessageInfoDropdown instead
 			expect(container.innerHTML).toBe('');
 		});
 

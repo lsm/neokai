@@ -1,13 +1,13 @@
 // @ts-nocheck
 /**
- * SessionIndicator Component Tests
+ * MessageInfoDropdown Component Tests
  *
- * Tests session indicator dropdown content rendering
+ * Tests message info dropdown content rendering
  */
 import { describe, it, expect } from 'vitest';
 
 import { render } from '@testing-library/preact';
-import { SessionIndicator } from '../SessionIndicator';
+import { MessageInfoDropdown } from '../MessageInfoDropdown';
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
 
@@ -40,11 +40,11 @@ function createSessionInfo(
 	};
 }
 
-describe('SessionIndicator', () => {
+describe('MessageInfoDropdown', () => {
 	describe('Header', () => {
 		it('should render "Session Started" header', () => {
 			const sessionInfo = createSessionInfo();
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).toContain('Session Started');
 		});
@@ -53,7 +53,7 @@ describe('SessionIndicator', () => {
 			const sessionInfo = createSessionInfo({
 				model: 'claude-3-5-sonnet-20241022',
 			});
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).toContain('3-5-sonnet-20241022');
 			expect(container.textContent).not.toContain('claude-claude');
@@ -63,21 +63,21 @@ describe('SessionIndicator', () => {
 			const sessionInfo = createSessionInfo({
 				model: 'anthropic.claude-3-opus-20240229',
 			});
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).not.toContain('anthropic.');
 		});
 
 		it('should show permission mode', () => {
 			const sessionInfo = createSessionInfo({ permissionMode: 'acceptEdits' });
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).toContain('acceptEdits');
 		});
 
 		it('should have lightning bolt icon', () => {
 			const sessionInfo = createSessionInfo();
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			const svg = container.querySelector('svg');
 			expect(svg).toBeTruthy();
@@ -89,7 +89,7 @@ describe('SessionIndicator', () => {
 			const sessionInfo = createSessionInfo({
 				cwd: '/home/user/my-project',
 			});
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).toContain('Working Directory');
 			expect(container.textContent).toContain('/home/user/my-project');
@@ -97,7 +97,7 @@ describe('SessionIndicator', () => {
 
 		it('should have monospace font for path', () => {
 			const sessionInfo = createSessionInfo({ cwd: '/test/path' });
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			const pathElement = container.querySelector('.font-mono');
 			expect(pathElement).toBeTruthy();
@@ -110,7 +110,7 @@ describe('SessionIndicator', () => {
 			const sessionInfo = createSessionInfo({
 				tools: ['Read', 'Write', 'Bash'],
 			});
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).toContain('Tools (3)');
 		});
@@ -119,7 +119,7 @@ describe('SessionIndicator', () => {
 			const sessionInfo = createSessionInfo({
 				tools: ['Read', 'Write', 'Bash', 'Glob', 'Grep'],
 			});
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).toContain('Read');
 			expect(container.textContent).toContain('Write');
@@ -130,7 +130,7 @@ describe('SessionIndicator', () => {
 
 		it('should not show tools section when empty', () => {
 			const sessionInfo = createSessionInfo({ tools: [] });
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).not.toContain('Tools (0)');
 		});
@@ -144,7 +144,7 @@ describe('SessionIndicator', () => {
 					{ name: 'database', status: 'failed' },
 				],
 			});
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).toContain('MCP Servers (2)');
 		});
@@ -156,7 +156,7 @@ describe('SessionIndicator', () => {
 					{ name: 'database', status: 'failed' },
 				],
 			});
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).toContain('filesystem');
 			expect(container.textContent).toContain('connected');
@@ -168,7 +168,7 @@ describe('SessionIndicator', () => {
 			const sessionInfo = createSessionInfo({
 				mcp_servers: [{ name: 'test', status: 'connected' }],
 			});
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.querySelector('.bg-green-500')).toBeTruthy();
 		});
@@ -177,14 +177,14 @@ describe('SessionIndicator', () => {
 			const sessionInfo = createSessionInfo({
 				mcp_servers: [{ name: 'test', status: 'failed' }],
 			});
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.querySelector('.bg-gray-500')).toBeTruthy();
 		});
 
 		it('should not show MCP servers section when empty', () => {
 			const sessionInfo = createSessionInfo({ mcp_servers: [] });
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).not.toContain('MCP Servers');
 		});
@@ -195,7 +195,7 @@ describe('SessionIndicator', () => {
 			const sessionInfo = createSessionInfo({
 				slash_commands: ['help', 'clear', 'compact'],
 			});
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).toContain('Slash Commands (3)');
 		});
@@ -204,7 +204,7 @@ describe('SessionIndicator', () => {
 			const sessionInfo = createSessionInfo({
 				slash_commands: ['help', 'clear', 'compact'],
 			});
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).toContain('/help');
 			expect(container.textContent).toContain('/clear');
@@ -215,7 +215,7 @@ describe('SessionIndicator', () => {
 			const sessionInfo = createSessionInfo({
 				slash_commands: ['help'],
 			});
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			const cmdElement = container.querySelector('.font-mono');
 			expect(cmdElement).toBeTruthy();
@@ -223,7 +223,7 @@ describe('SessionIndicator', () => {
 
 		it('should not show slash commands section when empty', () => {
 			const sessionInfo = createSessionInfo({ slash_commands: [] });
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).not.toContain('Slash Commands');
 		});
@@ -234,7 +234,7 @@ describe('SessionIndicator', () => {
 			const sessionInfo = createSessionInfo({
 				agents: ['Explore', 'Plan'],
 			});
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).toContain('Agents (2)');
 		});
@@ -243,7 +243,7 @@ describe('SessionIndicator', () => {
 			const sessionInfo = createSessionInfo({
 				agents: ['Explore', 'Plan', 'claude-code-guide'],
 			});
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).toContain('Explore');
 			expect(container.textContent).toContain('Plan');
@@ -252,7 +252,7 @@ describe('SessionIndicator', () => {
 
 		it('should not show agents section when empty', () => {
 			const sessionInfo = createSessionInfo({ agents: [] });
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).not.toContain('Agents');
 		});
@@ -261,7 +261,7 @@ describe('SessionIndicator', () => {
 	describe('Footer Details', () => {
 		it('should show API key source', () => {
 			const sessionInfo = createSessionInfo({ apiKeySource: 'project' });
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).toContain('API Key:');
 			expect(container.textContent).toContain('project');
@@ -269,7 +269,7 @@ describe('SessionIndicator', () => {
 
 		it('should show output style', () => {
 			const sessionInfo = createSessionInfo({ output_style: 'streaming' });
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).toContain('Output:');
 			expect(container.textContent).toContain('streaming');
@@ -279,21 +279,21 @@ describe('SessionIndicator', () => {
 	describe('Styling', () => {
 		it('should have indigo color scheme', () => {
 			const sessionInfo = createSessionInfo();
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.querySelector('.bg-indigo-50, .dark\\:bg-indigo-900\\/70')).toBeTruthy();
 		});
 
 		it('should have fixed width', () => {
 			const sessionInfo = createSessionInfo();
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.querySelector('.w-80')).toBeTruthy();
 		});
 
 		it('should have max height with scroll', () => {
 			const sessionInfo = createSessionInfo();
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.querySelector('.max-h-\\[70vh\\]')).toBeTruthy();
 			expect(container.querySelector('.overflow-y-auto')).toBeTruthy();
@@ -301,14 +301,14 @@ describe('SessionIndicator', () => {
 
 		it('should have shadow for dropdown appearance', () => {
 			const sessionInfo = createSessionInfo();
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.querySelector('.shadow-2xl')).toBeTruthy();
 		});
 
 		it('should have rounded corners', () => {
 			const sessionInfo = createSessionInfo();
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.querySelector('.rounded-lg')).toBeTruthy();
 		});
@@ -317,14 +317,14 @@ describe('SessionIndicator', () => {
 	describe('Permission Mode Display', () => {
 		it('should display default permission mode', () => {
 			const sessionInfo = createSessionInfo({ permissionMode: 'default' });
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).toContain('default');
 		});
 
 		it('should display acceptEdits permission mode', () => {
 			const sessionInfo = createSessionInfo({ permissionMode: 'acceptEdits' });
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).toContain('acceptEdits');
 		});
@@ -333,7 +333,7 @@ describe('SessionIndicator', () => {
 			const sessionInfo = createSessionInfo({
 				permissionMode: 'bypassPermissions',
 			});
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).toContain('bypassPermissions');
 		});
@@ -343,7 +343,7 @@ describe('SessionIndicator', () => {
 		it('should handle long working directory paths', () => {
 			const longPath = '/very/long/path/that/goes/on/and/on/to/test/overflow/handling/properly';
 			const sessionInfo = createSessionInfo({ cwd: longPath });
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).toContain(longPath);
 			// Should have break-all for long paths
@@ -353,7 +353,7 @@ describe('SessionIndicator', () => {
 		it('should handle many tools', () => {
 			const tools = Array.from({ length: 20 }, (_, i) => `Tool${i}`);
 			const sessionInfo = createSessionInfo({ tools });
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).toContain('Tools (20)');
 		});
@@ -364,7 +364,7 @@ describe('SessionIndicator', () => {
 				status: i % 2 === 0 ? 'connected' : 'failed',
 			}));
 			const sessionInfo = createSessionInfo({ mcp_servers: servers });
-			const { container } = render(<SessionIndicator sessionInfo={sessionInfo} />);
+			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
 			expect(container.textContent).toContain('MCP Servers (10)');
 		});

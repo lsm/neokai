@@ -4,9 +4,14 @@
  * Extracted from AgentSession to reduce complexity and improve testability.
  * Handles:
  * - Model validation and alias resolution
- * - SDK setModel() integration
+ * - Query restart to regenerate system:init with new model
  * - Session config persistence
  * - Event emission for UI updates
+ *
+ * FIX: Always restarts query when switching models mid-conversation.
+ * SDK's setModel() doesn't update the cached system:init message, which
+ * causes MessageInfoDropdown to show stale model info. Restarting ensures
+ * fresh system:init is emitted with the correct model.
  */
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
@@ -75,8 +80,9 @@ export class ModelSwitchHandler {
 	/**
 	 * Switch to a different model mid-session
 	 *
-	 * Handles same-provider switches using SDK's setModel() and cross-provider
-	 * switches by restarting the query with new environment variables.
+	 * Always restarts the query to ensure SDK emits a fresh system:init message
+	 * with the correct model. This is necessary because SDK's setModel() doesn't
+	 * update the cached system:init, causing stale model info in the UI.
 	 */
 	async switchModel(newModel: string): Promise<ModelSwitchResult> {
 		const {
@@ -136,8 +142,7 @@ export class ModelSwitchHandler {
 			const transportReady = this.deps.isTransportReady();
 
 			// Detect if this is a cross-provider switch (e.g., Anthropic → GLM)
-			// Cross-provider switches require query restart because the SDK subprocess
-			// needs different environment variables (ANTHROPIC_BASE_URL, API keys, etc.)
+			// This is mainly for logging and updating the provider config field
 			const providerRegistry = getProviderRegistry();
 			const currentProviderInstance = providerRegistry.detectProvider(currentResolvedModel);
 			const newProviderInstance = providerRegistry.detectProvider(resolvedModel);
@@ -168,25 +173,23 @@ export class ModelSwitchHandler {
 					source: 'model-switch',
 					session: { config: session.config },
 				});
-			} else if (isCrossProviderSwitch) {
-				// Cross-provider switch: need to restart the query to get new env vars
-				// The SDK subprocess was created with provider-specific env vars
-				// (ANTHROPIC_BASE_URL, API keys, etc.) that cannot be changed dynamically
+			} else {
+				// Query is running - restart it to ensure system:init is regenerated with new model
+				// FIX: SDK's setModel() doesn't update the cached system:init message,
+				// causing MessageInfoDropdown to show stale model info.
+				// Restarting forces SDK to emit fresh system:init with correct model.
 				if (!restartQuery) {
-					const error = `Cross-provider switch requires query restart, but restartQuery callback not provided`;
+					const error = `Model switch requires query restart, but restartQuery callback not provided`;
 					logger.error(error);
 					return { success: false, model: session.config.model, error };
 				}
 
-				const newProviderId = newProviderInstance?.id || 'unknown';
-				logger.log(
-					`Restarting query for cross-provider switch to ${resolvedModel} (${newProviderId})`
-				);
+				logger.log(`Restarting query for model switch to ${resolvedModel}`);
 
 				// Update session config first (will be used when query restarts)
 				session.config.model = resolvedModel;
 				// Update provider in session config for cross-provider switches
-				if (newProviderInstance?.id) {
+				if (isCrossProviderSwitch && newProviderInstance?.id) {
 					session.config.provider = newProviderInstance.id as 'anthropic' | 'glm';
 				}
 				db.updateSession(session.id, {
@@ -196,34 +199,11 @@ export class ModelSwitchHandler {
 				// Update context tracker model
 				contextTracker.setModel(resolvedModel);
 
-				// Restart the query with new environment variables
-				// This will spawn a new SDK subprocess with the correct provider env vars
+				// Restart the query
+				// This spawns a new SDK subprocess with the new model configuration
 				await restartQuery();
 
-				logger.log(`Query restarted for cross-provider switch to ${resolvedModel}`);
-			} else {
-				// Same-provider switch: Use SDK's native setModel() method
-				// This is fast (<500ms) and doesn't require restarting the subprocess
-				logger.log(`Using SDK setModel() to switch to: ${resolvedModel}`);
-				await queryObject.setModel(resolvedModel);
-
-				// Update session config
-				session.config.model = resolvedModel;
-				db.updateSession(session.id, {
-					config: session.config,
-				});
-
-				// Update context tracker model
-				contextTracker.setModel(resolvedModel);
-
-				// Emit session.updated event - include data for decoupled state management
-				await daemonHub.emit('session.updated', {
-					sessionId: session.id,
-					source: 'model-switch',
-					session: { config: session.config },
-				});
-
-				logger.log(`Model switched via SDK to: ${resolvedModel}`);
+				logger.log(`Query restarted for model switch to ${resolvedModel}`);
 			}
 
 			// Emit success event

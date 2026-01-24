@@ -24,21 +24,16 @@ import type { SettingsManager } from '../settings-manager';
 import { createOutputLimiterHook, getOutputLimiterConfigFromSettings } from './output-limiter-hook';
 import { Logger } from '../logger';
 import { getProviderContextManager } from '../providers/index.js';
-import type { ProviderContext } from '@liuboer/shared/provider';
 
 export class QueryOptionsBuilder {
 	private logger: Logger;
 	private canUseTool?: CanUseTool;
-	private providerContext: ProviderContext;
 
 	constructor(
 		private session: Session,
 		private settingsManager: SettingsManager
 	) {
 		this.logger = new Logger(`QueryOptionsBuilder ${session.id}`);
-		// Create provider context for model ID translation
-		const contextManager = getProviderContextManager();
-		this.providerContext = contextManager.createContext(session);
 	}
 
 	/**
@@ -62,9 +57,12 @@ export class QueryOptionsBuilder {
 		const sdkSettingsOptions = await this.getSettingsOptions();
 
 		// Translate model ID for SDK compatibility using provider context
+		// FIX: Recreate context each time to pick up model changes from model switching
 		// GLM model IDs (glm-4.7, glm-4.5-air) need to be mapped to SDK-recognized IDs
 		// (default, haiku, opus) since the SDK only knows Anthropic model IDs
-		const sdkModelId = this.providerContext.getSdkModelId();
+		const contextManager = getProviderContextManager();
+		const providerContext = contextManager.createContext(this.session);
+		const sdkModelId = providerContext.getSdkModelId();
 		let sdkFallbackModel: string | undefined;
 		if (config.fallbackModel) {
 			// For fallback model, we need to create a separate context

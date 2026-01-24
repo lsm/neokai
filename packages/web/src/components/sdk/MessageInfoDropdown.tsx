@@ -1,8 +1,8 @@
 /**
- * SessionIndicator Component
+ * MessageInfoDropdown Component
  *
  * Dropdown content showing session start information in indigo theme
- * Triggered by info icon button in user message actions
+ * Triggered by MessageInfoButton in user message actions
  */
 
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
@@ -13,7 +13,7 @@ interface Props {
 	sessionInfo: SystemInitMessage;
 }
 
-export function SessionIndicator({ sessionInfo }: Props) {
+export function MessageInfoDropdown({ sessionInfo }: Props) {
 	const simplifiedModel = sessionInfo.model.replace('claude-', '').replace('anthropic.', '');
 
 	return (
