@@ -703,4 +703,85 @@ describe('CheckpointTracker', () => {
 			expect(removedCount).toBe(messageCount - middleIndex - 1);
 		});
 	});
+
+	describe('createCheckpointFromUserMessage', () => {
+		it('should create checkpoint from string content', () => {
+			const messageId = generateUUID();
+			const content = 'Hello, this is a test message';
+
+			tracker.createCheckpointFromUserMessage(messageId, content);
+
+			const checkpoints = tracker.getCheckpoints();
+			expect(checkpoints).toHaveLength(1);
+			expect(checkpoints[0].id).toBe(messageId);
+			expect(checkpoints[0].messagePreview).toBe(content);
+			expect(checkpoints[0].turnNumber).toBe(1);
+			expect(checkpoints[0].sessionId).toBe(testSessionId);
+			expect(emitSpy).toHaveBeenCalledWith('checkpoint.created', expect.any(Object));
+		});
+
+		it('should create checkpoint from array content with text block', () => {
+			const messageId = generateUUID();
+			const content = [{ type: 'text' as const, text: 'Array content message' }];
+
+			tracker.createCheckpointFromUserMessage(messageId, content);
+
+			const checkpoints = tracker.getCheckpoints();
+			expect(checkpoints).toHaveLength(1);
+			expect(checkpoints[0].messagePreview).toBe('Array content message');
+		});
+
+		it('should truncate long content to 100 characters', () => {
+			const messageId = generateUUID();
+			const longContent = 'a'.repeat(150);
+
+			tracker.createCheckpointFromUserMessage(messageId, longContent);
+
+			const checkpoints = tracker.getCheckpoints();
+			expect(checkpoints[0].messagePreview).toHaveLength(100);
+		});
+
+		it('should not create duplicate checkpoints for same messageId', () => {
+			const messageId = generateUUID();
+
+			tracker.createCheckpointFromUserMessage(messageId, 'First call');
+			tracker.createCheckpointFromUserMessage(messageId, 'Second call');
+
+			const checkpoints = tracker.getCheckpoints();
+			expect(checkpoints).toHaveLength(1);
+			expect(checkpoints[0].messagePreview).toBe('First call');
+		});
+
+		it('should increment turn number for each checkpoint', () => {
+			tracker.createCheckpointFromUserMessage(generateUUID(), 'Message 1');
+			tracker.createCheckpointFromUserMessage(generateUUID(), 'Message 2');
+			tracker.createCheckpointFromUserMessage(generateUUID(), 'Message 3');
+
+			const checkpoints = tracker.getCheckpoints();
+			expect(checkpoints).toHaveLength(3);
+			expect(checkpoints[0].turnNumber).toBe(3); // Newest first
+			expect(checkpoints[1].turnNumber).toBe(2);
+			expect(checkpoints[2].turnNumber).toBe(1);
+		});
+
+		it('should handle empty content array', () => {
+			const messageId = generateUUID();
+			tracker.createCheckpointFromUserMessage(messageId, []);
+
+			const checkpoints = tracker.getCheckpoints();
+			expect(checkpoints).toHaveLength(1);
+			expect(checkpoints[0].messagePreview).toBe('');
+		});
+
+		it('should handle content array without text blocks', () => {
+			const messageId = generateUUID();
+			const content = [{ type: 'image' as const, source: { type: 'base64', data: 'abc' } }];
+
+			tracker.createCheckpointFromUserMessage(messageId, content as unknown as string);
+
+			const checkpoints = tracker.getCheckpoints();
+			expect(checkpoints).toHaveLength(1);
+			expect(checkpoints[0].messagePreview).toBe('');
+		});
+	});
 });

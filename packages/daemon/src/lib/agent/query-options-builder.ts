@@ -155,6 +155,11 @@ export class QueryOptionsBuilder {
 			// ============ Streaming ============
 			includePartialMessages: config.includePartialMessages,
 
+			// ============ File Checkpointing ============
+			// Enable file change tracking for rewind capability
+			// Default to true unless explicitly disabled
+			enableFileCheckpointing: config.enableFileCheckpointing ?? true,
+
 			// ============ Hooks ============
 			hooks,
 
@@ -191,6 +196,7 @@ export class QueryOptionsBuilder {
 					: Object.keys(cleanedOptions.mcpServers),
 			outputFormat: cleanedOptions.outputFormat?.type,
 			betas: cleanedOptions.betas,
+			enableFileCheckpointing: cleanedOptions.enableFileCheckpointing,
 			additionalDirectories:
 				cleanedOptions.additionalDirectories === undefined
 					? 'unrestricted'

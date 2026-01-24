@@ -42,6 +42,9 @@ export class CheckpointTracker {
 	 * Checkpoints are created from user messages with UUIDs.
 	 * This includes both regular user messages and replayed messages
 	 * (when resuming a session).
+	 *
+	 * NOTE: This is primarily for synthetic SDK messages (compaction, subagent, etc.).
+	 * Real user messages create checkpoints via createCheckpointFromUserMessage().
 	 */
 	processMessage(message: SDKMessage): void {
 		// Check for user message with UUID (checkpoint)
@@ -50,6 +53,61 @@ export class CheckpointTracker {
 				this.addCheckpoint(message);
 			}
 		}
+	}
+
+	/**
+	 * Create a checkpoint directly from user message data
+	 *
+	 * Called when a user message is persisted (before sending to SDK).
+	 * This is the primary way checkpoints are created for normal conversation flow.
+	 *
+	 * @param messageId - UUID of the user message (becomes checkpoint ID)
+	 * @param messageContent - Content of the message (for preview)
+	 */
+	createCheckpointFromUserMessage(
+		messageId: string,
+		messageContent: string | MessageContentBlock[]
+	): void {
+		// Don't create duplicate checkpoints
+		if (this.checkpoints.has(messageId)) {
+			this.logger.log(`Checkpoint ${messageId.slice(0, 8)}... already exists, skipping`);
+			return;
+		}
+
+		this.turnNumber++;
+
+		// Extract preview from content
+		let messagePreview = '';
+		if (typeof messageContent === 'string') {
+			messagePreview = messageContent.slice(0, 100);
+		} else if (Array.isArray(messageContent)) {
+			// Find first text block
+			const textBlock = messageContent.find(
+				(block): block is { type: 'text'; text: string } => block.type === 'text'
+			);
+			messagePreview = textBlock?.text?.slice(0, 100) || '';
+		}
+
+		const checkpoint: Checkpoint = {
+			id: messageId,
+			messagePreview,
+			turnNumber: this.turnNumber,
+			timestamp: Date.now(),
+			sessionId: this.sessionId,
+		};
+
+		this.checkpoints.set(checkpoint.id, checkpoint);
+		this.logger.log(
+			`Created checkpoint ${checkpoint.id.slice(0, 8)}... at turn ${checkpoint.turnNumber}`
+		);
+
+		// Emit event for state management (fire-and-forget)
+		this.daemonHub
+			.emit('checkpoint.created', {
+				sessionId: this.sessionId,
+				checkpoint,
+			})
+			.catch((err) => this.logger.warn('Failed to emit checkpoint.created:', err));
 	}
 
 	/**

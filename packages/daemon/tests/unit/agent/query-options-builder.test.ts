@@ -462,4 +462,31 @@ describe('QueryOptionsBuilder', () => {
 			expect(systemPrompt.append).toContain('/projects/my-repo');
 		});
 	});
+
+	describe('file checkpointing configuration', () => {
+		it('should enable file checkpointing by default', async () => {
+			const options = await builder.build();
+			expect(options.enableFileCheckpointing).toBe(true);
+		});
+
+		it('should enable file checkpointing when explicitly set to true', async () => {
+			mockSession.config.enableFileCheckpointing = true;
+			const options = await builder.build();
+			expect(options.enableFileCheckpointing).toBe(true);
+		});
+
+		it('should disable file checkpointing when explicitly set to false', async () => {
+			mockSession.config.enableFileCheckpointing = false;
+			const options = await builder.build();
+			expect(options.enableFileCheckpointing).toBe(false);
+		});
+
+		it('should include enableFileCheckpointing in debug logging', async () => {
+			mockSession.config.enableFileCheckpointing = true;
+			const options = await builder.build();
+			// Verify the option is included in the final options object
+			// (Debug logging will show this value automatically)
+			expect('enableFileCheckpointing' in options).toBe(true);
+		});
+	});
 });

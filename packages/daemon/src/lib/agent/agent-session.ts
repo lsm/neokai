@@ -317,8 +317,12 @@ export class AgentSession {
 			onModelSwitchRequest: (model) => this.modelSwitchHandler.switchModel(model),
 			onInterruptRequest: () => this.interruptHandler.handleInterrupt(),
 			onResetRequest: (restartQuery) => this.resetQuery({ restartQuery }),
-			onMessagePersisted: (messageId, content) =>
-				this.startQueryAndEnqueue(messageId, content as string | MessageContent[]),
+			onMessagePersisted: (messageId, content) => {
+				// Create checkpoint for the user message (enables rewind feature)
+				this.checkpointTracker.createCheckpointFromUserMessage(messageId, content as string);
+				// Start query and enqueue message
+				return this.startQueryAndEnqueue(messageId, content as string | MessageContent[]);
+			},
 			onQueryTrigger: () => this.queryModeHandler.handleQueryTrigger(),
 			onSendQueuedOnTurnEnd: () => this.queryModeHandler.sendQueuedMessagesOnTurnEnd(),
 		});
