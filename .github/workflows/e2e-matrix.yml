@@ -58,6 +58,8 @@ jobs:
           - message-pagination
           - message-removal
           - message-send-receive
+          - model-list-duplicates
+          - model-selection-persistence
           - model-switcher
           - mobile-layout
           - mobile-input

@@ -165,6 +165,7 @@ jobs:
           - components
           - glm
           - mcp
+          - providers
           - rpc
           - sdk
           - session
@@ -175,6 +176,8 @@ jobs:
             test_path: tests/online/glm
           - module: mcp
             test_path: tests/online/mcp
+          - module: providers
+            test_path: tests/online/providers
           - module: rpc
             test_path: tests/online/rpc
           - module: sdk

@@ -78,26 +78,55 @@ describe('AnthropicProvider', () => {
 		});
 	});
 
-	describe('getModels', () => {
-		it('should return at least 3 static models', async () => {
-			// Note: This test may load from SDK if credentials are available
-			// The SDK now returns 4 models (default, opus, haiku, sonnet)
-			const models = await provider.getModels();
+	describe('getModels without credentials', () => {
+		it('should return static models when no credentials are available', async () => {
+			// Remove credentials to ensure we get static models
+			delete process.env.ANTHROPIC_API_KEY;
+			delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
 
-			expect(models.length).toBeGreaterThanOrEqual(3);
-			// Check that we have the expected models
+			// Create new provider instance without credentials
+			const providerWithoutCreds = new AnthropicProvider();
+
+			const models = await providerWithoutCreds.getModels();
+
+			// Should return exactly 3 static models
+			expect(models.length).toBe(3);
+
+			// Check that we have the expected static models
 			const modelIds = models.map((m) => m.id);
 			expect(modelIds).toContain('default');
 			expect(modelIds).toContain('opus');
 			expect(modelIds).toContain('haiku');
 		});
 
-		it('should include provider field in models', async () => {
-			const models = await provider.getModels();
+		it('should include provider field in static models', async () => {
+			// Remove credentials
+			delete process.env.ANTHROPIC_API_KEY;
+			delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+
+			const providerWithoutCreds = new AnthropicProvider();
+			const models = await providerWithoutCreds.getModels();
 
 			for (const model of models) {
 				expect(model.provider).toBe('anthropic');
 			}
+		});
+
+		it('should not attempt SDK call when credentials are missing', async () => {
+			// Remove credentials
+			delete process.env.ANTHROPIC_API_KEY;
+			delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+
+			const providerWithoutCreds = new AnthropicProvider();
+
+			// This should complete quickly (no SDK call)
+			const startTime = Date.now();
+			const models = await providerWithoutCreds.getModels();
+			const duration = Date.now() - startTime;
+
+			// Should return static models quickly (< 100ms)
+			expect(models.length).toBe(3);
+			expect(duration).toBeLessThan(100);
 		});
 	});
 
