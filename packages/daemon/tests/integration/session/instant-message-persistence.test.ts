@@ -221,17 +221,15 @@ describe('Instant Message Persistence UX', () => {
 		});
 
 		// Emit message.sendRequest event with images
+		// Note: MessageImage type has data/media_type at top level, not nested under source
 		await eventBus.emit('message.sendRequest', {
 			sessionId: session.id,
 			messageId,
 			content: messageContent,
 			images: [
 				{
-					source: {
-						type: 'base64',
-						media_type: 'image/png',
-						data: 'base64data',
-					},
+					data: 'base64data',
+					media_type: 'image/png',
 				},
 			],
 		});

@@ -4,12 +4,17 @@
 
 const SUPPORTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
 
-const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
+// API limit is 5MB for base64-encoded data
+// Base64 encoding increases size by ~33% (4/3 ratio)
+// So we limit file size to ~3.75MB to stay under 5MB after encoding
+const MAX_FILE_SIZE = 3.75 * 1024 * 1024; // 3.75MB
+const MAX_BASE64_SIZE = 5 * 1024 * 1024; // 5MB (API limit)
 
 export type SupportedImageType = (typeof SUPPORTED_IMAGE_TYPES)[number];
 
 /**
  * Convert File object to base64 string (without data URL prefix)
+ * Validates that the base64 result doesn't exceed API limits
  */
 export async function fileToBase64(file: File): Promise<string> {
 	return new Promise((resolve, reject) => {
@@ -18,6 +23,18 @@ export async function fileToBase64(file: File): Promise<string> {
 			const base64 = reader.result as string;
 			// Remove data URL prefix (e.g., "data:image/png;base64,")
 			const base64Data = base64.split(',')[1];
+
+			// Validate base64 size (API limit is 5MB for base64-encoded data)
+			const base64SizeBytes = base64Data.length;
+			if (base64SizeBytes > MAX_BASE64_SIZE) {
+				reject(
+					new Error(
+						`Image base64 size (${formatFileSize(base64SizeBytes)}) exceeds API limit (${formatFileSize(MAX_BASE64_SIZE)}). Please resize the image before uploading.`
+					)
+				);
+				return;
+			}
+
 			resolve(base64Data);
 		};
 		reader.onerror = () => reject(new Error('Failed to read file'));
@@ -36,7 +53,7 @@ function isValidImageType(type: string): type is SupportedImageType {
  * Validate file size against maximum limit
  */
 function isValidFileSize(size: number): boolean {
-	return size > 0 && size <= MAX_IMAGE_SIZE;
+	return size > 0 && size <= MAX_FILE_SIZE;
 }
 
 /**
@@ -54,7 +71,7 @@ export function formatFileSize(bytes: number): string {
  * Get maximum file size in MB
  */
 function getMaxFileSizeMB(): number {
-	return MAX_IMAGE_SIZE / (1024 * 1024);
+	return Math.floor((MAX_FILE_SIZE / (1024 * 1024)) * 100) / 100;
 }
 
 /**

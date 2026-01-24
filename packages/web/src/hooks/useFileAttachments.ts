@@ -55,7 +55,9 @@ export function useFileAttachments(): UseFileAttachmentsResult {
 				]);
 			} catch (error) {
 				console.error('Failed to read file:', error);
-				toast.error(`Failed to read ${file.name}`);
+				// Show error message from fileToBase64 if available (e.g., size limit errors)
+				const errorMessage = error instanceof Error ? error.message : `Failed to read ${file.name}`;
+				toast.error(errorMessage);
 			}
 		}
 	}, []);

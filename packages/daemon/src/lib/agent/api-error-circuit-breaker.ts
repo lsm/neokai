@@ -47,12 +47,18 @@ export interface CircuitBreakerConfig {
 	timeWindowMs: number;
 	/** How long to stay tripped before auto-reset (default: 60000 = 1 min) */
 	cooldownMs: number;
+	/** Maximum messages allowed in rapid succession (default: 10) */
+	rapidFireThreshold: number;
+	/** Time window for rapid fire detection in ms (default: 5000 = 5s) */
+	rapidFireWindowMs: number;
 }
 
 const DEFAULT_CONFIG: CircuitBreakerConfig = {
 	errorThreshold: 3,
 	timeWindowMs: 30000,
 	cooldownMs: 60000,
+	rapidFireThreshold: 10,
+	rapidFireWindowMs: 5000,
 };
 
 /**
@@ -67,12 +73,18 @@ const FATAL_ERROR_PATTERNS = [
 	// Connection errors - indicate network/API unavailability
 	/Error:\s*Connection\s+error/i,
 	/Connection\s+error/i,
+	// Image size errors - SDK should NOT retry large images
+	/ImageSizeError/i,
+	/Image.*size.*exceeds.*limit/i,
+	/image.*base64.*size.*exceeds/i,
 ];
 
 export class ApiErrorCircuitBreaker {
 	private logger: Logger;
 	private config: CircuitBreakerConfig;
 	private recentErrors: ErrorOccurrence[] = [];
+	// Track ALL message timestamps for rapid-fire detection (master rate limiter)
+	private messageTimestamps: number[] = [];
 	private state: CircuitBreakerState = {
 		isTripped: false,
 		tripReason: null,
@@ -100,6 +112,15 @@ export class ApiErrorCircuitBreaker {
 	 * Returns the error pattern if found, null otherwise
 	 */
 	private extractErrorPattern(messageContent: string): string | null {
+		// First, check directly in the message content for ImageSizeError
+		// SDK might inject this error directly without stderr wrapper
+		if (
+			/ImageSizeError/i.test(messageContent) ||
+			/image.*size.*exceeds.*limit/i.test(messageContent)
+		) {
+			return 'image_size_error';
+		}
+
 		// Check for local-command-stderr errors (SDK error capture format)
 		const stderrMatch = messageContent.match(
 			/<local-command-stderr>([\s\S]*?)<\/local-command-stderr>/
@@ -121,6 +142,11 @@ export class ApiErrorCircuitBreaker {
 					// Connection error
 					if (/Connection\s+error/i.test(errorContent)) {
 						return 'connection_error';
+					}
+
+					// Image size error
+					if (/ImageSizeError/i.test(errorContent) || /image.*size.*exceeds/i.test(errorContent)) {
+						return 'image_size_error';
 					}
 
 					return 'invalid_request_error';
@@ -150,6 +176,25 @@ export class ApiErrorCircuitBreaker {
 		const msg = message as { type?: string; message?: { content?: unknown } };
 		if (msg.type !== 'user') {
 			return false;
+		}
+
+		const now = Date.now();
+
+		// MASTER RATE LIMITER: Check for rapid-fire message pattern
+		// This catches ANY runaway loop regardless of error type
+		this.messageTimestamps.push(now);
+
+		// Clean up old timestamps outside rapid-fire window
+		const rapidFireCutoff = now - this.config.rapidFireWindowMs;
+		this.messageTimestamps = this.messageTimestamps.filter((t) => t > rapidFireCutoff);
+
+		// Check for rapid-fire pattern
+		if (this.messageTimestamps.length >= this.config.rapidFireThreshold) {
+			this.logger.log(
+				`RAPID-FIRE DETECTED: ${this.messageTimestamps.length} messages in ${this.config.rapidFireWindowMs}ms`
+			);
+			await this.trip('rapid_fire', this.messageTimestamps.length);
+			return true;
 		}
 
 		// Extract message content
@@ -183,7 +228,6 @@ export class ApiErrorCircuitBreaker {
 		}
 
 		// Record this error occurrence
-		const now = Date.now();
 		this.recentErrors.push({
 			pattern: errorPattern,
 			timestamp: now,
@@ -246,13 +290,14 @@ export class ApiErrorCircuitBreaker {
 		this.state.isTripped = false;
 		this.state.tripReason = null;
 		this.recentErrors = [];
+		this.messageTimestamps = [];
 	}
 
 	/**
 	 * Mark a successful API call (resets error tracking)
 	 */
 	markSuccess(): void {
-		// Clear recent errors on success
+		// Clear recent errors on success (but keep timestamps for rate limiting)
 		this.recentErrors = [];
 	}
 
@@ -286,6 +331,19 @@ export class ApiErrorCircuitBreaker {
 			return 'Unknown error';
 		}
 
+		if (this.state.tripReason === 'rapid_fire') {
+			return `Rapid message loop detected and stopped.
+
+**What happened:**
+- The system detected an abnormal message pattern (too many messages in a short time)
+- This usually indicates an SDK error loop that was automatically stopped
+
+**What to do:**
+- The session has been paused to prevent resource waste
+- Try your request again - if the issue persists, the underlying error needs to be addressed
+- Consider starting a new session if the problem continues`;
+		}
+
 		if (this.state.tripReason.startsWith('prompt_too_long:')) {
 			const maxTokens = this.state.tripReason.split(':')[1];
 			return `Context limit exceeded (${maxTokens} tokens maximum).
@@ -308,6 +366,19 @@ export class ApiErrorCircuitBreaker {
 
 		if (this.state.tripReason === 'invalid_request_error') {
 			return 'The API rejected the request. This usually means the conversation context is too large or malformed.';
+		}
+
+		if (this.state.tripReason === 'image_size_error') {
+			return `Image size exceeds API limit (5 MB for base64-encoded data).
+
+**What happened:**
+- The image you uploaded is too large after base64 encoding
+- Base64 encoding increases file size by ~33%
+
+**What to do:**
+- Resize the image to under 3.75 MB before uploading
+- Use image compression tools to reduce file size
+- Consider using a lower resolution or cropping the image`;
 		}
 
 		if (this.state.tripReason === 'connection_error') {

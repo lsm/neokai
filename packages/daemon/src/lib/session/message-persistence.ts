@@ -44,12 +44,13 @@ export class MessagePersistence {
 	 * ARCHITECTURE: EventBus-centric - SessionManager owns message persistence logic
 	 *
 	 * Responsibilities:
-	 * 1. Expand built-in commands
-	 * 2. Build message content (text + images)
-	 * 3. Create SDK user message
-	 * 4. Save to database
-	 * 5. Publish to UI via state channel
-	 * 6. Emit 'message.persisted' event for downstream processing
+	 * 1. Validate image sizes
+	 * 2. Expand built-in commands
+	 * 3. Build message content (text + images)
+	 * 4. Create SDK user message
+	 * 5. Save to database
+	 * 6. Publish to UI via state channel
+	 * 7. Emit 'message.persisted' event for downstream processing
 	 */
 	async persist(data: MessagePersistenceData): Promise<void> {
 		const { sessionId, messageId, content, images } = data;
@@ -66,7 +67,22 @@ export class MessagePersistence {
 		const session = agentSession.getSessionData();
 
 		try {
-			// 1. Expand built-in commands (e.g., /merge-session → full prompt)
+			// 1. Validate image sizes (API limit is 5MB for base64-encoded data)
+			if (images && images.length > 0) {
+				const MAX_BASE64_SIZE = 5 * 1024 * 1024; // 5MB
+				for (const image of images) {
+					const base64SizeBytes = image.data.length;
+					if (base64SizeBytes > MAX_BASE64_SIZE) {
+						const sizeMB = (base64SizeBytes / (1024 * 1024)).toFixed(2);
+						const maxMB = (MAX_BASE64_SIZE / (1024 * 1024)).toFixed(2);
+						throw new Error(
+							`Image base64 size (${sizeMB} MB) exceeds API limit (${maxMB} MB). Please resize the image before uploading.`
+						);
+					}
+				}
+			}
+
+			// 2. Expand built-in commands (e.g., /merge-session → full prompt)
 			const expandedContent = expandBuiltInCommand(content);
 			const finalContent = expandedContent || content;
 
@@ -74,10 +90,10 @@ export class MessagePersistence {
 				this.logger.info(`[MessagePersistence] Expanding built-in command: ${content.trim()}`);
 			}
 
-			// 2. Build message content (text + images)
+			// 3. Build message content (text + images)
 			const messageContent = buildMessageContent(finalContent, images);
 
-			// 3. Create SDK user message
+			// 4. Create SDK user message
 			const sdkUserMessage: SDKUserMessage = {
 				type: 'user' as const,
 				uuid: messageId as UUID,
@@ -92,10 +108,10 @@ export class MessagePersistence {
 				},
 			};
 
-			// 4. Save to database
+			// 5. Save to database
 			this.db.saveSDKMessage(sessionId, sdkUserMessage);
 
-			// 5. Publish to UI (fire-and-forget)
+			// 6. Publish to UI (fire-and-forget)
 			this.messageHub
 				.publish(
 					'state.sdkMessages.delta',
@@ -110,7 +126,7 @@ export class MessagePersistence {
 				`[MessagePersistence] User message ${messageId} persisted and published to UI`
 			);
 
-			// 6. Emit 'message.persisted' event for downstream processing
+			// 7. Emit 'message.persisted' event for downstream processing
 			// AgentSession will start query and enqueue message
 			// SessionManager will handle title generation and draft clearing
 			await this.eventBus.emit('message.persisted', {
