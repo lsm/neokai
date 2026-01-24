@@ -185,6 +185,10 @@ export class ModelSwitchHandler {
 
 				// Update session config first (will be used when query restarts)
 				session.config.model = resolvedModel;
+				// Update provider in session config for cross-provider switches
+				if (newProviderInstance?.id) {
+					session.config.provider = newProviderInstance.id as 'anthropic' | 'glm';
+				}
 				db.updateSession(session.id, {
 					config: session.config,
 				});

@@ -373,11 +373,15 @@ export function setupSessionHandlers(
 			const { getAvailableModels } = await import('../model-service');
 
 			// Check if forceRefresh is requested or useCache is disabled
-			const params = data as { forceRefresh?: boolean; useCache?: boolean };
+			const params = data as {
+				forceRefresh?: boolean;
+				useCache?: boolean;
+			};
 			const forceRefresh = params?.forceRefresh ?? params?.useCache === false;
 
 			// Get models from cache (uses 'global' cache key)
 			// This will return dynamic models if they were loaded, otherwise static fallback
+			// NOTE: Returns ALL available models from ALL providers for cross-provider switching
 			const availableModels = getAvailableModels('global');
 
 			// Return models in the expected format

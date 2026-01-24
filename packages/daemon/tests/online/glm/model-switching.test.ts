@@ -551,5 +551,68 @@ describe('Model Switching Integration', () => {
 			})) as { state: { status: string } };
 			expect(stateAfter.state.status).toBeDefined();
 		}, 30000);
+
+		test('should update provider in session config when switching providers', async () => {
+			// Create session with GLM model and provider explicitly set
+			const createResult = (await daemon.messageHub.call('session.create', {
+				workspacePath: `${TMP_DIR}/test-provider-config-update`,
+				title: 'Provider Config Update Test',
+				config: {
+					model: 'glm-4.7',
+					provider: 'glm',
+				},
+			})) as { sessionId: string };
+
+			const { sessionId } = createResult;
+
+			// Verify initial provider is GLM
+			const sessionBefore = (await daemon.messageHub.call('session.get', {
+				sessionId,
+			})) as {
+				session: {
+					config: {
+						model: string;
+						provider?: string;
+					};
+				};
+			};
+			expect(sessionBefore.session.config.model).toBe('glm-4.7');
+			expect(sessionBefore.session.config.provider).toBe('glm');
+
+			// Send a message to start the query (makes transport ready)
+			await daemon.messageHub.call('message.send', {
+				sessionId,
+				content: 'Hello',
+			});
+
+			// Wait for query to start and transport to be ready
+			await new Promise((resolve) => setTimeout(resolve, 2000));
+
+			// Switch to Claude model (cross-provider switch)
+			const result = (await daemon.messageHub.call('session.model.switch', {
+				sessionId,
+				model: 'haiku',
+			})) as { success: boolean; model: string };
+
+			expect(result.success).toBe(true);
+			expect(result.model).toBe('haiku');
+
+			// Wait for restart to complete
+			await new Promise((resolve) => setTimeout(resolve, 1000));
+
+			// Verify provider was updated to anthropic
+			const sessionAfter = (await daemon.messageHub.call('session.get', {
+				sessionId,
+			})) as {
+				session: {
+					config: {
+						model: string;
+						provider?: string;
+					};
+				};
+			};
+			expect(sessionAfter.session.config.model).toBe('haiku');
+			expect(sessionAfter.session.config.provider).toBe('anthropic');
+		}, 30000);
 	});
 });

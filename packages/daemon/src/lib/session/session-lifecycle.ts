@@ -115,6 +115,8 @@ export class SessionLifecycle {
 				temperature: params.config?.temperature || this.config.temperature,
 				autoScroll: params.config?.autoScroll,
 				permissionMode: params.config?.permissionMode,
+				// Provider: Allow explicit override, otherwise default to 'anthropic'
+				provider: params.config?.provider,
 				// Tools config: Use global defaults for new sessions
 				// SDK built-in tools are always enabled (not configurable)
 				// MCP and Liuboer tools are configurable based on global settings

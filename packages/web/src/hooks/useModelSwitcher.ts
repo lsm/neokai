@@ -86,7 +86,7 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 			setCurrentModel(modelId);
 			setCurrentModelInfo(modelInfo);
 
-			// Fetch available models
+			// Fetch available models (includes all providers for cross-provider switching)
 			const { models } = (await hub.call('models.list', {
 				useCache: true,
 			})) as {
