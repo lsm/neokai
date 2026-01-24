@@ -18,10 +18,10 @@
  * These tests run in parallel with other tests for faster CI execution.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { DaemonServerContext } from '../../helpers/daemon-server-helper';
-import { spawnDaemonServer } from '../../helpers/daemon-server-helper';
-import { sendMessage, waitForIdle, getProcessingState } from '../../helpers/daemon-test-helpers';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { DaemonServerContext } from '../helpers/daemon-server-helper';
+import { spawnDaemonServer } from '../helpers/daemon-server-helper';
+import { getProcessingState, sendMessage, waitForIdle } from '../helpers/daemon-test-helpers';
 
 describe('Multi-Turn Conversation', () => {
 	let daemon: DaemonServerContext;

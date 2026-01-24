@@ -19,17 +19,17 @@
  * - Note: Short alias 'haiku' doesn't work with Claude OAuth (SDK hangs)
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import 'dotenv/config';
-import type { DaemonServerContext } from '../../helpers/daemon-server-helper';
-import { spawnDaemonServer } from '../../helpers/daemon-server-helper';
+import type { DaemonServerContext } from '../helpers/daemon-server-helper';
+import { spawnDaemonServer } from '../helpers/daemon-server-helper';
 import {
+	getProcessingState,
+	getSession,
+	interrupt,
 	sendMessage,
 	waitForIdle,
-	getSession,
-	getProcessingState,
-	interrupt,
-} from '../../helpers/daemon-test-helpers';
+} from '../helpers/daemon-test-helpers';
 
 // Use temp directory for test database
 const TMP_DIR = process.env.TMPDIR || '/tmp';

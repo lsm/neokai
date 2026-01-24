@@ -2,12 +2,11 @@
  * Unit tests for Provider Registry
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { ProviderRegistry, resetProviderRegistry } from '../../src/lib/providers/registry';
-import { resetProviderFactory } from '../../src/lib/providers/factory';
-import type { Provider } from '@liuboer/shared/provider';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import type { ModelInfo } from '@liuboer/shared';
-import type { ProviderSdkConfig } from '@liuboer/shared/provider';
+import type { Provider, ProviderSdkConfig } from '@liuboer/shared/provider';
+import { resetProviderFactory } from '../../../src/lib/providers/factory';
+import { ProviderRegistry, resetProviderRegistry } from '../../../src/lib/providers/registry';
 
 // Mock provider for testing
 class MockProvider implements Provider {

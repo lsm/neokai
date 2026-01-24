@@ -2,8 +2,8 @@
  * Unit tests for GLM Provider
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { GlmProvider } from '../../src/lib/providers/glm-provider';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { GlmProvider } from '../../../src/lib/providers/glm-provider';
 
 describe('GlmProvider', () => {
 	let provider: GlmProvider;
@@ -12,6 +12,8 @@ describe('GlmProvider', () => {
 	beforeEach(() => {
 		// Store original env
 		originalEnv = { ...process.env };
+		delete process.env.GLM_API_KEY;
+		delete process.env.ZHIPU_API_KEY;
 		provider = new GlmProvider();
 	});
 

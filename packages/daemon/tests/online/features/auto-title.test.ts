@@ -18,16 +18,16 @@
  * - Note: Short alias 'haiku' doesn't work with Claude OAuth (SDK hangs)
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import 'dotenv/config';
-import type { DaemonServerContext } from '../../helpers/daemon-server-helper';
-import { spawnDaemonServer } from '../../helpers/daemon-server-helper';
+import type { DaemonServerContext } from '../helpers/daemon-server-helper';
+import { spawnDaemonServer } from '../helpers/daemon-server-helper';
 import {
-	sendMessage,
-	waitForIdle,
 	getProcessingState,
 	getSession,
-} from '../../helpers/daemon-test-helpers';
+	sendMessage,
+	waitForIdle,
+} from '../helpers/daemon-test-helpers';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
@@ -213,7 +213,7 @@ describe('Auto-Title Generation', () => {
 		await waitForTitleGeneration(sessionId);
 
 		// Session should still be functional even if title generation fails
-		let session = await getSession(daemon, sessionId);
+		const session = await getSession(daemon, sessionId);
 		// Title might be generated or might remain default - either is acceptable
 		// The key is that the session is still functional
 		expect((session.metadata as { titleGenerated?: boolean }).titleGenerated).toBeBoolean();

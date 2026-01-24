@@ -2,8 +2,8 @@
  * Unit tests for Anthropic Provider
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { AnthropicProvider } from '../../src/lib/providers/anthropic-provider';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { AnthropicProvider } from '../../../src/lib/providers/anthropic-provider';
 
 describe('AnthropicProvider', () => {
 	let provider: AnthropicProvider;
@@ -12,6 +12,8 @@ describe('AnthropicProvider', () => {
 	beforeEach(() => {
 		// Store original env
 		originalEnv = { ...process.env };
+		delete process.env.ANTHROPIC_API_KEY;
+		delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
 		provider = new AnthropicProvider();
 	});
 

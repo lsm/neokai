@@ -74,8 +74,8 @@ jobs:
   # Each job uploads coverage with module-specific flag
   # ============================================
 
-  test-daemon:
-    name: Daemon (${{ matrix.module }})
+  test-daemon-offline:
+    name: Daemon Offline (${{ matrix.module }})
     runs-on: arc-runner-set
     timeout-minutes: 10
 
@@ -87,21 +87,23 @@ jobs:
           - session
           - rpc
           - database
+          - filesystem
           - websocket
           - git
           - components
           - mcp
-          - core
-          - providers
+          - unit
         include:
           - module: agent
-            test_path: tests/unit/agent tests/integration/agent
+            test_path: tests/integration/agent
           - module: session
-            test_path: tests/unit/session tests/integration/session
+            test_path: tests/integration/session
           - module: rpc
-            test_path: tests/unit/rpc tests/integration/rpc
+            test_path: tests/integration/rpc
           - module: database
             test_path: tests/integration/database
+          - module: filesystem
+            test_path: tests/integration/filesystem
           - module: websocket
             test_path: tests/integration/websocket
           - module: git
@@ -110,10 +112,8 @@ jobs:
             test_path: tests/integration/components
           - module: mcp
             test_path: tests/integration/mcp
-          - module: core
-            test_path: tests/unit/core
-          - module: providers
-            test_path: tests/providers
+          - module: unit
+            test_path: tests/unit
 
     steps:
       - uses: actions/checkout@v4
@@ -162,13 +162,16 @@ jobs:
       fail-fast: false
       matrix:
         module:
+          - agent
           - components
+          - convo
+          - features
           - glm
+          - lifecycle
           - mcp
           - providers
           - rpc
           - sdk
-          - session
         include:
           - module: components
             test_path: tests/online/components
@@ -182,8 +185,14 @@ jobs:
             test_path: tests/online/rpc
           - module: sdk
             test_path: tests/online/sdk
-          - module: session
-            test_path: tests/online/session
+          - module: agent
+            test_path: tests/online/agent
+          - module: convo
+            test_path: tests/online/convo
+          - module: features
+            test_path: tests/online/features
+          - module: lifecycle
+            test_path: tests/online/lifecycle
 
     steps:
       - uses: actions/checkout@v4
@@ -329,4 +338,3 @@ jobs:
           files: packages/cli/coverage/lcov.info
           flags: cli
           fail_ci_if_error: false
-
