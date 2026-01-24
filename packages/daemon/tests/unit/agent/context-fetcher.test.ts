@@ -149,6 +149,42 @@ describe('ContextFetcher', () => {
 			expect(result?.percentUsed).toBe(2);
 			expect(result?.slashCommandTool).toBeUndefined();
 		});
+
+		it('should handle context response with zero tokens (no k suffix)', () => {
+			const message = {
+				type: 'user',
+				isReplay: true,
+				message: {
+					content: `<local-command-stdout>## Context Usage
+
+**Model:** glm-4.7
+**Tokens:** 0 / 200.0k (0%)
+
+### Estimated usage by category
+
+| Category | Tokens | Percentage |
+|----------|--------|------------|
+| System prompt | 2.7k | 1.4% |
+| System tools | 14.3k | 7.2% |
+| Messages | 21 | 0.0% |
+| Free space | 137.9k | 69.0% |
+| Autocompact buffer | 45.0k | 22.5% |
+
+</local-command-stdout>`,
+				},
+			};
+
+			const result = fetcher.parseContextResponse(message as never);
+
+			expect(result).not.toBeNull();
+			// totalUsed = sum of all except Free space: 2700 + 14300 + 21 + 45000 = 62021
+			expect(result?.totalUsed).toBe(62021);
+			expect(result?.totalCapacity).toBe(200000);
+			// percentUsed = Math.round(62021 / 200000 * 100) = 31%
+			expect(result?.percentUsed).toBe(31);
+			expect(result?.model).toBe('glm-4.7');
+			expect(result?.slashCommandTool).toBeUndefined();
+		});
 	});
 
 	describe('mergeWithStreamContext', () => {

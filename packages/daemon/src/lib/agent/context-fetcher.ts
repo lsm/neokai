@@ -91,16 +91,20 @@ export class ContextFetcher {
 
 		// Parse model and capacity from tokens line
 		// Example: **Model:** claude-sonnet-4-5-20250929
-		// Example: **Tokens:** 62.5k / 200.0k (31%)
+		// Example: **Tokens:** 62.5k / 200.0k (31%) - when tokens > 0, SDK uses 'k' suffix
+		// Example: **Tokens:** 0 / 200.0k (0%) - when tokens is 0 or whole number, no 'k' suffix
 		const modelMatch = markdown.match(/\*\*Model:\*\*\s*(\S+)/);
-		const tokensMatch = markdown.match(/\*\*Tokens:\*\*\s*([\d.]+)k\s*\/\s*([\d.]+)k\s*\((\d+)%\)/);
+		// First token count may or may not have 'k' suffix, but capacity always does
+		const tokensMatch = markdown.match(
+			/\*\*Tokens:\*\*\s*([\d.]+)(k?)\s*\/\s*([\d.]+)k\s*\((\d+)%\)/
+		);
 
 		if (!tokensMatch) {
 			throw new Error('Failed to parse token usage from markdown');
 		}
 
 		const model = modelMatch?.[1] || 'unknown';
-		const totalCapacity = parseFloat(tokensMatch[2]) * 1000;
+		const totalCapacity = parseFloat(tokensMatch[3]) * 1000;
 
 		// Parse category breakdown table
 		const breakdown = this.parseCategoryTable(markdown);
