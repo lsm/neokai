@@ -22,7 +22,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import 'dotenv/config';
 import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { spawnDaemonServer } from '../helpers/daemon-server-helper';
+import { createDaemonServer } from '../helpers/daemon-server-helper';
 import {
 	getProcessingState,
 	getSession,
@@ -39,7 +39,7 @@ describe('Message Persistence', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		daemon = await spawnDaemonServer();
+		daemon = await createDaemonServer();
 	}, 30000);
 
 	afterEach(async () => {
@@ -47,7 +47,7 @@ describe('Message Persistence', () => {
 			daemon.kill('SIGTERM');
 			await daemon.waitForExit();
 		}
-	});
+	}, 20000);
 
 	describe('Basic Message Persistence', () => {
 		test('should persist user messages to database', async () => {
@@ -60,6 +60,7 @@ describe('Message Persistence', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send a message
 			const result = await sendMessage(daemon, sessionId, 'What is 1+1?');
@@ -86,6 +87,7 @@ describe('Message Persistence', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send multiple messages
 			const msg1 = await sendMessage(daemon, sessionId, 'First message');
@@ -119,6 +121,7 @@ describe('Message Persistence', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send a message that will take some time
 			await sendMessage(daemon, sessionId, 'Count from 1 to 100 slowly.');
@@ -157,6 +160,7 @@ describe('Message Persistence', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Initial state check
 			let session = await getSession(daemon, sessionId);
@@ -189,6 +193,7 @@ describe('Message Persistence', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send messages in quick succession
 			const results = await Promise.all([

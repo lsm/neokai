@@ -15,7 +15,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { spawnDaemonServer } from '../helpers/daemon-server-helper';
+import { createDaemonServer } from '../helpers/daemon-server-helper';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
@@ -24,7 +24,7 @@ describe('Authentication Integration (API-dependent)', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		daemon = await spawnDaemonServer();
+		daemon = await createDaemonServer();
 	}, 30000);
 
 	afterEach(async () => {
@@ -41,6 +41,7 @@ describe('Authentication Integration (API-dependent)', () => {
 				title: 'Auth Test Session',
 				config: { model: 'haiku-4.5' },
 			})) as { sessionId: string };
+			daemon.trackSession(result.sessionId);
 
 			expect(result.sessionId).toBeString();
 

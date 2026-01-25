@@ -20,14 +20,14 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { spawnDaemonServer } from '../helpers/daemon-server-helper';
+import { createDaemonServer } from '../helpers/daemon-server-helper';
 import { getProcessingState, sendMessage, waitForIdle } from '../helpers/daemon-test-helpers';
 
 describe('Multi-Turn Conversation', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		daemon = await spawnDaemonServer();
+		daemon = await createDaemonServer();
 	}, 30000);
 
 	afterEach(
@@ -51,6 +51,7 @@ describe('Multi-Turn Conversation', () => {
 		})) as { sessionId: string };
 
 		const { sessionId } = createResult;
+		daemon.trackSession(sessionId);
 
 		// Turn 1: Simple math question
 		const result1 = await sendMessage(
@@ -89,6 +90,7 @@ describe('Multi-Turn Conversation', () => {
 		})) as { sessionId: string };
 
 		const { sessionId } = createResult;
+		daemon.trackSession(sessionId);
 
 		// Turn 1: Provide code context
 		await sendMessage(
@@ -130,6 +132,7 @@ describe('Multi-Turn Conversation', () => {
 		})) as { sessionId: string };
 
 		const { sessionId } = createResult;
+		daemon.trackSession(sessionId);
 
 		// Send three simple messages in quick succession
 		// They should be queued and processed sequentially
@@ -164,6 +167,7 @@ describe('Multi-Turn Conversation', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Track states through 3 turns
 			for (let i = 1; i <= 3; i++) {

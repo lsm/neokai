@@ -18,7 +18,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import 'dotenv/config';
 import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { spawnDaemonServer } from '../helpers/daemon-server-helper';
+import { createDaemonServer } from '../helpers/daemon-server-helper';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
@@ -27,7 +27,7 @@ describe('GLM Model Switching', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		daemon = await spawnDaemonServer();
+		daemon = await createDaemonServer();
 	}, 30000);
 
 	afterEach(async () => {
@@ -49,6 +49,7 @@ describe('GLM Model Switching', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Switch to GLM model
 			const result = (await daemon.messageHub.call('session.model.switch', {
@@ -79,6 +80,7 @@ describe('GLM Model Switching', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Get initial state
 			const sessionBefore = (await daemon.messageHub.call('session.get', {
@@ -137,6 +139,7 @@ describe('GLM Model Switching', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Perform rapid switches between Claude and GLM
 			const switches = ['glm-4.7', 'haiku', 'glm-4.7', 'sonnet', 'glm-4.7'];
@@ -167,6 +170,7 @@ describe('GLM Model Switching', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Switch to GLM before sending any messages
 			const result = (await daemon.messageHub.call('session.model.switch', {

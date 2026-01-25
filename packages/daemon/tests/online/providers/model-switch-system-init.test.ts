@@ -32,7 +32,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import 'dotenv/config';
 import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { spawnDaemonServer } from '../helpers/daemon-server-helper';
+import { createDaemonServer } from '../helpers/daemon-server-helper';
 import { sendMessage, waitForIdle } from '../helpers/daemon-test-helpers';
 
 // Use temp directory for test workspaces
@@ -106,7 +106,7 @@ describe('Model Switch System Init Message', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		daemon = await spawnDaemonServer();
+		daemon = await createDaemonServer();
 	}, 30000);
 
 	afterEach(async () => {
@@ -128,6 +128,7 @@ describe('Model Switch System Init Message', () => {
 		})) as { sessionId: string };
 
 		const { sessionId } = createResult;
+		daemon.trackSession(sessionId);
 
 		// 2. Switch model to Opus
 		const switchResult = (await daemon.messageHub.call('session.model.switch', {
@@ -185,6 +186,7 @@ describe('Model Switch System Init Message', () => {
 		})) as { sessionId: string };
 
 		const { sessionId } = createResult;
+		daemon.trackSession(sessionId);
 
 		// Switch to Haiku
 		const switchResult = (await daemon.messageHub.call('session.model.switch', {
@@ -225,6 +227,7 @@ describe('Model Switch System Init Message', () => {
 		})) as { sessionId: string };
 
 		const { sessionId } = createResult;
+		daemon.trackSession(sessionId);
 
 		// Switch model BEFORE sending any messages
 		const switchResult = (await daemon.messageHub.call('session.model.switch', {
@@ -260,6 +263,7 @@ describe('Model Switch System Init Message', () => {
 		})) as { sessionId: string };
 
 		const { sessionId } = createResult;
+		daemon.trackSession(sessionId);
 
 		// Send first message to START the query with Sonnet
 		await sendMessage(daemon, sessionId, 'What is 1+1? Just the number.');
@@ -301,6 +305,7 @@ describe('Model Switch System Init Message', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send first message with Claude
 			await sendMessage(daemon, sessionId, 'What is 1+1? Just the number.');
@@ -341,6 +346,7 @@ describe('Model Switch System Init Message', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send first message with GLM
 			await sendMessage(daemon, sessionId, 'What is 1+1? Just the number.');
@@ -381,6 +387,7 @@ describe('Model Switch System Init Message', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// 1. Start with Sonnet
 			let systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init', 15000);

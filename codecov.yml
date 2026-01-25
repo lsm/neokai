@@ -63,6 +63,7 @@ flags:
   daemon:
     paths:
       - packages/daemon/src/
+      - packages/shared/src/
     carryforward: true
   shared:
     paths:

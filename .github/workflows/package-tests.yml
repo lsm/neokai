@@ -127,8 +127,25 @@ jobs:
         run: |
           # Fix package-relative paths
           sed -i 's|^SF:src/|SF:packages/daemon/src/|g' coverage/lcov.info
+          # Fix test helper paths (tests/ -> packages/daemon/tests/)
+          sed -i 's|^SF:tests/|SF:packages/daemon/tests/|g' coverage/lcov.info
           # Fix cross-package paths
           sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' coverage/lcov.info
+
+          # Filter coverage to only include source files (packages/*/src/**)
+          # Removes test files and non-source files from coverage report
+          awk '
+            /^SF:/ {
+              if ($0 ~ /^SF:packages\/[^\/]+\/src\//) {
+                keep = 1
+              } else {
+                keep = 0
+              }
+            }
+            keep { print }
+            /^end_of_record$/ { keep = 0 }
+          ' coverage/lcov.info > coverage/lcov.filtered.info
+          mv coverage/lcov.filtered.info coverage/lcov.info
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@v4
@@ -145,7 +162,7 @@ jobs:
   test-daemon-online:
     name: Daemon Online (${{ matrix.module }})
     runs-on: arc-runner-set
-    timeout-minutes: 3
+    timeout-minutes: 5
 
     strategy:
       fail-fast: false
@@ -161,6 +178,7 @@ jobs:
           - providers
           - rpc
           - sdk
+          - session
         include:
           - module: components
             test_path: tests/online/components
@@ -182,6 +200,8 @@ jobs:
             test_path: tests/online/features
           - module: lifecycle
             test_path: tests/online/lifecycle
+          - module: session
+            test_path: tests/online/session
 
     steps:
       - uses: actions/checkout@v4
@@ -206,8 +226,25 @@ jobs:
         run: |
           # Fix package-relative paths
           sed -i 's|^SF:src/|SF:packages/daemon/src/|g' coverage/lcov.info
+          # Fix test helper paths (tests/ -> packages/daemon/tests/)
+          sed -i 's|^SF:tests/|SF:packages/daemon/tests/|g' coverage/lcov.info
           # Fix cross-package paths
           sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' coverage/lcov.info
+
+          # Filter coverage to only include source files (packages/*/src/**)
+          # Removes test files and non-source files from coverage report
+          awk '
+            /^SF:/ {
+              if ($0 ~ /^SF:packages\/[^\/]+\/src\//) {
+                keep = 1
+              } else {
+                keep = 0
+              }
+            }
+            keep { print }
+            /^end_of_record$/ { keep = 0 }
+          ' coverage/lcov.info > coverage/lcov.filtered.info
+          mv coverage/lcov.filtered.info coverage/lcov.info
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@v4

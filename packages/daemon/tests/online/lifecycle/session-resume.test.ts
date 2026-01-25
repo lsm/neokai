@@ -12,7 +12,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { spawnDaemonServer } from '../helpers/daemon-server-helper';
+import { createDaemonServer } from '../helpers/daemon-server-helper';
 import { getSession, sendMessage, waitForIdle } from '../helpers/daemon-test-helpers';
 
 // Use temp directory for test workspaces
@@ -22,7 +22,7 @@ describe('Session Resume', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		daemon = await spawnDaemonServer();
+		daemon = await createDaemonServer();
 	}, 30000);
 
 	afterEach(async () => {
@@ -45,6 +45,7 @@ describe('Session Resume', () => {
 		})) as { sessionId: string };
 
 		const { sessionId } = createResult;
+		daemon.trackSession(sessionId);
 
 		// Initial session state
 		let session = await getSession(daemon, sessionId);

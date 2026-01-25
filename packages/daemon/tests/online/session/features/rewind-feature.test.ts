@@ -19,7 +19,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import 'dotenv/config';
 import type { DaemonServerContext } from '../../helpers/daemon-server-helper';
-import { spawnDaemonServer } from '../../helpers/daemon-server-helper';
+import { createDaemonServer } from '../../helpers/daemon-server-helper';
 import { sendMessage, waitForIdle, getProcessingState } from '../../helpers/daemon-test-helpers';
 import type { Checkpoint, RewindPreview, RewindResult } from '@liuboer/shared';
 
@@ -30,7 +30,7 @@ describe('Rewind Feature', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		daemon = await spawnDaemonServer();
+		daemon = await createDaemonServer();
 	}, 30000);
 
 	afterEach(async () => {
@@ -38,7 +38,7 @@ describe('Rewind Feature', () => {
 			daemon.kill('SIGTERM');
 			await daemon.waitForExit();
 		}
-	});
+	}, 20000);
 
 	/**
 	 * Helper to get checkpoints for a session
@@ -92,6 +92,7 @@ describe('Rewind Feature', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Initially no checkpoints
 			let checkpoints = await getCheckpoints(sessionId);
@@ -139,6 +140,7 @@ describe('Rewind Feature', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send multiple messages
 			await sendMessage(daemon, sessionId, 'First message');
@@ -175,6 +177,7 @@ describe('Rewind Feature', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send a message
 			await sendMessage(daemon, sessionId, 'What is 1+1?');
@@ -213,6 +216,7 @@ describe('Rewind Feature', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send a message to initialize SDK
 			await sendMessage(daemon, sessionId, 'Hello');
@@ -241,6 +245,7 @@ describe('Rewind Feature', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send first message
 			await sendMessage(daemon, sessionId, 'What is 1+1?');
@@ -283,6 +288,7 @@ describe('Rewind Feature', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send multiple messages
 			await sendMessage(daemon, sessionId, 'What is 1+1?');
@@ -339,6 +345,7 @@ describe('Rewind Feature', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send first message
 			await sendMessage(daemon, sessionId, 'What is 1+1?');
@@ -383,6 +390,7 @@ describe('Rewind Feature', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send a message to initialize
 			await sendMessage(daemon, sessionId, 'Hello');
@@ -409,6 +417,7 @@ describe('Rewind Feature', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send a message
 			await sendMessage(daemon, sessionId, 'What is 1+1?');
@@ -448,6 +457,7 @@ describe('Rewind Feature', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send messages
 			await sendMessage(daemon, sessionId, 'What is 1+1?');
@@ -486,6 +496,7 @@ describe('Rewind Feature', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send messages
 			await sendMessage(daemon, sessionId, 'What is 1+1?');

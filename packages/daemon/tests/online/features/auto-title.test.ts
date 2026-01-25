@@ -21,7 +21,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import 'dotenv/config';
 import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { spawnDaemonServer } from '../helpers/daemon-server-helper';
+import { createDaemonServer } from '../helpers/daemon-server-helper';
 import {
 	getProcessingState,
 	getSession,
@@ -37,7 +37,7 @@ describe('Auto-Title Generation', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		daemon = await spawnDaemonServer();
+		daemon = await createDaemonServer();
 	}, 30000);
 
 	afterEach(async () => {
@@ -86,6 +86,7 @@ describe('Auto-Title Generation', () => {
 		})) as { sessionId: string };
 
 		const { sessionId } = createResult;
+		daemon.trackSession(sessionId);
 
 		// Get initial session data
 		let session = await getSession(daemon, sessionId);
@@ -124,6 +125,7 @@ describe('Auto-Title Generation', () => {
 		})) as { sessionId: string };
 
 		const { sessionId } = createResult;
+		daemon.trackSession(sessionId);
 
 		// Send first message
 		await sendMessage(daemon, sessionId, 'What is 2+2?');
@@ -175,6 +177,7 @@ describe('Auto-Title Generation', () => {
 		})) as { sessionId: string };
 
 		const { sessionId } = createResult;
+		daemon.trackSession(sessionId);
 
 		// Verify workspace path is set
 		const session = await getSession(daemon, sessionId);
@@ -204,6 +207,7 @@ describe('Auto-Title Generation', () => {
 		})) as { sessionId: string };
 
 		const { sessionId } = createResult;
+		daemon.trackSession(sessionId);
 
 		// Send first message with minimal content
 		await sendMessage(daemon, sessionId, 'ok');

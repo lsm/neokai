@@ -23,7 +23,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { spawnDaemonServer } from '../helpers/daemon-server-helper';
+import { createDaemonServer } from '../helpers/daemon-server-helper';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
@@ -32,9 +32,9 @@ describe('SDK SIGINT Cleanup (Online)', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		// Spawn daemon server as a separate process
-		// This allows us to send SIGINT only to the daemon, not the test runner
-		daemon = await spawnDaemonServer();
+		// Force spawned mode - this test requires a separate process to receive SIGINT
+		process.env.DAEMON_TEST_SPAWN = 'true';
+		daemon = await createDaemonServer();
 	}, 30000);
 
 	afterEach(async () => {
@@ -43,6 +43,8 @@ describe('SDK SIGINT Cleanup (Online)', () => {
 			daemon.kill('SIGTERM');
 			await daemon.waitForExit();
 		}
+		// Reset spawned mode flag
+		delete process.env.DAEMON_TEST_SPAWN;
 	});
 
 	describe('SIGINT during active SDK query', () => {
@@ -56,6 +58,7 @@ describe('SDK SIGINT Cleanup (Online)', () => {
 				})) as { sessionId: string };
 
 				const { sessionId } = sessionResult;
+				daemon.trackSession(sessionId);
 
 				// Send a message to start the SDK query
 				// Use a long-running prompt to ensure the query is still active when we send SIGINT

@@ -17,7 +17,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import 'dotenv/config';
 import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { spawnDaemonServer } from '../helpers/daemon-server-helper';
+import { createDaemonServer } from '../helpers/daemon-server-helper';
 import {
 	sendMessage,
 	waitForIdle,
@@ -33,7 +33,7 @@ describe('SDK Streaming Behavior', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		daemon = await spawnDaemonServer();
+		daemon = await createDaemonServer();
 	}, 30000);
 
 	afterEach(
@@ -60,6 +60,7 @@ describe('SDK Streaming Behavior', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send a message
 			const result = await sendMessage(
@@ -95,6 +96,7 @@ describe('SDK Streaming Behavior', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send multiple messages
 			const msg1 = await sendMessage(daemon, sessionId, 'What is 1+1? Just the number.');
@@ -131,6 +133,7 @@ describe('SDK Streaming Behavior', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Simple prompt pattern (same as other passing tests)
 			const result = await sendMessage(
@@ -166,6 +169,7 @@ describe('SDK Streaming Behavior', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Initial state check
 			let session = await getSession(daemon, sessionId);
@@ -205,6 +209,7 @@ describe('SDK Streaming Behavior', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send a message to the real SDK
 			const result = await sendMessage(

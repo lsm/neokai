@@ -25,7 +25,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import 'dotenv/config';
 import { WebSocket } from 'undici';
 import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { spawnDaemonServer } from '../helpers/daemon-server-helper';
+import { createDaemonServer } from '../helpers/daemon-server-helper';
 import { getProcessingState, sendMessage, waitForIdle } from '../helpers/daemon-test-helpers';
 
 /**
@@ -128,7 +128,7 @@ describe('AgentSession SDK Integration', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		daemon = await spawnDaemonServer();
+		daemon = await createDaemonServer();
 	}, 30000);
 
 	afterEach(
@@ -150,6 +150,7 @@ describe('AgentSession SDK Integration', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send a simple message
 			const result = await sendMessage(
@@ -177,6 +178,7 @@ describe('AgentSession SDK Integration', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// 1x1 red pixel PNG
 			const result = await sendMessage(
@@ -217,6 +219,7 @@ describe('AgentSession SDK Integration', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send first message
 			await sendMessage(daemon, sessionId, 'What is 2+2? Just the number.');
@@ -244,6 +247,7 @@ describe('AgentSession SDK Integration', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send a simple message first and wait for it to complete
 			await sendMessage(daemon, sessionId, 'What is 1+1? Just the number.');
@@ -267,6 +271,7 @@ describe('AgentSession SDK Integration', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(
 				daemon.baseUrl,
@@ -316,6 +321,7 @@ describe('AgentSession SDK Integration', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Initial state should be idle
 			const initialState = await getProcessingState(daemon, sessionId);
@@ -344,6 +350,7 @@ describe('AgentSession SDK Integration', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send first message and wait for completion
 			const result1 = await sendMessage(daemon, sessionId, 'Count to 1');
@@ -371,6 +378,7 @@ describe('AgentSession SDK Integration', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send a message and let it complete
 			await sendMessage(daemon, sessionId, 'What is 1+1? Just the number.');

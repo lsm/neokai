@@ -17,7 +17,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { spawnDaemonServer } from '../helpers/daemon-server-helper';
+import { createDaemonServer } from '../helpers/daemon-server-helper';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Session } from '@liuboer/shared';
@@ -30,7 +30,7 @@ describe('MCP Tools Toggle Integration', () => {
 	let workspacePath: string;
 
 	beforeEach(async () => {
-		daemon = await spawnDaemonServer();
+		daemon = await createDaemonServer();
 	}, 30000);
 
 	beforeEach(async () => {
@@ -70,6 +70,7 @@ describe('MCP Tools Toggle Integration', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Verify session has proper setting sources
 			const session1 = (await daemon.messageHub.call('session.get', {
@@ -156,6 +157,7 @@ describe('MCP Tools Toggle Integration', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Step 2: Save tools config with disabled servers
 			await daemon.messageHub.call('tools.save', {

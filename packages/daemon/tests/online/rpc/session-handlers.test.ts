@@ -13,7 +13,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { spawnDaemonServer } from '../helpers/daemon-server-helper';
+import { createDaemonServer } from '../helpers/daemon-server-helper';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
@@ -22,7 +22,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		daemon = await spawnDaemonServer();
+		daemon = await createDaemonServer();
 	}, 30000);
 
 	afterEach(
@@ -141,6 +141,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 				})) as { sessionId: string };
 
 				const { sessionId } = createResult;
+				daemon.trackSession(sessionId);
 
 				const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
 				await waitForWebSocketState(ws, WebSocket.OPEN);

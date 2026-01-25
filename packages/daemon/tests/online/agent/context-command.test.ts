@@ -21,7 +21,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import 'dotenv/config';
 import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { spawnDaemonServer } from '../helpers/daemon-server-helper';
+import { createDaemonServer } from '../helpers/daemon-server-helper';
 import { sendMessage, waitForIdle, getSession } from '../helpers/daemon-test-helpers';
 import type { ContextInfo } from '@liuboer/shared';
 
@@ -29,7 +29,7 @@ describe('Context Command Online Tests', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		daemon = await spawnDaemonServer();
+		daemon = await createDaemonServer();
 	}, 30000);
 
 	afterEach(
@@ -51,6 +51,7 @@ describe('Context Command Online Tests', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send a simple message
 			await sendMessage(daemon, sessionId, 'What is 1+1? Answer with just the number.');
@@ -130,6 +131,7 @@ describe('Context Command Online Tests', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send a message that might result in minimal token usage
 			// (context parsing should work regardless of actual token values)
@@ -169,6 +171,7 @@ describe('Context Command Online Tests', () => {
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
 
 			// Send a message
 			await sendMessage(daemon, sessionId, 'What is 2+2? Just the number.');
