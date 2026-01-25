@@ -220,6 +220,45 @@ describe('ToastItem', () => {
 			const width = parseFloat(progressBar?.style.width || '100');
 			expect(width).toBeLessThan(100);
 		});
+
+		it('should complete progress and reach 0%', async () => {
+			const toast = createToast({ duration: 200 }); // Very short duration for testing
+			const { container } = render(<ToastItem toast={toast} />);
+
+			// Wait for progress to complete
+			await new Promise((resolve) => setTimeout(resolve, 300));
+
+			const progressBar = container.querySelector('.bg-blue-500') as HTMLElement;
+			const width = parseFloat(progressBar?.style.width || '100');
+			expect(width).toBe(0);
+		});
+	});
+
+	describe('Dismiss behavior', () => {
+		it('should trigger exit animation on dismiss click', async () => {
+			const toast = createToast();
+			const { container } = render(<ToastItem toast={toast} />);
+
+			const dismissButton = container.querySelector('button[aria-label="Dismiss notification"]');
+			dismissButton?.click();
+
+			// After clicking, should have exit animation classes
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			const alert = container.querySelector('[role="alert"]');
+			// Should have opacity-0 and translate-x-full for exit animation
+			expect(alert?.className).toContain('opacity-0');
+			expect(alert?.className).toContain('translate-x-full');
+		});
+
+		it('should not have exit animation initially', () => {
+			const toast = createToast();
+			const { container } = render(<ToastItem toast={toast} />);
+
+			const alert = container.querySelector('[role="alert"]');
+			// Should NOT have opacity-0 (exit state)
+			expect(alert?.className).not.toContain('opacity-0');
+		});
 	});
 
 	describe('Dismiss Button', () => {

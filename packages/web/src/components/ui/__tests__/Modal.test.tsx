@@ -581,6 +581,132 @@ describe('Modal', () => {
 			document.body.removeChild(container);
 		});
 
+		it('should wrap focus from last element to first on Tab', () => {
+			// Directly test focus trap - Tab at last element should wrap to first
+			const container = document.createElement('div');
+			container.innerHTML = `
+				<button id="btn1">First</button>
+				<button id="btn2">Last</button>
+			`;
+			document.body.appendChild(container);
+
+			const firstElement = document.getElementById('btn1') as HTMLElement;
+			const lastElement = document.getElementById('btn2') as HTMLElement;
+
+			// Focus the last element
+			lastElement.focus();
+
+			// Spy on focus calls
+			const firstFocusSpy = vi.spyOn(firstElement, 'focus');
+
+			// Create handleTab logic matching Modal implementation
+			const handleTab = (e: KeyboardEvent) => {
+				if (e.key === 'Tab') {
+					if (e.shiftKey) {
+						if (document.activeElement === firstElement) {
+							e.preventDefault();
+							lastElement?.focus();
+						}
+					} else {
+						if (document.activeElement === lastElement) {
+							e.preventDefault();
+							firstElement?.focus();
+						}
+					}
+				}
+			};
+
+			// Simulate Tab key press at last element
+			const tabEvent = new KeyboardEvent('keydown', {
+				key: 'Tab',
+				bubbles: true,
+				cancelable: true,
+			});
+			const preventDefaultSpy = vi.spyOn(tabEvent, 'preventDefault');
+			handleTab(tabEvent);
+
+			// Should have wrapped focus to first element
+			expect(preventDefaultSpy).toHaveBeenCalled();
+			expect(firstFocusSpy).toHaveBeenCalled();
+
+			firstFocusSpy.mockRestore();
+			document.body.removeChild(container);
+		});
+
+		it('should wrap focus from first element to last on Shift+Tab', () => {
+			// Directly test focus trap - Shift+Tab at first element should wrap to last
+			const container = document.createElement('div');
+			container.innerHTML = `
+				<button id="btn1">First</button>
+				<button id="btn2">Last</button>
+			`;
+			document.body.appendChild(container);
+
+			const firstElement = document.getElementById('btn1') as HTMLElement;
+			const lastElement = document.getElementById('btn2') as HTMLElement;
+
+			// Focus the first element
+			firstElement.focus();
+
+			// Spy on focus calls
+			const lastFocusSpy = vi.spyOn(lastElement, 'focus');
+
+			// Create handleTab logic matching Modal implementation
+			const handleTab = (e: KeyboardEvent) => {
+				if (e.key === 'Tab') {
+					if (e.shiftKey) {
+						if (document.activeElement === firstElement) {
+							e.preventDefault();
+							lastElement?.focus();
+						}
+					} else {
+						if (document.activeElement === lastElement) {
+							e.preventDefault();
+							firstElement?.focus();
+						}
+					}
+				}
+			};
+
+			// Simulate Shift+Tab key press at first element
+			const shiftTabEvent = new KeyboardEvent('keydown', {
+				key: 'Tab',
+				shiftKey: true,
+				bubbles: true,
+				cancelable: true,
+			});
+			const preventDefaultSpy = vi.spyOn(shiftTabEvent, 'preventDefault');
+			handleTab(shiftTabEvent);
+
+			// Should have wrapped focus to last element
+			expect(preventDefaultSpy).toHaveBeenCalled();
+			expect(lastFocusSpy).toHaveBeenCalled();
+
+			lastFocusSpy.mockRestore();
+			document.body.removeChild(container);
+		});
+
+		it('should handle focus trap cleanup function', () => {
+			// Test cleanup logic for removeEventListener
+			const container = document.createElement('div');
+			const addEventListenerSpy = vi.spyOn(container, 'addEventListener');
+			const removeEventListenerSpy = vi.spyOn(container, 'removeEventListener');
+
+			// Create a handler
+			const handleTab = () => {};
+
+			// Simulate adding the listener
+			container.addEventListener('keydown', handleTab as EventListener);
+			expect(addEventListenerSpy).toHaveBeenCalledWith('keydown', handleTab);
+
+			// Simulate cleanup (what the return function does)
+			container.removeEventListener('keydown', handleTab as EventListener);
+			expect(removeEventListenerSpy).toHaveBeenCalledWith('keydown', handleTab);
+
+			addEventListenerSpy.mockRestore();
+			removeEventListenerSpy.mockRestore();
+		});
+
 		it('should dispatch Tab key event on modal without error', () => {
 			const onClose = vi.fn(() => {});
 

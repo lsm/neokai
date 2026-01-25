@@ -50,14 +50,24 @@ vi.mock('../../lib/utils', () => ({
 import { getCheckpoints, previewRewind, executeRewind } from '../../lib/api-helpers';
 import { toast } from '../../lib/toast';
 
-function createMockCheckpoints(count: number): Checkpoint[] {
+function createMockCheckpoints(count: number, timestampOffset = 60000): Checkpoint[] {
 	return Array.from({ length: count }, (_, i) => ({
 		id: `checkpoint-${i + 1}`,
 		messagePreview: `User message ${i + 1}`,
 		turnNumber: i + 1,
-		timestamp: Date.now() - (count - i) * 60000, // Spaced by minute
+		timestamp: Date.now() - (count - i) * timestampOffset, // Spaced by offset
 		sessionId: 'test-session-id',
 	}));
+}
+
+function createCheckpointWithTimestamp(timestamp: number, id = 'checkpoint-1'): Checkpoint {
+	return {
+		id,
+		messagePreview: 'Test message',
+		turnNumber: 1,
+		timestamp,
+		sessionId: 'test-session-id',
+	};
 }
 
 function createMockPreview(overrides: Partial<RewindPreview> = {}): RewindPreview {
@@ -235,6 +245,81 @@ describe('RewindModal', () => {
 						input.getAttribute('value') === 'conversation' && (input as HTMLInputElement).checked
 				);
 				expect(conversationRadio).toBeTruthy();
+			});
+		});
+
+		it('should change mode when clicking files radio button', async () => {
+			render(
+				<RewindModal
+					isOpen={true}
+					onClose={() => {}}
+					sessionId="test-session"
+					initialMode="conversation"
+				/>
+			);
+
+			await waitFor(() => {
+				const filesRadio = document.body.querySelector(
+					'input[type="radio"][value="files"]'
+				) as HTMLInputElement;
+				expect(filesRadio).toBeTruthy();
+				filesRadio.click();
+			});
+
+			// Description should now show files mode description
+			await waitFor(() => {
+				const description = document.body.querySelector('p.text-sm.text-gray-400');
+				expect(description?.textContent).toContain('Restore file changes only');
+			});
+		});
+
+		it('should change mode when clicking conversation radio button', async () => {
+			render(
+				<RewindModal
+					isOpen={true}
+					onClose={() => {}}
+					sessionId="test-session"
+					initialMode="files"
+				/>
+			);
+
+			await waitFor(() => {
+				const conversationRadio = document.body.querySelector(
+					'input[type="radio"][value="conversation"]'
+				) as HTMLInputElement;
+				expect(conversationRadio).toBeTruthy();
+				conversationRadio.click();
+			});
+
+			// Description should now show conversation mode description
+			await waitFor(() => {
+				const description = document.body.querySelector('p.text-sm.text-gray-400');
+				expect(description?.textContent).toContain('Resume conversation from this point');
+			});
+		});
+
+		it('should change mode when clicking both radio button', async () => {
+			render(
+				<RewindModal
+					isOpen={true}
+					onClose={() => {}}
+					sessionId="test-session"
+					initialMode="files"
+				/>
+			);
+
+			await waitFor(() => {
+				const bothRadio = document.body.querySelector(
+					'input[type="radio"][value="both"]'
+				) as HTMLInputElement;
+				expect(bothRadio).toBeTruthy();
+				bothRadio.click();
+			});
+
+			// Description should now show both mode description
+			await waitFor(() => {
+				const description = document.body.querySelector('p.text-sm.text-gray-400');
+				expect(description?.textContent).toContain('Restore both files and conversation');
 			});
 		});
 	});
@@ -864,6 +949,81 @@ describe('RewindModal', () => {
 			});
 		});
 
+		it('should handle ConnectionNotReadyError from executeRewind', async () => {
+			const { ConnectionNotReadyError } = await import('../../lib/errors');
+			vi.mocked(executeRewind).mockRejectedValue(new ConnectionNotReadyError('Not connected'));
+
+			render(<RewindModal isOpen={true} onClose={() => {}} sessionId="test-session" />);
+
+			// Wait for checkpoints to load and click checkpoint
+			await waitFor(() => {
+				const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Turn 1')
+				);
+				expect(checkpoint).toBeTruthy();
+			});
+			const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Turn 1')
+			);
+			checkpoint?.click();
+
+			// Wait for preview to load and rewind button to be enabled
+			await waitFor(() => {
+				const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
+					(btn) => btn.textContent === 'Rewind'
+				);
+				expect(rewindButton).toBeTruthy();
+				expect(rewindButton?.hasAttribute('disabled')).toBe(false);
+			});
+
+			// Click rewind button
+			const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Rewind'
+			);
+			rewindButton?.click();
+
+			await waitFor(() => {
+				expect(toast.error).toHaveBeenCalledWith('Not connected to server');
+			});
+		});
+
+		it('should handle generic error from executeRewind', async () => {
+			vi.mocked(executeRewind).mockRejectedValue(new Error('Network error'));
+
+			render(<RewindModal isOpen={true} onClose={() => {}} sessionId="test-session" />);
+
+			// Wait for checkpoints to load and click checkpoint
+			await waitFor(() => {
+				const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Turn 1')
+				);
+				expect(checkpoint).toBeTruthy();
+			});
+			const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Turn 1')
+			);
+			checkpoint?.click();
+
+			// Wait for preview to load and rewind button to be enabled
+			await waitFor(() => {
+				const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
+					(btn) => btn.textContent === 'Rewind'
+				);
+				expect(rewindButton).toBeTruthy();
+				expect(rewindButton?.hasAttribute('disabled')).toBe(false);
+			});
+
+			// Click rewind button
+			const rewindButton = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Rewind'
+			);
+			rewindButton?.click();
+
+			await waitFor(() => {
+				expect(toast.error).toHaveBeenCalledWith('Network error');
+			});
+		});
+
 		it('should handle ConnectionNotReadyError from previewRewind', async () => {
 			const { ConnectionNotReadyError } = await import('../../lib/errors');
 			vi.mocked(previewRewind).mockRejectedValue(new ConnectionNotReadyError('Not connected'));
@@ -1099,6 +1259,71 @@ describe('RewindModal', () => {
 			await waitFor(() => {
 				const buttons = document.body.querySelectorAll('button[disabled]');
 				expect(buttons.length).toBeGreaterThan(0);
+			});
+		});
+	});
+
+	describe('Date formatting', () => {
+		it('should display "Today" for checkpoints created today', async () => {
+			const todayCheckpoint = createCheckpointWithTimestamp(Date.now() - 60000); // 1 minute ago
+			vi.mocked(getCheckpoints).mockResolvedValue({ checkpoints: [todayCheckpoint] });
+			vi.mocked(previewRewind).mockResolvedValue({ preview: createMockPreview() });
+
+			render(<RewindModal isOpen={true} onClose={() => {}} sessionId="test-session" />);
+
+			await waitFor(() => {
+				// Find the checkpoint button that should show "Today"
+				const checkpointButton = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Today')
+				);
+				expect(checkpointButton).toBeTruthy();
+			});
+		});
+
+		it('should display "Yesterday" for checkpoints created yesterday', async () => {
+			// Create a timestamp for yesterday
+			const yesterday = new Date();
+			yesterday.setDate(yesterday.getDate() - 1);
+			yesterday.setHours(12, 0, 0, 0); // Set to noon yesterday to ensure it's clearly yesterday
+
+			const yesterdayCheckpoint = createCheckpointWithTimestamp(yesterday.getTime());
+			vi.mocked(getCheckpoints).mockResolvedValue({ checkpoints: [yesterdayCheckpoint] });
+			vi.mocked(previewRewind).mockResolvedValue({ preview: createMockPreview() });
+
+			render(<RewindModal isOpen={true} onClose={() => {}} sessionId="test-session" />);
+
+			await waitFor(() => {
+				// Find the checkpoint button that should show "Yesterday"
+				const checkpointButton = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Yesterday')
+				);
+				expect(checkpointButton).toBeTruthy();
+			});
+		});
+
+		it('should display formatted date for checkpoints older than yesterday', async () => {
+			// Create a timestamp for 3 days ago
+			const threeDaysAgo = new Date();
+			threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+			threeDaysAgo.setHours(12, 0, 0, 0);
+
+			const oldCheckpoint = createCheckpointWithTimestamp(threeDaysAgo.getTime());
+			vi.mocked(getCheckpoints).mockResolvedValue({ checkpoints: [oldCheckpoint] });
+			vi.mocked(previewRewind).mockResolvedValue({ preview: createMockPreview() });
+
+			render(<RewindModal isOpen={true} onClose={() => {}} sessionId="test-session" />);
+
+			await waitFor(() => {
+				// Should NOT show "Today" or "Yesterday"
+				const buttons = Array.from(document.body.querySelectorAll('button'));
+				const checkpointButton = buttons.find((btn) => btn.textContent?.includes('Turn 1'));
+				expect(checkpointButton).toBeTruthy();
+
+				// Should not contain "Today" or "Yesterday" (checkpoint was 3 days ago)
+				const hasToday = buttons.some((btn) => btn.textContent?.includes('Today'));
+				const hasYesterday = buttons.some((btn) => btn.textContent?.includes('Yesterday'));
+				expect(hasToday).toBe(false);
+				expect(hasYesterday).toBe(false);
 			});
 		});
 	});

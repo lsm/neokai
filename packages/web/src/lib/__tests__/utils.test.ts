@@ -187,6 +187,27 @@ describe('copyToClipboard', () => {
 		await copyToClipboard('capture this');
 		expect(capturedValue).toBe('capture this');
 	});
+
+	it('should return false and log error when fallback throws exception', async () => {
+		Object.defineProperty(navigator, 'clipboard', {
+			value: undefined,
+			configurable: true,
+		});
+
+		// Make createElement throw an error to trigger the catch block
+		const mockCreateElement = vi.fn(() => {
+			throw new Error('DOM operation failed');
+		});
+
+		global.document = {
+			...originalDocument,
+			createElement: mockCreateElement,
+		} as unknown as Document;
+
+		const result = await copyToClipboard('test');
+		expect(result).toBe(false);
+		expect(errorSpy).toHaveBeenCalledWith('Failed to copy to clipboard:', expect.any(Error));
+	});
 });
 
 describe('formatRelativeTime', () => {
