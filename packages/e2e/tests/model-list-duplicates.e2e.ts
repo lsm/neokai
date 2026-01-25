@@ -20,11 +20,8 @@ test.describe('Model List Duplicates', () => {
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(messageInput).toBeVisible({ timeout: 15000 });
 
-		// Find and click the model switcher button
-		const modelSwitcher = page
-			.locator('button')
-			.filter({ hasText: /Sonnet|Opus|Haiku/ })
-			.first();
+		// Find and click the model switcher button (uses title attribute since button shows emoji icon)
+		const modelSwitcher = page.locator('button[title*="Switch Model"]').first();
 		await expect(modelSwitcher).toBeVisible({ timeout: 5000 });
 		await modelSwitcher.click();
 

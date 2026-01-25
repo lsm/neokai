@@ -101,8 +101,10 @@ test.describe('Session Info Modal', () => {
 		await expect(page.locator('text=SDK Folder')).toBeVisible();
 
 		// The SDK folder path should contain ~/.claude/projects/
-		// Use a more specific selector within the modal dialog
-		const sdkFolderValue = page.locator('[role="dialog"] span.font-mono').first();
+		// Find the label span and get its sibling value span (they're in a flex row)
+		const sdkFolderLabel = page.locator('[role="dialog"] span:text("SDK Folder")');
+		// The value span is the next sibling with font-mono class
+		const sdkFolderValue = sdkFolderLabel.locator('~ span.font-mono').first();
 		await expect(sdkFolderValue).toContainText('~/.claude/projects/');
 	});
 

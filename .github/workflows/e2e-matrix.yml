@@ -1,17 +1,20 @@
-# E2E Tests - Comprehensive E2E test suite (manual trigger)
+# E2E Tests - Comprehensive E2E test suite
 #
-# This workflow runs 70+ E2E tests in parallel with browser-side coverage.
+# This workflow runs all E2E tests in parallel with browser-side coverage.
+# Tests are auto-discovered from packages/e2e/tests/*.e2e.ts (excluding subdirectories).
 # Each test runs against an in-process daemon server.
 #
 # Note: Only browser coverage (web package) is collected during E2E tests.
 # Server-side coverage (daemon/shared) is collected by the package-tests workflow.
 # Browser coverage: Playwright monocart-reporter collects V8 coverage from browser
 #
-# For automatic coverage on push/PR, see e2e-quick.yml (quick mode - 11 tests)
+# For quick coverage on PR, see e2e-quick.yml (representative tests only)
 
 name: E2E Matrix
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       test:
@@ -23,88 +26,43 @@ env:
   SELECTED_TEST: ${{ inputs.test || '' }}
 
 jobs:
+  # ============================================
+  # DISCOVER TESTS
+  # Auto-discover test files from the e2e tests directory
+  # ============================================
+  discover:
+    name: Discover Tests
+    runs-on: arc-runner-set
+    outputs:
+      tests: ${{ steps.find-tests.outputs.tests }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find E2E test files
+        id: find-tests
+        run: |
+          # Find all .e2e.ts files in the tests directory (not subdirectories)
+          # Convert to JSON array of test names (without .e2e.ts extension)
+          tests=$(find packages/e2e/tests -maxdepth 1 -name "*.e2e.ts" -type f | \
+            xargs -I{} basename {} .e2e.ts | \
+            sort | \
+            jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "Found tests: $tests"
+          echo "tests=$tests" >> $GITHUB_OUTPUT
+
+  # ============================================
+  # E2E TESTS (Matrix)
+  # Run each test in parallel
+  # ============================================
   e2e:
     name: E2E (${{ matrix.test }})
     runs-on: arc-runner-set
+    needs: discover
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        test:
-          - 2-stage-creation
-          - auto-scroll-toggle
-          - auto-title-generation
-          - zzz-character-counter
-          - chat-flow-improved
-          - chat-flow
-          - connection-overlay
-          - connection-state
-          - context-dropdown
-          - context-usage-display
-          - context-usage-dropdown-content
-          - context-usage-dropdown-close
-          - draft-clearing-bug
-          - draft-persistence
-          - default-model-haiku
-          - error-handling
-          - file-attachment-ui
-          - file-attachment-preview
-          - file-attachment-send
-          - file-attachment-validation
-          - file-operations
-          - interrupt-button
-          - message-input-layout-and-styling
-          - message-input-processing-state
-          - message-pagination
-          - message-removal
-          - message-send-receive
-          - model-list-duplicates
-          - model-selection-persistence
-          - model-switcher
-          - mobile-layout
-          - mobile-input
-          - mobile-messages
-          - tablet-responsive
-          - multi-session-rapid-operations
-          - page-refresh-context
-          - page-refresh-session-state
-          - processing-state
-          - recent-sessions-home
-          - reconnection-basic
-          - reconnection-cycles
-          - reconnection-long-period
-          - reconnection-order
-          - scroll-responsiveness
-          - scroll-to-bottom-button
-          - archive-behavior
-          - archive-edge-cases
-          - archive-flow
-          - archive-menu-option
-          - archive-sidebar-toggle
-          - session-export
-          - session-info-modal
-          - session-list-ordering
-          - session-management
-          - session-switching-active-state
-          - session-switching-subscriptions
-          - session-switching-context
-          - session-switching-rapid
-          - settings-modal-basic
-          - settings-modal-authentication
-          - settings-modal-global-settings
-          - settings-modal-persistence
-          - slash-cmd-basic
-          - slash-cmd-built-in
-          - slash-cmd-edge-cases
-          - slash-cmd-navigation
-          - slash-cmd-selection
-          - mcp-toggle-edge-cases
-          - mcp-toggle-modal
-          - mcp-toggle-persistence
-          - mcp-toggle-session-sync
-          - thinking-level-selector
-          - tools-modal-complete
-          - worktree-isolation
+        test: ${{ fromJson(needs.discover.outputs.tests) }}
 
     steps:
       - name: Check if test should run
