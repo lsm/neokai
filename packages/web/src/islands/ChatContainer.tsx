@@ -66,6 +66,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// ========================================
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
+	// Store scroll position info to restore after older messages are loaded
+	const scrollPositionRestoreRef = useRef<{
+		oldScrollHeight: number;
+		oldScrollTop: number;
+		shouldRestore: boolean;
+	} | null>(null);
 
 	// Ref for tracking resolving questions (sync updates, prevents form disappearance during transition)
 	const resolvingQuestionsRef = useRef<Map<string, ResolvedQuestion>>(new Map());
@@ -217,8 +223,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			setLoadingOlder(true);
 
 			const container = messagesContainerRef.current;
-			const oldScrollHeight = container?.scrollHeight || 0;
-			const oldScrollTop = container?.scrollTop || 0;
+			if (!container) return;
+
+			// Store current scroll position to restore after messages are prepended
+			const oldScrollHeight = container.scrollHeight;
+			const oldScrollTop = container.scrollTop;
 
 			const oldestMessage = messages[0] as SDKMessage & { timestamp?: number };
 			const beforeTimestamp = oldestMessage?.timestamp;
@@ -235,16 +244,16 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				return;
 			}
 
-			// Prepend older messages to sessionStore
+			// Store scroll position info for restoration after DOM updates
+			scrollPositionRestoreRef.current = {
+				oldScrollHeight,
+				oldScrollTop,
+				shouldRestore: true,
+			};
+
+			// Prepend older messages to sessionStore (will trigger re-render)
 			sessionStore.prependMessages(olderMessages);
 			setHasMoreMessages(hasMore);
-
-			// Restore scroll position
-			requestAnimationFrame(() => {
-				if (container) {
-					container.scrollTop = oldScrollTop + (container.scrollHeight - oldScrollHeight);
-				}
-			});
 		} catch (err) {
 			console.error('Failed to load older messages:', err);
 			toast.error('Failed to load older messages');
@@ -281,6 +290,31 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	useEffect(() => {
 		checkPagination();
 	}, [sessionId, checkPagination]);
+
+	// Restore scroll position after older messages are loaded and DOM has updated
+	useEffect(() => {
+		if (!scrollPositionRestoreRef.current?.shouldRestore) return;
+
+		const { oldScrollHeight, oldScrollTop } = scrollPositionRestoreRef.current;
+		const container = messagesContainerRef.current;
+
+		if (!container) return;
+
+		// Use multiple requestAnimationFrame calls to ensure DOM has fully updated
+		// This is necessary because Preact's signal updates and DOM reflows are asynchronous
+		requestAnimationFrame(() => {
+			requestAnimationFrame(() => {
+				if (container) {
+					// Calculate the new scroll position to maintain visual position
+					// The scrollHeight has increased by the height of prepended messages
+					const newScrollTop = oldScrollTop + (container.scrollHeight - oldScrollHeight);
+					container.scrollTop = newScrollTop;
+				}
+				// Clear the restore flag
+				scrollPositionRestoreRef.current = null;
+			});
+		});
+	}, [messages.length, loadingOlder]);
 
 	// ========================================
 	// Auto-scroll
