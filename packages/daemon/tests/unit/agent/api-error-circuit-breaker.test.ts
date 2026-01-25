@@ -227,6 +227,96 @@ describe('ApiErrorCircuitBreaker', () => {
 		});
 	});
 
+	describe('per-agent rapid-fire isolation', () => {
+		it('should track rapid-fire independently for main agent and subagents', async () => {
+			// Create a circuit breaker with a low threshold for testing
+			const cb = new ApiErrorCircuitBreaker('test-session', {
+				rapidFireThreshold: 5,
+				rapidFireWindowMs: 3000,
+			});
+
+			// Send 4 messages from main agent (below threshold)
+			for (let i = 0; i < 4; i++) {
+				await cb.checkMessage({
+					type: 'user',
+					message: { content: 'main message' },
+					parent_tool_use_id: null, // main agent
+				});
+			}
+			expect(cb.isTripped()).toBe(false);
+
+			// Send 4 messages from subagent-1 (below threshold)
+			for (let i = 0; i < 4; i++) {
+				await cb.checkMessage({
+					type: 'user',
+					message: { content: 'subagent message' },
+					parent_tool_use_id: 'tool-use-id-1',
+				});
+			}
+			expect(cb.isTripped()).toBe(false);
+
+			// Total is 8 messages, but neither agent hit the threshold of 5
+			// If this was global, it would have tripped
+		});
+
+		it('should trip when single agent exceeds threshold', async () => {
+			const cb = new ApiErrorCircuitBreaker('test-session', {
+				rapidFireThreshold: 5,
+				rapidFireWindowMs: 3000,
+			});
+
+			// Send 3 messages from main agent
+			for (let i = 0; i < 3; i++) {
+				await cb.checkMessage({
+					type: 'user',
+					message: { content: 'main' },
+					parent_tool_use_id: null,
+				});
+			}
+
+			// Send 5 messages from subagent - this should trip
+			for (let i = 0; i < 4; i++) {
+				await cb.checkMessage({
+					type: 'user',
+					message: { content: 'subagent' },
+					parent_tool_use_id: 'subagent-tool-id',
+				});
+			}
+			expect(cb.isTripped()).toBe(false);
+
+			// 5th subagent message triggers trip
+			const tripped = await cb.checkMessage({
+				type: 'user',
+				message: { content: 'subagent' },
+				parent_tool_use_id: 'subagent-tool-id',
+			});
+			expect(tripped).toBe(true);
+			expect(cb.isTripped()).toBe(true);
+		});
+
+		it('should track multiple subagents independently', async () => {
+			const cb = new ApiErrorCircuitBreaker('test-session', {
+				rapidFireThreshold: 3,
+				rapidFireWindowMs: 3000,
+			});
+
+			// Send 2 messages from each of 3 different subagents (6 total)
+			// Each subagent is below threshold of 3
+			for (const subagentId of ['sub-1', 'sub-2', 'sub-3']) {
+				for (let i = 0; i < 2; i++) {
+					await cb.checkMessage({
+						type: 'user',
+						message: { content: 'message' },
+						parent_tool_use_id: subagentId,
+					});
+				}
+			}
+
+			// None should trip since each subagent only sent 2 messages
+			expect(cb.isTripped()).toBe(false);
+		});
+	});
+
 	describe('state management', () => {
 		it('should track trip count', async () => {
 			const message = {

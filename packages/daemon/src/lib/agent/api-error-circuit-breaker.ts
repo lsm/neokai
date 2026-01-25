@@ -57,7 +57,7 @@ const DEFAULT_CONFIG: CircuitBreakerConfig = {
 	errorThreshold: 3,
 	timeWindowMs: 30000,
 	cooldownMs: 60000,
-	rapidFireThreshold: 10,
+	rapidFireThreshold: 30,
 	rapidFireWindowMs: 3000,
 };
 
@@ -83,8 +83,10 @@ export class ApiErrorCircuitBreaker {
 	private logger: Logger;
 	private config: CircuitBreakerConfig;
 	private recentErrors: ErrorOccurrence[] = [];
-	// Track ALL message timestamps for rapid-fire detection (master rate limiter)
-	private messageTimestamps: number[] = [];
+	// Track message timestamps per agent context for rapid-fire detection
+	// Key: parent_tool_use_id (or 'main' for main agent)
+	// This allows main agent and subagents to have independent thresholds
+	private messageTimestampsByAgent: Map<string, number[]> = new Map();
 	private state: CircuitBreakerState = {
 		isTripped: false,
 		tripReason: null,
@@ -173,27 +175,43 @@ export class ApiErrorCircuitBreaker {
 	 */
 	async checkMessage(message: unknown): Promise<boolean> {
 		// Only check user messages (SDK injects errors as user messages)
-		const msg = message as { type?: string; message?: { content?: unknown } };
+		const msg = message as {
+			type?: string;
+			message?: { content?: unknown };
+			parent_tool_use_id?: string | null;
+		};
 		if (msg.type !== 'user') {
 			return false;
 		}
 
 		const now = Date.now();
 
-		// MASTER RATE LIMITER: Check for rapid-fire message pattern
+		// Get agent context: main agent uses 'main', subagents use their parent_tool_use_id
+		// This allows main agent and subagents to have independent rapid-fire thresholds
+		const agentContext = msg.parent_tool_use_id ?? 'main';
+
+		// MASTER RATE LIMITER: Check for rapid-fire message pattern per agent context
 		// This catches ANY runaway loop regardless of error type
-		this.messageTimestamps.push(now);
+		let agentTimestamps = this.messageTimestampsByAgent.get(agentContext);
+		if (!agentTimestamps) {
+			agentTimestamps = [];
+			this.messageTimestampsByAgent.set(agentContext, agentTimestamps);
+		}
+		agentTimestamps.push(now);
 
 		// Clean up old timestamps outside rapid-fire window
 		const rapidFireCutoff = now - this.config.rapidFireWindowMs;
-		this.messageTimestamps = this.messageTimestamps.filter((t) => t > rapidFireCutoff);
+		const filteredTimestamps = agentTimestamps.filter((t) => t > rapidFireCutoff);
+		this.messageTimestampsByAgent.set(agentContext, filteredTimestamps);
 
-		// Check for rapid-fire pattern
-		if (this.messageTimestamps.length >= this.config.rapidFireThreshold) {
+		// Check for rapid-fire pattern for this specific agent
+		if (filteredTimestamps.length >= this.config.rapidFireThreshold) {
+			const agentLabel =
+				agentContext === 'main' ? 'main agent' : `subagent ${agentContext.slice(0, 8)}`;
 			this.logger.log(
-				`RAPID-FIRE DETECTED: ${this.messageTimestamps.length} messages in ${this.config.rapidFireWindowMs}ms`
+				`RAPID-FIRE DETECTED (${agentLabel}): ${filteredTimestamps.length} messages in ${this.config.rapidFireWindowMs}ms`
 			);
-			await this.trip('rapid_fire', this.messageTimestamps.length);
+			await this.trip('rapid_fire', filteredTimestamps.length);
 			return true;
 		}
 
@@ -290,7 +308,7 @@ export class ApiErrorCircuitBreaker {
 		this.state.isTripped = false;
 		this.state.tripReason = null;
 		this.recentErrors = [];
-		this.messageTimestamps = [];
+		this.messageTimestampsByAgent.clear();
 	}
 
 	/**
