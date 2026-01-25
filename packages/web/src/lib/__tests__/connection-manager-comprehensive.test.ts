@@ -507,12 +507,263 @@ describe('ConnectionManager - Comprehensive Coverage', () => {
 				expect(mockTransportObj.resetReconnectState).toHaveBeenCalled();
 			}
 		});
+
+		it('should invoke pageHideHandler when set', () => {
+			// Test the pageHide handler by accessing private member
+			const testManager = new ConnectionManager();
+			const privateManager = testManager as unknown as { pageHideHandler: (() => void) | null };
+
+			const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+			// Call the handler if it exists
+			if (privateManager.pageHideHandler) {
+				privateManager.pageHideHandler();
+				expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Page hiding'));
+			}
+
+			consoleSpy.mockRestore();
+		});
+	});
+
+	describe('cleanupVisibilityHandlers()', () => {
+		it('should handle null handlers gracefully', async () => {
+			// Create a manager and immediately disconnect to clear handlers
+			const testManager = new ConnectionManager();
+
+			// First disconnect clears handlers
+			await testManager.disconnect();
+
+			// Second disconnect should not throw even with null handlers
+			await expect(testManager.disconnect()).resolves.toBeUndefined();
+		});
+
+		it('should remove both event listeners', async () => {
+			const removeEventListenerSpy = vi.spyOn(document, 'removeEventListener');
+
+			const testManager = new ConnectionManager();
+			await testManager.disconnect();
+
+			expect(removeEventListenerSpy).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
+			expect(removeEventListenerSpy).toHaveBeenCalledWith('pagehide', expect.any(Function));
+
+			removeEventListenerSpy.mockRestore();
+		});
 	});
 
 	describe('getConnectionState()', () => {
 		it('should return current connection state', () => {
 			const state = manager.getConnectionState();
 			expect(state).toBeDefined();
+		});
+	});
+
+	describe('onConnected()', () => {
+		it('should resolve immediately if already connected', async () => {
+			mockTransportObj.isReady.mockReturnValue(true);
+			mockHubObj.isConnected.mockReturnValue(true);
+
+			// Connect first
+			mockTransportObj.initialize.mockResolvedValue(undefined);
+			await manager.getHub();
+			mockHubObj._connectionCallback?.('connected');
+
+			// onConnected should resolve immediately
+			const start = Date.now();
+			await manager.onConnected(5000);
+			const elapsed = Date.now() - start;
+
+			expect(elapsed).toBeLessThan(100);
+		});
+
+		it('should timeout if connection does not happen in time', async () => {
+			// Don't connect, let it timeout
+			mockHubObj.isConnected.mockReturnValue(false);
+			mockTransportObj.isReady.mockReturnValue(false);
+
+			await expect(manager.onConnected(50)).rejects.toThrow('Connection timed out');
+		});
+
+		it('should clean up handler on timeout', async () => {
+			mockHubObj.isConnected.mockReturnValue(false);
+			mockTransportObj.isReady.mockReturnValue(false);
+
+			try {
+				await manager.onConnected(50);
+			} catch {
+				// Expected timeout
+			}
+
+			// The handler should have been removed from the set
+			const privateManager = manager as unknown as { connectionHandlers: Set<() => void> };
+			expect(privateManager.connectionHandlers.size).toBe(0);
+		});
+
+		it('should resolve when connection is established', async () => {
+			mockHubObj.isConnected.mockReturnValue(false);
+			mockTransportObj.isReady.mockReturnValue(false);
+
+			const onConnectedPromise = manager.onConnected(5000);
+
+			// Simulate connection establishment
+			setTimeout(() => {
+				mockHubObj.isConnected.mockReturnValue(true);
+				mockTransportObj.isReady.mockReturnValue(true);
+
+				// Notify handlers
+				mockTransportObj.initialize.mockResolvedValue(undefined);
+				manager.getHub().then(() => {
+					mockHubObj._connectionCallback?.('connected');
+				});
+			}, 10);
+
+			await expect(onConnectedPromise).resolves.toBeUndefined();
+		});
+	});
+
+	describe('onceConnected()', () => {
+		it('should call callback immediately if already connected', () => {
+			mockHubObj.isConnected.mockReturnValue(true);
+			mockTransportObj.isReady.mockReturnValue(true);
+
+			// Connect first
+			mockTransportObj.initialize.mockResolvedValue(undefined);
+			manager.getHub().then(() => {
+				mockHubObj._connectionCallback?.('connected');
+			});
+
+			const callback = vi.fn();
+			manager.onceConnected(callback);
+
+			// Should be called immediately since we're connected
+			expect(callback).toHaveBeenCalled();
+		});
+
+		it('should return unsubscribe function when already connected', () => {
+			mockHubObj.isConnected.mockReturnValue(true);
+			mockTransportObj.isReady.mockReturnValue(true);
+
+			mockTransportObj.initialize.mockResolvedValue(undefined);
+			manager.getHub().then(() => {
+				mockHubObj._connectionCallback?.('connected');
+			});
+
+			const callback = vi.fn();
+			const unsubscribe = manager.onceConnected(callback);
+
+			expect(typeof unsubscribe).toBe('function');
+			// Should not throw when called
+			expect(() => unsubscribe()).not.toThrow();
+		});
+
+		it('should call callback when connection happens later', async () => {
+			mockHubObj.isConnected.mockReturnValue(false);
+			mockTransportObj.isReady.mockReturnValue(false);
+
+			const callback = vi.fn();
+			manager.onceConnected(callback);
+
+			// Should not be called yet
+			expect(callback).not.toHaveBeenCalled();
+
+			// Now connect
+			mockHubObj.isConnected.mockReturnValue(true);
+			mockTransportObj.isReady.mockReturnValue(true);
+			mockTransportObj.initialize.mockResolvedValue(undefined);
+			await manager.getHub();
+			mockHubObj._connectionCallback?.('connected');
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Should be called after connection
+			expect(callback).toHaveBeenCalled();
+		});
+
+		it('should allow unsubscribe before connection', async () => {
+			mockHubObj.isConnected.mockReturnValue(false);
+			mockTransportObj.isReady.mockReturnValue(false);
+
+			const callback = vi.fn();
+			const unsubscribe = manager.onceConnected(callback);
+
+			// Unsubscribe before connection
+			unsubscribe();
+
+			// Now connect
+			mockHubObj.isConnected.mockReturnValue(true);
+			mockTransportObj.isReady.mockReturnValue(true);
+			mockTransportObj.initialize.mockResolvedValue(undefined);
+			await manager.getHub();
+			mockHubObj._connectionCallback?.('connected');
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Should NOT be called because we unsubscribed
+			expect(callback).not.toHaveBeenCalled();
+		});
+
+		it('should remove handler from set after being called', async () => {
+			mockHubObj.isConnected.mockReturnValue(false);
+			mockTransportObj.isReady.mockReturnValue(false);
+
+			const callback = vi.fn();
+			manager.onceConnected(callback);
+
+			const privateManager = manager as unknown as { connectionHandlers: Set<() => void> };
+			expect(privateManager.connectionHandlers.size).toBe(1);
+
+			// Connect
+			mockHubObj.isConnected.mockReturnValue(true);
+			mockTransportObj.isReady.mockReturnValue(true);
+			mockTransportObj.initialize.mockResolvedValue(undefined);
+			await manager.getHub();
+			mockHubObj._connectionCallback?.('connected');
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Handler should be removed after being called
+			expect(privateManager.connectionHandlers.size).toBe(0);
+		});
+	});
+
+	describe('waitForConnectionEventDriven()', () => {
+		it('should reject with ConnectionNotReadyError on error state', async () => {
+			mockTransportObj.initialize.mockResolvedValue(undefined);
+			mockHubObj.isConnected.mockReturnValue(false);
+
+			const hubPromise = manager.getHub();
+
+			// Trigger error state
+			setTimeout(() => {
+				mockHubObj._connectionCallback?.('error');
+			}, 10);
+
+			await expect(hubPromise).rejects.toThrow();
+		});
+
+		it('should resolve immediately if messageHub reports connected', async () => {
+			mockHubObj.isConnected.mockReturnValue(true);
+			mockTransportObj.initialize.mockResolvedValue(undefined);
+
+			const hub = await manager.getHub();
+			expect(hub).toBeDefined();
+		});
+	});
+
+	describe('getHub() error recovery', () => {
+		it('should clear connectionPromise on error and allow retry', async () => {
+			// First call fails
+			mockTransportObj.initialize.mockRejectedValueOnce(new Error('Network error'));
+
+			await expect(manager.getHub()).rejects.toThrow('Network error');
+
+			// Verify connectionPromise was cleared (we can retry)
+			const privateManager = manager as unknown as { connectionPromise: Promise<unknown> | null };
+			expect(privateManager.connectionPromise).toBeNull();
+
+			// Second call should attempt new connection
+			mockTransportObj.initialize.mockResolvedValueOnce(undefined);
+			const hub = await manager.getHub();
+			expect(hub).toBeDefined();
 		});
 	});
 

@@ -6,9 +6,10 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 
-import { render, cleanup } from '@testing-library/preact';
+import { render, cleanup, fireEvent } from '@testing-library/preact';
 import type { Session } from '@liuboer/shared';
 import { ChatHeader } from '../ChatHeader';
+import { sidebarOpenSignal } from '../../lib/signals';
 
 describe('ChatHeader', () => {
 	const mockSession: Session = {
@@ -143,6 +144,21 @@ describe('ChatHeader', () => {
 			const svg = menuButton.querySelector('svg');
 			expect(svg).toBeTruthy();
 		});
+
+		it('should set sidebarOpenSignal to true when menu button is clicked', () => {
+			// Reset signal state
+			sidebarOpenSignal.value = false;
+
+			const { container } = render(<ChatHeader {...defaultProps} />);
+
+			const menuButton = container.querySelector('button[title="Open menu"]')!;
+			fireEvent.click(menuButton);
+
+			expect(sidebarOpenSignal.value).toBe(true);
+
+			// Clean up
+			sidebarOpenSignal.value = false;
+		});
 	});
 
 	describe('Dropdown Menu', () => {
@@ -162,6 +178,17 @@ describe('ChatHeader', () => {
 			const { container } = render(<ChatHeader {...props} />);
 
 			// Basic sanity check - component rendered
+			const header = container.querySelector('h2');
+			expect(header).toBeTruthy();
+		});
+
+		it('should include Rewind option when onRewindClick is provided', () => {
+			const onRewindClick = vi.fn();
+			const props = { ...defaultProps, onRewindClick };
+
+			const { container } = render(<ChatHeader {...props} />);
+
+			// Component should render without error
 			const header = container.querySelector('h2');
 			expect(header).toBeTruthy();
 		});

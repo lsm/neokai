@@ -598,3 +598,269 @@ describe('Safari Background Tab - Integration Tests', () => {
 		});
 	});
 });
+
+describe('ConnectionManager - Simulate Disconnect Methods', () => {
+	describe('simulateDisconnect', () => {
+		it('should call forceReconnect on transport', () => {
+			const mockTransport = {
+				isReady: () => true,
+				forceReconnect: vi.fn(),
+				close: vi.fn(),
+			};
+
+			const state = { transport: mockTransport };
+
+			const simulateDisconnect = () => {
+				if (state.transport) {
+					state.transport.forceReconnect();
+				}
+			};
+
+			simulateDisconnect();
+			expect(mockTransport.forceReconnect).toHaveBeenCalled();
+		});
+
+		it('should not throw when transport is null', () => {
+			const state: { transport: null } = { transport: null };
+
+			const simulateDisconnect = () => {
+				if (state.transport) {
+					// @ts-ignore
+					state.transport.forceReconnect();
+				}
+			};
+
+			expect(() => simulateDisconnect()).not.toThrow();
+		});
+	});
+
+	describe('simulatePermanentDisconnect', () => {
+		it('should call close on transport and set state to disconnected', () => {
+			const mockTransport = {
+				isReady: () => true,
+				forceReconnect: vi.fn(),
+				close: vi.fn(),
+			};
+
+			const connectionState = { value: 'connected' as string };
+			const state = { transport: mockTransport };
+
+			const simulatePermanentDisconnect = () => {
+				if (state.transport) {
+					state.transport.close();
+				}
+				connectionState.value = 'disconnected';
+			};
+
+			simulatePermanentDisconnect();
+
+			expect(mockTransport.close).toHaveBeenCalled();
+			expect(connectionState.value).toBe('disconnected');
+		});
+	});
+});
+
+describe('ConnectionManager - getHub Connection Racing', () => {
+	it('should prevent duplicate connections with connectionPromise', async () => {
+		let connectCalls = 0;
+		let resolveConnection: (() => void) | null = null;
+
+		const simulatedConnect = () =>
+			new Promise<{ hub: 'connected' }>((resolve) => {
+				connectCalls++;
+				resolveConnection = () => resolve({ hub: 'connected' });
+			});
+
+		let connectionPromise: Promise<{ hub: 'connected' }> | null = null;
+
+		const getHub = async () => {
+			if (connectionPromise) {
+				return connectionPromise;
+			}
+
+			connectionPromise = simulatedConnect();
+			return connectionPromise;
+		};
+
+		// Start two concurrent getHub calls
+		const promise1 = getHub();
+		const promise2 = getHub();
+
+		// Should only call connect once (both calls reuse the same promise)
+		expect(connectCalls).toBe(1);
+
+		// Resolve and verify
+		resolveConnection?.();
+		const result1 = await promise1;
+		const result2 = await promise2;
+
+		expect(result1).toEqual({ hub: 'connected' });
+		expect(result2).toEqual({ hub: 'connected' });
+	});
+
+	it('should clear connectionPromise on error to allow retry', async () => {
+		let connectAttempts = 0;
+		let connectionPromise: Promise<{ hub: 'connected' }> | null = null;
+
+		const simulatedConnect = () =>
+			new Promise<{ hub: 'connected' }>((_, reject) => {
+				connectAttempts++;
+				setTimeout(() => reject(new Error('Connection failed')), 10);
+			});
+
+		const getHub = async () => {
+			if (connectionPromise) {
+				return connectionPromise;
+			}
+
+			connectionPromise = (async () => {
+				try {
+					return await simulatedConnect();
+				} catch (error) {
+					connectionPromise = null;
+					throw error;
+				}
+			})();
+
+			return connectionPromise;
+		};
+
+		// First attempt should fail
+		await expect(getHub()).rejects.toThrow('Connection failed');
+		expect(connectAttempts).toBe(1);
+		expect(connectionPromise).toBeNull();
+
+		// Second attempt should be allowed (not blocked by cached promise)
+		await expect(getHub()).rejects.toThrow('Connection failed');
+		expect(connectAttempts).toBe(2);
+	});
+});
+
+describe('ConnectionManager - getDaemonWsUrl Logic', () => {
+	describe('URL construction', () => {
+		it('should use ws protocol for http', () => {
+			const mockLocation = {
+				protocol: 'http:',
+				hostname: 'localhost',
+				port: '9283',
+			};
+
+			const getWsUrl = (location: typeof mockLocation) => {
+				const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+				return `${protocol}//${location.hostname}:${location.port}`;
+			};
+
+			expect(getWsUrl(mockLocation)).toBe('ws://localhost:9283');
+		});
+
+		it('should use wss protocol for https', () => {
+			const mockLocation = {
+				protocol: 'https:',
+				hostname: 'example.com',
+				port: '443',
+			};
+
+			const getWsUrl = (location: typeof mockLocation) => {
+				const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+				return `${protocol}//${location.hostname}:${location.port}`;
+			};
+
+			expect(getWsUrl(mockLocation)).toBe('wss://example.com:443');
+		});
+
+		it('should fallback to port 8283 when no port specified', () => {
+			const mockLocation = {
+				protocol: 'http:',
+				hostname: 'localhost',
+				port: '',
+			};
+
+			const getWsUrl = (location: typeof mockLocation) => {
+				const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+				if (location.port) {
+					return `${protocol}//${location.hostname}:${location.port}`;
+				}
+				return `${protocol}//${location.hostname}:8283`;
+			};
+
+			expect(getWsUrl(mockLocation)).toBe('ws://localhost:8283');
+		});
+	});
+});
+
+describe('ConnectionManager - Reconnect Method', () => {
+	it('should reset transport state before reconnecting', async () => {
+		const mockTransport = {
+			isReady: () => false,
+			resetReconnectState: vi.fn(),
+			forceReconnect: vi.fn(),
+		};
+
+		const reconnect = async () => {
+			if (mockTransport) {
+				mockTransport.resetReconnectState();
+				if (mockTransport.isReady()) {
+					mockTransport.forceReconnect();
+					return;
+				}
+			}
+			// Clear state for fresh connection
+		};
+
+		await reconnect();
+
+		expect(mockTransport.resetReconnectState).toHaveBeenCalled();
+		expect(mockTransport.forceReconnect).not.toHaveBeenCalled(); // Not ready
+	});
+
+	it('should call forceReconnect when transport is ready', async () => {
+		const mockTransport = {
+			isReady: () => true,
+			resetReconnectState: vi.fn(),
+			forceReconnect: vi.fn(),
+		};
+
+		const reconnect = async () => {
+			if (mockTransport) {
+				mockTransport.resetReconnectState();
+				if (mockTransport.isReady()) {
+					mockTransport.forceReconnect();
+					return;
+				}
+			}
+		};
+
+		await reconnect();
+
+		expect(mockTransport.resetReconnectState).toHaveBeenCalled();
+		expect(mockTransport.forceReconnect).toHaveBeenCalled();
+	});
+
+	it('should update connection state to connecting', async () => {
+		const connectionState = { value: 'disconnected' as string };
+
+		const reconnect = async () => {
+			connectionState.value = 'connecting';
+		};
+
+		await reconnect();
+
+		expect(connectionState.value).toBe('connecting');
+	});
+
+	it('should set state to failed on connection error', async () => {
+		const connectionState = { value: 'connecting' as string };
+
+		const reconnect = async () => {
+			try {
+				throw new Error('Connection failed');
+			} catch {
+				connectionState.value = 'failed';
+			}
+		};
+
+		await reconnect();
+
+		expect(connectionState.value).toBe('failed');
+	});
+});

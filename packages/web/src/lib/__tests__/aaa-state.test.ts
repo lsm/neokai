@@ -15,7 +15,26 @@
  */
 
 import { signal } from '@preact/signals';
-import { appState, initializeApplicationState, mergeSdkMessagesWithDedup } from '../state';
+import {
+	appState,
+	initializeApplicationState,
+	mergeSdkMessagesWithDedup,
+	sessions,
+	hasArchivedSessions,
+	systemState,
+	authStatus,
+	healthStatus,
+	apiConnectionStatus,
+	globalSettings,
+	activeSessions,
+	recentSessions,
+	isAgentWorking,
+	currentAgentState,
+	currentContextInfo,
+	currentSession,
+	connectionState,
+} from '../state';
+import { globalStore } from '../global-store';
 
 // Mock MessageHub - this is passed to initializeApplicationState and used by StateChannel
 // No need for mock.module - we just pass this mock directly
@@ -333,6 +352,156 @@ describe('ApplicationState - Edge Cases', () => {
 });
 
 // oxlint-disable-next-line @typescript-eslint/no-explicit-any
+describe('ApplicationState - refreshAll', () => {
+	let currentSessionId: import('@preact/signals').Signal<string | null>;
+
+	beforeEach(() => {
+		mockHub.subscribe.mockReset();
+		mockHub.call.mockReset();
+		mockHub.onConnection.mockReset();
+		mockHub.subscribe.mockImplementation(() => Promise.resolve(() => Promise.resolve()));
+		mockHub.call.mockImplementation(() => Promise.resolve({}));
+		mockHub.onConnection.mockImplementation(() => () => {});
+		currentSessionId = signal(null) as import('@preact/signals').Signal<string | null>;
+	});
+
+	afterEach(() => {
+		appState.cleanup();
+	});
+
+	it('should warn when refreshAll called without initialization', async () => {
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		// Don't initialize - call refreshAll
+		await appState.refreshAll();
+
+		expect(warnSpy).toHaveBeenCalledWith('[State] Cannot refresh: state not initialized');
+		warnSpy.mockRestore();
+	});
+
+	it('should refresh session channels when initialized', async () => {
+		await initializeApplicationState(
+			mockHub as unknown as Parameters<typeof initializeApplicationState>[0],
+			currentSessionId
+		);
+
+		// Set up a session
+		currentSessionId.value = 'refresh-test-session';
+		await waitForSessionSwitch();
+
+		const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+		// Call refreshAll
+		await appState.refreshAll();
+
+		// Should have logged refresh messages
+		expect(logSpy).toHaveBeenCalledWith(
+			'[State] Refreshing state channels after reconnection validation'
+		);
+		expect(logSpy).toHaveBeenCalledWith('[State] Session state channels refreshed');
+
+		logSpy.mockRestore();
+	});
+
+	it('should handle refreshAll when no active session channels', async () => {
+		await initializeApplicationState(
+			mockHub as unknown as Parameters<typeof initializeApplicationState>[0],
+			currentSessionId
+		);
+
+		// Don't set a session - no active channels
+		const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+		// Call refreshAll - should not throw
+		await appState.refreshAll();
+
+		expect(logSpy).toHaveBeenCalledWith('[State] Session state channels refreshed');
+
+		logSpy.mockRestore();
+	});
+});
+
+describe('ApplicationState - Session Channel Switch Error Handling', () => {
+	let currentSessionId: import('@preact/signals').Signal<string | null>;
+
+	beforeEach(() => {
+		mockHub.subscribe.mockReset();
+		mockHub.call.mockReset();
+		mockHub.onConnection.mockReset();
+		mockHub.subscribe.mockImplementation(() => Promise.resolve(() => Promise.resolve()));
+		mockHub.call.mockImplementation(() => Promise.resolve({}));
+		mockHub.onConnection.mockImplementation(() => () => {});
+		currentSessionId = signal(null) as import('@preact/signals').Signal<string | null>;
+	});
+
+	afterEach(() => {
+		appState.cleanup();
+	});
+
+	it('should log channel switch errors', async () => {
+		await initializeApplicationState(
+			mockHub as unknown as Parameters<typeof initializeApplicationState>[0],
+			currentSessionId
+		);
+
+		// Make subscribe throw an error
+		mockHub.subscribe.mockRejectedValueOnce(new Error('Channel start failed'));
+
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		// Get channels - this will start the async switch
+		currentSessionId.value = 'error-test-session';
+		await waitForSessionSwitch();
+
+		// Wait a bit more for the async error handler
+		await new Promise((resolve) => setTimeout(resolve, 100));
+
+		// Should have logged the error
+		expect(errorSpy).toHaveBeenCalledWith(
+			'[State] Session channel switch error:',
+			expect.any(Error)
+		);
+
+		errorSpy.mockRestore();
+	});
+
+	it('should return existing channels when same session requested', async () => {
+		await initializeApplicationState(
+			mockHub as unknown as Parameters<typeof initializeApplicationState>[0],
+			currentSessionId
+		);
+
+		// Set session and wait
+		currentSessionId.value = 'same-session';
+		await waitForSessionSwitch();
+
+		const channels1 = appState.getSessionChannels('same-session');
+		const channels2 = appState.getSessionChannels('same-session');
+
+		// Should return the same instance
+		expect(channels1).toBe(channels2);
+	});
+
+	it('should cleanupSessionChannels only for matching session', async () => {
+		await initializeApplicationState(
+			mockHub as unknown as Parameters<typeof initializeApplicationState>[0],
+			currentSessionId
+		);
+
+		// Set up a session
+		currentSessionId.value = 'active-session';
+		await waitForSessionSwitch();
+
+		// Try to cleanup a different session (should be a no-op)
+		await appState.cleanupSessionChannels('other-session');
+
+		// Active session should still be set
+		const activeSessionId = (appState as unknown as { activeSessionId: string | null })
+			.activeSessionId;
+		expect(activeSessionId).toBe('active-session');
+	});
+});
+
 describe('mergeSdkMessagesWithDedup', () => {
 	// Helper to create a mock SDK message with uuid and timestamp
 	const createMessage = (
@@ -449,5 +618,277 @@ describe('mergeSdkMessagesWithDedup', () => {
 		expect(result).toHaveLength(2);
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		expect(result.map((m: any) => m.uuid)).toEqual(['a', 'b']);
+	});
+});
+
+describe('Computed Signals', () => {
+	beforeEach(() => {
+		// Reset global store state for each test
+		globalStore.sessions.value = [];
+		globalStore.hasArchivedSessions.value = false;
+		globalStore.systemState.value = null;
+		globalStore.settings.value = null;
+	});
+
+	describe('sessions signal', () => {
+		it('should reflect globalStore sessions', () => {
+			globalStore.sessions.value = [
+				{
+					id: '1',
+					title: 'Session 1',
+					status: 'active',
+				} as unknown as import('@liuboer/shared').Session,
+				{
+					id: '2',
+					title: 'Session 2',
+					status: 'idle',
+				} as unknown as import('@liuboer/shared').Session,
+			];
+
+			expect(sessions.value).toHaveLength(2);
+			expect(sessions.value[0].id).toBe('1');
+		});
+	});
+
+	describe('hasArchivedSessions signal', () => {
+		it('should reflect globalStore hasArchivedSessions', () => {
+			expect(hasArchivedSessions.value).toBe(false);
+
+			globalStore.hasArchivedSessions.value = true;
+
+			expect(hasArchivedSessions.value).toBe(true);
+		});
+	});
+
+	describe('systemState signal', () => {
+		it('should reflect globalStore systemState', () => {
+			expect(systemState.value).toBeNull();
+
+			const mockSystemState = {
+				auth: { method: 'api-key' as const, hasCredentials: true },
+				health: { healthy: true, lastCheck: Date.now() },
+				apiConnection: { status: 'connected' as const },
+			};
+			globalStore.systemState.value = mockSystemState;
+
+			expect(systemState.value).toBe(mockSystemState);
+		});
+	});
+
+	describe('authStatus signal', () => {
+		it('should return null when systemState is null', () => {
+			globalStore.systemState.value = null;
+			expect(authStatus.value).toBeNull();
+		});
+
+		it('should return auth from systemState', () => {
+			const mockAuth = { method: 'api-key' as const, hasCredentials: true };
+			globalStore.systemState.value = {
+				auth: mockAuth,
+				health: { healthy: true, lastCheck: Date.now() },
+				apiConnection: { status: 'connected' as const },
+			};
+
+			expect(authStatus.value).toBe(mockAuth);
+		});
+	});
+
+	describe('healthStatus signal', () => {
+		it('should return null when systemState is null', () => {
+			globalStore.systemState.value = null;
+			expect(healthStatus.value).toBeNull();
+		});
+
+		it('should return health from systemState', () => {
+			const mockHealth = { healthy: true, lastCheck: Date.now() };
+			globalStore.systemState.value = {
+				auth: { method: 'api-key' as const, hasCredentials: true },
+				health: mockHealth,
+				apiConnection: { status: 'connected' as const },
+			};
+
+			expect(healthStatus.value).toBe(mockHealth);
+		});
+	});
+
+	describe('apiConnectionStatus signal', () => {
+		it('should return null when systemState is null', () => {
+			globalStore.systemState.value = null;
+			expect(apiConnectionStatus.value).toBeNull();
+		});
+
+		it('should return apiConnection from systemState', () => {
+			const mockApiConnection = { status: 'connected' as const };
+			globalStore.systemState.value = {
+				auth: { method: 'api-key' as const, hasCredentials: true },
+				health: { healthy: true, lastCheck: Date.now() },
+				apiConnection: mockApiConnection,
+			};
+
+			expect(apiConnectionStatus.value).toBe(mockApiConnection);
+		});
+	});
+
+	describe('globalSettings signal', () => {
+		it('should return null when settings is null', () => {
+			globalStore.settings.value = null;
+			expect(globalSettings.value).toBeNull();
+		});
+
+		it('should return settings from globalStore', () => {
+			const mockSettings = { theme: 'dark' };
+			globalStore.settings.value =
+				mockSettings as unknown as import('@liuboer/shared').GlobalSettings;
+
+			expect(globalSettings.value).toBe(mockSettings);
+		});
+	});
+
+	describe('activeSessions signal', () => {
+		it('should return 0 when no sessions', () => {
+			globalStore.sessions.value = [];
+			expect(activeSessions.value).toBe(0);
+		});
+
+		it('should count only active sessions', () => {
+			globalStore.sessions.value = [
+				{ id: '1', status: 'active' } as unknown as import('@liuboer/shared').Session,
+				{ id: '2', status: 'idle' } as unknown as import('@liuboer/shared').Session,
+				{ id: '3', status: 'active' } as unknown as import('@liuboer/shared').Session,
+				{ id: '4', status: 'archived' } as unknown as import('@liuboer/shared').Session,
+			];
+
+			expect(activeSessions.value).toBe(2);
+		});
+	});
+
+	describe('recentSessions signal', () => {
+		it('should return empty array when no sessions', () => {
+			globalStore.sessions.value = [];
+			expect(recentSessions.value).toHaveLength(0);
+		});
+
+		it('should return max 5 sessions sorted by lastActiveAt', () => {
+			const now = Date.now();
+			globalStore.sessions.value = [
+				{
+					id: '1',
+					lastActiveAt: new Date(now - 1000).toISOString(),
+				} as unknown as import('@liuboer/shared').Session,
+				{
+					id: '2',
+					lastActiveAt: new Date(now - 5000).toISOString(),
+				} as unknown as import('@liuboer/shared').Session,
+				{
+					id: '3',
+					lastActiveAt: new Date(now).toISOString(),
+				} as unknown as import('@liuboer/shared').Session,
+				{
+					id: '4',
+					lastActiveAt: new Date(now - 2000).toISOString(),
+				} as unknown as import('@liuboer/shared').Session,
+				{
+					id: '5',
+					lastActiveAt: new Date(now - 3000).toISOString(),
+				} as unknown as import('@liuboer/shared').Session,
+				{
+					id: '6',
+					lastActiveAt: new Date(now - 4000).toISOString(),
+				} as unknown as import('@liuboer/shared').Session,
+				{
+					id: '7',
+					lastActiveAt: new Date(now - 6000).toISOString(),
+				} as unknown as import('@liuboer/shared').Session,
+			];
+
+			const recent = recentSessions.value;
+			expect(recent).toHaveLength(5);
+			expect(recent.map((s) => s.id)).toEqual(['3', '1', '4', '5', '6']);
+		});
+	});
+
+	describe('isAgentWorking signal', () => {
+		it('should return false when currentAgentState is idle', async () => {
+			// Need to initialize state first to access session-related signals
+			const sessionId = signal<string | null>(null);
+			await initializeApplicationState(
+				mockHub as unknown as Parameters<typeof initializeApplicationState>[0],
+				sessionId
+			);
+
+			// When no session is active, currentAgentState defaults to idle
+			expect(isAgentWorking.value).toBe(false);
+
+			appState.cleanup();
+		});
+	});
+
+	describe('currentAgentState signal', () => {
+		it('should return idle when no session is active', async () => {
+			const sessionId = signal<string | null>(null);
+			await initializeApplicationState(
+				mockHub as unknown as Parameters<typeof initializeApplicationState>[0],
+				sessionId
+			);
+
+			expect(currentAgentState.value).toEqual({ status: 'idle' });
+
+			appState.cleanup();
+		});
+	});
+
+	describe('currentContextInfo signal', () => {
+		it('should return null when no session is active', async () => {
+			const sessionId = signal<string | null>(null);
+			await initializeApplicationState(
+				mockHub as unknown as Parameters<typeof initializeApplicationState>[0],
+				sessionId
+			);
+
+			expect(currentContextInfo.value).toBeNull();
+
+			appState.cleanup();
+		});
+	});
+
+	describe('currentSession signal', () => {
+		it('should return null when no session is active', async () => {
+			const sessionId = signal<string | null>(null);
+			await initializeApplicationState(
+				mockHub as unknown as Parameters<typeof initializeApplicationState>[0],
+				sessionId
+			);
+
+			expect(currentSession.value).toBeNull();
+
+			appState.cleanup();
+		});
+	});
+
+	describe('connectionState signal', () => {
+		it('should be a signal with default value', () => {
+			// connectionState is exported directly
+			expect(connectionState.value).toBeDefined();
+		});
+
+		it('should accept valid connection states', () => {
+			connectionState.value = 'connecting';
+			expect(connectionState.value).toBe('connecting');
+
+			connectionState.value = 'connected';
+			expect(connectionState.value).toBe('connected');
+
+			connectionState.value = 'disconnected';
+			expect(connectionState.value).toBe('disconnected');
+
+			connectionState.value = 'reconnecting';
+			expect(connectionState.value).toBe('reconnecting');
+
+			connectionState.value = 'failed';
+			expect(connectionState.value).toBe('failed');
+
+			connectionState.value = 'error';
+			expect(connectionState.value).toBe('error');
+		});
 	});
 });

@@ -4,12 +4,36 @@
  *
  * Tests user message rendering including text, images, and special cases
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { render } from '@testing-library/preact';
+import { render, fireEvent } from '@testing-library/preact';
 import { SDKUserMessage } from '../SDKUserMessage';
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
+
+// Mock the utils module for copyToClipboard
+vi.mock('../../../lib/utils.ts', async (importOriginal) => {
+	const original = await importOriginal<typeof import('../../../lib/utils.ts')>();
+	return {
+		...original,
+		copyToClipboard: vi.fn(),
+	};
+});
+
+// Mock the toast module
+vi.mock('../../../lib/toast.ts', () => ({
+	toast: {
+		success: vi.fn(),
+		error: vi.fn(),
+	},
+}));
+
+import { copyToClipboard } from '../../../lib/utils.ts';
+import { toast } from '../../../lib/toast.ts';
+
+beforeEach(() => {
+	vi.clearAllMocks();
+});
 
 // Helper to create a valid UUID
 const createUUID = (): UUID => crypto.randomUUID() as UUID;
@@ -232,6 +256,53 @@ describe('SDKUserMessage', () => {
 
 			expect(container.textContent).toContain('synthetic');
 		});
+
+		it('should handle synthetic message with non-object content blocks', () => {
+			// Create synthetic message with array content containing non-object elements
+			// Note: Avoid null since isToolResultMessage() tries to access .type on all elements
+			const message = {
+				type: 'user',
+				message: {
+					role: 'user',
+					content: [
+						{ type: 'text', text: 'Valid text block' },
+						'plain string element', // Non-object element to test line 108
+						123, // Non-object element (number)
+						true, // Boolean element
+					],
+				},
+				parent_tool_use_id: null,
+				isSynthetic: true,
+				uuid: createUUID(),
+				session_id: 'test-session',
+			} as unknown as Extract<SDKMessage, { type: 'user' }>;
+
+			const { container } = render(<SDKUserMessage message={message} />);
+
+			// Should render without error
+			expect(container.querySelector('[data-testid="synthetic-message"]')).toBeTruthy();
+		});
+
+		it('should return null for synthetic message with invalid content type', () => {
+			// Create synthetic message with content that is neither array nor string
+			const message = {
+				type: 'user',
+				message: {
+					role: 'user',
+					content: 12345, // Neither array nor string - should return null from getSyntheticContentBlocks
+				},
+				parent_tool_use_id: null,
+				isSynthetic: true,
+				uuid: createUUID(),
+				session_id: 'test-session',
+			} as unknown as Extract<SDKMessage, { type: 'user' }>;
+
+			const { container } = render(<SDKUserMessage message={message} />);
+
+			// When getSyntheticContentBlocks returns null, the message should render as a normal user message
+			// (syntheticContentBlocks will be null, so it won't use SyntheticMessageBlock)
+			expect(container.querySelector('[data-testid="user-message"]')).toBeTruthy();
+		});
 	});
 
 	describe('Replay Messages (Slash Commands)', () => {
@@ -322,6 +393,38 @@ describe('SDKUserMessage', () => {
 
 			const copyButton = container.querySelector('button[title="Copy message"]');
 			expect(copyButton).toBeTruthy();
+		});
+
+		it('should show success toast when copy succeeds', async () => {
+			vi.mocked(copyToClipboard).mockResolvedValue(true);
+
+			const message = createTextMessage('Hello world');
+			const { container } = render(<SDKUserMessage message={message} />);
+
+			const copyButton = container.querySelector('button[title="Copy message"]');
+			fireEvent.click(copyButton!);
+
+			// Wait for the async handler to complete
+			await vi.waitFor(() => {
+				expect(copyToClipboard).toHaveBeenCalledWith('Hello world');
+				expect(toast.success).toHaveBeenCalledWith('Message copied to clipboard');
+			});
+		});
+
+		it('should show error toast when copy fails', async () => {
+			vi.mocked(copyToClipboard).mockResolvedValue(false);
+
+			const message = createTextMessage('Hello world');
+			const { container } = render(<SDKUserMessage message={message} />);
+
+			const copyButton = container.querySelector('button[title="Copy message"]');
+			fireEvent.click(copyButton!);
+
+			// Wait for the async handler to complete
+			await vi.waitFor(() => {
+				expect(copyToClipboard).toHaveBeenCalledWith('Hello world');
+				expect(toast.error).toHaveBeenCalledWith('Failed to copy message');
+			});
 		});
 	});
 

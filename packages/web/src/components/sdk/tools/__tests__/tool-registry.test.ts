@@ -435,4 +435,198 @@ describe('tool-registry', () => {
 			});
 		});
 	});
+
+	describe('CustomRenderer Tests', () => {
+		it('should render TodoViewer from TodoWrite customRenderer with valid todos', () => {
+			const config = getToolConfig('TodoWrite');
+			const result = config.customRenderer?.({
+				input: {
+					todos: [{ content: 'Test', status: 'pending', activeForm: 'Testing' }],
+				},
+			});
+			// Should return a VNode (TodoViewer component)
+			expect(result).toBeTruthy();
+		});
+
+		it('should return null from TodoWrite customRenderer when todos is invalid', () => {
+			const config = getToolConfig('TodoWrite');
+			const result = config.customRenderer?.({ input: { todos: 'invalid' } });
+			expect(result).toBeNull();
+		});
+
+		it('should return null from TodoWrite customRenderer when todos is missing', () => {
+			const config = getToolConfig('TodoWrite');
+			const result = config.customRenderer?.({ input: {} });
+			expect(result).toBeNull();
+		});
+
+		it('should return null from TodoWrite customRenderer when input is undefined', () => {
+			const config = getToolConfig('TodoWrite');
+			const result = config.customRenderer?.({ input: undefined });
+			expect(result).toBeNull();
+		});
+	});
+
+	describe('SummaryExtractor Edge Cases', () => {
+		it('should handle Thinking summaryExtractor with non-string input', () => {
+			const config = getToolConfig('Thinking');
+			const summary = config.summaryExtractor?.({ someObject: true });
+			expect(summary).toBe('Extended reasoning process');
+		});
+
+		it('should handle file tools with undefined file_path', () => {
+			const config = getToolConfig('Read');
+			const summary = config.summaryExtractor?.({});
+			expect(summary).toBeNull();
+		});
+
+		it('should handle file tools with null input', () => {
+			const config = getToolConfig('Write');
+			const summary = config.summaryExtractor?.(null);
+			expect(summary).toBeNull();
+		});
+
+		it('should handle NotebookEdit with notebook_path', () => {
+			const config = getToolConfig('NotebookEdit');
+			const summary = config.summaryExtractor?.({ notebook_path: '/path/to/notebook.ipynb' });
+			expect(summary).toBe('notebook.ipynb');
+		});
+
+		it('should handle BashOutput with bash_id', () => {
+			const config = getToolConfig('BashOutput');
+			const summary = config.summaryExtractor?.({ bash_id: 'abcdefgh12345678' });
+			expect(summary).toBe('Shell: abcdefgh');
+		});
+
+		it('should handle BashOutput with undefined bash_id', () => {
+			const config = getToolConfig('BashOutput');
+			const summary = config.summaryExtractor?.({});
+			expect(summary).toBe('Shell: unknown');
+		});
+
+		it('should handle KillShell with shell_id', () => {
+			const config = getToolConfig('KillShell');
+			const summary = config.summaryExtractor?.({ shell_id: 'xyz12345678' });
+			expect(summary).toBe('Shell: xyz12345');
+		});
+
+		it('should handle KillShell with undefined shell_id', () => {
+			const config = getToolConfig('KillShell');
+			const summary = config.summaryExtractor?.({});
+			expect(summary).toBe('Shell: unknown');
+		});
+
+		it('should handle Task with description', () => {
+			const config = getToolConfig('Task');
+			const summary = config.summaryExtractor?.({ description: 'Run tests' });
+			expect(summary).toBe('Run tests');
+		});
+
+		it('should handle Task without description', () => {
+			const config = getToolConfig('Task');
+			const summary = config.summaryExtractor?.({});
+			expect(summary).toBe('Task execution');
+		});
+
+		it('should handle Agent without description', () => {
+			const config = getToolConfig('Agent');
+			const summary = config.summaryExtractor?.({});
+			expect(summary).toBe('Agent execution');
+		});
+
+		it('should handle WebFetch with long URL', () => {
+			const config = getToolConfig('WebFetch');
+			const longUrl = 'https://example.com/' + 'a'.repeat(100);
+			const summary = config.summaryExtractor?.({ url: longUrl });
+			expect(summary?.endsWith('...')).toBe(true);
+			expect(summary?.length).toBeLessThanOrEqual(53); // 50 + '...'
+		});
+
+		it('should handle ListMcpResourcesTool without server', () => {
+			const config = getToolConfig('ListMcpResourcesTool');
+			const summary = config.summaryExtractor?.({});
+			expect(summary).toBe('All servers');
+		});
+
+		it('should handle ReadMcpResourceTool with uri', () => {
+			const config = getToolConfig('ReadMcpResourceTool');
+			const summary = config.summaryExtractor?.({ uri: 'mcp://server/resource' });
+			expect(summary).toBe('mcp://server/resource');
+		});
+
+		it('should handle ExitPlanMode summaryExtractor', () => {
+			const config = getToolConfig('ExitPlanMode');
+			const summary = config.summaryExtractor?.({});
+			expect(summary).toBe('Exiting plan mode');
+		});
+
+		it('should handle TimeMachine with message_prefix', () => {
+			const config = getToolConfig('TimeMachine');
+			const summary = config.summaryExtractor?.({ message_prefix: 'Rewinding to checkpoint' });
+			expect(summary).toBe('Rewinding to checkpoint');
+		});
+
+		it('should handle TodoWrite with non-array todos', () => {
+			const config = getToolConfig('TodoWrite');
+			const summary = config.summaryExtractor?.({ todos: null });
+			expect(summary).toBe('Update todos');
+		});
+	});
+
+	describe('Helper Functions Edge Cases', () => {
+		it('should extract filename from simple path', () => {
+			const config = getToolConfig('Read');
+			const summary = config.summaryExtractor?.({ file_path: 'file.ts' });
+			expect(summary).toBe('file.ts');
+		});
+
+		it('should handle Edit tool with file_path', () => {
+			const config = getToolConfig('Edit');
+			const summary = config.summaryExtractor?.({ file_path: '/path/to/edited.ts' });
+			expect(summary).toBe('edited.ts');
+		});
+
+		it('should handle WebSearch with query', () => {
+			const config = getToolConfig('WebSearch');
+			const summary = config.summaryExtractor?.({ query: 'how to test code' });
+			expect(summary).toBe('how to test code');
+		});
+
+		it('should handle WebSearch with long query', () => {
+			const config = getToolConfig('WebSearch');
+			const longQuery = 'a'.repeat(100);
+			const summary = config.summaryExtractor?.({ query: longQuery });
+			expect(summary?.endsWith('...')).toBe(true);
+		});
+
+		it('should truncate long patterns for Glob', () => {
+			const config = getToolConfig('Glob');
+			const longPattern = '**/'.repeat(20) + '*.ts';
+			const summary = config.summaryExtractor?.({ pattern: longPattern });
+			expect(summary?.endsWith('...')).toBe(true);
+		});
+
+		it('should handle short patterns for Grep', () => {
+			const config = getToolConfig('Grep');
+			const summary = config.summaryExtractor?.({ pattern: 'test' });
+			expect(summary).toBe('test');
+		});
+	});
+
+	describe('MCP Tool Edge Cases', () => {
+		it('should handle MCP tool with only server part', () => {
+			const config = getToolConfig('mcp__server');
+			// When there's no tool part after server, displayName falls back to full toolName
+			expect(config.displayName).toBe('mcp__server');
+			// Still treated as MCP since it starts with 'mcp__'
+			expect(config.category).toBe('mcp');
+		});
+
+		it('should handle MCP tool with empty middle parts', () => {
+			const config = getToolConfig('mcp____tool');
+			// parts = ['mcp', '', 'tool'], so parts[1] is empty, parts.slice(2) = ['tool']
+			expect(config.displayName).toBe('tool');
+			expect(config.category).toBe('mcp');
+		});
+	});
 });

@@ -188,6 +188,18 @@ Error
 			expect(container.textContent).toContain('failed');
 		});
 
+		it('should stringify JSON when Error:statusCode format lacks message fields', () => {
+			// JSON with status code prefix but no error.message or message property
+			const content =
+				'<local-command-stderr>Error: 403 {"status":"forbidden","code":403}</local-command-stderr>';
+			const { container } = render(<ErrorOutput content={content} />);
+
+			// Should show status code and stringified JSON
+			expect(container.textContent).toContain('API Error (403)');
+			expect(container.textContent).toContain('"status"');
+			expect(container.textContent).toContain('forbidden');
+		});
+
 		it('should show "Error" label when no status code', () => {
 			const content =
 				'<local-command-stderr>{"error":{"message":"Something failed"}}</local-command-stderr>';

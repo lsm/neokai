@@ -190,6 +190,22 @@ describe('Router Utility', () => {
 			expect(callsAfterFirst).toBeGreaterThan(0);
 			expect(currentSessionIdSignal.value).toBe('550e8400e29b41d4a716446655440007');
 		});
+
+		it('should prevent recursive navigation when isNavigating is true', () => {
+			// First navigation sets isNavigating to true
+			navigateToSession('550e8400e29b41d4a716446655440007');
+			const firstCallCount = mockHistory.pushState.mock.calls.length;
+
+			// isNavigating is still true (setTimeout hasn't cleared it yet)
+			// Second call should be prevented
+			navigateToSession('550e8400e29b41d4a716446655440008');
+			const secondCallCount = mockHistory.pushState.mock.calls.length;
+
+			// Should still be just the one call from the first navigation
+			expect(secondCallCount).toBe(firstCallCount);
+			// Signal should still be from the first navigation
+			expect(currentSessionIdSignal.value).toBe('550e8400e29b41d4a716446655440007');
+		});
 	});
 
 	describe('navigateToHome', () => {
@@ -225,6 +241,27 @@ describe('Router Utility', () => {
 			// Should not call pushState or replaceState
 			expect(mockHistory.pushState).not.toHaveBeenCalled();
 			expect(mockHistory.replaceState).not.toHaveBeenCalled();
+		});
+
+		it('should prevent recursive navigation when isNavigating is true', () => {
+			// Set current path to a session (not home) so navigation is needed
+			mockLocation.pathname = '/session/550e8400e29b41d4a716446655440007';
+			currentSessionIdSignal.value = '550e8400e29b41d4a716446655440007';
+
+			// First navigation to home
+			navigateToHome();
+			const firstCallCount = mockHistory.pushState.mock.calls.length;
+
+			// isNavigating is still true (setTimeout hasn't cleared it yet)
+			// Update path back to a session for second call
+			mockLocation.pathname = '/session/550e8400e29b41d4a716446655440008';
+
+			// Second call should be prevented
+			navigateToHome();
+			const secondCallCount = mockHistory.pushState.mock.calls.length;
+
+			// Should still be just the one call from the first navigation
+			expect(secondCallCount).toBe(firstCallCount);
 		});
 	});
 
@@ -314,6 +351,70 @@ describe('Router Utility', () => {
 			initializeRouter();
 			cleanupRouter();
 			expect(isRouterInitialized()).toBe(false);
+		});
+	});
+
+	describe('Popstate handling (browser back/forward)', () => {
+		it('should update signal when popstate event is triggered with session path', () => {
+			// Initialize router first (sets up popstate listener)
+			mockLocation.pathname = '/';
+			initializeRouter();
+
+			// Change location to simulate navigation
+			mockLocation.pathname = '/session/550e8400e29b41d4a716446655440009';
+
+			// Dispatch popstate event (simulates browser back/forward)
+			const popstateEvent = new PopStateEvent('popstate', {
+				state: { sessionId: '550e8400e29b41d4a716446655440009' },
+			});
+			window.dispatchEvent(popstateEvent);
+
+			// Signal should be updated to match the new path
+			expect(currentSessionIdSignal.value).toBe('550e8400e29b41d4a716446655440009');
+		});
+
+		it('should update signal to null when popstate navigates to home', () => {
+			// Initialize router with a session path
+			mockLocation.pathname = '/session/550e8400e29b41d4a716446655440009';
+			initializeRouter();
+
+			// Set signal to current session
+			currentSessionIdSignal.value = '550e8400e29b41d4a716446655440009';
+
+			// Change location to simulate navigation to home
+			mockLocation.pathname = '/';
+
+			// Dispatch popstate event
+			const popstateEvent = new PopStateEvent('popstate', {
+				state: { sessionId: null },
+			});
+			window.dispatchEvent(popstateEvent);
+
+			// Signal should be updated to null
+			expect(currentSessionIdSignal.value).toBeNull();
+		});
+
+		it('should not update signal during navigation (isNavigating guard)', async () => {
+			// Initialize router
+			mockLocation.pathname = '/';
+			initializeRouter();
+
+			// Start a navigation which sets isNavigating = true
+			navigateToSession('550e8400e29b41d4a716446655440010');
+
+			// isNavigating is true now (setTimeout hasn't cleared it)
+			// Change location
+			mockLocation.pathname = '/session/550e8400e29b41d4a716446655440011';
+
+			// Dispatch popstate event while isNavigating is true
+			const popstateEvent = new PopStateEvent('popstate', {
+				state: { sessionId: '550e8400e29b41d4a716446655440011' },
+			});
+			window.dispatchEvent(popstateEvent);
+
+			// Signal should still be from the navigation, not from popstate
+			// (because popstate handler returns early when isNavigating is true)
+			expect(currentSessionIdSignal.value).toBe('550e8400e29b41d4a716446655440010');
 		});
 	});
 

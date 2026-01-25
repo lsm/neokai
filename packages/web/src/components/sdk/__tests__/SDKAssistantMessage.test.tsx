@@ -6,14 +6,35 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-import { render, cleanup } from '@testing-library/preact';
+import { render, cleanup, fireEvent } from '@testing-library/preact';
 import { SDKAssistantMessage } from '../SDKAssistantMessage';
 import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
 import type { PendingUserQuestion, ResolvedQuestion } from '@liuboer/shared';
 
+// Mock the utils module for copyToClipboard
+vi.mock('../../../lib/utils.ts', async (importOriginal) => {
+	const original = await importOriginal<typeof import('../../../lib/utils.ts')>();
+	return {
+		...original,
+		copyToClipboard: vi.fn(),
+	};
+});
+
+// Mock the toast module
+vi.mock('../../../lib/toast.ts', () => ({
+	toast: {
+		success: vi.fn(),
+		error: vi.fn(),
+	},
+}));
+
+import { copyToClipboard } from '../../../lib/utils.ts';
+import { toast } from '../../../lib/toast.ts';
+
 beforeEach(() => {
 	cleanup();
+	vi.clearAllMocks();
 });
 
 afterEach(() => {
@@ -310,6 +331,38 @@ describe('SDKAssistantMessage', () => {
 			const copyButton = container.querySelector('button[title="Copy message"]');
 			expect(copyButton).toBeTruthy();
 		});
+
+		it('should show success toast when copy succeeds', async () => {
+			vi.mocked(copyToClipboard).mockResolvedValue(true);
+
+			const message = createTextOnlyMessage('Hello world');
+			const { container } = render(<SDKAssistantMessage message={message} />);
+
+			const copyButton = container.querySelector('button[title="Copy message"]');
+			fireEvent.click(copyButton!);
+
+			// Wait for the async handler to complete
+			await vi.waitFor(() => {
+				expect(copyToClipboard).toHaveBeenCalledWith('Hello world');
+				expect(toast.success).toHaveBeenCalledWith('Message copied to clipboard');
+			});
+		});
+
+		it('should show error toast when copy fails', async () => {
+			vi.mocked(copyToClipboard).mockResolvedValue(false);
+
+			const message = createTextOnlyMessage('Hello world');
+			const { container } = render(<SDKAssistantMessage message={message} />);
+
+			const copyButton = container.querySelector('button[title="Copy message"]');
+			fireEvent.click(copyButton!);
+
+			// Wait for the async handler to complete
+			await vi.waitFor(() => {
+				expect(copyToClipboard).toHaveBeenCalledWith('Hello world');
+				expect(toast.error).toHaveBeenCalledWith('Failed to copy message');
+			});
+		});
 	});
 
 	describe('Question Handling (AskUserQuestion)', () => {
@@ -356,6 +409,94 @@ describe('SDKAssistantMessage', () => {
 
 			// AskUserQuestion tool should be rendered
 			expect(container.textContent).toContain('AskUserQuestion');
+		});
+
+		it('should render fallback ToolResultCard when AskUserQuestion has invalid input (no questions array)', () => {
+			// Create AskUserQuestion with missing questions array
+			const message = {
+				type: 'assistant',
+				message: {
+					id: 'msg_test',
+					type: 'message',
+					role: 'assistant',
+					content: [
+						{
+							type: 'tool_use',
+							id: 'toolu_invalid123',
+							name: 'AskUserQuestion',
+							input: {
+								// Missing questions array - should trigger fallback
+								invalidField: 'some value',
+							},
+						},
+					],
+					model: 'claude-3-5-sonnet-20241022',
+					stop_reason: 'tool_use',
+					stop_sequence: null,
+					usage: { input_tokens: 10, output_tokens: 20 },
+				},
+				parent_tool_use_id: null,
+				uuid: createUUID(),
+				session_id: 'test-session',
+			} as unknown as Extract<SDKMessage, { type: 'assistant' }>;
+
+			const { container } = render(
+				<SDKAssistantMessage
+					message={message}
+					sessionId="test-session"
+					resolvedQuestions={new Map()}
+				/>
+			);
+
+			// Should render ToolResultCard without QuestionPrompt
+			expect(container.textContent).toContain('AskUserQuestion');
+			// Should NOT contain QuestionPrompt elements
+			expect(container.textContent).not.toContain('Claude needs your input');
+			expect(container.textContent).not.toContain('Question skipped');
+		});
+
+		it('should render fallback ToolResultCard when AskUserQuestion has non-array questions', () => {
+			// Create AskUserQuestion with questions as non-array
+			const message = {
+				type: 'assistant',
+				message: {
+					id: 'msg_test',
+					type: 'message',
+					role: 'assistant',
+					content: [
+						{
+							type: 'tool_use',
+							id: 'toolu_nonarray123',
+							name: 'AskUserQuestion',
+							input: {
+								// questions is not an array - should trigger fallback
+								questions: 'not an array',
+							},
+						},
+					],
+					model: 'claude-3-5-sonnet-20241022',
+					stop_reason: 'tool_use',
+					stop_sequence: null,
+					usage: { input_tokens: 10, output_tokens: 20 },
+				},
+				parent_tool_use_id: null,
+				uuid: createUUID(),
+				session_id: 'test-session',
+			} as unknown as Extract<SDKMessage, { type: 'assistant' }>;
+
+			const { container } = render(
+				<SDKAssistantMessage
+					message={message}
+					sessionId="test-session"
+					resolvedQuestions={new Map()}
+				/>
+			);
+
+			// Should render ToolResultCard without QuestionPrompt
+			expect(container.textContent).toContain('AskUserQuestion');
+			// Should NOT contain QuestionPrompt elements
+			expect(container.textContent).not.toContain('Claude needs your input');
+			expect(container.textContent).not.toContain('Question skipped');
 		});
 	});
 

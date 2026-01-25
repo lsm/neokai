@@ -207,4 +207,210 @@ describe('SessionInfoModal', () => {
 			expect(portal).toBeTruthy();
 		});
 	});
+
+	describe('Usage Statistics with non-zero values', () => {
+		it('should format and display total cost when > 0', () => {
+			const session = createMockSession({
+				metadata: {
+					messageCount: 10,
+					totalTokens: 5000,
+					inputTokens: 2000,
+					outputTokens: 3000,
+					totalCost: 0.1234,
+					toolCallCount: 5,
+				},
+			});
+			render(<SessionInfoModal isOpen={true} onClose={() => {}} session={session} />);
+
+			// Find the Total Cost value
+			const spans = document.body.querySelectorAll('span');
+			const costValue = Array.from(spans).find((s) => s.textContent === '$0.1234');
+			expect(costValue).toBeTruthy();
+		});
+
+		it('should format and display token counts when > 0', () => {
+			const session = createMockSession({
+				metadata: {
+					messageCount: 10,
+					totalTokens: 12345,
+					inputTokens: 5000,
+					outputTokens: 7345,
+					totalCost: 0.05,
+					toolCallCount: 5,
+				},
+			});
+			render(<SessionInfoModal isOpen={true} onClose={() => {}} session={session} />);
+
+			// Find the Total Tokens value (formatted with commas)
+			const spans = document.body.querySelectorAll('span');
+			const tokenValue = Array.from(spans).find((s) => s.textContent === '12,345');
+			expect(tokenValue).toBeTruthy();
+
+			// Find the Input Tokens value
+			const inputTokenValue = Array.from(spans).find((s) => s.textContent === '5,000');
+			expect(inputTokenValue).toBeTruthy();
+
+			// Find the Output Tokens value
+			const outputTokenValue = Array.from(spans).find((s) => s.textContent === '7,345');
+			expect(outputTokenValue).toBeTruthy();
+		});
+
+		it('should not display cost when 0', () => {
+			const session = createMockSession({
+				metadata: {
+					messageCount: 10,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			});
+			render(<SessionInfoModal isOpen={true} onClose={() => {}} session={session} />);
+
+			// Should not find Total Cost label (since it's not rendered when 0)
+			const spans = document.body.querySelectorAll('span');
+			const costLabel = Array.from(spans).find((s) => s.textContent === 'Total Cost');
+			// If cost is 0, the InfoRow returns null, so the label should not be present
+			// Actually, let me check: if formatCost returns undefined, InfoRow renders null
+			// So we shouldn't see a Total Cost row
+			expect(costLabel).toBeFalsy();
+		});
+	});
+
+	describe('Date formatting edge cases', () => {
+		it('should handle invalid date strings gracefully', () => {
+			// Create a session with an invalid date string that will fail Date parsing
+			// Note: Most strings will parse to a valid date, but we can test the error case
+			// by mocking Date or using a string that causes issues
+			const session = createMockSession({
+				createdAt: 'invalid-date-string',
+			});
+			render(<SessionInfoModal isOpen={true} onClose={() => {}} session={session} />);
+
+			// The date should be displayed as-is when parsing fails
+			const spans = document.body.querySelectorAll('span');
+			// Note: JavaScript's Date constructor is very permissive, so most strings
+			// will parse to "Invalid Date" which toLocaleString() will return
+			// Let's check that at least the Created row is rendered
+			const createdLabel = Array.from(spans).find((s) => s.textContent === 'Created');
+			expect(createdLabel).toBeTruthy();
+		});
+
+		it('should return original string when Date throws', () => {
+			// Mock Date to throw to test the catch block
+			const OriginalDate = globalThis.Date;
+			const mockDate = vi.fn().mockImplementation(() => {
+				throw new Error('Date parsing error');
+			});
+			// Copy static properties
+			Object.setPrototypeOf(mockDate, OriginalDate);
+			globalThis.Date = mockDate as unknown as DateConstructor;
+
+			try {
+				const session = createMockSession({
+					createdAt: 'test-date-string',
+				});
+				render(<SessionInfoModal isOpen={true} onClose={() => {}} session={session} />);
+
+				// When Date throws, the original string should be returned
+				const spans = document.body.querySelectorAll('span');
+				const dateValue = Array.from(spans).find((s) => s.textContent === 'test-date-string');
+				expect(dateValue).toBeTruthy();
+			} finally {
+				// Restore original Date
+				globalThis.Date = OriginalDate;
+			}
+		});
+	});
+
+	describe('Worktree Information', () => {
+		it('should display worktree section when worktree exists', () => {
+			const session = createMockSession({
+				worktree: {
+					worktreePath: '/Users/test/.liuboer/worktrees/session-123',
+					mainRepoPath: '/Users/test/project',
+					branch: 'session/test-branch',
+				},
+			});
+			render(<SessionInfoModal isOpen={true} onClose={() => {}} session={session} />);
+
+			// Find the Worktree section header (CSS makes it uppercase but textContent is original)
+			const headers = document.body.querySelectorAll('h3');
+			const worktreeHeader = Array.from(headers).find((h) => h.textContent === 'Worktree');
+			expect(worktreeHeader).toBeTruthy();
+
+			// Check for worktree path
+			const copyButtons = document.body.querySelectorAll('[data-testid="copy-button"]');
+			const worktreePathButton = Array.from(copyButtons).find(
+				(btn) => btn.getAttribute('data-text') === '/Users/test/.liuboer/worktrees/session-123'
+			);
+			expect(worktreePathButton).toBeTruthy();
+		});
+
+		it('should not display worktree section when worktree is undefined', () => {
+			const session = createMockSession({ worktree: undefined });
+			render(<SessionInfoModal isOpen={true} onClose={() => {}} session={session} />);
+
+			// Should not find Worktree header
+			const headers = document.body.querySelectorAll('h3');
+			const worktreeHeader = Array.from(headers).find((h) => h.textContent === 'Worktree');
+			expect(worktreeHeader).toBeFalsy();
+		});
+	});
+
+	describe('Git Branch', () => {
+		it('should display git branch when available', () => {
+			const session = createMockSession({ gitBranch: 'feature/test-branch' });
+			render(<SessionInfoModal isOpen={true} onClose={() => {}} session={session} />);
+
+			const copyButtons = document.body.querySelectorAll('[data-testid="copy-button"]');
+			const branchButton = Array.from(copyButtons).find(
+				(btn) => btn.getAttribute('data-text') === 'feature/test-branch'
+			);
+			expect(branchButton).toBeTruthy();
+		});
+	});
+
+	describe('Archived Session', () => {
+		it('should display archived date when session is archived', () => {
+			const session = createMockSession({
+				archivedAt: '2024-02-01T00:00:00.000Z',
+			});
+			render(<SessionInfoModal isOpen={true} onClose={() => {}} session={session} />);
+
+			// Find the Archived label
+			const spans = document.body.querySelectorAll('span');
+			const archivedLabel = Array.from(spans).find((s) => s.textContent === 'Archived');
+			expect(archivedLabel).toBeTruthy();
+		});
+	});
+
+	describe('Available Commands', () => {
+		it('should display available commands when present', () => {
+			const session = createMockSession({
+				availableCommands: ['/help', '/clear', '/model'],
+			});
+			render(<SessionInfoModal isOpen={true} onClose={() => {}} session={session} />);
+
+			// Find the Available Commands value
+			const spans = document.body.querySelectorAll('span');
+			const commandsValue = Array.from(spans).find(
+				(s) => s.textContent === '/help, /clear, /model'
+			);
+			expect(commandsValue).toBeTruthy();
+		});
+
+		it('should not display available commands when empty array', () => {
+			const session = createMockSession({
+				availableCommands: [],
+			});
+			render(<SessionInfoModal isOpen={true} onClose={() => {}} session={session} />);
+
+			// Should not find Available Commands label
+			const spans = document.body.querySelectorAll('span');
+			const commandsLabel = Array.from(spans).find((s) => s.textContent === 'Available Commands');
+			expect(commandsLabel).toBeFalsy();
+		});
+	});
 });
