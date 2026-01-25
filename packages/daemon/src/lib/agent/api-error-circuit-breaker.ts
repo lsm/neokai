@@ -49,7 +49,7 @@ export interface CircuitBreakerConfig {
 	cooldownMs: number;
 	/** Maximum messages allowed in rapid succession (default: 10) */
 	rapidFireThreshold: number;
-	/** Time window for rapid fire detection in ms (default: 5000 = 5s) */
+	/** Time window for rapid fire detection in ms (default: 3000 = 3s) */
 	rapidFireWindowMs: number;
 }
 
@@ -58,7 +58,7 @@ const DEFAULT_CONFIG: CircuitBreakerConfig = {
 	timeWindowMs: 30000,
 	cooldownMs: 60000,
 	rapidFireThreshold: 10,
-	rapidFireWindowMs: 5000,
+	rapidFireWindowMs: 3000,
 };
 
 /**
