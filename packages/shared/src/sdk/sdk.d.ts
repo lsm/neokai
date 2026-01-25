@@ -205,6 +205,7 @@ declare namespace coreTypes {
         SDKSystemMessage,
         SDKTaskNotificationMessage,
         SDKToolProgressMessage,
+        SDKToolUseSummaryMessage,
         SDKUserMessageReplay,
         SDKUserMessage,
         SdkBeta,
@@ -770,7 +771,7 @@ export declare type OutputFormatType = 'json_schema';
 export declare type PermissionBehavior = 'allow' | 'deny' | 'ask';
 
 /**
- * Permission mode for controlling how tool executions are handled. 'default' - Standard behavior, prompts for dangerous operations. 'acceptEdits' - Auto-accept file edit operations. 'bypassPermissions' - Bypass all permission checks (requires allowDangerouslySkipPermissions). 'plan' - Planning mode, no actual tool execution. 'delegate' - Delegate mode, restricts team leader to only Teammate and Task tools. 'dontAsk' - Don't prompt for permissions, deny if not pre-approved.
+ * Permission mode for controlling how tool executions are handled. 'default' - Standard behavior, prompts for dangerous operations. 'acceptEdits' - Auto-accept file edit operations. 'bypassPermissions' - Bypass all permission checks (requires allowDangerouslySkipPermissions). 'plan' - Planning mode, no actual tool execution. 'dontAsk' - Don't prompt for permissions, deny if not pre-approved.
  */
 export declare type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'delegate' | 'dontAsk';
 
@@ -1183,7 +1184,7 @@ declare type SDKControlSetModelRequest = {
 declare type SDKControlSetPermissionModeRequest = {
     subtype: 'set_permission_mode';
     /**
-     * Permission mode for controlling how tool executions are handled. 'default' - Standard behavior, prompts for dangerous operations. 'acceptEdits' - Auto-accept file edit operations. 'bypassPermissions' - Bypass all permission checks (requires allowDangerouslySkipPermissions). 'plan' - Planning mode, no actual tool execution. 'delegate' - Delegate mode, restricts team leader to only Teammate and Task tools. 'dontAsk' - Don't prompt for permissions, deny if not pre-approved.
+     * Permission mode for controlling how tool executions are handled. 'default' - Standard behavior, prompts for dangerous operations. 'acceptEdits' - Auto-accept file edit operations. 'bypassPermissions' - Bypass all permission checks (requires allowDangerouslySkipPermissions). 'plan' - Planning mode, no actual tool execution. 'dontAsk' - Don't prompt for permissions, deny if not pre-approved.
      */
     mode: coreTypes.PermissionMode;
 };
@@ -1261,7 +1262,7 @@ export declare type SdkMcpToolDefinition<Schema extends AnyZodRawShape = AnyZodR
     handler: (args: InferShape<Schema>, extra: unknown) => Promise<CallToolResult>;
 };
 
-export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage;
+export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKToolUseSummaryMessage;
 
 export declare type SDKPartialAssistantMessage = {
     type: 'stream_event';
@@ -1424,7 +1425,7 @@ export declare type SDKSystemMessage = {
     }[];
     model: string;
     /**
-     * Permission mode for controlling how tool executions are handled. 'default' - Standard behavior, prompts for dangerous operations. 'acceptEdits' - Auto-accept file edit operations. 'bypassPermissions' - Bypass all permission checks (requires allowDangerouslySkipPermissions). 'plan' - Planning mode, no actual tool execution. 'delegate' - Delegate mode, restricts team leader to only Teammate and Task tools. 'dontAsk' - Don't prompt for permissions, deny if not pre-approved.
+     * Permission mode for controlling how tool executions are handled. 'default' - Standard behavior, prompts for dangerous operations. 'acceptEdits' - Auto-accept file edit operations. 'bypassPermissions' - Bypass all permission checks (requires allowDangerouslySkipPermissions). 'plan' - Planning mode, no actual tool execution. 'dontAsk' - Don't prompt for permissions, deny if not pre-approved.
      */
     permissionMode: PermissionMode;
     slash_commands: string[];
@@ -1455,6 +1456,14 @@ export declare type SDKToolProgressMessage = {
     tool_name: string;
     parent_tool_use_id: string | null;
     elapsed_time_seconds: number;
+    uuid: UUID;
+    session_id: string;
+};
+
+export declare type SDKToolUseSummaryMessage = {
+    type: 'tool_use_summary';
+    summary: string;
+    preceding_tool_use_ids: string[];
     uuid: UUID;
     session_id: string;
 };

@@ -18,7 +18,7 @@ export type ToolInputSchemas =
   | FileWriteInput
   | GlobInput
   | GrepInput
-  | KillShellInput
+  | TaskStopInput
   | ListMcpResourcesInput
   | McpInput
   | NotebookEditInput
@@ -58,6 +58,10 @@ export interface AgentInput {
    * Maximum number of agentic turns (API round-trips) before stopping. Used internally for warmup.
    */
   max_turns?: number;
+  /**
+   * Tools to grant this agent. User will be prompted to approve if not already allowed. Example: ["Bash(git commit*)", "Read"]
+   */
+  allowed_tools?: string[];
   /**
    * Name for the spawned agent
    */
@@ -270,11 +274,15 @@ export interface GrepInput {
    */
   multiline?: boolean;
 }
-export interface KillShellInput {
+export interface TaskStopInput {
   /**
-   * The ID of the background shell to kill
+   * The ID of the background task to stop
    */
-  shell_id: string;
+  task_id?: string;
+  /**
+   * Deprecated: use task_id instead
+   */
+  shell_id?: string;
 }
 export interface ListMcpResourcesInput {
   /**

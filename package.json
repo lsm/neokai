@@ -28,7 +28,7 @@
 		"test:e2e:clean": "bun run cleanup:all && bun run test:e2e"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.3.11",
+		"@biomejs/biome": "2.3.12",
 		"@testing-library/preact": "3.2.4",
 		"dotenv": "17.2.3",
 		"happy-dom": "20.3.7",
