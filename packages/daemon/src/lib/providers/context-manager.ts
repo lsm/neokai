@@ -9,7 +9,6 @@
  * SDK options directly.
  */
 
-import type { Options } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type { Provider, ProviderContext } from '@liuboer/shared/provider';
 import type { Session, ProviderId } from '@liuboer/shared';
 import type { ProviderRegistry } from './registry.js';
@@ -177,22 +176,4 @@ export class ProviderContextManager {
 	async getAvailableProviders(): Promise<Provider[]> {
 		return this.registry.getAvailable();
 	}
-}
-
-/**
- * Helper to build SDK options with provider context
- *
- * This is a convenience function for the common pattern:
- * ```typescript
- * const context = contextManager.createContext(session);
- * const options = await context.buildSdkOptions(baseOptions);
- * ```
- */
-export async function buildProviderAwareSdkOptions<T extends Options>(
-	session: Session,
-	baseOptions: T,
-	contextManager: ProviderContextManager
-): Promise<T> {
-	const context = contextManager.createContext(session);
-	return context.buildSdkOptions(baseOptions);
 }

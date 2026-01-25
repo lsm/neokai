@@ -122,7 +122,7 @@ export class QueryRunner {
 			// Verify authentication
 			const { getProviderService } = await import('../provider-service');
 			const providerService = getProviderService();
-			const { getProviderRegistry } = await import('../providers/index.js');
+			const { getProviderRegistry } = await import('../providers/factory.js');
 			const providerRegistry = getProviderRegistry();
 
 			const hasAnthropicAuth = !!(

@@ -10,6 +10,7 @@
 import { AnthropicProvider } from './anthropic-provider.js';
 import { GlmProvider } from './glm-provider.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
+export { getProviderRegistry };
 import { ProviderContextManager } from './context-manager.js';
 
 /**
@@ -60,13 +61,6 @@ export function getProviderContextManager(): ProviderContextManager {
 }
 
 /**
- * Check if the provider system has been initialized
- */
-export function isProviderSystemInitialized(): boolean {
-	return initialized;
-}
-
-/**
  * Reset the provider factory initialization state
  *
  * MUST be called alongside resetProviderRegistry() to fully reset
@@ -75,40 +69,6 @@ export function isProviderSystemInitialized(): boolean {
 export function resetProviderFactory(): void {
 	initialized = false;
 }
-
-/**
- * Register a custom provider
- *
- * Allows registering additional providers beyond the built-in ones.
- * Useful for plugins or custom provider implementations.
- *
- * @param provider - The provider instance to register
- * @throws if provider ID already exists
- */
-export function registerCustomProvider(
-	provider: import('@liuboer/shared/provider').Provider
-): void {
-	const registry = initializeProviders();
-	registry.register(provider);
-}
-
-/**
- * Unregister a provider by ID
- *
- * @param providerId - The ID of the provider to unregister
- */
-export function unregisterProvider(providerId: string): void {
-	const registry = getProviderRegistry();
-	registry.unregister(providerId);
-}
-
-/**
- * Re-export commonly used types and classes for convenience
- */
-export { AnthropicProvider } from './anthropic-provider.js';
-export { GlmProvider, GlmProvider as GLMProvider } from './glm-provider.js';
-export { getProviderRegistry, resetProviderRegistry } from './registry.js';
-export { ProviderContextManager } from './context-manager.js';
 
 // Re-export types from shared package
 export type {

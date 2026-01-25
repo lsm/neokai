@@ -15,7 +15,7 @@
 import type { Session, MessageHub } from '@liuboer/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
-import { AgentSession } from '../agent';
+import { AgentSession } from '../agent/agent-session';
 import type { AuthManager } from '../auth-manager';
 import type { SettingsManager } from '../settings-manager';
 import { WorktreeManager } from '../worktree-manager';

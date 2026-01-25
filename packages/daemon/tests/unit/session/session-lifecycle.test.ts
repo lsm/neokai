@@ -436,6 +436,7 @@ describe('SessionLifecycle', () => {
 
 		it('should remove worktree when session has one', async () => {
 			const sessionWithWorktree = {
+				workspacePath: '/worktree/path',
 				worktree: {
 					worktreePath: '/worktree/path',
 					mainRepoPath: '/main',
@@ -451,6 +452,7 @@ describe('SessionLifecycle', () => {
 
 		it('should continue on worktree removal failure', async () => {
 			const sessionWithWorktree = {
+				workspacePath: '/worktree/path',
 				worktree: {
 					worktreePath: '/worktree/path',
 					mainRepoPath: '/main',

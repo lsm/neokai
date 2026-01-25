@@ -8,7 +8,7 @@
  */
 
 import type { Session } from '@liuboer/shared';
-import type { AgentSession } from '../agent';
+import type { AgentSession } from '../agent/agent-session';
 
 /**
  * Factory function type for creating AgentSession instances

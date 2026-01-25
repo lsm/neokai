@@ -18,7 +18,8 @@ import {
 	initializeModels,
 } from '../../../src/lib/model-service';
 import type { ModelInfo } from '@liuboer/shared';
-import { resetProviderRegistry, resetProviderFactory } from '../../../src/lib/providers';
+import { resetProviderRegistry } from '../../../src/lib/providers/registry';
+import { resetProviderFactory } from '../../../src/lib/providers/factory';
 
 describe('Model Service', () => {
 	// Sample ModelInfo data for testing (as returned by providers)

@@ -4,13 +4,13 @@ const config: KnipConfig = {
 	// Monorepo workspace configuration
 	workspaces: {
 		'packages/cli': {
-			entry: ['src/dev-server.ts', 'src/prod-server.ts'],
+			entry: ['src/dev-server.ts', 'src/prod-server.ts', 'tests/**/*.ts'],
 		},
 		'packages/daemon': {
-			entry: ['src/app.ts', 'src/lib/rpc-handlers/*.ts'],
+			entry: ['src/app.ts', 'src/lib/rpc-handlers/*.ts', 'tests/**/*.ts'],
 		},
 		'packages/shared': {
-			entry: ['src/mod.ts'],
+			entry: ['src/mod.ts', 'tests/**/*.ts'],
 		},
 		'packages/web': {
 			// Web entry is client.tsx (rendered by vite), not index.ts
@@ -41,6 +41,12 @@ const config: KnipConfig = {
 		'packages/daemon/tests/manual/**', // Manual test scripts
 		'packages/daemon/tests/mocks/**', // Test mocks
 		'packages/shared/src/sdk/**', // SDK types from Claude Agent SDK (not all used)
+		// 'packages/shared/src/message-hub/index.ts',
+		// 'packages/daemon/src/lib/agent/index.ts',
+		// 'packages/daemon/src/lib/providers/index.ts',
+		// 'packages/daemon/src/lib/session/index.ts',
+		// 'packages/daemon/src/lib/logger.ts',
+		// 'packages/daemon/src/lib/model-service.ts',
 	],
 
 	// Workspace dependencies (don't flag as unlisted)

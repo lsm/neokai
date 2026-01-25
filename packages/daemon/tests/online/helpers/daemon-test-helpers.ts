@@ -38,7 +38,8 @@ export async function sendMessage(
  * NOTE: The state structure uses 'agentState' (not 'processingState').
  * See SessionState interface in @liuboer/shared/src/state-types.ts
  */
-export async function waitForProcessingState(
+
+async function waitForProcessingState(
 	daemon: DaemonServerContext,
 	sessionId: string,
 	targetStatus: string,
@@ -118,47 +119,6 @@ export async function waitForIdle(
  *
  * Returns an async generator that yields SDK messages as they arrive.
  */
-export async function* collectSDKMessages(
-	daemon: DaemonServerContext,
-	sessionId: string,
-	timeout = 30000
-): AsyncGenerator<unknown, void, unknown> {
-	const messages: unknown[] = [];
-	let resolved = false;
-	let unsubscribe: (() => void) | null = null;
-
-	const timer = setTimeout(() => {
-		if (!resolved && unsubscribe) {
-			resolved = true;
-			unsubscribe();
-		}
-	}, timeout);
-
-	unsubscribe = await daemon.messageHub.subscribe(
-		'state.sdkMessages.delta',
-		(data: unknown) => {
-			if (resolved) return;
-			messages.push(data);
-		},
-		{ sessionId }
-	);
-
-	try {
-		while (!resolved) {
-			// Check if we have messages to yield
-			while (messages.length > 0) {
-				yield messages.shift();
-			}
-			// Small delay to prevent busy-waiting
-			await new Promise((resolve) => setTimeout(resolve, 50));
-		}
-	} finally {
-		clearTimeout(timer);
-		if (unsubscribe) {
-			unsubscribe();
-		}
-	}
-}
 
 /**
  * Get current processing state via RPC
@@ -200,28 +160,10 @@ export async function getSession(
 /**
  * List all sessions via RPC
  */
-export async function listSessions(
-	daemon: DaemonServerContext
-): Promise<Array<Record<string, unknown>>> {
-	const result = (await daemon.messageHub.call('session.list', {})) as
-		| {
-				sessions: Array<Record<string, unknown>>;
-		  }
-		| undefined;
-
-	if (!result?.sessions) {
-		return [];
-	}
-
-	return result.sessions;
-}
 
 /**
  * Delete a session via RPC
  */
-export async function deleteSession(daemon: DaemonServerContext, sessionId: string): Promise<void> {
-	await daemon.messageHub.call('session.delete', { sessionId });
-}
 
 /**
  * Interrupt the current processing via RPC

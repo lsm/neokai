@@ -148,10 +148,7 @@ export class MessagePersistence {
  * Build message content from text and optional images
  * Static utility function for building SDK message content
  */
-export function buildMessageContent(
-	content: string,
-	images?: MessageImage[]
-): string | MessageContent[] {
+function buildMessageContent(content: string, images?: MessageImage[]): string | MessageContent[] {
 	if (!images || images.length === 0) {
 		return content;
 	}

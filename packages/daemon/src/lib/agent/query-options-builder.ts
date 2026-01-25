@@ -23,7 +23,7 @@ import type { PermissionMode } from '@liuboer/shared/types/settings';
 import type { SettingsManager } from '../settings-manager';
 import { createOutputLimiterHook, getOutputLimiterConfigFromSettings } from './output-limiter-hook';
 import { Logger } from '../logger';
-import { getProviderContextManager } from '../providers/index.js';
+import { getProviderContextManager } from '../providers/factory.js';
 
 export class QueryOptionsBuilder {
 	private logger: Logger;

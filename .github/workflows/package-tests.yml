@@ -12,8 +12,8 @@ jobs:
   # CODE QUALITY CHECKS
   # ============================================
 
-  lint:
-    name: Lint
+  check:
+    name: Lint, Knip, Format & Type Check
     runs-on: arc-runner-set
     timeout-minutes: 3
 
@@ -29,45 +29,34 @@ jobs:
         run: bun install
 
       - name: Run linter
+        id: lint
         run: bun run lint
-
-  format:
-    name: Format Check
-    runs-on: arc-runner-set
-    timeout-minutes: 3
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: 1.3.6
-
-      - name: Install dependencies
-        run: bun install
+        continue-on-error: true
 
       - name: Check formatting
+        id: format
         run: bun run format:check
+        continue-on-error: true
 
-  typecheck:
-    name: Type Check
-    runs-on: arc-runner-set
-    timeout-minutes: 3
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: 1.3.6
-
-      - name: Install dependencies
-        run: bun install
+      - name: Run Knip
+        id: knip
+        run: bun run knip
+        continue-on-error: true
 
       - name: Run type check
+        id: typecheck
         run: bun run typecheck
+        continue-on-error: true
+
+      - name: Check for failures
+        if: steps.lint.outcome == 'failure' || steps.format.outcome == 'failure' || steps.knip.outcome == 'failure' || steps.typecheck.outcome == 'failure'
+        run: |
+          echo "❌ One or more checks failed:"
+          echo "  Lint: ${{ steps.lint.outcome }}"
+          echo "  Format: ${{ steps.format.outcome }}"
+          echo "  Knip: ${{ steps.knip.outcome }}"
+          echo "  Typecheck: ${{ steps.typecheck.outcome }}"
+          exit 1
 
   # ============================================
   # DAEMON TESTS (Matrix by module for parallelization)
@@ -77,7 +66,7 @@ jobs:
   test-daemon-offline:
     name: Daemon Offline (${{ matrix.module }})
     runs-on: arc-runner-set
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     strategy:
       fail-fast: false
@@ -156,7 +145,7 @@ jobs:
   test-daemon-online:
     name: Daemon Online (${{ matrix.module }})
     runs-on: arc-runner-set
-    timeout-minutes: 10
+    timeout-minutes: 3
 
     strategy:
       fail-fast: false

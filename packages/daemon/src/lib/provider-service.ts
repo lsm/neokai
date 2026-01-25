@@ -47,7 +47,7 @@
 
 import type { Provider, ProviderInfo, Session } from '@liuboer/shared';
 import type { ProviderSdkConfig, ProviderInfo as NewProviderInfo } from '@liuboer/shared/provider';
-import { initializeProviders } from './providers/index.js';
+import { initializeProviders } from './providers/factory.js';
 
 /**
  * Convert new ProviderInfo to legacy ProviderInfo

@@ -7,4 +7,4 @@
  * @see packages/daemon/src/lib/session/session-manager.ts for the implementation
  */
 
-export { SessionManager } from './session';
+export { SessionManager } from './session/session-manager';

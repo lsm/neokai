@@ -14,10 +14,3 @@
 
 export { Database } from './index';
 export type { SQLiteValue } from './types';
-export {
-	DatabaseCore,
-	SessionRepository,
-	SDKMessageRepository,
-	SettingsRepository,
-	type SendStatus,
-} from './index';

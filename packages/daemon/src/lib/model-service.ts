@@ -12,7 +12,8 @@
 
 import type { ModelInfo } from '@liuboer/shared';
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
-import { initializeProviders, getProviderRegistry } from './providers/index.js';
+import { initializeProviders } from './providers/factory.js';
+import { getProviderRegistry } from './providers/registry.js';
 import type { Provider } from '@liuboer/shared/provider';
 
 /**

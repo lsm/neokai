@@ -22,7 +22,7 @@ import { Database } from '../../storage/database';
 import { ErrorCategory, ErrorManager } from '../error-manager';
 import { Logger } from '../logger';
 import { isValidModel, resolveModelAlias, getModelInfo } from '../model-service';
-import { getProviderRegistry } from '../providers/index.js';
+import { getProviderRegistry } from '../providers/factory.js';
 import type { ContextTracker } from './context-tracker';
 import type { ProcessingStateManager } from './processing-state-manager';
 
