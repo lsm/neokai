@@ -87,23 +87,7 @@ describe('Model Switching (Offline)', () => {
 		});
 	});
 
-	describe('models.clearCache', () => {
-		test('should clear model cache', async () => {
-			// Load models into cache (if available)
-			try {
-				await callRPCHandler(ctx.messageHub, 'models.list', {
-					useCache: true,
-				});
-			} catch {
-				// Ignore if models.list fails (no credentials)
-			}
-
-			// Clear cache - should always succeed
-			const result = await callRPCHandler(ctx.messageHub, 'models.clearCache', {});
-
-			expect(result.success).toBe(true);
-		});
-	});
+	// Note: models.clearCache tests are in tests/integration/rpc/rpc-model-handlers.test.ts
 
 	describe('AgentSession.getCurrentModel', () => {
 		test('should return current model info from AgentSession', async () => {
