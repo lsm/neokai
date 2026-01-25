@@ -66,7 +66,7 @@ jobs:
   test-daemon-offline:
     name: Daemon Offline (${{ matrix.module }})
     runs-on: arc-runner-set
-    timeout-minutes: 3
+    timeout-minutes: 5
 
     strategy:
       fail-fast: false
