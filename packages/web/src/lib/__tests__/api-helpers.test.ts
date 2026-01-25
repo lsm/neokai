@@ -1,30 +1,66 @@
 // @ts-nocheck
 /**
- * Tests for API Helper Functions
+ * Comprehensive tests for api-helpers.ts
  *
- * Tests the typed convenience functions for daemon operations.
- * Uses mocked connectionManager to avoid actual network calls.
+ * Tests typed convenience functions for common daemon operations.
  */
 
-import { ConnectionNotReadyError } from '../errors';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-// Mock the connection manager module
-// We need to test the behavior of getHubOrThrow helper
-describe('api-helpers', () => {
-	// Store original module state
-	let _mockGetHubIfConnected: ReturnType<typeof mock>;
-	let _mockGetHub: ReturnType<typeof mock>;
-	let mockHub: {
-		call: ReturnType<typeof mock>;
+// Mock connection-manager module - must be at top level and use inline factory
+vi.mock('../connection-manager.js', () => {
+	const mockHub = {
+		call: vi.fn(),
+		subscribe: vi.fn(),
+		subscribeOptimistic: vi.fn(),
+		forceResubscribe: vi.fn(),
+		isConnected: vi.fn(() => true),
 	};
+	return {
+		connectionManager: {
+			getHubIfConnected: vi.fn(() => mockHub),
+			getHub: vi.fn(async () => mockHub),
+		},
+	};
+});
 
+// Import errors module normally (not mocked)
+import { ConnectionNotReadyError } from '../errors.js';
+
+// Import api-helpers after mocking connection-manager
+import * as apiHelpers from '../api-helpers.js';
+
+// Import connectionManager to access the mock
+import { connectionManager } from '../connection-manager.js';
+
+describe('api-helpers', () => {
 	beforeEach(() => {
-		// Create fresh mocks for each test
-		mockHub = {
-			call: vi.fn(() => Promise.resolve({ success: true })),
-		};
-		_mockGetHubIfConnected = vi.fn(() => mockHub);
-		_mockGetHub = vi.fn(() => Promise.resolve(mockHub));
+		vi.clearAllMocks();
+		// Reset default mock behavior - return a working hub
+		(
+			connectionManager as unknown as {
+				getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+				getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+			}
+		).getHubIfConnected.mockReturnValue({
+			call: vi.fn(),
+			subscribe: vi.fn(),
+			subscribeOptimistic: vi.fn(),
+			forceResubscribe: vi.fn(),
+			isConnected: vi.fn(() => true),
+		});
+		(
+			connectionManager as unknown as {
+				getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+				getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+			}
+		).getHub.mockResolvedValue({
+			call: vi.fn(),
+			subscribe: vi.fn(),
+			subscribeOptimistic: vi.fn(),
+			forceResubscribe: vi.fn(),
+			isConnected: vi.fn(() => true),
+		});
 	});
 
 	describe('ConnectionNotReadyError', () => {
@@ -39,248 +75,890 @@ describe('api-helpers', () => {
 			expect(error.message).toBe('Not connected to server');
 		});
 
-		it('should be instanceof ConnectionError', () => {
+		it('should be instanceof Error', () => {
 			const error = new ConnectionNotReadyError();
 			expect(error).toBeInstanceOf(Error);
 		});
 	});
 
-	describe('getHubOrThrow pattern', () => {
-		// Test the pattern used in api-helpers
-		function getHubOrThrow(getHubIfConnected: () => { call: typeof mockHub.call } | null) {
-			const hub = getHubIfConnected();
-			if (!hub) {
-				throw new ConnectionNotReadyError('Not connected to server');
-			}
-			return hub;
-		}
+	describe('session operations', () => {
+		describe('createSession', () => {
+			it('should create a session with 15000ms timeout', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({ sessionId: 'sess-123', title: 'Test Session' }),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
 
-		it('should return hub when connected', () => {
-			const hub = getHubOrThrow(() => mockHub);
-			expect(hub).toBe(mockHub);
-		});
+				const result = await apiHelpers.createSession({ workspacePath: '/test/path' });
 
-		it('should throw ConnectionNotReadyError when not connected', () => {
-			expect(() => getHubOrThrow(() => null)).toThrow(ConnectionNotReadyError);
-		});
-
-		it('should throw with correct message', () => {
-			try {
-				getHubOrThrow(() => null);
-			} catch (e) {
-				expect((e as Error).message).toBe('Not connected to server');
-			}
-		});
-	});
-
-	describe('API function patterns', () => {
-		// Test the patterns used in the actual API helper functions
-		// These simulate how the functions work without mocking the module
-
-		describe('createSession pattern', () => {
-			async function createSession(
-				hub: { call: typeof mockHub.call },
-				req: { workspacePath: string }
-			) {
-				return await hub.call('session.create', req, { timeout: 15000 });
-			}
-
-			it('should call hub.call with correct method', async () => {
-				await createSession(mockHub, { workspacePath: '/path/to/project' });
+				expect(result).toEqual({ sessionId: 'sess-123', title: 'Test Session' });
 				expect(mockHub.call).toHaveBeenCalledWith(
 					'session.create',
-					{ workspacePath: '/path/to/project' },
+					{ workspacePath: '/test/path' },
 					{ timeout: 15000 }
 				);
 			});
 
-			it('should use 15000ms timeout', async () => {
-				await createSession(mockHub, { workspacePath: '/' });
-				expect(mockHub.call).toHaveBeenCalledWith(expect.any(String), expect.any(Object), {
-					timeout: 15000,
-				});
+			it('should pass through request data', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({ sessionId: 'sess-456' }),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				const req = {
+					workspacePath: '/workspace',
+					modelId: 'claude-sonnet-4',
+				};
+
+				await apiHelpers.createSession(req);
+
+				expect(mockHub.call).toHaveBeenCalledWith('session.create', req, { timeout: 15000 });
+			});
+
+			it('should throw ConnectionNotReadyError when not connected', async () => {
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(null);
+
+				await expect(apiHelpers.createSession({ workspacePath: '/test' })).rejects.toThrow(
+					'Not connected to server'
+				);
+			});
+
+			it('should propagate errors from hub', async () => {
+				const mockHub = {
+					call: vi.fn().mockRejectedValue(new Error('Network error')),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				await expect(apiHelpers.createSession({ workspacePath: '/test' })).rejects.toThrow(
+					'Network error'
+				);
 			});
 		});
 
-		describe('listSessions pattern', () => {
-			async function listSessions(hub: { call: typeof mockHub.call }) {
-				return await hub.call('session.list');
-			}
+		describe('listSessions', () => {
+			it('should list all sessions', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						sessions: [
+							{ id: 'sess-1', title: 'Session 1' },
+							{ id: 'sess-2', title: 'Session 2' },
+						],
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
 
-			it('should call hub.call with session.list', async () => {
-				await listSessions(mockHub);
+				const result = await apiHelpers.listSessions();
+
+				expect(result).toEqual({
+					sessions: [
+						{ id: 'sess-1', title: 'Session 1' },
+						{ id: 'sess-2', title: 'Session 2' },
+					],
+				});
 				expect(mockHub.call).toHaveBeenCalledWith('session.list');
 			});
+
+			it('should handle empty sessions list', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({ sessions: [] }),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				const result = await apiHelpers.listSessions();
+
+				expect(result).toEqual({ sessions: [] });
+			});
+
+			it('should throw ConnectionNotReadyError when not connected', async () => {
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(null);
+
+				await expect(apiHelpers.listSessions()).rejects.toThrow('Not connected to server');
+			});
 		});
 
-		describe('updateSession pattern', () => {
-			async function updateSession(
-				hub: { call: typeof mockHub.call },
-				sessionId: string,
-				updates: { title?: string }
-			) {
-				await hub.call('session.update', { sessionId, ...updates });
-			}
+		describe('updateSession', () => {
+			it('should update session metadata', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({ ok: true }),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
 
-			it('should call hub.call with session.update and merged params', async () => {
-				await updateSession(mockHub, 'session-123', { title: 'New Title' });
+				await apiHelpers.updateSession('sess-123', { title: 'New Title' });
+
 				expect(mockHub.call).toHaveBeenCalledWith('session.update', {
-					sessionId: 'session-123',
+					sessionId: 'sess-123',
 					title: 'New Title',
 				});
 			});
-		});
 
-		describe('deleteSession pattern', () => {
-			async function deleteSession(hub: { call: typeof mockHub.call }, sessionId: string) {
-				await hub.call('session.delete', { sessionId });
-			}
+			it('should update session status', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({ ok: true }),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
 
-			it('should call hub.call with session.delete', async () => {
-				await deleteSession(mockHub, 'session-456');
-				expect(mockHub.call).toHaveBeenCalledWith('session.delete', {
-					sessionId: 'session-456',
+				await apiHelpers.updateSession('sess-123', { status: 'archived' });
+
+				expect(mockHub.call).toHaveBeenCalledWith('session.update', {
+					sessionId: 'sess-123',
+					status: 'archived',
 				});
+			});
+
+			it('should update multiple fields', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({ ok: true }),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				await apiHelpers.updateSession('sess-123', {
+					title: 'Updated Title',
+					status: 'active',
+				});
+
+				expect(mockHub.call).toHaveBeenCalledWith('session.update', {
+					sessionId: 'sess-123',
+					title: 'Updated Title',
+					status: 'active',
+				});
+			});
+
+			it('should throw ConnectionNotReadyError when not connected', async () => {
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(null);
+
+				await expect(apiHelpers.updateSession('sess-123', { title: 'New' })).rejects.toThrow(
+					'Not connected to server'
+				);
 			});
 		});
 
-		describe('archiveSession pattern', () => {
-			async function archiveSession(
-				hub: { call: typeof mockHub.call },
-				sessionId: string,
-				confirmed = false
-			) {
-				return await hub.call('session.archive', { sessionId, confirmed });
-			}
+		describe('deleteSession', () => {
+			it('should delete a session', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({ ok: true }),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
 
-			it('should call hub.call with session.archive', async () => {
-				await archiveSession(mockHub, 'session-789');
+				await apiHelpers.deleteSession('sess-123');
+
+				expect(mockHub.call).toHaveBeenCalledWith('session.delete', {
+					sessionId: 'sess-123',
+				});
+			});
+
+			it('should propagate delete errors', async () => {
+				const mockHub = {
+					call: vi.fn().mockRejectedValue(new Error('Session not found')),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				await expect(apiHelpers.deleteSession('sess-123')).rejects.toThrow('Session not found');
+			});
+
+			it('should throw ConnectionNotReadyError when not connected', async () => {
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(null);
+
+				await expect(apiHelpers.deleteSession('sess-123')).rejects.toThrow(
+					'Not connected to server'
+				);
+			});
+		});
+
+		describe('archiveSession', () => {
+			it('should archive session with confirmation', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({ success: true, deleted: true }),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				const result = await apiHelpers.archiveSession('sess-123', true);
+
+				expect(result).toEqual({ success: true, deleted: true });
 				expect(mockHub.call).toHaveBeenCalledWith('session.archive', {
-					sessionId: 'session-789',
+					sessionId: 'sess-123',
+					confirmed: true,
+				});
+			});
+
+			it('should archive session without confirmation (default)', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({ success: true, deleted: false }),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				const result = await apiHelpers.archiveSession('sess-123');
+
+				expect(result).toEqual({ success: true, deleted: false });
+				expect(mockHub.call).toHaveBeenCalledWith('session.archive', {
+					sessionId: 'sess-123',
 					confirmed: false,
 				});
 			});
 
-			it('should pass confirmed flag', async () => {
-				await archiveSession(mockHub, 'session-789', true);
-				expect(mockHub.call).toHaveBeenCalledWith('session.archive', {
-					sessionId: 'session-789',
-					confirmed: true,
-				});
-			});
-		});
+			it('should handle unconfirmed archive response', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						success: true,
+						deleted: false,
+						confirmationRequired: true,
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
 
-		describe('getAuthStatus pattern', () => {
-			async function getAuthStatus(hub: { call: typeof mockHub.call }) {
-				return await hub.call('auth.status');
-			}
+				const result = await apiHelpers.archiveSession('sess-456', false);
 
-			it('should call hub.call with auth.status', async () => {
-				await getAuthStatus(mockHub);
-				expect(mockHub.call).toHaveBeenCalledWith('auth.status');
-			});
-		});
-
-		describe('updateGlobalSettings pattern', () => {
-			async function updateGlobalSettings(
-				hub: { call: typeof mockHub.call },
-				updates: Record<string, unknown>
-			) {
-				return await hub.call('settings.global.update', { updates });
-			}
-
-			it('should call hub.call with settings.global.update', async () => {
-				await updateGlobalSettings(mockHub, { theme: 'dark' });
-				expect(mockHub.call).toHaveBeenCalledWith('settings.global.update', {
-					updates: { theme: 'dark' },
-				});
-			});
-		});
-
-		describe('listMcpServersFromSources pattern', () => {
-			async function listMcpServersFromSources(
-				hub: { call: typeof mockHub.call },
-				sessionId?: string
-			) {
-				return await hub.call('settings.mcp.listFromSources', sessionId ? { sessionId } : {});
-			}
-
-			it('should call hub.call without sessionId', async () => {
-				await listMcpServersFromSources(mockHub);
-				expect(mockHub.call).toHaveBeenCalledWith('settings.mcp.listFromSources', {});
+				expect(result.deleted).toBe(false);
 			});
 
-			it('should call hub.call with sessionId when provided', async () => {
-				await listMcpServersFromSources(mockHub, 'session-abc');
-				expect(mockHub.call).toHaveBeenCalledWith('settings.mcp.listFromSources', {
-					sessionId: 'session-abc',
-				});
-			});
-		});
+			it('should throw ConnectionNotReadyError when not connected', async () => {
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(null);
 
-		describe('updateMcpServerSettings pattern', () => {
-			async function updateMcpServerSettings(
-				hub: { call: typeof mockHub.call },
-				serverName: string,
-				settings: { allowed?: boolean; defaultOn?: boolean }
-			) {
-				return await hub.call('settings.mcp.updateServerSettings', {
-					serverName,
-					settings,
-				});
-			}
-
-			it('should call hub.call with correct params', async () => {
-				await updateMcpServerSettings(mockHub, 'my-server', {
-					allowed: true,
-					defaultOn: false,
-				});
-				expect(mockHub.call).toHaveBeenCalledWith('settings.mcp.updateServerSettings', {
-					serverName: 'my-server',
-					settings: { allowed: true, defaultOn: false },
-				});
+				await expect(apiHelpers.archiveSession('sess-123')).rejects.toThrow(
+					'Not connected to server'
+				);
 			});
 		});
 	});
 
-	describe('Error handling patterns', () => {
-		it('should propagate hub.call errors', async () => {
-			mockHub.call.mockImplementation(() => Promise.reject(new Error('Network error')));
+	describe('authentication', () => {
+		describe('getAuthStatus', () => {
+			it('should get auth status', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						method: 'anthropic-api-key',
+						authenticated: true,
+						username: 'user@example.com',
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
 
-			await expect(mockHub.call('session.list')).rejects.toThrow('Network error');
+				const result = await apiHelpers.getAuthStatus();
+
+				expect(result).toEqual({
+					method: 'anthropic-api-key',
+					authenticated: true,
+					username: 'user@example.com',
+				});
+				expect(mockHub.call).toHaveBeenCalledWith('auth.status');
+			});
+
+			it('should handle unauthenticated status', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						method: null,
+						authenticated: false,
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				const result = await apiHelpers.getAuthStatus();
+
+				expect(result.authenticated).toBe(false);
+			});
+
+			it('should handle OAuth auth status', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						method: 'oauth',
+						authenticated: true,
+						username: 'oauth-user',
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				const result = await apiHelpers.getAuthStatus();
+
+				expect(result.method).toBe('oauth');
+			});
+
+			it('should throw ConnectionNotReadyError when not connected', async () => {
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(null);
+
+				await expect(apiHelpers.getAuthStatus()).rejects.toThrow('Not connected to server');
+			});
+		});
+	});
+
+	describe('settings operations', () => {
+		describe('updateGlobalSettings', () => {
+			it('should update global settings using getHub (async)', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						success: true,
+						settings: { permissionMode: 'bypassPermissions' },
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHub.mockResolvedValue(mockHub);
+
+				const result = await apiHelpers.updateGlobalSettings({
+					permissionMode: 'bypassPermissions',
+				});
+
+				expect(result).toEqual({
+					success: true,
+					settings: { permissionMode: 'bypassPermissions' },
+				});
+				expect(mockHub.call).toHaveBeenCalledWith('settings.global.update', {
+					updates: { permissionMode: 'bypassPermissions' },
+				});
+			});
+
+			it('should update multiple settings', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						success: true,
+						settings: {
+							permissionMode: 'acceptEdits',
+							outputLimiter: { enabled: true },
+						},
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHub.mockResolvedValue(mockHub);
+
+				const updates = {
+					permissionMode: 'acceptEdits' as const,
+					outputLimiter: { enabled: true },
+				};
+
+				const result = await apiHelpers.updateGlobalSettings(updates);
+
+				expect(result.success).toBe(true);
+			});
 		});
 
-		it('should handle ConnectionNotReadyError in catch block', async () => {
-			function getHubOrThrow() {
-				throw new ConnectionNotReadyError('Not connected');
-			}
+		describe('listMcpServersFromSources', () => {
+			it('should list MCP servers without session', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						servers: {
+							user: [
+								{ name: 'server1', source: 'user' as const },
+								{ name: 'server2', source: 'user' as const },
+							],
+							project: [{ name: 'server3', source: 'project' as const }],
+						},
+						serverSettings: {
+							server1: { allowed: true, defaultOn: true },
+							server2: { allowed: false, defaultOn: false },
+						},
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHub.mockResolvedValue(mockHub);
 
-			try {
-				getHubOrThrow();
-			} catch (err) {
-				if (err instanceof ConnectionNotReadyError) {
-					// Handle gracefully
-					expect(err.message).toBe('Not connected');
-				} else {
-					throw err;
-				}
-			}
+				const result = await apiHelpers.listMcpServersFromSources();
+
+				expect(result).toEqual({
+					servers: {
+						user: [
+							{ name: 'server1', source: 'user' as const },
+							{ name: 'server2', source: 'user' as const },
+						],
+						project: [{ name: 'server3', source: 'project' as const }],
+					},
+					serverSettings: {
+						server1: { allowed: true, defaultOn: true },
+						server2: { allowed: false, defaultOn: false },
+					},
+				});
+				expect(mockHub.call).toHaveBeenCalledWith('settings.mcp.listFromSources', {});
+			});
+
+			it('should list MCP servers with session', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						servers: {
+							session: [{ name: 'server4', source: 'session' as const }],
+						},
+						serverSettings: {},
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHub.mockResolvedValue(mockHub);
+
+				const result = await apiHelpers.listMcpServersFromSources('sess-123');
+
+				expect(result).toEqual({
+					servers: {
+						session: [{ name: 'server4', source: 'session' as const }],
+					},
+					serverSettings: {},
+				});
+				expect(mockHub.call).toHaveBeenCalledWith('settings.mcp.listFromSources', {
+					sessionId: 'sess-123',
+				});
+			});
+
+			it('should include command and args for servers', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						servers: {
+							user: [
+								{
+									name: 'test-server',
+									source: 'user' as const,
+									command: 'node',
+									args: ['server.js'],
+								},
+							],
+						},
+						serverSettings: {},
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHub.mockResolvedValue(mockHub);
+
+				const result = await apiHelpers.listMcpServersFromSources();
+
+				expect(result.servers.user[0].command).toBe('node');
+				expect(result.servers.user[0].args).toEqual(['server.js']);
+			});
+		});
+
+		describe('updateMcpServerSettings', () => {
+			it('should update MCP server allowed setting', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({ success: true }),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHub.mockResolvedValue(mockHub);
+
+				const result = await apiHelpers.updateMcpServerSettings('test-server', {
+					allowed: true,
+				});
+
+				expect(result).toEqual({ success: true });
+				expect(mockHub.call).toHaveBeenCalledWith('settings.mcp.updateServerSettings', {
+					serverName: 'test-server',
+					settings: { allowed: true },
+				});
+			});
+
+			it('should update MCP server defaultOn setting', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({ success: true }),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHub.mockResolvedValue(mockHub);
+
+				const result = await apiHelpers.updateMcpServerSettings('test-server', {
+					defaultOn: false,
+				});
+
+				expect(result).toEqual({ success: true });
+			});
+
+			it('should update both server settings', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({ success: true }),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHub.mockResolvedValue(mockHub);
+
+				const result = await apiHelpers.updateMcpServerSettings('test-server', {
+					allowed: true,
+					defaultOn: true,
+				});
+
+				expect(result.success).toBe(true);
+			});
+		});
+	});
+
+	describe('rewind operations', () => {
+		describe('getCheckpoints', () => {
+			it('should get checkpoints for session', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						checkpoints: [
+							{
+								id: 'cp-1',
+								turnIndex: 5,
+								createdAt: '2024-01-01T00:00:00Z',
+								messageCount: 10,
+							},
+							{
+								id: 'cp-2',
+								turnIndex: 10,
+								createdAt: '2024-01-01T01:00:00Z',
+								messageCount: 20,
+							},
+						],
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				const result = await apiHelpers.getCheckpoints('sess-123');
+
+				expect(result).toEqual({
+					checkpoints: [
+						{
+							id: 'cp-1',
+							turnIndex: 5,
+							createdAt: '2024-01-01T00:00:00Z',
+							messageCount: 10,
+						},
+						{
+							id: 'cp-2',
+							turnIndex: 10,
+							createdAt: '2024-01-01T01:00:00Z',
+							messageCount: 20,
+						},
+					],
+				});
+				expect(mockHub.call).toHaveBeenCalledWith('rewind.checkpoints', {
+					sessionId: 'sess-123',
+				});
+			});
+
+			it('should handle empty checkpoints list', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({ checkpoints: [] }),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				const result = await apiHelpers.getCheckpoints('sess-123');
+
+				expect(result.checkpoints).toEqual([]);
+			});
+
+			it('should handle error response', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						checkpoints: [],
+						error: 'Failed to fetch checkpoints',
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				const result = await apiHelpers.getCheckpoints('sess-123');
+
+				expect(result.error).toBeDefined();
+			});
+
+			it('should throw ConnectionNotReadyError when not connected', async () => {
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(null);
+
+				await expect(apiHelpers.getCheckpoints('sess-123')).rejects.toThrow(
+					'Not connected to server'
+				);
+			});
+		});
+
+		describe('previewRewind', () => {
+			it('should preview rewind to checkpoint', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						preview: {
+							filesChanged: ['file1.ts', 'file2.ts'],
+							filesDeleted: ['old-file.ts'],
+							messagesAffected: [1, 2, 3],
+							messageCount: 5,
+							targetTurnIndex: 5,
+						},
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				const result = await apiHelpers.previewRewind('sess-123', 'cp-1');
+
+				expect(result).toEqual({
+					preview: {
+						filesChanged: ['file1.ts', 'file2.ts'],
+						filesDeleted: ['old-file.ts'],
+						messagesAffected: [1, 2, 3],
+						messageCount: 5,
+						targetTurnIndex: 5,
+					},
+				});
+				expect(mockHub.call).toHaveBeenCalledWith('rewind.preview', {
+					sessionId: 'sess-123',
+					checkpointId: 'cp-1',
+				});
+			});
+
+			it('should throw ConnectionNotReadyError when not connected', async () => {
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(null);
+
+				await expect(apiHelpers.previewRewind('sess-123', 'cp-1')).rejects.toThrow(
+					'Not connected to server'
+				);
+			});
+		});
+
+		describe('executeRewind', () => {
+			it('should execute rewind with default mode (files)', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						result: {
+							success: true,
+							filesRestored: ['file1.ts', 'file2.ts'],
+							filesDeleted: ['file3.ts'],
+							messagesDeleted: [6, 7, 8],
+							restoredTurnIndex: 5,
+						},
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				const result = await apiHelpers.executeRewind('sess-123', 'cp-1');
+
+				expect(result).toEqual({
+					result: {
+						success: true,
+						filesRestored: ['file1.ts', 'file2.ts'],
+						filesDeleted: ['file3.ts'],
+						messagesDeleted: [6, 7, 8],
+						restoredTurnIndex: 5,
+					},
+				});
+				expect(mockHub.call).toHaveBeenCalledWith('rewind.execute', {
+					sessionId: 'sess-123',
+					checkpointId: 'cp-1',
+					mode: 'files',
+				});
+			});
+
+			it('should execute rewind with explicit mode', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						result: {
+							success: true,
+							messagesDeleted: [5, 6],
+							restoredTurnIndex: 3,
+						},
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				const result = await apiHelpers.executeRewind('sess-123', 'cp-1', 'messages');
+
+				expect(result).toEqual({
+					result: {
+						success: true,
+						messagesDeleted: [5, 6],
+						restoredTurnIndex: 3,
+					},
+				});
+				expect(mockHub.call).toHaveBeenCalledWith('rewind.execute', {
+					sessionId: 'sess-123',
+					checkpointId: 'cp-1',
+					mode: 'messages',
+				});
+			});
+
+			it('should throw ConnectionNotReadyError when not connected', async () => {
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(null);
+
+				await expect(apiHelpers.executeRewind('sess-123', 'cp-1')).rejects.toThrow(
+					'Not connected to server'
+				);
+			});
 		});
 	});
 
 	describe('Non-blocking pattern', () => {
-		it('should throw immediately when not connected', () => {
-			function getHubOrThrow(connected: boolean) {
-				if (!connected) {
-					throw new ConnectionNotReadyError('Not connected to server');
+		it('should throw immediately when not connected (< 10ms)', async () => {
+			(
+				connectionManager as unknown as {
+					getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+					getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
 				}
-				return mockHub;
-			}
+			).getHubIfConnected.mockReturnValue(null);
 
 			const start = Date.now();
 
 			try {
-				getHubOrThrow(false);
+				await apiHelpers.createSession({ workspacePath: '/test' });
 			} catch {
 				// Expected
 			}

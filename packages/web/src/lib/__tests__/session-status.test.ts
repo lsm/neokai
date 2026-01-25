@@ -2,49 +2,18 @@
 /**
  * Tests for Session Status Tracking
  *
- * Tests the session status tracking functions including processing state
- * parsing and color utilities.
- *
- * NOTE: We test getProcessingPhaseColor directly by recreating the logic
- * here to avoid the connection-manager dependency chain from session-status.ts
- * imports (session-status -> state -> global-store -> connection-manager).
+ * Tests the actual exported functions from session-status.ts:
+ * - initSessionStatusTracking()
+ * - allSessionStatuses (computed signal)
+ * - getProcessingPhaseColor()
  */
 
-import type { AgentProcessingState } from '@liuboer/shared';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type { Session, AgentProcessingState } from '@liuboer/shared';
+import type { Signal } from '@preact/signals';
 
-// Recreate getProcessingPhaseColor locally for testing without DOM dependencies
-function getProcessingPhaseColor(
-	state: AgentProcessingState
-): { dot: string; text: string } | null {
-	if (state.status === 'idle' || state.status === 'interrupted') {
-		return null;
-	}
-
-	if (state.status === 'queued') {
-		return { dot: 'bg-yellow-500', text: 'text-yellow-400' };
-	}
-
-	// Processing state
-	if (state.status === 'processing') {
-		switch (state.phase) {
-			case 'initializing':
-				return { dot: 'bg-yellow-500', text: 'text-yellow-400' };
-			case 'thinking':
-				return { dot: 'bg-blue-500', text: 'text-blue-400' };
-			case 'streaming':
-				return { dot: 'bg-green-500', text: 'text-green-400' };
-			case 'finalizing':
-				return { dot: 'bg-purple-500', text: 'text-purple-400' };
-			default:
-				return { dot: 'bg-purple-500', text: 'text-purple-400' };
-		}
-	}
-
-	return null;
-}
-
-// Mock localStorage for testing
-const _localStorageMock = (() => {
+// Mock localStorage
+const createMockLocalStorage = () => {
 	let store: Record<string, string> = {};
 	return {
 		getItem: (key: string) => store[key] || null,
@@ -57,190 +26,623 @@ const _localStorageMock = (() => {
 		clear: () => {
 			store = {};
 		},
+		_store: () => store,
 	};
-})();
+};
 
-// Store original localStorage
-const _originalLocalStorage = globalThis.localStorage;
+const mockLocalStorage = createMockLocalStorage();
+const originalLocalStorage = globalThis.localStorage;
 
-describe('getProcessingPhaseColor', () => {
-	it('should return null for idle status', () => {
-		const state: AgentProcessingState = { status: 'idle' };
-		expect(getProcessingPhaseColor(state)).toBeNull();
+// Setup state signals for mocking
+let mockSessions: Signal<Session[]>;
+let mockCurrentSessionIdSignal: Signal<string | null>;
+
+describe('session-status (real module tests)', () => {
+	beforeEach(() => {
+		// Setup mock localStorage
+		globalThis.localStorage = mockLocalStorage as unknown as Storage;
+		mockLocalStorage.clear();
+		vi.clearAllMocks();
+
+		// Reset signals
+		const { signal } = require('@preact/signals');
+		mockSessions = signal<Session[]>([]);
+		mockCurrentSessionIdSignal = signal<string | null>(null);
 	});
 
-	it('should return null for interrupted status', () => {
-		const state: AgentProcessingState = { status: 'interrupted' };
-		expect(getProcessingPhaseColor(state)).toBeNull();
+	afterEach(() => {
+		globalThis.localStorage = originalLocalStorage;
+		vi.resetModules();
 	});
 
-	it('should return yellow for queued status', () => {
-		const state: AgentProcessingState = { status: 'queued' };
-		const color = getProcessingPhaseColor(state);
-		expect(color).toEqual({
-			dot: 'bg-yellow-500',
-			text: 'text-yellow-400',
+	// Helper to create mock sessions
+	const createMockSession = (id: string, overrides: Partial<Session> = {}): Session => ({
+		id,
+		title: `Session ${id}`,
+		workspacePath: `/path/to/${id}`,
+		status: 'active',
+		config: {} as Session['config'],
+		metadata: {
+			messageCount: 0,
+			totalTokens: 0,
+			inputTokens: 0,
+			outputTokens: 0,
+			totalCost: 0,
+			toolCallCount: 0,
+		},
+		createdAt: '2024-01-01T00:00:00Z',
+		lastActiveAt: '2024-01-01T00:00:00Z',
+		processingState: undefined,
+		...overrides,
+	});
+
+	describe('getProcessingPhaseColor', () => {
+		it('should return null for idle status', async () => {
+			// Mock dependencies
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const { getProcessingPhaseColor } = await import('../session-status.js');
+
+			expect(getProcessingPhaseColor({ status: 'idle' })).toBeNull();
+		});
+
+		it('should return null for interrupted status', async () => {
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const { getProcessingPhaseColor } = await import('../session-status.js');
+
+			expect(getProcessingPhaseColor({ status: 'interrupted' })).toBeNull();
+		});
+
+		it('should return yellow for queued status', async () => {
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const { getProcessingPhaseColor } = await import('../session-status.js');
+
+			expect(getProcessingPhaseColor({ status: 'queued' })).toEqual({
+				dot: 'bg-yellow-500',
+				text: 'text-yellow-400',
+			});
+		});
+
+		it('should return blue for thinking phase', async () => {
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const { getProcessingPhaseColor } = await import('../session-status.js');
+
+			expect(getProcessingPhaseColor({ status: 'processing', phase: 'thinking' })).toEqual({
+				dot: 'bg-blue-500',
+				text: 'text-blue-400',
+			});
+		});
+
+		it('should return green for streaming phase', async () => {
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const { getProcessingPhaseColor } = await import('../session-status.js');
+
+			expect(getProcessingPhaseColor({ status: 'processing', phase: 'streaming' })).toEqual({
+				dot: 'bg-green-500',
+				text: 'text-green-400',
+			});
+		});
+
+		it('should return purple for finalizing phase', async () => {
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const { getProcessingPhaseColor } = await import('../session-status.js');
+
+			expect(getProcessingPhaseColor({ status: 'processing', phase: 'finalizing' })).toEqual({
+				dot: 'bg-purple-500',
+				text: 'text-purple-400',
+			});
+		});
+
+		it('should return yellow for initializing phase', async () => {
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const { getProcessingPhaseColor } = await import('../session-status.js');
+
+			expect(getProcessingPhaseColor({ status: 'processing', phase: 'initializing' })).toEqual({
+				dot: 'bg-yellow-500',
+				text: 'text-yellow-400',
+			});
 		});
 	});
 
-	it('should return yellow for initializing phase', () => {
-		const state: AgentProcessingState = {
-			status: 'processing',
-			phase: 'initializing',
-		};
-		const color = getProcessingPhaseColor(state);
-		expect(color).toEqual({
-			dot: 'bg-yellow-500',
-			text: 'text-yellow-400',
+	describe('allSessionStatuses computed signal', () => {
+		it('should return empty map when no sessions', async () => {
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const { allSessionStatuses } = await import('../session-status.js');
+
+			expect(allSessionStatuses.value.size).toBe(0);
+		});
+
+		it('should compute processing state from session object', async () => {
+			mockSessions.value = [
+				createMockSession('sess-1', {
+					processingState: JSON.stringify({ status: 'processing', phase: 'thinking' }),
+				}),
+			];
+
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const { allSessionStatuses } = await import('../session-status.js');
+
+			const status = allSessionStatuses.value.get('sess-1');
+			expect(status?.processingState).toEqual({ status: 'processing', phase: 'thinking' });
+		});
+
+		it('should compute hasUnread correctly', async () => {
+			mockSessions.value = [
+				createMockSession('sess-1', {
+					metadata: {
+						messageCount: 10,
+						totalTokens: 0,
+						inputTokens: 0,
+						outputTokens: 0,
+						totalCost: 0,
+						toolCallCount: 0,
+					},
+				}),
+				createMockSession('sess-2', {
+					metadata: {
+						messageCount: 5,
+						totalTokens: 0,
+						inputTokens: 0,
+						outputTokens: 0,
+						totalCost: 0,
+						toolCallCount: 0,
+					},
+				}),
+			];
+
+			// Set localStorage data
+			mockLocalStorage.setItem('liuboer:session-last-seen', JSON.stringify({ 'sess-1': 5 }));
+
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const module = await import('../session-status.js');
+			const { allSessionStatuses } = module;
+
+			// Need to call initSessionStatusTracking to load the localStorage data
+			module.initSessionStatusTracking();
+
+			// sess-1: 10 > 5, so unread
+			expect(allSessionStatuses.value.get('sess-1')?.hasUnread).toBe(true);
+			// sess-2: 5 > 0, so unread
+			expect(allSessionStatuses.value.get('sess-2')?.hasUnread).toBe(true);
+		});
+
+		it('should mark current session as read regardless of message count', async () => {
+			mockSessions.value = [
+				createMockSession('sess-1', {
+					metadata: {
+						messageCount: 100,
+						totalTokens: 0,
+						inputTokens: 0,
+						outputTokens: 0,
+						totalCost: 0,
+						toolCallCount: 0,
+					},
+				}),
+			];
+			mockCurrentSessionIdSignal.value = 'sess-1';
+
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const { allSessionStatuses } = await import('../session-status.js');
+
+			expect(allSessionStatuses.value.get('sess-1')?.hasUnread).toBe(false);
+		});
+
+		it('should handle object processingState', async () => {
+			const processingState: AgentProcessingState = { status: 'queued', messageId: 'msg-1' };
+			mockSessions.value = [createMockSession('sess-1', { processingState })];
+
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const { allSessionStatuses } = await import('../session-status.js');
+
+			expect(allSessionStatuses.value.get('sess-1')?.processingState).toEqual({
+				status: 'queued',
+				messageId: 'msg-1',
+			});
+		});
+
+		it('should default to idle when processingState is undefined', async () => {
+			mockSessions.value = [createMockSession('sess-1')];
+
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const { allSessionStatuses } = await import('../session-status.js');
+
+			expect(allSessionStatuses.value.get('sess-1')?.processingState).toEqual({ status: 'idle' });
 		});
 	});
 
-	it('should return blue for thinking phase', () => {
-		const state: AgentProcessingState = {
-			status: 'processing',
-			phase: 'thinking',
-		};
-		const color = getProcessingPhaseColor(state);
-		expect(color).toEqual({
-			dot: 'bg-blue-500',
-			text: 'text-blue-400',
+	describe('initSessionStatusTracking', () => {
+		it('should load last seen counts from localStorage', async () => {
+			// Set up localStorage with data
+			mockLocalStorage.setItem(
+				'liuboer:session-last-seen',
+				JSON.stringify({ 'sess-1': 5, 'sess-2': 10 })
+			);
+
+			mockSessions.value = [
+				createMockSession('sess-1', {
+					metadata: {
+						messageCount: 10,
+						totalTokens: 0,
+						inputTokens: 0,
+						outputTokens: 0,
+						totalCost: 0,
+						toolCallCount: 0,
+					},
+				}),
+				createMockSession('sess-2', {
+					metadata: {
+						messageCount: 15,
+						totalTokens: 0,
+						inputTokens: 0,
+						outputTokens: 0,
+						totalCost: 0,
+						toolCallCount: 0,
+					},
+				}),
+			];
+
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const module = await import('../session-status.js');
+			module.initSessionStatusTracking();
+
+			// After initialization, check that statuses reflect loaded data
+			expect(module.allSessionStatuses.value.get('sess-1')?.hasUnread).toBe(true); // 10 > 5
+			expect(module.allSessionStatuses.value.get('sess-2')?.hasUnread).toBe(true); // 15 > 10
+		});
+
+		it('should subscribe to currentSessionIdSignal changes', async () => {
+			mockSessions.value = [
+				createMockSession('sess-1', {
+					metadata: {
+						messageCount: 20,
+						totalTokens: 0,
+						inputTokens: 0,
+						outputTokens: 0,
+						totalCost: 0,
+						toolCallCount: 0,
+					},
+				}),
+			];
+
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const module = await import('../session-status.js');
+			module.initSessionStatusTracking();
+
+			// Initially unread
+			expect(module.allSessionStatuses.value.get('sess-1')?.hasUnread).toBe(true);
+
+			// Simulate switching to this session (which marks it as read)
+			mockCurrentSessionIdSignal.value = 'sess-1';
+
+			// Now should be marked as read
+			expect(module.allSessionStatuses.value.get('sess-1')?.hasUnread).toBe(false);
 		});
 	});
 
-	it('should return green for streaming phase', () => {
-		const state: AgentProcessingState = {
-			status: 'processing',
-			phase: 'streaming',
-		};
-		const color = getProcessingPhaseColor(state);
-		expect(color).toEqual({
-			dot: 'bg-green-500',
-			text: 'text-green-400',
+	describe('parseProcessingState behavior (via allSessionStatuses)', () => {
+		it('should handle undefined processingState', async () => {
+			mockSessions.value = [createMockSession('sess-1', { processingState: undefined })];
+
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const { allSessionStatuses } = await import('../session-status.js');
+
+			expect(allSessionStatuses.value.get('sess-1')?.processingState).toEqual({ status: 'idle' });
 		});
-	});
 
-	it('should return purple for finalizing phase', () => {
-		const state: AgentProcessingState = {
-			status: 'processing',
-			phase: 'finalizing',
-		};
-		const color = getProcessingPhaseColor(state);
-		expect(color).toEqual({
-			dot: 'bg-purple-500',
-			text: 'text-purple-400',
-		});
-	});
+		it('should parse valid JSON string', async () => {
+			mockSessions.value = [
+				createMockSession('sess-1', {
+					processingState: JSON.stringify({
+						status: 'processing',
+						phase: 'streaming',
+						messageId: 'msg-1',
+					}),
+				}),
+			];
 
-	it('should return purple for unknown processing phase', () => {
-		const state: AgentProcessingState = {
-			status: 'processing',
-			phase: 'unknown-phase' as 'thinking',
-		};
-		const color = getProcessingPhaseColor(state);
-		expect(color).toEqual({
-			dot: 'bg-purple-500',
-			text: 'text-purple-400',
-		});
-	});
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
 
-	it('should return purple for processing without phase', () => {
-		// This shouldn't happen in practice, but test the fallback
-		const state = { status: 'processing' } as AgentProcessingState;
-		const color = getProcessingPhaseColor(state);
-		expect(color).toEqual({
-			dot: 'bg-purple-500',
-			text: 'text-purple-400',
-		});
-	});
-});
+			const { allSessionStatuses } = await import('../session-status.js');
 
-describe('parseProcessingState (via module behavior)', () => {
-	// Since parseProcessingState is private, we test it indirectly through
-	// the module's behavior with different input formats
-
-	it('should handle undefined processingState', () => {
-		// When processingState is undefined, getProcessingPhaseColor should handle idle
-		const state: AgentProcessingState = { status: 'idle' };
-		expect(getProcessingPhaseColor(state)).toBeNull();
-	});
-
-	it('should handle object processingState', () => {
-		const state: AgentProcessingState = {
-			status: 'processing',
-			phase: 'thinking',
-		};
-		expect(getProcessingPhaseColor(state)).toEqual({
-			dot: 'bg-blue-500',
-			text: 'text-blue-400',
-		});
-	});
-});
-
-describe('SessionStatusInfo interface', () => {
-	// Test that the interface shape is correct via type checking
-	it('should define processingState and hasUnread', () => {
-		// This test validates the TypeScript interface
-		const statusInfo = {
-			processingState: { status: 'idle' as const },
-			hasUnread: false,
-		};
-		expect(statusInfo.processingState.status).toBe('idle');
-		expect(statusInfo.hasUnread).toBe(false);
-	});
-});
-
-describe('Processing phase color mapping coverage', () => {
-	// Ensure all defined phases have colors
-	const phases = ['initializing', 'thinking', 'streaming', 'finalizing'] as const;
-
-	phases.forEach((phase) => {
-		it(`should have color for ${phase} phase`, () => {
-			const state: AgentProcessingState = {
+			expect(allSessionStatuses.value.get('sess-1')?.processingState).toEqual({
 				status: 'processing',
-				phase,
-			};
-			const color = getProcessingPhaseColor(state);
-			expect(color).not.toBeNull();
-			expect(color?.dot).toBeDefined();
-			expect(color?.text).toBeDefined();
+				phase: 'streaming',
+				messageId: 'msg-1',
+			});
+		});
+
+		it('should handle invalid JSON string gracefully', async () => {
+			mockSessions.value = [createMockSession('sess-1', { processingState: 'invalid json' })];
+
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const { allSessionStatuses } = await import('../session-status.js');
+
+			expect(allSessionStatuses.value.get('sess-1')?.processingState).toEqual({ status: 'idle' });
+		});
+
+		it('should handle object processingState directly', async () => {
+			const state: AgentProcessingState = { status: 'queued', messageId: 'msg-2' };
+			mockSessions.value = [createMockSession('sess-1', { processingState: state })];
+
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const { allSessionStatuses } = await import('../session-status.js');
+
+			expect(allSessionStatuses.value.get('sess-1')?.processingState).toEqual({
+				status: 'queued',
+				messageId: 'msg-2',
+			});
 		});
 	});
-});
 
-describe('Color class format validation', () => {
-	it('should use Tailwind color format for dot classes', () => {
-		const state: AgentProcessingState = {
-			status: 'processing',
-			phase: 'thinking',
-		};
-		const color = getProcessingPhaseColor(state);
-		expect(color?.dot).toMatch(/^bg-[a-z]+-\d{3}$/);
+	describe('localStorage operations', () => {
+		it('should save last seen counts when session is marked as read', async () => {
+			mockSessions.value = [
+				createMockSession('sess-1', {
+					metadata: {
+						messageCount: 10,
+						totalTokens: 0,
+						inputTokens: 0,
+						outputTokens: 0,
+						totalCost: 0,
+						toolCallCount: 0,
+					},
+				}),
+			];
+
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const module = await import('../session-status.js');
+			module.initSessionStatusTracking();
+
+			// Switch to session - should mark as read
+			mockCurrentSessionIdSignal.value = 'sess-1';
+
+			// Check localStorage was updated
+			const stored = mockLocalStorage.getItem('liuboer:session-last-seen');
+			expect(stored).toBeDefined();
+			const data = JSON.parse(stored!);
+			expect(data['sess-1']).toBe(10);
+		});
+
+		it('should handle corrupted localStorage data gracefully', async () => {
+			// Set invalid data
+			mockLocalStorage.setItem('liuboer:session-last-seen', 'not valid json');
+
+			mockSessions.value = [
+				createMockSession('sess-1', {
+					metadata: {
+						messageCount: 5,
+						totalTokens: 0,
+						inputTokens: 0,
+						outputTokens: 0,
+						totalCost: 0,
+						toolCallCount: 0,
+					},
+				}),
+			];
+
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const module = await import('../session-status.js');
+
+			// Should not throw, should handle gracefully
+			expect(() => module.initSessionStatusTracking()).not.toThrow();
+			expect(module.allSessionStatuses.value.get('sess-1')?.hasUnread).toBe(true); // 5 > 0 (default)
+		});
+
+		it('should handle empty localStorage', async () => {
+			// No localStorage data set
+
+			mockSessions.value = [
+				createMockSession('sess-1', {
+					metadata: {
+						messageCount: 5,
+						totalTokens: 0,
+						inputTokens: 0,
+						outputTokens: 0,
+						totalCost: 0,
+						toolCallCount: 0,
+					},
+				}),
+			];
+
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const module = await import('../session-status.js');
+
+			expect(() => module.initSessionStatusTracking()).not.toThrow();
+			// All sessions should be unread when no lastSeen data exists
+			expect(module.allSessionStatuses.value.get('sess-1')?.hasUnread).toBe(true);
+		});
 	});
 
-	it('should use Tailwind color format for text classes', () => {
-		const state: AgentProcessingState = {
-			status: 'processing',
-			phase: 'thinking',
-		};
-		const color = getProcessingPhaseColor(state);
-		expect(color?.text).toMatch(/^text-[a-z]+-\d{3}$/);
-	});
+	describe('reactivity to signal changes', () => {
+		it('should compute statuses from sessions signal', async () => {
+			// Set up sessions with two sessions from the start
+			mockSessions.value = [
+				createMockSession('sess-1', {
+					processingState: JSON.stringify({ status: 'processing', phase: 'thinking' }),
+				}),
+				createMockSession('sess-2', { processingState: JSON.stringify({ status: 'idle' }) }),
+			];
 
-	it('should have consistent color families between dot and text', () => {
-		const phases = ['initializing', 'thinking', 'streaming', 'finalizing'] as const;
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
 
-		phases.forEach((phase) => {
-			const state: AgentProcessingState = {
+			const { allSessionStatuses } = await import('../session-status.js');
+
+			// Should have both sessions
+			expect(allSessionStatuses.value.size).toBe(2);
+			expect(allSessionStatuses.value.get('sess-1')?.processingState).toEqual({
 				status: 'processing',
-				phase,
-			};
-			const color = getProcessingPhaseColor(state);
+				phase: 'thinking',
+			});
+			expect(allSessionStatuses.value.get('sess-2')?.processingState).toEqual({
+				status: 'idle',
+			});
+		});
+	});
 
-			// Extract color name from classes
-			const dotColor = color?.dot.match(/bg-([a-z]+)/)?.[1];
-			const textColor = color?.text.match(/text-([a-z]+)/)?.[1];
+	describe('SessionStatusInfo interface', () => {
+		it('should return correct SessionStatusInfo shape', async () => {
+			mockSessions.value = [
+				createMockSession('sess-1', {
+					processingState: JSON.stringify({ status: 'processing', phase: 'thinking' }),
+					metadata: {
+						messageCount: 10,
+						totalTokens: 0,
+						inputTokens: 0,
+						outputTokens: 0,
+						totalCost: 0,
+						toolCallCount: 0,
+					},
+				}),
+			];
 
-			expect(dotColor).toBe(textColor);
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const { allSessionStatuses } = await import('../session-status.js');
+
+			const status = allSessionStatuses.value.get('sess-1');
+			expect(status).toBeDefined();
+			expect(status?.processingState).toBeDefined();
+			expect(typeof status?.hasUnread).toBe('boolean');
 		});
 	});
 });
