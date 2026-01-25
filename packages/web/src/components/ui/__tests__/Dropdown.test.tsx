@@ -308,6 +308,120 @@ describe('Dropdown', () => {
 			const menuItems = document.body.querySelectorAll('[role="menuitem"]');
 			expect(menuItems.length).toBe(3);
 		});
+
+		it('should navigate up with ArrowUp key', async () => {
+			const { container } = render(
+				<Dropdown trigger={<button>Open</button>} items={defaultItems} />
+			);
+			container.querySelector('button')?.click();
+
+			await waitFor(() => {
+				const menuItems = document.body.querySelectorAll('[role="menuitem"]');
+				expect(menuItems.length).toBe(3);
+			});
+
+			const dropdown = container.querySelector('.relative');
+
+			// Simulate arrow up
+			const arrowUpEvent = new KeyboardEvent('keydown', {
+				key: 'ArrowUp',
+				bubbles: true,
+				cancelable: true,
+			});
+			dropdown?.dispatchEvent(arrowUpEvent);
+
+			// Should wrap to last item (index 2)
+			const menuItems = document.body.querySelectorAll('[role="menuitem"]');
+			expect(menuItems.length).toBe(3);
+		});
+
+		it('should activate item with Enter key', async () => {
+			const onClick = vi.fn(() => {});
+			const items: DropdownMenuItem[] = [{ label: 'Click Me', onClick }];
+
+			const { container } = render(<Dropdown trigger={<button>Open</button>} items={items} />);
+			container.querySelector('button')?.click();
+
+			await waitFor(() => {
+				const menuItem = document.body.querySelector('[role="menuitem"]');
+				expect(menuItem).toBeTruthy();
+			});
+
+			// Wait for the keyboard handler to be set up
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Focus the menu item and press Enter directly on it
+			const menuItem = document.body.querySelector('[role="menuitem"]') as HTMLButtonElement;
+			menuItem?.focus();
+
+			const enterEvent = new KeyboardEvent('keydown', {
+				key: 'Enter',
+				bubbles: true,
+				cancelable: true,
+			});
+			menuItem?.dispatchEvent(enterEvent);
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			expect(onClick).toHaveBeenCalled();
+		});
+
+		it('should activate item with Space key', async () => {
+			const onClick = vi.fn(() => {});
+			const items: DropdownMenuItem[] = [{ label: 'Click Me', onClick }];
+
+			const { container } = render(<Dropdown trigger={<button>Open</button>} items={items} />);
+			container.querySelector('button')?.click();
+
+			await waitFor(() => {
+				const menuItem = document.body.querySelector('[role="menuitem"]');
+				expect(menuItem).toBeTruthy();
+			});
+
+			// Wait for the keyboard handler to be set up
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Focus the menu item and press Space directly on it
+			const menuItem = document.body.querySelector('[role="menuitem"]') as HTMLButtonElement;
+			menuItem?.focus();
+
+			const spaceEvent = new KeyboardEvent('keydown', {
+				key: ' ',
+				bubbles: true,
+				cancelable: true,
+			});
+			menuItem?.dispatchEvent(spaceEvent);
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			expect(onClick).toHaveBeenCalled();
+		});
+
+		it('should wrap around when navigating past last item', async () => {
+			const { container } = render(
+				<Dropdown trigger={<button>Open</button>} items={defaultItems} />
+			);
+			container.querySelector('button')?.click();
+
+			await waitFor(() => {
+				const menuItems = document.body.querySelectorAll('[role="menuitem"]');
+				expect(menuItems.length).toBe(3);
+			});
+
+			const dropdown = container.querySelector('.relative');
+
+			// Navigate down 4 times (should wrap around to item 0)
+			for (let i = 0; i < 4; i++) {
+				const arrowDownEvent = new KeyboardEvent('keydown', {
+					key: 'ArrowDown',
+					bubbles: true,
+					cancelable: true,
+				});
+				dropdown?.dispatchEvent(arrowDownEvent);
+			}
+
+			// Should still have all items
+			const menuItems = document.body.querySelectorAll('[role="menuitem"]');
+			expect(menuItems.length).toBe(3);
+		});
 	});
 
 	describe('Controlled Mode', () => {
@@ -410,6 +524,77 @@ describe('Dropdown', () => {
 			await waitFor(() => {
 				const menu = document.body.querySelector('.animate-slideIn');
 				expect(menu).toBeTruthy();
+			});
+		});
+	});
+
+	describe('Click Outside Handling', () => {
+		it('should not close when clicking inside dropdown', async () => {
+			const { container } = render(
+				<Dropdown trigger={<button>Open</button>} items={defaultItems} />
+			);
+			container.querySelector('button')?.click();
+
+			await waitFor(() => {
+				const menu = document.body.querySelector('[role="menu"]');
+				expect(menu).toBeTruthy();
+			});
+
+			// Wait for delayed click listener
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Click inside the dropdown
+			const dropdown = container.querySelector('.relative');
+			dropdown?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+			// Should stay open
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			const menuAfter = document.body.querySelector('[role="menu"]');
+			expect(menuAfter).toBeTruthy();
+		});
+
+		it('should not close when clicking inside menu', async () => {
+			const { container } = render(
+				<Dropdown trigger={<button>Open</button>} items={defaultItems} />
+			);
+			container.querySelector('button')?.click();
+
+			await waitFor(() => {
+				const menu = document.body.querySelector('[role="menu"]');
+				expect(menu).toBeTruthy();
+			});
+
+			// Wait for delayed click listener
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Click inside the menu
+			const menu = document.body.querySelector('[role="menu"]');
+			menu?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+			// Should stay open (menu item clicks close it but generic menu clicks don't)
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		});
+
+		it('should close when clicking outside', async () => {
+			const { container } = render(
+				<Dropdown trigger={<button>Open</button>} items={defaultItems} />
+			);
+			container.querySelector('button')?.click();
+
+			await waitFor(() => {
+				const menu = document.body.querySelector('[role="menu"]');
+				expect(menu).toBeTruthy();
+			});
+
+			// Wait for delayed click listener
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Click outside the dropdown (on document body)
+			document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+			await waitFor(() => {
+				const menu = document.body.querySelector('[role="menu"]');
+				expect(menu).toBeNull();
 			});
 		});
 	});

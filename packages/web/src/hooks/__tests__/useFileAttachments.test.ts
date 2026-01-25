@@ -3,12 +3,25 @@
  * Tests for useFileAttachments Hook
  *
  * Tests file attachment state management and API surface.
- * Note: Tests that require actual FileReader operations are skipped because
- * happy-dom doesn't support FileReader correctly in CI environments.
  */
 
 import { renderHook, act } from '@testing-library/preact';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useFileAttachments } from '../useFileAttachments.ts';
+import { toast } from '../../lib/toast.ts';
+import { fileToBase64, validateImageFile } from '../../lib/file-utils.ts';
+
+// Mock the dependencies
+vi.mock('../../lib/toast.ts', () => ({
+	toast: {
+		error: vi.fn(),
+	},
+}));
+
+vi.mock('../../lib/file-utils.ts', () => ({
+	validateImageFile: vi.fn(),
+	fileToBase64: vi.fn(),
+}));
 
 // Helper to create mock file
 function createMockFile(name: string, type: string, content: string = 'test content'): File {
@@ -35,6 +48,14 @@ function createMockFileList(files: File[]): FileList {
 }
 
 describe('useFileAttachments', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		// Default: validation passes
+		vi.mocked(validateImageFile).mockReturnValue(null);
+		// Default: file conversion succeeds
+		vi.mocked(fileToBase64).mockResolvedValue('base64data');
+	});
+
 	describe('initialization', () => {
 		it('should initialize with empty attachments', () => {
 			const { result } = renderHook(() => useFileAttachments());
@@ -200,6 +221,233 @@ describe('useFileAttachments', () => {
 			// Should not throw even with no attachments
 			act(() => {
 				result.current.handleRemove(0);
+			});
+
+			expect(result.current.attachments.length).toBe(0);
+		});
+
+		it('should remove attachment at specified index', async () => {
+			const { result } = renderHook(() => useFileAttachments());
+
+			const file1 = createMockFile('test1.png', 'image/png');
+			const file2 = createMockFile('test2.png', 'image/png');
+			const input = {
+				files: createMockFileList([file1, file2]),
+				value: '',
+			} as unknown as HTMLInputElement;
+			const event = { target: input } as unknown as Event;
+
+			await act(async () => {
+				await result.current.handleFileSelect(event);
+			});
+
+			expect(result.current.attachments.length).toBe(2);
+
+			act(() => {
+				result.current.handleRemove(0);
+			});
+
+			expect(result.current.attachments.length).toBe(1);
+			expect(result.current.attachments[0].name).toBe('test2.png');
+		});
+	});
+
+	describe('file validation', () => {
+		it('should show toast error when file validation fails', async () => {
+			vi.mocked(validateImageFile).mockReturnValue('File too large');
+
+			const { result } = renderHook(() => useFileAttachments());
+
+			const file = createMockFile('large.png', 'image/png');
+			const input = {
+				files: createMockFileList([file]),
+				value: '',
+			} as unknown as HTMLInputElement;
+			const event = { target: input } as unknown as Event;
+
+			await act(async () => {
+				await result.current.handleFileSelect(event);
+			});
+
+			expect(toast.error).toHaveBeenCalledWith('File too large');
+			expect(result.current.attachments.length).toBe(0);
+		});
+
+		it('should skip invalid files but process valid ones', async () => {
+			vi.mocked(validateImageFile)
+				.mockReturnValueOnce('Invalid file type')
+				.mockReturnValueOnce(null);
+
+			const { result } = renderHook(() => useFileAttachments());
+
+			const file1 = createMockFile('bad.txt', 'text/plain');
+			const file2 = createMockFile('good.png', 'image/png');
+			const input = {
+				files: createMockFileList([file1, file2]),
+				value: '',
+			} as unknown as HTMLInputElement;
+			const event = { target: input } as unknown as Event;
+
+			await act(async () => {
+				await result.current.handleFileSelect(event);
+			});
+
+			expect(toast.error).toHaveBeenCalledWith('Invalid file type');
+			expect(result.current.attachments.length).toBe(1);
+			expect(result.current.attachments[0].name).toBe('good.png');
+		});
+	});
+
+	describe('file read errors', () => {
+		it('should show toast error when file read fails', async () => {
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(fileToBase64).mockRejectedValue(new Error('Read error'));
+
+			const { result } = renderHook(() => useFileAttachments());
+
+			const file = createMockFile('test.png', 'image/png');
+			const input = {
+				files: createMockFileList([file]),
+				value: '',
+			} as unknown as HTMLInputElement;
+			const event = { target: input } as unknown as Event;
+
+			await act(async () => {
+				await result.current.handleFileSelect(event);
+			});
+
+			expect(consoleSpy).toHaveBeenCalledWith('Failed to read file:', expect.any(Error));
+			expect(toast.error).toHaveBeenCalledWith('Read error');
+			expect(result.current.attachments.length).toBe(0);
+			consoleSpy.mockRestore();
+		});
+
+		it('should show generic error when error has no message', async () => {
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(fileToBase64).mockRejectedValue('non-error');
+
+			const { result } = renderHook(() => useFileAttachments());
+
+			const file = createMockFile('test.png', 'image/png');
+			const input = {
+				files: createMockFileList([file]),
+				value: '',
+			} as unknown as HTMLInputElement;
+			const event = { target: input } as unknown as Event;
+
+			await act(async () => {
+				await result.current.handleFileSelect(event);
+			});
+
+			expect(toast.error).toHaveBeenCalledWith('Failed to read test.png');
+			consoleSpy.mockRestore();
+		});
+	});
+
+	describe('handleFileDrop', () => {
+		it('should process dropped files', async () => {
+			const { result } = renderHook(() => useFileAttachments());
+
+			const file = createMockFile('dropped.png', 'image/png');
+			const files = createMockFileList([file]);
+
+			await act(async () => {
+				await result.current.handleFileDrop(files);
+			});
+
+			expect(result.current.attachments.length).toBe(1);
+			expect(result.current.attachments[0].name).toBe('dropped.png');
+			expect(result.current.attachments[0].data).toBe('base64data');
+		});
+
+		it('should process multiple dropped files', async () => {
+			const { result } = renderHook(() => useFileAttachments());
+
+			const file1 = createMockFile('drop1.png', 'image/png');
+			const file2 = createMockFile('drop2.jpg', 'image/jpeg');
+			const files = createMockFileList([file1, file2]);
+
+			await act(async () => {
+				await result.current.handleFileDrop(files);
+			});
+
+			expect(result.current.attachments.length).toBe(2);
+		});
+	});
+
+	describe('getImagesForSend with attachments', () => {
+		it('should return stripped images when attachments exist', async () => {
+			const { result } = renderHook(() => useFileAttachments());
+
+			const file = createMockFile('test.png', 'image/png');
+			const input = {
+				files: createMockFileList([file]),
+				value: '',
+			} as unknown as HTMLInputElement;
+			const event = { target: input } as unknown as Event;
+
+			await act(async () => {
+				await result.current.handleFileSelect(event);
+			});
+
+			const images = result.current.getImagesForSend();
+
+			expect(images).toBeDefined();
+			expect(images?.length).toBe(1);
+			expect(images?.[0]).toEqual({
+				data: 'base64data',
+				media_type: 'image/png',
+			});
+			// Should not contain name or size
+			expect(images?.[0]).not.toHaveProperty('name');
+			expect(images?.[0]).not.toHaveProperty('size');
+		});
+	});
+
+	describe('successful file processing', () => {
+		it('should add file with correct metadata', async () => {
+			const { result } = renderHook(() => useFileAttachments());
+
+			const file = createMockFile('photo.jpeg', 'image/jpeg');
+			const input = {
+				files: createMockFileList([file]),
+				value: '',
+			} as unknown as HTMLInputElement;
+			const event = { target: input } as unknown as Event;
+
+			await act(async () => {
+				await result.current.handleFileSelect(event);
+			});
+
+			expect(result.current.attachments.length).toBe(1);
+			expect(result.current.attachments[0]).toEqual({
+				data: 'base64data',
+				media_type: 'image/jpeg',
+				name: 'photo.jpeg',
+				size: file.size,
+			});
+		});
+	});
+
+	describe('clear with attachments', () => {
+		it('should clear all attachments', async () => {
+			const { result } = renderHook(() => useFileAttachments());
+
+			const file = createMockFile('test.png', 'image/png');
+			const input = {
+				files: createMockFileList([file]),
+				value: '',
+			} as unknown as HTMLInputElement;
+			const event = { target: input } as unknown as Event;
+
+			await act(async () => {
+				await result.current.handleFileSelect(event);
+			});
+
+			expect(result.current.attachments.length).toBe(1);
+
+			act(() => {
+				result.current.clear();
 			});
 
 			expect(result.current.attachments.length).toBe(0);

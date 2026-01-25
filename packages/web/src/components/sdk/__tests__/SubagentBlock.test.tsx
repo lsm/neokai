@@ -82,6 +82,91 @@ function createNestedToolUseMessage(): SDKMessage {
 	} as unknown as SDKMessage;
 }
 
+// Additional factory functions for comprehensive testing
+function createNestedThinkingMessage(): SDKMessage {
+	return {
+		type: 'assistant',
+		message: {
+			id: 'msg_thinking',
+			type: 'message',
+			role: 'assistant',
+			content: [
+				{
+					type: 'thinking',
+					thinking: 'Let me analyze this problem step by step...',
+				},
+			],
+			model: 'claude-3-5-sonnet-20241022',
+			stop_reason: 'end_turn',
+			stop_sequence: null,
+			usage: { input_tokens: 10, output_tokens: 20 },
+		},
+		parent_tool_use_id: 'toolu_task123',
+		uuid: createUUID(),
+		session_id: 'test-session',
+	} as unknown as SDKMessage;
+}
+
+function createNestedResultMessage(result: string, isError = false): SDKMessage {
+	return {
+		type: 'result',
+		subtype: 'success',
+		result,
+		is_error: isError,
+		parent_tool_use_id: 'toolu_task123',
+		uuid: createUUID(),
+		session_id: 'test-session',
+	} as unknown as SDKMessage;
+}
+
+function createNestedSystemMessage(subtype?: string): SDKMessage {
+	return {
+		type: 'system',
+		subtype: subtype || 'status',
+		parent_tool_use_id: 'toolu_task123',
+		uuid: createUUID(),
+		session_id: 'test-session',
+	} as unknown as SDKMessage;
+}
+
+function createNestedUserMessageWithArrayContent(): SDKMessage {
+	return {
+		type: 'user',
+		message: {
+			role: 'user',
+			content: [
+				{ type: 'text', text: 'Some user text content' },
+				{ type: 'tool_result', tool_use_id: 'toolu_123', content: 'Tool result' },
+			],
+		},
+		parent_tool_use_id: 'toolu_task123',
+		uuid: createUUID(),
+		session_id: 'test-session',
+	} as unknown as SDKMessage;
+}
+
+function createNestedUserMessageWithOnlyToolResult(): SDKMessage {
+	return {
+		type: 'user',
+		message: {
+			role: 'user',
+			content: [{ type: 'tool_result', tool_use_id: 'toolu_123', content: 'Tool result only' }],
+		},
+		parent_tool_use_id: 'toolu_task123',
+		uuid: createUUID(),
+		session_id: 'test-session',
+	} as unknown as SDKMessage;
+}
+
+function createUnknownMessage(): SDKMessage {
+	return {
+		type: 'unknown_type' as never,
+		parent_tool_use_id: 'toolu_task123',
+		uuid: createUUID(),
+		session_id: 'test-session',
+	} as unknown as SDKMessage;
+}
+
 describe('SubagentBlock', () => {
 	describe('Basic Rendering', () => {
 		it('should render subagent type badge', () => {
@@ -419,6 +504,314 @@ describe('SubagentBlock', () => {
 			expect(rotatedChevron?.className.baseVal || rotatedChevron?.getAttribute('class')).toContain(
 				'rotate-180'
 			);
+		});
+	});
+
+	describe('Output Extraction Advanced', () => {
+		it('should extract text from content array with text blocks', () => {
+			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+			const output = {
+				content: [
+					{ type: 'text', text: 'First block' },
+					{ type: 'text', text: 'Second block' },
+				],
+			};
+
+			const { container } = render(
+				<SubagentBlock input={input} output={output} toolId="toolu_task123" />
+			);
+
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
+
+			expect(container.textContent).toContain('First block');
+			expect(container.textContent).toContain('Second block');
+		});
+
+		it('should extract text from content array with content field in blocks', () => {
+			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+			const output = {
+				content: [{ type: 'document', content: 'Document content here' }],
+			};
+
+			const { container } = render(
+				<SubagentBlock input={input} output={output} toolId="toolu_task123" />
+			);
+
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
+
+			expect(container.textContent).toContain('Document content here');
+		});
+
+		it('should extract text from content array with string items', () => {
+			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+			const output = {
+				content: ['String item 1', 'String item 2'],
+			};
+
+			const { container } = render(
+				<SubagentBlock input={input} output={output} toolId="toolu_task123" />
+			);
+
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
+
+			expect(container.textContent).toContain('String item 1');
+			expect(container.textContent).toContain('String item 2');
+		});
+
+		it('should extract text from result field', () => {
+			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+			const output = { result: 'Result text here' };
+
+			const { container } = render(
+				<SubagentBlock input={input} output={output} toolId="toolu_task123" />
+			);
+
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
+
+			expect(container.textContent).toContain('Result text here');
+		});
+
+		it('should fallback to JSON stringify for unknown object structure', () => {
+			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+			const output = { unknown_field: 'value', another: 123 };
+
+			const { container } = render(
+				<SubagentBlock input={input} output={output} toolId="toolu_task123" />
+			);
+
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
+
+			expect(container.textContent).toContain('unknown_field');
+			expect(container.textContent).toContain('value');
+		});
+
+		it('should convert non-object non-string to string', () => {
+			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+			const output = 12345;
+
+			const { container } = render(
+				<SubagentBlock input={input} output={output} toolId="toolu_task123" />
+			);
+
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
+
+			expect(container.textContent).toContain('12345');
+		});
+	});
+
+	describe('Nested Message Types', () => {
+		it('should render thinking blocks in assistant messages', () => {
+			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+			const nestedMessages = [createNestedThinkingMessage()];
+
+			const { container } = render(
+				<SubagentBlock input={input} toolId="toolu_task123" nestedMessages={nestedMessages} />
+			);
+
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
+
+			expect(container.textContent).toContain('Let me analyze this problem');
+		});
+
+		it('should render result messages', () => {
+			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+			const nestedMessages = [createNestedResultMessage('The operation completed successfully')];
+
+			const { container } = render(
+				<SubagentBlock input={input} toolId="toolu_task123" nestedMessages={nestedMessages} />
+			);
+
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
+
+			expect(container.textContent).toContain('Result');
+			expect(container.textContent).toContain('The operation completed successfully');
+		});
+
+		it('should render error result messages with error styling', () => {
+			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+			const nestedMessages = [createNestedResultMessage('Error occurred', true)];
+
+			const { container } = render(
+				<SubagentBlock input={input} toolId="toolu_task123" nestedMessages={nestedMessages} />
+			);
+
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
+
+			// Should have error styling (red colors)
+			expect(
+				container.querySelector('.border-red-200, .dark\\:border-red-800, .text-red-600')
+			).toBeTruthy();
+		});
+
+		it('should skip system init messages', () => {
+			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+			const nestedMessages = [createNestedSystemMessage('init')];
+
+			const { container } = render(
+				<SubagentBlock input={input} toolId="toolu_task123" nestedMessages={nestedMessages} />
+			);
+
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
+
+			// Should not show 'init' in the output
+			expect(container.textContent).not.toContain('System: init');
+		});
+
+		it('should render non-init system messages', () => {
+			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+			const nestedMessages = [createNestedSystemMessage('status')];
+
+			const { container } = render(
+				<SubagentBlock input={input} toolId="toolu_task123" nestedMessages={nestedMessages} />
+			);
+
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
+
+			expect(container.textContent).toContain('System: status');
+		});
+
+		it('should skip user messages with only tool results', () => {
+			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+			const nestedMessages = [createNestedUserMessageWithOnlyToolResult()];
+
+			const { container } = render(
+				<SubagentBlock input={input} toolId="toolu_task123" nestedMessages={nestedMessages} />
+			);
+
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
+
+			// Should not display the tool result content separately
+			expect(container.textContent).not.toContain('Tool result only');
+		});
+
+		it('should render user messages with mixed content', () => {
+			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+			const nestedMessages = [createNestedUserMessageWithArrayContent()];
+
+			const { container } = render(
+				<SubagentBlock input={input} toolId="toolu_task123" nestedMessages={nestedMessages} />
+			);
+
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
+
+			expect(container.textContent).toContain('Some user text content');
+		});
+
+		it('should render unknown message types with details', () => {
+			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+			const nestedMessages = [createUnknownMessage()];
+
+			const { container } = render(
+				<SubagentBlock input={input} toolId="toolu_task123" nestedMessages={nestedMessages} />
+			);
+
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
+
+			expect(container.textContent).toContain('Unknown message type');
+		});
+
+		it('should render tool use with error result', () => {
+			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+			const nestedMessages = [createNestedToolUseMessage()];
+			const toolResultsMap = new Map([
+				['toolu_nested123', { content: { is_error: true, error: 'File not found' } }],
+			]);
+
+			const { container } = render(
+				<SubagentBlock
+					input={input}
+					toolId="toolu_task123"
+					nestedMessages={nestedMessages}
+					toolResultsMap={toolResultsMap}
+				/>
+			);
+
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
+
+			expect(container.textContent).toContain('Read');
+		});
+
+		it('should handle result message without result text', () => {
+			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+			const nestedMessages = [
+				{
+					type: 'result',
+					subtype: 'empty',
+					parent_tool_use_id: 'toolu_task123',
+					uuid: createUUID(),
+					session_id: 'test-session',
+				} as unknown as SDKMessage,
+			];
+
+			const { container } = render(
+				<SubagentBlock input={input} toolId="toolu_task123" nestedMessages={nestedMessages} />
+			);
+
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
+
+			// Should not crash when result is undefined
+			expect(container.textContent).toContain('Messages (1)');
+		});
+
+		it('should handle system message without subtype', () => {
+			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+			const nestedMessages = [
+				{
+					type: 'system',
+					parent_tool_use_id: 'toolu_task123',
+					uuid: createUUID(),
+					session_id: 'test-session',
+				} as unknown as SDKMessage,
+			];
+
+			const { container } = render(
+				<SubagentBlock input={input} toolId="toolu_task123" nestedMessages={nestedMessages} />
+			);
+
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
+
+			expect(container.textContent).toContain('System: message');
+		});
+	});
+
+	describe('Tool Results with Output Removed', () => {
+		it('should handle isOutputRemoved flag', () => {
+			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+			const nestedMessages = [createNestedToolUseMessage()];
+			const toolResultsMap = new Map([
+				['toolu_nested123', { content: 'Large content', isOutputRemoved: true }],
+			]);
+
+			const { container } = render(
+				<SubagentBlock
+					input={input}
+					toolId="toolu_task123"
+					nestedMessages={nestedMessages}
+					toolResultsMap={toolResultsMap}
+				/>
+			);
+
+			const button = container.querySelector('button')!;
+			fireEvent.click(button);
+
+			expect(container.textContent).toContain('Read');
 		});
 	});
 });

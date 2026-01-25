@@ -1,12 +1,733 @@
 // @ts-nocheck
 /**
- * Tests for ToolResultCard Component Logic
+ * Tests for ToolResultCard Component
  *
- * Tests pure logic without mock.module to avoid polluting other tests.
- * IMPORTANT: Bun's mock.module() persists across test files, so we test
-import { describe, it, expect } from 'vitest';
- * the underlying logic without using module mocks.
+ * Tests component rendering and interaction with proper mocking.
  */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/preact';
+import { ToolResultCard } from '../ToolResultCard.tsx';
+
+// Mock connection manager
+const mockCall = vi.fn();
+const mockGetHub = vi.fn();
+
+vi.mock('../../../../lib/connection-manager', () => ({
+	connectionManager: {
+		getHub: () => mockGetHub(),
+	},
+}));
+
+// Mock toast
+const mockToastSuccess = vi.fn();
+const mockToastError = vi.fn();
+
+vi.mock('../../../../lib/toast', () => ({
+	toast: {
+		success: (msg: string) => mockToastSuccess(msg),
+		error: (msg: string) => mockToastError(msg),
+	},
+}));
+
+// Mock child components to simplify testing
+vi.mock('../ToolIcon.tsx', () => ({
+	ToolIcon: ({ toolName, size }: { toolName: string; size: string }) => (
+		<span data-testid="tool-icon" data-tool={toolName} data-size={size}>
+			Icon
+		</span>
+	),
+}));
+
+vi.mock('../ToolSummary.tsx', () => ({
+	ToolSummary: ({ toolName: _toolName, input: _input }: { toolName: string; input: unknown }) => (
+		<span data-testid="tool-summary">Summary</span>
+	),
+}));
+
+vi.mock('../DiffViewer.tsx', () => ({
+	DiffViewer: ({
+		oldText,
+		newText,
+		filePath: _filePath,
+	}: {
+		oldText: string;
+		newText: string;
+		filePath?: string;
+	}) => (
+		<div data-testid="diff-viewer">
+			Diff: {oldText} → {newText}
+		</div>
+	),
+}));
+
+vi.mock('../CodeViewer.tsx', () => ({
+	CodeViewer: ({ code, filePath: _filePath }: { code: string; filePath?: string }) => (
+		<pre data-testid="code-viewer">{code}</pre>
+	),
+}));
+
+vi.mock('../../../ui/ConfirmModal.tsx', () => ({
+	ConfirmModal: ({
+		isOpen,
+		onClose,
+		onConfirm,
+		title,
+		isLoading,
+	}: {
+		isOpen: boolean;
+		onClose: () => void;
+		onConfirm: () => void;
+		title: string;
+		isLoading?: boolean;
+	}) =>
+		isOpen ? (
+			<div data-testid="confirm-modal">
+				<span data-testid="modal-title">{title}</span>
+				<button data-testid="modal-confirm" onClick={onConfirm} disabled={isLoading}>
+					Confirm
+				</button>
+				<button data-testid="modal-cancel" onClick={onClose}>
+					Cancel
+				</button>
+			</div>
+		) : null,
+}));
+
+// Mock tool-utils
+vi.mock('../tool-utils.ts', () => ({
+	getToolDisplayName: (name: string) => name,
+	getToolColors: () => ({
+		bg: 'bg-blue-50',
+		border: 'border-blue-200',
+		text: 'text-blue-600',
+		lightText: 'text-blue-400',
+		iconColor: 'text-blue-500',
+	}),
+	getOutputDisplayText: (output: unknown) =>
+		typeof output === 'string' ? output : JSON.stringify(output, null, 2),
+	hasCustomRenderer: (name: string) => name === 'TodoWrite',
+	getCustomRenderer: () => () => <div data-testid="custom-renderer">Custom</div>,
+	shouldExpandByDefault: (name: string) => name === 'Thinking',
+}));
+
+describe('ToolResultCard Component', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mockGetHub.mockResolvedValue({ call: mockCall });
+		mockCall.mockResolvedValue({});
+	});
+
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	describe('compact variant', () => {
+		it('should render compact variant correctly', () => {
+			render(
+				<ToolResultCard
+					toolName="Read"
+					toolId="read-123"
+					input={{ file_path: '/test.ts' }}
+					output="content"
+					variant="compact"
+				/>
+			);
+
+			const icon = screen.getByTestId('tool-icon');
+			expect(icon).toBeTruthy();
+			expect(icon.dataset.size).toBe('sm');
+			expect(screen.getByText('Read')).toBeTruthy();
+		});
+
+		it('should show error icon in compact variant when isError is true', () => {
+			render(
+				<ToolResultCard
+					toolName="Bash"
+					toolId="bash-123"
+					input={{ command: 'ls' }}
+					output="error"
+					isError={true}
+					variant="compact"
+				/>
+			);
+
+			// Check for X icon (error indicator)
+			const svg = document.querySelector('svg');
+			expect(svg).toBeTruthy();
+		});
+	});
+
+	describe('inline variant', () => {
+		it('should render inline variant correctly', () => {
+			render(
+				<ToolResultCard
+					toolName="Grep"
+					toolId="grep-123"
+					input={{ pattern: 'test' }}
+					output="matches"
+					variant="inline"
+				/>
+			);
+
+			const icon = screen.getByTestId('tool-icon');
+			expect(icon.dataset.size).toBe('xs');
+			expect(screen.getByText('Grep')).toBeTruthy();
+		});
+
+		it('should show error indicator in inline variant', () => {
+			render(
+				<ToolResultCard
+					toolName="Grep"
+					toolId="grep-123"
+					input={{ pattern: 'test' }}
+					output="error"
+					isError={true}
+					variant="inline"
+				/>
+			);
+
+			expect(screen.getByText('✗')).toBeTruthy();
+		});
+	});
+
+	describe('default variant', () => {
+		it('should render default variant with header', () => {
+			render(
+				<ToolResultCard
+					toolName="Read"
+					toolId="read-123"
+					input={{ file_path: '/test.ts' }}
+					output="file content"
+				/>
+			);
+
+			expect(screen.getByTestId('tool-icon')).toBeTruthy();
+			expect(screen.getByTestId('tool-summary')).toBeTruthy();
+			expect(screen.getByText('Read')).toBeTruthy();
+		});
+
+		it('should toggle expand/collapse on header click', async () => {
+			render(
+				<ToolResultCard
+					toolName="Bash"
+					toolId="bash-123"
+					input={{ command: 'ls' }}
+					output="output"
+					defaultExpanded={false}
+				/>
+			);
+
+			// Initially collapsed - no expanded content
+			expect(screen.queryByText('Input:')).toBeNull();
+
+			// Click to expand
+			const header = document.querySelector('button');
+			fireEvent.click(header!);
+
+			await waitFor(() => {
+				expect(screen.getByText('Input:')).toBeTruthy();
+			});
+
+			// Click to collapse
+			fireEvent.click(header!);
+
+			await waitFor(() => {
+				expect(screen.queryByText('Input:')).toBeNull();
+			});
+		});
+
+		it('should show error styling when isError is true', () => {
+			render(
+				<ToolResultCard
+					toolName="Bash"
+					toolId="bash-123"
+					input={{ command: 'invalid' }}
+					output="command not found"
+					isError={true}
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByText('(Error)')).toBeTruthy();
+		});
+	});
+
+	describe('detailed variant', () => {
+		it('should show tool ID in detailed variant', () => {
+			render(
+				<ToolResultCard
+					toolName="Bash"
+					toolId="bash-detailed-123"
+					input={{ command: 'ls' }}
+					output="files"
+					variant="detailed"
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByText('Tool ID:')).toBeTruthy();
+			expect(screen.getByText('bash-detailed-123')).toBeTruthy();
+		});
+	});
+
+	describe('special tool handling', () => {
+		it('should render DiffViewer for Edit tool', () => {
+			render(
+				<ToolResultCard
+					toolName="Edit"
+					toolId="edit-123"
+					input={{ file_path: '/test.ts', old_string: 'old', new_string: 'new' }}
+					output="success"
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByTestId('diff-viewer')).toBeTruthy();
+		});
+
+		it('should render CodeViewer for Read tool with string output', () => {
+			render(
+				<ToolResultCard
+					toolName="Read"
+					toolId="read-123"
+					input={{ file_path: '/test.ts' }}
+					output="   1→const x = 1;"
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByTestId('code-viewer')).toBeTruthy();
+		});
+
+		it('should render CodeViewer for Read tool with object output', () => {
+			render(
+				<ToolResultCard
+					toolName="Read"
+					toolId="read-123"
+					input={{ file_path: '/test.ts' }}
+					output={{ content: '   1→const x = 1;' }}
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByTestId('code-viewer')).toBeTruthy();
+		});
+
+		it('should render CodeViewer for Write tool', () => {
+			render(
+				<ToolResultCard
+					toolName="Write"
+					toolId="write-123"
+					input={{ file_path: '/test.ts', content: 'const x = 1;' }}
+					output="success"
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByTestId('code-viewer')).toBeTruthy();
+		});
+
+		it('should render Thinking tool with character count in detailed variant', () => {
+			render(
+				<ToolResultCard
+					toolName="Thinking"
+					toolId="thinking-123"
+					input="This is my thinking process"
+					output={null}
+					variant="detailed"
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByText(/Extended Thinking Process/)).toBeTruthy();
+			expect(screen.getByText(/27 characters/)).toBeTruthy();
+		});
+
+		it('should render custom renderer for TodoWrite', () => {
+			render(
+				<ToolResultCard
+					toolName="TodoWrite"
+					toolId="todo-123"
+					input={{ todos: [] }}
+					output="success"
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByTestId('custom-renderer')).toBeTruthy();
+		});
+	});
+
+	describe('line count display', () => {
+		it('should show line count for Read tool', () => {
+			// Use actual multi-line content (not escaped \n)
+			const multilineContent = `line1
+line2
+line3`;
+			render(
+				<ToolResultCard
+					toolName="Read"
+					toolId="read-123"
+					input={{ file_path: '/test.ts' }}
+					output={multilineContent}
+				/>
+			);
+
+			expect(screen.getByText('3')).toBeTruthy();
+		});
+
+		it('should show line count for Write tool', () => {
+			const content = `line1
+line2`;
+			render(
+				<ToolResultCard
+					toolName="Write"
+					toolId="write-123"
+					input={{ file_path: '/test.ts', content }}
+					output="success"
+				/>
+			);
+
+			expect(screen.getByText('+2')).toBeTruthy();
+		});
+
+		it('should show diff counts for Edit tool', () => {
+			const oldString = `old
+old2`;
+			render(
+				<ToolResultCard
+					toolName="Edit"
+					toolId="edit-123"
+					input={{
+						file_path: '/test.ts',
+						old_string: oldString,
+						new_string: 'new',
+					}}
+					output="success"
+				/>
+			);
+
+			expect(screen.getByText('+1')).toBeTruthy();
+			expect(screen.getByText('-2')).toBeTruthy();
+		});
+	});
+
+	describe('output removed state', () => {
+		it('should show warning when output is removed', () => {
+			render(
+				<ToolResultCard
+					toolName="Bash"
+					toolId="bash-123"
+					input={{ command: 'ls' }}
+					output="large output"
+					isOutputRemoved={true}
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByText('Output Removed from Agent Context')).toBeTruthy();
+		});
+	});
+
+	describe('delete functionality', () => {
+		it('should show delete button when messageUuid and sessionId present', () => {
+			render(
+				<ToolResultCard
+					toolName="Bash"
+					toolId="bash-123"
+					input={{ command: 'ls' }}
+					output="files"
+					messageUuid="msg-123"
+					sessionId="session-456"
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByText('Remove From Context')).toBeTruthy();
+		});
+
+		it('should not show delete button when output is removed', () => {
+			render(
+				<ToolResultCard
+					toolName="Bash"
+					toolId="bash-123"
+					input={{ command: 'ls' }}
+					output="files"
+					messageUuid="msg-123"
+					sessionId="session-456"
+					isOutputRemoved={true}
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.queryByText('Remove From Context')).toBeNull();
+		});
+
+		it('should show error toast when delete clicked without messageUuid', () => {
+			render(
+				<ToolResultCard
+					toolName="Bash"
+					toolId="bash-123"
+					input={{ command: 'ls' }}
+					output="files"
+					sessionId="session-456"
+					defaultExpanded={true}
+				/>
+			);
+
+			// No delete button should be shown
+			expect(screen.queryByText('Remove From Context')).toBeNull();
+		});
+
+		it('should open confirmation modal on delete click', async () => {
+			render(
+				<ToolResultCard
+					toolName="Bash"
+					toolId="bash-123"
+					input={{ command: 'ls' }}
+					output="files"
+					messageUuid="msg-123"
+					sessionId="session-456"
+					defaultExpanded={true}
+				/>
+			);
+
+			const deleteButton = screen.getByText('Remove From Context');
+			fireEvent.click(deleteButton);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('confirm-modal')).toBeTruthy();
+			});
+		});
+
+		it('should call API on confirm delete', async () => {
+			const originalReload = window.location.reload;
+			window.location.reload = vi.fn();
+
+			render(
+				<ToolResultCard
+					toolName="Bash"
+					toolId="bash-123"
+					input={{ command: 'ls' }}
+					output="files"
+					messageUuid="msg-123"
+					sessionId="session-456"
+					defaultExpanded={true}
+				/>
+			);
+
+			// Open modal
+			fireEvent.click(screen.getByText('Remove From Context'));
+
+			await waitFor(() => {
+				expect(screen.getByTestId('confirm-modal')).toBeTruthy();
+			});
+
+			// Confirm delete
+			fireEvent.click(screen.getByTestId('modal-confirm'));
+
+			await waitFor(() => {
+				expect(mockCall).toHaveBeenCalledWith('message.removeOutput', {
+					sessionId: 'session-456',
+					messageUuid: 'msg-123',
+				});
+			});
+
+			expect(mockToastSuccess).toHaveBeenCalledWith('Tool output removed. Reloading session...');
+
+			window.location.reload = originalReload;
+		});
+
+		it('should show error toast on delete failure', async () => {
+			mockCall.mockRejectedValue(new Error('Delete failed'));
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			render(
+				<ToolResultCard
+					toolName="Bash"
+					toolId="bash-123"
+					input={{ command: 'ls' }}
+					output="files"
+					messageUuid="msg-123"
+					sessionId="session-456"
+					defaultExpanded={true}
+				/>
+			);
+
+			// Open modal
+			fireEvent.click(screen.getByText('Remove From Context'));
+
+			await waitFor(() => {
+				expect(screen.getByTestId('confirm-modal')).toBeTruthy();
+			});
+
+			// Confirm delete
+			fireEvent.click(screen.getByTestId('modal-confirm'));
+
+			await waitFor(() => {
+				expect(mockToastError).toHaveBeenCalledWith('Delete failed');
+			});
+
+			consoleError.mockRestore();
+		});
+
+		it('should show fallback error message on non-Error exception', async () => {
+			mockCall.mockRejectedValue('Unknown error');
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			render(
+				<ToolResultCard
+					toolName="Bash"
+					toolId="bash-123"
+					input={{ command: 'ls' }}
+					output="files"
+					messageUuid="msg-123"
+					sessionId="session-456"
+					defaultExpanded={true}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Remove From Context'));
+
+			await waitFor(() => {
+				expect(screen.getByTestId('confirm-modal')).toBeTruthy();
+			});
+
+			fireEvent.click(screen.getByTestId('modal-confirm'));
+
+			await waitFor(() => {
+				expect(mockToastError).toHaveBeenCalledWith('Failed to remove output');
+			});
+
+			consoleError.mockRestore();
+		});
+
+		it('should close modal on cancel', async () => {
+			render(
+				<ToolResultCard
+					toolName="Bash"
+					toolId="bash-123"
+					input={{ command: 'ls' }}
+					output="files"
+					messageUuid="msg-123"
+					sessionId="session-456"
+					defaultExpanded={true}
+				/>
+			);
+
+			// Open modal
+			fireEvent.click(screen.getByText('Remove From Context'));
+
+			await waitFor(() => {
+				expect(screen.getByTestId('confirm-modal')).toBeTruthy();
+			});
+
+			// Cancel
+			fireEvent.click(screen.getByTestId('modal-cancel'));
+
+			await waitFor(() => {
+				expect(screen.queryByTestId('confirm-modal')).toBeNull();
+			});
+		});
+	});
+
+	describe('expand state', () => {
+		it('should respect defaultExpanded prop', () => {
+			render(
+				<ToolResultCard
+					toolName="Bash"
+					toolId="bash-123"
+					input={{ command: 'ls' }}
+					output="files"
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.getByText('Input:')).toBeTruthy();
+		});
+
+		it('should expand Thinking tool by default', () => {
+			render(
+				<ToolResultCard
+					toolName="Thinking"
+					toolId="thinking-123"
+					input="thinking content"
+					output={null}
+				/>
+			);
+
+			// Thinking content should be visible
+			expect(screen.getByText('thinking content')).toBeTruthy();
+		});
+	});
+
+	describe('className prop', () => {
+		it('should apply custom className', () => {
+			const { container } = render(
+				<ToolResultCard
+					toolName="Read"
+					toolId="read-123"
+					input={{ file_path: '/test.ts' }}
+					output="content"
+					className="custom-class"
+				/>
+			);
+
+			expect((container.firstChild as HTMLElement).className).toContain('custom-class');
+		});
+	});
+
+	describe('null/undefined output handling', () => {
+		it('should not render output section when output is null', () => {
+			render(
+				<ToolResultCard
+					toolName="Bash"
+					toolId="bash-123"
+					input={{ command: 'ls' }}
+					output={null}
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.queryByText('Output:')).toBeNull();
+		});
+
+		it('should not render output section when output is undefined', () => {
+			render(
+				<ToolResultCard
+					toolName="Bash"
+					toolId="bash-123"
+					input={{ command: 'ls' }}
+					output={undefined}
+					defaultExpanded={true}
+				/>
+			);
+
+			expect(screen.queryByText('Output:')).toBeNull();
+		});
+	});
+
+	describe('stripLineNumbers function', () => {
+		it('should strip line numbers from Read output and pass to CodeViewer', () => {
+			render(
+				<ToolResultCard
+					toolName="Read"
+					toolId="read-123"
+					input={{ file_path: '/test.ts' }}
+					output="   1→const x = 1;"
+					defaultExpanded={true}
+				/>
+			);
+
+			// CodeViewer should receive stripped content
+			const codeViewer = screen.getByTestId('code-viewer');
+			expect(codeViewer.textContent).toBe('const x = 1;');
+		});
+	});
+});
+
+// ===== Logic Tests (kept from original) =====
 
 // Tool color configuration matching the component
 const TOOL_COLORS = {
@@ -33,7 +754,6 @@ const TOOL_COLORS = {
 	},
 };
 
-// Tool category mapping
 function getToolCategory(toolName: string): keyof typeof TOOL_COLORS {
 	const fileTools = ['Read', 'Write', 'Edit', 'Glob', 'NotebookEdit'];
 	const searchTools = ['Grep', 'WebSearch', 'WebFetch'];
@@ -47,7 +767,6 @@ function getToolCategory(toolName: string): keyof typeof TOOL_COLORS {
 	return 'system';
 }
 
-// Get display name from tool name (handle MCP tools)
 function getDisplayName(toolName: string): string {
 	if (toolName.startsWith('mcp__')) {
 		const parts = toolName.split('__');
@@ -56,34 +775,28 @@ function getDisplayName(toolName: string): string {
 	return toolName;
 }
 
-// Get file extension from path
 function getFileExtension(filePath: string): string {
 	const parts = filePath.split('.');
 	return parts.length > 1 ? parts[parts.length - 1] : '';
 }
 
-// Count lines in text
 function countLines(text: string): number {
 	if (!text) return 0;
 	return text.split('\n').length;
 }
 
-// Calculate diff stats
 function calculateDiffStats(
 	oldString: string,
 	newString: string
 ): { added: number; removed: number } {
 	const oldLines = oldString ? oldString.split('\n').length : 0;
 	const newLines = newString ? newString.split('\n').length : 0;
-
-	// Simplified diff calculation
 	return {
 		added: newLines,
 		removed: oldLines,
 	};
 }
 
-// Format input summary for display
 function formatInputSummary(toolName: string, input: unknown): string {
 	if (typeof input === 'string') return input;
 	if (!input || typeof input !== 'object') return '';
@@ -121,14 +834,9 @@ function formatInputSummary(toolName: string, input: unknown): string {
 	return '';
 }
 
-// Determine if tool should be expanded by default
 function shouldExpandByDefault(toolName: string, isError: boolean): boolean {
-	// Errors are always collapsed
 	if (isError) return false;
-
-	// Thinking tool is expanded by default
 	if (toolName === 'Thinking') return true;
-
 	return false;
 }
 
@@ -253,7 +961,7 @@ describe('ToolResultCard Logic', () => {
 		it('should truncate long Bash commands', () => {
 			const longCmd = 'a'.repeat(100);
 			const summary = formatInputSummary('Bash', { command: longCmd });
-			expect(summary.length).toBe(53); // 50 + '...'
+			expect(summary.length).toBe(53);
 			expect(summary.endsWith('...')).toBe(true);
 		});
 
@@ -290,180 +998,135 @@ describe('ToolResultCard Logic', () => {
 		});
 	});
 
-	describe('Variant Styles', () => {
-		it('should determine compact variant styles', () => {
-			const variant = 'compact';
-			const isCompact = variant === 'compact';
-			const isInline = variant === 'inline';
+	describe('stripLineNumbers Logic', () => {
+		function stripLineNumbers(content: string): string {
+			return content
+				.split('\n')
+				.map((line) => {
+					const match = line.match(/^\s*\d+→(.*)$/);
+					return match ? match[1] : line;
+				})
+				.join('\n');
+		}
 
-			expect(isCompact).toBe(true);
-			expect(isInline).toBe(false);
+		it('should strip line numbers from Read output format', () => {
+			const input = '   1→const x = 1;\n   2→const y = 2;';
+			const result = stripLineNumbers(input);
+			expect(result).toBe('const x = 1;\nconst y = 2;');
 		});
 
-		it('should determine inline variant styles', () => {
-			const variant = 'inline';
-			const isCompact = variant === 'compact';
-			const isInline = variant === 'inline';
-
-			expect(isCompact).toBe(false);
-			expect(isInline).toBe(true);
+		it('should handle single-digit line numbers', () => {
+			const input = '   1→first line';
+			const result = stripLineNumbers(input);
+			expect(result).toBe('first line');
 		});
 
-		it('should determine default variant styles', () => {
-			const variant = 'default';
-			const isCompact = variant === 'compact';
-			const isInline = variant === 'inline';
-
-			expect(isCompact).toBe(false);
-			expect(isInline).toBe(false);
-		});
-	});
-
-	describe('Error State Styling', () => {
-		it('should apply error styling when isError is true', () => {
-			const isError = true;
-			const errorClass = isError ? 'text-red-600' : '';
-			const errorBg = isError ? 'bg-red-50' : '';
-
-			expect(errorClass).toBe('text-red-600');
-			expect(errorBg).toBe('bg-red-50');
+		it('should handle multi-digit line numbers', () => {
+			const input = '  10→line 10\n 100→line 100\n1000→line 1000';
+			const result = stripLineNumbers(input);
+			expect(result).toBe('line 10\nline 100\nline 1000');
 		});
 
-		it('should not apply error styling when isError is false', () => {
-			const isError = false;
-			const errorClass = isError ? 'text-red-600' : '';
-
-			expect(errorClass).toBe('');
-		});
-	});
-
-	describe('Output Removed State', () => {
-		it('should show warning when output is removed', () => {
-			const isOutputRemoved = true;
-			const showWarning = isOutputRemoved;
-
-			expect(showWarning).toBe(true);
+		it('should preserve lines without line number format', () => {
+			const input = 'no line number here';
+			const result = stripLineNumbers(input);
+			expect(result).toBe('no line number here');
 		});
 
-		it('should not show warning when output is present', () => {
-			const isOutputRemoved = false;
-			const showWarning = isOutputRemoved;
+		it('should handle empty content in line', () => {
+			const input = '   1→';
+			const result = stripLineNumbers(input);
+			expect(result).toBe('');
+		});
 
-			expect(showWarning).toBe(false);
+		it('should handle mixed content', () => {
+			const input = '   1→code line\nplain text\n   2→more code';
+			const result = stripLineNumbers(input);
+			expect(result).toBe('code line\nplain text\nmore code');
+		});
+
+		it('should handle arrow character in content', () => {
+			const input = '   1→const arrow = →;';
+			const result = stripLineNumbers(input);
+			expect(result).toBe('const arrow = →;');
 		});
 	});
 
-	describe('Special Tool Rendering Logic', () => {
-		describe('Edit Tool', () => {
-			it('should detect Edit tool with diff data', () => {
-				const toolName = 'Edit';
-				const input = {
-					file_path: '/test.ts',
-					old_string: 'const x = 1;',
-					new_string: 'const x = 2;',
-				};
+	describe('calculateDiffCounts Logic', () => {
+		function calculateDiffCounts(
+			oldText: string,
+			newText: string
+		): { addedLines: number; removedLines: number } {
+			const oldLines = oldText.split('\n');
+			const newLines = newText.split('\n');
 
-				const hasDiff =
-					toolName === 'Edit' && input.old_string !== undefined && input.new_string !== undefined;
+			let firstDiffIndex = 0;
+			while (
+				firstDiffIndex < Math.min(oldLines.length, newLines.length) &&
+				oldLines[firstDiffIndex] === newLines[firstDiffIndex]
+			) {
+				firstDiffIndex++;
+			}
 
-				expect(hasDiff).toBe(true);
-			});
+			let lastDiffIndexOld = oldLines.length - 1;
+			let lastDiffIndexNew = newLines.length - 1;
+			while (
+				lastDiffIndexOld > firstDiffIndex &&
+				lastDiffIndexNew > firstDiffIndex &&
+				oldLines[lastDiffIndexOld] === newLines[lastDiffIndexNew]
+			) {
+				lastDiffIndexOld--;
+				lastDiffIndexNew--;
+			}
+
+			const removedLines = lastDiffIndexOld - firstDiffIndex + 1;
+			const addedLines = lastDiffIndexNew - firstDiffIndex + 1;
+
+			return { addedLines, removedLines };
+		}
+
+		it('should count simple single line change', () => {
+			const { addedLines, removedLines } = calculateDiffCounts('old', 'new');
+			expect(addedLines).toBe(1);
+			expect(removedLines).toBe(1);
 		});
 
-		describe('Write Tool', () => {
-			it('should detect Write tool with content', () => {
-				const toolName = 'Write';
-				const input = {
-					file_path: '/test.ts',
-					content: 'const x = 1;\nconst y = 2;',
-				};
-
-				const hasWriteContent = toolName === 'Write' && input.content !== undefined;
-
-				expect(hasWriteContent).toBe(true);
-			});
-
-			it('should calculate lines for Write tool', () => {
-				const content = 'line1\nline2\nline3';
-				const lines = countLines(content);
-
-				expect(lines).toBe(3);
-			});
+		it('should count added lines when new text is longer', () => {
+			const { addedLines, removedLines } = calculateDiffCounts('line1', 'line1\nline2\nline3');
+			expect(addedLines).toBe(2);
+			expect(removedLines).toBe(0);
 		});
 
-		describe('Thinking Tool', () => {
-			it('should detect Thinking tool', () => {
-				const toolName = 'Thinking';
-				const isThinking = toolName === 'Thinking';
-
-				expect(isThinking).toBe(true);
-			});
-
-			it('should calculate character count for Thinking', () => {
-				const input = 'This is the thinking process...';
-				const charCount = input.length;
-
-				expect(charCount).toBe(31);
-			});
+		it('should count removed lines when old text is longer', () => {
+			const { addedLines, removedLines } = calculateDiffCounts('line1\nline2\nline3', 'line1');
+			expect(addedLines).toBe(0);
+			expect(removedLines).toBe(2);
 		});
 
-		describe('TodoWrite Tool', () => {
-			it('should detect TodoWrite tool with todos', () => {
-				const toolName = 'TodoWrite';
-				const input = {
-					todos: [
-						{ content: 'Task 1', status: 'completed', activeForm: '' },
-						{ content: 'Task 2', status: 'pending', activeForm: '' },
-					],
-				};
-
-				const hasTodos = toolName === 'TodoWrite' && Array.isArray(input.todos);
-
-				expect(hasTodos).toBe(true);
-				expect(input.todos.length).toBe(2);
-			});
-		});
-	});
-
-	describe('Output Display Logic', () => {
-		it('should handle string output', () => {
-			const output = 'hello';
-			const displayOutput = typeof output === 'string' ? output : JSON.stringify(output, null, 2);
-
-			expect(displayOutput).toBe('hello');
+		it('should handle identical text', () => {
+			const { addedLines, removedLines } = calculateDiffCounts('same', 'same');
+			expect(addedLines).toBe(0);
+			expect(removedLines).toBe(0);
 		});
 
-		it('should handle object output', () => {
-			const output = { result: 'success', count: 42 };
-			const displayOutput = typeof output === 'string' ? output : JSON.stringify(output, null, 2);
-
-			expect(displayOutput).toContain('success');
-			expect(displayOutput).toContain('42');
+		it('should handle changes in the middle', () => {
+			const oldText = 'header\nold middle\nfooter';
+			const newText = 'header\nnew middle\nfooter';
+			const { addedLines, removedLines } = calculateDiffCounts(oldText, newText);
+			expect(addedLines).toBe(1);
+			expect(removedLines).toBe(1);
 		});
 
-		it('should handle null output', () => {
-			const output = null;
-			const hasOutput = output !== null && output !== undefined;
-
-			expect(hasOutput).toBe(false);
+		it('should handle empty old text', () => {
+			const { addedLines, removedLines } = calculateDiffCounts('', 'new content');
+			expect(addedLines).toBe(1);
+			expect(removedLines).toBe(1);
 		});
 
-		it('should handle undefined output', () => {
-			const output = undefined;
-			const hasOutput = output !== null && output !== undefined;
-
-			expect(hasOutput).toBe(false);
-		});
-	});
-
-	describe('Detailed Variant', () => {
-		it('should include tool ID in detailed mode', () => {
-			const variant = 'detailed';
-			const toolId = 'bash-123';
-			const showToolId = variant === 'detailed';
-
-			expect(showToolId).toBe(true);
-			expect(toolId).toBe('bash-123');
+		it('should handle empty new text', () => {
+			const { addedLines, removedLines } = calculateDiffCounts('old content', '');
+			expect(addedLines).toBe(1);
+			expect(removedLines).toBe(1);
 		});
 	});
 });

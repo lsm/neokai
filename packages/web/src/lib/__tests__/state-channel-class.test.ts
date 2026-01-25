@@ -556,4 +556,108 @@ describe('StateChannel - Comprehensive Coverage', () => {
 			expect(channel.value).toBeDefined();
 		});
 	});
+
+	describe('delta subscriptions', () => {
+		it('should subscribe to delta channel when enableDeltas is true', async () => {
+			const mergeFn = vi.fn((current, delta) => ({ ...current, ...delta }));
+			const deltaChannel = new StateChannel(mockHubObj as unknown as MessageHub, 'test.channel', {
+				enableDeltas: true,
+				mergeDelta: mergeFn,
+				useOptimisticSubscriptions: true,
+			});
+
+			await deltaChannel.start();
+
+			// Should have called subscribeOptimistic for the delta channel
+			expect(mockHubObj.subscribeOptimistic).toHaveBeenCalled();
+			const calls = mockHubObj.subscribeOptimistic.mock.calls;
+			const deltaCall = calls.find((call) => call[0] === 'test.channel.delta');
+			expect(deltaCall).toBeDefined();
+
+			await deltaChannel.stop();
+		});
+
+		it('should apply delta updates via mergeDelta function', async () => {
+			const mergeFn = vi.fn((current, delta) => ({ ...current, ...delta }));
+			const deltaChannel = new StateChannel(mockHubObj as unknown as MessageHub, 'test.channel', {
+				enableDeltas: true,
+				mergeDelta: mergeFn,
+				useOptimisticSubscriptions: true,
+			});
+
+			await deltaChannel.start();
+
+			// Get the delta callback
+			const calls = mockHubObj.subscribeOptimistic.mock.calls;
+			const deltaCall = calls.find((call) => call[0] === 'test.channel.delta');
+
+			if (deltaCall) {
+				const deltaCallback = deltaCall[1];
+				// Simulate delta update
+				deltaCallback({ newField: 'value' });
+
+				// mergeDelta should have been called
+				expect(mergeFn).toHaveBeenCalled();
+			}
+
+			await deltaChannel.stop();
+		});
+
+		it('should warn when delta received but state is null', async () => {
+			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			mockHubObj.call.mockResolvedValue(null); // state will be null
+
+			const mergeFn = vi.fn((current, delta) => ({ ...current, ...delta }));
+			const deltaChannel = new StateChannel(mockHubObj as unknown as MessageHub, 'test.channel', {
+				enableDeltas: true,
+				mergeDelta: mergeFn,
+				useOptimisticSubscriptions: true,
+			});
+
+			await deltaChannel.start();
+
+			// Get the delta callback
+			const calls = mockHubObj.subscribeOptimistic.mock.calls;
+			const deltaCall = calls.find((call) => call[0] === 'test.channel.delta');
+
+			if (deltaCall) {
+				const deltaCallback = deltaCall[1];
+				// Simulate delta update when state is null
+				deltaCallback({ newField: 'value' });
+
+				// Should log warning
+				expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Cannot apply delta'));
+			}
+
+			consoleSpy.mockRestore();
+			await deltaChannel.stop();
+		});
+	});
+
+	describe('hybrid refresh error handling', () => {
+		it('should throw error when hybridRefresh fails', async () => {
+			await channel.start();
+
+			// Make fetchSnapshot fail on reconnect
+			mockHubObj.call.mockRejectedValue(new Error('Fetch failed'));
+
+			const onConnectionCall = mockHubObj.onConnection.mock.calls[0];
+			if (onConnectionCall) {
+				const callback = onConnectionCall[0];
+
+				// Trigger reconnection - this calls hybridRefresh internally
+				// The error should be caught by the .catch(console.error) handler
+				const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+				callback('connected');
+
+				// Wait for async operation
+				await new Promise((resolve) => setTimeout(resolve, 10));
+
+				// Console.error should have been called with the error
+				expect(consoleSpy).toHaveBeenCalled();
+				consoleSpy.mockRestore();
+			}
+		});
+	});
 });

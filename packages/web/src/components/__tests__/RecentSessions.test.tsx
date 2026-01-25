@@ -4,15 +4,36 @@
  *
  * Tests the recent sessions welcome page with session cards,
  * mobile menu, and empty state.
-import { describe, it, expect } from 'vitest';
  */
 
-import { render, cleanup } from '@testing-library/preact';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, cleanup, fireEvent } from '@testing-library/preact';
+import { signal } from '@preact/signals';
 import type { Session } from '@liuboer/shared';
+
+// Define vi.fn() in vi.hoisted, signals after imports with getters for deferred evaluation
+const { mockNavigateToSession } = vi.hoisted(() => ({
+	mockNavigateToSession: vi.fn(),
+}));
+let mockSidebarOpenSignal: ReturnType<typeof signal<boolean>>;
+
+vi.mock('../../lib/router.ts', () => ({
+	navigateToSession: (sessionId: string) => mockNavigateToSession(sessionId),
+}));
+
+vi.mock('../../lib/signals.ts', () => ({
+	get sidebarOpenSignal() {
+		return mockSidebarOpenSignal;
+	},
+}));
+
+// Initialize signal after mocks are set up
+mockSidebarOpenSignal = signal(false);
+
 import RecentSessions from '../RecentSessions';
 
 // Mock window.innerWidth for mobile detection
-Object.defineProperty(window, 'innerWidth', { value: 1024, writable: true });
+Object.defineProperty(window, 'innerWidth', { value: 1024, writable: true, configurable: true });
 
 describe('RecentSessions', () => {
 	const createMockSession = (id: string, title: string, lastActiveAt: Date): Session => ({
@@ -41,10 +62,18 @@ describe('RecentSessions', () => {
 
 	beforeEach(() => {
 		cleanup();
+		vi.resetAllMocks();
+		mockSidebarOpenSignal.value = false;
+		Object.defineProperty(window, 'innerWidth', {
+			value: 1024,
+			writable: true,
+			configurable: true,
+		});
 	});
 
 	afterEach(() => {
 		cleanup();
+		vi.resetAllMocks();
 	});
 
 	describe('Basic Rendering', () => {
@@ -195,6 +224,62 @@ describe('RecentSessions', () => {
 			);
 			expect(sessionCards[0].className).toContain('cursor-pointer');
 		});
+
+		it('should navigate to session when clicked', () => {
+			const { container } = render(<RecentSessions sessions={mockSessions} />);
+
+			const sessionCards = Array.from(container.querySelectorAll('button')).filter((btn) =>
+				btn.className.includes('group')
+			);
+
+			fireEvent.click(sessionCards[0]);
+
+			// Should call navigateToSession with the first session's ID
+			expect(mockNavigateToSession).toHaveBeenCalledWith('session-1');
+		});
+
+		it('should close sidebar on mobile when session is clicked', () => {
+			// Set mobile width
+			Object.defineProperty(window, 'innerWidth', {
+				value: 500,
+				writable: true,
+				configurable: true,
+			});
+			mockSidebarOpenSignal.value = true;
+
+			const { container } = render(<RecentSessions sessions={mockSessions} />);
+
+			const sessionCards = Array.from(container.querySelectorAll('button')).filter((btn) =>
+				btn.className.includes('group')
+			);
+
+			fireEvent.click(sessionCards[0]);
+
+			expect(mockNavigateToSession).toHaveBeenCalledWith('session-1');
+			expect(mockSidebarOpenSignal.value).toBe(false);
+		});
+
+		it('should not close sidebar on desktop when session is clicked', () => {
+			// Set desktop width
+			Object.defineProperty(window, 'innerWidth', {
+				value: 1024,
+				writable: true,
+				configurable: true,
+			});
+			mockSidebarOpenSignal.value = true;
+
+			const { container } = render(<RecentSessions sessions={mockSessions} />);
+
+			const sessionCards = Array.from(container.querySelectorAll('button')).filter((btn) =>
+				btn.className.includes('group')
+			);
+
+			fireEvent.click(sessionCards[0]);
+
+			expect(mockNavigateToSession).toHaveBeenCalledWith('session-1');
+			// Sidebar should remain open on desktop
+			expect(mockSidebarOpenSignal.value).toBe(true);
+		});
 	});
 
 	describe('Mobile Menu', () => {
@@ -211,6 +296,17 @@ describe('RecentSessions', () => {
 			const menuButton = container.querySelector('button[title="Open menu"]')!;
 			const svg = menuButton.querySelector('svg');
 			expect(svg).toBeTruthy();
+		});
+
+		it('should open sidebar when menu button is clicked', () => {
+			mockSidebarOpenSignal.value = false;
+
+			const { container } = render(<RecentSessions sessions={mockSessions} />);
+
+			const menuButton = container.querySelector('button[title="Open menu"]');
+			fireEvent.click(menuButton!);
+
+			expect(mockSidebarOpenSignal.value).toBe(true);
 		});
 	});
 

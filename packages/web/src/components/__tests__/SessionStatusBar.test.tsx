@@ -4,11 +4,11 @@
  *
  * Tests the session status bar with connection status, model switcher,
  * thinking level, auto-scroll toggle, and context usage display.
-import { describe, it, expect, vi } from 'vitest';
  *
  * Note: Tests without mock.module to avoid polluting other tests.
  */
 
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import type { ContextInfo, ModelInfo } from '@liuboer/shared';
 import SessionStatusBar from '../SessionStatusBar';
@@ -356,6 +356,311 @@ describe('SessionStatusBar', () => {
 			const content = container.firstElementChild;
 			expect(content?.className).toContain('flex');
 			expect(content?.className).toContain('items-center');
+		});
+	});
+
+	describe('Model Dropdown', () => {
+		it('should open model dropdown when clicked', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+
+			const modelButton = container.querySelector('.control-btn') as HTMLButtonElement;
+			fireEvent.click(modelButton);
+
+			// Should show the dropdown with model options
+			expect(container.textContent).toContain('Select Model');
+		});
+
+		it('should show all available models in dropdown', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+
+			const modelButton = container.querySelector('.control-btn') as HTMLButtonElement;
+			fireEvent.click(modelButton);
+
+			expect(container.textContent).toContain('Claude Opus 4');
+			expect(container.textContent).toContain('Claude Sonnet 4');
+			expect(container.textContent).toContain('Claude Haiku 3');
+		});
+
+		it('should show current model indicator', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+
+			const modelButton = container.querySelector('.control-btn') as HTMLButtonElement;
+			fireEvent.click(modelButton);
+
+			expect(container.textContent).toContain('(current)');
+		});
+
+		it('should call onModelSwitch when a model is selected', async () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+
+			const modelButton = container.querySelector('.control-btn') as HTMLButtonElement;
+			fireEvent.click(modelButton);
+
+			// Find and click the Opus model button
+			const buttons = Array.from(container.querySelectorAll('button'));
+			const opusButton = buttons.find((btn) => btn.textContent?.includes('Claude Opus 4'));
+			fireEvent.click(opusButton!);
+
+			expect(mockOnModelSwitch).toHaveBeenCalledWith('claude-opus-4-20250514');
+		});
+
+		it('should close model dropdown when clicking it again', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+
+			const modelButton = container.querySelector('.control-btn') as HTMLButtonElement;
+
+			// Open
+			fireEvent.click(modelButton);
+			expect(container.textContent).toContain('Select Model');
+
+			// Close
+			fireEvent.click(modelButton);
+			expect(container.textContent).not.toContain('Select Model');
+		});
+
+		it('should close thinking dropdown when opening model dropdown', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+
+			// Open thinking dropdown first
+			const buttons = Array.from(container.querySelectorAll('.control-btn'));
+			const thinkingButton = buttons.find(
+				(btn) => btn.getAttribute('title')?.includes('Thinking:') || false
+			)!;
+			fireEvent.click(thinkingButton);
+			expect(container.textContent).toContain('Thinking Level');
+
+			// Open model dropdown
+			const modelButton = container.querySelector('.control-btn') as HTMLButtonElement;
+			fireEvent.click(modelButton);
+
+			// Model dropdown should be open, thinking dropdown should be closed
+			expect(container.textContent).toContain('Select Model');
+			expect(container.textContent).not.toContain('Thinking Level');
+		});
+	});
+
+	describe('Thinking Dropdown', () => {
+		it('should open thinking dropdown when clicked', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+
+			const buttons = Array.from(container.querySelectorAll('.control-btn'));
+			const thinkingButton = buttons.find(
+				(btn) => btn.getAttribute('title')?.includes('Thinking:') || false
+			)!;
+			fireEvent.click(thinkingButton);
+
+			expect(container.textContent).toContain('Thinking Level');
+		});
+
+		it('should show all thinking levels in dropdown', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+
+			const buttons = Array.from(container.querySelectorAll('.control-btn'));
+			const thinkingButton = buttons.find(
+				(btn) => btn.getAttribute('title')?.includes('Thinking:') || false
+			)!;
+			fireEvent.click(thinkingButton);
+
+			expect(container.textContent).toContain('Auto');
+			expect(container.textContent).toContain('Think 8k');
+			expect(container.textContent).toContain('Think 16k');
+			expect(container.textContent).toContain('Think 32k');
+		});
+
+		it('should close thinking dropdown when clicking it again', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+
+			const buttons = Array.from(container.querySelectorAll('.control-btn'));
+			const thinkingButton = buttons.find(
+				(btn) => btn.getAttribute('title')?.includes('Thinking:') || false
+			)!;
+
+			// Open
+			fireEvent.click(thinkingButton);
+			expect(container.textContent).toContain('Thinking Level');
+
+			// Close
+			fireEvent.click(thinkingButton);
+			expect(container.textContent).not.toContain('Thinking Level');
+		});
+
+		it('should close model dropdown when opening thinking dropdown', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+
+			// Open model dropdown first
+			const modelButton = container.querySelector('.control-btn') as HTMLButtonElement;
+			fireEvent.click(modelButton);
+			expect(container.textContent).toContain('Select Model');
+
+			// Open thinking dropdown
+			const buttons = Array.from(container.querySelectorAll('.control-btn'));
+			const thinkingButton = buttons.find(
+				(btn) => btn.getAttribute('title')?.includes('Thinking:') || false
+			)!;
+			fireEvent.click(thinkingButton);
+
+			// Thinking dropdown should be open, model dropdown should be closed
+			expect(container.textContent).toContain('Thinking Level');
+			expect(container.textContent).not.toContain('Select Model');
+		});
+
+		it('should change thinking level when option is selected', () => {
+			const { container, rerender } = render(<SessionStatusBar {...defaultProps} />);
+
+			const buttons = Array.from(container.querySelectorAll('.control-btn'));
+			const thinkingButton = buttons.find(
+				(btn) => btn.getAttribute('title')?.includes('Thinking:') || false
+			)!;
+			fireEvent.click(thinkingButton);
+
+			// Find and click Think 16k option
+			const allButtons = Array.from(container.querySelectorAll('button'));
+			const think16kButton = allButtons.find((btn) => btn.textContent?.includes('Think 16k'));
+			fireEvent.click(think16kButton!);
+
+			// Re-render with new thinking level
+			rerender(<SessionStatusBar {...defaultProps} thinkingLevel="think16k" />);
+
+			// Check title updated
+			const updatedButtons = Array.from(container.querySelectorAll('.control-btn'));
+			const updatedThinkingButton = updatedButtons.find(
+				(btn) => btn.getAttribute('title')?.includes('Thinking:') || false
+			);
+			expect(updatedThinkingButton?.getAttribute('title')).toContain('Think 16k');
+		});
+	});
+
+	describe('ThinkingLevelIcon Brightness', () => {
+		// Helper to get the icon SVG (not the border ring which has class "absolute")
+		const getThinkingIcon = (container: Element) => {
+			const buttons = Array.from(container.querySelectorAll('.control-btn'));
+			const thinkingButton = buttons.find(
+				(btn) => btn.getAttribute('title')?.includes('Thinking:') || false
+			);
+			// Get all SVGs and find the one that's not the absolute positioned border ring
+			const svgs = thinkingButton?.querySelectorAll('svg');
+			if (!svgs) return null;
+			for (const svg of Array.from(svgs)) {
+				const classes = svg.className.baseVal || svg.getAttribute('class') || '';
+				if (!classes.includes('absolute')) {
+					return svg;
+				}
+			}
+			return null;
+		};
+
+		it('should show gray icon for auto level', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel="auto" />);
+
+			const svg = getThinkingIcon(container);
+			expect(svg?.className.baseVal || svg?.getAttribute('class')).toContain('text-gray-400');
+		});
+
+		it('should show amber-600 icon for think8k level', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel="think8k" />);
+
+			const svg = getThinkingIcon(container);
+			expect(svg?.className.baseVal || svg?.getAttribute('class')).toContain('text-amber-600');
+		});
+
+		it('should show amber-500 icon for think16k level', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel="think16k" />);
+
+			const svg = getThinkingIcon(container);
+			expect(svg?.className.baseVal || svg?.getAttribute('class')).toContain('text-amber-500');
+		});
+
+		it('should show amber-400 icon for think32k level', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel="think32k" />);
+
+			const svg = getThinkingIcon(container);
+			expect(svg?.className.baseVal || svg?.getAttribute('class')).toContain('text-amber-400');
+		});
+	});
+
+	describe('ThinkingBorderRing', () => {
+		it('should not show border ring for auto level', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel="auto" />);
+
+			const buttons = Array.from(container.querySelectorAll('.control-btn'));
+			const thinkingButton = buttons.find(
+				(btn) => btn.getAttribute('title')?.includes('Thinking:') || false
+			);
+			// Auto level should have gray border, not amber ring
+			expect(thinkingButton?.className).toContain('border-gray-600');
+		});
+
+		it('should show border ring for think8k level', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel="think8k" />);
+
+			const buttons = Array.from(container.querySelectorAll('.control-btn'));
+			const thinkingButton = buttons.find(
+				(btn) => btn.getAttribute('title')?.includes('Thinking:') || false
+			);
+			// Should have the SVG ring
+			const ring = thinkingButton?.querySelector('svg.absolute');
+			expect(ring).toBeTruthy();
+		});
+
+		it('should show border ring for think16k level', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel="think16k" />);
+
+			const buttons = Array.from(container.querySelectorAll('.control-btn'));
+			const thinkingButton = buttons.find(
+				(btn) => btn.getAttribute('title')?.includes('Thinking:') || false
+			);
+			const ring = thinkingButton?.querySelector('svg.absolute');
+			expect(ring).toBeTruthy();
+		});
+
+		it('should show border ring for think32k level', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel="think32k" />);
+
+			const buttons = Array.from(container.querySelectorAll('.control-btn'));
+			const thinkingButton = buttons.find(
+				(btn) => btn.getAttribute('title')?.includes('Thinking:') || false
+			);
+			const ring = thinkingButton?.querySelector('svg.absolute');
+			expect(ring).toBeTruthy();
+		});
+	});
+
+	describe('Model Family Icons', () => {
+		it('should show opus icon for opus model', () => {
+			const opusModelInfo: ModelInfo = {
+				id: 'claude-opus-4-20250514',
+				name: 'Claude Opus 4',
+				family: 'opus',
+				isDefault: false,
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={opusModelInfo} />
+			);
+
+			// Opus icon should be visible
+			expect(container.textContent).toContain('🧠');
+		});
+
+		it('should show haiku icon for haiku model', () => {
+			const haikuModelInfo: ModelInfo = {
+				id: 'claude-haiku-3-20250514',
+				name: 'Claude Haiku 3',
+				family: 'haiku',
+				isDefault: false,
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={haikuModelInfo} />
+			);
+
+			// Haiku icon should be visible
+			expect(container.textContent).toContain('⚡');
+		});
+
+		it('should show default icon when no model info', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} currentModelInfo={null} />);
+
+			// Default gem icon should be visible
+			expect(container.textContent).toContain('💎');
 		});
 	});
 });
