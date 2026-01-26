@@ -364,3 +364,40 @@ jobs:
           files: packages/cli/coverage/lcov.info
           flags: cli
           fail_ci_if_error: false
+
+  # ============================================
+  # SUMMARY JOB - Required for branch protection
+  # ============================================
+
+  all-tests-pass:
+    name: All Package Tests Pass
+    runs-on: arc-runner-set
+    timeout-minutes: 1
+    if: always()
+    needs:
+      - check
+      - test-daemon-offline
+      - test-daemon-online
+      - test-web
+      - test-shared
+      - test-cli
+
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [[ "${{ needs.check.result }}" != "success" ]] || \
+             [[ "${{ needs.test-daemon-offline.result }}" != "success" ]] || \
+             [[ "${{ needs.test-daemon-online.result }}" != "success" ]] || \
+             [[ "${{ needs.test-web.result }}" != "success" ]] || \
+             [[ "${{ needs.test-shared.result }}" != "success" ]] || \
+             [[ "${{ needs.test-cli.result }}" != "success" ]]; then
+            echo "❌ One or more jobs failed:"
+            echo "  check: ${{ needs.check.result }}"
+            echo "  test-daemon-offline: ${{ needs.test-daemon-offline.result }}"
+            echo "  test-daemon-online: ${{ needs.test-daemon-online.result }}"
+            echo "  test-web: ${{ needs.test-web.result }}"
+            echo "  test-shared: ${{ needs.test-shared.result }}"
+            echo "  test-cli: ${{ needs.test-cli.result }}"
+            exit 1
+          fi
+          echo "✅ All package tests passed!"

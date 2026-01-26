@@ -131,14 +131,17 @@ describe('E2E Quick Coverage Tests', () => {
 				// Convert to Istanbul format
 				const istanbulCoverage = await convertToIstanbul(coverage, distPath);
 
+				// Filter path for web source files
+				const filterPath = 'packages/web/src';
+
 				// Calculate stats
-				const stats = calculateStats(istanbulCoverage);
+				const stats = calculateStats(istanbulCoverage, filterPath);
 
 				// Print summary
 				printCoverageSummary(stats);
 
 				// Generate LCOV
-				const lcovContent = generateLcov(istanbulCoverage);
+				const lcovContent = generateLcov(istanbulCoverage, filterPath);
 
 				// Write to file
 				const outputPath = resolve(import.meta.dir, 'browser-coverage.lcov');

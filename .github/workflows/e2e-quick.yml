@@ -63,6 +63,30 @@ jobs:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           DEFAULT_MODEL: haiku
 
+      - name: Fix server coverage paths for monorepo
+        working-directory: packages/cli
+        run: |
+          # Fix package-relative paths
+          sed -i 's|^SF:src/|SF:packages/cli/src/|g' coverage/lcov.info
+          # Fix cross-package paths
+          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' coverage/lcov.info
+          sed -i 's|^SF:\.\./daemon/|SF:packages/daemon/|g' coverage/lcov.info
+
+          # Filter coverage to only include source files (packages/*/src/**)
+          # Removes test files and non-source files from coverage report
+          awk '
+            /^SF:/ {
+              if ($0 ~ /^SF:packages\/[^\/]+\/src\//) {
+                keep = 1
+              } else {
+                keep = 0
+              }
+            }
+            keep { print }
+            /^end_of_record$/ { keep = 0 }
+          ' coverage/lcov.info > coverage/lcov.filtered.info
+          mv coverage/lcov.filtered.info coverage/lcov.info
+
       - name: Upload server-side coverage to Codecov
         uses: codecov/codecov-action@v4
         continue-on-error: true

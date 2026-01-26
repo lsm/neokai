@@ -118,8 +118,12 @@ export function generateLcov(
 			s?: Record<string, number>;
 		};
 
+		// Convert absolute path to relative path starting with packages/
+		const packagesIndex = filePath.indexOf('packages/');
+		const relativePath = packagesIndex >= 0 ? filePath.slice(packagesIndex) : filePath;
+
 		lcovContent += `TN:\n`;
-		lcovContent += `SF:${filePath}\n`;
+		lcovContent += `SF:${relativePath}\n`;
 
 		// Function coverage
 		const fnMap = coverageData.fnMap || {};

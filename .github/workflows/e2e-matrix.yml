@@ -1,11 +1,10 @@
 # E2E Tests - Comprehensive E2E test suite
 #
-# This workflow runs all E2E tests in parallel with browser-side coverage.
+# This workflow runs all E2E tests in parallel with BOTH server and browser coverage.
 # Tests are auto-discovered from packages/e2e/tests/*.e2e.ts (excluding subdirectories).
 # Each test runs against an in-process daemon server.
 #
-# Note: Only browser coverage (web package) is collected during E2E tests.
-# Server-side coverage (daemon/shared) is collected by the package-tests workflow.
+# Server coverage: Bun --coverage instruments daemon/shared/cli code running in-process
 # Browser coverage: Playwright monocart-reporter collects V8 coverage from browser
 #
 # For quick coverage on PR, see e2e-quick.yml (representative tests only)
@@ -119,16 +118,55 @@ jobs:
         working-directory: packages/cli
         run: |
           echo "Running test: ${{ matrix.test }} with in-process server"
-          # Run with bun --coverage to instrument daemon/shared code
-          # e2e-runner.ts starts in-process server and spawns Playwright test
+          # Run with bun test --coverage to instrument daemon/shared code
+          # e2e-matrix-runner.coverage.ts starts in-process server and spawns Playwright test
           timeout 300 xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
-            bun --coverage --coverage-reporter=lcov --coverage-dir=coverage \
-            ./tests/e2e-coverage/e2e-runner.ts ${{ matrix.test }} 2>&1
+            bun test --coverage --coverage-reporter=lcov --coverage-dir=coverage \
+            ./tests/e2e-coverage/e2e-matrix-runner.coverage.ts 2>&1
         env:
+          TEST_NAME: ${{ matrix.test }}
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           DEFAULT_MODEL: haiku
           CI: true
           COVERAGE: true
+
+      - name: Fix server coverage paths for monorepo
+        if: steps.check.outputs.should_run == 'true'
+        working-directory: packages/cli
+        run: |
+          if [ -f coverage/lcov.info ]; then
+            # Fix package-relative paths
+            sed -i 's|^SF:src/|SF:packages/cli/src/|g' coverage/lcov.info
+            # Fix cross-package paths
+            sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' coverage/lcov.info
+            sed -i 's|^SF:\.\./daemon/|SF:packages/daemon/|g' coverage/lcov.info
+
+            # Filter coverage to only include source files (packages/*/src/**)
+            awk '
+              /^SF:/ {
+                if ($0 ~ /^SF:packages\/[^\/]+\/src\//) {
+                  keep = 1
+                } else {
+                  keep = 0
+                }
+              }
+              keep { print }
+              /^end_of_record$/ { keep = 0 }
+            ' coverage/lcov.info > coverage/lcov.filtered.info
+            mv coverage/lcov.filtered.info coverage/lcov.info
+            echo "Server coverage paths fixed"
+          else
+            echo "No server coverage file found"
+          fi
+
+      - name: Upload server coverage artifact
+        uses: actions/upload-artifact@v4
+        if: steps.check.outputs.should_run == 'true' && always()
+        with:
+          name: coverage-e2e-server-${{ matrix.test }}
+          path: packages/cli/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
 
       - name: Upload browser coverage artifact
         uses: actions/upload-artifact@v4
@@ -165,25 +203,47 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download all browser coverage artifacts
+      - name: Download all coverage artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: coverage-e2e-browser-*
-          path: coverage-browser
+          pattern: coverage-e2e-*
+          path: coverage-artifacts
           merge-multiple: false
 
       - name: List downloaded coverage files
         run: |
+          echo "Server coverage files:"
+          find coverage-artifacts -path "*server*" -name "*.info" -type f 2>/dev/null || echo "No server coverage files found"
+          echo ""
           echo "Browser coverage files:"
-          find coverage-browser -name "*.info" -type f 2>/dev/null || echo "No browser coverage files found"
+          find coverage-artifacts -path "*browser*" -name "*.info" -type f 2>/dev/null || echo "No browser coverage files found"
 
-      - name: Merge browser coverage files
+      - name: Merge coverage files
         run: |
           mkdir -p merged-coverage
 
+          # Merge server coverage
+          FIRST=true
+          for f in $(find coverage-artifacts -path "*server*" -name "lcov.info" -type f 2>/dev/null); do
+            echo "Adding server coverage from: $f"
+            if [ "$FIRST" = true ]; then
+              cp "$f" merged-coverage/server-lcov.info
+              FIRST=false
+            else
+              cat "$f" >> merged-coverage/server-lcov.info
+            fi
+          done
+
+          if [ -f merged-coverage/server-lcov.info ]; then
+            echo "Merged server coverage file created"
+            wc -l merged-coverage/server-lcov.info
+          else
+            echo "No server coverage files to merge"
+          fi
+
           # Merge browser coverage
           FIRST=true
-          for f in $(find coverage-browser -name "lcov.info" -type f 2>/dev/null); do
+          for f in $(find coverage-artifacts -path "*browser*" -name "lcov.info" -type f 2>/dev/null); do
             echo "Adding browser coverage from: $f"
             if [ "$FIRST" = true ]; then
               cp "$f" merged-coverage/browser-lcov.info
@@ -200,8 +260,18 @@ jobs:
             echo "No browser coverage files to merge"
           fi
 
-      - name: Upload merged coverage to Codecov
+      - name: Upload server coverage to Codecov
         uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: merged-coverage/server-lcov.info
+          flags: e2e-matrix
+          fail_ci_if_error: false
+
+      - name: Upload browser coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: always()
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: merged-coverage/browser-lcov.info
