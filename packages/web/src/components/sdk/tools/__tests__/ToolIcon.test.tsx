@@ -4,10 +4,11 @@
  *
  * ToolIcon displays icons for different tool types.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 import { render } from '@testing-library/preact';
 import { ToolIcon } from '../ToolIcon';
+import * as toolRegistry from '../tool-registry.ts';
 
 describe('ToolIcon', () => {
 	describe('Basic Rendering', () => {
@@ -258,6 +259,45 @@ describe('ToolIcon', () => {
 			const { container } = render(<ToolIcon toolName="Read" />);
 			const svg = container.querySelector('svg');
 			expect(svg?.className).toContain('flex-shrink-0');
+		});
+	});
+
+	describe('Custom Icon', () => {
+		it('should render custom icon when tool config has icon property', () => {
+			// Mock getToolConfig to return a config with custom icon
+			const CustomIcon = () => <svg data-testid="custom-icon" />;
+			vi.spyOn(toolRegistry, 'getToolConfig').mockReturnValueOnce({
+				label: 'Custom Tool',
+				category: 'other',
+				icon: CustomIcon,
+			});
+
+			const { container } = render(<ToolIcon toolName="CustomIconTool" />);
+			const customIcon = container.querySelector('[data-testid="custom-icon"]');
+			expect(customIcon).toBeTruthy();
+
+			vi.restoreAllMocks();
+		});
+
+		it('should apply size and color classes to custom icon wrapper', () => {
+			// Mock getToolConfig to return a config with custom icon
+			const CustomIcon = () => <svg data-testid="custom-icon" />;
+			vi.spyOn(toolRegistry, 'getToolConfig').mockReturnValueOnce({
+				label: 'Custom Tool',
+				category: 'other',
+				icon: CustomIcon,
+			});
+
+			const { container } = render(
+				<ToolIcon toolName="CustomIconTool" size="lg" className="extra-class" />
+			);
+			const wrapper = container.querySelector('div');
+			expect(wrapper).toBeTruthy();
+			expect(wrapper?.className).toContain('w-6');
+			expect(wrapper?.className).toContain('h-6');
+			expect(wrapper?.className).toContain('extra-class');
+
+			vi.restoreAllMocks();
 		});
 	});
 });

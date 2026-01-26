@@ -4,10 +4,11 @@
  *
  * CodeViewer displays syntax-highlighted code using highlight.js.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 
 import { render } from '@testing-library/preact';
 import { CodeViewer } from '../CodeViewer';
+import hljs from 'highlight.js';
 
 describe('CodeViewer', () => {
 	describe('Basic Rendering', () => {
@@ -217,6 +218,40 @@ describe('CodeViewer', () => {
 			const { container } = render(<CodeViewer code="  indented\n    more indented" />);
 			const code = container.querySelector('code');
 			expect(code?.style?.whiteSpace).toBe('pre');
+		});
+	});
+
+	describe('Language Highlighting Error Handling', () => {
+		afterEach(() => {
+			vi.restoreAllMocks();
+		});
+
+		it('should fallback to auto-detect when hljs.highlight throws', () => {
+			// Mock hljs.highlight to throw an error on first call
+			const originalHighlight = hljs.highlight;
+			let callCount = 0;
+			vi.spyOn(hljs, 'highlight').mockImplementation((...args) => {
+				callCount++;
+				if (callCount === 1) {
+					throw new Error('Unknown language');
+				}
+				return originalHighlight.call(hljs, ...args);
+			});
+
+			// Use a TypeScript file which will trigger the highlight with language call
+			const { container } = render(<CodeViewer code="const x = 1;" filePath="/test/file.ts" />);
+			// Should still render the code (via auto-detect fallback)
+			const code = container.querySelector('code');
+			expect(code).toBeTruthy();
+		});
+
+		it('should handle unknown file extensions gracefully', () => {
+			// Unknown extensions use auto-detect path (not the catch block)
+			const { container } = render(
+				<CodeViewer code="const x = 1;" filePath="/test/file.unknown_ext" />
+			);
+			const code = container.querySelector('code');
+			expect(code).toBeTruthy();
 		});
 	});
 

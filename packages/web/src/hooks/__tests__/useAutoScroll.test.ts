@@ -43,16 +43,24 @@ function createMockRefs() {
 	};
 }
 
+// Store ResizeObserver instances for testing
+let resizeObserverInstances: MockResizeObserver[] = [];
+
 // Mock ResizeObserver
 class MockResizeObserver {
 	callback: ResizeObserverCallback;
 
 	constructor(callback: ResizeObserverCallback) {
 		this.callback = callback;
+		resizeObserverInstances.push(this);
 	}
 	observe() {}
 	unobserve() {}
 	disconnect() {}
+	// Helper to trigger resize callback
+	triggerResize() {
+		this.callback([], this as unknown as ResizeObserver);
+	}
 }
 
 // Set up global mock
@@ -60,7 +68,8 @@ globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserv
 
 describe('useAutoScroll', () => {
 	beforeEach(() => {
-		// Reset any state between tests
+		// Reset ResizeObserver instances
+		resizeObserverInstances = [];
 	});
 
 	describe('initialization', () => {
@@ -379,6 +388,108 @@ describe('useAutoScroll', () => {
 			unmount();
 
 			expect(removeEventListenerMock).toHaveBeenCalled();
+		});
+	});
+
+	describe('delayed ref setup', () => {
+		it('should set up scroll detection after timeout when containerRef is initially null', async () => {
+			vi.useFakeTimers();
+
+			const { endRef } = createMockRefs();
+			const addEventListenerMock = vi.fn();
+			const removeEventListenerMock = vi.fn();
+
+			// Start with null containerRef
+			const containerRef = { current: null } as RefObject<HTMLDivElement>;
+
+			const { unmount } = renderHook(() =>
+				useAutoScroll({
+					containerRef,
+					endRef,
+					enabled: true,
+					messageCount: 0,
+				})
+			);
+
+			// Now set the containerRef (simulating delayed DOM mounting)
+			containerRef.current = {
+				scrollTop: 0,
+				scrollHeight: 1000,
+				clientHeight: 500,
+				addEventListener: addEventListenerMock,
+				removeEventListener: removeEventListenerMock,
+			} as unknown as HTMLDivElement;
+
+			// Advance timers to trigger the delayed setup
+			await vi.advanceTimersByTimeAsync(50);
+
+			// Should have set up scroll listener after timeout
+			expect(addEventListenerMock).toHaveBeenCalledWith('scroll', expect.any(Function), {
+				passive: true,
+			});
+
+			unmount();
+			vi.useRealTimers();
+		});
+
+		it('should cleanup timeout when unmounted before delay completes', () => {
+			vi.useFakeTimers();
+
+			const { endRef } = createMockRefs();
+			const nullContainerRef = { current: null } as RefObject<HTMLDivElement>;
+
+			const { unmount } = renderHook(() =>
+				useAutoScroll({
+					containerRef: nullContainerRef,
+					endRef,
+					enabled: true,
+					messageCount: 0,
+				})
+			);
+
+			// Unmount before timeout fires
+			unmount();
+
+			// Advance timers - should not throw
+			vi.advanceTimersByTime(100);
+
+			vi.useRealTimers();
+		});
+	});
+
+	describe('ResizeObserver callback', () => {
+		it('should update scroll state when ResizeObserver fires', () => {
+			const { containerRef, endRef } = createMockRefs();
+
+			// Position not near bottom initially
+			containerRef.current!.scrollTop = 0;
+			containerRef.current!.scrollHeight = 1000;
+			containerRef.current!.clientHeight = 500;
+
+			const { result } = renderHook(() =>
+				useAutoScroll({
+					containerRef,
+					endRef,
+					enabled: true,
+					messageCount: 5,
+				})
+			);
+
+			// Initially not near bottom (scrollHeight - scrollTop - clientHeight = 500 > 200)
+			expect(result.current.showScrollButton).toBe(true);
+
+			// Simulate content size change where user is now near bottom
+			containerRef.current!.scrollTop = 400;
+			// scrollHeight(1000) - scrollTop(400) - clientHeight(500) = 100 < 200 threshold
+
+			// Trigger ResizeObserver callback
+			act(() => {
+				resizeObserverInstances[0]?.triggerResize();
+			});
+
+			// Should now be near bottom
+			expect(result.current.isNearBottom).toBe(true);
+			expect(result.current.showScrollButton).toBe(false);
 		});
 	});
 });

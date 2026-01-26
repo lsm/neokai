@@ -13,6 +13,55 @@ export interface ModalProps {
 	showCloseButton?: boolean;
 }
 
+/** Focusable element selector */
+export const FOCUSABLE_SELECTOR =
+	'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
+/**
+ * Creates a focus trap handler for modal dialogs.
+ * Exported for testing purposes.
+ */
+export function createFocusTrapHandler(
+	firstElement: HTMLElement | null,
+	lastElement: HTMLElement | null
+): (e: KeyboardEvent) => void {
+	return (e: KeyboardEvent) => {
+		if (e.key === 'Tab') {
+			if (e.shiftKey) {
+				if (document.activeElement === firstElement) {
+					e.preventDefault();
+					lastElement?.focus();
+				}
+			} else {
+				if (document.activeElement === lastElement) {
+					e.preventDefault();
+					firstElement?.focus();
+				}
+			}
+		}
+	};
+}
+
+/**
+ * Sets up focus trap on a container element.
+ * Exported for testing purposes.
+ * @returns cleanup function to remove the event listener
+ */
+export function setupFocusTrap(container: HTMLElement): () => void {
+	const focusableElements = container.querySelectorAll(FOCUSABLE_SELECTOR);
+	const firstElement = focusableElements[0] as HTMLElement;
+	const lastElement = focusableElements[focusableElements.length - 1] as HTMLElement;
+
+	const handleTab = createFocusTrapHandler(firstElement, lastElement);
+
+	container.addEventListener('keydown', handleTab as EventListener);
+	firstElement?.focus();
+
+	return () => {
+		container.removeEventListener('keydown', handleTab as EventListener);
+	};
+}
+
 export function Modal({
 	isOpen,
 	onClose,
@@ -43,35 +92,7 @@ export function Modal({
 
 	useEffect(() => {
 		if (isOpen && modalRef.current) {
-			// Focus trap
-			const focusableElements = modalRef.current.querySelectorAll(
-				'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-			);
-			const firstElement = focusableElements[0] as HTMLElement;
-			const lastElement = focusableElements[focusableElements.length - 1] as HTMLElement;
-
-			const handleTab = (e: KeyboardEvent) => {
-				if (e.key === 'Tab') {
-					if (e.shiftKey) {
-						if (document.activeElement === firstElement) {
-							e.preventDefault();
-							lastElement?.focus();
-						}
-					} else {
-						if (document.activeElement === lastElement) {
-							e.preventDefault();
-							firstElement?.focus();
-						}
-					}
-				}
-			};
-
-			modalRef.current.addEventListener('keydown', handleTab as EventListener);
-			firstElement?.focus();
-
-			return () => {
-				modalRef.current?.removeEventListener('keydown', handleTab as EventListener);
-			};
+			return setupFocusTrap(modalRef.current);
 		}
 	}, [isOpen]);
 

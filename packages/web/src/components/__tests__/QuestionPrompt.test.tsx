@@ -1101,4 +1101,68 @@ describe('QuestionPrompt', () => {
 			await new Promise((resolve) => setTimeout(resolve, 150));
 		});
 	});
+
+	describe('Resolved state with Other selected styling', () => {
+		it('should apply cancelled styling when Other is selected and cancelled', () => {
+			const questionWithOtherSelected: PendingUserQuestion = {
+				...mockPendingQuestion,
+				draftResponses: [
+					{
+						questionIndex: 0,
+						selectedLabels: [],
+						customText: 'Custom cancelled response',
+					},
+				],
+			};
+
+			const { container } = render(
+				<QuestionPrompt
+					sessionId="session-1"
+					pendingQuestion={questionWithOtherSelected}
+					resolvedState="cancelled"
+					finalResponses={[
+						{
+							questionIndex: 0,
+							selectedLabels: [],
+							customText: 'Custom cancelled response',
+						},
+					]}
+				/>
+			);
+
+			// Verify cancelled state
+			expect(container.textContent).toContain('Question skipped');
+		});
+
+		it('should show textarea with resolved styling when Other is selected', () => {
+			const questionWithOtherSelected: PendingUserQuestion = {
+				...mockPendingQuestion,
+				draftResponses: [
+					{
+						questionIndex: 0,
+						selectedLabels: [],
+						customText: 'My submitted answer',
+					},
+				],
+			};
+
+			const { container } = render(
+				<QuestionPrompt
+					sessionId="session-1"
+					pendingQuestion={questionWithOtherSelected}
+					resolvedState="submitted"
+					finalResponses={[
+						{
+							questionIndex: 0,
+							selectedLabels: [],
+							customText: 'My submitted answer',
+						},
+					]}
+				/>
+			);
+
+			// Verify submitted state header
+			expect(container.textContent).toContain('Response submitted');
+		});
+	});
 });

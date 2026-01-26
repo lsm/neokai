@@ -11,19 +11,21 @@ codecov:
 coverage:
   precision: 2
   round: down
-  range: "50...80"
+  range: "50...100"
   status:
     project:
       default:
         target: auto
-        threshold: 2%
-        # Don't fail CI on coverage drops
-        informational: true
+        threshold: 1%
+      web:
+        flags:
+          - web
+        target: 95%
+        threshold: 0%
     patch:
       default:
-        target: 60%
-        threshold: 5%
-        informational: true
+        target: 95%
+        threshold: 0%
 
 parsers:
   gcov:
@@ -40,7 +42,7 @@ comment:
   require_base: false
   require_head: true
 
-# Ignore test files and fixtures
+# Ignore test files, fixtures, and non-testable files
 ignore:
   - "**/*.test.ts"
   - "**/*.test.tsx"
@@ -50,6 +52,7 @@ ignore:
   - "**/__tests__/**"
   - "**/node_modules/**"
   - "**/dist/**"
+  - "**/index.ts" # Barrel exports and server entry points
 
 # Path fixing for monorepo coverage
 # e2e-quick tests run from packages/cli/ and generate relative paths like ../daemon/src/
@@ -72,7 +75,7 @@ flags:
   web:
     paths:
       - packages/web/src/
-    carryforward: true
+    carryforward: false
   cli:
     paths:
       - packages/cli/src/

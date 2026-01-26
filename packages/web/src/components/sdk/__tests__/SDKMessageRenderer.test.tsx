@@ -172,6 +172,21 @@ function createUserReplayMessage(): SDKMessage {
 	};
 }
 
+function createSystemCompactBoundaryMessage(): SDKMessage {
+	return {
+		type: 'system',
+		subtype: 'compact_boundary',
+		summary: 'Conversation compacted to save context',
+		compact_metadata: {
+			trigger: 'automatic',
+			pre_tokens: 50000,
+			post_tokens: 10000,
+		},
+		uuid: createUUID(),
+		session_id: 'test-session',
+	} as unknown as SDKMessage;
+}
+
 describe('SDKMessageRenderer', () => {
 	describe('Message Type Routing', () => {
 		it('should render user message', () => {
@@ -180,6 +195,16 @@ describe('SDKMessageRenderer', () => {
 
 			const userMessage = container.querySelector('[data-testid="user-message"]');
 			expect(userMessage).toBeTruthy();
+		});
+
+		it('should render system message (compact boundary)', () => {
+			const message = createSystemCompactBoundaryMessage();
+			const { container } = render(<SDKMessageRenderer message={message} />);
+
+			// SDKSystemMessage should be rendered for non-init system messages
+			// CompactBoundaryMessage shows "Compact" and token count
+			expect(container.textContent).toContain('Compact');
+			expect(container.textContent).toContain('tokens');
 		});
 
 		it('should render assistant message', () => {

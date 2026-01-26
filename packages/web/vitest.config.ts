@@ -17,6 +17,10 @@ export default defineConfig({
 			provider: 'v8',
 			reportsDirectory: 'coverage',
 			reporter: ['text', 'lcov'],
+			exclude: [
+				'src/index.ts', // Bun server - not testable in vitest
+				'**/index.ts', // Barrel exports - just re-exports
+			],
 		},
 	},
 

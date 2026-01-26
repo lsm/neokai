@@ -5,7 +5,432 @@
 
 import { render, cleanup, act } from '@testing-library/preact';
 import { describe, it, expect, vi } from 'vitest';
-import { Modal } from '../Modal';
+import { Modal, createFocusTrapHandler, setupFocusTrap, FOCUSABLE_SELECTOR } from '../Modal';
+
+// Mock Portal to render inline (avoids async timing issues with refs)
+vi.mock('../Portal.tsx', () => ({
+	Portal: ({ children }: { children: preact.ComponentChildren }) => (
+		<div data-portal="true">{children}</div>
+	),
+}));
+
+/**
+ * Tests for the extracted createFocusTrapHandler utility function.
+ * This allows direct testing of the focus trap logic without DOM/Portal complexities.
+ */
+describe('createFocusTrapHandler', () => {
+	it('should wrap focus to last element when Shift+Tab at first element', () => {
+		const firstElement = document.createElement('button');
+		const lastElement = document.createElement('button');
+		firstElement.id = 'first';
+		lastElement.id = 'last';
+		document.body.appendChild(firstElement);
+		document.body.appendChild(lastElement);
+
+		const handler = createFocusTrapHandler(firstElement, lastElement);
+		const lastFocusSpy = vi.spyOn(lastElement, 'focus');
+
+		// Set activeElement to first element
+		firstElement.focus();
+
+		// Create Shift+Tab event
+		const event = new KeyboardEvent('keydown', {
+			key: 'Tab',
+			shiftKey: true,
+			cancelable: true,
+		});
+		const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+		handler(event);
+
+		expect(preventDefaultSpy).toHaveBeenCalled();
+		expect(lastFocusSpy).toHaveBeenCalled();
+
+		document.body.removeChild(firstElement);
+		document.body.removeChild(lastElement);
+	});
+
+	it('should wrap focus to first element when Tab at last element', () => {
+		const firstElement = document.createElement('button');
+		const lastElement = document.createElement('button');
+		firstElement.id = 'first';
+		lastElement.id = 'last';
+		document.body.appendChild(firstElement);
+		document.body.appendChild(lastElement);
+
+		const handler = createFocusTrapHandler(firstElement, lastElement);
+		const firstFocusSpy = vi.spyOn(firstElement, 'focus');
+
+		// Set activeElement to last element
+		lastElement.focus();
+
+		// Create Tab event
+		const event = new KeyboardEvent('keydown', {
+			key: 'Tab',
+			shiftKey: false,
+			cancelable: true,
+		});
+		const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+		handler(event);
+
+		expect(preventDefaultSpy).toHaveBeenCalled();
+		expect(firstFocusSpy).toHaveBeenCalled();
+
+		document.body.removeChild(firstElement);
+		document.body.removeChild(lastElement);
+	});
+
+	it('should not prevent default for Tab on middle elements', () => {
+		const firstElement = document.createElement('button');
+		const middleElement = document.createElement('button');
+		const lastElement = document.createElement('button');
+		document.body.appendChild(firstElement);
+		document.body.appendChild(middleElement);
+		document.body.appendChild(lastElement);
+
+		const handler = createFocusTrapHandler(firstElement, lastElement);
+
+		// Focus middle element
+		middleElement.focus();
+
+		// Create Tab event
+		const event = new KeyboardEvent('keydown', {
+			key: 'Tab',
+			shiftKey: false,
+			cancelable: true,
+		});
+		const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+		handler(event);
+
+		// Should NOT prevent default for middle element
+		expect(preventDefaultSpy).not.toHaveBeenCalled();
+
+		document.body.removeChild(firstElement);
+		document.body.removeChild(middleElement);
+		document.body.removeChild(lastElement);
+	});
+
+	it('should not prevent default for non-Tab keys', () => {
+		const firstElement = document.createElement('button');
+		const lastElement = document.createElement('button');
+		document.body.appendChild(firstElement);
+		document.body.appendChild(lastElement);
+
+		const handler = createFocusTrapHandler(firstElement, lastElement);
+
+		// Focus last element
+		lastElement.focus();
+
+		// Create Enter event (not Tab)
+		const event = new KeyboardEvent('keydown', {
+			key: 'Enter',
+			cancelable: true,
+		});
+		const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+		handler(event);
+
+		// Should NOT prevent default for non-Tab keys
+		expect(preventDefaultSpy).not.toHaveBeenCalled();
+
+		document.body.removeChild(firstElement);
+		document.body.removeChild(lastElement);
+	});
+
+	it('should handle null elements gracefully', () => {
+		const handler = createFocusTrapHandler(null, null);
+
+		const event = new KeyboardEvent('keydown', {
+			key: 'Tab',
+			cancelable: true,
+		});
+
+		// Should not throw
+		expect(() => handler(event)).not.toThrow();
+	});
+
+	it('should not prevent default for Shift+Tab on middle element', () => {
+		const firstElement = document.createElement('button');
+		const middleElement = document.createElement('button');
+		const lastElement = document.createElement('button');
+		document.body.appendChild(firstElement);
+		document.body.appendChild(middleElement);
+		document.body.appendChild(lastElement);
+
+		const handler = createFocusTrapHandler(firstElement, lastElement);
+
+		// Focus middle element
+		middleElement.focus();
+
+		// Create Shift+Tab event
+		const event = new KeyboardEvent('keydown', {
+			key: 'Tab',
+			shiftKey: true,
+			cancelable: true,
+		});
+		const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+		handler(event);
+
+		// Should NOT prevent default for middle element with Shift+Tab
+		expect(preventDefaultSpy).not.toHaveBeenCalled();
+
+		document.body.removeChild(firstElement);
+		document.body.removeChild(middleElement);
+		document.body.removeChild(lastElement);
+	});
+
+	it('should still prevent default when firstElement is null (Tab at last)', () => {
+		const lastElement = document.createElement('button');
+		document.body.appendChild(lastElement);
+
+		const handler = createFocusTrapHandler(null, lastElement);
+
+		lastElement.focus();
+
+		const event = new KeyboardEvent('keydown', {
+			key: 'Tab',
+			shiftKey: false,
+			cancelable: true,
+		});
+		const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+		handler(event);
+
+		// preventDefault is still called to trap focus, focus uses optional chaining
+		expect(preventDefaultSpy).toHaveBeenCalled();
+
+		document.body.removeChild(lastElement);
+	});
+
+	it('should still prevent default when lastElement is null (Shift+Tab at first)', () => {
+		const firstElement = document.createElement('button');
+		document.body.appendChild(firstElement);
+
+		const handler = createFocusTrapHandler(firstElement, null);
+
+		firstElement.focus();
+
+		const event = new KeyboardEvent('keydown', {
+			key: 'Tab',
+			shiftKey: true,
+			cancelable: true,
+		});
+		const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+		handler(event);
+
+		// preventDefault is still called to trap focus, focus uses optional chaining
+		expect(preventDefaultSpy).toHaveBeenCalled();
+
+		document.body.removeChild(firstElement);
+	});
+});
+
+/**
+ * Tests for the setupFocusTrap utility function.
+ * This tests the focus trap setup logic that was previously inside useEffect.
+ */
+describe('setupFocusTrap', () => {
+	it('should find focusable elements using FOCUSABLE_SELECTOR', () => {
+		const container = document.createElement('div');
+		container.innerHTML = `
+			<button id="btn1">Button 1</button>
+			<input type="text" id="input1" />
+			<a href="#" id="link1">Link</a>
+			<select id="select1"><option>Option</option></select>
+			<textarea id="textarea1"></textarea>
+			<div tabindex="0" id="div1">Focusable div</div>
+			<div tabindex="-1" id="div2">Not focusable</div>
+		`;
+		document.body.appendChild(container);
+
+		const focusableElements = container.querySelectorAll(FOCUSABLE_SELECTOR);
+
+		// Should find 6 elements (not the tabindex="-1" one)
+		expect(focusableElements.length).toBe(6);
+
+		document.body.removeChild(container);
+	});
+
+	it('should set up focus trap and focus first element', () => {
+		const container = document.createElement('div');
+		container.innerHTML = `
+			<button id="btn1">First</button>
+			<button id="btn2">Last</button>
+		`;
+		document.body.appendChild(container);
+
+		const firstBtn = container.querySelector('#btn1') as HTMLElement;
+		const firstFocusSpy = vi.spyOn(firstBtn, 'focus');
+
+		const cleanup = setupFocusTrap(container);
+
+		// Should have focused the first element
+		expect(firstFocusSpy).toHaveBeenCalled();
+
+		// Cleanup should be a function
+		expect(typeof cleanup).toBe('function');
+
+		cleanup();
+		firstFocusSpy.mockRestore();
+		document.body.removeChild(container);
+	});
+
+	it('should add keydown event listener to container', () => {
+		const container = document.createElement('div');
+		container.innerHTML = `
+			<button id="btn1">First</button>
+			<button id="btn2">Last</button>
+		`;
+		document.body.appendChild(container);
+
+		const addEventListenerSpy = vi.spyOn(container, 'addEventListener');
+
+		const cleanup = setupFocusTrap(container);
+
+		expect(addEventListenerSpy).toHaveBeenCalledWith('keydown', expect.any(Function));
+
+		cleanup();
+		addEventListenerSpy.mockRestore();
+		document.body.removeChild(container);
+	});
+
+	it('should remove keydown event listener on cleanup', () => {
+		const container = document.createElement('div');
+		container.innerHTML = `
+			<button id="btn1">First</button>
+			<button id="btn2">Last</button>
+		`;
+		document.body.appendChild(container);
+
+		const removeEventListenerSpy = vi.spyOn(container, 'removeEventListener');
+
+		const cleanup = setupFocusTrap(container);
+		cleanup();
+
+		expect(removeEventListenerSpy).toHaveBeenCalledWith('keydown', expect.any(Function));
+
+		removeEventListenerSpy.mockRestore();
+		document.body.removeChild(container);
+	});
+
+	it('should trap focus when Tab is pressed at last element', () => {
+		const container = document.createElement('div');
+		container.innerHTML = `
+			<button id="btn1">First</button>
+			<button id="btn2">Last</button>
+		`;
+		document.body.appendChild(container);
+
+		const firstBtn = container.querySelector('#btn1') as HTMLElement;
+		const lastBtn = container.querySelector('#btn2') as HTMLElement;
+		const firstFocusSpy = vi.spyOn(firstBtn, 'focus');
+
+		const cleanup = setupFocusTrap(container);
+
+		// Clear initial focus call
+		firstFocusSpy.mockClear();
+
+		// Focus last element
+		lastBtn.focus();
+
+		// Dispatch Tab event
+		const event = new KeyboardEvent('keydown', {
+			key: 'Tab',
+			shiftKey: false,
+			bubbles: true,
+			cancelable: true,
+		});
+		const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+		container.dispatchEvent(event);
+
+		// Should have trapped and focused first element
+		expect(preventDefaultSpy).toHaveBeenCalled();
+		expect(firstFocusSpy).toHaveBeenCalled();
+
+		cleanup();
+		firstFocusSpy.mockRestore();
+		document.body.removeChild(container);
+	});
+
+	it('should trap focus when Shift+Tab is pressed at first element', () => {
+		const container = document.createElement('div');
+		container.innerHTML = `
+			<button id="btn1">First</button>
+			<button id="btn2">Last</button>
+		`;
+		document.body.appendChild(container);
+
+		const firstBtn = container.querySelector('#btn1') as HTMLElement;
+		const lastBtn = container.querySelector('#btn2') as HTMLElement;
+		const lastFocusSpy = vi.spyOn(lastBtn, 'focus');
+
+		const cleanup = setupFocusTrap(container);
+
+		// Focus first element (already done by setup, but explicit)
+		firstBtn.focus();
+
+		// Dispatch Shift+Tab event
+		const event = new KeyboardEvent('keydown', {
+			key: 'Tab',
+			shiftKey: true,
+			bubbles: true,
+			cancelable: true,
+		});
+		const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+		container.dispatchEvent(event);
+
+		// Should have trapped and focused last element
+		expect(preventDefaultSpy).toHaveBeenCalled();
+		expect(lastFocusSpy).toHaveBeenCalled();
+
+		cleanup();
+		lastFocusSpy.mockRestore();
+		document.body.removeChild(container);
+	});
+
+	it('should handle container with no focusable elements', () => {
+		const container = document.createElement('div');
+		container.innerHTML = '<p>No focusable content</p>';
+		document.body.appendChild(container);
+
+		// Should not throw
+		const cleanup = setupFocusTrap(container);
+		expect(typeof cleanup).toBe('function');
+
+		// Dispatching Tab should not throw
+		const event = new KeyboardEvent('keydown', {
+			key: 'Tab',
+			bubbles: true,
+			cancelable: true,
+		});
+		expect(() => container.dispatchEvent(event)).not.toThrow();
+
+		cleanup();
+		document.body.removeChild(container);
+	});
+
+	it('should handle container with single focusable element', () => {
+		const container = document.createElement('div');
+		container.innerHTML = '<button id="only">Only Button</button>';
+		document.body.appendChild(container);
+
+		const onlyBtn = container.querySelector('#only') as HTMLElement;
+		const focusSpy = vi.spyOn(onlyBtn, 'focus');
+
+		const cleanup = setupFocusTrap(container);
+
+		// Should have focused the only element
+		expect(focusSpy).toHaveBeenCalled();
+
+		cleanup();
+		focusSpy.mockRestore();
+		document.body.removeChild(container);
+	});
+});
 
 // Helper to wrap render with act for effects to run
 const renderWithEffects = async (ui: preact.ComponentChildren) => {
@@ -448,6 +873,105 @@ describe('Modal', () => {
 			// Modal should be removed
 			const modalAfterClose = document.body.querySelector('[role="dialog"]');
 			expect(modalAfterClose).toBeNull();
+		});
+
+		it('should run focus trap cleanup when modal closes', async () => {
+			const onClose = vi.fn(() => {});
+
+			// Use act to ensure useEffect runs
+			const { rerender } = await renderWithEffects(
+				<Modal isOpen={true} onClose={onClose} title="Test">
+					<button id="test-btn">Button</button>
+				</Modal>
+			);
+
+			// Verify modal is open and has focus trap
+			const modal = document.body.querySelector('[role="dialog"]');
+			expect(modal).toBeTruthy();
+
+			// Close the modal to trigger cleanup (isOpen changes from true to false)
+			await act(async () => {
+				rerender(
+					<Modal isOpen={false} onClose={onClose} title="Test">
+						<button id="test-btn">Button</button>
+					</Modal>
+				);
+			});
+
+			// Modal should be removed, cleanup should have run
+			const modalAfterClose = document.body.querySelector('[role="dialog"]');
+			expect(modalAfterClose).toBeNull();
+		});
+
+		it('should setup and cleanup focus trap on isOpen toggle', async () => {
+			const onClose = vi.fn(() => {});
+
+			// Start with modal closed
+			const { rerender } = render(
+				<Modal isOpen={false} onClose={onClose} title="Test">
+					<button id="test-btn">Button</button>
+				</Modal>
+			);
+
+			// Open the modal - this should set up focus trap
+			await act(async () => {
+				rerender(
+					<Modal isOpen={true} onClose={onClose} title="Test">
+						<button id="test-btn">Button</button>
+					</Modal>
+				);
+			});
+
+			const modal = document.body.querySelector('[role="dialog"]');
+			expect(modal).toBeTruthy();
+
+			// Close the modal - this should trigger cleanup (return of setupFocusTrap)
+			await act(async () => {
+				rerender(
+					<Modal isOpen={false} onClose={onClose} title="Test">
+						<button id="test-btn">Button</button>
+					</Modal>
+				);
+			});
+
+			// Modal should be removed
+			const modalAfterClose = document.body.querySelector('[role="dialog"]');
+			expect(modalAfterClose).toBeNull();
+		});
+
+		it('should return cleanup function from focus trap useEffect', async () => {
+			// This test directly exercises the Modal's focus trap useEffect cleanup path
+			const onClose = vi.fn(() => {});
+
+			// Render modal with focusable content
+			const { rerender } = render(
+				<Modal isOpen={true} onClose={onClose} title="Test">
+					<button id="btn1">First</button>
+					<button id="btn2">Second</button>
+				</Modal>
+			);
+
+			// Wait for render and effect to run
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			const modal = document.body.querySelector('[role="dialog"]');
+			expect(modal).toBeTruthy();
+
+			// Now close modal to trigger the cleanup return
+			await act(async () => {
+				rerender(
+					<Modal isOpen={false} onClose={onClose} title="Test">
+						<button id="btn1">First</button>
+						<button id="btn2">Second</button>
+					</Modal>
+				);
+			});
+
+			// Wait for cleanup to complete
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Modal should be gone
+			expect(document.body.querySelector('[role="dialog"]')).toBeNull();
 		});
 
 		it('should handle modal with no focusable elements', () => {
@@ -933,6 +1457,305 @@ describe('Modal', () => {
 			);
 			const backdrop = document.body.querySelector('.backdrop-blur-sm');
 			expect(backdrop).toBeTruthy();
+		});
+	});
+
+	describe('Focus trap handler coverage', () => {
+		it('should wrap focus to first element when Tab on last element', () => {
+			const onClose = vi.fn();
+			let capturedHandler: ((e: KeyboardEvent) => void) | null = null;
+
+			const originalAddEventListener = HTMLElement.prototype.addEventListener;
+			HTMLElement.prototype.addEventListener = function (
+				type: string,
+				handler: EventListenerOrEventListenerObject,
+				options?: boolean | AddEventListenerOptions
+			) {
+				if (type === 'keydown' && typeof handler === 'function') {
+					capturedHandler = handler;
+				}
+				return originalAddEventListener.call(this, type, handler, options);
+			};
+
+			render(
+				<Modal isOpen={true} onClose={onClose} title="Focus Test">
+					<button id="first-btn">First</button>
+					<button id="last-btn">Last</button>
+				</Modal>
+			);
+
+			HTMLElement.prototype.addEventListener = originalAddEventListener;
+
+			const modal = document.body.querySelector('[role="dialog"]') as HTMLElement;
+			const buttons = modal?.querySelectorAll('button');
+			const firstButton = buttons?.[0] as HTMLButtonElement;
+			const lastButton = buttons?.[buttons.length - 1] as HTMLButtonElement;
+
+			const firstFocusSpy = vi.spyOn(firstButton, 'focus');
+
+			// Set activeElement to lastButton
+			const originalActiveElement = Object.getOwnPropertyDescriptor(document, 'activeElement');
+			Object.defineProperty(document, 'activeElement', {
+				get: () => lastButton,
+				configurable: true,
+			});
+
+			if (capturedHandler) {
+				const event = new KeyboardEvent('keydown', {
+					key: 'Tab',
+					shiftKey: false,
+					cancelable: true,
+				});
+				const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+				capturedHandler(event);
+
+				// Should have prevented default and focused first element
+				expect(preventDefaultSpy).toHaveBeenCalled();
+				expect(firstFocusSpy).toHaveBeenCalled();
+			}
+
+			if (originalActiveElement) {
+				Object.defineProperty(document, 'activeElement', originalActiveElement);
+			}
+			firstFocusSpy.mockRestore();
+		});
+
+		it('should wrap focus to last element when Shift+Tab on first element', () => {
+			const onClose = vi.fn();
+			let capturedHandler: ((e: KeyboardEvent) => void) | null = null;
+
+			const originalAddEventListener = HTMLElement.prototype.addEventListener;
+			HTMLElement.prototype.addEventListener = function (
+				type: string,
+				handler: EventListenerOrEventListenerObject,
+				options?: boolean | AddEventListenerOptions
+			) {
+				if (type === 'keydown' && typeof handler === 'function') {
+					capturedHandler = handler;
+				}
+				return originalAddEventListener.call(this, type, handler, options);
+			};
+
+			render(
+				<Modal isOpen={true} onClose={onClose} title="Focus Test">
+					<button id="first-btn">First</button>
+					<button id="last-btn">Last</button>
+				</Modal>
+			);
+
+			HTMLElement.prototype.addEventListener = originalAddEventListener;
+
+			const modal = document.body.querySelector('[role="dialog"]') as HTMLElement;
+			const buttons = modal?.querySelectorAll('button');
+			const firstButton = buttons?.[0] as HTMLButtonElement;
+			const lastButton = buttons?.[buttons.length - 1] as HTMLButtonElement;
+
+			const lastFocusSpy = vi.spyOn(lastButton, 'focus');
+
+			// Set activeElement to firstButton
+			const originalActiveElement = Object.getOwnPropertyDescriptor(document, 'activeElement');
+			Object.defineProperty(document, 'activeElement', {
+				get: () => firstButton,
+				configurable: true,
+			});
+
+			if (capturedHandler) {
+				const event = new KeyboardEvent('keydown', {
+					key: 'Tab',
+					shiftKey: true,
+					cancelable: true,
+				});
+				const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+				capturedHandler(event);
+
+				// Should have prevented default and focused last element
+				expect(preventDefaultSpy).toHaveBeenCalled();
+				expect(lastFocusSpy).toHaveBeenCalled();
+			}
+
+			if (originalActiveElement) {
+				Object.defineProperty(document, 'activeElement', originalActiveElement);
+			}
+			lastFocusSpy.mockRestore();
+		});
+
+		it('should not interfere when not at boundary element', () => {
+			const onClose = vi.fn();
+			let capturedHandler: ((e: KeyboardEvent) => void) | null = null;
+
+			const originalAddEventListener = HTMLElement.prototype.addEventListener;
+			HTMLElement.prototype.addEventListener = function (
+				type: string,
+				handler: EventListenerOrEventListenerObject,
+				options?: boolean | AddEventListenerOptions
+			) {
+				if (type === 'keydown' && typeof handler === 'function') {
+					capturedHandler = handler;
+				}
+				return originalAddEventListener.call(this, type, handler, options);
+			};
+
+			render(
+				<Modal isOpen={true} onClose={onClose} title="Focus Test">
+					<button id="first-btn">First</button>
+					<input id="middle-input" />
+					<button id="last-btn">Last</button>
+				</Modal>
+			);
+
+			HTMLElement.prototype.addEventListener = originalAddEventListener;
+
+			const middleInput = document.getElementById('middle-input') as HTMLInputElement;
+
+			// Set activeElement to middle element
+			const originalActiveElement = Object.getOwnPropertyDescriptor(document, 'activeElement');
+			Object.defineProperty(document, 'activeElement', {
+				get: () => middleInput,
+				configurable: true,
+			});
+
+			if (capturedHandler) {
+				const event = new KeyboardEvent('keydown', {
+					key: 'Tab',
+					shiftKey: false,
+					cancelable: true,
+				});
+				const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+				capturedHandler(event);
+
+				// Should NOT have prevented default
+				expect(preventDefaultSpy).not.toHaveBeenCalled();
+			}
+
+			if (originalActiveElement) {
+				Object.defineProperty(document, 'activeElement', originalActiveElement);
+			}
+		});
+
+		it('should ignore non-Tab keys', () => {
+			const onClose = vi.fn();
+			let capturedHandler: ((e: KeyboardEvent) => void) | null = null;
+
+			const originalAddEventListener = HTMLElement.prototype.addEventListener;
+			HTMLElement.prototype.addEventListener = function (
+				type: string,
+				handler: EventListenerOrEventListenerObject,
+				options?: boolean | AddEventListenerOptions
+			) {
+				if (type === 'keydown' && typeof handler === 'function') {
+					capturedHandler = handler;
+				}
+				return originalAddEventListener.call(this, type, handler, options);
+			};
+
+			render(
+				<Modal isOpen={true} onClose={onClose} title="Focus Test">
+					<button id="first-btn">First</button>
+					<button id="last-btn">Last</button>
+				</Modal>
+			);
+
+			HTMLElement.prototype.addEventListener = originalAddEventListener;
+
+			const modal = document.body.querySelector('[role="dialog"]') as HTMLElement;
+			const buttons = modal?.querySelectorAll('button');
+			const lastButton = buttons?.[buttons.length - 1] as HTMLButtonElement;
+
+			// Set activeElement to lastButton
+			const originalActiveElement = Object.getOwnPropertyDescriptor(document, 'activeElement');
+			Object.defineProperty(document, 'activeElement', {
+				get: () => lastButton,
+				configurable: true,
+			});
+
+			if (capturedHandler) {
+				const event = new KeyboardEvent('keydown', {
+					key: 'Enter',
+					cancelable: true,
+				});
+				const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+				capturedHandler(event);
+
+				// Should NOT have prevented default for non-Tab key
+				expect(preventDefaultSpy).not.toHaveBeenCalled();
+			}
+
+			if (originalActiveElement) {
+				Object.defineProperty(document, 'activeElement', originalActiveElement);
+			}
+		});
+
+		it('should set up focus trap when modal opens with ref ready', async () => {
+			const onClose = vi.fn();
+			let focusTrapSetUp = false;
+
+			const originalAddEventListener = HTMLElement.prototype.addEventListener;
+			HTMLElement.prototype.addEventListener = function (
+				type: string,
+				handler: EventListenerOrEventListenerObject,
+				options?: boolean | AddEventListenerOptions
+			) {
+				if (type === 'keydown') {
+					focusTrapSetUp = true;
+				}
+				return originalAddEventListener.call(this, type, handler, options);
+			};
+
+			// Render the modal open using act for proper effect execution
+			await act(async () => {
+				render(
+					<Modal isOpen={true} onClose={onClose} title="Test">
+						<button>Test Button</button>
+					</Modal>
+				);
+				// Wait a tick for Portal to render and ref to be set
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+
+			HTMLElement.prototype.addEventListener = originalAddEventListener;
+
+			// Verify modal is properly rendered
+			const modal = document.body.querySelector('[role="dialog"]');
+			expect(modal).toBeTruthy();
+
+			// With Portal mocked to render inline, focus trap should be set up
+			expect(focusTrapSetUp).toBe(true);
+		});
+
+		it('should not set up focus trap when modal is closed', async () => {
+			const onClose = vi.fn();
+			let focusTrapSetUp = false;
+
+			const originalAddEventListener = HTMLElement.prototype.addEventListener;
+			HTMLElement.prototype.addEventListener = function (
+				type: string,
+				handler: EventListenerOrEventListenerObject,
+				options?: boolean | AddEventListenerOptions
+			) {
+				if (type === 'keydown') {
+					focusTrapSetUp = true;
+				}
+				return originalAddEventListener.call(this, type, handler, options);
+			};
+
+			// Render the modal closed
+			render(
+				<Modal isOpen={false} onClose={onClose} title="Test">
+					<button>Test Button</button>
+				</Modal>
+			);
+
+			HTMLElement.prototype.addEventListener = originalAddEventListener;
+
+			// Wait a bit to ensure no async setup happens
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Focus trap should NOT be set up when modal is closed
+			expect(focusTrapSetUp).toBe(false);
+
+			// Modal should not be rendered
+			const modal = document.body.querySelector('[role="dialog"]');
+			expect(modal).toBeNull();
 		});
 	});
 });

@@ -70,6 +70,24 @@ export function mergeSdkMessagesWithDedup(
 }
 
 /**
+ * Merge function for SDK messages delta updates.
+ * Handles delta updates by merging new messages with deduplication.
+ *
+ * @internal Exported for testing
+ */
+export function mergeSDKMessagesDelta(current: SDKMessagesState, delta: unknown): SDKMessagesState {
+	const typedDelta = delta as SDKMessagesUpdate;
+	return {
+		...current,
+		// FIX: Deduplicate by UUID to prevent duplicates on reconnection
+		// Race condition: delta events may arrive after snapshot fetch completes,
+		// containing messages already in the snapshot
+		sdkMessages: mergeSdkMessagesWithDedup(current.sdkMessages, typedDelta.added),
+		timestamp: typedDelta.timestamp,
+	};
+}
+
+/**
  * Session-Specific State Channels
  */
 class SessionStateChannels {
@@ -97,17 +115,7 @@ class SessionStateChannels {
 			{
 				sessionId,
 				enableDeltas: true,
-				mergeDelta: (current, delta) => {
-					const typedDelta = delta as SDKMessagesUpdate;
-					return {
-						...current,
-						// FIX: Deduplicate by UUID to prevent duplicates on reconnection
-						// Race condition: delta events may arrive after snapshot fetch completes,
-						// containing messages already in the snapshot
-						sdkMessages: mergeSdkMessagesWithDedup(current.sdkMessages, typedDelta.added),
-						timestamp: typedDelta.timestamp,
-					};
-				},
+				mergeDelta: mergeSDKMessagesDelta,
 				debug: false,
 			}
 		);

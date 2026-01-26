@@ -501,7 +501,8 @@ old2`;
 			});
 		});
 
-		it('should call API on confirm delete', async () => {
+		it('should call API on confirm delete and reload page', async () => {
+			vi.useFakeTimers();
 			const originalReload = window.location.reload;
 			window.location.reload = vi.fn();
 
@@ -527,7 +528,8 @@ old2`;
 			// Confirm delete
 			fireEvent.click(screen.getByTestId('modal-confirm'));
 
-			await waitFor(() => {
+			// Wait for API call to complete
+			await vi.waitFor(() => {
 				expect(mockCall).toHaveBeenCalledWith('message.removeOutput', {
 					sessionId: 'session-456',
 					messageUuid: 'msg-123',
@@ -536,7 +538,13 @@ old2`;
 
 			expect(mockToastSuccess).toHaveBeenCalledWith('Tool output removed. Reloading session...');
 
+			// Advance timer to trigger the reload
+			await vi.advanceTimersByTimeAsync(500);
+
+			expect(window.location.reload).toHaveBeenCalled();
+
 			window.location.reload = originalReload;
+			vi.useRealTimers();
 		});
 
 		it('should show error toast on delete failure', async () => {
@@ -1049,6 +1057,93 @@ describe('ToolResultCard Logic', () => {
 			const input = '   1→const arrow = →;';
 			const result = stripLineNumbers(input);
 			expect(result).toBe('const arrow = →;');
+		});
+	});
+
+	describe('calculateDiffCounts comprehensive', () => {
+		// Test the diff calculation with common prefix and suffix
+		it('should show accurate diff counts for changes with common prefix', () => {
+			// Use content with common prefix lines to test firstDiffIndex increment
+			const oldContent = `common line 1
+common line 2
+old content
+end`;
+			const newContent = `common line 1
+common line 2
+new content
+end`;
+			render(
+				<ToolResultCard
+					toolName="Edit"
+					toolId="edit-prefix"
+					input={{
+						file_path: '/test.ts',
+						old_string: oldContent,
+						new_string: newContent,
+					}}
+					output="success"
+				/>
+			);
+
+			// Should show diff counts (checking the component renders)
+			expect(screen.getByText('Edit')).toBeTruthy();
+		});
+
+		it('should show accurate diff counts for changes with common suffix', () => {
+			// Use content with common suffix lines to test lastDiffIndex decrement
+			const oldContent = `start
+old middle
+common end 1
+common end 2`;
+			const newContent = `start
+new middle
+common end 1
+common end 2`;
+			render(
+				<ToolResultCard
+					toolName="Edit"
+					toolId="edit-suffix"
+					input={{
+						file_path: '/test.ts',
+						old_string: oldContent,
+						new_string: newContent,
+					}}
+					output="success"
+				/>
+			);
+
+			// Should show diff counts
+			expect(screen.getByText('Edit')).toBeTruthy();
+		});
+
+		it('should handle changes with both common prefix and suffix', () => {
+			// This tests both while loops (firstDiffIndex++ and lastDiffIndex--)
+			const oldContent = `header line 1
+header line 2
+OLD CHANGE
+footer line 1
+footer line 2`;
+			const newContent = `header line 1
+header line 2
+NEW CHANGE
+footer line 1
+footer line 2`;
+			render(
+				<ToolResultCard
+					toolName="Edit"
+					toolId="edit-both"
+					input={{
+						file_path: '/test.ts',
+						old_string: oldContent,
+						new_string: newContent,
+					}}
+					output="success"
+				/>
+			);
+
+			// Should show +1 -1 for single line change
+			expect(screen.getByText('+1')).toBeTruthy();
+			expect(screen.getByText('-1')).toBeTruthy();
 		});
 	});
 

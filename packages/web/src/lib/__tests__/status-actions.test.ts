@@ -139,6 +139,14 @@ describe('getCurrentAction', () => {
 			expect(result).toBe('Taking snapshot...');
 		});
 
+		it('should handle tool names containing known tool as substring', () => {
+			// Tool name contains 'Read' as a substring but is not an exact match
+			// This tests the partial matching loop in getActionForTool (line 82)
+			const message = createToolProgressMessage('mcp__custom__Read_and_parse', 0.5);
+			const result = getCurrentAction(message, true);
+			expect(result).toBe('Reading files...');
+		});
+
 		it('should generate readable action for unknown MCP tools', () => {
 			const message = createToolProgressMessage('mcp__custom__do_something', 0.5);
 			const result = getCurrentAction(message, true);

@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { render } from '@testing-library/preact';
+import { render, fireEvent } from '@testing-library/preact';
 import { ThinkingBlock } from '../ThinkingBlock';
 
 describe('ThinkingBlock', () => {
@@ -110,6 +110,50 @@ describe('ThinkingBlock', () => {
 			expect(container.textContent).toContain('Line 1');
 			expect(container.textContent).toContain('Line 5');
 			expect(container.textContent).toContain('Line 10');
+		});
+
+		it('should toggle expand/collapse when button is clicked', () => {
+			// Mock scrollHeight to trigger truncation (PREVIEW_MAX_HEIGHT = 120)
+			const originalScrollHeight = Object.getOwnPropertyDescriptor(
+				HTMLElement.prototype,
+				'scrollHeight'
+			);
+			Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+				configurable: true,
+				get() {
+					// Return large scrollHeight to trigger truncation
+					return 500;
+				},
+			});
+
+			try {
+				const longContent =
+					'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10';
+				const { container } = render(<ThinkingBlock content={longContent} />);
+
+				// Should show "Show more" button when truncated
+				const showMoreButton = container.querySelector('button');
+				expect(showMoreButton).toBeTruthy();
+				expect(showMoreButton?.textContent).toContain('Show more');
+
+				// Click to expand using fireEvent
+				fireEvent.click(showMoreButton as HTMLElement);
+
+				// Should now show "Show less"
+				expect(container.textContent).toContain('Show less');
+
+				// Click again to collapse
+				const showLessButton = container.querySelector('button');
+				fireEvent.click(showLessButton as HTMLElement);
+
+				// Should show "Show more" again
+				expect(container.textContent).toContain('Show more');
+			} finally {
+				// Restore original scrollHeight
+				if (originalScrollHeight) {
+					Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalScrollHeight);
+				}
+			}
 		});
 	});
 

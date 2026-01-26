@@ -219,6 +219,91 @@ describe('Dropdown', () => {
 			// Restore original
 			Element.prototype.getBoundingClientRect = originalGetBoundingClientRect;
 		});
+
+		it('should constrain left position when menu overflows right edge of viewport', async () => {
+			// Mock getBoundingClientRect and offsetWidth to properly trigger the overflow branch
+			const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+			const originalOffsetWidth = Object.getOwnPropertyDescriptor(
+				HTMLElement.prototype,
+				'offsetWidth'
+			);
+			const originalOffsetHeight = Object.getOwnPropertyDescriptor(
+				HTMLElement.prototype,
+				'offsetHeight'
+			);
+
+			// Mock element dimensions
+			Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+				configurable: true,
+				get() {
+					// Return 300 for menu elements to ensure overflow calculation triggers
+					if (this.getAttribute('role') === 'menu') {
+						return 300;
+					}
+					return 100;
+				},
+			});
+
+			Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+				configurable: true,
+				get() {
+					return 200;
+				},
+			});
+
+			Element.prototype.getBoundingClientRect = function () {
+				// Trigger at left: 850, width 100
+				// Menu width: 300
+				// Viewport: 1024
+				// 850 + 300 = 1150 > 1024 - 8 = 1016 → should trigger adjustment
+				if (this.className?.includes?.('relative') || this.closest?.('.relative')) {
+					return {
+						top: 100,
+						bottom: 130,
+						left: 850,
+						right: 950,
+						width: 100,
+						height: 30,
+						x: 850,
+						y: 100,
+						toJSON: () => ({}),
+					} as DOMRect;
+				}
+				return originalGetBoundingClientRect.call(this);
+			};
+
+			Object.defineProperty(window, 'innerHeight', { value: 800, writable: true });
+			Object.defineProperty(window, 'innerWidth', { value: 1024, writable: true });
+
+			const { container } = render(
+				<Dropdown trigger={<button>Open</button>} items={defaultItems} position="left" />
+			);
+			container.querySelector('button')?.click();
+
+			// Wait for initial render and RAF callback
+			await waitFor(() => {
+				const menu = document.body.querySelector('[role="menu"]') as HTMLElement;
+				expect(menu).toBeTruthy();
+			});
+
+			// Wait for requestAnimationFrame to update position
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			const menu = document.body.querySelector('[role="menu"]') as HTMLElement;
+			// When menu overflows, left should be adjusted (viewportWidth - menuWidth - 8 = 1024 - 300 - 8 = 716)
+			// The style.left should be set to the constrained value
+			expect(menu?.style.left).toBeTruthy();
+			expect(menu?.style.left).not.toBe('auto');
+
+			// Restore originals
+			Element.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+			if (originalOffsetWidth) {
+				Object.defineProperty(HTMLElement.prototype, 'offsetWidth', originalOffsetWidth);
+			}
+			if (originalOffsetHeight) {
+				Object.defineProperty(HTMLElement.prototype, 'offsetHeight', originalOffsetHeight);
+			}
+		});
 	});
 
 	describe('Interactions', () => {

@@ -122,6 +122,33 @@ describe('CopyButton', () => {
 				expect(svg?.classList.contains('text-green-400')).toBe(true);
 			});
 		});
+
+		it('should reset copied state after 2 seconds', async () => {
+			vi.useFakeTimers();
+			(copyToClipboard as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+
+			render(<CopyButton text="test text" />);
+			const button = document.body.querySelector('button');
+			button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+			// Allow promises to resolve (for the async copyToClipboard)
+			await Promise.resolve();
+			// Flush microtask queue for state update
+			await vi.advanceTimersByTimeAsync(0);
+
+			// Initially should show checkmark (green)
+			let svg = document.body.querySelector('svg');
+			expect(svg?.classList.contains('text-green-400')).toBe(true);
+
+			// Advance time by 2 seconds
+			await vi.advanceTimersByTimeAsync(2000);
+
+			// Should revert to clipboard icon (no green class)
+			svg = document.body.querySelector('svg');
+			expect(svg?.classList.contains('text-green-400')).toBe(false);
+
+			vi.useRealTimers();
+		});
 	});
 
 	describe('Styling', () => {

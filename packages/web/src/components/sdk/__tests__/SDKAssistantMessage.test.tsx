@@ -363,6 +363,26 @@ describe('SDKAssistantMessage', () => {
 				expect(toast.error).toHaveBeenCalledWith('Failed to copy message');
 			});
 		});
+
+		it('should only copy text content from mixed content message', async () => {
+			vi.mocked(copyToClipboard).mockResolvedValue(true);
+
+			// Message with text and tool_use blocks - only text should be copied
+			const message = createMixedContentMessage();
+			const { container } = render(<SDKAssistantMessage message={message} />);
+
+			const copyButton = container.querySelector('button[title="Copy message"]');
+			fireEvent.click(copyButton!);
+
+			// Wait for the async handler to complete
+			await vi.waitFor(() => {
+				// Should only copy text blocks, filtering out tool_use blocks
+				expect(copyToClipboard).toHaveBeenCalledWith(
+					'I will read the file.\nThe file has been read.'
+				);
+				expect(toast.success).toHaveBeenCalledWith('Message copied to clipboard');
+			});
+		});
 	});
 
 	describe('Question Handling (AskUserQuestion)', () => {

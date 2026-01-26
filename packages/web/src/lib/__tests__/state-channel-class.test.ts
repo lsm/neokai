@@ -317,6 +317,40 @@ describe('StateChannel - Comprehensive Coverage', () => {
 			expect(channel.value?.data).not.toBe('optimistic');
 		});
 
+		it('should revert when confirmed promise times out', async () => {
+			vi.useFakeTimers();
+
+			const testChannel = new StateChannel(mockHubObj as unknown as MessageHub, 'test.channel', {
+				optimisticTimeout: 100, // 100ms timeout
+			});
+
+			mockHubObj.call.mockResolvedValue({ data: 'original' });
+			await testChannel.start();
+
+			// Create a promise that never resolves
+			const neverResolves = new Promise<void>(() => {
+				// This promise never resolves
+			});
+
+			testChannel.updateOptimistic(
+				'update-timeout',
+				(_current) => ({ data: 'optimistic' }),
+				neverResolves
+			);
+
+			// Initially should have optimistic value
+			expect(testChannel.value?.data).toBe('optimistic');
+
+			// Advance time past the timeout
+			await vi.advanceTimersByTimeAsync(150);
+
+			// Should have reverted back to original value
+			expect(testChannel.value?.data).toBe('original');
+
+			await testChannel.stop();
+			vi.useRealTimers();
+		});
+
 		it('should warn when state is null', () => {
 			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 

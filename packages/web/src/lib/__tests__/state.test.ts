@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { signal } from '@preact/signals';
 import {
 	mergeSdkMessagesWithDedup,
+	mergeSDKMessagesDelta,
 	appState,
 	connectionState,
 	sessions,
@@ -172,6 +173,73 @@ describe('state', () => {
 			const result = mergeSdkMessagesWithDedup([], [noUuid as unknown as SDKMessage]);
 			// Messages without UUID are not added to the map
 			expect(result).toHaveLength(0);
+		});
+	});
+
+	describe('mergeSDKMessagesDelta', () => {
+		it('should merge delta updates with current state', () => {
+			const current = {
+				sdkMessages: [createSDKMessage({ timestamp: 1000 })],
+				timestamp: 1000,
+			};
+			const delta = {
+				added: [createSDKMessage({ timestamp: 2000 })],
+				timestamp: 2000,
+			};
+
+			const result = mergeSDKMessagesDelta(current, delta);
+
+			expect(result.sdkMessages).toHaveLength(2);
+			expect(result.timestamp).toBe(2000);
+		});
+
+		it('should deduplicate messages in delta merge', () => {
+			const uuid = createUUID();
+			const current = {
+				sdkMessages: [createSDKMessage({ uuid, timestamp: 1000 })],
+				timestamp: 1000,
+			};
+			const delta = {
+				added: [createSDKMessage({ uuid, timestamp: 2000 })],
+				timestamp: 2000,
+			};
+
+			const result = mergeSDKMessagesDelta(current, delta);
+
+			expect(result.sdkMessages).toHaveLength(1);
+			expect(result.timestamp).toBe(2000);
+		});
+
+		it('should handle delta with no added messages', () => {
+			const current = {
+				sdkMessages: [createSDKMessage()],
+				timestamp: 1000,
+			};
+			const delta = {
+				added: [],
+				timestamp: 2000,
+			};
+
+			const result = mergeSDKMessagesDelta(current, delta);
+
+			expect(result.sdkMessages).toHaveLength(1);
+			expect(result.timestamp).toBe(2000);
+		});
+
+		it('should handle empty current state', () => {
+			const current = {
+				sdkMessages: [],
+				timestamp: 0,
+			};
+			const delta = {
+				added: [createSDKMessage({ timestamp: 1000 })],
+				timestamp: 1000,
+			};
+
+			const result = mergeSDKMessagesDelta(current, delta);
+
+			expect(result.sdkMessages).toHaveLength(1);
+			expect(result.timestamp).toBe(1000);
 		});
 	});
 
@@ -644,6 +712,30 @@ describe('state', () => {
 			// Access currentContextInfo
 			const contextInfo = currentContextInfo.value;
 
+			expect(contextInfo).toBeNull();
+		});
+
+		it('should trigger currentSessionState computed when accessing channels', async () => {
+			await initializeApplicationState(mockHub, mockSessionId);
+
+			// Set session ID to trigger the computed
+			mockSessionId.value = 'test-session-for-computed';
+
+			// Explicitly get channels to ensure they exist
+			const channels = appState.getSessionChannels('test-session-for-computed');
+			expect(channels).toBeDefined();
+			expect(channels.session).toBeDefined();
+			expect(channels.session.$).toBeDefined();
+
+			// Access the computed signals - this forces evaluation of currentSessionState
+			// which includes lines 396-397 (getSessionChannels and accessing $.value)
+			const session = currentSession.value;
+			const agentState = currentAgentState.value;
+			const contextInfo = currentContextInfo.value;
+
+			// Verify computed values are accessed (even if null due to mock)
+			expect(session).toBeNull();
+			expect(agentState).toEqual({ status: 'idle' });
 			expect(contextInfo).toBeNull();
 		});
 	});

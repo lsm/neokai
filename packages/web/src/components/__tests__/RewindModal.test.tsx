@@ -1047,6 +1047,41 @@ describe('RewindModal', () => {
 				expect(toast.error).toHaveBeenCalledWith('Not connected to server');
 			});
 		});
+
+		it('should handle generic error from getCheckpoints', async () => {
+			vi.mocked(getCheckpoints).mockRejectedValue(new Error('Database error'));
+
+			render(<RewindModal isOpen={true} onClose={() => {}} sessionId="test-session" />);
+
+			// Wait for error message to appear
+			await waitFor(() => {
+				const errorDiv = document.body.querySelector('.bg-red-500\\/10');
+				expect(errorDiv?.textContent).toContain('Database error');
+			});
+		});
+
+		it('should handle generic error from previewRewind', async () => {
+			vi.mocked(previewRewind).mockRejectedValue(new Error('Preview error'));
+
+			render(<RewindModal isOpen={true} onClose={() => {}} sessionId="test-session" />);
+
+			// Wait for checkpoints to load and click checkpoint
+			await waitFor(() => {
+				const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Turn 1')
+				);
+				expect(checkpoint).toBeTruthy();
+			});
+			const checkpoint = Array.from(document.body.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Turn 1')
+			);
+			checkpoint?.click();
+
+			// Check if toast.error was called with generic message
+			await waitFor(() => {
+				expect(toast.error).toHaveBeenCalledWith('Failed to load preview');
+			});
+		});
 	});
 
 	describe('Preselected checkpoint', () => {

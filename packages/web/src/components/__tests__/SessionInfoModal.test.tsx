@@ -413,4 +413,95 @@ describe('SessionInfoModal', () => {
 			expect(commandsLabel).toBeFalsy();
 		});
 	});
+
+	describe('Internal Flags', () => {
+		it('should display Title Generated as Yes when true', () => {
+			const session = createMockSession({
+				metadata: {
+					messageCount: 5,
+					totalTokens: 1000,
+					inputTokens: 500,
+					outputTokens: 500,
+					totalCost: 0.01,
+					toolCallCount: 2,
+					titleGenerated: true,
+				},
+			});
+			render(<SessionInfoModal isOpen={true} onClose={() => {}} session={session} />);
+
+			// Find the Title Generated value
+			const spans = document.body.querySelectorAll('span');
+			const titleGeneratedLabel = Array.from(spans).find(
+				(s) => s.textContent === 'Title Generated'
+			);
+			expect(titleGeneratedLabel).toBeTruthy();
+
+			// Find the 'Yes' value (should appear after the label)
+			const yesValue = Array.from(spans).find((s) => s.textContent === 'Yes');
+			expect(yesValue).toBeTruthy();
+		});
+
+		it('should display Title Generated as No when false', () => {
+			const session = createMockSession({
+				metadata: {
+					messageCount: 5,
+					totalTokens: 1000,
+					inputTokens: 500,
+					outputTokens: 500,
+					totalCost: 0.01,
+					toolCallCount: 2,
+					titleGenerated: false,
+				},
+			});
+			render(<SessionInfoModal isOpen={true} onClose={() => {}} session={session} />);
+
+			const spans = document.body.querySelectorAll('span');
+			const titleGeneratedLabel = Array.from(spans).find(
+				(s) => s.textContent === 'Title Generated'
+			);
+			expect(titleGeneratedLabel).toBeTruthy();
+		});
+
+		it('should display Workspace Initialized as Yes when true', () => {
+			const session = createMockSession({
+				metadata: {
+					messageCount: 5,
+					totalTokens: 1000,
+					inputTokens: 500,
+					outputTokens: 500,
+					totalCost: 0.01,
+					toolCallCount: 2,
+					workspaceInitialized: true,
+				},
+			});
+			render(<SessionInfoModal isOpen={true} onClose={() => {}} session={session} />);
+
+			const spans = document.body.querySelectorAll('span');
+			const workspaceLabel = Array.from(spans).find(
+				(s) => s.textContent === 'Workspace Initialized'
+			);
+			expect(workspaceLabel).toBeTruthy();
+		});
+
+		it('should display Workspace Initialized as No when false', () => {
+			const session = createMockSession({
+				metadata: {
+					messageCount: 5,
+					totalTokens: 1000,
+					inputTokens: 500,
+					outputTokens: 500,
+					totalCost: 0.01,
+					toolCallCount: 2,
+					workspaceInitialized: false,
+				},
+			});
+			render(<SessionInfoModal isOpen={true} onClose={() => {}} session={session} />);
+
+			const spans = document.body.querySelectorAll('span');
+			const workspaceLabel = Array.from(spans).find(
+				(s) => s.textContent === 'Workspace Initialized'
+			);
+			expect(workspaceLabel).toBeTruthy();
+		});
+	});
 });

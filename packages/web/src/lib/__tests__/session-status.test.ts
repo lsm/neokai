@@ -645,4 +645,93 @@ describe('session-status (real module tests)', () => {
 			expect(typeof status?.hasUnread).toBe('boolean');
 		});
 	});
+
+	describe('getProcessingPhaseColor edge cases', () => {
+		it('should return purple for unknown processing phase (default case)', async () => {
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const { getProcessingPhaseColor } = await import('../session-status.js');
+
+			// Test with an unknown phase value - should hit default case (line 196)
+			const result = getProcessingPhaseColor({
+				status: 'processing',
+				phase: 'unknown-phase' as unknown as AgentProcessingState['phase'],
+			});
+			expect(result).toEqual({
+				dot: 'bg-purple-500',
+				text: 'text-purple-400',
+			});
+		});
+
+		it('should return null for completely unknown status (final return null)', async () => {
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const { getProcessingPhaseColor } = await import('../session-status.js');
+
+			// Test with an unrecognized status - should hit final return null (line 200)
+			const result = getProcessingPhaseColor({
+				status: 'unknown-status' as unknown as AgentProcessingState['status'],
+			});
+			expect(result).toBeNull();
+		});
+	});
+
+	describe('localStorage save error handling', () => {
+		it('should handle localStorage.setItem failure gracefully (line 69)', async () => {
+			// Create a localStorage that throws on setItem
+			const throwingLocalStorage = {
+				...createMockLocalStorage(),
+				setItem: vi.fn(() => {
+					throw new Error('Storage quota exceeded');
+				}),
+			};
+			globalThis.localStorage = throwingLocalStorage as unknown as Storage;
+
+			mockSessions.value = [
+				createMockSession('sess-1', {
+					metadata: {
+						messageCount: 10,
+						totalTokens: 0,
+						inputTokens: 0,
+						outputTokens: 0,
+						totalCost: 0,
+						toolCallCount: 0,
+					},
+				}),
+			];
+
+			vi.doMock('../state.js', () => ({
+				sessions: mockSessions,
+			}));
+			vi.doMock('../signals.js', () => ({
+				currentSessionIdSignal: mockCurrentSessionIdSignal,
+			}));
+
+			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const module = await import('../session-status.js');
+			module.initSessionStatusTracking();
+
+			// Switch to session - should trigger save which will fail
+			mockCurrentSessionIdSignal.value = 'sess-1';
+
+			// Should have logged error but not thrown
+			expect(consoleErrorSpy).toHaveBeenCalledWith(
+				'[SessionStatus] Failed to save unread data:',
+				expect.any(Error)
+			);
+
+			consoleErrorSpy.mockRestore();
+		});
+	});
 });
