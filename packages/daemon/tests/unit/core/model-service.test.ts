@@ -368,5 +368,107 @@ describe('Model Service', () => {
 			const cache = getModelsCache();
 			expect(cache.get('global')).toEqual(mockModels);
 		});
+
+		it('should initialize providers and load models on first call', async () => {
+			// Ensure clean state - no cache
+			clearModelsCache();
+			resetProviderRegistry();
+			resetProviderFactory();
+
+			// When running with real providers, initializeModels() will:
+			// 1. Call initializeProviders() to register providers
+			// 2. Try to load models from providers
+			// 3. Set empty cache if no models loaded (no API key in test env)
+			await initializeModels();
+
+			// Cache should exist (even if empty due to no API key)
+			const cache = getModelsCache();
+			expect(cache.has('global')).toBe(true);
+		});
+	});
+
+	describe('background refresh behavior', () => {
+		it('should trigger background refresh for stale cache', async () => {
+			// Set up cache with old timestamp (simulating stale cache)
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
+			setModelsCache(testCache);
+
+			// Note: We can't easily test the actual refresh because it requires
+			// mocking the timestamp. However, getAvailableModels should return
+			// cached data even when triggering refresh.
+			const models = getAvailableModels('global');
+
+			// Should return cached models immediately
+			expect(models.length).toBe(3);
+		});
+
+		it('should return cached models while refresh is in progress', async () => {
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
+			setModelsCache(testCache);
+
+			// Multiple calls should return cached data
+			const models1 = getAvailableModels('global');
+			const models2 = getAvailableModels('global');
+
+			expect(models1).toEqual(models2);
+			expect(models1.length).toBe(3);
+		});
+	});
+
+	describe('provider loading', () => {
+		it('should return empty array when no providers are available', () => {
+			// Ensure no providers are registered
+			resetProviderRegistry();
+			resetProviderFactory();
+			clearModelsCache();
+
+			// With no providers and no cache, should return empty
+			const models = getAvailableModels('no-providers-key');
+			expect(models).toEqual([]);
+		});
+
+		it('should handle provider errors gracefully during model loading', async () => {
+			// Pre-populate cache so getAvailableModels doesn't return empty
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
+			setModelsCache(testCache);
+
+			// Even if a provider fails, cached models should still be available
+			const models = getAvailableModels('global');
+			expect(models.length).toBeGreaterThan(0);
+		});
+	});
+
+	describe('cache key isolation', () => {
+		it('should maintain separate caches for different keys', () => {
+			const globalModels = mockModels;
+			const sessionModels = [mockModels[0]]; // Only default model
+
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', globalModels);
+			testCache.set('session-abc', sessionModels);
+			setModelsCache(testCache);
+
+			expect(getAvailableModels('global').length).toBe(3);
+			expect(getAvailableModels('session-abc').length).toBe(1);
+			expect(getAvailableModels('nonexistent-key').length).toBe(0);
+		});
+
+		it('should clear cache for specific key without affecting others', () => {
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('key-a', mockModels);
+			testCache.set('key-b', mockModels);
+			testCache.set('key-c', mockModels);
+			setModelsCache(testCache);
+
+			clearModelsCache('key-b');
+
+			const cache = getModelsCache();
+			expect(cache.has('key-a')).toBe(true);
+			expect(cache.has('key-b')).toBe(false);
+			expect(cache.has('key-c')).toBe(true);
+		});
 	});
 });

@@ -587,4 +587,90 @@ describe('ErrorManager', () => {
 			expect(errorCause.stack).toBeDefined();
 		});
 	});
+
+	describe('API connection state', () => {
+		it('should return initial connection state', () => {
+			const state = errorManager.getApiConnectionState();
+
+			expect(state.status).toBe('connected');
+			expect(state.errorCount).toBe(0);
+			expect(state.lastError).toBeUndefined();
+			expect(state.timestamp).toBeDefined();
+		});
+
+		it('should track connection errors and update status', async () => {
+			// Generate enough connection errors to change status
+			for (let i = 0; i < 5; i++) {
+				const error = errorManager.createError(
+					new Error('ENOTFOUND api.anthropic.com'),
+					ErrorCategory.CONNECTION
+				);
+				await errorManager.broadcastError('test-session', error);
+			}
+
+			const state = errorManager.getApiConnectionState();
+			expect(state.status).toBe('disconnected');
+			expect(state.errorCount).toBe(5);
+		});
+
+		it('should mark API success and reset error count', async () => {
+			// First, create some connection errors
+			for (let i = 0; i < 3; i++) {
+				const error = errorManager.createError(new Error('ENOTFOUND'), ErrorCategory.CONNECTION);
+				await errorManager.broadcastError('test-session', error);
+			}
+
+			// Verify degraded state
+			let state = errorManager.getApiConnectionState();
+			expect(state.status).toBe('degraded');
+			expect(state.errorCount).toBe(3);
+
+			// Mark success
+			await errorManager.markApiSuccess();
+
+			// Verify recovery
+			state = errorManager.getApiConnectionState();
+			expect(state.status).toBe('connected');
+			expect(state.errorCount).toBe(0);
+			expect(state.lastSuccessfulCall).toBeDefined();
+		});
+
+		it('should emit api.connection event on recovery', async () => {
+			// Create errors to change status
+			for (let i = 0; i < 2; i++) {
+				const error = errorManager.createError(new Error('ECONNREFUSED'), ErrorCategory.CONNECTION);
+				await errorManager.broadcastError('test-session', error);
+			}
+
+			// Clear previous emit calls
+			emitSpy.mockClear();
+
+			// Mark success to trigger recovery
+			await errorManager.markApiSuccess();
+
+			// Should emit api.connection event for recovery
+			const apiConnectionCalls = emitSpy.mock.calls.filter(
+				(call: unknown[]) => call[0] === 'api.connection'
+			);
+			expect(apiConnectionCalls.length).toBe(1);
+			expect(apiConnectionCalls[0][1]).toMatchObject({
+				status: 'connected',
+				errorCount: 0,
+			});
+		});
+
+		it('should not emit recovery event if already connected', async () => {
+			// Start fresh - no errors
+			emitSpy.mockClear();
+
+			// Mark success when already connected
+			await errorManager.markApiSuccess();
+
+			// Should not emit api.connection event
+			const apiConnectionCalls = emitSpy.mock.calls.filter(
+				(call: unknown[]) => call[0] === 'api.connection'
+			);
+			expect(apiConnectionCalls.length).toBe(0);
+		});
+	});
 });

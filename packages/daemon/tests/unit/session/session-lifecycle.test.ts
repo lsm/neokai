@@ -537,6 +537,79 @@ describe('SessionLifecycle', () => {
 			);
 		});
 	});
+
+	describe('generateTitleAndRenameBranch', () => {
+		it('should throw if session not found in cache', async () => {
+			cacheHasSpy.mockReturnValue(false);
+
+			await expect(
+				lifecycle.generateTitleAndRenameBranch('nonexistent-session', 'Hello')
+			).rejects.toThrow('Session nonexistent-session not found');
+		});
+
+		it('should return existing title if already generated', async () => {
+			cacheHasSpy.mockReturnValue(true);
+			cacheGetSpy.mockReturnValue({
+				getSessionData: () => ({
+					id: 'test-session',
+					title: 'Existing Title',
+					workspacePath: '/test',
+					metadata: { titleGenerated: true },
+				}),
+				updateMetadata: mock(() => {}),
+			});
+
+			const result = await lifecycle.generateTitleAndRenameBranch('test-session', 'Hello');
+
+			expect(result.title).toBe('Existing Title');
+			expect(result.isFallback).toBe(false);
+			// Should not call updateSession since title is already generated
+			expect(updateSessionSpy).not.toHaveBeenCalled();
+		});
+
+		it('should use fallback title on error', async () => {
+			const longMessage = 'This is a test message that should be truncated for the fallback title';
+			const updateMetadataSpy = mock(() => {});
+
+			cacheHasSpy.mockReturnValue(true);
+			cacheGetSpy.mockReturnValue({
+				getSessionData: () => ({
+					id: 'test-session',
+					title: 'New Session',
+					workspacePath: '/nonexistent/path/that/will/fail',
+					metadata: { titleGenerated: false },
+				}),
+				updateMetadata: updateMetadataSpy,
+			});
+
+			const result = await lifecycle.generateTitleAndRenameBranch('test-session', longMessage);
+
+			// Should return fallback title (truncated message)
+			expect(result.isFallback).toBe(true);
+			expect(result.title.length).toBeLessThanOrEqual(50);
+		});
+
+		it('should use "New Session" as fallback for empty message', async () => {
+			const updateMetadataSpy = mock(() => {});
+
+			cacheHasSpy.mockReturnValue(true);
+			cacheGetSpy.mockReturnValue({
+				getSessionData: () => ({
+					id: 'test-session',
+					title: 'New Session',
+					workspacePath: '/nonexistent',
+					metadata: { titleGenerated: false },
+				}),
+				updateMetadata: updateMetadataSpy,
+			});
+
+			const result = await lifecycle.generateTitleAndRenameBranch('test-session', '   ');
+
+			// Empty/whitespace message should result in "New Session" fallback
+			expect(result.isFallback).toBe(true);
+			expect(result.title).toBe('New Session');
+		});
+	});
 });
 
 describe('generateBranchName', () => {
