@@ -173,6 +173,24 @@ describe('Config Handlers', () => {
 			});
 		});
 
+		it('should report errors for failed maxThinkingTokens', async () => {
+			mockAgentSession.setMaxThinkingTokens.mockResolvedValue({
+				success: false,
+				error: 'Invalid value',
+			});
+
+			const result = await callHandler('config.model.update', {
+				sessionId: 'test-session-id',
+				settings: { maxThinkingTokens: -1 },
+			});
+
+			expect(result).toEqual({
+				applied: [],
+				pending: [],
+				errors: [{ field: 'maxThinkingTokens', error: 'Invalid value' }],
+			});
+		});
+
 		it('should persist other settings as pending', async () => {
 			const result = await callHandler('config.model.update', {
 				sessionId: 'test-session-id',
@@ -183,6 +201,19 @@ describe('Config Handlers', () => {
 			expect(result).toEqual({
 				applied: [],
 				pending: ['fallbackModel', 'maxTurns'],
+				errors: [],
+			});
+		});
+
+		it('should persist maxBudgetUsd as pending', async () => {
+			const result = await callHandler('config.model.update', {
+				sessionId: 'test-session-id',
+				settings: { maxBudgetUsd: 10.0 },
+			});
+
+			expect(result).toEqual({
+				applied: [],
+				pending: ['maxBudgetUsd'],
 				errors: [],
 			});
 		});
@@ -204,6 +235,17 @@ describe('Config Handlers', () => {
 				errors: [{ field: 'model', error: 'Model not available' }],
 			});
 		});
+
+		it('should use default error message when no error provided', async () => {
+			mockAgentSession.handleModelSwitch.mockResolvedValue({ success: false });
+
+			const result = (await callHandler('config.model.update', {
+				sessionId: 'test-session-id',
+				settings: { model: 'bad-model' },
+			})) as { errors: Array<{ error: string }> };
+
+			expect(result.errors[0].error).toBe('Failed to switch model');
+		});
 	});
 
 	describe('config.systemPrompt.get', () => {
@@ -217,6 +259,20 @@ describe('Config Handlers', () => {
 	});
 
 	describe('config.systemPrompt.update', () => {
+		it('should reject invalid system prompt', async () => {
+			const result = await callHandler('config.systemPrompt.update', {
+				sessionId: 'test-session-id',
+				systemPrompt: { type: 'invalid' },
+				restartQuery: false,
+			});
+
+			expect(result).toEqual({
+				success: false,
+				applied: false,
+				error: expect.stringContaining('must have type: "preset"'),
+			});
+		});
+
 		it('should update system prompt without restart', async () => {
 			const result = await callHandler('config.systemPrompt.update', {
 				sessionId: 'test-session-id',
@@ -426,6 +482,20 @@ describe('Config Handlers', () => {
 	});
 
 	describe('config.tools.update', () => {
+		it('should reject invalid tools config', async () => {
+			const result = await callHandler('config.tools.update', {
+				sessionId: 'test-session-id',
+				settings: { tools: 'invalid-preset' },
+				restartQuery: false,
+			});
+
+			expect(result).toEqual({
+				success: false,
+				applied: false,
+				error: expect.stringContaining('Invalid tools'),
+			});
+		});
+
 		it('should update tools config', async () => {
 			const result = await callHandler('config.tools.update', {
 				sessionId: 'test-session-id',
@@ -439,6 +509,45 @@ describe('Config Handlers', () => {
 				applied: false,
 				message: 'Restart query to apply changes',
 			});
+		});
+
+		it('should update tools config with restart', async () => {
+			const result = await callHandler('config.tools.update', {
+				sessionId: 'test-session-id',
+				settings: { tools: { type: 'preset', preset: 'claude_code' } },
+				restartQuery: true,
+			});
+
+			expect(mockAgentSession.resetQuery).toHaveBeenCalledWith({ restartQuery: true });
+			expect(result).toEqual({ success: true, applied: true });
+		});
+
+		it('should handle restart failure for tools update', async () => {
+			mockAgentSession.resetQuery.mockResolvedValue({ success: false, error: 'Failed' });
+
+			const result = await callHandler('config.tools.update', {
+				sessionId: 'test-session-id',
+				settings: { tools: { type: 'preset', preset: 'claude_code' } },
+				restartQuery: true,
+			});
+
+			expect(result).toEqual({
+				success: false,
+				applied: false,
+				error: 'Failed',
+				message: 'Config saved but restart failed',
+			});
+		});
+
+		it('should update disallowedTools', async () => {
+			const result = await callHandler('config.tools.update', {
+				sessionId: 'test-session-id',
+				settings: { disallowedTools: ['Bash'] },
+				restartQuery: false,
+			});
+
+			expect(mockAgentSession.updateConfig).toHaveBeenCalled();
+			expect(result).toHaveProperty('success', true);
 		});
 	});
 
@@ -480,11 +589,549 @@ describe('Config Handlers', () => {
 		});
 	});
 
+	describe('config.agents.update', () => {
+		it('should reject invalid agents config', async () => {
+			const result = await callHandler('config.agents.update', {
+				sessionId: 'test-session-id',
+				agents: { 'bad-agent': { description: 'Missing prompt' } },
+				restartQuery: false,
+			});
+
+			expect(result).toEqual({
+				success: false,
+				applied: false,
+				error: expect.stringContaining('prompt is required'),
+			});
+		});
+
+		it('should update agents without restart', async () => {
+			const result = await callHandler('config.agents.update', {
+				sessionId: 'test-session-id',
+				agents: {
+					'test-agent': { description: 'Test agent', prompt: 'You are a test agent' },
+				},
+				restartQuery: false,
+			});
+
+			expect(result).toEqual({
+				success: true,
+				applied: false,
+				message: 'Restart query to apply changes',
+			});
+		});
+
+		it('should update agents with restart', async () => {
+			const result = await callHandler('config.agents.update', {
+				sessionId: 'test-session-id',
+				agents: {},
+				restartQuery: true,
+			});
+
+			expect(result).toEqual({ success: true, applied: true });
+		});
+
+		it('should handle restart failure for agents update', async () => {
+			mockAgentSession.resetQuery.mockResolvedValue({ success: false, error: 'Failed' });
+
+			const result = await callHandler('config.agents.update', {
+				sessionId: 'test-session-id',
+				agents: {},
+				restartQuery: true,
+			});
+
+			expect(result).toEqual({
+				success: false,
+				applied: false,
+				error: 'Failed',
+				message: 'Config saved but restart failed',
+			});
+		});
+	});
+
 	describe('config.sandbox.get', () => {
 		it('should return sandbox config', async () => {
 			const result = await callHandler('config.sandbox.get', { sessionId: 'test-session-id' });
 
 			expect(result).toEqual({ sandbox: undefined });
+		});
+	});
+
+	describe('config.sandbox.update', () => {
+		it('should reject invalid sandbox config', async () => {
+			const result = await callHandler('config.sandbox.update', {
+				sessionId: 'test-session-id',
+				sandbox: { excludedCommands: 'not-an-array' },
+				restartQuery: false,
+			});
+
+			expect(result).toEqual({
+				success: false,
+				applied: false,
+				error: expect.stringContaining('must be an array'),
+			});
+		});
+
+		it('should update sandbox without restart', async () => {
+			const result = await callHandler('config.sandbox.update', {
+				sessionId: 'test-session-id',
+				sandbox: { enabled: true },
+				restartQuery: false,
+			});
+
+			expect(result).toEqual({
+				success: true,
+				applied: false,
+				message: 'Restart query to apply changes',
+			});
+		});
+
+		it('should update sandbox with restart', async () => {
+			const result = await callHandler('config.sandbox.update', {
+				sessionId: 'test-session-id',
+				sandbox: { enabled: false },
+				restartQuery: true,
+			});
+
+			expect(result).toEqual({ success: true, applied: true });
+		});
+
+		it('should handle restart failure for sandbox update', async () => {
+			mockAgentSession.resetQuery.mockResolvedValue({ success: false, error: 'Failed' });
+
+			const result = await callHandler('config.sandbox.update', {
+				sessionId: 'test-session-id',
+				sandbox: { enabled: true },
+				restartQuery: true,
+			});
+
+			expect(result).toEqual({
+				success: false,
+				applied: false,
+				error: 'Failed',
+				message: 'Config saved but restart failed',
+			});
+		});
+	});
+
+	describe('config.mcp.update', () => {
+		it('should reject invalid mcp config', async () => {
+			const result = await callHandler('config.mcp.update', {
+				sessionId: 'test-session-id',
+				mcpServers: { 'bad-server': { type: 'stdio' } }, // missing command
+				restartQuery: false,
+			});
+
+			expect(result).toEqual({
+				success: false,
+				applied: false,
+				error: expect.stringContaining('command is required'),
+			});
+		});
+
+		it('should update mcp config without restart', async () => {
+			const result = await callHandler('config.mcp.update', {
+				sessionId: 'test-session-id',
+				mcpServers: { server1: { command: 'test' } },
+				restartQuery: false,
+			});
+
+			expect(result).toEqual({
+				success: true,
+				applied: false,
+				message: 'Restart query to apply changes',
+			});
+		});
+
+		it('should update mcp config with restart', async () => {
+			const result = await callHandler('config.mcp.update', {
+				sessionId: 'test-session-id',
+				mcpServers: {},
+				restartQuery: true,
+			});
+
+			expect(result).toEqual({ success: true, applied: true });
+		});
+
+		it('should update strictMcpConfig', async () => {
+			const result = await callHandler('config.mcp.update', {
+				sessionId: 'test-session-id',
+				strictMcpConfig: true,
+				restartQuery: false,
+			});
+
+			expect(result).toHaveProperty('success', true);
+		});
+
+		it('should handle restart failure for mcp update', async () => {
+			mockAgentSession.resetQuery.mockResolvedValue({ success: false, error: 'Failed' });
+
+			const result = await callHandler('config.mcp.update', {
+				sessionId: 'test-session-id',
+				mcpServers: {},
+				restartQuery: true,
+			});
+
+			expect(result).toEqual({
+				success: false,
+				applied: false,
+				error: 'Failed',
+				message: 'Config saved but restart failed',
+			});
+		});
+	});
+
+	describe('config.mcp.addServer - validation', () => {
+		it('should reject invalid server config', async () => {
+			const result = await callHandler('config.mcp.addServer', {
+				sessionId: 'test-session-id',
+				name: 'bad-server',
+				config: { type: 'stdio' }, // missing command
+				restartQuery: false,
+			});
+
+			expect(result).toEqual({
+				success: false,
+				applied: false,
+				error: expect.stringContaining('command is required'),
+			});
+		});
+	});
+
+	describe('config.mcp.addServer - restart scenarios', () => {
+		it('should add server with restart', async () => {
+			const result = await callHandler('config.mcp.addServer', {
+				sessionId: 'test-session-id',
+				name: 'server2',
+				config: { command: 'test2' },
+				restartQuery: true,
+			});
+
+			expect(result).toEqual({ success: true, applied: true });
+		});
+
+		it('should handle restart failure for addServer', async () => {
+			mockAgentSession.resetQuery.mockResolvedValue({ success: false, error: 'Failed' });
+
+			const result = await callHandler('config.mcp.addServer', {
+				sessionId: 'test-session-id',
+				name: 'server2',
+				config: { command: 'test2' },
+				restartQuery: true,
+			});
+
+			expect(result).toEqual({
+				success: false,
+				applied: false,
+				error: 'Failed',
+				message: 'Config saved but restart failed',
+			});
+		});
+	});
+
+	describe('config.mcp.removeServer - restart scenarios', () => {
+		it('should remove server with restart', async () => {
+			mockSession.config.mcpServers = { server1: { command: 'test' } };
+
+			const result = await callHandler('config.mcp.removeServer', {
+				sessionId: 'test-session-id',
+				name: 'server1',
+				restartQuery: true,
+			});
+
+			expect(result).toEqual({ success: true, applied: true });
+		});
+
+		it('should handle restart failure for removeServer', async () => {
+			mockAgentSession.resetQuery.mockResolvedValue({ success: false, error: 'Failed' });
+			mockSession.config.mcpServers = { server1: { command: 'test' } };
+
+			const result = await callHandler('config.mcp.removeServer', {
+				sessionId: 'test-session-id',
+				name: 'server1',
+				restartQuery: true,
+			});
+
+			expect(result).toEqual({
+				success: false,
+				applied: false,
+				error: 'Failed',
+				message: 'Config saved but restart failed',
+			});
+		});
+	});
+
+	describe('config.outputFormat.update', () => {
+		const validOutputFormat = {
+			type: 'json_schema' as const,
+			schema: { type: 'object', properties: { result: { type: 'string' } } },
+		};
+
+		it('should reject invalid output format', async () => {
+			const result = await callHandler('config.outputFormat.update', {
+				sessionId: 'test-session-id',
+				outputFormat: { type: 'invalid' },
+				restartQuery: false,
+			});
+
+			expect(result).toEqual({
+				success: false,
+				applied: false,
+				error: expect.stringContaining('must be "json_schema"'),
+			});
+		});
+
+		it('should update output format without restart', async () => {
+			const result = await callHandler('config.outputFormat.update', {
+				sessionId: 'test-session-id',
+				outputFormat: validOutputFormat,
+				restartQuery: false,
+			});
+
+			expect(result).toEqual({
+				success: true,
+				applied: false,
+				message: 'Restart query to apply changes',
+			});
+		});
+
+		it('should update output format with restart', async () => {
+			const result = await callHandler('config.outputFormat.update', {
+				sessionId: 'test-session-id',
+				outputFormat: validOutputFormat,
+				restartQuery: true,
+			});
+
+			expect(result).toEqual({ success: true, applied: true });
+		});
+
+		it('should clear output format', async () => {
+			const result = await callHandler('config.outputFormat.update', {
+				sessionId: 'test-session-id',
+				outputFormat: null,
+				restartQuery: false,
+			});
+
+			expect(result).toHaveProperty('success', true);
+		});
+
+		it('should handle restart failure for outputFormat update', async () => {
+			mockAgentSession.resetQuery.mockResolvedValue({ success: false, error: 'Failed' });
+
+			const result = await callHandler('config.outputFormat.update', {
+				sessionId: 'test-session-id',
+				outputFormat: validOutputFormat,
+				restartQuery: true,
+			});
+
+			expect(result).toEqual({
+				success: false,
+				applied: false,
+				error: 'Failed',
+				message: 'Config saved but restart failed',
+			});
+		});
+	});
+
+	describe('config.betas.update', () => {
+		it('should reject invalid beta', async () => {
+			const result = await callHandler('config.betas.update', {
+				sessionId: 'test-session-id',
+				betas: ['invalid-beta'],
+				restartQuery: false,
+			});
+
+			expect(result).toEqual({
+				success: false,
+				applied: false,
+				error: expect.stringContaining('Invalid beta feature'),
+			});
+		});
+
+		it('should update betas without restart', async () => {
+			const result = await callHandler('config.betas.update', {
+				sessionId: 'test-session-id',
+				betas: ['context-1m-2025-08-07'],
+				restartQuery: false,
+			});
+
+			expect(result).toEqual({
+				success: true,
+				applied: false,
+				message: 'Restart query to apply changes',
+			});
+		});
+
+		it('should update betas with restart', async () => {
+			const result = await callHandler('config.betas.update', {
+				sessionId: 'test-session-id',
+				betas: [],
+				restartQuery: true,
+			});
+
+			expect(result).toEqual({ success: true, applied: true });
+		});
+
+		it('should handle restart failure for betas update', async () => {
+			mockAgentSession.resetQuery.mockResolvedValue({ success: false, error: 'Failed' });
+
+			const result = await callHandler('config.betas.update', {
+				sessionId: 'test-session-id',
+				betas: [],
+				restartQuery: true,
+			});
+
+			expect(result).toEqual({
+				success: false,
+				applied: false,
+				error: 'Failed',
+				message: 'Config saved but restart failed',
+			});
+		});
+	});
+
+	describe('config.env.update', () => {
+		it('should reject invalid env config', async () => {
+			const result = await callHandler('config.env.update', {
+				sessionId: 'test-session-id',
+				settings: { cwd: '' }, // empty string not allowed
+				restartQuery: false,
+			});
+
+			expect(result).toEqual({
+				success: false,
+				applied: false,
+				error: expect.stringContaining('non-empty string'),
+			});
+		});
+
+		it('should update env without restart', async () => {
+			const result = await callHandler('config.env.update', {
+				sessionId: 'test-session-id',
+				settings: { cwd: '/new/path' },
+				restartQuery: false,
+			});
+
+			expect(result).toEqual({
+				success: true,
+				applied: false,
+				message: 'Restart query to apply changes',
+			});
+		});
+
+		it('should update env with restart', async () => {
+			const result = await callHandler('config.env.update', {
+				sessionId: 'test-session-id',
+				settings: { cwd: '/new/path' },
+				restartQuery: true,
+			});
+
+			expect(result).toEqual({ success: true, applied: true });
+		});
+
+		it('should handle restart failure for env update', async () => {
+			mockAgentSession.resetQuery.mockResolvedValue({ success: false, error: 'Failed' });
+
+			const result = await callHandler('config.env.update', {
+				sessionId: 'test-session-id',
+				settings: { cwd: '/new/path' },
+				restartQuery: true,
+			});
+
+			expect(result).toEqual({
+				success: false,
+				applied: false,
+				error: 'Failed',
+				message: 'Config saved but restart failed',
+			});
+		});
+	});
+
+	describe('config.permissions.update - error scenarios', () => {
+		it('should handle setPermissionMode failure', async () => {
+			mockAgentSession.setPermissionMode.mockResolvedValue({
+				success: false,
+				error: 'Cannot set permission',
+			});
+
+			const result = await callHandler('config.permissions.update', {
+				sessionId: 'test-session-id',
+				permissionMode: 'acceptEdits',
+			});
+
+			expect(result).toEqual({
+				success: false,
+				applied: false,
+				error: 'Cannot set permission',
+			});
+		});
+	});
+
+	describe('config.updateBulk - error scenarios', () => {
+		it('should handle model switch failure in bulk', async () => {
+			mockAgentSession.handleModelSwitch.mockResolvedValue({ success: false });
+
+			const result = (await callHandler('config.updateBulk', {
+				sessionId: 'test-session-id',
+				config: { model: 'bad-model' },
+				restartQuery: false,
+			})) as { errors: Array<{ field: string; error: string }> };
+
+			expect(result.errors).toHaveLength(1);
+			expect(result.errors[0].field).toBe('model');
+		});
+
+		it('should handle maxThinkingTokens failure in bulk', async () => {
+			mockAgentSession.setMaxThinkingTokens.mockResolvedValue({ success: false });
+
+			const result = (await callHandler('config.updateBulk', {
+				sessionId: 'test-session-id',
+				config: { maxThinkingTokens: -1 },
+				restartQuery: false,
+			})) as { errors: Array<{ field: string; error: string }> };
+
+			expect(result.errors).toHaveLength(1);
+			expect(result.errors[0].field).toBe('maxThinkingTokens');
+		});
+
+		it('should handle permissionMode failure in bulk', async () => {
+			mockAgentSession.setPermissionMode.mockResolvedValue({ success: false });
+
+			const result = (await callHandler('config.updateBulk', {
+				sessionId: 'test-session-id',
+				config: { permissionMode: 'bad' },
+				restartQuery: false,
+			})) as { errors: Array<{ field: string; error: string }> };
+
+			expect(result.errors).toHaveLength(1);
+			expect(result.errors[0].field).toBe('permissionMode');
+		});
+
+		it('should handle restart failure in bulk with pending changes', async () => {
+			mockAgentSession.resetQuery.mockResolvedValue({ success: false, error: 'Restart failed' });
+
+			const result = await callHandler('config.updateBulk', {
+				sessionId: 'test-session-id',
+				config: { systemPrompt: 'New prompt' },
+				restartQuery: true,
+			});
+
+			expect(result).toEqual({
+				applied: [],
+				pending: ['systemPrompt'],
+				errors: [{ field: 'restart', error: 'Restart failed' }],
+			});
+		});
+
+		it('should map tools to sdkToolsPreset in bulk update', async () => {
+			await callHandler('config.updateBulk', {
+				sessionId: 'test-session-id',
+				config: { tools: 'all' },
+				restartQuery: false,
+			});
+
+			expect(mockAgentSession.updateConfig).toHaveBeenCalledWith(
+				expect.objectContaining({ sdkToolsPreset: 'all' })
+			);
 		});
 	});
 });

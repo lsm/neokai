@@ -347,6 +347,34 @@ describe('MessageQueue', () => {
 		});
 	});
 
+	describe('generation tracking', () => {
+		it('should return generation counter', () => {
+			const gen1 = queue.getGeneration();
+			expect(gen1).toBe(0);
+
+			queue.start();
+			const gen2 = queue.getGeneration();
+			expect(gen2).toBe(1);
+
+			queue.start();
+			const gen3 = queue.getGeneration();
+			expect(gen3).toBe(2);
+		});
+
+		it('should increment generation on each start', () => {
+			expect(queue.getGeneration()).toBe(0);
+
+			queue.start();
+			expect(queue.getGeneration()).toBe(1);
+
+			queue.stop();
+			queue.start();
+			expect(queue.getGeneration()).toBe(2);
+
+			queue.stop();
+		});
+	});
+
 	describe('internal flag propagation', () => {
 		it('should propagate internal flag from queued message to SDK message', async () => {
 			queue.start();

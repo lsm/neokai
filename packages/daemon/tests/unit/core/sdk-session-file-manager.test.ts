@@ -19,6 +19,7 @@ import {
 	archiveSDKSessionFiles,
 	scanSDKSessionFiles,
 	identifyOrphanedSDKFiles,
+	removeToolResultFromSessionFile,
 } from '../../../src/lib/sdk-session-file-manager';
 import type { Database } from '../../../src/storage/database';
 
@@ -870,6 +871,205 @@ describe('SDK Session File Manager', () => {
 			const sdkIds = orphaned.map((o) => o.sdkSessionId);
 			expect(sdkIds).toContain('orphan');
 			expect(sdkIds).toContain('unknown');
+		});
+	});
+
+	// ============================================================================
+	// removeToolResultFromSessionFile Tests
+	// ============================================================================
+
+	describe('removeToolResultFromSessionFile', () => {
+		test('should return false when SDK session file does not exist', () => {
+			const result = removeToolResultFromSessionFile(
+				testWorkspacePath,
+				'nonexistent-sdk-session-id',
+				'message-uuid-123'
+			);
+
+			expect(result).toBe(false);
+		});
+
+		test('should return false when neither sdkSessionId nor liuboerSessionId provided', () => {
+			const result = removeToolResultFromSessionFile(testWorkspacePath, null, 'message-uuid-123');
+
+			expect(result).toBe(false);
+		});
+
+		test('should return false when liuboerSessionId search finds no files', () => {
+			const result = removeToolResultFromSessionFile(
+				testWorkspacePath,
+				null,
+				'message-uuid-123',
+				'nonexistent-liuboer-session-id'
+			);
+
+			expect(result).toBe(false);
+		});
+
+		test('should return false when message UUID is not found in file', () => {
+			// Create a file without the target message
+			const messages = [
+				JSON.stringify({
+					type: 'user',
+					uuid: 'other-uuid',
+					message: {
+						role: 'user',
+						content: [{ type: 'text', text: 'Hello' }],
+					},
+				}),
+			];
+			writeFileSync(testSessionFile, messages.join('\n') + '\n', 'utf-8');
+
+			const result = removeToolResultFromSessionFile(
+				testWorkspacePath,
+				testSdkSessionId,
+				'nonexistent-message-uuid'
+			);
+
+			expect(result).toBe(false);
+		});
+
+		test('should return false when message has no tool_result blocks', () => {
+			// Create a file with target message but no tool_result
+			const messages = [
+				JSON.stringify({
+					type: 'user',
+					uuid: 'target-uuid',
+					message: {
+						role: 'user',
+						content: [{ type: 'text', text: 'Hello' }],
+					},
+				}),
+			];
+			writeFileSync(testSessionFile, messages.join('\n') + '\n', 'utf-8');
+
+			const result = removeToolResultFromSessionFile(
+				testWorkspacePath,
+				testSdkSessionId,
+				'target-uuid'
+			);
+
+			expect(result).toBe(false);
+		});
+
+		test('should successfully remove tool_result content from message', () => {
+			// Create a file with a tool_result message
+			const messages = [
+				JSON.stringify({
+					type: 'assistant',
+					uuid: 'assistant-uuid',
+					message: {
+						role: 'assistant',
+						content: [{ type: 'tool_use', id: 'tool-123', name: 'Bash', input: { command: 'ls' } }],
+					},
+				}),
+				JSON.stringify({
+					type: 'user',
+					uuid: 'user-uuid-with-result',
+					message: {
+						role: 'user',
+						content: [
+							{
+								type: 'tool_result',
+								tool_use_id: 'tool-123',
+								content: 'Very large output that we want to remove...',
+							},
+						],
+					},
+				}),
+			];
+			writeFileSync(testSessionFile, messages.join('\n') + '\n', 'utf-8');
+
+			const result = removeToolResultFromSessionFile(
+				testWorkspacePath,
+				testSdkSessionId,
+				'user-uuid-with-result'
+			);
+
+			expect(result).toBe(true);
+
+			// Verify the content was replaced
+			const updatedContent = readFileSync(testSessionFile, 'utf-8');
+			const lines = updatedContent.split('\n').filter((l) => l.trim());
+			const userMessage = JSON.parse(lines[1]);
+
+			expect(userMessage.message.content[0].content[0].type).toBe('text');
+			expect(userMessage.message.content[0].content[0].text).toContain('Output removed by user');
+		});
+
+		test('should find file by liuboerSessionId when sdkSessionId is null', () => {
+			const liuboerSessionId = 'findable-liuboer-session-id-12345678';
+
+			// Create a file containing the Liuboer session ID
+			const messages = [
+				JSON.stringify({
+					type: 'user',
+					uuid: 'target-message-uuid',
+					sessionId: liuboerSessionId,
+					message: {
+						role: 'user',
+						content: [
+							{
+								type: 'tool_result',
+								tool_use_id: 'tool-456',
+								content: 'Large output to remove...',
+							},
+						],
+					},
+				}),
+			];
+			writeFileSync(testSessionFile, messages.join('\n') + '\n', 'utf-8');
+
+			const result = removeToolResultFromSessionFile(
+				testWorkspacePath,
+				null,
+				'target-message-uuid',
+				liuboerSessionId
+			);
+
+			expect(result).toBe(true);
+		});
+
+		test('should handle multiple tool_result blocks in same message', () => {
+			// Create a file with multiple tool_result blocks
+			const messages = [
+				JSON.stringify({
+					type: 'user',
+					uuid: 'multi-result-uuid',
+					message: {
+						role: 'user',
+						content: [
+							{
+								type: 'tool_result',
+								tool_use_id: 'tool-1',
+								content: 'First result output',
+							},
+							{
+								type: 'tool_result',
+								tool_use_id: 'tool-2',
+								content: 'Second result output',
+							},
+						],
+					},
+				}),
+			];
+			writeFileSync(testSessionFile, messages.join('\n') + '\n', 'utf-8');
+
+			const result = removeToolResultFromSessionFile(
+				testWorkspacePath,
+				testSdkSessionId,
+				'multi-result-uuid'
+			);
+
+			expect(result).toBe(true);
+
+			// Verify both tool_results were modified
+			const updatedContent = readFileSync(testSessionFile, 'utf-8');
+			const lines = updatedContent.split('\n').filter((l) => l.trim());
+			const userMessage = JSON.parse(lines[0]);
+
+			expect(userMessage.message.content[0].content[0].text).toContain('Output removed by user');
+			expect(userMessage.message.content[1].content[0].text).toContain('Output removed by user');
 		});
 	});
 });

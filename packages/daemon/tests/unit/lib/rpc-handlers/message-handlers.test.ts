@@ -357,5 +357,50 @@ describe('Message Handlers', () => {
 				})
 			).rejects.toThrow('Session not found');
 		});
+
+		it('should successfully remove output when session exists', async () => {
+			const result = (await callHandler('message.removeOutput', {
+				sessionId: 'test-session-id',
+				messageUuid: 'msg-1',
+			})) as { success: boolean };
+
+			expect(result.success).toBe(true);
+			expect(mockSessionManager.markOutputRemoved).toHaveBeenCalledWith('test-session-id', 'msg-1');
+			expect(mockMessageHub.publish).toHaveBeenCalledWith(
+				'sdk.message.updated',
+				{ sessionId: 'test-session-id', messageUuid: 'msg-1' },
+				{ sessionId: 'test-session-id' }
+			);
+		});
+
+		it('should get SDK session ID from active session if available', async () => {
+			// Setup agent session to return SDK session ID
+			mockAgentSession.getSDKSessionId.mockReturnValue('sdk-session-123');
+
+			const result = (await callHandler('message.removeOutput', {
+				sessionId: 'test-session-id',
+				messageUuid: 'msg-1',
+			})) as { success: boolean };
+
+			expect(result.success).toBe(true);
+			expect(mockSessionManager.getSession).toHaveBeenCalledWith('test-session-id');
+			expect(mockAgentSession.getSDKSessionId).toHaveBeenCalled();
+		});
+
+		it('should throw when removal fails', async () => {
+			// Import and mock the module to return false
+			const sdkModule = await import('../../../../src/lib/sdk-session-file-manager');
+			(sdkModule.removeToolResultFromSessionFile as ReturnType<typeof mock>).mockReturnValue(false);
+
+			await expect(
+				callHandler('message.removeOutput', {
+					sessionId: 'test-session-id',
+					messageUuid: 'msg-1',
+				})
+			).rejects.toThrow('Failed to remove output from SDK session file');
+
+			// Reset mock to original behavior
+			(sdkModule.removeToolResultFromSessionFile as ReturnType<typeof mock>).mockReturnValue(true);
+		});
 	});
 });

@@ -9,6 +9,58 @@ import { setupSessionHandlers } from '../../../../src/lib/rpc-handlers/session-h
 import type { MessageHub, Session } from '@liuboer/shared';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { SessionManager } from '../../../../src/lib/session-manager';
+import type { Database } from '../../../../src/storage/database';
+
+// Mock the sdk-session-file-manager module
+mock.module('../../../../src/lib/sdk-session-file-manager', () => ({
+	archiveSDKSessionFiles: mock(
+		(_workspacePath: string, _sdkSessionId: string | null, _liuboerSessionId: string) => ({
+			success: true,
+			archivePath: '/archive/path',
+			archivedFiles: ['file1.jsonl'],
+			totalSize: 1000,
+			errors: [],
+		})
+	),
+	deleteSDKSessionFiles: mock(
+		(_workspacePath: string, _sdkSessionId: string, _liuboerSessionId: string) => ({
+			success: true,
+			deletedFiles: ['file1.jsonl'],
+			deletedSize: 1000,
+			errors: [],
+		})
+	),
+	scanSDKSessionFiles: mock((_workspacePath: string) => [
+		{
+			sdkSessionId: 'sdk-session-1',
+			filepath: '/path/to/file.jsonl',
+			size: 1000,
+			liuboerSessionIds: ['session-1'],
+		},
+	]),
+	identifyOrphanedSDKFiles: mock(
+		(
+			_files: Array<{ sdkSessionId: string }>,
+			_activeIds: Set<string>,
+			_archivedIds: Set<string>
+		) => []
+	),
+}));
+
+// Mock the model-service module
+mock.module('../../../../src/lib/model-service', () => ({
+	resolveModelAlias: mock(async (modelId: string) => modelId),
+	getModelInfo: mock(async (_modelId: string) => ({
+		id: 'claude-sonnet-4-20250514',
+		name: 'Claude Sonnet',
+		description: 'Fast and capable',
+	})),
+	getAvailableModels: mock((_cacheKey: string) => [
+		{ id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet', description: 'Fast and capable' },
+		{ id: 'claude-opus-4-20250514', name: 'Claude Opus', description: 'Most powerful' },
+	]),
+	clearModelsCache: mock(() => {}),
+}));
 
 describe('Session Handlers', () => {
 	let mockMessageHub: MessageHub;
@@ -21,8 +73,12 @@ describe('Session Handlers', () => {
 		getCurrentModel: ReturnType<typeof mock>;
 		handleModelSwitch: ReturnType<typeof mock>;
 		setMaxThinkingTokens: ReturnType<typeof mock>;
+		getProcessingState: ReturnType<typeof mock>;
+		resetQuery: ReturnType<typeof mock>;
+		handleQueryTrigger: ReturnType<typeof mock>;
 	};
 	let mockSession: Session;
+	let mockDb: Database;
 
 	beforeEach(() => {
 		handlers = new Map();
@@ -65,7 +121,15 @@ describe('Session Handlers', () => {
 			getCurrentModel: mock(() => ({ id: 'claude-sonnet-4-20250514' })),
 			handleModelSwitch: mock(async () => ({ success: true, model: 'claude-opus-4-20250514' })),
 			setMaxThinkingTokens: mock(async () => ({ success: true })),
+			getProcessingState: mock(() => ({ phase: 'idle', isProcessing: false })),
+			resetQuery: mock(async () => ({ success: true })),
+			handleQueryTrigger: mock(async () => ({ success: true, messageCount: 2 })),
 		};
+
+		// Mock Database
+		mockDb = {
+			getMessageCountByStatus: mock(() => 3),
+		} as unknown as Database;
 
 		// Mock SessionManager
 		mockSessionManager = {
@@ -75,6 +139,8 @@ describe('Session Handlers', () => {
 			getSessionAsync: mock(async () => mockAgentSession),
 			updateSession: mock(async () => {}),
 			deleteSession: mock(async () => {}),
+			cleanupOrphanedWorktrees: mock(async () => ['/cleaned/path1']),
+			getDatabase: mock(() => mockDb),
 		} as unknown as SessionManager;
 
 		// Mock DaemonHub
@@ -338,6 +404,311 @@ describe('Session Handlers', () => {
 			await expect(
 				callHandler('session.model.switch', { sessionId: 'nonexistent', model: 'test' })
 			).rejects.toThrow('Session not found');
+		});
+	});
+
+	describe('session.model.get', () => {
+		it('should return current model info', async () => {
+			const result = (await callHandler('session.model.get', {
+				sessionId: 'test-session-id',
+			})) as { currentModel: string; modelInfo: unknown };
+
+			expect(result.currentModel).toBe('claude-sonnet-4-20250514');
+			expect(result.modelInfo).toBeDefined();
+		});
+
+		it('should throw if session not found', async () => {
+			(mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(null);
+
+			await expect(callHandler('session.model.get', { sessionId: 'nonexistent' })).rejects.toThrow(
+				'Session not found'
+			);
+		});
+	});
+
+	describe('session.thinking.set', () => {
+		it('should set thinking level', async () => {
+			const result = (await callHandler('session.thinking.set', {
+				sessionId: 'test-session-id',
+				level: 'think8k',
+			})) as { success: boolean; thinkingLevel: string };
+
+			expect(result.success).toBe(true);
+			expect(result.thinkingLevel).toBe('think8k');
+			expect(mockSessionManager.updateSession).toHaveBeenCalled();
+		});
+
+		it('should default to auto for invalid level', async () => {
+			const result = (await callHandler('session.thinking.set', {
+				sessionId: 'test-session-id',
+				level: 'invalid',
+			})) as { thinkingLevel: string };
+
+			expect(result.thinkingLevel).toBe('auto');
+		});
+
+		it('should throw if session not found', async () => {
+			(mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(null);
+
+			await expect(
+				callHandler('session.thinking.set', { sessionId: 'nonexistent', level: 'auto' })
+			).rejects.toThrow('Session not found');
+		});
+	});
+
+	describe('models.list', () => {
+		it('should return list of models', async () => {
+			const result = (await callHandler('models.list', {})) as { models: unknown[] };
+
+			expect(result.models).toHaveLength(2);
+			expect(result.models[0]).toHaveProperty('id');
+			expect(result.models[0]).toHaveProperty('display_name');
+		});
+
+		it('should handle forceRefresh parameter', async () => {
+			const result = (await callHandler('models.list', { forceRefresh: true })) as {
+				cached: boolean;
+			};
+
+			expect(result.cached).toBe(false);
+		});
+	});
+
+	describe('models.clearCache', () => {
+		it('should clear model cache', async () => {
+			const result = (await callHandler('models.clearCache', {})) as { success: boolean };
+
+			expect(result.success).toBe(true);
+		});
+	});
+
+	describe('agent.getState', () => {
+		it('should return agent processing state', async () => {
+			const result = (await callHandler('agent.getState', {
+				sessionId: 'test-session-id',
+			})) as { state: unknown };
+
+			expect(result.state).toEqual({ phase: 'idle', isProcessing: false });
+			expect(mockAgentSession.getProcessingState).toHaveBeenCalled();
+		});
+
+		it('should throw if session not found', async () => {
+			(mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(null);
+
+			await expect(callHandler('agent.getState', { sessionId: 'nonexistent' })).rejects.toThrow(
+				'Session not found'
+			);
+		});
+	});
+
+	describe('worktree.cleanup', () => {
+		it('should cleanup orphaned worktrees', async () => {
+			const result = (await callHandler('worktree.cleanup', {
+				workspacePath: '/test/path',
+			})) as { cleanedPaths: string[]; message: string };
+
+			expect(result.cleanedPaths).toEqual(['/cleaned/path1']);
+			expect(result.message).toContain('1');
+			expect(mockSessionManager.cleanupOrphanedWorktrees).toHaveBeenCalledWith('/test/path');
+		});
+	});
+
+	describe('sdk.scan', () => {
+		it('should scan SDK session files', async () => {
+			const result = (await callHandler('sdk.scan', {
+				workspacePath: '/test/path',
+			})) as { success: boolean; summary: unknown };
+
+			expect(result.success).toBe(true);
+			expect(result.summary).toHaveProperty('totalFiles');
+		});
+	});
+
+	describe('sdk.cleanup', () => {
+		it('should cleanup SDK files in delete mode', async () => {
+			const result = (await callHandler('sdk.cleanup', {
+				workspacePath: '/test/path',
+				mode: 'delete',
+			})) as { success: boolean; mode: string };
+
+			expect(result.success).toBe(true);
+			expect(result.mode).toBe('delete');
+		});
+
+		it('should cleanup SDK files in archive mode', async () => {
+			const result = (await callHandler('sdk.cleanup', {
+				workspacePath: '/test/path',
+				mode: 'archive',
+			})) as { success: boolean; mode: string };
+
+			expect(result.success).toBe(true);
+			expect(result.mode).toBe('archive');
+		});
+
+		it('should filter by sdkSessionIds', async () => {
+			const result = (await callHandler('sdk.cleanup', {
+				workspacePath: '/test/path',
+				mode: 'delete',
+				sdkSessionIds: ['sdk-session-1'],
+			})) as { success: boolean };
+
+			expect(result.success).toBe(true);
+		});
+	});
+
+	describe('session.resetQuery', () => {
+		it('should reset query', async () => {
+			const result = (await callHandler('session.resetQuery', {
+				sessionId: 'test-session-id',
+			})) as { success: boolean };
+
+			expect(result.success).toBe(true);
+			expect(mockAgentSession.resetQuery).toHaveBeenCalledWith({ restartQuery: true });
+			expect(mockDaemonHub.emit).toHaveBeenCalledWith(
+				'agent.reset',
+				expect.objectContaining({ sessionId: 'test-session-id', success: true })
+			);
+		});
+
+		it('should throw if session not found', async () => {
+			(mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(null);
+
+			await expect(callHandler('session.resetQuery', { sessionId: 'nonexistent' })).rejects.toThrow(
+				'Session not found'
+			);
+		});
+	});
+
+	describe('session.query.trigger', () => {
+		it('should trigger query', async () => {
+			const result = (await callHandler('session.query.trigger', {
+				sessionId: 'test-session-id',
+			})) as { success: boolean; messageCount: number };
+
+			expect(result.success).toBe(true);
+			expect(result.messageCount).toBe(2);
+			expect(mockAgentSession.handleQueryTrigger).toHaveBeenCalled();
+		});
+
+		it('should throw if session not found', async () => {
+			(mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(null);
+
+			await expect(
+				callHandler('session.query.trigger', { sessionId: 'nonexistent' })
+			).rejects.toThrow('Session not found');
+		});
+	});
+
+	describe('session.messages.countByStatus', () => {
+		it('should return message count by status', async () => {
+			const result = (await callHandler('session.messages.countByStatus', {
+				sessionId: 'test-session-id',
+				status: 'saved',
+			})) as { count: number };
+
+			expect(result.count).toBe(3);
+			expect(mockDb.getMessageCountByStatus).toHaveBeenCalledWith('test-session-id', 'saved');
+		});
+
+		it('should throw if session not found', async () => {
+			(mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(null);
+
+			await expect(
+				callHandler('session.messages.countByStatus', { sessionId: 'nonexistent', status: 'saved' })
+			).rejects.toThrow('Session not found');
+		});
+	});
+
+	describe('session.archive', () => {
+		it('should archive session without worktree', async () => {
+			// Session without worktree
+			mockSession.worktree = undefined;
+
+			const result = (await callHandler('session.archive', {
+				sessionId: 'test-session-id',
+			})) as { success: boolean; requiresConfirmation: boolean };
+
+			expect(result.success).toBe(true);
+			expect(result.requiresConfirmation).toBe(false);
+			expect(mockSessionManager.updateSession).toHaveBeenCalledWith(
+				'test-session-id',
+				expect.objectContaining({ status: 'archived' })
+			);
+		});
+
+		it('should throw if session not found', async () => {
+			(mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(null);
+
+			await expect(callHandler('session.archive', { sessionId: 'nonexistent' })).rejects.toThrow(
+				'Session not found'
+			);
+		});
+
+		it('should archive session with worktree when confirmed', async () => {
+			// Setup session with worktree
+			mockSession.worktree = {
+				isWorktree: true,
+				worktreePath: '/test/worktree',
+				mainRepoPath: '/test/repo',
+				branch: 'session/test-branch',
+			};
+
+			// Mock worktree manager via module mock
+			const { WorktreeManager } = await import('../../../../src/lib/worktree-manager');
+			const mockWorktreeManager = {
+				getCommitsAhead: mock(async () => ({
+					hasCommitsAhead: false,
+					commits: [],
+				})),
+				removeWorktree: mock(async () => {}),
+			};
+
+			// @ts-ignore - Mock for testing
+			WorktreeManager.prototype.getCommitsAhead = mockWorktreeManager.getCommitsAhead;
+			// @ts-ignore
+			WorktreeManager.prototype.removeWorktree = mockWorktreeManager.removeWorktree;
+
+			const result = (await callHandler('session.archive', {
+				sessionId: 'test-session-id',
+				confirmed: true,
+			})) as { success: boolean; requiresConfirmation: boolean };
+
+			expect(result.success).toBe(true);
+			expect(result.requiresConfirmation).toBe(false);
+			expect(mockSessionManager.updateSession).toHaveBeenCalledWith(
+				'test-session-id',
+				expect.objectContaining({ status: 'archived' })
+			);
+		});
+
+		it('should require confirmation when worktree has commits ahead', async () => {
+			// Setup session with worktree
+			mockSession.worktree = {
+				isWorktree: true,
+				worktreePath: '/test/worktree',
+				mainRepoPath: '/test/repo',
+				branch: 'session/test-branch',
+			};
+
+			// Mock worktree manager to return commits ahead
+			const { WorktreeManager } = await import('../../../../src/lib/worktree-manager');
+			WorktreeManager.prototype.getCommitsAhead = mock(async () => ({
+				hasCommitsAhead: true,
+				commits: [{ hash: 'abc123', message: 'Test commit', author: 'Test', date: '2024-01-01' }],
+			}));
+
+			const result = (await callHandler('session.archive', {
+				sessionId: 'test-session-id',
+				confirmed: false,
+			})) as {
+				success: boolean;
+				requiresConfirmation: boolean;
+				commitStatus: { hasCommitsAhead: boolean };
+			};
+
+			expect(result.success).toBe(false);
+			expect(result.requiresConfirmation).toBe(true);
+			expect(result.commitStatus.hasCommitsAhead).toBe(true);
 		});
 	});
 });
