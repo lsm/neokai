@@ -7,16 +7,17 @@
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import {
 	InterruptHandler,
-	type InterruptHandlerDependencies,
+	type InterruptHandlerContext,
 } from '../../../src/lib/agent/interrupt-handler';
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
-import type { MessageHub } from '@liuboer/shared';
+import type { Session, MessageHub } from '@liuboer/shared';
 import type { MessageQueue } from '../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../src/lib/agent/processing-state-manager';
 import type { Logger } from '../../../src/lib/logger';
 
 describe('InterruptHandler', () => {
 	let handler: InterruptHandler;
+	let mockSession: Session;
 	let mockMessageHub: MessageHub;
 	let mockMessageQueue: MessageQueue;
 	let mockStateManager: ProcessingStateManager;
@@ -35,6 +36,17 @@ describe('InterruptHandler', () => {
 	let sdkInterruptSpy: ReturnType<typeof mock>;
 
 	beforeEach(() => {
+		mockSession = {
+			id: 'test-session-id',
+			title: 'Test Session',
+			workspacePath: '/test/path',
+			status: 'active',
+			config: { model: 'claude-sonnet-4-20250514' },
+			metadata: {},
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+		} as Session;
+
 		publishSpy = mock(async () => {});
 		mockMessageHub = {
 			publish: publishSpy,
@@ -75,24 +87,24 @@ describe('InterruptHandler', () => {
 		mockQueryPromise = null;
 	});
 
-	function createHandler(overrides: Partial<InterruptHandlerDependencies> = {}): InterruptHandler {
-		const setQueryObjectSpy = mock(() => {});
-		const setAbortControllerSpy = mock(() => {});
-
-		const deps: InterruptHandlerDependencies = {
-			sessionId: 'test-session-id',
+	function createContext(
+		overrides: Partial<InterruptHandlerContext> = {}
+	): InterruptHandlerContext {
+		return {
+			session: mockSession,
 			messageHub: mockMessageHub,
 			messageQueue: mockMessageQueue,
 			stateManager: mockStateManager,
 			logger: mockLogger,
-			getQueryObject: () => mockQueryObject,
-			setQueryObject: setQueryObjectSpy,
-			getQueryPromise: () => mockQueryPromise,
-			getQueryAbortController: () => mockAbortController,
-			setQueryAbortController: setAbortControllerSpy,
+			queryObject: mockQueryObject,
+			queryPromise: mockQueryPromise,
+			queryAbortController: mockAbortController,
 			...overrides,
 		};
-		return new InterruptHandler(deps);
+	}
+
+	function createHandler(overrides: Partial<InterruptHandlerContext> = {}): InterruptHandler {
+		return new InterruptHandler(createContext(overrides));
 	}
 
 	describe('constructor', () => {
@@ -152,16 +164,13 @@ describe('InterruptHandler', () => {
 
 		it('should abort the query controller', async () => {
 			const abortController = new AbortController();
-			const setAbortControllerSpy = mock(() => {});
-			handler = createHandler({
-				getQueryAbortController: () => abortController,
-				setQueryAbortController: setAbortControllerSpy,
-			});
+			const ctx = createContext({ queryAbortController: abortController });
+			handler = new InterruptHandler(ctx);
 
 			await handler.handleInterrupt();
 
 			expect(abortController.signal.aborted).toBe(true);
-			expect(setAbortControllerSpy).toHaveBeenCalledWith(null);
+			expect(ctx.queryAbortController).toBeNull();
 		});
 
 		it('should call SDK interrupt()', async () => {
@@ -185,8 +194,7 @@ describe('InterruptHandler', () => {
 		});
 
 		it('should handle missing query object gracefully', async () => {
-			mockQueryObject = null;
-			handler = createHandler({ getQueryObject: () => null });
+			handler = createHandler({ queryObject: null });
 
 			await handler.handleInterrupt();
 
@@ -195,8 +203,8 @@ describe('InterruptHandler', () => {
 		});
 
 		it('should wait for old query to finish', async () => {
-			mockQueryPromise = new Promise((resolve) => setTimeout(resolve, 10));
-			handler = createHandler({ getQueryPromise: () => mockQueryPromise });
+			const queryPromise = new Promise<void>((resolve) => setTimeout(resolve, 10));
+			handler = createHandler({ queryPromise });
 
 			await handler.handleInterrupt();
 
@@ -204,8 +212,8 @@ describe('InterruptHandler', () => {
 		});
 
 		it('should handle error waiting for old query', async () => {
-			mockQueryPromise = Promise.reject(new Error('Query error'));
-			handler = createHandler({ getQueryPromise: () => mockQueryPromise });
+			const queryPromise = Promise.reject(new Error('Query error'));
+			handler = createHandler({ queryPromise });
 
 			await handler.handleInterrupt();
 
@@ -216,12 +224,12 @@ describe('InterruptHandler', () => {
 		});
 
 		it('should clear queryObject reference', async () => {
-			const setQueryObjectSpy = mock(() => {});
-			handler = createHandler({ setQueryObject: setQueryObjectSpy });
+			const ctx = createContext();
+			handler = new InterruptHandler(ctx);
 
 			await handler.handleInterrupt();
 
-			expect(setQueryObjectSpy).toHaveBeenCalledWith(null);
+			expect(ctx.queryObject).toBeNull();
 		});
 
 		it('should stop the message queue', async () => {
@@ -264,8 +272,7 @@ describe('InterruptHandler', () => {
 		});
 
 		it('should handle query object without interrupt method', async () => {
-			mockQueryObject = {} as Query; // No interrupt method
-			handler = createHandler({ getQueryObject: () => mockQueryObject });
+			handler = createHandler({ queryObject: {} as Query }); // No interrupt method
 
 			await handler.handleInterrupt();
 

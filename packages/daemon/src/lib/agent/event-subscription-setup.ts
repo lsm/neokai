@@ -2,6 +2,8 @@
  * EventSubscriptionSetup - Sets up DaemonHub event subscriptions
  *
  * Extracted from AgentSession to reduce complexity.
+ * Takes AgentSession instance directly - handlers are internal parts of AgentSession.
+ *
  * Handles:
  * - Model switch request subscription
  * - Interrupt request subscription
@@ -11,50 +13,66 @@
  * - Send queued on turn end subscription
  */
 
+import type { Session, MessageContent } from '@liuboer/shared';
 import type { DaemonHub } from '../daemon-hub';
-import { Logger } from '../logger';
+import type { Logger } from '../logger';
+import { Logger as LoggerClass } from '../logger';
+import type { ModelSwitchHandler } from './model-switch-handler';
+import type { InterruptHandler } from './interrupt-handler';
+import type { QueryModeHandler } from './query-mode-handler';
+import type { CheckpointTracker } from './checkpoint-tracker';
 
 /**
- * Event handlers that will be called when events occur
+ * Context interface - what EventSubscriptionSetup needs from AgentSession
+ * Using interface instead of importing AgentSession to avoid circular deps
  */
-export interface EventHandlers {
-	onModelSwitchRequest: (
-		model: string
-	) => Promise<{ success: boolean; model: string; error?: string }>;
-	onInterruptRequest: () => Promise<void>;
-	onResetRequest: (restartQuery: boolean) => Promise<{ success: boolean; error?: string }>;
-	onMessagePersisted: (messageId: string, messageContent: unknown) => Promise<void>;
-	onQueryTrigger: () => Promise<{ success: boolean; messageCount: number; error?: string }>;
-	onSendQueuedOnTurnEnd: () => Promise<void>;
+export interface EventSubscriptionSetupContext {
+	readonly session: Session;
+	readonly daemonHub: DaemonHub;
+
+	// Handler references for event delegation
+	readonly modelSwitchHandler: ModelSwitchHandler;
+	readonly interruptHandler: InterruptHandler;
+	readonly queryModeHandler: QueryModeHandler;
+	readonly checkpointTracker: CheckpointTracker;
+
+	// Methods for event handling
+	resetQuery(options?: { restartQuery?: boolean }): Promise<{ success: boolean; error?: string }>;
+	startQueryAndEnqueue(messageId: string, messageContent: string | MessageContent[]): Promise<void>;
 }
 
 /**
  * Sets up DaemonHub event subscriptions for AgentSession
  */
 export class EventSubscriptionSetup {
-	private sessionId: string;
-	private daemonHub: DaemonHub;
 	private logger: Logger;
 	private unsubscribers: Array<() => void> = [];
 
-	constructor(sessionId: string, daemonHub: DaemonHub, logger: Logger) {
-		this.sessionId = sessionId;
-		this.daemonHub = daemonHub;
-		this.logger = logger;
+	constructor(private ctx: EventSubscriptionSetupContext) {
+		this.logger = new LoggerClass(`EventSubscriptionSetup ${ctx.session.id}`);
 	}
 
 	/**
 	 * Setup all event subscriptions
+	 * Internally calls context methods for event handling
 	 */
-	setup(handlers: EventHandlers): void {
-		const { sessionId, daemonHub, logger } = this;
+	setup(): void {
+		const {
+			session,
+			daemonHub,
+			modelSwitchHandler,
+			interruptHandler,
+			queryModeHandler,
+			checkpointTracker,
+		} = this.ctx;
+		const sessionId = session.id;
 
 		// Model switch request handler
 		const unsubModelSwitch = daemonHub.on(
 			'model.switchRequest',
 			async ({ sessionId: sid, model }) => {
-				logger.log(`Received model.switchRequest for model: ${model}`);
-				const result = await handlers.onModelSwitchRequest(model);
+				this.logger.log(`Received model.switchRequest for model: ${model}`);
+				const result = await modelSwitchHandler.switchModel(model);
 
 				// Emit result
 				await daemonHub.emit('model.switched', {
@@ -72,8 +90,8 @@ export class EventSubscriptionSetup {
 		const unsubInterrupt = daemonHub.on(
 			'agent.interruptRequest',
 			async ({ sessionId: sid }) => {
-				logger.log('Received agent.interruptRequest');
-				await handlers.onInterruptRequest();
+				this.logger.log('Received agent.interruptRequest');
+				await interruptHandler.handleInterrupt();
 				await daemonHub.emit('agent.interrupted', { sessionId: sid });
 			},
 			{ sessionId }
@@ -84,8 +102,8 @@ export class EventSubscriptionSetup {
 		const unsubReset = daemonHub.on(
 			'agent.resetRequest',
 			async ({ sessionId: sid, restartQuery }) => {
-				logger.log(`Received agent.resetRequest (restartQuery: ${restartQuery})`);
-				const result = await handlers.onResetRequest(restartQuery ?? true);
+				this.logger.log(`Received agent.resetRequest (restartQuery: ${restartQuery})`);
+				const result = await this.ctx.resetQuery({ restartQuery: restartQuery ?? true });
 
 				await daemonHub.emit('agent.reset', {
 					sessionId: sid,
@@ -101,8 +119,17 @@ export class EventSubscriptionSetup {
 		const unsubMessagePersisted = daemonHub.on(
 			'message.persisted',
 			async (data) => {
-				logger.log(`Received message.persisted event (messageId: ${data.messageId})`);
-				await handlers.onMessagePersisted(data.messageId, data.messageContent);
+				this.logger.log(`Received message.persisted event (messageId: ${data.messageId})`);
+				// Create checkpoint for the user message (enables rewind feature)
+				checkpointTracker.createCheckpointFromUserMessage(
+					data.messageId,
+					data.messageContent as string
+				);
+				// Start query and enqueue message
+				await this.ctx.startQueryAndEnqueue(
+					data.messageId,
+					data.messageContent as string | MessageContent[]
+				);
 			},
 			{ sessionId }
 		);
@@ -112,8 +139,8 @@ export class EventSubscriptionSetup {
 		const unsubQueryTrigger = daemonHub.on(
 			'query.trigger',
 			async () => {
-				logger.log('Received query.trigger event');
-				await handlers.onQueryTrigger();
+				this.logger.log('Received query.trigger event');
+				await queryModeHandler.handleQueryTrigger();
 			},
 			{ sessionId }
 		);
@@ -123,14 +150,14 @@ export class EventSubscriptionSetup {
 		const unsubSendQueuedOnTurnEnd = daemonHub.on(
 			'query.sendQueuedOnTurnEnd',
 			async () => {
-				logger.log('Received query.sendQueuedOnTurnEnd event');
-				await handlers.onSendQueuedOnTurnEnd();
+				this.logger.log('Received query.sendQueuedOnTurnEnd event');
+				await queryModeHandler.sendQueuedMessagesOnTurnEnd();
 			},
 			{ sessionId }
 		);
 		this.unsubscribers.push(unsubSendQueuedOnTurnEnd);
 
-		logger.log('DaemonHub subscriptions initialized with session filtering');
+		this.logger.log('DaemonHub subscriptions initialized with session filtering');
 	}
 
 	/**

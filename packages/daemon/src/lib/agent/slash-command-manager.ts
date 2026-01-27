@@ -2,6 +2,8 @@
  * SlashCommandManager - Manages slash command caching
  *
  * Extracted from AgentSession to reduce complexity.
+ * Takes AgentSession instance directly - handlers are internal parts of AgentSession.
+ *
  * Handles:
  * - Fetching slash commands from SDK
  * - Caching and persisting to database
@@ -12,38 +14,36 @@ import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type { Session } from '@liuboer/shared';
 import type { SlashCommand } from '@liuboer/shared/sdk';
 import type { DaemonHub } from '../daemon-hub';
-import { Database } from '../../storage/database';
-import { Logger } from '../logger';
+import type { Database } from '../../storage/database';
+import type { Logger } from '../logger';
 import { getBuiltInCommandNames } from '../built-in-commands';
 
 /**
- * Dependencies required for SlashCommandManager
+ * Context interface - what SlashCommandManager needs from AgentSession
+ * Using interface instead of importing AgentSession to avoid circular deps
  */
-export interface SlashCommandManagerDependencies {
-	session: Session;
-	db: Database;
-	daemonHub: DaemonHub;
-	logger: Logger;
+export interface SlashCommandManagerContext {
+	readonly session: Session;
+	readonly db: Database;
+	readonly daemonHub: DaemonHub;
+	readonly logger: Logger;
 
-	// State accessor
-	getQueryObject: () => Query | null;
+	// SDK state
+	readonly queryObject: Query | null;
 }
 
 /**
  * Manages slash command fetching and caching
  */
 export class SlashCommandManager {
-	private deps: SlashCommandManagerDependencies;
 	private slashCommands: string[] = [];
 	private commandsFetchedFromSDK = false;
 
-	constructor(deps: SlashCommandManagerDependencies) {
-		this.deps = deps;
-
+	constructor(private ctx: SlashCommandManagerContext) {
 		// Restore from session if available
-		if (deps.session.availableCommands && deps.session.availableCommands.length > 0) {
-			this.slashCommands = deps.session.availableCommands;
-			deps.logger.log(`Restored ${this.slashCommands.length} slash commands from session data`);
+		if (ctx.session.availableCommands && ctx.session.availableCommands.length > 0) {
+			this.slashCommands = ctx.session.availableCommands;
+			ctx.logger.log(`Restored ${this.slashCommands.length} slash commands from session data`);
 		}
 	}
 
@@ -51,12 +51,12 @@ export class SlashCommandManager {
 	 * Get available slash commands
 	 */
 	async getSlashCommands(): Promise<string[]> {
-		const { logger } = this.deps;
+		const { logger, queryObject } = this.ctx;
 
 		// Return cached commands if available
 		if (this.slashCommands.length > 0) {
 			// Fire-and-forget: refresh from SDK in background
-			if (!this.commandsFetchedFromSDK && this.deps.getQueryObject()) {
+			if (!this.commandsFetchedFromSDK && queryObject) {
 				this.fetchAndCache().catch((e) => {
 					logger.warn('Background refresh of slash commands failed:', e);
 				});
@@ -79,8 +79,7 @@ export class SlashCommandManager {
 	 * Fetch and cache slash commands from SDK
 	 */
 	async fetchAndCache(): Promise<void> {
-		const { session, db, daemonHub, logger } = this.deps;
-		const queryObject = this.deps.getQueryObject();
+		const { session, db, daemonHub, logger, queryObject } = this.ctx;
 
 		if (!queryObject || typeof queryObject.supportedCommands !== 'function') {
 			return;

@@ -2,6 +2,8 @@
  * QueryModeHandler - Handles query mode operations (Manual/Auto-queue)
  *
  * Extracted from AgentSession to reduce complexity.
+ * Takes AgentSession instance directly - handlers are internal parts of AgentSession.
+ *
  * Handles:
  * - handleQueryTrigger - Manual mode: send all saved messages
  * - sendQueuedMessagesOnTurnEnd - Auto-queue mode: send queued messages after turn
@@ -10,33 +12,30 @@
 import type { Session } from '@liuboer/shared';
 import { isSDKUserMessage } from '@liuboer/shared/sdk/type-guards';
 import type { DaemonHub } from '../daemon-hub';
-import { Database } from '../../storage/database';
-import { Logger } from '../logger';
+import type { Database } from '../../storage/database';
+import type { Logger } from '../logger';
 import type { MessageQueue } from './message-queue';
 
 /**
- * Dependencies required for QueryModeHandler
+ * Context interface - what QueryModeHandler needs from AgentSession
+ * Using interface instead of importing AgentSession to avoid circular deps
  */
-export interface QueryModeHandlerDependencies {
-	session: Session;
-	db: Database;
-	daemonHub: DaemonHub;
-	messageQueue: MessageQueue;
-	logger: Logger;
+export interface QueryModeHandlerContext {
+	readonly session: Session;
+	readonly db: Database;
+	readonly daemonHub: DaemonHub;
+	readonly messageQueue: MessageQueue;
+	readonly logger: Logger;
 
-	// Callback to ensure query is started
-	ensureQueryStarted: () => Promise<void>;
+	// Method to ensure query is started
+	ensureQueryStarted(): Promise<void>;
 }
 
 /**
  * Handles query mode operations
  */
 export class QueryModeHandler {
-	private deps: QueryModeHandlerDependencies;
-
-	constructor(deps: QueryModeHandlerDependencies) {
-		this.deps = deps;
-	}
+	constructor(private ctx: QueryModeHandlerContext) {}
 
 	/**
 	 * Handle manual query trigger (Manual mode)
@@ -48,7 +47,7 @@ export class QueryModeHandler {
 		messageCount: number;
 		error?: string;
 	}> {
-		const { session, db, daemonHub, messageQueue, logger } = this.deps;
+		const { session, db, daemonHub, messageQueue, logger } = this.ctx;
 
 		logger.log('Handling query trigger (Manual mode)');
 
@@ -75,7 +74,7 @@ export class QueryModeHandler {
 			});
 
 			// Ensure query is started
-			await this.deps.ensureQueryStarted();
+			await this.ctx.ensureQueryStarted();
 
 			// Enqueue each message
 			for (const msg of savedMessages) {
@@ -105,7 +104,7 @@ export class QueryModeHandler {
 	 * Send queued messages when agent turn ends (Auto-queue mode)
 	 */
 	async sendQueuedMessagesOnTurnEnd(): Promise<void> {
-		const { session, db, messageQueue, logger } = this.deps;
+		const { session, db, messageQueue, logger } = this.ctx;
 
 		logger.log('Checking for queued messages on turn end');
 

@@ -2,6 +2,8 @@
  * InterruptHandler - Handles query interruption
  *
  * Extracted from AgentSession to reduce complexity.
+ * Takes AgentSession instance directly - handlers are internal parts of AgentSession.
+ *
  * Handles:
  * - Interrupt state management
  * - Abort controller signaling
@@ -11,42 +13,37 @@
  */
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
-import type { MessageHub } from '@liuboer/shared';
-import { Logger } from '../logger';
+import type { Session, MessageHub } from '@liuboer/shared';
+import type { Logger } from '../logger';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
 
 /**
- * Dependencies required for InterruptHandler
+ * Context interface - what InterruptHandler needs from AgentSession
+ * Using interface instead of importing AgentSession to avoid circular deps
  */
-export interface InterruptHandlerDependencies {
-	sessionId: string;
-	messageHub: MessageHub;
-	messageQueue: MessageQueue;
-	stateManager: ProcessingStateManager;
-	logger: Logger;
+export interface InterruptHandlerContext {
+	readonly session: Session;
+	readonly messageHub: MessageHub;
+	readonly messageQueue: MessageQueue;
+	readonly stateManager: ProcessingStateManager;
+	readonly logger: Logger;
 
-	// State accessors
-	getQueryObject: () => Query | null;
-	setQueryObject: (q: Query | null) => void;
-	getQueryPromise: () => Promise<void> | null;
-	getQueryAbortController: () => AbortController | null;
-	setQueryAbortController: (c: AbortController | null) => void;
+	// Mutable SDK query state
+	queryObject: Query | null;
+	queryPromise: Promise<void> | null;
+	queryAbortController: AbortController | null;
 }
 
 /**
  * Handles interrupt operations for AgentSession
  */
 export class InterruptHandler {
-	private deps: InterruptHandlerDependencies;
-
 	// Interrupt completion tracking
 	private interruptPromise: Promise<void> | null = null;
 	private interruptResolve: (() => void) | null = null;
 
-	constructor(deps: InterruptHandlerDependencies) {
-		this.deps = deps;
-	}
+	constructor(private ctx: InterruptHandlerContext) {}
 
 	/**
 	 * Get the current interrupt promise (for waiting in ensureQueryStarted)
@@ -60,7 +57,7 @@ export class InterruptHandler {
 	 * Uses official SDK interrupt() method
 	 */
 	async handleInterrupt(): Promise<void> {
-		const { sessionId, messageHub, messageQueue, stateManager, logger } = this.deps;
+		const { session, messageHub, messageQueue, stateManager, logger } = this.ctx;
 
 		const currentState = stateManager.getState();
 		logger.log(`Handling interrupt (current state: ${currentState.status})...`);
@@ -89,19 +86,17 @@ export class InterruptHandler {
 			}
 
 			// STEP 1: Abort the query to break the for-await loop
-			const abortController = this.deps.getQueryAbortController();
-			if (abortController) {
+			if (this.ctx.queryAbortController) {
 				logger.log('Aborting query controller to break for-await loop...');
-				abortController.abort();
-				this.deps.setQueryAbortController(null);
+				this.ctx.queryAbortController.abort();
+				this.ctx.queryAbortController = null;
 			}
 
 			// STEP 2: Call SDK interrupt()
-			const queryObject = this.deps.getQueryObject();
-			if (queryObject && typeof queryObject.interrupt === 'function') {
+			if (this.ctx.queryObject && typeof this.ctx.queryObject.interrupt === 'function') {
 				try {
 					logger.log('Calling SDK interrupt()...');
-					await queryObject.interrupt();
+					await this.ctx.queryObject.interrupt();
 					logger.log('SDK interrupt() completed successfully');
 				} catch (error) {
 					const errorMessage = error instanceof Error ? error.message : String(error);
@@ -112,11 +107,13 @@ export class InterruptHandler {
 			}
 
 			// STEP 3: Wait for old query to finish
-			const queryPromise = this.deps.getQueryPromise();
-			if (queryPromise) {
+			if (this.ctx.queryPromise) {
 				logger.log('Waiting for old query to finish...');
 				try {
-					await Promise.race([queryPromise, new Promise((resolve) => setTimeout(resolve, 200))]);
+					await Promise.race([
+						this.ctx.queryPromise,
+						new Promise((resolve) => setTimeout(resolve, 200)),
+					]);
 					logger.log('Old query finished or timeout reached');
 				} catch (error) {
 					logger.warn('Error waiting for old query:', error);
@@ -124,7 +121,7 @@ export class InterruptHandler {
 			}
 
 			// STEP 4: Clear queryObject
-			this.deps.setQueryObject(null);
+			this.ctx.queryObject = null;
 			logger.log('Cleared queryObject reference');
 
 			// STEP 5: Stop the message queue
@@ -132,7 +129,7 @@ export class InterruptHandler {
 			logger.log('Stopped message queue to allow immediate query restart');
 
 			// Publish interrupt event
-			await messageHub.publish('session.interrupted', {}, { sessionId });
+			await messageHub.publish('session.interrupted', {}, { sessionId: session.id });
 
 			// Set state back to idle
 			await stateManager.setIdle();

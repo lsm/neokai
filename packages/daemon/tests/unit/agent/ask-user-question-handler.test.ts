@@ -5,21 +5,28 @@
  */
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
-import { AskUserQuestionHandler } from '../../../src/lib/agent/ask-user-question-handler';
+import {
+	AskUserQuestionHandler,
+	type AskUserQuestionHandlerContext,
+} from '../../../src/lib/agent/ask-user-question-handler';
 import type { ProcessingStateManager } from '../../../src/lib/agent/processing-state-manager';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
-import type { PendingUserQuestion, AgentProcessingState } from '@liuboer/shared';
+import type { Database } from '../../../src/storage/database';
+import type { PendingUserQuestion, AgentProcessingState, Session } from '@liuboer/shared';
 import { generateUUID } from '@liuboer/shared';
 
 describe('AskUserQuestionHandler', () => {
 	let handler: AskUserQuestionHandler;
 	let mockStateManager: ProcessingStateManager;
 	let mockDaemonHub: DaemonHub;
+	let mockDb: Database;
+	let mockContext: AskUserQuestionHandlerContext;
 	let emitSpy: ReturnType<typeof mock>;
 	let setWaitingForInputSpy: ReturnType<typeof mock>;
 	let setProcessingSpy: ReturnType<typeof mock>;
 	let getStateSpy: ReturnType<typeof mock>;
 	let updateQuestionDraftSpy: ReturnType<typeof mock>;
+	let updateSessionSpy: ReturnType<typeof mock>;
 	const testSessionId = generateUUID();
 
 	let currentState: AgentProcessingState;
@@ -54,7 +61,33 @@ describe('AskUserQuestionHandler', () => {
 			updateQuestionDraft: updateQuestionDraftSpy,
 		} as unknown as ProcessingStateManager;
 
-		handler = new AskUserQuestionHandler(testSessionId, mockStateManager, mockDaemonHub);
+		// Create mock Database
+		updateSessionSpy = mock(() => {});
+		mockDb = {
+			updateSession: updateSessionSpy,
+		} as unknown as Database;
+
+		// Create mock session
+		const mockSession: Session = {
+			id: testSessionId,
+			title: 'Test Session',
+			workspacePath: '/test/workspace',
+			createdAt: new Date().toISOString(),
+			lastActiveAt: new Date().toISOString(),
+			status: 'active',
+			config: { model: 'default', maxTokens: 8192, temperature: 1.0 },
+			metadata: {},
+		};
+
+		// Create context
+		mockContext = {
+			session: mockSession,
+			db: mockDb,
+			stateManager: mockStateManager,
+			daemonHub: mockDaemonHub,
+		};
+
+		handler = new AskUserQuestionHandler(mockContext);
 	});
 
 	describe('createCanUseToolCallback', () => {
@@ -369,6 +402,77 @@ describe('AskUserQuestionHandler', () => {
 
 			expect(setProcessingSpy).toHaveBeenCalledWith('state-test', 'streaming');
 		});
+
+		it('should track resolved question in session metadata', async () => {
+			const callback = handler.createCanUseToolCallback();
+
+			const input = {
+				questions: [
+					{
+						question: 'Track test?',
+						header: 'Track',
+						options: [
+							{ label: 'Yes', description: 'Yes' },
+							{ label: 'No', description: 'No' },
+						],
+						multiSelect: false,
+					},
+				],
+			};
+
+			const resultPromise = callback('AskUserQuestion', input, {
+				signal: new AbortController().signal,
+				toolUseID: 'track-test',
+			});
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			await handler.handleQuestionResponse('track-test', [
+				{ questionIndex: 0, selectedLabels: ['Yes'] },
+			]);
+
+			await resultPromise;
+
+			// Should have updated session with resolved question
+			expect(updateSessionSpy).toHaveBeenCalled();
+			const updateCall = updateSessionSpy.mock.calls[0];
+			expect(updateCall[1].metadata.resolvedQuestions).toBeDefined();
+			expect(updateCall[1].metadata.resolvedQuestions['track-test'].state).toBe('submitted');
+		});
+
+		it('should skip invalid question index', async () => {
+			const callback = handler.createCanUseToolCallback();
+
+			const input = {
+				questions: [
+					{
+						question: 'Only question?',
+						header: 'Only',
+						options: [
+							{ label: 'A', description: 'A' },
+							{ label: 'B', description: 'B' },
+						],
+						multiSelect: false,
+					},
+				],
+			};
+
+			const resultPromise = callback('AskUserQuestion', input, {
+				signal: new AbortController().signal,
+				toolUseID: 'skip-test',
+			});
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Respond with invalid question index (out of bounds)
+			await handler.handleQuestionResponse('skip-test', [
+				{ questionIndex: 99, selectedLabels: ['A'] },
+			]);
+
+			const result = await resultPromise;
+			// Should still allow, but with empty answers since the index was invalid
+			expect(result.behavior).toBe('allow');
+		});
 	});
 
 	describe('handleQuestionCancel', () => {
@@ -378,6 +482,60 @@ describe('AskUserQuestionHandler', () => {
 			await expect(handler.handleQuestionCancel('tool-123')).rejects.toThrow(
 				'agent is not waiting for input'
 			);
+		});
+
+		it('should throw when no pending resolver', async () => {
+			const pendingQuestion: PendingUserQuestion = {
+				toolUseId: 'tool-123',
+				questions: [
+					{
+						question: 'Test?',
+						header: 'Test',
+						options: [{ label: 'A', description: 'A' }],
+						multiSelect: false,
+					},
+				],
+				askedAt: Date.now(),
+			};
+			currentState = { status: 'waiting_for_input', pendingQuestion };
+
+			await expect(handler.handleQuestionCancel('tool-123')).rejects.toThrow(
+				'No pending question to cancel'
+			);
+		});
+
+		it('should throw on toolUseId mismatch', async () => {
+			const callback = handler.createCanUseToolCallback();
+
+			const input = {
+				questions: [
+					{
+						question: 'Test?',
+						header: 'Test',
+						options: [
+							{ label: 'A', description: 'A' },
+							{ label: 'B', description: 'B' },
+						],
+						multiSelect: false,
+					},
+				],
+			};
+
+			const resultPromise = callback('AskUserQuestion', input, {
+				signal: new AbortController().signal,
+				toolUseID: 'correct-id',
+			});
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Try to cancel with wrong toolUseId
+			await expect(handler.handleQuestionCancel('wrong-id')).rejects.toThrow(
+				'Tool use ID mismatch'
+			);
+
+			// Cleanup - cancel with correct ID
+			await handler.handleQuestionCancel('correct-id');
+			await resultPromise;
 		});
 
 		it('should deny tool and provide cancellation message', async () => {
@@ -409,6 +567,72 @@ describe('AskUserQuestionHandler', () => {
 			const result = await resultPromise;
 			expect(result.behavior).toBe('deny');
 			expect(result.message).toContain('cancelled');
+		});
+
+		it('should track cancelled question in session metadata', async () => {
+			const callback = handler.createCanUseToolCallback();
+
+			const input = {
+				questions: [
+					{
+						question: 'Cancel track test?',
+						header: 'CancelTrack',
+						options: [
+							{ label: 'A', description: 'A' },
+							{ label: 'B', description: 'B' },
+						],
+						multiSelect: false,
+					},
+				],
+			};
+
+			const resultPromise = callback('AskUserQuestion', input, {
+				signal: new AbortController().signal,
+				toolUseID: 'cancel-track-test',
+			});
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			await handler.handleQuestionCancel('cancel-track-test');
+
+			await resultPromise;
+
+			// Should have updated session with resolved question marked as cancelled
+			expect(updateSessionSpy).toHaveBeenCalled();
+			const updateCall = updateSessionSpy.mock.calls[0];
+			expect(updateCall[1].metadata.resolvedQuestions).toBeDefined();
+			expect(updateCall[1].metadata.resolvedQuestions['cancel-track-test'].state).toBe('cancelled');
+		});
+
+		it('should transition to processing state after cancel', async () => {
+			const callback = handler.createCanUseToolCallback();
+
+			const input = {
+				questions: [
+					{
+						question: 'State test?',
+						header: 'State',
+						options: [
+							{ label: 'A', description: 'A' },
+							{ label: 'B', description: 'B' },
+						],
+						multiSelect: false,
+					},
+				],
+			};
+
+			const resultPromise = callback('AskUserQuestion', input, {
+				signal: new AbortController().signal,
+				toolUseID: 'state-cancel-test',
+			});
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			await handler.handleQuestionCancel('state-cancel-test');
+
+			await resultPromise;
+
+			expect(setProcessingSpy).toHaveBeenCalledWith('state-cancel-test', 'streaming');
 		});
 	});
 

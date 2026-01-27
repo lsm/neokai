@@ -5,8 +5,10 @@
  */
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
-import { QueryRunner, type QueryRunnerDependencies } from '../../../src/lib/agent/query-runner';
+import { QueryRunner, type QueryRunnerContext } from '../../../src/lib/agent/query-runner';
 import type { Session, MessageHub } from '@liuboer/shared';
+import type { SDKMessage } from '@liuboer/shared/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type { Database } from '../../../src/storage/database';
 import type { MessageQueue } from '../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../src/lib/agent/processing-state-manager';
@@ -46,15 +48,12 @@ describe('QueryRunner', () => {
 	let setCanUseToolSpy: ReturnType<typeof mock>;
 	let createCanUseToolCallbackSpy: ReturnType<typeof mock>;
 
-	// State callbacks
+	// State variables (mutable context properties)
 	let queryGeneration: number;
-	let firstMessageReceived: boolean;
-	let _queryObject: unknown | null;
-	let _queryPromise: Promise<void> | null;
-	let queryAbortController: AbortController | null;
-	let startupTimeoutTimer: ReturnType<typeof setTimeout> | null;
-	let originalEnvVars: Record<string, string | undefined>;
-	let cleaningUp: boolean;
+	let onSDKMessageSpy: ReturnType<typeof mock>;
+	let onSlashCommandsFetchedSpy: ReturnType<typeof mock>;
+	let onModelsFetchedSpy: ReturnType<typeof mock>;
+	let onMarkApiSuccessSpy: ReturnType<typeof mock>;
 
 	beforeEach(() => {
 		mockSession = {
@@ -81,13 +80,12 @@ describe('QueryRunner', () => {
 
 		// Reset state
 		queryGeneration = 0;
-		firstMessageReceived = false;
-		_queryObject = null;
-		_queryPromise = null;
-		queryAbortController = null;
-		startupTimeoutTimer = null;
-		originalEnvVars = {};
-		cleaningUp = false;
+
+		// Create callback spies
+		onSDKMessageSpy = mock(async () => {});
+		onSlashCommandsFetchedSpy = mock(async () => {});
+		onModelsFetchedSpy = mock(async () => {});
+		onMarkApiSuccessSpy = mock(async () => {});
 
 		// Database spies
 		saveSDKMessageSpy = mock(() => {});
@@ -164,8 +162,9 @@ describe('QueryRunner', () => {
 		} as unknown as AskUserQuestionHandler;
 	});
 
-	function createRunner(overrides: Partial<QueryRunnerDependencies> = {}): QueryRunner {
-		const deps: QueryRunnerDependencies = {
+	function createContext(overrides: Partial<QueryRunnerContext> = {}): QueryRunnerContext {
+		return {
+			// Core dependencies
 			session: mockSession,
 			db: mockDb,
 			messageHub: mockMessageHub,
@@ -175,38 +174,32 @@ describe('QueryRunner', () => {
 			logger: mockLogger,
 			optionsBuilder: mockOptionsBuilder,
 			askUserQuestionHandler: mockAskUserQuestionHandler,
-			getQueryGeneration: () => queryGeneration,
+
+			// Mutable SDK state (direct properties)
+			queryObject: null,
+			queryPromise: null,
+			queryAbortController: null,
+			firstMessageReceived: false,
+			startupTimeoutTimer: null,
+			originalEnvVars: {},
+
+			// Methods for state coordination
 			incrementQueryGeneration: () => ++queryGeneration,
-			getFirstMessageReceived: () => firstMessageReceived,
-			setFirstMessageReceived: (value: boolean) => {
-				firstMessageReceived = value;
-			},
-			setQueryObject: (q: unknown | null) => {
-				_queryObject = q;
-			},
-			setQueryPromise: (p: Promise<void> | null) => {
-				_queryPromise = p;
-			},
-			setQueryAbortController: (c: AbortController | null) => {
-				queryAbortController = c;
-			},
-			getQueryAbortController: () => queryAbortController,
-			setStartupTimeoutTimer: (t: ReturnType<typeof setTimeout> | null) => {
-				startupTimeoutTimer = t;
-			},
-			getStartupTimeoutTimer: () => startupTimeoutTimer,
-			setOriginalEnvVars: (vars: Record<string, string | undefined>) => {
-				originalEnvVars = vars;
-			},
-			getOriginalEnvVars: () => originalEnvVars,
-			isCleaningUp: () => cleaningUp,
-			onSDKMessage: mock(async () => {}),
-			onSlashCommandsFetched: mock(async () => {}),
-			onModelsFetched: mock(async () => {}),
-			onMarkApiSuccess: mock(async () => {}),
+			getQueryGeneration: () => queryGeneration,
+			isCleaningUp: () => false,
+
+			// Callbacks for message handling
+			onSDKMessage: onSDKMessageSpy,
+			onSlashCommandsFetched: onSlashCommandsFetchedSpy,
+			onModelsFetched: onModelsFetchedSpy,
+			onMarkApiSuccess: onMarkApiSuccessSpy,
+
 			...overrides,
 		};
-		return new QueryRunner(deps);
+	}
+
+	function createRunner(overrides: Partial<QueryRunnerContext> = {}): QueryRunner {
+		return new QueryRunner(createContext(overrides));
 	}
 
 	describe('constructor', () => {
@@ -241,14 +234,14 @@ describe('QueryRunner', () => {
 		});
 
 		it('should reset firstMessageReceived flag', async () => {
-			firstMessageReceived = true;
 			isRunningSpy.mockReturnValue(false);
-			runner = createRunner();
+			const ctx = createContext({ firstMessageReceived: true });
+			runner = new QueryRunner(ctx);
 
 			runner.start();
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
-			expect(firstMessageReceived).toBe(false);
+			expect(ctx.firstMessageReceived).toBe(false);
 		});
 	});
 
@@ -328,6 +321,317 @@ describe('QueryRunner', () => {
 
 			const savedMessage = saveSDKMessageSpy.mock.calls[0][1];
 			expect(savedMessage.parent_tool_use_id).toBeNull();
+		});
+	});
+
+	describe('createMessageGeneratorWrapper', () => {
+		it('should yield messages from queue and call onSent', async () => {
+			const sentCount = { value: 0 };
+
+			// Create a mock message generator
+			async function* mockMessageGenerator() {
+				yield {
+					message: { uuid: 'msg-1', content: 'Hello' },
+					onSent: () => {
+						sentCount.value++;
+					},
+				};
+				yield {
+					message: { uuid: 'msg-2', content: 'World' },
+					onSent: () => {
+						sentCount.value++;
+					},
+				};
+			}
+
+			const mockQueue = {
+				...mockMessageQueue,
+				messageGenerator: mock(() => mockMessageGenerator()),
+			};
+
+			runner = createRunner({
+				messageQueue: mockQueue as unknown as MessageQueue,
+			});
+
+			const generator = runner.createMessageGeneratorWrapper();
+			const results: unknown[] = [];
+
+			for await (const msg of generator) {
+				results.push(msg);
+			}
+
+			expect(results).toHaveLength(2);
+			expect(sentCount.value).toBe(2);
+		});
+
+		it('should set processing state for non-internal messages', async () => {
+			async function* mockMessageGenerator() {
+				yield {
+					message: { uuid: 'msg-1', content: 'Hello', internal: false },
+					onSent: () => {},
+				};
+			}
+
+			const mockQueue = {
+				...mockMessageQueue,
+				messageGenerator: mock(() => mockMessageGenerator()),
+			};
+
+			runner = createRunner({
+				messageQueue: mockQueue as unknown as MessageQueue,
+			});
+
+			const generator = runner.createMessageGeneratorWrapper();
+
+			for await (const _msg of generator) {
+				// Consume the generator
+			}
+
+			expect(setProcessingSpy).toHaveBeenCalledWith('msg-1', 'initializing');
+		});
+
+		it('should skip processing state for internal messages', async () => {
+			async function* mockMessageGenerator() {
+				yield {
+					message: { uuid: 'internal-msg', content: '/context', internal: true },
+					onSent: () => {},
+				};
+			}
+
+			const mockQueue = {
+				...mockMessageQueue,
+				messageGenerator: mock(() => mockMessageGenerator()),
+			};
+
+			runner = createRunner({
+				messageQueue: mockQueue as unknown as MessageQueue,
+			});
+
+			const generator = runner.createMessageGeneratorWrapper();
+
+			for await (const _msg of generator) {
+				// Consume the generator
+			}
+
+			expect(setProcessingSpy).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('handleSDKMessage', () => {
+		it('should mark queued messages as sent on system:init', async () => {
+			const queuedMessages = [
+				{ dbId: 1, uuid: 'msg-1' },
+				{ dbId: 2, uuid: 'msg-2' },
+			];
+			getMessagesByStatusSpy.mockReturnValue(queuedMessages);
+
+			runner = createRunner();
+
+			const systemInitMessage = {
+				type: 'system',
+				subtype: 'init',
+				uuid: 'init-uuid',
+				session_id: 'sdk-session-123',
+			};
+
+			await runner.handleSDKMessage(systemInitMessage as unknown as SDKMessage);
+
+			expect(getMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'queued');
+			expect(updateMessageStatusSpy).toHaveBeenCalledWith([1, 2], 'sent');
+		});
+
+		it('should not update status if no queued messages', async () => {
+			getMessagesByStatusSpy.mockReturnValue([]);
+
+			runner = createRunner();
+
+			const systemInitMessage = {
+				type: 'system',
+				subtype: 'init',
+				uuid: 'init-uuid',
+				session_id: 'sdk-session-123',
+			};
+
+			await runner.handleSDKMessage(systemInitMessage as unknown as SDKMessage);
+
+			expect(updateMessageStatusSpy).not.toHaveBeenCalled();
+		});
+
+		it('should delegate to onSDKMessage callback', async () => {
+			runner = createRunner();
+
+			const message = {
+				type: 'assistant',
+				uuid: 'asst-uuid',
+				message: { role: 'assistant', content: [] },
+			};
+
+			await runner.handleSDKMessage(message as unknown as SDKMessage);
+
+			expect(onSDKMessageSpy).toHaveBeenCalledWith(message);
+		});
+
+		it('should call onMarkApiSuccess after handling message', async () => {
+			runner = createRunner();
+
+			const message = {
+				type: 'assistant',
+				uuid: 'asst-uuid',
+				message: { role: 'assistant', content: [] },
+			};
+
+			await runner.handleSDKMessage(message as unknown as SDKMessage);
+
+			expect(onMarkApiSuccessSpy).toHaveBeenCalled();
+		});
+	});
+
+	describe('createAbortableQuery', () => {
+		it('should yield messages from query iterator', async () => {
+			runner = createRunner();
+
+			const messages = [{ type: 'msg1' }, { type: 'msg2' }];
+			let idx = 0;
+
+			const mockQuery = {
+				[Symbol.asyncIterator]: () => ({
+					next: async () => {
+						if (idx < messages.length) {
+							return { value: messages[idx++], done: false };
+						}
+						return { value: undefined, done: true };
+					},
+					return: async () => ({ value: undefined, done: true }),
+				}),
+			};
+
+			const abortController = new AbortController();
+			const generator = runner.createAbortableQuery(
+				mockQuery as unknown as Query,
+				abortController.signal
+			);
+
+			const results: unknown[] = [];
+			for await (const msg of generator) {
+				results.push(msg);
+			}
+
+			expect(results).toHaveLength(2);
+			expect(results[0]).toEqual({ type: 'msg1' });
+			expect(results[1]).toEqual({ type: 'msg2' });
+		});
+
+		it('should stop iteration when signal is already aborted', async () => {
+			runner = createRunner();
+
+			const abortController = new AbortController();
+			abortController.abort(); // Pre-abort
+
+			const mockQuery = {
+				[Symbol.asyncIterator]: () => ({
+					next: async () => ({ value: { type: 'msg' }, done: false }),
+					return: async () => ({ value: undefined, done: true }),
+				}),
+			};
+
+			const generator = runner.createAbortableQuery(
+				mockQuery as unknown as Query,
+				abortController.signal
+			);
+
+			const results: unknown[] = [];
+			for await (const msg of generator) {
+				results.push(msg);
+			}
+
+			expect(results).toHaveLength(0);
+		});
+
+		it('should stop iteration when abort is called during iteration', async () => {
+			runner = createRunner();
+
+			const abortController = new AbortController();
+			let callCount = 0;
+
+			const mockQuery = {
+				[Symbol.asyncIterator]: () => ({
+					next: async () => {
+						callCount++;
+						if (callCount === 2) {
+							// Abort after first yield
+							abortController.abort();
+						}
+						return { value: { type: `msg${callCount}` }, done: false };
+					},
+					return: async () => ({ value: undefined, done: true }),
+				}),
+			};
+
+			const generator = runner.createAbortableQuery(
+				mockQuery as unknown as Query,
+				abortController.signal
+			);
+
+			const results: unknown[] = [];
+			for await (const msg of generator) {
+				results.push(msg);
+				if (results.length > 5) break; // Safety limit
+			}
+
+			expect(results.length).toBeLessThanOrEqual(2);
+		});
+
+		it('should cleanup iterator on completion', async () => {
+			runner = createRunner();
+
+			let returnCalled = false;
+
+			const mockQuery = {
+				[Symbol.asyncIterator]: () => ({
+					next: async () => ({ value: undefined, done: true }),
+					return: async () => {
+						returnCalled = true;
+						return { value: undefined, done: true };
+					},
+				}),
+			};
+
+			const abortController = new AbortController();
+			const generator = runner.createAbortableQuery(
+				mockQuery as unknown as Query,
+				abortController.signal
+			);
+
+			for await (const _msg of generator) {
+				// Consume
+			}
+
+			expect(returnCalled).toBe(true);
+		});
+
+		it('should re-throw non-abort errors', async () => {
+			runner = createRunner();
+
+			const mockQuery = {
+				[Symbol.asyncIterator]: () => ({
+					next: async () => {
+						throw new Error('Some SDK error');
+					},
+					return: async () => ({ value: undefined, done: true }),
+				}),
+			};
+
+			const abortController = new AbortController();
+			const generator = runner.createAbortableQuery(
+				mockQuery as unknown as Query,
+				abortController.signal
+			);
+
+			await expect(async () => {
+				for await (const _msg of generator) {
+					// Consume
+				}
+			}).toThrow('Some SDK error');
 		});
 	});
 });

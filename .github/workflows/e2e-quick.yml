@@ -54,65 +54,10 @@ jobs:
       - name: Run E2E quick tests
         working-directory: packages/cli
         run: |
-          echo "Running E2E quick coverage tests..."
+          echo "Running E2E quick tests..."
           xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
-            bun test --coverage --coverage-reporter=lcov --coverage-dir=coverage \
-            ./tests/e2e-coverage/e2e-quick.coverage.ts
+            bun test ./tests/e2e-coverage/e2e-quick.coverage.ts
         env:
           CI: true
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           DEFAULT_MODEL: haiku
-
-      - name: Fix server coverage paths for monorepo
-        working-directory: packages/cli
-        run: |
-          # Fix package-relative paths
-          sed -i 's|^SF:src/|SF:packages/cli/src/|g' coverage/lcov.info
-          # Fix cross-package paths
-          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' coverage/lcov.info
-          sed -i 's|^SF:\.\./daemon/|SF:packages/daemon/|g' coverage/lcov.info
-
-          # Filter coverage to only include source files (packages/*/src/**)
-          # Removes test files and non-source files from coverage report
-          awk '
-            /^SF:/ {
-              if ($0 ~ /^SF:packages\/[^\/]+\/src\//) {
-                keep = 1
-              } else {
-                keep = 0
-              }
-            }
-            keep { print }
-            /^end_of_record$/ { keep = 0 }
-          ' coverage/lcov.info > coverage/lcov.filtered.info
-          mv coverage/lcov.filtered.info coverage/lcov.info
-
-      - name: Upload server-side coverage to Codecov
-        uses: codecov/codecov-action@v4
-        continue-on-error: true
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/cli/coverage/lcov.info
-          flags: e2e-quick
-          fail_ci_if_error: false
-
-      - name: Upload browser-side coverage to Codecov
-        uses: codecov/codecov-action@v4
-        continue-on-error: true
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/cli/tests/e2e-coverage/browser-coverage.lcov
-          flags: e2e-quick
-          fail_ci_if_error: false
-
-      - name: Upload coverage artifacts
-        uses: actions/upload-artifact@v4
-        if: always()
-        continue-on-error: true
-        with:
-          name: e2e-quick-coverage-reports
-          path: |
-            packages/cli/coverage/
-            packages/cli/tests/e2e-coverage/browser-coverage.lcov
-            packages/cli/tests/e2e-coverage/browser-coverage.json
-          retention-days: 7

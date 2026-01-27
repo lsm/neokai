@@ -5,7 +5,10 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
-import { QueryOptionsBuilder } from '../../../src/lib/agent/query-options-builder';
+import {
+	QueryOptionsBuilder,
+	type QueryOptionsBuilderContext,
+} from '../../../src/lib/agent/query-options-builder';
 import type { Session } from '@liuboer/shared';
 import type { SettingsManager } from '../../../src/lib/settings-manager';
 import { generateUUID } from '@liuboer/shared';
@@ -14,6 +17,7 @@ describe('QueryOptionsBuilder', () => {
 	let builder: QueryOptionsBuilder;
 	let mockSession: Session;
 	let mockSettingsManager: SettingsManager;
+	let mockContext: QueryOptionsBuilderContext;
 	let originalNodeEnv: string | undefined;
 
 	beforeEach(() => {
@@ -49,7 +53,12 @@ describe('QueryOptionsBuilder', () => {
 			prepareSDKOptions: mock(async () => ({})),
 		} as unknown as SettingsManager;
 
-		builder = new QueryOptionsBuilder(mockSession, mockSettingsManager);
+		mockContext = {
+			session: mockSession,
+			settingsManager: mockSettingsManager,
+		};
+
+		builder = new QueryOptionsBuilder(mockContext);
 	});
 
 	afterEach(() => {
@@ -150,7 +159,10 @@ describe('QueryOptionsBuilder', () => {
 				mainRepoPath: '/main/repo',
 				branch: 'session/test',
 			};
-			const newBuilder = new QueryOptionsBuilder(mockSession, mockSettingsManager);
+			const newBuilder = new QueryOptionsBuilder({
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+			});
 			expect(newBuilder.getCwd()).toBe('/worktree/path');
 		});
 	});
@@ -206,7 +218,10 @@ describe('QueryOptionsBuilder', () => {
 	describe('system prompt configuration', () => {
 		it('should skip system prompt in test environment', async () => {
 			process.env.NODE_ENV = 'test';
-			const newBuilder = new QueryOptionsBuilder(mockSession, mockSettingsManager);
+			const newBuilder = new QueryOptionsBuilder({
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+			});
 			const options = await newBuilder.build();
 
 			expect(options.systemPrompt).toBeUndefined();
@@ -227,7 +242,10 @@ describe('QueryOptionsBuilder', () => {
 				mainRepoPath: '/main/repo',
 				branch: 'session/test-branch',
 			};
-			const newBuilder = new QueryOptionsBuilder(mockSession, mockSettingsManager);
+			const newBuilder = new QueryOptionsBuilder({
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+			});
 			const options = await newBuilder.build();
 
 			expect(options.systemPrompt).toEqual(
@@ -253,7 +271,10 @@ describe('QueryOptionsBuilder', () => {
 				mainRepoPath: '/main',
 				branch: 'session/test',
 			};
-			const newBuilder = new QueryOptionsBuilder(mockSession, mockSettingsManager);
+			const newBuilder = new QueryOptionsBuilder({
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+			});
 			const options = await newBuilder.build();
 
 			expect(options.systemPrompt).toContain('Custom prompt');
@@ -267,7 +288,10 @@ describe('QueryOptionsBuilder', () => {
 				mainRepoPath: '/main',
 				branch: 'session/test',
 			};
-			const newBuilder = new QueryOptionsBuilder(mockSession, mockSettingsManager);
+			const newBuilder = new QueryOptionsBuilder({
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+			});
 			const options = await newBuilder.build();
 
 			expect(typeof options.systemPrompt).toBe('string');
@@ -311,7 +335,10 @@ describe('QueryOptionsBuilder', () => {
 	describe('MCP servers configuration', () => {
 		it('should disable MCP in test environment', async () => {
 			process.env.NODE_ENV = 'test';
-			const newBuilder = new QueryOptionsBuilder(mockSession, mockSettingsManager);
+			const newBuilder = new QueryOptionsBuilder({
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+			});
 			const options = await newBuilder.build();
 
 			expect(options.mcpServers).toEqual({});
@@ -338,7 +365,10 @@ describe('QueryOptionsBuilder', () => {
 	describe('setting sources configuration', () => {
 		it('should disable setting sources in test environment', async () => {
 			process.env.NODE_ENV = 'test';
-			const newBuilder = new QueryOptionsBuilder(mockSession, mockSettingsManager);
+			const newBuilder = new QueryOptionsBuilder({
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+			});
 			const options = await newBuilder.build();
 
 			expect(options.settingSources).toEqual([]);
@@ -363,7 +393,10 @@ describe('QueryOptionsBuilder', () => {
 				mainRepoPath: '/main',
 				branch: 'session/test',
 			};
-			const newBuilder = new QueryOptionsBuilder(mockSession, mockSettingsManager);
+			const newBuilder = new QueryOptionsBuilder({
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+			});
 			const options = await newBuilder.build();
 
 			expect(options.additionalDirectories).toEqual([]);
@@ -386,7 +419,10 @@ describe('QueryOptionsBuilder', () => {
 			(mockSettingsManager.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
 				permissionMode: 'prompt',
 			});
-			const newBuilder = new QueryOptionsBuilder(mockSession, mockSettingsManager);
+			const newBuilder = new QueryOptionsBuilder({
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+			});
 			const options = await newBuilder.build();
 
 			expect(options.permissionMode).toBe('prompt');
@@ -407,7 +443,10 @@ describe('QueryOptionsBuilder', () => {
 	describe('hooks configuration', () => {
 		it('should skip hooks in test environment', async () => {
 			process.env.NODE_ENV = 'test';
-			const newBuilder = new QueryOptionsBuilder(mockSession, mockSettingsManager);
+			const newBuilder = new QueryOptionsBuilder({
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+			});
 			const options = await newBuilder.build();
 
 			expect(options.hooks).toBeUndefined();
@@ -429,7 +468,10 @@ describe('QueryOptionsBuilder', () => {
 				mainRepoPath: '/main/repo',
 				branch: 'session/feature',
 			};
-			const newBuilder = new QueryOptionsBuilder(mockSession, mockSettingsManager);
+			const newBuilder = new QueryOptionsBuilder({
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+			});
 			const options = await newBuilder.build();
 
 			const systemPrompt = options.systemPrompt as { append?: string };
@@ -442,7 +484,10 @@ describe('QueryOptionsBuilder', () => {
 				mainRepoPath: '/main',
 				branch: 'session/my-feature',
 			};
-			const newBuilder = new QueryOptionsBuilder(mockSession, mockSettingsManager);
+			const newBuilder = new QueryOptionsBuilder({
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+			});
 			const options = await newBuilder.build();
 
 			const systemPrompt = options.systemPrompt as { append?: string };
@@ -455,7 +500,10 @@ describe('QueryOptionsBuilder', () => {
 				mainRepoPath: '/projects/my-repo',
 				branch: 'session/test',
 			};
-			const newBuilder = new QueryOptionsBuilder(mockSession, mockSettingsManager);
+			const newBuilder = new QueryOptionsBuilder({
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+			});
 			const options = await newBuilder.build();
 
 			const systemPrompt = options.systemPrompt as { append?: string };

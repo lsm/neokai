@@ -2,6 +2,8 @@
  * ModelSwitchHandler - Handles model switching logic for AgentSession
  *
  * Extracted from AgentSession to reduce complexity and improve testability.
+ * Takes AgentSession instance directly - handlers are internal parts of AgentSession.
+ *
  * Handles:
  * - Model validation and alias resolution
  * - Query restart to regenerate system:init with new model
@@ -15,37 +17,36 @@
  */
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
-import type { Session, CurrentModelInfo } from '@liuboer/shared';
-import type { MessageHub } from '@liuboer/shared';
+import type { Session, CurrentModelInfo, MessageHub } from '@liuboer/shared';
 import type { DaemonHub } from '../daemon-hub';
-import { Database } from '../../storage/database';
-import { ErrorCategory, ErrorManager } from '../error-manager';
-import { Logger } from '../logger';
+import type { Database } from '../../storage/database';
+import type { ErrorManager } from '../error-manager';
+import { ErrorCategory } from '../error-manager';
+import type { Logger } from '../logger';
 import { isValidModel, resolveModelAlias, getModelInfo } from '../model-service';
 import { getProviderRegistry } from '../providers/factory.js';
 import type { ContextTracker } from './context-tracker';
 import type { ProcessingStateManager } from './processing-state-manager';
+import type { QueryLifecycleManager } from './query-lifecycle-manager';
 
 /**
- * Dependencies required for model switching
+ * Context interface - what ModelSwitchHandler needs from AgentSession
+ * Using interface instead of importing AgentSession to avoid circular deps
  */
-export interface ModelSwitchDependencies {
-	session: Session;
-	db: Database;
-	messageHub: MessageHub;
-	daemonHub: DaemonHub;
-	contextTracker: ContextTracker;
-	stateManager: ProcessingStateManager;
-	errorManager: ErrorManager;
-	logger: Logger;
-	getQueryObject: () => Query | null;
-	isTransportReady: () => boolean;
-	/**
-	 * Callback to restart the query with new environment variables
-	 * Required when switching between providers (e.g., Anthropic ↔ GLM)
-	 * since the SDK subprocess needs different env vars (ANTHROPIC_BASE_URL, etc.)
-	 */
-	restartQuery?: () => Promise<void>;
+export interface ModelSwitchHandlerContext {
+	readonly session: Session;
+	readonly db: Database;
+	readonly messageHub: MessageHub;
+	readonly daemonHub: DaemonHub;
+	readonly contextTracker: ContextTracker;
+	readonly stateManager: ProcessingStateManager;
+	readonly errorManager: ErrorManager;
+	readonly logger: Logger;
+	readonly lifecycleManager: QueryLifecycleManager;
+
+	// SDK state
+	readonly queryObject: Query | null;
+	readonly firstMessageReceived: boolean;
 }
 
 /**
@@ -61,18 +62,14 @@ export interface ModelSwitchResult {
  * Handles model switching for AgentSession
  */
 export class ModelSwitchHandler {
-	private deps: ModelSwitchDependencies;
-
-	constructor(deps: ModelSwitchDependencies) {
-		this.deps = deps;
-	}
+	constructor(private ctx: ModelSwitchHandlerContext) {}
 
 	/**
 	 * Get current model ID for this session
 	 */
 	getCurrentModel(): CurrentModelInfo {
 		return {
-			id: this.deps.session.config.model,
+			id: this.ctx.session.config.model,
 			info: null, // Model info is fetched asynchronously by RPC handler
 		};
 	}
@@ -94,8 +91,10 @@ export class ModelSwitchHandler {
 			stateManager,
 			errorManager,
 			logger,
-			restartQuery,
-		} = this.deps;
+			lifecycleManager,
+			queryObject,
+			firstMessageReceived,
+		} = this.ctx;
 
 		logger.log(`Handling model switch to: ${newModel}`);
 
@@ -138,8 +137,7 @@ export class ModelSwitchHandler {
 			);
 
 			// Check if query is running AND ProcessTransport is ready
-			const queryObject = this.deps.getQueryObject();
-			const transportReady = this.deps.isTransportReady();
+			const transportReady = firstMessageReceived;
 
 			// Detect if this is a cross-provider switch (e.g., Anthropic → GLM)
 			// This is mainly for logging and updating the provider config field
@@ -178,12 +176,6 @@ export class ModelSwitchHandler {
 				// FIX: SDK's setModel() doesn't update the cached system:init message,
 				// causing MessageInfoDropdown to show stale model info.
 				// Restarting forces SDK to emit fresh system:init with correct model.
-				if (!restartQuery) {
-					const error = `Model switch requires query restart, but restartQuery callback not provided`;
-					logger.error(error);
-					return { success: false, model: session.config.model, error };
-				}
-
 				logger.log(`Restarting query for model switch to ${resolvedModel}`);
 
 				// Update session config first (will be used when query restarts)
@@ -199,9 +191,9 @@ export class ModelSwitchHandler {
 				// Update context tracker model
 				contextTracker.setModel(resolvedModel);
 
-				// Restart the query
+				// Restart the query via lifecycle manager
 				// This spawns a new SDK subprocess with the new model configuration
-				await restartQuery();
+				await lifecycleManager.restart();
 
 				logger.log(`Query restarted for model switch to ${resolvedModel}`);
 			}

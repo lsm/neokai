@@ -1,6 +1,9 @@
 /**
  * AskUserQuestionHandler - Handles the AskUserQuestion tool via canUseTool callback
  *
+ * Extracted from AgentSession to reduce complexity.
+ * Takes AgentSession instance directly - handlers are internal parts of AgentSession.
+ *
  * The Claude Agent SDK expects AskUserQuestion to be handled via the `canUseTool`
  * callback, NOT via tool_result messages through streaming input. This handler:
  *
@@ -13,11 +16,23 @@
  * See: https://platform.claude.com/docs/en/agent-sdk/permissions#handling-the-askuserquestion-tool
  */
 
-import type { PendingUserQuestion, QuestionDraftResponse } from '@liuboer/shared';
+import type { PendingUserQuestion, QuestionDraftResponse, Session } from '@liuboer/shared';
 import type { DaemonHub } from '../daemon-hub';
+import type { Database } from '../../storage/database';
 import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type { ProcessingStateManager } from './processing-state-manager';
 import { Logger } from '../logger';
+
+/**
+ * Context interface - what AskUserQuestionHandler needs from AgentSession
+ * Using interface instead of importing AgentSession to avoid circular deps
+ */
+export interface AskUserQuestionHandlerContext {
+	readonly session: Session;
+	readonly db: Database;
+	readonly stateManager: ProcessingStateManager;
+	readonly daemonHub: DaemonHub;
+}
 
 /**
  * Type for the AskUserQuestion input from SDK
@@ -49,12 +64,8 @@ export class AskUserQuestionHandler {
 	private logger: Logger;
 	private pendingResolver: PendingQuestionResolver | null = null;
 
-	constructor(
-		private sessionId: string,
-		private stateManager: ProcessingStateManager,
-		private daemonHub: DaemonHub
-	) {
-		this.logger = new Logger(`AskUserQuestionHandler ${sessionId}`);
+	constructor(private ctx: AskUserQuestionHandlerContext) {
+		this.logger = new Logger(`AskUserQuestionHandler ${ctx.session.id}`);
 	}
 
 	/**
@@ -76,6 +87,8 @@ export class AskUserQuestionHandler {
 				agentID?: string;
 			}
 		): Promise<PermissionResult> => {
+			const { session, stateManager, daemonHub } = this.ctx;
+
 			// Only intercept AskUserQuestion tool
 			if (toolName !== 'AskUserQuestion') {
 				// Allow all other tools (they go through permission mode settings)
@@ -104,11 +117,11 @@ export class AskUserQuestionHandler {
 
 			// Transition to waiting_for_input state
 			// This will persist to DB and broadcast to clients
-			await this.stateManager.setWaitingForInput(pendingQuestion);
+			await stateManager.setWaitingForInput(pendingQuestion);
 
 			// Emit event for logging/debugging
-			await this.daemonHub.emit('question.asked', {
-				sessionId: this.sessionId,
+			await daemonHub.emit('question.asked', {
+				sessionId: session.id,
 				pendingQuestion,
 			});
 
@@ -140,7 +153,8 @@ export class AskUserQuestionHandler {
 		toolUseId: string,
 		responses: QuestionDraftResponse[]
 	): Promise<void> {
-		const currentState = this.stateManager.getState();
+		const { stateManager } = this.ctx;
+		const currentState = stateManager.getState();
 
 		// Verify we're in waiting_for_input state
 		if (currentState.status !== 'waiting_for_input') {
@@ -163,11 +177,14 @@ export class AskUserQuestionHandler {
 
 		this.logger.log(`Handling question response for toolUseId: ${toolUseId}`);
 
+		// Capture the pending question before transitioning state
+		const pendingQuestion = currentState.pendingQuestion;
+
 		// Format the answers as expected by the SDK
 		// Maps question text to selected option label(s)
 		const answers: Record<string, string> = {};
 		for (const response of responses) {
-			const question = currentState.pendingQuestion.questions[response.questionIndex];
+			const question = pendingQuestion.questions[response.questionIndex];
 			if (!question) continue;
 
 			if (response.customText) {
@@ -183,7 +200,10 @@ export class AskUserQuestionHandler {
 		this.logger.log(`Formatted answers:`, answers);
 
 		// Transition back to processing state
-		await this.stateManager.setProcessing(toolUseId, 'streaming');
+		await stateManager.setProcessing(toolUseId, 'streaming');
+
+		// Track resolved question in session metadata
+		this.trackResolvedQuestion(toolUseId, pendingQuestion, 'submitted', responses);
 
 		// Resolve the pending Promise with the answers
 		// This allows the SDK to continue with the user's input
@@ -208,7 +228,8 @@ export class AskUserQuestionHandler {
 	 * declined to answer.
 	 */
 	async handleQuestionCancel(toolUseId: string): Promise<void> {
-		const currentState = this.stateManager.getState();
+		const { stateManager } = this.ctx;
+		const currentState = stateManager.getState();
 
 		// Verify we're in waiting_for_input state
 		if (currentState.status !== 'waiting_for_input') {
@@ -231,8 +252,14 @@ export class AskUserQuestionHandler {
 
 		this.logger.log(`Handling question cancel for toolUseId: ${toolUseId}`);
 
+		// Capture the pending question before transitioning state
+		const pendingQuestion = currentState.pendingQuestion;
+
 		// Transition back to processing state
-		await this.stateManager.setProcessing(toolUseId, 'streaming');
+		await stateManager.setProcessing(toolUseId, 'streaming');
+
+		// Track cancelled question in session metadata
+		this.trackResolvedQuestion(toolUseId, pendingQuestion, 'cancelled', []);
 
 		// Resolve with a deny behavior
 		// This tells Claude the user declined to answer
@@ -249,11 +276,44 @@ export class AskUserQuestionHandler {
 	}
 
 	/**
+	 * Track resolved question in session metadata
+	 *
+	 * Records whether the question was submitted or cancelled for history tracking.
+	 */
+	private trackResolvedQuestion(
+		toolUseId: string,
+		pendingQuestion: PendingUserQuestion,
+		state: 'submitted' | 'cancelled',
+		responses: QuestionDraftResponse[]
+	): void {
+		const { session, db } = this.ctx;
+
+		// Build the resolved questions record
+		const resolvedQuestions = { ...session.metadata?.resolvedQuestions };
+		resolvedQuestions[toolUseId] = {
+			question: pendingQuestion,
+			state,
+			responses,
+			resolvedAt: Date.now(),
+		};
+
+		// Update session metadata
+		const updatedMetadata = { ...session.metadata, resolvedQuestions };
+		session.metadata = updatedMetadata;
+
+		// Persist to database
+		db.updateSession(session.id, { metadata: updatedMetadata });
+
+		this.logger.log(`Tracked resolved question: ${toolUseId} (${state})`);
+	}
+
+	/**
 	 * Update draft responses for pending question
 	 * Called by question.saveDraft RPC to preserve user selections
 	 */
 	async updateQuestionDraft(draftResponses: QuestionDraftResponse[]): Promise<void> {
-		await this.stateManager.updateQuestionDraft(draftResponses);
+		const { stateManager } = this.ctx;
+		await stateManager.updateQuestionDraft(draftResponses);
 		this.logger.log(`Updated question draft with ${draftResponses.length} responses`);
 	}
 

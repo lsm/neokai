@@ -448,7 +448,7 @@ describe('GLM Provider Integration', () => {
 			process.env.GLM_API_KEY = 'test-glm-key';
 
 			try {
-				const builder = new QueryOptionsBuilder(session, settingsManager);
+				const builder = new QueryOptionsBuilder({ session, settingsManager });
 				const options = await builder.build();
 
 				// IMPORTANT: Provider env vars are NO LONGER passed via options.env
@@ -485,7 +485,7 @@ describe('GLM Provider Integration', () => {
 			process.env.GLM_API_KEY = 'test-glm-key';
 
 			try {
-				const builder = new QueryOptionsBuilder(session, settingsManager);
+				const builder = new QueryOptionsBuilder({ session, settingsManager });
 				const options = await builder.build();
 
 				// Session env vars should still be in options.env
@@ -512,7 +512,7 @@ describe('GLM Provider Integration', () => {
 				},
 			});
 
-			const builder = new QueryOptionsBuilder(session, settingsManager);
+			const builder = new QueryOptionsBuilder({ session, settingsManager });
 			const options = await builder.build();
 
 			// Anthropic should not have env overrides
@@ -529,8 +529,8 @@ describe('GLM Provider Integration', () => {
 				config: { model: 'haiku' },
 			});
 
-			const opusBuilder = new QueryOptionsBuilder(opusSession, settingsManager);
-			const haikuBuilder = new QueryOptionsBuilder(haikuSession, settingsManager);
+			const opusBuilder = new QueryOptionsBuilder({ session: opusSession, settingsManager });
+			const haikuBuilder = new QueryOptionsBuilder({ session: haikuSession, settingsManager });
 
 			const opusOptions = await opusBuilder.build();
 			const haikuOptions = await haikuBuilder.build();

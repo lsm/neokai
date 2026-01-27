@@ -1,21 +1,66 @@
 /**
- * AgentSession - Orchestrates a Claude conversation session
+ * AgentSession - Pure Facade/Orchestrator for Claude Agent SDK Sessions
+ *
+ * ## Architecture: Handler Context Pattern
+ *
+ * This class is a thin orchestrator that delegates ALL business logic to handlers.
+ * AgentSession itself contains NO implementation code - only:
+ * 1. Handler instantiation and wiring
+ * 2. Public API methods that delegate to handlers
+ * 3. Context interface implementation (getters/setters for handler access)
+ *
+ * ## How to Add New Features
+ *
+ * 1. Create a new handler file: `my-feature-handler.ts`
+ * 2. Define a context interface with required dependencies:
+ *    ```typescript
+ *    export interface MyFeatureHandlerContext {
+ *      readonly session: Session;
+ *      readonly db: Database;
+ *      // ... other needed properties
+ *    }
+ *    ```
+ * 3. Create handler class that takes context:
+ *    ```typescript
+ *    export class MyFeatureHandler {
+ *      constructor(private ctx: MyFeatureHandlerContext) {}
+ *      myMethod() { ... }
+ *    }
+ *    ```
+ * 4. Add `MyFeatureHandlerContext` to AgentSession implements list
+ * 5. Add handler property and instantiate in constructor
+ * 6. Add delegation method: `myMethod() { return this.myFeatureHandler.myMethod(); }`
+ *
+ * ## Handler Categories
+ *
+ * **Core Components** (stateful, used by multiple handlers):
+ * - MessageQueue: Message queueing with AsyncGenerator
+ * - ProcessingStateManager: State machine for processing phases
+ * - ContextTracker: Real-time context window usage
+ * - CheckpointTracker: Rewind checkpoint tracking
+ *
+ * **Business Logic Handlers**:
+ * - QueryLifecycleManager: Query start/stop/restart/cleanup
+ * - SDKMessageHandler: SDK message processing, circuit breaker
+ * - AskUserQuestionHandler: User question/answer flow
+ * - ModelSwitchHandler: Runtime model switching
+ * - RewindHandler: Checkpoint rewind operations
+ * - SessionConfigHandler: Config and metadata updates
+ * - InterruptHandler: User interrupt handling
+ *
+ * **Infrastructure Handlers**:
+ * - QueryRunner: Low-level query execution
+ * - QueryOptionsBuilder: SDK options construction
+ * - SDKRuntimeConfig: Runtime SDK settings
+ * - EventSubscriptionSetup: DaemonHub event wiring
+ * - QueryModeHandler: Manual/auto-queue mode
+ * - SlashCommandManager: Slash command caching
+ * - MessageRecoveryHandler: Orphaned message recovery
+ *
+ * ## SDK Mode
  *
  * Uses STREAMING INPUT mode - a single persistent SDK query with AsyncGenerator
  * that continuously yields messages from a queue.
- *
- * REFACTORED: Now delegates to extracted components for better maintainability:
- * - MessageQueue: Message queueing and AsyncGenerator
- * - ProcessingStateManager: State machine and phases
- * - ContextTracker: Real-time context window usage
- * - SDKMessageHandler: SDK message processing
- * - QueryRunner: Query execution and abort handling
- * - InterruptHandler: Interrupt logic
- * - SDKRuntimeConfig: Runtime SDK configuration
- * - EventSubscriptionSetup: Event subscriptions
- * - QueryModeHandler: Manual/Auto-queue mode
- * - SlashCommandManager: Slash command caching
- * - MessageRecoveryHandler: Orphaned message recovery
  */
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
@@ -25,7 +70,6 @@ import type {
 	Session,
 	ContextInfo,
 	QuestionDraftResponse,
-	PendingUserQuestion,
 	MessageHub,
 	CurrentModelInfo,
 	Checkpoint,
@@ -35,96 +79,116 @@ import type {
 } from '@liuboer/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { Database } from '../../storage/database';
-import { ErrorCategory, ErrorManager } from '../error-manager';
+import { ErrorManager } from '../error-manager';
 import { Logger } from '../logger';
 import { SettingsManager } from '../settings-manager';
-import { validateAndRepairSDKSession } from '../sdk-session-file-manager';
 
 // Extracted components
 import { MessageQueue } from './message-queue';
 import { ProcessingStateManager } from './processing-state-manager';
 import { ContextTracker } from './context-tracker';
-import { SDKMessageHandler } from './sdk-message-handler';
-import { QueryOptionsBuilder } from './query-options-builder';
-import { QueryLifecycleManager } from './query-lifecycle-manager';
-import { ModelSwitchHandler } from './model-switch-handler';
-import { AskUserQuestionHandler } from './ask-user-question-handler';
-import { QueryRunner } from './query-runner';
-import { InterruptHandler } from './interrupt-handler';
-import { SDKRuntimeConfig } from './sdk-runtime-config';
-import { EventSubscriptionSetup } from './event-subscription-setup';
-import { QueryModeHandler } from './query-mode-handler';
-import { SlashCommandManager } from './slash-command-manager';
+import { SDKMessageHandler, type SDKMessageHandlerContext } from './sdk-message-handler';
+import { QueryOptionsBuilder, type QueryOptionsBuilderContext } from './query-options-builder';
+import {
+	QueryLifecycleManager,
+	type QueryLifecycleManagerContext,
+} from './query-lifecycle-manager';
+import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler';
+import {
+	AskUserQuestionHandler,
+	type AskUserQuestionHandlerContext,
+} from './ask-user-question-handler';
+import { QueryRunner, type QueryRunnerContext, type OriginalEnvVars } from './query-runner';
+import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler';
+import { SDKRuntimeConfig, type SDKRuntimeConfigContext } from './sdk-runtime-config';
+import {
+	EventSubscriptionSetup,
+	type EventSubscriptionSetupContext,
+} from './event-subscription-setup';
+import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler';
+import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager';
 import { MessageRecoveryHandler } from './message-recovery-handler';
 import { CheckpointTracker } from './checkpoint-tracker';
+import { RewindHandler, type RewindHandlerContext } from './rewind-handler';
+import { SessionConfigHandler, type SessionConfigHandlerContext } from './session-config-handler';
 
 /**
- * Original environment variables for restoration after SDK query
+ * AgentSession - Pure facade that delegates to specialized handlers
+ *
+ * Implements all handler context interfaces so handlers can access state directly.
+ * This class should contain NO business logic - only delegation and wiring.
  */
-interface OriginalEnvVars {
-	ANTHROPIC_AUTH_TOKEN?: string;
-	ANTHROPIC_BASE_URL?: string;
-	API_TIMEOUT_MS?: string;
-	CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC?: string;
-	ANTHROPIC_DEFAULT_SONNET_MODEL?: string;
-	ANTHROPIC_DEFAULT_HAIKU_MODEL?: string;
-	ANTHROPIC_DEFAULT_OPUS_MODEL?: string;
-}
+export class AgentSession
+	implements
+		RewindHandlerContext,
+		InterruptHandlerContext,
+		SDKRuntimeConfigContext,
+		QueryModeHandlerContext,
+		SlashCommandManagerContext,
+		ModelSwitchHandlerContext,
+		QueryRunnerContext,
+		SDKMessageHandlerContext,
+		QueryLifecycleManagerContext,
+		AskUserQuestionHandlerContext,
+		QueryOptionsBuilderContext,
+		EventSubscriptionSetupContext,
+		SessionConfigHandlerContext
+{
+	// Core components (accessible to handlers via context interfaces)
+	readonly messageQueue: MessageQueue;
+	readonly stateManager: ProcessingStateManager;
+	readonly contextTracker: ContextTracker;
+	readonly messageHandler: SDKMessageHandler;
+	readonly lifecycleManager: QueryLifecycleManager;
+	readonly modelSwitchHandler: ModelSwitchHandler;
+	readonly askUserQuestionHandler: AskUserQuestionHandler;
+	readonly optionsBuilder: QueryOptionsBuilder;
 
-/**
- * Agent Session - wraps a single session with Claude using Claude Agent SDK
- */
-export class AgentSession {
-	// Core components
-	private messageQueue: MessageQueue;
-	private stateManager: ProcessingStateManager;
-	private contextTracker: ContextTracker;
-	private messageHandler: SDKMessageHandler;
-	private lifecycleManager: QueryLifecycleManager;
-	private modelSwitchHandler: ModelSwitchHandler;
-	private askUserQuestionHandler: AskUserQuestionHandler;
-
-	// Extracted handlers
+	// Extracted handlers (accessible to EventSubscriptionSetupContext)
 	private queryRunner: QueryRunner;
-	private interruptHandler: InterruptHandler;
+	readonly interruptHandler: InterruptHandler;
 	private sdkRuntimeConfig: SDKRuntimeConfig;
 	private eventSubscriptionSetup: EventSubscriptionSetup;
-	private queryModeHandler: QueryModeHandler;
+	readonly queryModeHandler: QueryModeHandler;
 	private slashCommandManager: SlashCommandManager;
 
-	// Rewind support
-	private checkpointTracker: CheckpointTracker;
+	// Rewind support (accessible to handlers)
+	readonly checkpointTracker: CheckpointTracker;
+	private rewindHandler: RewindHandler;
 
-	// SDK query state
-	private queryObject: Query | null = null;
-	private queryPromise: Promise<void> | null = null;
-	private queryGeneration = 0;
-	private queryAbortController: AbortController | null = null;
-	private firstMessageReceived = false;
-	private startupTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
-	private originalEnvVars: OriginalEnvVars = {};
+	// Config handler
+	private sessionConfigHandler: SessionConfigHandler;
+
+	// SDK query state (accessible to handlers via context interfaces)
+	queryObject: Query | null = null;
+	queryPromise: Promise<void> | null = null;
+	private _queryGeneration = 0;
+	queryAbortController: AbortController | null = null;
+	firstMessageReceived = false;
+	startupTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+	originalEnvVars: OriginalEnvVars = {};
 
 	// Session state
-	private isCleaningUp = false;
-	private pendingRestartReason: 'settings.local.json' | null = null;
+	private _isCleaningUp = false;
+	pendingRestartReason: 'settings.local.json' | null = null;
 
-	// Services
-	private errorManager: ErrorManager;
-	private settingsManager: SettingsManager;
-	private logger: Logger;
+	// Services (accessible to handlers)
+	readonly errorManager: ErrorManager;
+	settingsManager: SettingsManager;
+	readonly logger: Logger;
 
 	constructor(
-		private session: Session,
-		private db: Database,
-		private messageHub: MessageHub,
-		private daemonHub: DaemonHub,
+		readonly session: Session,
+		readonly db: Database,
+		readonly messageHub: MessageHub,
+		readonly daemonHub: DaemonHub,
 		private getApiKey: () => Promise<string | null>
 	) {
 		this.errorManager = new ErrorManager(this.messageHub, this.daemonHub);
 		this.logger = new Logger(`AgentSession ${session.id}`);
 		this.settingsManager = new SettingsManager(this.db, this.session.workspacePath);
 
-		// Initialize core components
+		// Initialize core components (order matters - some handlers depend on earlier ones)
 		this.messageQueue = new MessageQueue();
 		this.stateManager = new ProcessingStateManager(session.id, daemonHub, db);
 		this.contextTracker = new ContextTracker(
@@ -136,170 +200,53 @@ export class AgentSession {
 				this.db.updateSession(this.session.id, { metadata: this.session.metadata });
 			}
 		);
-		this.messageHandler = new SDKMessageHandler(
-			session,
-			db,
-			messageHub,
-			daemonHub,
-			this.stateManager,
-			this.contextTracker
-		);
 
-		// Initialize lifecycle manager
-		this.lifecycleManager = new QueryLifecycleManager(
-			session.id,
-			this.messageQueue,
-			() => this.queryObject,
-			(q) => {
-				this.queryObject = q;
-			},
-			() => this.queryPromise,
-			(p) => {
-				this.queryPromise = p;
-			},
-			() => this.startStreamingQuery(),
-			() => this.firstMessageReceived
-		);
-
-		// Initialize model switch handler
-		this.modelSwitchHandler = new ModelSwitchHandler({
-			session: this.session,
-			db: this.db,
-			messageHub: this.messageHub,
-			daemonHub: this.daemonHub,
-			contextTracker: this.contextTracker,
-			stateManager: this.stateManager,
-			errorManager: this.errorManager,
-			logger: this.logger,
-			getQueryObject: () => this.queryObject,
-			isTransportReady: () => this.firstMessageReceived,
-			restartQuery: () => this.lifecycleManager.restart(),
-		});
-
-		// Initialize AskUserQuestion handler
-		this.askUserQuestionHandler = new AskUserQuestionHandler(
-			session.id,
-			this.stateManager,
-			this.daemonHub
-		);
-
-		// Initialize QueryOptionsBuilder
-		const optionsBuilder = new QueryOptionsBuilder(this.session, this.settingsManager);
-
-		// Initialize QueryRunner
-		this.queryRunner = new QueryRunner({
-			session: this.session,
-			db: this.db,
-			messageHub: this.messageHub,
-			messageQueue: this.messageQueue,
-			stateManager: this.stateManager,
-			errorManager: this.errorManager,
-			logger: this.logger,
-			optionsBuilder,
-			askUserQuestionHandler: this.askUserQuestionHandler,
-			getQueryGeneration: () => this.queryGeneration,
-			incrementQueryGeneration: () => ++this.queryGeneration,
-			getFirstMessageReceived: () => this.firstMessageReceived,
-			setFirstMessageReceived: (v) => {
-				this.firstMessageReceived = v;
-			},
-			setQueryObject: (q) => {
-				this.queryObject = q;
-			},
-			setQueryPromise: (p) => {
-				this.queryPromise = p;
-			},
-			setQueryAbortController: (c) => {
-				this.queryAbortController = c;
-			},
-			getQueryAbortController: () => this.queryAbortController,
-			setStartupTimeoutTimer: (t) => {
-				this.startupTimeoutTimer = t;
-			},
-			getStartupTimeoutTimer: () => this.startupTimeoutTimer,
-			setOriginalEnvVars: (v) => {
-				this.originalEnvVars = v;
-			},
-			getOriginalEnvVars: () => this.originalEnvVars,
-			isCleaningUp: () => this.isCleaningUp,
-			onSDKMessage: (msg) => this.messageHandler.handleMessage(msg),
-			onSlashCommandsFetched: () => this.slashCommandManager.fetchAndCache(),
-			onModelsFetched: () => this.fetchAndCacheModels(),
-			onMarkApiSuccess: () => Promise.resolve(this.errorManager.markApiSuccess()),
-		});
-
-		// Initialize InterruptHandler
-		this.interruptHandler = new InterruptHandler({
-			sessionId: session.id,
-			messageHub: this.messageHub,
-			messageQueue: this.messageQueue,
-			stateManager: this.stateManager,
-			logger: this.logger,
-			getQueryObject: () => this.queryObject,
-			setQueryObject: (q) => {
-				this.queryObject = q;
-			},
-			getQueryPromise: () => this.queryPromise,
-			getQueryAbortController: () => this.queryAbortController,
-			setQueryAbortController: (c) => {
-				this.queryAbortController = c;
-			},
-		});
-
-		// Initialize SDKRuntimeConfig
-		this.sdkRuntimeConfig = new SDKRuntimeConfig({
-			session: this.session,
-			db: this.db,
-			daemonHub: this.daemonHub,
-			settingsManager: this.settingsManager,
-			messageQueue: this.messageQueue,
-			logger: this.logger,
-			getQueryObject: () => this.queryObject,
-			isTransportReady: () => this.firstMessageReceived,
-			restartQuery: () => this.restartQuery(),
-		});
-
-		// Initialize EventSubscriptionSetup
-		this.eventSubscriptionSetup = new EventSubscriptionSetup(
-			session.id,
-			this.daemonHub,
-			this.logger
-		);
-
-		// Initialize QueryModeHandler
-		this.queryModeHandler = new QueryModeHandler({
-			session: this.session,
-			db: this.db,
-			daemonHub: this.daemonHub,
-			messageQueue: this.messageQueue,
-			logger: this.logger,
-			ensureQueryStarted: () => this.ensureQueryStarted(),
-		});
-
-		// Initialize SlashCommandManager
-		this.slashCommandManager = new SlashCommandManager({
-			session: this.session,
-			db: this.db,
-			daemonHub: this.daemonHub,
-			logger: this.logger,
-			getQueryObject: () => this.queryObject,
-		});
-
-		// Initialize CheckpointTracker for rewind feature
+		// Initialize CheckpointTracker early (needed by SDKMessageHandler)
 		this.checkpointTracker = new CheckpointTracker(session.id, this.daemonHub);
 
-		// Set callbacks
-		this.messageHandler.setQueueMessageCallback(async (content: string, internal: boolean) => {
-			return await this.messageQueue.enqueue(content, internal);
-		});
-		this.messageHandler.setCircuitBreakerTripCallback(async (reason, userMessage) => {
-			await this.handleCircuitBreakerTrip(reason, userMessage);
-		});
-		this.messageHandler.setCheckpointCallback((message) => {
-			this.checkpointTracker.processMessage(message);
-		});
+		// Initialize SDKMessageHandler (handlers take AgentSession context directly)
+		this.messageHandler = new SDKMessageHandler(this);
+
+		// Initialize QueryLifecycleManager (handlers take AgentSession context directly)
+		this.lifecycleManager = new QueryLifecycleManager(this);
+
+		// Initialize model switch handler (handlers take AgentSession context directly)
+		this.modelSwitchHandler = new ModelSwitchHandler(this);
+
+		// Initialize AskUserQuestion handler (handlers take AgentSession context directly)
+		this.askUserQuestionHandler = new AskUserQuestionHandler(this);
+
+		// Initialize QueryOptionsBuilder (handlers take AgentSession context directly)
+		this.optionsBuilder = new QueryOptionsBuilder(this);
+
+		// Initialize QueryRunner (handlers take AgentSession context directly)
+		this.queryRunner = new QueryRunner(this);
+
+		// Initialize InterruptHandler (handlers take AgentSession context directly)
+		this.interruptHandler = new InterruptHandler(this);
+
+		// Initialize SDKRuntimeConfig (handlers take AgentSession context directly)
+		this.sdkRuntimeConfig = new SDKRuntimeConfig(this);
+
+		// Initialize QueryModeHandler (handlers take AgentSession context directly)
+		this.queryModeHandler = new QueryModeHandler(this);
+
+		// Initialize SlashCommandManager (handlers take AgentSession context directly)
+		this.slashCommandManager = new SlashCommandManager(this);
+
+		// Initialize RewindHandler (handlers take AgentSession context directly)
+		this.rewindHandler = new RewindHandler(this);
+
+		// Initialize SessionConfigHandler (handlers take AgentSession context directly)
+		this.sessionConfigHandler = new SessionConfigHandler(this);
+
+		// Initialize EventSubscriptionSetup (handlers take AgentSession context directly)
+		// Must be last since it needs other handlers to be initialized
+		this.eventSubscriptionSetup = new EventSubscriptionSetup(this);
+
+		// Set state manager callback - delegates to lifecycleManager
 		this.stateManager.setOnIdleCallback(async () => {
-			await this.executeDeferredRestartIfPending();
+			await this.lifecycleManager.executeDeferredRestartIfPending();
 		});
 
 		// Restore persisted state
@@ -312,100 +259,27 @@ export class AgentSession {
 		const recoveryHandler = new MessageRecoveryHandler(session, db, this.logger);
 		recoveryHandler.recoverOrphanedSentMessages();
 
-		// Setup event subscriptions
-		this.eventSubscriptionSetup.setup({
-			onModelSwitchRequest: (model) => this.modelSwitchHandler.switchModel(model),
-			onInterruptRequest: () => this.interruptHandler.handleInterrupt(),
-			onResetRequest: (restartQuery) => this.resetQuery({ restartQuery }),
-			onMessagePersisted: (messageId, content) => {
-				// Create checkpoint for the user message (enables rewind feature)
-				this.checkpointTracker.createCheckpointFromUserMessage(messageId, content as string);
-				// Start query and enqueue message
-				return this.startQueryAndEnqueue(messageId, content as string | MessageContent[]);
-			},
-			onQueryTrigger: () => this.queryModeHandler.handleQueryTrigger(),
-			onSendQueuedOnTurnEnd: () => this.queryModeHandler.sendQueuedMessagesOnTurnEnd(),
-		});
+		// Setup event subscriptions (moved callbacks into EventSubscriptionSetup)
+		this.eventSubscriptionSetup.setup();
 	}
 
 	// ============================================================================
 	// Query Lifecycle
 	// ============================================================================
 
-	private async startStreamingQuery(): Promise<void> {
+	async startStreamingQuery(): Promise<void> {
 		await this.queryRunner.start();
 	}
 
-	private async ensureQueryStarted(): Promise<void> {
-		// Wait for any pending interrupt
-		const interruptPromise = this.interruptHandler.getInterruptPromise();
-		if (interruptPromise) {
-			this.logger.log('Waiting for interrupt to complete before starting query...');
-			try {
-				await Promise.race([interruptPromise, new Promise((r) => setTimeout(r, 5000))]);
-			} catch (error) {
-				this.logger.warn('Error waiting for interrupt:', error);
-			}
-		}
-
-		if (this.messageQueue.isRunning()) {
-			return;
-		}
-
-		// Validate SDK session file
-		if (this.session.sdkSessionId) {
-			validateAndRepairSDKSession(
-				this.session.workspacePath,
-				this.session.sdkSessionId,
-				this.session.id,
-				this.db
-			);
-		}
-
-		this.logger.log('Lazy-starting streaming query...');
-		await this.startStreamingQuery();
+	async ensureQueryStarted(): Promise<void> {
+		await this.lifecycleManager.ensureQueryStarted();
 	}
 
 	async startQueryAndEnqueue(
 		messageId: string,
 		messageContent: string | MessageContent[]
 	): Promise<void> {
-		await this.ensureQueryStarted();
-		await this.stateManager.setQueued(messageId);
-
-		this.messageQueue.enqueueWithId(messageId, messageContent).catch(async (error) => {
-			if (error instanceof Error && error.message === 'Interrupted by user') {
-				return;
-			}
-
-			const isTimeoutError = error instanceof Error && error.name === 'MessageQueueTimeoutError';
-			await this.errorManager.handleError(
-				this.session.id,
-				error as Error,
-				isTimeoutError ? ErrorCategory.TIMEOUT : ErrorCategory.MESSAGE,
-				isTimeoutError
-					? 'The SDK is not responding. Click "Reset Agent" to recover.'
-					: 'Failed to process message. Please try again.',
-				this.stateManager.getState(),
-				{ messageId }
-			);
-
-			if (isTimeoutError) {
-				try {
-					await this.resetQuery({ restartQuery: true });
-					await this.stateManager.setQueued(messageId);
-					this.messageQueue.enqueueWithId(messageId, messageContent).catch(async () => {
-						await this.stateManager.setIdle();
-					});
-				} catch {
-					await this.stateManager.setIdle();
-				}
-			} else {
-				await this.stateManager.setIdle();
-			}
-		});
-
-		this.daemonHub.emit('message.sent', { sessionId: this.session.id }).catch(() => {});
+		await this.lifecycleManager.startQueryAndEnqueue(messageId, messageContent);
 	}
 
 	// ============================================================================
@@ -419,74 +293,18 @@ export class AgentSession {
 	async resetQuery(options?: {
 		restartQuery?: boolean;
 	}): Promise<{ success: boolean; error?: string }> {
-		const { restartQuery = true } = options ?? {};
-
-		if (!this.queryObject && !this.queryPromise) {
-			this.messageQueue.clear();
-			this.pendingRestartReason = null;
-			this.messageHandler.resetCircuitBreaker();
-			await this.stateManager.setIdle();
-			return { success: true };
-		}
-
-		return await this.lifecycleManager.reset({
-			restartAfter: restartQuery,
-			onBeforeStop: async () => {
-				const lastSdkCost = this.session.metadata?.lastSdkCost || 0;
-				const costBaseline = this.session.metadata?.costBaseline || 0;
-				if (lastSdkCost > 0) {
-					this.session.metadata = {
-						...this.session.metadata,
-						costBaseline: costBaseline + lastSdkCost,
-						lastSdkCost: 0,
-					};
-					this.db.updateSession(this.session.id, { metadata: this.session.metadata });
-				}
-				this.messageQueue.clear();
-				this.pendingRestartReason = null;
-				this.messageHandler.resetCircuitBreaker();
-				await this.daemonHub.emit('session.errorClear', { sessionId: this.session.id });
-			},
-			onAfterStop: async () => {
-				this.firstMessageReceived = false;
-				await this.stateManager.setIdle();
-			},
-			onAfterRestart: async () => {
-				await this.messageHub.publish(
-					'session.reset',
-					{ message: 'Agent has been reset and is ready for new messages' },
-					{ sessionId: this.session.id }
-				);
-			},
-		});
+		return await this.lifecycleManager.reset({ restartAfter: options?.restartQuery });
 	}
 
 	// ============================================================================
-	// Question Handling
+	// Question Handling (delegated to AskUserQuestionHandler)
 	// ============================================================================
 
 	async handleQuestionResponse(
 		toolUseId: string,
 		responses: QuestionDraftResponse[]
 	): Promise<void> {
-		const currentState = this.stateManager.getState();
-		let pendingQuestion: PendingUserQuestion | null = null;
-		if (currentState.status === 'waiting_for_input') {
-			pendingQuestion = currentState.pendingQuestion;
-		}
-
 		await this.askUserQuestionHandler.handleQuestionResponse(toolUseId, responses);
-
-		if (pendingQuestion) {
-			const resolvedQuestions = { ...this.session.metadata?.resolvedQuestions };
-			resolvedQuestions[toolUseId] = {
-				question: pendingQuestion,
-				state: 'submitted',
-				responses,
-				resolvedAt: Date.now(),
-			};
-			this.updateMetadata({ metadata: { ...this.session.metadata, resolvedQuestions } });
-		}
 	}
 
 	async updateQuestionDraft(draftResponses: QuestionDraftResponse[]): Promise<void> {
@@ -494,50 +312,7 @@ export class AgentSession {
 	}
 
 	async handleQuestionCancel(toolUseId: string): Promise<void> {
-		const currentState = this.stateManager.getState();
-		let pendingQuestion: PendingUserQuestion | null = null;
-		if (currentState.status === 'waiting_for_input') {
-			pendingQuestion = currentState.pendingQuestion;
-		}
-
 		await this.askUserQuestionHandler.handleQuestionCancel(toolUseId);
-
-		if (pendingQuestion) {
-			const resolvedQuestions = { ...this.session.metadata?.resolvedQuestions };
-			resolvedQuestions[toolUseId] = {
-				question: pendingQuestion,
-				state: 'cancelled',
-				responses: [],
-				resolvedAt: Date.now(),
-			};
-			this.updateMetadata({ metadata: { ...this.session.metadata, resolvedQuestions } });
-		}
-	}
-
-	// ============================================================================
-	// Circuit Breaker
-	// ============================================================================
-
-	private async handleCircuitBreakerTrip(reason: string, userMessage: string): Promise<void> {
-		this.logger.log(`Handling circuit breaker trip: ${reason}`);
-		try {
-			await this.resetQuery({ restartQuery: false });
-			await this.queryRunner.displayErrorAsAssistantMessage(
-				`⚠️ **Session Stopped: Error Loop Detected**\n\n${userMessage}\n\n` +
-					`The agent has been automatically stopped to prevent further errors.`
-			);
-			await this.errorManager.handleError(
-				this.session.id,
-				new Error(`Circuit breaker tripped: ${reason}`),
-				ErrorCategory.SYSTEM,
-				userMessage,
-				this.stateManager.getState(),
-				{ circuitBreakerReason: reason }
-			);
-		} catch (error) {
-			this.logger.error('Error handling circuit breaker trip:', error);
-			await this.stateManager.setIdle();
-		}
 	}
 
 	// ============================================================================
@@ -577,43 +352,15 @@ export class AgentSession {
 	}
 
 	// ============================================================================
-	// Config and Metadata
+	// Config and Metadata (delegated to SessionConfigHandler)
 	// ============================================================================
 
 	async updateConfig(configUpdates: Partial<Session['config']>): Promise<void> {
-		this.session.config = { ...this.session.config, ...configUpdates };
-		this.db.updateSession(this.session.id, { config: this.session.config });
-		await this.daemonHub.emit('session.updated', {
-			sessionId: this.session.id,
-			source: 'config-update',
-			session: { config: this.session.config },
-		});
+		await this.sessionConfigHandler.updateConfig(configUpdates);
 	}
 
 	updateMetadata(updates: Partial<Session>): void {
-		if (updates.title) this.session.title = updates.title;
-		if (updates.workspacePath) {
-			this.session.workspacePath = updates.workspacePath;
-			this.settingsManager = new SettingsManager(this.db, updates.workspacePath);
-		}
-		if (updates.status) this.session.status = updates.status;
-		if (updates.metadata) {
-			const mergedMetadata = { ...this.session.metadata };
-			for (const [key, value] of Object.entries(updates.metadata)) {
-				if (value === undefined || value === null) {
-					delete mergedMetadata[key as keyof typeof mergedMetadata];
-				} else {
-					(mergedMetadata as Record<string, unknown>)[key] = value;
-				}
-			}
-			this.session.metadata = mergedMetadata;
-		}
-		if (updates.config) {
-			this.session.config = { ...this.session.config, ...updates.config };
-		}
-		if (updates.archivedAt !== undefined) this.session.archivedAt = updates.archivedAt;
-		if (updates.worktree !== undefined) this.session.worktree = updates.worktree;
-		this.db.updateSession(this.session.id, updates);
+		this.sessionConfigHandler.updateMetadata(updates);
 	}
 
 	// ============================================================================
@@ -665,7 +412,51 @@ export class AgentSession {
 	// Private Helpers
 	// ============================================================================
 
-	private async fetchAndCacheModels(): Promise<void> {
+	async restartQuery(): Promise<void> {
+		await this.lifecycleManager.restartQuery();
+	}
+
+	// ============================================================================
+	// Rewind Feature (delegated to RewindHandler)
+	// ============================================================================
+
+	getCheckpoints(): Checkpoint[] {
+		return this.rewindHandler.getCheckpoints();
+	}
+
+	previewRewind(checkpointId: string): Promise<RewindPreview> {
+		return this.rewindHandler.previewRewind(checkpointId);
+	}
+
+	executeRewind(checkpointId: string, mode: RewindMode): Promise<RewindResult> {
+		return this.rewindHandler.executeRewind(checkpointId, mode);
+	}
+
+	// ============================================================================
+	// QueryRunnerContext methods
+	// ============================================================================
+
+	incrementQueryGeneration(): number {
+		return ++this._queryGeneration;
+	}
+
+	getQueryGeneration(): number {
+		return this._queryGeneration;
+	}
+
+	isCleaningUp(): boolean {
+		return this._isCleaningUp;
+	}
+
+	async onSDKMessage(message: import('@liuboer/shared/sdk').SDKMessage): Promise<void> {
+		await this.messageHandler.handleMessage(message);
+	}
+
+	async onSlashCommandsFetched(): Promise<void> {
+		await this.slashCommandManager.fetchAndCache();
+	}
+
+	async onModelsFetched(): Promise<void> {
 		if (!this.queryObject) return;
 		try {
 			const { getSupportedModelsFromQuery } = await import('../model-service');
@@ -675,284 +466,32 @@ export class AgentSession {
 		}
 	}
 
-	private async restartQuery(): Promise<void> {
-		if (!this.messageQueue.isRunning() || !this.queryObject) return;
-
-		const currentState = this.stateManager.getState();
-		if (currentState.status === 'processing') {
-			this.pendingRestartReason = 'settings.local.json';
-			return;
-		}
-
-		await this.lifecycleManager.restart();
-	}
-
-	private async executeDeferredRestartIfPending(): Promise<void> {
-		if (!this.pendingRestartReason) return;
-
-		const reason = this.pendingRestartReason;
-		this.pendingRestartReason = null;
-
-		this.logger.log(`Agent became idle, executing deferred restart (reason: ${reason})`);
-		try {
-			await this.lifecycleManager.restart();
-		} catch (error) {
-			this.logger.error(`Deferred restart failed (${reason}):`, error);
-		}
+	async onMarkApiSuccess(): Promise<void> {
+		this.errorManager.markApiSuccess();
 	}
 
 	// ============================================================================
-	// Rewind Feature
+	// QueryLifecycleManagerContext methods
 	// ============================================================================
 
-	/**
-	 * Get all checkpoints for this session
-	 */
-	getCheckpoints(): Checkpoint[] {
-		return this.checkpointTracker.getCheckpoints();
+	setCleaningUp(value: boolean): void {
+		this._isCleaningUp = value;
 	}
 
-	/**
-	 * Preview a rewind operation (dry run)
-	 *
-	 * @param checkpointId - The checkpoint ID to preview rewind to
-	 * @returns Rewind preview with files that would change
-	 */
-	async previewRewind(checkpointId: string): Promise<RewindPreview> {
-		// Validate checkpoint exists
-		const checkpoint = this.checkpointTracker.getCheckpoint(checkpointId);
-		if (!checkpoint) {
-			return {
-				canRewind: false,
-				error: `Checkpoint ${checkpointId} not found`,
-			};
-		}
-
-		// Check SDK query is active and ready
-		if (!this.queryObject) {
-			return {
-				canRewind: false,
-				error: 'SDK query not active. Start a conversation first.',
-			};
-		}
-
-		if (!this.firstMessageReceived) {
-			return {
-				canRewind: false,
-				error: 'SDK not ready. Please wait for the session to initialize.',
-			};
-		}
-
-		try {
-			// Call SDK's rewindFiles with dryRun option
-			const sdkResult = await this.queryObject.rewindFiles(checkpointId, { dryRun: true });
-
-			return {
-				canRewind: sdkResult.canRewind,
-				error: sdkResult.error,
-				filesChanged: sdkResult.filesChanged,
-				insertions: sdkResult.insertions,
-				deletions: sdkResult.deletions,
-			};
-		} catch (error) {
-			this.logger.error('Rewind preview failed:', error);
-			return {
-				canRewind: false,
-				error: error instanceof Error ? error.message : 'Unknown error',
-			};
-		}
+	cleanupEventSubscriptions(): void {
+		this.eventSubscriptionSetup.cleanup();
 	}
 
-	/**
-	 * Execute a rewind operation
-	 *
-	 * @param checkpointId - The checkpoint ID to rewind to
-	 * @param mode - Rewind mode: 'files' | 'conversation' | 'both'
-	 * @returns Rewind result with actual changes made
-	 */
-	async executeRewind(checkpointId: string, mode: RewindMode): Promise<RewindResult> {
-		// Validate checkpoint exists
-		const checkpoint = this.checkpointTracker.getCheckpoint(checkpointId);
-		if (!checkpoint) {
-			return {
-				success: false,
-				error: `Checkpoint ${checkpointId} not found`,
-			};
-		}
-
-		// Check SDK query is active and ready
-		if (!this.queryObject) {
-			return {
-				success: false,
-				error: 'SDK query not active. Start a conversation first.',
-			};
-		}
-
-		if (!this.firstMessageReceived) {
-			return {
-				success: false,
-				error: 'SDK not ready. Please wait for the session to initialize.',
-			};
-		}
-
-		// Emit rewind.started event
-		await this.daemonHub.emit('rewind.started', {
-			sessionId: this.session.id,
-			checkpointId,
-			mode,
-		});
-
-		try {
-			// Mode 1: files only - Rewind files without affecting conversation
-			if (mode === 'files') {
-				const sdkResult = await this.queryObject.rewindFiles(checkpointId);
-
-				if (!sdkResult.canRewind) {
-					await this.daemonHub.emit('rewind.failed', {
-						sessionId: this.session.id,
-						checkpointId,
-						mode,
-						error: sdkResult.error || 'Rewind failed',
-					});
-					return {
-						success: false,
-						error: sdkResult.error,
-					};
-				}
-
-				await this.daemonHub.emit('rewind.completed', {
-					sessionId: this.session.id,
-					checkpointId,
-					mode,
-					result: {
-						success: true,
-						filesChanged: sdkResult.filesChanged,
-						insertions: sdkResult.insertions,
-						deletions: sdkResult.deletions,
-					},
-				});
-
-				return {
-					success: true,
-					filesChanged: sdkResult.filesChanged,
-					insertions: sdkResult.insertions,
-					deletions: sdkResult.deletions,
-				};
-			}
-
-			// Mode 2: conversation only - Resume from checkpoint without file changes
-			if (mode === 'conversation') {
-				return await this.executeConversationRewind(checkpointId, checkpoint);
-			}
-
-			// Mode 3: both - Rewind files and conversation
-			// First rewind files
-			const sdkResult = await this.queryObject.rewindFiles(checkpointId);
-
-			if (!sdkResult.canRewind) {
-				await this.daemonHub.emit('rewind.failed', {
-					sessionId: this.session.id,
-					checkpointId,
-					mode,
-					error: sdkResult.error || 'File rewind failed',
-				});
-				return {
-					success: false,
-					error: sdkResult.error,
-				};
-			}
-
-			// Then rewind conversation
-			const conversationResult = await this.executeConversationRewind(checkpointId, checkpoint);
-
-			return {
-				success: conversationResult.success,
-				error: conversationResult.error,
-				filesChanged: sdkResult.filesChanged,
-				insertions: sdkResult.insertions,
-				deletions: sdkResult.deletions,
-				conversationRewound: conversationResult.conversationRewound,
-				messagesDeleted: conversationResult.messagesDeleted,
-			};
-		} catch (error) {
-			this.logger.error('Rewind execution failed:', error);
-			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
-			await this.daemonHub.emit('rewind.failed', {
-				sessionId: this.session.id,
-				checkpointId,
-				mode,
-				error: errorMessage,
-			});
-
-			return {
-				success: false,
-				error: errorMessage,
-			};
-		}
-	}
-
-	/**
-	 * Execute conversation rewind (delete messages after checkpoint and restart)
-	 *
-	 * @param checkpointId - The checkpoint ID to rewind to
-	 * @param checkpoint - The checkpoint object
-	 * @returns Rewind result for conversation rewind
-	 */
-	private async executeConversationRewind(
-		checkpointId: string,
-		checkpoint: Checkpoint
-	): Promise<RewindResult> {
-		// Step 1: Delete messages from DB after checkpoint timestamp
-		const messagesDeleted = this.db.deleteMessagesAfter(this.session.id, checkpoint.timestamp);
-
-		// Step 2: Set resumeSessionAt in session metadata
-		this.session.metadata.resumeSessionAt = checkpointId;
-		this.db.updateSession(this.session.id, { metadata: this.session.metadata });
-
-		// Step 3: Rewind checkpoint tracker to remove later checkpoints
-		this.checkpointTracker.rewindTo(checkpointId);
-
-		// Step 4: Restart query to apply resumeSessionAt
-		await this.lifecycleManager.restart();
-
-		this.logger.log(
-			`Conversation rewound to checkpoint ${checkpointId.slice(0, 8)}..., deleted ${messagesDeleted} messages`
-		);
-
-		return {
-			success: true,
-			conversationRewound: true,
-			messagesDeleted,
-		};
+	async clearModelsCache(): Promise<void> {
+		const { clearModelsCache } = await import('../model-service');
+		clearModelsCache(this.session.id);
 	}
 
 	// ============================================================================
-	// Cleanup
+	// Cleanup (delegated to QueryLifecycleManager)
 	// ============================================================================
 
 	async cleanup(): Promise<void> {
-		const cleanupStart = Date.now();
-		this.logger.log('[AgentSession] Starting cleanup...');
-		this.isCleaningUp = true;
-
-		// Phase 1: Unsubscribe from events
-		this.eventSubscriptionSetup.cleanup();
-
-		// Phase 2: Clear models cache
-		try {
-			const { clearModelsCache } = await import('../model-service');
-			clearModelsCache(this.session.id);
-		} catch {}
-
-		// Phase 3: Stop query
-		try {
-			await this.lifecycleManager.stop({ timeoutMs: 15000, catchQueryErrors: true });
-			await new Promise((r) => setTimeout(r, 1000));
-		} catch (error) {
-			this.logger.error('[AgentSession] Error during query stop:', error);
-		}
-
-		this.logger.log(`[AgentSession] Cleanup complete (${Date.now() - cleanupStart}ms total)`);
+		await this.lifecycleManager.cleanup();
 	}
 }

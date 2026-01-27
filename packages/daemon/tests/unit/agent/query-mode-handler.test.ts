@@ -7,7 +7,7 @@
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import {
 	QueryModeHandler,
-	type QueryModeHandlerDependencies,
+	type QueryModeHandlerContext,
 } from '../../../src/lib/agent/query-mode-handler';
 import type { Session } from '@liuboer/shared';
 import type { SDKMessage } from '@liuboer/shared/sdk';
@@ -81,8 +81,8 @@ describe('QueryModeHandler', () => {
 		ensureQueryStartedSpy = mock(async () => {});
 	});
 
-	function createHandler(): QueryModeHandler {
-		const deps: QueryModeHandlerDependencies = {
+	function createContext(): QueryModeHandlerContext {
+		return {
 			session: mockSession,
 			db: mockDb,
 			daemonHub: mockDaemonHub,
@@ -90,7 +90,10 @@ describe('QueryModeHandler', () => {
 			logger: mockLogger,
 			ensureQueryStarted: ensureQueryStartedSpy,
 		};
-		return new QueryModeHandler(deps);
+	}
+
+	function createHandler(): QueryModeHandler {
+		return new QueryModeHandler(createContext());
 	}
 
 	describe('constructor', () => {

@@ -1,7 +1,9 @@
 /**
  * QueryOptionsBuilder - Builds SDK query options from session config
  *
- * Extracted from AgentSession.runQuery() to improve maintainability.
+ * Extracted from AgentSession to reduce complexity.
+ * Takes AgentSession instance directly - handlers are internal parts of AgentSession.
+ *
  * Handles all SDK options construction including:
  * - System prompt configuration (custom string or Claude Code preset)
  * - Tool configuration (tools preset, allowed/disallowed tools)
@@ -25,15 +27,21 @@ import { createOutputLimiterHook, getOutputLimiterConfigFromSettings } from './o
 import { Logger } from '../logger';
 import { getProviderContextManager } from '../providers/factory.js';
 
+/**
+ * Context interface - what QueryOptionsBuilder needs from AgentSession
+ * Using interface instead of importing AgentSession to avoid circular deps
+ */
+export interface QueryOptionsBuilderContext {
+	readonly session: Session;
+	readonly settingsManager: SettingsManager;
+}
+
 export class QueryOptionsBuilder {
 	private logger: Logger;
 	private canUseTool?: CanUseTool;
 
-	constructor(
-		private session: Session,
-		private settingsManager: SettingsManager
-	) {
-		this.logger = new Logger(`QueryOptionsBuilder ${session.id}`);
+	constructor(private ctx: QueryOptionsBuilderContext) {
+		this.logger = new Logger(`QueryOptionsBuilder ${ctx.session.id}`);
 	}
 
 	/**
@@ -50,7 +58,7 @@ export class QueryOptionsBuilder {
 	 * Maps all SessionConfig (which extends SDKConfig) options to SDK Options
 	 */
 	async build(): Promise<Options> {
-		const config = this.session.config;
+		const config = this.ctx.session.config;
 		const legacyToolsConfig = config.tools; // Legacy Liuboer-specific tools config
 
 		// Get settings-derived options (from global settings)
@@ -61,7 +69,7 @@ export class QueryOptionsBuilder {
 		// GLM model IDs (glm-4.7, glm-4.5-air) need to be mapped to SDK-recognized IDs
 		// (default, haiku, opus) since the SDK only knows Anthropic model IDs
 		const contextManager = getProviderContextManager();
-		const providerContext = contextManager.createContext(this.session);
+		const providerContext = contextManager.createContext(this.ctx.session);
 		const sdkModelId = providerContext.getSdkModelId();
 		let sdkFallbackModel: string | undefined;
 		if (config.fallbackModel) {
@@ -69,8 +77,8 @@ export class QueryOptionsBuilder {
 			const contextManager = getProviderContextManager();
 			// Create a temporary session config with the fallback model
 			const fallbackSession = {
-				...this.session,
-				config: { ...this.session.config, model: config.fallbackModel },
+				...this.ctx.session,
+				config: { ...this.ctx.session.config, model: config.fallbackModel },
 			};
 			const fallbackContext = contextManager.createContext(fallbackSession);
 			sdkFallbackModel = fallbackContext.getSdkModelId();
@@ -213,24 +221,24 @@ export class QueryOptionsBuilder {
 		const result = { ...options };
 
 		// Add resume parameter if SDK session ID exists (session resumption)
-		if (this.session.sdkSessionId) {
-			result.resume = this.session.sdkSessionId;
-			this.logger.log(`Resuming SDK session: ${this.session.sdkSessionId}`);
+		if (this.ctx.session.sdkSessionId) {
+			result.resume = this.ctx.session.sdkSessionId;
+			this.logger.log(`Resuming SDK session: ${this.ctx.session.sdkSessionId}`);
 		} else {
 			this.logger.log(`Starting new SDK session`);
 		}
 
 		// Add resumeSessionAt for conversation rewind
 		// When set, only messages up to and including this UUID are resumed
-		if (this.session.metadata?.resumeSessionAt) {
-			result.resumeSessionAt = this.session.metadata.resumeSessionAt;
+		if (this.ctx.session.metadata?.resumeSessionAt) {
+			result.resumeSessionAt = this.ctx.session.metadata.resumeSessionAt;
 			this.logger.log(
-				`Rewinding conversation to checkpoint: ${this.session.metadata.resumeSessionAt.slice(0, 8)}...`
+				`Rewinding conversation to checkpoint: ${this.ctx.session.metadata.resumeSessionAt.slice(0, 8)}...`
 			);
 		}
 
 		// Add thinking token budget based on thinkingLevel config
-		const thinkingLevel = (this.session.config.thinkingLevel || 'auto') as ThinkingLevel;
+		const thinkingLevel = (this.ctx.session.config.thinkingLevel || 'auto') as ThinkingLevel;
 		const maxThinkingTokens = THINKING_LEVEL_TOKENS[thinkingLevel];
 		if (maxThinkingTokens !== undefined) {
 			result.maxThinkingTokens = maxThinkingTokens;
@@ -244,7 +252,9 @@ export class QueryOptionsBuilder {
 	 * Get the current working directory for the SDK
 	 */
 	getCwd(): string {
-		return this.session.worktree ? this.session.worktree.worktreePath : this.session.workspacePath;
+		return this.ctx.session.worktree
+			? this.ctx.session.worktree.worktreePath
+			: this.ctx.session.workspacePath;
 	}
 
 	/**
@@ -267,7 +277,7 @@ export class QueryOptionsBuilder {
 			return undefined;
 		}
 
-		const config = this.session.config;
+		const config = this.ctx.session.config;
 
 		// Priority 1: Check if SDKConfig systemPrompt is explicitly set
 		if (config.systemPrompt !== undefined) {
@@ -285,7 +295,7 @@ export class QueryOptionsBuilder {
 			};
 
 			// Append worktree isolation instructions if session uses a worktree
-			if (this.session.worktree) {
+			if (this.ctx.session.worktree) {
 				presetConfig.append = this.getWorktreeIsolationText();
 			}
 
@@ -294,7 +304,7 @@ export class QueryOptionsBuilder {
 
 		// No Claude Code preset - use minimal system prompt or undefined
 		// When worktree is used, still append isolation instructions
-		if (this.session.worktree) {
+		if (this.ctx.session.worktree) {
 			return this.getMinimalWorktreePrompt();
 		}
 
@@ -311,7 +321,7 @@ export class QueryOptionsBuilder {
 		// Custom string prompt
 		if (typeof systemPrompt === 'string') {
 			// Append worktree isolation if needed
-			if (this.session.worktree) {
+			if (this.ctx.session.worktree) {
 				return systemPrompt + '\n\n' + this.getWorktreeIsolationText();
 			}
 			return systemPrompt;
@@ -326,7 +336,7 @@ export class QueryOptionsBuilder {
 
 			// Combine existing append with worktree isolation
 			let append = systemPrompt.append || '';
-			if (this.session.worktree) {
+			if (this.ctx.session.worktree) {
 				if (append) {
 					append += '\n\n';
 				}
@@ -348,7 +358,7 @@ export class QueryOptionsBuilder {
 	 * Get worktree isolation text to append to system prompt
 	 */
 	private getWorktreeIsolationText(): string {
-		const wt = this.session.worktree!;
+		const wt = this.ctx.session.worktree!;
 		return `
 IMPORTANT: Git Worktree Isolation
 
@@ -382,7 +392,7 @@ This isolation ensures concurrent sessions don't conflict with each other.
 	 * Get minimal worktree prompt (when Claude Code preset is disabled)
 	 */
 	private getMinimalWorktreePrompt(): string {
-		const wt = this.session.worktree!;
+		const wt = this.ctx.session.worktree!;
 		return `
 You are an AI assistant helping with coding tasks.
 
@@ -409,7 +419,7 @@ CRITICAL RULES:
 	 * 2. Legacy liuboerTools config (memory tool control)
 	 */
 	private getDisallowedTools(): string[] {
-		const config = this.session.config;
+		const config = this.ctx.session.config;
 		const disallowedTools: string[] = [];
 
 		// Add SDKConfig disallowedTools
@@ -433,7 +443,7 @@ CRITICAL RULES:
 	 * These tools will be auto-approved without permission prompts
 	 */
 	private getAllowedTools(): string[] {
-		const config = this.session.config;
+		const config = this.ctx.session.config;
 
 		if (config.allowedTools && config.allowedTools.length > 0) {
 			return [...config.allowedTools];
@@ -458,7 +468,7 @@ CRITICAL RULES:
 		}
 
 		// Use SDKConfig mcpServers if explicitly set
-		const config = this.session.config;
+		const config = this.ctx.session.config;
 		if (config.mcpServers !== undefined) {
 			return config.mcpServers;
 		}
@@ -473,7 +483,7 @@ CRITICAL RULES:
 	 * Controls CLAUDE.md and .claude/settings.json loading
 	 */
 	private getSettingSources(): Options['settingSources'] {
-		const toolsConfig = this.session.config.tools;
+		const toolsConfig = this.ctx.session.config.tools;
 		const loadSettingSources = toolsConfig?.loadSettingSources ?? true;
 		return loadSettingSources ? ['project', 'local'] : ['local'];
 	}
@@ -485,7 +495,7 @@ CRITICAL RULES:
 	 * For non-worktree: Leave undefined for backward compatibility
 	 */
 	private getAdditionalDirectories(): string[] | undefined {
-		return this.session.worktree ? [] : undefined;
+		return this.ctx.session.worktree ? [] : undefined;
 	}
 
 	/**
@@ -506,8 +516,8 @@ CRITICAL RULES:
 	 * @returns Merged env vars (excluding provider-specific vars)
 	 */
 	private getMergedEnvironmentVars(): Record<string, string> | undefined {
-		const globalSettings = this.settingsManager.getGlobalSettings();
-		const sessionEnv = this.session.config.env;
+		const globalSettings = this.ctx.settingsManager.getGlobalSettings();
+		const sessionEnv = this.ctx.session.config.env;
 
 		// Provider-specific env vars that are managed by the provider system
 		// These should NOT be passed via options.env as they won't work for GLM
@@ -561,18 +571,18 @@ CRITICAL RULES:
 	 */
 	private getPermissionMode(): PermissionMode {
 		// Layer 1: Session config (highest priority)
-		if (this.session.config.permissionMode) {
+		if (this.ctx.session.config.permissionMode) {
 			// Map 'default' based on environment
-			if (this.session.config.permissionMode === 'default') {
+			if (this.ctx.session.config.permissionMode === 'default') {
 				// In test/CI environments, use 'acceptEdits' to avoid root user crashes
 				// (bypassPermissions crashes SDK subprocess when running as root)
 				return process.env.NODE_ENV === 'test' ? 'acceptEdits' : 'bypassPermissions';
 			}
-			return this.session.config.permissionMode;
+			return this.ctx.session.config.permissionMode;
 		}
 
 		// Layer 2: Global settings
-		const globalSettings = this.settingsManager.getGlobalSettings();
+		const globalSettings = this.ctx.settingsManager.getGlobalSettings();
 		if (globalSettings.permissionMode) {
 			// Map 'default' based on environment
 			if (globalSettings.permissionMode === 'default') {
@@ -594,8 +604,8 @@ CRITICAL RULES:
 	 * SDK-supported options to merge with query options
 	 */
 	private async getSettingsOptions(): Promise<Partial<Options>> {
-		const toolsConfig = this.session.config.tools;
-		return await this.settingsManager.prepareSDKOptions({
+		const toolsConfig = this.ctx.session.config.tools;
+		return await this.ctx.settingsManager.prepareSDKOptions({
 			disabledMcpServers: toolsConfig?.disabledMcpServers ?? [],
 		});
 	}
@@ -614,7 +624,7 @@ CRITICAL RULES:
 			return undefined;
 		}
 
-		const globalSettings = this.settingsManager.getGlobalSettings();
+		const globalSettings = this.ctx.settingsManager.getGlobalSettings();
 		const outputLimiterConfig = getOutputLimiterConfigFromSettings(globalSettings);
 		const outputLimiterHook = createOutputLimiterHook(outputLimiterConfig);
 

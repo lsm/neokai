@@ -9,7 +9,7 @@
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import {
 	ModelSwitchHandler,
-	type ModelSwitchDependencies,
+	type ModelSwitchHandlerContext,
 } from '../../../src/lib/agent/model-switch-handler';
 import type { Session, ModelInfo } from '@liuboer/shared';
 import type { MessageHub } from '@liuboer/shared';
@@ -17,6 +17,8 @@ import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { Database } from '../../../src/storage/database';
 import type { ContextTracker } from '../../../src/lib/agent/context-tracker';
 import type { ProcessingStateManager } from '../../../src/lib/agent/processing-state-manager';
+import type { QueryLifecycleManager } from '../../../src/lib/agent/query-lifecycle-manager';
+import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type { ErrorManager } from '../../../src/lib/error-manager';
 import type { Logger } from '../../../src/lib/logger';
 import { generateUUID } from '@liuboer/shared';
@@ -63,17 +65,23 @@ const TEST_MODELS: ModelInfo[] = [
 
 describe('ModelSwitchHandler', () => {
 	let handler: ModelSwitchHandler;
-	let mockDeps: ModelSwitchDependencies;
 	let mockSession: Session;
+	let mockDb: Database;
+	let mockMessageHub: MessageHub;
+	let mockDaemonHub: DaemonHub;
+	let mockContextTracker: ContextTracker;
+	let mockStateManager: ProcessingStateManager;
+	let mockErrorManager: ErrorManager;
+	let mockLogger: Logger;
+	let mockLifecycleManager: QueryLifecycleManager;
+
 	let publishSpy: ReturnType<typeof mock>;
 	let emitSpy: ReturnType<typeof mock>;
 	let updateSessionSpy: ReturnType<typeof mock>;
 	let setModelSpy: ReturnType<typeof mock>;
 	let handleErrorSpy: ReturnType<typeof mock>;
 	let setModelTrackerSpy: ReturnType<typeof mock>;
-	let restartQuerySpy: ReturnType<typeof mock>;
-	let queryObject: { setModel: ReturnType<typeof mock> } | null;
-	let transportReady: boolean;
+	let restartSpy: ReturnType<typeof mock>;
 
 	beforeEach(() => {
 		// Initialize providers for model validation
@@ -119,42 +127,64 @@ describe('ModelSwitchHandler', () => {
 		setModelSpy = mock(async () => {});
 		handleErrorSpy = mock(async () => {});
 		setModelTrackerSpy = mock(() => {});
-		restartQuerySpy = mock(async () => {});
+		restartSpy = mock(async () => {});
 
-		queryObject = { setModel: setModelSpy };
-		transportReady = true;
+		mockDb = {
+			updateSession: updateSessionSpy,
+		} as unknown as Database;
 
-		mockDeps = {
-			session: mockSession,
-			db: {
-				updateSession: updateSessionSpy,
-			} as unknown as Database,
-			messageHub: {
-				publish: publishSpy,
-			} as unknown as MessageHub,
-			daemonHub: {
-				emit: emitSpy,
-			} as unknown as DaemonHub,
-			contextTracker: {
-				setModel: setModelTrackerSpy,
-			} as unknown as ContextTracker,
-			stateManager: {
-				getState: mock(() => ({ status: 'idle' })),
-			} as unknown as ProcessingStateManager,
-			errorManager: {
-				handleError: handleErrorSpy,
-			} as unknown as ErrorManager,
-			logger: {
-				log: mock(() => {}),
-				error: mock(() => {}),
-			} as unknown as Logger,
-			getQueryObject: () => queryObject,
-			isTransportReady: () => transportReady,
-			restartQuery: restartQuerySpy,
-		};
+		mockMessageHub = {
+			publish: publishSpy,
+		} as unknown as MessageHub;
 
-		handler = new ModelSwitchHandler(mockDeps);
+		mockDaemonHub = {
+			emit: emitSpy,
+		} as unknown as DaemonHub;
+
+		mockContextTracker = {
+			setModel: setModelTrackerSpy,
+		} as unknown as ContextTracker;
+
+		mockStateManager = {
+			getState: mock(() => ({ status: 'idle' })),
+		} as unknown as ProcessingStateManager;
+
+		mockErrorManager = {
+			handleError: handleErrorSpy,
+		} as unknown as ErrorManager;
+
+		mockLogger = {
+			log: mock(() => {}),
+			error: mock(() => {}),
+		} as unknown as Logger;
+
+		mockLifecycleManager = {
+			restart: restartSpy,
+		} as unknown as QueryLifecycleManager;
 	});
+
+	function createContext(
+		overrides: Partial<ModelSwitchHandlerContext> = {}
+	): ModelSwitchHandlerContext {
+		return {
+			session: mockSession,
+			db: mockDb,
+			messageHub: mockMessageHub,
+			daemonHub: mockDaemonHub,
+			contextTracker: mockContextTracker,
+			stateManager: mockStateManager,
+			errorManager: mockErrorManager,
+			logger: mockLogger,
+			lifecycleManager: mockLifecycleManager,
+			queryObject: { setModel: setModelSpy } as unknown as Query,
+			firstMessageReceived: true,
+			...overrides,
+		};
+	}
+
+	function createHandler(overrides: Partial<ModelSwitchHandlerContext> = {}): ModelSwitchHandler {
+		return new ModelSwitchHandler(createContext(overrides));
+	}
 
 	afterEach(() => {
 		resetProviderRegistry();
@@ -164,6 +194,7 @@ describe('ModelSwitchHandler', () => {
 
 	describe('getCurrentModel', () => {
 		it('should return current model info', () => {
+			handler = createHandler();
 			const modelInfo = handler.getCurrentModel();
 			expect(modelInfo.id).toBe('default');
 			expect(modelInfo.info).toBeNull(); // Info is fetched async
@@ -171,11 +202,13 @@ describe('ModelSwitchHandler', () => {
 
 		it('should reflect session config model', () => {
 			mockSession.config.model = 'opus';
+			handler = createHandler();
 			const modelInfo = handler.getCurrentModel();
 			expect(modelInfo.id).toBe('opus');
 		});
 
 		it('should return info as null (fetched asynchronously)', () => {
+			handler = createHandler();
 			const modelInfo = handler.getCurrentModel();
 			expect(modelInfo).toEqual({
 				id: 'default',
@@ -184,6 +217,7 @@ describe('ModelSwitchHandler', () => {
 		});
 
 		it('should track model changes in session config', () => {
+			handler = createHandler();
 			expect(handler.getCurrentModel().id).toBe('default');
 
 			mockSession.config.model = 'haiku';
@@ -196,29 +230,18 @@ describe('ModelSwitchHandler', () => {
 
 	describe('constructor', () => {
 		it('should accept all required dependencies', () => {
-			const newHandler = new ModelSwitchHandler(mockDeps);
+			const newHandler = createHandler();
 			expect(newHandler).toBeDefined();
 			expect(newHandler.getCurrentModel).toBeDefined();
 			expect(newHandler.switchModel).toBeDefined();
 		});
 	});
 
-	describe('dependency usage', () => {
-		it('should use session from dependencies', () => {
+	describe('context usage', () => {
+		it('should use session from context', () => {
+			handler = createHandler();
 			const modelInfo = handler.getCurrentModel();
-			expect(modelInfo.id).toBe(mockDeps.session.config.model);
-		});
-
-		it('should access query object via callback', () => {
-			// Verify the dependency pattern works
-			expect(mockDeps.getQueryObject()).toBe(queryObject);
-		});
-
-		it('should access transport ready state via callback', () => {
-			expect(mockDeps.isTransportReady()).toBe(true);
-
-			transportReady = false;
-			expect(mockDeps.isTransportReady()).toBe(false);
+			expect(modelInfo.id).toBe(mockSession.config.model);
 		});
 	});
 
@@ -228,21 +251,18 @@ describe('ModelSwitchHandler', () => {
 		const VALID_MODEL = 'opus';
 
 		describe('when query not started', () => {
-			beforeEach(() => {
-				// Set query to null (not started)
-				queryObject = null;
-			});
-
 			it('should update config only when query not started', async () => {
+				handler = createHandler({ queryObject: null });
 				const result = await handler.switchModel(VALID_MODEL);
 
 				expect(result.success).toBe(true);
 				expect(updateSessionSpy).toHaveBeenCalled();
 				expect(setModelTrackerSpy).toHaveBeenCalled();
-				expect(restartQuerySpy).not.toHaveBeenCalled();
+				expect(restartSpy).not.toHaveBeenCalled();
 			});
 
 			it('should emit session.updated event', async () => {
+				handler = createHandler({ queryObject: null });
 				await handler.switchModel(VALID_MODEL);
 
 				expect(emitSpy).toHaveBeenCalledWith(
@@ -255,6 +275,7 @@ describe('ModelSwitchHandler', () => {
 			});
 
 			it('should emit model-switching event', async () => {
+				handler = createHandler({ queryObject: null });
 				await handler.switchModel(VALID_MODEL);
 
 				expect(publishSpy).toHaveBeenCalledWith(
@@ -267,6 +288,7 @@ describe('ModelSwitchHandler', () => {
 			});
 
 			it('should emit model-switched event on success', async () => {
+				handler = createHandler({ queryObject: null });
 				await handler.switchModel(VALID_MODEL);
 
 				expect(publishSpy).toHaveBeenCalledWith(
@@ -280,46 +302,36 @@ describe('ModelSwitchHandler', () => {
 		});
 
 		describe('when transport not ready', () => {
-			beforeEach(() => {
-				transportReady = false;
-			});
-
 			it('should update config only when transport not ready', async () => {
+				handler = createHandler({ firstMessageReceived: false });
 				const result = await handler.switchModel(VALID_MODEL);
 
 				expect(result.success).toBe(true);
 				expect(updateSessionSpy).toHaveBeenCalled();
-				expect(restartQuerySpy).not.toHaveBeenCalled();
+				expect(restartSpy).not.toHaveBeenCalled();
 			});
 		});
 
 		describe('when query is running', () => {
 			it('should restart query when running', async () => {
+				handler = createHandler();
 				const result = await handler.switchModel(VALID_MODEL);
 
 				expect(result.success).toBe(true);
-				expect(restartQuerySpy).toHaveBeenCalled();
+				expect(restartSpy).toHaveBeenCalled();
 			});
 
 			it('should update session config before restart', async () => {
+				handler = createHandler();
 				await handler.switchModel(VALID_MODEL);
 
 				expect(updateSessionSpy).toHaveBeenCalled();
-			});
-
-			it('should fail if restartQuery not provided', async () => {
-				mockDeps.restartQuery = undefined;
-				handler = new ModelSwitchHandler(mockDeps);
-
-				const result = await handler.switchModel(VALID_MODEL);
-
-				expect(result.success).toBe(false);
-				expect(result.error).toContain('restartQuery callback not provided');
 			});
 		});
 
 		describe('validation', () => {
 			it('should reject invalid model', async () => {
+				handler = createHandler();
 				const result = await handler.switchModel('invalid-model-12345');
 
 				expect(result.success).toBe(false);
@@ -328,8 +340,9 @@ describe('ModelSwitchHandler', () => {
 			});
 
 			it('should return success with message when already using model', async () => {
+				// No query running for simpler test
+				handler = createHandler({ queryObject: null });
 				// Switch to haiku first
-				queryObject = null; // No query running for simpler test
 				await handler.switchModel('haiku');
 				// Then try to switch to haiku again
 				const result = await handler.switchModel('haiku');
@@ -341,8 +354,9 @@ describe('ModelSwitchHandler', () => {
 
 		describe('error handling', () => {
 			it('should handle errors and call error manager', async () => {
-				// Make restartQuery throw
-				restartQuerySpy.mockRejectedValue(new Error('Restart failed'));
+				// Make restart throw
+				restartSpy.mockRejectedValue(new Error('Restart failed'));
+				handler = createHandler();
 
 				const result = await handler.switchModel(VALID_MODEL);
 
@@ -353,12 +367,9 @@ describe('ModelSwitchHandler', () => {
 		});
 
 		describe('context tracker update', () => {
-			beforeEach(() => {
-				// Set query to null so we don't need restart
-				queryObject = null;
-			});
-
 			it('should update context tracker model', async () => {
+				// Set query to null so we don't need restart
+				handler = createHandler({ queryObject: null });
 				// Use haiku to ensure we're switching to a different model
 				await handler.switchModel('haiku');
 

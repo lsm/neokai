@@ -7,7 +7,7 @@
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import {
 	SlashCommandManager,
-	type SlashCommandManagerDependencies,
+	type SlashCommandManagerContext,
 } from '../../../src/lib/agent/slash-command-manager';
 import type { Session } from '@liuboer/shared';
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
@@ -78,19 +78,25 @@ describe('SlashCommandManager', () => {
 		} as unknown as Query;
 	});
 
-	function createManager(
+	function createContext(
 		sessionOverrides: Partial<Session> = {},
-		getQueryObject: () => Query | null = () => mockQueryObject
-	): SlashCommandManager {
+		queryObject: Query | null = mockQueryObject
+	): SlashCommandManagerContext {
 		const session = { ...mockSession, ...sessionOverrides };
-		const deps: SlashCommandManagerDependencies = {
+		return {
 			session,
 			db: mockDb,
 			daemonHub: mockDaemonHub,
 			logger: mockLogger,
-			getQueryObject,
+			queryObject,
 		};
-		return new SlashCommandManager(deps);
+	}
+
+	function createManager(
+		sessionOverrides: Partial<Session> = {},
+		queryObject: Query | null = mockQueryObject
+	): SlashCommandManager {
+		return new SlashCommandManager(createContext(sessionOverrides, queryObject));
 	}
 
 	describe('constructor', () => {
@@ -141,7 +147,7 @@ describe('SlashCommandManager', () => {
 
 		it('should fallback to built-in commands if SDK returns nothing', async () => {
 			supportedCommandsSpy.mockResolvedValue([]);
-			manager = createManager({}, () => null); // No query object
+			manager = createManager({}, null); // No query object
 
 			const commands = await manager.getSlashCommands();
 
@@ -184,7 +190,7 @@ describe('SlashCommandManager', () => {
 		});
 
 		it('should return early if no query object', async () => {
-			manager = createManager({}, () => null);
+			manager = createManager({}, null);
 
 			await manager.fetchAndCache();
 
@@ -194,7 +200,7 @@ describe('SlashCommandManager', () => {
 
 		it('should return early if supportedCommands is not a function', async () => {
 			const invalidQueryObject = {} as Query;
-			manager = createManager({}, () => invalidQueryObject);
+			manager = createManager({}, invalidQueryObject);
 
 			await manager.fetchAndCache();
 

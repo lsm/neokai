@@ -67,26 +67,12 @@ flags:
     paths:
       - packages/daemon/src/
       - packages/shared/src/
-    carryforward: true
-  shared:
-    paths:
-      - packages/shared/src/
-    carryforward: true
+    carryforward: false
   web:
     paths:
       - packages/web/src/
     carryforward: false
-  cli:
-    paths:
-      - packages/cli/src/
-    carryforward: true
-  e2e-quick:
-    paths:
-      - packages/daemon/src/
-      - packages/shared/src/
-      - packages/web/src/
-    carryforward: true
   e2e-matrix:
     paths:
       - packages/web/src/
-    carryforward: true
+    carryforward: false

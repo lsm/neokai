@@ -6,13 +6,18 @@
  */
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
-import { SDKMessageHandler } from '../../../src/lib/agent/sdk-message-handler';
+import {
+	SDKMessageHandler,
+	type SDKMessageHandlerContext,
+} from '../../../src/lib/agent/sdk-message-handler';
 import { ProcessingStateManager } from '../../../src/lib/processing-state-manager';
 import { ContextTracker } from '../../../src/lib/context-tracker';
 import { Database } from '../../../src/storage/database';
 import type { Session, MessageHub } from '@liuboer/shared';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { SDKMessage } from '@liuboer/shared/sdk';
+import type { MessageQueue } from '../../../src/lib/agent/message-queue';
+import type { CheckpointTracker } from '../../../src/lib/agent/checkpoint-tracker';
 import { generateUUID } from '@liuboer/shared';
 
 describe('SDKMessageHandler', () => {
@@ -23,12 +28,16 @@ describe('SDKMessageHandler', () => {
 	let mockEventBus: DaemonHub;
 	let mockStateManager: ProcessingStateManager;
 	let mockContextTracker: ContextTracker;
+	let mockMessageQueue: MessageQueue;
+	let mockCheckpointTracker: CheckpointTracker;
+	let mockContext: SDKMessageHandlerContext;
 
 	let dbSaveSpy: ReturnType<typeof mock>;
 	let hubPublishSpy: ReturnType<typeof mock>;
 	let eventBusEmitSpy: ReturnType<typeof mock>;
 	let stateSetIdleSpy: ReturnType<typeof mock>;
 	let contextHandleResultSpy: ReturnType<typeof mock>;
+	let handleCircuitBreakerTripSpy: ReturnType<typeof mock>;
 
 	const testSessionId = generateUUID();
 
@@ -90,14 +99,33 @@ describe('SDKMessageHandler', () => {
 			handleResultUsage: contextHandleResultSpy,
 		} as unknown as ContextTracker;
 
-		handler = new SDKMessageHandler(
-			mockSession,
-			mockDb,
-			mockMessageHub,
-			mockEventBus,
-			mockStateManager,
-			mockContextTracker
-		);
+		// Mock MessageQueue
+		mockMessageQueue = {
+			enqueue: mock(async () => 'message-id'),
+		} as unknown as MessageQueue;
+
+		// Mock CheckpointTracker
+		mockCheckpointTracker = {
+			processMessage: mock(() => {}),
+		} as unknown as CheckpointTracker;
+
+		// Mock circuit breaker trip handler
+		handleCircuitBreakerTripSpy = mock(async () => {});
+
+		// Create context
+		mockContext = {
+			session: mockSession,
+			db: mockDb,
+			messageHub: mockMessageHub,
+			daemonHub: mockEventBus,
+			stateManager: mockStateManager,
+			contextTracker: mockContextTracker,
+			messageQueue: mockMessageQueue,
+			checkpointTracker: mockCheckpointTracker,
+			handleCircuitBreakerTrip: handleCircuitBreakerTripSpy,
+		};
+
+		handler = new SDKMessageHandler(mockContext);
 	});
 
 	describe('message processing', () => {

@@ -5,13 +5,20 @@
  */
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
-import { SDKMessageHandler } from '../../../src/lib/agent/sdk-message-handler';
+import {
+	SDKMessageHandler,
+	type SDKMessageHandlerContext,
+} from '../../../src/lib/agent/sdk-message-handler';
 import type { Session, MessageHub } from '@liuboer/shared';
 import type { SDKMessage } from '@liuboer/shared/sdk';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { Database } from '../../../src/storage/database';
 import type { ProcessingStateManager } from '../../../src/lib/agent/processing-state-manager';
 import type { ContextTracker } from '../../../src/lib/agent/context-tracker';
+import type { MessageQueue } from '../../../src/lib/agent/message-queue';
+import type { CheckpointTracker } from '../../../src/lib/agent/checkpoint-tracker';
+import type { ErrorManager } from '../../../src/lib/error-manager';
+import type { QueryLifecycleManager } from '../../../src/lib/agent/query-lifecycle-manager';
 
 describe('SDKMessageHandler', () => {
 	let handler: SDKMessageHandler;
@@ -21,6 +28,11 @@ describe('SDKMessageHandler', () => {
 	let mockDaemonHub: DaemonHub;
 	let mockStateManager: ProcessingStateManager;
 	let mockContextTracker: ContextTracker;
+	let mockMessageQueue: MessageQueue;
+	let mockCheckpointTracker: CheckpointTracker;
+	let mockErrorManager: ErrorManager;
+	let mockLifecycleManager: QueryLifecycleManager;
+	let mockContext: SDKMessageHandlerContext;
 
 	// Spy functions
 	let saveSDKMessageSpy: ReturnType<typeof mock>;
@@ -33,6 +45,12 @@ describe('SDKMessageHandler', () => {
 	let handleResultUsageSpy: ReturnType<typeof mock>;
 	let getContextInfoSpy: ReturnType<typeof mock>;
 	let updateWithDetailedBreakdownSpy: ReturnType<typeof mock>;
+	let enqueueMessageSpy: ReturnType<typeof mock>;
+	let processMessageSpy: ReturnType<typeof mock>;
+	let handleErrorSpy: ReturnType<typeof mock>;
+	let lifecycleStopSpy: ReturnType<typeof mock>;
+	let messageQueueClearSpy: ReturnType<typeof mock>;
+	let getStateSpy: ReturnType<typeof mock>;
 
 	beforeEach(() => {
 		mockSession = {
@@ -81,10 +99,12 @@ describe('SDKMessageHandler', () => {
 		detectPhaseFromMessageSpy = mock(async () => {});
 		setIdleSpy = mock(async () => {});
 		setCompactingSpy = mock(async () => {});
+		getStateSpy = mock(() => ({ phase: 'idle' }));
 		mockStateManager = {
 			detectPhaseFromMessage: detectPhaseFromMessageSpy,
 			setIdle: setIdleSpy,
 			setCompacting: setCompactingSpy,
+			getState: getStateSpy,
 		} as unknown as ProcessingStateManager;
 
 		// ContextTracker spies
@@ -97,43 +117,53 @@ describe('SDKMessageHandler', () => {
 			updateWithDetailedBreakdown: updateWithDetailedBreakdownSpy,
 		} as unknown as ContextTracker;
 
-		handler = new SDKMessageHandler(
-			mockSession,
-			mockDb,
-			mockMessageHub,
-			mockDaemonHub,
-			mockStateManager,
-			mockContextTracker
-		);
+		// MessageQueue spies
+		enqueueMessageSpy = mock(async () => 'context-id');
+		messageQueueClearSpy = mock(() => {});
+		mockMessageQueue = {
+			enqueue: enqueueMessageSpy,
+			clear: messageQueueClearSpy,
+		} as unknown as MessageQueue;
+
+		// CheckpointTracker spy
+		processMessageSpy = mock(() => {});
+		mockCheckpointTracker = {
+			processMessage: processMessageSpy,
+		} as unknown as CheckpointTracker;
+
+		// ErrorManager spy
+		handleErrorSpy = mock(async () => {});
+		mockErrorManager = {
+			handleError: handleErrorSpy,
+		} as unknown as ErrorManager;
+
+		// LifecycleManager spy
+		lifecycleStopSpy = mock(async () => {});
+		mockLifecycleManager = {
+			stop: lifecycleStopSpy,
+		} as unknown as QueryLifecycleManager;
+
+		// Create context
+		mockContext = {
+			session: mockSession,
+			db: mockDb,
+			messageHub: mockMessageHub,
+			daemonHub: mockDaemonHub,
+			stateManager: mockStateManager,
+			contextTracker: mockContextTracker,
+			messageQueue: mockMessageQueue,
+			checkpointTracker: mockCheckpointTracker,
+			errorManager: mockErrorManager,
+			lifecycleManager: mockLifecycleManager,
+			queryObject: null,
+			queryPromise: null,
+		};
+
+		handler = new SDKMessageHandler(mockContext);
 	});
 
 	describe('constructor', () => {
 		it('should create handler with dependencies', () => {
-			expect(handler).toBeDefined();
-		});
-	});
-
-	describe('setQueueMessageCallback', () => {
-		it('should set the queue message callback', () => {
-			const callback = mock(async () => 'message-id');
-			handler.setQueueMessageCallback(callback);
-			// No direct way to verify, but should not throw
-			expect(handler).toBeDefined();
-		});
-	});
-
-	describe('setCircuitBreakerTripCallback', () => {
-		it('should set the circuit breaker trip callback', () => {
-			const callback = mock(async () => {});
-			handler.setCircuitBreakerTripCallback(callback);
-			expect(handler).toBeDefined();
-		});
-	});
-
-	describe('setCheckpointCallback', () => {
-		it('should set the checkpoint callback', () => {
-			const callback = mock(() => {});
-			handler.setCheckpointCallback(callback);
 			expect(handler).toBeDefined();
 		});
 	});
@@ -225,10 +255,7 @@ describe('SDKMessageHandler', () => {
 			expect((message as unknown as { isSynthetic: boolean }).isSynthetic).toBe(true);
 		});
 
-		it('should call checkpoint callback if set', async () => {
-			const checkpointCallback = mock(() => {});
-			handler.setCheckpointCallback(checkpointCallback);
-
+		it('should call checkpoint tracker processMessage', async () => {
 			const message: SDKMessage = {
 				type: 'user',
 				uuid: 'test-uuid',
@@ -237,14 +264,13 @@ describe('SDKMessageHandler', () => {
 
 			await handler.handleMessage(message);
 
-			expect(checkpointCallback).toHaveBeenCalledWith(message);
+			expect(processMessageSpy).toHaveBeenCalledWith(message);
 		});
 
-		it('should handle checkpoint callback errors gracefully', async () => {
-			const checkpointCallback = mock(() => {
+		it('should handle checkpoint tracker errors gracefully', async () => {
+			processMessageSpy.mockImplementation(() => {
 				throw new Error('Checkpoint error');
 			});
-			handler.setCheckpointCallback(checkpointCallback);
 
 			const message: SDKMessage = {
 				type: 'assistant',
@@ -364,9 +390,6 @@ describe('SDKMessageHandler', () => {
 		});
 
 		it('should queue /context command', async () => {
-			const queueMessageSpy = mock(async () => 'context-id');
-			handler.setQueueMessageCallback(queueMessageSpy);
-
 			const message: SDKMessage = {
 				type: 'result',
 				subtype: 'success',
@@ -381,7 +404,7 @@ describe('SDKMessageHandler', () => {
 
 			await handler.handleMessage(message);
 
-			expect(queueMessageSpy).toHaveBeenCalledWith('/context', true);
+			expect(enqueueMessageSpy).toHaveBeenCalledWith('/context', true);
 		});
 
 		it('should set state to idle', async () => {
@@ -553,6 +576,409 @@ describe('SDKMessageHandler', () => {
 			await handler.handleMessage(message);
 
 			expect(setCompactingSpy).toHaveBeenCalledWith(false);
+		});
+	});
+
+	describe('circuit breaker integration', () => {
+		it('should handle circuit breaker trip with active query', async () => {
+			// Set up context with active query
+			mockContext.queryObject = {} as unknown as SDKMessageHandlerContext['queryObject'];
+			mockContext.queryPromise = Promise.resolve();
+
+			// Create handler fresh with the context that has query
+			const handlerWithQuery = new SDKMessageHandler(mockContext);
+
+			// Send many error messages to trip the circuit breaker
+			const errorMessage: SDKMessage = {
+				type: 'user',
+				uuid: 'error-uuid',
+				message: {
+					role: 'user',
+					content:
+						'<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+				},
+			} as unknown as SDKMessage;
+
+			// Trip the circuit breaker by sending multiple error messages
+			for (let i = 0; i < 4; i++) {
+				await handlerWithQuery.handleMessage({
+					...errorMessage,
+					uuid: `error-uuid-${i}`,
+				} as SDKMessage);
+			}
+
+			// Give async callback time to execute
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			// Verify circuit breaker tripped and stopped the query
+			expect(lifecycleStopSpy).toHaveBeenCalledWith({ catchQueryErrors: true });
+			expect(setIdleSpy).toHaveBeenCalled();
+		});
+
+		it('should handle circuit breaker trip without active query', async () => {
+			// No query object or promise
+			mockContext.queryObject = null;
+			mockContext.queryPromise = null;
+
+			// Create handler fresh
+			const handlerNoQuery = new SDKMessageHandler(mockContext);
+
+			// Trip the circuit breaker
+			const errorMessage: SDKMessage = {
+				type: 'user',
+				uuid: 'error-uuid',
+				message: {
+					role: 'user',
+					content:
+						'<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+				},
+			} as unknown as SDKMessage;
+
+			for (let i = 0; i < 4; i++) {
+				await handlerNoQuery.handleMessage({
+					...errorMessage,
+					uuid: `error-uuid-${i}`,
+				} as SDKMessage);
+			}
+
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			// Should NOT call stop if no query running
+			expect(lifecycleStopSpy).not.toHaveBeenCalled();
+			// But should still reset to idle
+			expect(setIdleSpy).toHaveBeenCalled();
+		});
+
+		it('should display error as assistant message when circuit breaker trips', async () => {
+			mockContext.queryObject = {} as unknown as SDKMessageHandlerContext['queryObject'];
+			mockContext.queryPromise = Promise.resolve();
+
+			const handlerWithQuery = new SDKMessageHandler(mockContext);
+
+			// Trip the circuit breaker
+			const errorMessage: SDKMessage = {
+				type: 'user',
+				uuid: 'error-uuid',
+				message: {
+					role: 'user',
+					content:
+						'<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+				},
+			} as unknown as SDKMessage;
+
+			for (let i = 0; i < 4; i++) {
+				await handlerWithQuery.handleMessage({
+					...errorMessage,
+					uuid: `error-uuid-${i}`,
+				} as SDKMessage);
+			}
+
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			// Verify an assistant message was saved
+			const saveCalls = saveSDKMessageSpy.mock.calls;
+			const assistantSaves = saveCalls.filter(
+				(call: unknown[]) => (call[1] as SDKMessage).type === 'assistant'
+			);
+			expect(assistantSaves.length).toBeGreaterThan(0);
+		});
+
+		it('should report error to error manager on trip', async () => {
+			mockContext.queryObject = {} as unknown as SDKMessageHandlerContext['queryObject'];
+			mockContext.queryPromise = Promise.resolve();
+
+			const handlerWithQuery = new SDKMessageHandler(mockContext);
+
+			// Trip the circuit breaker
+			const errorMessage: SDKMessage = {
+				type: 'user',
+				uuid: 'error-uuid',
+				message: {
+					role: 'user',
+					content:
+						'<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+				},
+			} as unknown as SDKMessage;
+
+			for (let i = 0; i < 4; i++) {
+				await handlerWithQuery.handleMessage({
+					...errorMessage,
+					uuid: `error-uuid-${i}`,
+				} as SDKMessage);
+			}
+
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			// Verify error manager was called
+			expect(handleErrorSpy).toHaveBeenCalled();
+		});
+
+		it('should clear message queue when circuit breaker trips', async () => {
+			mockContext.queryObject = {} as unknown as SDKMessageHandlerContext['queryObject'];
+			mockContext.queryPromise = Promise.resolve();
+
+			const handlerWithQuery = new SDKMessageHandler(mockContext);
+
+			// Trip the circuit breaker
+			const errorMessage: SDKMessage = {
+				type: 'user',
+				uuid: 'error-uuid',
+				message: {
+					role: 'user',
+					content:
+						'<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+				},
+			} as unknown as SDKMessage;
+
+			for (let i = 0; i < 4; i++) {
+				await handlerWithQuery.handleMessage({
+					...errorMessage,
+					uuid: `error-uuid-${i}`,
+				} as SDKMessage);
+			}
+
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			// Verify message queue was cleared
+			expect(messageQueueClearSpy).toHaveBeenCalled();
+		});
+
+		it('should emit session.errorClear when circuit breaker trips', async () => {
+			mockContext.queryObject = {} as unknown as SDKMessageHandlerContext['queryObject'];
+			mockContext.queryPromise = Promise.resolve();
+
+			const handlerWithQuery = new SDKMessageHandler(mockContext);
+
+			// Trip the circuit breaker
+			const errorMessage: SDKMessage = {
+				type: 'user',
+				uuid: 'error-uuid',
+				message: {
+					role: 'user',
+					content:
+						'<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+				},
+			} as unknown as SDKMessage;
+
+			for (let i = 0; i < 4; i++) {
+				await handlerWithQuery.handleMessage({
+					...errorMessage,
+					uuid: `error-uuid-${i}`,
+				} as SDKMessage);
+			}
+
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			// Verify session.errorClear was emitted
+			expect(emitSpy).toHaveBeenCalledWith('session.errorClear', {
+				sessionId: 'test-session-id',
+			});
+		});
+	});
+
+	describe('handleContextResponse', () => {
+		it('should process valid /context response and update context tracker', async () => {
+			// Create a valid /context response message (type: user, isReplay: true)
+			const contextResponseMessage: SDKMessage = {
+				type: 'user',
+				uuid: 'context-response-uuid',
+				isReplay: true,
+				message: {
+					role: 'user',
+					content: `<local-command-stdout>
+# Context Usage
+
+**Model:** claude-sonnet-4-5-20250929
+**Tokens:** 62.5k / 200.0k (31%)
+
+| Category | Tokens | Percentage |
+|----------|--------|------------|
+| System prompt | 3.2k | 1.6% |
+| System tools | 14.3k | 7.1% |
+| Messages | 40k | 20% |
+| Free space | 137.5k | 68.7% |
+</local-command-stdout>`,
+				},
+			} as unknown as SDKMessage;
+
+			await handler.handleMessage(contextResponseMessage);
+
+			// Context response should NOT be saved to DB (early return)
+			expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+
+			// But context tracker should be updated
+			expect(updateWithDetailedBreakdownSpy).toHaveBeenCalled();
+		});
+
+		it('should emit context update event via DaemonHub', async () => {
+			const contextResponseMessage: SDKMessage = {
+				type: 'user',
+				uuid: 'context-response-uuid',
+				isReplay: true,
+				message: {
+					role: 'user',
+					content: `<local-command-stdout>
+# Context Usage
+
+**Model:** claude-sonnet-4-5-20250929
+**Tokens:** 50.0k / 200.0k (25%)
+
+| Category | Tokens | Percentage |
+|----------|--------|------------|
+| System prompt | 5k | 2.5% |
+| System tools | 10k | 5% |
+| Messages | 35k | 17.5% |
+| Free space | 150k | 75% |
+</local-command-stdout>`,
+				},
+			} as unknown as SDKMessage;
+
+			await handler.handleMessage(contextResponseMessage);
+
+			// Should emit context.updated via daemonHub
+			expect(emitSpy).toHaveBeenCalledWith(
+				'context.updated',
+				expect.objectContaining({
+					sessionId: 'test-session-id',
+					contextInfo: expect.any(Object),
+				})
+			);
+		});
+
+		it('should skip context response without saving to DB', async () => {
+			const contextResponseMessage: SDKMessage = {
+				type: 'user',
+				uuid: 'context-response-uuid',
+				isReplay: true,
+				message: {
+					role: 'user',
+					content: `<local-command-stdout>
+# Context Usage
+
+**Model:** claude-sonnet-4-5-20250929
+**Tokens:** 10k / 200.0k (5%)
+
+| Category | Tokens | Percentage |
+|----------|--------|------------|
+| System prompt | 2k | 1% |
+| Free space | 190k | 95% |
+</local-command-stdout>`,
+				},
+			} as unknown as SDKMessage;
+
+			await handler.handleMessage(contextResponseMessage);
+
+			// Should NOT save to DB
+			expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+			// Should NOT publish to MessageHub
+			expect(publishSpy).not.toHaveBeenCalled();
+		});
+
+		it('should handle context response parsing failure gracefully', async () => {
+			// Create a context response with invalid format
+			const invalidContextMessage: SDKMessage = {
+				type: 'user',
+				uuid: 'invalid-context-uuid',
+				isReplay: true,
+				message: {
+					role: 'user',
+					content: '<local-command-stdout>Context Usage - invalid format</local-command-stdout>',
+				},
+			} as unknown as SDKMessage;
+
+			// Should not throw
+			await handler.handleMessage(invalidContextMessage);
+
+			// Context tracker should NOT be updated (parsing failed)
+			expect(updateWithDetailedBreakdownSpy).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('markApiSuccess', () => {
+		it('should not throw when called', () => {
+			expect(() => handler.markApiSuccess()).not.toThrow();
+		});
+
+		it('should reset circuit breaker error tracking', async () => {
+			// First, trigger some errors but not enough to trip
+			const errorMessage: SDKMessage = {
+				type: 'user',
+				uuid: 'error-uuid',
+				message: {
+					role: 'user',
+					content:
+						'<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+				},
+			} as unknown as SDKMessage;
+
+			// Send 2 errors (not enough to trip with threshold of 3)
+			await handler.handleMessage(errorMessage);
+			await handler.handleMessage({ ...errorMessage, uuid: 'error-uuid-2' } as SDKMessage);
+
+			// Mark success to reset error tracking
+			handler.markApiSuccess();
+
+			// Send one more error - should NOT trip since errors were reset
+			await handler.handleMessage({ ...errorMessage, uuid: 'error-uuid-3' } as SDKMessage);
+
+			// Should NOT have tripped (no stop called)
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			expect(lifecycleStopSpy).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('resetCircuitBreaker', () => {
+		it('should not throw when called', () => {
+			expect(() => handler.resetCircuitBreaker()).not.toThrow();
+		});
+
+		it('should fully reset circuit breaker state', async () => {
+			mockContext.queryObject = {} as unknown as SDKMessageHandlerContext['queryObject'];
+			mockContext.queryPromise = Promise.resolve();
+
+			const handlerWithQuery = new SDKMessageHandler(mockContext);
+
+			// Trip the circuit breaker
+			const errorMessage: SDKMessage = {
+				type: 'user',
+				uuid: 'error-uuid',
+				message: {
+					role: 'user',
+					content:
+						'<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+				},
+			} as unknown as SDKMessage;
+
+			for (let i = 0; i < 4; i++) {
+				await handlerWithQuery.handleMessage({
+					...errorMessage,
+					uuid: `error-uuid-${i}`,
+				} as SDKMessage);
+			}
+
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			// Verify it was tripped
+			expect(lifecycleStopSpy).toHaveBeenCalled();
+
+			// Reset all mocks
+			lifecycleStopSpy.mockClear();
+
+			// Reset the circuit breaker
+			handlerWithQuery.resetCircuitBreaker();
+
+			// Try to trip again - should work after reset
+			for (let i = 0; i < 4; i++) {
+				await handlerWithQuery.handleMessage({
+					...errorMessage,
+					uuid: `error-uuid-new-${i}`,
+				} as SDKMessage);
+			}
+
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			// Should have tripped again
+			expect(lifecycleStopSpy).toHaveBeenCalled();
 		});
 	});
 });

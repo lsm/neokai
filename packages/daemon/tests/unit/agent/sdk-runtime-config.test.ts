@@ -7,7 +7,7 @@
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import {
 	SDKRuntimeConfig,
-	type SDKRuntimeConfigDependencies,
+	type SDKRuntimeConfigContext,
 } from '../../../src/lib/agent/sdk-runtime-config';
 import type { Session } from '@liuboer/shared';
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
@@ -26,6 +26,7 @@ describe('SDKRuntimeConfig', () => {
 	let mockMessageQueue: MessageQueue;
 	let mockLogger: Logger;
 	let mockQueryObject: Query | null;
+	let firstMessageReceived: boolean;
 
 	let updateSessionSpy: ReturnType<typeof mock>;
 	let emitSpy: ReturnType<typeof mock>;
@@ -33,8 +34,6 @@ describe('SDKRuntimeConfig', () => {
 	let enqueueSpy: ReturnType<typeof mock>;
 	let isRunningSpy: ReturnType<typeof mock>;
 	let restartQuerySpy: ReturnType<typeof mock>;
-	let getQueryObjectSpy: ReturnType<typeof mock>;
-	let isTransportReadySpy: ReturnType<typeof mock>;
 
 	// SDK method spies
 	let setMaxThinkingTokensSpy: ReturnType<typeof mock>;
@@ -108,24 +107,28 @@ describe('SDKRuntimeConfig', () => {
 		} as unknown as Query;
 
 		restartQuerySpy = mock(async () => {});
-		getQueryObjectSpy = mock(() => mockQueryObject);
-		isTransportReadySpy = mock(() => true);
+		firstMessageReceived = true;
 	});
 
-	function createConfig(overrides: Partial<SDKRuntimeConfigDependencies> = {}): SDKRuntimeConfig {
-		const deps: SDKRuntimeConfigDependencies = {
+	function createContext(
+		overrides: Partial<SDKRuntimeConfigContext> = {}
+	): SDKRuntimeConfigContext {
+		return {
 			session: mockSession,
 			db: mockDb,
 			daemonHub: mockDaemonHub,
 			settingsManager: mockSettingsManager,
 			messageQueue: mockMessageQueue,
 			logger: mockLogger,
-			getQueryObject: getQueryObjectSpy,
-			isTransportReady: isTransportReadySpy,
+			queryObject: mockQueryObject,
+			firstMessageReceived,
 			restartQuery: restartQuerySpy,
 			...overrides,
 		};
-		return new SDKRuntimeConfig(deps);
+	}
+
+	function createConfig(overrides: Partial<SDKRuntimeConfigContext> = {}): SDKRuntimeConfig {
+		return new SDKRuntimeConfig(createContext(overrides));
 	}
 
 	describe('constructor', () => {
@@ -137,8 +140,7 @@ describe('SDKRuntimeConfig', () => {
 
 	describe('setMaxThinkingTokens', () => {
 		it('should set tokens when query not active', async () => {
-			getQueryObjectSpy.mockReturnValue(null);
-			config = createConfig();
+			config = createConfig({ queryObject: null });
 
 			const result = await config.setMaxThinkingTokens(10000);
 
@@ -151,8 +153,7 @@ describe('SDKRuntimeConfig', () => {
 		});
 
 		it('should set tokens when transport not ready', async () => {
-			isTransportReadySpy.mockReturnValue(false);
-			config = createConfig();
+			config = createConfig({ firstMessageReceived: false });
 
 			const result = await config.setMaxThinkingTokens(5000);
 
@@ -218,9 +219,7 @@ describe('SDKRuntimeConfig', () => {
 		});
 
 		it('should handle query without setMaxThinkingTokens method', async () => {
-			mockQueryObject = {} as Query; // No setMaxThinkingTokens method
-			getQueryObjectSpy.mockReturnValue(mockQueryObject);
-			config = createConfig();
+			config = createConfig({ queryObject: {} as Query }); // No setMaxThinkingTokens method
 
 			const result = await config.setMaxThinkingTokens(10000);
 
@@ -231,8 +230,7 @@ describe('SDKRuntimeConfig', () => {
 
 	describe('setPermissionMode', () => {
 		it('should set mode when query not active', async () => {
-			getQueryObjectSpy.mockReturnValue(null);
-			config = createConfig();
+			config = createConfig({ queryObject: null });
 
 			const result = await config.setPermissionMode('acceptEdits');
 
@@ -245,8 +243,7 @@ describe('SDKRuntimeConfig', () => {
 		});
 
 		it('should set mode when transport not ready', async () => {
-			isTransportReadySpy.mockReturnValue(false);
-			config = createConfig();
+			config = createConfig({ firstMessageReceived: false });
 
 			const result = await config.setPermissionMode('bypassPermissions');
 
@@ -300,9 +297,7 @@ describe('SDKRuntimeConfig', () => {
 		});
 
 		it('should handle query without setPermissionMode method', async () => {
-			mockQueryObject = {} as Query; // No setPermissionMode method
-			getQueryObjectSpy.mockReturnValue(mockQueryObject);
-			config = createConfig();
+			config = createConfig({ queryObject: {} as Query }); // No setPermissionMode method
 
 			const result = await config.setPermissionMode('acceptEdits');
 
@@ -313,8 +308,7 @@ describe('SDKRuntimeConfig', () => {
 
 	describe('getMcpServerStatus', () => {
 		it('should return empty array when query not active', async () => {
-			getQueryObjectSpy.mockReturnValue(null);
-			config = createConfig();
+			config = createConfig({ queryObject: null });
 
 			const result = await config.getMcpServerStatus();
 
@@ -322,8 +316,7 @@ describe('SDKRuntimeConfig', () => {
 		});
 
 		it('should return empty array when transport not ready', async () => {
-			isTransportReadySpy.mockReturnValue(false);
-			config = createConfig();
+			config = createConfig({ firstMessageReceived: false });
 
 			const result = await config.getMcpServerStatus();
 
@@ -345,9 +338,7 @@ describe('SDKRuntimeConfig', () => {
 		});
 
 		it('should return empty array when query has no mcpServerStatus method', async () => {
-			mockQueryObject = {} as Query; // No mcpServerStatus method
-			getQueryObjectSpy.mockReturnValue(mockQueryObject);
-			config = createConfig();
+			config = createConfig({ queryObject: {} as Query }); // No mcpServerStatus method
 
 			const result = await config.getMcpServerStatus();
 

@@ -1,6 +1,9 @@
 /**
  * SDKMessageHandler - Process incoming SDK messages
  *
+ * Extracted from AgentSession to reduce complexity.
+ * Takes AgentSession instance directly - handlers are internal parts of AgentSession.
+ *
  * Handles:
  * - Message persistence to DB
  * - Broadcasting to clients via MessageHub
@@ -8,9 +11,13 @@
  * - Compaction event detection and emission
  * - Title generation trigger
  * - Automatic phase detection for state tracking
+ * - Circuit breaker trip handling (error loop detection)
  */
 
+import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { UUID } from 'crypto';
 import type { Session, MessageHub } from '@liuboer/shared';
+import { generateUUID } from '@liuboer/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SDKMessage, SDKUserMessage } from '@liuboer/shared/sdk';
 import {
@@ -21,12 +28,39 @@ import {
 	isSDKCompactBoundary,
 	isSDKSystemMessage,
 } from '@liuboer/shared/sdk/type-guards';
-import { Database } from '../../storage/database';
+import type { Database } from '../../storage/database';
 import { Logger } from '../logger';
-import { ProcessingStateManager } from './processing-state-manager';
-import { ContextTracker } from './context-tracker';
+import { ErrorCategory, type ErrorManager } from '../error-manager';
+import type { ProcessingStateManager } from './processing-state-manager';
+import type { ContextTracker } from './context-tracker';
 import { ContextFetcher } from './context-fetcher';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
+import type { MessageQueue } from './message-queue';
+import type { CheckpointTracker } from './checkpoint-tracker';
+import type { QueryLifecycleManager } from './query-lifecycle-manager';
+
+/**
+ * Context interface - what SDKMessageHandler needs from AgentSession
+ * Using interface instead of importing AgentSession to avoid circular deps
+ */
+export interface SDKMessageHandlerContext {
+	readonly session: Session;
+	readonly db: Database;
+	readonly messageHub: MessageHub;
+	readonly daemonHub: DaemonHub;
+	readonly stateManager: ProcessingStateManager;
+	readonly contextTracker: ContextTracker;
+	readonly messageQueue: MessageQueue;
+	readonly checkpointTracker: CheckpointTracker;
+
+	// Dependencies for circuit breaker trip handling
+	readonly errorManager: ErrorManager;
+	readonly lifecycleManager: QueryLifecycleManager;
+
+	// Mutable query state (needed to check if query is running)
+	queryObject: Query | null;
+	queryPromise: Promise<void> | null;
+}
 
 export class SDKMessageHandler {
 	private sdkMessageDeltaVersion: number = 0;
@@ -41,55 +75,18 @@ export class SDKMessageHandler {
 	// Track UUIDs of internal /context commands to skip their result messages
 	private internalContextCommandIds: Set<string> = new Set();
 
-	// Callback to queue messages (will be set by AgentSession)
-	// Returns the message UUID so we can track internal commands
-	private queueMessage?: (content: string, internal: boolean) => Promise<string>;
-
-	// Callback to stop the query when circuit breaker trips
-	private onCircuitBreakerTrip?: (reason: string, userMessage: string) => Promise<void>;
-
-	// Callback to process message for checkpoint tracking
-	private onCheckpointMessage?: (message: SDKMessage) => void;
-
-	constructor(
-		private session: Session,
-		private db: Database,
-		private messageHub: MessageHub,
-		private daemonHub: DaemonHub,
-		private stateManager: ProcessingStateManager,
-		private contextTracker: ContextTracker
-	) {
+	constructor(private ctx: SDKMessageHandlerContext) {
+		const { session } = ctx;
 		this.logger = new Logger(`SDKMessageHandler ${session.id}`);
 		this.contextFetcher = new ContextFetcher(session.id);
 		this.circuitBreaker = new ApiErrorCircuitBreaker(session.id);
 
-		// Set up circuit breaker callback
+		// Set up circuit breaker callback - fully internalized
 		this.circuitBreaker.setOnTripCallback(async (reason, errorCount) => {
 			const userMessage = this.circuitBreaker.getTripMessage();
 			this.logger.log(`Circuit breaker tripped: ${reason} (${errorCount} errors)`);
-
-			if (this.onCircuitBreakerTrip) {
-				await this.onCircuitBreakerTrip(reason, userMessage);
-			}
+			await this.handleCircuitBreakerTrip(reason, userMessage);
 		});
-	}
-
-	/**
-	 * Set callback to execute when circuit breaker trips
-	 * Called by AgentSession to enable stopping the query on fatal errors
-	 */
-	setCircuitBreakerTripCallback(
-		callback: (reason: string, userMessage: string) => Promise<void>
-	): void {
-		this.onCircuitBreakerTrip = callback;
-	}
-
-	/**
-	 * Set callback to process messages for checkpoint tracking
-	 * Called by AgentSession to enable checkpoint creation for rewind
-	 */
-	setCheckpointCallback(callback: (message: SDKMessage) => void): void {
-		this.onCheckpointMessage = callback;
 	}
 
 	/**
@@ -107,11 +104,81 @@ export class SDKMessageHandler {
 	}
 
 	/**
-	 * Set the message queue callback
-	 * Called by AgentSession to enable automatic context fetching
+	 * Handle circuit breaker trip (error loop detected)
+	 *
+	 * This is called when the circuit breaker detects repeated API errors.
+	 * It stops the session and displays an error message to the user.
+	 * Unlike normal reset, this does NOT:
+	 * - Preserve cost tracking
+	 * - Restart the query
+	 * - Publish session.reset notification
 	 */
-	setQueueMessageCallback(callback: (content: string, internal: boolean) => Promise<string>): void {
-		this.queueMessage = callback;
+	private async handleCircuitBreakerTrip(reason: string, userMessage: string): Promise<void> {
+		const { session, stateManager, messageQueue, daemonHub, errorManager, lifecycleManager } =
+			this.ctx;
+		this.logger.log(`Handling circuit breaker trip: ${reason}`);
+
+		try {
+			// Clear state before stopping
+			messageQueue.clear();
+			this.resetCircuitBreaker();
+			await daemonHub.emit('session.errorClear', { sessionId: session.id });
+
+			// Stop the query (if running)
+			if (this.ctx.queryObject || this.ctx.queryPromise) {
+				await lifecycleManager.stop({ catchQueryErrors: true });
+			}
+
+			// Reset to idle state
+			await stateManager.setIdle();
+
+			// Display error message as assistant message
+			await this.displayErrorAsAssistantMessage(
+				`⚠️ **Session Stopped: Error Loop Detected**\n\n${userMessage}\n\n` +
+					`The agent has been automatically stopped to prevent further errors.`
+			);
+
+			// Report to error manager
+			await errorManager.handleError(
+				session.id,
+				new Error(`Circuit breaker tripped: ${reason}`),
+				ErrorCategory.SYSTEM,
+				userMessage,
+				stateManager.getState(),
+				{ circuitBreakerReason: reason }
+			);
+		} catch (error) {
+			this.logger.error('Error handling circuit breaker trip:', error);
+			await stateManager.setIdle();
+		}
+	}
+
+	/**
+	 * Display error as synthetic assistant message
+	 *
+	 * Creates and persists an assistant message to show errors in the chat UI.
+	 */
+	private async displayErrorAsAssistantMessage(text: string): Promise<void> {
+		const { session, db, messageHub } = this.ctx;
+
+		const assistantMessage: SDKMessage = {
+			type: 'assistant' as const,
+			uuid: generateUUID() as UUID,
+			session_id: session.id,
+			parent_tool_use_id: null,
+			message: {
+				role: 'assistant' as const,
+				content: [{ type: 'text' as const, text }],
+			},
+		};
+
+		db.saveSDKMessage(session.id, assistantMessage);
+
+		await messageHub.publish(
+			'state.sdkMessages.delta',
+			{ added: [assistantMessage], timestamp: Date.now() },
+			{ sessionId: session.id }
+		);
 	}
 
 	/**
@@ -121,6 +188,8 @@ export class SDKMessageHandler {
 	 * complete messages, not incremental stream_event tokens.
 	 */
 	async handleMessage(message: SDKMessage): Promise<void> {
+		const { session, db, messageHub, stateManager, checkpointTracker } = this.ctx;
+
 		// Check for API error patterns that indicate an infinite loop
 		// This MUST happen BEFORE any other processing to catch errors early
 		const circuitBreakerTripped = await this.circuitBreaker.checkMessage(message);
@@ -132,7 +201,7 @@ export class SDKMessageHandler {
 		}
 
 		// Automatically update phase based on message type
-		await this.stateManager.detectPhaseFromMessage(message);
+		await stateManager.detectPhaseFromMessage(message);
 
 		// Check if this is a /context response BEFORE saving/emitting
 		// /context responses should be processed for context tracking but NOT saved to DB or shown in UI
@@ -174,7 +243,7 @@ export class SDKMessageHandler {
 
 		// Save to DB FIRST before broadcasting to clients
 		// This ensures we only broadcast messages that are successfully persisted
-		const savedSuccessfully = this.db.saveSDKMessage(this.session.id, message);
+		const savedSuccessfully = db.saveSDKMessage(session.id, message);
 
 		if (!savedSuccessfully) {
 			// Log warning but continue - message is already in SDK's memory
@@ -185,24 +254,22 @@ export class SDKMessageHandler {
 
 		// Process message for checkpoint tracking (after successful save)
 		// User messages with UUIDs become checkpoints for the rewind feature
-		if (this.onCheckpointMessage) {
-			try {
-				this.onCheckpointMessage(message);
-			} catch (error) {
-				// Log error but don't fail the message processing
-				this.logger.warn('Failed to process checkpoint:', error);
-			}
+		try {
+			checkpointTracker.processMessage(message);
+		} catch (error) {
+			// Log error but don't fail the message processing
+			this.logger.warn('Failed to process checkpoint:', error);
 		}
 
 		// Broadcast SDK message delta (only channel - sdk.message removed as redundant)
-		await this.messageHub.publish(
+		await messageHub.publish(
 			'state.sdkMessages.delta',
 			{
 				added: [message],
 				timestamp: Date.now(),
 				version: ++this.sdkMessageDeltaVersion,
 			},
-			{ sessionId: this.session.id }
+			{ sessionId: session.id }
 		);
 
 		// Handle specific message types
@@ -231,25 +298,27 @@ export class SDKMessageHandler {
 	 * Handle system message (capture SDK session ID)
 	 */
 	private async handleSystemMessage(message: SDKMessage): Promise<void> {
+		const { session, db, daemonHub } = this.ctx;
+
 		if (!isSDKSystemMessage(message)) return;
 
 		// Capture SDK's internal session ID if we don't have it yet
 		// This enables session resumption after daemon restart
-		if (!this.session.sdkSessionId && message.session_id) {
+		if (!session.sdkSessionId && message.session_id) {
 			this.logger.log(`Captured SDK session ID: ${message.session_id}`);
 
 			// Update in-memory session
-			this.session.sdkSessionId = message.session_id;
+			session.sdkSessionId = message.session_id;
 
 			// Persist to database
-			this.db.updateSession(this.session.id, {
+			db.updateSession(session.id, {
 				sdkSessionId: message.session_id,
 			});
 
 			// Emit session.updated event so StateManager broadcasts the change
 			// Include data for decoupled state management
-			await this.daemonHub.emit('session.updated', {
-				sessionId: this.session.id,
+			await daemonHub.emit('session.updated', {
+				sessionId: session.id,
 				source: 'sdk-session',
 				session: { sdkSessionId: message.session_id },
 			});
@@ -260,6 +329,8 @@ export class SDKMessageHandler {
 	 * Handle result message (end of turn)
 	 */
 	private async handleResultMessage(message: SDKMessage): Promise<void> {
+		const { session, db, daemonHub, contextTracker, stateManager, messageQueue } = this.ctx;
+
 		// Type guard to ensure this is a successful result
 		if (!isSDKResultSuccess(message)) return;
 
@@ -271,8 +342,8 @@ export class SDKMessageHandler {
 		// (e.g., after errors or manual reset). We detect resets by comparing to lastSdkCost.
 		// Example sequence: 0.42 -> 0.73 -> 1.1 (cumulative) -> RESET -> 0.25 -> 0.50 (cumulative again)
 		const sdkCost = message.total_cost_usd || 0;
-		const lastSdkCost = this.session.metadata?.lastSdkCost || 0;
-		const costBaseline = this.session.metadata?.costBaseline || 0;
+		const lastSdkCost = session.metadata?.lastSdkCost || 0;
+		const costBaseline = session.metadata?.costBaseline || 0;
 
 		// Detect SDK reset: if current cost < last cost, SDK was restarted
 		// Save previous cumulative cost as new baseline
@@ -285,34 +356,34 @@ export class SDKMessageHandler {
 		// Total cost = baseline (from previous runs) + current SDK cost (cumulative within this run)
 		const totalCost = newCostBaseline + sdkCost;
 
-		this.session.lastActiveAt = new Date().toISOString();
-		this.session.metadata = {
-			...this.session.metadata,
-			messageCount: (this.session.metadata?.messageCount || 0) + 1,
-			totalTokens: (this.session.metadata?.totalTokens || 0) + totalTokens,
-			inputTokens: (this.session.metadata?.inputTokens || 0) + usage.input_tokens,
-			outputTokens: (this.session.metadata?.outputTokens || 0) + usage.output_tokens,
+		session.lastActiveAt = new Date().toISOString();
+		session.metadata = {
+			...session.metadata,
+			messageCount: (session.metadata?.messageCount || 0) + 1,
+			totalTokens: (session.metadata?.totalTokens || 0) + totalTokens,
+			inputTokens: (session.metadata?.inputTokens || 0) + usage.input_tokens,
+			outputTokens: (session.metadata?.outputTokens || 0) + usage.output_tokens,
 			// Total cost across all runs (baseline + current SDK cumulative)
 			totalCost,
-			toolCallCount: this.session.metadata?.toolCallCount || 0,
+			toolCallCount: session.metadata?.toolCallCount || 0,
 			// Track SDK state for reset detection
 			lastSdkCost: sdkCost,
 			costBaseline: newCostBaseline,
 		};
 
-		this.db.updateSession(this.session.id, {
-			lastActiveAt: this.session.lastActiveAt,
-			metadata: this.session.metadata,
+		db.updateSession(session.id, {
+			lastActiveAt: session.lastActiveAt,
+			metadata: session.metadata,
 		});
 
 		// Emit session.updated event so StateManager broadcasts the change
 		// Include data for decoupled state management
-		await this.daemonHub.emit('session.updated', {
-			sessionId: this.session.id,
+		await daemonHub.emit('session.updated', {
+			sessionId: session.id,
 			source: 'metadata',
 			session: {
-				lastActiveAt: this.session.lastActiveAt,
-				metadata: this.session.metadata,
+				lastActiveAt: session.lastActiveAt,
+				metadata: session.metadata,
 			},
 		});
 
@@ -320,7 +391,7 @@ export class SDKMessageHandler {
 		// SKIP for /context command's result - /context doesn't call the API, so it has 0 tokens
 		// We already have the correct context from parsing the /context response
 		if (!this.lastMessageWasContextResponse) {
-			await this.contextTracker.handleResultUsage(
+			await contextTracker.handleResultUsage(
 				{
 					input_tokens: usage.input_tokens,
 					output_tokens: usage.output_tokens,
@@ -335,10 +406,10 @@ export class SDKMessageHandler {
 		// CRITICAL: Check flag to prevent infinite loop!
 		// /context produces its own result message, so we must skip queuing another
 		// Note: flag is reset when we process the result message (see early return above)
-		if (!this.lastMessageWasContextResponse && this.queueMessage) {
+		if (!this.lastMessageWasContextResponse) {
 			try {
 				// Queue as internal message (won't be saved to DB or broadcast as user message)
-				const messageId = await this.queueMessage('/context', true);
+				const messageId = await messageQueue.enqueue('/context', true);
 				// Track this ID so we can skip the result message
 				this.internalContextCommandIds.add(messageId);
 				this.logger.log(`Queued /context for detailed breakdown (ID: ${messageId})`);
@@ -358,13 +429,13 @@ export class SDKMessageHandler {
 
 		// Clear any session errors since we successfully completed a turn
 		// This resolves persistent error banners that weren't being cleared
-		await this.daemonHub.emit('session.errorClear', {
-			sessionId: this.session.id,
+		await daemonHub.emit('session.errorClear', {
+			sessionId: session.id,
 		});
 
 		// Set state back to idle
 		// Note: Title generation now handled by TitleGenerationQueue (decoupled via EventBus)
-		await this.stateManager.setIdle();
+		await stateManager.setIdle();
 	}
 
 	/**
@@ -374,24 +445,26 @@ export class SDKMessageHandler {
 	 * AskUserQuestionHandler, not here. The SDK intercepts it BEFORE execution.
 	 */
 	private async handleAssistantMessage(message: SDKMessage): Promise<void> {
+		const { session, db, daemonHub } = this.ctx;
+
 		if (!isSDKAssistantMessage(message)) return;
 
 		const toolCalls = message.message.content.filter(isToolUseBlock);
 		if (toolCalls.length > 0) {
-			this.session.metadata = {
-				...this.session.metadata,
-				toolCallCount: (this.session.metadata?.toolCallCount || 0) + toolCalls.length,
+			session.metadata = {
+				...session.metadata,
+				toolCallCount: (session.metadata?.toolCallCount || 0) + toolCalls.length,
 			};
-			this.db.updateSession(this.session.id, {
-				metadata: this.session.metadata,
+			db.updateSession(session.id, {
+				metadata: session.metadata,
 			});
 
 			// Emit session.updated event so StateManager broadcasts the change
 			// Include data for decoupled state management
-			await this.daemonHub.emit('session.updated', {
-				sessionId: this.session.id,
+			await daemonHub.emit('session.updated', {
+				sessionId: session.id,
 				source: 'metadata',
-				session: { metadata: this.session.metadata },
+				session: { metadata: session.metadata },
 			});
 		}
 	}
@@ -400,13 +473,15 @@ export class SDKMessageHandler {
 	 * Handle status message (detect compaction start)
 	 */
 	private async handleStatusMessage(message: SDKMessage): Promise<void> {
+		const { stateManager } = this.ctx;
+
 		if (!isSDKStatusMessage(message)) return;
 
 		const statusMsg = message as { status: string | null };
 		if (statusMsg.status === 'compacting') {
 			this.logger.log('Context compaction started (auto)');
 			// Set isCompacting flag on processing state (flows through state.session)
-			await this.stateManager.setCompacting(true);
+			await stateManager.setCompacting(true);
 		}
 	}
 
@@ -414,6 +489,8 @@ export class SDKMessageHandler {
 	 * Handle compact boundary message (compaction completed)
 	 */
 	private async handleCompactBoundary(message: SDKMessage): Promise<void> {
+		const { stateManager } = this.ctx;
+
 		if (!isSDKCompactBoundary(message)) return;
 
 		const compactMsg = message as {
@@ -429,7 +506,7 @@ export class SDKMessageHandler {
 		);
 
 		// Clear isCompacting flag on processing state (flows through state.session)
-		await this.stateManager.setCompacting(false);
+		await stateManager.setCompacting(false);
 	}
 
 	/**
@@ -437,6 +514,8 @@ export class SDKMessageHandler {
 	 * Parse the detailed breakdown and merge with stream-based context tracking
 	 */
 	private async handleContextResponse(message: SDKMessage): Promise<void> {
+		const { session, daemonHub, contextTracker } = this.ctx;
+
 		this.logger.log('Processing /context response...');
 
 		const parsedContext = this.contextFetcher.parseContextResponse(message);
@@ -446,18 +525,18 @@ export class SDKMessageHandler {
 		}
 
 		// Merge with stream-based context
-		const streamContext = this.contextTracker.getContextInfo();
+		const streamContext = contextTracker.getContextInfo();
 		const mergedContext = this.contextFetcher.mergeWithStreamContext(parsedContext, streamContext);
 
 		// Update ContextTracker with merged data
 		// This makes it the source of truth for context info
 		// The tracker will persist to session metadata and emit the context:updated event
-		this.contextTracker.updateWithDetailedBreakdown(mergedContext);
+		contextTracker.updateWithDetailedBreakdown(mergedContext);
 
 		// Emit context update event via DaemonHub
 		// StateManager will broadcast this via state.session channel
-		await this.daemonHub.emit('context.updated', {
-			sessionId: this.session.id,
+		await daemonHub.emit('context.updated', {
+			sessionId: session.id,
 			contextInfo: mergedContext,
 		});
 	}

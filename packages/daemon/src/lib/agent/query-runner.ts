@@ -30,7 +30,7 @@ const STARTUP_TIMEOUT_MS = 15000; // 15 seconds - enough for CI load
 /**
  * Original environment variables for restoration after SDK query
  */
-interface OriginalEnvVars {
+export interface OriginalEnvVars {
 	ANTHROPIC_AUTH_TOKEN?: string;
 	ANTHROPIC_BASE_URL?: string;
 	API_TIMEOUT_MS?: string;
@@ -41,56 +41,52 @@ interface OriginalEnvVars {
 }
 
 /**
- * Dependencies required for QueryRunner
+ * Context interface - what QueryRunner needs from AgentSession
+ * Handlers take AgentSession instance directly via this context pattern
  */
-export interface QueryRunnerDependencies {
-	session: Session;
-	db: Database;
-	messageHub: MessageHub;
-	messageQueue: MessageQueue;
-	stateManager: ProcessingStateManager;
-	errorManager: ErrorManager;
-	logger: Logger;
-	optionsBuilder: QueryOptionsBuilder;
-	askUserQuestionHandler: AskUserQuestionHandler;
+export interface QueryRunnerContext {
+	// Core dependencies (readonly)
+	readonly session: Session;
+	readonly db: Database;
+	readonly messageHub: MessageHub;
+	readonly messageQueue: MessageQueue;
+	readonly stateManager: ProcessingStateManager;
+	readonly errorManager: ErrorManager;
+	readonly logger: Logger;
+	readonly optionsBuilder: QueryOptionsBuilder;
+	readonly askUserQuestionHandler: AskUserQuestionHandler;
 
-	// Callbacks for state coordination with AgentSession
-	getQueryGeneration: () => number;
-	incrementQueryGeneration: () => number;
-	getFirstMessageReceived: () => boolean;
-	setFirstMessageReceived: (value: boolean) => void;
-	setQueryObject: (q: Query | null) => void;
-	setQueryPromise: (p: Promise<void> | null) => void;
-	setQueryAbortController: (c: AbortController | null) => void;
-	getQueryAbortController: () => AbortController | null;
-	setStartupTimeoutTimer: (t: ReturnType<typeof setTimeout> | null) => void;
-	getStartupTimeoutTimer: () => ReturnType<typeof setTimeout> | null;
-	setOriginalEnvVars: (vars: OriginalEnvVars) => void;
-	getOriginalEnvVars: () => OriginalEnvVars;
-	isCleaningUp: () => boolean;
+	// Mutable SDK state (accessed directly)
+	queryObject: Query | null;
+	queryPromise: Promise<void> | null;
+	queryAbortController: AbortController | null;
+	firstMessageReceived: boolean;
+	startupTimeoutTimer: ReturnType<typeof setTimeout> | null;
+	originalEnvVars: OriginalEnvVars;
+
+	// Methods for state coordination
+	incrementQueryGeneration(): number;
+	getQueryGeneration(): number;
+	isCleaningUp(): boolean;
 
 	// Callbacks for message handling
-	onSDKMessage: (message: SDKMessage, queuedMessages?: SDKMessage[]) => Promise<void>;
-	onSlashCommandsFetched: () => Promise<void>;
-	onModelsFetched: () => Promise<void>;
-	onMarkApiSuccess: () => Promise<void>;
+	onSDKMessage(message: SDKMessage, queuedMessages?: SDKMessage[]): Promise<void>;
+	onSlashCommandsFetched(): Promise<void>;
+	onModelsFetched(): Promise<void>;
+	onMarkApiSuccess(): Promise<void>;
 }
 
 /**
  * Runs SDK queries with streaming input mode
  */
 export class QueryRunner {
-	private deps: QueryRunnerDependencies;
-
-	constructor(deps: QueryRunnerDependencies) {
-		this.deps = deps;
-	}
+	constructor(private ctx: QueryRunnerContext) {}
 
 	/**
 	 * Start the streaming query (called from AgentSession.startStreamingQuery)
 	 */
 	async start(): Promise<void> {
-		const { messageQueue, logger } = this.deps;
+		const { messageQueue, logger } = this.ctx;
 
 		if (messageQueue.isRunning()) {
 			logger.log('Query already running, skipping start');
@@ -101,22 +97,22 @@ export class QueryRunner {
 		messageQueue.start();
 
 		// Increment query generation for this new query
-		const currentGeneration = this.deps.incrementQueryGeneration();
+		const currentGeneration = this.ctx.incrementQueryGeneration();
 		logger.log(`Starting query with generation ${currentGeneration}`);
 
 		// Reset firstMessageReceived flag for new query
-		this.deps.setFirstMessageReceived(false);
+		this.ctx.firstMessageReceived = false;
 		logger.log('Reset firstMessageReceived flag for new query');
 
 		// Store query promise for cleanup
-		this.deps.setQueryPromise(this.runQuery(currentGeneration));
+		this.ctx.queryPromise = this.runQuery(currentGeneration);
 	}
 
 	/**
 	 * Run the query (main execution loop)
 	 */
 	private async runQuery(queryGeneration: number): Promise<void> {
-		const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.deps;
+		const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
 
 		try {
 			// Verify authentication
@@ -161,14 +157,14 @@ export class QueryRunner {
 			}
 
 			// Build query options
-			optionsBuilder.setCanUseTool(this.deps.askUserQuestionHandler.createCanUseToolCallback());
+			optionsBuilder.setCanUseTool(this.ctx.askUserQuestionHandler.createCanUseToolCallback());
 			let queryOptions = await optionsBuilder.build();
 			queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
 
 			// Apply provider env vars
 			const modelId = session.config.model || 'default';
 			const originalEnvVars = providerService.applyEnvVarsToProcess(modelId);
-			this.deps.setOriginalEnvVars(originalEnvVars);
+			this.ctx.originalEnvVars = originalEnvVars;
 
 			const provider = providerRegistry.detectProvider(modelId);
 			if (provider && provider.id === 'glm') {
@@ -180,14 +176,14 @@ export class QueryRunner {
 				prompt: this.createMessageGeneratorWrapper(),
 				options: queryOptions,
 			});
-			this.deps.setQueryObject(queryObject);
+			this.ctx.queryObject = queryObject;
 
 			// Set up startup timeout
 			const queryStartTime = Date.now();
 			let startupTimeoutReached = false;
 
 			const startupTimer = setTimeout(() => {
-				if (!this.deps.getFirstMessageReceived()) {
+				if (!this.ctx.firstMessageReceived) {
 					startupTimeoutReached = true;
 					const elapsed = Date.now() - queryStartTime;
 					logger.error(
@@ -195,19 +191,19 @@ export class QueryRunner {
 							`Model: ${queryOptions.model}, Workspace: ${session.workspacePath}` +
 							(session.worktree ? ` (worktree: ${session.worktree.worktreePath})` : '')
 					);
-					this.deps.setQueryPromise(null);
+					this.ctx.queryPromise = null;
 					stateManager.setIdle().catch((e) => logger.warn('Failed to set idle:', e));
 				}
 			}, STARTUP_TIMEOUT_MS);
-			this.deps.setStartupTimeoutTimer(startupTimer);
+			this.ctx.startupTimeoutTimer = startupTimer;
 
 			logger.log('Processing SDK stream...');
 
 			// Fetch slash commands and models in background
-			this.deps.onSlashCommandsFetched().catch((e) => {
+			this.ctx.onSlashCommandsFetched().catch((e) => {
 				logger.warn('Background fetch of slash commands failed:', e);
 			});
-			this.deps.onModelsFetched().catch((e) => {
+			this.ctx.onModelsFetched().catch((e) => {
 				logger.warn('Background fetch of models failed:', e);
 			});
 
@@ -217,7 +213,7 @@ export class QueryRunner {
 
 			// Create abort controller for this query
 			const abortController = new AbortController();
-			this.deps.setQueryAbortController(abortController);
+			this.ctx.queryAbortController = abortController;
 
 			let messageCount = 0;
 
@@ -229,14 +225,14 @@ export class QueryRunner {
 				messageCount++;
 
 				// Clear startup timeout on first message
-				const timer = this.deps.getStartupTimeoutTimer();
+				const timer = this.ctx.startupTimeoutTimer;
 				if (timer && messageCount === 1) {
 					clearTimeout(timer);
-					this.deps.setStartupTimeoutTimer(null);
+					this.ctx.startupTimeoutTimer = null;
 					logger.log(`SDK first message received after ${Date.now() - queryStartTime}ms`);
 				}
 
-				this.deps.setFirstMessageReceived(true);
+				this.ctx.firstMessageReceived = true;
 
 				try {
 					await this.handleSDKMessage(message as SDKMessage);
@@ -314,39 +310,39 @@ export class QueryRunner {
 			}
 		} finally {
 			// Cleanup abort controller
-			const abortController = this.deps.getQueryAbortController();
+			const abortController = this.ctx.queryAbortController;
 			if (abortController) {
 				abortController.abort();
-				this.deps.setQueryAbortController(null);
+				this.ctx.queryAbortController = null;
 			}
 
 			// Check for stale query
-			const isStaleQuery = this.deps.getQueryGeneration() !== queryGeneration;
+			const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
 
 			if (!isStaleQuery) {
 				messageQueue.stop();
-				this.deps.setQueryPromise(null);
+				this.ctx.queryPromise = null;
 
 				// Restore original env vars
-				const originalEnvVars = this.deps.getOriginalEnvVars();
+				const originalEnvVars = this.ctx.originalEnvVars;
 				if (Object.keys(originalEnvVars).length > 0) {
 					const { getProviderService: getProviderServiceRestore } = await import(
 						'../provider-service'
 					);
 					const providerServiceRestore = getProviderServiceRestore();
 					providerServiceRestore.restoreEnvVars(originalEnvVars);
-					this.deps.setOriginalEnvVars({});
+					this.ctx.originalEnvVars = {};
 					logger.log('Restored original environment variables after SDK query');
 				}
 
-				if (!this.deps.isCleaningUp()) {
+				if (!this.ctx.isCleaningUp()) {
 					await stateManager.setIdle();
 				}
 
 				logger.log(`Streaming query stopped (generation ${queryGeneration})`);
 			} else {
 				logger.log(
-					`Skipping all cleanup in finally block - stale query detected (generation ${queryGeneration} != current ${this.deps.getQueryGeneration()})`
+					`Skipping all cleanup in finally block - stale query detected (generation ${queryGeneration} != current ${this.ctx.getQueryGeneration()})`
 				);
 			}
 		}
@@ -354,9 +350,10 @@ export class QueryRunner {
 
 	/**
 	 * Create wrapper for MessageQueue's AsyncGenerator
+	 * Public for testing
 	 */
-	private async *createMessageGeneratorWrapper() {
-		const { session, messageQueue, stateManager } = this.deps;
+	async *createMessageGeneratorWrapper() {
+		const { session, messageQueue, stateManager } = this.ctx;
 
 		for await (const { message, onSent } of messageQueue.messageGenerator(session.id)) {
 			const queuedMessage = message as typeof message & { internal?: boolean };
@@ -373,9 +370,10 @@ export class QueryRunner {
 
 	/**
 	 * Handle incoming SDK message
+	 * Public for testing
 	 */
-	private async handleSDKMessage(message: SDKMessage): Promise<void> {
-		const { session, db, logger } = this.deps;
+	async handleSDKMessage(message: SDKMessage): Promise<void> {
+		const { session, db, logger } = this.ctx;
 
 		// Mark queued messages as 'sent' when we receive system:init
 		if (isSDKSystemMessage(message) && message.subtype === 'init') {
@@ -390,18 +388,19 @@ export class QueryRunner {
 		}
 
 		// Delegate to callback
-		await this.deps.onSDKMessage(message);
-		await this.deps.onMarkApiSuccess();
+		await this.ctx.onSDKMessage(message);
+		await this.ctx.onMarkApiSuccess();
 	}
 
 	/**
 	 * Create an abortable async iterator wrapper
+	 * Public for testing
 	 */
-	private async *createAbortableQuery(
+	async *createAbortableQuery(
 		queryObj: Query,
 		signal: AbortSignal
 	): AsyncGenerator<unknown, void, unknown> {
-		const { logger } = this.deps;
+		const { logger } = this.ctx;
 		const iterator = queryObj[Symbol.asyncIterator]();
 		const abortError = new Error('Query aborted');
 
@@ -467,7 +466,7 @@ export class QueryRunner {
 	 * Handle API validation errors (400-level)
 	 */
 	private async handleApiValidationError(error: unknown): Promise<boolean> {
-		const { logger } = this.deps;
+		const { logger } = this.ctx;
 
 		try {
 			const errorMessage = error instanceof Error ? error.message : String(error);
@@ -511,7 +510,7 @@ export class QueryRunner {
 		text: string,
 		options?: { markAsError?: boolean }
 	): Promise<void> {
-		const { session, db, messageHub } = this.deps;
+		const { session, db, messageHub } = this.ctx;
 
 		const assistantMessage: SDKMessage = {
 			type: 'assistant' as const,

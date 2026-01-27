@@ -2,6 +2,8 @@
  * SDKRuntimeConfig - Runtime SDK configuration management
  *
  * Extracted from AgentSession to reduce complexity.
+ * Takes AgentSession instance directly - handlers are internal parts of AgentSession.
+ *
  * Handles:
  * - setMaxThinkingTokens - Adjust thinking tokens at runtime
  * - setPermissionMode - Change permission mode
@@ -12,26 +14,29 @@
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type { Session } from '@liuboer/shared';
 import type { DaemonHub } from '../daemon-hub';
-import { Database } from '../../storage/database';
-import { Logger } from '../logger';
+import type { Database } from '../../storage/database';
+import type { Logger } from '../logger';
 import type { SettingsManager } from '../settings-manager';
 import type { MessageQueue } from './message-queue';
 
 /**
- * Dependencies required for SDKRuntimeConfig
+ * Context interface - what SDKRuntimeConfig needs from AgentSession
+ * Using interface instead of importing AgentSession to avoid circular deps
  */
-export interface SDKRuntimeConfigDependencies {
-	session: Session;
-	db: Database;
-	daemonHub: DaemonHub;
-	settingsManager: SettingsManager;
-	messageQueue: MessageQueue;
-	logger: Logger;
+export interface SDKRuntimeConfigContext {
+	readonly session: Session;
+	readonly db: Database;
+	readonly daemonHub: DaemonHub;
+	readonly settingsManager: SettingsManager;
+	readonly messageQueue: MessageQueue;
+	readonly logger: Logger;
 
-	// State accessors
-	getQueryObject: () => Query | null;
-	isTransportReady: () => boolean;
-	restartQuery: () => Promise<void>;
+	// SDK state
+	readonly queryObject: Query | null;
+	readonly firstMessageReceived: boolean;
+
+	// Method to restart query (needs to be a method, not a simple property)
+	restartQuery(): Promise<void>;
 }
 
 /**
@@ -55,26 +60,19 @@ interface McpServerStatus {
  * Manages SDK runtime configuration
  */
 export class SDKRuntimeConfig {
-	private deps: SDKRuntimeConfigDependencies;
-
-	constructor(deps: SDKRuntimeConfigDependencies) {
-		this.deps = deps;
-	}
+	constructor(private ctx: SDKRuntimeConfigContext) {}
 
 	/**
 	 * Set max thinking tokens at runtime
 	 */
 	async setMaxThinkingTokens(tokens: number | null): Promise<ConfigUpdateResult> {
-		const { session, db, daemonHub, logger } = this.deps;
+		const { session, db, daemonHub, logger, queryObject, firstMessageReceived } = this.ctx;
 
 		logger.log(`Setting max thinking tokens to: ${tokens}`);
 
 		try {
-			const queryObject = this.deps.getQueryObject();
-			const transportReady = this.deps.isTransportReady();
-
 			// If query not running or transport not ready, just update config
-			if (!queryObject || !transportReady) {
+			if (!queryObject || !firstMessageReceived) {
 				session.config.maxThinkingTokens = tokens;
 				db.updateSession(session.id, { config: session.config });
 				logger.log('Max thinking tokens saved to config (query not active)');
@@ -112,16 +110,13 @@ export class SDKRuntimeConfig {
 	 * Set permission mode at runtime
 	 */
 	async setPermissionMode(mode: string): Promise<ConfigUpdateResult> {
-		const { session, db, daemonHub, logger } = this.deps;
+		const { session, db, daemonHub, logger, queryObject, firstMessageReceived } = this.ctx;
 
 		logger.log(`Setting permission mode to: ${mode}`);
 
 		try {
-			const queryObject = this.deps.getQueryObject();
-			const transportReady = this.deps.isTransportReady();
-
 			// If query not running or transport not ready, just update config
-			if (!queryObject || !transportReady) {
+			if (!queryObject || !firstMessageReceived) {
 				session.config.permissionMode = mode as Session['config']['permissionMode'];
 				db.updateSession(session.id, { config: session.config });
 				logger.log('Permission mode saved to config (query not active)');
@@ -159,11 +154,9 @@ export class SDKRuntimeConfig {
 	 * Get MCP server status from SDK
 	 */
 	async getMcpServerStatus(): Promise<McpServerStatus[]> {
-		const { logger } = this.deps;
-		const queryObject = this.deps.getQueryObject();
-		const transportReady = this.deps.isTransportReady();
+		const { logger, queryObject, firstMessageReceived } = this.ctx;
 
-		if (!queryObject || !transportReady) {
+		if (!queryObject || !firstMessageReceived) {
 			return [];
 		}
 
@@ -185,7 +178,7 @@ export class SDKRuntimeConfig {
 	 * Update tools configuration and restart query to apply changes
 	 */
 	async updateToolsConfig(tools: Session['config']['tools']): Promise<ConfigUpdateResult> {
-		const { session, db, daemonHub, settingsManager, messageQueue, logger } = this.deps;
+		const { session, db, daemonHub, settingsManager, messageQueue, logger } = this.ctx;
 
 		try {
 			logger.log('Updating tools config:', tools);
@@ -201,7 +194,7 @@ export class SDKRuntimeConfig {
 				await settingsManager.setDisabledMcpServers(tools.disabledMcpServers);
 
 				// Restart query to reload MCP settings
-				await this.deps.restartQuery();
+				await this.ctx.restartQuery();
 			}
 
 			// 3. Queue /context to get updated context breakdown

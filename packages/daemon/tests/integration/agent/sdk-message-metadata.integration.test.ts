@@ -9,12 +9,17 @@
  * 2. Tool call count broadcasting (assistant messages)
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
 import type { MessageHub } from '@liuboer/shared';
 import { generateUUID } from '@liuboer/shared';
 import { ProcessingStateManager } from '../../../src/lib/agent/processing-state-manager';
-import { SDKMessageHandler } from '../../../src/lib/agent/sdk-message-handler';
+import {
+	SDKMessageHandler,
+	type SDKMessageHandlerContext,
+} from '../../../src/lib/agent/sdk-message-handler';
 import { ContextTracker } from '../../../src/lib/agent/context-tracker';
+import type { MessageQueue } from '../../../src/lib/agent/message-queue';
+import type { CheckpointTracker } from '../../../src/lib/agent/checkpoint-tracker';
 import {
 	setupIntegrationTestEnv,
 	cleanupIntegrationTestEnv,
@@ -62,15 +67,31 @@ describe('SDK Message Metadata Broadcasting', () => {
 			// The handler will update the session object passed to it AND the DB
 			const workingSession = env.db.getSession(session.id)!;
 
-			// Create SDKMessageHandler
-			const messageHandler = new SDKMessageHandler(
-				workingSession,
-				env.db,
-				env.mockMessageHub as unknown as MessageHub,
-				env.daemonHub,
+			// Create mock MessageQueue
+			const mockMessageQueue = {
+				enqueue: mock(async () => generateUUID()),
+			} as unknown as MessageQueue;
+
+			// Create mock CheckpointTracker
+			const mockCheckpointTracker = {
+				processMessage: mock(() => {}),
+				getCheckpoints: mock(() => []),
+			} as unknown as CheckpointTracker;
+
+			// Create SDKMessageHandler context
+			const mockContext: SDKMessageHandlerContext = {
+				session: workingSession,
+				db: env.db,
+				messageHub: env.mockMessageHub as unknown as MessageHub,
+				daemonHub: env.daemonHub,
 				stateManager,
-				contextTracker
-			);
+				contextTracker,
+				messageQueue: mockMessageQueue,
+				checkpointTracker: mockCheckpointTracker,
+				handleCircuitBreakerTrip: mock(async () => {}),
+			};
+
+			const messageHandler = new SDKMessageHandler(mockContext);
 
 			// Simulate result message with token usage
 			const resultMessage = {
@@ -159,15 +180,31 @@ describe('SDK Message Metadata Broadcasting', () => {
 			// We need to get the session from DB and pass it to SDKMessageHandler
 			const workingSession = env.db.getSession(session.id)!;
 
-			// Create SDKMessageHandler
-			const messageHandler = new SDKMessageHandler(
-				workingSession,
-				env.db,
-				env.mockMessageHub as unknown as MessageHub,
-				env.daemonHub,
+			// Create mock MessageQueue
+			const mockMessageQueue = {
+				enqueue: mock(async () => generateUUID()),
+			} as unknown as MessageQueue;
+
+			// Create mock CheckpointTracker
+			const mockCheckpointTracker = {
+				processMessage: mock(() => {}),
+				getCheckpoints: mock(() => []),
+			} as unknown as CheckpointTracker;
+
+			// Create SDKMessageHandler context
+			const mockContext: SDKMessageHandlerContext = {
+				session: workingSession,
+				db: env.db,
+				messageHub: env.mockMessageHub as unknown as MessageHub,
+				daemonHub: env.daemonHub,
 				stateManager,
-				contextTracker
-			);
+				contextTracker,
+				messageQueue: mockMessageQueue,
+				checkpointTracker: mockCheckpointTracker,
+				handleCircuitBreakerTrip: mock(async () => {}),
+			};
+
+			const messageHandler = new SDKMessageHandler(mockContext);
 
 			// Simulate assistant message with tool calls
 			const assistantMessage = {
