@@ -1,9 +1,12 @@
 {
+	"name": "liuboer-core",
+	"private": true,
 	"type": "module",
 	"workspaces": [
 		"packages/*"
 	],
 	"scripts": {
+		"dev": "make dev",
 		"lint": "oxlint .",
 		"lint:fix": "oxlint --fix .",
 		"format": "biome format --write .",
@@ -21,11 +24,7 @@
 		"test:web:coverage": "cd packages/web && vitest run --coverage",
 		"test:shared": "cd packages/shared && bun test",
 		"test:cli": "cd packages/cli && bun test",
-		"cleanup:worktrees": "bash scripts/cleanup-worktrees.sh",
-		"cleanup:db": "cd packages/e2e && bash scripts/cleanup-test-db.sh",
-		"cleanup:all": "bun run cleanup:worktrees && bun run cleanup:db",
-		"test:e2e": "cd packages/e2e && playwright test",
-		"test:e2e:clean": "bun run cleanup:all && bun run test:e2e"
+		"test:e2e": "cd packages/e2e && playwright test"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.3.12",
