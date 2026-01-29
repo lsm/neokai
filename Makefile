@@ -1,4 +1,4 @@
-.PHONY: dev self other build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check
+.PHONY: dev self run build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check
 
 dev:
 	@echo "Starting development server..."
@@ -6,30 +6,25 @@ dev:
 	@lsof -ti:9283 | xargs kill -9 2>/dev/null || true
 	@NODE_ENV=development bun run packages/cli/main.ts --workspace tmp/workspace
 
-# Self-hosting mode - production build serving the current directory
+# Self-developing mode - production build serving the current directory on port 9983
+# This is a convenience wrapper around `make run`
 self:
-	@echo "🔄 Starting self-hosting server (production mode)..."
-	@echo "   Workspace: $(shell pwd)"
-	@echo "📦 Building web production bundle..."
-	@cd packages/web && bun run build
-	@mkdir -p $(shell pwd)/tmp/self-dev
-	@lsof -ti:9983 | xargs kill -9 2>/dev/null || true
-	@NODE_ENV=production bun run packages/cli/main.ts --port 9983 --workspace $(shell pwd)
+	@$(MAKE) run WORKSPACE=$(shell pwd) PORT=9983
 
-# Other workspace mode - production build with custom workspace and port
-# Usage: make other WORKSPACE=/path/to/workspace PORT=8080
-other:
+# Run production server with custom workspace and port
+# Usage: make run WORKSPACE=/path/to/workspace PORT=8080
+run:
 	@if [ -z "$(WORKSPACE)" ]; then \
 		echo "❌ Error: WORKSPACE parameter is required"; \
-		echo "Usage: make other WORKSPACE=/path/to/workspace PORT=8080"; \
+		echo "Usage: make run WORKSPACE=/path/to/workspace PORT=8080"; \
 		exit 1; \
 	fi
 	@if [ -z "$(PORT)" ]; then \
 		echo "❌ Error: PORT parameter is required"; \
-		echo "Usage: make other WORKSPACE=/path/to/workspace PORT=8080"; \
+		echo "Usage: make run WORKSPACE=/path/to/workspace PORT=8080"; \
 		exit 1; \
 	fi
-	@echo "🚀 Starting production server for custom workspace..."
+	@echo "🚀 Starting production server..."
 	@echo "   Workspace: $(WORKSPACE)"
 	@echo "   Listening on port $(PORT)"
 	@echo "📦 Building web production bundle..."
