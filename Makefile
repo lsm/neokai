@@ -6,17 +6,36 @@ dev:
 	@lsof -ti:9283 | xargs kill -9 2>/dev/null || true
 	@NODE_ENV=development bun run packages/cli/main.ts --workspace tmp/workspace
 
+# Self-hosting mode - production build serving the current directory
 self:
-	@echo "Starting self server on port 9983..."
-	@mkdir -p tmp/workspace
+	@echo "🔄 Starting self-hosting server (production mode)..."
+	@echo "   Workspace: $(shell pwd)"
+	@echo "📦 Building web production bundle..."
+	@cd packages/web && bun run build
+	@mkdir -p $(shell pwd)/tmp/self-dev
 	@lsof -ti:9983 | xargs kill -9 2>/dev/null || true
-	@NODE_ENV=development PORT=9983 bun run packages/cli/main.ts --workspace tmp/workspace
+	@NODE_ENV=production bun run packages/cli/main.ts --port 9983 --workspace $(shell pwd)
 
+# Other workspace mode - production build with custom workspace and port
+# Usage: make other WORKSPACE=/path/to/workspace PORT=8080
 other:
-	@echo "Starting other server on port 8283..."
-	@mkdir -p tmp/workspace
-	@lsof -ti:8283 | xargs kill -9 2>/dev/null || true
-	@NODE_ENV=development PORT=8283 bun run packages/cli/main.ts --workspace tmp/workspace
+	@if [ -z "$(WORKSPACE)" ]; then \
+		echo "❌ Error: WORKSPACE parameter is required"; \
+		echo "Usage: make other WORKSPACE=/path/to/workspace PORT=8080"; \
+		exit 1; \
+	fi
+	@if [ -z "$(PORT)" ]; then \
+		echo "❌ Error: PORT parameter is required"; \
+		echo "Usage: make other WORKSPACE=/path/to/workspace PORT=8080"; \
+		exit 1; \
+	fi
+	@echo "🚀 Starting production server for custom workspace..."
+	@echo "   Workspace: $(WORKSPACE)"
+	@echo "   Listening on port $(PORT)"
+	@echo "📦 Building web production bundle..."
+	@cd packages/web && bun run build
+	@lsof -ti:$(PORT) | xargs kill -9 2>/dev/null || true
+	@NODE_ENV=production bun run packages/cli/main.ts --port $(PORT) --workspace $(WORKSPACE)
 
 build:
 	@echo "Building web package..."
