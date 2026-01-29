@@ -34,8 +34,7 @@ bun install
 
 ```bash
 make dev          # Start dev server (port 9283)
-make test         # Run all tests
-make e2e          # Run E2E tests
+make self         # Use liuboer to develop liuboer :)
 make typecheck    # Type check
 make lint         # Lint code
 ```
