@@ -27,13 +27,12 @@ run:
 	@echo "🚀 Starting production server..."
 	@echo "   Workspace: $(WORKSPACE)"
 	@echo "   Listening on port $(PORT)"
-	@echo "📦 Building web production bundle..."
-	@cd packages/web && bun run build
+	@$(MAKE) build
 	@lsof -ti:$(PORT) | xargs kill -9 2>/dev/null || true
 	@NODE_ENV=production bun run packages/cli/main.ts --port $(PORT) --workspace $(WORKSPACE)
 
 build:
-	@echo "Building web package..."
+	@echo "📦 Building web production bundle..."
 	@cd packages/web && bun run build
 
 test:
