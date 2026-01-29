@@ -1,10 +1,22 @@
-.PHONY: dev build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check
+.PHONY: dev self other build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check
 
 dev:
 	@echo "Starting development server..."
 	@mkdir -p tmp/workspace
 	@lsof -ti:9283 | xargs kill -9 2>/dev/null || true
 	@NODE_ENV=development bun run packages/cli/main.ts --workspace tmp/workspace
+
+self:
+	@echo "Starting self server on port 9983..."
+	@mkdir -p tmp/workspace
+	@lsof -ti:9983 | xargs kill -9 2>/dev/null || true
+	@NODE_ENV=development PORT=9983 bun run packages/cli/main.ts --workspace tmp/workspace
+
+other:
+	@echo "Starting other server on port 8283..."
+	@mkdir -p tmp/workspace
+	@lsof -ti:8283 | xargs kill -9 2>/dev/null || true
+	@NODE_ENV=development PORT=8283 bun run packages/cli/main.ts --workspace tmp/workspace
 
 build:
 	@echo "Building web package..."
