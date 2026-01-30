@@ -333,14 +333,10 @@ export class WorktreeManager {
 				}
 
 				// Check if worktree is prunable (directory missing) or if it's a session worktree that doesn't exist
-				// Support old paths (.worktrees, .liuboer/worktrees, .liuboer/projects) and new path (.neokai/projects)
+				// Support session worktrees (.neokai/projects)
 				if (
 					worktree.isPrunable ||
-					(!existsSync(worktree.path) &&
-						(worktree.path.includes('.worktrees') ||
-							worktree.path.includes('.liuboer/worktrees') ||
-							worktree.path.includes('.liuboer/projects') ||
-							worktree.path.includes('.neokai/projects')))
+					(!existsSync(worktree.path) && worktree.path.includes('.neokai/projects'))
 				) {
 					this.logger.info(`[WorktreeManager] Removing orphaned worktree: ${worktree.path}`);
 
