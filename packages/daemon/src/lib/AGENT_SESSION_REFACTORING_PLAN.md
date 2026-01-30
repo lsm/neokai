@@ -47,7 +47,7 @@ Create `packages/daemon/src/lib/query-options-builder.ts`:
 
 ```typescript
 import type { Options } from '@anthropic-ai/claude-agent-sdk/sdk';
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 import type { SettingsManager } from './settings-manager';
 
 export class QueryOptionsBuilder {
@@ -158,8 +158,8 @@ CRITICAL RULES:
 		const toolsConfig = this.session.config.tools;
 		const disallowedTools: string[] = [];
 
-		if (!toolsConfig?.liuboerTools?.memory) {
-			disallowedTools.push('liuboer__memory__*');
+		if (!toolsConfig?.kaiTools?.memory) {
+			disallowedTools.push('kai__memory__*');
 		}
 
 		return disallowedTools.length > 0 ? disallowedTools : undefined;

@@ -42,6 +42,6 @@ const server = serve({
 	},
 });
 
-console.log(`🚀 Liuboer Web UI running on ${server.url}`);
+console.log(`🚀 NeoKai Web UI running on ${server.url}`);
 console.log(`📡 Proxying API requests to ${DAEMON_URL}`);
 console.log(`📦 Serving static files from ./dist`);

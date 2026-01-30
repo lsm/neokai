@@ -14,7 +14,7 @@ import { join } from 'path';
 
 const DIST_DIR = join(import.meta.dir, 'dist');
 
-console.log('🏗️  Building Liuboer Web UI for production...\n');
+console.log('🏗️  Building NeoKai Web UI for production...\n');
 
 // Clean dist directory
 console.log('🧹 Cleaning dist directory...');
@@ -68,7 +68,7 @@ const indexHtml = `<!DOCTYPE html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Liuboer - Claude Agent Wrapper</title>
+    <title>NeoKai - Claude Agent Wrapper</title>
     <link rel="stylesheet" href="/styles.css" />
     <script>
       // Prevent errors from browser extensions trying to access window.ethereum

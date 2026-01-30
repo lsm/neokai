@@ -1,4 +1,4 @@
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 import { sidebarOpenSignal } from '../lib/signals.ts';
 import { formatRelativeTime, formatTokens } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
@@ -49,7 +49,7 @@ export default function RecentSessions({ sessions }: RecentSessionsProps) {
 					</button>
 
 					<div class="flex-1">
-						<h2 class="text-2xl font-bold text-gray-100">Welcome to Liuboer</h2>
+						<h2 class="text-2xl font-bold text-gray-100">Welcome to NeoKai</h2>
 						<p class="text-sm text-gray-400 mt-1">
 							{recentSessions.length > 0
 								? 'Continue where you left off or create a new session'
