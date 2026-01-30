@@ -98,10 +98,48 @@ jobs:
           mv dist/bin-flat dist/bin
 
       - name: Package npm packages
-        run: bun run scripts/package-npm.ts
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            bun run scripts/package-npm.ts --version ${GITHUB_REF_NAME#v}
+          else
+            bun run scripts/package-npm.ts
+          fi
 
       - name: Upload npm packages
         uses: actions/upload-artifact@v4
         with:
           name: npm-packages
           path: dist/npm/
+
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: package
+
+    steps:
+      - name: Download npm packages
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-packages
+          path: dist/npm/
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish platform packages
+        run: |
+          for pkg in dist/npm/cli-*; do
+            echo "Publishing $(basename $pkg)..."
+            cd "$pkg" && npm publish --access public && cd -
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish main package
+        run: cd dist/npm/neokai && npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
