@@ -19,7 +19,7 @@ jobs:
             target: bun-darwin-arm64
             binary: kai-darwin-arm64
             smoke: true
-          - runner: macos-13
+          - runner: macos-15-intel
             target: bun-darwin-x64
             binary: kai-darwin-x64
             smoke: true
@@ -55,6 +55,8 @@ jobs:
       - name: Smoke test
         if: matrix.smoke
         run: bun run scripts/smoke-test.ts ./dist/bin/${{ matrix.binary }}
+        env:
+          GLM_API_KEY: smoke-test
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
