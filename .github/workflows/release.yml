@@ -145,4 +145,4 @@ jobs:
 
       - name: Publish main package
         run: |
-          cd dist/npm/neokai && npm publish --access public --provenance
+          cd dist/npm/neokai && npm publish --access public --provenance || echo "::warning::Failed to publish neokai, may already exist"
