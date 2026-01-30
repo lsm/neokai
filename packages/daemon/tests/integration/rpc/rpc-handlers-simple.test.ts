@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { MessageHub } from '@liuboer/shared';
+import { MessageHub } from '@neokai/shared';
 import { createDaemonHub } from '../../../src/lib/daemon-hub';
 import { setupRPCHandlers } from '../../../src/lib/rpc-handlers';
 import { getConfig } from '../../../src/config';

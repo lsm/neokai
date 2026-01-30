@@ -10,7 +10,7 @@ import {
 	type EventSubscriptionSetupContext,
 } from '../../../src/lib/agent/event-subscription-setup';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 import type { ModelSwitchHandler } from '../../../src/lib/agent/model-switch-handler';
 import type { InterruptHandler } from '../../../src/lib/agent/interrupt-handler';
 import type { QueryModeHandler } from '../../../src/lib/agent/query-mode-handler';

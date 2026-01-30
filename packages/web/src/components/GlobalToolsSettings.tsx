@@ -17,7 +17,7 @@ import { useEffect } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import { borderColors } from '../lib/design-tokens.ts';
-import type { GlobalToolsConfig } from '@liuboer/shared';
+import type { GlobalToolsConfig } from '@neokai/shared';
 
 const DEFAULT_CONFIG: GlobalToolsConfig = {
 	systemPrompt: {
@@ -36,7 +36,7 @@ const DEFAULT_CONFIG: GlobalToolsConfig = {
 		allowProjectMcp: true,
 		defaultProjectMcp: false,
 	},
-	liuboerTools: {
+	kaiTools: {
 		memory: {
 			allowed: true,
 			defaultEnabled: false,
@@ -101,24 +101,24 @@ export function GlobalToolsSettings() {
 		saveConfig(newConfig);
 	};
 
-	const updateLiuboerToolConfig = (
+	const updateKaiToolConfig = (
 		tool: 'memory',
 		key: 'allowed' | 'defaultEnabled',
 		value: boolean
 	) => {
 		const newConfig = {
 			...config.value,
-			liuboerTools: {
-				...(config.value.liuboerTools ?? DEFAULT_CONFIG.liuboerTools),
+			kaiTools: {
+				...(config.value.kaiTools ?? DEFAULT_CONFIG.kaiTools),
 				[tool]: {
-					...(config.value.liuboerTools?.[tool] ?? DEFAULT_CONFIG.liuboerTools[tool]),
+					...(config.value.kaiTools?.[tool] ?? DEFAULT_CONFIG.kaiTools[tool]),
 					[key]: value,
 				},
 			},
 		};
 		// If disabling permission, also disable default
 		if (key === 'allowed' && !value) {
-			newConfig.liuboerTools[tool].defaultEnabled = false;
+			newConfig.kaiTools[tool].defaultEnabled = false;
 		}
 		saveConfig(newConfig);
 	};
@@ -205,13 +205,13 @@ export function GlobalToolsSettings() {
 					</div>
 				</div>
 
-				{/* Liuboer Tools Section */}
+				{/* NeoKai Tools Section */}
 				<div class="mb-6">
 					<h4 class="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">
-						Liuboer Tools
+						NeoKai Tools
 					</h4>
 					<p class="text-xs text-gray-500 mb-3">
-						Tools provided by Liuboer for enhanced functionality.
+						Tools provided by NeoKai for enhanced functionality.
 					</p>
 
 					<div class="space-y-3">
@@ -243,9 +243,9 @@ export function GlobalToolsSettings() {
 									<span class="text-xs text-gray-400">Allowed</span>
 									<input
 										type="checkbox"
-										checked={config.value.liuboerTools?.memory?.allowed ?? true}
+										checked={config.value.kaiTools?.memory?.allowed ?? true}
 										onChange={(e) =>
-											updateLiuboerToolConfig(
+											updateKaiToolConfig(
 												'memory',
 												'allowed',
 												(e.target as HTMLInputElement).checked
@@ -256,20 +256,20 @@ export function GlobalToolsSettings() {
 									/>
 								</label>
 								<label
-									class={`flex items-center gap-2 ${config.value.liuboerTools?.memory?.allowed ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
+									class={`flex items-center gap-2 ${config.value.kaiTools?.memory?.allowed ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
 								>
 									<span class="text-xs text-gray-400">Default ON</span>
 									<input
 										type="checkbox"
-										checked={config.value.liuboerTools?.memory?.defaultEnabled ?? false}
+										checked={config.value.kaiTools?.memory?.defaultEnabled ?? false}
 										onChange={(e) =>
-											updateLiuboerToolConfig(
+											updateKaiToolConfig(
 												'memory',
 												'defaultEnabled',
 												(e.target as HTMLInputElement).checked
 											)
 										}
-										disabled={saving.value || !config.value.liuboerTools?.memory?.allowed}
+										disabled={saving.value || !config.value.kaiTools?.memory?.allowed}
 										class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 									/>
 								</label>

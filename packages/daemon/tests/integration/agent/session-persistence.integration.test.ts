@@ -13,8 +13,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import type { SessionMetadata } from '@liuboer/shared';
-import { generateUUID } from '@liuboer/shared';
+import type { SessionMetadata } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import { ProcessingStateManager } from '../../../src/lib/agent/processing-state-manager';
 import {
 	setupIntegrationTestEnv,

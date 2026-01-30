@@ -16,7 +16,7 @@ import {
 	LogLevel,
 	configureLogger,
 	getLoggerConfig,
-} from '@liuboer/shared';
+} from '@neokai/shared';
 
 /**
  * Logger class - wraps the shared logger for daemon compatibility
@@ -30,7 +30,7 @@ export class Logger {
 
 	constructor(prefix: string) {
 		// Create a shared logger with the daemon namespace prefix
-		this.sharedLogger = createLogger(`liuboer:daemon:${prefix.toLowerCase()}`);
+		this.sharedLogger = createLogger(`kai:daemon:${prefix.toLowerCase()}`);
 	}
 
 	log(...args: unknown[]): void {

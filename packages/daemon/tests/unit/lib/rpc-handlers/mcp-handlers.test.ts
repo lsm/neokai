@@ -6,7 +6,7 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { registerMcpHandlers } from '../../../../src/lib/rpc-handlers/mcp-handlers';
-import type { MessageHub, Session, ToolsConfig, GlobalToolsConfig } from '@liuboer/shared';
+import type { MessageHub, Session, ToolsConfig, GlobalToolsConfig } from '@neokai/shared';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 
 // Mock fs/promises
@@ -83,7 +83,7 @@ describe('MCP Handlers', () => {
 				systemPrompt: { claudeCodePreset: { allowed: true, defaultEnabled: true } },
 				settingSources: { project: { allowed: true, defaultEnabled: true } },
 				mcp: { allowProjectMcp: true, defaultProjectMcp: true },
-				liuboerTools: { memory: { allowed: true, defaultEnabled: false } },
+				kaiTools: { memory: { allowed: true, defaultEnabled: false } },
 			})),
 			saveGlobalToolsConfig: mock(() => {}),
 		} as unknown as SessionManager;
@@ -239,7 +239,7 @@ describe('MCP Handlers', () => {
 					systemPrompt: { claudeCodePreset: { allowed: true, defaultEnabled: true } },
 					settingSources: { project: { allowed: true, defaultEnabled: true } },
 					mcp: { allowProjectMcp: true, defaultProjectMcp: true },
-					liuboerTools: { memory: { allowed: true, defaultEnabled: false } },
+					kaiTools: { memory: { allowed: true, defaultEnabled: false } },
 				},
 			});
 			expect(mockSessionManager.getGlobalToolsConfig).toHaveBeenCalled();
@@ -252,7 +252,7 @@ describe('MCP Handlers', () => {
 				systemPrompt: { claudeCodePreset: { allowed: false, defaultEnabled: false } },
 				settingSources: { project: { allowed: false, defaultEnabled: false } },
 				mcp: { allowProjectMcp: false, defaultProjectMcp: false },
-				liuboerTools: { memory: { allowed: false, defaultEnabled: false } },
+				kaiTools: { memory: { allowed: false, defaultEnabled: false } },
 			};
 
 			const result = await callHandler('globalTools.saveConfig', { config });

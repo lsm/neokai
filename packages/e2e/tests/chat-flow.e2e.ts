@@ -15,7 +15,7 @@ test.describe('Chat Flow', () => {
 		await page.goto('/');
 
 		// Wait for app to initialize (check for sidebar heading specifically)
-		await expect(page.getByRole('heading', { name: 'Liuboer', exact: true }).first()).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible();
 		await page.waitForTimeout(1000); // Wait for WebSocket connection
 
 		sessionId = null; // Reset for each test

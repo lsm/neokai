@@ -76,7 +76,7 @@ import type {
 	RewindPreview,
 	RewindResult,
 	RewindMode,
-} from '@liuboer/shared';
+} from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { Database } from '../../storage/database';
 import { ErrorManager } from '../error-manager';
@@ -448,7 +448,7 @@ export class AgentSession
 		return this._isCleaningUp;
 	}
 
-	async onSDKMessage(message: import('@liuboer/shared/sdk').SDKMessage): Promise<void> {
+	async onSDKMessage(message: import('@neokai/shared/sdk').SDKMessage): Promise<void> {
 		await this.messageHandler.handleMessage(message);
 	}
 

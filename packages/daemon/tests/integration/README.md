@@ -1,6 +1,6 @@
 # Daemon Integration Tests
 
-This directory contains comprehensive integration tests for the Liuboer daemon. These tests verify that multiple components work together correctly.
+This directory contains comprehensive integration tests for the NeoKai daemon. These tests verify that multiple components work together correctly.
 
 ## Test Files
 

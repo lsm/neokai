@@ -8,8 +8,8 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { GlobalToolsConfig, GlobalSettings } from '@liuboer/shared';
-import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@liuboer/shared';
+import type { GlobalToolsConfig, GlobalSettings } from '@neokai/shared';
+import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
 
 export class SettingsRepository {
 	constructor(private db: BunDatabase) {}
@@ -55,7 +55,7 @@ export class SettingsRepository {
 			const newMcp = parsed.mcp as
 				| { allowProjectMcp?: boolean; defaultProjectMcp?: boolean }
 				| undefined;
-			const newLiuboerTools = parsed.liuboerTools as
+			const newKaiTools = parsed.kaiTools as
 				| { memory?: { allowed?: boolean; defaultEnabled?: boolean } }
 				| undefined;
 
@@ -92,14 +92,13 @@ export class SettingsRepository {
 					defaultProjectMcp:
 						newMcp?.defaultProjectMcp ?? DEFAULT_GLOBAL_TOOLS_CONFIG.mcp.defaultProjectMcp,
 				},
-				liuboerTools: {
+				kaiTools: {
 					memory: {
 						allowed:
-							newLiuboerTools?.memory?.allowed ??
-							DEFAULT_GLOBAL_TOOLS_CONFIG.liuboerTools.memory.allowed,
+							newKaiTools?.memory?.allowed ?? DEFAULT_GLOBAL_TOOLS_CONFIG.kaiTools.memory.allowed,
 						defaultEnabled:
-							newLiuboerTools?.memory?.defaultEnabled ??
-							DEFAULT_GLOBAL_TOOLS_CONFIG.liuboerTools.memory.defaultEnabled,
+							newKaiTools?.memory?.defaultEnabled ??
+							DEFAULT_GLOBAL_TOOLS_CONFIG.kaiTools.memory.defaultEnabled,
 					},
 				},
 			};

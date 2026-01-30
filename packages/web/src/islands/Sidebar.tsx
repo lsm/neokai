@@ -144,7 +144,7 @@ export default function Sidebar() {
 				<div class={`p-4 border-b ${borderColors.ui.default}`}>
 					<div class="flex items-center gap-3 mb-4">
 						<div class="text-2xl">🤖</div>
-						<h1 class="text-xl font-bold text-gray-100 flex-1">Liuboer</h1>
+						<h1 class="text-xl font-bold text-gray-100 flex-1">NeoKai</h1>
 						{/* Close button for mobile */}
 						<button
 							onClick={() => (sidebarOpenSignal.value = false)}

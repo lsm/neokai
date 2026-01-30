@@ -27,7 +27,7 @@ describe('GlobalToolsSettings Logic', () => {
 			allowProjectMcp?: boolean;
 			defaultProjectMcp?: boolean;
 		};
-		liuboerTools?: {
+		kaiTools?: {
 			memory?: {
 				allowed?: boolean;
 				defaultEnabled?: boolean;
@@ -52,7 +52,7 @@ describe('GlobalToolsSettings Logic', () => {
 			allowProjectMcp: true,
 			defaultProjectMcp: false,
 		},
-		liuboerTools: {
+		kaiTools: {
 			memory: {
 				allowed: true,
 				defaultEnabled: false,
@@ -135,43 +135,43 @@ describe('GlobalToolsSettings Logic', () => {
 		});
 	});
 
-	describe('Liuboer Tools Settings', () => {
+	describe('NeoKai Tools Settings', () => {
 		it('should have memory allowed by default', () => {
-			expect(DEFAULT_CONFIG.liuboerTools?.memory?.allowed).toBe(true);
+			expect(DEFAULT_CONFIG.kaiTools?.memory?.allowed).toBe(true);
 		});
 
 		it('should have memory disabled by default', () => {
-			expect(DEFAULT_CONFIG.liuboerTools?.memory?.defaultEnabled).toBe(false);
+			expect(DEFAULT_CONFIG.kaiTools?.memory?.defaultEnabled).toBe(false);
 		});
 
 		it('should update memory allowed setting', () => {
 			let config: MockGlobalToolsConfig = { ...DEFAULT_CONFIG };
 			config = {
 				...config,
-				liuboerTools: {
-					...config.liuboerTools,
+				kaiTools: {
+					...config.kaiTools,
 					memory: {
-						...config.liuboerTools?.memory,
+						...config.kaiTools?.memory,
 						allowed: false,
 					},
 				},
 			};
-			expect(config.liuboerTools?.memory?.allowed).toBe(false);
+			expect(config.kaiTools?.memory?.allowed).toBe(false);
 		});
 
 		it('should update memory defaultEnabled setting', () => {
 			let config: MockGlobalToolsConfig = { ...DEFAULT_CONFIG };
 			config = {
 				...config,
-				liuboerTools: {
-					...config.liuboerTools,
+				kaiTools: {
+					...config.kaiTools,
 					memory: {
-						...config.liuboerTools?.memory,
+						...config.kaiTools?.memory,
 						defaultEnabled: true,
 					},
 				},
 			};
-			expect(config.liuboerTools?.memory?.defaultEnabled).toBe(true);
+			expect(config.kaiTools?.memory?.defaultEnabled).toBe(true);
 		});
 
 		it('should disable defaultEnabled when disabling allowed for memory', () => {
@@ -179,21 +179,21 @@ describe('GlobalToolsSettings Logic', () => {
 
 			config = {
 				...config,
-				liuboerTools: {
-					...config.liuboerTools,
+				kaiTools: {
+					...config.kaiTools,
 					memory: {
-						...config.liuboerTools?.memory,
+						...config.kaiTools?.memory,
 						allowed: false,
 					},
 				},
 			};
 
 			// If disabling permission, also disable default
-			if (!config.liuboerTools?.memory?.allowed) {
-				config.liuboerTools!.memory!.defaultEnabled = false;
+			if (!config.kaiTools?.memory?.allowed) {
+				config.kaiTools!.memory!.defaultEnabled = false;
 			}
 
-			expect(config.liuboerTools?.memory?.defaultEnabled).toBe(false);
+			expect(config.kaiTools?.memory?.defaultEnabled).toBe(false);
 		});
 	});
 

@@ -10,11 +10,11 @@
  * This file now acts as a facade over the provider registry.
  */
 
-import type { ModelInfo } from '@liuboer/shared';
+import type { ModelInfo } from '@neokai/shared';
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
 import { initializeProviders } from './providers/factory.js';
 import { getProviderRegistry } from './providers/registry.js';
-import type { Provider } from '@liuboer/shared/provider';
+import type { Provider } from '@neokai/shared/provider';
 
 /**
  * Legacy model ID mappings to SDK model IDs

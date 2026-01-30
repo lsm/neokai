@@ -8,8 +8,8 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { SDKMessage } from '@liuboer/shared/sdk';
-import { generateUUID } from '@liuboer/shared';
+import type { SDKMessage } from '@neokai/shared/sdk';
+import { generateUUID } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
 import { Logger } from '../../lib/logger';
 

@@ -4,9 +4,9 @@
  * Provides RPC methods for managing global and session-specific settings.
  */
 
-import type { MessageHub } from '@liuboer/shared';
+import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
-import type { GlobalSettings, SessionSettings } from '@liuboer/shared';
+import type { GlobalSettings, SessionSettings } from '@neokai/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { Database } from '../../storage/database';
 

@@ -38,7 +38,7 @@ test.describe('Recent Sessions Home Page', () => {
 
 	test('should display welcome message on home page', async ({ page }) => {
 		// Should show welcome header
-		await expect(page.locator('text=Welcome to Liuboer')).toBeVisible({
+		await expect(page.locator('text=Welcome to NeoKai')).toBeVisible({
 			timeout: 10000,
 		});
 	});
@@ -66,7 +66,7 @@ test.describe('Recent Sessions Home Page', () => {
 		await waitForAssistantResponse(page);
 
 		// Navigate back to home by deselecting the current session
-		// Click the Liuboer logo/title to go back to home
+		// Click the NeoKai logo/title to go back to home
 		await page.goto('/');
 
 		// Should show "Recent Sessions" section

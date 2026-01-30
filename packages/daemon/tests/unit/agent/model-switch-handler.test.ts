@@ -11,8 +11,8 @@ import {
 	ModelSwitchHandler,
 	type ModelSwitchHandlerContext,
 } from '../../../src/lib/agent/model-switch-handler';
-import type { Session, ModelInfo } from '@liuboer/shared';
-import type { MessageHub } from '@liuboer/shared';
+import type { Session, ModelInfo } from '@neokai/shared';
+import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { Database } from '../../../src/storage/database';
 import type { ContextTracker } from '../../../src/lib/agent/context-tracker';
@@ -21,7 +21,7 @@ import type { QueryLifecycleManager } from '../../../src/lib/agent/query-lifecyc
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type { ErrorManager } from '../../../src/lib/error-manager';
 import type { Logger } from '../../../src/lib/logger';
-import { generateUUID } from '@liuboer/shared';
+import { generateUUID } from '@neokai/shared';
 import { resetProviderFactory, initializeProviders } from '../../../src/lib/providers/factory';
 import { resetProviderRegistry } from '../../../src/lib/providers/registry';
 import { setModelsCache, clearModelsCache } from '../../../src/lib/model-service';

@@ -16,9 +16,9 @@
  * This is exactly what we need to calculate context window usage!
  */
 
-import type { ContextInfo, ContextCategoryBreakdown, ContextAPIUsage } from '@liuboer/shared';
+import type { ContextInfo, ContextCategoryBreakdown, ContextAPIUsage } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
-import type { ModelUsage } from '@liuboer/shared/sdk';
+import type { ModelUsage } from '@neokai/shared/sdk';
 import { Logger } from '../logger';
 
 interface UsageData {

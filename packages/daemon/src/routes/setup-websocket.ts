@@ -6,8 +6,8 @@
  */
 
 import type { ServerWebSocket } from 'bun';
-import { createEventMessage, createErrorMessage, MessageType, generateUUID } from '@liuboer/shared';
-import type { HubMessage } from '@liuboer/shared/message-hub/protocol';
+import { createEventMessage, createErrorMessage, MessageType, generateUUID } from '@neokai/shared';
+import type { HubMessage } from '@neokai/shared/message-hub/protocol';
 import type { WebSocketServerTransport } from '../lib/websocket-server-transport';
 import type { SessionManager } from '../lib/session-manager';
 import type { SubscriptionManager } from '../lib/subscription-manager';

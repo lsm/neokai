@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type { Session, AgentProcessingState } from '@liuboer/shared';
+import type { Session, AgentProcessingState } from '@neokai/shared';
 import type { Signal } from '@preact/signals';
 
 // Mock localStorage
@@ -244,7 +244,7 @@ describe('session-status (real module tests)', () => {
 			];
 
 			// Set localStorage data
-			mockLocalStorage.setItem('liuboer:session-last-seen', JSON.stringify({ 'sess-1': 5 }));
+			mockLocalStorage.setItem('kai:session-last-seen', JSON.stringify({ 'sess-1': 5 }));
 
 			vi.doMock('../state.js', () => ({
 				sessions: mockSessions,
@@ -331,7 +331,7 @@ describe('session-status (real module tests)', () => {
 		it('should load last seen counts from localStorage', async () => {
 			// Set up localStorage with data
 			mockLocalStorage.setItem(
-				'liuboer:session-last-seen',
+				'kai:session-last-seen',
 				JSON.stringify({ 'sess-1': 5, 'sess-2': 10 })
 			);
 
@@ -515,7 +515,7 @@ describe('session-status (real module tests)', () => {
 			mockCurrentSessionIdSignal.value = 'sess-1';
 
 			// Check localStorage was updated
-			const stored = mockLocalStorage.getItem('liuboer:session-last-seen');
+			const stored = mockLocalStorage.getItem('kai:session-last-seen');
 			expect(stored).toBeDefined();
 			const data = JSON.parse(stored!);
 			expect(data['sess-1']).toBe(10);
@@ -523,7 +523,7 @@ describe('session-status (real module tests)', () => {
 
 		it('should handle corrupted localStorage data gracefully', async () => {
 			// Set invalid data
-			mockLocalStorage.setItem('liuboer:session-last-seen', 'not valid json');
+			mockLocalStorage.setItem('kai:session-last-seen', 'not valid json');
 
 			mockSessions.value = [
 				createMockSession('sess-1', {

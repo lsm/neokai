@@ -20,7 +20,7 @@
  */
 
 import { useMemo } from 'preact/hooks';
-import type { SDKMessage, SDKSystemMessage } from '@liuboer/shared/sdk/sdk.d.ts';
+import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
 
 export interface ToolResultData {
 	content: unknown;

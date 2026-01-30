@@ -18,7 +18,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'preact/hooks';
-import type { ModelInfo } from '@liuboer/shared';
+import type { ModelInfo } from '@neokai/shared';
 import { connectionManager } from '../lib/connection-manager';
 import { toast } from '../lib/toast';
 

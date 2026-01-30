@@ -8,14 +8,14 @@
  * - AskUserQuestion tool blocks with inline QuestionPrompt
  */
 
-import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
-import type { PendingUserQuestion, QuestionDraftResponse, ResolvedQuestion } from '@liuboer/shared';
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { PendingUserQuestion, QuestionDraftResponse, ResolvedQuestion } from '@neokai/shared';
 import {
 	isTextBlock,
 	isToolUseBlock,
 	isThinkingBlock,
 	type ContentBlock,
-} from '@liuboer/shared/sdk/type-guards';
+} from '@neokai/shared/sdk/type-guards';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import { IconButton } from '../ui/IconButton.tsx';
 import { Tooltip } from '../ui/Tooltip.tsx';
@@ -27,7 +27,7 @@ import { ToolResultCard } from './tools/index.ts';
 import { ThinkingBlock } from './ThinkingBlock.tsx';
 import { SubagentBlock } from './SubagentBlock.tsx';
 import { QuestionPrompt } from '../QuestionPrompt.tsx';
-import type { AgentInput } from '@liuboer/shared/sdk/sdk-tools.d.ts';
+import type { AgentInput } from '@neokai/shared/sdk/sdk-tools.d.ts';
 
 type AssistantMessage = Extract<SDKMessage, { type: 'assistant' }>;
 

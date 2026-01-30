@@ -23,7 +23,7 @@ import 'dotenv/config';
 import type { DaemonServerContext } from '../helpers/daemon-server-helper';
 import { createDaemonServer } from '../helpers/daemon-server-helper';
 import { sendMessage, waitForIdle, getSession } from '../helpers/daemon-test-helpers';
-import type { ContextInfo } from '@liuboer/shared';
+import type { ContextInfo } from '@neokai/shared';
 
 describe('Context Command Online Tests', () => {
 	let daemon: DaemonServerContext;

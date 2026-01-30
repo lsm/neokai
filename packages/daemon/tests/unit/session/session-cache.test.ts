@@ -11,7 +11,7 @@ import {
 	type AgentSessionFactory,
 	type SessionLoader,
 } from '../../../src/lib/session/session-cache';
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 import type { AgentSession } from '../../../src/lib/agent/agent-session';
 
 describe('SessionCache', () => {

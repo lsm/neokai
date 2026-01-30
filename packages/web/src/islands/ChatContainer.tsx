@@ -18,8 +18,8 @@
 
 import { useEffect, useRef, useCallback, useMemo, useState } from 'preact/hooks';
 import { useSignalEffect } from '@preact/signals';
-import type { MessageImage } from '@liuboer/shared';
-import type { SDKMessage, SDKSystemMessage } from '@liuboer/shared/sdk/sdk.d.ts';
+import type { MessageImage } from '@neokai/shared';
+import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { updateSession } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
 import { cn } from '../lib/utils.ts';
@@ -54,7 +54,7 @@ import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
 import { ErrorBanner } from '../components/ErrorBanner.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
 import { RewindModal } from '../components/RewindModal.tsx';
-import type { ResolvedQuestion } from '@liuboer/shared';
+import type { ResolvedQuestion } from '@neokai/shared';
 
 interface ChatContainerProps {
 	sessionId: string;

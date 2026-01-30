@@ -40,7 +40,7 @@ const content = raw.toString('utf8', 0, raw.length);
 interface RecoveredMessage {
 	type: string;
 	uuid: string;
-	sdk_session_id?: string; // SDK session ID from JSON (NOT Liuboer session ID)
+	sdk_session_id?: string; // SDK session ID from JSON (NOT NeoKai session ID)
 	raw: string;
 }
 
@@ -96,8 +96,8 @@ console.log('\nStep 2: Building session mappings...');
 
 const db = new Database(dbPath);
 
-// Map: SDK session ID -> Liuboer session ID
-const sdkToLiuboer = new Map<string, string>();
+// Map: SDK session ID -> NeoKai session ID
+const sdkToKai = new Map<string, string>();
 const sessions = db.query('SELECT id, sdk_session_id FROM sessions').all() as {
 	id: string;
 	sdk_session_id: string | null;
@@ -105,7 +105,7 @@ const sessions = db.query('SELECT id, sdk_session_id FROM sessions').all() as {
 
 for (const s of sessions) {
 	if (s.sdk_session_id) {
-		sdkToLiuboer.set(s.sdk_session_id, s.id);
+		sdkToKai.set(s.sdk_session_id, s.id);
 	}
 }
 
@@ -118,13 +118,13 @@ const existingMessageIds = new Set(
 );
 
 console.log(`   Existing sessions: ${existingSessionIds.size}`);
-console.log(`   SDK→Liuboer mappings: ${sdkToLiuboer.size}`);
+console.log(`   SDK→NeoKai mappings: ${sdkToKai.size}`);
 console.log(`   Existing messages: ${existingMessageIds.size}`);
 
-// Step 3: Group messages by SDK session and resolve to Liuboer sessions
+// Step 3: Group messages by SDK session and resolve to NeoKai sessions
 console.log('\nStep 3: Resolving message ownership...');
 
-const messagesByLiuboerSession = new Map<string, RecoveredMessage[]>();
+const messagesByKaiSession = new Map<string, RecoveredMessage[]>();
 const orphanMessages: RecoveredMessage[] = [];
 
 for (const msg of messages) {
@@ -133,14 +133,14 @@ for (const msg of messages) {
 		continue;
 	}
 
-	// Try to find the Liuboer session for this SDK session
-	const liuboerSessionId = sdkToLiuboer.get(msg.sdk_session_id);
+	// Try to find the NeoKai session for this SDK session
+	const kaiSessionId = sdkToKai.get(msg.sdk_session_id);
 
-	if (liuboerSessionId) {
-		if (!messagesByLiuboerSession.has(liuboerSessionId)) {
-			messagesByLiuboerSession.set(liuboerSessionId, []);
+	if (kaiSessionId) {
+		if (!messagesByKaiSession.has(kaiSessionId)) {
+			messagesByKaiSession.set(kaiSessionId, []);
 		}
-		messagesByLiuboerSession.get(liuboerSessionId)!.push(msg);
+		messagesByKaiSession.get(kaiSessionId)!.push(msg);
 	} else {
 		// No existing session has this SDK session ID - treat as orphan
 		orphanMessages.push(msg);
@@ -160,7 +160,7 @@ const insertMessage = db.prepare(`
 
 let messagesInserted = 0;
 
-for (const [liuboerSessionId, msgs] of messagesByLiuboerSession.entries()) {
+for (const [kaiSessionId, msgs] of messagesByKaiSession.entries()) {
 	for (const msg of msgs) {
 		if (existingMessageIds.has(msg.uuid)) continue;
 
@@ -168,7 +168,7 @@ for (const [liuboerSessionId, msgs] of messagesByLiuboerSession.entries()) {
 			const parsed = JSON.parse(msg.raw);
 			const result = insertMessage.run(
 				msg.uuid,
-				liuboerSessionId,
+				kaiSessionId,
 				msg.type,
 				parsed.subtype || null,
 				msg.raw,
@@ -244,7 +244,7 @@ for (const [sdkSessionId, msgs] of orphansBySDKSession.entries()) {
 		}
 	}
 
-	// Generate a new Liuboer session ID (don't reuse SDK session ID!)
+	// Generate a new NeoKai session ID (don't reuse SDK session ID!)
 	const newSessionId = crypto.randomUUID();
 
 	try {
@@ -287,7 +287,7 @@ for (const [sdkSessionId, msgs] of orphansBySDKSession.entries()) {
 				const parsed = JSON.parse(msg.raw);
 				const result = insertMessage.run(
 					msg.uuid,
-					newSessionId, // Use the NEW Liuboer session ID
+					newSessionId, // Use the NEW NeoKai session ID
 					msg.type,
 					parsed.subtype || null,
 					msg.raw,

@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
 import { serveStatic } from 'hono/bun';
-import { createDaemonApp } from '@liuboer/daemon/app';
-import type { Config } from '@liuboer/daemon/config';
+import { createDaemonApp } from '@neokai/daemon/app';
+import type { Config } from '@neokai/daemon/config';
 import { resolve } from 'path';
-import { createLogger } from '@liuboer/shared';
+import { createLogger } from '@neokai/shared';
 import {
 	createCorsPreflightResponse,
 	isWebSocketPath,
@@ -12,7 +12,7 @@ import {
 	isHtmlFile,
 } from './cli-utils';
 
-const log = createLogger('liuboer:cli:prod-server');
+const log = createLogger('kai:cli:prod-server');
 
 export async function startProdServer(config: Config) {
 	log.info('🚀 Starting production server...');
@@ -81,7 +81,7 @@ export async function startProdServer(config: Config) {
 	log.info(`📦 Serving static files from: ${distPath}`);
 
 	// Get WebSocket handlers from daemon
-	const { createWebSocketHandlers } = await import('@liuboer/daemon/routes/setup-websocket');
+	const { createWebSocketHandlers } = await import('@neokai/daemon/routes/setup-websocket');
 	const wsHandlers = createWebSocketHandlers(
 		daemonContext.transport,
 		daemonContext.sessionManager,

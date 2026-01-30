@@ -12,7 +12,7 @@
  * SubscriptionManager defines those patterns based on application requirements.
  */
 
-import type { MessageHub } from '@liuboer/shared';
+import type { MessageHub } from '@neokai/shared';
 import { Logger } from './logger';
 
 /**

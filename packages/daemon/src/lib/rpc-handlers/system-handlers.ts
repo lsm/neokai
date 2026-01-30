@@ -2,11 +2,11 @@
  * System RPC Handlers
  */
 
-import type { MessageHub } from '@liuboer/shared';
+import type { MessageHub } from '@neokai/shared';
 import type { SessionManager } from '../session-manager';
 import type { AuthManager } from '../auth-manager';
 import type { Config } from '../../config';
-import type { HealthStatus, DaemonConfig } from '@liuboer/shared';
+import type { HealthStatus, DaemonConfig } from '@neokai/shared';
 
 const VERSION = '0.1.0';
 const CLAUDE_SDK_VERSION = '0.1.37'; // TODO: Get dynamically

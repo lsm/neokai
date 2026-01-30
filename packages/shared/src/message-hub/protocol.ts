@@ -13,7 +13,7 @@
 import { generateUUID } from '../utils.ts';
 import { createLogger } from '../logger.ts';
 
-const log = createLogger('liuboer:messagehub:protocol');
+const log = createLogger('kai:messagehub:protocol');
 
 /**
  * Protocol version for compatibility checking

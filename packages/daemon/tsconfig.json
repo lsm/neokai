@@ -10,8 +10,8 @@
 		"noEmit": true,
 		"paths": {
 			"@/*": ["./src/*"],
-			"@liuboer/shared": ["../shared/src/mod.ts"],
-			"@liuboer/shared/*": ["../shared/src/*"]
+			"@neokai/shared": ["../shared/src/mod.ts"],
+			"@neokai/shared/*": ["../shared/src/*"]
 		}
 	},
 	"include": ["src/**/*", "main.ts", "../shared/src/**/*", "research-context-info.ts"],

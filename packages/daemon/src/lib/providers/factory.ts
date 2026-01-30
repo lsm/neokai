@@ -80,4 +80,4 @@ export type {
 	ProviderSdkConfig,
 	ProviderSessionConfig,
 	ModelTier,
-} from '@liuboer/shared/provider';
+} from '@neokai/shared/provider';

@@ -11,7 +11,7 @@ import { cleanupTestSession, waitForSessionCreated } from './helpers/wait-helper
  * - Cleanup on session deletion
  *
  * Note: These tests require the workspace to be a git repository
- * Worktree path: ~/.liuboer/worktrees/{repo-hash}/{sessionId}
+ * Worktree path: ~/.neokai/worktrees/{repo-hash}/{sessionId}
  * Branch naming: session/{slugified-title}-{shortId}
  */
 test.describe('Worktree Isolation', () => {
@@ -19,7 +19,7 @@ test.describe('Worktree Isolation', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		await expect(page.getByRole('heading', { name: 'Liuboer', exact: true }).first()).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible();
 		await page.waitForTimeout(1000);
 		sessionId = null;
 	});

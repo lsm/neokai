@@ -14,7 +14,7 @@
 import type { HookCallback, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { Logger } from '../logger';
 
-import type { GlobalSettings } from '@liuboer/shared/types/settings';
+import type { GlobalSettings } from '@neokai/shared/types/settings';
 
 // Output limiter configuration
 interface OutputLimiterConfig {

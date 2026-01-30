@@ -6,7 +6,7 @@
  *
  * Tests cover:
  * 1. Removing tool_result from active session (with SDK session ID)
- * 2. Removing tool_result from old session (fallback search by Liuboer session ID)
+ * 2. Removing tool_result from old session (fallback search by NeoKai session ID)
  * 3. Error handling for invalid session
  * 4. Error handling for invalid message UUID
  * 5. Error handling for missing session file
@@ -51,7 +51,7 @@ describe('Message Remove Output Integration Tests', () => {
 		messageUuid: string
 	): string {
 		// Create directory structure
-		// SDK replaces both / and . with - (e.g., /.liuboer/ -> --liuboer-)
+		// SDK replaces both / and . with - (e.g., /.neokai/ -> --neokai-)
 		const projectKey = workspacePath.replace(/[/.]/g, '-');
 		testSessionDir = join(homedir(), '.claude', 'projects', projectKey);
 		mkdirSync(testSessionDir, { recursive: true });
@@ -252,7 +252,7 @@ describe('Message Remove Output Integration Tests', () => {
 	});
 
 	describe('Remove Tool Result with Fallback Search', () => {
-		test('should find session file by Liuboer session ID when SDK session ID unavailable', async () => {
+		test('should find session file by NeoKai session ID when SDK session ID unavailable', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: process.cwd(),
 			});

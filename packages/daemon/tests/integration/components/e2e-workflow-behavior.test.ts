@@ -16,7 +16,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { TestContext } from '../../test-utils';
 import { createTestApp, callRPCHandler } from '../../test-utils';
-import { STATE_CHANNELS } from '@liuboer/shared';
+import { STATE_CHANNELS } from '@neokai/shared';
 import {
 	createSession,
 	getSession,

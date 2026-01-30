@@ -32,7 +32,7 @@ test.describe('Session Switching - Subscriptions', () => {
 			sessionIds.push(sessionId);
 
 			if (i < 1) {
-				await page.click('h1:has-text("Liuboer")');
+				await page.click('h1:has-text("NeoKai")');
 				await page.waitForTimeout(300);
 			}
 		}
@@ -78,7 +78,7 @@ test.describe('Session Switching - Subscriptions', () => {
 		expect(Math.abs(withSession1 - backToSession1)).toBeLessThanOrEqual(5);
 
 		// Go home - all session subscriptions should clean up
-		await page.click('h1:has-text("Liuboer")');
+		await page.click('h1:has-text("NeoKai")');
 		await page.waitForTimeout(1000);
 
 		const backHome = await page.evaluate(() => {

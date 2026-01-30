@@ -152,10 +152,10 @@ export const THINKING_LEVEL_TOKENS: Record<ThinkingLevel, number | undefined> = 
  * Session configuration extending SDKConfig with UI-specific settings
  *
  * This interface combines all SDK options from SDKConfig with
- * Liuboer-specific UI settings like autoScroll and queryMode.
+ * NeoKai-specific UI settings like autoScroll and queryMode.
  *
  * For backward compatibility:
- * - The existing `tools?: ToolsConfig` field is preserved for Liuboer-specific UI settings
+ * - The existing `tools?: ToolsConfig` field is preserved for NeoKai-specific UI settings
  * - SDKConfig's `tools` field (for tool selection) is available as `sdkToolsPreset`
  * - Other SDKConfig properties like `allowedTools`, `disallowedTools` are inherited directly
  */
@@ -215,8 +215,8 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
 	queryMode?: 'immediate' | 'manual';
 
 	/**
-	 * Legacy tools configuration for session (Liuboer-specific UI settings)
-	 * Controls system prompt preset, setting sources, MCP tools, and Liuboer tools
+	 * Legacy tools configuration for session (NeoKai-specific UI settings)
+	 * Controls system prompt preset, setting sources, MCP tools, and NeoKai tools
 	 *
 	 * This is different from SDK's tool selection. For SDK tool selection, use:
 	 * - sdkToolsPreset: Select which tools to enable (array or preset)
@@ -270,7 +270,7 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
 
 /**
  * Tools configuration for a session
- * Controls system prompt, setting sources, MCP tools, and Liuboer tools
+ * Controls system prompt, setting sources, MCP tools, and NeoKai tools
  *
  * SDK Terms Reference:
  * - systemPrompt: { type: 'preset', preset: 'claude_code' } - The Claude Code system prompt
@@ -299,8 +299,8 @@ export interface ToolsConfig {
 	// Written to settings.local.json as "disabledMcpjsonServers"
 	disabledMcpServers?: string[];
 
-	// Liuboer-specific tools (not SDK built-in tools)
-	liuboerTools?: {
+	// NeoKai-specific tools (not SDK built-in tools)
+	kaiTools?: {
 		// Memory tool: persistent key-value storage for the workspace
 		memory?: boolean;
 	};
@@ -341,8 +341,8 @@ export interface GlobalToolsConfig {
 		// Default for new sessions
 		defaultProjectMcp: boolean;
 	};
-	// Liuboer-specific tools settings
-	liuboerTools: {
+	// NeoKai-specific tools settings
+	kaiTools: {
 		memory: {
 			allowed: boolean;
 			defaultEnabled: boolean;
@@ -371,7 +371,7 @@ export const DEFAULT_GLOBAL_TOOLS_CONFIG: GlobalToolsConfig = {
 		allowProjectMcp: true, // Allow but don't enable by default
 		defaultProjectMcp: false,
 	},
-	liuboerTools: {
+	kaiTools: {
 		memory: {
 			allowed: true,
 			defaultEnabled: false,

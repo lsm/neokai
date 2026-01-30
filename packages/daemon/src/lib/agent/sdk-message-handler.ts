@@ -16,10 +16,10 @@
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type { UUID } from 'crypto';
-import type { Session, MessageHub } from '@liuboer/shared';
-import { generateUUID } from '@liuboer/shared';
+import type { Session, MessageHub } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
-import type { SDKMessage, SDKUserMessage } from '@liuboer/shared/sdk';
+import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
 import {
 	isSDKResultSuccess,
 	isSDKAssistantMessage,
@@ -27,7 +27,7 @@ import {
 	isSDKStatusMessage,
 	isSDKCompactBoundary,
 	isSDKSystemMessage,
-} from '@liuboer/shared/sdk/type-guards';
+} from '@neokai/shared/sdk/type-guards';
 import type { Database } from '../../storage/database';
 import { Logger } from '../logger';
 import { ErrorCategory, type ErrorManager } from '../error-manager';

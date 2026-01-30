@@ -21,7 +21,7 @@ test.describe('Tablet Responsiveness', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		await expect(page.getByRole('heading', { name: 'Liuboer', exact: true }).first()).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible();
 		await page.waitForTimeout(1000);
 		sessionId = null;
 	});

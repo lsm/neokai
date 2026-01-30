@@ -19,9 +19,9 @@
  */
 
 import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk/sdk';
-import type { Session, ThinkingLevel, SystemPromptConfig, ClaudeCodePreset } from '@liuboer/shared';
-import { THINKING_LEVEL_TOKENS } from '@liuboer/shared';
-import type { PermissionMode } from '@liuboer/shared/types/settings';
+import type { Session, ThinkingLevel, SystemPromptConfig, ClaudeCodePreset } from '@neokai/shared';
+import { THINKING_LEVEL_TOKENS } from '@neokai/shared';
+import type { PermissionMode } from '@neokai/shared/types/settings';
 import type { SettingsManager } from '../settings-manager';
 import { createOutputLimiterHook, getOutputLimiterConfigFromSettings } from './output-limiter-hook';
 import { Logger } from '../logger';
@@ -59,7 +59,7 @@ export class QueryOptionsBuilder {
 	 */
 	async build(): Promise<Options> {
 		const config = this.ctx.session.config;
-		const legacyToolsConfig = config.tools; // Legacy Liuboer-specific tools config
+		const legacyToolsConfig = config.tools; // Legacy NeoKai-specific tools config
 
 		// Get settings-derived options (from global settings)
 		const sdkSettingsOptions = await this.getSettingsOptions();
@@ -416,7 +416,7 @@ CRITICAL RULES:
 	 *
 	 * Combines:
 	 * 1. SDKConfig disallowedTools (explicit tools to disable)
-	 * 2. Legacy liuboerTools config (memory tool control)
+	 * 2. Legacy kaiTools config (memory tool control)
 	 */
 	private getDisallowedTools(): string[] {
 		const config = this.ctx.session.config;
@@ -427,10 +427,10 @@ CRITICAL RULES:
 			disallowedTools.push(...config.disallowedTools);
 		}
 
-		// Legacy: Disable Liuboer memory tool if not enabled
+		// Legacy: Disable NeoKai memory tool if not enabled
 		const legacyToolsConfig = config.tools;
-		if (!legacyToolsConfig?.liuboerTools?.memory) {
-			disallowedTools.push('liuboer__memory__*');
+		if (!legacyToolsConfig?.kaiTools?.memory) {
+			disallowedTools.push('kai__memory__*');
 		}
 
 		// Deduplicate

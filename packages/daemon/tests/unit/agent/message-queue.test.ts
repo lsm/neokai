@@ -7,7 +7,7 @@
 
 import { describe, expect, it, beforeEach } from 'bun:test';
 import { MessageQueue } from '../../../src/lib/agent/message-queue';
-import { generateUUID } from '@liuboer/shared';
+import { generateUUID } from '@neokai/shared';
 
 describe('MessageQueue', () => {
 	let queue: MessageQueue;

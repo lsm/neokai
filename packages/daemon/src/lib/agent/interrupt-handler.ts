@@ -13,7 +13,7 @@
  */
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
-import type { Session, MessageHub } from '@liuboer/shared';
+import type { Session, MessageHub } from '@neokai/shared';
 import type { Logger } from '../logger';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';

@@ -46,8 +46,8 @@ const mockTransportObj: {
 	resetReconnectState: vi.fn(),
 };
 
-// Mock @liuboer/shared module
-vi.mock('@liuboer/shared', () => ({
+// Mock @neokai/shared module
+vi.mock('@neokai/shared', () => ({
 	MessageHub: class MockMessageHub {
 		constructor() {
 			return mockHubObj;

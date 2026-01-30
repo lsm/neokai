@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 
 // Define vi.fn() in vi.hoisted, signals after imports with getters for deferred evaluation
 const { mockNavigateToSession } = vi.hoisted(() => ({
@@ -80,7 +80,7 @@ describe('RecentSessions', () => {
 		it('should render welcome header', () => {
 			const { container } = render(<RecentSessions sessions={mockSessions} />);
 
-			expect(container.textContent).toContain('Welcome to Liuboer');
+			expect(container.textContent).toContain('Welcome to NeoKai');
 		});
 
 		it('should render feature highlights', () => {

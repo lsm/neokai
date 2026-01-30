@@ -40,7 +40,7 @@ describe('Daemon App Cleanup', () => {
 			dbPath: ':memory:',
 			maxSessions: 10,
 			nodeEnv: 'test',
-			workspaceRoot: `${tmpDir}/liuboer-test-daemon-cleanup-${Date.now()}`,
+			workspaceRoot: `${tmpDir}/neokai-test-daemon-cleanup-${Date.now()}`,
 			disableWorktrees: true,
 		};
 	});

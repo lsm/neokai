@@ -6,7 +6,7 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { setupQuestionHandlers } from '../../../../src/lib/rpc-handlers/question-handlers';
-import type { MessageHub, QuestionDraftResponse } from '@liuboer/shared';
+import type { MessageHub, QuestionDraftResponse } from '@neokai/shared';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 

@@ -18,7 +18,7 @@ on:
 jobs:
   e2e-quick:
     name: E2E Quick
-    runs-on: arc-runner-set
+    runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:

@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { ErrorManager, ErrorCategory } from '../../../src/lib/error-manager';
-import { MessageHub } from '@liuboer/shared';
+import { MessageHub } from '@neokai/shared';
 import { createDaemonHub, type DaemonHub } from '../../../src/lib/daemon-hub';
 
 describe('ErrorManager - Error Throttling', () => {

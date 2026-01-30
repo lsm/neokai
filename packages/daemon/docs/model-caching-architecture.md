@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the dynamic model loading system with TTL-based lazy cache refresh implemented in the Liuboer daemon.
+This document describes the dynamic model loading system with TTL-based lazy cache refresh implemented in the NeoKai daemon.
 
 **Important:** The model list is solely sourced from the SDK's `supportedModels()` API. There is no static model fallback.
 

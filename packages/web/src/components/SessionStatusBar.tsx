@@ -14,7 +14,7 @@
 
 import { useSignalEffect } from '@preact/signals';
 import { useState, useCallback, useEffect } from 'preact/hooks';
-import type { ContextInfo, ModelInfo, ThinkingLevel } from '@liuboer/shared';
+import type { ContextInfo, ModelInfo, ThinkingLevel } from '@neokai/shared';
 import { connectionState, type ConnectionState } from '../lib/state.ts';
 import ConnectionStatus from './ConnectionStatus.tsx';
 import ContextUsageBar from './ContextUsageBar.tsx';

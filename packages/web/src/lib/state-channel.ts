@@ -9,8 +9,8 @@
  */
 
 import { signal, type Signal, batch } from '@preact/signals';
-import type { MessageHub } from '@liuboer/shared';
-import type { UnsubscribeFn } from '@liuboer/shared/message-hub/types';
+import type { MessageHub } from '@neokai/shared';
+import type { UnsubscribeFn } from '@neokai/shared/message-hub/types';
 
 /**
  * State Channel Options

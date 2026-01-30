@@ -18,10 +18,10 @@ describe('SDK Session File Manager', () => {
 			);
 		});
 
-		it('should encode paths with dots (like .liuboer) correctly', () => {
+		it('should encode paths with dots (like .neokai) correctly', () => {
 			// This is the key test - dots should be replaced with dashes
 			const result = getSDKSessionFilePath(
-				'/Users/lsm/.liuboer/projects/-Users-lsm-focus-liuboer/worktrees/abc123',
+				'/Users/lsm/.neokai/projects/-Users-lsm-focus-neokai/worktrees/abc123',
 				'sdk-456'
 			);
 			expect(result).toBe(
@@ -29,7 +29,7 @@ describe('SDK Session File Manager', () => {
 					homedir(),
 					'.claude',
 					'projects',
-					'-Users-lsm--liuboer-projects--Users-lsm-focus-liuboer-worktrees-abc123',
+					'-Users-lsm--neokai-projects--Users-lsm-focus-neokai-worktrees-abc123',
 					'sdk-456.jsonl'
 				)
 			);

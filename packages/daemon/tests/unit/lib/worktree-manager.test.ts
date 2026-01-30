@@ -128,9 +128,9 @@ describe('WorktreeManager', () => {
 
 		it('should create worktree directory if it does not exist', async () => {
 			existsSyncResults.set('/test/repo/.git', true);
-			existsSyncResults.set('/home/testuser/.liuboer/projects/-test-repo/worktrees', false);
+			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', false);
 			existsSyncResults.set(
-				'/home/testuser/.liuboer/projects/-test-repo/worktrees/session-123',
+				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
 				false
 			);
 			mockGitRevparse.mockResolvedValue('.git');
@@ -146,9 +146,9 @@ describe('WorktreeManager', () => {
 
 		it('should throw if worktree directory already exists', async () => {
 			existsSyncResults.set('/test/repo/.git', true);
-			existsSyncResults.set('/home/testuser/.liuboer/projects/-test-repo/worktrees', true);
+			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', true);
 			existsSyncResults.set(
-				'/home/testuser/.liuboer/projects/-test-repo/worktrees/session-123',
+				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
 				true
 			);
 			mockGitRevparse.mockResolvedValue('.git');
@@ -163,9 +163,9 @@ describe('WorktreeManager', () => {
 
 		it('should fallback to UUID branch if custom branch exists', async () => {
 			existsSyncResults.set('/test/repo/.git', true);
-			existsSyncResults.set('/home/testuser/.liuboer/projects/-test-repo/worktrees', true);
+			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', true);
 			existsSyncResults.set(
-				'/home/testuser/.liuboer/projects/-test-repo/worktrees/session-123',
+				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
 				false
 			);
 			mockGitRevparse.mockResolvedValue('.git');
@@ -184,9 +184,9 @@ describe('WorktreeManager', () => {
 
 		it('should return WorktreeMetadata on success', async () => {
 			existsSyncResults.set('/test/repo/.git', true);
-			existsSyncResults.set('/home/testuser/.liuboer/projects/-test-repo/worktrees', true);
+			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', true);
 			existsSyncResults.set(
-				'/home/testuser/.liuboer/projects/-test-repo/worktrees/session-123',
+				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
 				false
 			);
 			mockGitRevparse.mockResolvedValue('.git');
@@ -200,7 +200,7 @@ describe('WorktreeManager', () => {
 
 			expect(result).toEqual({
 				isWorktree: true,
-				worktreePath: '/home/testuser/.liuboer/projects/-test-repo/worktrees/session-123',
+				worktreePath: '/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
 				mainRepoPath: '/test/repo',
 				branch: 'my-branch',
 			});
@@ -208,9 +208,9 @@ describe('WorktreeManager', () => {
 
 		it('should cleanup on failure', async () => {
 			existsSyncResults.set('/test/repo/.git', true);
-			existsSyncResults.set('/home/testuser/.liuboer/projects/-test-repo/worktrees', true);
+			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', true);
 			existsSyncResults.set(
-				'/home/testuser/.liuboer/projects/-test-repo/worktrees/session-123',
+				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
 				false
 			);
 			mockGitRevparse.mockResolvedValue('.git');
@@ -222,7 +222,7 @@ describe('WorktreeManager', () => {
 
 			// After failure, worktree dir exists (partially created)
 			existsSyncResults.set(
-				'/home/testuser/.liuboer/projects/-test-repo/worktrees/session-123',
+				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
 				true
 			);
 
@@ -417,19 +417,19 @@ describe('WorktreeManager', () => {
 
 		it('should prune and remove orphaned worktrees', async () => {
 			existsSyncResults.set('/test/repo/.git', true);
-			existsSyncResults.set('/test/repo/.liuboer/worktrees/session-1', false); // Orphaned
+			existsSyncResults.set('/test/repo/.neokai/worktrees/session-1', false); // Orphaned
 
 			mockGitRevparse.mockResolvedValue('.git');
 			mockGitRaw
 				.mockResolvedValueOnce('') // prune
 				.mockResolvedValueOnce(
-					'worktree /test/repo\nHEAD abc123\n\nworktree /test/repo/.liuboer/worktrees/session-1\nHEAD def456\nbranch refs/heads/session/session-1\nprunable\n'
+					'worktree /test/repo\nHEAD abc123\n\nworktree /test/repo/.neokai/worktrees/session-1\nHEAD def456\nbranch refs/heads/session/session-1\nprunable\n'
 				) // list
 				.mockResolvedValue(''); // remove
 
 			const result = await manager.cleanupOrphanedWorktrees('/test/repo');
 
-			expect(result).toContain('/test/repo/.liuboer/worktrees/session-1');
+			expect(result).toContain('/test/repo/.neokai/worktrees/session-1');
 		});
 
 		it('should throw on cleanup failure', async () => {

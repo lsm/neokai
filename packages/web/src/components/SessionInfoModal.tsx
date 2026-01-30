@@ -1,4 +1,4 @@
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 import { Modal } from './ui/Modal.tsx';
 import { CopyButton } from './ui/CopyButton.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
@@ -43,7 +43,7 @@ function InfoSection({ title, children }: InfoSectionProps) {
 
 /**
  * Compute SDK project directory path from workspace path
- * SDK replaces both / and . with - (e.g., /.liuboer/ -> --liuboer-)
+ * SDK replaces both / and . with - (e.g., /.neokai/ -> --neokai-)
  */
 function getSDKProjectDir(workspacePath: string): string {
 	const projectKey = workspacePath.replace(/[/.]/g, '-');

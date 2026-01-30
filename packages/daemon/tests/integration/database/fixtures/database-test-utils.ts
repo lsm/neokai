@@ -2,7 +2,7 @@
  * Shared test utilities for database tests
  */
 
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 import { Database } from '../../../../src/storage/database';
 
 /**

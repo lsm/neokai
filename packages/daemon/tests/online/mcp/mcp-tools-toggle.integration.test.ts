@@ -20,7 +20,7 @@ import type { DaemonServerContext } from '../helpers/daemon-server-helper';
 import { createDaemonServer } from '../helpers/daemon-server-helper';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
@@ -34,7 +34,7 @@ describe('MCP Tools Toggle Integration', () => {
 	}, 30000);
 
 	beforeEach(async () => {
-		workspacePath = join(TMP_DIR, `liuboer-test-mcp-${Date.now()}`);
+		workspacePath = join(TMP_DIR, `neokai-test-mcp-${Date.now()}`);
 
 		// Setup: Create dummy MCP config in workspace root (project-level .mcp.json)
 		mkdirSync(workspacePath, { recursive: true });
@@ -102,7 +102,7 @@ describe('MCP Tools Toggle Integration', () => {
 					settingSources: ['user', 'project', 'local'],
 					// NEW APPROACH: List of disabled servers (unchecked in UI)
 					disabledMcpServers: ['dummy-test-server'],
-					liuboerTools: { memory: false },
+					kaiTools: { memory: false },
 				},
 			})) as { success: boolean };
 			expect(disableResult.success).toBe(true);
@@ -129,7 +129,7 @@ describe('MCP Tools Toggle Integration', () => {
 					settingSources: ['user', 'project', 'local'],
 					// Empty list = all servers enabled
 					disabledMcpServers: [],
-					liuboerTools: { memory: false },
+					kaiTools: { memory: false },
 				},
 			})) as { success: boolean };
 			expect(enableResult.success).toBe(true);
@@ -166,7 +166,7 @@ describe('MCP Tools Toggle Integration', () => {
 					useClaudeCodePreset: true,
 					settingSources: ['user', 'project', 'local'],
 					disabledMcpServers: ['dummy-test-server', 'another-server'],
-					liuboerTools: { memory: false },
+					kaiTools: { memory: false },
 				},
 			});
 

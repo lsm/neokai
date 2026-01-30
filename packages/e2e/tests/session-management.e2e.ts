@@ -22,8 +22,8 @@ test.describe('Session Management', () => {
 	});
 
 	test('should display sidebar with branding', async ({ page }) => {
-		// Check for Liuboer branding in sidebar
-		await expect(page.locator("h1:has-text('Liuboer')")).toBeVisible();
+		// Check for NeoKai branding in sidebar
+		await expect(page.locator("h1:has-text('NeoKai')")).toBeVisible();
 		await expect(page.locator(".text-2xl:has-text('🤖')")).toBeVisible();
 	});
 

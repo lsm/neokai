@@ -32,7 +32,7 @@ import { useComputed } from '@preact/signals';
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 import { ConnectionNotReadyError } from '../lib/errors';
-import type { MessageHub, SubscribeOptions, EventHandler } from '@liuboer/shared';
+import type { MessageHub, SubscribeOptions, EventHandler } from '@neokai/shared';
 
 /**
  * Options for the useMessageHub hook

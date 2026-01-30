@@ -5,7 +5,7 @@
  * and error categorization for better debugging and user experience.
  */
 
-import type { MessageHub } from '@liuboer/shared';
+import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from './daemon-hub';
 import { Logger } from './logger';
 

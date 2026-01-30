@@ -9,9 +9,9 @@ import {
 	QueryOptionsBuilder,
 	type QueryOptionsBuilderContext,
 } from '../../../src/lib/agent/query-options-builder';
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 import type { SettingsManager } from '../../../src/lib/settings-manager';
-import { generateUUID } from '@liuboer/shared';
+import { generateUUID } from '@neokai/shared';
 
 describe('QueryOptionsBuilder', () => {
 	let builder: QueryOptionsBuilder;
@@ -320,15 +320,15 @@ describe('QueryOptionsBuilder', () => {
 
 		it('should disable memory tool by default', async () => {
 			const options = await builder.build();
-			expect(options.disallowedTools).toContain('liuboer__memory__*');
+			expect(options.disallowedTools).toContain('kai__memory__*');
 		});
 
 		it('should not disable memory tool when enabled', async () => {
-			mockSession.config.tools = { liuboerTools: { memory: true } };
+			mockSession.config.tools = { kaiTools: { memory: true } };
 			const options = await builder.build();
 			// When memory is enabled, disallowedTools may be undefined or not contain the memory pattern
 			const disallowed = options.disallowedTools || [];
-			expect(disallowed).not.toContain('liuboer__memory__*');
+			expect(disallowed).not.toContain('kai__memory__*');
 		});
 	});
 

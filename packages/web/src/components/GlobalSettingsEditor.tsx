@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'preact/hooks';
-import type { PermissionMode, SettingSource } from '@liuboer/shared';
+import type { PermissionMode, SettingSource } from '@neokai/shared';
 import { toast } from '../lib/toast.ts';
 import {
 	updateGlobalSettings,

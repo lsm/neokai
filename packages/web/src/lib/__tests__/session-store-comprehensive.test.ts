@@ -7,8 +7,8 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sessionStore } from '../session-store';
-import type { Session, ContextInfo, AgentProcessingState, SessionState } from '@liuboer/shared';
-import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
+import type { Session, ContextInfo, AgentProcessingState, SessionState } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 
 // Mock connection manager
 const mockHub = {
@@ -815,7 +815,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 				sdkMessages: [],
 			});
 
-			let sessionStateCallback: ((state: import('@liuboer/shared').SessionState) => void) | null =
+			let sessionStateCallback: ((state: import('@neokai/shared').SessionState) => void) | null =
 				null;
 			mockHub.subscribeOptimistic.mockImplementation((channel, callback) => {
 				if (channel === 'state.session') {
@@ -852,7 +852,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 				sdkMessages: [],
 			});
 
-			let sessionStateCallback: ((state: import('@liuboer/shared').SessionState) => void) | null =
+			let sessionStateCallback: ((state: import('@neokai/shared').SessionState) => void) | null =
 				null;
 			mockHub.subscribeOptimistic.mockImplementation((channel, callback) => {
 				if (channel === 'state.session') {
@@ -888,7 +888,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 				sdkMessages: [],
 			});
 
-			let sessionStateCallback: ((state: import('@liuboer/shared').SessionState) => void) | null =
+			let sessionStateCallback: ((state: import('@neokai/shared').SessionState) => void) | null =
 				null;
 			mockHub.subscribeOptimistic.mockImplementation((channel, callback) => {
 				if (channel === 'state.session') {

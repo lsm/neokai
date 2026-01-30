@@ -1,7 +1,7 @@
 /**
  * Worktree Path Generation Tests
  *
- * Verifies that worktrees are created in ~/.liuboer/projects/{encoded-repo-path}/worktrees/ instead of {repo}/.worktrees/
+ * Verifies that worktrees are created in ~/.neokai/projects/{encoded-repo-path}/worktrees/ instead of {repo}/.worktrees/
  * Tests that:
  * 1. New worktrees use the project-based path format with readable encoded paths
  * 2. Different repos get different project directories (no collisions)
@@ -58,8 +58,8 @@ describe('WorktreeManager - Path Generation', () => {
 			try {
 				if (fs.existsSync(worktreePath)) {
 					// Remove via git if possible
-					// For new worktrees in ~/.liuboer/projects, always use testRepoPath1
-					const repoPath = worktreePath.startsWith(path.join(homedir(), '.liuboer', 'projects'))
+					// For new worktrees in ~/.neokai/projects, always use testRepoPath1
+					const repoPath = worktreePath.startsWith(path.join(homedir(), '.neokai', 'projects'))
 						? testRepoPath1
 						: path.dirname(path.dirname(worktreePath));
 
@@ -84,14 +84,14 @@ describe('WorktreeManager - Path Generation', () => {
 			}
 		}
 
-		// Cleanup ~/.liuboer/projects test directories
-		const liuboerProjectsDir = path.join(homedir(), '.liuboer', 'projects');
-		if (fs.existsSync(liuboerProjectsDir)) {
+		// Cleanup ~/.neokai/projects test directories
+		const neoKaiProjectsDir = path.join(homedir(), '.neokai', 'projects');
+		if (fs.existsSync(neoKaiProjectsDir)) {
 			// Only remove test project directories
 			try {
-				const entries = fs.readdirSync(liuboerProjectsDir);
+				const entries = fs.readdirSync(neoKaiProjectsDir);
 				for (const entry of entries) {
-					const fullPath = path.join(liuboerProjectsDir, entry);
+					const fullPath = path.join(neoKaiProjectsDir, entry);
 					const stat = fs.statSync(fullPath);
 					if (stat.isDirectory()) {
 						// Check if this is a test directory (contains test-git-repo in path)
@@ -106,7 +106,7 @@ describe('WorktreeManager - Path Generation', () => {
 		}
 	});
 
-	test('Creates worktree in ~/.liuboer/projects/{encoded-repo-path}/worktrees/ instead of repo/.worktrees/', async () => {
+	test('Creates worktree in ~/.neokai/projects/{encoded-repo-path}/worktrees/ instead of repo/.worktrees/', async () => {
 		const sessionId = 'test-session-123';
 
 		const worktree = await worktreeManager.createWorktree({
@@ -119,8 +119,8 @@ describe('WorktreeManager - Path Generation', () => {
 
 		createdWorktrees.push(worktree.worktreePath);
 
-		// Verify path format: ~/.liuboer/projects/{encoded-path}/worktrees/{sessionId}
-		expect(worktree.worktreePath).toContain('.liuboer/projects');
+		// Verify path format: ~/.neokai/projects/{encoded-path}/worktrees/{sessionId}
+		expect(worktree.worktreePath).toContain('.neokai/projects');
 		expect(worktree.worktreePath).toContain('/worktrees/');
 		expect(worktree.worktreePath).toContain(sessionId);
 		expect(worktree.worktreePath).toStartWith(homedir());
@@ -163,7 +163,7 @@ describe('WorktreeManager - Path Generation', () => {
 		createdWorktrees.push(worktree1.worktreePath, worktree2.worktreePath);
 
 		// Extract encoded repo path from worktree paths
-		// Path format: ~/.liuboer/projects/{encoded-path}/worktrees/{sessionId}
+		// Path format: ~/.neokai/projects/{encoded-path}/worktrees/{sessionId}
 		const extractEncodedPath = (p: string) => {
 			const parts = p.split(path.sep);
 			const projectsIndex = parts.indexOf('projects');
@@ -207,7 +207,7 @@ describe('WorktreeManager - Path Generation', () => {
 		createdWorktrees.push(worktree1.worktreePath, worktree2.worktreePath);
 
 		// Extract encoded repo path from worktree paths
-		// Path format: ~/.liuboer/projects/{encoded-path}/worktrees/{sessionId}
+		// Path format: ~/.neokai/projects/{encoded-path}/worktrees/{sessionId}
 		const extractEncodedPath = (p: string) => {
 			const parts = p.split(path.sep);
 			const projectsIndex = parts.indexOf('projects');
@@ -239,7 +239,7 @@ describe('WorktreeManager - Path Generation', () => {
 		if (!worktree) return;
 
 		// Verify worktree was created with new path format
-		expect(worktree.worktreePath).toContain('.liuboer/projects');
+		expect(worktree.worktreePath).toContain('.neokai/projects');
 		expect(worktree.worktreePath).toContain('/worktrees/');
 
 		// Remove the worktree properly via git first, then manually delete to create orphan state
@@ -270,7 +270,7 @@ describe('WorktreeManager - Path Generation', () => {
 
 		createdWorktrees.push(worktree.worktreePath);
 
-		// Expected structure: ~/.liuboer/projects/{encoded-repo-path}/worktrees/{sessionId}
+		// Expected structure: ~/.neokai/projects/{encoded-repo-path}/worktrees/{sessionId}
 		const pathParts = worktree.worktreePath.split(path.sep);
 
 		// Find the projects index

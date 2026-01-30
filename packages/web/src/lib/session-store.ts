@@ -20,8 +20,8 @@
  */
 
 import { signal, computed } from '@preact/signals';
-import type { Session, ContextInfo, AgentProcessingState, SessionState } from '@liuboer/shared';
-import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
+import type { Session, ContextInfo, AgentProcessingState, SessionState } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { connectionManager } from './connection-manager';
 import { slashCommandsSignal } from './signals';
 import { toast } from './toast';

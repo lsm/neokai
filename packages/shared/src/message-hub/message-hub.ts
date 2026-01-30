@@ -12,7 +12,7 @@ import { generateUUID } from '../utils.ts';
 import { createLogger } from '../logger.ts';
 
 // Create logger for MessageHub (uses unified log levels)
-const log = createLogger('liuboer:messagehub');
+const log = createLogger('kai:messagehub');
 import {
 	type HubMessage,
 	MessageType,

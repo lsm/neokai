@@ -13,8 +13,8 @@ import type {
 	ProviderSdkConfig,
 	ProviderSessionConfig,
 	ModelTier,
-} from '@liuboer/shared/provider';
-import type { ModelInfo } from '@liuboer/shared';
+} from '@neokai/shared/provider';
+import type { ModelInfo } from '@neokai/shared';
 
 /**
  * GLM provider implementation

@@ -7,7 +7,7 @@
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { RewindHandler, type RewindHandlerContext } from '../../../src/lib/agent/rewind-handler';
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
-import type { Session, Checkpoint } from '@liuboer/shared';
+import type { Session, Checkpoint } from '@neokai/shared';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { Database } from '../../../src/storage/database';
 import type { CheckpointTracker } from '../../../src/lib/agent/checkpoint-tracker';

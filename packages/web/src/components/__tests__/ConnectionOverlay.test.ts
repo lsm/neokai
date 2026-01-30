@@ -8,7 +8,7 @@
  */
 
 import { connectionState } from '../../lib/state';
-import type { ConnectionState } from '@liuboer/shared';
+import type { ConnectionState } from '@neokai/shared';
 
 /**
  * Helper function that mirrors the ConnectionOverlay logic

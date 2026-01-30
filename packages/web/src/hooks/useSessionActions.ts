@@ -6,7 +6,7 @@
  */
 
 import { useState, useCallback } from 'preact/hooks';
-import type { Session, ArchiveSessionResponse } from '@liuboer/shared';
+import type { Session, ArchiveSessionResponse } from '@neokai/shared';
 import { connectionManager } from '../lib/connection-manager';
 import { deleteSession, listSessions, archiveSession } from '../lib/api-helpers';
 import { toast } from '../lib/toast';

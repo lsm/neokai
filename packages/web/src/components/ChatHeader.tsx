@@ -5,7 +5,7 @@
  * Extracted from ChatContainer.tsx for better separation of concerns.
  */
 
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 import { borderColors } from '../lib/design-tokens';
 import { formatTokens } from '../lib/utils';
 import { sidebarOpenSignal } from '../lib/signals';

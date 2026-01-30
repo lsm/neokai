@@ -113,12 +113,12 @@ test.describe('Settings Modal - Global Tools Settings', () => {
 		await expect(page.locator('text=Use official Claude Code system prompt')).toBeVisible();
 	});
 
-	test.skip('should show Liuboer Tools section with Memory tool', async ({ page }) => {
+	test.skip('should show NeoKai Tools section with Memory tool', async ({ page }) => {
 		// TODO: Update test to match current SettingsModal structure
 		await openSettingsModal(page);
 
-		// Find Liuboer Tools section
-		await expect(page.locator('h4:has-text("Liuboer Tools")')).toBeVisible();
+		// Find NeoKai Tools section
+		await expect(page.locator('h4:has-text("NeoKai Tools")')).toBeVisible();
 
 		// Should show Memory tool
 		await expect(page.locator('text=Memory')).toBeVisible();

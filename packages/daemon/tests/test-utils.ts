@@ -16,7 +16,7 @@ import { AuthManager } from '../src/lib/auth-manager';
 import { SettingsManager } from '../src/lib/settings-manager';
 import { StateManager } from '../src/lib/state-manager';
 import { SubscriptionManager } from '../src/lib/subscription-manager';
-import { MessageHub, MessageHubRouter } from '@liuboer/shared';
+import { MessageHub, MessageHubRouter } from '@neokai/shared';
 import { setupRPCHandlers } from '../src/lib/rpc-handlers';
 import { WebSocketServerTransport } from '../src/lib/websocket-server-transport';
 import { createWebSocketHandlers } from '../src/routes/setup-websocket';
@@ -69,7 +69,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 
 	// Test config - use temp directory for workspace root
 	const tmpDir = process.env.TMPDIR || '/tmp';
-	const testWorkspaceRoot = `${tmpDir}/liuboer-test-${Date.now()}`;
+	const testWorkspaceRoot = `${tmpDir}/neokai-test-${Date.now()}`;
 
 	const config: Config = {
 		host: 'localhost',
@@ -216,7 +216,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 			if (url.pathname === '/') {
 				return Response.json(
 					{
-						name: 'Liuboer Test Daemon',
+						name: 'NeoKai Test Daemon',
 						version: '0.1.0',
 						status: 'running',
 					},
@@ -274,7 +274,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 		} else {
 			// For offline tests without authentication, set up mock models
 			// This allows model-related RPC handlers to work correctly
-			// IMPORTANT: Must match app's ModelInfo type from @liuboer/shared (NOT SDK's ModelInfo)
+			// IMPORTANT: Must match app's ModelInfo type from @neokai/shared (NOT SDK's ModelInfo)
 			// The model-service cache stores app's ModelInfo format with id, name, family, etc.
 			const mockModels = [
 				{

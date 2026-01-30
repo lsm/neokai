@@ -6,7 +6,7 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { SessionManager, CleanupState } from '../../../src/lib/session/session-manager';
-import type { MessageHub, Session, GlobalSettings } from '@liuboer/shared';
+import type { MessageHub, Session, GlobalSettings } from '@neokai/shared';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { Database } from '../../../src/storage/database';
 import type { AuthManager } from '../../../src/lib/auth-manager';

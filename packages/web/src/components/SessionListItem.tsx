@@ -1,4 +1,4 @@
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 import { currentSessionIdSignal } from '../lib/signals.ts';
 import { formatRelativeTime, formatTokens } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';

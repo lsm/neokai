@@ -9,9 +9,9 @@
  * They represent restore points that can be used with query.rewindFiles().
  */
 
-import type { Checkpoint } from '@liuboer/shared';
-import type { SDKMessage } from '@liuboer/shared/sdk';
-import { isSDKUserMessage, isSDKUserMessageReplay } from '@liuboer/shared/sdk/type-guards';
+import type { Checkpoint } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk';
+import { isSDKUserMessage, isSDKUserMessageReplay } from '@neokai/shared/sdk/type-guards';
 import type { DaemonHub } from '../daemon-hub';
 import { Logger } from '../logger';
 

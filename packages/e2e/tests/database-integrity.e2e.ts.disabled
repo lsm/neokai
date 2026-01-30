@@ -250,7 +250,7 @@ test.describe('Session Loading Race Conditions', () => {
       }
 
       // Go back home for next creation
-      await page.click('h1:has-text("Liuboer")');
+      await page.click('h1:has-text("NeoKai")');
       await page.waitForTimeout(200);
     }
 
@@ -452,7 +452,7 @@ test.describe('Database Transaction Safety', () => {
     await page.waitForTimeout(2000);
 
     // Either redirected to home or still on session page with error
-    const isOnHome = await page.locator('h2:has-text("Welcome to Liuboer")').isVisible();
+    const isOnHome = await page.locator('h2:has-text("Welcome to NeoKai")').isVisible();
     const hasError = await page.locator('text=/error|failed/i').isVisible();
 
     expect(isOnHome || !hasError).toBe(true); // Should either succeed or handle error gracefully

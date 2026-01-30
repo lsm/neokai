@@ -10,8 +10,8 @@
  * - Emit events for downstream processing
  */
 
-import type { MessageContent, MessageHub, MessageImage } from '@liuboer/shared';
-import type { SDKUserMessage } from '@liuboer/shared/sdk';
+import type { MessageContent, MessageHub, MessageImage } from '@neokai/shared';
+import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
 import type { Database } from '../../storage/database';
 import type { DaemonHub } from '../daemon-hub';

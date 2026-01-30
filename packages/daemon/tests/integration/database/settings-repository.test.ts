@@ -6,8 +6,8 @@
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../src/storage/database';
-import type { GlobalToolsConfig, GlobalSettings } from '@liuboer/shared';
-import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@liuboer/shared';
+import type { GlobalToolsConfig, GlobalSettings } from '@neokai/shared';
+import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
 
 describe('SettingsRepository', () => {
 	let db: Database;
@@ -65,10 +65,10 @@ describe('SettingsRepository', () => {
 				expect(retrieved.mcp.defaultProjectMcp).toBe(true);
 			});
 
-			it('should handle liuboerTools settings', () => {
+			it('should handle kaiTools settings', () => {
 				const customConfig: GlobalToolsConfig = {
 					...DEFAULT_GLOBAL_TOOLS_CONFIG,
-					liuboerTools: {
+					kaiTools: {
 						memory: {
 							allowed: true,
 							defaultEnabled: true,
@@ -79,8 +79,8 @@ describe('SettingsRepository', () => {
 
 				const retrieved = db.getGlobalToolsConfig();
 
-				expect(retrieved.liuboerTools.memory.allowed).toBe(true);
-				expect(retrieved.liuboerTools.memory.defaultEnabled).toBe(true);
+				expect(retrieved.kaiTools.memory.allowed).toBe(true);
+				expect(retrieved.kaiTools.memory.defaultEnabled).toBe(true);
 			});
 
 			it('should handle settingSources settings', () => {
@@ -115,7 +115,7 @@ describe('SettingsRepository', () => {
 						allowProjectMcp: true,
 						defaultProjectMcp: false,
 					},
-					liuboerTools: {
+					kaiTools: {
 						memory: { allowed: true, defaultEnabled: false },
 					},
 				};

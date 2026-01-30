@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useState } from 'preact/hooks';
-import type { MessageImage } from '@liuboer/shared';
+import type { MessageImage } from '@neokai/shared';
 import { isAgentWorking } from '../lib/state.ts';
 import { AttachmentPreview } from './AttachmentPreview.tsx';
 import { InputActionsMenu } from './InputActionsMenu.tsx';

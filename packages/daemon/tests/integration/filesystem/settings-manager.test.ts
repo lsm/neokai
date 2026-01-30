@@ -8,8 +8,8 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { Database } from '../../../src/storage/database';
 import { SettingsManager } from '../../../src/lib/settings-manager';
-import { DEFAULT_GLOBAL_SETTINGS } from '@liuboer/shared';
-import type { GlobalSettings } from '@liuboer/shared';
+import { DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
+import type { GlobalSettings } from '@neokai/shared';
 
 describe('SettingsManager', () => {
 	let db: Database;
@@ -188,7 +188,7 @@ describe('SettingsManager', () => {
 			expect(content.disabledMcpjsonServers).toEqual(['server1', 'server2']);
 		});
 
-		test('preserves non-Liuboer settings in file', async () => {
+		test('preserves non-NeoKai settings in file', async () => {
 			// Pre-create settings.local.json with custom content
 			const settingsPath = join(workspacePath, '.claude/settings.local.json');
 			mkdirSync(join(workspacePath, '.claude'), { recursive: true });

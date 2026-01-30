@@ -9,7 +9,7 @@
  * - Get/set global tools configuration
  */
 
-import type { MessageHub, ToolsConfig, GlobalToolsConfig } from '@liuboer/shared';
+import type { MessageHub, ToolsConfig, GlobalToolsConfig } from '@neokai/shared';
 import type { SessionManager } from '../session-manager';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';

@@ -12,7 +12,7 @@
  * - Background task tracking for cleanup
  */
 
-import type { Session, MessageHub } from '@liuboer/shared';
+import type { Session, MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import { AgentSession } from '../agent/agent-session';

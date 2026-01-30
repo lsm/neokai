@@ -10,7 +10,7 @@
  * - Provider auto-detection from model IDs
  */
 
-import type { Provider, ProviderId, ProviderInfo } from '@liuboer/shared/provider';
+import type { Provider, ProviderId, ProviderInfo } from '@neokai/shared/provider';
 
 /**
  * Provider Registry class

@@ -15,7 +15,7 @@ import {
 	waitForWebSocketState,
 	waitForWebSocketMessage,
 } from '../../test-utils';
-import { STATE_CHANNELS, MessageType } from '@liuboer/shared';
+import { STATE_CHANNELS, MessageType } from '@neokai/shared';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';

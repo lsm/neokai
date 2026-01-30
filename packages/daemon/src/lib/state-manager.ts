@@ -11,7 +11,7 @@
  * - Broadcasts immediately on event (no debouncing needed - LLM is slow)
  */
 
-import type { MessageHub, AgentProcessingState } from '@liuboer/shared';
+import type { MessageHub, AgentProcessingState } from '@neokai/shared';
 import type { DaemonHub } from './daemon-hub';
 import type { SessionManager } from './session-manager';
 import type { AuthManager } from './auth-manager';
@@ -28,9 +28,9 @@ import type {
 	SDKMessagesState,
 	SessionsUpdate,
 	SDKMessagesUpdate,
-} from '@liuboer/shared';
-import type { Session, ContextInfo } from '@liuboer/shared';
-import { STATE_CHANNELS } from '@liuboer/shared';
+} from '@neokai/shared';
+import type { Session, ContextInfo } from '@neokai/shared';
+import { STATE_CHANNELS } from '@neokai/shared';
 
 const VERSION = '0.1.0';
 const CLAUDE_SDK_VERSION = '0.1.37';
@@ -42,7 +42,7 @@ export class StateManager {
 	private logger = new Logger('StateManager');
 
 	// Track API connection state (updated via broadcasts from ErrorManager)
-	private apiConnectionState: import('@liuboer/shared').ApiConnectionState = {
+	private apiConnectionState: import('@neokai/shared').ApiConnectionState = {
 		status: 'connected',
 		timestamp: Date.now(),
 	};
@@ -81,7 +81,7 @@ export class StateManager {
 	private setupEventListeners(): void {
 		// API connection state updates from ErrorManager
 		this.eventBus.on('api.connection', (data) => {
-			this.apiConnectionState = data as import('@liuboer/shared').ApiConnectionState;
+			this.apiConnectionState = data as import('@neokai/shared').ApiConnectionState;
 			this.logger.log('API connection state updated:', this.apiConnectionState.status);
 			this.broadcastSystemChange().catch((err: unknown) => {
 				this.logger.error('Failed to broadcast system state after API connection change:', err);

@@ -13,12 +13,12 @@ import {
 import { ProcessingStateManager } from '../../../src/lib/processing-state-manager';
 import { ContextTracker } from '../../../src/lib/context-tracker';
 import { Database } from '../../../src/storage/database';
-import type { Session, MessageHub } from '@liuboer/shared';
+import type { Session, MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
-import type { SDKMessage } from '@liuboer/shared/sdk';
+import type { SDKMessage } from '@neokai/shared/sdk';
 import type { MessageQueue } from '../../../src/lib/agent/message-queue';
 import type { CheckpointTracker } from '../../../src/lib/agent/checkpoint-tracker';
-import { generateUUID } from '@liuboer/shared';
+import { generateUUID } from '@neokai/shared';
 
 describe('SDKMessageHandler', () => {
 	let handler: SDKMessageHandler;

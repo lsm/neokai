@@ -8,17 +8,17 @@
  */
 
 import { signal, computed, type Signal } from '@preact/signals';
-import type { MessageHub } from '@liuboer/shared';
-import type { Session, AuthStatus, HealthStatus, ContextInfo } from '@liuboer/shared';
+import type { MessageHub } from '@neokai/shared';
+import type { Session, AuthStatus, HealthStatus, ContextInfo } from '@neokai/shared';
 import type {
 	SystemState,
 	SessionState,
 	SDKMessagesState,
 	AgentProcessingState,
 	SDKMessagesUpdate,
-} from '@liuboer/shared';
-import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
-import { STATE_CHANNELS } from '@liuboer/shared';
+} from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import { STATE_CHANNELS } from '@neokai/shared';
 import { StateChannel } from './state-channel';
 import { globalStore } from './global-store';
 
@@ -383,7 +383,7 @@ export const healthStatus = computed<HealthStatus | null>(() => {
 });
 
 /** @public - Preact signal accessed via .value in components */
-export const apiConnectionStatus = computed<import('@liuboer/shared').ApiConnectionState | null>(
+export const apiConnectionStatus = computed<import('@neokai/shared').ApiConnectionState | null>(
 	() => {
 		const system = systemState.value;
 		return system?.apiConnection || null;
@@ -391,7 +391,7 @@ export const apiConnectionStatus = computed<import('@liuboer/shared').ApiConnect
 );
 
 /** @public - Preact signal accessed via .value in components */
-export const globalSettings = computed<import('@liuboer/shared').GlobalSettings | null>(() => {
+export const globalSettings = computed<import('@neokai/shared').GlobalSettings | null>(() => {
 	return globalStore.settings.value;
 });
 

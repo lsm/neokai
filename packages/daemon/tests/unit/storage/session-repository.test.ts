@@ -7,7 +7,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { SessionRepository } from '../../../src/storage/repositories/session-repository';
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 
 describe('SessionRepository', () => {
 	let db: Database;

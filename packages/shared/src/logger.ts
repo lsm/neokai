@@ -1,9 +1,9 @@
 /**
- * Unified Logger for Liuboer
+ * Unified Logger for NeoKai
  *
  * Features:
  * - Log levels: SILENT, ERROR, WARN, INFO, DEBUG, TRACE
- * - Namespace support with filtering (e.g., "liuboer:messagehub:*")
+ * - Namespace support with filtering (e.g., "kai:messagehub:*")
  * - Environment-based defaults (test=SILENT, prod=WARN, dev=INFO)
  * - Child logger creation for scoped logging
  * - Works in both Node.js and browser environments
@@ -12,23 +12,23 @@
  * - LOG_LEVEL: Override default log level (silent, error, warn, info, debug, trace)
  * - LOG_FILTER: Namespace filter patterns (comma-separated, supports wildcards)
  *   - "*" = all namespaces
- *   - "liuboer:messagehub" = exact match
- *   - "liuboer:messagehub:*" = prefix match
- *   - "-liuboer:transport" = exclude namespace
+ *   - "kai:messagehub" = exact match
+ *   - "kai:messagehub:*" = prefix match
+ *   - "-kai:transport" = exclude namespace
  *
  * Usage:
- *   import { createLogger, logger } from '@liuboer/shared/logger';
+ *   import { createLogger, logger } from '@neokai/shared/logger';
  *
  *   // Use default logger
  *   logger.info('Application started');
  *
  *   // Create namespaced logger
- *   const log = createLogger('liuboer:messagehub');
+ *   const log = createLogger('kai:messagehub');
  *   log.debug('Processing message', { id: '123' });
  *
  *   // Create child logger
  *   const childLog = log.child('client');
- *   childLog.info('Connected'); // [liuboer:messagehub:client] Connected
+ *   childLog.info('Connected'); // [kai:messagehub:client] Connected
  */
 
 /**
@@ -161,7 +161,7 @@ function matchesPattern(namespace: string, pattern: string): boolean {
 	if (pattern === '*') return true;
 
 	if (pattern.endsWith(':*')) {
-		// Prefix match: "liuboer:messagehub:*" matches "liuboer:messagehub:foo"
+		// Prefix match: "kai:messagehub:*" matches "kai:messagehub:foo"
 		const prefix = pattern.slice(0, -1); // Remove the *
 		return namespace === pattern.slice(0, -2) || namespace.startsWith(prefix);
 	}
@@ -225,7 +225,7 @@ export class Logger {
 	private readonly prefix: string;
 	private cachedEnabled: boolean | null = null;
 
-	constructor(namespace: string = 'liuboer') {
+	constructor(namespace: string = 'kai') {
 		this.namespace = namespace;
 		this.prefix = namespace ? `[${namespace}]` : '';
 	}

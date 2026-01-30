@@ -13,8 +13,8 @@ describe('getConfig', () => {
 	beforeEach(() => {
 		// Store original environment
 		originalEnv = { ...process.env };
-		// Clear LIUBOER_WORKSPACE_PATH to avoid test pollution
-		delete process.env.LIUBOER_WORKSPACE_PATH;
+		// Clear NEOKAI_WORKSPACE_PATH to avoid test pollution
+		delete process.env.NEOKAI_WORKSPACE_PATH;
 	});
 
 	afterEach(() => {
@@ -37,8 +37,8 @@ describe('getConfig', () => {
 
 		expect(config.port).toBe(9283);
 		expect(config.host).toBe('0.0.0.0');
-		// Database path should be project-based: ~/.liuboer/projects/{encoded-workspace}/database/daemon.db
-		expect(config.dbPath).toContain('.liuboer/projects');
+		// Database path should be project-based: ~/.neokai/projects/{encoded-workspace}/database/daemon.db
+		expect(config.dbPath).toContain('.neokai/projects');
 		expect(config.dbPath).toContain('-test-workspace');
 		expect(config.dbPath).toEndWith('database/daemon.db');
 		// 'default' maps to Sonnet 4.5 in the SDK
@@ -59,7 +59,7 @@ describe('getConfig', () => {
 		process.env.TEMPERATURE = '0.5';
 		process.env.MAX_SESSIONS = '20';
 		process.env.NODE_ENV = 'production';
-		process.env.LIUBOER_WORKSPACE_PATH = '/env/workspace';
+		process.env.NEOKAI_WORKSPACE_PATH = '/env/workspace';
 
 		const config = getConfig();
 
@@ -75,7 +75,7 @@ describe('getConfig', () => {
 
 	test('CLI port override takes precedence over env var', () => {
 		process.env.PORT = '8080';
-		process.env.LIUBOER_WORKSPACE_PATH = '/env/workspace';
+		process.env.NEOKAI_WORKSPACE_PATH = '/env/workspace';
 
 		const config = getConfig({ port: 3000 });
 
@@ -84,7 +84,7 @@ describe('getConfig', () => {
 
 	test('CLI host override takes precedence over env var', () => {
 		process.env.HOST = '127.0.0.1';
-		process.env.LIUBOER_WORKSPACE_PATH = '/env/workspace';
+		process.env.NEOKAI_WORKSPACE_PATH = '/env/workspace';
 
 		const config = getConfig({ host: 'localhost' });
 
@@ -93,25 +93,25 @@ describe('getConfig', () => {
 
 	test('CLI dbPath override takes precedence over env var', () => {
 		process.env.DB_PATH = '/env/path/db.sqlite';
-		process.env.LIUBOER_WORKSPACE_PATH = '/env/workspace';
+		process.env.NEOKAI_WORKSPACE_PATH = '/env/workspace';
 
 		const config = getConfig({ dbPath: '/cli/path/db.sqlite' });
 
 		expect(config.dbPath).toBe('/cli/path/db.sqlite');
 	});
 
-	test('CLI workspace override takes precedence over LIUBOER_WORKSPACE_PATH env var', () => {
+	test('CLI workspace override takes precedence over NEOKAI_WORKSPACE_PATH env var', () => {
 		process.env.NODE_ENV = 'production';
-		process.env.LIUBOER_WORKSPACE_PATH = '/env/workspace';
+		process.env.NEOKAI_WORKSPACE_PATH = '/env/workspace';
 
 		const config = getConfig({ workspace: '/custom/workspace' });
 
 		expect(config.workspaceRoot).toBe('/custom/workspace');
 	});
 
-	test('LIUBOER_WORKSPACE_PATH environment variable is used when set', () => {
+	test('NEOKAI_WORKSPACE_PATH environment variable is used when set', () => {
 		process.env.NODE_ENV = 'production';
-		process.env.LIUBOER_WORKSPACE_PATH = '/env/workspace';
+		process.env.NEOKAI_WORKSPACE_PATH = '/env/workspace';
 
 		const config = getConfig();
 
@@ -120,16 +120,16 @@ describe('getConfig', () => {
 
 	test('throws error when no workspace is provided', () => {
 		process.env.NODE_ENV = 'production';
-		// No LIUBOER_WORKSPACE_PATH env var set
+		// No NEOKAI_WORKSPACE_PATH env var set
 
 		expect(() => getConfig()).toThrow(
-			'Workspace path must be explicitly provided via --workspace flag or LIUBOER_WORKSPACE_PATH environment variable'
+			'Workspace path must be explicitly provided via --workspace flag or NEOKAI_WORKSPACE_PATH environment variable'
 		);
 	});
 
 	test('reads API key from env var', () => {
 		process.env.ANTHROPIC_API_KEY = 'sk-test-key';
-		process.env.LIUBOER_WORKSPACE_PATH = '/env/workspace';
+		process.env.NEOKAI_WORKSPACE_PATH = '/env/workspace';
 
 		const config = getConfig();
 
@@ -138,7 +138,7 @@ describe('getConfig', () => {
 
 	test('reads OAuth token from env var', () => {
 		process.env.CLAUDE_CODE_OAUTH_TOKEN = 'oauth-token-123';
-		process.env.LIUBOER_WORKSPACE_PATH = '/env/workspace';
+		process.env.NEOKAI_WORKSPACE_PATH = '/env/workspace';
 
 		const config = getConfig();
 
@@ -152,7 +152,7 @@ describe('getConfig', () => {
 		const config = getConfig({ workspace: '/Users/alice/my_project' });
 
 		// Should encode path: /Users/alice/my_project → -Users-alice-my_project
-		expect(config.dbPath).toContain('.liuboer/projects/-Users-alice-my_project/database/daemon.db');
+		expect(config.dbPath).toContain('.neokai/projects/-Users-alice-my_project/database/daemon.db');
 	});
 
 	test('handles Windows-style paths in database path generation', () => {
@@ -164,12 +164,12 @@ describe('getConfig', () => {
 
 		// Should normalize and encode: C:\Users\bob\project → -C:-Users-bob-project
 		// Note: The colon is preserved in Windows drive letters
-		expect(config.dbPath).toContain('.liuboer/projects/-C:-Users-bob-project/database/daemon.db');
+		expect(config.dbPath).toContain('.neokai/projects/-C:-Users-bob-project/database/daemon.db');
 	});
 
 	test('DB_PATH env var takes precedence over auto-generated path', () => {
 		process.env.DB_PATH = '/custom/database.db';
-		process.env.LIUBOER_WORKSPACE_PATH = '/workspace';
+		process.env.NEOKAI_WORKSPACE_PATH = '/workspace';
 
 		const config = getConfig();
 

@@ -6,8 +6,8 @@
  */
 
 import { Database as BunDatabase } from 'bun:sqlite';
-import type { Session, GlobalToolsConfig, GlobalSettings } from '@liuboer/shared';
-import type { SDKMessage } from '@liuboer/shared/sdk';
+import type { Session, GlobalToolsConfig, GlobalSettings } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk';
 import { DatabaseCore } from './database-core';
 import { SessionRepository } from './repositories/session-repository';
 import { SDKMessageRepository, type SendStatus } from './repositories/sdk-message-repository';

@@ -7,11 +7,11 @@
  * - State updates are broadcast via State Channels
  */
 
-import type { MessageHub, MessageImage, Session } from '@liuboer/shared';
+import type { MessageHub, MessageImage, Session } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
-import { generateUUID } from '@liuboer/shared';
+import { generateUUID } from '@neokai/shared';
 import type { SessionManager } from '../session-manager';
-import type { CreateSessionRequest, UpdateSessionRequest } from '@liuboer/shared';
+import type { CreateSessionRequest, UpdateSessionRequest } from '@neokai/shared';
 import { clearModelsCache } from '../model-service';
 import {
 	archiveSDKSessionFiles,
@@ -485,10 +485,10 @@ export function setupSessionHandlers(
 
 		// Process each file
 		for (const file of filesToClean) {
-			const liuboerSessionId = file.liuboerSessionIds[0] || 'orphan';
+			const kaiSessionId = file.kaiSessionIds[0] || 'orphan';
 
 			if (mode === 'delete') {
-				const result = deleteSDKSessionFiles(workspacePath, file.sdkSessionId, liuboerSessionId);
+				const result = deleteSDKSessionFiles(workspacePath, file.sdkSessionId, kaiSessionId);
 				if (result.success) {
 					processedCount++;
 					totalSize += result.deletedSize;
@@ -496,7 +496,7 @@ export function setupSessionHandlers(
 					errors.push(...result.errors);
 				}
 			} else {
-				const result = archiveSDKSessionFiles(workspacePath, file.sdkSessionId, liuboerSessionId);
+				const result = archiveSDKSessionFiles(workspacePath, file.sdkSessionId, kaiSessionId);
 				if (result.success) {
 					processedCount++;
 					totalSize += result.totalSize;

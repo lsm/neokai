@@ -1,5 +1,5 @@
 import { signal } from '@preact/signals';
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 
 // Shared signal for the current session ID - always starts as null
 // Refreshing the page will return to recent conversations view

@@ -1,8 +1,8 @@
-# Liuboer Core
+# NeoKai
 
-[![CI](https://github.com/lsm/liuboer-core/actions/workflows/package-tests.yml/badge.svg)](https://github.com/lsm/liuboer-core/actions/workflows/package-tests.yml)
-[![E2E](https://github.com/lsm/liuboer-core/actions/workflows/e2e-quick.yml/badge.svg)](https://github.com/lsm/liuboer-core/actions/workflows/e2e-quick.yml)
-[![codecov](https://codecov.io/gh/lsm/liuboer-core/graph/badge.svg)](https://codecov.io/gh/lsm/liuboer-core)
+[![CI](https://github.com/lsm/neokai/actions/workflows/package-tests.yml/badge.svg)](https://github.com/lsm/neokai/actions/workflows/package-tests.yml)
+[![E2E](https://github.com/lsm/neokai/actions/workflows/e2e-quick.yml/badge.svg)](https://github.com/lsm/neokai/actions/workflows/e2e-quick.yml)
+[![codecov](https://codecov.io/gh/lsm/neokai/graph/badge.svg)](https://codecov.io/gh/lsm/neokai)
 
 Web-based interface for Claude Agent SDK, enabling multi-session agent conversations.
 
@@ -10,19 +10,19 @@ Web-based interface for Claude Agent SDK, enabling multi-session agent conversat
 
 | Package | Coverage |
 |---------|----------|
-| Daemon | [![daemon](https://codecov.io/gh/lsm/liuboer-core/graph/badge.svg?flag=daemon)](https://codecov.io/gh/lsm/liuboer-core?flags[0]=daemon) |
-| Web | [![web](https://codecov.io/gh/lsm/liuboer-core/graph/badge.svg?flag=web)](https://codecov.io/gh/lsm/liuboer-core?flags[0]=web) |
-| E2E | [![e2e](https://codecov.io/gh/lsm/liuboer-core/graph/badge.svg?flag=e2e-matrix)](https://codecov.io/gh/lsm/liuboer-core?flags[0]=e2e-matrix) |
+| Daemon | [![daemon](https://codecov.io/gh/lsm/neokai/graph/badge.svg?flag=daemon)](https://codecov.io/gh/lsm/neokai?flags[0]=daemon) |
+| Web | [![web](https://codecov.io/gh/lsm/neokai/graph/badge.svg?flag=web)](https://codecov.io/gh/lsm/neokai?flags[0]=web) |
+| E2E | [![e2e](https://codecov.io/gh/lsm/neokai/graph/badge.svg?flag=e2e-matrix)](https://codecov.io/gh/lsm/neokai?flags[0]=e2e-matrix) |
 
 ## Packages
 
 | Package | Description |
 |---------|-------------|
-| `@liuboer/cli` | Unified server (daemon + web) |
-| `@liuboer/daemon` | Backend wrapping Claude Agent SDK |
-| `@liuboer/web` | Preact + Signals UI |
-| `@liuboer/shared` | Types, MessageHub, utilities |
-| `@liuboer/e2e` | End-to-end tests |
+| `@neokai/cli` | Unified server (daemon + web) |
+| `@neokai/daemon` | Backend wrapping Claude Agent SDK |
+| `@neokai/web` | Preact + Signals UI |
+| `@neokai/shared` | Types, MessageHub, utilities |
+| `@neokai/e2e` | End-to-end tests |
 
 ## Installation
 
@@ -34,7 +34,7 @@ bun install
 
 ```bash
 make dev          # Start dev server (port 9283)
-make self         # Use liuboer to develop liuboer :)
+make self         # Use kai to develop kai :)
 make typecheck    # Type check
 make lint         # Lint code
 ```

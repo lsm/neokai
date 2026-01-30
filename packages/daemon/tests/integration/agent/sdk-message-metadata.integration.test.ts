@@ -10,8 +10,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
-import type { MessageHub } from '@liuboer/shared';
-import { generateUUID } from '@liuboer/shared';
+import type { MessageHub } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import { ProcessingStateManager } from '../../../src/lib/agent/processing-state-manager';
 import {
 	SDKMessageHandler,

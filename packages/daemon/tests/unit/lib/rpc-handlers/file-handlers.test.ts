@@ -6,7 +6,7 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { setupFileHandlers } from '../../../../src/lib/rpc-handlers/file-handlers';
-import type { MessageHub, Session } from '@liuboer/shared';
+import type { MessageHub, Session } from '@neokai/shared';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 
 // Mock the FileManager module

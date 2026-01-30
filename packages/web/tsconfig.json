@@ -13,8 +13,8 @@
 		"noEmit": true,
 		"paths": {
 			"@/*": ["./*"],
-			"@liuboer/shared": ["../shared/src/mod.ts"],
-			"@liuboer/shared/*": ["../shared/src/*"]
+			"@neokai/shared": ["../shared/src/mod.ts"],
+			"@neokai/shared/*": ["../shared/src/*"]
 		}
 	},
 	"include": ["src/**/*", "build.ts", "../shared/src/**/*"],

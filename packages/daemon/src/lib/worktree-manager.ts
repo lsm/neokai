@@ -2,7 +2,7 @@ import simpleGit, { SimpleGit } from 'simple-git';
 import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import type { WorktreeMetadata, CommitInfo, WorktreeCommitStatus } from '@liuboer/shared';
+import type { WorktreeMetadata, CommitInfo, WorktreeCommitStatus } from '@neokai/shared';
 import { Logger } from './logger';
 
 export interface WorktreeInfo {
@@ -104,12 +104,12 @@ export class WorktreeManager {
 
 	/**
 	 * Get the worktree base directory for a repository
-	 * Format: ~/.liuboer/projects/{encoded-repo-path}/worktrees/
-	 * Example: ~/.liuboer/projects/-Users-alice-project/worktrees/
+	 * Format: ~/.neokai/projects/{encoded-repo-path}/worktrees/
+	 * Example: ~/.neokai/projects/-Users-alice-project/worktrees/
 	 */
 	private getWorktreeBaseDir(gitRoot: string): string {
 		const encodedPath = this.encodeRepoPath(gitRoot);
-		return join(homedir(), '.liuboer', 'projects', encodedPath, 'worktrees');
+		return join(homedir(), '.neokai', 'projects', encodedPath, 'worktrees');
 	}
 
 	/**
@@ -129,7 +129,7 @@ export class WorktreeManager {
 		const git = this.getGit(gitRoot);
 
 		// Create worktree base directory if it doesn't exist
-		// Format: ~/.liuboer/projects/{encoded-repo-path}/worktrees/
+		// Format: ~/.neokai/projects/{encoded-repo-path}/worktrees/
 		const worktreesDir = this.getWorktreeBaseDir(gitRoot);
 		if (!existsSync(worktreesDir)) {
 			mkdirSync(worktreesDir, { recursive: true });
@@ -333,13 +333,14 @@ export class WorktreeManager {
 				}
 
 				// Check if worktree is prunable (directory missing) or if it's a session worktree that doesn't exist
-				// Support old paths (.worktrees, .liuboer/worktrees) and new path (.liuboer/projects)
+				// Support old paths (.worktrees, .liuboer/worktrees, .liuboer/projects) and new path (.neokai/projects)
 				if (
 					worktree.isPrunable ||
 					(!existsSync(worktree.path) &&
 						(worktree.path.includes('.worktrees') ||
 							worktree.path.includes('.liuboer/worktrees') ||
-							worktree.path.includes('.liuboer/projects')))
+							worktree.path.includes('.liuboer/projects') ||
+							worktree.path.includes('.neokai/projects')))
 				) {
 					this.logger.info(`[WorktreeManager] Removing orphaned worktree: ${worktree.path}`);
 

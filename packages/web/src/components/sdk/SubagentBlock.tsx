@@ -12,14 +12,14 @@
 import { useState } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
-import type { AgentInput } from '@liuboer/shared/sdk/sdk-tools.d.ts';
-import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
+import type { AgentInput } from '@neokai/shared/sdk/sdk-tools.d.ts';
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import {
 	isTextBlock,
 	isToolUseBlock,
 	isThinkingBlock,
 	type ContentBlock,
-} from '@liuboer/shared/sdk/type-guards';
+} from '@neokai/shared/sdk/type-guards';
 import { ToolResultCard } from './tools/index.ts';
 import { ThinkingBlock } from './ThinkingBlock.tsx';
 

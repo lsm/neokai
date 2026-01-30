@@ -7,7 +7,7 @@ import { AuthManager } from './lib/auth-manager';
 import { SettingsManager } from './lib/settings-manager';
 import { StateManager } from './lib/state-manager';
 import { SubscriptionManager } from './lib/subscription-manager';
-import { MessageHub, MessageHubRouter } from '@liuboer/shared';
+import { MessageHub, MessageHubRouter } from '@neokai/shared';
 import { createDaemonHub } from './lib/daemon-hub';
 import { setupRPCHandlers } from './lib/rpc-handlers';
 import { WebSocketServerTransport } from './lib/websocket-server-transport';
@@ -47,7 +47,7 @@ export interface DaemonAppContext {
 }
 
 /**
- * Creates and initializes the Liuboer daemon application.
+ * Creates and initializes the NeoKai daemon application.
  *
  * This factory function sets up:
  * - Database connection
@@ -230,7 +230,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			if (standalone && url.pathname === '/') {
 				return Response.json(
 					{
-						name: 'Liuboer Daemon',
+						name: 'NeoKai Daemon',
 						version: '0.1.0',
 						status: 'running',
 						protocol: 'WebSocket-only (MessageHub RPC + Pub/Sub)',

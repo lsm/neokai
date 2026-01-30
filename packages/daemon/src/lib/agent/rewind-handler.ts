@@ -11,7 +11,7 @@
  */
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
-import type { Session, Checkpoint, RewindPreview, RewindResult, RewindMode } from '@liuboer/shared';
+import type { Session, Checkpoint, RewindPreview, RewindResult, RewindMode } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { Logger } from '../logger';

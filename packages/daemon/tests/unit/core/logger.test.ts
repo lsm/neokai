@@ -59,7 +59,7 @@ describe('Logger', () => {
 			// Logger uses namespace-based prefix
 			expect(consoleSpy.info).toHaveBeenCalledTimes(1);
 			const calls = consoleSpy.info.mock.calls[0];
-			expect(calls[0]).toContain('liuboer:daemon:testprefix');
+			expect(calls[0]).toContain('kai:daemon:testprefix');
 			expect(calls[1]).toBe('test message');
 		});
 
@@ -69,7 +69,7 @@ describe('Logger', () => {
 
 			expect(consoleSpy.error).toHaveBeenCalledTimes(1);
 			const calls = consoleSpy.error.mock.calls[0];
-			expect(calls[0]).toContain('liuboer:daemon:testprefix');
+			expect(calls[0]).toContain('kai:daemon:testprefix');
 			expect(calls[1]).toBe('error message');
 		});
 
@@ -79,7 +79,7 @@ describe('Logger', () => {
 
 			expect(consoleSpy.warn).toHaveBeenCalledTimes(1);
 			const calls = consoleSpy.warn.mock.calls[0];
-			expect(calls[0]).toContain('liuboer:daemon:testprefix');
+			expect(calls[0]).toContain('kai:daemon:testprefix');
 			expect(calls[1]).toBe('warning message');
 		});
 
@@ -89,7 +89,7 @@ describe('Logger', () => {
 
 			expect(consoleSpy.info).toHaveBeenCalledTimes(1);
 			const calls = consoleSpy.info.mock.calls[0];
-			expect(calls[0]).toContain('liuboer:daemon:testprefix');
+			expect(calls[0]).toContain('kai:daemon:testprefix');
 			expect(calls[1]).toBe('info message');
 		});
 
@@ -232,13 +232,13 @@ describe('Logger', () => {
 		beforeEach(() => {
 			configureLogger({
 				level: LogLevel.DEBUG,
-				filter: ['liuboer:daemon:*'],
+				filter: ['kai:daemon:*'],
 				excludeFilter: [],
 			});
 		});
 
 		test('matching namespace should log', () => {
-			const logger = new Logger('TestPrefix'); // becomes liuboer:daemon:testprefix
+			const logger = new Logger('TestPrefix'); // becomes kai:daemon:testprefix
 			logger.info('info message');
 
 			expect(consoleSpy.info).toHaveBeenCalledTimes(1);

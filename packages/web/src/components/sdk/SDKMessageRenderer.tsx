@@ -2,8 +2,8 @@
  * SDK Message Renderer - Routes SDK messages to appropriate renderers
  */
 
-import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
-import type { PendingUserQuestion, QuestionDraftResponse, ResolvedQuestion } from '@liuboer/shared';
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { PendingUserQuestion, QuestionDraftResponse, ResolvedQuestion } from '@neokai/shared';
 import {
 	isSDKAssistantMessage,
 	isSDKResultMessage,
@@ -14,7 +14,7 @@ import {
 	isSDKUserMessage,
 	isSDKUserMessageReplay,
 	isUserVisibleMessage,
-} from '@liuboer/shared/sdk/type-guards';
+} from '@neokai/shared/sdk/type-guards';
 
 // Component imports
 import { SDKAssistantMessage } from './SDKAssistantMessage.tsx';

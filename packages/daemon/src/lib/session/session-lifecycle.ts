@@ -9,8 +9,8 @@
  * - Title generation and branch renaming
  */
 
-import type { Session, WorktreeMetadata, MessageHub, Provider } from '@liuboer/shared';
-import { generateUUID } from '@liuboer/shared';
+import type { Session, WorktreeMetadata, MessageHub, Provider } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import type { Database } from '../../storage/database';
 import type { DaemonHub } from '../daemon-hub';
 import type { WorktreeManager } from '../worktree-manager';
@@ -119,7 +119,7 @@ export class SessionLifecycle {
 				provider: params.config?.provider,
 				// Tools config: Use global defaults for new sessions
 				// SDK built-in tools are always enabled (not configurable)
-				// MCP and Liuboer tools are configurable based on global settings
+				// MCP and NeoKai tools are configurable based on global settings
 				tools: params.config?.tools ?? this.toolsConfigManager.getDefaultForNewSession(),
 			},
 			metadata: {
@@ -592,7 +592,7 @@ ${messageText.slice(0, 2000)}`;
 			});
 
 			// Extract title from the response
-			const { isSDKAssistantMessage } = await import('@liuboer/shared/sdk/type-guards');
+			const { isSDKAssistantMessage } = await import('@neokai/shared/sdk/type-guards');
 			let title = '';
 
 			for await (const message of agentQuery) {

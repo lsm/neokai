@@ -15,7 +15,7 @@ import { generateUUID } from '../utils.ts';
 import { createLogger } from '../logger.ts';
 
 // Create logger for WebSocket transport (uses unified log levels)
-const log = createLogger('liuboer:transport:client');
+const log = createLogger('kai:transport:client');
 
 export interface WebSocketClientTransportOptions {
 	/**

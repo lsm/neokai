@@ -143,10 +143,10 @@ test.describe
 			await page.click('[data-testid="send-button"]');
 
 			// Navigate away abruptly
-			await page.click('h1:has-text("Liuboer")');
+			await page.click('h1:has-text("NeoKai")');
 
 			// Should return to home without errors
-			await expect(page.locator('h2:has-text("Welcome to Liuboer")')).toBeVisible({
+			await expect(page.locator('h2:has-text("Welcome to NeoKai")')).toBeVisible({
 				timeout: 5000,
 			});
 

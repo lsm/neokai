@@ -110,7 +110,7 @@ test.describe('Error Scenarios', () => {
 
 		// Should see error toast or be redirected to home
 		const isOnHome = await page
-			.locator('h2:has-text("Welcome to Liuboer")')
+			.locator('h2:has-text("Welcome to NeoKai")')
 			.isVisible({ timeout: 5000 });
 		const hasErrorToast = await page
 			.locator('text=/session not found/i')

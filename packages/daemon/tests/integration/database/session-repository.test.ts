@@ -6,7 +6,7 @@
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../src/storage/database';
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 import { createTestSession } from './fixtures/database-test-utils';
 
 describe('SessionRepository', () => {

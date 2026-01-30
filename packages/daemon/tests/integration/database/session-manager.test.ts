@@ -11,7 +11,7 @@ import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { SessionManager } from '../../../src/lib/session-manager';
 import { Database } from '../../../src/storage/database';
 import { AuthManager } from '../../../src/lib/auth-manager';
-import { MessageHub, MessageHubRouter } from '@liuboer/shared';
+import { MessageHub, MessageHubRouter } from '@neokai/shared';
 import { createDaemonHub, type DaemonHub } from '../../../src/lib/daemon-hub';
 import type { SettingsManager } from '../../../src/lib/settings-manager';
 

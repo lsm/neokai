@@ -1,4 +1,4 @@
-# Dockerfile for Liuboer
+# Dockerfile for NeoKai
 # Uses Bun runtime for fast builds and execution
 
 FROM oven/bun:1.3.2-slim AS base

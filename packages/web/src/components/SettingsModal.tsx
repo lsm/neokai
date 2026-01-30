@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { AuthStatus } from '@liuboer/shared';
+import type { AuthStatus } from '@neokai/shared';
 import { getAuthStatus } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
 import { Modal } from './ui/Modal.tsx';

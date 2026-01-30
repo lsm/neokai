@@ -31,7 +31,7 @@ test.describe('Multi-Session Rapid Operations', () => {
 
 			// Immediately go back to create another (except for last one)
 			if (i < sessionCount - 1) {
-				await page.click('h1:has-text("Liuboer")');
+				await page.click('h1:has-text("NeoKai")');
 				await page.waitForTimeout(300); // Slightly increased delay
 			}
 		}
@@ -95,7 +95,7 @@ test.describe('Multi-Session Rapid Operations', () => {
 
 			// Go back to create next session
 			if (i < 2) {
-				await page.click('h1:has-text("Liuboer")');
+				await page.click('h1:has-text("NeoKai")');
 				await page.waitForTimeout(500);
 			}
 		}
@@ -176,7 +176,7 @@ test.describe('Multi-Session Rapid Operations', () => {
 			await waitForMessageProcessed(page, `Message in session ${i + 1}`);
 
 			// Go back home
-			await page.click('h1:has-text("Liuboer")');
+			await page.click('h1:has-text("NeoKai")');
 			await page.waitForTimeout(500);
 		}
 

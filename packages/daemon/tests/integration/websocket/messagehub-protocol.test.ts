@@ -19,7 +19,7 @@ import {
 	waitForWebSocketState,
 	waitForWebSocketMessage,
 } from '../../test-utils';
-import { generateUUID } from '@liuboer/shared';
+import { generateUUID } from '@neokai/shared';
 
 const verbose = !!process.env.TEST_VERBOSE;
 const log = verbose ? console.log : () => {};

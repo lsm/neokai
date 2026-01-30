@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { render, fireEvent } from '@testing-library/preact';
 import { SDKUserMessage } from '../SDKUserMessage';
-import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
 
 // Mock the utils module for copyToClipboard

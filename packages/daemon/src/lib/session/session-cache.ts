@@ -7,7 +7,7 @@
  * - Cache invalidation on session deletion
  */
 
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 import type { AgentSession } from '../agent/agent-session';
 
 /**

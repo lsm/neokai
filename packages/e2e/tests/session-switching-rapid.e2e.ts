@@ -34,7 +34,7 @@ test.describe('Session Switching - Rapid Switching', () => {
 
 			// Go back to home to create next session
 			if (i < 4) {
-				await page.click('h1:has-text("Liuboer")');
+				await page.click('h1:has-text("NeoKai")');
 				await page.waitForTimeout(300);
 			}
 		}

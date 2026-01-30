@@ -7,7 +7,7 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { ErrorManager, ErrorCategory } from '../../../src/lib/error-manager';
-import { MessageHub } from '@liuboer/shared';
+import { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 
 describe('ErrorManager', () => {

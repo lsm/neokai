@@ -6,9 +6,9 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { setupTestHandlers } from '../../../../src/lib/rpc-handlers/test-handlers';
-import type { MessageHub } from '@liuboer/shared';
+import type { MessageHub } from '@neokai/shared';
 import type { Database } from '../../../../src/storage/database';
-import type { SDKMessage } from '@liuboer/shared/sdk';
+import type { SDKMessage } from '@neokai/shared/sdk';
 
 describe('Test Handlers', () => {
 	let mockMessageHub: MessageHub;
