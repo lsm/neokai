@@ -6,7 +6,7 @@
  * - Build default tools config for new sessions based on global settings
  */
 
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 import type { Database } from '../../storage/database';
 import type { SettingsManager } from '../settings-manager';
 import { Logger } from '../logger';
@@ -85,11 +85,11 @@ export class ToolsConfigManager {
 			// MCP: Direct mapping - list of disabled servers (empty = all enabled)
 			// SDK will auto-load from .mcp.json and apply this filter via settings.local.json
 			disabledMcpServers,
-			// Liuboer tools: Only enable if allowed AND default is on
-			liuboerTools: {
+			// NeoKai tools: Only enable if allowed AND default is on
+			kaiTools: {
 				memory:
-					globalToolsConfig.liuboerTools.memory.allowed &&
-					globalToolsConfig.liuboerTools.memory.defaultEnabled,
+					globalToolsConfig.kaiTools.memory.allowed &&
+					globalToolsConfig.kaiTools.memory.defaultEnabled,
 			},
 		};
 	}

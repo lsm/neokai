@@ -64,7 +64,7 @@ export default defineConfig({
 
 	optimizeDeps: {
 		include: ['preact', '@preact/signals', 'marked', 'highlight.js', 'clsx', 'date-fns'],
-		exclude: ['@liuboer/shared'], // Exclude local packages from pre-bundling
+		exclude: ['@neokai/shared'], // Exclude local packages from pre-bundling
 		esbuildOptions: {
 			jsx: 'automatic',
 			jsxImportSource: 'preact',
@@ -73,14 +73,14 @@ export default defineConfig({
 
 	resolve: {
 		alias: [
-			// Handle subpath imports (e.g., @liuboer/shared/sdk/type-guards)
+			// Handle subpath imports (e.g., @neokai/shared/sdk/type-guards)
 			{
-				find: /^@liuboer\/shared\/(.+)$/,
+				find: /^@neokai\/shared\/(.+)$/,
 				replacement: resolve(__dirname, '../shared/src/$1'),
 			},
 			// Handle main package import
 			{
-				find: '@liuboer/shared',
+				find: '@neokai/shared',
 				replacement: resolve(__dirname, '../shared/src/mod.ts'),
 			},
 		],

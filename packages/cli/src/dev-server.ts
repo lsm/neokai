@@ -1,8 +1,8 @@
-import { createDaemonApp } from '@liuboer/daemon/app';
-import type { Config } from '@liuboer/daemon/config';
+import { createDaemonApp } from '@neokai/daemon/app';
+import type { Config } from '@neokai/daemon/config';
 import { createServer as createViteServer } from 'vite';
 import { resolve } from 'path';
-import { createLogger } from '@liuboer/shared';
+import { createLogger } from '@neokai/shared';
 import {
 	findAvailablePort,
 	createCorsPreflightResponse,
@@ -10,7 +10,7 @@ import {
 	createJsonErrorResponse,
 } from './cli-utils';
 
-const log = createLogger('liuboer:cli:dev-server');
+const log = createLogger('kai:cli:dev-server');
 
 export async function startDevServer(config: Config) {
 	log.info('🔧 Starting unified development server...');
@@ -110,7 +110,7 @@ export async function startDevServer(config: Config) {
 	log.info(`✅ Vite dev server running on port ${vitePort}`);
 
 	// Get WebSocket handlers from daemon
-	const { createWebSocketHandlers } = await import('@liuboer/daemon/routes/setup-websocket');
+	const { createWebSocketHandlers } = await import('@neokai/daemon/routes/setup-websocket');
 	const wsHandlers = createWebSocketHandlers(
 		daemonContext.transport,
 		daemonContext.sessionManager,

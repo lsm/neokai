@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { getConfig } from '@liuboer/daemon/config';
+import { getConfig } from '@neokai/daemon/config';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -24,8 +24,8 @@ const nodeEnv = process.env.NODE_ENV || 'development';
 const isDev = nodeEnv === 'development';
 const isTest = nodeEnv === 'test';
 
-// Provide default workspace if not specified via CLI or LIUBOER_WORKSPACE_PATH env var
-if (!cliOptions.workspace && !process.env.LIUBOER_WORKSPACE_PATH) {
+// Provide default workspace if not specified via CLI or NEOKAI_WORKSPACE_PATH env var
+if (!cliOptions.workspace && !process.env.NEOKAI_WORKSPACE_PATH) {
 	if (isDev) {
 		// Development: use project_root/tmp/workspace
 		const __filename = fileURLToPath(import.meta.url);
@@ -41,7 +41,7 @@ if (!cliOptions.workspace && !process.env.LIUBOER_WORKSPACE_PATH) {
 const config = getConfig(cliOptions);
 
 const serverMode = isDev ? 'Development' : isTest ? 'Test' : 'Production';
-console.log(`\n🚀 Liuboer ${serverMode} Server`);
+console.log(`\n🚀 NeoKai ${serverMode} Server`);
 console.log(`   Mode: ${config.nodeEnv}`);
 console.log(`   Model: ${config.defaultModel}`);
 console.log(`   Workspace: ${config.workspaceRoot}\n`);

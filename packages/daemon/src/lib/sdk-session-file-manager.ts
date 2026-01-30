@@ -25,7 +25,7 @@ import type { Database } from '../storage/database';
 
 /**
  * Get the SDK project directory for a workspace path
- * SDK replaces both / and . with - (e.g., /.liuboer/ -> --liuboer-)
+ * SDK replaces both / and . with - (e.g., /.neokai/ -> --neokai-)
  *
  * @param workspacePath - The session's workspace path
  * @returns Absolute path to the SDK project directory
@@ -51,10 +51,10 @@ export function getSDKSessionFilePath(workspacePath: string, sdkSessionId: strin
  * Useful when we don't have the SDK session ID (e.g., session not currently running)
  *
  * @param workspacePath - The session's workspace path
- * @param liuboerSessionId - The Liuboer session ID to search for in files
+ * @param kaiSessionId - The NeoKai session ID to search for in files
  * @returns Path to the session file if found, null otherwise
  */
-function findSDKSessionFile(workspacePath: string, liuboerSessionId: string): string | null {
+function findSDKSessionFile(workspacePath: string, kaiSessionId: string): string | null {
 	try {
 		const sessionDir = getSDKProjectDir(workspacePath);
 
@@ -62,7 +62,7 @@ function findSDKSessionFile(workspacePath: string, liuboerSessionId: string): st
 			return null;
 		}
 
-		// Search all .jsonl files for the Liuboer session ID
+		// Search all .jsonl files for the NeoKai session ID
 		const files = readdirSync(sessionDir).filter((f) => f.endsWith('.jsonl'));
 
 		// Track all matching files with their modification times
@@ -72,8 +72,8 @@ function findSDKSessionFile(workspacePath: string, liuboerSessionId: string): st
 			const filePath = join(sessionDir, file);
 			const content = readFileSync(filePath, 'utf-8');
 
-			// Check if this file contains the Liuboer session ID
-			if (content.includes(liuboerSessionId)) {
+			// Check if this file contains the NeoKai session ID
+			if (content.includes(kaiSessionId)) {
 				const stats = statSync(filePath);
 				matchingFiles.push({ path: filePath, mtime: stats.mtimeMs });
 			}
@@ -101,14 +101,14 @@ function findSDKSessionFile(workspacePath: string, liuboerSessionId: string): st
  * @param workspacePath - The session's workspace path
  * @param sdkSessionId - The SDK session ID from Query.sessionId (optional, will search if not provided)
  * @param messageUuid - The UUID of the message to modify
- * @param liuboerSessionId - The Liuboer session ID (for fallback search)
+ * @param kaiSessionId - The NeoKai session ID (for fallback search)
  * @returns true if successful, false otherwise
  */
 export function removeToolResultFromSessionFile(
 	workspacePath: string,
 	sdkSessionId: string | null,
 	messageUuid: string,
-	liuboerSessionId?: string
+	kaiSessionId?: string
 ): boolean {
 	try {
 		let sessionFile: string | null = null;
@@ -124,19 +124,19 @@ export function removeToolResultFromSessionFile(
 				return false;
 			}
 		}
-		// Fallback: Search by Liuboer session ID (only when session not currently running)
-		// This is less reliable as the same Liuboer ID can appear in 100+ SDK files
-		else if (liuboerSessionId) {
-			sessionFile = findSDKSessionFile(workspacePath, liuboerSessionId);
+		// Fallback: Search by NeoKai session ID (only when session not currently running)
+		// This is less reliable as the same NeoKai ID can appear in 100+ SDK files
+		else if (kaiSessionId) {
+			sessionFile = findSDKSessionFile(workspacePath, kaiSessionId);
 			if (!sessionFile) {
 				console.error(
-					'[SDKSessionFileManager] Could not find session file by searching for Liuboer session ID'
+					'[SDKSessionFileManager] Could not find session file by searching for NeoKai session ID'
 				);
 				return false;
 			}
 		} else {
 			console.error(
-				'[SDKSessionFileManager] Neither SDK session ID nor Liuboer session ID provided'
+				'[SDKSessionFileManager] Neither SDK session ID nor NeoKai session ID provided'
 			);
 			return false;
 		}
@@ -372,22 +372,22 @@ function backupSDKSessionFile(sessionFilePath: string): string | null {
 }
 
 /**
- * Repair SDK session file by inserting missing tool_use messages from Liuboer DB
+ * Repair SDK session file by inserting missing tool_use messages from NeoKai DB
  *
  * When SDK context compaction removes tool_use blocks while keeping tool_results,
  * this function attempts to repair the file by looking up the missing messages
- * from Liuboer's database and inserting them at the correct positions.
+ * from NeoKai's database and inserting them at the correct positions.
  *
  * @param workspacePath - The session's workspace path
  * @param sdkSessionId - The SDK session ID
- * @param liuboerSessionId - The Liuboer session ID (for DB lookup)
+ * @param kaiSessionId - The NeoKai session ID (for DB lookup)
  * @param db - Database instance for message lookup
  * @returns Repair result with backup path and count of repaired messages
  */
 export function repairSDKSessionFile(
 	workspacePath: string,
 	sdkSessionId: string,
-	liuboerSessionId: string,
+	kaiSessionId: string,
 	db: Database
 ): SDKSessionRepairResult {
 	const result: SDKSessionRepairResult = {
@@ -427,9 +427,9 @@ export function repairSDKSessionFile(
 		const insertions: Array<{ lineIndex: number; message: string }> = [];
 
 		for (const orphan of validation.orphanedToolResults) {
-			// Look up the tool_use message from Liuboer DB by searching for the tool_use_id
+			// Look up the tool_use message from NeoKai DB by searching for the tool_use_id
 			// Note: db.getSDKMessages returns up to 100 messages by default, increase limit to search more
-			const dbMessages = db.getSDKMessages(liuboerSessionId, 10000);
+			const dbMessages = db.getSDKMessages(kaiSessionId, 10000);
 
 			let missingAssistantMsg: SDKFileMessage | null = null;
 			let missingMsgTimestamp: string | null = null;
@@ -455,7 +455,7 @@ export function repairSDKSessionFile(
 			}
 
 			if (!missingAssistantMsg) {
-				result.errors.push(`Could not find tool_use message for ${orphan.toolUseId} in Liuboer DB`);
+				result.errors.push(`Could not find tool_use message for ${orphan.toolUseId} in NeoKai DB`);
 				continue;
 			}
 
@@ -530,14 +530,14 @@ export function repairSDKSessionFile(
  *
  * @param workspacePath - The session's workspace path
  * @param sdkSessionId - The SDK session ID
- * @param liuboerSessionId - The Liuboer session ID (for DB lookup)
+ * @param kaiSessionId - The NeoKai session ID (for DB lookup)
  * @param db - Database instance for message lookup
  * @returns true if session is valid (or was repaired), false if unrecoverable
  */
 export function validateAndRepairSDKSession(
 	workspacePath: string,
 	sdkSessionId: string,
-	liuboerSessionId: string,
+	kaiSessionId: string,
 	db: Database
 ): boolean {
 	// First validate
@@ -552,7 +552,7 @@ export function validateAndRepairSDKSession(
 	);
 
 	// Attempt repair
-	const repair = repairSDKSessionFile(workspacePath, sdkSessionId, liuboerSessionId, db);
+	const repair = repairSDKSessionFile(workspacePath, sdkSessionId, kaiSessionId, db);
 
 	if (repair.success) {
 		console.info(
@@ -600,7 +600,7 @@ export interface SDKArchiveResult {
 export interface SDKSessionFileInfo {
 	path: string;
 	sdkSessionId: string;
-	liuboerSessionIds: string[];
+	kaiSessionIds: string[];
 	size: number;
 	modifiedAt: Date;
 }
@@ -616,7 +616,7 @@ export interface OrphanedSDKFileInfo extends SDKSessionFileInfo {
  * Archive metadata stored alongside archived files
  */
 interface ArchiveMetadata {
-	liuboerSessionId: string;
+	kaiSessionId: string;
 	originalWorkspacePath: string;
 	originalFilePaths: string[];
 	archivedAt: string;
@@ -625,20 +625,20 @@ interface ArchiveMetadata {
 }
 
 /**
- * Get the archive directory for a Liuboer session
+ * Get the archive directory for a NeoKai session
  */
-function getArchiveDir(liuboerSessionId: string): string {
-	return join(homedir(), '.liuboer', 'claude-session-archives', liuboerSessionId);
+function getArchiveDir(kaiSessionId: string): string {
+	return join(homedir(), '.neokai', 'claude-session-archives', kaiSessionId);
 }
 
 /**
- * Find all SDK session files for a Liuboer session
- * Returns all files that contain the Liuboer session ID
+ * Find all SDK session files for a NeoKai session
+ * Returns all files that contain the NeoKai session ID
  */
 function findAllSDKFilesForSession(
 	workspacePath: string,
 	sdkSessionId: string | null,
-	liuboerSessionId: string
+	kaiSessionId: string
 ): Array<{ path: string; size: number }> {
 	const results: Array<{ path: string; size: number }> = [];
 
@@ -658,8 +658,8 @@ function findAllSDKFilesForSession(
 			}
 		}
 
-		// Also search for any other files containing the Liuboer session ID
-		// (in case there are multiple SDK sessions for the same Liuboer session)
+		// Also search for any other files containing the NeoKai session ID
+		// (in case there are multiple SDK sessions for the same NeoKai session)
 		const files = readdirSync(sessionDir).filter((f) => f.endsWith('.jsonl'));
 
 		for (const file of files) {
@@ -672,7 +672,7 @@ function findAllSDKFilesForSession(
 
 			try {
 				const content = readFileSync(filePath, 'utf-8');
-				if (content.includes(liuboerSessionId)) {
+				if (content.includes(kaiSessionId)) {
 					const stats = statSync(filePath);
 					results.push({ path: filePath, size: stats.size });
 				}
@@ -688,17 +688,17 @@ function findAllSDKFilesForSession(
 }
 
 /**
- * Delete SDK session files for a Liuboer session
+ * Delete SDK session files for a NeoKai session
  *
  * @param workspacePath - The session's workspace path
  * @param sdkSessionId - The SDK session ID (optional, will search if not provided)
- * @param liuboerSessionId - The Liuboer session ID
+ * @param kaiSessionId - The NeoKai session ID
  * @returns Delete result with list of deleted files
  */
 export function deleteSDKSessionFiles(
 	workspacePath: string,
 	sdkSessionId: string | null,
-	liuboerSessionId: string
+	kaiSessionId: string
 ): SDKDeleteResult {
 	const result: SDKDeleteResult = {
 		success: true,
@@ -708,11 +708,11 @@ export function deleteSDKSessionFiles(
 	};
 
 	try {
-		const files = findAllSDKFilesForSession(workspacePath, sdkSessionId, liuboerSessionId);
+		const files = findAllSDKFilesForSession(workspacePath, sdkSessionId, kaiSessionId);
 
 		if (files.length === 0) {
 			console.info(
-				`[SDKSessionFileManager] No SDK session files found for session ${liuboerSessionId.slice(0, 8)}...`
+				`[SDKSessionFileManager] No SDK session files found for session ${kaiSessionId.slice(0, 8)}...`
 			);
 			return result;
 		}
@@ -733,7 +733,7 @@ export function deleteSDKSessionFiles(
 		if (result.deletedFiles.length > 0) {
 			console.info(
 				`[SDKSessionFileManager] Deleted ${result.deletedFiles.length} SDK file(s), ` +
-					`${(result.deletedSize / 1024).toFixed(1)}KB freed for session ${liuboerSessionId.slice(0, 8)}...`
+					`${(result.deletedSize / 1024).toFixed(1)}KB freed for session ${kaiSessionId.slice(0, 8)}...`
 			);
 		}
 	} catch (error) {
@@ -747,20 +747,20 @@ export function deleteSDKSessionFiles(
 }
 
 /**
- * Archive SDK session files for a Liuboer session
+ * Archive SDK session files for a NeoKai session
  *
- * Moves files to ~/.liuboer/claude-session-archives/{liuboerSessionId}/
+ * Moves files to ~/.neokai/claude-session-archives/{kaiSessionId}/
  * and creates an archive-metadata.json file.
  *
  * @param workspacePath - The session's workspace path
  * @param sdkSessionId - The SDK session ID (optional, will search if not provided)
- * @param liuboerSessionId - The Liuboer session ID
+ * @param kaiSessionId - The NeoKai session ID
  * @returns Archive result with archive path and list of archived files
  */
 export function archiveSDKSessionFiles(
 	workspacePath: string,
 	sdkSessionId: string | null,
-	liuboerSessionId: string
+	kaiSessionId: string
 ): SDKArchiveResult {
 	const result: SDKArchiveResult = {
 		success: true,
@@ -771,17 +771,17 @@ export function archiveSDKSessionFiles(
 	};
 
 	try {
-		const files = findAllSDKFilesForSession(workspacePath, sdkSessionId, liuboerSessionId);
+		const files = findAllSDKFilesForSession(workspacePath, sdkSessionId, kaiSessionId);
 
 		if (files.length === 0) {
 			console.info(
-				`[SDKSessionFileManager] No SDK session files found for session ${liuboerSessionId.slice(0, 8)}...`
+				`[SDKSessionFileManager] No SDK session files found for session ${kaiSessionId.slice(0, 8)}...`
 			);
 			return result;
 		}
 
 		// Create archive directory
-		const archiveDir = getArchiveDir(liuboerSessionId);
+		const archiveDir = getArchiveDir(kaiSessionId);
 		mkdirSync(archiveDir, { recursive: true });
 		result.archivePath = archiveDir;
 
@@ -816,7 +816,7 @@ export function archiveSDKSessionFiles(
 		// Write archive metadata
 		if (result.archivedFiles.length > 0) {
 			const metadata: ArchiveMetadata = {
-				liuboerSessionId,
+				kaiSessionId,
 				originalWorkspacePath: workspacePath,
 				originalFilePaths: originalPaths,
 				archivedAt: new Date().toISOString(),
@@ -867,13 +867,13 @@ export function scanSDKSessionFiles(workspacePath: string): SDKSessionFileInfo[]
 				const stats = statSync(filePath);
 				const sdkSessionId = file.replace('.jsonl', '');
 
-				// Extract Liuboer session IDs from file content
-				const liuboerSessionIds = extractLiuboerSessionIds(filePath);
+				// Extract NeoKai session IDs from file content
+				const kaiSessionIds = extractKaiSessionIds(filePath);
 
 				results.push({
 					path: filePath,
 					sdkSessionId,
-					liuboerSessionIds,
+					kaiSessionIds,
 					size: stats.size,
 					modifiedAt: stats.mtime,
 				});
@@ -889,16 +889,16 @@ export function scanSDKSessionFiles(workspacePath: string): SDKSessionFileInfo[]
 }
 
 /**
- * Extract Liuboer session IDs from an SDK session file
+ * Extract NeoKai session IDs from an SDK session file
  * Looks for UUID patterns in the file content
  */
-function extractLiuboerSessionIds(filePath: string): string[] {
+function extractKaiSessionIds(filePath: string): string[] {
 	const ids = new Set<string>();
 
 	try {
 		const content = readFileSync(filePath, 'utf-8');
 
-		// UUID v4 pattern (Liuboer session IDs)
+		// UUID v4 pattern (NeoKai session IDs)
 		const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi;
 		const matches = content.match(uuidPattern);
 
@@ -928,12 +928,12 @@ function extractLiuboerSessionIds(filePath: string): string[] {
 /**
  * Identify orphaned SDK session files
  *
- * Files are considered orphaned if none of their Liuboer session IDs
+ * Files are considered orphaned if none of their NeoKai session IDs
  * match any active or archived session in the database.
  *
  * @param files - List of SDK session file info from scanSDKSessionFiles
- * @param activeSessionIds - Set of active Liuboer session IDs
- * @param archivedSessionIds - Set of archived Liuboer session IDs
+ * @param activeSessionIds - Set of active NeoKai session IDs
+ * @param archivedSessionIds - Set of archived NeoKai session IDs
  * @returns List of orphaned files with reason
  */
 export function identifyOrphanedSDKFiles(
@@ -944,14 +944,14 @@ export function identifyOrphanedSDKFiles(
 	const orphaned: OrphanedSDKFileInfo[] = [];
 
 	for (const file of files) {
-		// Check if any of the Liuboer session IDs match known sessions
-		const hasActiveSession = file.liuboerSessionIds.some((id) => activeSessionIds.has(id));
-		const hasArchivedSession = file.liuboerSessionIds.some((id) => archivedSessionIds.has(id));
+		// Check if any of the NeoKai session IDs match known sessions
+		const hasActiveSession = file.kaiSessionIds.some((id) => activeSessionIds.has(id));
+		const hasArchivedSession = file.kaiSessionIds.some((id) => archivedSessionIds.has(id));
 
 		if (!hasActiveSession && !hasArchivedSession) {
 			orphaned.push({
 				...file,
-				reason: file.liuboerSessionIds.length === 0 ? 'unknown-session' : 'no-matching-session',
+				reason: file.kaiSessionIds.length === 0 ? 'unknown-session' : 'no-matching-session',
 			});
 		}
 	}

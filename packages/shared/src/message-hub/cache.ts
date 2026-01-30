@@ -9,7 +9,7 @@
 
 import { createLogger } from '../logger.ts';
 
-const log = createLogger('liuboer:messagehub:cache');
+const log = createLogger('kai:messagehub:cache');
 
 export interface CacheEntry<T> {
 	value: T;

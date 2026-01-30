@@ -17,14 +17,14 @@
  */
 
 import { signal, computed } from '@preact/signals';
-import type { AgentProcessingState } from '@liuboer/shared';
+import type { AgentProcessingState } from '@neokai/shared';
 import { sessions } from './state.ts';
 import { currentSessionIdSignal } from './signals.ts';
 
 /**
  * Storage key for unread tracking
  */
-const UNREAD_STORAGE_KEY = 'liuboer:session-last-seen';
+const UNREAD_STORAGE_KEY = 'kai:session-last-seen';
 
 /**
  * Session status info for UI display

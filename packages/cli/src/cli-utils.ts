@@ -65,9 +65,9 @@ export function parseArgs(args: string[]): ParseArgsResult {
  */
 export function getHelpText(): string {
 	return `
-Liuboer - Claude Agent SDK Web Interface
+NeoKai - Claude Agent SDK Web Interface
 
-Usage: liuboer [options]
+Usage: kai [options]
 
 Options:
   -p, --port <port>         Port to listen on (default: 9283)
@@ -77,13 +77,13 @@ Options:
   -h, --help                Show this help message
 
 Environment Variables:
-  LIUBOER_WORKSPACE_PATH    Workspace root directory (overridden by --workspace flag)
+  NEOKAI_WORKSPACE_PATH    Workspace root directory (overridden by --workspace flag)
 
 Examples:
-  liuboer --port 9983 --workspace .
-  liuboer -p 8080 -w /path/to/workspace
-  liuboer --db-path /path/to/shared/daemon.db
-  LIUBOER_WORKSPACE_PATH=/my/workspace liuboer
+  kai --port 9983 --workspace .
+  kai -p 8080 -w /path/to/workspace
+  kai --db-path /path/to/shared/daemon.db
+  NEOKAI_WORKSPACE_PATH=/my/workspace kai
 `;
 }
 

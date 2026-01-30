@@ -551,7 +551,7 @@ export interface SwitchProviderResponse {
 export interface SDKSessionFileInfo {
 	path: string;
 	sdkSessionId: string;
-	liuboerSessionIds: string[];
+	kaiSessionIds: string[];
 	size: number;
 	modifiedAt: string; // ISO timestamp
 }

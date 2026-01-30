@@ -60,7 +60,7 @@ const config: KnipConfig = {
 
 	// Ignore specific dependencies (external tools, runtime only)
 	ignoreDependencies: [
-		'@liuboer/*', // Workspace dependencies
+		'@neokai/*', // Workspace dependencies
 		'@testing-library/preact', // Used in tests
 		'dotenv', // Used in development scripts
 		'happy-dom', // Used in unit tests

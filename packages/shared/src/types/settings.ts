@@ -1,5 +1,5 @@
 /**
- * Settings types for Liuboer
+ * Settings types for NeoKai
  *
  * This module defines the settings system types that support both SDK-native
  * settings (passed as query options) and file-only settings (written to
@@ -61,7 +61,7 @@ export interface SDKSupportedSettings {
  * These settings have no SDK option equivalent.
  */
 export interface FileOnlySettings {
-	// MCP Server Control (CRITICAL for Liuboer)
+	// MCP Server Control (CRITICAL for NeoKai)
 	disabledMcpServers?: string[];
 	enabledMcpServers?: string[];
 	enableAllProjectMcpServers?: boolean;
@@ -83,7 +83,7 @@ export interface FileOnlySettings {
 		pr?: string;
 	};
 
-	// Output Limiter (Liuboer-specific)
+	// Output Limiter (NeoKai-specific)
 	outputLimiter?: {
 		enabled?: boolean;
 		bash?: {

@@ -5,7 +5,7 @@
  * - System Prompt: Claude Code preset
  * - Setting Sources: User/Project/Local settings selection
  * - MCP Servers: Dynamic list from selected setting sources
- * - Liuboer Tools: Memory (configurable)
+ * - NeoKai Tools: Memory (configurable)
  * - SDK Built-in: Always enabled, shown for information only
  *
  * SDK Terms Reference:
@@ -19,7 +19,7 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import { Modal } from './ui/Modal.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
-import type { Session, ToolsConfig, GlobalToolsConfig, SettingSource } from '@liuboer/shared';
+import type { Session, ToolsConfig, GlobalToolsConfig, SettingSource } from '@neokai/shared';
 import {
 	listMcpServersFromSources,
 	type McpServerFromSource,
@@ -110,7 +110,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		}
 		// Load disabled MCP servers (new approach)
 		disabledMcpServers.value = tools?.disabledMcpServers ?? [];
-		memoryEnabled.value = tools?.liuboerTools?.memory ?? false;
+		memoryEnabled.value = tools?.kaiTools?.memory ?? false;
 		hasChanges.value = false;
 	};
 
@@ -145,7 +145,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	);
 	const isMcpAllowed = useComputed(() => globalConfig.value?.mcp?.allowProjectMcp ?? true);
 	const isMemoryAllowed = useComputed(
-		() => globalConfig.value?.liuboerTools?.memory?.allowed ?? true
+		() => globalConfig.value?.kaiTools?.memory?.allowed ?? true
 	);
 
 	// Check if a server is enabled (not in disabled list)
@@ -206,7 +206,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 				settingSources: settingSources.value,
 				// List of unchecked servers → written to settings.local.json as disabledMcpjsonServers
 				disabledMcpServers: disabledMcpServers.value,
-				liuboerTools: {
+				kaiTools: {
 					memory: memoryEnabled.value,
 				},
 			};
@@ -417,10 +417,10 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 				{/* Divider */}
 				<div class={`border-t ${borderColors.ui.secondary}`} />
 
-				{/* Liuboer Tools Section */}
+				{/* NeoKai Tools Section */}
 				<div>
-					<h3 class="text-sm font-medium text-gray-300 mb-2">Liuboer Tools</h3>
-					<p class="text-xs text-gray-500 mb-3">Enhanced tools provided by Liuboer.</p>
+					<h3 class="text-sm font-medium text-gray-300 mb-2">NeoKai Tools</h3>
+					<p class="text-xs text-gray-500 mb-3">Enhanced tools provided by NeoKai.</p>
 					<div class="space-y-2">
 						{/* Memory Tool */}
 						<label

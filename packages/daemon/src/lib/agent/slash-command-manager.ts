@@ -11,8 +11,8 @@
  */
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
-import type { Session } from '@liuboer/shared';
-import type { SlashCommand } from '@liuboer/shared/sdk';
+import type { Session } from '@neokai/shared';
+import type { SlashCommand } from '@neokai/shared/sdk';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { Logger } from '../logger';
@@ -95,10 +95,10 @@ export class SlashCommandManager {
 
 			// Add SDK built-in commands
 			const sdkBuiltInCommands = ['clear', 'help'];
-			// Add Liuboer built-in commands
-			const liuboerBuiltInCommands = getBuiltInCommandNames();
+			// Add NeoKai built-in commands
+			const kaiBuiltInCommands = getBuiltInCommandNames();
 			const allCommands = [
-				...new Set([...commandNames, ...sdkBuiltInCommands, ...liuboerBuiltInCommands]),
+				...new Set([...commandNames, ...sdkBuiltInCommands, ...kaiBuiltInCommands]),
 			];
 
 			this.slashCommands = allCommands;

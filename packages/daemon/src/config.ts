@@ -50,28 +50,28 @@ export function getConfig(overrides?: ConfigOverrides): Config {
 
 	// Workspace root priority:
 	// 1. CLI --workspace flag (overrides parameter)
-	// 2. LIUBOER_WORKSPACE_PATH environment variable
+	// 2. NEOKAI_WORKSPACE_PATH environment variable
 	// Note: No default fallback - caller (CLI package) must provide workspace path
 	let workspaceRoot: string;
 	if (overrides?.workspace) {
 		// CLI override has highest priority
 		workspaceRoot = overrides.workspace;
-	} else if (process.env.LIUBOER_WORKSPACE_PATH) {
+	} else if (process.env.NEOKAI_WORKSPACE_PATH) {
 		// Environment variable
-		workspaceRoot = process.env.LIUBOER_WORKSPACE_PATH;
+		workspaceRoot = process.env.NEOKAI_WORKSPACE_PATH;
 	} else {
 		// No workspace provided - this is an error
 		throw new Error(
-			'Workspace path must be explicitly provided via --workspace flag or LIUBOER_WORKSPACE_PATH environment variable. ' +
+			'Workspace path must be explicitly provided via --workspace flag or NEOKAI_WORKSPACE_PATH environment variable. ' +
 				'The daemon does not provide default workspace paths.'
 		);
 	}
 
-	// Default database path: ~/.liuboer/projects/{encoded-workspace-path}/database/daemon.db
+	// Default database path: ~/.neokai/projects/{encoded-workspace-path}/database/daemon.db
 	// This ensures each workspace/project gets its own isolated database
 	const defaultDbPath = join(
 		homedir(),
-		'.liuboer',
+		'.neokai',
 		'projects',
 		encodeRepoPath(workspaceRoot),
 		'database',

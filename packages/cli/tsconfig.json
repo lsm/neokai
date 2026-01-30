@@ -11,10 +11,10 @@
 		"types": ["bun"],
 		"paths": {
 			"@/*": ["./src/*"],
-			"@liuboer/shared": ["../shared/src/mod.ts"],
-			"@liuboer/shared/*": ["../shared/src/*"],
-			"@liuboer/daemon": ["../daemon/main.ts"],
-			"@liuboer/daemon/*": ["../daemon/src/*"]
+			"@neokai/shared": ["../shared/src/mod.ts"],
+			"@neokai/shared/*": ["../shared/src/*"],
+			"@neokai/daemon": ["../daemon/main.ts"],
+			"@neokai/daemon/*": ["../daemon/src/*"]
 		}
 	},
 	"include": ["src/**/*", "main.ts"],

@@ -2,8 +2,8 @@
  * Message RPC Handlers
  */
 
-import type { MessageHub } from '@liuboer/shared';
-import type { SDKMessage } from '@liuboer/shared/sdk';
+import type { MessageHub } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk';
 import {
 	isSDKAssistantMessage,
 	isSDKUserMessage,
@@ -13,7 +13,7 @@ import {
 	isToolUseBlock,
 	isThinkingBlock,
 	type ContentBlock,
-} from '@liuboer/shared/sdk';
+} from '@neokai/shared/sdk';
 import type { SessionManager } from '../session-manager';
 import { removeToolResultFromSessionFile } from '../sdk-session-file-manager';
 
@@ -42,7 +42,7 @@ export function setupMessageHandlers(messageHub: MessageHub, sessionManager: Ses
 		}
 
 		// Remove tool_result from the .jsonl file
-		// Pass both SDK session ID and Liuboer session ID for fallback search
+		// Pass both SDK session ID and NeoKai session ID for fallback search
 		const success = removeToolResultFromSessionFile(
 			session.workspacePath,
 			sdkSessionId,

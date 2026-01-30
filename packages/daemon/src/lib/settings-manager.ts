@@ -9,7 +9,7 @@
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import type { GlobalSettings, SessionSettings, SettingSource } from '@liuboer/shared';
+import type { GlobalSettings, SessionSettings, SettingSource } from '@neokai/shared';
 
 /**
  * MCP server info from a setting source
@@ -178,7 +178,7 @@ export class SettingsManager {
 	private async writeFileOnlySettings(settings: GlobalSettings): Promise<void> {
 		const settingsLocalPath = join(this.workspacePath, '.claude/settings.local.json');
 
-		// Read existing settings (preserve non-Liuboer settings)
+		// Read existing settings (preserve non-NeoKai settings)
 		let localSettings: Record<string, unknown> = {};
 		try {
 			if (existsSync(settingsLocalPath)) {
@@ -190,7 +190,7 @@ export class SettingsManager {
 			// Continue with empty object
 		}
 
-		// Update Liuboer-managed settings
+		// Update NeoKai-managed settings
 
 		// MCP Server Control (CRITICAL)
 		if (settings.disabledMcpServers !== undefined) {
@@ -240,7 +240,7 @@ export class SettingsManager {
 		// are respected, we explicitly read from user settings and write to local settings.
 		// See: https://github.com/anthropics/claude-code/issues/11135
 		if (settings.attribution !== undefined) {
-			// User has configured attribution in Liuboer's database, use it
+			// User has configured attribution in NeoKai's database, use it
 			localSettings.attribution = settings.attribution;
 		} else if (localSettings.attribution === undefined) {
 			// No attribution in database AND no existing attribution in local file,
