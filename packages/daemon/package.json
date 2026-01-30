@@ -1,5 +1,5 @@
 {
-	"name": "@liuboer/daemon",
+	"name": "@neokai/daemon",
 	"version": "0.1.0",
 	"type": "module",
 	"main": "main.ts",
@@ -19,7 +19,7 @@
 	},
 	"dependencies": {
 		"@anthropic-ai/claude-agent-sdk": "0.2.19",
-		"@liuboer/shared": "workspace:*",
+		"@neokai/shared": "workspace:*",
 		"dotenv": "17.2.3",
 		"simple-git": "3.30.0"
 	},

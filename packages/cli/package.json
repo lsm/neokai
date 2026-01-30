@@ -1,17 +1,17 @@
 {
-	"name": "@liuboer/cli",
+	"name": "@neokai/cli",
 	"version": "0.1.0",
 	"type": "module",
 	"bin": {
-		"liuboer": "./main.ts"
+		"kai": "./main.ts"
 	},
 	"scripts": {
 		"dev": "bun run main.ts",
 		"start": "NODE_ENV=production bun run main.ts"
 	},
 	"dependencies": {
-		"@liuboer/daemon": "workspace:*",
-		"@liuboer/shared": "workspace:*",
+		"@neokai/daemon": "workspace:*",
+		"@neokai/shared": "workspace:*",
 		"hono": "4.11.5",
 		"vite": "7.3.1"
 	},
