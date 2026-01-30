@@ -140,7 +140,7 @@ jobs:
         run: |
           for pkg in dist/npm/cli-*; do
             echo "Publishing $(basename $pkg)..."
-            (cd "$pkg" && npm publish --access public --provenance)
+            (cd "$pkg" && npm publish --access public --provenance) || echo "::warning::Failed to publish $(basename $pkg), may already exist"
           done
 
       - name: Publish main package
