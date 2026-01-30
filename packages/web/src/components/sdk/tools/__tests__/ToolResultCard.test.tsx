@@ -922,7 +922,7 @@ describe('ToolResultCard Logic', () => {
 
 		it('should handle files without extension', () => {
 			expect(getFileExtension('Makefile')).toBe('');
-			expect(getFileExtension('/path/to/Dockerfile')).toBe('');
+			expect(getFileExtension('/path/to/README')).toBe('');
 		});
 	});
 
