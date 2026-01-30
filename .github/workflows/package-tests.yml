@@ -14,7 +14,7 @@ jobs:
 
   check:
     name: Lint, Knip, Format & Type Check
-    runs-on: arc-runner-set
+    runs-on: ubuntu-latest
     timeout-minutes: 3
 
     steps:
@@ -65,7 +65,7 @@ jobs:
 
   test-daemon-offline:
     name: Daemon Offline (${{ matrix.module }})
-    runs-on: arc-runner-set
+    runs-on: ubuntu-latest
     timeout-minutes: 5
 
     strategy:
@@ -128,7 +128,7 @@ jobs:
 
   test-daemon-online:
     name: Daemon Online (${{ matrix.module }})
-    runs-on: arc-runner-set
+    runs-on: ubuntu-latest
     timeout-minutes: 5
 
     strategy:
@@ -194,7 +194,7 @@ jobs:
 
   test-daemon-shared-unit:
     name: Daemon + Shared Unit Tests (Coverage)
-    runs-on: arc-runner-set
+    runs-on: ubuntu-latest
     timeout-minutes: 3
 
     steps:
@@ -228,7 +228,7 @@ jobs:
 
   test-web:
     name: Web Tests
-    runs-on: arc-runner-set
+    runs-on: ubuntu-latest
     timeout-minutes: 3
 
     steps:
@@ -264,7 +264,7 @@ jobs:
 
   test-cli:
     name: CLI Tests
-    runs-on: arc-runner-set
+    runs-on: ubuntu-latest
     timeout-minutes: 2
 
     steps:
@@ -288,7 +288,7 @@ jobs:
 
   all-tests-pass:
     name: All Package Tests Pass
-    runs-on: arc-runner-set
+    runs-on: ubuntu-latest
     timeout-minutes: 1
     if: always()
     needs:
