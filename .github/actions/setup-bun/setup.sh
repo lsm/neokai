@@ -43,9 +43,17 @@ install_bun() {
         *)       echo "Unsupported architecture: $(uname -m)"; exit 1 ;;
     esac
 
-    # Check for AVX2 support (x64 only)
+    # Detect OS
+    local os
+    case "$(uname -s)" in
+        Linux)  os="linux" ;;
+        Darwin) os="darwin" ;;
+        *)      echo "Unsupported OS: $(uname -s)"; exit 1 ;;
+    esac
+
+    # Check for AVX2 support (Linux x64 only)
     local avx2=""
-    if [[ "$arch" == "x64" ]]; then
+    if [[ "$os" == "linux" && "$arch" == "x64" ]]; then
         if grep -q avx2 /proc/cpuinfo 2>/dev/null; then
             avx2="true"
         else
@@ -54,7 +62,7 @@ install_bun() {
     fi
 
     # Build download URL
-    local url="https://github.com/oven-sh/bun/releases/download/bun-v${version}/bun-linux-${arch}"
+    local url="https://github.com/oven-sh/bun/releases/download/bun-v${version}/bun-${os}-${arch}"
     if [[ "$avx2" == "false" ]]; then
         url="${url}-baseline"
     fi
