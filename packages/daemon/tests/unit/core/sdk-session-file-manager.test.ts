@@ -586,11 +586,7 @@ describe('SDK Session File Manager', () => {
 
 			expect(existsSync(testSessionFile)).toBe(true);
 
-			const result = deleteSDKSessionFiles(
-				testWorkspacePath,
-				testSdkSessionId,
-				'neokai-session-1'
-			);
+			const result = deleteSDKSessionFiles(testWorkspacePath, testSdkSessionId, 'neokai-session-1');
 
 			expect(result.success).toBe(true);
 			expect(result.deletedFiles).toHaveLength(1);

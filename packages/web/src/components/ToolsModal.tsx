@@ -144,9 +144,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		() => globalConfig.value?.systemPrompt?.claudeCodePreset?.allowed ?? true
 	);
 	const isMcpAllowed = useComputed(() => globalConfig.value?.mcp?.allowProjectMcp ?? true);
-	const isMemoryAllowed = useComputed(
-		() => globalConfig.value?.kaiTools?.memory?.allowed ?? true
-	);
+	const isMemoryAllowed = useComputed(() => globalConfig.value?.kaiTools?.memory?.allowed ?? true);
 
 	// Check if a server is enabled (not in disabled list)
 	const isServerEnabled = (serverName: string): boolean => {

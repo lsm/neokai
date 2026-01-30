@@ -95,8 +95,7 @@ export class SettingsRepository {
 				kaiTools: {
 					memory: {
 						allowed:
-							newKaiTools?.memory?.allowed ??
-							DEFAULT_GLOBAL_TOOLS_CONFIG.kaiTools.memory.allowed,
+							newKaiTools?.memory?.allowed ?? DEFAULT_GLOBAL_TOOLS_CONFIG.kaiTools.memory.allowed,
 						defaultEnabled:
 							newKaiTools?.memory?.defaultEnabled ??
 							DEFAULT_GLOBAL_TOOLS_CONFIG.kaiTools.memory.defaultEnabled,
