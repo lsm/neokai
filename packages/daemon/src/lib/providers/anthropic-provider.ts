@@ -11,8 +11,8 @@ import type {
 	ProviderCapabilities,
 	ProviderSdkConfig,
 	ModelTier,
-} from '@liuboer/shared/provider';
-import type { ModelInfo } from '@liuboer/shared';
+} from '@neokai/shared/provider';
+import type { ModelInfo } from '@neokai/shared';
 
 /**
  * Canonical SDK model IDs (short-form IDs preferred by the SDK)

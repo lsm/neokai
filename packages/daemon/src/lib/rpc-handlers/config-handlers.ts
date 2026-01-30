@@ -12,7 +12,7 @@
  * - State updates are broadcast via DaemonHub events
  */
 
-import type { MessageHub, Session } from '@liuboer/shared';
+import type { MessageHub, Session } from '@neokai/shared';
 import type {
 	GetModelSettingsRequest,
 	UpdateModelSettingsRequest,
@@ -38,7 +38,7 @@ import type {
 	UpdatePermissionsConfigRequest,
 	GetAllConfigRequest,
 	UpdateBulkConfigRequest,
-} from '@liuboer/shared';
+} from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SessionManager } from '../session-manager';
 import {

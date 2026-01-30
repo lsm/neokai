@@ -12,7 +12,7 @@
  */
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { Logger } from '../logger';

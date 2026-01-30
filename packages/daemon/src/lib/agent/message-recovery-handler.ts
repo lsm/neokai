@@ -8,9 +8,9 @@
  * - Resetting orphaned messages to 'saved' for retry
  */
 
-import type { Session } from '@liuboer/shared';
-import type { SDKMessage } from '@liuboer/shared/sdk';
-import { isSDKUserMessage, isSDKSystemMessage } from '@liuboer/shared/sdk/type-guards';
+import type { Session } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk';
+import { isSDKUserMessage, isSDKSystemMessage } from '@neokai/shared/sdk/type-guards';
 import { Database } from '../../storage/database';
 import { Logger } from '../logger';
 

@@ -14,7 +14,7 @@
  */
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
-import type { MessageContent, Session, MessageHub } from '@liuboer/shared';
+import type { MessageContent, Session, MessageHub } from '@neokai/shared';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { SDKMessageHandler } from './sdk-message-handler';

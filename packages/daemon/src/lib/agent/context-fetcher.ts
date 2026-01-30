@@ -13,8 +13,8 @@
  * markdown-formatted breakdown in <local-command-stdout> tags.
  */
 
-import type { ContextInfo, ContextCategoryBreakdown } from '@liuboer/shared';
-import type { SDKMessage } from '@liuboer/shared/sdk';
+import type { ContextInfo, ContextCategoryBreakdown } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk';
 import { Logger } from '../logger';
 
 interface ParsedContextInfo {

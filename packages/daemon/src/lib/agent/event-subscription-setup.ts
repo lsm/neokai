@@ -13,7 +13,7 @@
  * - Send queued on turn end subscription
  */
 
-import type { Session, MessageContent } from '@liuboer/shared';
+import type { Session, MessageContent } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Logger } from '../logger';
 import { Logger as LoggerClass } from '../logger';

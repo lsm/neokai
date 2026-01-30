@@ -9,8 +9,8 @@
  * SDK options directly.
  */
 
-import type { Provider, ProviderContext } from '@liuboer/shared/provider';
-import type { Session, ProviderId } from '@liuboer/shared';
+import type { Provider, ProviderContext } from '@neokai/shared/provider';
+import type { Session, ProviderId } from '@neokai/shared';
 import type { ProviderRegistry } from './registry.js';
 
 /**

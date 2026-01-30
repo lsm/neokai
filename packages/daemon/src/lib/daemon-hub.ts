@@ -11,7 +11,7 @@
  * - DaemonHub: 'session.created'
  */
 
-import { TypedHub, type BaseEventData } from '@liuboer/shared';
+import { TypedHub, type BaseEventData } from '@neokai/shared';
 import type {
 	Session,
 	AuthMethod,
@@ -25,8 +25,8 @@ import type {
 	Checkpoint,
 	RewindMode,
 	RewindResult,
-} from '@liuboer/shared';
-import type { SDKMessage } from '@liuboer/shared/sdk';
+} from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk';
 
 /**
  * Compaction trigger type

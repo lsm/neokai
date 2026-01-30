@@ -8,10 +8,10 @@
  * Now persists state to database for recovery after restarts.
  */
 
-import type { AgentProcessingState, PendingUserQuestion } from '@liuboer/shared';
+import type { AgentProcessingState, PendingUserQuestion } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
-import type { SDKMessage } from '@liuboer/shared/sdk';
-import { isSDKAssistantMessage, isToolUseBlock } from '@liuboer/shared/sdk/type-guards';
+import type { SDKMessage } from '@neokai/shared/sdk';
+import { isSDKAssistantMessage, isToolUseBlock } from '@neokai/shared/sdk/type-guards';
 import type { Database } from '../../storage/database';
 import { Logger } from '../logger';
 

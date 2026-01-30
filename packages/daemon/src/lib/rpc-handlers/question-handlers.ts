@@ -4,7 +4,7 @@
  * Handles user responses to AskUserQuestion tool calls.
  */
 
-import type { MessageHub, QuestionDraftResponse } from '@liuboer/shared';
+import type { MessageHub, QuestionDraftResponse } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SessionManager } from '../session-manager';
 

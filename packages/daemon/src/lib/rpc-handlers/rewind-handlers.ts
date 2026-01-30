@@ -10,10 +10,10 @@
  * - State updates are broadcast via State Channels
  */
 
-import type { MessageHub } from '@liuboer/shared';
+import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SessionManager } from '../session-manager';
-import type { RewindMode } from '@liuboer/shared';
+import type { RewindMode } from '@neokai/shared';
 
 export function setupRewindHandlers(
 	messageHub: MessageHub,

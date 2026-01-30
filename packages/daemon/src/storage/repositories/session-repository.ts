@@ -8,7 +8,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
 
 export class SessionRepository {

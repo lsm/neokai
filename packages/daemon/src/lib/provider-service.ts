@@ -45,8 +45,8 @@
  * that cannot be moved to the provider registry.
  */
 
-import type { Provider, ProviderInfo, Session } from '@liuboer/shared';
-import type { ProviderSdkConfig, ProviderInfo as NewProviderInfo } from '@liuboer/shared/provider';
+import type { Provider, ProviderInfo, Session } from '@neokai/shared';
+import type { ProviderSdkConfig, ProviderInfo as NewProviderInfo } from '@neokai/shared/provider';
 import { initializeProviders } from './providers/factory.js';
 
 /**

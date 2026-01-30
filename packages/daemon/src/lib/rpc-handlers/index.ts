@@ -5,7 +5,7 @@
  * Organized by domain for better maintainability.
  */
 
-import type { MessageHub } from '@liuboer/shared';
+import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SessionManager } from '../session-manager';
 import type { AuthManager } from '../auth-manager';

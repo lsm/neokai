@@ -8,7 +8,7 @@ import { describe, it, expect, vi } from 'vitest';
  */
 
 import { render, fireEvent, cleanup } from '@testing-library/preact';
-import type { ArchiveSessionResponse } from '@liuboer/shared';
+import type { ArchiveSessionResponse } from '@neokai/shared';
 import { ArchiveConfirmDialog } from '../ArchiveConfirmDialog';
 
 describe('ArchiveConfirmDialog', () => {

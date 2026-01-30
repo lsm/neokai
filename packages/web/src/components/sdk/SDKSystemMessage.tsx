@@ -9,13 +9,13 @@
  */
 
 import { useState } from 'preact/hooks';
-import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import {
 	isSDKSystemInit,
 	isSDKCompactBoundary,
 	isSDKStatusMessage,
 	isSDKHookResponse,
-} from '@liuboer/shared/sdk/type-guards';
+} from '@neokai/shared/sdk/type-guards';
 import { customColors } from '../../lib/design-tokens.ts';
 
 type SystemMessage = Extract<SDKMessage, { type: 'system' }>;

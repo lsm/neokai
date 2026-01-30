@@ -17,7 +17,7 @@ describe('ToolsModal Logic', () => {
 				useClaudeCodePreset?: boolean;
 				settingSources?: Array<'user' | 'project' | 'local'>;
 				disabledMcpServers?: string[];
-				liuboerTools?: {
+				kaiTools?: {
 					memory?: boolean;
 				};
 			};
@@ -59,7 +59,7 @@ describe('ToolsModal Logic', () => {
 						useClaudeCodePreset: true,
 						settingSources: ['user', 'project'],
 						disabledMcpServers: ['server1'],
-						liuboerTools: { memory: true },
+						kaiTools: { memory: true },
 					},
 				},
 			};
@@ -67,7 +67,7 @@ describe('ToolsModal Logic', () => {
 			expect(session.config.tools?.useClaudeCodePreset).toBe(true);
 			expect(session.config.tools?.settingSources).toEqual(['user', 'project']);
 			expect(session.config.tools?.disabledMcpServers).toEqual(['server1']);
-			expect(session.config.tools?.liuboerTools?.memory).toBe(true);
+			expect(session.config.tools?.kaiTools?.memory).toBe(true);
 		});
 
 		it('should handle undefined tools config', () => {
@@ -167,7 +167,7 @@ describe('ToolsModal Logic', () => {
 					useClaudeCodePreset: true,
 					settingSources: ['user', 'project'],
 					disabledMcpServers: [],
-					liuboerTools: { memory: false },
+					kaiTools: { memory: false },
 				},
 			});
 
@@ -231,10 +231,10 @@ describe('ToolsModal Logic', () => {
 
 		it('should check if memory is allowed', () => {
 			const globalConfig = {
-				liuboerTools: { memory: { allowed: false } },
+				kaiTools: { memory: { allowed: false } },
 			};
 
-			const isMemoryAllowed = globalConfig.liuboerTools?.memory?.allowed ?? true;
+			const isMemoryAllowed = globalConfig.kaiTools?.memory?.allowed ?? true;
 			expect(isMemoryAllowed).toBe(false);
 		});
 	});

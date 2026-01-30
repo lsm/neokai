@@ -24,9 +24,9 @@ import type {
 	SessionsUpdate,
 	SystemState,
 	SettingsState,
-} from '@liuboer/shared';
-import { STATE_CHANNELS } from '@liuboer/shared';
-import type { GlobalSettings } from '@liuboer/shared/types/settings';
+} from '@neokai/shared';
+import { STATE_CHANNELS } from '@neokai/shared';
+import type { GlobalSettings } from '@neokai/shared/types/settings';
 import { connectionManager } from './connection-manager';
 
 export class GlobalStore {

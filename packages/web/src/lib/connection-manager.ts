@@ -28,7 +28,7 @@
  * ```
  */
 
-import { MessageHub, WebSocketClientTransport } from '@liuboer/shared';
+import { MessageHub, WebSocketClientTransport } from '@neokai/shared';
 import { appState, connectionState } from './state';
 import { globalStore } from './global-store';
 import { sessionStore } from './session-store';

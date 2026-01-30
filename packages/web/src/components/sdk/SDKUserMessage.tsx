@@ -4,7 +4,7 @@
  * Renders user messages from the SDK message stream
  */
 
-import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { IconButton } from '../ui/IconButton.tsx';
 import { Dropdown } from '../ui/Dropdown.tsx';
 import { Tooltip } from '../ui/Tooltip.tsx';

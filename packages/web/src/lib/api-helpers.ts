@@ -29,7 +29,7 @@ import type {
 	UpdateSessionRequest,
 	ArchiveSessionResponse,
 	GetAuthStatusResponse,
-} from '@liuboer/shared';
+} from '@neokai/shared';
 import { connectionManager } from './connection-manager.ts';
 import { ConnectionNotReadyError } from './errors.ts';
 
@@ -89,27 +89,27 @@ export async function getAuthStatus(): Promise<GetAuthStatusResponse> {
 // ==================== Settings Operations ====================
 
 export async function updateGlobalSettings(
-	updates: Partial<import('@liuboer/shared').GlobalSettings>
+	updates: Partial<import('@neokai/shared').GlobalSettings>
 ): Promise<{
 	success: boolean;
-	settings: import('@liuboer/shared').GlobalSettings;
+	settings: import('@neokai/shared').GlobalSettings;
 }> {
 	const hub = await connectionManager.getHub();
 	return await hub.call<{
 		success: boolean;
-		settings: import('@liuboer/shared').GlobalSettings;
+		settings: import('@neokai/shared').GlobalSettings;
 	}>('settings.global.update', { updates });
 }
 
 export interface McpServerFromSource {
 	name: string;
-	source: import('@liuboer/shared').SettingSource;
+	source: import('@neokai/shared').SettingSource;
 	command?: string;
 	args?: string[];
 }
 
 export interface McpServersFromSourcesResponse {
-	servers: Record<import('@liuboer/shared').SettingSource, McpServerFromSource[]>;
+	servers: Record<import('@neokai/shared').SettingSource, McpServerFromSource[]>;
 	serverSettings: Record<string, { allowed?: boolean; defaultOn?: boolean }>;
 }
 
@@ -138,9 +138,9 @@ export async function updateMcpServerSettings(
 
 export async function getCheckpoints(
 	sessionId: string
-): Promise<{ checkpoints: import('@liuboer/shared').Checkpoint[]; error?: string }> {
+): Promise<{ checkpoints: import('@neokai/shared').Checkpoint[]; error?: string }> {
 	const hub = getHubOrThrow();
-	return await hub.call<{ checkpoints: import('@liuboer/shared').Checkpoint[]; error?: string }>(
+	return await hub.call<{ checkpoints: import('@neokai/shared').Checkpoint[]; error?: string }>(
 		'rewind.checkpoints',
 		{ sessionId }
 	);
@@ -149,9 +149,9 @@ export async function getCheckpoints(
 export async function previewRewind(
 	sessionId: string,
 	checkpointId: string
-): Promise<{ preview: import('@liuboer/shared').RewindPreview }> {
+): Promise<{ preview: import('@neokai/shared').RewindPreview }> {
 	const hub = getHubOrThrow();
-	return await hub.call<{ preview: import('@liuboer/shared').RewindPreview }>('rewind.preview', {
+	return await hub.call<{ preview: import('@neokai/shared').RewindPreview }>('rewind.preview', {
 		sessionId,
 		checkpointId,
 	});
@@ -160,10 +160,10 @@ export async function previewRewind(
 export async function executeRewind(
 	sessionId: string,
 	checkpointId: string,
-	mode: import('@liuboer/shared').RewindMode = 'files'
-): Promise<{ result: import('@liuboer/shared').RewindResult }> {
+	mode: import('@neokai/shared').RewindMode = 'files'
+): Promise<{ result: import('@neokai/shared').RewindResult }> {
 	const hub = getHubOrThrow();
-	return await hub.call<{ result: import('@liuboer/shared').RewindResult }>('rewind.execute', {
+	return await hub.call<{ result: import('@neokai/shared').RewindResult }>('rewind.execute', {
 		sessionId,
 		checkpointId,
 		mode,

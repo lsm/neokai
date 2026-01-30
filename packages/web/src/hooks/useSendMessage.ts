@@ -6,7 +6,7 @@
  */
 
 import { useRef, useCallback } from 'preact/hooks';
-import type { Session, MessageImage } from '@liuboer/shared';
+import type { Session, MessageImage } from '@neokai/shared';
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 import { toast } from '../lib/toast';

@@ -6,7 +6,7 @@
 import { render, cleanup, waitFor } from '@testing-library/preact';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RewindModal } from '../RewindModal';
-import type { Checkpoint, RewindPreview } from '@liuboer/shared';
+import type { Checkpoint, RewindPreview } from '@neokai/shared';
 
 // Mock API helpers (path relative to __tests__ folder)
 vi.mock('../../lib/api-helpers', () => ({

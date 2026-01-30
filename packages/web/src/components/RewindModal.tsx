@@ -7,7 +7,7 @@
 
 import { useEffect } from 'preact/hooks';
 import { useSignal } from '@preact/signals';
-import type { Checkpoint, RewindPreview, RewindMode } from '@liuboer/shared';
+import type { Checkpoint, RewindPreview, RewindMode } from '@neokai/shared';
 import { Modal } from './ui/Modal';
 import { Button } from './ui/Button';
 import { cn } from '../lib/utils';

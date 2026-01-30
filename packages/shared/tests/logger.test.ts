@@ -110,7 +110,7 @@ describe('Logger', () => {
 
 		test('should create default logger without namespace', () => {
 			const logger = new Logger();
-			expect(logger.getNamespace()).toBe('liuboer');
+			expect(logger.getNamespace()).toBe('kai');
 		});
 
 		test('should create logger with empty namespace', () => {

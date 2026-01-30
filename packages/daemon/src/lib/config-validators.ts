@@ -17,7 +17,7 @@ import type {
 	EnvironmentSettings,
 	ValidationResult,
 	ToolsPresetConfig,
-} from '@liuboer/shared';
+} from '@neokai/shared';
 
 // ============================================================================
 // System Prompt Validation

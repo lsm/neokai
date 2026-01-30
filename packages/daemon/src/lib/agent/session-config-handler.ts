@@ -10,7 +10,7 @@
  * - SettingsManager recreation when workspace changes
  */
 
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import { SettingsManager } from '../settings-manager';

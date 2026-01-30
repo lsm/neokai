@@ -9,8 +9,8 @@
  * - sendQueuedMessagesOnTurnEnd - Auto-queue mode: send queued messages after turn
  */
 
-import type { Session } from '@liuboer/shared';
-import { isSDKUserMessage } from '@liuboer/shared/sdk/type-guards';
+import type { Session } from '@neokai/shared';
+import { isSDKUserMessage } from '@neokai/shared/sdk/type-guards';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { Logger } from '../logger';

@@ -8,7 +8,7 @@
 
 import type { RefObject } from 'preact';
 import { useRef } from 'preact/hooks';
-import type { ModelInfo } from '@liuboer/shared';
+import type { ModelInfo } from '@neokai/shared';
 import { cn } from '../lib/utils';
 import { borderColors } from '../lib/design-tokens';
 import { useClickOutside } from '../hooks/useClickOutside';

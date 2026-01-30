@@ -8,7 +8,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'preact/hooks';
-import type { ContextInfo } from '@liuboer/shared';
+import type { ContextInfo } from '@neokai/shared';
 import { borderColors } from '../lib/design-tokens.ts';
 
 interface ContextUsageBarProps {
