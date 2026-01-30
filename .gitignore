@@ -21,6 +21,9 @@ dist/
 build/
 _fresh/
 
+# Generated embedded assets (created during binary build)
+packages/cli/src/embedded-assets.ts
+
 # Logs
 *.log
 logs/
