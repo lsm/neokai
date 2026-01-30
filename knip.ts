@@ -4,7 +4,7 @@ const config: KnipConfig = {
 	// Monorepo workspace configuration
 	workspaces: {
 		'packages/cli': {
-			entry: ['src/dev-server.ts', 'src/prod-server.ts', 'tests/**/*.ts'],
+			entry: ['src/dev-server.ts', 'src/prod-server.ts', 'prod-entry.ts', 'tests/**/*.ts'],
 		},
 		'packages/daemon': {
 			entry: ['src/app.ts', 'src/lib/rpc-handlers/*.ts', 'tests/**/*.ts'],
@@ -31,6 +31,7 @@ const config: KnipConfig = {
 		'docs/**',
 		'examples/**', // Example scripts
 		'scripts/**', // Utility scripts
+		'npm/**', // npm distribution launcher
 		'**/*.config.ts',
 		'**/*.config.js',
 		'packages/web/vite.config.ts',

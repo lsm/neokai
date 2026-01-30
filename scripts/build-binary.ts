@@ -16,12 +16,7 @@ import { join } from 'node:path';
 const ROOT = join(import.meta.dir, '..');
 const OUTPUT_DIR = join(ROOT, 'dist', 'bin');
 
-const ALL_TARGETS = [
-	'bun-darwin-arm64',
-	'bun-darwin-x64',
-	'bun-linux-x64',
-	'bun-linux-arm64',
-];
+const ALL_TARGETS = ['bun-darwin-arm64', 'bun-darwin-x64', 'bun-linux-x64', 'bun-linux-arm64'];
 
 // Parse --target argument
 const targetIdx = process.argv.indexOf('--target');

@@ -84,7 +84,10 @@ function rpcCall(
 
 function connectWebSocket(url: string): Promise<WebSocket> {
 	return new Promise((resolve, reject) => {
-		const timeout = setTimeout(() => reject(new Error('WebSocket connection timed out')), RPC_TIMEOUT);
+		const timeout = setTimeout(
+			() => reject(new Error('WebSocket connection timed out')),
+			RPC_TIMEOUT
+		);
 		const ws = new WebSocket(url);
 		ws.addEventListener('open', () => {
 			clearTimeout(timeout);
@@ -204,7 +207,9 @@ try {
 	const listData2 = listResult2.data as { sessions: Array<{ id: string }> };
 	const found = listData2.sessions.some((s) => s.id === sessionId);
 	if (!found) {
-		throw new SmokeTestError(`Session ${sessionId} not found in list: ${JSON.stringify(listData2.sessions.map((s) => s.id))}`);
+		throw new SmokeTestError(
+			`Session ${sessionId} not found in list: ${JSON.stringify(listData2.sessions.map((s) => s.id))}`
+		);
 	}
 	log(`  PASS: Session ${sessionId} appears in session list`);
 

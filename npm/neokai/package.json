@@ -11,7 +11,9 @@
 		"@neokai/cli-linux-x64": "0.1.0",
 		"@neokai/cli-linux-arm64": "0.1.0"
 	},
-	"files": ["bin/"],
+	"files": [
+		"bin/"
+	],
 	"license": "MIT",
 	"repository": {
 		"type": "git",

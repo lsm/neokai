@@ -17,6 +17,6 @@
 			"@neokai/daemon/*": ["../daemon/src/*"]
 		}
 	},
-	"include": ["src/**/*", "main.ts"],
-	"exclude": ["node_modules", "dist", "tests/**/*", "test-*.ts"]
+	"include": ["src/**/*", "main.ts", "prod-entry.ts"],
+	"exclude": ["node_modules", "dist", "tests/**/*", "test-*.ts", "src/embedded-assets.ts"]
 }

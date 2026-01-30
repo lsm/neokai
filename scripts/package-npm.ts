@@ -14,9 +14,10 @@ const NPM_DIR = join(ROOT, 'dist', 'npm');
 
 // Read version from root package.json or CLI args
 const versionIdx = process.argv.indexOf('--version');
-const VERSION = versionIdx !== -1
-	? process.argv[versionIdx + 1]
-	: JSON.parse(readFileSync(join(ROOT, 'packages/cli/package.json'), 'utf-8')).version;
+const VERSION =
+	versionIdx !== -1
+		? process.argv[versionIdx + 1]
+		: JSON.parse(readFileSync(join(ROOT, 'packages/cli/package.json'), 'utf-8')).version;
 
 const PLATFORMS = [
 	{ target: 'darwin-arm64', os: 'darwin', cpu: 'arm64' },

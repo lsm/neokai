@@ -33,7 +33,9 @@ export async function startProdServer(config: Config) {
 		}
 		isShuttingDown = true;
 
-		log.info(`\nReceived ${signal}, shutting down gracefully... (Press Ctrl+C again to force exit)`);
+		log.info(
+			`\nReceived ${signal}, shutting down gracefully... (Press Ctrl+C again to force exit)`
+		);
 
 		try {
 			if (server) {
