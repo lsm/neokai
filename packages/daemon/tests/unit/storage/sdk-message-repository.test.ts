@@ -7,7 +7,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { SDKMessageRepository } from '../../../src/storage/repositories/sdk-message-repository';
-import type { SDKMessage } from '@liuboer/shared/sdk';
+import type { SDKMessage } from '@neokai/shared/sdk';
 
 describe('SDKMessageRepository', () => {
 	let db: Database;

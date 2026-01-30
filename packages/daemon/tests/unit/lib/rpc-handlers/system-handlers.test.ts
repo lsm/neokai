@@ -6,7 +6,7 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { setupSystemHandlers } from '../../../../src/lib/rpc-handlers/system-handlers';
-import type { MessageHub, HealthStatus, DaemonConfig, AuthStatus } from '@liuboer/shared';
+import type { MessageHub, HealthStatus, DaemonConfig, AuthStatus } from '@neokai/shared';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { Config } from '../../../../src/config';

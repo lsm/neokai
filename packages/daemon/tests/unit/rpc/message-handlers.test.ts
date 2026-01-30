@@ -10,7 +10,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import type { SDKMessage } from '@liuboer/shared/sdk';
+import type { SDKMessage } from '@neokai/shared/sdk';
 
 // We need to test the internal functions. Since they're not exported,
 // we'll test them through the integration tests or extract them for testing.

@@ -19,9 +19,9 @@ import { serveStatic } from 'hono/bun';
 import { resolve } from 'path';
 
 // Import daemon components - these will be covered by bun --coverage
-import { createDaemonApp } from '@liuboer/daemon/app';
-import { getConfig } from '@liuboer/daemon/config';
-import { createWebSocketHandlers } from '@liuboer/daemon/routes/setup-websocket';
+import { createDaemonApp } from '@neokai/daemon/app';
+import { getConfig } from '@neokai/daemon/config';
+import { createWebSocketHandlers } from '@neokai/daemon/routes/setup-websocket';
 
 // Get test name from environment
 const TEST_NAME = process.env.TEST_NAME || 'archive-menu-option';
@@ -46,7 +46,7 @@ describe(`E2E Matrix: ${TEST_NAME}`, () => {
 		await Bun.$`mkdir -p ${workspace}`;
 
 		// Configure
-		process.env.LIUBOER_WORKSPACE_PATH = workspace;
+		process.env.NEOKAI_WORKSPACE_PATH = workspace;
 		const config = getConfig();
 		config.port = serverPort;
 		config.dbPath = `${workspace}/daemon.db`;

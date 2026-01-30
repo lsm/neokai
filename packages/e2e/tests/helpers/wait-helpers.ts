@@ -80,7 +80,7 @@ export async function waitForSessionCreated(page: Page): Promise<string> {
 export async function waitForSessionDeleted(page: Page, sessionId: string): Promise<void> {
 	// Wait for redirect to home
 	await page.waitForFunction(
-		() => document.querySelector('h2')?.textContent?.includes('Welcome to Liuboer'),
+		() => document.querySelector('h2')?.textContent?.includes('Welcome to NeoKai'),
 		{ timeout: 10000 }
 	);
 
@@ -428,7 +428,7 @@ export async function setupMessageHubTesting(page: Page): Promise<void> {
 	await page.goto('/');
 
 	// Wait for app to initialize - check for sidebar heading
-	await expect(page.getByRole('heading', { name: 'Liuboer', exact: true }).first()).toBeVisible({
+	await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible({
 		timeout: 10000,
 	});
 

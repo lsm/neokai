@@ -7,7 +7,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { WorktreeManager } from '../../../src/lib/worktree-manager';
-import type { WorktreeMetadata, CommitInfo } from '@liuboer/shared';
+import type { WorktreeMetadata, CommitInfo } from '@neokai/shared';
 import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';

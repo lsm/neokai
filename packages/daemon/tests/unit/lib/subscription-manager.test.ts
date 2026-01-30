@@ -6,7 +6,7 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { SubscriptionManager } from '../../../src/lib/subscription-manager';
-import type { MessageHub } from '@liuboer/shared';
+import type { MessageHub } from '@neokai/shared';
 
 describe('SubscriptionManager', () => {
 	let mockMessageHub: MessageHub;

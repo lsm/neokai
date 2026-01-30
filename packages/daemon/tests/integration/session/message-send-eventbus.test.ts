@@ -17,7 +17,7 @@ import { Database } from '../../../src/storage/database';
 import { SessionManager } from '../../../src/lib/session-manager';
 import { SettingsManager } from '../../../src/lib/settings-manager';
 import { AuthManager } from '../../../src/lib/auth-manager';
-import { MessageHub } from '@liuboer/shared';
+import { MessageHub } from '@neokai/shared';
 import { getConfig } from '../../../src/config';
 import { setModelsCache } from '../../../src/lib/model-service';
 import { join } from 'node:path';
@@ -58,7 +58,7 @@ describe('message.send EventBus Integration', () => {
 		setModelsCache(mockCache as Map<string, never>);
 
 		// Create test workspace
-		testWorkspace = mkdtempSync(join(tmpdir(), 'liuboer-test-'));
+		testWorkspace = mkdtempSync(join(tmpdir(), 'neokai-test-'));
 
 		// Setup database
 		db = new Database(':memory:');
@@ -127,7 +127,7 @@ describe('message.send EventBus Integration', () => {
 		// If the handler is registered, it should process the event and clear the draft
 		await sessionManager.updateSession(sessionId, {
 			metadata: { inputDraft: 'verify-handler', workspaceInitialized: true },
-		} as Partial<import('@liuboer/shared').Session>);
+		} as Partial<import('@neokai/shared').Session>);
 
 		await eventBus.emit('message.persisted', {
 			sessionId,
@@ -173,7 +173,7 @@ describe('message.send EventBus Integration', () => {
 			await sessionManager.updateSession(_sessionId, {
 				title: 'Test message for tit',
 				metadata: { titleGenerated: true },
-			} as Partial<import('@liuboer/shared').Session>);
+			} as Partial<import('@neokai/shared').Session>);
 			return { title: 'Test message for tit', isFallback: false };
 		};
 
@@ -221,7 +221,7 @@ describe('message.send EventBus Integration', () => {
 			await sessionManager.updateSession(_sessionId, {
 				title: 'First message',
 				metadata: { titleGenerated: true },
-			} as Partial<import('@liuboer/shared').Session>);
+			} as Partial<import('@neokai/shared').Session>);
 			return { title: 'First message', isFallback: false };
 		};
 
@@ -268,7 +268,7 @@ describe('message.send EventBus Integration', () => {
 		// Set a draft
 		await sessionManager.updateSession(sessionId, {
 			metadata: { inputDraft: 'Test draft', workspaceInitialized: true },
-		} as Partial<import('@liuboer/shared').Session>);
+		} as Partial<import('@neokai/shared').Session>);
 
 		let session = agentSession!.getSessionData();
 		expect(session.metadata.inputDraft).toBe('Test draft');

@@ -13,7 +13,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { TestContext } from '../../test-utils';
 import { createTestApp, callRPCHandler } from '../../test-utils';
-import type { ToolsConfig } from '@liuboer/shared';
+import type { ToolsConfig } from '@neokai/shared';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
@@ -42,7 +42,7 @@ describe('MCP Toggle Integration', () => {
 			const toolsConfig: ToolsConfig = {
 				useClaudeCodePreset: true,
 				disabledMcpServers: [], // Empty = all enabled
-				liuboerTools: { memory: false },
+				kaiTools: { memory: false },
 			};
 
 			const result = await callRPCHandler<{ success: boolean }>(ctx.messageHub, 'tools.save', {
@@ -69,7 +69,7 @@ describe('MCP Toggle Integration', () => {
 			const toolsConfig: ToolsConfig = {
 				useClaudeCodePreset: true,
 				disabledMcpServers: ['chrome-devtools', 'filesystem'],
-				liuboerTools: { memory: false },
+				kaiTools: { memory: false },
 			};
 
 			const result = await callRPCHandler<{ success: boolean }>(ctx.messageHub, 'tools.save', {
@@ -265,7 +265,7 @@ describe('MCP Toggle Integration', () => {
 				tools: {
 					useClaudeCodePreset: true,
 					disabledMcpServers: [],
-					liuboerTools: { memory: true },
+					kaiTools: { memory: true },
 				},
 			});
 
@@ -275,14 +275,14 @@ describe('MCP Toggle Integration', () => {
 				tools: {
 					useClaudeCodePreset: true,
 					disabledMcpServers: ['chrome-devtools'],
-					liuboerTools: { memory: true },
+					kaiTools: { memory: true },
 				},
 			});
 
 			const session = ctx.db.getSession(sessionId);
 			expect(session?.config.tools?.useClaudeCodePreset).toBe(true);
 			expect(session?.config.tools?.disabledMcpServers).toEqual(['chrome-devtools']);
-			expect(session?.config.tools?.liuboerTools?.memory).toBe(true);
+			expect(session?.config.tools?.kaiTools?.memory).toBe(true);
 		});
 	});
 });

@@ -42,7 +42,7 @@ test.describe('Session Switching - Context Preservation', () => {
 
 			// Go home
 			if (i < 2) {
-				await page.click('h1:has-text("Liuboer")');
+				await page.click('h1:has-text("NeoKai")');
 				await page.waitForTimeout(300);
 			}
 		}

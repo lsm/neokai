@@ -11,7 +11,7 @@
  * making it difficult to reliably reproduce in E2E tests. The primary focus is on
  * the race condition bug which is consistently reproduced.
  *
- * Reference: https://github.com/anthropics/liuboer/issues/XXX
+ * Reference: https://github.com/anthropics/neokai/issues/XXX
  */
 
 import { test, expect } from '../fixtures';

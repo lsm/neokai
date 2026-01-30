@@ -5,7 +5,7 @@
  * These wrap callRPCHandler with domain-specific semantics.
  */
 
-import type { MessageHub, Session } from '@liuboer/shared';
+import type { MessageHub, Session } from '@neokai/shared';
 import { callRPCHandler } from '../../test-utils';
 
 /**

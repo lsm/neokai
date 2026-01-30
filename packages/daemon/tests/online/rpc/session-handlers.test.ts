@@ -135,7 +135,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 			'should accept message for existing session',
 			async () => {
 				const createResult = (await daemon.messageHub.call('session.create', {
-					workspacePath: `${TMP_DIR}/liuboer-test-message-send-${Date.now()}`,
+					workspacePath: `${TMP_DIR}/neokai-test-message-send-${Date.now()}`,
 					title: 'Message Send Test',
 					config: { model: 'haiku-4.5' },
 				})) as { sessionId: string };

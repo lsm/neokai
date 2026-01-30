@@ -6,8 +6,8 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { setupMessageHandlers } from '../../../../src/lib/rpc-handlers/message-handlers';
-import type { MessageHub, Session } from '@liuboer/shared';
-import type { SDKMessage } from '@liuboer/shared/sdk';
+import type { MessageHub, Session } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 
 // Mock the sdk-session-file-manager module

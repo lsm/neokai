@@ -7,8 +7,8 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { ContextTracker } from '../../../src/lib/agent/context-tracker';
-import type { ContextInfo } from '@liuboer/shared';
-import { generateUUID } from '@liuboer/shared';
+import type { ContextInfo } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 
 describe('ContextTracker', () => {

@@ -129,7 +129,7 @@ describe('parseArgs', () => {
 describe('getHelpText', () => {
 	test('returns help text containing usage information', () => {
 		const helpText = getHelpText();
-		expect(helpText).toContain('Liuboer');
+		expect(helpText).toContain('NeoKai');
 		expect(helpText).toContain('Usage:');
 		expect(helpText).toContain('Options:');
 	});
@@ -148,13 +148,13 @@ describe('getHelpText', () => {
 
 	test('includes environment variable documentation', () => {
 		const helpText = getHelpText();
-		expect(helpText).toContain('LIUBOER_WORKSPACE_PATH');
+		expect(helpText).toContain('NEOKAI_WORKSPACE_PATH');
 	});
 
 	test('includes examples', () => {
 		const helpText = getHelpText();
 		expect(helpText).toContain('Examples:');
-		expect(helpText).toContain('liuboer --port');
+		expect(helpText).toContain('kai --port');
 	});
 });
 

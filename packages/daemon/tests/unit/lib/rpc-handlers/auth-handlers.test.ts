@@ -6,7 +6,7 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { setupAuthHandlers } from '../../../../src/lib/rpc-handlers/auth-handlers';
-import type { MessageHub } from '@liuboer/shared';
+import type { MessageHub } from '@neokai/shared';
 import type { AuthManager } from '../../../../src/lib/auth-manager';
 
 describe('Auth Handlers', () => {

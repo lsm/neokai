@@ -15,7 +15,7 @@ import {
 	waitForWebSocketMessage,
 	createWebSocketWithFirstMessage,
 } from '../../test-utils';
-import { STATE_CHANNELS } from '@liuboer/shared';
+import { STATE_CHANNELS } from '@neokai/shared';
 
 describe('StateManager RPC - Global State', () => {
 	let ctx: TestContext;

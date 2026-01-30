@@ -6,10 +6,10 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { setupRewindHandlers } from '../../../../src/lib/rpc-handlers/rewind-handlers';
-import type { MessageHub } from '@liuboer/shared';
+import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { SessionManager } from '../../../../src/lib/session-manager';
-import type { RewindMode, Checkpoint, RewindPreview, RewindResult } from '@liuboer/shared';
+import type { RewindMode, Checkpoint, RewindPreview, RewindResult } from '@neokai/shared';
 
 describe('Rewind Handlers', () => {
 	let mockMessageHub: MessageHub;

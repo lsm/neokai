@@ -8,7 +8,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 import { useSessionActions } from '../useSessionActions.ts';
 
 // Mock connection state

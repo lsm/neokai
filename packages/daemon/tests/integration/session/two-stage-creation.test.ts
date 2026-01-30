@@ -12,7 +12,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { SessionManager } from '../../../src/lib/session-manager';
 import { generateBranchName } from '../../../src/lib/session/session-lifecycle';
 import { Database } from '../../../src/storage/database';
-import { MessageHub } from '@liuboer/shared';
+import { MessageHub } from '@neokai/shared';
 import { createDaemonHub, type DaemonHub } from '../../../src/lib/daemon-hub';
 import type { AuthManager } from '../../../src/lib/auth-manager';
 import * as fs from 'node:fs';

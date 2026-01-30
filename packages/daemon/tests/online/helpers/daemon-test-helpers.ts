@@ -36,7 +36,7 @@ export async function sendMessage(
  * processing completes before the subscription is set up.
  *
  * NOTE: The state structure uses 'agentState' (not 'processingState').
- * See SessionState interface in @liuboer/shared/src/state-types.ts
+ * See SessionState interface in @neokai/shared/src/state-types.ts
  */
 
 async function waitForProcessingState(

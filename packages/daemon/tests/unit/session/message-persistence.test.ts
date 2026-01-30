@@ -6,7 +6,7 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { MessagePersistence } from '../../../src/lib/session/message-persistence';
-import type { MessageHub, Session } from '@liuboer/shared';
+import type { MessageHub, Session } from '@neokai/shared';
 import type { Database } from '../../../src/storage/database';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { SessionCache } from '../../../src/lib/session/session-cache';

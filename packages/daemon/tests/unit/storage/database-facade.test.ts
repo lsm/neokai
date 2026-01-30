@@ -10,7 +10,7 @@ import { Database } from '../../../src/storage/index';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import type { Session, GlobalToolsConfig, GlobalSettings } from '@liuboer/shared';
+import type { Session, GlobalToolsConfig, GlobalSettings } from '@neokai/shared';
 
 describe('Database Facade', () => {
 	let tempDir: string;
@@ -350,7 +350,7 @@ describe('Database Facade', () => {
 					allowProjectMcp: false,
 					defaultProjectMcp: false,
 				},
-				liuboerTools: {
+				kaiTools: {
 					memory: {
 						allowed: false,
 						defaultEnabled: false,

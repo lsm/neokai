@@ -7,8 +7,8 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { SettingsRepository } from '../../../src/storage/repositories/settings-repository';
-import type { GlobalToolsConfig, GlobalSettings } from '@liuboer/shared';
-import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@liuboer/shared';
+import type { GlobalToolsConfig, GlobalSettings } from '@neokai/shared';
+import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
 
 describe('SettingsRepository', () => {
 	let db: Database;
@@ -53,7 +53,7 @@ describe('SettingsRepository', () => {
 				systemPrompt: { claudeCodePreset: { allowed: false, defaultEnabled: false } },
 				settingSources: { project: { allowed: false, defaultEnabled: false } },
 				mcp: { allowProjectMcp: false, defaultProjectMcp: false },
-				liuboerTools: { memory: { allowed: false, defaultEnabled: false } },
+				kaiTools: { memory: { allowed: false, defaultEnabled: false } },
 			};
 
 			repo.saveGlobalToolsConfig(customConfig);
@@ -149,7 +149,7 @@ describe('SettingsRepository', () => {
 				systemPrompt: { claudeCodePreset: { allowed: true, defaultEnabled: false } },
 				settingSources: { project: { allowed: true, defaultEnabled: false } },
 				mcp: { allowProjectMcp: true, defaultProjectMcp: false },
-				liuboerTools: { memory: { allowed: true, defaultEnabled: true } },
+				kaiTools: { memory: { allowed: true, defaultEnabled: true } },
 			};
 
 			repo.saveGlobalToolsConfig(config);

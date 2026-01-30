@@ -7,7 +7,7 @@ import { cleanupTestSession, waitForSessionCreated } from './helpers/wait-helper
  * Comprehensive tests for ToolsModal features beyond MCP toggle:
  * - System prompt preset toggle (Claude Code Preset)
  * - Setting sources selection (User/Project/Local)
- * - Liuboer Tools section (Memory tool)
+ * - NeoKai Tools section (Memory tool)
  * - SDK built-in tools section
  * - Save/Cancel functionality
  *
@@ -18,7 +18,7 @@ test.describe('Tools Modal - Complete', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		await expect(page.getByRole('heading', { name: 'Liuboer', exact: true }).first()).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible();
 		await page.waitForTimeout(1000);
 		sessionId = null;
 	});
@@ -88,7 +88,7 @@ test.describe('Tools Modal - Complete', () => {
 		await expect(page.locator('text=Local').first()).toBeVisible();
 	});
 
-	test.skip('should show Liuboer Tools section with Memory tool', async ({ page }) => {
+	test.skip('should show NeoKai Tools section with Memory tool', async ({ page }) => {
 		// Create a new session
 		const newSessionButton = page.getByRole('button', {
 			name: 'New Session',
@@ -107,8 +107,8 @@ test.describe('Tools Modal - Complete', () => {
 			timeout: 5000,
 		});
 
-		// Should show Liuboer Tools section
-		await expect(page.locator('text=Liuboer Tools')).toBeVisible();
+		// Should show NeoKai Tools section
+		await expect(page.locator('text=NeoKai Tools')).toBeVisible();
 
 		// Should show Memory tool option
 		await expect(page.locator('text=Memory')).toBeVisible();

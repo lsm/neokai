@@ -3,7 +3,7 @@
  *
  * Validates that worktrees and databases are co-located under the same project directory.
  * Ensures the project-based path structure works end-to-end:
- * ~/.liuboer/projects/{encoded-repo-path}/
+ * ~/.neokai/projects/{encoded-repo-path}/
  * ├── database/daemon.db
  * └── worktrees/{sessionId}/
  */
@@ -63,7 +63,7 @@ describe('Project Structure Integration', () => {
 		for (const worktreePath of createdWorktrees) {
 			try {
 				if (fs.existsSync(worktreePath)) {
-					const repoPath = worktreePath.startsWith(path.join(homedir(), '.liuboer', 'projects'))
+					const repoPath = worktreePath.startsWith(path.join(homedir(), '.neokai', 'projects'))
 						? testRepoPath
 						: path.dirname(path.dirname(worktreePath));
 
@@ -87,7 +87,7 @@ describe('Project Structure Integration', () => {
 
 		// Cleanup project directory
 		const encodedPath = encodeRepoPath(testRepoPath);
-		const projectDir = path.join(homedir(), '.liuboer', 'projects', encodedPath);
+		const projectDir = path.join(homedir(), '.neokai', 'projects', encodedPath);
 		if (fs.existsSync(projectDir)) {
 			fs.rmSync(projectDir, { recursive: true, force: true });
 		}
@@ -133,11 +133,11 @@ describe('Project Structure Integration', () => {
 
 		// Both should be in the same project directory
 		expect(worktreeProjectDir).toBe(dbProjectDir);
-		expect(worktreeProjectDir).toContain('.liuboer/projects');
+		expect(worktreeProjectDir).toContain('.neokai/projects');
 
 		// Verify the structure
 		const encodedPath = encodeRepoPath(testRepoPath);
-		const expectedProjectDir = path.join(homedir(), '.liuboer', 'projects', encodedPath);
+		const expectedProjectDir = path.join(homedir(), '.neokai', 'projects', encodedPath);
 
 		expect(worktreeProjectDir).toBe(expectedProjectDir);
 		expect(dbProjectDir).toBe(expectedProjectDir);
@@ -162,7 +162,7 @@ describe('Project Structure Integration', () => {
 
 		// Calculate project directory
 		const encodedPath = encodeRepoPath(testRepoPath);
-		const projectDir = path.join(homedir(), '.liuboer', 'projects', encodedPath);
+		const projectDir = path.join(homedir(), '.neokai', 'projects', encodedPath);
 
 		// Verify project directory exists
 		expect(fs.existsSync(projectDir)).toBe(true);

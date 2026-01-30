@@ -8,7 +8,7 @@
  */
 
 import { signal, computed } from '@preact/signals';
-import type { Session, AuthStatus, HealthStatus, SystemState } from '@liuboer/shared';
+import type { Session, AuthStatus, HealthStatus, SystemState } from '@neokai/shared';
 import { vi } from 'vitest';
 
 // Mock connection-manager before importing GlobalStore

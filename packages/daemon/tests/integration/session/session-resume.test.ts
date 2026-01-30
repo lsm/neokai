@@ -10,8 +10,8 @@
 import { describe, test, beforeEach, afterEach, expect } from 'bun:test';
 import type { TestContext } from '../../test-utils';
 import { createTestApp, callRPCHandler } from '../../test-utils';
-import type { Session } from '@liuboer/shared';
-import { generateUUID } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';

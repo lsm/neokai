@@ -7,9 +7,9 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { CheckpointTracker } from '../../../src/lib/agent/checkpoint-tracker';
-import { generateUUID } from '@liuboer/shared';
+import { generateUUID } from '@neokai/shared';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
-import type { SDKMessage } from '@liuboer/shared/sdk';
+import type { SDKMessage } from '@neokai/shared/sdk';
 
 describe('CheckpointTracker', () => {
 	let tracker: CheckpointTracker;

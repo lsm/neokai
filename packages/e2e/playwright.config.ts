@@ -115,7 +115,7 @@ export default defineConfig({
 
 	/* Reporter to use - add monocart when coverage is enabled */
 	reporter: collectCoverage
-		? [['monocart-reporter', { name: 'Liuboer E2E Coverage', coverage: coverageOptions }], ['list']]
+		? [['monocart-reporter', { name: 'NeoKai E2E Coverage', coverage: coverageOptions }], ['list']]
 		: [['html', { outputFolder: 'playwright-report' }], ['list']],
 
 	/* Shared settings for all the projects below */

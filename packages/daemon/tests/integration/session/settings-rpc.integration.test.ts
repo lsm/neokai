@@ -9,7 +9,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { TestContext } from '../../test-utils';
 import { createTestApp, callRPCHandler } from '../../test-utils';
-import type { GlobalSettings } from '@liuboer/shared';
+import type { GlobalSettings } from '@neokai/shared';
 
 describe('Settings RPC Integration', () => {
 	let ctx: TestContext;

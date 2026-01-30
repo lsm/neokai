@@ -6,8 +6,8 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { MessageRecoveryHandler } from '../../../src/lib/agent/message-recovery-handler';
-import type { Session } from '@liuboer/shared';
-import type { SDKMessage } from '@liuboer/shared/sdk';
+import type { Session } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk';
 import type { Database } from '../../../src/storage/database';
 import type { Logger } from '../../../src/lib/logger';
 

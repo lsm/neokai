@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { generateUUID } from '@liuboer/shared';
+import { generateUUID } from '@neokai/shared';
 import { ProcessingStateManager } from '../../../src/lib/agent/processing-state-manager';
 import {
 	setupIntegrationTestEnv,

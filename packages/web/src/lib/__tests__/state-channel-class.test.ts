@@ -7,10 +7,10 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { StateChannel } from '../state-channel';
-import type { MessageHub } from '@liuboer/shared';
+import type { MessageHub } from '@neokai/shared';
 
 // Mock MessageHub
-vi.mock('@liuboer/shared', () => ({
+vi.mock('@neokai/shared', () => ({
 	MessageHub: vi.fn(),
 }));
 

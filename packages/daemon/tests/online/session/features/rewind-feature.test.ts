@@ -21,7 +21,7 @@ import 'dotenv/config';
 import type { DaemonServerContext } from '../../helpers/daemon-server-helper';
 import { createDaemonServer } from '../../helpers/daemon-server-helper';
 import { sendMessage, waitForIdle, getProcessingState } from '../../helpers/daemon-test-helpers';
-import type { Checkpoint, RewindPreview, RewindResult } from '@liuboer/shared';
+import type { Checkpoint, RewindPreview, RewindResult } from '@neokai/shared';
 
 // Use temp directory for test database
 const TMP_DIR = process.env.TMPDIR || '/tmp';

@@ -7,8 +7,8 @@
  */
 
 import { signal } from '@preact/signals';
-import type { SessionState, AgentProcessingState } from '@liuboer/shared';
-import type { SDKMessage } from '@liuboer/shared/sdk/sdk.d.ts';
+import type { SessionState, AgentProcessingState } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 
 // Create SessionStore class instance directly for testing
 // We need to create a fresh instance for each test
@@ -120,7 +120,7 @@ describe('SessionStore', () => {
 					id: 'test-session',
 					title: 'Test Session',
 					status: 'active',
-				} as import('@liuboer/shared').Session,
+				} as import('@neokai/shared').Session,
 				agentState: { status: 'idle' },
 				contextInfo: null,
 				commandsData: null,
@@ -135,7 +135,7 @@ describe('SessionStore', () => {
 
 		it('agentState should return agentState from sessionState', () => {
 			store.sessionState.value = {
-				sessionInfo: null as unknown as import('@liuboer/shared').Session,
+				sessionInfo: null as unknown as import('@neokai/shared').Session,
 				agentState: { status: 'processing', phase: 'thinking' },
 				contextInfo: null,
 				commandsData: null,
@@ -157,7 +157,7 @@ describe('SessionStore', () => {
 
 		it('commandsData should return availableCommands', () => {
 			store.sessionState.value = {
-				sessionInfo: null as unknown as import('@liuboer/shared').Session,
+				sessionInfo: null as unknown as import('@neokai/shared').Session,
 				agentState: { status: 'idle' },
 				contextInfo: null,
 				commandsData: { availableCommands: ['/help', '/clear', '/reset'] },
@@ -176,7 +176,7 @@ describe('SessionStore', () => {
 				occurredAt: Date.now(),
 			};
 			store.sessionState.value = {
-				sessionInfo: null as unknown as import('@liuboer/shared').Session,
+				sessionInfo: null as unknown as import('@neokai/shared').Session,
 				agentState: { status: 'idle' },
 				contextInfo: null,
 				commandsData: null,
@@ -189,7 +189,7 @@ describe('SessionStore', () => {
 	describe('isCompacting', () => {
 		it('should return false when status is idle', () => {
 			store.sessionState.value = {
-				sessionInfo: null as unknown as import('@liuboer/shared').Session,
+				sessionInfo: null as unknown as import('@neokai/shared').Session,
 				agentState: { status: 'idle' },
 				contextInfo: null,
 				commandsData: null,
@@ -200,7 +200,7 @@ describe('SessionStore', () => {
 
 		it('should return false when processing but not compacting', () => {
 			store.sessionState.value = {
-				sessionInfo: null as unknown as import('@liuboer/shared').Session,
+				sessionInfo: null as unknown as import('@neokai/shared').Session,
 				agentState: { status: 'processing', phase: 'thinking' },
 				contextInfo: null,
 				commandsData: null,
@@ -211,7 +211,7 @@ describe('SessionStore', () => {
 
 		it('should return true when processing and compacting', () => {
 			store.sessionState.value = {
-				sessionInfo: null as unknown as import('@liuboer/shared').Session,
+				sessionInfo: null as unknown as import('@neokai/shared').Session,
 				agentState: {
 					status: 'processing',
 					phase: 'finalizing',
@@ -228,7 +228,7 @@ describe('SessionStore', () => {
 	describe('isWorking', () => {
 		it('should return false when idle', () => {
 			store.sessionState.value = {
-				sessionInfo: null as unknown as import('@liuboer/shared').Session,
+				sessionInfo: null as unknown as import('@neokai/shared').Session,
 				agentState: { status: 'idle' },
 				contextInfo: null,
 				commandsData: null,
@@ -239,7 +239,7 @@ describe('SessionStore', () => {
 
 		it('should return true when processing', () => {
 			store.sessionState.value = {
-				sessionInfo: null as unknown as import('@liuboer/shared').Session,
+				sessionInfo: null as unknown as import('@neokai/shared').Session,
 				agentState: { status: 'processing', phase: 'thinking' },
 				contextInfo: null,
 				commandsData: null,
@@ -250,7 +250,7 @@ describe('SessionStore', () => {
 
 		it('should return true when queued', () => {
 			store.sessionState.value = {
-				sessionInfo: null as unknown as import('@liuboer/shared').Session,
+				sessionInfo: null as unknown as import('@neokai/shared').Session,
 				agentState: { status: 'queued' },
 				contextInfo: null,
 				commandsData: null,
@@ -261,7 +261,7 @@ describe('SessionStore', () => {
 
 		it('should return false when interrupted', () => {
 			store.sessionState.value = {
-				sessionInfo: null as unknown as import('@liuboer/shared').Session,
+				sessionInfo: null as unknown as import('@neokai/shared').Session,
 				agentState: { status: 'interrupted' },
 				contextInfo: null,
 				commandsData: null,
@@ -279,7 +279,7 @@ describe('SessionStore', () => {
 
 		it('should clear sessionState on select', async () => {
 			store.sessionState.value = {
-				sessionInfo: { id: 'old' } as import('@liuboer/shared').Session,
+				sessionInfo: { id: 'old' } as import('@neokai/shared').Session,
 				agentState: { status: 'idle' },
 				contextInfo: null,
 				commandsData: null,
@@ -325,7 +325,7 @@ describe('SessionStore', () => {
 	describe('clearError', () => {
 		it('should clear error from sessionState', () => {
 			store.sessionState.value = {
-				sessionInfo: { id: 'test' } as import('@liuboer/shared').Session,
+				sessionInfo: { id: 'test' } as import('@neokai/shared').Session,
 				agentState: { status: 'idle' },
 				contextInfo: null,
 				commandsData: null,
@@ -341,7 +341,7 @@ describe('SessionStore', () => {
 
 		it('should not throw when error is already null', () => {
 			store.sessionState.value = {
-				sessionInfo: { id: 'test' } as import('@liuboer/shared').Session,
+				sessionInfo: { id: 'test' } as import('@neokai/shared').Session,
 				agentState: { status: 'idle' },
 				contextInfo: null,
 				commandsData: null,

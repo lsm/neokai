@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from 'bun:test';
-import type { Session, ContextInfo, AgentProcessingState } from '@liuboer/shared';
+import type { Session, ContextInfo, AgentProcessingState } from '@neokai/shared';
 
 // Test the AgentSession class indirectly through its components
 // since direct testing with mock.module() causes global mock pollution

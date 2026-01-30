@@ -9,7 +9,7 @@
 
 import { Database } from '../src/storage/database';
 import { createDaemonHub, type DaemonHub } from '../src/lib/daemon-hub';
-import type { Session, SessionConfig, SessionMetadata } from '@liuboer/shared';
+import type { Session, SessionConfig, SessionMetadata } from '@neokai/shared';
 import type {
 	PublishOptions,
 	CallOptions,
@@ -17,8 +17,8 @@ import type {
 	RPCHandler,
 	EventHandler,
 	UnsubscribeFn,
-} from '@liuboer/shared/message-hub/types';
-import { generateUUID } from '@liuboer/shared';
+} from '@neokai/shared/message-hub/types';
+import { generateUUID } from '@neokai/shared';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

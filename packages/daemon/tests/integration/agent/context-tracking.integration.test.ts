@@ -10,8 +10,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import type { ContextInfo } from '@liuboer/shared';
-import { generateUUID } from '@liuboer/shared';
+import type { ContextInfo } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import { ContextTracker } from '../../../src/lib/agent/context-tracker';
 import {
 	setupIntegrationTestEnv,

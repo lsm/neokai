@@ -129,7 +129,7 @@ test.describe('Authentication Error Scenarios', () => {
 
 		// Or session creation might fail silently and stay on home
 		const stillOnHome = await page
-			.locator('h2:has-text("Welcome to Liuboer")')
+			.locator('h2:has-text("Welcome to NeoKai")')
 			.isVisible()
 			.catch(() => false);
 

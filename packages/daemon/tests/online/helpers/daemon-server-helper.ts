@@ -8,7 +8,7 @@
 
 import { spawn } from 'child_process';
 import path from 'path';
-import { MessageHub, WebSocketClientTransport } from '@liuboer/shared';
+import { MessageHub, WebSocketClientTransport } from '@neokai/shared';
 import { createDaemonApp, type DaemonAppContext } from '../../../src/app';
 import { getConfig } from '../../../src/config';
 
@@ -206,7 +206,7 @@ async function createInProcessDaemonServer(
 	await Bun.$`mkdir -p ${workspace}`;
 
 	// Configure daemon
-	process.env.LIUBOER_WORKSPACE_PATH = workspace;
+	process.env.NEOKAI_WORKSPACE_PATH = workspace;
 	const config = getConfig();
 	config.port = userPort;
 	config.dbPath = `${workspace}/daemon.db`;

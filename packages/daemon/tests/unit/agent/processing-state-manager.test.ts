@@ -9,8 +9,8 @@ import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { ProcessingStateManager } from '../../../src/lib/agent/processing-state-manager';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { Database } from '../../../src/storage/database';
-import type { PendingUserQuestion } from '@liuboer/shared';
-import { generateUUID } from '@liuboer/shared';
+import type { PendingUserQuestion } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 
 describe('ProcessingStateManager', () => {
 	let stateManager: ProcessingStateManager;

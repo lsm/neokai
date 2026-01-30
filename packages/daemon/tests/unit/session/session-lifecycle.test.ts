@@ -19,7 +19,7 @@ import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { WorktreeManager } from '../../../src/lib/worktree-manager';
 import type { SessionCache, AgentSessionFactory } from '../../../src/lib/session/session-cache';
 import type { ToolsConfigManager } from '../../../src/lib/session/tools-config';
-import type { MessageHub } from '@liuboer/shared';
+import type { MessageHub } from '@neokai/shared';
 
 describe('SessionLifecycle', () => {
 	let lifecycle: SessionLifecycle;

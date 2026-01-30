@@ -6,7 +6,7 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { registerSettingsHandlers } from '../../../../src/lib/rpc-handlers/settings-handlers';
-import type { MessageHub, GlobalSettings } from '@liuboer/shared';
+import type { MessageHub, GlobalSettings } from '@neokai/shared';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import type { Database } from '../../../../src/storage/database';

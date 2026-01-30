@@ -28,7 +28,7 @@ test.describe('Recovery Mechanisms', () => {
 		await messageInput.fill(draftMessage);
 
 		// Navigate away
-		await page.click('h1:has-text("Liuboer")');
+		await page.click('h1:has-text("NeoKai")');
 		await page.waitForTimeout(1000);
 
 		// Navigate back to session

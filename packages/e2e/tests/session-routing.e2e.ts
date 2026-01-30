@@ -118,7 +118,7 @@ test.describe('URL-based Session Routing', () => {
 		await page.waitForURL(/\/$/, { timeout: 5000 });
 
 		// Verify we see the home page (RecentSessions or welcome message)
-		const welcomeText = page.locator('text=Welcome to Liuboer');
+		const welcomeText = page.locator('text=Welcome to NeoKai');
 		const recentSessionsText = page.locator('text=Recent Sessions');
 		const isVisible =
 			(await welcomeText.isVisible().catch(() => false)) ||
@@ -257,7 +257,7 @@ test.describe('URL-based Session Routing', () => {
 
 		// Verify home page elements are visible
 		await expect(
-			page.locator('text=Welcome to Liuboer').or(page.locator('h2:has-text("Liuboer")'))
+			page.locator('text=Welcome to NeoKai').or(page.locator('h2:has-text("NeoKai")'))
 		).toBeVisible();
 	});
 

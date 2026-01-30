@@ -5,10 +5,10 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import type { ProviderId } from '@liuboer/shared/provider';
-import type { Session } from '@liuboer/shared';
-import type { ModelInfo } from '@liuboer/shared';
-import type { Provider, ProviderSdkConfig } from '@liuboer/shared/provider';
+import type { ProviderId } from '@neokai/shared/provider';
+import type { Session } from '@neokai/shared';
+import type { ModelInfo } from '@neokai/shared';
+import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
 import { ProviderService, getProviderService } from '../../../src/lib/provider-service';
 import { resetProviderFactory } from '../../../src/lib/providers/factory';
 import { ProviderRegistry, resetProviderRegistry } from '../../../src/lib/providers/registry';

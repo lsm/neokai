@@ -27,7 +27,7 @@ test.describe('Session Switching - During Processing', () => {
 			sessionIds.push(sessionId);
 
 			if (i < 1) {
-				await page.click('h1:has-text("Liuboer")');
+				await page.click('h1:has-text("NeoKai")');
 				await page.waitForTimeout(300);
 			}
 		}

@@ -12,8 +12,8 @@ import {
 import type { ProcessingStateManager } from '../../../src/lib/agent/processing-state-manager';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { Database } from '../../../src/storage/database';
-import type { PendingUserQuestion, AgentProcessingState, Session } from '@liuboer/shared';
-import { generateUUID } from '@liuboer/shared';
+import type { PendingUserQuestion, AgentProcessingState, Session } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 
 describe('AskUserQuestionHandler', () => {
 	let handler: AskUserQuestionHandler;

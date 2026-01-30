@@ -8,8 +8,8 @@ import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { ToolsConfigManager } from '../../../src/lib/session/tools-config';
 import type { Database } from '../../../src/storage/database';
 import type { SettingsManager } from '../../../src/lib/settings-manager';
-import type { GlobalToolsConfig, GlobalSettings } from '@liuboer/shared';
-import { DEFAULT_GLOBAL_SETTINGS } from '@liuboer/shared';
+import type { GlobalToolsConfig, GlobalSettings } from '@neokai/shared';
+import { DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
 
 describe('ToolsConfigManager', () => {
 	let mockDb: Database;
@@ -20,7 +20,7 @@ describe('ToolsConfigManager', () => {
 		systemPrompt: { claudeCodePreset: { allowed: true, defaultEnabled: true } },
 		settingSources: { project: { allowed: true, defaultEnabled: true } },
 		mcp: { allowProjectMcp: true, defaultProjectMcp: true },
-		liuboerTools: { memory: { allowed: true, defaultEnabled: false } },
+		kaiTools: { memory: { allowed: true, defaultEnabled: false } },
 	};
 
 	const defaultGlobalSettings: GlobalSettings = {
@@ -78,7 +78,7 @@ describe('ToolsConfigManager', () => {
 			expect(result).toHaveProperty('useClaudeCodePreset', true);
 			expect(result).toHaveProperty('settingSources', ['user', 'project', 'local']);
 			expect(result).toHaveProperty('disabledMcpServers');
-			expect(result).toHaveProperty('liuboerTools');
+			expect(result).toHaveProperty('kaiTools');
 		});
 
 		it('should disable Claude Code preset when not allowed', () => {
@@ -106,12 +106,12 @@ describe('ToolsConfigManager', () => {
 		it('should disable memory tool when not allowed', () => {
 			(mockDb.getGlobalToolsConfig as ReturnType<typeof mock>).mockReturnValue({
 				...defaultGlobalToolsConfig,
-				liuboerTools: { memory: { allowed: false, defaultEnabled: true } },
+				kaiTools: { memory: { allowed: false, defaultEnabled: true } },
 			});
 
 			const result = manager.getDefaultForNewSession();
 
-			expect(result.liuboerTools?.memory).toBe(false);
+			expect(result.kaiTools?.memory).toBe(false);
 		});
 
 		it('should populate disabledMcpServers from MCP settings', () => {

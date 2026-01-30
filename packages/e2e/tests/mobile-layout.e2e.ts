@@ -19,13 +19,13 @@ test.describe('Mobile Layout', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		await expect(page.getByRole('heading', { name: 'Liuboer', exact: true }).first()).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible();
 		await page.waitForTimeout(1000);
 	});
 
 	test('should display correctly on mobile viewport', async ({ page }) => {
 		// Verify the app loads on mobile
-		const heading = page.getByRole('heading', { name: 'Liuboer', exact: true }).first();
+		const heading = page.getByRole('heading', { name: 'NeoKai', exact: true }).first();
 		await expect(heading).toBeVisible();
 
 		// New Session button should still be accessible

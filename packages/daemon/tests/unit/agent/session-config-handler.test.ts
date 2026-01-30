@@ -9,11 +9,11 @@ import {
 	SessionConfigHandler,
 	type SessionConfigHandlerContext,
 } from '../../../src/lib/agent/session-config-handler';
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { Database } from '../../../src/storage/database';
 import { SettingsManager } from '../../../src/lib/settings-manager';
-import { generateUUID } from '@liuboer/shared';
+import { generateUUID } from '@neokai/shared';
 
 describe('SessionConfigHandler', () => {
 	let handler: SessionConfigHandler;

@@ -9,7 +9,7 @@
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
-import { generateUUID } from '@liuboer/shared';
+import { generateUUID } from '@neokai/shared';
 import { createMockDb } from './test-utils';
 
 describe('ProcessingStateManager Phases', () => {

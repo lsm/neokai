@@ -15,7 +15,7 @@ import {
 	type QueryLifecycleManagerContext,
 } from '../../../src/lib/agent/query-lifecycle-manager';
 import { MessageQueue } from '../../../src/lib/agent/message-queue';
-import type { Session, MessageHub } from '@liuboer/shared';
+import type { Session, MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { Database } from '../../../src/storage/database';
 import type { ProcessingStateManager } from '../../../src/lib/agent/processing-state-manager';

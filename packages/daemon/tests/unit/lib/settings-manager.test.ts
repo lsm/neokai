@@ -7,8 +7,8 @@
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { SettingsManager } from '../../../src/lib/settings-manager';
 import type { Database } from '../../../src/storage/database';
-import type { GlobalSettings } from '@liuboer/shared';
-import { DEFAULT_GLOBAL_SETTINGS } from '@liuboer/shared';
+import type { GlobalSettings } from '@neokai/shared';
+import { DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
 import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

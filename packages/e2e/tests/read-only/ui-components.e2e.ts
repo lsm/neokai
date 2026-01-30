@@ -52,7 +52,7 @@ test.describe('UI Components', () => {
 			await page.waitForTimeout(500);
 
 			// Main elements should still be visible
-			await expect(page.locator("h1:has-text('Liuboer')")).toBeVisible();
+			await expect(page.locator("h1:has-text('NeoKai')")).toBeVisible();
 			await expect(page.getByRole('button', { name: 'New Session', exact: true })).toBeVisible();
 		});
 
@@ -64,8 +64,8 @@ test.describe('UI Components', () => {
 			await page.waitForTimeout(500);
 
 			// All main elements should be visible
-			await expect(page.locator("h1:has-text('Liuboer')")).toBeVisible();
-			await expect(page.locator("h2:has-text('Welcome to Liuboer')")).toBeVisible();
+			await expect(page.locator("h1:has-text('NeoKai')")).toBeVisible();
+			await expect(page.locator("h2:has-text('Welcome to NeoKai')")).toBeVisible();
 		});
 	});
 

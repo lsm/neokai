@@ -6,9 +6,9 @@
  */
 
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import { MessageHub } from '@liuboer/shared';
+import { MessageHub } from '@neokai/shared';
 import { createDaemonHub, type DaemonHub } from '../../../src/lib/daemon-hub';
-import type { QuestionDraftResponse } from '@liuboer/shared';
+import type { QuestionDraftResponse } from '@neokai/shared';
 import { setupQuestionHandlers } from '../../../src/lib/rpc-handlers/question-handlers';
 
 // Mock AgentSession with question handling methods

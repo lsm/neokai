@@ -6,7 +6,7 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { setupSessionHandlers } from '../../../../src/lib/rpc-handlers/session-handlers';
-import type { MessageHub, Session } from '@liuboer/shared';
+import type { MessageHub, Session } from '@neokai/shared';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { Database } from '../../../../src/storage/database';
@@ -14,7 +14,7 @@ import type { Database } from '../../../../src/storage/database';
 // Mock the sdk-session-file-manager module
 mock.module('../../../../src/lib/sdk-session-file-manager', () => ({
 	archiveSDKSessionFiles: mock(
-		(_workspacePath: string, _sdkSessionId: string | null, _liuboerSessionId: string) => ({
+		(_workspacePath: string, _sdkSessionId: string | null, _kaiSessionId: string) => ({
 			success: true,
 			archivePath: '/archive/path',
 			archivedFiles: ['file1.jsonl'],
@@ -23,7 +23,7 @@ mock.module('../../../../src/lib/sdk-session-file-manager', () => ({
 		})
 	),
 	deleteSDKSessionFiles: mock(
-		(_workspacePath: string, _sdkSessionId: string, _liuboerSessionId: string) => ({
+		(_workspacePath: string, _sdkSessionId: string, _kaiSessionId: string) => ({
 			success: true,
 			deletedFiles: ['file1.jsonl'],
 			deletedSize: 1000,
@@ -35,7 +35,7 @@ mock.module('../../../../src/lib/sdk-session-file-manager', () => ({
 			sdkSessionId: 'sdk-session-1',
 			filepath: '/path/to/file.jsonl',
 			size: 1000,
-			liuboerSessionIds: ['session-1'],
+			kaiSessionIds: ['session-1'],
 		},
 	]),
 	identifyOrphanedSDKFiles: mock(

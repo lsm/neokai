@@ -2,7 +2,7 @@
  * Shared test utilities for ProcessingStateManager tests
  */
 
-import type { Session } from '@liuboer/shared';
+import type { Session } from '@neokai/shared';
 import { mock } from 'bun:test';
 import { Database } from '../../../../src/storage/database';
 import { createDaemonHub, type DaemonHub } from '../../../../src/lib/daemon-hub';

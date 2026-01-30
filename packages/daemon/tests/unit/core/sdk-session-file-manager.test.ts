@@ -317,7 +317,7 @@ describe('SDK Session File Manager', () => {
 			const result = repairSDKSessionFile(
 				testWorkspacePath,
 				testSdkSessionId,
-				'liuboer-session-1',
+				'neokai-session-1',
 				mockDb
 			);
 
@@ -355,7 +355,7 @@ describe('SDK Session File Manager', () => {
 			const result = repairSDKSessionFile(
 				testWorkspacePath,
 				testSdkSessionId,
-				'liuboer-session-1',
+				'neokai-session-1',
 				mockDb
 			);
 
@@ -403,7 +403,7 @@ describe('SDK Session File Manager', () => {
 			const result = repairSDKSessionFile(
 				testWorkspacePath,
 				testSdkSessionId,
-				'liuboer-session-1',
+				'neokai-session-1',
 				mockDb
 			);
 
@@ -448,7 +448,7 @@ describe('SDK Session File Manager', () => {
 			const result = repairSDKSessionFile(
 				testWorkspacePath,
 				testSdkSessionId,
-				'liuboer-session-1',
+				'neokai-session-1',
 				mockDb
 			);
 
@@ -482,7 +482,7 @@ describe('SDK Session File Manager', () => {
 			const result = validateAndRepairSDKSession(
 				testWorkspacePath,
 				testSdkSessionId,
-				'liuboer-session-1',
+				'neokai-session-1',
 				mockDb
 			);
 
@@ -521,7 +521,7 @@ describe('SDK Session File Manager', () => {
 			const result = validateAndRepairSDKSession(
 				testWorkspacePath,
 				testSdkSessionId,
-				'liuboer-session-1',
+				'neokai-session-1',
 				mockDb
 			);
 
@@ -549,7 +549,7 @@ describe('SDK Session File Manager', () => {
 			const result = validateAndRepairSDKSession(
 				testWorkspacePath,
 				testSdkSessionId,
-				'liuboer-session-1',
+				'neokai-session-1',
 				mockDb
 			);
 
@@ -566,7 +566,7 @@ describe('SDK Session File Manager', () => {
 			const result = deleteSDKSessionFiles(
 				'/nonexistent/workspace',
 				'nonexistent-sdk-session',
-				'liuboer-session-1'
+				'neokai-session-1'
 			);
 
 			expect(result.success).toBe(true);
@@ -589,7 +589,7 @@ describe('SDK Session File Manager', () => {
 			const result = deleteSDKSessionFiles(
 				testWorkspacePath,
 				testSdkSessionId,
-				'liuboer-session-1'
+				'neokai-session-1'
 			);
 
 			expect(result.success).toBe(true);
@@ -599,19 +599,19 @@ describe('SDK Session File Manager', () => {
 			expect(existsSync(testSessionFile)).toBe(false);
 		});
 
-		test('should find and delete SDK files by liuboerSessionId when sdkSessionId is null', () => {
-			const liuboerSessionId = 'test-liuboer-id-12345678';
+		test('should find and delete SDK files by kaiSessionId when sdkSessionId is null', () => {
+			const kaiSessionId = 'test-neokai-id-12345678';
 
-			// Create a file that contains the Liuboer session ID
+			// Create a file that contains the NeoKai session ID
 			const content = JSON.stringify({
 				type: 'user',
 				uuid: 'u1',
-				sessionId: liuboerSessionId,
+				sessionId: kaiSessionId,
 				message: { content: [{ type: 'text', text: 'Hello' }] },
 			});
 			writeFileSync(testSessionFile, content + '\n', 'utf-8');
 
-			const result = deleteSDKSessionFiles(testWorkspacePath, null, liuboerSessionId);
+			const result = deleteSDKSessionFiles(testWorkspacePath, null, kaiSessionId);
 
 			expect(result.success).toBe(true);
 			expect(result.deletedFiles.length).toBeGreaterThanOrEqual(1);
@@ -619,11 +619,11 @@ describe('SDK Session File Manager', () => {
 	});
 
 	describe('archiveSDKSessionFiles', () => {
-		const liuboerSessionId = 'test-archive-session-id';
+		const kaiSessionId = 'test-archive-session-id';
 		let archiveDir: string;
 
 		beforeEach(() => {
-			archiveDir = join(homedir(), '.liuboer', 'claude-session-archives', liuboerSessionId);
+			archiveDir = join(homedir(), '.neokai', 'claude-session-archives', kaiSessionId);
 		});
 
 		afterEach(() => {
@@ -641,7 +641,7 @@ describe('SDK Session File Manager', () => {
 			const result = archiveSDKSessionFiles(
 				'/nonexistent/workspace',
 				'nonexistent-sdk-session',
-				liuboerSessionId
+				kaiSessionId
 			);
 
 			expect(result.success).toBe(true);
@@ -661,7 +661,7 @@ describe('SDK Session File Manager', () => {
 
 			expect(existsSync(testSessionFile)).toBe(true);
 
-			const result = archiveSDKSessionFiles(testWorkspacePath, testSdkSessionId, liuboerSessionId);
+			const result = archiveSDKSessionFiles(testWorkspacePath, testSdkSessionId, kaiSessionId);
 
 			expect(result.success).toBe(true);
 			expect(result.archivePath).toBe(archiveDir);
@@ -681,7 +681,7 @@ describe('SDK Session File Manager', () => {
 
 			// Verify metadata content
 			const metadata = JSON.parse(readFileSync(metadataFile, 'utf-8'));
-			expect(metadata.liuboerSessionId).toBe(liuboerSessionId);
+			expect(metadata.kaiSessionId).toBe(kaiSessionId);
 			expect(metadata.originalWorkspacePath).toBe(testWorkspacePath);
 			expect(metadata.fileCount).toBe(1);
 		});
@@ -700,12 +700,12 @@ describe('SDK Session File Manager', () => {
 
 			writeFileSync(
 				file1,
-				JSON.stringify({ type: 'user', uuid: 'u1', sessionId: 'liuboer-id-1' }) + '\n',
+				JSON.stringify({ type: 'user', uuid: 'u1', sessionId: 'neokai-id-1' }) + '\n',
 				'utf-8'
 			);
 			writeFileSync(
 				file2,
-				JSON.stringify({ type: 'user', uuid: 'u2', sessionId: 'liuboer-id-2' }) + '\n',
+				JSON.stringify({ type: 'user', uuid: 'u2', sessionId: 'neokai-id-2' }) + '\n',
 				'utf-8'
 			);
 
@@ -724,15 +724,15 @@ describe('SDK Session File Manager', () => {
 			}
 		});
 
-		test('should extract Liuboer session IDs from file content', () => {
-			const liuboerId = 'a1b2c3d4-e5f6-4789-abcd-ef0123456789';
+		test('should extract NeoKai session IDs from file content', () => {
+			const kaiId = 'a1b2c3d4-e5f6-4789-abcd-ef0123456789';
 
 			// Create a file with UUID-like content (appears multiple times)
 			const content = [
-				JSON.stringify({ type: 'user', uuid: 'u1', liuboerId }),
-				JSON.stringify({ type: 'assistant', uuid: 'a1', liuboerId }),
-				JSON.stringify({ type: 'user', uuid: 'u2', liuboerId }),
-				JSON.stringify({ type: 'assistant', uuid: 'a2', liuboerId }),
+				JSON.stringify({ type: 'user', uuid: 'u1', kaiId }),
+				JSON.stringify({ type: 'assistant', uuid: 'a1', kaiId }),
+				JSON.stringify({ type: 'user', uuid: 'u2', kaiId }),
+				JSON.stringify({ type: 'assistant', uuid: 'a2', kaiId }),
 			].join('\n');
 
 			writeFileSync(testSessionFile, content + '\n', 'utf-8');
@@ -741,7 +741,7 @@ describe('SDK Session File Manager', () => {
 			const targetFile = files.find((f) => f.sdkSessionId === testSdkSessionId);
 
 			expect(targetFile).toBeDefined();
-			expect(targetFile!.liuboerSessionIds).toContain(liuboerId);
+			expect(targetFile!.kaiSessionIds).toContain(kaiId);
 		});
 	});
 
@@ -756,7 +756,7 @@ describe('SDK Session File Manager', () => {
 				{
 					path: '/test/path/sdk-1.jsonl',
 					sdkSessionId: 'sdk-1',
-					liuboerSessionIds: ['unknown-session-id'],
+					kaiSessionIds: ['unknown-session-id'],
 					size: 100,
 					modifiedAt: new Date(),
 				},
@@ -777,7 +777,7 @@ describe('SDK Session File Manager', () => {
 				{
 					path: '/test/path/sdk-1.jsonl',
 					sdkSessionId: 'sdk-1',
-					liuboerSessionIds: ['active-session-1'],
+					kaiSessionIds: ['active-session-1'],
 					size: 100,
 					modifiedAt: new Date(),
 				},
@@ -796,7 +796,7 @@ describe('SDK Session File Manager', () => {
 				{
 					path: '/test/path/sdk-1.jsonl',
 					sdkSessionId: 'sdk-1',
-					liuboerSessionIds: ['archived-session-1'],
+					kaiSessionIds: ['archived-session-1'],
 					size: 100,
 					modifiedAt: new Date(),
 				},
@@ -810,12 +810,12 @@ describe('SDK Session File Manager', () => {
 			expect(orphaned).toHaveLength(0);
 		});
 
-		test('should mark files with no liuboerSessionIds as unknown-session', () => {
+		test('should mark files with no kaiSessionIds as unknown-session', () => {
 			const files = [
 				{
 					path: '/test/path/sdk-1.jsonl',
 					sdkSessionId: 'sdk-1',
-					liuboerSessionIds: [],
+					kaiSessionIds: [],
 					size: 100,
 					modifiedAt: new Date(),
 				},
@@ -835,28 +835,28 @@ describe('SDK Session File Manager', () => {
 				{
 					path: '/test/path/active.jsonl',
 					sdkSessionId: 'active',
-					liuboerSessionIds: ['active-session-1'],
+					kaiSessionIds: ['active-session-1'],
 					size: 100,
 					modifiedAt: new Date(),
 				},
 				{
 					path: '/test/path/archived.jsonl',
 					sdkSessionId: 'archived',
-					liuboerSessionIds: ['archived-session-1'],
+					kaiSessionIds: ['archived-session-1'],
 					size: 100,
 					modifiedAt: new Date(),
 				},
 				{
 					path: '/test/path/orphan.jsonl',
 					sdkSessionId: 'orphan',
-					liuboerSessionIds: ['deleted-session'],
+					kaiSessionIds: ['deleted-session'],
 					size: 100,
 					modifiedAt: new Date(),
 				},
 				{
 					path: '/test/path/unknown.jsonl',
 					sdkSessionId: 'unknown',
-					liuboerSessionIds: [],
+					kaiSessionIds: [],
 					size: 100,
 					modifiedAt: new Date(),
 				},
@@ -889,18 +889,18 @@ describe('SDK Session File Manager', () => {
 			expect(result).toBe(false);
 		});
 
-		test('should return false when neither sdkSessionId nor liuboerSessionId provided', () => {
+		test('should return false when neither sdkSessionId nor kaiSessionId provided', () => {
 			const result = removeToolResultFromSessionFile(testWorkspacePath, null, 'message-uuid-123');
 
 			expect(result).toBe(false);
 		});
 
-		test('should return false when liuboerSessionId search finds no files', () => {
+		test('should return false when kaiSessionId search finds no files', () => {
 			const result = removeToolResultFromSessionFile(
 				testWorkspacePath,
 				null,
 				'message-uuid-123',
-				'nonexistent-liuboer-session-id'
+				'nonexistent-neokai-session-id'
 			);
 
 			expect(result).toBe(false);
@@ -997,15 +997,15 @@ describe('SDK Session File Manager', () => {
 			expect(userMessage.message.content[0].content[0].text).toContain('Output removed by user');
 		});
 
-		test('should find file by liuboerSessionId when sdkSessionId is null', () => {
-			const liuboerSessionId = 'findable-liuboer-session-id-12345678';
+		test('should find file by kaiSessionId when sdkSessionId is null', () => {
+			const kaiSessionId = 'findable-neokai-session-id-12345678';
 
-			// Create a file containing the Liuboer session ID
+			// Create a file containing the NeoKai session ID
 			const messages = [
 				JSON.stringify({
 					type: 'user',
 					uuid: 'target-message-uuid',
-					sessionId: liuboerSessionId,
+					sessionId: kaiSessionId,
 					message: {
 						role: 'user',
 						content: [
@@ -1024,7 +1024,7 @@ describe('SDK Session File Manager', () => {
 				testWorkspacePath,
 				null,
 				'target-message-uuid',
-				liuboerSessionId
+				kaiSessionId
 			);
 
 			expect(result).toBe(true);

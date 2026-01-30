@@ -6,7 +6,7 @@
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { setupCommandHandlers } from '../../../../src/lib/rpc-handlers/command-handlers';
-import type { MessageHub } from '@liuboer/shared';
+import type { MessageHub } from '@neokai/shared';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 
 describe('Command Handlers', () => {

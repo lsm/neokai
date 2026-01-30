@@ -9,8 +9,8 @@ import { describe, expect, test, beforeEach, afterEach, mock } from 'bun:test';
 import { SessionManager } from '../../../src/lib/session-manager';
 import { Database } from '../../../src/storage/database';
 import { createDaemonHub, type DaemonHub } from '../../../src/lib/daemon-hub';
-import type { MessageHub, Session } from '@liuboer/shared';
-import { generateUUID } from '@liuboer/shared';
+import type { MessageHub, Session } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { mkdirSync, rmSync } from 'fs';
@@ -26,7 +26,7 @@ describe('Instant Message Persistence UX', () => {
 
 	beforeEach(async () => {
 		// Create temp directory for this test
-		testDir = join(tmpdir(), `liuboer-test-${generateUUID()}`);
+		testDir = join(tmpdir(), `neokai-test-${generateUUID()}`);
 		mkdirSync(testDir, { recursive: true });
 
 		// Initialize database

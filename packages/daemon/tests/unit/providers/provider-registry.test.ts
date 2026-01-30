@@ -3,8 +3,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import type { ModelInfo } from '@liuboer/shared';
-import type { Provider, ProviderSdkConfig } from '@liuboer/shared/provider';
+import type { ModelInfo } from '@neokai/shared';
+import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
 import { resetProviderFactory } from '../../../src/lib/providers/factory';
 import { ProviderRegistry, resetProviderRegistry } from '../../../src/lib/providers/registry';
 
