@@ -137,8 +137,9 @@ jobs:
         run: |
           for pkg in dist/npm/cli-*; do
             echo "Publishing $(basename $pkg)..."
-            cd "$pkg" && npm publish --access public --provenance && cd -
+            (cd "$pkg" && npm publish --access public --provenance)
           done
 
       - name: Publish main package
-        run: cd dist/npm/neokai && npm publish --access public --provenance
+        run: |
+          cd dist/npm/neokai && npm publish --access public --provenance
