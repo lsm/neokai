@@ -116,6 +116,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: package
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Download npm packages
@@ -134,12 +137,8 @@ jobs:
         run: |
           for pkg in dist/npm/cli-*; do
             echo "Publishing $(basename $pkg)..."
-            cd "$pkg" && npm publish --access public && cd -
+            cd "$pkg" && npm publish --access public --provenance && cd -
           done
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish main package
-        run: cd dist/npm/neokai && npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: cd dist/npm/neokai && npm publish --access public --provenance
