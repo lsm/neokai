@@ -124,6 +124,36 @@ describe('parseArgs', () => {
 		expect(result.options.host).toBe('0.0.0.0');
 		expect(result.error).toBeUndefined();
 	});
+
+	test('parses positional path as workspace', () => {
+		const result = parseArgs(['/path/to/project']);
+		expect(result.options.workspace).toBe('/path/to/project');
+		expect(result.error).toBeUndefined();
+	});
+
+	test('parses positional path with options', () => {
+		const result = parseArgs(['/my/project', '-p', '8080']);
+		expect(result.options.workspace).toBe('/my/project');
+		expect(result.options.port).toBe(8080);
+		expect(result.error).toBeUndefined();
+	});
+
+	test('parses dot as workspace', () => {
+		const result = parseArgs(['.']);
+		expect(result.options.workspace).toBe('.');
+		expect(result.error).toBeUndefined();
+	});
+
+	test('returns error for duplicate workspace (positional + flag)', () => {
+		const result = parseArgs(['/first', '-w', '/second']);
+		expect(result.options.workspace).toBe('/first');
+		expect(result.error).toContain('Workspace already set');
+	});
+
+	test('returns error for two positional arguments', () => {
+		const result = parseArgs(['/first', '/second']);
+		expect(result.error).toContain('workspace already set');
+	});
 });
 
 describe('getHelpText', () => {
@@ -154,7 +184,7 @@ describe('getHelpText', () => {
 	test('includes examples', () => {
 		const helpText = getHelpText();
 		expect(helpText).toContain('Examples:');
-		expect(helpText).toContain('kai --port');
+		expect(helpText).toContain('kai .');
 	});
 });
 

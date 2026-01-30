@@ -1,4 +1,4 @@
-.PHONY: dev self run build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check
+.PHONY: dev self run build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release
 
 dev:
 	@echo "Starting development server..."
@@ -73,3 +73,19 @@ typecheck:
 
 check:
 	@bun run check
+
+# Build compiled binary for current platform
+compile:
+	@bun run scripts/build-binary.ts --target bun-$(shell uname -s | tr '[:upper:]' '[:lower:]')-$(shell uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/x64/')
+
+# Build compiled binaries for all platforms (cross-compilation)
+compile-all:
+	@bun run scripts/build-binary.ts
+
+# Package npm packages from compiled binaries
+package-npm:
+	@bun run scripts/package-npm.ts
+
+# Full release pipeline: build + compile + package
+release: compile-all package-npm
+	@echo "Release artifacts ready in dist/npm/"

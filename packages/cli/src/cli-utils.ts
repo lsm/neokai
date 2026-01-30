@@ -36,6 +36,10 @@ export function parseArgs(args: string[]): ParseArgsResult {
 				return { options, error: `Invalid port value: ${portValue}` };
 			}
 		} else if (arg === '--workspace' || arg === '-w') {
+			if (options.workspace) {
+				options.help = true;
+				return { options, error: `Workspace already set to: ${options.workspace}` };
+			}
 			options.workspace = args[++i];
 			if (!options.workspace) {
 				return { options, error: '--workspace requires a path' };
@@ -50,6 +54,13 @@ export function parseArgs(args: string[]): ParseArgsResult {
 			if (!options.dbPath) {
 				return { options, error: '--db-path requires a path' };
 			}
+		} else if (!arg.startsWith('-')) {
+			// Positional argument: treat as workspace path
+			if (options.workspace) {
+				options.help = true;
+				return { options, error: `Unexpected argument: ${arg} (workspace already set)` };
+			}
+			options.workspace = arg;
 		} else {
 			// Unknown option - set help flag and return error
 			options.help = true;
@@ -67,23 +78,26 @@ export function getHelpText(): string {
 	return `
 NeoKai - Claude Agent SDK Web Interface
 
-Usage: kai [options]
+Usage: kai [path] [options]
+
+Arguments:
+  path                      Workspace directory (default: current directory)
 
 Options:
   -p, --port <port>         Port to listen on (default: 9283)
-  -w, --workspace <path>    Workspace root directory (default: tmp/workspace in dev, cwd in prod)
+  -w, --workspace <path>    Alias for path argument
   --host <host>             Host to bind to (default: 0.0.0.0)
   --db-path <path>          Database file path (default: ./data/daemon.db)
   -h, --help                Show this help message
 
 Environment Variables:
-  NEOKAI_WORKSPACE_PATH    Workspace root directory (overridden by --workspace flag)
+  NEOKAI_WORKSPACE_PATH    Workspace root directory (overridden by path/--workspace)
 
 Examples:
-  kai --port 9983 --workspace .
-  kai -p 8080 -w /path/to/workspace
-  kai --db-path /path/to/shared/daemon.db
-  NEOKAI_WORKSPACE_PATH=/my/workspace kai
+  kai                           Start in current directory
+  kai /path/to/project          Start with specific workspace
+  kai . -p 8080                 Start on port 8080
+  kai --db-path /shared/db.db   Use a shared database
 `;
 }
 
