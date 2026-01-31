@@ -710,22 +710,22 @@ describe('api-helpers', () => {
 	});
 
 	describe('rewind operations', () => {
-		describe('getCheckpoints', () => {
-			it('should get checkpoints for session', async () => {
+		describe('getRewindPoints', () => {
+			it('should get rewind points for session', async () => {
 				const mockHub = {
 					call: vi.fn().mockResolvedValue({
-						checkpoints: [
+						rewindPoints: [
 							{
-								id: 'cp-1',
-								turnIndex: 5,
-								createdAt: '2024-01-01T00:00:00Z',
-								messageCount: 10,
+								uuid: 'msg-1',
+								content: 'User message 1',
+								timestamp: 1704067200000,
+								turnNumber: 1,
 							},
 							{
-								id: 'cp-2',
-								turnIndex: 10,
-								createdAt: '2024-01-01T01:00:00Z',
-								messageCount: 20,
+								uuid: 'msg-2',
+								content: 'User message 2',
+								timestamp: 1704070800000,
+								turnNumber: 2,
 							},
 						],
 					}),
@@ -737,21 +737,21 @@ describe('api-helpers', () => {
 					}
 				).getHubIfConnected.mockReturnValue(mockHub);
 
-				const result = await apiHelpers.getCheckpoints('sess-123');
+				const result = await apiHelpers.getRewindPoints('sess-123');
 
 				expect(result).toEqual({
-					checkpoints: [
+					rewindPoints: [
 						{
-							id: 'cp-1',
-							turnIndex: 5,
-							createdAt: '2024-01-01T00:00:00Z',
-							messageCount: 10,
+							uuid: 'msg-1',
+							content: 'User message 1',
+							timestamp: 1704067200000,
+							turnNumber: 1,
 						},
 						{
-							id: 'cp-2',
-							turnIndex: 10,
-							createdAt: '2024-01-01T01:00:00Z',
-							messageCount: 20,
+							uuid: 'msg-2',
+							content: 'User message 2',
+							timestamp: 1704070800000,
+							turnNumber: 2,
 						},
 					],
 				});
@@ -760,9 +760,9 @@ describe('api-helpers', () => {
 				});
 			});
 
-			it('should handle empty checkpoints list', async () => {
+			it('should handle empty rewind points list', async () => {
 				const mockHub = {
-					call: vi.fn().mockResolvedValue({ checkpoints: [] }),
+					call: vi.fn().mockResolvedValue({ rewindPoints: [] }),
 				};
 				(
 					connectionManager as unknown as {
@@ -771,16 +771,16 @@ describe('api-helpers', () => {
 					}
 				).getHubIfConnected.mockReturnValue(mockHub);
 
-				const result = await apiHelpers.getCheckpoints('sess-123');
+				const result = await apiHelpers.getRewindPoints('sess-123');
 
-				expect(result.checkpoints).toEqual([]);
+				expect(result.rewindPoints).toEqual([]);
 			});
 
 			it('should handle error response', async () => {
 				const mockHub = {
 					call: vi.fn().mockResolvedValue({
-						checkpoints: [],
-						error: 'Failed to fetch checkpoints',
+						rewindPoints: [],
+						error: 'Failed to fetch rewind points',
 					}),
 				};
 				(
@@ -790,7 +790,7 @@ describe('api-helpers', () => {
 					}
 				).getHubIfConnected.mockReturnValue(mockHub);
 
-				const result = await apiHelpers.getCheckpoints('sess-123');
+				const result = await apiHelpers.getRewindPoints('sess-123');
 
 				expect(result.error).toBeDefined();
 			});
@@ -803,7 +803,7 @@ describe('api-helpers', () => {
 					}
 				).getHubIfConnected.mockReturnValue(null);
 
-				await expect(apiHelpers.getCheckpoints('sess-123')).rejects.toThrow(
+				await expect(apiHelpers.getRewindPoints('sess-123')).rejects.toThrow(
 					'Not connected to server'
 				);
 			});

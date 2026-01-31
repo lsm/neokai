@@ -53,7 +53,6 @@ import { Spinner } from '../components/ui/Spinner.tsx';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
 import { ErrorBanner } from '../components/ErrorBanner.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
-import { RewindModal } from '../components/RewindModal.tsx';
 import type { ResolvedQuestion } from '@neokai/shared';
 
 interface ChatContainerProps {
@@ -92,6 +91,15 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		new Map()
 	);
 
+	// Rewind mode state
+	const [rewindMode, setRewindMode] = useState(false);
+	const [selectedMessages, setSelectedMessages] = useState<Set<string>>(new Set());
+
+	// Reactive State from sessionStore (via useSignalEffect for re-renders)
+	// Moved here before callbacks that depend on it
+	const [messages, setMessages] = useState<SDKMessage[]>([]);
+	const [session, setSession] = useState(sessionStore.sessionInfo.value);
+
 	// ========================================
 	// Modals
 	// ========================================
@@ -99,13 +107,104 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const toolsModal = useModal();
 	const infoModal = useModal();
 	const errorDialog = useModal();
-	const rewindModal = useModal();
+
+	// ========================================
+	// Rewind handler
+	// ========================================
+	const handleRewind = useCallback(
+		async (uuid: string) => {
+			try {
+				const { result } = await import('../lib/api-helpers.ts').then((m) =>
+					m.executeRewind(sessionId, uuid, 'both')
+				);
+
+				if (result.success) {
+					toast.success(
+						`Rewound successfully: ${result.messagesDeleted || 0} messages removed, ${
+							result.filesChanged?.length || 0
+						} files restored`
+					);
+				} else {
+					toast.error(`Rewind failed: ${result.error || 'Unknown error'}`);
+				}
+			} catch (err) {
+				toast.error(`Rewind failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+			}
+		},
+		[sessionId]
+	);
+
+	// Rewind mode handlers
+	const handleEnterRewindMode = useCallback(() => {
+		setRewindMode(true);
+		setSelectedMessages(new Set());
+	}, []);
+
+	const handleExitRewindMode = useCallback(() => {
+		setRewindMode(false);
+		setSelectedMessages(new Set());
+	}, []);
+
+	const handleMessageCheckboxChange = useCallback(
+		(messageId: string, checked: boolean) => {
+			const newSelected = new Set(selectedMessages);
+
+			if (checked) {
+				// Find message index and select all messages from this point onward
+				const messageIndex = messages.findIndex((m) => m.uuid === messageId);
+				for (let i = messageIndex; i < messages.length; i++) {
+					if (messages[i].uuid) {
+						newSelected.add(messages[i].uuid!);
+					}
+				}
+			} else {
+				// Unselect this message and all after it
+				const messageIndex = messages.findIndex((m) => m.uuid === messageId);
+				for (let i = messageIndex; i < messages.length; i++) {
+					if (messages[i].uuid) {
+						newSelected.delete(messages[i].uuid!);
+					}
+				}
+			}
+
+			setSelectedMessages(newSelected);
+		},
+		[selectedMessages, messages]
+	);
+
+	const handleRewindSelection = useCallback(async () => {
+		if (selectedMessages.size === 0) return;
+
+		// Show confirmation dialog
+		const confirmed = confirm(
+			`Rewind to selected point? This will delete ${selectedMessages.size} messages and revert files. This action cannot be undone.`
+		);
+
+		if (!confirmed) return;
+
+		try {
+			const { result } = await import('../lib/api-helpers.ts').then((m) =>
+				m.executeSelectiveRewind(sessionId, Array.from(selectedMessages))
+			);
+
+			if (result.success) {
+				toast.success(
+					`Rewound successfully: ${result.messagesDeleted || 0} messages removed, ${
+						result.filesReverted?.length || 0
+					} files restored`
+				);
+				handleExitRewindMode();
+			} else {
+				toast.error(`Rewind failed: ${result.error || 'Unknown error'}`);
+			}
+		} catch (err) {
+			toast.error(`Rewind failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+		}
+	}, [selectedMessages, sessionId, handleExitRewindMode]);
 
 	// ========================================
 	// Reactive State from sessionStore (via useSignalEffect for re-renders)
 	// ========================================
-	const [messages, setMessages] = useState<SDKMessage[]>([]);
-	const [session, setSession] = useState(sessionStore.sessionInfo.value);
 	const [contextUsage, setContextUsage] = useState(sessionStore.contextInfo.value);
 	const [agentState, setAgentState] = useState(sessionStore.agentState.value);
 	const [storeError, setStoreError] = useState(sessionStore.error.value);
@@ -470,7 +569,6 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				onInfoClick={infoModal.open}
 				onExportClick={sessionActions.handleExportChat}
 				onResetClick={sessionActions.handleResetAgent}
-				onRewindClick={rewindModal.open}
 				onArchiveClick={sessionActions.handleArchiveClick}
 				onDeleteClick={deleteModal.open}
 				archiving={sessionActions.archiving}
@@ -479,6 +577,50 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 			{/* Messages */}
 			<div class="flex-1 relative min-h-0">
+				{/* Rewind Mode Banner */}
+				{rewindMode && (
+					<div class="absolute top-0 left-0 right-0 z-20 bg-amber-500/10 backdrop-blur-sm border-b border-amber-500/30 px-4 py-3">
+						<div class="max-w-4xl mx-auto flex items-center justify-between">
+							<div class="flex items-center gap-3">
+								<svg
+									class="w-5 h-5 text-amber-400"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
+									/>
+								</svg>
+								<span class="text-sm text-amber-200">
+									{selectedMessages.size > 0
+										? `${selectedMessages.size} message${selectedMessages.size > 1 ? 's' : ''} selected`
+										: 'Select a message to rewind to'}
+								</span>
+							</div>
+							<div class="flex items-center gap-2">
+								{selectedMessages.size > 0 && (
+									<button
+										onClick={handleRewindSelection}
+										class="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium transition-colors"
+									>
+										Rewind to Here
+									</button>
+								)}
+								<button
+									onClick={handleExitRewindMode}
+									class="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-gray-200 rounded-lg text-sm font-medium transition-colors"
+								>
+									Cancel
+								</button>
+							</div>
+						</div>
+					</div>
+				)}
+
 				<div
 					ref={messagesContainerRef}
 					data-messages-container
@@ -540,6 +682,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 									sessionId={sessionId}
 									resolvedQuestions={allResolvedQuestions}
 									pendingQuestion={pendingQuestion}
+									onRewind={handleRewind}
+									rewindMode={rewindMode}
+									selectedMessages={selectedMessages}
+									onMessageCheckboxChange={handleMessageCheckboxChange}
+									allMessages={messages}
 									onQuestionResolved={(state, responses) => {
 										// Move question to resolved state locally for immediate UI feedback
 										// (Server also persists this via question.respond/cancel RPC)
@@ -641,6 +788,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 							autoScroll={autoScroll}
 							onAutoScrollChange={handleAutoScrollChange}
 							onOpenTools={toolsModal.open}
+							onEnterRewindMode={handleEnterRewindMode}
 						/>
 					)}
 				</div>
@@ -683,9 +831,6 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 			{/* Session Info Modal */}
 			<SessionInfoModal isOpen={infoModal.isOpen} onClose={infoModal.close} session={session} />
-
-			{/* Rewind Modal */}
-			<RewindModal isOpen={rewindModal.isOpen} onClose={rewindModal.close} sessionId={sessionId} />
 
 			{/* Error Dialog */}
 			<ErrorDialog

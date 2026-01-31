@@ -40,6 +40,12 @@ interface Props {
 		state: 'submitted' | 'cancelled',
 		responses: QuestionDraftResponse[]
 	) => void;
+	onRewind?: (uuid: string) => void; // Rewind to this message
+	// Rewind mode props
+	rewindMode?: boolean;
+	selectedMessages?: Set<string>;
+	onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
+	allMessages?: SDKMessage[];
 }
 
 /**
@@ -66,6 +72,11 @@ export function SDKMessageRenderer({
 	resolvedQuestions,
 	pendingQuestion,
 	onQuestionResolved,
+	onRewind,
+	rewindMode,
+	selectedMessages,
+	onMessageCheckboxChange,
+	allMessages,
 }: Props) {
 	// Skip messages that shouldn't be shown to user (e.g., stream events)
 	if (!isUserVisibleMessage(message)) {
@@ -85,11 +96,34 @@ export function SDKMessageRenderer({
 	// Route to appropriate renderer based on message type
 	// Handle user replay messages (slash command responses) first
 	if (isSDKUserMessageReplay(message)) {
-		return <SDKUserMessage message={message} sessionInfo={sessionInfo} isReplay={true} />;
+		return (
+			<SDKUserMessage
+				message={message}
+				sessionInfo={sessionInfo}
+				isReplay={true}
+				sessionId={sessionId}
+				onRewind={onRewind}
+				rewindMode={rewindMode}
+				selectedMessages={selectedMessages}
+				onMessageCheckboxChange={onMessageCheckboxChange}
+				allMessages={allMessages}
+			/>
+		);
 	}
 
 	if (isSDKUserMessage(message)) {
-		return <SDKUserMessage message={message} sessionInfo={sessionInfo} />;
+		return (
+			<SDKUserMessage
+				message={message}
+				sessionInfo={sessionInfo}
+				sessionId={sessionId}
+				onRewind={onRewind}
+				rewindMode={rewindMode}
+				selectedMessages={selectedMessages}
+				onMessageCheckboxChange={onMessageCheckboxChange}
+				allMessages={allMessages}
+			/>
+		);
 	}
 
 	if (isSDKAssistantMessage(message)) {

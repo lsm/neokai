@@ -36,7 +36,6 @@ import type { ContextTracker } from './context-tracker';
 import { ContextFetcher } from './context-fetcher';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
 import type { MessageQueue } from './message-queue';
-import type { CheckpointTracker } from './checkpoint-tracker';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 
 /**
@@ -51,7 +50,6 @@ export interface SDKMessageHandlerContext {
 	readonly stateManager: ProcessingStateManager;
 	readonly contextTracker: ContextTracker;
 	readonly messageQueue: MessageQueue;
-	readonly checkpointTracker: CheckpointTracker;
 
 	// Dependencies for circuit breaker trip handling
 	readonly errorManager: ErrorManager;
@@ -188,7 +186,7 @@ export class SDKMessageHandler {
 	 * complete messages, not incremental stream_event tokens.
 	 */
 	async handleMessage(message: SDKMessage): Promise<void> {
-		const { session, db, messageHub, stateManager, checkpointTracker } = this.ctx;
+		const { session, db, messageHub, stateManager } = this.ctx;
 
 		// Check for API error patterns that indicate an infinite loop
 		// This MUST happen BEFORE any other processing to catch errors early
@@ -250,15 +248,6 @@ export class SDKMessageHandler {
 			this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
 			// Don't broadcast to clients if DB save failed
 			return;
-		}
-
-		// Process message for checkpoint tracking (after successful save)
-		// User messages with UUIDs become checkpoints for the rewind feature
-		try {
-			checkpointTracker.processMessage(message);
-		} catch (error) {
-			// Log error but don't fail the message processing
-			this.logger.warn('Failed to process checkpoint:', error);
 		}
 
 		// Broadcast SDK message delta (only channel - sdk.message removed as redundant)

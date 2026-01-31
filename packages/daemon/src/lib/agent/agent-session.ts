@@ -37,7 +37,6 @@
  * - MessageQueue: Message queueing with AsyncGenerator
  * - ProcessingStateManager: State machine for processing phases
  * - ContextTracker: Real-time context window usage
- * - CheckpointTracker: Rewind checkpoint tracking
  *
  * **Business Logic Handlers**:
  * - QueryLifecycleManager: Query start/stop/restart/cleanup
@@ -72,10 +71,11 @@ import type {
 	QuestionDraftResponse,
 	MessageHub,
 	CurrentModelInfo,
-	Checkpoint,
 	RewindPreview,
 	RewindResult,
 	RewindMode,
+	SelectiveRewindPreview,
+	SelectiveRewindResult,
 } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { Database } from '../../storage/database';
@@ -108,8 +108,7 @@ import {
 import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler';
 import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager';
 import { MessageRecoveryHandler } from './message-recovery-handler';
-import { CheckpointTracker } from './checkpoint-tracker';
-import { RewindHandler, type RewindHandlerContext } from './rewind-handler';
+import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler';
 import { SessionConfigHandler, type SessionConfigHandlerContext } from './session-config-handler';
 
 /**
@@ -153,7 +152,6 @@ export class AgentSession
 	private slashCommandManager: SlashCommandManager;
 
 	// Rewind support (accessible to handlers)
-	readonly checkpointTracker: CheckpointTracker;
 	private rewindHandler: RewindHandler;
 
 	// Config handler
@@ -200,9 +198,6 @@ export class AgentSession
 				this.db.updateSession(this.session.id, { metadata: this.session.metadata });
 			}
 		);
-
-		// Initialize CheckpointTracker early (needed by SDKMessageHandler)
-		this.checkpointTracker = new CheckpointTracker(session.id, this.daemonHub);
 
 		// Initialize SDKMessageHandler (handlers take AgentSession context directly)
 		this.messageHandler = new SDKMessageHandler(this);
@@ -420,8 +415,8 @@ export class AgentSession
 	// Rewind Feature (delegated to RewindHandler)
 	// ============================================================================
 
-	getCheckpoints(): Checkpoint[] {
-		return this.rewindHandler.getCheckpoints();
+	getRewindPoints(): RewindPoint[] {
+		return this.rewindHandler.getRewindPoints();
 	}
 
 	previewRewind(checkpointId: string): Promise<RewindPreview> {
@@ -430,6 +425,14 @@ export class AgentSession
 
 	executeRewind(checkpointId: string, mode: RewindMode): Promise<RewindResult> {
 		return this.rewindHandler.executeRewind(checkpointId, mode);
+	}
+
+	previewSelectiveRewind(messageIds: string[]): Promise<SelectiveRewindPreview> {
+		return this.rewindHandler.previewSelectiveRewind(messageIds);
+	}
+
+	executeSelectiveRewind(messageIds: string[]): Promise<SelectiveRewindResult> {
+		return this.rewindHandler.executeSelectiveRewind(messageIds);
 	}
 
 	// ============================================================================

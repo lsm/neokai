@@ -3,24 +3,10 @@
  *
  * Types for the rewind feature, which allows restoring workspace files
  * and/or conversation to a previous checkpoint.
+ *
+ * Note: Checkpoints are now derived from user messages stored in the database.
+ * Each user message with a UUID serves as a potential rewind point.
  */
-
-/**
- * Checkpoint information for a restore point in the conversation.
- * Each user message with a UUID creates a checkpoint.
- */
-export interface Checkpoint {
-	/** UUID from the user message */
-	id: string;
-	/** Preview of the message content (first 100 chars) */
-	messagePreview: string;
-	/** Turn number in the conversation (1-indexed) */
-	turnNumber: number;
-	/** Timestamp when the message was created (milliseconds since epoch) */
-	timestamp: number;
-	/** Session ID this checkpoint belongs to */
-	sessionId: string;
-}
 
 /**
  * Result of a rewind preview operation (dry run).
@@ -37,6 +23,8 @@ export interface RewindPreview {
 	insertions?: number;
 	/** Number of line deletions */
 	deletions?: number;
+	/** Number of messages that would be deleted (for conversation/both modes) */
+	messagesAffected?: number;
 }
 
 /**
@@ -64,3 +52,54 @@ export interface RewindResult {
  * Rewind mode - what to restore when rewinding.
  */
 export type RewindMode = 'files' | 'conversation' | 'both';
+
+// ==================== Selective Rewind Types ====================
+
+/**
+ * Request for selective rewind operation.
+ * Selective rewind allows choosing specific messages to rewind,
+ * deleting all messages from the first selected message onward.
+ */
+export interface SelectiveRewindRequest {
+	/** Message UUIDs to rewind (all messages from first selected to end) */
+	messageIds: string[];
+	/** Session ID */
+	sessionId: string;
+}
+
+/**
+ * Preview result for selective rewind operation.
+ * Shows what would change without actually modifying anything.
+ */
+export interface SelectiveRewindPreview {
+	/** Whether selective rewind is possible */
+	canRewind: boolean;
+	/** Error message if rewind is not possible */
+	error?: string;
+	/** Number of messages that would be deleted */
+	messagesToDelete: number;
+	/** Files that would be reverted, with strategy information */
+	filesToRevert: Array<{
+		/** File path relative to workspace root */
+		path: string;
+		/** Whether SDK checkpoint is available for this file */
+		hasCheckpoint: boolean;
+		/** Whether Edit tool diff is available as fallback */
+		hasEditDiff: boolean;
+	}>;
+}
+
+/**
+ * Result of a selective rewind execution operation.
+ * Contains the actual changes made.
+ */
+export interface SelectiveRewindResult {
+	/** Whether the selective rewind operation succeeded */
+	success: boolean;
+	/** Error message if the operation failed */
+	error?: string;
+	/** Number of messages deleted from the conversation */
+	messagesDeleted: number;
+	/** List of file paths that were reverted */
+	filesReverted: string[];
+}

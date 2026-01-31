@@ -13,7 +13,7 @@
 import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SessionManager } from '../session-manager';
-import type { RewindMode } from '@neokai/shared';
+import type { RewindMode, SelectiveRewindRequest } from '@neokai/shared';
 
 export function setupRewindHandlers(
 	messageHub: MessageHub,
@@ -21,10 +21,10 @@ export function setupRewindHandlers(
 	_daemonHub: DaemonHub
 ): void {
 	/**
-	 * Get all checkpoints for a session
+	 * Get all rewind points for a session
 	 *
 	 * Request: { sessionId: string }
-	 * Response: { checkpoints: Checkpoint[]; error?: string }
+	 * Response: { rewindPoints: RewindPoint[]; error?: string }
 	 */
 	messageHub.handle('rewind.checkpoints', async (data) => {
 		const { sessionId } = data as { sessionId: string };
@@ -32,13 +32,13 @@ export function setupRewindHandlers(
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) {
 			return {
-				checkpoints: [],
+				rewindPoints: [],
 				error: 'Session not found',
 			};
 		}
 
-		const checkpoints = agentSession.getCheckpoints();
-		return { checkpoints };
+		const rewindPoints = agentSession.getRewindPoints();
+		return { rewindPoints };
 	});
 
 	/**
@@ -97,6 +97,83 @@ export function setupRewindHandlers(
 		}
 
 		const result = await agentSession.executeRewind(checkpointId, mode);
+		return { result };
+	});
+
+	/**
+	 * Preview a selective rewind operation (dry run)
+	 *
+	 * Selective rewind allows choosing specific messages to rewind,
+	 * deleting all messages from the first selected message onward.
+	 *
+	 * Request: SelectiveRewindRequest
+	 * Response: { preview: SelectiveRewindPreview }
+	 */
+	messageHub.handle('rewind.previewSelective', async (data) => {
+		const { sessionId, messageIds } = data as SelectiveRewindRequest;
+
+		const agentSession = await sessionManager.getSessionAsync(sessionId);
+		if (!agentSession) {
+			return {
+				preview: {
+					canRewind: false,
+					error: 'Session not found',
+					messagesToDelete: 0,
+					filesToRevert: [],
+				},
+			};
+		}
+
+		if (messageIds.length === 0) {
+			return {
+				preview: {
+					canRewind: false,
+					error: 'No messages selected',
+					messagesToDelete: 0,
+					filesToRevert: [],
+				},
+			};
+		}
+
+		// Get the first selected message (earliest timestamp)
+		// All messages from this point onward will be deleted
+		const preview = await agentSession.previewSelectiveRewind(messageIds);
+		return { preview };
+	});
+
+	/**
+	 * Execute a selective rewind operation
+	 *
+	 * Request: SelectiveRewindRequest
+	 * Response: { result: SelectiveRewindResult }
+	 */
+	messageHub.handle('rewind.executeSelective', async (data) => {
+		const { sessionId, messageIds } = data as SelectiveRewindRequest;
+
+		const agentSession = await sessionManager.getSessionAsync(sessionId);
+		if (!agentSession) {
+			return {
+				result: {
+					success: false,
+					error: 'Session not found',
+					messagesDeleted: 0,
+					filesReverted: [],
+				},
+			};
+		}
+
+		if (messageIds.length === 0) {
+			return {
+				result: {
+					success: false,
+					error: 'No messages selected',
+					messagesDeleted: 0,
+					filesReverted: [],
+				},
+			};
+		}
+
+		const result = await agentSession.executeSelectiveRewind(messageIds);
 		return { result };
 	});
 }
