@@ -11,7 +11,10 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
 
 // Re-export migrations
-export { runMigrations, runMigration12 } from './migrations';
+// knip-ignore: Used by database initialization
+export { runMigrations } from './migrations';
+// knip-ignore: Exported for testing
+export { runMigration12 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults

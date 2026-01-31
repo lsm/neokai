@@ -98,7 +98,9 @@ describe('Migration 12: autoScroll default in global_settings', () => {
 		runMigration12(db);
 
 		// Verify settings were not modified (updated_at should be the same)
-		const after = db.prepare(`SELECT settings, updated_at FROM global_settings WHERE id = 1`).get() as {
+		const after = db
+			.prepare(`SELECT settings, updated_at FROM global_settings WHERE id = 1`)
+			.get() as {
 			settings: string;
 			updated_at: string;
 		};
@@ -124,7 +126,9 @@ describe('Migration 12: autoScroll default in global_settings', () => {
 		runMigration12(db);
 
 		// Verify settings were not modified (autoScroll should stay false)
-		const after = db.prepare(`SELECT settings, updated_at FROM global_settings WHERE id = 1`).get() as {
+		const after = db
+			.prepare(`SELECT settings, updated_at FROM global_settings WHERE id = 1`)
+			.get() as {
 			settings: string;
 			updated_at: string;
 		};
