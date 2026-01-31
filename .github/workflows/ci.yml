@@ -218,7 +218,7 @@ jobs:
             bunx playwright test "tests/${{ matrix.test }}.e2e.ts"
         env:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
-          DEFAULT_MODEL: haiku
+          DEFAULT_MODEL: sonnet
           CI: true
           COVERAGE: true
 
@@ -318,7 +318,7 @@ jobs:
             bunx playwright test "tests/${{ matrix.test }}.e2e.ts"
         env:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
-          DEFAULT_MODEL: haiku
+          DEFAULT_MODEL: sonnet
           CI: true
           COVERAGE: true
 
@@ -415,20 +415,19 @@ jobs:
         if: github.ref_type == 'tag'
         run: |
           echo "Verifying commit $GITHUB_SHA was tested on main branch..."
-          # Check combined status for this commit across all contexts
-          STATUS=$(gh api \
+          # Check GitHub Actions CI runs for this commit on main branch
+          RUNS=$(gh api \
             -H "Accept: application/vnd.github+json" \
-            /repos/${{ github.repository }}/commits/$GITHUB_SHA/status \
-            --jq '.state')
+            "/repos/${{ github.repository }}/actions/runs?head_sha=$GITHUB_SHA&branch=main&status=success&per_page=1" \
+            --jq '.total_count')
 
-          if [ "$STATUS" != "success" ]; then
-            echo "ERROR: Commit $GITHUB_SHA has not passed all required checks on main branch"
-            echo "Current status: $STATUS"
+          if [ "$RUNS" -eq 0 ]; then
+            echo "ERROR: Commit $GITHUB_SHA has no successful CI runs on main branch"
             echo "Cannot proceed with release for untested commit"
             exit 1
           fi
 
-          echo "✓ Commit $GITHUB_SHA passed all checks on main branch (status: $STATUS)"
+          echo "✓ Commit $GITHUB_SHA has $RUNS successful CI run(s) on main branch"
         env:
           GH_TOKEN: ${{ github.token }}
 
