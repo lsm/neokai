@@ -100,7 +100,7 @@ export class AnthropicProvider implements Provider {
 
 	/**
 	 * Get available models from Anthropic
-	 * Dynamically loads from SDK or returns cached models
+	 * Dynamically loads from SDK - no static fallback
 	 */
 	async getModels(): Promise<ModelInfo[]> {
 		// Return cached models if available
@@ -111,20 +111,18 @@ export class AnthropicProvider implements Provider {
 		// Only try to load from SDK if credentials are available
 		// Without credentials, the SDK call may hang indefinitely
 		if (!this.isAvailable()) {
-			this.modelCache = this.getStaticModels();
-			return this.modelCache;
+			return [];
 		}
 
 		try {
-			// Try to load from SDK
+			// Load from SDK
 			const models = await this.loadModelsFromSdk();
 			this.modelCache = models;
 			return models;
 		} catch (error) {
 			console.warn('[AnthropicProvider] Failed to load models from SDK:', error);
-			// Return static fallback models
-			this.modelCache = this.getStaticModels();
-			return this.modelCache;
+			// No static fallback - return empty array
+			return [];
 		}
 	}
 
@@ -252,47 +250,6 @@ export class AnthropicProvider implements Provider {
 					available: true,
 				};
 			});
-	}
-
-	/**
-	 * Get static fallback models when SDK is unavailable
-	 */
-	private getStaticModels(): ModelInfo[] {
-		return [
-			{
-				id: 'default',
-				name: 'Sonnet 4.5',
-				alias: 'default',
-				family: 'sonnet',
-				provider: 'anthropic',
-				contextWindow: 200000,
-				description: 'Best for everyday tasks',
-				releaseDate: '2024-10-22',
-				available: true,
-			},
-			{
-				id: 'opus',
-				name: 'Opus 4.5',
-				alias: 'opus',
-				family: 'opus',
-				provider: 'anthropic',
-				contextWindow: 200000,
-				description: 'Most capable model for complex tasks',
-				releaseDate: '2025-01-19',
-				available: true,
-			},
-			{
-				id: 'haiku',
-				name: 'Haiku 3.5',
-				alias: 'haiku',
-				family: 'haiku',
-				provider: 'anthropic',
-				contextWindow: 200000,
-				description: 'Fast and efficient model',
-				releaseDate: '2024-10-22',
-				available: true,
-			},
-		];
 	}
 
 	/**

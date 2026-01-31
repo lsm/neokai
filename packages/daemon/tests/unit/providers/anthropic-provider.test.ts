@@ -81,8 +81,8 @@ describe('AnthropicProvider', () => {
 	});
 
 	describe('getModels without credentials', () => {
-		it('should return static models when no credentials are available', async () => {
-			// Remove credentials to ensure we get static models
+		it('should return empty array when no credentials are available', async () => {
+			// Remove credentials
 			delete process.env.ANTHROPIC_API_KEY;
 			delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
 
@@ -91,27 +91,8 @@ describe('AnthropicProvider', () => {
 
 			const models = await providerWithoutCreds.getModels();
 
-			// Should return exactly 3 static models
-			expect(models.length).toBe(3);
-
-			// Check that we have the expected static models
-			const modelIds = models.map((m) => m.id);
-			expect(modelIds).toContain('default');
-			expect(modelIds).toContain('opus');
-			expect(modelIds).toContain('haiku');
-		});
-
-		it('should include provider field in static models', async () => {
-			// Remove credentials
-			delete process.env.ANTHROPIC_API_KEY;
-			delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
-
-			const providerWithoutCreds = new AnthropicProvider();
-			const models = await providerWithoutCreds.getModels();
-
-			for (const model of models) {
-				expect(model.provider).toBe('anthropic');
-			}
+			// Should return empty array (no static fallback)
+			expect(models).toEqual([]);
 		});
 
 		it('should not attempt SDK call when credentials are missing', async () => {
@@ -126,8 +107,8 @@ describe('AnthropicProvider', () => {
 			const models = await providerWithoutCreds.getModels();
 			const duration = Date.now() - startTime;
 
-			// Should return static models quickly (< 100ms)
-			expect(models.length).toBe(3);
+			// Should return empty array quickly (< 100ms)
+			expect(models).toEqual([]);
 			expect(duration).toBeLessThan(100);
 		});
 	});
@@ -217,9 +198,9 @@ describe('AnthropicProvider', () => {
 			// Clear cache
 			provider.clearModelCache();
 
-			// Should return at least 3 models
+			// Should return empty array when cache is cleared and no credentials
 			const models = await provider.getModels();
-			expect(models.length).toBeGreaterThanOrEqual(3);
+			expect(models).toEqual([]);
 		});
 	});
 });
