@@ -13,6 +13,7 @@ import type {
 	ModelTier,
 } from '@neokai/shared/provider';
 import type { ModelInfo } from '@neokai/shared';
+import { resolveSDKCliPath, isBundledBinary } from '../agent/sdk-cli-resolver.js';
 
 /**
  * Canonical SDK model IDs (short-form IDs preferred by the SDK)
@@ -141,6 +142,8 @@ export class AnthropicProvider implements Provider {
 				model: 'default',
 				cwd: process.cwd(),
 				maxTurns: 0,
+				pathToClaudeCodeExecutable: resolveSDKCliPath(),
+				executable: isBundledBinary() ? 'bun' : undefined,
 			},
 		});
 
