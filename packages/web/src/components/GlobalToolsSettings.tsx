@@ -101,28 +101,6 @@ export function GlobalToolsSettings() {
 		saveConfig(newConfig);
 	};
 
-	const updateKaiToolConfig = (
-		tool: 'memory',
-		key: 'allowed' | 'defaultEnabled',
-		value: boolean
-	) => {
-		const newConfig = {
-			...config.value,
-			kaiTools: {
-				...(config.value.kaiTools ?? DEFAULT_CONFIG.kaiTools),
-				[tool]: {
-					...(config.value.kaiTools?.[tool] ?? DEFAULT_CONFIG.kaiTools[tool]),
-					[key]: value,
-				},
-			},
-		};
-		// If disabling permission, also disable default
-		if (key === 'allowed' && !value) {
-			newConfig.kaiTools[tool].defaultEnabled = false;
-		}
-		saveConfig(newConfig);
-	};
-
 	if (loading.value) {
 		return (
 			<div class="text-center py-4">
@@ -205,79 +183,6 @@ export function GlobalToolsSettings() {
 					</div>
 				</div>
 
-				{/* NeoKai Tools Section */}
-				<div class="mb-6">
-					<h4 class="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">
-						NeoKai Tools
-					</h4>
-					<p class="text-xs text-gray-500 mb-3">
-						Tools provided by NeoKai for enhanced functionality.
-					</p>
-
-					<div class="space-y-3">
-						{/* Memory Tool */}
-						<div class="flex items-center justify-between p-3 rounded-lg bg-dark-700/50">
-							<div class="flex items-center gap-3">
-								<svg
-									class="w-5 h-5 text-purple-400"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke="currentColor"
-								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
-									/>
-								</svg>
-								<div>
-									<div class="text-sm text-gray-200">Memory</div>
-									<div class="text-xs text-gray-500">
-										Persistent key-value storage across sessions
-									</div>
-								</div>
-							</div>
-							<div class="flex items-center gap-4">
-								<label class="flex items-center gap-2 cursor-pointer">
-									<span class="text-xs text-gray-400">Allowed</span>
-									<input
-										type="checkbox"
-										checked={config.value.kaiTools?.memory?.allowed ?? true}
-										onChange={(e) =>
-											updateKaiToolConfig(
-												'memory',
-												'allowed',
-												(e.target as HTMLInputElement).checked
-											)
-										}
-										disabled={saving.value}
-										class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
-									/>
-								</label>
-								<label
-									class={`flex items-center gap-2 ${config.value.kaiTools?.memory?.allowed ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
-								>
-									<span class="text-xs text-gray-400">Default ON</span>
-									<input
-										type="checkbox"
-										checked={config.value.kaiTools?.memory?.defaultEnabled ?? false}
-										onChange={(e) =>
-											updateKaiToolConfig(
-												'memory',
-												'defaultEnabled',
-												(e.target as HTMLInputElement).checked
-											)
-										}
-										disabled={saving.value || !config.value.kaiTools?.memory?.allowed}
-										class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
-									/>
-								</label>
-							</div>
-						</div>
-					</div>
-				</div>
-
 				{/* SDK Built-in Tools Info (read-only) */}
 				<div>
 					<h4 class="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">
@@ -303,7 +208,9 @@ export function GlobalToolsSettings() {
 									d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
 								/>
 							</svg>
-							<span class="text-xs text-gray-400">Read, Write, Edit, Glob, Grep, Bash...</span>
+							<span class="text-xs text-gray-400">
+								Read, Write, Edit, Glob, Grep, Bash, NotebookEdit, TodoWrite
+							</span>
 						</div>
 						{/* Slash Commands */}
 						<div class="flex items-center gap-3 p-2 rounded-lg bg-dark-700/30">
@@ -320,7 +227,7 @@ export function GlobalToolsSettings() {
 									d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"
 								/>
 							</svg>
-							<span class="text-xs text-gray-400">/help, /context, /clear, /config, /bug...</span>
+							<span class="text-xs text-gray-400">/help, /context, /clear, /config, /bug</span>
 						</div>
 						{/* Sub-agents */}
 						<div class="flex items-center gap-3 p-2 rounded-lg bg-dark-700/30">
@@ -338,7 +245,7 @@ export function GlobalToolsSettings() {
 								/>
 							</svg>
 							<span class="text-xs text-gray-400">
-								Task agents (general-purpose, Explore, Plan...)
+								Task agents (general-purpose, Explore, Plan, Bash)
 							</span>
 						</div>
 						{/* Web tools */}

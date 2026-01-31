@@ -307,6 +307,204 @@ describe('Settings RPC Integration', () => {
 		});
 	});
 
+	describe('thinkingLevel Setting', () => {
+		test('defaults to undefined', async () => {
+			const result = (await callRPCHandler(
+				ctx.messageHub,
+				'settings.global.get',
+				{}
+			)) as GlobalSettings;
+
+			expect(result.thinkingLevel).toBeUndefined();
+		});
+
+		test('can be set to think8k', async () => {
+			const result = (await callRPCHandler(ctx.messageHub, 'settings.global.update', {
+				updates: { thinkingLevel: 'think8k' },
+			})) as { success: boolean; settings: GlobalSettings };
+
+			expect(result.success).toBe(true);
+			expect(result.settings.thinkingLevel).toBe('think8k');
+		});
+
+		test('can be set to think16k', async () => {
+			const result = (await callRPCHandler(ctx.messageHub, 'settings.global.update', {
+				updates: { thinkingLevel: 'think16k' },
+			})) as { success: boolean; settings: GlobalSettings };
+
+			expect(result.success).toBe(true);
+			expect(result.settings.thinkingLevel).toBe('think16k');
+		});
+
+		test('can be set to think32k', async () => {
+			const result = (await callRPCHandler(ctx.messageHub, 'settings.global.update', {
+				updates: { thinkingLevel: 'think32k' },
+			})) as { success: boolean; settings: GlobalSettings };
+
+			expect(result.success).toBe(true);
+			expect(result.settings.thinkingLevel).toBe('think32k');
+		});
+
+		test('can be reset to auto', async () => {
+			await callRPCHandler(ctx.messageHub, 'settings.global.update', {
+				updates: { thinkingLevel: 'think16k' },
+			});
+
+			const result = (await callRPCHandler(ctx.messageHub, 'settings.global.update', {
+				updates: { thinkingLevel: 'auto' },
+			})) as { success: boolean; settings: GlobalSettings };
+
+			expect(result.success).toBe(true);
+			expect(result.settings.thinkingLevel).toBe('auto');
+		});
+
+		test('persists to database', async () => {
+			await callRPCHandler(ctx.messageHub, 'settings.global.update', {
+				updates: { thinkingLevel: 'think32k' },
+			});
+
+			const loaded = ctx.db.getGlobalSettings();
+			expect(loaded.thinkingLevel).toBe('think32k');
+		});
+	});
+
+	describe('autoScroll Setting', () => {
+		test('defaults to undefined', async () => {
+			const result = (await callRPCHandler(
+				ctx.messageHub,
+				'settings.global.get',
+				{}
+			)) as GlobalSettings;
+
+			expect(result.autoScroll).toBeUndefined();
+		});
+
+		test('can be set to true', async () => {
+			const result = (await callRPCHandler(ctx.messageHub, 'settings.global.update', {
+				updates: { autoScroll: true },
+			})) as { success: boolean; settings: GlobalSettings };
+
+			expect(result.success).toBe(true);
+			expect(result.settings.autoScroll).toBe(true);
+		});
+
+		test('can be set to false', async () => {
+			const result = (await callRPCHandler(ctx.messageHub, 'settings.global.update', {
+				updates: { autoScroll: false },
+			})) as { success: boolean; settings: GlobalSettings };
+
+			expect(result.success).toBe(true);
+			expect(result.settings.autoScroll).toBe(false);
+		});
+
+		test('persists to database', async () => {
+			await callRPCHandler(ctx.messageHub, 'settings.global.update', {
+				updates: { autoScroll: false },
+			});
+
+			const loaded = ctx.db.getGlobalSettings();
+			expect(loaded.autoScroll).toBe(false);
+		});
+
+		test('can be toggled', async () => {
+			await callRPCHandler(ctx.messageHub, 'settings.global.update', {
+				updates: { autoScroll: true },
+			});
+			let settings = ctx.db.getGlobalSettings();
+			expect(settings.autoScroll).toBe(true);
+
+			await callRPCHandler(ctx.messageHub, 'settings.global.update', {
+				updates: { autoScroll: false },
+			});
+			settings = ctx.db.getGlobalSettings();
+			expect(settings.autoScroll).toBe(false);
+		});
+	});
+
+	describe('Global Settings Applied to New Sessions', () => {
+		test('new session uses global model setting', async () => {
+			// Set global model
+			await callRPCHandler(ctx.messageHub, 'settings.global.update', {
+				updates: { model: 'opus' },
+			});
+
+			// Create a new session without specifying a model
+			const result = (await callRPCHandler(ctx.messageHub, 'session.create', {
+				workspacePath: ctx.workspacePath,
+			})) as { sessionId: string; session: { config: { model: string } } };
+
+			expect(result.session.config.model).toBe('opus');
+		});
+
+		test('new session uses global thinkingLevel setting', async () => {
+			// Set global thinking level
+			await callRPCHandler(ctx.messageHub, 'settings.global.update', {
+				updates: { thinkingLevel: 'think16k' },
+			});
+
+			// Create a new session
+			const result = (await callRPCHandler(ctx.messageHub, 'session.create', {
+				workspacePath: ctx.workspacePath,
+			})) as {
+				sessionId: string;
+				session: { config: { thinkingLevel?: string } };
+			};
+
+			expect(result.session.config.thinkingLevel).toBe('think16k');
+		});
+
+		test('new session uses global autoScroll setting', async () => {
+			// Set global autoScroll to false
+			await callRPCHandler(ctx.messageHub, 'settings.global.update', {
+				updates: { autoScroll: false },
+			});
+
+			// Create a new session
+			const result = (await callRPCHandler(ctx.messageHub, 'session.create', {
+				workspacePath: ctx.workspacePath,
+			})) as {
+				sessionId: string;
+				session: { config: { autoScroll?: boolean } };
+			};
+
+			expect(result.session.config.autoScroll).toBe(false);
+		});
+
+		test('session-level config overrides global defaults', async () => {
+			// Set global model
+			await callRPCHandler(ctx.messageHub, 'settings.global.update', {
+				updates: {
+					model: 'opus',
+					thinkingLevel: 'think32k',
+					autoScroll: false,
+				},
+			});
+
+			// Create a session with explicit overrides
+			const result = (await callRPCHandler(ctx.messageHub, 'session.create', {
+				workspacePath: ctx.workspacePath,
+				config: {
+					model: 'haiku',
+					thinkingLevel: 'auto',
+					autoScroll: true,
+				},
+			})) as {
+				sessionId: string;
+				session: {
+					config: {
+						model: string;
+						thinkingLevel?: string;
+						autoScroll?: boolean;
+					};
+				};
+			};
+
+			expect(result.session.config.model).toBe('haiku');
+			expect(result.session.config.thinkingLevel).toBe('auto');
+			expect(result.session.config.autoScroll).toBe(true);
+		});
+	});
+
 	describe('Complete Flow', () => {
 		test('update settings → persist to DB → write to file', async () => {
 			// 1. Update settings via RPC

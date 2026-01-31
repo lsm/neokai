@@ -50,6 +50,43 @@ test.describe('Settings Modal - Global Settings', () => {
 		await expect(modelSelect).toBeVisible();
 	});
 
+	test.skip('should show Thinking Level selection dropdown', async ({ page }) => {
+		// TODO: Update test to match current SettingsModal structure
+		await openSettingsModal(page);
+
+		// Find the thinking level label
+		const thinkingLabel = page.locator('label:has-text("Thinking Level")');
+		await expect(thinkingLabel).toBeVisible();
+
+		// Should have a select for thinking level with all options
+		const thinkingSelect = page.locator('select').filter({
+			has: page.locator('option:has-text("Auto")'),
+		});
+		await expect(thinkingSelect.first()).toBeVisible();
+
+		// Verify all thinking level options exist
+		await expect(page.locator('option:has-text("Think 8k")')).toBeAttached();
+		await expect(page.locator('option:has-text("Think 16k")')).toBeAttached();
+		await expect(page.locator('option:has-text("Think 32k")')).toBeAttached();
+	});
+
+	test.skip('should show Auto Scroll toggle', async ({ page }) => {
+		// TODO: Update test to match current SettingsModal structure
+		await openSettingsModal(page);
+
+		// Find auto scroll label
+		await expect(page.locator('label:has-text("Auto Scroll")')).toBeVisible();
+
+		// Should show description
+		await expect(page.locator('text=Auto-scroll to bottom when new messages arrive')).toBeVisible();
+
+		// Should have a checkbox
+		const autoScrollCheckbox = page
+			.locator('label:has-text("Enabled")')
+			.locator('input[type="checkbox"]');
+		await expect(autoScrollCheckbox).toBeVisible();
+	});
+
 	test.skip('should show Permission Mode selection', async ({ page }) => {
 		// TODO: Update test to match current SettingsModal structure
 		await openSettingsModal(page);
@@ -113,28 +150,33 @@ test.describe('Settings Modal - Global Tools Settings', () => {
 		await expect(page.locator('text=Use official Claude Code system prompt')).toBeVisible();
 	});
 
-	test.skip('should show NeoKai Tools section with Memory tool', async ({ page }) => {
-		// TODO: Update test to match current SettingsModal structure
+	test.skip('should NOT show NeoKai Tools section', async ({ page }) => {
+		// NeoKai Tools section has been removed
 		await openSettingsModal(page);
 
-		// Find NeoKai Tools section
-		await expect(page.locator('h4:has-text("NeoKai Tools")')).toBeVisible();
+		// Verify NeoKai Tools heading does NOT exist
+		await expect(page.locator('h4:has-text("NeoKai Tools")')).not.toBeVisible();
 
-		// Should show Memory tool
-		await expect(page.locator('text=Memory')).toBeVisible();
-		await expect(page.locator('text=Persistent key-value storage')).toBeVisible();
+		// Memory tool should NOT be shown
+		await expect(page.locator('text=Persistent key-value storage')).not.toBeVisible();
 	});
 
-	test.skip('should show SDK Built-in section', async ({ page }) => {
+	test.skip('should show SDK Built-in section with full tool names', async ({ page }) => {
 		// TODO: Update test to match current SettingsModal structure
 		await openSettingsModal(page);
 
 		// Find SDK Built-in section
 		await expect(page.locator('h4:has-text("Claude Agent SDK Built-in")')).toBeVisible();
 
-		// Should list built-in tools
-		await expect(page.locator('text=Read, Write, Edit, Glob, Grep, Bash')).toBeVisible();
-		await expect(page.locator('text=/help, /context, /clear')).toBeVisible();
+		// Should list built-in tools without trailing "..."
+		await expect(
+			page.locator('text=Read, Write, Edit, Glob, Grep, Bash, NotebookEdit, TodoWrite')
+		).toBeVisible();
+		await expect(page.locator('text=/help, /context, /clear, /config, /bug')).toBeVisible();
+		await expect(
+			page.locator('text=Task agents (general-purpose, Explore, Plan, Bash)')
+		).toBeVisible();
+		await expect(page.locator('text=WebSearch, WebFetch')).toBeVisible();
 	});
 
 	test.skip('should have Allowed and Default ON checkboxes for tools', async ({ page }) => {

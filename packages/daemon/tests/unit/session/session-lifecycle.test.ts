@@ -58,6 +58,10 @@ describe('SessionLifecycle', () => {
 			updateSession: updateSessionSpy,
 			deleteSession: deleteSessionSpy,
 			getSession: getSessionSpy,
+			getGlobalSettings: mock(() => ({
+				settingSources: ['user', 'project', 'local'],
+				disabledMcpServers: [],
+			})),
 		} as unknown as Database;
 
 		// Worktree manager mocks

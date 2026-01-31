@@ -62,8 +62,13 @@ export class SessionLifecycle {
 
 		const baseWorkspacePath = params.workspacePath || this.config.workspaceRoot;
 
+		// Read global settings for defaults (model, thinkingLevel, autoScroll)
+		const globalSettings = this.db.getGlobalSettings();
+
 		// Validate and resolve model ID using cached models
-		const modelId = await this.getValidatedModelId(params.config?.model);
+		// Priority: params.config.model > globalSettings.model > server default
+		const requestedModel = params.config?.model || globalSettings.model;
+		const modelId = await this.getValidatedModelId(requestedModel);
 
 		// Determine if title should be auto-generated
 		// If title is provided, mark as generated to skip auto-title generation
@@ -114,7 +119,9 @@ export class SessionLifecycle {
 				model: modelId, // Use validated model ID
 				maxTokens: params.config?.maxTokens || this.config.maxTokens,
 				temperature: params.config?.temperature || this.config.temperature,
-				autoScroll: params.config?.autoScroll,
+				// Apply global settings defaults for autoScroll and thinkingLevel
+				autoScroll: params.config?.autoScroll ?? globalSettings.autoScroll,
+				thinkingLevel: params.config?.thinkingLevel ?? globalSettings.thinkingLevel,
 				permissionMode: params.config?.permissionMode,
 				// Provider: Allow explicit override, otherwise default to 'anthropic'
 				provider: params.config?.provider,
