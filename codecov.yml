@@ -38,7 +38,7 @@ parsers:
 comment:
   layout: "reach,diff,flags,files"
   behavior: default
-  require_changes: true
+  require_changes: false
   require_base: false
   require_head: true
 
