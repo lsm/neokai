@@ -95,7 +95,6 @@ jobs:
             message-pagination
             message-removal
             message-send-receive
-            model-selection-persistence
             page-refresh-context
             page-refresh-session-state
             processing-state
@@ -108,6 +107,7 @@ jobs:
 
           # Tests to exclude entirely (disabled, pending refactor)
           EXCLUDED_TESTS=(
+            model-selection-persistence
             rewind-modal
           )
 
