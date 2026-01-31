@@ -179,7 +179,8 @@ describe('useSessionActions', () => {
 				await result.current.handleDeleteSession();
 			});
 
-			expect(onDeleteModalClose).toHaveBeenCalled();
+			// Modal stays open on error so user can retry
+			expect(onDeleteModalClose).not.toHaveBeenCalled();
 			expect(mockToastError).toHaveBeenCalledWith('Delete failed');
 		});
 
