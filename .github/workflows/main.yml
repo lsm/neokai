@@ -7,7 +7,7 @@
 #
 # Browser coverage is collected from Playwright (no server coverage from binary).
 
-name: CI
+name: Build & Release
 
 on:
   push:
