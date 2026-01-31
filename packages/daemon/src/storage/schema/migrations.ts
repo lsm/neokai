@@ -1,7 +1,7 @@
 /**
  * Database Migrations
  *
- * All 11 migrations for schema changes.
+ * All 12 migrations for schema changes.
  * CRITICAL: Preserve the order of migrations.
  */
 
@@ -53,6 +53,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 11: Add sub-session columns for parent-child session relationships
 	runMigration11(db);
+
+	// Migration 12: Ensure global_settings has autoScroll: true for existing databases
+	runMigration12(db);
 }
 
 /**
@@ -296,5 +299,44 @@ function runMigration11(db: BunDatabase): void {
 		db.exec(`ALTER TABLE sessions ADD COLUMN sub_session_order INTEGER DEFAULT 0`);
 		// Add index for efficient parent lookups
 		db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_id)`);
+	}
+}
+
+/**
+ * Migration 12: Ensure global_settings has autoScroll: true for existing databases
+ *
+ * Existing databases may have global_settings without the autoScroll field.
+ * This migration ensures all existing settings have autoScroll: true as default.
+ */
+function runMigration12(db: BunDatabase): void {
+	try {
+		const row = db.prepare(`SELECT settings FROM global_settings WHERE id = 1`).get() as
+			| { settings: string }
+			| undefined;
+
+		if (!row) {
+			logger.log('Running migration: Initializing global_settings with autoScroll: true');
+			db.exec(`
+        INSERT INTO global_settings (id, settings, updated_at)
+        VALUES (1, '{"autoScroll":true}', datetime('now'))
+      `);
+			return;
+		}
+
+		const settings = JSON.parse(row.settings) as Record<string, unknown>;
+
+		// Only update if autoScroll is not already set
+		if (settings.autoScroll === undefined) {
+			logger.log('Running migration: Adding autoScroll: true to global_settings');
+			settings.autoScroll = true;
+			db.exec(`
+        UPDATE global_settings
+        SET settings = '${JSON.stringify(settings).replace(/'/g, "''")}',
+            updated_at = datetime('now')
+        WHERE id = 1
+      `);
+		}
+	} catch (err) {
+		logger.log(`Migration 12 failed: ${err}`);
 	}
 }

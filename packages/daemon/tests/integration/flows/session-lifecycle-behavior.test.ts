@@ -145,9 +145,9 @@ describe('Session Lifecycle (Behavior)', () => {
 
 			const sessionId = createResult.sessionId;
 
-			// Initial config
+			// Initial config - autoScroll is true by default
 			const initial = await callRPCHandler(ctx.messageHub, 'session.get', { sessionId });
-			expect(initial.session.config.autoScroll).toBeUndefined();
+			expect(initial.session.config.autoScroll).toBe(true);
 
 			// Update config
 			await callRPCHandler(ctx.messageHub, 'session.update', {

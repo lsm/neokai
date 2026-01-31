@@ -369,14 +369,14 @@ describe('Settings RPC Integration', () => {
 	});
 
 	describe('autoScroll Setting', () => {
-		test('defaults to undefined', async () => {
+		test('defaults to true', async () => {
 			const result = (await callRPCHandler(
 				ctx.messageHub,
 				'settings.global.get',
 				{}
 			)) as GlobalSettings;
 
-			expect(result.autoScroll).toBeUndefined();
+			expect(result.autoScroll).toBe(true);
 		});
 
 		test('can be set to true', async () => {

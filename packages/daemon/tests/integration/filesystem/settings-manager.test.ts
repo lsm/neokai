@@ -108,6 +108,7 @@ describe('SettingsManager', () => {
 				maxThinkingTokens: 10000,
 				disabledMcpServers: ['server1'],
 				showArchived: false,
+				autoScroll: false,
 				outputLimiter: {
 					enabled: true,
 					bash: {

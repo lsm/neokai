@@ -146,6 +146,9 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
 	permissionMode: 'default',
 	disabledMcpServers: [],
 	showArchived: false,
+	// Default auto-scroll to true so new sessions inherit this setting
+	// This must match the display default in GlobalSettingsEditor (autoScroll ?? true)
+	autoScroll: true,
 	outputLimiter: {
 		enabled: true,
 		bash: {
