@@ -187,7 +187,7 @@ export function InputTextarea({
 				)}
 
 				{/* Send/Stop Button */}
-				{isAgentWorking ? (
+				{isAgentWorking || interrupting ? (
 					<button
 						type="button"
 						onClick={onInterrupt}

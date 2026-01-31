@@ -1,18 +1,24 @@
 # CI - Unified build, test, and release pipeline
 #
-# On push to main or version tags:
-# 1. Build linux-x64 binary + smoke test
-# 2. Run full E2E test matrix against the binary
-# 3. If a version tag exists: build all platforms, package, and publish to npm
+# On PRs and push to main:
+# 1. Code quality checks + unit/integration tests (parallel)
+# 2. Build linux-x64 binary + smoke test (after tests pass)
+# 3. Run full E2E test matrix against the binary
 #
-# Browser coverage is collected from Playwright (no server coverage from binary).
+# On version tags (v*):
+# 1. Skip tests (already ran on main)
+# 2. Build all platforms, package, and publish to npm
+#
+# Unit test coverage (daemon, web) is uploaded to Codecov.
 
-name: Build & Release
+name: CI
 
 on:
   push:
     branches: [main]
     tags: ['v*']
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -20,11 +26,295 @@ permissions:
 
 jobs:
   # ============================================
-  # BUILD - Compile linux-x64 binary + smoke test
+  # CODE QUALITY CHECKS
   # ============================================
+
+  check:
+    name: Lint, Knip, Format & Type Check
+    runs-on: ubuntu-latest
+    if: github.ref_type != 'tag'
+    timeout-minutes: 3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.6
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run linter
+        id: lint
+        run: bun run lint
+        continue-on-error: true
+
+      - name: Check formatting
+        id: format
+        run: bun run format:check
+        continue-on-error: true
+
+      - name: Run Knip
+        id: knip
+        run: bun run knip
+        continue-on-error: true
+
+      - name: Run type check
+        id: typecheck
+        run: bun run typecheck
+        continue-on-error: true
+
+      - name: Check for failures
+        if: steps.lint.outcome == 'failure' || steps.format.outcome == 'failure' || steps.knip.outcome == 'failure' || steps.typecheck.outcome == 'failure'
+        run: |
+          echo "One or more checks failed:"
+          echo "  Lint: ${{ steps.lint.outcome }}"
+          echo "  Format: ${{ steps.format.outcome }}"
+          echo "  Knip: ${{ steps.knip.outcome }}"
+          echo "  Typecheck: ${{ steps.typecheck.outcome }}"
+          exit 1
+
+  # ============================================
+  # DAEMON TESTS (Matrix by module for parallelization)
+  # ============================================
+
+  test-daemon-offline:
+    name: Daemon Offline (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    if: github.ref_type != 'tag'
+    timeout-minutes: 5
+
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - agent
+          - session
+          - rpc
+          - database
+          - filesystem
+          - websocket
+          - git
+          - components
+          - mcp
+        include:
+          - module: agent
+            test_path: tests/integration/agent
+          - module: session
+            test_path: tests/integration/session
+          - module: rpc
+            test_path: tests/integration/rpc
+          - module: database
+            test_path: tests/integration/database
+          - module: filesystem
+            test_path: tests/integration/filesystem
+          - module: websocket
+            test_path: tests/integration/websocket
+          - module: git
+            test_path: tests/integration/git
+          - module: components
+            test_path: tests/integration/components
+          - module: mcp
+            test_path: tests/integration/mcp
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.6
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run daemon tests (${{ matrix.module }})
+        working-directory: packages/daemon
+        run: bun test ${{ matrix.test_path }}
+        env:
+          GLM_API_KEY: ""
+          CLAUDE_CODE_OAUTH_TOKEN: ""
+
+  # ============================================
+  # DAEMON ONLINE TESTS (Require API credentials)
+  # ============================================
+
+  test-daemon-online:
+    name: Daemon Online (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    if: github.ref_type != 'tag'
+    timeout-minutes: 5
+
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - agent
+          - components
+          - convo
+          - features
+          - glm
+          - lifecycle
+          - mcp
+          - providers
+          - rpc
+          - sdk
+          - session
+        include:
+          - module: components
+            test_path: tests/online/components
+          - module: glm
+            test_path: tests/online/glm
+          - module: mcp
+            test_path: tests/online/mcp
+          - module: providers
+            test_path: tests/online/providers
+          - module: rpc
+            test_path: tests/online/rpc
+          - module: sdk
+            test_path: tests/online/sdk
+          - module: agent
+            test_path: tests/online/agent
+          - module: convo
+            test_path: tests/online/convo
+          - module: features
+            test_path: tests/online/features
+          - module: lifecycle
+            test_path: tests/online/lifecycle
+          - module: session
+            test_path: tests/online/session
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.6
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run daemon online tests (${{ matrix.module }})
+        working-directory: packages/daemon
+        run: bun test ${{ matrix.test_path }}
+        env:
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+  # ============================================
+  # DAEMON + SHARED UNIT TESTS (For coverage measurement)
+  # ============================================
+
+  test-daemon-shared-unit:
+    name: Daemon + Shared Unit Tests (Coverage)
+    runs-on: ubuntu-latest
+    if: github.ref_type != 'tag'
+    timeout-minutes: 3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.6
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run daemon + shared unit tests from root
+        run: bun test packages/daemon/tests/unit packages/shared/tests --coverage --coverage-reporter=lcov --coverage-dir=coverage
+        env:
+          GLM_API_KEY: ""
+          CLAUDE_CODE_OAUTH_TOKEN: ""
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/lcov.info
+          flags: daemon
+          fail_ci_if_error: false
+
+  # ============================================
+  # WEB TESTS
+  # ============================================
+
+  test-web:
+    name: Web Tests
+    runs-on: ubuntu-latest
+    if: github.ref_type != 'tag'
+    timeout-minutes: 3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.6
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run web tests
+        working-directory: packages/web
+        run: bun run coverage
+
+      - name: Fix coverage paths for monorepo
+        run: |
+          # Vitest generates paths relative to package dir (src/...)
+          # Codecov needs paths relative to repo root (packages/web/src/...)
+          sed -i 's|^SF:src/|SF:packages/web/src/|g' packages/web/coverage/lcov.info
+          # Fix cross-package paths (../shared/src/... -> packages/shared/src/...)
+          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' packages/web/coverage/lcov.info
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/web/coverage/lcov.info
+          flags: web
+          fail_ci_if_error: false
+
+  # ============================================
+  # CLI TESTS
+  # ============================================
+
+  test-cli:
+    name: CLI Tests
+    runs-on: ubuntu-latest
+    if: github.ref_type != 'tag'
+    timeout-minutes: 2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.6
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run CLI tests
+        working-directory: packages/cli
+        run: bun test
+
+  # ============================================
+  # BUILD - Compile linux-x64 binary + smoke test
+  # Runs after all unit/integration tests pass
+  # ============================================
+
   build:
     name: Build Binary (linux-x64)
     runs-on: ubuntu-latest
+    needs: [check, test-daemon-offline, test-daemon-online, test-daemon-shared-unit, test-web, test-cli]
+    if: github.ref_type != 'tag'
     timeout-minutes: 10
 
     steps:
@@ -65,9 +355,11 @@ jobs:
   #   - no-llm: UI-only tests (run fully parallel)
   #   - llm: Tests requiring LLM round-trips (max 4 parallel)
   # ============================================
+
   discover:
     name: Discover Tests
     runs-on: ubuntu-latest
+    if: github.ref_type != 'tag'
     outputs:
       tests_no_llm: ${{ steps.categorize.outputs.tests_no_llm }}
       tests_llm: ${{ steps.categorize.outputs.tests_llm }}
@@ -145,8 +437,8 @@ jobs:
   # ============================================
   # E2E TESTS - No LLM (Matrix, fully parallel)
   # UI-only tests that don't require LLM API calls
-  # Skipped on tags since tests already ran on main branch
   # ============================================
+
   e2e:
     name: E2E (${{ matrix.test }})
     runs-on: ubuntu-latest
@@ -220,16 +512,6 @@ jobs:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           DEFAULT_MODEL: sonnet
           CI: true
-          COVERAGE: true
-
-      - name: Upload browser coverage artifact
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coverage-e2e-browser-${{ matrix.test }}
-          path: packages/e2e/coverage/lcov.info
-          retention-days: 1
-          if-no-files-found: ignore
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -244,8 +526,8 @@ jobs:
   # ============================================
   # E2E TESTS - LLM Required (Matrix, max 4 parallel)
   # Tests that send messages and wait for LLM responses
-  # Skipped on tags since tests already ran on main branch
   # ============================================
+
   e2e-llm:
     name: E2E LLM (${{ matrix.test }})
     runs-on: ubuntu-latest
@@ -320,16 +602,6 @@ jobs:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           DEFAULT_MODEL: sonnet
           CI: true
-          COVERAGE: true
-
-      - name: Upload browser coverage artifact
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coverage-e2e-browser-${{ matrix.test }}
-          path: packages/e2e/coverage/lcov.info
-          retention-days: 1
-          if-no-files-found: ignore
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -342,66 +614,57 @@ jobs:
           retention-days: 7
 
   # ============================================
-  # UPLOAD COVERAGE (Single upload after all tests)
-  # Merges browser coverage files and uploads to Codecov
+  # GATE - All tests (unit, integration, E2E) must pass
   # ============================================
-  upload-coverage:
-    name: Upload Coverage
+
+  all-tests-pass:
+    name: All Tests Pass
     runs-on: ubuntu-latest
-    needs: [e2e, e2e-llm]
-    if: always()
-    timeout-minutes: 5
+    timeout-minutes: 1
+    if: always() && github.ref_type != 'tag'
+    needs:
+      - check
+      - test-daemon-offline
+      - test-daemon-online
+      - test-daemon-shared-unit
+      - test-web
+      - test-cli
+      - e2e
+      - e2e-llm
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Download all coverage artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: coverage-e2e-browser-*
-          path: coverage-artifacts
-          merge-multiple: false
-
-      - name: Merge browser coverage files
+      - name: Check all jobs passed
         run: |
-          mkdir -p merged-coverage
-
-          FIRST=true
-          for f in $(find coverage-artifacts -name "lcov.info" -type f 2>/dev/null); do
-            echo "Adding coverage from: $f"
-            if [ "$FIRST" = true ]; then
-              cp "$f" merged-coverage/browser-lcov.info
-              FIRST=false
-            else
-              cat "$f" >> merged-coverage/browser-lcov.info
-            fi
-          done
-
-          if [ -f merged-coverage/browser-lcov.info ]; then
-            echo "Merged browser coverage file created"
-            wc -l merged-coverage/browser-lcov.info
-          else
-            echo "No browser coverage files to merge"
+          if [[ "${{ needs.check.result }}" != "success" ]] || \
+             [[ "${{ needs.test-daemon-offline.result }}" != "success" ]] || \
+             [[ "${{ needs.test-daemon-online.result }}" != "success" ]] || \
+             [[ "${{ needs.test-daemon-shared-unit.result }}" != "success" ]] || \
+             [[ "${{ needs.test-web.result }}" != "success" ]] || \
+             [[ "${{ needs.test-cli.result }}" != "success" ]] || \
+             [[ "${{ needs.e2e.result }}" != "success" ]] || \
+             [[ "${{ needs.e2e-llm.result }}" != "success" ]]; then
+            echo "One or more jobs failed:"
+            echo "  check: ${{ needs.check.result }}"
+            echo "  test-daemon-offline: ${{ needs.test-daemon-offline.result }}"
+            echo "  test-daemon-online: ${{ needs.test-daemon-online.result }}"
+            echo "  test-daemon-shared-unit: ${{ needs.test-daemon-shared-unit.result }}"
+            echo "  test-web: ${{ needs.test-web.result }}"
+            echo "  test-cli: ${{ needs.test-cli.result }}"
+            echo "  e2e: ${{ needs.e2e.result }}"
+            echo "  e2e-llm: ${{ needs.e2e-llm.result }}"
+            exit 1
           fi
-
-      - name: Upload browser coverage to Codecov
-        uses: codecov/codecov-action@v4
-        if: always()
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: merged-coverage/browser-lcov.info
-          flags: e2e-browser
-          fail_ci_if_error: false
+          echo "All tests passed!"
 
   # ============================================
   # CHECK RELEASE TAG
   # Determine if current commit has a version tag
   # On tags, verify commit was tested on main via API
   # ============================================
+
   check-release:
     name: Check Release
     runs-on: ubuntu-latest
-    # No dependencies needed - uses GitHub status API for verification
     outputs:
       is_release: ${{ steps.check.outputs.is_release }}
       version: ${{ steps.check.outputs.version }}
@@ -427,7 +690,7 @@ jobs:
             exit 1
           fi
 
-          echo "✓ Commit $GITHUB_SHA has $RUNS successful CI run(s) on main branch"
+          echo "Commit $GITHUB_SHA has $RUNS successful CI run(s) on main branch"
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -449,6 +712,7 @@ jobs:
   # RELEASE BUILD (conditional)
   # Build binaries for all platforms
   # ============================================
+
   release-build:
     name: Release Build ${{ matrix.binary }}
     runs-on: ${{ matrix.runner }}
@@ -513,6 +777,7 @@ jobs:
   # PACKAGE (conditional)
   # Create npm packages from built binaries
   # ============================================
+
   package:
     name: Package npm
     runs-on: ubuntu-latest
@@ -563,6 +828,7 @@ jobs:
   # PUBLISH (conditional)
   # Publish packages to npm registry
   # ============================================
+
   publish:
     name: Publish to npm
     runs-on: ubuntu-latest
