@@ -98,7 +98,7 @@ export class GlmProvider implements Provider {
 	 * Maps Anthropic tiers to GLM models
 	 * All tiers use glm-4.7 (flagship model)
 	 */
-	getModelForTier(tier: ModelTier): string | undefined {
+	getModelForTier(_tier: ModelTier): string | undefined {
 		// All tiers use glm-4.7
 		return 'glm-4.7';
 	}
@@ -153,7 +153,7 @@ export class GlmProvider implements Provider {
 	 * Translation:
 	 * - glm-4.7 → default (flagship, balanced)
 	 */
-	translateModelIdForSdk(modelId: string): string {
+	translateModelIdForSdk(_modelId: string): string {
 		return 'default'; // glm-4.7 uses 'default' (Sonnet tier)
 	}
 
