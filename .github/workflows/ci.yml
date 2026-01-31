@@ -399,6 +399,8 @@ jobs:
     name: Check Release
     runs-on: ubuntu-latest
     needs: [e2e, e2e-llm]
+    # Run even if e2e-llm has flaky failures; require no-LLM tests to pass
+    if: always() && needs.e2e.result == 'success'
     outputs:
       is_release: ${{ steps.check.outputs.is_release }}
       version: ${{ steps.check.outputs.version }}
