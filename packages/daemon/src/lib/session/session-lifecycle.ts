@@ -598,8 +598,7 @@ ${messageText.slice(0, 2000)}`;
 			// Merge provider env vars with parent process env vars
 			// This ensures inherited vars (like ANTHROPIC_API_KEY) are preserved
 			// while provider-specific vars (like ANTHROPIC_BASE_URL for GLM) override
-			const { mergeProviderEnvVars } = await import('../provider-service');
-			const mergedEnv = mergeProviderEnvVars(providerEnvVars);
+			const mergedEnv = buildSdkQueryEnv(providerEnvVars);
 
 			const agentQuery = query({
 				prompt,
@@ -755,4 +754,19 @@ export function slugify(text: string): string {
 		.replace(/[^a-z0-9]+/g, '-')
 		.replace(/^-|-$/g, '')
 		.substring(0, 50);
+}
+
+/**
+ * Build environment variables for SDK query
+ *
+ * Merges provider-specific environment variables with parent process env vars.
+ * This ensures inherited vars (like ANTHROPIC_API_KEY) are preserved while
+ * provider-specific vars (like ANTHROPIC_BASE_URL for GLM) can override.
+ *
+ * @param providerEnvVars - Provider-specific environment variables
+ * @returns Merged environment variables object
+ */
+export function buildSdkQueryEnv(providerEnvVars: Record<string, string>): NodeJS.ProcessEnv {
+	const { mergeProviderEnvVars } = require('../provider-service');
+	return mergeProviderEnvVars(providerEnvVars);
 }

@@ -12,6 +12,7 @@ import {
 	SessionLifecycle,
 	generateBranchName,
 	slugify,
+	buildSdkQueryEnv,
 	type SessionLifecycleConfig,
 } from '../../../src/lib/session/session-lifecycle';
 import type { Database } from '../../../src/storage/database';
@@ -687,5 +688,73 @@ describe('slugify', () => {
 
 	it('should handle only special characters', () => {
 		expect(slugify('!@#$%')).toBe('');
+	});
+});
+
+describe('buildSdkQueryEnv', () => {
+	it('should merge provider env vars with process.env', () => {
+		// Save original process.env
+		const originalEnv = process.env.TEST_VAR;
+
+		try {
+			// Set a process.env variable
+			process.env.TEST_VAR = 'from_process';
+
+			// Create provider env vars
+			const providerEnvVars = {
+				ANTHROPIC_API_KEY: 'provider_key',
+				CUSTOM_VAR: 'custom_value',
+			};
+
+			const result = buildSdkQueryEnv(providerEnvVars);
+
+			// Should contain process.env vars
+			expect(result.TEST_VAR).toBe('from_process');
+			// Should contain provider env vars
+			expect(result.ANTHROPIC_API_KEY).toBe('provider_key');
+			expect(result.CUSTOM_VAR).toBe('custom_value');
+		} finally {
+			// Restore original process.env
+			if (originalEnv === undefined) {
+				delete process.env.TEST_VAR;
+			} else {
+				process.env.TEST_VAR = originalEnv;
+			}
+		}
+	});
+
+	it('should handle empty provider env vars', () => {
+		const result = buildSdkQueryEnv({});
+
+		// Should still return an object with process.env values
+		expect(result).toBeDefined();
+		expect(typeof result).toBe('object');
+	});
+
+	it('should allow provider vars to override process.env', () => {
+		// Save original process.env
+		const originalEnv = process.env.ANTHROPIC_API_KEY;
+
+		try {
+			// Set process.env
+			process.env.ANTHROPIC_API_KEY = 'process_key';
+
+			// Provider vars should override
+			const providerEnvVars = {
+				ANTHROPIC_API_KEY: 'provider_override_key',
+			};
+
+			const result = buildSdkQueryEnv(providerEnvVars);
+
+			// Provider var should win
+			expect(result.ANTHROPIC_API_KEY).toBe('provider_override_key');
+		} finally {
+			// Restore original process.env
+			if (originalEnv === undefined) {
+				delete process.env.ANTHROPIC_API_KEY;
+			} else {
+				process.env.ANTHROPIC_API_KEY = originalEnv;
+			}
+		}
 	});
 });
