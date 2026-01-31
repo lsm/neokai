@@ -508,9 +508,10 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Download all binary artifacts
+      - name: Download release binary artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: kai-*
           path: dist/bin/
 
       - name: Move binaries to expected locations
@@ -518,6 +519,8 @@ jobs:
           mkdir -p dist/bin-flat
           for dir in dist/bin/kai-*; do
             binary=$(basename "$dir")
+            # Skip E2E build artifact
+            [[ "$binary" == *-e2e ]] && continue
             mv "$dir/$binary" "dist/bin-flat/$binary"
             chmod +x "dist/bin-flat/$binary"
           done
