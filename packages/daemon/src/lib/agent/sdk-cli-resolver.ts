@@ -116,6 +116,12 @@ function extractEmbeddedCli(): string | undefined {
 	}
 }
 
+/** @internal Reset module state for testing */
+export function _resetForTesting(): void {
+	embeddedCliPath = undefined;
+	cachedCliPath = undefined;
+}
+
 /**
  * Resolve the path to the Claude Code CLI bundled with the SDK.
  *
