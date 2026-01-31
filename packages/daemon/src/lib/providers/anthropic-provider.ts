@@ -130,7 +130,7 @@ export class AnthropicProvider implements Provider {
 	 * Load models from SDK
 	 * @param timeout - Timeout in milliseconds (default: 3000ms)
 	 */
-	private async loadModelsFromSdk(timeout: number = 3000): Promise<ModelInfo[]> {
+	private async loadModelsFromSdk(timeout: number = 10000): Promise<ModelInfo[]> {
 		const { query } = await import('@anthropic-ai/claude-agent-sdk');
 
 		// Create a temporary query to fetch models
