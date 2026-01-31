@@ -13,12 +13,6 @@ import { SessionRepository } from './repositories/session-repository';
 import { SDKMessageRepository, type SendStatus } from './repositories/sdk-message-repository';
 import { SettingsRepository } from './repositories/settings-repository';
 
-// Export migrations for database initialization and testing
-// knip-ignore-next-line
-export { runMigrations } from './schema';
-// knip-ignore-next-line
-export { runMigration12 } from './schema';
-
 // Re-export components for direct access if needed
 export { DatabaseCore } from './database-core';
 export { SessionRepository } from './repositories/session-repository';

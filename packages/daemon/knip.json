@@ -1,6 +1,3 @@
 {
-  "ignore": [
-    "src/storage/index.ts",
-    "src/storage/schema/index.ts"
-  ]
+  "ignore": ["src/storage/index.ts", "src/storage/schema/index.ts"]
 }
