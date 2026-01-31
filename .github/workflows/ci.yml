@@ -396,14 +396,12 @@ jobs:
   # ============================================
   # CHECK RELEASE TAG
   # Determine if current commit has a version tag
-  # On tags, E2E jobs are skipped (already ran on main)
+  # On tags, verify commit was tested on main via API
   # ============================================
   check-release:
     name: Check Release
     runs-on: ubuntu-latest
-    needs: [e2e, e2e-llm]
-    # On tags: skip E2E checks (jobs are skipped). On main: require e2e success.
-    if: github.ref_type == 'tag' || (always() && needs.e2e.result == 'success')
+    # No dependencies needed - uses GitHub status API for verification
     outputs:
       is_release: ${{ steps.check.outputs.is_release }}
       version: ${{ steps.check.outputs.version }}
