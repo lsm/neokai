@@ -215,18 +215,18 @@ describe('Session RPC (Behavior)', () => {
 				workspacePath: `${TMP_DIR}/test-workspace`,
 			});
 
-			// ✅ Verify autoScroll undefined via RPC
+			// ✅ Verify autoScroll is true by default (from DEFAULT_GLOBAL_SETTINGS)
 			let session = await getSession(ctx.messageHub, sessionId);
-			expect(session.config.autoScroll).toBeUndefined();
+			expect(session.config.autoScroll).toBe(true);
 
-			// ✅ Update config via RPC
+			// ✅ Update config via RPC (toggle to false to test update)
 			await updateSession(ctx.messageHub, sessionId, {
-				config: { autoScroll: true },
+				config: { autoScroll: false },
 			});
 
 			// ✅ Verify autoScroll via RPC
 			session = await getSession(ctx.messageHub, sessionId);
-			expect(session.config.autoScroll).toBe(true);
+			expect(session.config.autoScroll).toBe(false);
 			// Other config values should be preserved
 			expect(session.config.model).toBeDefined();
 			expect(session.config.maxTokens).toBeDefined();
