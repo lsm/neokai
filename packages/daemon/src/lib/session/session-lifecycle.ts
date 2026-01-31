@@ -20,6 +20,8 @@ import type { ToolsConfigManager } from './tools-config';
 import { getProviderService } from '../provider-service';
 import { deleteSDKSessionFiles } from '../sdk-session-file-manager';
 import { resolveSDKCliPath, isBundledBinary } from '../agent/sdk-cli-resolver.js';
+// Lazy import SDK query function for testability - can be mocked in tests
+let sdkQuery: typeof import('@anthropic-ai/claude-agent-sdk').query | undefined;
 
 export interface SessionLifecycleConfig {
 	defaultModel: string;
@@ -562,7 +564,8 @@ export class SessionLifecycle {
 		modelId: string,
 		messageText: string
 	): Promise<string> {
-		const { query } = await import('@anthropic-ai/claude-agent-sdk');
+		// Use lazy-loaded or mockable query function
+		const query = sdkQuery ?? (await import('@anthropic-ai/claude-agent-sdk')).query;
 		const providerService = getProviderService();
 
 		// Apply provider-specific environment variables to process.env
@@ -586,6 +589,20 @@ IMPORTANT: Return ONLY the title text itself, with NO formatting whatsoever:
 User's request:
 ${messageText.slice(0, 2000)}`;
 
+			// Get the environment variables to pass explicitly to SDK subprocess
+			// This ensures env vars are properly inherited when spawning subprocess
+			const providerEnvVars = providerService.getEnvVarsForModel(modelId);
+
+			const cliPath = resolveSDKCliPath();
+			this.logger.debug(
+				`[SessionLifecycle] Spawning title generation subprocess: cli=${cliPath}, bundled=${isBundledBinary()}, provider=${provider}, model=${modelId}`
+			);
+
+			// Merge provider env vars with parent process env vars
+			// This ensures inherited vars (like ANTHROPIC_API_KEY) are preserved
+			// while provider-specific vars (like ANTHROPIC_BASE_URL for GLM) override
+			const mergedEnv = buildSdkQueryEnv(providerEnvVars);
+
 			const agentQuery = query({
 				prompt,
 				options: {
@@ -596,8 +613,9 @@ ${messageText.slice(0, 2000)}`;
 					mcpServers: {},
 					settingSources: [],
 					tools: [],
-					pathToClaudeCodeExecutable: resolveSDKCliPath(),
+					pathToClaudeCodeExecutable: cliPath,
 					executable: isBundledBinary() ? 'bun' : undefined,
+					env: mergedEnv,
 				},
 			});
 
@@ -739,4 +757,33 @@ export function slugify(text: string): string {
 		.replace(/[^a-z0-9]+/g, '-')
 		.replace(/^-|-$/g, '')
 		.substring(0, 50);
+}
+
+/**
+ * Build environment variables for SDK query
+ *
+ * Merges provider-specific environment variables with parent process env vars.
+ * This ensures inherited vars (like ANTHROPIC_API_KEY) are preserved while
+ * provider-specific vars (like ANTHROPIC_BASE_URL for GLM) can override.
+ *
+ * @param providerEnvVars - Provider-specific environment variables
+ * @returns Merged environment variables object
+ */
+export function buildSdkQueryEnv(
+	providerEnvVars: Record<string, string | undefined>
+): NodeJS.ProcessEnv {
+	const { mergeProviderEnvVars } = require('../provider-service');
+	return mergeProviderEnvVars(providerEnvVars as Record<string, string>);
+}
+
+/**
+ * Set a mock SDK query function for testing
+ * This allows tests to mock the SDK query without complex module mocking
+ *
+ * @param mockFn - Mock function to use instead of the real SDK query
+ */
+export function __setMockSdkQuery(
+	mockFn: typeof import('@anthropic-ai/claude-agent-sdk').query | undefined
+): void {
+	sdkQuery = mockFn;
 }

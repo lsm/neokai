@@ -713,3 +713,45 @@ describe('getProviderService', () => {
 		expect(service).toBeInstanceOf(ProviderService);
 	});
 });
+
+describe('mergeProviderEnvVars', () => {
+	const originalEnv = { ...process.env };
+
+	afterEach(() => {
+		// Restore process.env
+		for (const key in process.env) {
+			delete process.env[key as keyof NodeJS.ProcessEnv];
+		}
+		for (const key in originalEnv) {
+			process.env[key as keyof NodeJS.ProcessEnv] = originalEnv[key as keyof NodeJS.ProcessEnv];
+		}
+	});
+
+	it('should merge provider env vars with process.env', async () => {
+		const { mergeProviderEnvVars } = await import('../../../src/lib/provider-service');
+
+		// Set a provider env var
+		process.env.TEST_VAR = 'parent';
+
+		const providerEnvVars = {
+			OVERRIDE_VAR: 'provider',
+			NEW_VAR: 'new',
+		} as const;
+
+		const merged = mergeProviderEnvVars(providerEnvVars);
+
+		expect(merged.TEST_VAR).toBe('parent');
+		expect(merged.OVERRIDE_VAR).toBe('provider');
+		expect(merged.NEW_VAR).toBe('new');
+	});
+
+	it('should return all process.env when provider env vars is empty', async () => {
+		const { mergeProviderEnvVars } = await import('../../../src/lib/provider-service');
+
+		process.env.TEST_VAR = 'parent';
+
+		const merged = mergeProviderEnvVars({});
+
+		expect(merged.TEST_VAR).toBe('parent');
+	});
+});

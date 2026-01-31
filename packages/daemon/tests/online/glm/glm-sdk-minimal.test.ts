@@ -3,7 +3,7 @@
  *
  * Direct test of Claude Agent SDK with GLM using minimal settings.
  * Tests transparent provider mapping for all model tiers:
- * - 'haiku' model → glm-4.7-FlashX (fast model)
+ * - 'haiku' model → GLM-4.7
  * - 'default' (sonnet) model → GLM-4.7
  * - 'opus' model → GLM-4.7
  *
@@ -150,37 +150,34 @@ function restoreEnvVars(originals: Map<string, string | undefined>): void {
 }
 
 describe('GLM SDK - Stable Tests with Promise.race', () => {
-	// SKIP: glm-4.7-FlashX (haiku tier) has intermittent timeout issues on CI.
-	// Most users use glm-4.7 (sonnet/opus tier) which is more reliable.
-	// The sonnet and opus tests below provide sufficient GLM coverage.
-	test.skip('should work with GLM via haiku model (glm-4.7-FlashX)', async () => {
+	test('should work with GLM via sonnet/default model (glm-4.7)', async () => {
 		if (!GLM_API_KEY) {
 			console.log('Skipping test - GLM_API_KEY not set');
 			return;
 		}
 
-		console.log('[GLM Test] Starting minimal SDK test with haiku → glm-4.7-FlashX...');
+		console.log('[GLM Test] Starting minimal SDK test with default → glm-4.7...');
 		console.log('[GLM Test] API Key:', GLM_API_KEY.substring(0, 10) + '...');
 
-		const originals = setGlmEnvVars(GLM_API_KEY, 'glm-4.7-FlashX');
+		const originals = setGlmEnvVars(GLM_API_KEY, 'glm-4.7');
 		const tempDir = mkdtempSync(join(tmpdir(), 'glm-test-'));
 
 		try {
 			console.log(
-				'[GLM Test] ANTHROPIC_DEFAULT_HAIKU_MODEL:',
-				process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL
+				'[GLM Test] ANTHROPIC_DEFAULT_SONNET_MODEL:',
+				process.env.ANTHROPIC_DEFAULT_SONNET_MODEL
 			);
 			console.log('[GLM Test] ANTHROPIC_BASE_URL:', process.env.ANTHROPIC_BASE_URL);
 
 			const responseText = await runQueryWithTimeout(
 				'Say "Hello from GLM" in exactly 5 words.',
-				'haiku',
+				'default',
 				tempDir
 			);
 
 			// Verify we got a response from GLM
 			expect(responseText.length).toBeGreaterThan(0);
-			console.log('[GLM Test] SUCCESS - GLM works with haiku model!');
+			console.log('[GLM Test] SUCCESS - GLM works with default (sonnet) model!');
 		} finally {
 			restoreEnvVars(originals);
 			rmSync(tempDir, { recursive: true, force: true });
