@@ -83,7 +83,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const [hasMoreMessages, setHasMoreMessages] = useState(true);
 	const [isInitialLoad, setIsInitialLoad] = useState(true);
 	const [localError, setLocalError] = useState<string | null>(null);
-	const [autoScroll, setAutoScroll] = useState(false);
+	const [autoScroll, setAutoScroll] = useState(true);
 
 	// Track resolved questions to keep showing them in disabled state
 	// Map of toolUseId -> resolved question data
