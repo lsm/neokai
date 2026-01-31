@@ -79,6 +79,7 @@ export interface ProviderEnvVars {
 	ANTHROPIC_DEFAULT_OPUS_MODEL?: string; // Map opus tier to provider model
 	API_TIMEOUT_MS?: string;
 	CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC?: string;
+	[key: string]: string | undefined; // Index signature for SDK env option compatibility
 }
 
 /**

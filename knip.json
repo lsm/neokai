@@ -1,0 +1,22 @@
+{
+	"ignoreExportsUsedInFile": true,
+	"ignore": [
+		"**/node_modules/**",
+		"**/dist/**",
+		"**/coverage/**",
+		"**/.next/**",
+		"**/packages/cli/tests/**",
+		"**/packages/web/dist/**"
+	],
+	"entry": [
+		"packages/daemon/src/index.ts",
+		"packages/cli/src/index.ts",
+		"packages/web/src/index.ts"
+	],
+	"project": [
+		"packages/daemon/src/**/*.{ts,js}",
+		"packages/cli/src/**/*.{ts,js}",
+		"packages/web/src/**/*.{ts,tsx}",
+		"packages/shared/src/**/*.{ts,js}"
+	]
+}
