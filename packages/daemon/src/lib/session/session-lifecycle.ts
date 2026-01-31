@@ -766,7 +766,7 @@ export function slugify(text: string): string {
  * @param providerEnvVars - Provider-specific environment variables
  * @returns Merged environment variables object
  */
-export function buildSdkQueryEnv(providerEnvVars: Record<string, string>): NodeJS.ProcessEnv {
+export function buildSdkQueryEnv(providerEnvVars: Record<string, string | undefined>): NodeJS.ProcessEnv {
 	const { mergeProviderEnvVars } = require('../provider-service');
-	return mergeProviderEnvVars(providerEnvVars);
+	return mergeProviderEnvVars(providerEnvVars as Record<string, string>);
 }
