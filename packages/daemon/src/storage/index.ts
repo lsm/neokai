@@ -12,10 +12,6 @@ import { DatabaseCore } from './database-core';
 import { SessionRepository } from './repositories/session-repository';
 import { SDKMessageRepository, type SendStatus } from './repositories/sdk-message-repository';
 import { SettingsRepository } from './repositories/settings-repository';
-// @knip-ignore
-export { runMigrations } from './schema';
-// @knip-ignore
-export { runMigration12 } from './schema';
 
 // Re-export components for direct access if needed
 export { DatabaseCore } from './database-core';
