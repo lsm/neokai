@@ -66,8 +66,8 @@ describe('Rewind RPC Handlers', () => {
 			});
 
 			expect(response.type).toBe('RESULT');
-			const data = response.data as { checkpoints: unknown[]; error?: string };
-			expect(data.checkpoints).toEqual([]);
+			const data = response.data as { rewindPoints: unknown[]; error?: string };
+			expect(data.rewindPoints).toEqual([]);
 			expect(data.error).toBeUndefined();
 			ws.close();
 		});
@@ -82,8 +82,8 @@ describe('Rewind RPC Handlers', () => {
 			});
 
 			expect(response.type).toBe('RESULT');
-			const data = response.data as { checkpoints: unknown[]; error?: string };
-			expect(data.checkpoints).toEqual([]);
+			const data = response.data as { rewindPoints: unknown[]; error?: string };
+			expect(data.rewindPoints).toEqual([]);
 			expect(data.error).toBe('Session not found');
 			ws.close();
 		});
@@ -97,8 +97,8 @@ describe('Rewind RPC Handlers', () => {
 
 			// Should return an error or empty result
 			expect(response.type).toBe('RESULT');
-			const data = response.data as { checkpoints: unknown[]; error?: string };
-			expect(data.checkpoints).toEqual([]);
+			const data = response.data as { rewindPoints: unknown[]; error?: string };
+			expect(data.rewindPoints).toEqual([]);
 			ws.close();
 		});
 	});

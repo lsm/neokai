@@ -20,7 +20,6 @@ import { Logger as LoggerClass } from '../logger';
 import type { ModelSwitchHandler } from './model-switch-handler';
 import type { InterruptHandler } from './interrupt-handler';
 import type { QueryModeHandler } from './query-mode-handler';
-import type { CheckpointTracker } from './checkpoint-tracker';
 
 /**
  * Context interface - what EventSubscriptionSetup needs from AgentSession
@@ -34,7 +33,6 @@ export interface EventSubscriptionSetupContext {
 	readonly modelSwitchHandler: ModelSwitchHandler;
 	readonly interruptHandler: InterruptHandler;
 	readonly queryModeHandler: QueryModeHandler;
-	readonly checkpointTracker: CheckpointTracker;
 
 	// Methods for event handling
 	resetQuery(options?: { restartQuery?: boolean }): Promise<{ success: boolean; error?: string }>;
@@ -57,14 +55,7 @@ export class EventSubscriptionSetup {
 	 * Internally calls context methods for event handling
 	 */
 	setup(): void {
-		const {
-			session,
-			daemonHub,
-			modelSwitchHandler,
-			interruptHandler,
-			queryModeHandler,
-			checkpointTracker,
-		} = this.ctx;
+		const { session, daemonHub, modelSwitchHandler, interruptHandler, queryModeHandler } = this.ctx;
 		const sessionId = session.id;
 
 		// Model switch request handler
@@ -120,12 +111,8 @@ export class EventSubscriptionSetup {
 			'message.persisted',
 			async (data) => {
 				this.logger.log(`Received message.persisted event (messageId: ${data.messageId})`);
-				// Create checkpoint for the user message (enables rewind feature)
-				checkpointTracker.createCheckpointFromUserMessage(
-					data.messageId,
-					data.messageContent as string
-				);
 				// Start query and enqueue message
+				// Note: User messages in the DB serve as rewind points - no separate checkpoint tracking needed
 				await this.ctx.startQueryAndEnqueue(
 					data.messageId,
 					data.messageContent as string | MessageContent[]

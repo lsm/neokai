@@ -251,4 +251,122 @@ export class SDKMessageRepository {
 		const result = stmt.run(sessionId, isoTimestamp);
 		return result.changes;
 	}
+
+	/**
+	 * Get user messages for a session (used as rewind points)
+	 *
+	 * Returns user messages with their UUIDs, timestamps, and content.
+	 * These serve as potential rewind checkpoints since each user message
+	 * has a UUID that the SDK uses for file checkpointing.
+	 *
+	 * @param sessionId - The session ID to get user messages for
+	 * @returns Array of user message data for rewind
+	 */
+	getUserMessages(sessionId: string): Array<{ uuid: string; timestamp: number; content: string }> {
+		const stmt = this.db.prepare(
+			`SELECT sdk_message, timestamp FROM sdk_messages
+       WHERE session_id = ? AND message_type = 'user'
+       ORDER BY timestamp ASC`
+		);
+		const rows = stmt.all(sessionId) as Array<{ sdk_message: string; timestamp: string }>;
+
+		return rows.map((row) => {
+			const message = JSON.parse(row.sdk_message) as SDKMessage;
+			const timestamp = new Date(row.timestamp).getTime();
+
+			// Extract text content from message
+			// User messages have a specific structure with nested message.content
+			let content = '';
+			const userMessage = message as {
+				message?: { content?: string | Array<{ type: string; text?: string }> };
+				uuid?: string;
+			};
+			if (userMessage.message?.content) {
+				if (typeof userMessage.message.content === 'string') {
+					content = userMessage.message.content;
+				} else if (Array.isArray(userMessage.message.content)) {
+					// Find first text block
+					const textBlock = userMessage.message.content.find(
+						(block): block is { type: 'text'; text: string } => block.type === 'text'
+					);
+					content = textBlock?.text || '';
+				}
+			}
+
+			return {
+				uuid: userMessage.uuid || '',
+				timestamp,
+				content,
+			};
+		});
+	}
+
+	/**
+	 * Get a single user message by UUID
+	 *
+	 * Used by rewind to look up a specific checkpoint/message.
+	 *
+	 * @param sessionId - The session ID
+	 * @param uuid - The message UUID
+	 * @returns The message data or undefined
+	 */
+	getUserMessageByUuid(
+		sessionId: string,
+		uuid: string
+	): { uuid: string; timestamp: number; content: string } | undefined {
+		const stmt = this.db.prepare(
+			`SELECT sdk_message, timestamp FROM sdk_messages
+       WHERE session_id = ? AND message_type = 'user'
+       ORDER BY timestamp ASC`
+		);
+		const rows = stmt.all(sessionId) as Array<{ sdk_message: string; timestamp: string }>;
+
+		for (const row of rows) {
+			const message = JSON.parse(row.sdk_message) as SDKMessage;
+			if (message.uuid === uuid) {
+				const timestamp = new Date(row.timestamp).getTime();
+
+				// Extract text content from message
+				// User messages have a specific structure with nested message.content
+				let content = '';
+				const userMessage = message as {
+					message?: { content?: string | Array<{ type: string; text?: string }> };
+					uuid?: string;
+				};
+				if (userMessage.message?.content) {
+					if (typeof userMessage.message.content === 'string') {
+						content = userMessage.message.content;
+					} else if (Array.isArray(userMessage.message.content)) {
+						// Find first text block
+						const textBlock = userMessage.message.content.find(
+							(block): block is { type: 'text'; text: string } => block.type === 'text'
+						);
+						content = textBlock?.text || '';
+					}
+				}
+
+				return { uuid, timestamp, content };
+			}
+		}
+
+		return undefined;
+	}
+
+	/**
+	 * Count messages after a specific timestamp
+	 *
+	 * Used by rewind to show how many messages will be deleted.
+	 *
+	 * @param sessionId - The session ID
+	 * @param afterTimestamp - Count messages with timestamp greater than this value (milliseconds)
+	 * @returns The number of messages after the timestamp
+	 */
+	countMessagesAfter(sessionId: string, afterTimestamp: number): number {
+		const isoTimestamp = new Date(afterTimestamp).toISOString();
+		const stmt = this.db.prepare(
+			`SELECT COUNT(*) as count FROM sdk_messages WHERE session_id = ? AND timestamp > ?`
+		);
+		const result = stmt.get(sessionId, isoTimestamp) as { count: number };
+		return result.count;
+	}
 }

@@ -6,7 +6,7 @@
  * 2. Checkpoints can be retrieved via RPC
  * 3. Rewind preview shows expected file changes
  * 4. Rewind execute restores files correctly
- * 5. Conversation rewind removes messages after checkpoint
+ * 5. Conversation rewind removes messages after rewindPoint
  *
  * REQUIREMENTS:
  * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
@@ -21,7 +21,17 @@ import 'dotenv/config';
 import type { DaemonServerContext } from '../../helpers/daemon-server-helper';
 import { createDaemonServer } from '../../helpers/daemon-server-helper';
 import { sendMessage, waitForIdle, getProcessingState } from '../../helpers/daemon-test-helpers';
-import type { Checkpoint, RewindPreview, RewindResult } from '@neokai/shared';
+import type { RewindPreview, RewindResult } from '@neokai/shared';
+
+/**
+ * A rewind point derived from a user message
+ */
+interface RewindPoint {
+	uuid: string; // User message UUID (used as rewindPoint ID)
+	timestamp: number; // Message timestamp (milliseconds)
+	content: string; // Message content preview
+	turnNumber: number; // Derived turn number (1-indexed position)
+}
 
 // Use temp directory for test database
 const TMP_DIR = process.env.TMPDIR || '/tmp';
@@ -41,22 +51,22 @@ describe('Rewind Feature', () => {
 	}, 20000);
 
 	/**
-	 * Helper to get checkpoints for a session
+	 * Helper to get rewind points for a session
 	 */
-	async function getCheckpoints(sessionId: string): Promise<Checkpoint[]> {
+	async function getRewindPoints(sessionId: string): Promise<RewindPoint[]> {
 		const result = (await daemon.messageHub.call('rewind.checkpoints', {
 			sessionId,
-		})) as { checkpoints: Checkpoint[]; error?: string };
-		return result.checkpoints;
+		})) as { rewindPoints: RewindPoint[]; error?: string };
+		return result.rewindPoints;
 	}
 
 	/**
 	 * Helper to preview a rewind operation
 	 */
-	async function previewRewind(sessionId: string, checkpointId: string): Promise<RewindPreview> {
+	async function previewRewind(sessionId: string, rewindPointId: string): Promise<RewindPreview> {
 		const result = (await daemon.messageHub.call('rewind.preview', {
 			sessionId,
-			checkpointId,
+			rewindPointId,
 		})) as { preview: RewindPreview };
 		return result.preview;
 	}
@@ -66,24 +76,24 @@ describe('Rewind Feature', () => {
 	 */
 	async function executeRewind(
 		sessionId: string,
-		checkpointId: string,
+		rewindPointId: string,
 		mode: 'files' | 'conversation' | 'both' = 'files'
 	): Promise<RewindResult> {
 		const result = (await daemon.messageHub.call('rewind.execute', {
 			sessionId,
-			checkpointId,
+			rewindPointId,
 			mode,
 		})) as { result: RewindResult };
 		return result.result;
 	}
 
-	describe('Checkpoint Creation', () => {
-		test('should create checkpoints when messages are sent', async () => {
-			const workspacePath = `${TMP_DIR}/rewind-checkpoint-test-${Date.now()}`;
+	describe('Rewind Point Creation', () => {
+		test('should create rewind points when messages are sent', async () => {
+			const workspacePath = `${TMP_DIR}/rewind-point-test-${Date.now()}`;
 
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath,
-				title: 'Checkpoint Creation Test',
+				title: 'Rewind Point Creation Test',
 				config: {
 					model: 'haiku-4.5',
 					permissionMode: 'acceptEdits',
@@ -94,44 +104,43 @@ describe('Rewind Feature', () => {
 			const { sessionId } = createResult;
 			daemon.trackSession(sessionId);
 
-			// Initially no checkpoints
-			let checkpoints = await getCheckpoints(sessionId);
-			expect(checkpoints).toEqual([]);
+			// Initially no rewind points
+			let rewindPoints = await getRewindPoints(sessionId);
+			expect(rewindPoints).toEqual([]);
 
 			// Send first message
 			await sendMessage(daemon, sessionId, 'What is 2+2? Reply with just the number.');
 			await waitForIdle(daemon, sessionId, 60000);
 
-			// Should have 1 checkpoint
-			checkpoints = await getCheckpoints(sessionId);
-			expect(checkpoints.length).toBeGreaterThanOrEqual(1);
+			// Should have 1 rewind point
+			rewindPoints = await getRewindPoints(sessionId);
+			expect(rewindPoints.length).toBeGreaterThanOrEqual(1);
 
-			// First checkpoint should have turn number 1
-			const firstCheckpoint = checkpoints.find((c) => c.turnNumber === 1);
-			expect(firstCheckpoint).toBeDefined();
-			expect(firstCheckpoint?.sessionId).toBe(sessionId);
-			expect(firstCheckpoint?.messagePreview).toContain('2+2');
+			// First rewind point should have turn number 1
+			const firstRewindPoint = rewindPoints.find((c) => c.turnNumber === 1);
+			expect(firstRewindPoint).toBeDefined();
+			expect(firstRewindPoint?.content).toContain('2+2');
 
 			// Send second message
 			await sendMessage(daemon, sessionId, 'What is 3+3? Reply with just the number.');
 			await waitForIdle(daemon, sessionId, 60000);
 
-			// Should have 2 checkpoints
-			checkpoints = await getCheckpoints(sessionId);
-			expect(checkpoints.length).toBeGreaterThanOrEqual(2);
+			// Should have 2 rewind points
+			rewindPoints = await getRewindPoints(sessionId);
+			expect(rewindPoints.length).toBeGreaterThanOrEqual(2);
 
-			// Check second checkpoint
-			const secondCheckpoint = checkpoints.find((c) => c.turnNumber === 2);
-			expect(secondCheckpoint).toBeDefined();
-			expect(secondCheckpoint?.messagePreview).toContain('3+3');
+			// Check second rewind point
+			const secondRewindPoint = rewindPoints.find((c) => c.turnNumber === 2);
+			expect(secondRewindPoint).toBeDefined();
+			expect(secondRewindPoint?.content).toContain('3+3');
 		}, 120000);
 
-		test('should return checkpoints sorted by turn number (newest first)', async () => {
+		test('should return rewind points sorted by turn number (newest first)', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-sort-test-${Date.now()}`;
 
 			const createResult = (await daemon.messageHub.call('session.create', {
 				workspacePath,
-				title: 'Checkpoint Sorting Test',
+				title: 'Rewind Point Sorting Test',
 				config: {
 					model: 'haiku-4.5',
 					permissionMode: 'acceptEdits',
@@ -152,18 +161,18 @@ describe('Rewind Feature', () => {
 			await sendMessage(daemon, sessionId, 'Third message');
 			await waitForIdle(daemon, sessionId, 60000);
 
-			const checkpoints = await getCheckpoints(sessionId);
-			expect(checkpoints.length).toBeGreaterThanOrEqual(3);
+			const rewindPoints = await getRewindPoints(sessionId);
+			expect(rewindPoints.length).toBeGreaterThanOrEqual(3);
 
 			// Should be sorted newest first (highest turn number first)
-			for (let i = 0; i < checkpoints.length - 1; i++) {
-				expect(checkpoints[i].turnNumber).toBeGreaterThan(checkpoints[i + 1].turnNumber);
+			for (let i = 0; i < rewindPoints.length - 1; i++) {
+				expect(rewindPoints[i].turnNumber).toBeGreaterThan(rewindPoints[i + 1].turnNumber);
 			}
 		}, 180000);
 	});
 
 	describe('Rewind Preview', () => {
-		test('should show preview when checkpoint exists', async () => {
+		test('should show preview when rewindPoint exists', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-preview-test-${Date.now()}`;
 
 			const createResult = (await daemon.messageHub.call('session.create', {
@@ -183,14 +192,14 @@ describe('Rewind Feature', () => {
 			await sendMessage(daemon, sessionId, 'What is 1+1?');
 			await waitForIdle(daemon, sessionId, 60000);
 
-			// Get checkpoint
-			const checkpoints = await getCheckpoints(sessionId);
-			expect(checkpoints.length).toBeGreaterThanOrEqual(1);
+			// Get rewindPoint
+			const rewindPoints = await getRewindPoints(sessionId);
+			expect(rewindPoints.length).toBeGreaterThanOrEqual(1);
 
-			const checkpoint = checkpoints[0];
+			const rewindPoint = rewindPoints[0];
 
 			// Preview rewind
-			const preview = await previewRewind(sessionId, checkpoint.id);
+			const preview = await previewRewind(sessionId, rewindPoint.uuid);
 
 			// Preview should indicate whether rewind is possible
 			expect(preview).toBeDefined();
@@ -202,7 +211,7 @@ describe('Rewind Feature', () => {
 			}
 		}, 120000);
 
-		test('should return error for non-existent checkpoint', async () => {
+		test('should return error for non-existent rewindPoint', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-preview-invalid-test-${Date.now()}`;
 
 			const createResult = (await daemon.messageHub.call('session.create', {
@@ -222,8 +231,8 @@ describe('Rewind Feature', () => {
 			await sendMessage(daemon, sessionId, 'Hello');
 			await waitForIdle(daemon, sessionId, 60000);
 
-			// Preview with invalid checkpoint ID
-			const preview = await previewRewind(sessionId, 'invalid-checkpoint-id');
+			// Preview with invalid rewindPoint ID
+			const preview = await previewRewind(sessionId, 'invalid-rewindPoint-id');
 
 			expect(preview.canRewind).toBe(false);
 			expect(preview.error).toContain('not found');
@@ -251,25 +260,25 @@ describe('Rewind Feature', () => {
 			await sendMessage(daemon, sessionId, 'What is 1+1?');
 			await waitForIdle(daemon, sessionId, 60000);
 
-			// Get first checkpoint
-			let checkpoints = await getCheckpoints(sessionId);
-			expect(checkpoints.length).toBeGreaterThanOrEqual(1);
-			const firstCheckpoint = checkpoints[0];
+			// Get first rewindPoint
+			let rewindPoints = await getRewindPoints(sessionId);
+			expect(rewindPoints.length).toBeGreaterThanOrEqual(1);
+			const firstRewindPoint = rewindPoints[0];
 
 			// Send second message
 			await sendMessage(daemon, sessionId, 'What is 2+2?');
 			await waitForIdle(daemon, sessionId, 60000);
 
-			// Execute files-only rewind to first checkpoint
-			const result = await executeRewind(sessionId, firstCheckpoint.id, 'files');
+			// Execute files-only rewind to first rewindPoint
+			const result = await executeRewind(sessionId, firstRewindPoint.uuid, 'files');
 
 			// Result should indicate success or provide reason for failure
 			expect(result).toBeDefined();
 			expect(typeof result.success).toBe('boolean');
 
-			// After files rewind, checkpoints should still exist (conversation not affected)
-			checkpoints = await getCheckpoints(sessionId);
-			expect(checkpoints.length).toBeGreaterThanOrEqual(1);
+			// After files rewind, rewindPoints should still exist (conversation not affected)
+			rewindPoints = await getRewindPoints(sessionId);
+			expect(rewindPoints.length).toBeGreaterThanOrEqual(1);
 		}, 180000);
 	});
 
@@ -294,10 +303,10 @@ describe('Rewind Feature', () => {
 			await sendMessage(daemon, sessionId, 'What is 1+1?');
 			await waitForIdle(daemon, sessionId, 60000);
 
-			const checkpointsAfterFirst = await getCheckpoints(sessionId);
-			expect(checkpointsAfterFirst.length).toBeGreaterThanOrEqual(1);
-			const firstCheckpoint = checkpointsAfterFirst.find((c) => c.turnNumber === 1);
-			expect(firstCheckpoint).toBeDefined();
+			const rewindPointsAfterFirst = await getRewindPoints(sessionId);
+			expect(rewindPointsAfterFirst.length).toBeGreaterThanOrEqual(1);
+			const firstRewindPoint = rewindPointsAfterFirst.find((c) => c.turnNumber === 1);
+			expect(firstRewindPoint).toBeDefined();
 
 			await sendMessage(daemon, sessionId, 'What is 2+2?');
 			await waitForIdle(daemon, sessionId, 60000);
@@ -305,22 +314,22 @@ describe('Rewind Feature', () => {
 			await sendMessage(daemon, sessionId, 'What is 3+3?');
 			await waitForIdle(daemon, sessionId, 60000);
 
-			// Should have 3 checkpoints
-			let checkpoints = await getCheckpoints(sessionId);
-			expect(checkpoints.length).toBeGreaterThanOrEqual(3);
+			// Should have 3 rewindPoints
+			let rewindPoints = await getRewindPoints(sessionId);
+			expect(rewindPoints.length).toBeGreaterThanOrEqual(3);
 
-			// Execute conversation rewind to first checkpoint
-			const result = await executeRewind(sessionId, firstCheckpoint!.id, 'conversation');
+			// Execute conversation rewind to first rewindPoint (rewindPoints sorted newest first, so first with turnNumber=1 is the earliest)
+			const result = await executeRewind(sessionId, firstRewindPoint!.uuid, 'conversation');
 
 			expect(result).toBeDefined();
 			expect(typeof result.success).toBe('boolean');
 
 			if (result.success) {
-				// After conversation rewind, should have fewer checkpoints
-				checkpoints = await getCheckpoints(sessionId);
+				// After conversation rewind, should have fewer rewindPoints
+				rewindPoints = await getRewindPoints(sessionId);
 
 				// Checkpoints after the rewind point should be removed
-				const hasLaterCheckpoints = checkpoints.some((c) => c.turnNumber > 1);
+				const hasLaterCheckpoints = rewindPoints.some((c) => c.turnNumber > 1);
 				expect(hasLaterCheckpoints).toBe(false);
 
 				// Result should indicate messages were deleted
@@ -351,32 +360,32 @@ describe('Rewind Feature', () => {
 			await sendMessage(daemon, sessionId, 'What is 1+1?');
 			await waitForIdle(daemon, sessionId, 60000);
 
-			const checkpointsAfterFirst = await getCheckpoints(sessionId);
-			expect(checkpointsAfterFirst.length).toBeGreaterThanOrEqual(1);
-			const firstCheckpoint = checkpointsAfterFirst.find((c) => c.turnNumber === 1);
-			expect(firstCheckpoint).toBeDefined();
+			const rewindPointsAfterFirst = await getRewindPoints(sessionId);
+			expect(rewindPointsAfterFirst.length).toBeGreaterThanOrEqual(1);
+			const firstRewindPoint = rewindPointsAfterFirst.find((c) => c.turnNumber === 1);
+			expect(firstRewindPoint).toBeDefined();
 
 			// Send second message
 			await sendMessage(daemon, sessionId, 'What is 2+2?');
 			await waitForIdle(daemon, sessionId, 60000);
 
-			// Execute both mode rewind to first checkpoint
-			const result = await executeRewind(sessionId, firstCheckpoint!.id, 'both');
+			// Execute both mode rewind to first rewindPoint
+			const result = await executeRewind(sessionId, firstRewindPoint!.uuid, 'both');
 
 			expect(result).toBeDefined();
 			expect(typeof result.success).toBe('boolean');
 
 			if (result.success) {
 				// After both rewind, conversation should be truncated
-				const checkpoints = await getCheckpoints(sessionId);
-				const hasLaterCheckpoints = checkpoints.some((c) => c.turnNumber > 1);
+				const rewindPoints = await getRewindPoints(sessionId);
+				const hasLaterCheckpoints = rewindPoints.some((c) => c.turnNumber > 1);
 				expect(hasLaterCheckpoints).toBe(false);
 			}
 		}, 180000);
 	});
 
 	describe('Rewind Error Handling', () => {
-		test('should handle rewind with invalid checkpoint gracefully', async () => {
+		test('should handle rewind with invalid rewindPoint gracefully', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-error-test-${Date.now()}`;
 
 			const createResult = (await daemon.messageHub.call('session.create', {
@@ -396,8 +405,8 @@ describe('Rewind Feature', () => {
 			await sendMessage(daemon, sessionId, 'Hello');
 			await waitForIdle(daemon, sessionId, 60000);
 
-			// Try to rewind with invalid checkpoint
-			const result = await executeRewind(sessionId, 'invalid-checkpoint-id', 'files');
+			// Try to rewind with invalid rewindPoint
+			const result = await executeRewind(sessionId, 'invalid-rewindPoint-id', 'files');
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('not found');
@@ -424,7 +433,7 @@ describe('Rewind Feature', () => {
 			await waitForIdle(daemon, sessionId, 60000);
 
 			// Attempt failed rewind
-			await executeRewind(sessionId, 'invalid-checkpoint-id', 'files');
+			await executeRewind(sessionId, 'invalid-rewindPoint-id', 'files');
 
 			// Session should still be functional
 			const state = await getProcessingState(daemon, sessionId);
@@ -443,7 +452,7 @@ describe('Rewind Feature', () => {
 	});
 
 	describe('enableFileCheckpointing Configuration', () => {
-		test('should create checkpoints when enableFileCheckpointing is true (default)', async () => {
+		test('should create rewindPoints when enableFileCheckpointing is true (default)', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-enabled-test-${Date.now()}`;
 
 			const createResult = (await daemon.messageHub.call('session.create', {
@@ -466,15 +475,15 @@ describe('Rewind Feature', () => {
 			await sendMessage(daemon, sessionId, 'What is 2+2?');
 			await waitForIdle(daemon, sessionId, 60000);
 
-			// With enableFileCheckpointing=true, checkpoints SHOULD be created
-			const checkpoints = await getCheckpoints(sessionId);
-			expect(checkpoints.length).toBeGreaterThanOrEqual(2);
+			// With enableFileCheckpointing=true, rewindPoints SHOULD be created
+			const rewindPoints = await getRewindPoints(sessionId);
+			expect(rewindPoints.length).toBeGreaterThanOrEqual(2);
 
-			// Verify checkpoints have proper structure
-			for (const checkpoint of checkpoints) {
-				expect(checkpoint.id).toBeDefined();
-				expect(checkpoint.turnNumber).toBeGreaterThan(0);
-				expect(checkpoint.sessionId).toBe(sessionId);
+			// Verify rewindPoints have proper structure
+			for (const rewindPoint of rewindPoints) {
+				expect(rewindPoint.uuid).toBeDefined();
+				expect(rewindPoint.turnNumber).toBeGreaterThan(0);
+				expect(rewindPoint.content).toBeDefined();
 			}
 
 			// Session should still be functional
@@ -482,7 +491,7 @@ describe('Rewind Feature', () => {
 			expect(state.status).toBe('idle');
 		}, 180000);
 
-		test('should still have checkpoints but file rewind disabled when enableFileCheckpointing is false', async () => {
+		test('should still have rewindPoints but file rewind disabled when enableFileCheckpointing is false', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-disabled-test-${Date.now()}`;
 
 			const createResult = (await daemon.messageHub.call('session.create', {
@@ -507,12 +516,12 @@ describe('Rewind Feature', () => {
 
 			// Checkpoints are STILL created for conversation tracking
 			// (enableFileCheckpointing only controls SDK's file change tracking)
-			const checkpoints = await getCheckpoints(sessionId);
-			expect(checkpoints.length).toBeGreaterThanOrEqual(2);
+			const rewindPoints = await getRewindPoints(sessionId);
+			expect(rewindPoints.length).toBeGreaterThanOrEqual(2);
 
 			// However, file rewind should not be available (SDK won't track file changes)
 			// Preview should indicate rewind is not possible for files
-			const preview = await previewRewind(sessionId, checkpoints[0].id);
+			const preview = await previewRewind(sessionId, rewindPoints[0].uuid);
 			// Either canRewind is false or filesChanged is empty/undefined
 			if (preview.canRewind) {
 				const filesCount = Array.isArray(preview.filesChanged)

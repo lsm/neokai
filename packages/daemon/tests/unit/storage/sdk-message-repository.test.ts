@@ -422,4 +422,136 @@ describe('SDKMessageRepository', () => {
 			expect(deleted).toBe(0);
 		});
 	});
+
+	describe('getUserMessages', () => {
+		it('should return user messages for rewind points', () => {
+			const stmt = db.prepare(
+				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+			);
+
+			// Insert user messages with proper structure
+			const userMsg1 =
+				'{"type":"user","uuid":"uuid-1","message":{"role":"user","content":"First message"}}';
+			const userMsg2 =
+				'{"type":"user","uuid":"uuid-2","message":{"role":"user","content":"Second message"}}';
+			const assistantMsg =
+				'{"type":"assistant","uuid":"uuid-3","message":{"role":"assistant","content":"Response"}}';
+
+			stmt.run('1', 'session-1', 'user', null, userMsg1, '2024-01-01T00:00:00.000Z');
+			stmt.run('2', 'session-1', 'assistant', null, assistantMsg, '2024-01-01T00:01:00.000Z');
+			stmt.run('3', 'session-1', 'user', null, userMsg2, '2024-01-01T00:02:00.000Z');
+
+			const userMessages = repo.getUserMessages('session-1');
+
+			expect(userMessages).toHaveLength(2);
+			expect(userMessages[0].uuid).toBe('uuid-1');
+			expect(userMessages[0].content).toBe('First message');
+			expect(userMessages[1].uuid).toBe('uuid-2');
+			expect(userMessages[1].content).toBe('Second message');
+		});
+
+		it('should return empty array when no user messages exist', () => {
+			const userMessages = repo.getUserMessages('nonexistent');
+			expect(userMessages).toEqual([]);
+		});
+
+		it('should extract content from array content blocks', () => {
+			const stmt = db.prepare(
+				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+			);
+
+			const userMsgWithArray =
+				'{"type":"user","uuid":"uuid-array","message":{"role":"user","content":[{"type":"text","text":"Array content"}]}}';
+
+			stmt.run('1', 'session-1', 'user', null, userMsgWithArray, '2024-01-01T00:00:00.000Z');
+
+			const userMessages = repo.getUserMessages('session-1');
+
+			expect(userMessages).toHaveLength(1);
+			expect(userMessages[0].content).toBe('Array content');
+		});
+	});
+
+	describe('getUserMessageByUuid', () => {
+		it('should return user message by UUID', () => {
+			const stmt = db.prepare(
+				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+			);
+
+			const userMsg1 =
+				'{"type":"user","uuid":"target-uuid","message":{"role":"user","content":"Target message"}}';
+			const userMsg2 =
+				'{"type":"user","uuid":"other-uuid","message":{"role":"user","content":"Other message"}}';
+
+			stmt.run('1', 'session-1', 'user', null, userMsg1, '2024-01-01T00:00:00.000Z');
+			stmt.run('2', 'session-1', 'user', null, userMsg2, '2024-01-01T00:01:00.000Z');
+
+			const message = repo.getUserMessageByUuid('session-1', 'target-uuid');
+
+			expect(message).toBeDefined();
+			expect(message?.uuid).toBe('target-uuid');
+			expect(message?.content).toBe('Target message');
+		});
+
+		it('should return undefined when UUID not found', () => {
+			const stmt = db.prepare(
+				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+			);
+
+			const userMsg =
+				'{"type":"user","uuid":"some-uuid","message":{"role":"user","content":"Some message"}}';
+
+			stmt.run('1', 'session-1', 'user', null, userMsg, '2024-01-01T00:00:00.000Z');
+
+			const message = repo.getUserMessageByUuid('session-1', 'non-existent-uuid');
+
+			expect(message).toBeUndefined();
+		});
+
+		it('should return undefined for non-existent session', () => {
+			const message = repo.getUserMessageByUuid('nonexistent', 'any-uuid');
+			expect(message).toBeUndefined();
+		});
+	});
+
+	describe('countMessagesAfter', () => {
+		it('should count messages after timestamp', () => {
+			const stmt = db.prepare(
+				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+			);
+
+			stmt.run('1', 'session-1', 'user', null, '{}', '2024-01-01T00:00:00.000Z');
+			stmt.run('2', 'session-1', 'user', null, '{}', '2024-01-02T00:00:00.000Z');
+			stmt.run('3', 'session-1', 'user', null, '{}', '2024-01-03T00:00:00.000Z');
+
+			const cutoff = new Date('2024-01-01T12:00:00.000Z').getTime();
+			const count = repo.countMessagesAfter('session-1', cutoff);
+
+			expect(count).toBe(2);
+		});
+
+		it('should return 0 when no messages after timestamp', () => {
+			const stmt = db.prepare(
+				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+			);
+
+			stmt.run('1', 'session-1', 'user', null, '{}', '2024-01-01T00:00:00.000Z');
+
+			const cutoff = new Date('2024-01-02T00:00:00.000Z').getTime();
+			const count = repo.countMessagesAfter('session-1', cutoff);
+
+			expect(count).toBe(0);
+		});
+
+		it('should return 0 for non-existent session', () => {
+			const count = repo.countMessagesAfter('nonexistent', Date.now());
+			expect(count).toBe(0);
+		});
+	});
 });

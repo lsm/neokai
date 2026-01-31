@@ -136,14 +136,15 @@ export async function updateMcpServerSettings(
 
 // ==================== Rewind Operations ====================
 
-export async function getCheckpoints(
-	sessionId: string
-): Promise<{ checkpoints: import('@neokai/shared').Checkpoint[]; error?: string }> {
+export async function getRewindPoints(sessionId: string): Promise<{
+	rewindPoints: Array<{ uuid: string; timestamp: number; content: string; turnNumber: number }>;
+	error?: string;
+}> {
 	const hub = getHubOrThrow();
-	return await hub.call<{ checkpoints: import('@neokai/shared').Checkpoint[]; error?: string }>(
-		'rewind.checkpoints',
-		{ sessionId }
-	);
+	return await hub.call<{
+		rewindPoints: Array<{ uuid: string; timestamp: number; content: string; turnNumber: number }>;
+		error?: string;
+	}>('rewind.checkpoints', { sessionId });
 }
 
 export async function previewRewind(
@@ -168,4 +169,17 @@ export async function executeRewind(
 		checkpointId,
 		mode,
 	});
+}
+
+// ==================== Selective Rewind Operations ====================
+
+export async function executeSelectiveRewind(
+	sessionId: string,
+	messageIds: string[]
+): Promise<{ result: import('@neokai/shared').SelectiveRewindResult }> {
+	const hub = getHubOrThrow();
+	return await hub.call<{ result: import('@neokai/shared').SelectiveRewindResult }>(
+		'rewind.executeSelective',
+		{ sessionId, messageIds }
+	);
 }

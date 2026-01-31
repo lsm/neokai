@@ -14,7 +14,6 @@ import type { Session } from '@neokai/shared';
 import type { ModelSwitchHandler } from '../../../src/lib/agent/model-switch-handler';
 import type { InterruptHandler } from '../../../src/lib/agent/interrupt-handler';
 import type { QueryModeHandler } from '../../../src/lib/agent/query-mode-handler';
-import type { CheckpointTracker } from '../../../src/lib/agent/checkpoint-tracker';
 
 describe('EventSubscriptionSetup', () => {
 	let setup: EventSubscriptionSetup;
@@ -29,7 +28,6 @@ describe('EventSubscriptionSetup', () => {
 	let mockModelSwitchHandler: ModelSwitchHandler;
 	let mockInterruptHandler: InterruptHandler;
 	let mockQueryModeHandler: QueryModeHandler;
-	let mockCheckpointTracker: CheckpointTracker;
 
 	// Store callbacks registered via daemonHub.on()
 	let registeredCallbacks: Map<string, (data: unknown) => Promise<void>>;
@@ -65,10 +63,6 @@ describe('EventSubscriptionSetup', () => {
 			sendQueuedMessagesOnTurnEnd: mock(async () => {}),
 		} as unknown as QueryModeHandler;
 
-		mockCheckpointTracker = {
-			createCheckpointFromUserMessage: mock(() => {}),
-		} as unknown as CheckpointTracker;
-
 		// Create mock session
 		const mockSession: Session = {
 			id: 'test-session-id',
@@ -88,7 +82,6 @@ describe('EventSubscriptionSetup', () => {
 			modelSwitchHandler: mockModelSwitchHandler,
 			interruptHandler: mockInterruptHandler,
 			queryModeHandler: mockQueryModeHandler,
-			checkpointTracker: mockCheckpointTracker,
 			resetQuery: mock(async () => ({ success: true })),
 			startQueryAndEnqueue: mock(async () => {}),
 		};
@@ -230,10 +223,7 @@ describe('EventSubscriptionSetup', () => {
 					messageContent: 'Hello',
 				});
 
-				expect(mockCheckpointTracker.createCheckpointFromUserMessage).toHaveBeenCalledWith(
-					'msg-123',
-					'Hello'
-				);
+				// Note: User messages in the DB serve as rewind points - no separate checkpoint tracking needed
 				expect(mockContext.startQueryAndEnqueue).toHaveBeenCalledWith('msg-123', 'Hello');
 			});
 		});

@@ -236,4 +236,48 @@ describe('InputActionsMenu', () => {
 			expect(menu).toBeTruthy();
 		});
 	});
+
+	describe('Rewind Mode Button', () => {
+		it('should show Rewind Mode option in menu', () => {
+			const onEnterRewindMode = vi.fn(() => {});
+			const { container } = render(
+				<InputActionsMenu {...defaultProps} isOpen={true} onEnterRewindMode={onEnterRewindMode} />
+			);
+			const text = container.textContent;
+			expect(text).toContain('Rewind Mode');
+		});
+
+		it('should call onEnterRewindMode and close menu on click', () => {
+			const onEnterRewindMode = vi.fn(() => {});
+			const onClose = vi.fn(() => {});
+			const { container } = render(
+				<InputActionsMenu
+					{...defaultProps}
+					isOpen={true}
+					onEnterRewindMode={onEnterRewindMode}
+					onClose={onClose}
+				/>
+			);
+
+			const buttons = container.querySelectorAll('button');
+			const rewindButton = Array.from(buttons).find((b) => b.textContent?.includes('Rewind'));
+			rewindButton?.click();
+
+			expect(onEnterRewindMode).toHaveBeenCalled();
+			expect(onClose).toHaveBeenCalled();
+		});
+
+		it('should close menu when Rewind Mode clicked without onEnterRewindMode', () => {
+			const onClose = vi.fn(() => {});
+			const { container } = render(
+				<InputActionsMenu {...defaultProps} isOpen={true} onClose={onClose} />
+			);
+
+			const buttons = container.querySelectorAll('button');
+			const rewindButton = Array.from(buttons).find((b) => b.textContent?.includes('Rewind'));
+			rewindButton?.click();
+
+			expect(onClose).toHaveBeenCalled();
+		});
+	});
 });

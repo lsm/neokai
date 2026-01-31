@@ -182,9 +182,9 @@ describe('ChatHeader', () => {
 			expect(header).toBeTruthy();
 		});
 
-		it('should include Rewind option when onRewindClick is provided', () => {
-			const onRewindClick = vi.fn();
-			const props = { ...defaultProps, onRewindClick };
+		it('should render when handlers are provided', () => {
+			const onResetClick = vi.fn();
+			const props = { ...defaultProps, onResetClick };
 
 			const { container } = render(<ChatHeader {...props} />);
 

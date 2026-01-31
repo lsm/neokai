@@ -452,4 +452,73 @@ describe('AgentSession', () => {
 			// This is verified through the session's internal structure
 		});
 	});
+
+	describe('Rewind Methods', () => {
+		test('should get rewind points for session', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/rewind-points',
+			});
+
+			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+			const rewindPoints = agentSession!.getRewindPoints();
+
+			// Should return array (empty for new session)
+			expect(rewindPoints).toBeArray();
+			expect(rewindPoints.length).toBe(0);
+		});
+
+		test('should preview rewind operation', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/rewind-preview',
+			});
+
+			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+
+			// Preview should return canRewind: false for non-existent checkpoint
+			const preview = await agentSession!.previewRewind('non-existent-checkpoint');
+
+			expect(preview.canRewind).toBe(false);
+			expect(preview.error).toContain('not found');
+		});
+
+		test('should execute rewind operation', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/rewind-execute',
+			});
+
+			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+
+			// Execute should return success: false for non-existent checkpoint
+			const result = await agentSession!.executeRewind('non-existent-checkpoint', 'files');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('not found');
+		});
+
+		test('should preview selective rewind operation', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/selective-rewind-preview',
+			});
+
+			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+
+			// Preview should return canRewind: false when no valid messages
+			const preview = await agentSession!.previewSelectiveRewind(['non-existent-uuid']);
+
+			expect(preview.canRewind).toBe(false);
+		});
+
+		test('should execute selective rewind operation', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/selective-rewind-execute',
+			});
+
+			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+
+			// Execute should return success: false when no valid messages
+			const result = await agentSession!.executeSelectiveRewind(['non-existent-uuid']);
+
+			expect(result.success).toBe(false);
+		});
+	});
 });

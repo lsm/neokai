@@ -22,7 +22,6 @@ import type {
 	AgentProcessingState,
 	ApiConnectionState,
 	PendingUserQuestion,
-	Checkpoint,
 	RewindMode,
 	RewindResult,
 } from '@neokai/shared';
@@ -157,9 +156,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	};
 	// Send queued messages on turn end (Auto-queue mode)
 	'query.sendQueuedOnTurnEnd': { sessionId: string };
-
-	// Checkpoint events
-	'checkpoint.created': { sessionId: string; checkpoint: Checkpoint };
 
 	// Rewind events
 	'rewind.started': {

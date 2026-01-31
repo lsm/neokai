@@ -122,6 +122,22 @@ export class Database {
 		return this.sdkMessageRepo.deleteMessagesAfter(sessionId, afterTimestamp);
 	}
 
+	// Rewind feature: get user messages as checkpoints
+	getUserMessages(sessionId: string): Array<{ uuid: string; timestamp: number; content: string }> {
+		return this.sdkMessageRepo.getUserMessages(sessionId);
+	}
+
+	getUserMessageByUuid(
+		sessionId: string,
+		uuid: string
+	): { uuid: string; timestamp: number; content: string } | undefined {
+		return this.sdkMessageRepo.getUserMessageByUuid(sessionId, uuid);
+	}
+
+	countMessagesAfter(sessionId: string, afterTimestamp: number): number {
+		return this.sdkMessageRepo.countMessagesAfter(sessionId, afterTimestamp);
+	}
+
 	// ============================================================================
 	// Global Configuration operations (delegated to SettingsRepository)
 	// ============================================================================

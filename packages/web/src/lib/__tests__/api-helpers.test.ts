@@ -710,22 +710,22 @@ describe('api-helpers', () => {
 	});
 
 	describe('rewind operations', () => {
-		describe('getCheckpoints', () => {
-			it('should get checkpoints for session', async () => {
+		describe('getRewindPoints', () => {
+			it('should get rewind points for session', async () => {
 				const mockHub = {
 					call: vi.fn().mockResolvedValue({
-						checkpoints: [
+						rewindPoints: [
 							{
-								id: 'cp-1',
-								turnIndex: 5,
-								createdAt: '2024-01-01T00:00:00Z',
-								messageCount: 10,
+								uuid: 'msg-1',
+								content: 'User message 1',
+								timestamp: 1704067200000,
+								turnNumber: 1,
 							},
 							{
-								id: 'cp-2',
-								turnIndex: 10,
-								createdAt: '2024-01-01T01:00:00Z',
-								messageCount: 20,
+								uuid: 'msg-2',
+								content: 'User message 2',
+								timestamp: 1704070800000,
+								turnNumber: 2,
 							},
 						],
 					}),
@@ -737,21 +737,21 @@ describe('api-helpers', () => {
 					}
 				).getHubIfConnected.mockReturnValue(mockHub);
 
-				const result = await apiHelpers.getCheckpoints('sess-123');
+				const result = await apiHelpers.getRewindPoints('sess-123');
 
 				expect(result).toEqual({
-					checkpoints: [
+					rewindPoints: [
 						{
-							id: 'cp-1',
-							turnIndex: 5,
-							createdAt: '2024-01-01T00:00:00Z',
-							messageCount: 10,
+							uuid: 'msg-1',
+							content: 'User message 1',
+							timestamp: 1704067200000,
+							turnNumber: 1,
 						},
 						{
-							id: 'cp-2',
-							turnIndex: 10,
-							createdAt: '2024-01-01T01:00:00Z',
-							messageCount: 20,
+							uuid: 'msg-2',
+							content: 'User message 2',
+							timestamp: 1704070800000,
+							turnNumber: 2,
 						},
 					],
 				});
@@ -760,9 +760,9 @@ describe('api-helpers', () => {
 				});
 			});
 
-			it('should handle empty checkpoints list', async () => {
+			it('should handle empty rewind points list', async () => {
 				const mockHub = {
-					call: vi.fn().mockResolvedValue({ checkpoints: [] }),
+					call: vi.fn().mockResolvedValue({ rewindPoints: [] }),
 				};
 				(
 					connectionManager as unknown as {
@@ -771,16 +771,16 @@ describe('api-helpers', () => {
 					}
 				).getHubIfConnected.mockReturnValue(mockHub);
 
-				const result = await apiHelpers.getCheckpoints('sess-123');
+				const result = await apiHelpers.getRewindPoints('sess-123');
 
-				expect(result.checkpoints).toEqual([]);
+				expect(result.rewindPoints).toEqual([]);
 			});
 
 			it('should handle error response', async () => {
 				const mockHub = {
 					call: vi.fn().mockResolvedValue({
-						checkpoints: [],
-						error: 'Failed to fetch checkpoints',
+						rewindPoints: [],
+						error: 'Failed to fetch rewind points',
 					}),
 				};
 				(
@@ -790,7 +790,7 @@ describe('api-helpers', () => {
 					}
 				).getHubIfConnected.mockReturnValue(mockHub);
 
-				const result = await apiHelpers.getCheckpoints('sess-123');
+				const result = await apiHelpers.getRewindPoints('sess-123');
 
 				expect(result.error).toBeDefined();
 			});
@@ -803,7 +803,7 @@ describe('api-helpers', () => {
 					}
 				).getHubIfConnected.mockReturnValue(null);
 
-				await expect(apiHelpers.getCheckpoints('sess-123')).rejects.toThrow(
+				await expect(apiHelpers.getRewindPoints('sess-123')).rejects.toThrow(
 					'Not connected to server'
 				);
 			});
@@ -942,6 +942,106 @@ describe('api-helpers', () => {
 				await expect(apiHelpers.executeRewind('sess-123', 'cp-1')).rejects.toThrow(
 					'Not connected to server'
 				);
+			});
+		});
+
+		describe('executeSelectiveRewind', () => {
+			it('should execute selective rewind with message IDs', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						result: {
+							success: true,
+							messagesDeleted: 5,
+							filesReverted: ['file1.ts', 'file2.ts'],
+						},
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				const result = await apiHelpers.executeSelectiveRewind('sess-123', [
+					'msg-uuid-1',
+					'msg-uuid-2',
+				]);
+
+				expect(result).toEqual({
+					result: {
+						success: true,
+						messagesDeleted: 5,
+						filesReverted: ['file1.ts', 'file2.ts'],
+					},
+				});
+				expect(mockHub.call).toHaveBeenCalledWith('rewind.executeSelective', {
+					sessionId: 'sess-123',
+					messageIds: ['msg-uuid-1', 'msg-uuid-2'],
+				});
+			});
+
+			it('should handle selective rewind failure', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						result: {
+							success: false,
+							error: 'Failed to rewind',
+							messagesDeleted: 0,
+							filesReverted: [],
+						},
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				const result = await apiHelpers.executeSelectiveRewind('sess-123', ['msg-1']);
+
+				expect(result.result.success).toBe(false);
+				expect(result.result.error).toBe('Failed to rewind');
+			});
+
+			it('should throw ConnectionNotReadyError when not connected', async () => {
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(null);
+
+				await expect(apiHelpers.executeSelectiveRewind('sess-123', ['msg-1'])).rejects.toThrow(
+					'Not connected to server'
+				);
+			});
+
+			it('should handle single message ID', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						result: {
+							success: true,
+							messagesDeleted: 2,
+							filesReverted: ['file1.ts'],
+						},
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				const result = await apiHelpers.executeSelectiveRewind('sess-123', ['msg-1']);
+
+				expect(result.result.success).toBe(true);
+				expect(mockHub.call).toHaveBeenCalledWith('rewind.executeSelective', {
+					sessionId: 'sess-123',
+					messageIds: ['msg-1'],
+				});
 			});
 		});
 	});

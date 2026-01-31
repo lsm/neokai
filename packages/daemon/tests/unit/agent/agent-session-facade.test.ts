@@ -155,15 +155,15 @@ describe('AgentSession Facade Methods', () => {
 	});
 
 	describe('Rewind methods', () => {
-		test('getCheckpoints should delegate to rewindHandler', async () => {
+		test('getRewindPoints should delegate to rewindHandler', async () => {
 			const sessionId = await ctx.sessionManager.createSession({
 				workspacePath: '/test/facade',
 			});
 
 			const session = await ctx.sessionManager.getSessionAsync(sessionId);
-			const checkpoints = session!.getCheckpoints();
+			const rewindPoints = session!.getRewindPoints();
 
-			expect(Array.isArray(checkpoints)).toBe(true);
+			expect(Array.isArray(rewindPoints)).toBe(true);
 		});
 
 		test('previewRewind should delegate to rewindHandler', async () => {
