@@ -40,7 +40,7 @@ export class GlmProvider implements Provider {
 	 * Static model definitions for GLM
 	 * These cannot be loaded dynamically from SDK
 	 *
-	 * All GLM-4.7 series models have 200K context window
+	 * All GLM-4.7 models have 200K context window
 	 * Source: https://llm-stats.com/models/glm-4.7
 	 * Official docs: https://docs.bigmodel.cn/cn/guide/models/text/glm-4.7
 	 */
@@ -53,17 +53,6 @@ export class GlmProvider implements Provider {
 			provider: 'glm',
 			contextWindow: 200000,
 			description: 'GLM-4.7 · Coding-focused model for complex tasks',
-			releaseDate: '2025-12-22',
-			available: true,
-		},
-		{
-			id: 'glm-4.7-FlashX',
-			name: 'GLM-4.7-FlashX',
-			alias: 'glm-flashx',
-			family: 'glm',
-			provider: 'glm',
-			contextWindow: 200000,
-			description: 'GLM-4.7-FlashX · Fast and efficient model',
 			releaseDate: '2025-12-22',
 			available: true,
 		},
@@ -107,16 +96,11 @@ export class GlmProvider implements Provider {
 	/**
 	 * Get model for a specific tier
 	 * Maps Anthropic tiers to GLM models
+	 * All tiers use glm-4.7 (flagship model)
 	 */
 	getModelForTier(tier: ModelTier): string | undefined {
-		// GLM model mapping by tier:
-		// - haiku tier -> glm-4.7-FlashX (fastest)
-		// - sonnet/default tiers -> glm-4.7 (flagship, balanced)
-		// - opus tier -> glm-4.7 (most capable)
-		if (tier === 'haiku') {
-			return 'glm-4.7-FlashX';
-		}
-		return 'glm-4.7'; // sonnet, default, and opus use the main model
+		// All tiers use glm-4.7
+		return 'glm-4.7';
 	}
 
 	/**
@@ -147,18 +131,11 @@ export class GlmProvider implements Provider {
 			API_TIMEOUT_MS: '3000000',
 			// Disable non-essential traffic (telemetry, etc.)
 			CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+			// Map all Anthropic tiers to glm-4.7
+			ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-4.7',
+			ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-4.7',
+			ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-4.7',
 		};
-
-		// Map Anthropic tier IDs to GLM model IDs
-		// When SDK uses 'haiku', 'default', or 'opus', translate to actual GLM model
-		if (modelId === 'glm-4.7-FlashX') {
-			envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.7-FlashX';
-		} else {
-			// glm-4.7 maps to all tiers (flagship model)
-			envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.7';
-			envVars.ANTHROPIC_DEFAULT_SONNET_MODEL = 'glm-4.7';
-			envVars.ANTHROPIC_DEFAULT_OPUS_MODEL = 'glm-4.7';
-		}
 
 		return {
 			envVars,
@@ -170,25 +147,21 @@ export class GlmProvider implements Provider {
 	/**
 	 * Translate GLM model ID to SDK-compatible ID
 	 *
-	 * GLM model IDs (glm-4.7, glm-4.5-air) are not recognized by the SDK.
+	 * GLM model IDs (glm-4.7) are not recognized by the SDK.
 	 * The SDK only knows Anthropic model IDs: default, opus, haiku.
 	 *
 	 * Translation:
-	 * - glm-4.7-FlashX → haiku (fast tier)
 	 * - glm-4.7 → default (flagship, balanced)
 	 */
 	translateModelIdForSdk(modelId: string): string {
-		if (modelId === 'glm-4.7-FlashX') {
-			return 'haiku';
-		}
 		return 'default'; // glm-4.7 uses 'default' (Sonnet tier)
 	}
 
 	/**
 	 * Get the title generation model for GLM
-	 * Uses the faster glm-4.7-FlashX model
+	 * Uses glm-4.7
 	 */
 	getTitleGenerationModel(): string {
-		return 'glm-4.7-FlashX';
+		return 'glm-4.7';
 	}
 }

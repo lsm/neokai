@@ -586,6 +586,15 @@ IMPORTANT: Return ONLY the title text itself, with NO formatting whatsoever:
 User's request:
 ${messageText.slice(0, 2000)}`;
 
+			// Get the environment variables to pass explicitly to SDK subprocess
+			// This ensures env vars are properly inherited when spawning subprocess
+			const providerEnvVars = providerService.getEnvVarsForModel(modelId);
+
+			const cliPath = resolveSDKCliPath();
+			this.logger.debug(
+				`[SessionLifecycle] Spawning title generation subprocess: cli=${cliPath}, bundled=${isBundledBinary()}, provider=${provider}, model=${modelId}`
+			);
+
 			const agentQuery = query({
 				prompt,
 				options: {
@@ -596,8 +605,9 @@ ${messageText.slice(0, 2000)}`;
 					mcpServers: {},
 					settingSources: [],
 					tools: [],
-					pathToClaudeCodeExecutable: resolveSDKCliPath(),
+					pathToClaudeCodeExecutable: cliPath,
 					executable: isBundledBinary() ? 'bun' : undefined,
+					env: providerEnvVars,
 				},
 			});
 
