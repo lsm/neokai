@@ -8,11 +8,32 @@
  */
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
+
+// Mock SDK type-guards at the top level
+mock.module('@neokai/shared/sdk/type-guards', () => ({
+	isSDKAssistantMessage: (msg: { type: string }) => msg.type === 'assistant',
+}));
+
+// Create a mock provider service that can be configured per test
+// Returns undefined by default so most tests use fallback path
+let mockProviderService = {
+	getProviderApiKey: mock(() => undefined),
+	getDefaultProvider: mock(async () => 'anthropic' as const),
+	getTitleGenerationConfig: mock(async () => ({ modelId: 'claude-3-5-haiku' })),
+	applyEnvVarsToProcessForProvider: mock(() => ({})),
+	getEnvVarsForModel: mock(() => ({ ANTHROPIC_API_KEY: 'test-key' })),
+	restoreEnvVars: mock(() => {}),
+};
+
+mock.module('../../../src/lib/provider-service', () => ({
+	getProviderService: () => mockProviderService,
+}));
 import {
 	SessionLifecycle,
 	generateBranchName,
 	slugify,
 	buildSdkQueryEnv,
+	__setMockSdkQuery,
 	type SessionLifecycleConfig,
 } from '../../../src/lib/session/session-lifecycle';
 import type { Database } from '../../../src/storage/database';
@@ -613,6 +634,56 @@ describe('SessionLifecycle', () => {
 			// Empty/whitespace message should result in "New Session" fallback
 			expect(result.isFallback).toBe(true);
 			expect(result.title).toBe('New Session');
+		});
+
+		it('should call buildSdkQueryEnv when generating title with SDK', async () => {
+			// Create an async generator that yields mock messages
+			let mockCalled = false;
+			async function* createMockAgentQuery() {
+				mockCalled = true;
+				yield { type: 'user', message: { content: [] } };
+				yield {
+					type: 'assistant',
+					message: {
+						content: [{ type: 'text', text: 'Generated Title' }],
+					},
+				};
+			}
+
+			// Set the mock SDK query function
+			__setMockSdkQuery(() => createMockAgentQuery());
+
+			// Configure the mock provider service to return an API key
+			mockProviderService.getProviderApiKey.mockReturnValue('test-api-key');
+
+			try {
+				const updateMetadataSpy = mock(() => {});
+
+				cacheHasSpy.mockReturnValue(true);
+				cacheGetSpy.mockReturnValue({
+					getSessionData: () => ({
+						id: 'test-session',
+						title: 'New Session',
+						workspacePath: '/test/path',
+						metadata: { titleGenerated: false },
+					}),
+					updateMetadata: updateMetadataSpy,
+				});
+
+				const result = await lifecycle.generateTitleAndRenameBranch(
+					'test-session',
+					'Create a new feature for user authentication'
+				);
+
+				// Should generate title via SDK (not fallback)
+				expect(result.isFallback).toBe(false);
+				expect(result.title).toBe('Generated Title');
+				expect(mockCalled).toBe(true);
+			} finally {
+				// Reset for other tests
+				__setMockSdkQuery(undefined);
+				mockProviderService.getProviderApiKey.mockReturnValue(undefined);
+			}
 		});
 	});
 });
