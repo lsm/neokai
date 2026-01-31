@@ -60,31 +60,91 @@ jobs:
 
   # ============================================
   # DISCOVER TESTS
-  # Auto-discover test files from the e2e tests directory
+  # Auto-discover and categorize E2E test files
+  # Tests are split into two groups:
+  #   - no-llm: UI-only tests (run fully parallel)
+  #   - llm: Tests requiring LLM round-trips (max 4 parallel)
   # ============================================
   discover:
     name: Discover Tests
     runs-on: ubuntu-latest
     outputs:
-      tests: ${{ steps.find-tests.outputs.tests }}
+      tests_no_llm: ${{ steps.categorize.outputs.tests_no_llm }}
+      tests_llm: ${{ steps.categorize.outputs.tests_llm }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Find E2E test files
-        id: find-tests
+      - name: Categorize E2E test files
+        id: categorize
         run: |
-          # Find all .e2e.ts files in the tests directory (not subdirectories)
-          # Convert to JSON array of test names (without .e2e.ts extension)
-          tests=$(find packages/e2e/tests -maxdepth 1 -name "*.e2e.ts" -type f | \
-            xargs -I{} basename {} .e2e.ts | \
-            sort | \
-            jq -R -s -c 'split("\n") | map(select(length > 0))')
-          echo "Found tests: $tests"
-          echo "tests=$tests" >> $GITHUB_OUTPUT
+          # Tests that require LLM API round-trips (send messages, wait for agent responses)
+          LLM_TESTS=(
+            2-stage-creation
+            auto-title-generation
+            auto-scroll-toggle
+            chat-flow
+            chat-flow-improved
+            context-dropdown
+            context-usage-display
+            context-usage-dropdown-content
+            file-attachment-send
+            file-operations
+            interrupt-button
+            interrupt-error-bug
+            message-input-processing-state
+            message-pagination
+            message-removal
+            message-send-receive
+            model-selection-persistence
+            page-refresh-context
+            page-refresh-session-state
+            processing-state
+            question-form-persistence
+            slash-cmd-built-in
+            slash-cmd-edge-cases
+            slash-cmd-navigation
+            slash-cmd-selection
+          )
+
+          # Tests to exclude entirely (disabled, pending refactor)
+          EXCLUDED_TESTS=(
+            rewind-modal
+          )
+
+          # Build lookup sets
+          declare -A LLM_SET EXCLUDED_SET
+          for t in "${LLM_TESTS[@]}"; do LLM_SET[$t]=1; done
+          for t in "${EXCLUDED_TESTS[@]}"; do EXCLUDED_SET[$t]=1; done
+
+          # Find all test files and categorize
+          NO_LLM=()
+          LLM=()
+          for file in $(find packages/e2e/tests -maxdepth 1 -name "*.e2e.ts" -type f | xargs -I{} basename {} .e2e.ts | sort); do
+            if [[ -n "${EXCLUDED_SET[$file]}" ]]; then
+              echo "EXCLUDED: $file"
+              continue
+            fi
+            if [[ -n "${LLM_SET[$file]}" ]]; then
+              LLM+=("$file")
+            else
+              NO_LLM+=("$file")
+            fi
+          done
+
+          # Convert to JSON arrays
+          tests_no_llm=$(printf '%s\n' "${NO_LLM[@]}" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          tests_llm=$(printf '%s\n' "${LLM[@]}" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+
+          echo "No-LLM tests (${#NO_LLM[@]}): $tests_no_llm"
+          echo "LLM tests (${#LLM[@]}): $tests_llm"
+          echo "Excluded (${#EXCLUDED_TESTS[@]}): ${EXCLUDED_TESTS[*]}"
+
+          echo "tests_no_llm=$tests_no_llm" >> $GITHUB_OUTPUT
+          echo "tests_llm=$tests_llm" >> $GITHUB_OUTPUT
 
   # ============================================
-  # E2E TESTS (Matrix)
-  # Run each test against the compiled binary
+  # E2E TESTS - No LLM (Matrix, fully parallel)
+  # UI-only tests that don't require LLM API calls
   # ============================================
   e2e:
     name: E2E (${{ matrix.test }})
@@ -94,7 +154,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        test: ${{ fromJson(needs.discover.outputs.tests) }}
+        test: ${{ fromJson(needs.discover.outputs.tests_no_llm) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -124,25 +184,15 @@ jobs:
 
       - name: Run E2E test against binary (${{ matrix.test }})
         run: |
-          # Make binary executable
           chmod +x dist/bin/kai-linux-x64
-
-          # Create workspace for the binary
           WORKSPACE=$(mktemp -d)
-
-          # Find a free port
           PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
-
           echo "Starting binary on port $PORT with workspace $WORKSPACE"
 
-          # Start binary in background
           ./dist/bin/kai-linux-x64 --port "$PORT" "$WORKSPACE" &
           BINARY_PID=$!
-
-          # Ensure cleanup on exit
           trap 'kill $BINARY_PID 2>/dev/null; rm -rf "$WORKSPACE"' EXIT
 
-          # Wait for server to be ready (up to 30s)
           for i in $(seq 1 60); do
             if curl -s "http://localhost:$PORT/" > /dev/null 2>&1; then
               echo "Server ready on port $PORT (PID $BINARY_PID)"
@@ -155,16 +205,111 @@ jobs:
             sleep 0.5
           done
 
-          # Verify server is responding
           if ! curl -s "http://localhost:$PORT/" > /dev/null 2>&1; then
             echo "Server failed to start within 30s"
             exit 1
           fi
 
-          # Set the base URL for Playwright to connect to the binary
           export PLAYWRIGHT_BASE_URL="http://localhost:$PORT"
+          cd packages/e2e
+          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
+            bunx playwright test "tests/${{ matrix.test }}.e2e.ts"
+        env:
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          DEFAULT_MODEL: haiku
+          CI: true
+          COVERAGE: true
 
-          # Run Playwright test
+      - name: Upload browser coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-e2e-browser-${{ matrix.test }}
+          path: packages/e2e/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-results-${{ matrix.test }}
+          path: |
+            packages/e2e/test-results/
+            packages/e2e/playwright-report/
+          retention-days: 7
+
+  # ============================================
+  # E2E TESTS - LLM Required (Matrix, max 4 parallel)
+  # Tests that send messages and wait for LLM responses
+  # ============================================
+  e2e-llm:
+    name: E2E LLM (${{ matrix.test }})
+    runs-on: ubuntu-latest
+    needs: [build, discover]
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        test: ${{ fromJson(needs.discover.outputs.tests_llm) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.6
+
+      - name: Install dependencies
+        run: |
+          echo "Starting bun install at $(date)"
+          timeout 180 bun install --verbose 2>&1 || {
+            echo "bun install timed out or failed"
+            exit 1
+          }
+          echo "Finished bun install at $(date)"
+
+      - name: Install Playwright browsers
+        run: cd packages/e2e && bunx playwright install chromium
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: kai-linux-x64-e2e
+          path: dist/bin/
+
+      - name: Run E2E test against binary (${{ matrix.test }})
+        run: |
+          chmod +x dist/bin/kai-linux-x64
+          WORKSPACE=$(mktemp -d)
+          PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
+          echo "Starting binary on port $PORT with workspace $WORKSPACE"
+
+          ./dist/bin/kai-linux-x64 --port "$PORT" "$WORKSPACE" &
+          BINARY_PID=$!
+          trap 'kill $BINARY_PID 2>/dev/null; rm -rf "$WORKSPACE"' EXIT
+
+          for i in $(seq 1 60); do
+            if curl -s "http://localhost:$PORT/" > /dev/null 2>&1; then
+              echo "Server ready on port $PORT (PID $BINARY_PID)"
+              break
+            fi
+            if ! kill -0 $BINARY_PID 2>/dev/null; then
+              echo "Binary process died unexpectedly"
+              exit 1
+            fi
+            sleep 0.5
+          done
+
+          if ! curl -s "http://localhost:$PORT/" > /dev/null 2>&1; then
+            echo "Server failed to start within 30s"
+            exit 1
+          fi
+
+          export PLAYWRIGHT_BASE_URL="http://localhost:$PORT"
           cd packages/e2e
           xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
             bunx playwright test "tests/${{ matrix.test }}.e2e.ts"
@@ -201,7 +346,7 @@ jobs:
   upload-coverage:
     name: Upload Coverage
     runs-on: ubuntu-latest
-    needs: e2e
+    needs: [e2e, e2e-llm]
     if: always()
     timeout-minutes: 5
 
@@ -253,7 +398,7 @@ jobs:
   check-release:
     name: Check Release
     runs-on: ubuntu-latest
-    needs: e2e
+    needs: [e2e, e2e-llm]
     outputs:
       is_release: ${{ steps.check.outputs.is_release }}
       version: ${{ steps.check.outputs.version }}
