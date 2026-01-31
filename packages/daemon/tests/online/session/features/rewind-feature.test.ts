@@ -54,7 +54,7 @@ describe('Rewind Feature', () => {
 	 * Helper to get rewind points for a session
 	 */
 	async function getRewindPoints(sessionId: string): Promise<RewindPoint[]> {
-		const result = (await daemon.messageHub.call('rewind.rewindPoints', {
+		const result = (await daemon.messageHub.call('rewind.checkpoints', {
 			sessionId,
 		})) as { rewindPoints: RewindPoint[]; error?: string };
 		return result.rewindPoints;
@@ -481,9 +481,9 @@ describe('Rewind Feature', () => {
 
 			// Verify rewindPoints have proper structure
 			for (const rewindPoint of rewindPoints) {
-				expect(rewindPoint.id).toBeDefined();
+				expect(rewindPoint.uuid).toBeDefined();
 				expect(rewindPoint.turnNumber).toBeGreaterThan(0);
-				expect(rewindPoint.sessionId).toBe(sessionId);
+				expect(rewindPoint.content).toBeDefined();
 			}
 
 			// Session should still be functional
@@ -521,7 +521,7 @@ describe('Rewind Feature', () => {
 
 			// However, file rewind should not be available (SDK won't track file changes)
 			// Preview should indicate rewind is not possible for files
-			const preview = await previewRewind(sessionId, rewindPoints[0].id);
+			const preview = await previewRewind(sessionId, rewindPoints[0].uuid);
 			// Either canRewind is false or filesChanged is empty/undefined
 			if (preview.canRewind) {
 				const filesCount = Array.isArray(preview.filesChanged)
