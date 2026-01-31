@@ -310,9 +310,9 @@ function runMigration11(db: BunDatabase): void {
  */
 function runMigration12(db: BunDatabase): void {
 	try {
-		const row = db
-			.prepare(`SELECT settings FROM global_settings WHERE id = 1`)
-			.get() as { settings: string } | undefined;
+		const row = db.prepare(`SELECT settings FROM global_settings WHERE id = 1`).get() as
+			| { settings: string }
+			| undefined;
 
 		if (!row) {
 			logger.log('Running migration: Initializing global_settings with autoScroll: true');
