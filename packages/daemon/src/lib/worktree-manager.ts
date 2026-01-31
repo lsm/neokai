@@ -163,6 +163,18 @@ export class WorktreeManager {
 			);
 			await git.raw(['worktree', 'add', worktreePath, '-b', branchName, baseBranch]);
 
+			// Initialize git submodules in the new worktree (no-op if no submodules)
+			try {
+				const worktreeGit = this.getGit(worktreePath);
+				await worktreeGit.raw(['submodule', 'update', '--init', '--recursive']);
+				this.logger.info(`[WorktreeManager] Submodules initialized in worktree`);
+			} catch (submoduleError) {
+				this.logger.warn(
+					`[WorktreeManager] Failed to initialize submodules (non-fatal):`,
+					submoduleError
+				);
+			}
+
 			this.logger.info(`[WorktreeManager] Successfully created worktree for session ${sessionId}`);
 
 			return {
