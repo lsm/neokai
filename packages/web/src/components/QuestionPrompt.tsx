@@ -75,6 +75,14 @@ export function QuestionPrompt({
 	// Collapse state for the question block (expand by default for pending, collapsed for resolved)
 	const [isExpanded, setIsExpanded] = useState(!isResolved);
 
+	// Auto-expand when transitioning from resolved to pending (fixes race condition where
+	// the component first mounts as 'cancelled' fallback before pendingQuestion state arrives)
+	useEffect(() => {
+		if (!isResolved) {
+			setIsExpanded(true);
+		}
+	}, [isResolved]);
+
 	// Track selections for each question (map of questionIndex -> Set of selected labels)
 	const [selections, setSelections] = useState<Map<number, Set<string>>>(() => {
 		// Initialize from final responses if resolved, otherwise from draft
@@ -365,7 +373,7 @@ export function QuestionPrompt({
 	};
 
 	return (
-		<div class={getContainerClasses()}>
+		<div class={getContainerClasses()} data-testid="question-prompt">
 			{/* Collapsible Header - like ToolResultCard */}
 			<button
 				onClick={() => !isResolved && setIsExpanded(!isExpanded)}

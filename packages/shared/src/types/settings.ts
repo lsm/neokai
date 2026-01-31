@@ -6,6 +6,8 @@
  * .claude/settings.local.json).
  */
 
+import type { ThinkingLevel } from '../types.ts';
+
 export type SettingSource = 'user' | 'project' | 'local';
 
 export type PermissionMode =
@@ -120,6 +122,13 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
 
 	// Per-server MCP settings (keyed by server name)
 	mcpServerSettings?: Record<string, McpServerSettings>;
+
+	// Default thinking level for new sessions
+	// Maps to maxThinkingTokens in SDK options
+	thinkingLevel?: ThinkingLevel;
+
+	// Default auto-scroll setting for new sessions
+	autoScroll?: boolean;
 }
 
 /**
@@ -137,6 +146,9 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
 	permissionMode: 'default',
 	disabledMcpServers: [],
 	showArchived: false,
+	// Default auto-scroll to true so new sessions inherit this setting
+	// This must match the display default in GlobalSettingsEditor (autoScroll ?? true)
+	autoScroll: true,
 	outputLimiter: {
 		enabled: true,
 		bash: {

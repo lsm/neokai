@@ -96,7 +96,7 @@ describe('GLM Provider Integration', () => {
 			}
 		});
 
-		it('should return correct env vars for glm-4.7-FlashX (haiku tier)', () => {
+		it('should return correct env vars for glm-4.7', () => {
 			const providerService = new ProviderService();
 
 			// Mock GLM_API_KEY
@@ -104,7 +104,7 @@ describe('GLM Provider Integration', () => {
 			process.env.GLM_API_KEY = 'test-glm-api-key';
 
 			try {
-				const envVars = providerService.getEnvVarsForModel('glm-4.7-FlashX');
+				const envVars = providerService.getEnvVarsForModel('glm-4.7');
 
 				// Verify base env vars are set
 				expect(envVars.ANTHROPIC_BASE_URL).toBe('https://open.bigmodel.cn/api/anthropic');
@@ -114,8 +114,10 @@ describe('GLM Provider Integration', () => {
 				expect(envVars.ANTHROPIC_API_KEY).toBeUndefined();
 				// ANTHROPIC_MODEL is NOT set - model ID is passed directly to SDK
 				expect(envVars.ANTHROPIC_MODEL).toBeUndefined();
-				// glm-4.7-FlashX maps to Haiku tier
-				expect(envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-4.7-FlashX');
+				// All tiers map to glm-4.7
+				expect(envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-4.7');
+				expect(envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-4.7');
+				expect(envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-4.7');
 				// Extended timeout
 				expect(envVars.API_TIMEOUT_MS).toBe('3000000');
 			} finally {

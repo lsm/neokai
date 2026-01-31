@@ -79,6 +79,7 @@ export interface ProviderEnvVars {
 	ANTHROPIC_DEFAULT_OPUS_MODEL?: string; // Map opus tier to provider model
 	API_TIMEOUT_MS?: string;
 	CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC?: string;
+	[key: string]: string | undefined; // Index signature for SDK env option compatibility
 }
 
 /**
@@ -533,6 +534,20 @@ export class ProviderService {
 	async isGlmAvailable(): Promise<boolean> {
 		return this.isProviderAvailable('glm');
 	}
+}
+
+/**
+ * Merge provider environment variables with process.env
+ *
+ * This is used when spawning SDK subprocesses to ensure:
+ * - Provider-specific vars (like ANTHROPIC_BASE_URL) override defaults
+ * - Parent process vars (like ANTHROPIC_API_KEY) are inherited
+ *
+ * @param providerEnvVars - Provider-specific environment variables
+ * @returns Merged environment variables for subprocess
+ */
+export function mergeProviderEnvVars(providerEnvVars: ProviderEnvVars): NodeJS.ProcessEnv {
+	return { ...process.env, ...providerEnvVars };
 }
 
 // Singleton instance

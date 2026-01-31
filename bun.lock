@@ -7,7 +7,7 @@
       "devDependencies": {
         "@biomejs/biome": "2.3.12",
         "@testing-library/preact": "3.2.4",
-        "dotenv": "17.2.3",
+        "dotenv": "^17.2.3",
         "happy-dom": "20.3.7",
         "knip": "5.82.1",
         "oxlint": "1.41.0",
@@ -16,7 +16,7 @@
     },
     "packages/cli": {
       "name": "@neokai/cli",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "bin": {
         "kai": "./main.ts",
       },
@@ -34,7 +34,7 @@
     },
     "packages/daemon": {
       "name": "@neokai/daemon",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "0.2.19",
         "@neokai/shared": "workspace:*",
@@ -47,7 +47,7 @@
     },
     "packages/e2e": {
       "name": "@neokai/e2e",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "devDependencies": {
         "@playwright/test": "1.57.0",
         "@types/node": "^24.10.1",
@@ -56,14 +56,14 @@
     },
     "packages/shared": {
       "name": "@neokai/shared",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "devDependencies": {
         "@types/bun": "latest",
       },
     },
     "packages/web": {
       "name": "@neokai/web",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@preact/signals": "2.6.1",
         "clsx": "2.1.1",

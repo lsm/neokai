@@ -166,7 +166,7 @@ test.describe('Page Refresh - Session State Persistence', () => {
 				return titleText !== 'New Session' && titleText.length > 0;
 			},
 			sessionId,
-			{ timeout: 15000 }
+			{ timeout: 45000 } // GLM-4.7 can take 30-40s in CI due to API latency
 		);
 
 		// Count messages before refresh

@@ -195,7 +195,7 @@ export default defineConfig({
 		timeout: 120 * 1000,
 		env: {
 			NODE_ENV: 'test',
-			DEFAULT_MODEL: 'haiku', // Use Haiku for faster and cheaper tests
+			DEFAULT_MODEL: 'sonnet', // Maps to GLM-4.7 for E2E tests
 		},
 	},
 });

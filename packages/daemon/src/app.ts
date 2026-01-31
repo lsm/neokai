@@ -231,7 +231,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				return Response.json(
 					{
 						name: 'NeoKai Daemon',
-						version: '0.1.0',
+						version: '0.1.1',
 						status: 'running',
 						protocol: 'WebSocket-only (MessageHub RPC + Pub/Sub)',
 						endpoints: {

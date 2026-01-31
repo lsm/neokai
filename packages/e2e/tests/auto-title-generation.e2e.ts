@@ -25,6 +25,9 @@ test.describe('Auto Title Generation', () => {
 	});
 
 	test('should auto-generate title after first message exchange', async ({ page }) => {
+		// Set longer timeout for this test since it involves multiple API calls
+		test.setTimeout(180000);
+
 		// Create a new session
 		const newSessionButton = page.getByRole('button', {
 			name: 'New Session',
@@ -59,7 +62,7 @@ test.describe('Auto Title Generation', () => {
 				return titleText !== 'New Session' && titleText.length > 0;
 			},
 			sessionId,
-			{ timeout: 15000 } // Give it 15 seconds for Haiku to generate title
+			{ timeout: 120000 } // Increased timeout for CI environment
 		);
 
 		// Verify the title has changed
@@ -75,7 +78,7 @@ test.describe('Auto Title Generation', () => {
 
 	test('should not regenerate title for subsequent messages', async ({ page }) => {
 		// This test sends 2 messages, so needs longer timeout
-		test.setTimeout(120000);
+		test.setTimeout(180000);
 		// Create a new session
 		const newSessionButton = page.getByRole('button', {
 			name: 'New Session',
@@ -103,7 +106,7 @@ test.describe('Auto Title Generation', () => {
 				return titleText !== 'New Session' && titleText.length > 0;
 			},
 			sessionId,
-			{ timeout: 15000 }
+			{ timeout: 120000 } // Increased timeout for CI environment
 		);
 
 		// Get the generated title

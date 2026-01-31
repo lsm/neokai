@@ -82,7 +82,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const [hasMoreMessages, setHasMoreMessages] = useState(true);
 	const [isInitialLoad, setIsInitialLoad] = useState(true);
 	const [localError, setLocalError] = useState<string | null>(null);
-	const [autoScroll, setAutoScroll] = useState(false);
+	const [autoScroll, setAutoScroll] = useState(true);
 
 	// Track resolved questions to keep showing them in disabled state
 	// Map of toolUseId -> resolved question data
@@ -561,6 +561,18 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 	return (
 		<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden relative">
+			{/* Loading overlay for archive/delete operations */}
+			{(sessionActions.archiving || sessionActions.deleting) && (
+				<div class="absolute inset-0 z-20 flex items-center justify-center bg-dark-900/80 backdrop-blur-sm">
+					<div class="text-center">
+						<Spinner size="lg" className="mx-auto mb-3" />
+						<p class="text-sm text-gray-400">
+							{sessionActions.deleting ? 'Deleting session...' : 'Archiving session...'}
+						</p>
+					</div>
+				</div>
+			)}
+
 			{/* Header */}
 			<ChatHeader
 				session={session}
@@ -801,12 +813,17 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 						Are you sure you want to delete this chat session? This action cannot be undone.
 					</p>
 					<div class="flex gap-3 justify-end">
-						<Button variant="secondary" onClick={deleteModal.close}>
+						<Button
+							variant="secondary"
+							onClick={deleteModal.close}
+							disabled={sessionActions.deleting}
+						>
 							Cancel
 						</Button>
 						<Button
 							variant="danger"
 							onClick={sessionActions.handleDeleteSession}
+							loading={sessionActions.deleting}
 							data-testid="confirm-delete-session"
 						>
 							Delete Chat

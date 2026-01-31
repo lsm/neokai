@@ -28,6 +28,7 @@ export interface UseSessionActionsOptions {
 export interface UseSessionActionsResult {
 	// State
 	archiving: boolean;
+	deleting: boolean;
 	resettingAgent: boolean;
 	archiveConfirmDialog: ArchiveConfirmState | null;
 
@@ -50,6 +51,7 @@ export function useSessionActions({
 	onStateReset,
 }: UseSessionActionsOptions): UseSessionActionsResult {
 	const [archiving, setArchiving] = useState(false);
+	const [deleting, setDeleting] = useState(false);
 	const [resettingAgent, setResettingAgent] = useState(false);
 	const [archiveConfirmDialog, setArchiveConfirmDialog] = useState<ArchiveConfirmState | null>(
 		null
@@ -59,8 +61,9 @@ export function useSessionActions({
 
 	const handleDeleteSession = useCallback(async () => {
 		try {
-			onDeleteModalClose();
+			setDeleting(true);
 			await deleteSession(sessionId);
+			onDeleteModalClose();
 			const response = await listSessions();
 			sessionsSignal.value = response.sessions;
 			setTimeout(() => {
@@ -69,6 +72,8 @@ export function useSessionActions({
 			toast.success('Session deleted');
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : 'Failed to delete session');
+		} finally {
+			setDeleting(false);
 		}
 	}, [sessionId, onDeleteModalClose]);
 
@@ -179,6 +184,7 @@ export function useSessionActions({
 
 	return {
 		archiving,
+		deleting,
 		resettingAgent,
 		archiveConfirmDialog,
 		handleDeleteSession,

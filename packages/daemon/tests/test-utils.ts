@@ -217,7 +217,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 				return Response.json(
 					{
 						name: 'NeoKai Test Daemon',
-						version: '0.1.0',
+						version: '0.1.1',
 						status: 'running',
 					},
 					{

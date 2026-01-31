@@ -2,7 +2,7 @@
  * Unit tests for Anthropic Provider
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { AnthropicProvider } from '../../../src/lib/providers/anthropic-provider';
 
 describe('AnthropicProvider', () => {
@@ -81,8 +81,8 @@ describe('AnthropicProvider', () => {
 	});
 
 	describe('getModels without credentials', () => {
-		it('should return static models when no credentials are available', async () => {
-			// Remove credentials to ensure we get static models
+		it('should return empty array when no credentials are available', async () => {
+			// Remove credentials
 			delete process.env.ANTHROPIC_API_KEY;
 			delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
 
@@ -91,27 +91,8 @@ describe('AnthropicProvider', () => {
 
 			const models = await providerWithoutCreds.getModels();
 
-			// Should return exactly 3 static models
-			expect(models.length).toBe(3);
-
-			// Check that we have the expected static models
-			const modelIds = models.map((m) => m.id);
-			expect(modelIds).toContain('default');
-			expect(modelIds).toContain('opus');
-			expect(modelIds).toContain('haiku');
-		});
-
-		it('should include provider field in static models', async () => {
-			// Remove credentials
-			delete process.env.ANTHROPIC_API_KEY;
-			delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
-
-			const providerWithoutCreds = new AnthropicProvider();
-			const models = await providerWithoutCreds.getModels();
-
-			for (const model of models) {
-				expect(model.provider).toBe('anthropic');
-			}
+			// Should return empty array (no static fallback)
+			expect(models).toEqual([]);
 		});
 
 		it('should not attempt SDK call when credentials are missing', async () => {
@@ -126,9 +107,35 @@ describe('AnthropicProvider', () => {
 			const models = await providerWithoutCreds.getModels();
 			const duration = Date.now() - startTime;
 
-			// Should return static models quickly (< 100ms)
-			expect(models.length).toBe(3);
+			// Should return empty array quickly (< 100ms)
+			expect(models).toEqual([]);
 			expect(duration).toBeLessThan(100);
+		});
+	});
+
+	describe('getModels with SDK failure', () => {
+		it('should return empty array when SDK loading fails', async () => {
+			// Set credentials so SDK load is attempted
+			process.env.ANTHROPIC_API_KEY = 'test-key';
+
+			// Mock the SDK module with a query that fails when supportedModels is called
+			mock.module('@anthropic-ai/claude-agent-sdk', () => ({
+				query: async () => ({
+					interrupt: () => {},
+					supportedModels: async () => {
+						throw new Error('SDK unavailable');
+					},
+				}),
+			}));
+
+			// Clear cache to force fresh load
+			const providerWithCreds = new AnthropicProvider();
+			providerWithCreds.clearModelCache();
+
+			const models = await providerWithCreds.getModels();
+
+			// Should return empty array when SDK fails
+			expect(models).toEqual([]);
 		});
 	});
 
@@ -217,9 +224,9 @@ describe('AnthropicProvider', () => {
 			// Clear cache
 			provider.clearModelCache();
 
-			// Should return at least 3 models
+			// Should return empty array when cache is cleared and no credentials
 			const models = await provider.getModels();
-			expect(models.length).toBeGreaterThanOrEqual(3);
+			expect(models).toEqual([]);
 		});
 	});
 });

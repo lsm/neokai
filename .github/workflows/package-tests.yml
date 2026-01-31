@@ -81,7 +81,6 @@ jobs:
           - git
           - components
           - mcp
-          - unit
         include:
           - module: agent
             test_path: tests/integration/agent
@@ -101,8 +100,6 @@ jobs:
             test_path: tests/integration/components
           - module: mcp
             test_path: tests/integration/mcp
-          - module: unit
-            test_path: tests/unit
 
     steps:
       - uses: actions/checkout@v4

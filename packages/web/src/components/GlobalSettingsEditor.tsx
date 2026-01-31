@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'preact/hooks';
-import type { PermissionMode, SettingSource } from '@neokai/shared';
+import type { PermissionMode, SettingSource, ThinkingLevel } from '@neokai/shared';
 import { toast } from '../lib/toast.ts';
 import {
 	updateGlobalSettings,
@@ -75,6 +75,34 @@ const SETTING_SOURCE_OPTIONS: Array<{
 	},
 ];
 
+// Thinking level options
+const THINKING_LEVEL_OPTIONS: Array<{
+	value: ThinkingLevel;
+	label: string;
+	description: string;
+}> = [
+	{
+		value: 'auto',
+		label: 'Auto',
+		description: 'No thinking budget - SDK default behavior',
+	},
+	{
+		value: 'think8k',
+		label: 'Think 8k',
+		description: '8,000 token thinking budget',
+	},
+	{
+		value: 'think16k',
+		label: 'Think 16k',
+		description: '16,000 token thinking budget',
+	},
+	{
+		value: 'think32k',
+		label: 'Think 32k',
+		description: '32,000 token thinking budget',
+	},
+];
+
 // Source label mapping
 const SOURCE_LABELS: Record<SettingSource, string> = {
 	user: 'User (~/.claude/)',
@@ -134,6 +162,32 @@ export function GlobalSettingsEditor() {
 		} catch (error) {
 			console.error('Failed to update permission mode:', error);
 			toast.error('Failed to update permission mode');
+		} finally {
+			setSaving(false);
+		}
+	};
+
+	const handleThinkingLevelChange = async (value: ThinkingLevel) => {
+		try {
+			setSaving(true);
+			await updateGlobalSettings({ thinkingLevel: value });
+			showSavedIndicator('thinking');
+		} catch (error) {
+			console.error('Failed to update thinking level:', error);
+			toast.error('Failed to update thinking level');
+		} finally {
+			setSaving(false);
+		}
+	};
+
+	const handleAutoScrollChange = async (value: boolean) => {
+		try {
+			setSaving(true);
+			await updateGlobalSettings({ autoScroll: value });
+			showSavedIndicator('autoScroll');
+		} catch (error) {
+			console.error('Failed to update auto scroll:', error);
+			toast.error('Failed to update auto scroll');
 		} finally {
 			setSaving(false);
 		}
@@ -213,6 +267,8 @@ export function GlobalSettingsEditor() {
 
 	const currentModel = settings.model || '';
 	const currentPermissionMode = settings.permissionMode || 'default';
+	const currentThinkingLevel = settings.thinkingLevel || 'auto';
+	const currentAutoScroll = settings.autoScroll ?? true;
 	const currentSources = settings.settingSources || ['user', 'project', 'local'];
 
 	// Saved checkmark component
@@ -288,6 +344,58 @@ export function GlobalSettingsEditor() {
 				<p class="text-xs text-gray-500">
 					{PERMISSION_MODE_OPTIONS.find((o) => o.value === currentPermissionMode)?.description}
 				</p>
+			</div>
+
+			{/* Thinking Level Selection */}
+			<div class="space-y-2">
+				<div class="flex items-center justify-between">
+					<label class="text-sm text-gray-400">Thinking Level</label>
+					<SavedIndicator field="thinking" />
+				</div>
+				<select
+					value={currentThinkingLevel}
+					onChange={(e) =>
+						handleThinkingLevelChange((e.target as HTMLSelectElement).value as ThinkingLevel)
+					}
+					class={`w-full px-3 py-2 bg-dark-900 border ${borderColors.ui.secondary} rounded text-gray-200 text-sm focus:outline-none focus:border-blue-500`}
+				>
+					{THINKING_LEVEL_OPTIONS.map((option) => (
+						<option key={option.value} value={option.value}>
+							{option.label}
+						</option>
+					))}
+				</select>
+				<p class="text-xs text-gray-500">
+					{THINKING_LEVEL_OPTIONS.find((o) => o.value === currentThinkingLevel)?.description}
+				</p>
+			</div>
+
+			{/* Auto Scroll Toggle */}
+			<div class="space-y-2">
+				<div class="flex items-center justify-between">
+					<label class="text-sm text-gray-400">Auto Scroll</label>
+					<SavedIndicator field="autoScroll" />
+				</div>
+				<label
+					class={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+						currentAutoScroll
+							? `${borderColors.ui.secondary} bg-dark-800`
+							: 'border-dark-700 bg-dark-900 opacity-60'
+					}`}
+				>
+					<input
+						type="checkbox"
+						checked={currentAutoScroll}
+						onChange={(e) => handleAutoScrollChange((e.target as HTMLInputElement).checked)}
+						class="mt-0.5 w-4 h-4 rounded border-gray-600 bg-dark-900 text-blue-500 focus:ring-blue-500 focus:ring-offset-0"
+					/>
+					<div class="flex-1">
+						<div class="text-sm text-gray-200 font-medium">Enabled</div>
+						<div class="text-xs text-gray-500">
+							Auto-scroll to bottom when new messages arrive in sessions
+						</div>
+					</div>
+				</label>
 			</div>
 
 			{/* Setting Sources Checkboxes */}
