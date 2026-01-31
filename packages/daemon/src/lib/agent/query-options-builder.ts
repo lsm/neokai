@@ -26,6 +26,7 @@ import type { SettingsManager } from '../settings-manager';
 import { createOutputLimiterHook, getOutputLimiterConfigFromSettings } from './output-limiter-hook';
 import { Logger } from '../logger';
 import { getProviderContextManager } from '../providers/factory.js';
+import { resolveSDKCliPath, isBundledBinary } from './sdk-cli-resolver.js';
 
 /**
  * Context interface - what QueryOptionsBuilder needs from AgentSession
@@ -94,6 +95,7 @@ export class QueryOptionsBuilder {
 		const permissionMode = this.getPermissionMode();
 		const mcpServers = this.getMcpServers();
 		const mergedEnv = this.getMergedEnvironmentVars();
+		const sdkCliPath = this.getSDKCliPath();
 
 		// Build final query options
 		// Settings-derived options first, then session-specific overrides
@@ -150,8 +152,11 @@ export class QueryOptionsBuilder {
 			cwd: this.getCwd(),
 			additionalDirectories,
 			env: mergedEnv,
-			executable: config.executable,
+			// In bundled binaries, process.execPath is the binary itself, not a JS runtime.
+			// Default to 'bun' so the SDK finds the runtime from PATH.
+			executable: config.executable ?? (isBundledBinary() ? 'bun' : undefined),
 			executableArgs: config.executableArgs,
+			pathToClaudeCodeExecutable: sdkCliPath,
 
 			// ============ Settings ============
 			// In test/CI environments, disable setting sources (CLAUDE.md, .claude/settings.json)
@@ -631,5 +636,34 @@ CRITICAL RULES:
 		return {
 			PreToolUse: [{ hooks: [outputLimiterHook] }],
 		};
+	}
+
+	/**
+	 * Get SDK CLI path
+	 *
+	 * Priority:
+	 * 1. Session config explicit path
+	 * 2. Auto-resolved path from SDK installation
+	 * 3. undefined (let SDK use its default)
+	 */
+	private getSDKCliPath(): string | undefined {
+		const config = this.ctx.session.config;
+
+		// Priority 1: Explicit path from config
+		if (config.pathToClaudeCodeExecutable) {
+			return config.pathToClaudeCodeExecutable;
+		}
+
+		// Priority 2: Auto-resolve from SDK installation
+		// This is critical for bundled binaries where SDK's internal
+		// resolution produces virtual /$bunfs/root paths
+		const resolvedPath = resolveSDKCliPath();
+		if (resolvedPath) {
+			this.logger.log(`Auto-resolved SDK CLI path: ${resolvedPath}`);
+			return resolvedPath;
+		}
+
+		// Priority 3: Let SDK use its default resolution
+		return undefined;
 	}
 }

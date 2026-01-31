@@ -283,6 +283,8 @@ export interface EnvironmentSettings {
 	executable?: 'bun' | 'deno' | 'node';
 	/** Runtime arguments */
 	executableArgs?: string[];
+	/** Path to Claude Code executable (uses SDK bundled version if not specified) */
+	pathToClaudeCodeExecutable?: string;
 }
 
 // ============================================================================

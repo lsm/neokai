@@ -19,6 +19,7 @@ import type { SessionCache, AgentSessionFactory } from './session-cache';
 import type { ToolsConfigManager } from './tools-config';
 import { getProviderService } from '../provider-service';
 import { deleteSDKSessionFiles } from '../sdk-session-file-manager';
+import { resolveSDKCliPath, isBundledBinary } from '../agent/sdk-cli-resolver.js';
 
 export interface SessionLifecycleConfig {
 	defaultModel: string;
@@ -588,6 +589,8 @@ ${messageText.slice(0, 2000)}`;
 					mcpServers: {},
 					settingSources: [],
 					tools: [],
+					pathToClaudeCodeExecutable: resolveSDKCliPath(),
+					executable: isBundledBinary() ? 'bun' : undefined,
 				},
 			});
 
