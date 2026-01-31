@@ -595,29 +595,25 @@ ${messageText.slice(0, 2000)}`;
 				`[SessionLifecycle] Spawning title generation subprocess: cli=${cliPath}, bundled=${isBundledBinary()}, provider=${provider}, model=${modelId}`
 			);
 
-			// Build query options - only pass env if there are provider-specific vars
-			// Passing env: {} would prevent inheriting parent process env vars
-			const queryOptions: Record<string, unknown> = {
-				model: provider === 'glm' ? 'haiku' : modelId,
-				maxTurns: 1,
-				permissionMode: 'acceptEdits',
-				allowDangerouslySkipPermissions: false,
-				mcpServers: {},
-				settingSources: [],
-				tools: [],
-				pathToClaudeCodeExecutable: cliPath,
-				executable: isBundledBinary() ? 'bun' : undefined,
-			};
-
-			// Only add env option if there are actual provider-specific env vars
-			// For Anthropic, providerEnvVars will be empty, so we rely on inherited env
-			if (Object.keys(providerEnvVars).length > 0) {
-				queryOptions.env = providerEnvVars;
-			}
+			// Merge provider env vars with parent process env vars
+			// This ensures inherited vars (like ANTHROPIC_API_KEY) are preserved
+			// while provider-specific vars (like ANTHROPIC_BASE_URL for GLM) override
+			const mergedEnv = { ...process.env, ...providerEnvVars };
 
 			const agentQuery = query({
 				prompt,
-				options: queryOptions,
+				options: {
+					model: provider === 'glm' ? 'haiku' : modelId,
+					maxTurns: 1,
+					permissionMode: 'acceptEdits',
+					allowDangerouslySkipPermissions: false,
+					mcpServers: {},
+					settingSources: [],
+					tools: [],
+					pathToClaudeCodeExecutable: cliPath,
+					executable: isBundledBinary() ? 'bun' : undefined,
+					env: mergedEnv,
+				},
 			});
 
 			// Extract title from the response
