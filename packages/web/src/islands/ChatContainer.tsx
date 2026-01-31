@@ -665,7 +665,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 						Are you sure you want to delete this chat session? This action cannot be undone.
 					</p>
 					<div class="flex gap-3 justify-end">
-						<Button variant="secondary" onClick={deleteModal.close} disabled={sessionActions.deleting}>
+						<Button
+							variant="secondary"
+							onClick={deleteModal.close}
+							disabled={sessionActions.deleting}
+						>
 							Cancel
 						</Button>
 						<Button
