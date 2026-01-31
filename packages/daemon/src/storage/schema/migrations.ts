@@ -308,7 +308,7 @@ function runMigration11(db: BunDatabase): void {
  * Existing databases may have global_settings without the autoScroll field.
  * This migration ensures all existing settings have autoScroll: true as default.
  */
-function runMigration12(db: BunDatabase): void {
+export function runMigration12(db: BunDatabase): void {
 	try {
 		const row = db.prepare(`SELECT settings FROM global_settings WHERE id = 1`).get() as
 			| { settings: string }
