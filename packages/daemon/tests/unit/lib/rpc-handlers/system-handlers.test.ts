@@ -74,7 +74,7 @@ describe('System Handlers', () => {
 			const result = (await callHandler('system.health')) as HealthStatus;
 
 			expect(result.status).toBe('ok');
-			expect(result.version).toBe('0.1.0');
+			expect(result.version).toBe('0.1.1');
 			expect(result.uptime).toBeGreaterThanOrEqual(0);
 			expect(result.sessions).toEqual({
 				active: 3,
@@ -94,7 +94,7 @@ describe('System Handlers', () => {
 		it('should return daemon config', async () => {
 			const result = (await callHandler('system.config')) as DaemonConfig;
 
-			expect(result.version).toBe('0.1.0');
+			expect(result.version).toBe('0.1.1');
 			expect(result.claudeSDKVersion).toBeDefined();
 			expect(result.defaultModel).toBe('claude-sonnet-4-20250514');
 			expect(result.maxSessions).toBe(10);

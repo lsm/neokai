@@ -32,7 +32,7 @@ import type {
 import type { Session, ContextInfo } from '@neokai/shared';
 import { STATE_CHANNELS } from '@neokai/shared';
 
-const VERSION = '0.1.0';
+const VERSION = '0.1.1';
 const CLAUDE_SDK_VERSION = '0.1.37';
 const startTime = Date.now();
 

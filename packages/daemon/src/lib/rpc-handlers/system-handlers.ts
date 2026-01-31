@@ -8,7 +8,7 @@ import type { AuthManager } from '../auth-manager';
 import type { Config } from '../../config';
 import type { HealthStatus, DaemonConfig } from '@neokai/shared';
 
-const VERSION = '0.1.0';
+const VERSION = '0.1.1';
 const CLAUDE_SDK_VERSION = '0.1.37'; // TODO: Get dynamically
 const startTime = Date.now();
 
