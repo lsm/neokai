@@ -2,7 +2,7 @@
  * Unit tests for Anthropic Provider
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { AnthropicProvider } from '../../../src/lib/providers/anthropic-provider';
 
 describe('AnthropicProvider', () => {
@@ -110,6 +110,32 @@ describe('AnthropicProvider', () => {
 			// Should return empty array quickly (< 100ms)
 			expect(models).toEqual([]);
 			expect(duration).toBeLessThan(100);
+		});
+	});
+
+	describe('getModels with SDK failure', () => {
+		it('should return empty array when SDK loading fails', async () => {
+			// Set credentials so SDK load is attempted
+			process.env.ANTHROPIC_API_KEY = 'test-key';
+
+			// Mock the SDK module with a query that fails when supportedModels is called
+			mock.module('@anthropic-ai/claude-agent-sdk', () => ({
+				query: async () => ({
+					interrupt: () => {},
+					supportedModels: async () => {
+						throw new Error('SDK unavailable');
+					},
+				}),
+			}));
+
+			// Clear cache to force fresh load
+			const providerWithCreds = new AnthropicProvider();
+			providerWithCreds.clearModelCache();
+
+			const models = await providerWithCreds.getModels();
+
+			// Should return empty array when SDK fails
+			expect(models).toEqual([]);
 		});
 	});
 
