@@ -267,10 +267,17 @@ describe('InputActionsMenu', () => {
 			expect(onClose).toHaveBeenCalled();
 		});
 
-		it('should not show Rewind Mode when onEnterRewindMode is not provided', () => {
-			const { container } = render(<InputActionsMenu {...defaultProps} isOpen={true} />);
-			const text = container.textContent;
-			expect(text).not.toContain('Rewind Mode');
+		it('should close menu when Rewind Mode clicked without onEnterRewindMode', () => {
+			const onClose = vi.fn(() => {});
+			const { container } = render(
+				<InputActionsMenu {...defaultProps} isOpen={true} onClose={onClose} />
+			);
+
+			const buttons = container.querySelectorAll('button');
+			const rewindButton = Array.from(buttons).find((b) => b.textContent?.includes('Rewind'));
+			rewindButton?.click();
+
+			expect(onClose).toHaveBeenCalled();
 		});
 	});
 });
