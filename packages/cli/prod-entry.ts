@@ -12,7 +12,9 @@ import { startProdServer } from './src/prod-server-embedded';
 // virtual filesystem (/$bunfs/root/), making it accessible at runtime.
 // Without this, the SDK cannot find its CLI executable in bundled binaries.
 // @ts-ignore -- Bun-specific import attribute
-import embeddedSdkCliPath from '../daemon/node_modules/@anthropic-ai/claude-agent-sdk/cli.js' with { type: 'file' };
+import embeddedSdkCliPath from '../daemon/node_modules/@anthropic-ai/claude-agent-sdk/cli.js' with {
+	type: 'file',
+};
 import { setEmbeddedCliPath } from '@neokai/daemon/sdk-cli-resolver';
 setEmbeddedCliPath(embeddedSdkCliPath);
 
