@@ -1,7 +1,7 @@
-# E2E Quick - Fast E2E tests with coverage collection
+# E2E Quick - Fast E2E tests for PRs
 #
 # Runs representative E2E tests (~11 tests) with BOTH server and browser coverage.
-# For full E2E test suite (70+ tests), use e2e-matrix.yml (manual trigger).
+# For full E2E test suite (70+ tests against compiled binary), see ci.yml (main/tags).
 #
 # Server coverage: Bun test --coverage instruments daemon/shared code running in-process
 # Browser coverage: Playwright CDP collects V8 coverage from browser
@@ -10,7 +10,7 @@ name: E2E Quick
 
 on:
   push:
-    branches: [main, develop]
+    branches: [develop]
   pull_request:
     branches: [main, develop]
   workflow_dispatch:

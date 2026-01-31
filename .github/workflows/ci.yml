@@ -1,0 +1,429 @@
+# CI - Unified build, test, and release pipeline
+#
+# On push to main or version tags:
+# 1. Build linux-x64 binary + smoke test
+# 2. Run full E2E test matrix against the binary
+# 3. If a version tag exists: build all platforms, package, and publish to npm
+#
+# Browser coverage is collected from Playwright (no server coverage from binary).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ============================================
+  # BUILD - Compile linux-x64 binary + smoke test
+  # ============================================
+  build:
+    name: Build Binary (linux-x64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.6
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build web frontend
+        run: cd packages/web && bun run build
+
+      - name: Generate embedded assets
+        run: bun run scripts/generate-embedded-assets.ts
+
+      - name: Compile binary
+        run: bun build --compile --target=bun-linux-x64 --outfile=dist/bin/kai-linux-x64 packages/cli/prod-entry.ts
+
+      - name: Smoke test
+        run: bun run scripts/smoke-test.ts ./dist/bin/kai-linux-x64
+        env:
+          GLM_API_KEY: smoke-test
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kai-linux-x64-e2e
+          path: dist/bin/kai-linux-x64
+
+  # ============================================
+  # DISCOVER TESTS
+  # Auto-discover test files from the e2e tests directory
+  # ============================================
+  discover:
+    name: Discover Tests
+    runs-on: ubuntu-latest
+    outputs:
+      tests: ${{ steps.find-tests.outputs.tests }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find E2E test files
+        id: find-tests
+        run: |
+          # Find all .e2e.ts files in the tests directory (not subdirectories)
+          # Convert to JSON array of test names (without .e2e.ts extension)
+          tests=$(find packages/e2e/tests -maxdepth 1 -name "*.e2e.ts" -type f | \
+            xargs -I{} basename {} .e2e.ts | \
+            sort | \
+            jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "Found tests: $tests"
+          echo "tests=$tests" >> $GITHUB_OUTPUT
+
+  # ============================================
+  # E2E TESTS (Matrix)
+  # Run each test against the compiled binary
+  # ============================================
+  e2e:
+    name: E2E (${{ matrix.test }})
+    runs-on: ubuntu-latest
+    needs: [build, discover]
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        test: ${{ fromJson(needs.discover.outputs.tests) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.6
+
+      - name: Install dependencies
+        run: |
+          echo "Starting bun install at $(date)"
+          timeout 180 bun install --verbose 2>&1 || {
+            echo "bun install timed out or failed"
+            exit 1
+          }
+          echo "Finished bun install at $(date)"
+
+      - name: Install Playwright browsers
+        run: cd packages/e2e && bunx playwright install chromium
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: kai-linux-x64-e2e
+          path: dist/bin/
+
+      - name: Run E2E test against binary (${{ matrix.test }})
+        run: |
+          # Make binary executable
+          chmod +x dist/bin/kai-linux-x64
+
+          # Create workspace for the binary
+          WORKSPACE=$(mktemp -d)
+
+          # Find a free port
+          PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
+
+          echo "Starting binary on port $PORT with workspace $WORKSPACE"
+
+          # Start binary in background
+          ./dist/bin/kai-linux-x64 --port "$PORT" "$WORKSPACE" &
+          BINARY_PID=$!
+
+          # Ensure cleanup on exit
+          trap 'kill $BINARY_PID 2>/dev/null; rm -rf "$WORKSPACE"' EXIT
+
+          # Wait for server to be ready (up to 30s)
+          for i in $(seq 1 60); do
+            if curl -s "http://localhost:$PORT/" > /dev/null 2>&1; then
+              echo "Server ready on port $PORT (PID $BINARY_PID)"
+              break
+            fi
+            if ! kill -0 $BINARY_PID 2>/dev/null; then
+              echo "Binary process died unexpectedly"
+              exit 1
+            fi
+            sleep 0.5
+          done
+
+          # Verify server is responding
+          if ! curl -s "http://localhost:$PORT/" > /dev/null 2>&1; then
+            echo "Server failed to start within 30s"
+            exit 1
+          fi
+
+          # Set the base URL for Playwright to connect to the binary
+          export PLAYWRIGHT_BASE_URL="http://localhost:$PORT"
+
+          # Run Playwright test
+          cd packages/e2e
+          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
+            bunx playwright test "tests/${{ matrix.test }}.e2e.ts"
+        env:
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+          DEFAULT_MODEL: haiku
+          CI: true
+          COVERAGE: true
+
+      - name: Upload browser coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-e2e-browser-${{ matrix.test }}
+          path: packages/e2e/coverage/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-results-${{ matrix.test }}
+          path: |
+            packages/e2e/test-results/
+            packages/e2e/playwright-report/
+          retention-days: 7
+
+  # ============================================
+  # UPLOAD COVERAGE (Single upload after all tests)
+  # Merges browser coverage files and uploads to Codecov
+  # ============================================
+  upload-coverage:
+    name: Upload Coverage
+    runs-on: ubuntu-latest
+    needs: e2e
+    if: always()
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-e2e-browser-*
+          path: coverage-artifacts
+          merge-multiple: false
+
+      - name: Merge browser coverage files
+        run: |
+          mkdir -p merged-coverage
+
+          FIRST=true
+          for f in $(find coverage-artifacts -name "lcov.info" -type f 2>/dev/null); do
+            echo "Adding coverage from: $f"
+            if [ "$FIRST" = true ]; then
+              cp "$f" merged-coverage/browser-lcov.info
+              FIRST=false
+            else
+              cat "$f" >> merged-coverage/browser-lcov.info
+            fi
+          done
+
+          if [ -f merged-coverage/browser-lcov.info ]; then
+            echo "Merged browser coverage file created"
+            wc -l merged-coverage/browser-lcov.info
+          else
+            echo "No browser coverage files to merge"
+          fi
+
+      - name: Upload browser coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: merged-coverage/browser-lcov.info
+          flags: e2e-browser
+          fail_ci_if_error: false
+
+  # ============================================
+  # CHECK RELEASE TAG
+  # Determine if current commit has a version tag
+  # ============================================
+  check-release:
+    name: Check Release
+    runs-on: ubuntu-latest
+    needs: e2e
+    outputs:
+      is_release: ${{ steps.check.outputs.is_release }}
+      version: ${{ steps.check.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for version tag
+        id: check
+        run: |
+          VERSION_TAG=$(git tag --points-at HEAD | grep '^v' | head -1)
+          if [ -n "$VERSION_TAG" ]; then
+            echo "is_release=true" >> $GITHUB_OUTPUT
+            echo "version=${VERSION_TAG#v}" >> $GITHUB_OUTPUT
+            echo "Found release tag: $VERSION_TAG (version: ${VERSION_TAG#v})"
+          else
+            echo "is_release=false" >> $GITHUB_OUTPUT
+            echo "version=" >> $GITHUB_OUTPUT
+            echo "No release tag found on HEAD"
+          fi
+
+  # ============================================
+  # RELEASE BUILD (conditional)
+  # Build binaries for all platforms
+  # ============================================
+  release-build:
+    name: Release Build ${{ matrix.binary }}
+    runs-on: ${{ matrix.runner }}
+    needs: check-release
+    if: needs.check-release.outputs.is_release == 'true'
+    timeout-minutes: 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            target: bun-darwin-arm64
+            binary: kai-darwin-arm64
+            smoke: true
+          - runner: macos-15-intel
+            target: bun-darwin-x64
+            binary: kai-darwin-x64
+            smoke: true
+          - runner: ubuntu-latest
+            target: bun-linux-x64
+            binary: kai-linux-x64
+            smoke: true
+          - runner: ubuntu-latest
+            target: bun-linux-arm64
+            binary: kai-linux-arm64
+            smoke: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.6
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build web frontend
+        run: cd packages/web && bun run build
+
+      - name: Generate embedded assets
+        run: bun run scripts/generate-embedded-assets.ts
+
+      - name: Compile binary
+        run: bun build --compile --target=${{ matrix.target }} --outfile=dist/bin/${{ matrix.binary }} packages/cli/prod-entry.ts
+
+      - name: Smoke test
+        if: matrix.smoke
+        run: bun run scripts/smoke-test.ts ./dist/bin/${{ matrix.binary }}
+        env:
+          GLM_API_KEY: smoke-test
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary }}
+          path: dist/bin/${{ matrix.binary }}
+
+  # ============================================
+  # PACKAGE (conditional)
+  # Create npm packages from built binaries
+  # ============================================
+  package:
+    name: Package npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [check-release, release-build]
+    if: needs.check-release.outputs.is_release == 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.6
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/bin/
+
+      - name: Move binaries to expected locations
+        run: |
+          mkdir -p dist/bin-flat
+          for dir in dist/bin/kai-*; do
+            binary=$(basename "$dir")
+            mv "$dir/$binary" "dist/bin-flat/$binary"
+            chmod +x "dist/bin-flat/$binary"
+          done
+          rm -rf dist/bin
+          mv dist/bin-flat dist/bin
+
+      - name: Package npm packages
+        run: bun run scripts/package-npm.ts --version ${{ needs.check-release.outputs.version }}
+
+      - name: Upload npm packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-packages
+          path: dist/npm/
+
+  # ============================================
+  # PUBLISH (conditional)
+  # Publish packages to npm registry
+  # ============================================
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [check-release, package]
+    if: needs.check-release.outputs.is_release == 'true'
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download npm packages
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-packages
+          path: dist/npm/
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Upgrade npm for Trusted Publishing support
+        run: npm install -g npm@latest
+
+      - name: Publish platform packages
+        run: |
+          for pkg in dist/npm/cli-*; do
+            echo "Publishing $(basename $pkg)..."
+            (cd "$pkg" && npm publish --access public --provenance) || echo "::warning::Failed to publish $(basename $pkg), may already exist"
+          done
+
+      - name: Publish main package
+        run: |
+          cd dist/npm/neokai && npm publish --access public --provenance || echo "::warning::Failed to publish neokai, may already exist"
