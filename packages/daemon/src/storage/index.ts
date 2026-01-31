@@ -170,3 +170,4 @@ export class Database {
 		this.core.close();
 	}
 }
+
