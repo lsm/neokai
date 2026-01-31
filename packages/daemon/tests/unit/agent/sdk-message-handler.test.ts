@@ -16,7 +16,6 @@ import type { Database } from '../../../src/storage/database';
 import type { ProcessingStateManager } from '../../../src/lib/agent/processing-state-manager';
 import type { ContextTracker } from '../../../src/lib/agent/context-tracker';
 import type { MessageQueue } from '../../../src/lib/agent/message-queue';
-import type { CheckpointTracker } from '../../../src/lib/agent/checkpoint-tracker';
 import type { ErrorManager } from '../../../src/lib/error-manager';
 import type { QueryLifecycleManager } from '../../../src/lib/agent/query-lifecycle-manager';
 
@@ -29,7 +28,6 @@ describe('SDKMessageHandler', () => {
 	let mockStateManager: ProcessingStateManager;
 	let mockContextTracker: ContextTracker;
 	let mockMessageQueue: MessageQueue;
-	let mockCheckpointTracker: CheckpointTracker;
 	let mockErrorManager: ErrorManager;
 	let mockLifecycleManager: QueryLifecycleManager;
 	let mockContext: SDKMessageHandlerContext;
@@ -46,7 +44,6 @@ describe('SDKMessageHandler', () => {
 	let getContextInfoSpy: ReturnType<typeof mock>;
 	let updateWithDetailedBreakdownSpy: ReturnType<typeof mock>;
 	let enqueueMessageSpy: ReturnType<typeof mock>;
-	let processMessageSpy: ReturnType<typeof mock>;
 	let handleErrorSpy: ReturnType<typeof mock>;
 	let lifecycleStopSpy: ReturnType<typeof mock>;
 	let messageQueueClearSpy: ReturnType<typeof mock>;
@@ -125,12 +122,6 @@ describe('SDKMessageHandler', () => {
 			clear: messageQueueClearSpy,
 		} as unknown as MessageQueue;
 
-		// CheckpointTracker spy
-		processMessageSpy = mock(() => {});
-		mockCheckpointTracker = {
-			processMessage: processMessageSpy,
-		} as unknown as CheckpointTracker;
-
 		// ErrorManager spy
 		handleErrorSpy = mock(async () => {});
 		mockErrorManager = {
@@ -152,7 +143,6 @@ describe('SDKMessageHandler', () => {
 			stateManager: mockStateManager,
 			contextTracker: mockContextTracker,
 			messageQueue: mockMessageQueue,
-			checkpointTracker: mockCheckpointTracker,
 			errorManager: mockErrorManager,
 			lifecycleManager: mockLifecycleManager,
 			queryObject: null,
@@ -253,33 +243,6 @@ describe('SDKMessageHandler', () => {
 			await handler.handleMessage(message);
 
 			expect((message as unknown as { isSynthetic: boolean }).isSynthetic).toBe(true);
-		});
-
-		it('should call checkpoint tracker processMessage', async () => {
-			const message: SDKMessage = {
-				type: 'user',
-				uuid: 'test-uuid',
-				message: { role: 'user', content: 'Hello' },
-			} as unknown as SDKMessage;
-
-			await handler.handleMessage(message);
-
-			expect(processMessageSpy).toHaveBeenCalledWith(message);
-		});
-
-		it('should handle checkpoint tracker errors gracefully', async () => {
-			processMessageSpy.mockImplementation(() => {
-				throw new Error('Checkpoint error');
-			});
-
-			const message: SDKMessage = {
-				type: 'assistant',
-				uuid: 'test-uuid',
-				message: { role: 'assistant', content: [] },
-			} as unknown as SDKMessage;
-
-			// Should not throw
-			await handler.handleMessage(message);
 		});
 	});
 
