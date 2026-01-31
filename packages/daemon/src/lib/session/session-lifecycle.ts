@@ -598,7 +598,8 @@ ${messageText.slice(0, 2000)}`;
 			// Merge provider env vars with parent process env vars
 			// This ensures inherited vars (like ANTHROPIC_API_KEY) are preserved
 			// while provider-specific vars (like ANTHROPIC_BASE_URL for GLM) override
-			const mergedEnv = { ...process.env, ...providerEnvVars };
+			const { mergeProviderEnvVars } = await import('@neokai/daemon/lib/provider-service');
+			const mergedEnv = mergeProviderEnvVars(providerEnvVars);
 
 			const agentQuery = query({
 				prompt,

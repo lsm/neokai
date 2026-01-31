@@ -536,6 +536,20 @@ export class ProviderService {
 	}
 }
 
+/**
+ * Merge provider environment variables with process.env
+ *
+ * This is used when spawning SDK subprocesses to ensure:
+ * - Provider-specific vars (like ANTHROPIC_BASE_URL) override defaults
+ * - Parent process vars (like ANTHROPIC_API_KEY) are inherited
+ *
+ * @param providerEnvVars - Provider-specific environment variables
+ * @returns Merged environment variables for subprocess
+ */
+export function mergeProviderEnvVars(providerEnvVars: ProviderEnvVars): NodeJS.ProcessEnv {
+	return { ...process.env, ...providerEnvVars };
+}
+
 // Singleton instance
 let providerServiceInstance: ProviderService | null = null;
 
