@@ -85,7 +85,7 @@ test.describe('Authentication Error Scenarios', () => {
 			hub.publish(
 				'state.system',
 				{
-					version: '0.1.0',
+					version: '0.1.1',
 					claudeSDKVersion: '0.1.37',
 					defaultModel: 'claude-sonnet-4-5-20250929',
 					maxSessions: 10,
@@ -97,7 +97,7 @@ test.describe('Authentication Error Scenarios', () => {
 					},
 					health: {
 						status: 'ok',
-						version: '0.1.0',
+						version: '0.1.1',
 						uptime: 0,
 						sessions: { active: 0, total: 0 },
 					},
