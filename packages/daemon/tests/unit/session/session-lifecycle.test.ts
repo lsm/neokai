@@ -13,21 +13,6 @@ import { describe, expect, it, beforeEach, mock } from 'bun:test';
 mock.module('@neokai/shared/sdk/type-guards', () => ({
 	isSDKAssistantMessage: (msg: { type: string }) => msg.type === 'assistant',
 }));
-
-// Create a mock provider service that can be configured per test
-// Returns undefined by default so most tests use fallback path
-let mockProviderService = {
-	getProviderApiKey: mock(() => undefined),
-	getDefaultProvider: mock(async () => 'anthropic' as const),
-	getTitleGenerationConfig: mock(async () => ({ modelId: 'claude-3-5-haiku' })),
-	applyEnvVarsToProcessForProvider: mock(() => ({})),
-	getEnvVarsForModel: mock(() => ({ ANTHROPIC_API_KEY: 'test-key' })),
-	restoreEnvVars: mock(() => {}),
-};
-
-mock.module('../../../src/lib/provider-service', () => ({
-	getProviderService: () => mockProviderService,
-}));
 import {
 	SessionLifecycle,
 	generateBranchName,
@@ -653,10 +638,14 @@ describe('SessionLifecycle', () => {
 			// Set the mock SDK query function
 			__setMockSdkQuery(() => createMockAgentQuery());
 
-			// Configure the mock provider service to return an API key
-			mockProviderService.getProviderApiKey.mockReturnValue('test-api-key');
+			// Set API key in environment so providerService.getProviderApiKey returns truthy
+			const originalApiKey = process.env.ANTHROPIC_API_KEY;
+			const originalOauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
 
 			try {
+				// Set API key to enable SDK path
+				process.env.ANTHROPIC_API_KEY = 'test-api-key';
+
 				const updateMetadataSpy = mock(() => {});
 
 				cacheHasSpy.mockReturnValue(true);
@@ -682,7 +671,17 @@ describe('SessionLifecycle', () => {
 			} finally {
 				// Reset for other tests
 				__setMockSdkQuery(undefined);
-				mockProviderService.getProviderApiKey.mockReturnValue(undefined);
+				// Restore original API key
+				if (originalApiKey === undefined) {
+					delete process.env.ANTHROPIC_API_KEY;
+				} else {
+					process.env.ANTHROPIC_API_KEY = originalApiKey;
+				}
+				if (originalOauthToken === undefined) {
+					delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+				} else {
+					process.env.CLAUDE_CODE_OAUTH_TOKEN = originalOauthToken;
+				}
 			}
 		});
 	});
