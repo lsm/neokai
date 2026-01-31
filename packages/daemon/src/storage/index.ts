@@ -12,7 +12,10 @@ import { DatabaseCore } from './database-core';
 import { SessionRepository } from './repositories/session-repository';
 import { SDKMessageRepository, type SendStatus } from './repositories/sdk-message-repository';
 import { SettingsRepository } from './repositories/settings-repository';
-export { runMigrations, runMigration12 } from './schema';
+// knip-ignore: Exported for database initialization
+export { runMigrations } from './schema';
+// knip-ignore: Exported for testing
+export { runMigration12 } from './schema';
 
 // Re-export components for direct access if needed
 export { DatabaseCore } from './database-core';
