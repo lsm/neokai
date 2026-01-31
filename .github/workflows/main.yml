@@ -9,7 +9,7 @@
 # 1. Skip tests (already ran on main)
 # 2. Build all platforms, package, and publish to npm
 #
-# Browser coverage is collected from Playwright (no server coverage from binary).
+# Unit test coverage (daemon, web) is uploaded to Codecov.
 
 name: CI
 
@@ -306,43 +306,6 @@ jobs:
         run: bun test
 
   # ============================================
-  # GATE - All unit/integration tests must pass
-  # ============================================
-
-  all-tests-pass:
-    name: All Package Tests Pass
-    runs-on: ubuntu-latest
-    timeout-minutes: 1
-    if: always() && github.ref_type != 'tag'
-    needs:
-      - check
-      - test-daemon-offline
-      - test-daemon-online
-      - test-daemon-shared-unit
-      - test-web
-      - test-cli
-
-    steps:
-      - name: Check all jobs passed
-        run: |
-          if [[ "${{ needs.check.result }}" != "success" ]] || \
-             [[ "${{ needs.test-daemon-offline.result }}" != "success" ]] || \
-             [[ "${{ needs.test-daemon-online.result }}" != "success" ]] || \
-             [[ "${{ needs.test-daemon-shared-unit.result }}" != "success" ]] || \
-             [[ "${{ needs.test-web.result }}" != "success" ]] || \
-             [[ "${{ needs.test-cli.result }}" != "success" ]]; then
-            echo "One or more jobs failed:"
-            echo "  check: ${{ needs.check.result }}"
-            echo "  test-daemon-offline: ${{ needs.test-daemon-offline.result }}"
-            echo "  test-daemon-online: ${{ needs.test-daemon-online.result }}"
-            echo "  test-daemon-shared-unit: ${{ needs.test-daemon-shared-unit.result }}"
-            echo "  test-web: ${{ needs.test-web.result }}"
-            echo "  test-cli: ${{ needs.test-cli.result }}"
-            exit 1
-          fi
-          echo "All package tests passed!"
-
-  # ============================================
   # BUILD - Compile linux-x64 binary + smoke test
   # Runs after all unit/integration tests pass
   # ============================================
@@ -350,7 +313,7 @@ jobs:
   build:
     name: Build Binary (linux-x64)
     runs-on: ubuntu-latest
-    needs: [all-tests-pass]
+    needs: [check, test-daemon-offline, test-daemon-online, test-daemon-shared-unit, test-web, test-cli]
     if: github.ref_type != 'tag'
     timeout-minutes: 10
 
@@ -549,16 +512,6 @@ jobs:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           DEFAULT_MODEL: sonnet
           CI: true
-          COVERAGE: true
-
-      - name: Upload browser coverage artifact
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coverage-e2e-browser-${{ matrix.test }}
-          path: packages/e2e/coverage/lcov.info
-          retention-days: 1
-          if-no-files-found: ignore
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -649,16 +602,6 @@ jobs:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           DEFAULT_MODEL: sonnet
           CI: true
-          COVERAGE: true
-
-      - name: Upload browser coverage artifact
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coverage-e2e-browser-${{ matrix.test }}
-          path: packages/e2e/coverage/lcov.info
-          retention-days: 1
-          if-no-files-found: ignore
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -671,57 +614,47 @@ jobs:
           retention-days: 7
 
   # ============================================
-  # UPLOAD COVERAGE (Single upload after all E2E tests)
-  # Merges browser coverage files and uploads to Codecov
+  # GATE - All tests (unit, integration, E2E) must pass
   # ============================================
 
-  upload-coverage:
-    name: Upload Coverage
+  all-tests-pass:
+    name: All Tests Pass
     runs-on: ubuntu-latest
-    needs: [e2e, e2e-llm]
+    timeout-minutes: 1
     if: always() && github.ref_type != 'tag'
-    timeout-minutes: 5
+    needs:
+      - check
+      - test-daemon-offline
+      - test-daemon-online
+      - test-daemon-shared-unit
+      - test-web
+      - test-cli
+      - e2e
+      - e2e-llm
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Download all coverage artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: coverage-e2e-browser-*
-          path: coverage-artifacts
-          merge-multiple: false
-
-      - name: Merge browser coverage files
+      - name: Check all jobs passed
         run: |
-          mkdir -p merged-coverage
-
-          FIRST=true
-          for f in $(find coverage-artifacts -name "lcov.info" -type f 2>/dev/null); do
-            echo "Adding coverage from: $f"
-            if [ "$FIRST" = true ]; then
-              cp "$f" merged-coverage/browser-lcov.info
-              FIRST=false
-            else
-              cat "$f" >> merged-coverage/browser-lcov.info
-            fi
-          done
-
-          if [ -f merged-coverage/browser-lcov.info ]; then
-            echo "Merged browser coverage file created"
-            wc -l merged-coverage/browser-lcov.info
-          else
-            echo "No browser coverage files to merge"
+          if [[ "${{ needs.check.result }}" != "success" ]] || \
+             [[ "${{ needs.test-daemon-offline.result }}" != "success" ]] || \
+             [[ "${{ needs.test-daemon-online.result }}" != "success" ]] || \
+             [[ "${{ needs.test-daemon-shared-unit.result }}" != "success" ]] || \
+             [[ "${{ needs.test-web.result }}" != "success" ]] || \
+             [[ "${{ needs.test-cli.result }}" != "success" ]] || \
+             [[ "${{ needs.e2e.result }}" != "success" ]] || \
+             [[ "${{ needs.e2e-llm.result }}" != "success" ]]; then
+            echo "One or more jobs failed:"
+            echo "  check: ${{ needs.check.result }}"
+            echo "  test-daemon-offline: ${{ needs.test-daemon-offline.result }}"
+            echo "  test-daemon-online: ${{ needs.test-daemon-online.result }}"
+            echo "  test-daemon-shared-unit: ${{ needs.test-daemon-shared-unit.result }}"
+            echo "  test-web: ${{ needs.test-web.result }}"
+            echo "  test-cli: ${{ needs.test-cli.result }}"
+            echo "  e2e: ${{ needs.e2e.result }}"
+            echo "  e2e-llm: ${{ needs.e2e-llm.result }}"
+            exit 1
           fi
-
-      - name: Upload browser coverage to Codecov
-        uses: codecov/codecov-action@v4
-        if: always()
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: merged-coverage/browser-lcov.info
-          flags: e2e-browser
-          fail_ci_if_error: false
+          echo "All tests passed!"
 
   # ============================================
   # CHECK RELEASE TAG
