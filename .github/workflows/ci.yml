@@ -170,6 +170,7 @@ jobs:
             bunx playwright test "tests/${{ matrix.test }}.e2e.ts"
         env:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           DEFAULT_MODEL: haiku
           CI: true
           COVERAGE: true
