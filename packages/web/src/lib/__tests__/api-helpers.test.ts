@@ -944,6 +944,106 @@ describe('api-helpers', () => {
 				);
 			});
 		});
+
+		describe('executeSelectiveRewind', () => {
+			it('should execute selective rewind with message IDs', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						result: {
+							success: true,
+							messagesDeleted: 5,
+							filesReverted: ['file1.ts', 'file2.ts'],
+						},
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				const result = await apiHelpers.executeSelectiveRewind('sess-123', [
+					'msg-uuid-1',
+					'msg-uuid-2',
+				]);
+
+				expect(result).toEqual({
+					result: {
+						success: true,
+						messagesDeleted: 5,
+						filesReverted: ['file1.ts', 'file2.ts'],
+					},
+				});
+				expect(mockHub.call).toHaveBeenCalledWith('rewind.executeSelective', {
+					sessionId: 'sess-123',
+					messageIds: ['msg-uuid-1', 'msg-uuid-2'],
+				});
+			});
+
+			it('should handle selective rewind failure', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						result: {
+							success: false,
+							error: 'Failed to rewind',
+							messagesDeleted: 0,
+							filesReverted: [],
+						},
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				const result = await apiHelpers.executeSelectiveRewind('sess-123', ['msg-1']);
+
+				expect(result.result.success).toBe(false);
+				expect(result.result.error).toBe('Failed to rewind');
+			});
+
+			it('should throw ConnectionNotReadyError when not connected', async () => {
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(null);
+
+				await expect(apiHelpers.executeSelectiveRewind('sess-123', ['msg-1'])).rejects.toThrow(
+					'Not connected to server'
+				);
+			});
+
+			it('should handle single message ID', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({
+						result: {
+							success: true,
+							messagesDeleted: 2,
+							filesReverted: ['file1.ts'],
+						},
+					}),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				const result = await apiHelpers.executeSelectiveRewind('sess-123', ['msg-1']);
+
+				expect(result.result.success).toBe(true);
+				expect(mockHub.call).toHaveBeenCalledWith('rewind.executeSelective', {
+					sessionId: 'sess-123',
+					messageIds: ['msg-1'],
+				});
+			});
+		});
 	});
 
 	describe('Non-blocking pattern', () => {

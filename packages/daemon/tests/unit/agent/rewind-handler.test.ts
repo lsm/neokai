@@ -491,6 +491,14 @@ describe('RewindHandler', () => {
 			expect(result.error).toContain('SDK query not active');
 		});
 
+		it('should return error when firstMessageReceived is false', async () => {
+			handler = createHandler({ firstMessageReceived: false });
+			const result = await handler.previewSelectiveRewind([testRewindPoint.uuid]);
+
+			expect(result.canRewind).toBe(false);
+			expect(result.error).toContain('SDK not ready');
+		});
+
 		it('should return error when no valid messages found', async () => {
 			mockDb.getSDKMessages = mock(() => [{ uuid: 'different-uuid', timestamp: 1000 }]);
 			handler = createHandler();
@@ -526,6 +534,14 @@ describe('RewindHandler', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('SDK query not active');
+		});
+
+		it('should return error when firstMessageReceived is false', async () => {
+			handler = createHandler({ firstMessageReceived: false });
+			const result = await handler.executeSelectiveRewind([testRewindPoint.uuid]);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('SDK not ready');
 		});
 
 		it('should rewind files, delete messages, and restart query', async () => {
