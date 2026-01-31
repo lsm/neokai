@@ -432,7 +432,7 @@ jobs:
     name: Release Build ${{ matrix.binary }}
     runs-on: ${{ matrix.runner }}
     needs: check-release
-    if: needs.check-release.outputs.is_release == 'true'
+    if: needs.check-release.result == 'success' && needs.check-release.outputs.is_release == 'true'
     timeout-minutes: 10
 
     strategy:
@@ -497,7 +497,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: [check-release, release-build]
-    if: needs.check-release.outputs.is_release == 'true'
+    if: needs.check-release.result == 'success' && needs.check-release.outputs.is_release == 'true'
 
     steps:
       - uses: actions/checkout@v4
@@ -547,7 +547,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: [check-release, package]
-    if: needs.check-release.outputs.is_release == 'true'
+    if: needs.check-release.result == 'success' && needs.check-release.outputs.is_release == 'true'
     permissions:
       contents: read
       id-token: write
