@@ -1,52 +1,55 @@
 # NeoKai
 
-[![CI](https://github.com/lsm/neokai/actions/workflows/package-tests.yml/badge.svg)](https://github.com/lsm/neokai/actions/workflows/package-tests.yml)
-[![E2E](https://github.com/lsm/neokai/actions/workflows/e2e-quick.yml/badge.svg)](https://github.com/lsm/neokai/actions/workflows/e2e-quick.yml)
+[![CI](https://github.com/lsm/neokai/actions/workflows/main.yml/badge.svg)](https://github.com/lsm/neokai/actions/workflows/main.yml)
 [![codecov](https://codecov.io/gh/lsm/neokai/graph/badge.svg)](https://codecov.io/gh/lsm/neokai)
 
-Web-based interface for Claude Agent SDK, enabling multi-session agent conversations.
+Claude Code web UI for coding, life, and anything in between.
 
-## Coverage
+Run `kai` in any directory to get a full-featured web interface for Claude right in your browser. Manage multiple conversations at once, switch models on the fly, and let the agent read, write, and run code in your project — all from a clean, responsive UI.
 
-| Package | Coverage |
-|---------|----------|
-| Daemon | [![daemon](https://codecov.io/gh/lsm/neokai/graph/badge.svg?flag=daemon)](https://codecov.io/gh/lsm/neokai?flags[0]=daemon) |
-| Web | [![web](https://codecov.io/gh/lsm/neokai/graph/badge.svg?flag=web)](https://codecov.io/gh/lsm/neokai?flags[0]=web) |
-| E2E | [![e2e](https://codecov.io/gh/lsm/neokai/graph/badge.svg?flag=e2e-matrix)](https://codecov.io/gh/lsm/neokai?flags[0]=e2e-matrix) |
-
-## Packages
-
-| Package | Description |
-|---------|-------------|
-| `@neokai/cli` | Unified server (daemon + web) |
-| `@neokai/daemon` | Backend wrapping Claude Agent SDK |
-| `@neokai/web` | Preact + Signals UI |
-| `@neokai/shared` | Types, MessageHub, utilities |
-| `@neokai/e2e` | End-to-end tests |
-
-## Installation
+## Quick start
 
 ```bash
-bun install
+npm install -g neokai
+export ANTHROPIC_API_KEY=sk-ant-...
+kai
 ```
 
-## Development
+Open `http://localhost:9283` and start a conversation.
 
-```bash
-make dev          # Start dev server (port 9283)
-make self         # Use kai to develop kai :)
-make typecheck    # Type check
-make lint         # Lint code
+## Features
+
+- **Multi-session conversations** — run multiple independent agent sessions side by side
+- **Model switching** — swap between Sonnet, Opus, and Haiku mid-conversation
+- **File and git operations** — the agent reads, writes, and commits within your workspace
+- **MCP server support** — connect external tools via the Model Context Protocol
+- **Rewind and checkpoints** — roll back file changes or conversation history to any point
+- **Extended thinking** — enable thinking mode with configurable token budgets (8k/16k/32k)
+- **macOS and Linux** — native binaries for darwin-arm64, darwin-x64, linux-x64, and linux-arm64
+
+## Authentication
+
+Set one of these environment variables before starting:
+
+| Variable | Description |
+|----------|-------------|
+| `ANTHROPIC_API_KEY` | Anthropic API key (recommended) |
+| `CLAUDE_CODE_OAUTH_TOKEN` | OAuth token from Claude Code |
+
+## Usage
+
+```
+kai [path] [options]
 ```
 
-## Testing
+| Option | Default | Description |
+|--------|---------|-------------|
+| `path` | `.` | Workspace directory |
+| `-p, --port` | `9283` | Port to listen on |
+| `--host` | `0.0.0.0` | Host to bind to |
+| `--db-path` | `./data/daemon.db` | Database location |
+| `-V, --version` | | Show version number |
 
-```bash
-# Unit tests
-bun run test:daemon     # Daemon tests
-bun run test:web        # Web tests (vitest)
-bun run test:shared     # Shared tests
+## License
 
-# E2E tests
-bun run test:e2e        # All E2E tests
-```
+[Apache-2.0](LICENSE)
