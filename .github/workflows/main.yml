@@ -6,7 +6,7 @@
 # 3. Run full E2E test matrix against the binary
 #
 # On version tags (v*):
-# 1. Skip tests (already ran on main)
+# 1. Verify commit has a successful CI run on main with all tests passed
 # 2. Build all platforms, package, and publish to npm
 #
 # Unit test coverage (daemon, web) is uploaded to Codecov.
@@ -659,7 +659,8 @@ jobs:
   # ============================================
   # CHECK RELEASE TAG
   # Determine if current commit has a version tag
-  # On tags, verify commit was tested on main via API
+  # On tags, verify commit had a successful CI run on main
+  # AND the "All Tests Pass" gate check succeeded
   # ============================================
 
   check-release:
@@ -678,7 +679,8 @@ jobs:
         if: github.ref_type == 'tag'
         run: |
           echo "Verifying commit $GITHUB_SHA was tested on main branch..."
-          # Check GitHub Actions CI runs for this commit on main branch
+
+          # 1. Check that this commit has a successful CI workflow run on main
           RUNS=$(gh api \
             -H "Accept: application/vnd.github+json" \
             "/repos/${{ github.repository }}/actions/runs?head_sha=$GITHUB_SHA&branch=main&status=success&per_page=1" \
@@ -691,6 +693,27 @@ jobs:
           fi
 
           echo "Commit $GITHUB_SHA has $RUNS successful CI run(s) on main branch"
+
+          # 2. Verify the "All Tests Pass" gate check completed successfully
+          #    This is the explicit gate job that requires all test jobs to pass
+          GATE_CONCLUSION=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${{ github.repository }}/commits/$GITHUB_SHA/check-runs?check_name=All+Tests+Pass&per_page=1" \
+            --jq '.check_runs[0].conclusion // empty')
+
+          if [ -z "$GATE_CONCLUSION" ]; then
+            echo "ERROR: No 'All Tests Pass' check run found for commit $GITHUB_SHA"
+            echo "This commit was never fully tested - cannot release"
+            exit 1
+          fi
+
+          if [ "$GATE_CONCLUSION" != "success" ]; then
+            echo "ERROR: 'All Tests Pass' check has conclusion '$GATE_CONCLUSION' (expected 'success')"
+            echo "Cannot release a commit with failing tests"
+            exit 1
+          fi
+
+          echo "All tests passed for commit $GITHUB_SHA (gate check: $GATE_CONCLUSION)"
         env:
           GH_TOKEN: ${{ github.token }}
 
