@@ -15,6 +15,12 @@ if (error) {
 	}
 }
 
+if (cliOptions.version) {
+	const pkg = await import('./package.json');
+	console.log(pkg.version);
+	process.exit(0);
+}
+
 if (cliOptions.help) {
 	console.log(getHelpText());
 	process.exit(0);

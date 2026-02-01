@@ -32,6 +32,18 @@ describe('parseArgs', () => {
 		expect(result.error).toBeUndefined();
 	});
 
+	test('parses --version flag', () => {
+		const result = parseArgs(['--version']);
+		expect(result.options.version).toBe(true);
+		expect(result.error).toBeUndefined();
+	});
+
+	test('parses -V flag', () => {
+		const result = parseArgs(['-V']);
+		expect(result.options.version).toBe(true);
+		expect(result.error).toBeUndefined();
+	});
+
 	test('parses --port with valid value', () => {
 		const result = parseArgs(['--port', '9283']);
 		expect(result.options.port).toBe(9283);
@@ -172,6 +184,8 @@ describe('getHelpText', () => {
 		expect(helpText).toContain('-w');
 		expect(helpText).toContain('--host');
 		expect(helpText).toContain('--db-path');
+		expect(helpText).toContain('--version');
+		expect(helpText).toContain('-V');
 		expect(helpText).toContain('--help');
 		expect(helpText).toContain('-h');
 	});

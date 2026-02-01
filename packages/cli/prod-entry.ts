@@ -6,6 +6,7 @@
 import { getConfig } from '@neokai/daemon/config';
 import { parseArgs, getHelpText } from './src/cli-utils';
 import { startProdServer } from './src/prod-server-embedded';
+import { version } from './package.json';
 
 // Embed the Claude Agent SDK's CLI into the compiled binary.
 // The { type: "file" } attribute tells Bun to include this file in its
@@ -25,6 +26,11 @@ if (error) {
 	if (!cliOptions.help) {
 		process.exit(1);
 	}
+}
+
+if (cliOptions.version) {
+	console.log(version);
+	process.exit(0);
 }
 
 if (cliOptions.help) {

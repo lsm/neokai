@@ -9,6 +9,7 @@ export interface CliOptions {
 	host?: string;
 	dbPath?: string;
 	help?: boolean;
+	version?: boolean;
 }
 
 export interface ParseArgsResult {
@@ -28,6 +29,8 @@ export function parseArgs(args: string[]): ParseArgsResult {
 
 		if (arg === '--help' || arg === '-h') {
 			options.help = true;
+		} else if (arg === '--version' || arg === '-V') {
+			options.version = true;
 		} else if (arg === '--port' || arg === '-p') {
 			const portValue = args[++i];
 			if (portValue && !isNaN(Number(portValue))) {
@@ -76,7 +79,7 @@ export function parseArgs(args: string[]): ParseArgsResult {
  */
 export function getHelpText(): string {
 	return `
-NeoKai - Claude Agent SDK Web Interface
+NeoKai - Claude Code web UI for coding, life, and anything in between
 
 Usage: kai [path] [options]
 
@@ -88,6 +91,7 @@ Options:
   -w, --workspace <path>    Alias for path argument
   --host <host>             Host to bind to (default: 0.0.0.0)
   --db-path <path>          Database file path (default: ./data/daemon.db)
+  -V, --version             Show version number
   -h, --help                Show this help message
 
 Environment Variables:
