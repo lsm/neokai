@@ -193,6 +193,19 @@ export function GlobalSettingsEditor() {
 		}
 	};
 
+	const handleCoordinatorModeChange = async (value: boolean) => {
+		try {
+			setSaving(true);
+			await updateGlobalSettings({ coordinatorMode: value });
+			showSavedIndicator('coordinatorMode');
+		} catch (error) {
+			console.error('Failed to update coordinator mode:', error);
+			toast.error('Failed to update coordinator mode');
+		} finally {
+			setSaving(false);
+		}
+	};
+
 	const handleSettingSourceToggle = async (source: SettingSource, enabled: boolean) => {
 		try {
 			setSaving(true);
@@ -269,6 +282,7 @@ export function GlobalSettingsEditor() {
 	const currentPermissionMode = settings.permissionMode || 'default';
 	const currentThinkingLevel = settings.thinkingLevel || 'auto';
 	const currentAutoScroll = settings.autoScroll ?? true;
+	const currentCoordinatorMode = settings.coordinatorMode ?? false;
 	const currentSources = settings.settingSources || ['user', 'project', 'local'];
 
 	// Saved checkmark component
@@ -393,6 +407,34 @@ export function GlobalSettingsEditor() {
 						<div class="text-sm text-gray-200 font-medium">Enabled</div>
 						<div class="text-xs text-gray-500">
 							Auto-scroll to bottom when new messages arrive in sessions
+						</div>
+					</div>
+				</label>
+			</div>
+
+			{/* Coordinator Mode Toggle */}
+			<div class="space-y-2">
+				<div class="flex items-center justify-between">
+					<label class="text-sm text-gray-400">Coordinator Mode</label>
+					<SavedIndicator field="coordinatorMode" />
+				</div>
+				<label
+					class={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+						currentCoordinatorMode
+							? `${borderColors.ui.secondary} bg-dark-800`
+							: 'border-dark-700 bg-dark-900 opacity-60'
+					}`}
+				>
+					<input
+						type="checkbox"
+						checked={currentCoordinatorMode}
+						onChange={(e) => handleCoordinatorModeChange((e.target as HTMLInputElement).checked)}
+						class="mt-0.5 w-4 h-4 rounded border-gray-600 bg-dark-900 text-purple-500 focus:ring-purple-500 focus:ring-offset-0"
+					/>
+					<div class="flex-1">
+						<div class="text-sm text-gray-200 font-medium">Enabled</div>
+						<div class="text-xs text-gray-500">
+							Main agent delegates all work to specialist subagents (requires query restart)
 						</div>
 					</div>
 				</label>

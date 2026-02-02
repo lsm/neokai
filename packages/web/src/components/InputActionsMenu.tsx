@@ -165,8 +165,6 @@ export function InputActionsMenu({
 						)}
 					</button>
 
-					<div class="h-px bg-dark-600" />
-
 					{/* Tools */}
 					<button
 						type="button"

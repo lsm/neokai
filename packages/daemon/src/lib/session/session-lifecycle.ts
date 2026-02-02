@@ -124,6 +124,7 @@ export class SessionLifecycle {
 				// Apply global settings defaults for autoScroll and thinkingLevel
 				autoScroll: params.config?.autoScroll ?? globalSettings.autoScroll,
 				thinkingLevel: params.config?.thinkingLevel ?? globalSettings.thinkingLevel,
+				coordinatorMode: params.config?.coordinatorMode ?? globalSettings.coordinatorMode,
 				permissionMode: params.config?.permissionMode,
 				// Provider: Allow explicit override, otherwise default to 'anthropic'
 				provider: params.config?.provider,

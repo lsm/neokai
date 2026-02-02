@@ -19,7 +19,14 @@
  */
 
 import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk/sdk';
-import type { Session, ThinkingLevel, SystemPromptConfig, ClaudeCodePreset } from '@neokai/shared';
+import type {
+	Session,
+	ThinkingLevel,
+	SystemPromptConfig,
+	ClaudeCodePreset,
+	AgentDefinition,
+} from '@neokai/shared';
+import { getCoordinatorAgents } from './coordinator-agents';
 import { THINKING_LEVEL_TOKENS } from '@neokai/shared';
 import type { PermissionMode } from '@neokai/shared/types/settings';
 import type { SettingsManager } from '../settings-manager';
@@ -123,6 +130,8 @@ export class QueryOptionsBuilder {
 			disallowedTools: disallowedTools.length > 0 ? disallowedTools : undefined,
 
 			// ============ Agents/Subagents ============
+			// agent: named agent for main thread (coordinator mode sets this)
+			agent: config.agent,
 			// Cast to SDK type - our AgentDefinition is compatible
 			agents: config.agents as Options['agents'],
 
@@ -178,6 +187,32 @@ export class QueryOptionsBuilder {
 			canUseTool: this.canUseTool,
 		};
 
+		// ============ Coordinator Mode ============
+		// When coordinator mode is enabled, apply the coordinator agent to the main thread
+		// and merge specialist agents with any user-defined agents
+		if (config.coordinatorMode) {
+			queryOptions.agent = 'coordinator';
+			const agents = getCoordinatorAgents(
+				config.agents as Record<string, AgentDefinition> | undefined
+			);
+
+			// Inject worktree isolation into specialist agents that modify files.
+			// The coordinator doesn't need it (it doesn't touch files), but subagents
+			// run as separate CLI processes that don't inherit the parent's systemPrompt.append.
+			if (this.ctx.session.worktree) {
+				const worktreeText = this.getWorktreeIsolationText();
+				for (const [name, agent] of Object.entries(agents)) {
+					if (name === 'coordinator') continue;
+					agents[name] = {
+						...agent,
+						prompt: agent.prompt + '\n\n' + worktreeText,
+					};
+				}
+			}
+
+			queryOptions.agents = agents as Options['agents'];
+		}
+
 		// Remove undefined values to use SDK defaults
 		const cleanedOptions = Object.fromEntries(
 			Object.entries(queryOptions).filter(([_, v]) => v !== undefined)
@@ -199,7 +234,9 @@ export class QueryOptionsBuilder {
 			spawnClaudeCodeProcess: typeof config.spawnClaudeCodeProcess, // Log if hook is present
 			allowedTools: cleanedOptions.allowedTools,
 			disallowedTools: cleanedOptions.disallowedTools,
+			agent: cleanedOptions.agent,
 			agents: cleanedOptions.agents ? Object.keys(cleanedOptions.agents) : undefined,
+			coordinatorMode: config.coordinatorMode ?? false,
 			sandbox: cleanedOptions.sandbox?.enabled,
 			mcpServers:
 				cleanedOptions.mcpServers === undefined

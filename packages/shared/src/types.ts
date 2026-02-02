@@ -197,6 +197,13 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
 	autoScroll?: boolean;
 
 	/**
+	 * Coordinator mode - main agent delegates all work to specialist subagents
+	 * When enabled, the main agent can only use Task, TodoWrite, AskUserQuestion
+	 * @default false
+	 */
+	coordinatorMode?: boolean;
+
+	/**
 	 * Thinking level for extended thinking
 	 * Maps to maxThinkingTokens in SDK options
 	 * @default 'auto'

@@ -20,7 +20,7 @@ import { useEffect, useRef, useCallback, useMemo, useState } from 'preact/hooks'
 import { useSignalEffect } from '@preact/signals';
 import type { MessageImage } from '@neokai/shared';
 import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import { updateSession } from '../lib/api-helpers.ts';
+import { updateSession, switchCoordinatorMode } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
 import { cn } from '../lib/utils.ts';
 import { connectionState } from '../lib/state.ts';
@@ -83,6 +83,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const [isInitialLoad, setIsInitialLoad] = useState(true);
 	const [localError, setLocalError] = useState<string | null>(null);
 	const [autoScroll, setAutoScroll] = useState(true);
+	const [coordinatorMode, setCoordinatorMode] = useState(true);
+	const [coordinatorSwitching, setCoordinatorSwitching] = useState(false);
 
 	// Track resolved questions to keep showing them in disabled state
 	// Map of toolUseId -> resolved question data
@@ -221,6 +223,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		if (info?.config.autoScroll !== undefined) {
 			setAutoScroll(info.config.autoScroll);
 		}
+		if (info?.config.coordinatorMode !== undefined) {
+			setCoordinatorMode(info.config.coordinatorMode);
+		}
 	});
 
 	// Sync context from sessionStore
@@ -276,6 +281,20 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		loading: modelLoading,
 		switchModel,
 	} = useModelSwitcher(sessionId);
+
+	// Model switch with processing confirmation
+	const handleModelSwitchWithConfirmation = useCallback(
+		async (modelId: string) => {
+			if (isProcessing) {
+				const confirmed = confirm(
+					'The agent is currently processing. Switching the model will interrupt the current operation. Continue?'
+				);
+				if (!confirmed) return;
+			}
+			await switchModel(modelId);
+		},
+		[switchModel, isProcessing]
+	);
 
 	// ========================================
 	// Session Actions
@@ -472,6 +491,29 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			}
 		},
 		[sessionId]
+	);
+
+	const handleCoordinatorModeChange = useCallback(
+		async (newMode: boolean) => {
+			if (isProcessing) {
+				const confirmed = confirm(
+					'The agent is currently processing. Changing coordinator mode will interrupt the current operation. Continue?'
+				);
+				if (!confirmed) return;
+			}
+			setCoordinatorSwitching(true);
+			setCoordinatorMode(newMode);
+			try {
+				await switchCoordinatorMode(sessionId, newMode);
+			} catch (err) {
+				setCoordinatorMode(!newMode);
+				toast.error('Failed to toggle coordinator mode');
+				console.error('Failed to toggle coordinator mode:', err);
+			} finally {
+				setCoordinatorSwitching(false);
+			}
+		},
+		[sessionId, isProcessing]
 	);
 
 	// ========================================
@@ -762,9 +804,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 						availableModels={availableModels}
 						modelSwitching={modelSwitching}
 						modelLoading={modelLoading}
-						onModelSwitch={switchModel}
+						onModelSwitch={handleModelSwitchWithConfirmation}
 						autoScroll={autoScroll}
 						onAutoScrollChange={handleAutoScrollChange}
+						coordinatorMode={coordinatorMode}
+						coordinatorSwitching={coordinatorSwitching}
+						onCoordinatorModeChange={handleCoordinatorModeChange}
 						thinkingLevel={session?.config?.thinkingLevel}
 					/>
 
