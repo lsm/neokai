@@ -20,7 +20,7 @@ import { useEffect, useRef, useCallback, useMemo, useState } from 'preact/hooks'
 import { useSignalEffect } from '@preact/signals';
 import type { MessageImage } from '@neokai/shared';
 import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import { updateSession } from '../lib/api-helpers.ts';
+import { updateSession, resetSessionQuery } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
 import { cn } from '../lib/utils.ts';
 import { connectionState } from '../lib/state.ts';
@@ -83,6 +83,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const [isInitialLoad, setIsInitialLoad] = useState(true);
 	const [localError, setLocalError] = useState<string | null>(null);
 	const [autoScroll, setAutoScroll] = useState(true);
+	const [coordinatorMode, setCoordinatorMode] = useState(false);
 
 	// Track resolved questions to keep showing them in disabled state
 	// Map of toolUseId -> resolved question data
@@ -220,6 +221,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		setSession(info);
 		if (info?.config.autoScroll !== undefined) {
 			setAutoScroll(info.config.autoScroll);
+		}
+		if (info?.config.coordinatorMode !== undefined) {
+			setCoordinatorMode(info.config.coordinatorMode);
 		}
 	});
 
@@ -469,6 +473,24 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				setAutoScroll(!newAutoScroll);
 				toast.error('Failed to save auto-scroll setting');
 				console.error('Failed to update autoScroll:', err);
+			}
+		},
+		[sessionId]
+	);
+
+	const handleCoordinatorModeChange = useCallback(
+		async (newMode: boolean) => {
+			setCoordinatorMode(newMode);
+			try {
+				await updateSession(sessionId, {
+					config: { coordinatorMode: newMode },
+				});
+				// Coordinator mode requires query restart to apply agent/tools changes
+				await resetSessionQuery(sessionId);
+			} catch (err) {
+				setCoordinatorMode(!newMode);
+				toast.error('Failed to toggle coordinator mode');
+				console.error('Failed to toggle coordinator mode:', err);
 			}
 		},
 		[sessionId]
@@ -799,6 +821,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 							disabled={isProcessing || isCompacting || isWaitingForInput || !isConnected}
 							autoScroll={autoScroll}
 							onAutoScrollChange={handleAutoScrollChange}
+							coordinatorMode={coordinatorMode}
+							onCoordinatorModeChange={handleCoordinatorModeChange}
 							onOpenTools={toolsModal.open}
 							onEnterRewindMode={handleEnterRewindMode}
 						/>

@@ -63,6 +63,16 @@ export async function updateSession(sessionId: string, req: UpdateSessionRequest
 	await hub.call('session.update', { sessionId, ...req });
 }
 
+export async function resetSessionQuery(
+	sessionId: string
+): Promise<{ success: boolean; error?: string }> {
+	const hub = getHubOrThrow();
+	return await hub.call<{ success: boolean; error?: string }>('session.resetQuery', {
+		sessionId,
+		restartQuery: true,
+	});
+}
+
 export async function deleteSession(sessionId: string): Promise<void> {
 	const hub = getHubOrThrow();
 	await hub.call('session.delete', { sessionId });

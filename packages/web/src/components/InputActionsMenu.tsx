@@ -30,6 +30,9 @@ export interface InputActionsMenuProps {
 	/** Auto-scroll state */
 	autoScroll: boolean;
 	onAutoScrollChange: (enabled: boolean) => void;
+	/** Coordinator mode state */
+	coordinatorMode: boolean;
+	onCoordinatorModeChange: (enabled: boolean) => void;
 	/** Open tools modal */
 	onOpenTools: () => void;
 	/** Trigger file input */
@@ -54,6 +57,8 @@ export function InputActionsMenu({
 	onModelSwitch: _onModelSwitch,
 	autoScroll,
 	onAutoScrollChange,
+	coordinatorMode,
+	onCoordinatorModeChange,
 	onOpenTools,
 	onAttachFile,
 	onEnterRewindMode,
@@ -69,6 +74,11 @@ export function InputActionsMenu({
 
 	const handleAutoScrollToggle = () => {
 		onAutoScrollChange(!autoScroll);
+		onClose();
+	};
+
+	const handleCoordinatorModeToggle = () => {
+		onCoordinatorModeChange(!coordinatorMode);
 		onClose();
 	};
 
@@ -151,6 +161,45 @@ export function InputActionsMenu({
 						{autoScroll && (
 							<svg
 								class="w-4 h-4 text-blue-400"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2.5}
+									d="M5 13l4 4L19 7"
+								/>
+							</svg>
+						)}
+					</button>
+
+					{/* Coordinator Mode Toggle */}
+					<button
+						type="button"
+						onClick={handleCoordinatorModeToggle}
+						class="w-full px-4 py-3 text-left flex items-center justify-between transition-colors text-gray-200 hover:bg-dark-700/50"
+					>
+						<span class="flex items-center gap-3">
+							<svg
+								class={cn('w-5 h-5', coordinatorMode ? 'text-purple-400' : 'text-gray-400')}
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
+								/>
+							</svg>
+							<span class="text-sm">Coordinator</span>
+						</span>
+						{coordinatorMode && (
+							<svg
+								class="w-4 h-4 text-purple-400"
 								fill="none"
 								viewBox="0 0 24 24"
 								stroke="currentColor"
