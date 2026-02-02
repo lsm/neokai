@@ -152,8 +152,8 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
 	// Default auto-scroll to true so new sessions inherit this setting
 	// This must match the display default in GlobalSettingsEditor (autoScroll ?? true)
 	autoScroll: true,
-	// Default coordinator mode to true (delegate work to specialist subagents)
-	coordinatorMode: true,
+	// Default coordinator mode to false (user opts in when needed)
+	coordinatorMode: false,
 	outputLimiter: {
 		enabled: true,
 		bash: {

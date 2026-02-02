@@ -109,7 +109,7 @@ describe('SettingsManager', () => {
 				disabledMcpServers: ['server1'],
 				showArchived: false,
 				autoScroll: false,
-				coordinatorMode: true,
+				coordinatorMode: false,
 				outputLimiter: {
 					enabled: true,
 					bash: {
