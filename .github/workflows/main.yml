@@ -145,7 +145,7 @@ jobs:
     name: Daemon Online (${{ matrix.module }})
     runs-on: ubuntu-latest
     if: github.ref_type != 'tag'
-    timeout-minutes: 5
+    timeout-minutes: ${{ matrix.timeout || 5 }}
 
     strategy:
       fail-fast: false
@@ -153,6 +153,7 @@ jobs:
         module:
           - agent
           - components
+          - coordinator
           - convo
           - features
           - glm
@@ -177,6 +178,9 @@ jobs:
             test_path: tests/online/sdk
           - module: agent
             test_path: tests/online/agent
+          - module: coordinator
+            test_path: tests/online/coordinator
+            timeout: 10
           - module: convo
             test_path: tests/online/convo
           - module: features
