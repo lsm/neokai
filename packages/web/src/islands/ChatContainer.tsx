@@ -83,7 +83,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const [isInitialLoad, setIsInitialLoad] = useState(true);
 	const [localError, setLocalError] = useState<string | null>(null);
 	const [autoScroll, setAutoScroll] = useState(true);
-	const [coordinatorMode, setCoordinatorMode] = useState(false);
+	const [coordinatorMode, setCoordinatorMode] = useState(true);
+	const [coordinatorSwitching, setCoordinatorSwitching] = useState(false);
 
 	// Track resolved questions to keep showing them in disabled state
 	// Map of toolUseId -> resolved question data
@@ -280,6 +281,20 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		loading: modelLoading,
 		switchModel,
 	} = useModelSwitcher(sessionId);
+
+	// Model switch with processing confirmation
+	const handleModelSwitchWithConfirmation = useCallback(
+		async (modelId: string) => {
+			if (isProcessing) {
+				const confirmed = confirm(
+					'The agent is currently processing. Switching the model will interrupt the current operation. Continue?'
+				);
+				if (!confirmed) return;
+			}
+			await switchModel(modelId);
+		},
+		[switchModel, isProcessing]
+	);
 
 	// ========================================
 	// Session Actions
@@ -480,6 +495,13 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 	const handleCoordinatorModeChange = useCallback(
 		async (newMode: boolean) => {
+			if (isProcessing) {
+				const confirmed = confirm(
+					'The agent is currently processing. Changing coordinator mode will interrupt the current operation. Continue?'
+				);
+				if (!confirmed) return;
+			}
+			setCoordinatorSwitching(true);
 			setCoordinatorMode(newMode);
 			try {
 				await updateSession(sessionId, {
@@ -491,9 +513,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				setCoordinatorMode(!newMode);
 				toast.error('Failed to toggle coordinator mode');
 				console.error('Failed to toggle coordinator mode:', err);
+			} finally {
+				setCoordinatorSwitching(false);
 			}
 		},
-		[sessionId]
+		[sessionId, isProcessing]
 	);
 
 	// ========================================
@@ -784,9 +808,12 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 						availableModels={availableModels}
 						modelSwitching={modelSwitching}
 						modelLoading={modelLoading}
-						onModelSwitch={switchModel}
+						onModelSwitch={handleModelSwitchWithConfirmation}
 						autoScroll={autoScroll}
 						onAutoScrollChange={handleAutoScrollChange}
+						coordinatorMode={coordinatorMode}
+						coordinatorSwitching={coordinatorSwitching}
+						onCoordinatorModeChange={handleCoordinatorModeChange}
 						thinkingLevel={session?.config?.thinkingLevel}
 					/>
 
@@ -821,8 +848,6 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 							disabled={isProcessing || isCompacting || isWaitingForInput || !isConnected}
 							autoScroll={autoScroll}
 							onAutoScrollChange={handleAutoScrollChange}
-							coordinatorMode={coordinatorMode}
-							onCoordinatorModeChange={handleCoordinatorModeChange}
 							onOpenTools={toolsModal.open}
 							onEnterRewindMode={handleEnterRewindMode}
 						/>

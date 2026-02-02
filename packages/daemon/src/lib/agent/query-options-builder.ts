@@ -236,7 +236,7 @@ export class QueryOptionsBuilder {
 			disallowedTools: cleanedOptions.disallowedTools,
 			agent: cleanedOptions.agent,
 			agents: cleanedOptions.agents ? Object.keys(cleanedOptions.agents) : undefined,
-			coordinatorMode: config.coordinatorMode ?? false,
+			coordinatorMode: config.coordinatorMode ?? true,
 			sandbox: cleanedOptions.sandbox?.enabled,
 			mcpServers:
 				cleanedOptions.mcpServers === undefined

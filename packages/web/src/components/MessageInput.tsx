@@ -29,8 +29,6 @@ interface MessageInputProps {
 	disabled?: boolean;
 	autoScroll?: boolean;
 	onAutoScrollChange?: (autoScroll: boolean) => void;
-	coordinatorMode?: boolean;
-	onCoordinatorModeChange?: (enabled: boolean) => void;
 	onOpenTools?: () => void;
 	onEnterRewindMode?: () => void;
 }
@@ -41,8 +39,6 @@ export default function MessageInput({
 	disabled,
 	autoScroll,
 	onAutoScrollChange,
-	coordinatorMode,
-	onCoordinatorModeChange,
 	onOpenTools,
 	onEnterRewindMode,
 }: MessageInputProps) {
@@ -257,8 +253,6 @@ export default function MessageInput({
 							onModelSwitch={handleModelSwitch}
 							autoScroll={autoScroll ?? true}
 							onAutoScrollChange={(enabled) => onAutoScrollChange?.(enabled)}
-							coordinatorMode={coordinatorMode ?? false}
-							onCoordinatorModeChange={(enabled) => onCoordinatorModeChange?.(enabled)}
 							onOpenTools={() => onOpenTools?.()}
 							onAttachFile={openFilePicker}
 							onEnterRewindMode={onEnterRewindMode}

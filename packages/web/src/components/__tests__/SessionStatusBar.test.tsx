@@ -16,6 +16,7 @@ import SessionStatusBar from '../SessionStatusBar';
 describe('SessionStatusBar', () => {
 	const mockOnModelSwitch = vi.fn(() => Promise.resolve());
 	const mockOnAutoScrollChange = vi.fn(() => {});
+	const mockOnCoordinatorModeChange = vi.fn(() => {});
 
 	const mockModelInfo: ModelInfo = {
 		id: 'claude-sonnet-4-20250514',
@@ -68,12 +69,16 @@ describe('SessionStatusBar', () => {
 		onModelSwitch: mockOnModelSwitch,
 		autoScroll: true,
 		onAutoScrollChange: mockOnAutoScrollChange,
+		coordinatorMode: true,
+		coordinatorSwitching: false,
+		onCoordinatorModeChange: mockOnCoordinatorModeChange,
 	};
 
 	beforeEach(() => {
 		cleanup();
 		mockOnModelSwitch.mockClear();
 		mockOnAutoScrollChange.mockClear();
+		mockOnCoordinatorModeChange.mockClear();
 	});
 
 	afterEach(() => {
@@ -207,14 +212,18 @@ describe('SessionStatusBar', () => {
 		it('should disable model button when loading', () => {
 			const { container } = render(<SessionStatusBar {...defaultProps} modelLoading={true} />);
 
-			const modelButton = container.querySelector('.control-btn') as HTMLButtonElement;
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
 			expect(modelButton?.disabled).toBe(true);
 		});
 
 		it('should disable model button when switching', () => {
 			const { container } = render(<SessionStatusBar {...defaultProps} modelSwitching={true} />);
 
-			const modelButton = container.querySelector('.control-btn') as HTMLButtonElement;
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
 			expect(modelButton?.disabled).toBe(true);
 		});
 
@@ -363,7 +372,9 @@ describe('SessionStatusBar', () => {
 		it('should open model dropdown when clicked', () => {
 			const { container } = render(<SessionStatusBar {...defaultProps} />);
 
-			const modelButton = container.querySelector('.control-btn') as HTMLButtonElement;
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
 			fireEvent.click(modelButton);
 
 			// Should show the dropdown with model options
@@ -373,7 +384,9 @@ describe('SessionStatusBar', () => {
 		it('should show all available models in dropdown', () => {
 			const { container } = render(<SessionStatusBar {...defaultProps} />);
 
-			const modelButton = container.querySelector('.control-btn') as HTMLButtonElement;
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
 			fireEvent.click(modelButton);
 
 			expect(container.textContent).toContain('Claude Opus 4');
@@ -384,7 +397,9 @@ describe('SessionStatusBar', () => {
 		it('should show current model indicator', () => {
 			const { container } = render(<SessionStatusBar {...defaultProps} />);
 
-			const modelButton = container.querySelector('.control-btn') as HTMLButtonElement;
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
 			fireEvent.click(modelButton);
 
 			expect(container.textContent).toContain('(current)');
@@ -393,7 +408,9 @@ describe('SessionStatusBar', () => {
 		it('should call onModelSwitch when a model is selected', async () => {
 			const { container } = render(<SessionStatusBar {...defaultProps} />);
 
-			const modelButton = container.querySelector('.control-btn') as HTMLButtonElement;
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
 			fireEvent.click(modelButton);
 
 			// Find and click the Opus model button
@@ -407,7 +424,9 @@ describe('SessionStatusBar', () => {
 		it('should close model dropdown when clicking it again', () => {
 			const { container } = render(<SessionStatusBar {...defaultProps} />);
 
-			const modelButton = container.querySelector('.control-btn') as HTMLButtonElement;
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
 
 			// Open
 			fireEvent.click(modelButton);
@@ -430,7 +449,9 @@ describe('SessionStatusBar', () => {
 			expect(container.textContent).toContain('Thinking Level');
 
 			// Open model dropdown
-			const modelButton = container.querySelector('.control-btn') as HTMLButtonElement;
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
 			fireEvent.click(modelButton);
 
 			// Model dropdown should be open, thinking dropdown should be closed
@@ -488,7 +509,9 @@ describe('SessionStatusBar', () => {
 			const { container } = render(<SessionStatusBar {...defaultProps} />);
 
 			// Open model dropdown first
-			const modelButton = container.querySelector('.control-btn') as HTMLButtonElement;
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
 			fireEvent.click(modelButton);
 			expect(container.textContent).toContain('Select Model');
 
@@ -661,6 +684,78 @@ describe('SessionStatusBar', () => {
 
 			// Default gem icon should be visible
 			expect(container.textContent).toContain('💎');
+		});
+	});
+
+	describe('Coordinator Mode Toggle', () => {
+		it('should show spinner when coordinator is switching', () => {
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} coordinatorSwitching={true} />
+			);
+			const buttons = Array.from(container.querySelectorAll('.control-btn'));
+			const coordinatorButton = buttons.find(
+				(btn) => btn.getAttribute('title')?.includes('Coordinator Mode') || false
+			);
+			const spinner = coordinatorButton?.querySelector('[class*="animate-spin"]');
+			expect(spinner).toBeTruthy();
+		});
+
+		it('should disable coordinator button when coordinator is switching', () => {
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} coordinatorSwitching={true} />
+			);
+			const buttons = Array.from(container.querySelectorAll('.control-btn'));
+			const coordinatorButton = buttons.find(
+				(btn) => btn.getAttribute('title')?.includes('Coordinator Mode') || false
+			) as HTMLButtonElement;
+			expect(coordinatorButton?.disabled).toBe(true);
+		});
+
+		it('should disable coordinator button when model is switching', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} modelSwitching={true} />);
+			const buttons = Array.from(container.querySelectorAll('.control-btn'));
+			const coordinatorButton = buttons.find(
+				(btn) => btn.getAttribute('title')?.includes('Coordinator Mode') || false
+			) as HTMLButtonElement;
+			expect(coordinatorButton?.disabled).toBe(true);
+		});
+
+		it('should disable model button when coordinator is switching', () => {
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} coordinatorSwitching={true} />
+			);
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
+			expect(modelButton?.disabled).toBe(true);
+		});
+
+		it('should call onCoordinatorModeChange when clicked', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} coordinatorMode={true} />);
+			const buttons = Array.from(container.querySelectorAll('.control-btn'));
+			const coordinatorButton = buttons.find(
+				(btn) => btn.getAttribute('title')?.includes('Coordinator Mode') || false
+			)!;
+			fireEvent.click(coordinatorButton);
+			expect(mockOnCoordinatorModeChange).toHaveBeenCalledWith(false);
+		});
+
+		it('should show purple border when coordinator mode is enabled', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} coordinatorMode={true} />);
+			const buttons = Array.from(container.querySelectorAll('.control-btn'));
+			const coordinatorButton = buttons.find(
+				(btn) => btn.getAttribute('title')?.includes('Coordinator Mode') || false
+			);
+			expect(coordinatorButton?.className).toContain('border-purple-500');
+		});
+
+		it('should show gray border when coordinator mode is disabled', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} coordinatorMode={false} />);
+			const buttons = Array.from(container.querySelectorAll('.control-btn'));
+			const coordinatorButton = buttons.find(
+				(btn) => btn.getAttribute('title')?.includes('Coordinator Mode') || false
+			);
+			expect(coordinatorButton?.className).toContain('border-gray-600');
 		});
 	});
 });

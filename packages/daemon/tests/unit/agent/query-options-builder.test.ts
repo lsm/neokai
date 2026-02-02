@@ -511,6 +511,114 @@ describe('QueryOptionsBuilder', () => {
 		});
 	});
 
+	describe('coordinator mode', () => {
+		it('should set agent=coordinator and include specialist agents when coordinatorMode is true', async () => {
+			mockSession.config.coordinatorMode = true;
+			const options = await builder.build();
+
+			expect(options.agent).toBe('coordinator');
+			expect(options.agents).toBeDefined();
+			const agentNames = Object.keys(options.agents!);
+			expect(agentNames).toContain('coordinator');
+			expect(agentNames).toContain('coder');
+			expect(agentNames).toContain('debugger');
+			expect(agentNames).toContain('tester');
+			expect(agentNames).toContain('reviewer');
+			expect(agentNames).toContain('vcs');
+			expect(agentNames).toContain('verifier');
+			expect(agentNames).toContain('executor');
+			expect(agentNames).toHaveLength(8);
+		});
+
+		it('should NOT set agent or specialist agents when coordinatorMode is false', async () => {
+			mockSession.config.coordinatorMode = false;
+			const options = await builder.build();
+
+			expect(options.agent).toBeUndefined();
+			// agents should not contain coordinator specialists
+			if (options.agents) {
+				const agentNames = Object.keys(options.agents);
+				expect(agentNames).not.toContain('coordinator');
+			}
+		});
+
+		it('should NOT set coordinator agent when coordinatorMode is undefined', async () => {
+			// coordinatorMode not set - defaults to falsy
+			const options = await builder.build();
+
+			expect(options.agent).toBeUndefined();
+		});
+
+		it('should transition from non-coordinator to coordinator options (OFF -> ON)', async () => {
+			// Build with coordinator OFF
+			mockSession.config.coordinatorMode = false;
+			const optionsOff = await builder.build();
+			expect(optionsOff.agent).toBeUndefined();
+
+			// Build with coordinator ON (simulating config update + query restart)
+			mockSession.config.coordinatorMode = true;
+			const builderOn = new QueryOptionsBuilder(mockContext);
+			const optionsOn = await builderOn.build();
+			expect(optionsOn.agent).toBe('coordinator');
+			expect(Object.keys(optionsOn.agents!)).toHaveLength(8);
+		});
+
+		it('should transition ON -> OFF -> ON correctly', async () => {
+			// ON
+			mockSession.config.coordinatorMode = true;
+			let options = await new QueryOptionsBuilder(mockContext).build();
+			expect(options.agent).toBe('coordinator');
+
+			// OFF
+			mockSession.config.coordinatorMode = false;
+			options = await new QueryOptionsBuilder(mockContext).build();
+			expect(options.agent).toBeUndefined();
+
+			// ON again
+			mockSession.config.coordinatorMode = true;
+			options = await new QueryOptionsBuilder(mockContext).build();
+			expect(options.agent).toBe('coordinator');
+			expect(Object.keys(options.agents!)).toHaveLength(8);
+		});
+
+		it('should preserve user-defined agents alongside coordinator agents', async () => {
+			mockSession.config.coordinatorMode = true;
+			mockSession.config.agents = {
+				'my-custom-agent': {
+					description: 'Custom agent',
+					prompt: 'You are custom.',
+				},
+			};
+			const options = await builder.build();
+
+			expect(options.agents!['my-custom-agent']).toBeDefined();
+			expect(options.agents!['coder']).toBeDefined();
+			expect(options.agents!['coordinator']).toBeDefined();
+		});
+
+		it('should inject worktree isolation into specialist agents but not coordinator', async () => {
+			mockSession.config.coordinatorMode = true;
+			mockSession.worktree = {
+				worktreePath: '/worktree/path',
+				mainRepoPath: '/main/repo',
+				branch: 'session/test',
+			};
+			const newBuilder = new QueryOptionsBuilder({
+				session: mockSession,
+				settingsManager: mockSettingsManager,
+			});
+			const options = await newBuilder.build();
+
+			// Coordinator should NOT have worktree text
+			const coordinatorPrompt = (options.agents!['coordinator'] as { prompt: string }).prompt;
+			expect(coordinatorPrompt).not.toContain('Git Worktree Isolation');
+
+			// Specialists should have worktree text
+			const coderPrompt = (options.agents!['coder'] as { prompt: string }).prompt;
+			expect(coderPrompt).toContain('Git Worktree Isolation');
+		});
+	});
+
 	describe('file checkpointing configuration', () => {
 		it('should enable file checkpointing by default', async () => {
 			const options = await builder.build();

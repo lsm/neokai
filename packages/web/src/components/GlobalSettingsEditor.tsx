@@ -282,7 +282,7 @@ export function GlobalSettingsEditor() {
 	const currentPermissionMode = settings.permissionMode || 'default';
 	const currentThinkingLevel = settings.thinkingLevel || 'auto';
 	const currentAutoScroll = settings.autoScroll ?? true;
-	const currentCoordinatorMode = settings.coordinatorMode ?? false;
+	const currentCoordinatorMode = settings.coordinatorMode ?? true;
 	const currentSources = settings.settingSources || ['user', 'project', 'local'];
 
 	// Saved checkmark component
