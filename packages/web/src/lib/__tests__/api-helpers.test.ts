@@ -334,6 +334,41 @@ describe('api-helpers', () => {
 			});
 		});
 
+		describe('resetSessionQuery', () => {
+			it('should reset session query with restartQuery flag', async () => {
+				const mockHub = {
+					call: vi.fn().mockResolvedValue({ success: true }),
+				};
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(mockHub);
+
+				const result = await apiHelpers.resetSessionQuery('sess-123');
+
+				expect(result).toEqual({ success: true });
+				expect(mockHub.call).toHaveBeenCalledWith('session.resetQuery', {
+					sessionId: 'sess-123',
+					restartQuery: true,
+				});
+			});
+
+			it('should throw ConnectionNotReadyError when not connected', async () => {
+				(
+					connectionManager as unknown as {
+						getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+						getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+					}
+				).getHubIfConnected.mockReturnValue(null);
+
+				await expect(apiHelpers.resetSessionQuery('sess-123')).rejects.toThrow(
+					'Not connected to server'
+				);
+			});
+		});
+
 		describe('archiveSession', () => {
 			it('should archive session with confirmation', async () => {
 				const mockHub = {

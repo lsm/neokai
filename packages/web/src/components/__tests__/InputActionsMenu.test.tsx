@@ -17,6 +17,8 @@ describe('InputActionsMenu', () => {
 		onClose: vi.fn(() => {}),
 		autoScroll: true,
 		onAutoScrollChange: vi.fn(() => {}),
+		coordinatorMode: false,
+		onCoordinatorModeChange: vi.fn(() => {}),
 		onOpenTools: vi.fn(() => {}),
 		onAttachFile: vi.fn(() => {}),
 	};
@@ -25,6 +27,7 @@ describe('InputActionsMenu', () => {
 		defaultProps.onToggle.mockClear();
 		defaultProps.onClose.mockClear();
 		defaultProps.onAutoScrollChange.mockClear();
+		defaultProps.onCoordinatorModeChange.mockClear();
 		defaultProps.onOpenTools.mockClear();
 		defaultProps.onAttachFile.mockClear();
 	});
@@ -234,6 +237,70 @@ describe('InputActionsMenu', () => {
 			const { container } = render(<InputActionsMenu {...defaultProps} isOpen={true} />);
 			const menu = container.querySelector('.animate-slideIn');
 			expect(menu).toBeTruthy();
+		});
+	});
+
+	describe('Coordinator Mode Toggle', () => {
+		it('should show Coordinator option in menu', () => {
+			const { container } = render(<InputActionsMenu {...defaultProps} isOpen={true} />);
+			const text = container.textContent;
+			expect(text).toContain('Coordinator');
+		});
+
+		it('should show purple icon when coordinator mode is enabled', () => {
+			const { container } = render(
+				<InputActionsMenu {...defaultProps} isOpen={true} coordinatorMode={true} />
+			);
+			const svgs = container.querySelectorAll('svg');
+			const coordinatorSvg = Array.from(svgs).find(
+				(svg) =>
+					svg.className?.baseVal?.includes('text-purple-400') ||
+					svg.getAttribute('class')?.includes('text-purple-400')
+			);
+			expect(coordinatorSvg).toBeTruthy();
+		});
+
+		it('should call onCoordinatorModeChange and close menu on click', () => {
+			const onCoordinatorModeChange = vi.fn(() => {});
+			const onClose = vi.fn(() => {});
+			const { container } = render(
+				<InputActionsMenu
+					{...defaultProps}
+					isOpen={true}
+					coordinatorMode={false}
+					onCoordinatorModeChange={onCoordinatorModeChange}
+					onClose={onClose}
+				/>
+			);
+
+			const buttons = container.querySelectorAll('button');
+			const coordinatorButton = Array.from(buttons).find((b) =>
+				b.textContent?.includes('Coordinator')
+			);
+			coordinatorButton?.click();
+
+			expect(onCoordinatorModeChange).toHaveBeenCalledWith(true);
+			expect(onClose).toHaveBeenCalled();
+		});
+
+		it('should toggle coordinator mode off when enabled', () => {
+			const onCoordinatorModeChange = vi.fn(() => {});
+			const { container } = render(
+				<InputActionsMenu
+					{...defaultProps}
+					isOpen={true}
+					coordinatorMode={true}
+					onCoordinatorModeChange={onCoordinatorModeChange}
+				/>
+			);
+
+			const buttons = container.querySelectorAll('button');
+			const coordinatorButton = Array.from(buttons).find((b) =>
+				b.textContent?.includes('Coordinator')
+			);
+			coordinatorButton?.click();
+
+			expect(onCoordinatorModeChange).toHaveBeenCalledWith(false);
 		});
 	});
 
