@@ -90,15 +90,15 @@ test.describe('Scroll Responsiveness', () => {
 		await messageInput.press('Enter');
 		await waitForAssistantResponse(page, { timeout: 45000 });
 
-		// Wait for content to render
-		await page.waitForTimeout(500);
+		// Wait for all post-response processing to settle (auto-context, metadata updates)
+		await page.waitForTimeout(3000);
 
 		// Scroll to top to prepare for next test
 		await page.evaluate(() => {
 			const container = document.querySelector('[data-messages-container]') as HTMLElement;
 			if (container) container.scrollTop = 0;
 		});
-		await page.waitForTimeout(300);
+		await page.waitForTimeout(500);
 
 		// Now send another message - during "Starting..." we should still be able to scroll
 		await messageInput.fill('Explain TypeScript generics');
@@ -215,6 +215,10 @@ test.describe('Scroll Responsiveness', () => {
 			test.skip();
 			return;
 		}
+
+		// Wait for all post-response processing to settle (auto-context, metadata updates)
+		// before testing scroll behavior
+		await page.waitForTimeout(3000);
 
 		// Scroll to top
 		await page.evaluate(() => {
