@@ -257,11 +257,39 @@ jobs:
 
       - name: Publish platform packages
         run: |
+          FAILED=0
           for pkg in dist/npm/cli-*; do
-            echo "Publishing $(basename $pkg)..."
-            (cd "$pkg" && npm publish --access public --provenance) || echo "::warning::Failed to publish $(basename $pkg), may already exist"
+            PKG_NAME=$(basename "$pkg")
+            echo "Publishing $PKG_NAME..."
+            if OUTPUT=$(cd "$pkg" && npm publish --access public --provenance 2>&1); then
+              echo "$OUTPUT"
+              echo "$PKG_NAME published successfully"
+            else
+              echo "$OUTPUT"
+              if echo "$OUTPUT" | grep -qiE "previously published|cannot publish over|EPUBLISHCONFLICT"; then
+                echo "::warning::$PKG_NAME already published, skipping"
+              else
+                echo "::error::Failed to publish $PKG_NAME"
+                FAILED=1
+              fi
+            fi
           done
+          if [ "$FAILED" -eq 1 ]; then
+            echo "One or more platform packages failed to publish"
+            exit 1
+          fi
 
       - name: Publish main package
         run: |
-          cd dist/npm/neokai && npm publish --access public --provenance || echo "::warning::Failed to publish neokai, may already exist"
+          if OUTPUT=$(cd dist/npm/neokai && npm publish --access public --provenance 2>&1); then
+            echo "$OUTPUT"
+            echo "neokai published successfully"
+          else
+            echo "$OUTPUT"
+            if echo "$OUTPUT" | grep -qiE "previously published|cannot publish over|EPUBLISHCONFLICT"; then
+              echo "::warning::neokai already published, skipping"
+            else
+              echo "::error::Failed to publish neokai"
+              exit 1
+            fi
+          fi
