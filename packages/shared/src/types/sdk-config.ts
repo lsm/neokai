@@ -324,6 +324,9 @@ export interface SDKConfig
 		McpSettings,
 		EnvironmentSettings,
 		SessionResumptionSettings {
+	/** Agent name for the main thread (coordinator mode) */
+	agent?: string;
+
 	/** System prompt configuration */
 	systemPrompt?: SystemPromptConfig;
 

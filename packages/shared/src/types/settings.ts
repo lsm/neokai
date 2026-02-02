@@ -129,6 +129,9 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
 
 	// Default auto-scroll setting for new sessions
 	autoScroll?: boolean;
+
+	// Default coordinator mode for new sessions
+	coordinatorMode?: boolean;
 }
 
 /**
