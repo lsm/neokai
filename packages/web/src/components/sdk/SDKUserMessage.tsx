@@ -5,18 +5,18 @@
  */
 
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import { IconButton } from '../ui/IconButton.tsx';
-import { Dropdown } from '../ui/Dropdown.tsx';
-import { Tooltip } from '../ui/Tooltip.tsx';
-import { copyToClipboard } from '../../lib/utils.ts';
+import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
 import { toast } from '../../lib/toast.ts';
-import { cn } from '../../lib/utils.ts';
+import { cn, copyToClipboard } from '../../lib/utils.ts';
+import { Dropdown } from '../ui/Dropdown.tsx';
+import { IconButton } from '../ui/IconButton.tsx';
+import { Spinner } from '../ui/Spinner.tsx';
+import { Tooltip } from '../ui/Tooltip.tsx';
+import { ErrorOutput, hasErrorOutput } from './ErrorOutput.tsx';
 import { MessageInfoButton } from './MessageInfoButton.tsx';
 import { MessageInfoDropdown } from './MessageInfoDropdown.tsx';
-import { messageSpacing, messageColors, borderRadius } from '../../lib/design-tokens.ts';
-import { SlashCommandOutput, isHiddenCommandOutput } from './SlashCommandOutput.tsx';
+import { isHiddenCommandOutput, SlashCommandOutput } from './SlashCommandOutput.tsx';
 import { SyntheticMessageBlock } from './SyntheticMessageBlock.tsx';
-import { ErrorOutput, hasErrorOutput } from './ErrorOutput.tsx';
 
 type UserMessage = Extract<SDKMessage, { type: 'user' }>;
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
@@ -29,6 +29,7 @@ interface Props {
 	isReplay?: boolean; // Whether this is a replay message (slash command response)
 	sessionId?: string; // Session ID for rewind operations
 	onRewind?: (uuid: string) => void; // Callback for rewind to this message
+	rewindingMessageUuid?: string | null; // UUID of message being rewound (shows spinner)
 	// Rewind mode props
 	rewindMode?: boolean;
 	selectedMessages?: Set<string>;
@@ -44,6 +45,7 @@ export function SDKUserMessage({
 	isReplay,
 	sessionId,
 	onRewind,
+	rewindingMessageUuid,
 	rewindMode,
 	selectedMessages,
 	onMessageCheckboxChange,
@@ -304,25 +306,31 @@ export function SDKUserMessage({
 					)}
 
 					{/* Rewind button - always visible for user messages with UUID */}
-					{!message.isSynthetic && message.uuid && sessionId && onRewind && (
-						<Tooltip content="Rewind to this message" position="left">
-							<IconButton
-								size="md"
-								onClick={() => onRewind(message.uuid!)}
-								title="Rewind to here"
-								class="text-gray-500 hover:text-amber-600 dark:text-gray-400 dark:hover:text-amber-500"
-							>
-								<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
-									/>
-								</svg>
-							</IconButton>
-						</Tooltip>
-					)}
+					{!message.isSynthetic &&
+						message.uuid &&
+						sessionId &&
+						onRewind &&
+						(rewindingMessageUuid === message.uuid ? (
+							<Spinner size="sm" color="border-amber-500" className="mx-1" />
+						) : (
+							<Tooltip content="Rewind to this message" position="left">
+								<IconButton
+									size="md"
+									onClick={() => onRewind(message.uuid!)}
+									title="Rewind to here"
+									class="text-gray-500 hover:text-amber-600 dark:text-gray-400 dark:hover:text-amber-500"
+								>
+									<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
+										/>
+									</svg>
+								</IconButton>
+							</Tooltip>
+						))}
 
 					{/* Session info icon (if session info is attached) */}
 					{sessionInfo && (

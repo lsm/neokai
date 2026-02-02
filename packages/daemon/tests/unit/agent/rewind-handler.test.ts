@@ -4,18 +4,18 @@
  * Tests for rewind operations (preview and execute).
  */
 
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Session } from '@neokai/shared';
+import type { QueryLifecycleManager } from '../../../src/lib/agent/query-lifecycle-manager';
 import {
 	RewindHandler,
 	type RewindHandlerContext,
 	type RewindPoint,
 } from '../../../src/lib/agent/rewind-handler';
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
-import type { Session } from '@neokai/shared';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
-import type { Database } from '../../../src/storage/database';
-import type { QueryLifecycleManager } from '../../../src/lib/agent/query-lifecycle-manager';
 import type { Logger } from '../../../src/lib/logger';
+import type { Database } from '../../../src/storage/database';
 
 describe('RewindHandler', () => {
 	let handler: RewindHandler;
@@ -32,6 +32,7 @@ describe('RewindHandler', () => {
 	let countMessagesAfterSpy: ReturnType<typeof mock>;
 	let restartSpy: ReturnType<typeof mock>;
 	let deleteMessagesAfterSpy: ReturnType<typeof mock>;
+	let deleteMessagesAtAndAfterSpy: ReturnType<typeof mock>;
 	let rewindFilesSpy: ReturnType<typeof mock>;
 	let updateSessionSpy: ReturnType<typeof mock>;
 
@@ -61,6 +62,7 @@ describe('RewindHandler', () => {
 		} as unknown as DaemonHub;
 
 		deleteMessagesAfterSpy = mock(() => 5);
+		deleteMessagesAtAndAfterSpy = mock(() => 5);
 		updateSessionSpy = mock(() => {});
 		getUserMessagesSpy = mock(() => [
 			{
@@ -75,6 +77,7 @@ describe('RewindHandler', () => {
 		countMessagesAfterSpy = mock(() => 5);
 		mockDb = {
 			deleteMessagesAfter: deleteMessagesAfterSpy,
+			deleteMessagesAtAndAfter: deleteMessagesAtAndAfterSpy,
 			updateSession: updateSessionSpy,
 			getUserMessages: getUserMessagesSpy,
 			getUserMessageByUuid: getUserMessageByUuidSpy,
@@ -330,14 +333,35 @@ describe('RewindHandler', () => {
 				handler = createHandler();
 				await handler.executeRewind(testRewindPoint.uuid, 'conversation');
 
-				expect(deleteMessagesAfterSpy).toHaveBeenCalledWith(mockSession.id, testTimestamp);
+				expect(deleteMessagesAtAndAfterSpy).toHaveBeenCalledWith(mockSession.id, testTimestamp);
 			});
 
-			it('should set resumeSessionAt in metadata and persist to DB', async () => {
+			it('should set resumeSessionAt to previous user message after deletion', async () => {
+				const previousMessage = {
+					uuid: 'prev-msg-uuid',
+					timestamp: testTimestamp - 10000,
+					content: 'Previous message',
+				};
+				// getUserMessages is called AFTER deleteMessagesAtAndAfter, so it should return only remaining messages
+				getUserMessagesSpy.mockReturnValue([previousMessage]);
+
 				handler = createHandler();
 				await handler.executeRewind(testRewindPoint.uuid, 'conversation');
 
-				expect(mockSession.metadata.resumeSessionAt).toBe(testRewindPoint.uuid);
+				expect(mockSession.metadata.resumeSessionAt).toBe('prev-msg-uuid');
+				expect(updateSessionSpy).toHaveBeenCalledWith(mockSession.id, {
+					metadata: mockSession.metadata,
+				});
+			});
+
+			it('should clear resumeSessionAt when no previous user message exists', async () => {
+				// After deleting the only user message, getUserMessages returns empty
+				getUserMessagesSpy.mockReturnValue([]);
+
+				handler = createHandler();
+				await handler.executeRewind(testRewindPoint.uuid, 'conversation');
+
+				expect(mockSession.metadata.resumeSessionAt).toBeUndefined();
 				expect(updateSessionSpy).toHaveBeenCalledWith(mockSession.id, {
 					metadata: mockSession.metadata,
 				});
@@ -372,7 +396,7 @@ describe('RewindHandler', () => {
 				handler = createHandler();
 				await handler.executeRewind(testRewindPoint.uuid, 'both');
 
-				expect(deleteMessagesAfterSpy).toHaveBeenCalled();
+				expect(deleteMessagesAtAndAfterSpy).toHaveBeenCalled();
 				expect(restartSpy).toHaveBeenCalled();
 			});
 
@@ -386,14 +410,16 @@ describe('RewindHandler', () => {
 				expect(result.messagesDeleted).toBe(5);
 			});
 
-			it('should fail if file rewind fails', async () => {
+			it('should proceed with conversation rewind even if file rewind fails', async () => {
 				rewindFilesSpy.mockResolvedValue({ canRewind: false, error: 'File rewind failed' });
 				handler = createHandler();
 				const result = await handler.executeRewind(testRewindPoint.uuid, 'both');
 
-				expect(result.success).toBe(false);
-				expect(result.error).toBe('File rewind failed');
-				expect(deleteMessagesAfterSpy).not.toHaveBeenCalled();
+				// File rewind is best-effort - conversation rewind should still proceed
+				expect(result.success).toBe(true);
+				expect(result.conversationRewound).toBe(true);
+				expect(deleteMessagesAtAndAfterSpy).toHaveBeenCalled();
+				expect(result.filesChanged).toBeUndefined(); // No files changed since file rewind failed
 			});
 		});
 
@@ -436,18 +462,22 @@ describe('RewindHandler', () => {
 				});
 			});
 
-			it('should use default error message when SDK returns no error message for both mode', async () => {
+			it('should proceed with conversation rewind when file rewind returns no error for both mode', async () => {
 				rewindFilesSpy.mockResolvedValue({ canRewind: false });
 				handler = createHandler();
 				const result = await handler.executeRewind(testRewindPoint.uuid, 'both');
 
-				expect(result.success).toBe(false);
-				expect(emitSpy).toHaveBeenCalledWith('rewind.failed', {
-					sessionId: mockSession.id,
-					checkpointId: testRewindPoint.uuid,
-					mode: 'both',
-					error: 'File rewind failed',
-				});
+				// Best-effort: conversation rewind succeeds even when file rewind fails
+				expect(result.success).toBe(true);
+				expect(result.conversationRewound).toBe(true);
+				expect(emitSpy).toHaveBeenCalledWith(
+					'rewind.completed',
+					expect.objectContaining({
+						sessionId: mockSession.id,
+						checkpointId: testRewindPoint.uuid,
+						mode: 'both',
+					})
+				);
 			});
 
 			it('should handle exceptions and emit rewind.failed', async () => {
@@ -554,20 +584,27 @@ describe('RewindHandler', () => {
 			const result = await handler.executeSelectiveRewind([testRewindPoint.uuid]);
 
 			expect(rewindFilesSpy).toHaveBeenCalledWith(testRewindPoint.uuid);
-			expect(deleteMessagesAfterSpy).toHaveBeenCalledWith(mockSession.id, testTimestamp);
+			expect(deleteMessagesAtAndAfterSpy).toHaveBeenCalledWith(mockSession.id, testTimestamp);
 			expect(restartSpy).toHaveBeenCalled();
 			expect(result.success).toBe(true);
 		});
 
-		it('should set resumeSessionAt in metadata', async () => {
+		it('should set resumeSessionAt to previous user message after selective rewind', async () => {
+			const previousMessage = {
+				uuid: 'prev-msg-uuid',
+				timestamp: testTimestamp - 10000,
+				content: 'Previous message',
+			};
 			mockDb.getSDKMessages = mock(() => [
 				{ uuid: testRewindPoint.uuid, timestamp: testTimestamp },
 			]);
+			// After deletion, getUserMessages returns only the previous message
+			getUserMessagesSpy.mockReturnValue([previousMessage]);
 
 			handler = createHandler();
 			await handler.executeSelectiveRewind([testRewindPoint.uuid]);
 
-			expect(mockSession.metadata.resumeSessionAt).toBe(testRewindPoint.uuid);
+			expect(mockSession.metadata.resumeSessionAt).toBe('prev-msg-uuid');
 			expect(updateSessionSpy).toHaveBeenCalled();
 		});
 	});

@@ -16,44 +16,41 @@
  * agent state from state.session channel.
  */
 
-import { useEffect, useRef, useCallback, useMemo, useState } from 'preact/hooks';
-import { useSignalEffect } from '@preact/signals';
-import type { MessageImage } from '@neokai/shared';
+import type { MessageImage, ResolvedQuestion } from '@neokai/shared';
 import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import { updateSession, switchCoordinatorMode } from '../lib/api-helpers.ts';
-import { toast } from '../lib/toast.ts';
-import { cn } from '../lib/utils.ts';
-import { connectionState } from '../lib/state.ts';
+import { useSignalEffect } from '@preact/signals';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
+import { ChatHeader } from '../components/ChatHeader.tsx';
+import { ErrorBanner } from '../components/ErrorBanner.tsx';
+import { ErrorDialog } from '../components/ErrorDialog.tsx';
+// Components
+import MessageInput from '../components/MessageInput.tsx';
+import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
+import { SessionInfoModal } from '../components/SessionInfoModal.tsx';
+import SessionStatusBar from '../components/SessionStatusBar.tsx';
+import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
+import { ToolsModal } from '../components/ToolsModal.tsx';
+import { Button } from '../components/ui/Button.tsx';
+import { ContentContainer } from '../components/ui/ContentContainer.tsx';
+import { Modal } from '../components/ui/Modal.tsx';
+import { Skeleton, SkeletonMessage } from '../components/ui/Skeleton.tsx';
+import { Spinner } from '../components/ui/Spinner.tsx';
+import { useAutoScroll } from '../hooks/useAutoScroll.ts';
+import { useMessageMaps } from '../hooks/useMessageMaps.ts';
+// Hooks
+import { useModal } from '../hooks/useModal.ts';
+import { useModelSwitcher } from '../hooks/useModelSwitcher.ts';
+import { useSendMessage } from '../hooks/useSendMessage.ts';
+import { useSessionActions } from '../hooks/useSessionActions.ts';
+import { switchCoordinatorMode, updateSession } from '../lib/api-helpers.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import { sessionStore } from '../lib/session-store.ts';
 import { currentSessionIdSignal } from '../lib/signals.ts';
+import { connectionState } from '../lib/state.ts';
 import { getCurrentAction } from '../lib/status-actions.ts';
-
-// Hooks
-import { useModal } from '../hooks/useModal.ts';
-import { useAutoScroll } from '../hooks/useAutoScroll.ts';
-import { useMessageMaps } from '../hooks/useMessageMaps.ts';
-import { useSessionActions } from '../hooks/useSessionActions.ts';
-import { useSendMessage } from '../hooks/useSendMessage.ts';
-import { useModelSwitcher } from '../hooks/useModelSwitcher.ts';
-
-// Components
-import MessageInput from '../components/MessageInput.tsx';
-import SessionStatusBar from '../components/SessionStatusBar.tsx';
-import { Button } from '../components/ui/Button.tsx';
-import { Modal } from '../components/ui/Modal.tsx';
-import { ContentContainer } from '../components/ui/ContentContainer.tsx';
-import { ToolsModal } from '../components/ToolsModal.tsx';
-import { SessionInfoModal } from '../components/SessionInfoModal.tsx';
-import { Skeleton, SkeletonMessage } from '../components/ui/Skeleton.tsx';
-import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
-import { ErrorDialog } from '../components/ErrorDialog.tsx';
-import { ChatHeader } from '../components/ChatHeader.tsx';
-import { Spinner } from '../components/ui/Spinner.tsx';
-import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
-import { ErrorBanner } from '../components/ErrorBanner.tsx';
-import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
-import type { ResolvedQuestion } from '@neokai/shared';
+import { toast } from '../lib/toast.ts';
+import { cn } from '../lib/utils.ts';
 
 interface ChatContainerProps {
 	sessionId: string;
@@ -97,6 +94,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const [rewindMode, setRewindMode] = useState(false);
 	const [selectedMessages, setSelectedMessages] = useState<Set<string>>(new Set());
 
+	// Per-message rewind state
+	const [rewindTargetUuid, setRewindTargetUuid] = useState<string | null>(null);
+	const [isRewinding, setIsRewinding] = useState(false);
+
 	// Reactive State from sessionStore (via useSignalEffect for re-renders)
 	// Moved here before callbacks that depend on it
 	const [messages, setMessages] = useState<SDKMessage[]>([]);
@@ -109,32 +110,50 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const toolsModal = useModal();
 	const infoModal = useModal();
 	const errorDialog = useModal();
+	const rewindConfirmModal = useModal();
 
 	// ========================================
 	// Rewind handler
 	// ========================================
-	const handleRewind = useCallback(
-		async (uuid: string) => {
-			try {
-				const { result } = await import('../lib/api-helpers.ts').then((m) =>
-					m.executeRewind(sessionId, uuid, 'both')
-				);
-
-				if (result.success) {
-					toast.success(
-						`Rewound successfully: ${result.messagesDeleted || 0} messages removed, ${
-							result.filesChanged?.length || 0
-						} files restored`
-					);
-				} else {
-					toast.error(`Rewind failed: ${result.error || 'Unknown error'}`);
-				}
-			} catch (err) {
-				toast.error(`Rewind failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
-			}
+	const handleRewindClick = useCallback(
+		(uuid: string) => {
+			setRewindTargetUuid(uuid);
+			rewindConfirmModal.open();
 		},
-		[sessionId]
+		[rewindConfirmModal]
 	);
+
+	const handleRewindConfirm = useCallback(async () => {
+		if (!rewindTargetUuid) return;
+
+		setIsRewinding(true);
+		try {
+			const { result } = await import('../lib/api-helpers.ts').then((m) =>
+				m.executeRewind(sessionId, rewindTargetUuid, 'both')
+			);
+
+			if (result.success) {
+				toast.success(
+					`Rewound successfully: ${result.messagesDeleted || 0} messages removed, ${
+						result.filesChanged?.length || 0
+					} files restored`
+				);
+			} else {
+				toast.error(`Rewind failed: ${result.error || 'Unknown error'}`);
+			}
+		} catch (err) {
+			toast.error(`Rewind failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+		} finally {
+			setIsRewinding(false);
+			setRewindTargetUuid(null);
+			rewindConfirmModal.close();
+		}
+	}, [rewindTargetUuid, sessionId, rewindConfirmModal]);
+
+	const handleRewindCancel = useCallback(() => {
+		setRewindTargetUuid(null);
+		rewindConfirmModal.close();
+	}, [rewindConfirmModal]);
 
 	// Rewind mode handlers
 	const handleEnterRewindMode = useCallback(() => {
@@ -177,13 +196,24 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const handleRewindSelection = useCallback(async () => {
 		if (selectedMessages.size === 0) return;
 
-		// Show confirmation dialog
+		// Check if any user message is included in the selection
+		const selectedUserMessages = messages.filter(
+			(m) => m.type === 'user' && m.uuid && selectedMessages.has(m.uuid) && !m.isSynthetic
+		);
+
+		if (selectedUserMessages.length === 0) {
+			toast.error('Please select at least one user message to rewind to.');
+			return;
+		}
+
+		// Show confirmation
 		const confirmed = confirm(
 			`Rewind to selected point? This will delete ${selectedMessages.size} messages and revert files. This action cannot be undone.`
 		);
 
 		if (!confirmed) return;
 
+		setIsRewinding(true);
 		try {
 			const { result } = await import('../lib/api-helpers.ts').then((m) =>
 				m.executeSelectiveRewind(sessionId, Array.from(selectedMessages))
@@ -201,8 +231,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			}
 		} catch (err) {
 			toast.error(`Rewind failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+		} finally {
+			setIsRewinding(false);
 		}
-	}, [selectedMessages, sessionId, handleExitRewindMode]);
+	}, [selectedMessages, messages, sessionId, handleExitRewindMode]);
 
 	// ========================================
 	// Reactive State from sessionStore (via useSignalEffect for re-renders)
@@ -659,9 +691,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 								{selectedMessages.size > 0 && (
 									<button
 										onClick={handleRewindSelection}
-										class="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium transition-colors"
+										disabled={isRewinding}
+										class="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
 									>
-										Rewind to Here
+										{isRewinding && <Spinner size="xs" color="border-white" />}
+										{isRewinding ? 'Rewinding...' : 'Rewind to Here'}
 									</button>
 								)}
 								<button
@@ -736,7 +770,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 									sessionId={sessionId}
 									resolvedQuestions={allResolvedQuestions}
 									pendingQuestion={pendingQuestion}
-									onRewind={handleRewind}
+									onRewind={handleRewindClick}
+									rewindingMessageUuid={isRewinding ? rewindTargetUuid : null}
 									rewindMode={rewindMode}
 									selectedMessages={selectedMessages}
 									onMessageCheckboxChange={handleMessageCheckboxChange}
@@ -901,6 +936,30 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				error={sessionStore.getErrorDetails()}
 				isDev={import.meta.env.DEV === 'true' || import.meta.env.MODE === 'development'}
 			/>
+
+			{/* Rewind Confirmation Modal */}
+			<Modal
+				isOpen={rewindConfirmModal.isOpen}
+				onClose={handleRewindCancel}
+				title="Rewind Conversation"
+				size="sm"
+			>
+				<div class="space-y-4">
+					<p class="text-gray-300 text-sm">
+						This will rewind the conversation to before this message. All messages from this point
+						forward will be permanently deleted and file changes will be reverted.
+					</p>
+					<p class="text-amber-400 text-xs">This action cannot be undone.</p>
+					<div class="flex gap-3 justify-end">
+						<Button variant="secondary" onClick={handleRewindCancel} disabled={isRewinding}>
+							Cancel
+						</Button>
+						<Button variant="danger" onClick={handleRewindConfirm} loading={isRewinding}>
+							{isRewinding ? 'Rewinding...' : 'Rewind'}
+						</Button>
+					</div>
+				</div>
+			</Modal>
 		</div>
 	);
 }

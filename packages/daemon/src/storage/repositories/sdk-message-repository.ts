@@ -8,10 +8,10 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { SDKMessage } from '@neokai/shared/sdk';
 import { generateUUID } from '@neokai/shared';
-import type { SQLiteValue } from '../types';
+import type { SDKMessage } from '@neokai/shared/sdk';
 import { Logger } from '../../lib/logger';
+import type { SQLiteValue } from '../types';
 
 export type SendStatus = 'saved' | 'queued' | 'sent';
 
@@ -248,6 +248,25 @@ export class SDKMessageRepository {
 	deleteMessagesAfter(sessionId: string, afterTimestamp: number): number {
 		const isoTimestamp = new Date(afterTimestamp).toISOString();
 		const stmt = this.db.prepare(`DELETE FROM sdk_messages WHERE session_id = ? AND timestamp > ?`);
+		const result = stmt.run(sessionId, isoTimestamp);
+		return result.changes;
+	}
+
+	/**
+	 * Delete messages at and after a specific timestamp (inclusive)
+	 *
+	 * Used by the rewind feature to remove the rewind point message itself
+	 * and all subsequent messages.
+	 *
+	 * @param sessionId - The session ID to delete messages from
+	 * @param atTimestamp - Delete messages with timestamp greater than or equal to this value (milliseconds)
+	 * @returns The number of messages deleted
+	 */
+	deleteMessagesAtAndAfter(sessionId: string, atTimestamp: number): number {
+		const isoTimestamp = new Date(atTimestamp).toISOString();
+		const stmt = this.db.prepare(
+			`DELETE FROM sdk_messages WHERE session_id = ? AND timestamp >= ?`
+		);
 		const result = stmt.run(sessionId, isoTimestamp);
 		return result.changes;
 	}

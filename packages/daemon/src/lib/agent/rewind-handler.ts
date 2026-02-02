@@ -12,16 +12,17 @@
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type {
-	Session,
+	RewindMode,
 	RewindPreview,
 	RewindResult,
-	RewindMode,
 	SelectiveRewindPreview,
 	SelectiveRewindResult,
+	Session,
 } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
+import type { DaemonHub } from '../daemon-hub';
 import type { Logger } from '../logger';
+import { truncateSessionFileAtMessage } from '../sdk-session-file-manager';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 
 /**
@@ -204,27 +205,45 @@ export class RewindHandler {
 				return await this.executeConversationRewind(checkpointId, rewindPoint);
 			}
 
-			// Mode 3: both - files then conversation
-			const sdkResult = await queryObject.rewindFiles(checkpointId);
-
-			if (!sdkResult.canRewind) {
-				await daemonHub.emit('rewind.failed', {
-					sessionId: session.id,
-					checkpointId,
-					mode,
-					error: sdkResult.error || 'File rewind failed',
-				});
-				return { success: false, error: sdkResult.error };
+			// Mode 3: both - files (best-effort) then conversation
+			let fileResult: { filesChanged?: string[]; insertions?: number; deletions?: number } = {};
+			try {
+				const sdkResult = await queryObject.rewindFiles(checkpointId);
+				if (sdkResult.canRewind) {
+					fileResult = {
+						filesChanged: sdkResult.filesChanged,
+						insertions: sdkResult.insertions,
+						deletions: sdkResult.deletions,
+					};
+				} else {
+					logger.log(
+						`File rewind not available for ${checkpointId.slice(0, 8)}...: ${sdkResult.error || 'no checkpoint'}. Proceeding with conversation rewind only.`
+					);
+				}
+			} catch (fileError) {
+				logger.error('File rewind failed (proceeding with conversation rewind):', fileError);
 			}
 
+			// Always proceed with conversation rewind
 			const conversationResult = await this.executeConversationRewind(checkpointId, rewindPoint);
+
+			await daemonHub.emit('rewind.completed', {
+				sessionId: session.id,
+				checkpointId,
+				mode,
+				result: {
+					success: conversationResult.success,
+					filesChanged: fileResult.filesChanged,
+					messagesDeleted: conversationResult.messagesDeleted,
+				},
+			});
 
 			return {
 				success: conversationResult.success,
 				error: conversationResult.error,
-				filesChanged: sdkResult.filesChanged,
-				insertions: sdkResult.insertions,
-				deletions: sdkResult.deletions,
+				filesChanged: fileResult.filesChanged,
+				insertions: fileResult.insertions,
+				deletions: fileResult.deletions,
 				conversationRewound: conversationResult.conversationRewound,
 				messagesDeleted: conversationResult.messagesDeleted,
 			};
@@ -244,7 +263,12 @@ export class RewindHandler {
 	}
 
 	/**
-	 * Execute conversation rewind (delete messages after checkpoint and restart)
+	 * Execute conversation rewind (delete messages at and after checkpoint, truncate JSONL, restart)
+	 *
+	 * Key changes from original:
+	 * 1. Deletes the checkpoint message ITSELF (not just messages after it)
+	 * 2. Finds the previous user message for resumeSessionAt
+	 * 3. Explicitly truncates the SDK JSONL file
 	 */
 	private async executeConversationRewind(
 		checkpointId: string,
@@ -252,18 +276,41 @@ export class RewindHandler {
 	): Promise<RewindResult> {
 		const { session, db, lifecycleManager, logger } = this.ctx;
 
-		// Step 1: Delete messages from DB after rewind point timestamp
-		const messagesDeleted = db.deleteMessagesAfter(session.id, rewindPoint.timestamp);
+		// Step 1: Delete the user message itself AND all messages after it from DB
+		const messagesDeleted = db.deleteMessagesAtAndAfter(session.id, rewindPoint.timestamp);
 
-		// Step 2: Set resumeSessionAt in session metadata
-		session.metadata.resumeSessionAt = checkpointId;
+		// Step 2: Truncate the SDK JSONL file at this message
+		const jsonlResult = truncateSessionFileAtMessage(
+			session.workspacePath,
+			session.sdkSessionId,
+			session.id,
+			checkpointId
+		);
+		if (jsonlResult.truncated) {
+			logger.log(`Truncated JSONL file: removed ${jsonlResult.linesRemoved} lines`);
+		}
+
+		// Step 3: Find the previous user message for resumeSessionAt
+		// After deleting the checkpoint message, the remaining user messages are the ones before it
+		const remainingUserMessages = db.getUserMessages(session.id);
+		const previousUserMessage =
+			remainingUserMessages.length > 0
+				? remainingUserMessages[remainingUserMessages.length - 1]
+				: null;
+
+		if (previousUserMessage) {
+			session.metadata.resumeSessionAt = previousUserMessage.uuid;
+		} else {
+			// No previous user message - clear resumeSessionAt for fresh start
+			delete session.metadata.resumeSessionAt;
+		}
 		db.updateSession(session.id, { metadata: session.metadata });
 
-		// Step 3: Restart query to apply resumeSessionAt
+		// Step 4: Restart query to apply new state
 		await lifecycleManager.restart();
 
 		logger.log(
-			`Conversation rewound to checkpoint ${checkpointId.slice(0, 8)}..., deleted ${messagesDeleted} messages`
+			`Conversation rewound: deleted ${messagesDeleted} messages (including checkpoint ${checkpointId.slice(0, 8)}...)`
 		);
 
 		return { success: true, conversationRewound: true, messagesDeleted };
@@ -404,39 +451,77 @@ export class RewindHandler {
 		});
 
 		const earliestTimestamp = (earliestMessage as Record<string, unknown>).timestamp as number;
-		const checkpointId = messageIds[0]; // Use the first message UUID as checkpoint
 
 		try {
-			// Step 1: Rewind files using SDK checkpoint
-			const sdkResult = await queryObject.rewindFiles(checkpointId);
+			// Find the earliest USER message among selected (for SDK checkpoint)
+			const userMessages = db.getUserMessages(session.id);
+			const selectedUserMessages = userMessages.filter((m) => messageIds.includes(m.uuid));
 
-			if (!sdkResult.canRewind) {
-				return {
-					success: false,
-					error: sdkResult.error,
-					messagesDeleted: 0,
-					filesReverted: [],
-				};
+			// Use the earliest user message as checkpoint for file rewind
+			const earliestUserMessage =
+				selectedUserMessages.length > 0
+					? selectedUserMessages[0] // Already sorted chronologically by getUserMessages
+					: null;
+
+			// Step 1: Rewind files using SDK checkpoint (best-effort)
+			let filesReverted: string[] = [];
+			if (earliestUserMessage) {
+				try {
+					const sdkResult = await queryObject.rewindFiles(earliestUserMessage.uuid);
+					if (sdkResult.canRewind) {
+						filesReverted = sdkResult.filesChanged || [];
+					} else {
+						logger.log(
+							`File rewind not available for selective rewind: ${sdkResult.error || 'no checkpoint'}. Proceeding with conversation rewind only.`
+						);
+					}
+				} catch (fileError) {
+					logger.error('File rewind failed during selective rewind (proceeding):', fileError);
+				}
 			}
 
-			// Step 2: Delete messages from DB after the earliest timestamp
-			const messagesDeleted = db.deleteMessagesAfter(session.id, earliestTimestamp);
+			// Step 2: Delete messages from DB at and after the earliest timestamp (inclusive)
+			const messagesDeleted = db.deleteMessagesAtAndAfter(session.id, earliestTimestamp);
 
-			// Step 3: Set resumeSessionAt in session metadata and restart
-			session.metadata.resumeSessionAt = checkpointId;
+			// Step 3: Truncate JSONL at the earliest selected message
+			const jsonlUuid = earliestUserMessage?.uuid || (earliestMessage as { uuid?: string }).uuid;
+			if (jsonlUuid) {
+				const jsonlResult = truncateSessionFileAtMessage(
+					session.workspacePath,
+					session.sdkSessionId,
+					session.id,
+					jsonlUuid
+				);
+				if (jsonlResult.truncated) {
+					logger.log(`Truncated JSONL file: removed ${jsonlResult.linesRemoved} lines`);
+				}
+			}
+
+			// Step 4: Find previous user message for resumeSessionAt
+			const remainingUserMessages = db.getUserMessages(session.id);
+			const previousUserMessage =
+				remainingUserMessages.length > 0
+					? remainingUserMessages[remainingUserMessages.length - 1]
+					: null;
+
+			if (previousUserMessage) {
+				session.metadata.resumeSessionAt = previousUserMessage.uuid;
+			} else {
+				delete session.metadata.resumeSessionAt;
+			}
 			db.updateSession(session.id, { metadata: session.metadata });
 
-			// Step 4: Restart query to apply resumeSessionAt
+			// Step 5: Restart query to apply new state
 			await lifecycleManager.restart();
 
 			logger.log(
-				`Selective rewind to checkpoint ${checkpointId.slice(0, 8)}..., deleted ${messagesDeleted} messages, reverted ${sdkResult.filesChanged?.length || 0} files`
+				`Selective rewind: deleted ${messagesDeleted} messages, reverted ${filesReverted.length} files`
 			);
 
 			return {
 				success: true,
 				messagesDeleted,
-				filesReverted: sdkResult.filesChanged || [],
+				filesReverted,
 			};
 		} catch (error) {
 			logger.error('Selective rewind execution failed:', error);

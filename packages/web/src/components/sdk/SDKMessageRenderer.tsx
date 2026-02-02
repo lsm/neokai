@@ -41,6 +41,7 @@ interface Props {
 		responses: QuestionDraftResponse[]
 	) => void;
 	onRewind?: (uuid: string) => void; // Rewind to this message
+	rewindingMessageUuid?: string | null; // UUID of message currently being rewound (shows spinner)
 	// Rewind mode props
 	rewindMode?: boolean;
 	selectedMessages?: Set<string>;
@@ -73,6 +74,7 @@ export function SDKMessageRenderer({
 	pendingQuestion,
 	onQuestionResolved,
 	onRewind,
+	rewindingMessageUuid,
 	rewindMode,
 	selectedMessages,
 	onMessageCheckboxChange,
@@ -103,6 +105,7 @@ export function SDKMessageRenderer({
 				isReplay={true}
 				sessionId={sessionId}
 				onRewind={onRewind}
+				rewindingMessageUuid={rewindingMessageUuid}
 				rewindMode={rewindMode}
 				selectedMessages={selectedMessages}
 				onMessageCheckboxChange={onMessageCheckboxChange}
@@ -118,6 +121,7 @@ export function SDKMessageRenderer({
 				sessionInfo={sessionInfo}
 				sessionId={sessionId}
 				onRewind={onRewind}
+				rewindingMessageUuid={rewindingMessageUuid}
 				rewindMode={rewindMode}
 				selectedMessages={selectedMessages}
 				onMessageCheckboxChange={onMessageCheckboxChange}
