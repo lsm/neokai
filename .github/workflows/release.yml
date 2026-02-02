@@ -44,6 +44,27 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Release version: $VERSION"
 
+      - name: Verify package.json versions match tag
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          echo "Checking all package.json versions match tag version: $VERSION"
+          MISMATCHES=()
+          for pkg in npm/neokai packages/cli packages/daemon packages/e2e packages/shared packages/web; do
+            PKG_VERSION=$(node -p "require('./$pkg/package.json').version")
+            if [ "$PKG_VERSION" != "$VERSION" ]; then
+              MISMATCHES+=("$pkg/package.json: $PKG_VERSION (expected $VERSION)")
+            fi
+          done
+          if [ ${#MISMATCHES[@]} -gt 0 ]; then
+            echo "ERROR: Version mismatches found!"
+            printf '  %s\n' "${MISMATCHES[@]}"
+            echo ""
+            echo "All package.json versions must match the release tag (v$VERSION)."
+            echo "Bump all package.json versions to $VERSION before tagging."
+            exit 1
+          fi
+          echo "All package.json versions match v$VERSION"
+
       - name: Verify commit is on main branch
         run: |
           if ! git branch -r --contains "$GITHUB_SHA" | grep -q 'origin/main'; then
