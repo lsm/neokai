@@ -1,0 +1,246 @@
+# Release - Build and publish to npm
+#
+# Triggered by version tags (v*). Waits for CI to pass on the tagged
+# commit before building platform binaries and publishing to npm.
+#
+# Flow:
+# 1. Wait for CI workflow to pass on this commit (handles race conditions)
+# 2. Build binaries for all platforms (4 targets)
+# 3. Package into platform-specific npm packages
+# 4. Publish to npm registry (Trusted Publishing via OIDC)
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  # ============================================
+  # WAIT FOR CI
+  # Ensure the tagged commit has passed all CI checks.
+  # If CI is still running, wait for it to complete.
+  # ============================================
+
+  wait-for-ci:
+    name: Wait for CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Release version: $VERSION"
+
+      - name: Verify commit is on main branch
+        run: |
+          if ! git branch -r --contains "$GITHUB_SHA" | grep -q 'origin/main'; then
+            echo "ERROR: Tagged commit $GITHUB_SHA is not on the main branch"
+            echo "Releases must be tagged on commits that exist on main"
+            exit 1
+          fi
+          echo "Commit $GITHUB_SHA is on main branch"
+
+      - name: Wait for CI to pass
+        run: |
+          echo "Waiting for CI workflow to pass on commit $GITHUB_SHA..."
+
+          # Wait for the CI run to appear (may not have started yet if tag
+          # was pushed at the same time as the commit)
+          for attempt in $(seq 1 30); do
+            RUN_ID=$(gh run list \
+              --workflow=main.yml \
+              --commit="$GITHUB_SHA" \
+              --json databaseId \
+              --jq '.[0].databaseId // empty')
+
+            if [ -n "$RUN_ID" ]; then
+              echo "Found CI run: $RUN_ID"
+              break
+            fi
+
+            echo "No CI run found yet, waiting... (attempt $attempt/30)"
+            sleep 10
+          done
+
+          if [ -z "$RUN_ID" ]; then
+            echo "ERROR: No CI workflow run found for commit $GITHUB_SHA"
+            echo "Ensure this commit was pushed to main before tagging"
+            exit 1
+          fi
+
+          # Wait for the run to complete (exits 0 on success, non-zero on failure)
+          echo "Watching CI run $RUN_ID..."
+          gh run watch "$RUN_ID" --exit-status || {
+            echo "ERROR: CI workflow failed. Cannot release."
+            exit 1
+          }
+
+          echo "CI passed! Proceeding with release."
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  # ============================================
+  # RELEASE BUILD
+  # Build binaries for all platforms
+  # ============================================
+
+  release-build:
+    name: Release Build ${{ matrix.binary }}
+    runs-on: ${{ matrix.runner }}
+    needs: wait-for-ci
+    timeout-minutes: 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            target: bun-darwin-arm64
+            binary: kai-darwin-arm64
+            smoke: true
+          - runner: macos-15-intel
+            target: bun-darwin-x64
+            binary: kai-darwin-x64
+            smoke: true
+          - runner: ubuntu-latest
+            target: bun-linux-x64
+            binary: kai-linux-x64
+            smoke: true
+          - runner: ubuntu-latest
+            target: bun-linux-arm64
+            binary: kai-linux-arm64
+            smoke: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.6
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build web frontend
+        run: cd packages/web && bun run build
+
+      - name: Generate embedded assets
+        run: bun run scripts/generate-embedded-assets.ts
+
+      - name: Compile binary
+        run: bun build --compile --target=${{ matrix.target }} --outfile=dist/bin/${{ matrix.binary }} packages/cli/prod-entry.ts
+
+      - name: Smoke test
+        if: matrix.smoke
+        run: bun run scripts/smoke-test.ts ./dist/bin/${{ matrix.binary }}
+        env:
+          GLM_API_KEY: smoke-test
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary }}
+          path: dist/bin/${{ matrix.binary }}
+
+  # ============================================
+  # PACKAGE
+  # Create npm packages from built binaries
+  # ============================================
+
+  package:
+    name: Package npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [wait-for-ci, release-build]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.6
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Download release binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: kai-*
+          path: dist/bin/
+
+      - name: Move binaries to expected locations
+        run: |
+          mkdir -p dist/bin-flat
+          for dir in dist/bin/kai-*; do
+            binary=$(basename "$dir")
+            mv "$dir/$binary" "dist/bin-flat/$binary"
+            chmod +x "dist/bin-flat/$binary"
+          done
+          rm -rf dist/bin
+          mv dist/bin-flat dist/bin
+
+      - name: Package npm packages
+        run: bun run scripts/package-npm.ts --version ${{ needs.wait-for-ci.outputs.version }}
+
+      - name: Upload npm packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-packages
+          path: dist/npm/
+
+  # ============================================
+  # PUBLISH
+  # Publish packages to npm registry
+  # ============================================
+
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [wait-for-ci, package]
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download npm packages
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-packages
+          path: dist/npm/
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Upgrade npm for Trusted Publishing support
+        run: npm install -g npm@latest
+
+      - name: Publish platform packages
+        run: |
+          for pkg in dist/npm/cli-*; do
+            echo "Publishing $(basename $pkg)..."
+            (cd "$pkg" && npm publish --access public --provenance) || echo "::warning::Failed to publish $(basename $pkg), may already exist"
+          done
+
+      - name: Publish main package
+        run: |
+          cd dist/npm/neokai && npm publish --access public --provenance || echo "::warning::Failed to publish neokai, may already exist"

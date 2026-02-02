@@ -1,14 +1,12 @@
-# CI - Unified build, test, and release pipeline
+# CI - Build, test, and quality checks
 #
 # On PRs and push to main:
 # 1. Code quality checks + unit/integration tests (parallel)
 # 2. Build linux-x64 binary + smoke test (after tests pass)
 # 3. Run full E2E test matrix against the binary
+# 4. "All Tests Pass" gate (used by release.yml to verify CI status)
 #
-# On version tags (v*):
-# 1. Verify commit has a successful CI run on main with all tests passed
-# 2. Build all platforms, package, and publish to npm
-#
+# Release is handled separately in release.yml (triggered by version tags).
 # Unit test coverage (daemon, web) is uploaded to Codecov.
 
 name: CI
@@ -16,7 +14,6 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -32,7 +29,6 @@ jobs:
   check:
     name: Lint, Knip, Format & Type Check
     runs-on: ubuntu-latest
-    if: github.ref_type != 'tag'
     timeout-minutes: 3
 
     steps:
@@ -83,7 +79,6 @@ jobs:
   test-daemon-offline:
     name: Daemon Offline (${{ matrix.module }})
     runs-on: ubuntu-latest
-    if: github.ref_type != 'tag'
     timeout-minutes: 5
 
     strategy:
@@ -144,7 +139,6 @@ jobs:
   test-daemon-online:
     name: Daemon Online (${{ matrix.module }})
     runs-on: ubuntu-latest
-    if: github.ref_type != 'tag'
     timeout-minutes: 5
 
     strategy:
@@ -211,7 +205,6 @@ jobs:
   test-daemon-shared-unit:
     name: Daemon + Shared Unit Tests (Coverage)
     runs-on: ubuntu-latest
-    if: github.ref_type != 'tag'
     timeout-minutes: 3
 
     steps:
@@ -246,7 +239,6 @@ jobs:
   test-web:
     name: Web Tests
     runs-on: ubuntu-latest
-    if: github.ref_type != 'tag'
     timeout-minutes: 3
 
     steps:
@@ -287,7 +279,6 @@ jobs:
   test-cli:
     name: CLI Tests
     runs-on: ubuntu-latest
-    if: github.ref_type != 'tag'
     timeout-minutes: 2
 
     steps:
@@ -314,7 +305,6 @@ jobs:
     name: Build Binary (linux-x64)
     runs-on: ubuntu-latest
     needs: [check, test-daemon-offline, test-daemon-online, test-daemon-shared-unit, test-web, test-cli]
-    if: github.ref_type != 'tag'
     timeout-minutes: 10
 
     steps:
@@ -359,7 +349,6 @@ jobs:
   discover:
     name: Discover Tests
     runs-on: ubuntu-latest
-    if: github.ref_type != 'tag'
     outputs:
       tests_no_llm: ${{ steps.categorize.outputs.tests_no_llm }}
       tests_llm: ${{ steps.categorize.outputs.tests_llm }}
@@ -443,7 +432,6 @@ jobs:
     name: E2E (${{ matrix.test }})
     runs-on: ubuntu-latest
     needs: [build, discover]
-    if: github.ref_type != 'tag'
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -532,7 +520,6 @@ jobs:
     name: E2E LLM (${{ matrix.test }})
     runs-on: ubuntu-latest
     needs: [build, discover]
-    if: github.ref_type != 'tag'
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -621,7 +608,7 @@ jobs:
     name: All Tests Pass
     runs-on: ubuntu-latest
     timeout-minutes: 1
-    if: always() && github.ref_type != 'tag'
+    if: always()
     needs:
       - check
       - test-daemon-offline
@@ -655,236 +642,3 @@ jobs:
             exit 1
           fi
           echo "All tests passed!"
-
-  # ============================================
-  # CHECK RELEASE TAG
-  # Determine if current commit has a version tag
-  # On tags, verify commit had a successful CI run on main
-  # AND the "All Tests Pass" gate check succeeded
-  # ============================================
-
-  check-release:
-    name: Check Release
-    runs-on: ubuntu-latest
-    outputs:
-      is_release: ${{ steps.check.outputs.is_release }}
-      version: ${{ steps.check.outputs.version }}
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Verify commit was tested on main (tagged releases only)
-        if: github.ref_type == 'tag'
-        run: |
-          echo "Verifying commit $GITHUB_SHA was tested on main branch..."
-
-          # 1. Check that this commit has a successful CI workflow run on main
-          RUNS=$(gh api \
-            -H "Accept: application/vnd.github+json" \
-            "/repos/${{ github.repository }}/actions/runs?head_sha=$GITHUB_SHA&branch=main&status=success&per_page=1" \
-            --jq '.total_count')
-
-          if [ "$RUNS" -eq 0 ]; then
-            echo "ERROR: Commit $GITHUB_SHA has no successful CI runs on main branch"
-            echo "Cannot proceed with release for untested commit"
-            exit 1
-          fi
-
-          echo "Commit $GITHUB_SHA has $RUNS successful CI run(s) on main branch"
-
-          # 2. Verify the "All Tests Pass" gate check completed successfully
-          #    This is the explicit gate job that requires all test jobs to pass
-          GATE_CONCLUSION=$(gh api \
-            -H "Accept: application/vnd.github+json" \
-            "/repos/${{ github.repository }}/commits/$GITHUB_SHA/check-runs?check_name=All+Tests+Pass&per_page=1" \
-            --jq '.check_runs[0].conclusion // empty')
-
-          if [ -z "$GATE_CONCLUSION" ]; then
-            echo "ERROR: No 'All Tests Pass' check run found for commit $GITHUB_SHA"
-            echo "This commit was never fully tested - cannot release"
-            exit 1
-          fi
-
-          if [ "$GATE_CONCLUSION" != "success" ]; then
-            echo "ERROR: 'All Tests Pass' check has conclusion '$GATE_CONCLUSION' (expected 'success')"
-            echo "Cannot release a commit with failing tests"
-            exit 1
-          fi
-
-          echo "All tests passed for commit $GITHUB_SHA (gate check: $GATE_CONCLUSION)"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Check for version tag
-        id: check
-        run: |
-          VERSION_TAG=$(git tag --points-at HEAD | grep '^v' | head -1)
-          if [ -n "$VERSION_TAG" ]; then
-            echo "is_release=true" >> $GITHUB_OUTPUT
-            echo "version=${VERSION_TAG#v}" >> $GITHUB_OUTPUT
-            echo "Found release tag: $VERSION_TAG (version: ${VERSION_TAG#v})"
-          else
-            echo "is_release=false" >> $GITHUB_OUTPUT
-            echo "version=" >> $GITHUB_OUTPUT
-            echo "No release tag found on HEAD"
-          fi
-
-  # ============================================
-  # RELEASE BUILD (conditional)
-  # Build binaries for all platforms
-  # ============================================
-
-  release-build:
-    name: Release Build ${{ matrix.binary }}
-    runs-on: ${{ matrix.runner }}
-    needs: check-release
-    if: needs.check-release.result == 'success' && needs.check-release.outputs.is_release == 'true'
-    timeout-minutes: 10
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-latest
-            target: bun-darwin-arm64
-            binary: kai-darwin-arm64
-            smoke: true
-          - runner: macos-15-intel
-            target: bun-darwin-x64
-            binary: kai-darwin-x64
-            smoke: true
-          - runner: ubuntu-latest
-            target: bun-linux-x64
-            binary: kai-linux-x64
-            smoke: true
-          - runner: ubuntu-latest
-            target: bun-linux-arm64
-            binary: kai-linux-arm64
-            smoke: false
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: 1.3.6
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Build web frontend
-        run: cd packages/web && bun run build
-
-      - name: Generate embedded assets
-        run: bun run scripts/generate-embedded-assets.ts
-
-      - name: Compile binary
-        run: bun build --compile --target=${{ matrix.target }} --outfile=dist/bin/${{ matrix.binary }} packages/cli/prod-entry.ts
-
-      - name: Smoke test
-        if: matrix.smoke
-        run: bun run scripts/smoke-test.ts ./dist/bin/${{ matrix.binary }}
-        env:
-          GLM_API_KEY: smoke-test
-
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.binary }}
-          path: dist/bin/${{ matrix.binary }}
-
-  # ============================================
-  # PACKAGE (conditional)
-  # Create npm packages from built binaries
-  # ============================================
-
-  package:
-    name: Package npm
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    needs: [check-release, release-build]
-    if: needs.check-release.result == 'success' && needs.check-release.outputs.is_release == 'true'
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: 1.3.6
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Download release binary artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: kai-*
-          path: dist/bin/
-
-      - name: Move binaries to expected locations
-        run: |
-          mkdir -p dist/bin-flat
-          for dir in dist/bin/kai-*; do
-            binary=$(basename "$dir")
-            # Skip E2E build artifact
-            [[ "$binary" == *-e2e ]] && continue
-            mv "$dir/$binary" "dist/bin-flat/$binary"
-            chmod +x "dist/bin-flat/$binary"
-          done
-          rm -rf dist/bin
-          mv dist/bin-flat dist/bin
-
-      - name: Package npm packages
-        run: bun run scripts/package-npm.ts --version ${{ needs.check-release.outputs.version }}
-
-      - name: Upload npm packages
-        uses: actions/upload-artifact@v4
-        with:
-          name: npm-packages
-          path: dist/npm/
-
-  # ============================================
-  # PUBLISH (conditional)
-  # Publish packages to npm registry
-  # ============================================
-
-  publish:
-    name: Publish to npm
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    needs: [check-release, package]
-    if: needs.check-release.result == 'success' && needs.check-release.outputs.is_release == 'true'
-    permissions:
-      contents: read
-      id-token: write
-
-    steps:
-      - name: Download npm packages
-        uses: actions/download-artifact@v4
-        with:
-          name: npm-packages
-          path: dist/npm/
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Upgrade npm for Trusted Publishing support
-        run: npm install -g npm@latest
-
-      - name: Publish platform packages
-        run: |
-          for pkg in dist/npm/cli-*; do
-            echo "Publishing $(basename $pkg)..."
-            (cd "$pkg" && npm publish --access public --provenance) || echo "::warning::Failed to publish $(basename $pkg), may already exist"
-          done
-
-      - name: Publish main package
-        run: |
-          cd dist/npm/neokai && npm publish --access public --provenance || echo "::warning::Failed to publish neokai, may already exist"
