@@ -1,4 +1,4 @@
-# Release - Build and publish to npm
+# Release - Build, publish to npm, and create GitHub Release
 #
 # Triggered by version tags (v*). Waits for CI to pass on the tagged
 # commit before building platform binaries and publishing to npm.
@@ -8,6 +8,7 @@
 # 2. Build binaries for all platforms (4 targets)
 # 3. Package into platform-specific npm packages
 # 4. Publish to npm registry (Trusted Publishing via OIDC)
+# 5. Create GitHub Release with auto-generated notes
 
 name: Release
 
@@ -293,3 +294,32 @@ jobs:
               exit 1
             fi
           fi
+
+  # ============================================
+  # GITHUB RELEASE
+  # Create a GitHub Release with auto-generated notes
+  # ============================================
+
+  github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [wait-for-ci, publish]
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create GitHub Release
+        run: |
+          VERSION="${{ needs.wait-for-ci.outputs.version }}"
+          echo "Creating GitHub Release for v$VERSION..."
+          gh release create "v$VERSION" \
+            --title "v$VERSION" \
+            --generate-notes
+          echo "GitHub Release created: v$VERSION"
+        env:
+          GH_TOKEN: ${{ github.token }}
