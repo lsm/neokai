@@ -73,6 +73,17 @@ export async function resetSessionQuery(
 	});
 }
 
+export async function switchCoordinatorMode(
+	sessionId: string,
+	coordinatorMode: boolean
+): Promise<{ success: boolean; coordinatorMode: boolean; error?: string }> {
+	const hub = getHubOrThrow();
+	return await hub.call<{ success: boolean; coordinatorMode: boolean; error?: string }>(
+		'session.coordinator.switch',
+		{ sessionId, coordinatorMode }
+	);
+}
+
 export async function deleteSession(sessionId: string): Promise<void> {
 	const hub = getHubOrThrow();
 	await hub.call('session.delete', { sessionId });

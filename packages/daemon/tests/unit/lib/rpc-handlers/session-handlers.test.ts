@@ -579,6 +579,57 @@ describe('Session Handlers', () => {
 		});
 	});
 
+	describe('session.coordinator.switch', () => {
+		it('should switch coordinator mode and restart query', async () => {
+			const result = (await callHandler('session.coordinator.switch', {
+				sessionId: 'test-session-id',
+				coordinatorMode: true,
+			})) as { success: boolean; coordinatorMode: boolean };
+
+			expect(result.success).toBe(true);
+			expect(result.coordinatorMode).toBe(true);
+			expect(mockSessionManager.updateSession).toHaveBeenCalledWith(
+				'test-session-id',
+				expect.objectContaining({
+					config: expect.objectContaining({ coordinatorMode: true }),
+				})
+			);
+			expect(mockAgentSession.resetQuery).toHaveBeenCalledWith({ restartQuery: true });
+			expect(mockMessageHub.publish).toHaveBeenCalledWith(
+				'session.updated',
+				{ config: { coordinatorMode: true } },
+				{ sessionId: 'test-session-id' }
+			);
+		});
+
+		it('should no-op if mode is already the same', async () => {
+			(mockAgentSession.getSessionData as ReturnType<typeof mock>).mockReturnValue({
+				...mockSession,
+				config: { ...mockSession.config, coordinatorMode: true },
+			});
+
+			const result = (await callHandler('session.coordinator.switch', {
+				sessionId: 'test-session-id',
+				coordinatorMode: true,
+			})) as { success: boolean; coordinatorMode: boolean };
+
+			expect(result.success).toBe(true);
+			expect(result.coordinatorMode).toBe(true);
+			expect(mockAgentSession.resetQuery).not.toHaveBeenCalled();
+		});
+
+		it('should throw if session not found', async () => {
+			(mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(null);
+
+			await expect(
+				callHandler('session.coordinator.switch', {
+					sessionId: 'nonexistent',
+					coordinatorMode: true,
+				})
+			).rejects.toThrow('Session not found');
+		});
+	});
+
 	describe('session.query.trigger', () => {
 		it('should trigger query', async () => {
 			const result = (await callHandler('session.query.trigger', {

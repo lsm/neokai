@@ -328,6 +328,44 @@ export function setupSessionHandlers(
 		return result;
 	});
 
+	// Handle coordinator mode switching
+	// Updates config and auto-restarts query so the new agent/tools take effect
+	messageHub.handle('session.coordinator.switch', async (data) => {
+		const { sessionId: targetSessionId, coordinatorMode } = data as {
+			sessionId: string;
+			coordinatorMode: boolean;
+		};
+
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+
+		const session = agentSession.getSessionData();
+		const previousMode = session.config.coordinatorMode ?? false;
+
+		if (previousMode === coordinatorMode) {
+			return { success: true, coordinatorMode };
+		}
+
+		// Update session config
+		await sessionManager.updateSession(targetSessionId, {
+			config: { ...session.config, coordinatorMode },
+		});
+
+		// Restart query to apply new agent/tools configuration
+		const result = await agentSession.resetQuery({ restartQuery: true });
+
+		// Broadcast update for UI
+		await messageHub.publish(
+			'session.updated',
+			{ config: { coordinatorMode } },
+			{ sessionId: targetSessionId }
+		);
+
+		return { success: result.success, coordinatorMode, error: result.error };
+	});
+
 	// Handle thinking level changes
 	// Levels: auto, think8k, think16k, think32k
 	// - auto: No thinking budget

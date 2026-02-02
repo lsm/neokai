@@ -20,7 +20,7 @@ import { useEffect, useRef, useCallback, useMemo, useState } from 'preact/hooks'
 import { useSignalEffect } from '@preact/signals';
 import type { MessageImage } from '@neokai/shared';
 import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import { updateSession, resetSessionQuery } from '../lib/api-helpers.ts';
+import { updateSession, switchCoordinatorMode } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
 import { cn } from '../lib/utils.ts';
 import { connectionState } from '../lib/state.ts';
@@ -504,11 +504,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			setCoordinatorSwitching(true);
 			setCoordinatorMode(newMode);
 			try {
-				await updateSession(sessionId, {
-					config: { coordinatorMode: newMode },
-				});
-				// Coordinator mode requires query restart to apply agent/tools changes
-				await resetSessionQuery(sessionId);
+				await switchCoordinatorMode(sessionId, newMode);
 			} catch (err) {
 				setCoordinatorMode(!newMode);
 				toast.error('Failed to toggle coordinator mode');

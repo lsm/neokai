@@ -135,31 +135,21 @@ function assertCoordinatorOff(systemInit: Record<string, unknown>) {
 }
 
 /**
- * Toggle coordinator mode on a session via session.update + session.resetQuery
+ * Toggle coordinator mode on a session via session.coordinator.switch
+ * This single RPC updates config and auto-restarts the query
  */
 async function toggleCoordinatorMode(
 	daemon: DaemonServerContext,
 	sessionId: string,
 	coordinatorMode: boolean
 ): Promise<void> {
-	// Update session config
-	await daemon.messageHub.call('session.update', {
+	const result = (await daemon.messageHub.call('session.coordinator.switch', {
 		sessionId,
-		config: { coordinatorMode },
-	});
+		coordinatorMode,
+	})) as { success: boolean; coordinatorMode: boolean; error?: string };
 
-	// Verify config was updated
-	const sessionResult = (await daemon.messageHub.call('session.get', {
-		sessionId,
-	})) as { session: { config: { coordinatorMode: boolean } } };
-	expect(sessionResult.session.config.coordinatorMode).toBe(coordinatorMode);
-
-	// Reset query to apply the new config
-	const resetResult = (await daemon.messageHub.call('session.resetQuery', {
-		sessionId,
-		restartQuery: true,
-	})) as { success: boolean };
-	expect(resetResult.success).toBe(true);
+	expect(result.success).toBe(true);
+	expect(result.coordinatorMode).toBe(coordinatorMode);
 }
 
 describe('Coordinator Mode Switch - System Init Message', () => {
