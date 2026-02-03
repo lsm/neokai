@@ -27,13 +27,13 @@ import { executorAgent } from './coordinator/executor';
  * beyond the built-ins.
  */
 const SPECIALIST_AGENTS: Record<string, AgentDefinition> = {
-	coder: coderAgent,
-	debugger: debuggerAgent,
-	tester: testerAgent,
-	reviewer: reviewerAgent,
-	vcs: vcsAgent,
-	verifier: verifierAgent,
-	executor: executorAgent,
+	Coder: coderAgent,
+	Debugger: debuggerAgent,
+	Tester: testerAgent,
+	Reviewer: reviewerAgent,
+	VCS: vcsAgent,
+	Verifier: verifierAgent,
+	Executor: executorAgent,
 };
 
 /**
@@ -45,7 +45,7 @@ export function getCoordinatorAgents(
 	userAgents?: Record<string, AgentDefinition>
 ): Record<string, AgentDefinition> {
 	return {
-		coordinator: COORDINATOR_AGENT,
+		Coordinator: COORDINATOR_AGENT,
 		...userAgents,
 		...SPECIALIST_AGENTS, // Specialists win on conflict
 	};

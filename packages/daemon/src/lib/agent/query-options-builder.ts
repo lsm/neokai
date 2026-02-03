@@ -191,10 +191,15 @@ export class QueryOptionsBuilder {
 		// When coordinator mode is enabled, apply the coordinator agent to the main thread
 		// and merge specialist agents with any user-defined agents
 		if (config.coordinatorMode) {
-			queryOptions.agent = 'coordinator';
+			queryOptions.agent = 'Coordinator';
 			const agents = getCoordinatorAgents(
 				config.agents as Record<string, AgentDefinition> | undefined
 			);
+
+			// Restrict session-level tools to match coordinator's allowed tools.
+			// This ensures the SDK only presents these tools to the main agent.
+			// Subagents run as separate CLI processes with their own tool sets.
+			queryOptions.tools = agents.Coordinator.tools;
 
 			// Inject worktree isolation into specialist agents that modify files.
 			// The coordinator doesn't need it (it doesn't touch files), but subagents
@@ -202,7 +207,7 @@ export class QueryOptionsBuilder {
 			if (this.ctx.session.worktree) {
 				const worktreeText = this.getWorktreeIsolationText();
 				for (const [name, agent] of Object.entries(agents)) {
-					if (name === 'coordinator') continue;
+					if (name === 'Coordinator') continue;
 					agents[name] = {
 						...agent,
 						prompt: agent.prompt + '\n\n' + worktreeText,

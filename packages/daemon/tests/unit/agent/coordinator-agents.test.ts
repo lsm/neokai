@@ -12,19 +12,19 @@ describe('getCoordinatorAgents', () => {
 	it('should return coordinator and all specialist agents', () => {
 		const agents = getCoordinatorAgents();
 
-		expect(agents.coordinator).toBeDefined();
-		expect(agents.coder).toBeDefined();
-		expect(agents.debugger).toBeDefined();
-		expect(agents.tester).toBeDefined();
-		expect(agents.reviewer).toBeDefined();
-		expect(agents.vcs).toBeDefined();
-		expect(agents.verifier).toBeDefined();
-		expect(agents.executor).toBeDefined();
+		expect(agents.Coordinator).toBeDefined();
+		expect(agents.Coder).toBeDefined();
+		expect(agents.Debugger).toBeDefined();
+		expect(agents.Tester).toBeDefined();
+		expect(agents.Reviewer).toBeDefined();
+		expect(agents.VCS).toBeDefined();
+		expect(agents.Verifier).toBeDefined();
+		expect(agents.Executor).toBeDefined();
 	});
 
 	it('should include coordinator agent with orchestration tools only', () => {
 		const agents = getCoordinatorAgents();
-		const coordinator = agents.coordinator;
+		const coordinator = agents.Coordinator;
 
 		expect(coordinator.tools).toContain('Task');
 		expect(coordinator.tools).toContain('TodoWrite');
@@ -36,15 +36,15 @@ describe('getCoordinatorAgents', () => {
 		const agents = getCoordinatorAgents();
 
 		// Coder should have file editing tools
-		expect(agents.coder.tools).toContain('Edit');
-		expect(agents.coder.tools).toContain('Write');
+		expect(agents.Coder.tools).toContain('Edit');
+		expect(agents.Coder.tools).toContain('Write');
 
 		// Debugger should have file tools for writing tests
-		expect(agents.debugger.tools).toContain('Bash');
-		expect(agents.debugger.tools).toContain('Write');
+		expect(agents.Debugger.tools).toContain('Bash');
+		expect(agents.Debugger.tools).toContain('Write');
 
 		// VCS should have Bash for git operations
-		expect(agents.vcs.tools).toContain('Bash');
+		expect(agents.VCS.tools).toContain('Bash');
 	});
 
 	it('should merge user agents with specialists', () => {
@@ -60,14 +60,14 @@ describe('getCoordinatorAgents', () => {
 		expect(agents['custom-agent']).toBeDefined();
 		expect(agents['custom-agent'].description).toBe('A custom agent');
 		// Specialists should still be present
-		expect(agents.coder).toBeDefined();
-		expect(agents.coordinator).toBeDefined();
+		expect(agents.Coder).toBeDefined();
+		expect(agents.Coordinator).toBeDefined();
 	});
 
 	it('should let specialists win on name conflicts with user agents', () => {
 		const userAgents: Record<string, AgentDefinition> = {
-			coder: {
-				description: 'User-defined coder',
+			Coder: {
+				description: 'User-defined Coder',
 				prompt: 'Custom coder prompt.',
 			},
 		};
@@ -75,7 +75,7 @@ describe('getCoordinatorAgents', () => {
 		const agents = getCoordinatorAgents(userAgents);
 
 		// Specialist should win over user agent
-		expect(agents.coder.description).not.toBe('User-defined coder');
+		expect(agents.Coder.description).not.toBe('User-defined Coder');
 	});
 
 	it('should return correct number of agents', () => {
@@ -89,14 +89,14 @@ describe('getCoordinatorAgents', () => {
 	it('should work with undefined user agents', () => {
 		const agents = getCoordinatorAgents(undefined);
 
-		expect(agents.coordinator).toBeDefined();
+		expect(agents.Coordinator).toBeDefined();
 		expect(Object.keys(agents)).toHaveLength(8);
 	});
 
 	it('should have verifier using opus model for critical verification', () => {
 		const agents = getCoordinatorAgents();
 
-		expect(agents.verifier.model).toBe('opus');
+		expect(agents.Verifier.model).toBe('opus');
 	});
 
 	it('should have all agents with non-empty prompts', () => {
@@ -106,5 +106,10 @@ describe('getCoordinatorAgents', () => {
 			expect(agent.prompt.length).toBeGreaterThan(0);
 			expect(agent.description.length).toBeGreaterThan(0);
 		}
+	});
+
+	it('should have coordinator with exactly Task, TodoWrite, AskUserQuestion tools', () => {
+		const agents = getCoordinatorAgents();
+		expect(agents.Coordinator.tools).toEqual(['Task', 'TodoWrite', 'AskUserQuestion']);
 	});
 });
