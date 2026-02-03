@@ -27,7 +27,15 @@ import { sendMessage, waitForIdle } from '../helpers/daemon-test-helpers';
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
 /** Coordinator-allowed tools — the only tools the coordinator should use directly */
-const COORDINATOR_TOOLS = new Set(['Task', 'TodoWrite', 'AskUserQuestion']);
+const COORDINATOR_TOOLS = new Set([
+	'Task',
+	'TodoWrite',
+	'AskUserQuestion',
+	'TaskOutput',
+	'TaskStop',
+	'EnterPlanMode',
+	'ExitPlanMode',
+]);
 
 /** Tools that indicate direct file/command access (should be delegated) */
 const _DIRECT_TOOLS = new Set([

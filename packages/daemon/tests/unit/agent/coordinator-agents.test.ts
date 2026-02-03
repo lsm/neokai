@@ -108,8 +108,16 @@ describe('getCoordinatorAgents', () => {
 		}
 	});
 
-	it('should have coordinator with exactly Task, TodoWrite, AskUserQuestion tools', () => {
+	it('should have coordinator with orchestration and monitoring tools only', () => {
 		const agents = getCoordinatorAgents();
-		expect(agents.Coordinator.tools).toEqual(['Task', 'TodoWrite', 'AskUserQuestion']);
+		expect(agents.Coordinator.tools).toEqual([
+			'Task',
+			'TodoWrite',
+			'AskUserQuestion',
+			'TaskOutput',
+			'TaskStop',
+			'EnterPlanMode',
+			'ExitPlanMode',
+		]);
 	});
 });
