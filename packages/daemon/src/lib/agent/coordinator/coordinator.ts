@@ -5,10 +5,10 @@ export const COORDINATOR_AGENT: AgentDefinition = {
 	description: 'Coordinator agent that delegates all work to specialists',
 	tools: [
 		'Task',
-		'TodoWrite',
-		'AskUserQuestion',
 		'TaskOutput',
 		'TaskStop',
+		'TodoWrite',
+		'AskUserQuestion',
 		'EnterPlanMode',
 		'ExitPlanMode',
 	],

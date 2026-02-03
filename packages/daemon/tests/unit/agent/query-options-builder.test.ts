@@ -18,14 +18,8 @@ describe('QueryOptionsBuilder', () => {
 	let mockSession: Session;
 	let mockSettingsManager: SettingsManager;
 	let mockContext: QueryOptionsBuilderContext;
-	let originalNodeEnv: string | undefined;
 
 	beforeEach(() => {
-		// Store original NODE_ENV
-		originalNodeEnv = process.env.NODE_ENV;
-		// Set to development for most tests
-		process.env.NODE_ENV = 'development';
-
 		mockSession = {
 			id: generateUUID(),
 			title: 'Test Session',
@@ -61,10 +55,7 @@ describe('QueryOptionsBuilder', () => {
 		builder = new QueryOptionsBuilder(mockContext);
 	});
 
-	afterEach(() => {
-		// Restore NODE_ENV
-		process.env.NODE_ENV = originalNodeEnv;
-	});
+	afterEach(() => {});
 
 	describe('build', () => {
 		it('should build basic query options', async () => {
@@ -216,17 +207,6 @@ describe('QueryOptionsBuilder', () => {
 	});
 
 	describe('system prompt configuration', () => {
-		it('should skip system prompt in test environment', async () => {
-			process.env.NODE_ENV = 'test';
-			const newBuilder = new QueryOptionsBuilder({
-				session: mockSession,
-				settingsManager: mockSettingsManager,
-			});
-			const options = await newBuilder.build();
-
-			expect(options.systemPrompt).toBeUndefined();
-		});
-
 		it('should use Claude Code preset by default', async () => {
 			const options = await builder.build();
 
@@ -333,17 +313,6 @@ describe('QueryOptionsBuilder', () => {
 	});
 
 	describe('MCP servers configuration', () => {
-		it('should disable MCP in test environment', async () => {
-			process.env.NODE_ENV = 'test';
-			const newBuilder = new QueryOptionsBuilder({
-				session: mockSession,
-				settingsManager: mockSettingsManager,
-			});
-			const options = await newBuilder.build();
-
-			expect(options.mcpServers).toEqual({});
-		});
-
 		it('should use configured mcpServers', async () => {
 			mockSession.config.mcpServers = {
 				'test-server': { command: 'test-command' },
@@ -363,17 +332,6 @@ describe('QueryOptionsBuilder', () => {
 	});
 
 	describe('setting sources configuration', () => {
-		it('should disable setting sources in test environment', async () => {
-			process.env.NODE_ENV = 'test';
-			const newBuilder = new QueryOptionsBuilder({
-				session: mockSession,
-				settingsManager: mockSettingsManager,
-			});
-			const options = await newBuilder.build();
-
-			expect(options.settingSources).toEqual([]);
-		});
-
 		it('should include project and local sources by default', async () => {
 			const options = await builder.build();
 			expect(options.settingSources).toEqual(['project', 'local']);
@@ -441,23 +399,11 @@ describe('QueryOptionsBuilder', () => {
 	});
 
 	describe('hooks configuration', () => {
-		it('should skip hooks in test environment', async () => {
-			process.env.NODE_ENV = 'test';
-			const newBuilder = new QueryOptionsBuilder({
-				session: mockSession,
-				settingsManager: mockSettingsManager,
-			});
-			const options = await newBuilder.build();
-
-			expect(options.hooks).toBeUndefined();
-		});
-
-		it('should include output limiter hook in production', async () => {
-			process.env.NODE_ENV = 'production';
+		it('should return empty hooks', async () => {
 			const options = await builder.build();
 
-			expect(options.hooks).toBeDefined();
-			expect(options.hooks?.PreToolUse).toBeDefined();
+			// buildHooks() returns {} — no hooks configured
+			expect(options.hooks).toEqual({});
 		});
 	});
 
@@ -639,17 +585,17 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.tools).toEqual({ type: 'preset', preset: 'claude_code' });
 		});
 
-		it('should rely on SDK native agent tool restrictions (not hooks or canUseTool)', async () => {
+		it('should set allowedTools for all tools in coordinator mode', async () => {
 			mockSession.config.coordinatorMode = true;
 			const options = await builder.build();
 
-			// The SDK natively applies AgentDefinition.tools to the main thread
-			// when Options.agent is set. No hooks or canUseTool wrappers needed.
-			// Verify no coordinator-specific hooks were added
-			const preToolUseHooks = options.hooks?.PreToolUse || [];
-			// Should only have the output limiter hook (from buildHooks), not a coordinator hook
-			// In test env, hooks are undefined (buildHooks returns undefined for NODE_ENV=test)
-			expect(preToolUseHooks.length).toBeLessThanOrEqual(1);
+			// allowedTools ensures sub-agents can use tools under dontAsk permission mode
+			expect(options.allowedTools).toBeDefined();
+			expect(options.allowedTools).toContain('Read');
+			expect(options.allowedTools).toContain('Write');
+			expect(options.allowedTools).toContain('Bash');
+			expect(options.allowedTools).toContain('Edit');
+			expect(options.allowedTools).toContain('Task');
 		});
 
 		it('should not add coordinator canUseTool wrapper', async () => {

@@ -14,8 +14,6 @@
 import type { HookCallback, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { Logger } from '../logger';
 
-import type { GlobalSettings } from '@neokai/shared/types/settings';
-
 // Output limiter configuration
 interface OutputLimiterConfig {
 	enabled: boolean;
@@ -218,32 +216,4 @@ function limitToolInput(
 			// No limiting strategy for this tool
 			return null;
 	}
-}
-
-/**
- * Get output limiter configuration from global settings
- */
-export function getOutputLimiterConfigFromSettings(
-	globalSettings: GlobalSettings
-): OutputLimiterConfig {
-	const settingsLimiter = globalSettings.outputLimiter;
-
-	// Merge with defaults
-	return {
-		enabled: settingsLimiter?.enabled ?? DEFAULT_CONFIG.enabled,
-		bash: {
-			headLines: settingsLimiter?.bash?.headLines ?? DEFAULT_CONFIG.bash.headLines,
-			tailLines: settingsLimiter?.bash?.tailLines ?? DEFAULT_CONFIG.bash.tailLines,
-		},
-		read: {
-			maxChars: settingsLimiter?.read?.maxChars ?? DEFAULT_CONFIG.read.maxChars,
-		},
-		grep: {
-			maxMatches: settingsLimiter?.grep?.maxMatches ?? DEFAULT_CONFIG.grep.maxMatches,
-		},
-		glob: {
-			maxFiles: settingsLimiter?.glob?.maxFiles ?? DEFAULT_CONFIG.glob.maxFiles,
-		},
-		excludeTools: settingsLimiter?.excludeTools ?? DEFAULT_CONFIG.excludeTools,
-	};
 }

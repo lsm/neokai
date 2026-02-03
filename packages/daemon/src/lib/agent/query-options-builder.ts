@@ -30,7 +30,6 @@ import { getCoordinatorAgents } from './coordinator-agents';
 import { THINKING_LEVEL_TOKENS } from '@neokai/shared';
 import type { PermissionMode } from '@neokai/shared/types/settings';
 import type { SettingsManager } from '../settings-manager';
-import { createOutputLimiterHook, getOutputLimiterConfigFromSettings } from './output-limiter-hook';
 import { Logger } from '../logger';
 import { getProviderContextManager } from '../providers/factory.js';
 import { resolveSDKCliPath, isBundledBinary } from './sdk-cli-resolver.js';
@@ -168,9 +167,7 @@ export class QueryOptionsBuilder {
 			pathToClaudeCodeExecutable: sdkCliPath,
 
 			// ============ Settings ============
-			// In test/CI environments, disable setting sources (CLAUDE.md, .claude/settings.json)
-			// to prevent subprocess crashes due to missing or misconfigured settings files.
-			settingSources: process.env.NODE_ENV === 'test' ? [] : settingSources,
+			settingSources,
 
 			// ============ Streaming ============
 			includePartialMessages: config.includePartialMessages,
@@ -196,17 +193,6 @@ export class QueryOptionsBuilder {
 				config.agents as Record<string, AgentDefinition> | undefined
 			);
 
-			// Tool restrictions for the coordinator are handled by the SDK natively.
-			// When Options.agent = 'Coordinator' is set, the SDK applies the agent's
-			// tools, system prompt, and model to the main conversation thread.
-			// The Coordinator's tools: ['Task', 'TodoWrite', 'AskUserQuestion'] means
-			// only those tools are available to the main thread. Sub-agents get their
-			// own tool sets from their AgentDefinition, independent of the coordinator.
-			//
-			// We do NOT restrict session-level Options.tools because that sets the
-			// BASE tool set for the entire session. AgentDefinition.tools is a FILTER
-			// on that base — restricting the base would give sub-agents empty tool sets.
-
 			// Inject worktree isolation into specialist agents that modify files.
 			// The coordinator doesn't need it (it doesn't touch files), but subagents
 			// run as separate CLI processes that don't inherit the parent's systemPrompt.append.
@@ -222,6 +208,30 @@ export class QueryOptionsBuilder {
 			}
 
 			queryOptions.agents = agents as Options['agents'];
+
+			// Allow all tools at session level so sub-agents can use them under dontAsk
+			const allTools = [
+				'Task',
+				'TaskOutput',
+				'TaskStop',
+				'Bash',
+				'Read',
+				'Edit',
+				'Write',
+				'Glob',
+				'Grep',
+				'NotebookEdit',
+				'WebFetch',
+				'WebSearch',
+				'TodoWrite',
+				'AskUserQuestion',
+				'EnterPlanMode',
+				'ExitPlanMode',
+				'Skill',
+				'ToolSearch',
+			];
+			const existing = queryOptions.allowedTools ?? [];
+			queryOptions.allowedTools = [...new Set([...existing, ...allTools])];
 		}
 
 		// Remove undefined values to use SDK defaults
@@ -318,18 +328,8 @@ export class QueryOptionsBuilder {
 	 * 2. Legacy tools config (useClaudeCodePreset)
 	 * 3. Default: Claude Code preset
 	 *
-	 * NOTE: In test environments, we skip the Claude Code preset to avoid subprocess
-	 * crashes due to missing system resources or configuration.
 	 */
 	private buildSystemPrompt(): Options['systemPrompt'] {
-		// In test environments, skip the system prompt entirely to match
-		// the title generation configuration which works reliably.
-		// The claude_code preset requires additional system resources
-		// that may not be available on CI runners.
-		if (process.env.NODE_ENV === 'test') {
-			return undefined;
-		}
-
 		const config = this.ctx.session.config;
 
 		// Priority 1: Check if SDKConfig systemPrompt is explicitly set
@@ -512,14 +512,8 @@ CRITICAL RULES:
 	 * 1. SDKConfig mcpServers (programmatic configuration)
 	 * 2. Undefined to let SDK auto-load from settings files
 	 *
-	 * In test/CI environments, disable MCP to prevent subprocess crashes
 	 */
 	private getMcpServers(): Record<string, unknown> | undefined {
-		// In test/CI environments, disable MCP
-		if (process.env.NODE_ENV === 'test') {
-			return {};
-		}
-
 		// Use SDKConfig mcpServers if explicitly set
 		const config = this.ctx.session.config;
 		if (config.mcpServers !== undefined) {
@@ -610,26 +604,21 @@ CRITICAL RULES:
 	}
 
 	/**
+	/**
 	 * Get permission mode with 2-layer priority system
 	 *
 	 * Priority:
 	 * 1. Session config (highest priority)
 	 * 2. Global settings
-	 * 3. Default: 'bypassPermissions' (production) or 'acceptEdits' (test/CI)
-	 *
-	 * In test/CI environments (NODE_ENV=test), 'default' and final fallback
-	 * resolve to 'acceptEdits' to avoid SDK subprocess crashes when running as root.
+	 * 3. Default: 'bypassPermissions'
 	 *
 	 * @returns Permission mode for SDK operations
 	 */
 	private getPermissionMode(): PermissionMode {
 		// Layer 1: Session config (highest priority)
 		if (this.ctx.session.config.permissionMode) {
-			// Map 'default' based on environment
 			if (this.ctx.session.config.permissionMode === 'default') {
-				// In test/CI environments, use 'acceptEdits' to avoid root user crashes
-				// (bypassPermissions crashes SDK subprocess when running as root)
-				return process.env.NODE_ENV === 'test' ? 'acceptEdits' : 'bypassPermissions';
+				return 'bypassPermissions';
 			}
 			return this.ctx.session.config.permissionMode;
 		}
@@ -637,17 +626,14 @@ CRITICAL RULES:
 		// Layer 2: Global settings
 		const globalSettings = this.ctx.settingsManager.getGlobalSettings();
 		if (globalSettings.permissionMode) {
-			// Map 'default' based on environment
 			if (globalSettings.permissionMode === 'default') {
-				// In test/CI environments, use 'acceptEdits' to avoid root user crashes
-				return process.env.NODE_ENV === 'test' ? 'acceptEdits' : 'bypassPermissions';
+				return 'bypassPermissions';
 			}
 			return globalSettings.permissionMode;
 		}
 
-		// Layer 3: Default (environment-aware)
-		// In test/CI environments, use 'acceptEdits' to avoid root user crashes
-		return process.env.NODE_ENV === 'test' ? 'acceptEdits' : 'bypassPermissions';
+		// Layer 3: Default
+		return 'bypassPermissions';
 	}
 
 	/**
@@ -665,25 +651,9 @@ CRITICAL RULES:
 
 	/**
 	 * Build hooks configuration
-	 *
-	 * Currently includes output limiter hook to prevent "prompt too long" errors
-	 *
-	 * NOTE: In test environments, skip hooks to match title generation
-	 * configuration which works reliably.
 	 */
 	private buildHooks(): Options['hooks'] {
-		// Skip hooks in test environments to avoid potential subprocess crashes
-		if (process.env.NODE_ENV === 'test') {
-			return undefined;
-		}
-
-		const globalSettings = this.ctx.settingsManager.getGlobalSettings();
-		const outputLimiterConfig = getOutputLimiterConfigFromSettings(globalSettings);
-		const outputLimiterHook = createOutputLimiterHook(outputLimiterConfig);
-
-		return {
-			PreToolUse: [{ hooks: [outputLimiterHook] }],
-		};
+		return {};
 	}
 
 	/**

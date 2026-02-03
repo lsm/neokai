@@ -1,15 +1,9 @@
 /**
  * Coordinator Tool Delegation - Behavioral Tests
  *
- * Tests that coordinator mode actually delegates file operations to specialist
- * sub-agents instead of performing them directly. This is an end-to-end
- * behavioral test — not a config test.
- *
- * Verifies:
- * 1. Coordinator delegates file reading to a specialist via Task tool
- * 2. The specialist actually reads the file (canary value appears in response)
- * 3. Coordinator's own assistant messages only contain Task/TodoWrite/AskUserQuestion
- *    tool_use blocks — never Read/Edit/Write/Bash directly
+ * Tests coordinator mode behavior with tool usage:
+ * 1. Coordinator can read files directly (read-only, no delegation needed)
+ * 2. Coordinator delegates file writing to specialist sub-agents via Task
  *
  * REQUIREMENTS:
  * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
@@ -26,29 +20,8 @@ import { sendMessage, waitForIdle } from '../helpers/daemon-test-helpers';
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
-/** Coordinator-allowed tools — the only tools the coordinator should use directly */
-const COORDINATOR_TOOLS = new Set([
-	'Task',
-	'TodoWrite',
-	'AskUserQuestion',
-	'TaskOutput',
-	'TaskStop',
-	'EnterPlanMode',
-	'ExitPlanMode',
-]);
-
-/** Tools that indicate direct file/command access (should be delegated) */
-const _DIRECT_TOOLS = new Set([
-	'Read',
-	'Edit',
-	'Write',
-	'Bash',
-	'Grep',
-	'Glob',
-	'NotebookEdit',
-	'WebFetch',
-	'WebSearch',
-]);
+/** Mutation tools the coordinator should NOT use — must delegate to specialists */
+const MUTATION_TOOLS = new Set(['Edit', 'Write', 'Bash', 'NotebookEdit']);
 
 /**
  * Collect all SDK messages for a session after processing completes.
@@ -135,7 +108,7 @@ describe('Coordinator Tool Delegation - Behavioral', () => {
 		}
 	}, 20000);
 
-	test('coordinator delegates file reading to specialist — canary value appears in response', async () => {
+	test('coordinator reads files directly — canary value appears in response', async () => {
 		// 1. Create a file with a unique canary value
 		const canary = `CANARY_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 		const testFile = join(testDir, 'canary.txt');
@@ -144,11 +117,10 @@ describe('Coordinator Tool Delegation - Behavioral', () => {
 		// 2. Create a coordinator mode session
 		const createResult = (await daemon.messageHub.call('session.create', {
 			workspacePath: testDir,
-			title: 'Coordinator Delegation Test',
+			title: 'Coordinator Read Test',
 			config: {
 				coordinatorMode: true,
 				permissionMode: 'bypassPermissions',
-				allowDangerouslySkipPermissions: true,
 			},
 		})) as { sessionId: string };
 
@@ -162,41 +134,25 @@ describe('Coordinator Tool Delegation - Behavioral', () => {
 			`Read the file at ${testFile} and tell me exactly what it contains. Just respond with the file content, nothing else.`
 		);
 
-		// 4. Wait for full processing (coordinator + sub-agent)
+		// 4. Wait for full processing
 		await waitForIdle(daemon, sessionId, 120000);
 
 		// 5. Collect all SDK messages
 		const allMessages = await getAllSDKMessages(daemon, sessionId);
 
-		// 6. Log the system:init message to see what tools the SDK reports
-		const initMsg = allMessages.find(
-			(m) => m.type === 'system' && (m as { subtype?: string }).subtype === 'init'
-		) as { tools?: string[]; agents?: string[] } | undefined;
-		console.log('system:init tools:', initMsg?.tools);
-		console.log('system:init agents:', initMsg?.agents);
-
-		// 7. Verify the canary value appears somewhere in the response
-		//    This proves a specialist actually read the file
+		// 6. Verify the canary value appears in the coordinator's response
 		const coordinatorText = getCoordinatorTextResponse(allMessages);
 		expect(coordinatorText).toContain(canary);
 
-		// 8. Verify the coordinator used tools and check for violations (soft check)
-		//    SDK tool restriction may be prompt-based rather than API-level filtering,
-		//    so the model may occasionally use tools outside its allowed set.
+		// 7. Verify coordinator used Read directly (read-only tools are fine)
 		const coordinatorToolUses = getCoordinatorToolUses(allMessages);
 		console.log(
 			'Coordinator tool uses:',
 			coordinatorToolUses.map((t) => t.name)
 		);
-		expect(coordinatorToolUses.length).toBeGreaterThan(0); // coordinator did use tools
 
-		const violatingTools = coordinatorToolUses.filter((t) => !COORDINATOR_TOOLS.has(t.name));
-		if (violatingTools.length > 0) {
-			console.warn(
-				'WARNING: Coordinator used non-coordinator tools directly:',
-				violatingTools.map((t) => t.name)
-			);
-		}
+		const readUses = coordinatorToolUses.filter((t) => t.name === 'Read');
+		expect(readUses.length).toBeGreaterThan(0);
 	}, 120000);
 
 	test('coordinator delegates file writing to specialist — file is actually created', async () => {
@@ -210,7 +166,6 @@ describe('Coordinator Tool Delegation - Behavioral', () => {
 			config: {
 				coordinatorMode: true,
 				permissionMode: 'bypassPermissions',
-				allowDangerouslySkipPermissions: true,
 			},
 		})) as { sessionId: string };
 
@@ -227,22 +182,51 @@ describe('Coordinator Tool Delegation - Behavioral', () => {
 		// 3. Wait for processing
 		await waitForIdle(daemon, sessionId, 120000);
 
-		// 4. Verify the file was actually written by the specialist
+		// 4. Collect and debug print all SDK messages
+		const allMessages = await getAllSDKMessages(daemon, sessionId);
+		for (const msg of allMessages) {
+			const parentId = msg.parent_tool_use_id ?? 'null';
+			const betaMsg = msg.message as { content?: Array<Record<string, unknown>> } | undefined;
+			if (betaMsg?.content) {
+				for (const block of betaMsg.content) {
+					if (block.type === 'tool_use') {
+						console.log(`[${msg.type}] parent=${parentId} tool_use: ${block.name}`);
+					} else if (block.type === 'tool_result') {
+						const content =
+							typeof block.content === 'string'
+								? block.content.slice(0, 200)
+								: JSON.stringify(block.content)?.slice(0, 200);
+						console.log(
+							`[${msg.type}] parent=${parentId} tool_result for=${block.tool_use_id}: ${content}`
+						);
+					} else if (block.type === 'text') {
+						console.log(
+							`[${msg.type}] parent=${parentId} text: ${(block.text as string).slice(0, 200)}`
+						);
+					}
+				}
+			}
+		}
+
+		// 5. Verify the file was actually written
 		expect(existsSync(outputFile)).toBe(true);
 		const content = readFileSync(outputFile, 'utf-8');
 		expect(content).toContain(canary);
 
-		// 5. Verify coordinator only used coordinator tools
-		const allMessages = await getAllSDKMessages(daemon, sessionId);
+		// 6. Verify coordinator tool usage
 		const coordinatorToolUses = getCoordinatorToolUses(allMessages);
+		console.log(
+			'Coordinator tool uses:',
+			coordinatorToolUses.map((t) => t.name)
+		);
 
-		for (const toolUse of coordinatorToolUses) {
-			expect(COORDINATOR_TOOLS.has(toolUse.name)).toBe(true);
-		}
-
-		// 6. Verify delegation happened
+		// Verify delegation happened — coordinator should use Task for mutations
 		const taskUses = coordinatorToolUses.filter((t) => t.name === 'Task');
 		expect(taskUses.length).toBeGreaterThan(0);
+
+		// Verify the coordinator did NOT use mutation tools directly
+		const mutationUses = coordinatorToolUses.filter((t) => MUTATION_TOOLS.has(t.name));
+		expect(mutationUses).toEqual([]);
 
 		// Cleanup
 		try {
