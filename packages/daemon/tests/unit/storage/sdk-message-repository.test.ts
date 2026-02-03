@@ -423,6 +423,128 @@ describe('SDKMessageRepository', () => {
 		});
 	});
 
+	describe('deleteMessagesAtAndAfter', () => {
+		it('should delete messages at and after the given timestamp (inclusive)', () => {
+			const stmt = db.prepare(
+				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+			);
+
+			stmt.run('1', 'session-1', 'user', null, '{}', '2024-01-01T00:00:00.000Z');
+			stmt.run('2', 'session-1', 'user', null, '{}', '2024-01-02T00:00:00.000Z');
+			stmt.run('3', 'session-1', 'user', null, '{}', '2024-01-03T00:00:00.000Z');
+
+			const cutoff = new Date('2024-01-02T00:00:00.000Z').getTime();
+			const deleted = repo.deleteMessagesAtAndAfter('session-1', cutoff);
+
+			expect(deleted).toBe(2);
+
+			const remaining = repo.getSDKMessages('session-1');
+			expect(remaining).toHaveLength(1);
+		});
+
+		it('should include the message at the exact timestamp (boundary test)', () => {
+			const stmt = db.prepare(
+				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+			);
+
+			const exactTimestamp = '2024-01-02T00:00:00.000Z';
+			stmt.run('1', 'session-1', 'user', null, '{}', '2024-01-01T00:00:00.000Z');
+			stmt.run('2', 'session-1', 'user', null, '{}', exactTimestamp);
+			stmt.run('3', 'session-1', 'user', null, '{}', '2024-01-03T00:00:00.000Z');
+
+			// Delete at exact timestamp - should delete message 2 and 3
+			const cutoff = new Date(exactTimestamp).getTime();
+			const deleted = repo.deleteMessagesAtAndAfter('session-1', cutoff);
+
+			expect(deleted).toBe(2);
+
+			const remaining = repo.getSDKMessages('session-1');
+			expect(remaining).toHaveLength(1);
+		});
+
+		it('should return 0 when no messages match', () => {
+			const stmt = db.prepare(
+				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+			);
+
+			stmt.run('1', 'session-1', 'user', null, '{}', '2024-01-01T00:00:00.000Z');
+
+			// Timestamp in the future
+			const futureTimestamp = new Date('2024-12-31T00:00:00.000Z').getTime();
+			const deleted = repo.deleteMessagesAtAndAfter('session-1', futureTimestamp);
+
+			expect(deleted).toBe(0);
+		});
+
+		it('should return the correct count of deleted messages', () => {
+			const stmt = db.prepare(
+				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+			);
+
+			stmt.run('1', 'session-1', 'user', null, '{}', '2024-01-01T00:00:00.000Z');
+			stmt.run('2', 'session-1', 'user', null, '{}', '2024-01-02T00:00:00.000Z');
+			stmt.run('3', 'session-1', 'user', null, '{}', '2024-01-03T00:00:00.000Z');
+			stmt.run('4', 'session-1', 'user', null, '{}', '2024-01-04T00:00:00.000Z');
+			stmt.run('5', 'session-1', 'user', null, '{}', '2024-01-05T00:00:00.000Z');
+
+			const cutoff = new Date('2024-01-03T00:00:00.000Z').getTime();
+			const deleted = repo.deleteMessagesAtAndAfter('session-1', cutoff);
+
+			expect(deleted).toBe(3);
+		});
+
+		it('should only affect the specified session', () => {
+			const stmt = db.prepare(
+				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+			);
+
+			// Insert messages in session-1
+			stmt.run('1', 'session-1', 'user', null, '{}', '2024-01-01T00:00:00.000Z');
+			stmt.run('2', 'session-1', 'user', null, '{}', '2024-01-02T00:00:00.000Z');
+			stmt.run('3', 'session-1', 'user', null, '{}', '2024-01-03T00:00:00.000Z');
+
+			// Insert messages in session-2 with same timestamps
+			stmt.run('4', 'session-2', 'user', null, '{}', '2024-01-01T00:00:00.000Z');
+			stmt.run('5', 'session-2', 'user', null, '{}', '2024-01-02T00:00:00.000Z');
+			stmt.run('6', 'session-2', 'user', null, '{}', '2024-01-03T00:00:00.000Z');
+
+			const cutoff = new Date('2024-01-02T00:00:00.000Z').getTime();
+			const deleted = repo.deleteMessagesAtAndAfter('session-1', cutoff);
+
+			expect(deleted).toBe(2);
+
+			const remainingSession1 = repo.getSDKMessages('session-1');
+			expect(remainingSession1).toHaveLength(1);
+
+			const remainingSession2 = repo.getSDKMessages('session-2');
+			expect(remainingSession2).toHaveLength(3);
+		});
+
+		it('should delete all messages when timestamp is before all messages', () => {
+			const stmt = db.prepare(
+				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+			);
+
+			stmt.run('1', 'session-1', 'user', null, '{}', '2024-01-02T00:00:00.000Z');
+			stmt.run('2', 'session-1', 'user', null, '{}', '2024-01-03T00:00:00.000Z');
+			stmt.run('3', 'session-1', 'user', null, '{}', '2024-01-04T00:00:00.000Z');
+
+			const cutoff = new Date('2024-01-01T00:00:00.000Z').getTime();
+			const deleted = repo.deleteMessagesAtAndAfter('session-1', cutoff);
+
+			expect(deleted).toBe(3);
+
+			const remaining = repo.getSDKMessages('session-1');
+			expect(remaining).toHaveLength(0);
+		});
+	});
+
 	describe('getUserMessages', () => {
 		it('should return user messages for rewind points', () => {
 			const stmt = db.prepare(
