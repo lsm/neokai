@@ -122,6 +122,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const handleRewindClick = useCallback(
 		(uuid: string) => {
 			setRewindTargetUuid(uuid);
+			setRewindModeChoice('both');
 			rewindConfirmModal.open();
 		},
 		[rewindConfirmModal]
@@ -133,7 +134,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		setIsRewinding(true);
 		try {
 			const { result } = await import('../lib/api-helpers.ts').then((m) =>
-				m.executeRewind(sessionId, rewindTargetUuid, 'both')
+				m.executeRewind(sessionId, rewindTargetUuid, rewindModeChoice)
 			);
 
 			if (result.success) {
@@ -152,7 +153,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			setRewindTargetUuid(null);
 			rewindConfirmModal.close();
 		}
-	}, [rewindTargetUuid, sessionId, rewindConfirmModal]);
+	}, [rewindTargetUuid, sessionId, rewindModeChoice, rewindConfirmModal]);
 
 	const handleRewindCancel = useCallback(() => {
 		setRewindTargetUuid(null);
@@ -940,9 +941,43 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			>
 				<div class="space-y-4">
 					<p class="text-gray-300 text-sm">
-						This will rewind the conversation to before this message. All messages from this point
-						forward will be permanently deleted and file changes will be reverted.
+						This will rewind the conversation to before this message. Choose what to restore:
 					</p>
+					<div class="space-y-2">
+						<label class="flex items-center gap-2 cursor-pointer">
+							<input
+								type="radio"
+								name="perMessageRewindMode"
+								value="both"
+								checked={rewindModeChoice === 'both'}
+								onChange={() => setRewindModeChoice('both')}
+								class="text-amber-500 focus:ring-amber-500"
+							/>
+							<span class="text-sm text-gray-200">Files & Conversation</span>
+						</label>
+						<label class="flex items-center gap-2 cursor-pointer">
+							<input
+								type="radio"
+								name="perMessageRewindMode"
+								value="files"
+								checked={rewindModeChoice === 'files'}
+								onChange={() => setRewindModeChoice('files')}
+								class="text-amber-500 focus:ring-amber-500"
+							/>
+							<span class="text-sm text-gray-200">Files only</span>
+						</label>
+						<label class="flex items-center gap-2 cursor-pointer">
+							<input
+								type="radio"
+								name="perMessageRewindMode"
+								value="conversation"
+								checked={rewindModeChoice === 'conversation'}
+								onChange={() => setRewindModeChoice('conversation')}
+								class="text-amber-500 focus:ring-amber-500"
+							/>
+							<span class="text-sm text-gray-200">Conversation only</span>
+						</label>
+					</div>
 					<p class="text-amber-400 text-xs">This action cannot be undone.</p>
 					<div class="flex gap-3 justify-end">
 						<Button variant="secondary" onClick={handleRewindCancel} disabled={isRewinding}>

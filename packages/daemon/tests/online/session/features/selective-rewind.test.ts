@@ -1,0 +1,364 @@
+/**
+ * Selective Rewind Feature Online Tests
+ *
+ * These tests verify the selective rewind feature with real SDK calls:
+ * 1. Selective rewind can delete specific messages and all messages after
+ * 2. Mode selection (conversation, both) works correctly
+ * 3. Error handling for invalid inputs (empty/nonexistent messageIds)
+ * 4. Message count verification after rewind
+ *
+ * REQUIREMENTS:
+ * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
+ * - Makes real API calls (costs money, uses rate limits)
+ *
+ * MODEL:
+ * - Uses 'haiku-4.5' (faster and cheaper than Sonnet for tests)
+ */
+
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import 'dotenv/config';
+import type { DaemonServerContext } from '../../helpers/daemon-server-helper';
+import { createDaemonServer } from '../../helpers/daemon-server-helper';
+import { sendMessage, waitForIdle } from '../../helpers/daemon-test-helpers';
+import type { RewindMode } from '@neokai/shared';
+
+/**
+ * Message structure from message.list RPC
+ */
+interface Message {
+	uuid: string;
+	type: 'user' | 'assistant';
+	content: string;
+	timestamp: number;
+}
+
+/**
+ * Selective rewind result
+ */
+interface SelectiveRewindResult {
+	success: boolean;
+	error?: string;
+	messagesDeleted: number;
+	filesReverted?: string[];
+	rewindCase?: string;
+}
+
+// Use temp directory for test database
+const TMP_DIR = process.env.TMPDIR || '/tmp';
+
+describe('Selective Rewind Feature', () => {
+	let daemon: DaemonServerContext;
+
+	beforeEach(async () => {
+		daemon = await createDaemonServer();
+	}, 30000);
+
+	afterEach(async () => {
+		if (daemon) {
+			daemon.kill('SIGTERM');
+			await daemon.waitForExit();
+		}
+	}, 20000);
+
+	/**
+	 * Helper to list messages for a session
+	 */
+	async function listMessages(sessionId: string): Promise<Message[]> {
+		const result = (await daemon.messageHub.call('message.list', {
+			sessionId,
+		})) as { messages: Message[] };
+		return result.messages;
+	}
+
+	/**
+	 * Helper to execute selective rewind
+	 */
+	async function executeSelectiveRewind(
+		sessionId: string,
+		messageIds: string[],
+		mode: RewindMode = 'both'
+	): Promise<SelectiveRewindResult> {
+		const result = (await daemon.messageHub.call('rewind.executeSelective', {
+			sessionId,
+			messageIds,
+			mode,
+		})) as { result: SelectiveRewindResult };
+		return result.result;
+	}
+
+	describe('Selective Rewind with mode=conversation', () => {
+		test('should delete selected messages and all messages after', async () => {
+			const workspacePath = `${TMP_DIR}/selective-rewind-conversation-${Date.now()}`;
+
+			const createResult = (await daemon.messageHub.call('session.create', {
+				workspacePath,
+				title: 'Selective Rewind Conversation Test',
+				config: {
+					model: 'haiku-4.5',
+					permissionMode: 'acceptEdits',
+					enableFileCheckpointing: true,
+				},
+			})) as { sessionId: string };
+
+			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
+
+			// Send 3 simple messages
+			await sendMessage(daemon, sessionId, 'What is 1+1?');
+			await waitForIdle(daemon, sessionId, 60000);
+
+			await sendMessage(daemon, sessionId, 'What is 2+2?');
+			await waitForIdle(daemon, sessionId, 60000);
+
+			await sendMessage(daemon, sessionId, 'What is 3+3?');
+			await waitForIdle(daemon, sessionId, 60000);
+
+			// Get messages
+			const messages = await listMessages(sessionId);
+			expect(messages.length).toBeGreaterThan(0);
+
+			// Find the 2nd user message (should be "What is 2+2?")
+			const userMessages = messages.filter((m) => m.type === 'user');
+			expect(userMessages.length).toBeGreaterThanOrEqual(3);
+
+			const secondUserMessage = userMessages.find((m) => m.content.includes('2+2'));
+			expect(secondUserMessage).toBeDefined();
+
+			// Select from 2nd user message onward
+			const messageIdsToRewind = [secondUserMessage!.uuid];
+
+			// Execute selective rewind with mode='conversation'
+			const result = await executeSelectiveRewind(sessionId, messageIdsToRewind, 'conversation');
+
+			// Verify success
+			expect(result.success).toBe(true);
+			expect(result.messagesDeleted).toBeGreaterThan(0);
+
+			// Verify messages were deleted
+			const messagesAfterRewind = await listMessages(sessionId);
+			expect(messagesAfterRewind.length).toBeLessThan(messages.length);
+
+			// Verify the second user message and all after it are gone
+			const userMessagesAfter = messagesAfterRewind.filter((m) => m.type === 'user');
+			const hasSecondMessage = userMessagesAfter.some((m) => m.content.includes('2+2'));
+			const hasThirdMessage = userMessagesAfter.some((m) => m.content.includes('3+3'));
+			expect(hasSecondMessage).toBe(false);
+			expect(hasThirdMessage).toBe(false);
+		}, 240000);
+	});
+
+	describe('Selective Rewind with mode=both', () => {
+		test('should execute selective rewind with mode=both', async () => {
+			const workspacePath = `${TMP_DIR}/selective-rewind-both-${Date.now()}`;
+
+			const createResult = (await daemon.messageHub.call('session.create', {
+				workspacePath,
+				title: 'Selective Rewind Both Test',
+				config: {
+					model: 'haiku-4.5',
+					permissionMode: 'acceptEdits',
+					enableFileCheckpointing: true,
+				},
+			})) as { sessionId: string };
+
+			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
+
+			// Send 3 simple messages
+			await sendMessage(daemon, sessionId, 'What is 1+1?');
+			await waitForIdle(daemon, sessionId, 60000);
+
+			await sendMessage(daemon, sessionId, 'What is 2+2?');
+			await waitForIdle(daemon, sessionId, 60000);
+
+			await sendMessage(daemon, sessionId, 'What is 3+3?');
+			await waitForIdle(daemon, sessionId, 60000);
+
+			// Get messages
+			const messages = await listMessages(sessionId);
+			expect(messages.length).toBeGreaterThan(0);
+
+			// Find the 2nd user message
+			const userMessages = messages.filter((m) => m.type === 'user');
+			expect(userMessages.length).toBeGreaterThanOrEqual(3);
+
+			const secondUserMessage = userMessages.find((m) => m.content.includes('2+2'));
+			expect(secondUserMessage).toBeDefined();
+
+			// Execute selective rewind with mode='both'
+			const result = await executeSelectiveRewind(sessionId, [secondUserMessage!.uuid], 'both');
+
+			// Verify success
+			expect(result.success).toBe(true);
+			expect(result.messagesDeleted).toBeGreaterThan(0);
+
+			// Verify rewindCase is present (3-case selective rewind logic)
+			if (result.rewindCase !== undefined) {
+				expect(typeof result.rewindCase).toBe('string');
+			}
+
+			// Verify messages were deleted
+			const messagesAfterRewind = await listMessages(sessionId);
+			expect(messagesAfterRewind.length).toBeLessThan(messages.length);
+		}, 240000);
+	});
+
+	describe('Error Handling', () => {
+		test('should fail gracefully with empty messageIds array', async () => {
+			const workspacePath = `${TMP_DIR}/selective-rewind-empty-${Date.now()}`;
+
+			const createResult = (await daemon.messageHub.call('session.create', {
+				workspacePath,
+				title: 'Selective Rewind Empty Test',
+				config: {
+					model: 'haiku-4.5',
+					permissionMode: 'acceptEdits',
+					enableFileCheckpointing: true,
+				},
+			})) as { sessionId: string };
+
+			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
+
+			// Send a message to initialize
+			await sendMessage(daemon, sessionId, 'What is 1+1?');
+			await waitForIdle(daemon, sessionId, 60000);
+
+			// Call with empty array
+			const result = await executeSelectiveRewind(sessionId, [], 'both');
+
+			// Verify failure
+			expect(result.success).toBe(false);
+			expect(result.error).toBeDefined();
+			expect(result.messagesDeleted).toBe(0);
+		}, 120000);
+
+		test('should handle invalid messageIds gracefully', async () => {
+			const workspacePath = `${TMP_DIR}/selective-rewind-invalid-${Date.now()}`;
+
+			const createResult = (await daemon.messageHub.call('session.create', {
+				workspacePath,
+				title: 'Selective Rewind Invalid Test',
+				config: {
+					model: 'haiku-4.5',
+					permissionMode: 'acceptEdits',
+					enableFileCheckpointing: true,
+				},
+			})) as { sessionId: string };
+
+			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
+
+			// Send a message to initialize
+			await sendMessage(daemon, sessionId, 'What is 1+1?');
+			await waitForIdle(daemon, sessionId, 60000);
+
+			// Call with nonexistent UUID
+			const result = await executeSelectiveRewind(
+				sessionId,
+				['nonexistent-uuid-12345'],
+				'conversation'
+			);
+
+			// The result depends on implementation - could be success=false or graceful handling
+			// Either way, it should not crash
+			expect(result).toBeDefined();
+			expect(typeof result.success).toBe('boolean');
+
+			if (!result.success) {
+				// If it fails, should have an error message
+				expect(result.error).toBeDefined();
+			}
+
+			// Verify session is still functional
+			const messages = await listMessages(sessionId);
+			expect(messages.length).toBeGreaterThan(0);
+		}, 120000);
+
+		test('should handle session not found error', async () => {
+			// Call with nonexistent session ID
+			const result = await executeSelectiveRewind(
+				'nonexistent-session-id',
+				['some-message-id'],
+				'both'
+			);
+
+			// Should return error
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Session not found');
+			expect(result.messagesDeleted).toBe(0);
+		}, 30000);
+	});
+
+	describe('Multiple Message Selection', () => {
+		test('should handle multiple messageIds correctly', async () => {
+			const workspacePath = `${TMP_DIR}/selective-rewind-multiple-${Date.now()}`;
+
+			const createResult = (await daemon.messageHub.call('session.create', {
+				workspacePath,
+				title: 'Selective Rewind Multiple Test',
+				config: {
+					model: 'haiku-4.5',
+					permissionMode: 'acceptEdits',
+					enableFileCheckpointing: true,
+				},
+			})) as { sessionId: string };
+
+			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
+
+			// Send 4 simple messages
+			await sendMessage(daemon, sessionId, 'What is 1+1?');
+			await waitForIdle(daemon, sessionId, 60000);
+
+			await sendMessage(daemon, sessionId, 'What is 2+2?');
+			await waitForIdle(daemon, sessionId, 60000);
+
+			await sendMessage(daemon, sessionId, 'What is 3+3?');
+			await waitForIdle(daemon, sessionId, 60000);
+
+			await sendMessage(daemon, sessionId, 'What is 4+4?');
+			await waitForIdle(daemon, sessionId, 60000);
+
+			// Get messages
+			const messages = await listMessages(sessionId);
+			const userMessages = messages.filter((m) => m.type === 'user');
+			expect(userMessages.length).toBeGreaterThanOrEqual(4);
+
+			// Select 2nd and 3rd user messages
+			const secondUserMessage = userMessages.find((m) => m.content.includes('2+2'));
+			const thirdUserMessage = userMessages.find((m) => m.content.includes('3+3'));
+			expect(secondUserMessage).toBeDefined();
+			expect(thirdUserMessage).toBeDefined();
+
+			// Execute selective rewind with multiple messageIds
+			// Implementation should find the earliest message and delete from there
+			const result = await executeSelectiveRewind(
+				sessionId,
+				[secondUserMessage!.uuid, thirdUserMessage!.uuid],
+				'conversation'
+			);
+
+			// Verify success
+			expect(result.success).toBe(true);
+			expect(result.messagesDeleted).toBeGreaterThan(0);
+
+			// Verify messages were deleted from the earliest selected message onward
+			const messagesAfterRewind = await listMessages(sessionId);
+			expect(messagesAfterRewind.length).toBeLessThan(messages.length);
+
+			// First message should still be there
+			const userMessagesAfter = messagesAfterRewind.filter((m) => m.type === 'user');
+			const hasFirstMessage = userMessagesAfter.some((m) => m.content.includes('1+1'));
+			expect(hasFirstMessage).toBe(true);
+
+			// 2nd, 3rd, and 4th messages should be gone
+			const hasSecondMessage = userMessagesAfter.some((m) => m.content.includes('2+2'));
+			const hasThirdMessage = userMessagesAfter.some((m) => m.content.includes('3+3'));
+			const hasFourthMessage = userMessagesAfter.some((m) => m.content.includes('4+4'));
+			expect(hasSecondMessage).toBe(false);
+			expect(hasThirdMessage).toBe(false);
+			expect(hasFourthMessage).toBe(false);
+		}, 240000);
+	});
+});

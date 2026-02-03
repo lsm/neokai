@@ -10,7 +10,6 @@ import { toast } from '../../lib/toast.ts';
 import { cn, copyToClipboard } from '../../lib/utils.ts';
 import { Dropdown } from '../ui/Dropdown.tsx';
 import { IconButton } from '../ui/IconButton.tsx';
-import { Spinner } from '../ui/Spinner.tsx';
 import { Tooltip } from '../ui/Tooltip.tsx';
 import { ErrorOutput, hasErrorOutput } from './ErrorOutput.tsx';
 import { MessageInfoButton } from './MessageInfoButton.tsx';
@@ -28,13 +27,6 @@ interface Props {
 	sessionInfo?: SystemInitMessage; // Optional session init info to display
 	isReplay?: boolean; // Whether this is a replay message (slash command response)
 	sessionId?: string; // Session ID for rewind operations
-	onRewind?: (uuid: string) => void; // Callback for rewind to this message
-	rewindingMessageUuid?: string | null; // UUID of message being rewound (shows spinner)
-	// Rewind mode props
-	rewindMode?: boolean;
-	selectedMessages?: Set<string>;
-	onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
-	allMessages?: Array<{ uuid?: string }>;
 }
 
 export function SDKUserMessage({
@@ -43,13 +35,7 @@ export function SDKUserMessage({
 	onDelete: _onDelete,
 	sessionInfo,
 	isReplay,
-	sessionId,
-	onRewind,
-	rewindingMessageUuid,
-	rewindMode,
-	selectedMessages,
-	onMessageCheckboxChange,
-	allMessages,
+	sessionId: _sessionId,
 }: Props) {
 	const { message: apiMessage } = message;
 
@@ -211,36 +197,14 @@ export function SDKUserMessage({
 	// Get message metadata for E2E tests
 	const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
 
-	// Check if this message is selected in rewind mode
-	const isSelected = rewindMode && message.uuid && selectedMessages?.has(message.uuid);
-
 	return (
 		<div
-			class={cn(
-				messageSpacing.user.container.combined,
-				rewindMode ? 'flex justify-start' : 'flex justify-end',
-				'gap-3'
-			)}
+			class={cn(messageSpacing.user.container.combined, 'flex justify-end')}
 			data-testid="user-message"
 			data-message-role="user"
 			data-message-uuid={message.uuid}
 			data-message-timestamp={messageWithTimestamp.timestamp || 0}
 		>
-			{/* Rewind Mode Checkbox */}
-			{rewindMode && message.uuid && onMessageCheckboxChange && allMessages && (
-				<div class="flex items-start pt-3">
-					<input
-						type="checkbox"
-						checked={isSelected}
-						onChange={(e) => {
-							const target = e.target as HTMLInputElement;
-							onMessageCheckboxChange(message.uuid!, target.checked);
-						}}
-						class="w-5 h-5 rounded border-gray-500 bg-dark-800 text-amber-500 focus:ring-amber-500 focus:ring-offset-dark-900 cursor-pointer"
-					/>
-				</div>
-			)}
-
 			<div class="max-w-[85%] md:max-w-[70%] w-auto">
 				{/* Message bubble */}
 				<div
@@ -304,33 +268,6 @@ export function SDKUserMessage({
 							</span>
 						</Tooltip>
 					)}
-
-					{/* Rewind button - always visible for user messages with UUID */}
-					{!message.isSynthetic &&
-						message.uuid &&
-						sessionId &&
-						onRewind &&
-						(rewindingMessageUuid === message.uuid ? (
-							<Spinner size="sm" color="border-amber-500" className="mx-1" />
-						) : (
-							<Tooltip content="Rewind to this message" position="left">
-								<IconButton
-									size="md"
-									onClick={() => onRewind(message.uuid!)}
-									title="Rewind to here"
-									class="text-gray-500 hover:text-amber-600 dark:text-gray-400 dark:hover:text-amber-500"
-								>
-									<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width={2}
-											d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
-										/>
-									</svg>
-								</IconButton>
-							</Tooltip>
-						))}
 
 					{/* Session info icon (if session info is attached) */}
 					{sessionInfo && (
