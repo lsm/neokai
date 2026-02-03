@@ -36,14 +36,14 @@ const TMP_DIR = process.env.TMPDIR || '/tmp';
 
 /** Expected coordinator specialist agent names */
 const COORDINATOR_AGENTS = [
-	'coordinator',
-	'coder',
-	'debugger',
-	'tester',
-	'reviewer',
-	'vcs',
-	'verifier',
-	'executor',
+	'Coordinator',
+	'Coder',
+	'Debugger',
+	'Tester',
+	'Reviewer',
+	'VCS',
+	'Verifier',
+	'Executor',
 ];
 
 /**
@@ -120,17 +120,17 @@ function assertCoordinatorOn(systemInit: Record<string, unknown>) {
 function assertCoordinatorOff(systemInit: Record<string, unknown>) {
 	const agents = systemInit.agents as string[] | undefined;
 
-	// When coordinator is off, there should be no 'coordinator' agent
+	// When coordinator is off, there should be no 'Coordinator' agent
 	// agents may be undefined or an array without coordinator-specific agents
 	if (agents) {
-		expect(agents).not.toContain('coordinator');
-		expect(agents).not.toContain('coder');
-		expect(agents).not.toContain('debugger');
-		expect(agents).not.toContain('tester');
-		expect(agents).not.toContain('reviewer');
-		expect(agents).not.toContain('vcs');
-		expect(agents).not.toContain('verifier');
-		expect(agents).not.toContain('executor');
+		expect(agents).not.toContain('Coordinator');
+		expect(agents).not.toContain('Coder');
+		expect(agents).not.toContain('Debugger');
+		expect(agents).not.toContain('Tester');
+		expect(agents).not.toContain('Reviewer');
+		expect(agents).not.toContain('VCS');
+		expect(agents).not.toContain('Verifier');
+		expect(agents).not.toContain('Executor');
 	}
 }
 

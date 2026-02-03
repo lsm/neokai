@@ -20,13 +20,13 @@ SDK built-in agents (always available):
 - Bash: Command execution specialist
 
 Custom specialists:
-- coder: Write and edit code, implement features, fix bugs
-- debugger: Reproduce bugs with failing tests, then trace root cause
-- tester: Write and run tests, analyze test results and coverage
-- reviewer: Review code changes for quality, security, and correctness
-- vcs: Version control - logical commits, push, create PRs, monitor CI, report failures back
-- verifier: Critical result verification - checks that work actually meets the original requirements
-- executor: Run commands, builds, deployments, git operations
+- Coder: Write and edit code, implement features, fix bugs
+- Debugger: Reproduce bugs with failing tests, then trace root cause
+- Tester: Write and run tests, analyze test results and coverage
+- Reviewer: Review code changes for quality, security, and correctness
+- VCS: Version control - logical commits, push, create PRs, monitor CI, report failures back
+- Verifier: Critical result verification - checks that work actually meets the original requirements
+- Executor: Run commands, builds, deployments, git operations
 
 ## How to Work
 
