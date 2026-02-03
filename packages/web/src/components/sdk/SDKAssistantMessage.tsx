@@ -119,7 +119,7 @@ export function SDKAssistantMessage({
 
 	// Render checkbox wrapper if in rewind mode
 	const renderContent = () => (
-		<div class="py-2 space-y-3">
+		<>
 			{/* Tool use blocks - full width like result messages */}
 			{toolBlocks.map((block: Extract<ContentBlock, { type: 'tool_use' }>, idx: number) => {
 				const toolResult = toolResultsMap?.get(block.id);
@@ -216,7 +216,7 @@ export function SDKAssistantMessage({
 					</div>
 				</div>
 			)}
-		</div>
+		</>
 	);
 
 	// Wrap with checkbox if in rewind mode and message has uuid
@@ -240,7 +240,7 @@ export function SDKAssistantMessage({
 						class="w-5 h-5 rounded border-gray-500 bg-dark-800 text-amber-500 focus:ring-amber-500 focus:ring-offset-dark-900 cursor-pointer"
 					/>
 				</div>
-				<div class="flex-1 min-w-0">{renderContent()}</div>
+				<div class="flex-1 min-w-0 py-2 space-y-3">{renderContent()}</div>
 			</div>
 		);
 	}
@@ -248,6 +248,7 @@ export function SDKAssistantMessage({
 	// Otherwise, render without checkbox wrapper
 	return (
 		<div
+			class="py-2 space-y-3"
 			data-testid="assistant-message"
 			data-message-role="assistant"
 			data-message-uuid={message.uuid}
