@@ -65,6 +65,8 @@ export interface SelectiveRewindRequest {
 	messageIds: string[];
 	/** Session ID */
 	sessionId: string;
+	/** Rewind mode - what to restore when rewinding */
+	mode?: RewindMode;
 }
 
 /**
@@ -102,4 +104,8 @@ export interface SelectiveRewindResult {
 	messagesDeleted: number;
 	/** List of file paths that were reverted */
 	filesReverted: string[];
+	/** Which rewind case was used for file reversion */
+	rewindCase?: 'sdk-native' | 'diff-based' | 'hybrid';
+	/** Files reverted via diff-based approach */
+	diffRevertedFiles?: string[];
 }

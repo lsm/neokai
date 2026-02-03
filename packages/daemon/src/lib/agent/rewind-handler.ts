@@ -19,6 +19,7 @@ import type {
 	SelectiveRewindResult,
 	Session,
 } from '@neokai/shared';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import type { Database } from '../../storage/database';
 import type { DaemonHub } from '../daemon-hub';
 import type { Logger } from '../logger';
@@ -33,6 +34,35 @@ export interface RewindPoint {
 	timestamp: number; // Message timestamp (milliseconds)
 	content: string; // Message content preview
 	turnNumber: number; // Derived turn number (1-indexed position)
+}
+
+/**
+ * Rewind case - determines which strategy to use for file rewind
+ */
+export type RewindCase = 'sdk-native' | 'diff-based' | 'hybrid';
+
+/**
+ * Represents a file operation (Edit or Write tool call)
+ */
+export interface FileOperation {
+	type: 'edit' | 'write';
+	filePath: string;
+	// For edit operations
+	oldString?: string;
+	newString?: string;
+	// For write operations
+	content?: string;
+}
+
+/**
+ * Analysis result for determining rewind strategy
+ */
+export interface RewindCaseAnalysis {
+	rewindCase: RewindCase;
+	/** The oldest user message in the range (for SDK checkpoint) */
+	oldestUserMessage?: { uuid: string; timestamp: number };
+	/** Assistant messages before the oldest user message (for diff-based revert in hybrid case) */
+	messagesBeforeUser: Array<Record<string, unknown>>;
 }
 
 /**
@@ -317,6 +347,157 @@ export class RewindHandler {
 	}
 
 	/**
+	 * Analyze which rewind case applies based on the earliest selected message
+	 * and the distribution of user vs assistant messages in the range.
+	 *
+	 * Cases:
+	 * 1. sdk-native: Earliest message is a user message -> can use SDK checkpoint directly
+	 * 2. diff-based: No user messages in range -> must use diff-based revert only
+	 * 3. hybrid: Earliest is assistant, but user messages exist later -> SDK to user, then diff before
+	 */
+	analyzeRewindCase(
+		earliestMessage: Record<string, unknown>,
+		messagesInRange: Array<Record<string, unknown>>,
+		userMessagesInRange: Array<{ uuid: string; timestamp: number }>
+	): RewindCaseAnalysis {
+		const earliestType = earliestMessage.type as string;
+
+		if (earliestType === 'user') {
+			// Case 1: SDK-native - earliest message is a user message
+			return {
+				rewindCase: 'sdk-native',
+				messagesBeforeUser: [],
+			};
+		}
+
+		if (userMessagesInRange.length === 0) {
+			// Case 2: Diff-based - no user messages in range, all assistant messages
+			return {
+				rewindCase: 'diff-based',
+				messagesBeforeUser: messagesInRange.filter((m) => m.type === 'assistant'),
+			};
+		}
+
+		// Case 3: Hybrid - earliest is assistant, but user messages exist later
+		// Sort user messages chronologically and get the first one
+		const sortedUserMessages = [...userMessagesInRange].sort((a, b) => a.timestamp - b.timestamp);
+		const oldestUserMessage = sortedUserMessages[0];
+
+		// Get assistant messages that occur before the oldest user message
+		const messagesBeforeUser = messagesInRange.filter((m) => {
+			const msgTimestamp = m.timestamp as number;
+			return m.type === 'assistant' && msgTimestamp < oldestUserMessage.timestamp;
+		});
+
+		return {
+			rewindCase: 'hybrid',
+			oldestUserMessage,
+			messagesBeforeUser,
+		};
+	}
+
+	/**
+	 * Extract file operations (Edit and Write tool calls) from assistant messages
+	 */
+	extractFileOperations(messages: Array<Record<string, unknown>>): FileOperation[] {
+		const operations: FileOperation[] = [];
+
+		// Filter to assistant messages only
+		const assistantMessages = messages.filter((m) => m.type === 'assistant');
+
+		for (const message of assistantMessages) {
+			const content = message.content as Array<Record<string, unknown>> | undefined;
+			if (!Array.isArray(content)) continue;
+
+			for (const block of content) {
+				if (block.type !== 'tool_use') continue;
+
+				const name = block.name as string;
+				const input = block.input as Record<string, unknown> | undefined;
+				if (!input) continue;
+
+				if (name === 'Edit') {
+					operations.push({
+						type: 'edit',
+						filePath: input.file_path as string,
+						oldString: input.old_string as string,
+						newString: input.new_string as string,
+					});
+				} else if (name === 'Write') {
+					operations.push({
+						type: 'write',
+						filePath: input.file_path as string,
+						content: input.content as string,
+					});
+				}
+			}
+		}
+
+		return operations;
+	}
+
+	/**
+	 * Revert file operations in reverse order (undo from latest to earliest)
+	 * Write operations are skipped (cannot be automatically reverted).
+	 */
+	async revertFileOperations(
+		operations: FileOperation[]
+	): Promise<{ reverted: string[]; failed: string[]; skipped: string[] }> {
+		const { logger } = this.ctx;
+		const reverted: string[] = [];
+		const failed: string[] = [];
+		const skipped: string[] = [];
+
+		// Process in reverse order (undo latest operations first)
+		const reversedOps = [...operations].reverse();
+
+		for (const op of reversedOps) {
+			if (op.type === 'write') {
+				// Cannot automatically revert Write operations
+				skipped.push(op.filePath);
+				logger.log(`Skipping diff revert for Write operation: ${op.filePath}`);
+				continue;
+			}
+
+			// Edit operation - revert by replacing newString with oldString
+			try {
+				if (!existsSync(op.filePath)) {
+					failed.push(op.filePath);
+					logger.warn(`Diff revert failed: file not found: ${op.filePath}`);
+					continue;
+				}
+
+				const fileContent = readFileSync(op.filePath, 'utf-8');
+
+				// Find and replace newString with oldString
+				if (!op.newString || !op.oldString) {
+					failed.push(op.filePath);
+					logger.warn(`Diff revert failed: missing old/new strings for ${op.filePath}`);
+					continue;
+				}
+
+				if (!fileContent.includes(op.newString)) {
+					failed.push(op.filePath);
+					logger.warn(`Diff revert failed: newString not found in ${op.filePath}`);
+					continue;
+				}
+
+				const revertedContent = fileContent.replace(op.newString, op.oldString);
+				writeFileSync(op.filePath, revertedContent, 'utf-8');
+
+				if (!reverted.includes(op.filePath)) {
+					reverted.push(op.filePath);
+				}
+			} catch (error) {
+				failed.push(op.filePath);
+				logger.error(`Diff revert error for ${op.filePath}:`, error);
+			}
+		}
+
+		return { reverted, failed, skipped };
+	}
+
+	/**
 	 * Preview a selective rewind operation
 	 *
 	 * Selective rewind allows choosing specific messages to rewind.
@@ -404,12 +585,19 @@ export class RewindHandler {
 	}
 
 	/**
-	 * Execute a selective rewind operation
+	 * Execute a selective rewind operation with 3-case logic
 	 *
-	 * Deletes all messages from the earliest selected message onward,
-	 * and reverts files using SDK checkpoints.
+	 * Cases:
+	 * 1. SDK-native: Earliest selected message is a user message -> use SDK checkpoint
+	 * 2. Diff-based: Only assistant messages selected -> revert using Edit tool diffs
+	 * 3. Hybrid: Mix of assistant then user messages -> SDK to user checkpoint + diff revert before it
+	 *
+	 * Supports file-only, conversation-only, or both modes.
 	 */
-	async executeSelectiveRewind(messageIds: string[]): Promise<SelectiveRewindResult> {
+	async executeSelectiveRewind(
+		messageIds: string[],
+		mode: RewindMode = 'both'
+	): Promise<SelectiveRewindResult> {
 		const { session, db, lifecycleManager, queryObject, firstMessageReceived, logger } = this.ctx;
 
 		if (!queryObject) {
@@ -453,75 +641,147 @@ export class RewindHandler {
 		const earliestTimestamp = (earliestMessage as Record<string, unknown>).timestamp as number;
 
 		try {
-			// Find the earliest USER message among selected (for SDK checkpoint)
+			// Step 1: Get all messages in the range (timestamp >= earliestTimestamp)
+			const messagesInRange = allMessages.filter((m) => {
+				const ts = (m as Record<string, unknown>).timestamp as number;
+				return ts >= earliestTimestamp;
+			});
+
+			// Step 2: Get user messages in the range
 			const userMessages = db.getUserMessages(session.id);
-			const selectedUserMessages = userMessages.filter((m) => messageIds.includes(m.uuid));
+			const userMessagesInRange = userMessages.filter((um) => um.timestamp >= earliestTimestamp);
 
-			// Use the earliest user message as checkpoint for file rewind
-			const earliestUserMessage =
-				selectedUserMessages.length > 0
-					? selectedUserMessages[0] // Already sorted chronologically by getUserMessages
-					: null;
+			// Step 3: Analyze which rewind case applies
+			const analysis = this.analyzeRewindCase(
+				earliestMessage as Record<string, unknown>,
+				messagesInRange,
+				userMessagesInRange
+			);
 
-			// Step 1: Rewind files using SDK checkpoint (best-effort)
+			// Step 4: File rewind (if mode includes files)
 			let filesReverted: string[] = [];
-			if (earliestUserMessage) {
-				try {
-					const sdkResult = await queryObject.rewindFiles(earliestUserMessage.uuid);
-					if (sdkResult.canRewind) {
-						filesReverted = sdkResult.filesChanged || [];
-					} else {
-						logger.log(
-							`File rewind not available for selective rewind: ${sdkResult.error || 'no checkpoint'}. Proceeding with conversation rewind only.`
-						);
+			let diffRevertedFiles: string[] = [];
+
+			if (mode === 'files' || mode === 'both') {
+				switch (analysis.rewindCase) {
+					case 'sdk-native': {
+						// Use SDK rewindFiles with earliest user message
+						const checkpointUuid = (earliestMessage as { uuid?: string }).uuid;
+						if (checkpointUuid) {
+							try {
+								const sdkResult = await queryObject.rewindFiles(checkpointUuid);
+								if (sdkResult.canRewind) {
+									filesReverted = sdkResult.filesChanged || [];
+								} else {
+									logger.log(
+										`SDK file rewind not available: ${sdkResult.error || 'no checkpoint'}`
+									);
+								}
+							} catch (e) {
+								logger.error('SDK file rewind failed:', e);
+							}
+						}
+						break;
 					}
-				} catch (fileError) {
-					logger.error('File rewind failed during selective rewind (proceeding):', fileError);
+					case 'diff-based': {
+						// Extract and revert file operations from assistant messages
+						const ops = this.extractFileOperations(messagesInRange);
+						if (ops.length > 0) {
+							const result = await this.revertFileOperations(ops);
+							diffRevertedFiles = result.reverted;
+							// Log failures
+							if (result.failed.length > 0) {
+								logger.warn('Diff revert failed for:', result.failed);
+							}
+							if (result.skipped.length > 0) {
+								logger.log('Diff revert skipped (Write ops):', result.skipped);
+							}
+						}
+						break;
+					}
+					case 'hybrid': {
+						// SDK rewind to oldest user message
+						if (analysis.oldestUserMessage) {
+							try {
+								const sdkResult = await queryObject.rewindFiles(analysis.oldestUserMessage.uuid);
+								if (sdkResult.canRewind) {
+									filesReverted = sdkResult.filesChanged || [];
+								} else {
+									logger.log(
+										`SDK file rewind not available: ${sdkResult.error || 'no checkpoint'}`
+									);
+								}
+							} catch (e) {
+								logger.error('SDK file rewind failed:', e);
+							}
+						}
+						// Diff-based revert for messages before the user message
+						if (analysis.messagesBeforeUser.length > 0) {
+							const ops = this.extractFileOperations(analysis.messagesBeforeUser);
+							if (ops.length > 0) {
+								const result = await this.revertFileOperations(ops);
+								diffRevertedFiles = result.reverted;
+								if (result.failed.length > 0) {
+									logger.warn('Diff revert failed for:', result.failed);
+								}
+								if (result.skipped.length > 0) {
+									logger.log('Diff revert skipped (Write ops):', result.skipped);
+								}
+							}
+						}
+						break;
+					}
 				}
 			}
 
-			// Step 2: Delete messages from DB at and after the earliest timestamp (inclusive)
-			const messagesDeleted = db.deleteMessagesAtAndAfter(session.id, earliestTimestamp);
+			// Step 5: Conversation rewind (if mode includes conversation)
+			let messagesDeleted = 0;
+			if (mode === 'conversation' || mode === 'both') {
+				// Delete messages from DB at and after the earliest timestamp (inclusive)
+				messagesDeleted = db.deleteMessagesAtAndAfter(session.id, earliestTimestamp);
 
-			// Step 3: Truncate JSONL at the earliest selected message
-			const jsonlUuid = earliestUserMessage?.uuid || (earliestMessage as { uuid?: string }).uuid;
-			if (jsonlUuid) {
-				const jsonlResult = truncateSessionFileAtMessage(
-					session.workspacePath,
-					session.sdkSessionId,
-					session.id,
-					jsonlUuid
-				);
-				if (jsonlResult.truncated) {
-					logger.log(`Truncated JSONL file: removed ${jsonlResult.linesRemoved} lines`);
+				// Truncate JSONL at the earliest selected message
+				const jsonlUuid = (earliestMessage as { uuid?: string }).uuid;
+				if (jsonlUuid) {
+					const jsonlResult = truncateSessionFileAtMessage(
+						session.workspacePath,
+						session.sdkSessionId,
+						session.id,
+						jsonlUuid
+					);
+					if (jsonlResult.truncated) {
+						logger.log(`Truncated JSONL file: removed ${jsonlResult.linesRemoved} lines`);
+					}
 				}
+
+				// Update resumeSessionAt to the previous user message
+				const remainingUserMessages = db.getUserMessages(session.id);
+				const previousUserMessage =
+					remainingUserMessages.length > 0
+						? remainingUserMessages[remainingUserMessages.length - 1]
+						: null;
+
+				if (previousUserMessage) {
+					session.metadata.resumeSessionAt = previousUserMessage.uuid;
+				} else {
+					delete session.metadata.resumeSessionAt;
+				}
+				db.updateSession(session.id, { metadata: session.metadata });
+
+				// Restart query to apply new state
+				await lifecycleManager.restart();
 			}
-
-			// Step 4: Find previous user message for resumeSessionAt
-			const remainingUserMessages = db.getUserMessages(session.id);
-			const previousUserMessage =
-				remainingUserMessages.length > 0
-					? remainingUserMessages[remainingUserMessages.length - 1]
-					: null;
-
-			if (previousUserMessage) {
-				session.metadata.resumeSessionAt = previousUserMessage.uuid;
-			} else {
-				delete session.metadata.resumeSessionAt;
-			}
-			db.updateSession(session.id, { metadata: session.metadata });
-
-			// Step 5: Restart query to apply new state
-			await lifecycleManager.restart();
 
 			logger.log(
-				`Selective rewind: deleted ${messagesDeleted} messages, reverted ${filesReverted.length} files`
+				`Selective rewind (${analysis.rewindCase}): deleted ${messagesDeleted} messages, reverted ${filesReverted.length + diffRevertedFiles.length} files`
 			);
 
 			return {
 				success: true,
 				messagesDeleted,
-				filesReverted,
+				filesReverted: [...filesReverted, ...diffRevertedFiles],
+				rewindCase: analysis.rewindCase,
+				diffRevertedFiles: diffRevertedFiles.length > 0 ? diffRevertedFiles : undefined,
 			};
 		} catch (error) {
 			logger.error('Selective rewind execution failed:', error);

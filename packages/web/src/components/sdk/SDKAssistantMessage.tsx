@@ -43,6 +43,10 @@ interface Props {
 		state: 'submitted' | 'cancelled',
 		responses: QuestionDraftResponse[]
 	) => void;
+	// Rewind mode props
+	rewindMode?: boolean;
+	selectedMessages?: Set<string>;
+	onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
 }
 
 export function SDKAssistantMessage({
@@ -53,6 +57,9 @@ export function SDKAssistantMessage({
 	resolvedQuestions,
 	pendingQuestion,
 	onQuestionResolved,
+	rewindMode,
+	selectedMessages,
+	onMessageCheckboxChange,
 }: Props) {
 	const { message: apiMessage } = message;
 	const hasError = 'error' in message && message.error !== undefined;
@@ -110,14 +117,9 @@ export function SDKAssistantMessage({
 	// Get message metadata for E2E tests
 	const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
 
-	return (
-		<div
-			class="py-2 space-y-3"
-			data-testid="assistant-message"
-			data-message-role="assistant"
-			data-message-uuid={message.uuid}
-			data-message-timestamp={messageWithTimestamp.timestamp || 0}
-		>
+	// Render checkbox wrapper if in rewind mode
+	const renderContent = () => (
+		<div class="py-2 space-y-3">
 			{/* Tool use blocks - full width like result messages */}
 			{toolBlocks.map((block: Extract<ContentBlock, { type: 'tool_use' }>, idx: number) => {
 				const toolResult = toolResultsMap?.get(block.id);
@@ -214,6 +216,44 @@ export function SDKAssistantMessage({
 					</div>
 				</div>
 			)}
+		</div>
+	);
+
+	// Wrap with checkbox if in rewind mode and message has uuid
+	if (rewindMode && message.uuid && onMessageCheckboxChange) {
+		return (
+			<div
+				class="flex items-start gap-2"
+				data-testid="assistant-message"
+				data-message-role="assistant"
+				data-message-uuid={message.uuid}
+				data-message-timestamp={messageWithTimestamp.timestamp || 0}
+			>
+				<div class="flex items-start pt-3">
+					<input
+						type="checkbox"
+						checked={selectedMessages?.has(message.uuid) || false}
+						onChange={(e) => {
+							const target = e.target as HTMLInputElement;
+							onMessageCheckboxChange(message.uuid!, target.checked);
+						}}
+						class="w-5 h-5 rounded border-gray-500 bg-dark-800 text-amber-500 focus:ring-amber-500 focus:ring-offset-dark-900 cursor-pointer"
+					/>
+				</div>
+				<div class="flex-1 min-w-0">{renderContent()}</div>
+			</div>
+		);
+	}
+
+	// Otherwise, render without checkbox wrapper
+	return (
+		<div
+			data-testid="assistant-message"
+			data-message-role="assistant"
+			data-message-uuid={message.uuid}
+			data-message-timestamp={messageWithTimestamp.timestamp || 0}
+		>
+			{renderContent()}
 		</div>
 	);
 }

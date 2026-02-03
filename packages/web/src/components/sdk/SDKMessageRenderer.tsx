@@ -140,6 +140,9 @@ export function SDKMessageRenderer({
 				resolvedQuestions={resolvedQuestions}
 				pendingQuestion={pendingQuestion}
 				onQuestionResolved={onQuestionResolved}
+				rewindMode={rewindMode}
+				selectedMessages={selectedMessages}
+				onMessageCheckboxChange={onMessageCheckboxChange}
 			/>
 		);
 	}
