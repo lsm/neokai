@@ -547,6 +547,13 @@ describe('AgentSession', () => {
 			// Execute without mode should default to 'both'
 			const resultDefault = await agentSession!.executeSelectiveRewind(['non-existent-uuid']);
 			expect(resultDefault.success).toBe(false);
+
+			// Execute with explicit undefined should also default to 'both'
+			const resultUndefined = await agentSession!.executeSelectiveRewind(
+				['non-existent-uuid'],
+				undefined
+			);
+			expect(resultUndefined.success).toBe(false);
 		});
 	});
 });
