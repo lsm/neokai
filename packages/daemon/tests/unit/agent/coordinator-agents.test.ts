@@ -112,10 +112,10 @@ describe('getCoordinatorAgents', () => {
 		const agents = getCoordinatorAgents();
 		expect(agents.Coordinator.tools).toEqual([
 			'Task',
-			'TodoWrite',
-			'AskUserQuestion',
 			'TaskOutput',
 			'TaskStop',
+			'TodoWrite',
+			'AskUserQuestion',
 			'EnterPlanMode',
 			'ExitPlanMode',
 		]);
