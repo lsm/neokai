@@ -59,10 +59,6 @@ export interface AgentInput {
    */
   max_turns?: number;
   /**
-   * Tools to grant this agent. User will be prompted to approve if not already allowed. Example: ["Bash(git commit*)", "Read"]
-   */
-  allowed_tools?: string[];
-  /**
    * Name for the spawned agent
    */
   name?: string;
@@ -158,14 +154,6 @@ export interface ExitPlanModeInput {
    * The remote session title if pushed to remote
    */
   remoteSessionTitle?: string;
-  /**
-   * Whether to launch a swarm to implement the plan
-   */
-  launchSwarm?: boolean;
-  /**
-   * Number of teammates to spawn in the swarm
-   */
-  teammateCount?: number;
   [k: string]: unknown;
 }
 export interface FileEditInput {
@@ -246,9 +234,13 @@ export interface GrepInput {
    */
   "-A"?: number;
   /**
-   * Number of lines to show before and after each match (rg -C). Requires output_mode: "content", ignored otherwise.
+   * Alias for context.
    */
   "-C"?: number;
+  /**
+   * Number of lines to show before and after each match (rg -C). Requires output_mode: "content", ignored otherwise.
+   */
+  context?: number;
   /**
    * Show line numbers in output (rg -n). Requires output_mode: "content", ignored otherwise. Defaults to true.
    */
