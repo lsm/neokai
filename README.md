@@ -7,10 +7,13 @@ Claude Code web UI for coding, life, and anything in between.
 
 ## Screenshots
 
-<p align="center">
-  <img src="docs/screenshot-desktop.png" alt="NeoKai Desktop UI" height="500" style="margin-right: 20px;">
-  <img src="docs/screenshot-mobile.jpeg" alt="NeoKai Mobile UI" height="500">
-</p>
+<table>
+  <tr>
+    <td><img src="docs/screenshot-desktop.png" alt="NeoKai Desktop UI" height="500"></td>
+    <td><img src="docs/screenshot-mobile.jpeg" alt="NeoKai Mobile UI" height="500"></td>
+  </tr>
+</table>
+
 <p align="center">
   <em>Desktop and mobile interfaces showing coordinator mode with multi-agent workflow and task management</em>
 </p>
