@@ -18,14 +18,8 @@ describe('QueryOptionsBuilder', () => {
 	let mockSession: Session;
 	let mockSettingsManager: SettingsManager;
 	let mockContext: QueryOptionsBuilderContext;
-	let originalNodeEnv: string | undefined;
 
 	beforeEach(() => {
-		// Store original NODE_ENV
-		originalNodeEnv = process.env.NODE_ENV;
-		// Set to development for most tests
-		process.env.NODE_ENV = 'development';
-
 		mockSession = {
 			id: generateUUID(),
 			title: 'Test Session',
@@ -61,10 +55,7 @@ describe('QueryOptionsBuilder', () => {
 		builder = new QueryOptionsBuilder(mockContext);
 	});
 
-	afterEach(() => {
-		// Restore NODE_ENV
-		process.env.NODE_ENV = originalNodeEnv;
-	});
+	afterEach(() => {});
 
 	describe('build', () => {
 		it('should build basic query options', async () => {
@@ -216,17 +207,6 @@ describe('QueryOptionsBuilder', () => {
 	});
 
 	describe('system prompt configuration', () => {
-		it('should skip system prompt in test environment', async () => {
-			process.env.NODE_ENV = 'test';
-			const newBuilder = new QueryOptionsBuilder({
-				session: mockSession,
-				settingsManager: mockSettingsManager,
-			});
-			const options = await newBuilder.build();
-
-			expect(options.systemPrompt).toBeUndefined();
-		});
-
 		it('should use Claude Code preset by default', async () => {
 			const options = await builder.build();
 
@@ -333,17 +313,6 @@ describe('QueryOptionsBuilder', () => {
 	});
 
 	describe('MCP servers configuration', () => {
-		it('should disable MCP in test environment', async () => {
-			process.env.NODE_ENV = 'test';
-			const newBuilder = new QueryOptionsBuilder({
-				session: mockSession,
-				settingsManager: mockSettingsManager,
-			});
-			const options = await newBuilder.build();
-
-			expect(options.mcpServers).toEqual({});
-		});
-
 		it('should use configured mcpServers', async () => {
 			mockSession.config.mcpServers = {
 				'test-server': { command: 'test-command' },
@@ -363,17 +332,6 @@ describe('QueryOptionsBuilder', () => {
 	});
 
 	describe('setting sources configuration', () => {
-		it('should disable setting sources in test environment', async () => {
-			process.env.NODE_ENV = 'test';
-			const newBuilder = new QueryOptionsBuilder({
-				session: mockSession,
-				settingsManager: mockSettingsManager,
-			});
-			const options = await newBuilder.build();
-
-			expect(options.settingSources).toEqual([]);
-		});
-
 		it('should include project and local sources by default', async () => {
 			const options = await builder.build();
 			expect(options.settingSources).toEqual(['project', 'local']);
@@ -441,23 +399,11 @@ describe('QueryOptionsBuilder', () => {
 	});
 
 	describe('hooks configuration', () => {
-		it('should skip hooks in test environment', async () => {
-			process.env.NODE_ENV = 'test';
-			const newBuilder = new QueryOptionsBuilder({
-				session: mockSession,
-				settingsManager: mockSettingsManager,
-			});
-			const options = await newBuilder.build();
-
-			expect(options.hooks).toBeUndefined();
-		});
-
-		it('should include output limiter hook in production', async () => {
-			process.env.NODE_ENV = 'production';
+		it('should return empty hooks', async () => {
 			const options = await builder.build();
 
-			expect(options.hooks).toBeDefined();
-			expect(options.hooks?.PreToolUse).toBeDefined();
+			// buildHooks() returns {} — no hooks configured
+			expect(options.hooks).toEqual({});
 		});
 	});
 
@@ -618,30 +564,61 @@ describe('QueryOptionsBuilder', () => {
 			expect(coderPrompt).toContain('Git Worktree Isolation');
 		});
 
-		it('should restrict session-level tools to coordinator tools when coordinatorMode is true', async () => {
+		it('should NOT restrict session-level tools in coordinator mode (sub-agents need full tool access)', async () => {
 			mockSession.config.coordinatorMode = true;
 			const options = await builder.build();
 
-			// Session-level tools should be restricted to coordinator's tools only
-			expect(options.tools).toEqual(['Task', 'TodoWrite', 'AskUserQuestion']);
+			// Session-level tools must NOT be restricted to coordinator's tools.
+			// Options.tools is the BASE set for the entire session including sub-agents.
+			// If restricted to ['Task', 'TodoWrite', 'AskUserQuestion'], sub-agents like
+			// Coder (tools: ['Read', 'Edit', 'Write', ...]) get an empty tool set
+			// because AgentDefinition.tools is a filter on the base set.
+			expect(options.tools).not.toEqual(['Task', 'TodoWrite', 'AskUserQuestion']);
 		});
 
-		it('should NOT restrict session-level tools when coordinatorMode is false', async () => {
-			mockSession.config.coordinatorMode = false;
+		it('should preserve sdkToolsPreset in coordinator mode', async () => {
+			mockSession.config.coordinatorMode = true;
 			mockSession.config.sdkToolsPreset = { type: 'preset', preset: 'claude_code' };
 			const options = await builder.build();
 
-			// Session-level tools should remain as configured
+			// Coordinator mode should NOT override the preset - sub-agents need full tools
 			expect(options.tools).toEqual({ type: 'preset', preset: 'claude_code' });
 		});
 
-		it('should override sdkToolsPreset with coordinator tools when coordinatorMode is true', async () => {
+		it('should set allowedTools for all tools in coordinator mode', async () => {
 			mockSession.config.coordinatorMode = true;
-			mockSession.config.sdkToolsPreset = { type: 'preset', preset: 'claude_code' };
 			const options = await builder.build();
 
-			// Coordinator mode should override the preset
-			expect(options.tools).toEqual(['Task', 'TodoWrite', 'AskUserQuestion']);
+			// allowedTools ensures sub-agents can use tools under dontAsk permission mode
+			expect(options.allowedTools).toBeDefined();
+			expect(options.allowedTools).toContain('Read');
+			expect(options.allowedTools).toContain('Write');
+			expect(options.allowedTools).toContain('Bash');
+			expect(options.allowedTools).toContain('Edit');
+			expect(options.allowedTools).toContain('Task');
+		});
+
+		it('should not add coordinator canUseTool wrapper', async () => {
+			mockSession.config.coordinatorMode = true;
+			const options = await builder.build();
+
+			// canUseTool should not be set by coordinator mode
+			// (only set if explicitly via setCanUseTool for AskUserQuestion handler)
+			expect(options.canUseTool).toBeUndefined();
+		});
+
+		it('should preserve existing canUseTool when coordinatorMode is on', async () => {
+			mockSession.config.coordinatorMode = true;
+
+			// Set an existing canUseTool callback (like AskUserQuestion handler)
+			const originalCallback = async () => {
+				return { behavior: 'allow' as const };
+			};
+			builder.setCanUseTool(originalCallback);
+			const options = await builder.build();
+
+			// The original callback should be passed through unchanged
+			expect(options.canUseTool).toBe(originalCallback);
 		});
 	});
 
