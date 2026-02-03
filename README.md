@@ -63,6 +63,15 @@ kai [path] [options]
 | `--db-path` | `./data/daemon.db` | Database location |
 | `-V, --version` | | Show version number |
 
+## Development
+
+This project uses a `dev` branch for active development. See [CONTRIBUTING.md](CONTRIBUTING.md) for details on the branching strategy and contribution guidelines.
+
+Quick overview:
+- All feature PRs should target the `dev` branch for faster CI feedback (E2E tests skipped)
+- E2E tests run automatically when changes are merged to `dev`
+- PRs from `dev` to `main` run full test suite for production deployment
+
 ## License
 
 [Apache-2.0](LICENSE)
