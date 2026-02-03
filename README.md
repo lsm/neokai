@@ -5,6 +5,16 @@
 
 Claude Code web UI for coding, life, and anything in between.
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshot-desktop.png" alt="NeoKai Desktop UI" height="500" style="margin-right: 20px;">
+  <img src="docs/screenshot-mobile.jpeg" alt="NeoKai Mobile UI" height="500">
+</p>
+<p align="center">
+  <em>Desktop and mobile interfaces showing coordinator mode with multi-agent workflow and task management</em>
+</p>
+
 Run `kai` in any directory to get a full-featured web interface for Claude right in your browser. Manage multiple conversations at once, switch models on the fly, and let the agent read, write, and run code in your project — all from a clean, responsive UI.
 
 ## Quick start
