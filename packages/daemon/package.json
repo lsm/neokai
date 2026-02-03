@@ -20,7 +20,7 @@
 		"test:online": "bun test --coverage --coverage-reporter=text ./tests/online"
 	},
 	"dependencies": {
-		"@anthropic-ai/claude-agent-sdk": "0.2.19",
+		"@anthropic-ai/claude-agent-sdk": "0.2.29",
 		"@neokai/shared": "workspace:*",
 		"dotenv": "17.2.3",
 		"simple-git": "3.30.0"
