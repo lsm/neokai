@@ -196,10 +196,16 @@ export class QueryOptionsBuilder {
 				config.agents as Record<string, AgentDefinition> | undefined
 			);
 
-			// Restrict session-level tools to match coordinator's allowed tools.
-			// This ensures the SDK only presents these tools to the main agent.
-			// Subagents run as separate CLI processes with their own tool sets.
-			queryOptions.tools = agents.Coordinator.tools;
+			// Tool restrictions for the coordinator are handled by the SDK natively.
+			// When Options.agent = 'Coordinator' is set, the SDK applies the agent's
+			// tools, system prompt, and model to the main conversation thread.
+			// The Coordinator's tools: ['Task', 'TodoWrite', 'AskUserQuestion'] means
+			// only those tools are available to the main thread. Sub-agents get their
+			// own tool sets from their AgentDefinition, independent of the coordinator.
+			//
+			// We do NOT restrict session-level Options.tools because that sets the
+			// BASE tool set for the entire session. AgentDefinition.tools is a FILTER
+			// on that base — restricting the base would give sub-agents empty tool sets.
 
 			// Inject worktree isolation into specialist agents that modify files.
 			// The coordinator doesn't need it (it doesn't touch files), but subagents

@@ -618,30 +618,61 @@ describe('QueryOptionsBuilder', () => {
 			expect(coderPrompt).toContain('Git Worktree Isolation');
 		});
 
-		it('should restrict session-level tools to coordinator tools when coordinatorMode is true', async () => {
+		it('should NOT restrict session-level tools in coordinator mode (sub-agents need full tool access)', async () => {
 			mockSession.config.coordinatorMode = true;
 			const options = await builder.build();
 
-			// Session-level tools should be restricted to coordinator's tools only
-			expect(options.tools).toEqual(['Task', 'TodoWrite', 'AskUserQuestion']);
+			// Session-level tools must NOT be restricted to coordinator's tools.
+			// Options.tools is the BASE set for the entire session including sub-agents.
+			// If restricted to ['Task', 'TodoWrite', 'AskUserQuestion'], sub-agents like
+			// Coder (tools: ['Read', 'Edit', 'Write', ...]) get an empty tool set
+			// because AgentDefinition.tools is a filter on the base set.
+			expect(options.tools).not.toEqual(['Task', 'TodoWrite', 'AskUserQuestion']);
 		});
 
-		it('should NOT restrict session-level tools when coordinatorMode is false', async () => {
-			mockSession.config.coordinatorMode = false;
+		it('should preserve sdkToolsPreset in coordinator mode', async () => {
+			mockSession.config.coordinatorMode = true;
 			mockSession.config.sdkToolsPreset = { type: 'preset', preset: 'claude_code' };
 			const options = await builder.build();
 
-			// Session-level tools should remain as configured
+			// Coordinator mode should NOT override the preset - sub-agents need full tools
 			expect(options.tools).toEqual({ type: 'preset', preset: 'claude_code' });
 		});
 
-		it('should override sdkToolsPreset with coordinator tools when coordinatorMode is true', async () => {
+		it('should rely on SDK native agent tool restrictions (not hooks or canUseTool)', async () => {
 			mockSession.config.coordinatorMode = true;
-			mockSession.config.sdkToolsPreset = { type: 'preset', preset: 'claude_code' };
 			const options = await builder.build();
 
-			// Coordinator mode should override the preset
-			expect(options.tools).toEqual(['Task', 'TodoWrite', 'AskUserQuestion']);
+			// The SDK natively applies AgentDefinition.tools to the main thread
+			// when Options.agent is set. No hooks or canUseTool wrappers needed.
+			// Verify no coordinator-specific hooks were added
+			const preToolUseHooks = options.hooks?.PreToolUse || [];
+			// Should only have the output limiter hook (from buildHooks), not a coordinator hook
+			// In test env, hooks are undefined (buildHooks returns undefined for NODE_ENV=test)
+			expect(preToolUseHooks.length).toBeLessThanOrEqual(1);
+		});
+
+		it('should not add coordinator canUseTool wrapper', async () => {
+			mockSession.config.coordinatorMode = true;
+			const options = await builder.build();
+
+			// canUseTool should not be set by coordinator mode
+			// (only set if explicitly via setCanUseTool for AskUserQuestion handler)
+			expect(options.canUseTool).toBeUndefined();
+		});
+
+		it('should preserve existing canUseTool when coordinatorMode is on', async () => {
+			mockSession.config.coordinatorMode = true;
+
+			// Set an existing canUseTool callback (like AskUserQuestion handler)
+			const originalCallback = async () => {
+				return { behavior: 'allow' as const };
+			};
+			builder.setCanUseTool(originalCallback);
+			const options = await builder.build();
+
+			// The original callback should be passed through unchanged
+			expect(options.canUseTool).toBe(originalCallback);
 		});
 	});
 
