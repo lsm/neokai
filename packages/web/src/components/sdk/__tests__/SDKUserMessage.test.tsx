@@ -578,4 +578,137 @@ describe('SDKUserMessage', () => {
 			expect(checkbox).toBeNull();
 		});
 	});
+
+	describe('Rewind Button and Spinner', () => {
+		const onRewind = vi.fn();
+
+		beforeEach(() => {
+			onRewind.mockClear();
+		});
+
+		it('should show rewind button when message has uuid and onRewind callback', () => {
+			const message = createTextMessage('Hello');
+			const { container } = render(
+				<SDKUserMessage
+					message={message}
+					sessionId="test-session"
+					onRewind={onRewind}
+					rewindingMessageUuid={null}
+				/>
+			);
+
+			const rewindButton = container.querySelector('button[title="Rewind to here"]');
+			expect(rewindButton).toBeTruthy();
+		});
+
+		it('should show spinner when rewindingMessageUuid matches message uuid', () => {
+			const message = createTextMessage('Hello');
+			const { container } = render(
+				<SDKUserMessage
+					message={message}
+					sessionId="test-session"
+					onRewind={onRewind}
+					rewindingMessageUuid={message.uuid}
+				/>
+			);
+
+			// Should show spinner instead of rewind button
+			const spinner = container.querySelector('[role="status"]');
+			expect(spinner).toBeTruthy();
+			expect(spinner?.getAttribute('aria-label')).toBe('Loading');
+
+			// Rewind button should not be present
+			const rewindButton = container.querySelector('button[title="Rewind to here"]');
+			expect(rewindButton).toBeFalsy();
+		});
+
+		it('should show rewind button when rewindingMessageUuid does not match', () => {
+			const message = createTextMessage('Hello');
+			const { container } = render(
+				<SDKUserMessage
+					message={message}
+					sessionId="test-session"
+					onRewind={onRewind}
+					rewindingMessageUuid="different-uuid"
+				/>
+			);
+
+			// Should show rewind button, not spinner
+			const rewindButton = container.querySelector('button[title="Rewind to here"]');
+			expect(rewindButton).toBeTruthy();
+
+			const spinner = container.querySelector('[role="status"]');
+			expect(spinner).toBeFalsy();
+		});
+
+		it('should call onRewind with message uuid when rewind button is clicked', () => {
+			const message = createTextMessage('Hello');
+			const { container } = render(
+				<SDKUserMessage
+					message={message}
+					sessionId="test-session"
+					onRewind={onRewind}
+					rewindingMessageUuid={null}
+				/>
+			);
+
+			const rewindButton = container.querySelector('button[title="Rewind to here"]');
+			fireEvent.click(rewindButton!);
+
+			expect(onRewind).toHaveBeenCalledWith(message.uuid);
+		});
+
+		it('should not show rewind button for synthetic messages', () => {
+			const message = createSyntheticMessage();
+			const { container } = render(
+				<SDKUserMessage
+					message={message}
+					sessionId="test-session"
+					onRewind={onRewind}
+					rewindingMessageUuid={null}
+				/>
+			);
+
+			const rewindButton = container.querySelector('button[title="Rewind to here"]');
+			expect(rewindButton).toBeFalsy();
+		});
+
+		it('should not show rewind button when sessionId is missing', () => {
+			const message = createTextMessage('Hello');
+			const { container } = render(
+				<SDKUserMessage message={message} onRewind={onRewind} rewindingMessageUuid={null} />
+			);
+
+			const rewindButton = container.querySelector('button[title="Rewind to here"]');
+			expect(rewindButton).toBeFalsy();
+		});
+
+		it('should not show rewind button when onRewind is missing', () => {
+			const message = createTextMessage('Hello');
+			const { container } = render(
+				<SDKUserMessage message={message} sessionId="test-session" rewindingMessageUuid={null} />
+			);
+
+			const rewindButton = container.querySelector('button[title="Rewind to here"]');
+			expect(rewindButton).toBeFalsy();
+		});
+
+		it('should not show rewind button when message has no uuid', () => {
+			const message = createTextMessage('Hello');
+			// @ts-expect-error - Testing undefined uuid
+			message.uuid = undefined;
+
+			const { container } = render(
+				<SDKUserMessage
+					message={message}
+					sessionId="test-session"
+					onRewind={onRewind}
+					rewindingMessageUuid={null}
+				/>
+			);
+
+			const rewindButton = container.querySelector('button[title="Rewind to here"]');
+			expect(rewindButton).toBeFalsy();
+		});
+	});
 });

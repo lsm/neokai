@@ -925,4 +925,146 @@ describe('SDKAssistantMessage', () => {
 			});
 		});
 	});
+
+	describe('Rewind Mode', () => {
+		const onMessageCheckboxChange = vi.fn();
+
+		beforeEach(() => {
+			onMessageCheckboxChange.mockClear();
+		});
+
+		it('should render with checkbox wrapper when in rewind mode', () => {
+			const message = createTextOnlyMessage('Test message');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKAssistantMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			// Should have checkbox
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeTruthy();
+
+			// Should have flex layout with gap
+			expect(container.querySelector('.flex.items-start.gap-2')).toBeTruthy();
+		});
+
+		it('should check checkbox when message is selected', () => {
+			const message = createTextOnlyMessage('Test message');
+			const selectedMessages = new Set<string>([message.uuid]);
+
+			const { container } = render(
+				<SDKAssistantMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+			expect(checkbox.checked).toBe(true);
+		});
+
+		it('should not check checkbox when message is not selected', () => {
+			const message = createTextOnlyMessage('Test message');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKAssistantMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+			expect(checkbox.checked).toBe(false);
+		});
+
+		it('should call onMessageCheckboxChange when checkbox is toggled', () => {
+			const message = createTextOnlyMessage('Test message');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKAssistantMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			fireEvent.click(checkbox!);
+
+			expect(onMessageCheckboxChange).toHaveBeenCalledWith(message.uuid, true);
+		});
+
+		it('should not render checkbox wrapper when not in rewind mode', () => {
+			const message = createTextOnlyMessage('Test message');
+
+			const { container } = render(<SDKAssistantMessage message={message} rewindMode={false} />);
+
+			// Should not have checkbox
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeFalsy();
+
+			// Should use regular layout without flex gap-2
+			expect(container.querySelector('.flex.items-start.gap-2')).toBeFalsy();
+		});
+
+		it('should not render checkbox when message has no uuid', () => {
+			const message = createTextOnlyMessage('Test message');
+			// @ts-expect-error - Testing undefined uuid
+			message.uuid = undefined;
+
+			const { container } = render(
+				<SDKAssistantMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={new Set()}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeFalsy();
+		});
+
+		it('should not render checkbox when onMessageCheckboxChange is not provided', () => {
+			const message = createTextOnlyMessage('Test message');
+
+			const { container } = render(
+				<SDKAssistantMessage message={message} rewindMode={true} selectedMessages={new Set()} />
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeFalsy();
+		});
+
+		it('should render content inside flex-1 container when in rewind mode', () => {
+			const message = createTextOnlyMessage('Test content');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKAssistantMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			// Content should be in flex-1 container
+			expect(container.querySelector('.flex-1.min-w-0')).toBeTruthy();
+			expect(container.textContent).toContain('Test content');
+		});
+	});
 });
