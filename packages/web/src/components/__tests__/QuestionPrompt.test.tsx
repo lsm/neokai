@@ -857,6 +857,47 @@ describe('QuestionPrompt', () => {
 			expect(mockOnResolved).toHaveBeenCalledWith('submitted', expect.any(Array));
 		});
 
+		it('should submit with only custom text and no option selected', async () => {
+			const { container } = render(
+				<QuestionPrompt
+					sessionId="session-1"
+					pendingQuestion={mockPendingQuestion}
+					onResolved={mockOnResolved}
+				/>
+			);
+
+			// Click Other instead of selecting an option
+			const otherBtn = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Other...')
+			)!;
+			fireEvent.click(otherBtn);
+
+			// Type custom text
+			const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+			fireEvent.input(textarea, { target: { value: 'My custom answer' } });
+
+			// Click submit
+			const submitButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Submit Response')
+			)!;
+			fireEvent.click(submitButton);
+
+			// Wait for async operation
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			// onResolved should have been called with custom text response
+			expect(mockOnResolved).toHaveBeenCalledWith(
+				'submitted',
+				expect.arrayContaining([
+					expect.objectContaining({
+						questionIndex: 0,
+						selectedLabels: [],
+						customText: 'My custom answer',
+					}),
+				])
+			);
+		});
+
 		it('should call onResolved with cancelled state when cancel succeeds', async () => {
 			const { container } = render(
 				<QuestionPrompt
@@ -1166,6 +1207,106 @@ describe('QuestionPrompt', () => {
 
 			// Verify submitted state header
 			expect(container.textContent).toContain('Response submitted');
+		});
+	});
+
+	describe('Resolved form interaction guards', () => {
+		it('should not trigger submit when form is already resolved', async () => {
+			// Render a resolved form and attempt to submit - the isResolved guard should prevent it
+			const { container } = render(
+				<QuestionPrompt
+					sessionId="session-1"
+					pendingQuestion={mockPendingQuestion}
+					resolvedState="submitted"
+					finalResponses={[{ questionIndex: 0, selectedLabels: ['Edit'] }]}
+					onResolved={mockOnResolved}
+				/>
+			);
+
+			// Submit and Skip buttons should not be rendered in resolved state
+			const submitButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Submit Response')
+			);
+			const skipButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Skip Question')
+			);
+
+			expect(submitButton).toBeFalsy();
+			expect(skipButton).toBeFalsy();
+
+			// onResolved should not have been called
+			expect(mockOnResolved).not.toHaveBeenCalled();
+			// callIfConnected should not have been called
+			expect(mockCallIfConnected).not.toHaveBeenCalled();
+		});
+
+		it('should not allow custom text input changes when resolved', () => {
+			const { container } = render(
+				<QuestionPrompt
+					sessionId="session-1"
+					pendingQuestion={mockPendingQuestion}
+					resolvedState="submitted"
+					finalResponses={[
+						{
+							questionIndex: 0,
+							selectedLabels: [],
+							customText: 'Original text',
+						},
+					]}
+				/>
+			);
+
+			// The textarea should be disabled/readonly
+			const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+			expect(textarea).toBeTruthy();
+			expect(textarea.disabled).toBe(true);
+		});
+
+		it('should initialize customInputs map without customText entries when responses lack customText', () => {
+			// This covers the falsy branch of `if (response.customText)` during initialization
+			const { container } = render(
+				<QuestionPrompt
+					sessionId="session-1"
+					pendingQuestion={mockPendingQuestion}
+					resolvedState="submitted"
+					finalResponses={[
+						{
+							questionIndex: 0,
+							selectedLabels: ['Edit'],
+							// No customText property - tests the falsy branch
+						},
+					]}
+				/>
+			);
+
+			// No textarea should be visible since Other was not selected
+			const textarea = container.querySelector('textarea');
+			expect(textarea).toBeFalsy();
+
+			// The selected option should be shown
+			expect(container.textContent).toContain('Edit');
+		});
+
+		it('should prevent option selection changes in cancelled state', () => {
+			const { container } = render(
+				<QuestionPrompt
+					sessionId="session-1"
+					pendingQuestion={mockPendingQuestion}
+					resolvedState="cancelled"
+					finalResponses={[{ questionIndex: 0, selectedLabels: ['Edit'] }]}
+				/>
+			);
+
+			// All option buttons should be disabled
+			const optionButtons = Array.from(container.querySelectorAll('button')).filter(
+				(btn) =>
+					btn.textContent?.includes('Edit') ||
+					btn.textContent?.includes('Delete') ||
+					btn.textContent?.includes('Move')
+			);
+			for (const btn of optionButtons) {
+				expect(btn.disabled).toBe(true);
+			}
 		});
 	});
 

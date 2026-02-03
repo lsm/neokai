@@ -118,10 +118,8 @@ export function QuestionPrompt({
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [isCancelling, setIsCancelling] = useState(false);
 
-	// Save draft whenever selections change (only if not resolved)
+	// Save draft whenever selections change (guarded by useEffect below)
 	const saveDraft = useCallback(async () => {
-		if (isResolved) return;
-
 		const responses: QuestionDraftResponse[] = [];
 		for (let i = 0; i < questions.length; i++) {
 			const selectedLabels = [...(selections.get(i) || [])];
@@ -143,7 +141,7 @@ export function QuestionPrompt({
 		} catch (error) {
 			console.error('Failed to save draft:', error);
 		}
-	}, [sessionId, questions.length, selections, customInputs, callIfConnected, isResolved]);
+	}, [sessionId, questions.length, selections, customInputs, callIfConnected]);
 
 	// Debounced draft saving
 	useEffect(() => {
@@ -156,8 +154,6 @@ export function QuestionPrompt({
 	}, [saveDraft, isResolved]);
 
 	const handleOptionClick = (questionIndex: number, label: string) => {
-		if (isResolved) return;
-
 		const question = questions[questionIndex];
 		const current = new Set(selections.get(questionIndex) || []);
 
@@ -192,8 +188,6 @@ export function QuestionPrompt({
 	};
 
 	const handleOtherClick = (questionIndex: number) => {
-		if (isResolved) return;
-
 		const question = questions[questionIndex];
 
 		setShowOther((prev) => new Set([...prev, questionIndex]));
@@ -209,12 +203,10 @@ export function QuestionPrompt({
 	};
 
 	const handleCustomInput = (questionIndex: number, text: string) => {
-		if (isResolved) return;
 		setCustomInputs((prev) => new Map(prev.set(questionIndex, text)));
 	};
 
 	const handleSubmit = async () => {
-		if (isResolved) return;
 		setIsSubmitting(true);
 
 		try {
@@ -242,7 +234,6 @@ export function QuestionPrompt({
 	};
 
 	const handleCancel = async () => {
-		if (isResolved) return;
 		setIsCancelling(true);
 
 		try {
@@ -509,7 +500,7 @@ export function QuestionPrompt({
 												: questionColors.active.selectedBg
 											: cn(
 													questionColors.active.unselectedBg,
-													resolvedState === 'cancelled' ? 'text-gray-600' : 'text-gray-400',
+													'text-gray-400',
 													borderColors.ui.secondary,
 													!isResolved && 'hover:border-rose-600/50'
 												)
