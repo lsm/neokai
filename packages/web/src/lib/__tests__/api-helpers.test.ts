@@ -1048,6 +1048,7 @@ describe('api-helpers', () => {
 				expect(mockHub.call).toHaveBeenCalledWith('rewind.executeSelective', {
 					sessionId: 'sess-123',
 					messageIds: ['msg-uuid-1', 'msg-uuid-2'],
+					mode: 'both',
 				});
 			});
 
@@ -1111,6 +1112,7 @@ describe('api-helpers', () => {
 				expect(mockHub.call).toHaveBeenCalledWith('rewind.executeSelective', {
 					sessionId: 'sess-123',
 					messageIds: ['msg-1'],
+					mode: 'both',
 				});
 			});
 		});
