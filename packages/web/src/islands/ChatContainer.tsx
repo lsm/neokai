@@ -196,16 +196,6 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const handleRewindSelection = useCallback(async () => {
 		if (selectedMessages.size === 0) return;
 
-		// Check if any user message is included in the selection
-		const selectedUserMessages = messages.filter(
-			(m) => m.type === 'user' && m.uuid && selectedMessages.has(m.uuid) && !m.isSynthetic
-		);
-
-		if (selectedUserMessages.length === 0) {
-			toast.error('Please select at least one user message to rewind to.');
-			return;
-		}
-
 		// Show confirmation
 		const confirmed = confirm(
 			`Rewind to selected point? This will delete ${selectedMessages.size} messages and revert files. This action cannot be undone.`
