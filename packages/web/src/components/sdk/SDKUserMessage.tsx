@@ -202,7 +202,6 @@ export function SDKUserMessage({
 			class={cn(messageSpacing.user.container.combined, 'flex justify-end')}
 			data-testid="user-message"
 			data-message-role="user"
-			data-message-uuid={message.uuid}
 			data-message-timestamp={messageWithTimestamp.timestamp || 0}
 		>
 			<div class="max-w-[85%] md:max-w-[70%] w-auto">

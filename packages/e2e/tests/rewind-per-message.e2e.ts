@@ -16,11 +16,11 @@ import {
 /**
  * Helper to send a message and wait for it to be processed
  */
-async function sendMessage(page: Page, messageText: string, sessionId: string): Promise<void> {
+async function sendMessage(page: Page, messageText: string): Promise<void> {
 	const messageInput = 'textarea[placeholder*="Ask"]';
 	await page.fill(messageInput, messageText);
 	await page.click('button[aria-label*="Send message"]');
-	await waitForMessageProcessed(page, sessionId);
+	await waitForMessageProcessed(page, messageText);
 }
 
 test.describe('Per-Message Rewind Modal', () => {
@@ -44,7 +44,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send a message to have content to rewind
-		await sendMessage(page, 'Test message for rewind', sessionId);
+		await sendMessage(page, 'Test message for rewind');
 
 		// Wait for the message to appear
 		await page.waitForTimeout(1000);
@@ -65,7 +65,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send a message to get an assistant response
-		await sendMessage(page, 'Say hello', sessionId);
+		await sendMessage(page, 'Say hello');
 
 		// Wait for assistant message to appear
 		await page.waitForTimeout(2000);
@@ -86,7 +86,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send a message
-		await sendMessage(page, 'Test message for modal', sessionId);
+		await sendMessage(page, 'Test message for modal');
 		await page.waitForTimeout(1000);
 
 		// Click rewind button (no hover needed)
@@ -105,7 +105,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send a message
-		await sendMessage(page, 'Test radio options', sessionId);
+		await sendMessage(page, 'Test radio options');
 		await page.waitForTimeout(1000);
 
 		// Open the rewind modal (no hover needed)
@@ -125,7 +125,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send a message
-		await sendMessage(page, 'Test default selection', sessionId);
+		await sendMessage(page, 'Test default selection');
 		await page.waitForTimeout(1000);
 
 		// Open the rewind modal (no hover needed)
@@ -144,7 +144,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send a message
-		await sendMessage(page, 'Test mode switching', sessionId);
+		await sendMessage(page, 'Test mode switching');
 		await page.waitForTimeout(1000);
 
 		// Open the rewind modal (no hover needed)
@@ -174,8 +174,8 @@ test.describe('Per-Message Rewind Modal', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send multiple messages
-		await sendMessage(page, 'First message', sessionId);
-		await sendMessage(page, 'Second message', sessionId);
+		await sendMessage(page, 'First message');
+		await sendMessage(page, 'Second message');
 		await page.waitForTimeout(1000);
 
 		// Open the rewind modal (no hover needed)
@@ -194,9 +194,9 @@ test.describe('Per-Message Rewind Modal', () => {
 			timeout: 3000,
 		});
 
-		// Verify messages are still present
-		await expect(page.locator('text=First message')).toBeVisible();
-		await expect(page.locator('text=Second message')).toBeVisible();
+		// Verify messages are still present (use .first() since auto-title may also contain the text)
+		await expect(page.locator('text=First message').first()).toBeVisible();
+		await expect(page.locator('text=Second message').first()).toBeVisible();
 	});
 
 	test('should display warning text about action being irreversible', async ({ page }) => {
@@ -206,7 +206,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send a message
-		await sendMessage(page, 'Test warning text', sessionId);
+		await sendMessage(page, 'Test warning text');
 		await page.waitForTimeout(1000);
 
 		// Open the rewind modal (no hover needed)
@@ -224,7 +224,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send a message
-		await sendMessage(page, 'Test explanatory text', sessionId);
+		await sendMessage(page, 'Test explanatory text');
 		await page.waitForTimeout(1000);
 
 		// Open the rewind modal (no hover needed)
@@ -246,7 +246,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send a message
-		await sendMessage(page, 'Test rewind button', sessionId);
+		await sendMessage(page, 'Test rewind button');
 		await page.waitForTimeout(1000);
 
 		// Open the rewind modal (no hover needed)
@@ -265,8 +265,8 @@ test.describe('Per-Message Rewind Modal', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send messages
-		await sendMessage(page, 'First message', sessionId);
-		await sendMessage(page, 'Second message', sessionId);
+		await sendMessage(page, 'First message');
+		await sendMessage(page, 'Second message');
 		await page.waitForTimeout(1000);
 
 		// Try to enter rewind mode by opening the header menu
@@ -304,8 +304,8 @@ test.describe('Per-Message Rewind Modal', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send messages
-		await sendMessage(page, 'First message', sessionId);
-		await sendMessage(page, 'Second message', sessionId);
+		await sendMessage(page, 'First message');
+		await sendMessage(page, 'Second message');
 		await page.waitForTimeout(1000);
 
 		// Try to enter rewind mode
@@ -340,7 +340,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send a message
-		await sendMessage(page, 'Test escape key', sessionId);
+		await sendMessage(page, 'Test escape key');
 		await page.waitForTimeout(1000);
 
 		// Open the rewind modal (no hover needed)
@@ -366,7 +366,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send a message
-		await sendMessage(page, 'Test option persistence', sessionId);
+		await sendMessage(page, 'Test option persistence');
 		await page.waitForTimeout(1000);
 
 		// Open the rewind modal (no hover needed)
