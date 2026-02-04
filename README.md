@@ -7,10 +7,13 @@ Claude Code web UI for coding, life, and anything in between.
 
 ## Screenshots
 
-<p align="center">
-  <img src="docs/screenshot-desktop.png" alt="NeoKai Desktop UI" height="500" style="margin-right: 20px;">
-  <img src="docs/screenshot-mobile.jpeg" alt="NeoKai Mobile UI" height="500">
-</p>
+<table>
+  <tr>
+    <td><img src="docs/screenshot-desktop.png" alt="NeoKai Desktop UI" height="500"></td>
+    <td><img src="docs/screenshot-mobile.jpeg" alt="NeoKai Mobile UI" height="500"></td>
+  </tr>
+</table>
+
 <p align="center">
   <em>Desktop and mobile interfaces showing coordinator mode with multi-agent workflow and task management</em>
 </p>
@@ -59,6 +62,15 @@ kai [path] [options]
 | `--host` | `0.0.0.0` | Host to bind to |
 | `--db-path` | `./data/daemon.db` | Database location |
 | `-V, --version` | | Show version number |
+
+## Development
+
+This project uses a `dev` branch for active development. See [CONTRIBUTING.md](CONTRIBUTING.md) for details on the branching strategy and contribution guidelines.
+
+Quick overview:
+- All feature PRs should target the `dev` branch for faster CI feedback (E2E tests skipped)
+- E2E tests run automatically when changes are merged to `dev`
+- PRs from `dev` to `main` run full test suite for production deployment
 
 ## License
 

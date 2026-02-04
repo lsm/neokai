@@ -6,6 +6,7 @@ import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { MessageParam } from '@anthropic-ai/sdk/resources';
 import type { Readable } from 'stream';
+import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import type { UUID } from 'crypto';
 import type { Writable } from 'stream';
 import { z } from 'zod/v4';
@@ -158,10 +159,12 @@ declare namespace coreTypes {
         HookInput,
         HookJSONOutput,
         JsonSchemaOutputFormat,
+        McpClaudeAIProxyServerConfig,
         McpHttpServerConfig,
         McpSSEServerConfig,
         McpSdkServerConfig,
         McpServerConfigForProcessTransport,
+        McpServerStatusConfig,
         McpServerStatus,
         McpSetServersResult,
         McpStdioServerConfig,
@@ -191,6 +194,7 @@ declare namespace coreTypes {
         SDKAssistantMessage,
         SDKAuthStatusMessage,
         SDKCompactBoundaryMessage,
+        SDKFilesPersistedEvent,
         SDKHookProgressMessage,
         SDKHookResponseMessage,
         SDKHookStartedMessage,
@@ -281,6 +285,12 @@ export declare type JsonSchemaOutputFormat = {
     schema: Record<string, unknown>;
 };
 
+export declare type McpClaudeAIProxyServerConfig = {
+    type: 'claudeai-proxy';
+    url: string;
+    id: string;
+};
+
 export declare type McpHttpServerConfig = {
     type: 'http';
     url: string;
@@ -318,7 +328,7 @@ export declare type McpServerStatus = {
     /**
      * Current connection status
      */
-    status: 'connected' | 'failed' | 'needs-auth' | 'pending';
+    status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled';
     /**
      * Server information (available when connected)
      */
@@ -330,7 +340,29 @@ export declare type McpServerStatus = {
      * Error message (available when status is 'failed')
      */
     error?: string;
+    /**
+     * Server configuration (includes URL for HTTP/SSE servers)
+     */
+    config?: McpServerStatusConfig;
+    /**
+     * Configuration scope (e.g., project, user, local, claudeai, managed)
+     */
+    scope?: string;
+    /**
+     * Tools provided by this server (available when connected)
+     */
+    tools?: {
+        name: string;
+        description?: string;
+        annotations?: {
+            readOnly?: boolean;
+            destructive?: boolean;
+            openWorld?: boolean;
+        };
+    }[];
 };
+
+export declare type McpServerStatusConfig = McpServerConfigForProcessTransport | McpClaudeAIProxyServerConfig;
 
 /**
  * Result of a setMcpServers operation.
@@ -969,6 +1001,21 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
         dryRun?: boolean;
     }): Promise<RewindFilesResult>;
     /**
+     * Reconnect an MCP server by name.
+     * Throws on failure.
+     *
+     * @param serverName - The name of the MCP server to reconnect
+     */
+    reconnectMcpServer(serverName: string): Promise<void>;
+    /**
+     * Enable or disable an MCP server by name.
+     * Throws on failure.
+     *
+     * @param serverName - The name of the MCP server to toggle
+     * @param enabled - Whether the server should be enabled
+     */
+    toggleMcpServer(serverName: string, enabled: boolean): Promise<void>;
+    /**
      * Dynamically set the MCP servers for this session.
      * This replaces the current set of dynamically-added MCP servers with the provided set.
      * Servers that are removed will be disconnected, and new servers will be connected.
@@ -1189,6 +1236,22 @@ declare type SDKControlSetPermissionModeRequest = {
     mode: coreTypes.PermissionMode;
 };
 
+export declare type SDKFilesPersistedEvent = {
+    type: 'system';
+    subtype: 'files_persisted';
+    files: {
+        filename: string;
+        file_id: string;
+    }[];
+    failed: {
+        filename: string;
+        error: string;
+    }[];
+    processed_at: string;
+    uuid: UUID;
+    session_id: string;
+};
+
 /**
  * Configuration for matching and routing hook callbacks.
  */
@@ -1259,10 +1322,11 @@ export declare type SdkMcpToolDefinition<Schema extends AnyZodRawShape = AnyZodR
     name: string;
     description: string;
     inputSchema: Schema;
+    annotations?: ToolAnnotations;
     handler: (args: InferShape<Schema>, extra: unknown) => Promise<CallToolResult>;
 };
 
-export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKToolUseSummaryMessage;
+export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage;
 
 export declare type SDKPartialAssistantMessage = {
     type: 'stream_event';
@@ -1406,6 +1470,7 @@ export declare type SDKStatusMessage = {
     type: 'system';
     subtype: 'status';
     status: SDKStatus;
+    permissionMode?: PermissionMode;
     uuid: UUID;
     session_id: string;
 };
@@ -1623,6 +1688,7 @@ export declare type SubagentStopHookInput = BaseHookInput & {
     stop_hook_active: boolean;
     agent_id: string;
     agent_transcript_path: string;
+    agent_type: string;
 };
 
 export declare type SyncHookJSONOutput = {
@@ -1635,7 +1701,9 @@ export declare type SyncHookJSONOutput = {
     hookSpecificOutput?: PreToolUseHookSpecificOutput | UserPromptSubmitHookSpecificOutput | SessionStartHookSpecificOutput | SetupHookSpecificOutput | SubagentStartHookSpecificOutput | PostToolUseHookSpecificOutput | PostToolUseFailureHookSpecificOutput | NotificationHookSpecificOutput | PermissionRequestHookSpecificOutput;
 };
 
-export declare function tool<Schema extends AnyZodRawShape>(_name: string, _description: string, _inputSchema: Schema, _handler: (args: InferShape<Schema>, extra: unknown) => Promise<CallToolResult>): SdkMcpToolDefinition<Schema>;
+export declare function tool<Schema extends AnyZodRawShape>(_name: string, _description: string, _inputSchema: Schema, _handler: (args: InferShape<Schema>, extra: unknown) => Promise<CallToolResult>, _extras?: {
+    annotations?: ToolAnnotations;
+}): SdkMcpToolDefinition<Schema>;
 
 /**
  * Transport interface for Claude Code SDK communication

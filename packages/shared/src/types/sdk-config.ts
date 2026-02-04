@@ -111,6 +111,8 @@ export interface AgentDefinition {
 	prompt: string;
 	/** Model override for this agent */
 	model?: AgentModel;
+	/** Permission mode override for this agent */
+	permissionMode?: PermissionMode;
 	/** MCP servers for this agent */
 	mcpServers?: AgentMcpServerSpec[];
 	/** Critical system reminder (experimental) */

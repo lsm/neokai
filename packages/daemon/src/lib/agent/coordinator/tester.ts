@@ -3,7 +3,23 @@ import type { AgentDefinition } from '@neokai/shared';
 export const testerAgent: AgentDefinition = {
 	description:
 		'Write and run tests. Use for creating test cases, running test suites, and analyzing test results.',
-	tools: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'],
+	tools: [
+		'Read',
+		'Write',
+		'Edit',
+		'Bash',
+		'Grep',
+		'Glob',
+		'WebFetch',
+		'WebSearch',
+		'Skill',
+		'Task',
+		'TodoWrite',
+		'TaskOutput',
+		'TaskStop',
+		'EnterPlanMode',
+		'ExitPlanMode',
+	],
 	model: 'sonnet',
 	prompt: `You are a testing specialist. Your job is to write tests, run test suites, and analyze results.
 

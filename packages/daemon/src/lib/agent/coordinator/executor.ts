@@ -3,7 +3,7 @@ import type { AgentDefinition } from '@neokai/shared';
 export const executorAgent: AgentDefinition = {
 	description:
 		'Run commands, builds, and deployments. Use for shell operations, build verification, git operations.',
-	tools: ['Bash', 'Read'],
+	tools: ['Bash', 'Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'Skill'],
 	model: 'haiku',
 	prompt: `You are a command execution specialist. Your job is to run commands and report their output.
 

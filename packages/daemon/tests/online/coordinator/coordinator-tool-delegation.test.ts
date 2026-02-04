@@ -1,0 +1,238 @@
+/**
+ * Coordinator Tool Delegation - Behavioral Tests
+ *
+ * Tests coordinator mode behavior with tool usage:
+ * 1. Coordinator can read files directly (read-only, no delegation needed)
+ * 2. Coordinator delegates file writing to specialist sub-agents via Task
+ *
+ * REQUIREMENTS:
+ * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
+ * - Makes real API calls (costs money, uses rate limits)
+ */
+
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import 'dotenv/config';
+import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync } from 'fs';
+import { join } from 'path';
+import type { DaemonServerContext } from '../helpers/daemon-server-helper';
+import { createDaemonServer } from '../helpers/daemon-server-helper';
+import { sendMessage, waitForIdle } from '../helpers/daemon-test-helpers';
+
+const TMP_DIR = process.env.TMPDIR || '/tmp';
+
+/** Mutation tools the coordinator should NOT use — must delegate to specialists */
+const MUTATION_TOOLS = new Set(['Edit', 'Write', 'Bash', 'NotebookEdit']);
+
+/**
+ * Collect all SDK messages for a session after processing completes.
+ * Uses the message.sdkMessages RPC to fetch the full message list.
+ */
+async function getAllSDKMessages(
+	daemon: DaemonServerContext,
+	sessionId: string
+): Promise<Array<Record<string, unknown>>> {
+	const result = (await daemon.messageHub.call('message.sdkMessages', {
+		sessionId,
+	})) as { sdkMessages: Array<Record<string, unknown>> };
+	return result.sdkMessages || [];
+}
+
+/**
+ * Extract tool_use blocks from the coordinator's (main thread) assistant messages.
+ *
+ * Coordinator messages have parent_tool_use_id === null (they're on the main thread).
+ * Sub-agent messages have parent_tool_use_id !== null (they're spawned via Task).
+ */
+function getCoordinatorToolUses(
+	messages: Array<Record<string, unknown>>
+): Array<{ name: string; id: string }> {
+	const toolUses: Array<{ name: string; id: string }> = [];
+
+	for (const msg of messages) {
+		if (msg.type !== 'assistant') continue;
+		if (msg.parent_tool_use_id !== null) continue; // skip sub-agent messages
+
+		const betaMessage = msg.message as { content?: Array<Record<string, unknown>> } | undefined;
+		if (!betaMessage?.content) continue;
+
+		for (const block of betaMessage.content) {
+			if (block.type === 'tool_use') {
+				toolUses.push({
+					name: block.name as string,
+					id: block.id as string,
+				});
+			}
+		}
+	}
+
+	return toolUses;
+}
+
+/**
+ * Extract the final text response from assistant messages on the main thread.
+ */
+function getCoordinatorTextResponse(messages: Array<Record<string, unknown>>): string {
+	const texts: string[] = [];
+
+	for (const msg of messages) {
+		if (msg.type !== 'assistant') continue;
+		if (msg.parent_tool_use_id !== null) continue;
+
+		const betaMessage = msg.message as { content?: Array<Record<string, unknown>> } | undefined;
+		if (!betaMessage?.content) continue;
+
+		for (const block of betaMessage.content) {
+			if (block.type === 'text') {
+				texts.push(block.text as string);
+			}
+		}
+	}
+
+	return texts.join('\n');
+}
+
+describe('Coordinator Tool Delegation - Behavioral', () => {
+	let daemon: DaemonServerContext;
+	let testDir: string;
+
+	beforeEach(async () => {
+		daemon = await createDaemonServer();
+		testDir = join(TMP_DIR, `coordinator-delegation-test-${Date.now()}`);
+		mkdirSync(testDir, { recursive: true });
+	}, 30000);
+
+	afterEach(async () => {
+		if (daemon) {
+			daemon.kill('SIGTERM');
+			await daemon.waitForExit();
+		}
+	}, 20000);
+
+	test('coordinator reads files directly — canary value appears in response', async () => {
+		// 1. Create a file with a unique canary value
+		const canary = `CANARY_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+		const testFile = join(testDir, 'canary.txt');
+		writeFileSync(testFile, canary);
+
+		// 2. Create a coordinator mode session
+		const createResult = (await daemon.messageHub.call('session.create', {
+			workspacePath: testDir,
+			title: 'Coordinator Read Test',
+			config: {
+				coordinatorMode: true,
+				permissionMode: 'bypassPermissions',
+			},
+		})) as { sessionId: string };
+
+		const { sessionId } = createResult;
+		daemon.trackSession(sessionId);
+
+		// 3. Ask the coordinator to read the file
+		await sendMessage(
+			daemon,
+			sessionId,
+			`Read the file at ${testFile} and tell me exactly what it contains. Just respond with the file content, nothing else.`
+		);
+
+		// 4. Wait for full processing
+		await waitForIdle(daemon, sessionId, 120000);
+
+		// 5. Collect all SDK messages
+		const allMessages = await getAllSDKMessages(daemon, sessionId);
+
+		// 6. Verify the canary value appears in the coordinator's response
+		const coordinatorText = getCoordinatorTextResponse(allMessages);
+		expect(coordinatorText).toContain(canary);
+
+		// 7. Verify coordinator used Read directly (read-only tools are fine)
+		const coordinatorToolUses = getCoordinatorToolUses(allMessages);
+		console.log(
+			'Coordinator tool uses:',
+			coordinatorToolUses.map((t) => t.name)
+		);
+
+		const readUses = coordinatorToolUses.filter((t) => t.name === 'Read');
+		expect(readUses.length).toBeGreaterThan(0);
+	}, 120000);
+
+	test('coordinator delegates file writing to specialist — file is actually created', async () => {
+		const outputFile = join(testDir, 'output.txt');
+		const canary = `WRITTEN_BY_SPECIALIST_${Date.now()}`;
+
+		// 1. Create a coordinator mode session
+		const createResult = (await daemon.messageHub.call('session.create', {
+			workspacePath: testDir,
+			title: 'Coordinator Write Delegation Test',
+			config: {
+				coordinatorMode: true,
+				permissionMode: 'bypassPermissions',
+			},
+		})) as { sessionId: string };
+
+		const { sessionId } = createResult;
+		daemon.trackSession(sessionId);
+
+		// 2. Ask the coordinator to write a file
+		await sendMessage(
+			daemon,
+			sessionId,
+			`Create a file at ${outputFile} with exactly this content: ${canary}`
+		);
+
+		// 3. Wait for processing
+		await waitForIdle(daemon, sessionId, 120000);
+
+		// 4. Collect and debug print all SDK messages
+		const allMessages = await getAllSDKMessages(daemon, sessionId);
+		for (const msg of allMessages) {
+			const parentId = msg.parent_tool_use_id ?? 'null';
+			const betaMsg = msg.message as { content?: Array<Record<string, unknown>> } | undefined;
+			if (betaMsg?.content) {
+				for (const block of betaMsg.content) {
+					if (block.type === 'tool_use') {
+						console.log(`[${msg.type}] parent=${parentId} tool_use: ${block.name}`);
+					} else if (block.type === 'tool_result') {
+						const content =
+							typeof block.content === 'string'
+								? block.content.slice(0, 200)
+								: JSON.stringify(block.content)?.slice(0, 200);
+						console.log(
+							`[${msg.type}] parent=${parentId} tool_result for=${block.tool_use_id}: ${content}`
+						);
+					} else if (block.type === 'text') {
+						console.log(
+							`[${msg.type}] parent=${parentId} text: ${(block.text as string).slice(0, 200)}`
+						);
+					}
+				}
+			}
+		}
+
+		// 5. Verify the file was actually written
+		expect(existsSync(outputFile)).toBe(true);
+		const content = readFileSync(outputFile, 'utf-8');
+		expect(content).toContain(canary);
+
+		// 6. Verify coordinator tool usage
+		const coordinatorToolUses = getCoordinatorToolUses(allMessages);
+		console.log(
+			'Coordinator tool uses:',
+			coordinatorToolUses.map((t) => t.name)
+		);
+
+		// Verify delegation happened — coordinator should use Task for mutations
+		const taskUses = coordinatorToolUses.filter((t) => t.name === 'Task');
+		expect(taskUses.length).toBeGreaterThan(0);
+
+		// Verify the coordinator did NOT use mutation tools directly
+		const mutationUses = coordinatorToolUses.filter((t) => MUTATION_TOOLS.has(t.name));
+		expect(mutationUses).toEqual([]);
+
+		// Cleanup
+		try {
+			unlinkSync(outputFile);
+		} catch {
+			// ignore
+		}
+	}, 120000);
+});

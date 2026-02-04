@@ -1,4 +1,4 @@
-.PHONY: dev self run build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release
+.PHONY: dev self run build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release sync-sdk-types
 
 dev:
 	@echo "Starting development server..."
@@ -85,6 +85,14 @@ compile-all:
 # Package npm packages from compiled binaries
 package-npm:
 	@bun run scripts/package-npm.ts
+
+# Sync SDK type definitions from installed package to shared types
+sync-sdk-types:
+	@echo "Syncing Claude SDK type definitions..."
+	@mkdir -p packages/shared/src/sdk
+	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts packages/shared/src/sdk/
+	@cp packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk-tools.d.ts packages/shared/src/sdk/
+	@echo "SDK types synced to packages/shared/src/sdk/"
 
 # Full release pipeline: build + compile + package
 release: compile-all package-npm

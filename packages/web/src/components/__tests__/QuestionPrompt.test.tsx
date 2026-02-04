@@ -497,23 +497,21 @@ describe('QuestionPrompt', () => {
 			expect(container.textContent).toContain('Delete');
 		});
 
-		it('should toggle expanded state when header is clicked', () => {
+		it('should always show form content (no collapse functionality)', () => {
 			const { container } = render(
 				<QuestionPrompt sessionId="session-1" pendingQuestion={mockPendingQuestion} />
 			);
 
-			// Find the header button (first button with "Claude needs your input")
-			const headerButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+			// Form content should always be visible
+			expect(container.textContent).toContain('Edit');
+			expect(container.textContent).toContain('Delete');
+			expect(container.textContent).toContain('Other...');
+
+			// Header should not be a clickable button (no collapse functionality)
+			const headerButtons = Array.from(container.querySelectorAll('button')).filter((btn) =>
 				btn.textContent?.includes('Claude needs your input')
-			)!;
-
-			// Click to collapse
-			fireEvent.click(headerButton);
-
-			// Options should be hidden when collapsed
-			// Since we're testing DOM state changes, verify through class changes
-			const chevron = headerButton.querySelector('svg:last-child');
-			expect(chevron).toBeTruthy();
+			);
+			expect(headerButtons.length).toBe(0);
 		});
 
 		it('should show question count in header', () => {
@@ -557,7 +555,7 @@ describe('QuestionPrompt', () => {
 			expect(container.textContent).toContain('1 question');
 		});
 
-		it('should not show chevron when resolved', () => {
+		it('should show check icon when resolved (no chevron)', () => {
 			const { container } = render(
 				<QuestionPrompt
 					sessionId="session-1"
@@ -567,16 +565,18 @@ describe('QuestionPrompt', () => {
 				/>
 			);
 
-			// Header should not have the expand chevron (rotate-180 class)
-			const headerButton = Array.from(container.querySelectorAll('button')).find((btn) =>
-				btn.textContent?.includes('Response submitted')
-			)!;
+			// Header should show a check icon (not a button, no chevron)
+			const headerDiv = container.querySelector('div');
+			expect(headerDiv).toBeTruthy();
 
-			// The last SVG in resolved state is the check icon, not the chevron
-			expect(headerButton.className).toContain('cursor-default');
+			// Should show "Response submitted" text
+			expect(container.textContent).toContain('Response submitted');
+
+			// Form content should still be visible
+			expect(container.textContent).toContain('Edit');
 		});
 
-		it('should disable header button when resolved', () => {
+		it('should show non-interactive header when resolved (no button)', () => {
 			const { container } = render(
 				<QuestionPrompt
 					sessionId="session-1"
@@ -586,11 +586,14 @@ describe('QuestionPrompt', () => {
 				/>
 			);
 
-			const headerButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+			// Header should not be a button in resolved state
+			const headerButtons = Array.from(container.querySelectorAll('button')).filter((btn) =>
 				btn.textContent?.includes('Response submitted')
-			)! as HTMLButtonElement;
+			);
+			expect(headerButtons.length).toBe(0);
 
-			expect(headerButton.disabled).toBe(true);
+			// Header text should still be present
+			expect(container.textContent).toContain('Response submitted');
 		});
 	});
 
@@ -852,6 +855,47 @@ describe('QuestionPrompt', () => {
 
 			// onResolved should have been called
 			expect(mockOnResolved).toHaveBeenCalledWith('submitted', expect.any(Array));
+		});
+
+		it('should submit with only custom text and no option selected', async () => {
+			const { container } = render(
+				<QuestionPrompt
+					sessionId="session-1"
+					pendingQuestion={mockPendingQuestion}
+					onResolved={mockOnResolved}
+				/>
+			);
+
+			// Click Other instead of selecting an option
+			const otherBtn = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Other...')
+			)!;
+			fireEvent.click(otherBtn);
+
+			// Type custom text
+			const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+			fireEvent.input(textarea, { target: { value: 'My custom answer' } });
+
+			// Click submit
+			const submitButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Submit Response')
+			)!;
+			fireEvent.click(submitButton);
+
+			// Wait for async operation
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			// onResolved should have been called with custom text response
+			expect(mockOnResolved).toHaveBeenCalledWith(
+				'submitted',
+				expect.arrayContaining([
+					expect.objectContaining({
+						questionIndex: 0,
+						selectedLabels: [],
+						customText: 'My custom answer',
+					}),
+				])
+			);
 		});
 
 		it('should call onResolved with cancelled state when cancel succeeds', async () => {
@@ -1163,6 +1207,192 @@ describe('QuestionPrompt', () => {
 
 			// Verify submitted state header
 			expect(container.textContent).toContain('Response submitted');
+		});
+	});
+
+	describe('Resolved form interaction guards', () => {
+		it('should not trigger submit when form is already resolved', async () => {
+			// Render a resolved form and attempt to submit - the isResolved guard should prevent it
+			const { container } = render(
+				<QuestionPrompt
+					sessionId="session-1"
+					pendingQuestion={mockPendingQuestion}
+					resolvedState="submitted"
+					finalResponses={[{ questionIndex: 0, selectedLabels: ['Edit'] }]}
+					onResolved={mockOnResolved}
+				/>
+			);
+
+			// Submit and Skip buttons should not be rendered in resolved state
+			const submitButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Submit Response')
+			);
+			const skipButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Skip Question')
+			);
+
+			expect(submitButton).toBeFalsy();
+			expect(skipButton).toBeFalsy();
+
+			// onResolved should not have been called
+			expect(mockOnResolved).not.toHaveBeenCalled();
+			// callIfConnected should not have been called
+			expect(mockCallIfConnected).not.toHaveBeenCalled();
+		});
+
+		it('should not allow custom text input changes when resolved', () => {
+			const { container } = render(
+				<QuestionPrompt
+					sessionId="session-1"
+					pendingQuestion={mockPendingQuestion}
+					resolvedState="submitted"
+					finalResponses={[
+						{
+							questionIndex: 0,
+							selectedLabels: [],
+							customText: 'Original text',
+						},
+					]}
+				/>
+			);
+
+			// The textarea should be disabled/readonly
+			const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+			expect(textarea).toBeTruthy();
+			expect(textarea.disabled).toBe(true);
+		});
+
+		it('should initialize customInputs map without customText entries when responses lack customText', () => {
+			// This covers the falsy branch of `if (response.customText)` during initialization
+			const { container } = render(
+				<QuestionPrompt
+					sessionId="session-1"
+					pendingQuestion={mockPendingQuestion}
+					resolvedState="submitted"
+					finalResponses={[
+						{
+							questionIndex: 0,
+							selectedLabels: ['Edit'],
+							// No customText property - tests the falsy branch
+						},
+					]}
+				/>
+			);
+
+			// No textarea should be visible since Other was not selected
+			const textarea = container.querySelector('textarea');
+			expect(textarea).toBeFalsy();
+
+			// The selected option should be shown
+			expect(container.textContent).toContain('Edit');
+		});
+
+		it('should prevent option selection changes in cancelled state', () => {
+			const { container } = render(
+				<QuestionPrompt
+					sessionId="session-1"
+					pendingQuestion={mockPendingQuestion}
+					resolvedState="cancelled"
+					finalResponses={[{ questionIndex: 0, selectedLabels: ['Edit'] }]}
+				/>
+			);
+
+			// All option buttons should be disabled
+			const optionButtons = Array.from(container.querySelectorAll('button')).filter(
+				(btn) =>
+					btn.textContent?.includes('Edit') ||
+					btn.textContent?.includes('Delete') ||
+					btn.textContent?.includes('Move')
+			);
+			for (const btn of optionButtons) {
+				expect(btn.disabled).toBe(true);
+			}
+		});
+	});
+
+	describe('BUG REPRODUCTION: Form content visibility after submission', () => {
+		it('should always show form fields even after submission (simulates page refresh)', () => {
+			// This test reproduces the bug where:
+			// 1. User submits a question form
+			// 2. Page is refreshed
+			// 3. Form is re-rendered with resolvedState='submitted'
+			// 4. BUG: Form content is hidden because isExpanded defaults to false for resolved forms
+			// 5. REQUIREMENT: Form fields should NEVER be hidden - they should always be visible
+
+			const { container } = render(
+				<QuestionPrompt
+					sessionId="session-1"
+					pendingQuestion={mockPendingQuestion}
+					resolvedState="submitted"
+					finalResponses={[{ questionIndex: 0, selectedLabels: ['Edit'] }]}
+				/>
+			);
+
+			// Verify the submitted state header is shown
+			expect(container.textContent).toContain('Response submitted');
+
+			// BUG: The form content should be visible, but currently it's hidden
+			// The question text should be in the DOM
+			expect(container.textContent).toContain('What would you like to do with the file?');
+
+			// The options should be visible in the DOM
+			expect(container.textContent).toContain('Edit');
+			expect(container.textContent).toContain('Make changes to the file');
+			expect(container.textContent).toContain('Delete');
+			expect(container.textContent).toContain('Remove the file permanently');
+
+			// The selected option should be visible with selected styling
+			const editButton = Array.from(container.querySelectorAll('button')).find(
+				(btn) =>
+					btn.textContent?.includes('Edit') && btn.textContent?.includes('Make changes to the file')
+			);
+			expect(editButton).toBeTruthy();
+		});
+
+		it('should show form fields for cancelled questions after refresh', () => {
+			// Similar bug for cancelled state - form should still be visible
+			const { container } = render(
+				<QuestionPrompt
+					sessionId="session-1"
+					pendingQuestion={mockPendingQuestion}
+					resolvedState="cancelled"
+					finalResponses={[]}
+				/>
+			);
+
+			// Verify the cancelled state header is shown
+			expect(container.textContent).toContain('Question skipped');
+
+			// Form content should be visible even though it was cancelled
+			expect(container.textContent).toContain('What would you like to do with the file?');
+			expect(container.textContent).toContain('Edit');
+			expect(container.textContent).toContain('Delete');
+		});
+
+		it('should show custom text in resolved state after refresh', () => {
+			// Test that custom text remains visible after refresh
+			const { container } = render(
+				<QuestionPrompt
+					sessionId="session-1"
+					pendingQuestion={mockPendingQuestion}
+					resolvedState="submitted"
+					finalResponses={[
+						{
+							questionIndex: 0,
+							selectedLabels: [],
+							customText: 'My custom response text',
+						},
+					]}
+				/>
+			);
+
+			// Verify the submitted state header
+			expect(container.textContent).toContain('Response submitted');
+
+			// The custom text should be visible in the textarea
+			const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+			expect(textarea).toBeTruthy();
+			expect(textarea.value).toBe('My custom response text');
 		});
 	});
 });
