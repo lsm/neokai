@@ -8,7 +8,6 @@
 		"jsxImportSource": "preact",
 		"strict": true,
 		"skipLibCheck": true,
-		"types": ["vitest/globals"],
 		"allowImportingTsExtensions": true,
 		"noEmit": true,
 		"paths": {
