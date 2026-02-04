@@ -24,9 +24,6 @@ import { SDKSystemMessage } from './SDKSystemMessage.tsx';
 import { SDKToolProgressMessage } from './SDKToolProgressMessage.tsx';
 import { SDKUserMessage } from './SDKUserMessage.tsx';
 import { AuthStatusCard } from './tools/index.ts';
-import { Spinner } from '../ui/Spinner.tsx';
-import { IconButton } from '../ui/IconButton.tsx';
-import { Tooltip } from '../ui/Tooltip.tsx';
 
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 
@@ -103,6 +100,7 @@ export function SDKMessageRenderer({
 	let renderedMessage: JSX.Element | null = null;
 
 	// Route to appropriate renderer based on message type
+	// Skip user messages in rewind mode - they'll be handled in the special path below
 	// Handle user replay messages (slash command responses) first
 	if (isSDKUserMessageReplay(message)) {
 		renderedMessage = (
@@ -114,9 +112,15 @@ export function SDKMessageRenderer({
 			/>
 		);
 	} else if (isSDKUserMessage(message)) {
-		renderedMessage = (
-			<SDKUserMessage message={message} sessionInfo={sessionInfo} sessionId={sessionId} />
-		);
+		// Skip normal user messages here - they'll be handled in the special path below
+		// Only render replay user messages (slash command responses) in this section
+		if (!rewindMode) {
+			// Will be handled below with rewind props
+		} else {
+			renderedMessage = (
+				<SDKUserMessage message={message} sessionInfo={sessionInfo} sessionId={sessionId} />
+			);
+		}
 	} else if (isSDKAssistantMessage(message)) {
 		renderedMessage = (
 			<SDKAssistantMessage
@@ -160,9 +164,8 @@ export function SDKMessageRenderer({
 		);
 	}
 
-	// Get message UUID and check if synthetic
+	// Get message UUID
 	const messageUuid = message.uuid;
-	const isSynthetic = 'isSynthetic' in message && (message as Record<string, unknown>).isSynthetic;
 
 	// Rewind mode path - wrap with checkbox
 	if (rewindMode && messageUuid && onMessageCheckboxChange) {
@@ -187,37 +190,18 @@ export function SDKMessageRenderer({
 		);
 	}
 
-	// Normal mode (non-rewind) with rewind support
-	if (!rewindMode && messageUuid && !isSynthetic && onRewind && sessionId) {
+	// Normal mode (non-rewind) - only wrap user messages with rewind data attribute
+	if (!rewindMode && isSDKUserMessage(message)) {
+		// Pass rewind props to user message component
+		const userMessage = message as Extract<SDKMessage, { type: 'user' }>;
 		return (
-			<div data-message-uuid={messageUuid}>
-				{renderedMessage}
-				{rewindingMessageUuid === messageUuid ? (
-					<div class="flex justify-end mt-2 pr-2">
-						<Spinner size="sm" color="border-amber-500" />
-					</div>
-				) : (
-					<div class="flex justify-end mt-2 pr-2">
-						<Tooltip content="Rewind to this message" position="left">
-							<IconButton
-								size="md"
-								onClick={() => onRewind(messageUuid)}
-								title="Rewind to here"
-								class="text-gray-500 hover:text-amber-600 dark:text-gray-400 dark:hover:text-amber-500 bg-dark-800/80 rounded"
-							>
-								<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
-									/>
-								</svg>
-							</IconButton>
-						</Tooltip>
-					</div>
-				)}
-			</div>
+			<SDKUserMessage
+				message={userMessage}
+				sessionInfo={sessionInfo}
+				sessionId={sessionId}
+				onRewind={onRewind}
+				rewindingMessageUuid={rewindingMessageUuid}
+			/>
 		);
 	}
 

@@ -16,6 +16,7 @@ import { MessageInfoButton } from './MessageInfoButton.tsx';
 import { MessageInfoDropdown } from './MessageInfoDropdown.tsx';
 import { isHiddenCommandOutput, SlashCommandOutput } from './SlashCommandOutput.tsx';
 import { SyntheticMessageBlock } from './SyntheticMessageBlock.tsx';
+import { Spinner } from '../ui/Spinner.tsx';
 
 type UserMessage = Extract<SDKMessage, { type: 'user' }>;
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
@@ -27,6 +28,8 @@ interface Props {
 	sessionInfo?: SystemInitMessage; // Optional session init info to display
 	isReplay?: boolean; // Whether this is a replay message (slash command response)
 	sessionId?: string; // Session ID for rewind operations
+	onRewind?: (uuid: string) => void; // Rewind to this message
+	rewindingMessageUuid?: string | null; // UUID of message currently being rewound
 }
 
 export function SDKUserMessage({
@@ -35,7 +38,9 @@ export function SDKUserMessage({
 	onDelete: _onDelete,
 	sessionInfo,
 	isReplay,
-	sessionId: _sessionId,
+	sessionId,
+	onRewind,
+	rewindingMessageUuid,
 }: Props) {
 	const { message: apiMessage } = message;
 
@@ -267,6 +272,32 @@ export function SDKUserMessage({
 							</span>
 						</Tooltip>
 					)}
+
+					{/* Rewind button - only for non-replay user messages */}
+					{!isReplay &&
+						onRewind &&
+						sessionId &&
+						(rewindingMessageUuid === message.uuid ? (
+							<Spinner size="sm" color="border-amber-500" />
+						) : (
+							<Tooltip content="Rewind to this message" position="left">
+								<IconButton
+									size="md"
+									onClick={() => onRewind(message.uuid)}
+									title="Rewind to here"
+									class="text-gray-500 hover:text-amber-600 dark:text-gray-400 dark:hover:text-amber-500 bg-dark-800/80 rounded"
+								>
+									<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
+										/>
+									</svg>
+								</IconButton>
+							</Tooltip>
+						))}
 
 					{/* Session info icon (if session info is attached) */}
 					{sessionInfo && (
