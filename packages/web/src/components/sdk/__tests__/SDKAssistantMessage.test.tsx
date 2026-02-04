@@ -199,13 +199,8 @@ describe('SDKAssistantMessage', () => {
 			expect(container.querySelector('[data-testid="assistant-message"]')).toBeTruthy();
 		});
 
-		it('should include message UUID in data attribute', () => {
-			const message = createTextOnlyMessage('Hello world');
-			const { container } = render(<SDKAssistantMessage message={message} />);
-
-			const element = container.querySelector('[data-message-uuid]');
-			expect(element?.getAttribute('data-message-uuid')).toBe(message.uuid);
-		});
+		// Note: data-message-uuid is now set by parent SDKMessageRenderer wrapper
+		// This test is removed as the child component no longer sets this attribute
 
 		it('should include message role in data attribute', () => {
 			const message = createTextOnlyMessage('Hello world');
