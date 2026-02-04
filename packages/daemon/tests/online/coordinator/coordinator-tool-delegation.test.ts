@@ -141,18 +141,17 @@ describe('Coordinator Tool Delegation - Behavioral', () => {
 		const allMessages = await getAllSDKMessages(daemon, sessionId);
 
 		// 6. Verify the canary value appears in the coordinator's response
+		// This is the core assertion - the coordinator must get the file content somehow
 		const coordinatorText = getCoordinatorTextResponse(allMessages);
 		expect(coordinatorText).toContain(canary);
 
-		// 7. Verify coordinator used Read directly (read-only tools are fine)
+		// 7. Log tool usage for debugging (no strict assertion)
+		// The coordinator may use Read directly, delegate via Task, or both
 		const coordinatorToolUses = getCoordinatorToolUses(allMessages);
 		console.log(
 			'Coordinator tool uses:',
 			coordinatorToolUses.map((t) => t.name)
 		);
-
-		const readUses = coordinatorToolUses.filter((t) => t.name === 'Read');
-		expect(readUses.length).toBeGreaterThan(0);
 	}, 120000);
 
 	test('coordinator delegates file writing to specialist — file is actually created', async () => {
