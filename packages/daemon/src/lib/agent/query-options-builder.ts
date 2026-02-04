@@ -600,6 +600,9 @@ CRITICAL RULES:
 			}
 		}
 
+		// Always disable statusline for all agent sessions
+		mergedEnv['CLAUDE_STATUSLINE'] = 'none';
+
 		return Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined;
 	}
 
