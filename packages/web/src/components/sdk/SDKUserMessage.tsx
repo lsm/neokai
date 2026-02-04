@@ -284,7 +284,7 @@ export function SDKUserMessage({
 							<Tooltip content="Rewind to this message" position="left">
 								<IconButton
 									size="md"
-									onClick={() => onRewind(message.uuid)}
+									onClick={() => onRewind(message.uuid!)}
 									title="Rewind to here"
 									class="text-gray-500 hover:text-amber-600 dark:text-gray-400 dark:hover:text-amber-500 bg-dark-800/80 rounded"
 								>
