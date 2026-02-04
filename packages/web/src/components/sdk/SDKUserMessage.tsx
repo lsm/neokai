@@ -273,10 +273,11 @@ export function SDKUserMessage({
 						</Tooltip>
 					)}
 
-					{/* Rewind button - only for non-replay user messages */}
+					{/* Rewind button - only for non-replay user messages with valid UUID */}
 					{!isReplay &&
 						onRewind &&
 						sessionId &&
+						message.uuid &&
 						(rewindingMessageUuid === message.uuid ? (
 							<Spinner size="sm" color="border-amber-500" />
 						) : (
