@@ -132,4 +132,82 @@ describe('Authentication Integration', () => {
 			expect(['api_key', 'oauth_token', 'none']).toContain(system.auth.method);
 		});
 	});
+
+	describe('Graceful Startup Without Credentials', () => {
+		let unauthCtx: TestContext;
+		let savedApiKey: string | undefined;
+		let savedOAuthToken: string | undefined;
+		let savedAuthToken: string | undefined;
+		let savedGlmKey: string | undefined;
+
+		beforeEach(async () => {
+			// Save and clear ALL credential env vars
+			savedApiKey = process.env.ANTHROPIC_API_KEY;
+			savedOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+			savedAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
+			savedGlmKey = process.env.GLM_API_KEY;
+
+			delete process.env.ANTHROPIC_API_KEY;
+			delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+			delete process.env.ANTHROPIC_AUTH_TOKEN;
+			delete process.env.GLM_API_KEY;
+
+			// Create app with no credentials - should NOT throw
+			unauthCtx = await createTestApp();
+		});
+
+		afterEach(async () => {
+			await unauthCtx.cleanup();
+
+			// Restore env vars
+			if (savedApiKey !== undefined) process.env.ANTHROPIC_API_KEY = savedApiKey;
+			else delete process.env.ANTHROPIC_API_KEY;
+			if (savedOAuthToken !== undefined) process.env.CLAUDE_CODE_OAUTH_TOKEN = savedOAuthToken;
+			else delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+			if (savedAuthToken !== undefined) process.env.ANTHROPIC_AUTH_TOKEN = savedAuthToken;
+			else delete process.env.ANTHROPIC_AUTH_TOKEN;
+			if (savedGlmKey !== undefined) process.env.GLM_API_KEY = savedGlmKey;
+			else delete process.env.GLM_API_KEY;
+		});
+
+		test('should start daemon without credentials', async () => {
+			// If we got here, createTestApp() succeeded without throwing
+			expect(unauthCtx.server).toBeDefined();
+			expect(unauthCtx.authManager).toBeDefined();
+			expect(unauthCtx.messageHub).toBeDefined();
+		});
+
+		test('should report unauthenticated status', async () => {
+			const status = await unauthCtx.authManager.getAuthStatus();
+			expect(status.isAuthenticated).toBe(false);
+			expect(status.method).toBe('none');
+		});
+
+		test('should respond to auth.status RPC when unauthenticated', async () => {
+			const result = await callRPCHandler(unauthCtx.messageHub, 'auth.status', {});
+			expect(result.authStatus).toBeDefined();
+			expect(result.authStatus.isAuthenticated).toBe(false);
+			expect(result.authStatus.method).toBe('none');
+		});
+
+		test('should expose unauthenticated status in system state', async () => {
+			const result = await callRPCHandler(unauthCtx.messageHub, 'state.system', {});
+			expect(result.auth).toBeDefined();
+			expect(result.auth.isAuthenticated).toBe(false);
+			expect(result.auth.method).toBe('none');
+		});
+
+		test('should still serve mock models when unauthenticated', async () => {
+			const result = await callRPCHandler(unauthCtx.messageHub, 'models.list', {});
+			// createTestApp sets up mock models when unauthenticated
+			expect(result.models).toBeDefined();
+			expect(Array.isArray(result.models)).toBe(true);
+			expect(result.models.length).toBeGreaterThan(0);
+		});
+
+		test('should return null for getCurrentApiKey when unauthenticated', async () => {
+			const key = await unauthCtx.authManager.getCurrentApiKey();
+			expect(key === null || key === undefined).toBe(true);
+		});
+	});
 });

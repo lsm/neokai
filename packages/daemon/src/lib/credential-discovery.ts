@@ -14,10 +14,12 @@ export interface DiscoveryResult {
  * Runs once at daemon startup to enrich the environment before any other code reads it.
  * Never overwrites existing env vars - explicit config always wins.
  */
-export function discoverCredentials(): DiscoveryResult {
+export function discoverCredentials(claudeDir?: string): DiscoveryResult {
 	const errors: string[] = [];
 	let credentialSource: DiscoveryResult['credentialSource'] = 'none';
 	let settingsEnvApplied = 0;
+
+	const claudeBase = claudeDir || join(homedir(), '.claude');
 
 	try {
 		// Step 1: Check if credentials already exist in process.env
@@ -32,7 +34,7 @@ export function discoverCredentials(): DiscoveryResult {
 			// Step 2: Try reading ~/.claude/.credentials.json
 			if (!hasOAuthToken) {
 				try {
-					const credentialsPath = join(homedir(), '.claude', '.credentials.json');
+					const credentialsPath = join(claudeBase, '.credentials.json');
 					if (existsSync(credentialsPath)) {
 						const credentialsContent = readFileSync(credentialsPath, 'utf8');
 						const credentials = JSON.parse(credentialsContent);
@@ -75,7 +77,7 @@ export function discoverCredentials(): DiscoveryResult {
 
 		// Step 4: ALWAYS read ~/.claude/settings.json and apply env vars
 		try {
-			const settingsPath = join(homedir(), '.claude', 'settings.json');
+			const settingsPath = join(claudeBase, 'settings.json');
 			if (existsSync(settingsPath)) {
 				const settingsContent = readFileSync(settingsPath, 'utf8');
 				const settings = JSON.parse(settingsContent);
