@@ -526,7 +526,7 @@ describe('SDKMessageRenderer', () => {
 			expect(rewindButton).toBeTruthy();
 		});
 
-		it('should render rewind icon on hover for assistant message with uuid', () => {
+		it('should not render rewind icon for assistant message (only user messages have rewind)', () => {
 			const message = createAssistantMessage('Hello there');
 			const { container } = render(
 				<SDKMessageRenderer
@@ -537,9 +537,9 @@ describe('SDKMessageRenderer', () => {
 				/>
 			);
 
-			// Should have rewind button
+			// Should NOT have rewind button (only user messages get rewind buttons)
 			const rewindButton = container.querySelector('button[title="Rewind to here"]');
-			expect(rewindButton).toBeTruthy();
+			expect(rewindButton).toBeFalsy();
 		});
 
 		it('should call onRewind when rewind button is clicked', () => {
@@ -624,9 +624,8 @@ describe('SDKMessageRenderer', () => {
 				/>
 			);
 
-			// Should not have rewind button or wrapper
+			// Should not have rewind button
 			expect(container.querySelector('button[title="Rewind to here"]')).toBeFalsy();
-			expect(container.querySelector('.group.relative')).toBeFalsy();
 
 			// Should render message directly
 			expect(container.querySelector('[data-testid="user-message"]')).toBeTruthy();
@@ -647,12 +646,11 @@ describe('SDKMessageRenderer', () => {
 				/>
 			);
 
-			// Should not have rewind button or wrapper
+			// Should not have rewind button (synthetic messages use SyntheticMessageBlock component)
 			expect(container.querySelector('button[title="Rewind to here"]')).toBeFalsy();
-			expect(container.querySelector('.group.relative')).toBeFalsy();
 		});
 
-		it('should show rewind UI for result messages with uuid', () => {
+		it('should not show rewind UI for result messages (only user messages have rewind)', () => {
 			const message = createResultMessage(true);
 
 			const { container } = render(
@@ -664,12 +662,12 @@ describe('SDKMessageRenderer', () => {
 				/>
 			);
 
-			// Result messages with UUIDs should have rewind button (they're rewindable)
+			// Result messages should NOT have rewind button (only user messages get rewind buttons)
 			const rewindButton = container.querySelector('button[title="Rewind to here"]');
-			expect(rewindButton).toBeTruthy();
+			expect(rewindButton).toBeFalsy();
 		});
 
-		it('should show rewind UI for system messages with uuid', () => {
+		it('should not show rewind UI for system messages (only user messages have rewind)', () => {
 			const message = createSystemCompactBoundaryMessage();
 
 			const { container } = render(
@@ -681,9 +679,9 @@ describe('SDKMessageRenderer', () => {
 				/>
 			);
 
-			// System messages with UUIDs should have rewind button (they're rewindable)
+			// System messages should NOT have rewind button (only user messages get rewind buttons)
 			const rewindButton = container.querySelector('button[title="Rewind to here"]');
-			expect(rewindButton).toBeTruthy();
+			expect(rewindButton).toBeFalsy();
 		});
 
 		it('should render normal message in default mode without rewind props', () => {
@@ -693,7 +691,6 @@ describe('SDKMessageRenderer', () => {
 
 			// Should render message without any wrappers
 			expect(container.querySelector('[data-testid="user-message"]')).toBeTruthy();
-			expect(container.querySelector('.group.relative')).toBeFalsy();
 			expect(container.querySelector('input[type="checkbox"]')).toBeFalsy();
 		});
 	});
