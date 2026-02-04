@@ -27,6 +27,25 @@ permissions:
 
 jobs:
   # ============================================
+  # MERGE POLICY ENFORCEMENT
+  # ============================================
+
+  enforce-merge-policy:
+    name: Enforce Merge Policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+
+    steps:
+      - name: Check source branch is 'dev'
+        run: |
+          if [[ "${{ github.head_ref }}" != "dev" ]]; then
+            echo "❌ Only 'dev' branch can merge into 'main'. Current source: ${{ github.head_ref }}"
+            exit 1
+          fi
+          echo "✅ Source branch is 'dev' - merge policy check passed"
+
+  # ============================================
   # CODE QUALITY CHECKS
   # ============================================
 
