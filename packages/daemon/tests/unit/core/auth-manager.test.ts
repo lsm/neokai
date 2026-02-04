@@ -17,6 +17,7 @@ describe('AuthManager', () => {
 		// Clear auth-related env vars
 		delete process.env.ANTHROPIC_API_KEY;
 		delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+		delete process.env.ANTHROPIC_AUTH_TOKEN;
 
 		authManager = new AuthManager();
 	});
@@ -72,6 +73,33 @@ describe('AuthManager', () => {
 			const status = await authManager.getAuthStatus();
 			expect(status.user).toBeDefined();
 		});
+
+		it('should return authenticated with ANTHROPIC_AUTH_TOKEN', async () => {
+			process.env.ANTHROPIC_AUTH_TOKEN = 'bearer-test-token';
+
+			const status = await authManager.getAuthStatus();
+			expect(status.isAuthenticated).toBe(true);
+			expect(status.method).toBe('api_key');
+			expect(status.source).toBe('env');
+		});
+
+		it('should prefer OAuth token over ANTHROPIC_AUTH_TOKEN', async () => {
+			process.env.CLAUDE_CODE_OAUTH_TOKEN = 'oauth-test-token';
+			process.env.ANTHROPIC_AUTH_TOKEN = 'bearer-test-token';
+
+			const status = await authManager.getAuthStatus();
+			expect(status.method).toBe('oauth_token');
+		});
+
+		it('should prefer API key over ANTHROPIC_AUTH_TOKEN', async () => {
+			process.env.ANTHROPIC_API_KEY = 'sk-ant-test-key';
+			process.env.ANTHROPIC_AUTH_TOKEN = 'bearer-test-token';
+
+			const status = await authManager.getAuthStatus();
+			expect(status.method).toBe('api_key');
+			const key = await authManager.getCurrentApiKey();
+			expect(key).toBe('sk-ant-test-key');
+		});
 	});
 
 	describe('getCurrentApiKey', () => {
@@ -97,6 +125,21 @@ describe('AuthManager', () => {
 		it('should prefer OAuth token over API key for getCurrentApiKey', async () => {
 			process.env.ANTHROPIC_API_KEY = 'sk-ant-test-key';
 			process.env.CLAUDE_CODE_OAUTH_TOKEN = 'oauth-test-token';
+
+			const key = await authManager.getCurrentApiKey();
+			expect(key).toBe('oauth-test-token');
+		});
+
+		it('should return ANTHROPIC_AUTH_TOKEN when only that is set', async () => {
+			process.env.ANTHROPIC_AUTH_TOKEN = 'bearer-test-token';
+
+			const key = await authManager.getCurrentApiKey();
+			expect(key).toBe('bearer-test-token');
+		});
+
+		it('should prefer OAuth token over ANTHROPIC_AUTH_TOKEN for getCurrentApiKey', async () => {
+			process.env.CLAUDE_CODE_OAUTH_TOKEN = 'oauth-test-token';
+			process.env.ANTHROPIC_AUTH_TOKEN = 'bearer-test-token';
 
 			const key = await authManager.getCurrentApiKey();
 			expect(key).toBe('oauth-test-token');

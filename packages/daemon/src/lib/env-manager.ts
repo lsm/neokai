@@ -12,13 +12,14 @@ export class EnvManager {
 
 	/**
 	 * Get current API key from environment
-	 * Supports ANTHROPIC_API_KEY, GLM_API_KEY, and CLAUDE_CODE_OAUTH_TOKEN
+	 * Supports ANTHROPIC_API_KEY, GLM_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, and ANTHROPIC_AUTH_TOKEN
 	 */
 	getApiKey(): string | undefined {
 		return (
 			process.env.ANTHROPIC_API_KEY ||
 			process.env.GLM_API_KEY ||
-			process.env.CLAUDE_CODE_OAUTH_TOKEN
+			process.env.CLAUDE_CODE_OAUTH_TOKEN ||
+			process.env.ANTHROPIC_AUTH_TOKEN
 		);
 	}
 
@@ -36,7 +37,8 @@ export class EnvManager {
 		return !!(
 			process.env.ANTHROPIC_API_KEY ||
 			process.env.GLM_API_KEY ||
-			process.env.CLAUDE_CODE_OAUTH_TOKEN
+			process.env.CLAUDE_CODE_OAUTH_TOKEN ||
+			process.env.ANTHROPIC_AUTH_TOKEN
 		);
 	}
 }

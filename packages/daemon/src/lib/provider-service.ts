@@ -151,7 +151,11 @@ export class ProviderService {
 
 		// Check provider-specific env vars
 		if (providerId === 'anthropic') {
-			return process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN;
+			return (
+				process.env.ANTHROPIC_API_KEY ||
+				process.env.CLAUDE_CODE_OAUTH_TOKEN ||
+				process.env.ANTHROPIC_AUTH_TOKEN
+			);
 		}
 		if (providerId === 'glm') {
 			return process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
