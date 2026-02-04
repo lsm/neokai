@@ -127,7 +127,10 @@ describe('QueryOptionsBuilder', () => {
 		it('should include env when configured', async () => {
 			mockSession.config.env = { MY_VAR: 'value' };
 			const options = await builder.build();
-			expect(options.env).toEqual({ MY_VAR: 'value' });
+			expect(options.env).toEqual({
+				MY_VAR: 'value',
+				CLAUDE_STATUSLINE: 'none',
+			});
 		});
 
 		it('should remove undefined values from options', async () => {

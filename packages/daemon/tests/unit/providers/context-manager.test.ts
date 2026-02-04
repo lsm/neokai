@@ -535,7 +535,7 @@ describe('ProviderContextManager', () => {
 				maxTokens: 4096,
 			});
 
-			// Anthropic returns empty env vars
+			// Anthropic returns empty env vars, and no base env provided
 			expect(options.env).toBeUndefined();
 		});
 	});
