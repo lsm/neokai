@@ -11,15 +11,18 @@ describe('EnvManager', () => {
 	let envManager: EnvManager;
 	let originalApiKey: string | undefined;
 	let originalOAuthToken: string | undefined;
+	let originalAuthToken: string | undefined;
 
 	beforeEach(() => {
 		// Save original env vars
 		originalApiKey = process.env.ANTHROPIC_API_KEY;
 		originalOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+		originalAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
 
 		// Clear env vars for clean test state
 		delete process.env.ANTHROPIC_API_KEY;
 		delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+		delete process.env.ANTHROPIC_AUTH_TOKEN;
 
 		envManager = new EnvManager();
 	});
@@ -36,6 +39,12 @@ describe('EnvManager', () => {
 			process.env.CLAUDE_CODE_OAUTH_TOKEN = originalOAuthToken;
 		} else {
 			delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+		}
+
+		if (originalAuthToken !== undefined) {
+			process.env.ANTHROPIC_AUTH_TOKEN = originalAuthToken;
+		} else {
+			delete process.env.ANTHROPIC_AUTH_TOKEN;
 		}
 	});
 
@@ -57,6 +66,23 @@ describe('EnvManager', () => {
 
 			process.env.ANTHROPIC_API_KEY = 'key-2';
 			expect(envManager.getApiKey()).toBe('key-2');
+		});
+
+		it('should return ANTHROPIC_AUTH_TOKEN when only that is set', () => {
+			process.env.ANTHROPIC_AUTH_TOKEN = 'auth-token-test';
+			expect(envManager.getApiKey()).toBe('auth-token-test');
+		});
+
+		it('should prefer ANTHROPIC_API_KEY over ANTHROPIC_AUTH_TOKEN', () => {
+			process.env.ANTHROPIC_API_KEY = 'api-key';
+			process.env.ANTHROPIC_AUTH_TOKEN = 'auth-token';
+			expect(envManager.getApiKey()).toBe('api-key');
+		});
+
+		it('should prefer CLAUDE_CODE_OAUTH_TOKEN over ANTHROPIC_AUTH_TOKEN', () => {
+			process.env.CLAUDE_CODE_OAUTH_TOKEN = 'oauth-token';
+			process.env.ANTHROPIC_AUTH_TOKEN = 'auth-token';
+			expect(envManager.getApiKey()).toBe('oauth-token');
 		});
 	});
 
@@ -105,6 +131,11 @@ describe('EnvManager', () => {
 		it('should handle empty string credentials as falsy', () => {
 			process.env.ANTHROPIC_API_KEY = '';
 			expect(envManager.hasCredentials()).toBe(false);
+		});
+
+		it('should return true when ANTHROPIC_AUTH_TOKEN is set', () => {
+			process.env.ANTHROPIC_AUTH_TOKEN = 'auth-token';
+			expect(envManager.hasCredentials()).toBe(true);
 		});
 	});
 

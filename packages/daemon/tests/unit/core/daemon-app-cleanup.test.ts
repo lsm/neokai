@@ -176,4 +176,60 @@ describe('Daemon App Cleanup', () => {
 			expect(checkCount).toBeLessThan(10);
 		});
 	});
+
+	describe('unauthenticated startup', () => {
+		let savedApiKey: string | undefined;
+		let savedOAuthToken: string | undefined;
+		let savedAuthToken: string | undefined;
+		let savedGlmKey: string | undefined;
+
+		beforeEach(() => {
+			// Save and clear all credential env vars
+			savedApiKey = process.env.ANTHROPIC_API_KEY;
+			savedOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+			savedAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
+			savedGlmKey = process.env.GLM_API_KEY;
+			delete process.env.ANTHROPIC_API_KEY;
+			delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+			delete process.env.ANTHROPIC_AUTH_TOKEN;
+			delete process.env.GLM_API_KEY;
+		});
+
+		afterEach(() => {
+			// Restore credential env vars
+			if (savedApiKey !== undefined) process.env.ANTHROPIC_API_KEY = savedApiKey;
+			if (savedOAuthToken !== undefined) process.env.CLAUDE_CODE_OAUTH_TOKEN = savedOAuthToken;
+			if (savedAuthToken !== undefined) process.env.ANTHROPIC_AUTH_TOKEN = savedAuthToken;
+			if (savedGlmKey !== undefined) process.env.GLM_API_KEY = savedGlmKey;
+		});
+
+		test('should start without credentials and log guidance', async () => {
+			// Create config without any API key
+			const unauthConfig = { ...config };
+			delete unauthConfig.anthropicApiKey;
+			delete unauthConfig.claudeCodeOAuthToken;
+			delete unauthConfig.anthropicAuthToken;
+
+			const daemonContext = await createDaemonApp({
+				config: unauthConfig,
+				verbose: true,
+				standalone: false,
+			});
+
+			// Verify guidance was logged
+			const noCredsLog = logs.find((log) => log.includes('NO CREDENTIALS DETECTED'));
+			expect(noCredsLog).toBeTruthy();
+
+			const skipModelLog = logs.find((log) => log.includes('Model initialization skipped'));
+			expect(skipModelLog).toBeTruthy();
+
+			// Should still have basic components
+			expect(daemonContext.server).toBeDefined();
+			expect(daemonContext.authManager).toBeDefined();
+			expect(daemonContext.messageHub).toBeDefined();
+
+			// Cleanup
+			await daemonContext.cleanup();
+		});
+	});
 });

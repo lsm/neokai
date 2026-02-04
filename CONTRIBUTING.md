@@ -129,7 +129,7 @@ feat: add model switching support in coordinator mode
 
 ### Prerequisites
 
-- [Bun](https://bun.sh/) 1.3.6 or later
+- [Bun](https://bun.sh/) 1.3.8 or later
 - Node.js 20.x or later (for compatibility)
 - Git
 

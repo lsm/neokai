@@ -88,28 +88,47 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 								</svg>
 								<div class="flex-1">
 									<h4 class="text-sm font-medium text-blue-300 mb-2">
-										How to Configure Authentication
+										{authStatus?.isAuthenticated
+											? 'Authentication Info'
+											: 'How to Configure Authentication'}
 									</h4>
 									<div class="text-xs text-blue-200/80 space-y-2">
-										<p>
-											Authentication must be configured via environment variables before starting
-											the daemon.
-										</p>
-										<div class="space-y-1">
-											<p class="font-medium text-blue-200">Option 1: API Key (Recommended)</p>
-											<pre class="p-2 bg-dark-950 rounded border border-blue-500/20 text-blue-300 overflow-x-auto">
-												<code>export ANTHROPIC_API_KEY=sk-ant-...</code>
-											</pre>
-										</div>
-										<div class="space-y-1">
-											<p class="font-medium text-blue-200">Option 2: OAuth Token</p>
-											<pre class="p-2 bg-dark-950 rounded border border-blue-500/20 text-blue-300 overflow-x-auto">
-												<code>export CLAUDE_CODE_OAUTH_TOKEN=...</code>
-											</pre>
-										</div>
+										{!authStatus?.isAuthenticated && (
+											<>
+												<div class="space-y-1">
+													<p class="font-medium text-blue-200">
+														Option 1: Claude Code Login (Recommended)
+													</p>
+													<p>If you have Claude Code CLI installed, log in and restart Kai:</p>
+													<pre class="p-2 bg-dark-950 rounded border border-blue-500/20 text-blue-300 overflow-x-auto">
+														<code>
+															claude login{'\n'}# Then restart Kai to auto-detect credentials
+														</code>
+													</pre>
+												</div>
+												<div class="space-y-1">
+													<p class="font-medium text-blue-200">Option 2: API Key</p>
+													<pre class="p-2 bg-dark-950 rounded border border-blue-500/20 text-blue-300 overflow-x-auto">
+														<code>export ANTHROPIC_API_KEY=sk-ant-...</code>
+													</pre>
+												</div>
+												<div class="space-y-1">
+													<p class="font-medium text-blue-200">
+														Option 3: Third-Party Provider (Zhipu, etc.)
+													</p>
+													<p>
+														Configure in <code class="text-blue-300">~/.claude/settings.json</code>:
+													</p>
+													<pre class="p-2 bg-dark-950 rounded border border-blue-500/20 text-blue-300 overflow-x-auto">
+														<code>{`{ "env": { "ANTHROPIC_AUTH_TOKEN": "your_key", "ANTHROPIC_BASE_URL": "https://..." } }`}</code>
+													</pre>
+												</div>
+											</>
+										)}
 										<p class="mt-2">
-											After setting the environment variable, restart the daemon for changes to take
-											effect.
+											{authStatus?.isAuthenticated
+												? 'Credentials are auto-detected from Claude Code login, environment variables, or ~/.claude/settings.json.'
+												: 'After configuring credentials, restart Kai for changes to take effect.'}
 										</p>
 									</div>
 								</div>
