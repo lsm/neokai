@@ -419,7 +419,6 @@ jobs:
           # Tests to exclude entirely (disabled, pending refactor)
           EXCLUDED_TESTS=(
             model-selection-persistence
-            rewind-modal
           )
 
           # Build lookup sets
