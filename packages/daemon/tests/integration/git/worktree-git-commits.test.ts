@@ -261,4 +261,110 @@ describe('WorktreeManager - getCommitsAhead', () => {
 		expect(result.commits.length).toBe(1);
 		expect(result.commits[0].author).toBe("Test O'Neill (Dev)");
 	});
+
+	test('should filter out commits already merged via merge commit', async () => {
+		// Create session branch with commits
+		execSync('git checkout -b session-branch', { cwd: testRepoPath });
+		fs.writeFileSync(path.join(testRepoPath, 'file1.txt'), 'content 1');
+		execSync('git add .', { cwd: testRepoPath });
+		execSync('git commit -m "Commit 1"', { cwd: testRepoPath });
+
+		fs.writeFileSync(path.join(testRepoPath, 'file2.txt'), 'content 2');
+		execSync('git add .', { cwd: testRepoPath });
+		execSync('git commit -m "Commit 2"', { cwd: testRepoPath });
+
+		// Merge session branch into main
+		execSync('git checkout main', { cwd: testRepoPath });
+		execSync('git merge --no-ff session-branch -m "Merge session branch"', {
+			cwd: testRepoPath,
+		});
+
+		// Go back to session branch
+		execSync('git checkout session-branch', { cwd: testRepoPath });
+
+		const worktree: WorktreeMetadata = {
+			isWorktree: true,
+			worktreePath: testRepoPath,
+			mainRepoPath: testRepoPath,
+			branch: 'session-branch',
+		};
+
+		const result = await worktreeManager.getCommitsAhead(worktree, 'main');
+
+		// Should report no commits ahead (they're merged via merge commit)
+		expect(result.hasCommitsAhead).toBe(false);
+		expect(result.commits).toBeArray();
+		expect(result.commits.length).toBe(0);
+	});
+
+	test('should only report unmerged commits when some are merged', async () => {
+		// Create session branch
+		execSync('git checkout -b session-branch', { cwd: testRepoPath });
+
+		// Commit 1
+		fs.writeFileSync(path.join(testRepoPath, 'file1.txt'), 'content 1');
+		execSync('git add .', { cwd: testRepoPath });
+		execSync('git commit -m "Commit 1"', { cwd: testRepoPath });
+
+		// Commit 2
+		fs.writeFileSync(path.join(testRepoPath, 'file2.txt'), 'content 2');
+		execSync('git add .', { cwd: testRepoPath });
+		execSync('git commit -m "Commit 2"', { cwd: testRepoPath });
+
+		// Merge to main
+		execSync('git checkout main', { cwd: testRepoPath });
+		execSync('git merge --no-ff session-branch -m "Merge"', {
+			cwd: testRepoPath,
+		});
+
+		// Add more commits to session branch
+		execSync('git checkout session-branch', { cwd: testRepoPath });
+		fs.writeFileSync(path.join(testRepoPath, 'file3.txt'), 'content 3');
+		execSync('git add .', { cwd: testRepoPath });
+		execSync('git commit -m "Commit 3 (new)"', { cwd: testRepoPath });
+
+		const worktree: WorktreeMetadata = {
+			isWorktree: true,
+			worktreePath: testRepoPath,
+			mainRepoPath: testRepoPath,
+			branch: 'session-branch',
+		};
+
+		const result = await worktreeManager.getCommitsAhead(worktree, 'main');
+
+		// Should only report Commit 3
+		expect(result.hasCommitsAhead).toBe(true);
+		expect(result.commits.length).toBe(1);
+		expect(result.commits[0].message).toBe('Commit 3 (new)');
+	});
+
+	test('should still detect squash-merged commits', async () => {
+		// Create session branch
+		execSync('git checkout -b session-branch', { cwd: testRepoPath });
+		fs.writeFileSync(path.join(testRepoPath, 'file1.txt'), 'content 1');
+		execSync('git add .', { cwd: testRepoPath });
+		execSync('git commit -m "Commit 1"', { cwd: testRepoPath });
+
+		// Squash merge to main
+		execSync('git checkout main', { cwd: testRepoPath });
+		execSync('git merge --squash session-branch', { cwd: testRepoPath });
+		execSync('git commit -m "Squashed changes"', { cwd: testRepoPath });
+
+		// Back to session branch
+		execSync('git checkout session-branch', { cwd: testRepoPath });
+
+		const worktree: WorktreeMetadata = {
+			isWorktree: true,
+			worktreePath: testRepoPath,
+			mainRepoPath: testRepoPath,
+			branch: 'session-branch',
+		};
+
+		const result = await worktreeManager.getCommitsAhead(worktree, 'main');
+
+		// Should detect squash merge via file content check
+		expect(result.hasCommitsAhead).toBe(false);
+		expect(result.commits).toBeArray();
+		expect(result.commits.length).toBe(0);
+	});
 });
