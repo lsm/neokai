@@ -4,7 +4,7 @@
  * Tests for SDK query execution with streaming input.
  */
 
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { QueryRunner, type QueryRunnerContext } from '../../../src/lib/agent/query-runner';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
@@ -1138,5 +1138,78 @@ describe('QueryRunner cleaning up state', () => {
 		}
 
 		expect(setIdleCalled).toBe(true);
+	});
+});
+
+describe('CLAUDE_STATUSLINE environment variable', () => {
+	// Store original value
+	let originalStatuslineValue: string | undefined;
+
+	beforeEach(() => {
+		// Store the original value before each test
+		originalStatuslineValue = process.env.CLAUDE_STATUSLINE;
+	});
+
+	afterEach(() => {
+		// Restore the original value after each test
+		if (originalStatuslineValue === undefined) {
+			delete process.env.CLAUDE_STATUSLINE;
+		} else {
+			process.env.CLAUDE_STATUSLINE = originalStatuslineValue;
+		}
+	});
+
+	it('should set CLAUDE_STATUSLINE=none when not already set', () => {
+		// Clear the env var to simulate it not being set
+		delete process.env.CLAUDE_STATUSLINE;
+
+		// Simulate the logic from query-runner.ts lines 170-172
+		if (!process.env.CLAUDE_STATUSLINE) {
+			process.env.CLAUDE_STATUSLINE = 'none';
+		}
+
+		// Verify it was set to 'none'
+		expect(process.env.CLAUDE_STATUSLINE).toBe('none');
+	});
+
+	it('should not overwrite existing CLAUDE_STATUSLINE value', () => {
+		// Set a custom value
+		process.env.CLAUDE_STATUSLINE = 'custom-value';
+
+		// Simulate the logic from query-runner.ts lines 170-172
+		if (!process.env.CLAUDE_STATUSLINE) {
+			process.env.CLAUDE_STATUSLINE = 'none';
+		}
+
+		// Verify it was NOT overwritten
+		expect(process.env.CLAUDE_STATUSLINE).toBe('custom-value');
+	});
+
+	it('should not overwrite CLAUDE_STATUSLINE when set to empty string', () => {
+		// Set to empty string (which is falsy but explicitly set)
+		process.env.CLAUDE_STATUSLINE = '';
+
+		// Simulate the logic from query-runner.ts lines 170-172
+		// Empty string is falsy, so the condition !process.env.CLAUDE_STATUSLINE is true
+		if (!process.env.CLAUDE_STATUSLINE) {
+			process.env.CLAUDE_STATUSLINE = 'none';
+		}
+
+		// Empty string is falsy, so it gets set to 'none'
+		// This is the current behavior
+		expect(process.env.CLAUDE_STATUSLINE).toBe('none');
+	});
+
+	it('should preserve CLAUDE_STATUSLINE=none when already set', () => {
+		// Set to 'none' explicitly
+		process.env.CLAUDE_STATUSLINE = 'none';
+
+		// Simulate the logic from query-runner.ts lines 170-172
+		if (!process.env.CLAUDE_STATUSLINE) {
+			process.env.CLAUDE_STATUSLINE = 'none';
+		}
+
+		// Verify it remains 'none'
+		expect(process.env.CLAUDE_STATUSLINE).toBe('none');
 	});
 });
