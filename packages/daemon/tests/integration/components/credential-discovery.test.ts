@@ -9,8 +9,8 @@
  * Uses claudeDir parameter injection to isolate tests from real ~/.claude/ directory.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { discoverCredentials } from '../../../src/lib/credential-discovery';
 
@@ -81,7 +81,7 @@ describe('Credential Discovery Integration', () => {
 			};
 			writeFileSync(join(claudeDir, '.credentials.json'), JSON.stringify(credentials));
 
-			const _result = discoverCredentials(claudeDir);
+			const result = discoverCredentials(claudeDir);
 
 			expect(result.credentialSource).toBe('credentials-file');
 			expect(result.errors).toHaveLength(0);
@@ -91,7 +91,7 @@ describe('Credential Discovery Integration', () => {
 		test('should handle malformed .credentials.json gracefully', () => {
 			writeFileSync(join(claudeDir, '.credentials.json'), '{ invalid json }');
 
-			const _result = discoverCredentials(claudeDir);
+			const result = discoverCredentials(claudeDir);
 
 			expect(result.errors.length).toBeGreaterThan(0);
 			expect(result.errors[0]).toContain('.credentials.json');
@@ -105,9 +105,10 @@ describe('Credential Discovery Integration', () => {
 				JSON.stringify({ someOtherField: 'value' })
 			);
 
-			const _result = discoverCredentials(claudeDir);
+			const result = discoverCredentials(claudeDir);
 
 			// No error - file parsed OK, just no relevant data
+			expect(result.errors).toHaveLength(0);
 			expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
 		});
 
@@ -117,9 +118,10 @@ describe('Credential Discovery Integration', () => {
 				JSON.stringify({ claudeAiOauth: { accessToken: null } })
 			);
 
-			const _result = discoverCredentials(claudeDir);
+			const result = discoverCredentials(claudeDir);
 
 			// accessToken is falsy, should not be set
+			expect(result.errors).toHaveLength(0);
 			expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
 		});
 
@@ -133,15 +135,16 @@ describe('Credential Discovery Integration', () => {
 				})
 			);
 
-			const _result = discoverCredentials(claudeDir);
+			const result = discoverCredentials(claudeDir);
 
 			// Existing env var should win
+			expect(result.errors).toHaveLength(0);
 			expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('existing-token');
 		});
 
 		test('should handle missing .claude directory gracefully', () => {
 			rmSync(claudeDir, { recursive: true, force: true });
-			const _result = discoverCredentials(claudeDir);
+			const result = discoverCredentials(claudeDir);
 			expect(result.credentialSource).toBe('none');
 		});
 	});
@@ -160,7 +163,7 @@ describe('Credential Discovery Integration', () => {
 			};
 			writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify(settings));
 
-			const _result = discoverCredentials(claudeDir);
+			const result = discoverCredentials(claudeDir);
 
 			expect(result.settingsEnvApplied).toBe(6);
 			expect(result.credentialSource).toBe('settings-json');
@@ -183,7 +186,7 @@ describe('Credential Discovery Integration', () => {
 			};
 			writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify(settings));
 
-			const _result = discoverCredentials(claudeDir);
+			const result = discoverCredentials(claudeDir);
 
 			// Explicit env var should win
 			expect(process.env.ANTHROPIC_AUTH_TOKEN).toBe('explicit-token');
@@ -196,7 +199,7 @@ describe('Credential Discovery Integration', () => {
 		test('should handle settings.json without env block', () => {
 			writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify({ allowedTools: ['Bash'] }));
 
-			const _result = discoverCredentials(claudeDir);
+			const result = discoverCredentials(claudeDir);
 
 			expect(result.settingsEnvApplied).toBe(0);
 		});
@@ -204,7 +207,7 @@ describe('Credential Discovery Integration', () => {
 		test('should handle malformed settings.json gracefully', () => {
 			writeFileSync(join(claudeDir, 'settings.json'), 'not valid json');
 
-			const _result = discoverCredentials(claudeDir);
+			const result = discoverCredentials(claudeDir);
 
 			expect(result.errors.length).toBeGreaterThan(0);
 			expect(result.errors[0]).toContain('settings.json');
@@ -212,7 +215,7 @@ describe('Credential Discovery Integration', () => {
 
 		test('should handle missing settings.json gracefully', () => {
 			// No settings.json created
-			const _result = discoverCredentials(claudeDir);
+			const result = discoverCredentials(claudeDir);
 
 			expect(result.settingsEnvApplied).toBe(0);
 			expect(result.errors).toHaveLength(0);
@@ -227,7 +230,7 @@ describe('Credential Discovery Integration', () => {
 			};
 			writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify(settings));
 
-			const _result = discoverCredentials(claudeDir);
+			const result = discoverCredentials(claudeDir);
 
 			expect(result.settingsEnvApplied).toBe(2);
 			expect(process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');
@@ -256,7 +259,7 @@ describe('Credential Discovery Integration', () => {
 				})
 			);
 
-			const _result = discoverCredentials(claudeDir);
+			const result = discoverCredentials(claudeDir);
 
 			expect(result.credentialSource).toBe('credentials-file');
 			expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('my-oauth-token');
@@ -280,7 +283,7 @@ describe('Credential Discovery Integration', () => {
 			};
 			writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify(settings));
 
-			const _result = discoverCredentials(claudeDir);
+			const result = discoverCredentials(claudeDir);
 
 			expect(result.credentialSource).toBe('settings-json');
 			expect(result.settingsEnvApplied).toBe(7);
