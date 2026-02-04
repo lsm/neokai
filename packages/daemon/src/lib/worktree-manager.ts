@@ -498,6 +498,36 @@ export class WorktreeManager {
 	}
 
 	/**
+	 * Check if a commit is an ancestor of a branch
+	 * Returns true if the commit is reachable from the branch
+	 *
+	 * Uses git merge-base to determine ancestry:
+	 * If git merge-base(branch, commit) returns commit, then commit is an ancestor of branch
+	 */
+	private async isCommitAncestor(
+		repoPath: string,
+		commitHash: string,
+		branch: string
+	): Promise<boolean> {
+		try {
+			const git = this.getGit(repoPath);
+			// Get the merge base between the branch and the commit
+			const mergeBase = (await git.raw(['merge-base', branch, commitHash])).trim();
+
+			// If merge base equals the commit hash, the commit is an ancestor of the branch
+			// (The merge base is the best common ancestor; if it's the commit itself,
+			// then the commit is reachable from the branch)
+			return mergeBase === commitHash || mergeBase.startsWith(commitHash);
+		} catch (error) {
+			// On error, assume not an ancestor (safe default)
+			this.logger.debug(
+				`[WorktreeManager] Error checking ancestry of ${commitHash} in ${branch}: ${error}`
+			);
+			return false;
+		}
+	}
+
+	/**
 	 * Check if worktree branch has commits ahead of the base branch
 	 * Returns commit information for user confirmation before archiving
 	 */
@@ -566,6 +596,9 @@ export class WorktreeManager {
 			// For each file the session branch changed, check if it matches base
 			// If session branch's version matches base's version, the changes are already on base
 			let hasUniqueChanges = false;
+			this.logger.info(
+				`[WorktreeManager] Checking ${changedFiles.length} changed file(s) for uniqueness between ${branch} and ${base}`
+			);
 			for (const file of changedFiles) {
 				try {
 					// Compare the file content between session branch and base
@@ -577,12 +610,16 @@ export class WorktreeManager {
 							`[WorktreeManager] File ${file} differs between ${branch} and ${base}`
 						);
 						break;
+					} else {
+						this.logger.info(
+							`[WorktreeManager] File ${file} is identical between ${branch} and ${base}`
+						);
 					}
-				} catch {
+				} catch (diffError) {
 					// File might not exist on one side - that's a real difference
 					hasUniqueChanges = true;
 					this.logger.info(
-						`[WorktreeManager] File ${file} exists only on one branch (${branch} vs ${base})`
+						`[WorktreeManager] File ${file} exists only on one branch (${branch} vs ${base}): ${diffError}`
 					);
 					break;
 				}
@@ -591,7 +628,7 @@ export class WorktreeManager {
 			if (!hasUniqueChanges) {
 				// All files match - changes already on base (squash merged)
 				this.logger.info(
-					`[WorktreeManager] Branch ${branch} changes are all on ${base} (squash merged)`
+					`[WorktreeManager] Branch ${branch} changes are all on ${base} (squash merged) - returning hasCommitsAhead=false`
 				);
 				return {
 					hasCommitsAhead: false,
@@ -604,22 +641,61 @@ export class WorktreeManager {
 			const logFormat = '--format=%H|%an|%ai|%s';
 			const logOutput = await git.raw(['log', `${base}..${branch}`, logFormat]);
 
-			const commits: CommitInfo[] = [];
+			// Parse commits and store both full hash and display info
+			const commits: Array<{ fullHash: string; info: CommitInfo }> = [];
 			if (logOutput.trim()) {
 				for (const line of logOutput.trim().split('\n')) {
-					const [hash, author, date, ...messageParts] = line.split('|');
+					const [fullHash, author, date, ...messageParts] = line.split('|');
 					commits.push({
-						hash: hash.substring(0, 7), // Short hash
-						author,
-						date,
-						message: messageParts.join('|'), // Rejoin in case message had |
+						fullHash,
+						info: {
+							hash: fullHash.substring(0, 7), // Short hash for display
+							author,
+							date,
+							message: messageParts.join('|'),
+						},
 					});
 				}
 			}
 
+			// Filter out commits already reachable from base via merge commits
+			const unmergedCommits: CommitInfo[] = [];
+			let filteredCount = 0;
+
+			if (commits.length > 0) {
+				this.logger.info(
+					`[WorktreeManager] Checking ${commits.length} commit(s) from ${branch} for ancestry in ${base}`
+				);
+
+				for (const commit of commits) {
+					const isAncestor = await this.isCommitAncestor(mainRepoPath, commit.fullHash, base);
+
+					if (isAncestor) {
+						this.logger.info(
+							`[WorktreeManager] Commit ${commit.info.hash} (${commit.info.message}) is reachable from ${base} via merge commit, filtering out`
+						);
+						filteredCount++;
+					} else {
+						unmergedCommits.push(commit.info);
+					}
+				}
+
+				if (filteredCount > 0) {
+					this.logger.info(
+						`[WorktreeManager] Filtered ${filteredCount} of ${commits.length} commits already merged into ${base}`
+					);
+				}
+
+				if (commits.length > 0 && unmergedCommits.length === 0) {
+					this.logger.info(
+						`[WorktreeManager] All ${commits.length} commit(s) from ${branch} are reachable from ${base} (merged via merge commits)`
+					);
+				}
+			}
+
 			return {
-				hasCommitsAhead: commits.length > 0,
-				commits,
+				hasCommitsAhead: unmergedCommits.length > 0,
+				commits: unmergedCommits,
 				baseBranch: base,
 			};
 		} catch (error) {
