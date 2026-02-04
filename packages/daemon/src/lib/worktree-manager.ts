@@ -498,6 +498,79 @@ export class WorktreeManager {
 	}
 
 	/**
+	 * Detect the current branch of the repository
+	 * Returns the branch that HEAD is currently on
+	 * @private
+	 */
+	private async detectCurrentBranch(repoPath: string): Promise<string> {
+		const git = this.getGit(repoPath);
+
+		try {
+			const currentBranch = (await git.raw(['branch', '--show-current'])).trim();
+			if (currentBranch) {
+				this.logger.info(`[WorktreeManager] Detected current branch: ${currentBranch}`);
+				return currentBranch;
+			}
+		} catch (error) {
+			this.logger.debug(`[WorktreeManager] Error getting current branch: ${error}`);
+		}
+
+		// Fallback to default branch
+		this.logger.info(' Using fallback: default branch');
+		return await this.getDefaultBranch(repoPath);
+	}
+
+	/**
+	 * Get the base branch to compare against for commit checking
+	 * Strategy:
+	 * 1. If main repo is on a session branch, use dev/develop/main/master as the base
+	 * 2. If main repo is on dev/develop, use that as the base
+	 * 3. Otherwise prefer main/master over current branch
+	 */
+	private async getBaseBranch(repoPath: string): Promise<string> {
+		const git = this.getGit(repoPath);
+		const currentBranch = await this.detectCurrentBranch(repoPath);
+
+		// If current branch is a session branch, look for a development branch to use as base
+		if (currentBranch.startsWith('session/')) {
+			// Try common development branches in order
+			const devBranches = ['dev', 'develop', 'development', 'main', 'master'];
+			for (const branch of devBranches) {
+				try {
+					await git.revparse(['--verify', branch]);
+					this.logger.info(
+						`[WorktreeManager] Main repo is on session branch, using ${branch} as base branch`
+					);
+					return branch;
+				} catch {
+					// Branch doesn't exist, continue
+				}
+			}
+		}
+
+		// If current branch is dev/develop, use it (this is the integration branch)
+		if (['dev', 'develop', 'development'].includes(currentBranch)) {
+			this.logger.info(`[WorktreeManager] Using current dev branch as base: ${currentBranch}`);
+			return currentBranch;
+		}
+
+		// Try to use main or master if they exist (preferred for production workflows)
+		for (const preferredBranch of ['main', 'master']) {
+			try {
+				await git.revparse(['--verify', preferredBranch]);
+				this.logger.info(`[WorktreeManager] Using preferred base branch: ${preferredBranch}`);
+				return preferredBranch;
+			} catch {
+				// Branch doesn't exist, continue
+			}
+		}
+
+		// Fallback to current branch
+		this.logger.info(`[WorktreeManager] Using current branch as base: ${currentBranch}`);
+		return currentBranch;
+	}
+
+	/**
 	 * Check if a commit is an ancestor of a branch
 	 * Returns true if the commit is reachable from the branch
 	 *
@@ -556,10 +629,11 @@ export class WorktreeManager {
 				};
 			}
 
-			// Auto-detect base branch from repository's default branch
+			// Auto-detect base branch
+			// Prefer main/master for production branches, fallback to current branch for dev branches
 			let base = baseBranch;
 			if (!base) {
-				base = await this.getDefaultBranch(mainRepoPath);
+				base = await this.getBaseBranch(mainRepoPath);
 			}
 
 			// Verify base branch exists
