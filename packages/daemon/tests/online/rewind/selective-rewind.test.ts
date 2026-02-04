@@ -378,4 +378,77 @@ describe('Selective Rewind Feature', () => {
 			expect(hasFourthMessage).toBe(false);
 		}, 240000);
 	});
+
+	describe('Non-User Message Rewind', () => {
+		test('should rewind to assistant message with multiple tool uses and accept new messages', async () => {
+			const workspacePath = `${TMP_DIR}/selective-rewind-nonuser-${Date.now()}`;
+
+			const createResult = (await daemon.messageHub.call('session.create', {
+				workspacePath,
+				title: 'Non-User Message Rewind Test',
+				config: {
+					model: 'haiku-4.5',
+					permissionMode: 'acceptEdits',
+					enableFileCheckpointing: true,
+				},
+			})) as { sessionId: string };
+
+			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
+
+			// Send a message that triggers multiple tool uses (Write and Read)
+			await sendMessage(
+				daemon,
+				sessionId,
+				'Create a file called test.txt with content "hello world", then read it back to me'
+			);
+			await waitForIdle(daemon, sessionId, 120000);
+
+			// Get messages
+			const messages = await listMessages(sessionId);
+			expect(messages.length).toBeGreaterThan(0);
+
+			// Find the assistant message (should have tool use blocks)
+			const assistantMessages = messages.filter((m) => m.type === 'assistant');
+			expect(assistantMessages.length).toBeGreaterThanOrEqual(1);
+
+			// Use the first assistant message
+			const assistantMessage = assistantMessages[0];
+			expect(assistantMessage).toBeDefined();
+
+			// Execute selective rewind to the assistant message
+			const result = await executeSelectiveRewind(
+				sessionId,
+				[assistantMessage.uuid],
+				'conversation'
+			);
+
+			// Verify success
+			expect(result.success).toBe(true);
+			expect(result.messagesDeleted).toBeGreaterThan(0);
+
+			// Verify the assistant message and messages after it are gone
+			const messagesAfterRewind = await listMessages(sessionId);
+			const assistantMessagesAfter = messagesAfterRewind.filter((m) => m.type === 'assistant');
+
+			// The assistant message we rewound to should be deleted
+			const hasOriginalAssistant = assistantMessagesAfter.some(
+				(m) => m.uuid === assistantMessage.uuid
+			);
+			expect(hasOriginalAssistant).toBe(false);
+
+			// Send a new message to verify SDK still accepts messages after non-native rewind
+			await sendMessage(daemon, sessionId, 'What is 2+2?');
+			await waitForIdle(daemon, sessionId, 60000);
+
+			// Verify new message was processed
+			const messagesAfterNew = await listMessages(sessionId);
+			const hasNewMessage = messagesAfterNew.some((m) => getMessageText(m).includes('2+2'));
+			expect(hasNewMessage).toBe(true);
+
+			// Verify there's at least one assistant response to the new message
+			const assistantMessagesAfterNew = messagesAfterNew.filter((m) => m.type === 'assistant');
+			expect(assistantMessagesAfterNew.length).toBeGreaterThan(0);
+		}, 300000);
+	});
 });

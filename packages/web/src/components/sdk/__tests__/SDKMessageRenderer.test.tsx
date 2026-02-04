@@ -499,17 +499,9 @@ describe('SDKMessageRenderer', () => {
 				/>
 			);
 
-			// Should have group class for hover effect
-			expect(container.querySelector('.group.relative')).toBeTruthy();
-
-			// Should have rewind button - it's wrapped in a div with opacity-0 (shown on hover)
+			// Should have rewind button
 			const rewindButton = container.querySelector('button[title="Rewind to here"]');
 			expect(rewindButton).toBeTruthy();
-
-			// The button should be in a container with opacity-0 and group-hover:opacity-100
-			const rewindContainer = rewindButton?.closest('.opacity-0');
-			expect(rewindContainer).toBeTruthy();
-			expect(rewindContainer?.className).toContain('group-hover:opacity-100');
 		});
 
 		it('should render rewind icon on hover for assistant message with uuid', () => {
@@ -651,8 +643,8 @@ describe('SDKMessageRenderer', () => {
 			);
 
 			// Result messages with UUIDs should have rewind button (they're rewindable)
-			expect(container.querySelector('button[title="Rewind to here"]')).toBeTruthy();
-			expect(container.querySelector('.group.relative')).toBeTruthy();
+			const rewindButton = container.querySelector('button[title="Rewind to here"]');
+			expect(rewindButton).toBeTruthy();
 		});
 
 		it('should show rewind UI for system messages with uuid', () => {
@@ -668,8 +660,8 @@ describe('SDKMessageRenderer', () => {
 			);
 
 			// System messages with UUIDs should have rewind button (they're rewindable)
-			expect(container.querySelector('button[title="Rewind to here"]')).toBeTruthy();
-			expect(container.querySelector('.group.relative')).toBeTruthy();
+			const rewindButton = container.querySelector('button[title="Rewind to here"]');
+			expect(rewindButton).toBeTruthy();
 		});
 
 		it('should render normal message in default mode without rewind props', () => {

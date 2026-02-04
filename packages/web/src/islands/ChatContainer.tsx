@@ -143,6 +143,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 						result.filesChanged?.length || 0
 					} files restored`
 				);
+				// Refresh session state to ensure data consistency
+				await sessionStore.refresh();
 			} else {
 				toast.error(`Rewind failed: ${result.error || 'Unknown error'}`);
 			}
@@ -219,6 +221,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				if (result.filesReverted?.length)
 					parts.push(`${result.filesReverted.length} files restored`);
 				toast.success(`Rewound successfully: ${parts.join(', ')}`);
+				// Refresh session state to ensure data consistency
+				await sessionStore.refresh();
 				handleExitRewindMode();
 			} else {
 				toast.error(`Rewind failed: ${result.error || 'Unknown error'}`);
@@ -710,6 +714,16 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y pb-32"
 					style={{ WebkitOverflowScrolling: 'touch' }}
 				>
+					{/* Loading overlay for rewind operation */}
+					{isRewinding && (
+						<div class="absolute inset-0 z-50 bg-dark-900/80 backdrop-blur-sm flex items-center justify-center">
+							<div class="bg-dark-800 border border-amber-500/30 rounded-xl p-6 flex flex-col items-center gap-4 shadow-2xl">
+								<Spinner size="lg" color="border-amber-500" />
+								<div class="text-amber-200 text-sm font-medium">Rewinding conversation...</div>
+								<div class="text-gray-400 text-xs">This may take a moment</div>
+							</div>
+						</div>
+					)}
 					{messages.length === 0 ? (
 						<div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6">
 							<div class="text-center">
@@ -876,6 +890,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 							onAutoScrollChange={handleAutoScrollChange}
 							onOpenTools={toolsModal.open}
 							onEnterRewindMode={handleEnterRewindMode}
+							rewindMode={rewindMode}
+							onExitRewindMode={handleExitRewindMode}
 						/>
 					)}
 				</div>

@@ -166,6 +166,10 @@ export function SDKMessageRenderer({
 
 	// Rewind mode path - wrap with checkbox
 	if (rewindMode && messageUuid && onMessageCheckboxChange) {
+		// Skip tool progress messages - they're part of tool execution, not separate checkpoints
+		if (isSDKToolProgressMessage(message)) {
+			return renderedMessage;
+		}
 		return (
 			<div class="flex items-start gap-2" data-message-uuid={messageUuid}>
 				<div class="flex items-start pt-3">
@@ -175,7 +179,7 @@ export function SDKMessageRenderer({
 						onChange={(e) =>
 							onMessageCheckboxChange(messageUuid, (e.target as HTMLInputElement).checked)
 						}
-						class="w-5 h-5 rounded border-gray-500 bg-dark-800 text-amber-500 focus:ring-amber-500 focus:ring-offset-dark-900 cursor-pointer"
+						class="w-5 h-5 rounded border-gray-600 bg-transparent text-amber-500 focus:ring-amber-500 focus:ring-2 focus:ring-offset-dark-900 cursor-pointer transition-colors checked:border-amber-500 hover:border-gray-500"
 					/>
 				</div>
 				<div class="flex-1 min-w-0">{renderedMessage}</div>
@@ -186,14 +190,14 @@ export function SDKMessageRenderer({
 	// Normal mode (non-rewind) with rewind support
 	if (!rewindMode && messageUuid && !isSynthetic && onRewind && sessionId) {
 		return (
-			<div class="group relative" data-message-uuid={messageUuid}>
+			<div data-message-uuid={messageUuid}>
 				{renderedMessage}
 				{rewindingMessageUuid === messageUuid ? (
-					<div class="absolute top-2 right-2 z-10">
+					<div class="flex justify-end mt-2 pr-2">
 						<Spinner size="sm" color="border-amber-500" />
 					</div>
 				) : (
-					<div class="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+					<div class="flex justify-end mt-2 pr-2">
 						<Tooltip content="Rewind to this message" position="left">
 							<IconButton
 								size="md"
