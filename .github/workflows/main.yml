@@ -159,9 +159,9 @@ jobs:
           - lifecycle
           - mcp
           - providers
+          - rewind
           - rpc
           - sdk
-          - session
         include:
           - module: components
             test_path: tests/online/components
@@ -186,8 +186,8 @@ jobs:
             test_path: tests/online/features
           - module: lifecycle
             test_path: tests/online/lifecycle
-          - module: session
-            test_path: tests/online/session
+          - module: rewind
+            test_path: tests/online/rewind
 
     steps:
       - uses: actions/checkout@v4
