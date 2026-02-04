@@ -81,7 +81,6 @@ To maintain code quality and workflow integrity, only the `dev` branch can merge
 2. After `dev` is validated with E2E tests → create PR from `dev` to `main`
 
 This ensures all code going to production has been properly validated through the dev branch.
-
 ## Development Guidelines
 
 ### Code Style
