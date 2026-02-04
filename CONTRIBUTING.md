@@ -62,6 +62,26 @@ This project uses a two-branch workflow to optimize development speed while main
 - **Quality**: Full validation before production deployment
 - **Stability**: Dev branch validated with E2E after merge
 
+### 🔒 Merge Enforcement
+
+To maintain code quality and workflow integrity, only the `dev` branch can merge into `main`. This protection is enforced automatically by CI - no manual approval needed.
+
+**How it works:**
+- The `enforce-merge-policy` CI job runs on every PR to `main`
+- It validates that the source branch is `dev` and nothing else
+- Attempting to create a PR from any other branch to `main` will fail immediately
+
+**What happens on bypass attempt:**
+- The CI check will fail with a clear error message: `❌ Only 'dev' branch can merge into 'main'. Current source: <branch>`
+- The PR cannot be merged until the source branch is changed to `dev`
+- This prevents accidental or intentional bypass of the intended workflow
+
+**Proper workflow reminder:**
+1. Feature branches → `dev` (fast feedback, quick iteration)
+2. After `dev` is validated with E2E tests → create PR from `dev` to `main`
+
+This ensures all code going to production has been properly validated through the dev branch.
+
 ## Development Guidelines
 
 ### Code Style
