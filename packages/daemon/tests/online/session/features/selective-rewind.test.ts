@@ -23,13 +23,15 @@ import { sendMessage, waitForIdle } from '../../helpers/daemon-test-helpers';
 import type { RewindMode } from '@neokai/shared';
 
 /**
- * Message structure from message.list RPC
+ * SDKMessage structure from message.sdkMessages RPC
  */
-interface Message {
+interface SDKMessageResult {
 	uuid: string;
-	type: 'user' | 'assistant';
-	content: string;
-	timestamp: number;
+	type: string;
+	message?: {
+		content?: string | Array<{ type: string; text?: string }>;
+	};
+	timestamp?: number;
 }
 
 /**
@@ -63,11 +65,26 @@ describe('Selective Rewind Feature', () => {
 	/**
 	 * Helper to list messages for a session
 	 */
-	async function listMessages(sessionId: string): Promise<Message[]> {
-		const result = (await daemon.messageHub.call('message.list', {
+	async function listMessages(sessionId: string): Promise<SDKMessageResult[]> {
+		const result = (await daemon.messageHub.call('message.sdkMessages', {
 			sessionId,
-		})) as { messages: Message[] };
-		return result.messages;
+		})) as { sdkMessages: SDKMessageResult[] };
+		return result.sdkMessages;
+	}
+
+	/**
+	 * Extract text content from an SDKMessage
+	 */
+	function getMessageText(msg: SDKMessageResult): string {
+		if (!msg.message?.content) return '';
+		if (typeof msg.message.content === 'string') return msg.message.content;
+		if (Array.isArray(msg.message.content)) {
+			return msg.message.content
+				.filter((b) => b.type === 'text' && b.text)
+				.map((b) => b.text!)
+				.join(' ');
+		}
+		return '';
 	}
 
 	/**
@@ -121,7 +138,7 @@ describe('Selective Rewind Feature', () => {
 			const userMessages = messages.filter((m) => m.type === 'user');
 			expect(userMessages.length).toBeGreaterThanOrEqual(3);
 
-			const secondUserMessage = userMessages.find((m) => m.content.includes('2+2'));
+			const secondUserMessage = userMessages.find((m) => getMessageText(m).includes('2+2'));
 			expect(secondUserMessage).toBeDefined();
 
 			// Select from 2nd user message onward
@@ -140,8 +157,8 @@ describe('Selective Rewind Feature', () => {
 
 			// Verify the second user message and all after it are gone
 			const userMessagesAfter = messagesAfterRewind.filter((m) => m.type === 'user');
-			const hasSecondMessage = userMessagesAfter.some((m) => m.content.includes('2+2'));
-			const hasThirdMessage = userMessagesAfter.some((m) => m.content.includes('3+3'));
+			const hasSecondMessage = userMessagesAfter.some((m) => getMessageText(m).includes('2+2'));
+			const hasThirdMessage = userMessagesAfter.some((m) => getMessageText(m).includes('3+3'));
 			expect(hasSecondMessage).toBe(false);
 			expect(hasThirdMessage).toBe(false);
 		}, 240000);
@@ -182,7 +199,7 @@ describe('Selective Rewind Feature', () => {
 			const userMessages = messages.filter((m) => m.type === 'user');
 			expect(userMessages.length).toBeGreaterThanOrEqual(3);
 
-			const secondUserMessage = userMessages.find((m) => m.content.includes('2+2'));
+			const secondUserMessage = userMessages.find((m) => getMessageText(m).includes('2+2'));
 			expect(secondUserMessage).toBeDefined();
 
 			// Execute selective rewind with mode='both'
@@ -326,8 +343,8 @@ describe('Selective Rewind Feature', () => {
 			expect(userMessages.length).toBeGreaterThanOrEqual(4);
 
 			// Select 2nd and 3rd user messages
-			const secondUserMessage = userMessages.find((m) => m.content.includes('2+2'));
-			const thirdUserMessage = userMessages.find((m) => m.content.includes('3+3'));
+			const secondUserMessage = userMessages.find((m) => getMessageText(m).includes('2+2'));
+			const thirdUserMessage = userMessages.find((m) => getMessageText(m).includes('3+3'));
 			expect(secondUserMessage).toBeDefined();
 			expect(thirdUserMessage).toBeDefined();
 
@@ -349,13 +366,13 @@ describe('Selective Rewind Feature', () => {
 
 			// First message should still be there
 			const userMessagesAfter = messagesAfterRewind.filter((m) => m.type === 'user');
-			const hasFirstMessage = userMessagesAfter.some((m) => m.content.includes('1+1'));
+			const hasFirstMessage = userMessagesAfter.some((m) => getMessageText(m).includes('1+1'));
 			expect(hasFirstMessage).toBe(true);
 
 			// 2nd, 3rd, and 4th messages should be gone
-			const hasSecondMessage = userMessagesAfter.some((m) => m.content.includes('2+2'));
-			const hasThirdMessage = userMessagesAfter.some((m) => m.content.includes('3+3'));
-			const hasFourthMessage = userMessagesAfter.some((m) => m.content.includes('4+4'));
+			const hasSecondMessage = userMessagesAfter.some((m) => getMessageText(m).includes('2+2'));
+			const hasThirdMessage = userMessagesAfter.some((m) => getMessageText(m).includes('3+3'));
+			const hasFourthMessage = userMessagesAfter.some((m) => getMessageText(m).includes('4+4'));
 			expect(hasSecondMessage).toBe(false);
 			expect(hasThirdMessage).toBe(false);
 			expect(hasFourthMessage).toBe(false);
