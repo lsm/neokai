@@ -479,6 +479,28 @@ describe('SDKMessageRenderer', () => {
 			const checkbox = container.querySelector('input[type="checkbox"]');
 			expect(checkbox).toBeFalsy();
 		});
+
+		it('should return rendered message for tool progress in rewind mode (skips checkbox)', () => {
+			const message = createToolProgressMessage();
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKMessageRenderer
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			// Tool progress messages should be rendered without checkbox in rewind mode
+			// They're part of tool execution, not separate checkpoints
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeFalsy();
+
+			// But the message should still be rendered
+			expect(container.textContent).toContain('Read');
+		});
 	});
 
 	describe('Normal Mode Rewind Icon', () => {
