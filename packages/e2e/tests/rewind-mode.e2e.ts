@@ -17,11 +17,11 @@ import {
 /**
  * Helper to send a message and wait for it to be processed
  */
-async function sendMessage(page: Page, messageText: string, sessionId: string): Promise<void> {
+async function sendMessage(page: Page, messageText: string): Promise<void> {
 	const messageInput = 'textarea[placeholder*="Ask"]';
 	await page.fill(messageInput, messageText);
 	await page.click('button[aria-label*="Send message"]');
-	await waitForMessageProcessed(page, sessionId);
+	await waitForMessageProcessed(page, messageText);
 }
 
 /**
@@ -99,7 +99,7 @@ test.describe('Rewind Mode', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send a message to have content
-		await sendMessage(page, 'Test message for rewind mode', sessionId);
+		await sendMessage(page, 'Test message for rewind mode');
 		await page.waitForTimeout(1000);
 
 		// Open InputActionsMenu and click "Rewind Mode"
@@ -126,8 +126,8 @@ test.describe('Rewind Mode', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send multiple messages
-		await sendMessage(page, 'First message', sessionId);
-		await sendMessage(page, 'Second message', sessionId);
+		await sendMessage(page, 'First message');
+		await sendMessage(page, 'Second message');
 		await page.waitForTimeout(1000);
 
 		// Enter rewind mode
@@ -150,7 +150,7 @@ test.describe('Rewind Mode', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send a message that triggers tool use
-		await sendMessage(page, 'What files are in the current directory?', sessionId);
+		await sendMessage(page, 'What files are in the current directory?');
 		await page.waitForTimeout(3000); // Wait for tool execution
 
 		// Enter rewind mode
@@ -176,9 +176,9 @@ test.describe('Rewind Mode', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send multiple messages
-		await sendMessage(page, 'First message', sessionId);
-		await sendMessage(page, 'Second message', sessionId);
-		await sendMessage(page, 'Third message', sessionId);
+		await sendMessage(page, 'First message');
+		await sendMessage(page, 'Second message');
+		await sendMessage(page, 'Third message');
 		await page.waitForTimeout(1000);
 
 		// Enter rewind mode
@@ -210,8 +210,8 @@ test.describe('Rewind Mode', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send messages
-		await sendMessage(page, 'First message', sessionId);
-		await sendMessage(page, 'Second message', sessionId);
+		await sendMessage(page, 'First message');
+		await sendMessage(page, 'Second message');
 		await page.waitForTimeout(1000);
 
 		// Enter rewind mode
@@ -242,8 +242,8 @@ test.describe('Rewind Mode', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send messages
-		await sendMessage(page, 'First message', sessionId);
-		await sendMessage(page, 'Second message', sessionId);
+		await sendMessage(page, 'First message');
+		await sendMessage(page, 'Second message');
 		await page.waitForTimeout(1000);
 
 		// Enter rewind mode
@@ -278,7 +278,7 @@ test.describe('Rewind Mode', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send a message
-		await sendMessage(page, 'Test message', sessionId);
+		await sendMessage(page, 'Test message');
 		await page.waitForTimeout(1000);
 
 		// Enter rewind mode
@@ -322,7 +322,7 @@ test.describe('Rewind Mode', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send a message
-		await sendMessage(page, 'Test message', sessionId);
+		await sendMessage(page, 'Test message');
 		await page.waitForTimeout(1000);
 
 		// Enter rewind mode
@@ -350,8 +350,8 @@ test.describe('Rewind Mode', () => {
 		sessionId = await waitForSessionCreated(page);
 
 		// Send messages
-		await sendMessage(page, 'First message', sessionId);
-		await sendMessage(page, 'Second message', sessionId);
+		await sendMessage(page, 'First message');
+		await sendMessage(page, 'Second message');
 		await page.waitForTimeout(1000);
 
 		// Enter rewind mode

@@ -58,7 +58,9 @@ test.describe('Per-Message Rewind Modal', () => {
 		await expect(rewindButton).toBeVisible({ timeout: 5000 });
 	});
 
-	test('should show rewind button for assistant messages', async ({ page }) => {
+	test('should NOT show rewind button for assistant messages (only user messages have rewind)', async ({
+		page,
+	}) => {
 		// Create a new session
 		const newSessionButton = page.locator('button:has-text("New Session")').first();
 		await newSessionButton.click();
@@ -74,9 +76,9 @@ test.describe('Per-Message Rewind Modal', () => {
 		const assistantMessage = page.locator('[data-message-uuid]').nth(1);
 		await expect(assistantMessage).toBeVisible({ timeout: 5000 });
 
-		// Verify rewind button is visible (no hover needed)
+		// Verify rewind button is NOT visible (only user messages get rewind buttons)
 		const rewindButton = assistantMessage.locator('button[title="Rewind to here"]');
-		await expect(rewindButton).toBeVisible({ timeout: 5000 });
+		await expect(rewindButton).not.toBeVisible({ timeout: 3000 });
 	});
 
 	test('should open rewind modal when rewind button is clicked', async ({ page }) => {
