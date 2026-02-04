@@ -129,7 +129,6 @@ describe('QueryOptionsBuilder', () => {
 			const options = await builder.build();
 			expect(options.env).toEqual({
 				MY_VAR: 'value',
-				CLAUDE_STATUSLINE: 'none',
 			});
 		});
 

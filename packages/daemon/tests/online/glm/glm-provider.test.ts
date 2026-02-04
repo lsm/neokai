@@ -455,10 +455,8 @@ describe('GLM Provider Integration', () => {
 
 				// IMPORTANT: Provider env vars are NO LONGER passed via options.env
 				// They are now applied to process.env before SDK query creation
-				// So options.env should only contain CLAUDE_STATUSLINE for agent sessions
-				expect(options.env).toEqual({
-					CLAUDE_STATUSLINE: 'none',
-				});
+				// So options.env should be undefined for GLM models
+				expect(options.env).toBeUndefined();
 
 				// The model ID is translated to SDK-recognized ID
 				expect(options.model).toBe('default'); // glm-4.7 → default (Sonnet tier)
@@ -496,8 +494,6 @@ describe('GLM Provider Integration', () => {
 				expect(options.env).toBeDefined();
 				// Custom var should be added
 				expect(options.env!.CUSTOM_VAR).toBe('custom-value');
-				// CLAUDE_STATUSLINE is always set
-				expect(options.env!.CLAUDE_STATUSLINE).toBe('none');
 				// Note: Provider vars (API_TIMEOUT_MS, ANTHROPIC_BASE_URL, etc.) are NO LONGER in options.env
 				// They are applied to process.env before SDK query creation by the provider system
 			} finally {
@@ -521,10 +517,8 @@ describe('GLM Provider Integration', () => {
 			const builder = new QueryOptionsBuilder({ session, settingsManager });
 			const options = await builder.build();
 
-			// Anthropic sessions should have CLAUDE_STATUSLINE set
-			expect(options.env).toEqual({
-				CLAUDE_STATUSLINE: 'none',
-			});
+			// Anthropic sessions should have undefined env
+			expect(options.env).toBeUndefined();
 		});
 
 		it('should not inject env vars for opus/haiku models', async () => {
@@ -543,12 +537,8 @@ describe('GLM Provider Integration', () => {
 			const opusOptions = await opusBuilder.build();
 			const haikuOptions = await haikuBuilder.build();
 
-			expect(opusOptions.env).toEqual({
-				CLAUDE_STATUSLINE: 'none',
-			});
-			expect(haikuOptions.env).toEqual({
-				CLAUDE_STATUSLINE: 'none',
-			});
+			expect(opusOptions.env).toBeUndefined();
+			expect(haikuOptions.env).toBeUndefined();
 		});
 	});
 

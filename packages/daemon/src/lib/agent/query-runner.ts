@@ -166,6 +166,11 @@ export class QueryRunner {
 			const originalEnvVars = providerService.applyEnvVarsToProcess(modelId);
 			this.ctx.originalEnvVars = originalEnvVars;
 
+			// Disable statusline for all agent sessions
+			if (!process.env.CLAUDE_STATUSLINE) {
+				process.env.CLAUDE_STATUSLINE = 'none';
+			}
+
 			const provider = providerRegistry.detectProvider(modelId);
 			if (provider && provider.id === 'glm') {
 				logger.log(`Applied GLM env vars for model ${modelId} to process.env`);
