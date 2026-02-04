@@ -557,4 +557,42 @@ describe('InputTextarea', () => {
 			expect(textarea.value).toBe('hellox');
 		});
 	});
+
+	describe('Paste Event Forwarding', () => {
+		it('should call onPaste callback when paste event fires on textarea', () => {
+			const onPaste = vi.fn(() => {});
+			const { container } = render(
+				<InputTextarea
+					content=""
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					onPaste={onPaste}
+				/>
+			);
+
+			const textarea = container.querySelector('textarea')!;
+			fireEvent.paste(textarea);
+
+			expect(onPaste).toHaveBeenCalled();
+		});
+
+		it('should not error when onPaste is undefined (default)', () => {
+			const { container } = render(
+				<InputTextarea
+					content=""
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+
+			const textarea = container.querySelector('textarea')!;
+
+			// Should not throw when onPaste is undefined
+			expect(() => {
+				fireEvent.paste(textarea);
+			}).not.toThrow();
+		});
+	});
 });

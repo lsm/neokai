@@ -66,6 +66,7 @@ export default function MessageInput({
 		clear: clearAttachments,
 		openFilePicker,
 		getImagesForSend,
+		handlePaste,
 	} = useFileAttachments();
 
 	// Command autocomplete
@@ -284,6 +285,7 @@ export default function MessageInput({
 							isAgentWorking={isAgentWorking.value}
 							interrupting={interrupting}
 							onInterrupt={handleInterrupt}
+							onPaste={disabled ? undefined : handlePaste}
 						/>
 					</div>
 				</form>

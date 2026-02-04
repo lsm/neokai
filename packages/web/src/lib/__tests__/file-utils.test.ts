@@ -6,7 +6,12 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { fileToBase64, formatFileSize, validateImageFile } from '../file-utils';
+import {
+	fileToBase64,
+	formatFileSize,
+	validateImageFile,
+	extractImagesFromClipboard,
+} from '../file-utils';
 
 // Helper to create mock File objects with controlled size
 function createMockFile(name: string, size: number, type: string): File {
@@ -250,6 +255,114 @@ describe('file-utils', () => {
 				expect(message).toContain('MB');
 				expect(message).toContain('resize');
 			}
+		});
+	});
+
+	describe('extractImagesFromClipboard', () => {
+		// Helper to create mock DataTransferItemList
+		function createMockItemList(
+			items: Array<{ kind: string; type: string; file?: File | null }>
+		): DataTransferItemList {
+			const list = {
+				length: items.length,
+			} as DataTransferItemList;
+
+			for (let i = 0; i < items.length; i++) {
+				(list as unknown as Record<number, DataTransferItem>)[i] = {
+					kind: items[i].kind,
+					type: items[i].type,
+					getAsFile: () => items[i].file ?? null,
+				};
+			}
+
+			return list;
+		}
+
+		it('should return empty array when items list is empty', () => {
+			const items = createMockItemList([]);
+			const result = extractImagesFromClipboard(items);
+			expect(result).toEqual([]);
+		});
+
+		it('should return empty array when only text items are present', () => {
+			const items = createMockItemList([
+				{ kind: 'string', type: 'text/plain' },
+				{ kind: 'string', type: 'text/html' },
+			]);
+			const result = extractImagesFromClipboard(items);
+			expect(result).toEqual([]);
+		});
+
+		it('should return image files for supported MIME types', () => {
+			const pngFile = new File(['test'], 'image.png', { type: 'image/png' });
+			const jpegFile = new File(['test'], 'image.jpeg', { type: 'image/jpeg' });
+			const gifFile = new File(['test'], 'image.gif', { type: 'image/gif' });
+			const webpFile = new File(['test'], 'image.webp', { type: 'image/webp' });
+
+			const items = createMockItemList([
+				{ kind: 'file', type: 'image/png', file: pngFile },
+				{ kind: 'file', type: 'image/jpeg', file: jpegFile },
+				{ kind: 'file', type: 'image/gif', file: gifFile },
+				{ kind: 'file', type: 'image/webp', file: webpFile },
+			]);
+
+			const result = extractImagesFromClipboard(items);
+			expect(result).toEqual([pngFile, jpegFile, gifFile, webpFile]);
+		});
+
+		it('should filter out unsupported file types', () => {
+			const imageFile = new File(['test'], 'image.png', { type: 'image/png' });
+			const pdfFile = new File(['test'], 'document.pdf', { type: 'application/pdf' });
+			const textFile = new File(['test'], 'text.txt', { type: 'text/plain' });
+
+			const items = createMockItemList([
+				{ kind: 'file', type: 'image/png', file: imageFile },
+				{ kind: 'file', type: 'application/pdf', file: pdfFile },
+				{ kind: 'file', type: 'text/plain', file: textFile },
+			]);
+
+			const result = extractImagesFromClipboard(items);
+			expect(result).toEqual([imageFile]);
+		});
+
+		it('should handle mixed items (string + file) - only returns files', () => {
+			const imageFile = new File(['test'], 'image.png', { type: 'image/png' });
+
+			const items = createMockItemList([
+				{ kind: 'string', type: 'text/plain' },
+				{ kind: 'file', type: 'image/png', file: imageFile },
+				{ kind: 'string', type: 'text/html' },
+			]);
+
+			const result = extractImagesFromClipboard(items);
+			expect(result).toEqual([imageFile]);
+		});
+
+		it('should handle getAsFile() returning null gracefully', () => {
+			const imageFile = new File(['test'], 'image.png', { type: 'image/png' });
+
+			const items = createMockItemList([
+				{ kind: 'file', type: 'image/png', file: imageFile },
+				{ kind: 'file', type: 'image/jpeg', file: null },
+			]);
+
+			const result = extractImagesFromClipboard(items);
+			expect(result).toEqual([imageFile]);
+		});
+
+		it('should return multiple image files when multiple are present', () => {
+			const file1 = new File(['test1'], 'image1.png', { type: 'image/png' });
+			const file2 = new File(['test2'], 'image2.jpeg', { type: 'image/jpeg' });
+			const file3 = new File(['test3'], 'image3.gif', { type: 'image/gif' });
+
+			const items = createMockItemList([
+				{ kind: 'file', type: 'image/png', file: file1 },
+				{ kind: 'file', type: 'image/jpeg', file: file2 },
+				{ kind: 'file', type: 'image/gif', file: file3 },
+			]);
+
+			const result = extractImagesFromClipboard(items);
+			expect(result).toEqual([file1, file2, file3]);
 		});
 	});
 });

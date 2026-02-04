@@ -47,6 +47,7 @@ export interface InputTextareaProps {
 	// Interrupt
 	interrupting?: boolean;
 	onInterrupt?: () => void;
+	onPaste?: (e: ClipboardEvent) => void;
 }
 
 /**
@@ -67,6 +68,7 @@ export function InputTextarea({
 	isAgentWorking = false,
 	interrupting = false,
 	onInterrupt,
+	onPaste,
 }: InputTextareaProps) {
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const [isMultiline, setIsMultiline] = useState(false);
@@ -160,6 +162,7 @@ export function InputTextarea({
 					ref={textareaRef}
 					onInput={(e) => onContentChange((e.target as HTMLTextAreaElement).value)}
 					onKeyDown={onKeyDown}
+					onPaste={onPaste}
 					placeholder="Ask or make anything..."
 					maxLength={maxChars}
 					rows={1}

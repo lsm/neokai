@@ -9,7 +9,7 @@ import type { RefObject } from 'preact';
 import { useState, useCallback, useRef } from 'preact/hooks';
 import type { MessageImage } from '@neokai/shared';
 import { toast } from '../lib/toast.ts';
-import { fileToBase64, validateImageFile } from '../lib/file-utils.ts';
+import { fileToBase64, validateImageFile, extractImagesFromClipboard } from '../lib/file-utils.ts';
 
 export interface AttachmentWithMetadata extends MessageImage {
 	name: string;
@@ -25,6 +25,7 @@ export interface UseFileAttachmentsResult {
 	clear: () => void;
 	openFilePicker: () => void;
 	getImagesForSend: () => MessageImage[] | undefined;
+	handlePaste: (e: ClipboardEvent) => void;
 }
 
 /**
@@ -81,6 +82,21 @@ export function useFileAttachments(): UseFileAttachmentsResult {
 		[processFiles]
 	);
 
+	const handlePaste = useCallback(
+		async (e: ClipboardEvent) => {
+			const items = e.clipboardData?.items;
+			if (!items) return;
+
+			const imageFiles = extractImagesFromClipboard(items);
+			if (imageFiles.length === 0) return;
+
+			// Process images as attachments
+			// Do NOT call e.preventDefault() — let text paste continue normally
+			await processFiles(imageFiles);
+		},
+		[processFiles]
+	);
+
 	const handleRemove = useCallback((index: number) => {
 		setAttachments((prev) => prev.filter((_, i) => i !== index));
 	}, []);
@@ -108,5 +124,6 @@ export function useFileAttachments(): UseFileAttachmentsResult {
 		clear,
 		openFilePicker,
 		getImagesForSend,
+		handlePaste,
 	};
 }
