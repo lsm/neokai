@@ -148,7 +148,11 @@ export function setupRewindHandlers(
 	 * Response: { result: SelectiveRewindResult }
 	 */
 	messageHub.handle('rewind.executeSelective', async (data) => {
-		const { sessionId, messageIds } = data as SelectiveRewindRequest;
+		const {
+			sessionId,
+			messageIds,
+			mode = 'both',
+		} = data as SelectiveRewindRequest & { mode?: RewindMode };
 
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) {
@@ -173,7 +177,7 @@ export function setupRewindHandlers(
 			};
 		}
 
-		const result = await agentSession.executeSelectiveRewind(messageIds);
+		const result = await agentSession.executeSelectiveRewind(messageIds, mode);
 		return { result };
 	});
 }

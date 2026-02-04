@@ -6,8 +6,17 @@
  * using mock.module() which affects other test files globally.
  */
 
-import { describe, expect, it } from 'bun:test';
-import type { Session, ContextInfo, AgentProcessingState } from '@neokai/shared';
+import { describe, expect, it, mock, beforeEach } from 'bun:test';
+import type {
+	Session,
+	ContextInfo,
+	AgentProcessingState,
+	SelectiveRewindResult,
+	RewindMode,
+} from '@neokai/shared';
+import { AgentSession } from '../../../src/lib/agent/agent-session';
+import type { Database } from '../../../src/storage/database';
+import type { MessageHub, DaemonHub } from '@neokai/shared';
 
 // Test the AgentSession class indirectly through its components
 // since direct testing with mock.module() causes global mock pollution
@@ -219,6 +228,151 @@ describe('AgentSession', () => {
 			expect(response.questionIndex).toBe(0);
 			expect(response.selectedOptionIndices).toEqual([0, 2]);
 			expect(response.customText).toBe('custom input');
+		});
+	});
+
+	describe('executeSelectiveRewind', () => {
+		let mockSession: Session;
+		let mockDb: Database;
+		let mockMessageHub: MessageHub;
+		let mockDaemonHub: DaemonHub;
+		let mockGetApiKey: () => Promise<string | null>;
+		let agentSession: AgentSession;
+
+		beforeEach(() => {
+			// Create minimal mock session
+			mockSession = {
+				id: 'test-session-id',
+				title: 'Test Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					maxTokens: 8192,
+					temperature: 1.0,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			} as Session;
+
+			// Create minimal mock database
+			mockDb = {
+				getSession: mock(() => mockSession),
+				updateSession: mock(() => {}),
+				getUserMessages: mock(() => []),
+				getSDKMessages: mock(() => []),
+				deleteMessagesAfter: mock(() => 0),
+				deleteMessagesAtAndAfter: mock(() => 0),
+				getUserMessageByUuid: mock(() => undefined),
+				countMessagesAfter: mock(() => 0),
+				getMessagesByStatus: mock(() => []),
+				updateMessage: mock(() => {}),
+			} as unknown as Database;
+
+			// Create minimal mock message hub
+			mockMessageHub = {
+				sendMessage: mock(() => {}),
+			} as unknown as MessageHub;
+
+			// Create minimal mock daemon hub
+			mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})), // Returns unsubscribe function
+			} as unknown as DaemonHub;
+
+			// Create mock API key getter
+			mockGetApiKey = mock(async () => 'test-api-key');
+
+			// Create AgentSession instance
+			agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+		});
+
+		it('should delegate to rewindHandler.executeSelectiveRewind with messageIds and mode', async () => {
+			const messageIds = ['msg-1', 'msg-2'];
+			const mode: RewindMode = 'both';
+			const expectedResult: SelectiveRewindResult = {
+				success: true,
+				messagesDeleted: 2,
+				filesReverted: ['file1.ts', 'file2.ts'],
+				rewindCase: 'sdk-native',
+			};
+
+			// Mock the rewindHandler's executeSelectiveRewind method
+			const executeSelectiveRewindSpy = mock(() => Promise.resolve(expectedResult));
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).rewindHandler = {
+				executeSelectiveRewind: executeSelectiveRewindSpy,
+			};
+
+			// Call the method
+			const result = await agentSession.executeSelectiveRewind(messageIds, mode);
+
+			// Verify the handler was called with correct arguments
+			expect(executeSelectiveRewindSpy).toHaveBeenCalledTimes(1);
+			expect(executeSelectiveRewindSpy).toHaveBeenCalledWith(messageIds, mode);
+			expect(result).toEqual(expectedResult);
+		});
+
+		it('should delegate to rewindHandler.executeSelectiveRewind without mode parameter', async () => {
+			const messageIds = ['msg-1', 'msg-2'];
+			const expectedResult: SelectiveRewindResult = {
+				success: true,
+				messagesDeleted: 2,
+				filesReverted: ['file1.ts'],
+				rewindCase: 'diff-based',
+			};
+
+			// Mock the rewindHandler's executeSelectiveRewind method
+			const executeSelectiveRewindSpy = mock(() => Promise.resolve(expectedResult));
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).rewindHandler = {
+				executeSelectiveRewind: executeSelectiveRewindSpy,
+			};
+
+			// Call the method without mode parameter
+			const result = await agentSession.executeSelectiveRewind(messageIds);
+
+			// Verify the handler was called with correct arguments (mode should be undefined)
+			expect(executeSelectiveRewindSpy).toHaveBeenCalledTimes(1);
+			expect(executeSelectiveRewindSpy).toHaveBeenCalledWith(messageIds, undefined);
+			expect(result).toEqual(expectedResult);
+		});
+
+		it('should handle different rewind modes', async () => {
+			const messageIds = ['msg-1'];
+			const modes: RewindMode[] = ['files', 'conversation', 'both'];
+
+			for (const mode of modes) {
+				const expectedResult: SelectiveRewindResult = {
+					success: true,
+					messagesDeleted: 1,
+					filesReverted: [],
+				};
+
+				const executeSelectiveRewindSpy = mock(() => Promise.resolve(expectedResult));
+				// biome-ignore lint: test mock access
+				(agentSession as unknown as Record<string, unknown>).rewindHandler = {
+					executeSelectiveRewind: executeSelectiveRewindSpy,
+				};
+
+				await agentSession.executeSelectiveRewind(messageIds, mode);
+
+				expect(executeSelectiveRewindSpy).toHaveBeenCalledWith(messageIds, mode);
+			}
 		});
 	});
 });

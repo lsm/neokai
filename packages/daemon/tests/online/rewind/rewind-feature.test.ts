@@ -18,9 +18,9 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import 'dotenv/config';
-import type { DaemonServerContext } from '../../helpers/daemon-server-helper';
-import { createDaemonServer } from '../../helpers/daemon-server-helper';
-import { sendMessage, waitForIdle, getProcessingState } from '../../helpers/daemon-test-helpers';
+import type { DaemonServerContext } from '../helpers/daemon-server-helper';
+import { createDaemonServer } from '../helpers/daemon-server-helper';
+import { sendMessage, waitForIdle, getProcessingState } from '../helpers/daemon-test-helpers';
 import type { RewindPreview, RewindResult } from '@neokai/shared';
 
 /**

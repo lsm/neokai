@@ -431,8 +431,8 @@ export class AgentSession
 		return this.rewindHandler.previewSelectiveRewind(messageIds);
 	}
 
-	executeSelectiveRewind(messageIds: string[]): Promise<SelectiveRewindResult> {
-		return this.rewindHandler.executeSelectiveRewind(messageIds);
+	executeSelectiveRewind(messageIds: string[], mode?: RewindMode): Promise<SelectiveRewindResult> {
+		return this.rewindHandler.executeSelectiveRewind(messageIds, mode);
 	}
 
 	// ============================================================================
