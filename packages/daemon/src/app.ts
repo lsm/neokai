@@ -79,30 +79,38 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const settingsManager = new SettingsManager(db, config.workspaceRoot);
 	log('✅ Settings manager initialized');
 
-	// Check authentication status - MUST be configured via environment variables
+	// Check authentication status
 	const authStatus = await authManager.getAuthStatus();
 	if (authStatus.isAuthenticated) {
 		log(`✅ Authenticated via ${authStatus.method} (source: ${authStatus.source})`);
 	} else {
-		logError('\n❌ AUTHENTICATION REQUIRED');
-		logError('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-		logError('Authentication credentials must be provided via environment variables.');
-		logError('\nOption 1: GLM API Key (Recommended for E2E tests)');
-		logError('  export GLM_API_KEY=...');
-		logError('\nOption 2: Anthropic API Key');
-		logError('  export ANTHROPIC_API_KEY=sk-ant-...');
-		logError('\nOption 3: Claude Code OAuth Token');
-		logError('  export CLAUDE_CODE_OAUTH_TOKEN=...');
-		logError('\nGet your API key from: https://console.anthropic.com/');
-		logError('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-		throw new Error('Authentication required');
+		log('\n⚠️  NO CREDENTIALS DETECTED');
+		log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+		log('No authentication credentials found. The daemon will start');
+		log('but sessions cannot be created until credentials are configured.');
+		log('');
+		log('If you have Claude Code installed, try:');
+		log('  claude login          # Login via browser');
+		log('  Then restart Kai to auto-detect credentials');
+		log('');
+		log('Or set credentials manually:');
+		log('  export ANTHROPIC_API_KEY=sk-ant-...');
+		log('  export CLAUDE_CODE_OAUTH_TOKEN=...');
+		log('');
+		log('For third-party providers (Zhipu, etc.):');
+		log('  Configure env vars in ~/.claude/settings.json');
+		log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 	}
 
 	// Initialize dynamic models on app startup (global cache fallback)
-	log('Loading dynamic models from Claude SDK...');
-	const { initializeModels } = await import('./lib/model-service');
-	await initializeModels();
-	log('✅ Model service initialized');
+	if (authStatus.isAuthenticated) {
+		log('Loading dynamic models from Claude SDK...');
+		const { initializeModels } = await import('./lib/model-service');
+		await initializeModels();
+		log('✅ Model service initialized');
+	} else {
+		log('⏭️  Model initialization skipped (no credentials configured)');
+	}
 
 	// PHASE 3 ARCHITECTURE (FIXED): MessageHub owns Router, Transport is pure I/O
 	// 1. Initialize MessageHubRouter (routing layer - pure routing, no app logic)

@@ -85,17 +85,25 @@ export class AnthropicProvider implements Provider {
 
 	/**
 	 * Check if Anthropic is available
-	 * Requires either ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
+	 * Requires ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or ANTHROPIC_AUTH_TOKEN
 	 */
 	isAvailable(): boolean {
-		return !!(this.env.ANTHROPIC_API_KEY || this.env.CLAUDE_CODE_OAUTH_TOKEN);
+		return !!(
+			this.env.ANTHROPIC_API_KEY ||
+			this.env.CLAUDE_CODE_OAUTH_TOKEN ||
+			this.env.ANTHROPIC_AUTH_TOKEN
+		);
 	}
 
 	/**
 	 * Get API key from environment
 	 */
 	getApiKey(): string | undefined {
-		return this.env.ANTHROPIC_API_KEY || this.env.CLAUDE_CODE_OAUTH_TOKEN;
+		return (
+			this.env.ANTHROPIC_API_KEY ||
+			this.env.CLAUDE_CODE_OAUTH_TOKEN ||
+			this.env.ANTHROPIC_AUTH_TOKEN
+		);
 	}
 
 	/**

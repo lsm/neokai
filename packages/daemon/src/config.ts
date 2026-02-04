@@ -6,6 +6,23 @@ import { homedir } from 'os';
 // This allows each instance (dev, self-hosting, production) to have its own configuration
 config({ path: join(process.cwd(), '.env') });
 
+// Discover credentials from Claude Code storage and ~/.claude/settings.json
+// This enriches process.env BEFORE any other code reads it.
+// Never overwrites existing env vars (explicit config always wins).
+import { discoverCredentials } from './lib/credential-discovery';
+const discoveryResult = discoverCredentials();
+if (discoveryResult.credentialSource !== 'none') {
+	console.log(`[Config] Credentials discovered from: ${discoveryResult.credentialSource}`);
+}
+if (discoveryResult.settingsEnvApplied > 0) {
+	console.log(
+		`[Config] Applied ${discoveryResult.settingsEnvApplied} env vars from ~/.claude/settings.json`
+	);
+}
+for (const error of discoveryResult.errors) {
+	console.warn(`[Config] Credential discovery warning: ${error}`);
+}
+
 /**
  * Encode an absolute path to a filesystem-safe directory name
  * Uses the same approach as Claude Code (~/.claude/projects/)
@@ -29,6 +46,7 @@ export interface Config {
 	dbPath: string;
 	anthropicApiKey?: string; // Optional - can use CLAUDE_CODE_OAUTH_TOKEN instead
 	claudeCodeOAuthToken?: string; // Long-lived OAuth token
+	anthropicAuthToken?: string; // Bearer token for third-party proxies
 	defaultModel: string;
 	maxTokens: number;
 	temperature: number;
@@ -84,6 +102,7 @@ export function getConfig(overrides?: ConfigOverrides): Config {
 		dbPath: overrides?.dbPath ?? (process.env.DB_PATH || defaultDbPath),
 		anthropicApiKey: process.env.ANTHROPIC_API_KEY,
 		claudeCodeOAuthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN,
+		anthropicAuthToken: process.env.ANTHROPIC_AUTH_TOKEN,
 		// Use 'default' which maps to Sonnet 4.5 in the SDK
 		// This matches the SDK's supportedModels() response
 		defaultModel: process.env.DEFAULT_MODEL || 'default',
