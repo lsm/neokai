@@ -31,6 +31,8 @@ interface MessageInputProps {
 	onAutoScrollChange?: (autoScroll: boolean) => void;
 	onOpenTools?: () => void;
 	onEnterRewindMode?: () => void;
+	rewindMode?: boolean;
+	onExitRewindMode?: () => void;
 }
 
 export default function MessageInput({
@@ -41,6 +43,8 @@ export default function MessageInput({
 	onAutoScrollChange,
 	onOpenTools,
 	onEnterRewindMode,
+	rewindMode,
+	onExitRewindMode,
 }: MessageInputProps) {
 	// Drag and drop state
 	const [isDragging, setIsDragging] = useState(false);
@@ -257,6 +261,8 @@ export default function MessageInput({
 							onOpenTools={() => onOpenTools?.()}
 							onAttachFile={openFilePicker}
 							onEnterRewindMode={onEnterRewindMode}
+							rewindMode={rewindMode}
+							onExitRewindMode={onExitRewindMode}
 							disabled={disabled}
 						/>
 

@@ -1,7 +1,7 @@
 /**
  * Per-Message Rewind Modal E2E Tests
  *
- * Tests for the per-message rewind feature accessible via hover actions on messages.
+ * Tests for the per-message rewind feature accessible via rewind buttons on messages.
  * The rewind feature allows users to rewind the conversation to a specific message point.
  */
 
@@ -37,7 +37,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		}
 	});
 
-	test('should show rewind button on hover for user messages', async ({ page }) => {
+	test('should show rewind button for user messages', async ({ page }) => {
 		// Create a new session
 		const newSessionButton = page.locator('button:has-text("New Session")').first();
 		await newSessionButton.click();
@@ -53,15 +53,12 @@ test.describe('Per-Message Rewind Modal', () => {
 		const userMessage = page.locator('[data-message-uuid]').first();
 		await expect(userMessage).toBeVisible({ timeout: 5000 });
 
-		// Hover over the message container to reveal the rewind button
-		await userMessage.hover();
-
-		// Verify rewind button appears
+		// Verify rewind button is visible (no hover needed)
 		const rewindButton = page.locator('button[title="Rewind to here"]').first();
 		await expect(rewindButton).toBeVisible({ timeout: 5000 });
 	});
 
-	test('should show rewind button on hover for assistant messages', async ({ page }) => {
+	test('should show rewind button for assistant messages', async ({ page }) => {
 		// Create a new session
 		const newSessionButton = page.locator('button:has-text("New Session")').first();
 		await newSessionButton.click();
@@ -77,10 +74,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		const assistantMessage = page.locator('[data-message-uuid]').nth(1);
 		await expect(assistantMessage).toBeVisible({ timeout: 5000 });
 
-		// Hover over the message container to reveal the rewind button
-		await assistantMessage.hover();
-
-		// Verify rewind button appears
+		// Verify rewind button is visible (no hover needed)
 		const rewindButton = assistantMessage.locator('button[title="Rewind to here"]');
 		await expect(rewindButton).toBeVisible({ timeout: 5000 });
 	});
@@ -95,9 +89,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		await sendMessage(page, 'Test message for modal', sessionId);
 		await page.waitForTimeout(1000);
 
-		// Hover over the message and click rewind button
-		const userMessage = page.locator('[data-message-uuid]').first();
-		await userMessage.hover();
+		// Click rewind button (no hover needed)
 		const rewindButton = page.locator('button[title="Rewind to here"]').first();
 		await rewindButton.click();
 
@@ -116,9 +108,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		await sendMessage(page, 'Test radio options', sessionId);
 		await page.waitForTimeout(1000);
 
-		// Open the rewind modal
-		const userMessage = page.locator('[data-message-uuid]').first();
-		await userMessage.hover();
+		// Open the rewind modal (no hover needed)
 		const rewindButton = page.locator('button[title="Rewind to here"]').first();
 		await rewindButton.click();
 
@@ -138,9 +128,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		await sendMessage(page, 'Test default selection', sessionId);
 		await page.waitForTimeout(1000);
 
-		// Open the rewind modal
-		const userMessage = page.locator('[data-message-uuid]').first();
-		await userMessage.hover();
+		// Open the rewind modal (no hover needed)
 		const rewindButton = page.locator('button[title="Rewind to here"]').first();
 		await rewindButton.click();
 
@@ -159,9 +147,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		await sendMessage(page, 'Test mode switching', sessionId);
 		await page.waitForTimeout(1000);
 
-		// Open the rewind modal
-		const userMessage = page.locator('[data-message-uuid]').first();
-		await userMessage.hover();
+		// Open the rewind modal (no hover needed)
 		const rewindButton = page.locator('button[title="Rewind to here"]').first();
 		await rewindButton.click();
 
@@ -192,9 +178,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		await sendMessage(page, 'Second message', sessionId);
 		await page.waitForTimeout(1000);
 
-		// Open the rewind modal
-		const userMessage = page.locator('[data-message-uuid]').first();
-		await userMessage.hover();
+		// Open the rewind modal (no hover needed)
 		const rewindButton = page.locator('button[title="Rewind to here"]').first();
 		await rewindButton.click();
 
@@ -225,9 +209,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		await sendMessage(page, 'Test warning text', sessionId);
 		await page.waitForTimeout(1000);
 
-		// Open the rewind modal
-		const userMessage = page.locator('[data-message-uuid]').first();
-		await userMessage.hover();
+		// Open the rewind modal (no hover needed)
 		const rewindButton = page.locator('button[title="Rewind to here"]').first();
 		await rewindButton.click();
 
@@ -245,9 +227,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		await sendMessage(page, 'Test explanatory text', sessionId);
 		await page.waitForTimeout(1000);
 
-		// Open the rewind modal
-		const userMessage = page.locator('[data-message-uuid]').first();
-		await userMessage.hover();
+		// Open the rewind modal (no hover needed)
 		const rewindButton = page.locator('button[title="Rewind to here"]').first();
 		await rewindButton.click();
 
@@ -269,9 +249,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		await sendMessage(page, 'Test rewind button', sessionId);
 		await page.waitForTimeout(1000);
 
-		// Open the rewind modal
-		const userMessage = page.locator('[data-message-uuid]').first();
-		await userMessage.hover();
+		// Open the rewind modal (no hover needed)
 		const rewindButton = page.locator('button[title="Rewind to here"]').first();
 		await rewindButton.click();
 
@@ -365,9 +343,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		await sendMessage(page, 'Test escape key', sessionId);
 		await page.waitForTimeout(1000);
 
-		// Open the rewind modal
-		const userMessage = page.locator('[data-message-uuid]').first();
-		await userMessage.hover();
+		// Open the rewind modal (no hover needed)
 		const rewindButton = page.locator('button[title="Rewind to here"]').first();
 		await rewindButton.click();
 
@@ -393,9 +369,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		await sendMessage(page, 'Test option persistence', sessionId);
 		await page.waitForTimeout(1000);
 
-		// Open the rewind modal
-		const userMessage = page.locator('[data-message-uuid]').first();
-		await userMessage.hover();
+		// Open the rewind modal (no hover needed)
 		let rewindButton = page.locator('button[title="Rewind to here"]').first();
 		await rewindButton.click();
 
@@ -409,8 +383,7 @@ test.describe('Per-Message Rewind Modal', () => {
 		await cancelButton.click();
 		await page.waitForTimeout(500);
 
-		// Reopen the modal
-		await userMessage.hover();
+		// Reopen the modal (no hover needed)
 		rewindButton = page.locator('button[title="Rewind to here"]').first();
 		await rewindButton.click();
 
