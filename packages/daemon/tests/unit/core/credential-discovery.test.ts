@@ -317,4 +317,102 @@ describe('discoverCredentials', () => {
 			expect(process.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-4.7');
 		});
 	});
+
+	describe('macOS Keychain discovery', () => {
+		it('should discover OAuth token from macOS Keychain', () => {
+			const result = discoverCredentials(claudeDir, {
+				platformName: 'darwin',
+				keychainReader: () => JSON.stringify({ claudeAiOauth: { accessToken: 'keychain-token' } }),
+			});
+
+			expect(result.credentialSource).toBe('keychain');
+			expect(result.errors).toHaveLength(0);
+			expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('keychain-token');
+		});
+
+		it('should skip keychain on non-macOS platforms', () => {
+			const keychainReaderCalled = { value: false };
+			const result = discoverCredentials(claudeDir, {
+				platformName: 'linux',
+				keychainReader: () => {
+					keychainReaderCalled.value = true;
+					return JSON.stringify({ claudeAiOauth: { accessToken: 'keychain-token' } });
+				},
+			});
+
+			expect(keychainReaderCalled.value).toBe(false);
+			expect(result.credentialSource).toBe('none');
+			expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+		});
+
+		it('should handle keychain access denied', () => {
+			const result = discoverCredentials(claudeDir, {
+				platformName: 'darwin',
+				keychainReader: () => {
+					throw new Error('keychain access denied');
+				},
+			});
+
+			expect(result.credentialSource).not.toBe('keychain');
+			expect(result.errors).toHaveLength(0);
+			expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+		});
+
+		it('should handle malformed keychain JSON', () => {
+			const result = discoverCredentials(claudeDir, {
+				platformName: 'darwin',
+				keychainReader: () => 'not valid json',
+			});
+
+			expect(result.credentialSource).not.toBe('keychain');
+			expect(result.errors).toHaveLength(0);
+			expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+		});
+
+		it('should handle keychain JSON without accessToken', () => {
+			const result = discoverCredentials(claudeDir, {
+				platformName: 'darwin',
+				keychainReader: () => JSON.stringify({ otherField: 'value' }),
+			});
+
+			expect(result.credentialSource).not.toBe('keychain');
+			expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+		});
+
+		it('should skip keychain when CLAUDE_CODE_OAUTH_TOKEN already set', () => {
+			process.env.CLAUDE_CODE_OAUTH_TOKEN = 'existing';
+			const keychainReaderCalled = { value: false };
+
+			discoverCredentials(claudeDir, {
+				platformName: 'darwin',
+				keychainReader: () => {
+					keychainReaderCalled.value = true;
+					return JSON.stringify({ claudeAiOauth: { accessToken: 'keychain-token' } });
+				},
+			});
+
+			expect(keychainReaderCalled.value).toBe(false);
+			expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('existing');
+		});
+
+		it('should skip keychain when credentials.json already provides token', () => {
+			writeFileSync(
+				join(claudeDir, '.credentials.json'),
+				JSON.stringify({ claudeAiOauth: { accessToken: 'file-token' } })
+			);
+
+			const keychainReaderCalled = { value: false };
+			const _result = discoverCredentials(claudeDir, {
+				platformName: 'darwin',
+				keychainReader: () => {
+					keychainReaderCalled.value = true;
+					return JSON.stringify({ claudeAiOauth: { accessToken: 'keychain-token' } });
+				},
+			});
+
+			expect(keychainReaderCalled.value).toBe(false);
+			expect(_result.credentialSource).toBe('credentials-file');
+			expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('file-token');
+		});
+	});
 });

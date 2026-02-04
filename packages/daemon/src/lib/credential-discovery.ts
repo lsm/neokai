@@ -9,12 +9,20 @@ export interface DiscoveryResult {
 	errors: string[]; // non-fatal issues encountered
 }
 
+export interface DiscoveryOptions {
+	keychainReader?: () => string; // Returns raw JSON string from keychain, throws on failure
+	platformName?: string; // Override platform detection (for testing)
+}
+
 /**
  * Discover Claude Code credentials and inject them into process.env.
  * Runs once at daemon startup to enrich the environment before any other code reads it.
  * Never overwrites existing env vars - explicit config always wins.
  */
-export function discoverCredentials(claudeDir?: string): DiscoveryResult {
+export function discoverCredentials(
+	claudeDir?: string,
+	options?: DiscoveryOptions
+): DiscoveryResult {
 	const errors: string[] = [];
 	let credentialSource: DiscoveryResult['credentialSource'] = 'none';
 	let settingsEnvApplied = 0;
@@ -52,18 +60,22 @@ export function discoverCredentials(claudeDir?: string): DiscoveryResult {
 			}
 
 			// Step 3: If still no OAuth token AND on macOS, try keychain
-			if (!process.env.CLAUDE_CODE_OAUTH_TOKEN && platform() === 'darwin') {
+			if (
+				!process.env.CLAUDE_CODE_OAUTH_TOKEN &&
+				(options?.platformName ?? platform()) === 'darwin'
+			) {
 				try {
-					const keychainOutput = execSync(
-						'security find-generic-password -s "Claude Code-credentials" -w',
-						{
-							timeout: 5000,
-							encoding: 'utf8',
-							stdio: ['ignore', 'pipe', 'ignore'], // suppress stderr
-						}
-					);
+					const keychainOutput = options?.keychainReader
+						? options.keychainReader()
+						: execSync('security find-generic-password -s "Claude Code-credentials" -w', {
+								timeout: 5000,
+								encoding: 'utf8',
+								stdio: ['ignore', 'pipe', 'ignore'], // suppress stderr
+							});
 
-					const keychainData = JSON.parse(keychainOutput.trim());
+					const keychainData = JSON.parse(
+						typeof keychainOutput === 'string' ? keychainOutput.trim() : keychainOutput
+					);
 					if (keychainData?.claudeAiOauth?.accessToken) {
 						process.env.CLAUDE_CODE_OAUTH_TOKEN = keychainData.claudeAiOauth.accessToken;
 						credentialSource = 'keychain';
