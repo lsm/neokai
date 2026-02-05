@@ -423,6 +423,46 @@ describe('SDKUserMessage', () => {
 		});
 	});
 
+	describe('Rewind Mode', () => {
+		const onMessageCheckboxChange = vi.fn();
+
+		it('should render checkbox in rewind mode', () => {
+			const message = createTextMessage('Hello world');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKUserMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeTruthy();
+		});
+
+		it('should call onMessageCheckboxChange when checkbox is clicked', () => {
+			const message = createTextMessage('Hello world');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKUserMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			fireEvent.click(checkbox!);
+
+			expect(onMessageCheckboxChange).toHaveBeenCalledWith(message.uuid, true);
+		});
+	});
+
 	describe('Styling', () => {
 		it('should be right-aligned (user messages)', () => {
 			const message = createTextMessage('Hello');
