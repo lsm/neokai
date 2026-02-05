@@ -346,6 +346,7 @@ export function SDKUserMessage({
 				class={cn(messageSpacing.user.container.combined)}
 				data-testid="user-message"
 				data-message-role="user"
+				data-message-uuid={message.uuid}
 				data-message-timestamp={messageWithTimestamp.timestamp || 0}
 			>
 				<div class="flex items-center gap-2">

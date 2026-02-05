@@ -224,13 +224,14 @@ export function SDKAssistantMessage({
 		);
 	};
 
-	// Wrap with checkbox if in rewind mode - use multi-row grid for proper alignment
+	// Wrap with checkbox if in rewind mode - simpler structure for proper alignment
 	if (rewindMode && message.uuid && onMessageCheckboxChange && !hasSubagentChild) {
 		return (
 			<div
 				class="py-2 space-y-3"
 				data-testid="assistant-message"
 				data-message-role="assistant"
+				data-message-uuid={message.uuid}
 				data-message-timestamp={messageWithTimestamp.timestamp || 0}
 			>
 				{/* Tool use blocks - full width, no checkbox alignment needed */}
