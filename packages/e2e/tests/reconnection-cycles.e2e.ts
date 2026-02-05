@@ -67,9 +67,14 @@ test.describe('Reconnection - Multiple Cycles', () => {
 		await page.waitForTimeout(2000);
 
 		// Wait for auto-reconnect
-		await expect(page.locator('text=Online').first()).toBeVisible({
-			timeout: 15000,
-		});
+		// Wait for WebSocket to be connected again
+		await page.waitForFunction(
+			() => {
+				const hub = window.__messageHub || window.appState?.messageHub;
+				return hub?.getState && hub.getState() === 'connected';
+			},
+			{ timeout: 15000 }
+		);
 
 		const messagesAfterCycle1 = await page.locator('[data-message-role]').count();
 
@@ -87,9 +92,14 @@ test.describe('Reconnection - Multiple Cycles', () => {
 		await page.waitForTimeout(2000);
 
 		// Wait for auto-reconnect
-		await expect(page.locator('text=Online').first()).toBeVisible({
-			timeout: 15000,
-		});
+		// Wait for WebSocket to be connected again
+		await page.waitForFunction(
+			() => {
+				const hub = window.__messageHub || window.appState?.messageHub;
+				return hub?.getState && hub.getState() === 'connected';
+			},
+			{ timeout: 15000 }
+		);
 
 		const messagesAfterCycle2 = await page.locator('[data-message-role]').count();
 

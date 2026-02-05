@@ -115,6 +115,7 @@ export function SDKAssistantMessage({
 			class="py-2 space-y-3"
 			data-testid="assistant-message"
 			data-message-role="assistant"
+			data-message-uuid={message.uuid}
 			data-message-timestamp={messageWithTimestamp.timestamp || 0}
 		>
 			{/* Tool use blocks - full width like result messages */}

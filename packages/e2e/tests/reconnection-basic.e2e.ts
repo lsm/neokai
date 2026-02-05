@@ -76,9 +76,14 @@ test.describe('Reconnection - Basic Message Sync', () => {
 		await page.waitForTimeout(6000);
 
 		// 8. Wait for auto-reconnect to happen (simulateDisconnect triggers auto-reconnect)
-		await expect(page.locator('text=Online').first()).toBeVisible({
-			timeout: 15000,
-		});
+		// Wait for WebSocket to be connected again
+		await page.waitForFunction(
+			() => {
+				const hub = window.__messageHub || window.appState?.messageHub;
+				return hub?.getState && hub.getState() === 'connected';
+			},
+			{ timeout: 15000 }
+		);
 
 		// 9. Wait for state sync to complete
 		await page.waitForTimeout(2000);
