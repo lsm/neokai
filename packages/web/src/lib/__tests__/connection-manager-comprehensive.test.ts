@@ -513,15 +513,10 @@ describe('ConnectionManager - Comprehensive Coverage', () => {
 			const testManager = new ConnectionManager();
 			const privateManager = testManager as unknown as { pageHideHandler: (() => void) | null };
 
-			const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
-			// Call the handler if it exists
+			// Call the handler if it exists - should not throw
 			if (privateManager.pageHideHandler) {
-				privateManager.pageHideHandler();
-				expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Page hiding'));
+				expect(() => privateManager.pageHideHandler!()).not.toThrow();
 			}
-
-			consoleSpy.mockRestore();
 		});
 	});
 

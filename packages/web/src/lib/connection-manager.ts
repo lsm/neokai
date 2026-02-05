@@ -102,7 +102,6 @@ export class ConnectionManager {
 
 	constructor(baseUrl?: string) {
 		this.baseUrl = baseUrl || getDaemonWsUrl();
-		console.log(`[ConnectionManager] Initialized with baseUrl: ${this.baseUrl}`);
 		this.setupVisibilityHandlers();
 	}
 
@@ -284,8 +283,6 @@ export class ConnectionManager {
 	 * Connect to daemon WebSocket with MessageHub
 	 */
 	private async connect(): Promise<MessageHub> {
-		console.log('[ConnectionManager] Connecting to WebSocket...');
-
 		// Set initial connecting state
 		connectionState.value = 'connecting';
 
@@ -296,8 +293,7 @@ export class ConnectionManager {
 		});
 
 		// Listen to connection state changes and update global state
-		this.messageHub.onConnection((state, error) => {
-			console.log(`[ConnectionManager] Connection state: ${state}`, error);
+		this.messageHub.onConnection((state) => {
 			connectionState.value = state;
 
 			// Notify connection handlers when connected
@@ -337,8 +333,6 @@ export class ConnectionManager {
 
 		// Wait for connection to be established (event-driven, not polling)
 		await this.waitForConnectionEventDriven(5000);
-
-		console.log('[ConnectionManager] WebSocket connected');
 
 		// Mark ready for testing
 		if (typeof window !== 'undefined' && window.__messageHub) {
@@ -396,8 +390,6 @@ export class ConnectionManager {
 	 * Disconnect from WebSocket
 	 */
 	async disconnect(): Promise<void> {
-		console.log('[ConnectionManager] Disconnecting...');
-
 		// Update connection state
 		connectionState.value = 'disconnected';
 
@@ -414,8 +406,6 @@ export class ConnectionManager {
 
 		this.messageHub = null;
 		this.connectionPromise = null; // Clear connection promise on disconnect
-
-		console.log('[ConnectionManager] Disconnected');
 	}
 
 	/**
@@ -443,10 +433,7 @@ export class ConnectionManager {
 
 		// Handle visibility changes (tab switch, minimize)
 		this.visibilityHandler = () => {
-			if (document.hidden) {
-				console.log('[ConnectionManager] Page hidden - connection may be paused by browser');
-			} else {
-				console.log('[ConnectionManager] Page visible - validating connection');
+			if (!document.hidden) {
 				// IMPORTANT: Reset reconnect state when returning to page
 				// This allows fresh reconnection attempts after being backgrounded
 				if (this.transport) {
@@ -456,12 +443,10 @@ export class ConnectionManager {
 			}
 		};
 
-		// Handle page hide (navigation away, close tab)
-		this.pageHideHandler = () => {
-			console.log('[ConnectionManager] Page hiding - marking connection as stale');
-		};
-
 		document.addEventListener('visibilitychange', this.visibilityHandler);
+		this.pageHideHandler = () => {
+			// Page hiding - connection may become stale
+		};
 		document.addEventListener('pagehide', this.pageHideHandler);
 	}
 
@@ -479,7 +464,6 @@ export class ConnectionManager {
 	private async validateConnectionOnResume(): Promise<void> {
 		if (!this.messageHub || !this.transport) {
 			// No connection exists - try to reconnect from scratch
-			console.log('[ConnectionManager] No existing connection on resume, initiating reconnect');
 			await this.reconnect();
 			return;
 		}
@@ -488,7 +472,6 @@ export class ConnectionManager {
 			// Send a lightweight health check with short timeout
 			// If this fails, the connection is dead and needs reconnect
 			await this.messageHub.call('system.health', {}, { timeout: 3000 });
-			console.log('[ConnectionManager] Connection validated successfully');
 
 			// CRITICAL FIX: Force resubscribe even when health check succeeds
 			// Safari may pause WebSocket without closing it, causing server-side
@@ -502,8 +485,6 @@ export class ConnectionManager {
 			// FIX: Added sessionStore.refresh() to sync agent state for status bar
 			// Without this, status bar would show "Online" instead of actual state
 			await Promise.all([sessionStore.refresh(), appState.refreshAll(), globalStore.refresh()]);
-
-			console.log('[ConnectionManager] Subscriptions and state refreshed after validation');
 		} catch (error) {
 			console.error('[ConnectionManager] Connection validation failed, forcing reconnect:', error);
 
@@ -520,8 +501,6 @@ export class ConnectionManager {
 	 * Use this when user clicks "Reconnect" button or to recover from permanent failure
 	 */
 	async reconnect(): Promise<void> {
-		console.log('[ConnectionManager] Manual reconnect initiated');
-
 		// Reset transport state to allow fresh connection
 		if (this.transport) {
 			this.transport.resetReconnectState();
@@ -542,9 +521,7 @@ export class ConnectionManager {
 		// Attempt fresh connection
 		try {
 			await this.getHub();
-			console.log('[ConnectionManager] Reconnection successful');
-		} catch (error) {
-			console.error('[ConnectionManager] Reconnection failed:', error);
+		} catch {
 			connectionState.value = 'failed';
 		}
 	}
@@ -574,7 +551,6 @@ export class ConnectionManager {
 	 */
 	simulateDisconnect(): void {
 		if (this.transport) {
-			console.log('[ConnectionManager] Simulating disconnect for testing');
 			// Use forceReconnect() instead of close() - close() sets closed=true which prevents reconnection
 			this.transport.forceReconnect();
 		}
@@ -587,7 +563,6 @@ export class ConnectionManager {
 	 */
 	simulatePermanentDisconnect(): void {
 		if (this.transport) {
-			console.log('[ConnectionManager] Simulating permanent disconnect for testing');
 			this.transport.close();
 		}
 		connectionState.value = 'disconnected';

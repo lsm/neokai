@@ -474,14 +474,11 @@ describe('state', () => {
 			await expect(initializeApplicationState(mockHub, mockSessionId)).resolves.not.toThrow();
 		});
 
-		it('should warn on double initialization', async () => {
-			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-			await initializeApplicationState(mockHub, mockSessionId);
+		it('should handle double initialization gracefully', async () => {
 			await initializeApplicationState(mockHub, mockSessionId);
 
-			expect(consoleSpy).toHaveBeenCalledWith('State already initialized');
-			consoleSpy.mockRestore();
+			// Second initialization should not throw
+			await expect(initializeApplicationState(mockHub, mockSessionId)).resolves.not.toThrow();
 		});
 
 		it('should cleanup properly', async () => {
@@ -578,14 +575,11 @@ describe('state', () => {
 			expect(refreshSpy).toHaveBeenCalled();
 		});
 
-		it('should warn when refreshAll is called without initialization', async () => {
-			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
+		it('should handle refreshAll without initialization gracefully', async () => {
 			appState.cleanup();
-			await appState.refreshAll();
 
-			expect(consoleSpy).toHaveBeenCalledWith('[State] Cannot refresh: state not initialized');
-			consoleSpy.mockRestore();
+			// Should not throw when called without initialization
+			await expect(appState.refreshAll()).resolves.not.toThrow();
 		});
 	});
 

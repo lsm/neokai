@@ -174,7 +174,6 @@ export class GlobalStore {
 	 */
 	async refresh(): Promise<void> {
 		if (!this.initialized) {
-			console.warn('[GlobalStore] Cannot refresh: not initialized');
 			return;
 		}
 
@@ -195,7 +194,7 @@ export class GlobalStore {
 				this.settings.value = snapshot.settings?.settings || null;
 			}
 
-			console.log('[GlobalStore] State refreshed after reconnection');
+			// State refreshed after reconnection
 		} catch (err) {
 			console.error('[GlobalStore] Failed to refresh state:', err);
 			throw err;

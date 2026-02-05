@@ -281,14 +281,14 @@ describe('StateChannel', () => {
 			// The actual revert happens in catch handler
 		});
 
-		it('should warn when state is null', () => {
+		it('should no-op when state is null', () => {
 			channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel');
-			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
+			// Should not throw when state is null
 			channel.updateOptimistic('update-1', (current) => current);
 
-			expect(warnSpy).toHaveBeenCalledWith('Cannot update optimistically: state is null');
-			warnSpy.mockRestore();
+			// Value should remain null
+			expect(channel.value).toBeNull();
 		});
 	});
 });
@@ -375,7 +375,7 @@ describe('StateChannel - Optimistic Subscriptions', () => {
 		await channel.stop();
 	});
 
-	it('should warn when delta received but state is null', async () => {
+	it('should skip delta when state is null', async () => {
 		mockHub.call.mockImplementation(() => Promise.resolve(null));
 
 		let deltaHandler: ((delta: unknown) => void) | null = null;
@@ -386,21 +386,21 @@ describe('StateChannel - Optimistic Subscriptions', () => {
 			return Promise.resolve(() => Promise.resolve());
 		});
 
-		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const mergeFn = vi.fn((current, delta) => ({ ...current, ...delta }));
 
 		const channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel', {
 			enableDeltas: true,
-			mergeDelta: (current, delta) => ({ ...current, ...delta }),
+			mergeDelta: mergeFn,
 		});
 		await channel.start();
 
-		// Simulate receiving a delta update when state is null
+		// Simulate receiving a delta update when state is null - should not throw
 		if (deltaHandler) {
 			deltaHandler({ increment: 5 });
 		}
 
-		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Cannot apply delta'));
-		warnSpy.mockRestore();
+		// mergeFn should NOT have been called since state is null
+		expect(mergeFn).not.toHaveBeenCalled();
 
 		await channel.stop();
 	});
@@ -873,7 +873,7 @@ describe('StateChannel - Full Subscription Callbacks', () => {
 		await channel.stop();
 	});
 
-	it('should warn when delta received via blocking subscription but state is null', async () => {
+	it('should skip delta via blocking subscription when state is null', async () => {
 		let deltaCallback: ((data: unknown) => void) | null = null;
 		mockHub.call.mockImplementation(() => Promise.resolve(null));
 		mockHub.subscribe.mockImplementation((channelName: string, callback: unknown) => {
@@ -883,8 +883,6 @@ describe('StateChannel - Full Subscription Callbacks', () => {
 			return Promise.resolve(() => Promise.resolve());
 		});
 
-		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
 		const mergeFn = vi.fn((current, delta) => ({ ...current, ...delta }));
 
 		const channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel', {
@@ -893,12 +891,12 @@ describe('StateChannel - Full Subscription Callbacks', () => {
 		});
 		await channel.start();
 
-		// Simulate delta update when state is null
+		// Simulate delta update when state is null - should not throw
 		deltaCallback?.({ increment: 5 });
 
-		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Cannot apply delta'));
+		// mergeFn should NOT have been called since state is null
+		expect(mergeFn).not.toHaveBeenCalled();
 
-		warnSpy.mockRestore();
 		await channel.stop();
 	});
 });
@@ -969,7 +967,7 @@ describe('StateChannel - Optimistic Subscription Full Update', () => {
 		await channel.stop();
 	});
 
-	it('should warn when delta received via optimistic subscription but state is null', async () => {
+	it('should skip delta via optimistic subscription when state is null', async () => {
 		let deltaCallback: ((data: unknown) => void) | null = null;
 		mockHub.call.mockImplementation(() => Promise.resolve(null));
 		mockHub.subscribeOptimistic.mockImplementation((channelName: string, callback: unknown) => {
@@ -978,8 +976,6 @@ describe('StateChannel - Optimistic Subscription Full Update', () => {
 			}
 			return () => {};
 		});
-
-		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
 		const mergeFn = vi.fn((current, delta) => ({ ...current, ...delta }));
 
@@ -990,12 +986,12 @@ describe('StateChannel - Optimistic Subscription Full Update', () => {
 		});
 		await channel.start();
 
-		// Simulate delta update when state is null
+		// Simulate delta update when state is null - should not throw
 		deltaCallback?.({ increment: 5 });
 
-		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Cannot apply delta'));
+		// mergeFn should NOT have been called since state is null
+		expect(mergeFn).not.toHaveBeenCalled();
 
-		warnSpy.mockRestore();
 		await channel.stop();
 	});
 });

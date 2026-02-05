@@ -351,15 +351,14 @@ describe('StateChannel - Comprehensive Coverage', () => {
 			vi.useRealTimers();
 		});
 
-		it('should warn when state is null', () => {
-			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
+		it('should no-op when state is null', () => {
 			const emptyChannel = new StateChannel(mockHubObj as unknown as MessageHub, 'test.channel');
 
+			// Should not throw when state is null
 			emptyChannel.updateOptimistic('update-1', (current) => current as { data: string });
 
-			expect(warnSpy).toHaveBeenCalledWith('Cannot update optimistically: state is null');
-			warnSpy.mockRestore();
+			// Value should remain null
+			expect(emptyChannel.value).toBeNull();
 		});
 
 		it('should handle multiple optimistic updates', async () => {
@@ -637,8 +636,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 			await deltaChannel.stop();
 		});
 
-		it('should warn when delta received but state is null', async () => {
-			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		it('should skip delta when state is null', async () => {
 			mockHubObj.call.mockResolvedValue(null); // state will be null
 
 			const mergeFn = vi.fn((current, delta) => ({ ...current, ...delta }));
@@ -656,14 +654,13 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
 			if (deltaCall) {
 				const deltaCallback = deltaCall[1];
-				// Simulate delta update when state is null
+				// Simulate delta update when state is null - should not throw
 				deltaCallback({ newField: 'value' });
 
-				// Should log warning
-				expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Cannot apply delta'));
+				// mergeFn should NOT have been called since state is null
+				expect(mergeFn).not.toHaveBeenCalled();
 			}
 
-			consoleSpy.mockRestore();
 			await deltaChannel.stop();
 		});
 	});

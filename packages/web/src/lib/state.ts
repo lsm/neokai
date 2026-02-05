@@ -174,7 +174,6 @@ class ApplicationState {
 	 */
 	async initialize(hub: MessageHub, currentSessionId: Signal<string | null>): Promise<void> {
 		if (this.initialized.value) {
-			console.warn('State already initialized');
 			return;
 		}
 
@@ -185,8 +184,6 @@ class ApplicationState {
 		this.setupCurrentSessionAutoLoad();
 
 		this.initialized.value = true;
-
-		console.log('[State] Initialized (global state handled by globalStore)');
 	}
 
 	/**
@@ -215,7 +212,6 @@ class ApplicationState {
 		// Cleanup previous session's channels before creating new ones
 		// CRITICAL: Must await stop() to ensure unsubscribes complete before new subscribes
 		const previousChannels = this.activeSessionChannels;
-		const previousSessionId = this.activeSessionId;
 
 		// Create new channels for the requested session (but don't start yet)
 		const channels = new SessionStateChannels(this.hub, sessionId);
@@ -225,18 +221,12 @@ class ApplicationState {
 		// Async cleanup + start sequence (awaits unsubscribes before subscribes)
 		(async () => {
 			if (previousChannels) {
-				console.log(`[State] Switching session: cleaning up channels for ${previousSessionId}`);
 				await previousChannels.stop(); // AWAIT unsubscribes
-				console.log(`[State] Cleanup complete for ${previousSessionId}`);
 			}
 
 			// Now start new session's channels
-			console.log(`[State] Starting channels for ${sessionId}`);
 			await channels.start();
-			console.log(`[State] Channels started for ${sessionId}`);
-		})().catch((err) => {
-			console.error(`[State] Session channel switch error:`, err);
-		});
+		})().catch(console.error);
 
 		return channels;
 	}
@@ -248,11 +238,9 @@ class ApplicationState {
 	 */
 	async cleanupSessionChannels(sessionId: string): Promise<void> {
 		if (this.activeSessionId === sessionId && this.activeSessionChannels) {
-			console.log(`[State] Cleaning up channels for session: ${sessionId}`);
 			await this.activeSessionChannels.stop();
 			this.activeSessionId = null;
 			this.activeSessionChannels = null;
-			console.log(`[State] Cleanup complete for session: ${sessionId}`);
 		}
 	}
 
@@ -280,7 +268,6 @@ class ApplicationState {
 					// CLEANUP: Stop previous session's channels before starting new ones
 					// This prevents subscription accumulation across session switches
 					if (previousSessionId && previousSessionId !== sessionId) {
-						console.log(`[State] Cleaning up channels for previous session: ${previousSessionId}`);
 						await this.cleanupSessionChannels(previousSessionId);
 					}
 
@@ -307,18 +294,13 @@ class ApplicationState {
 	 */
 	async refreshAll(): Promise<void> {
 		if (!this.initialized.value) {
-			console.warn('[State] Cannot refresh: state not initialized');
 			return;
 		}
-
-		console.log('[State] Refreshing state channels after reconnection validation');
 
 		// Refresh current session channels
 		if (this.activeSessionChannels) {
 			await this.activeSessionChannels.refresh();
 		}
-
-		console.log('[State] Session state channels refreshed');
 	}
 
 	/**

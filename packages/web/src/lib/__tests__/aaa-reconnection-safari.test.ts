@@ -44,7 +44,6 @@ describe('Safari Background Tab - Integration Tests', () => {
 
 			stateChannel = new StateChannel(mockHub, 'test.channel', {
 				sessionId: 'test-session',
-				debug: true,
 			});
 		});
 
