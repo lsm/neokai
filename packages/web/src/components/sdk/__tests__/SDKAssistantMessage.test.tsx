@@ -1012,6 +1012,40 @@ describe('SDKAssistantMessage', () => {
 			expect(container.querySelector('[data-testid="thinking-block"]')).toBeTruthy();
 		});
 
+		it('should not render checkbox when message has no uuid', () => {
+			const message = createTextOnlyMessage('Hello world');
+			delete (message as Record<string, unknown>).uuid;
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKAssistantMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeFalsy();
+		});
+
+		it('should not render checkbox when onMessageCheckboxChange is not provided', () => {
+			const message = createTextOnlyMessage('Hello world');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKAssistantMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeFalsy();
+		});
+
 		it('should not render checkbox when message has sub-agent children', () => {
 			const message = createTextOnlyMessage('Parent message');
 			const childMessage = createTextOnlyMessage('Child message');

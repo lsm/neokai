@@ -461,6 +461,36 @@ describe('SDKUserMessage', () => {
 
 			expect(onMessageCheckboxChange).toHaveBeenCalledWith(message.uuid, true);
 		});
+
+		it('should not render checkbox when message has no uuid', () => {
+			const message = createTextMessage('Hello world');
+			delete (message as Record<string, unknown>).uuid;
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKUserMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeFalsy();
+		});
+
+		it('should not render checkbox when onMessageCheckboxChange is not provided', () => {
+			const message = createTextMessage('Hello world');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKUserMessage message={message} rewindMode={true} selectedMessages={selectedMessages} />
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeFalsy();
+		});
 	});
 
 	describe('Styling', () => {
