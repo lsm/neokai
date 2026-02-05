@@ -28,26 +28,39 @@ async function sendMessage(page: Page, messageText: string): Promise<void> {
  * Open the InputActionsMenu (plus button dropdown)
  */
 async function openInputActionsMenu(page: Page): Promise<void> {
-	const menuButton = page
-		.locator('button[aria-label="More options"]')
-		.or(page.locator('button:has(svg path[d="M12 4v16m8-8H4"])'));
+	// Use the More options button specifically - filter out New Session button
+	const menuButton = page.locator('button[title="More options"]');
 	await menuButton.waitFor({ state: 'visible', timeout: 5000 });
 	await menuButton.click();
 	await page.waitForTimeout(200);
 }
 
 /**
+ * Helper to wait for rewind mode to be fully activated and checkboxes to render
+ */
+async function waitForRewindModeReady(page: Page): Promise<void> {
+	// Wait for the rewind mode banner to appear
+	await page.waitForSelector('div:has-text("Select a message to rewind to")', { timeout: 5000 });
+	// Wait a bit more for checkboxes to render
+	await page.waitForTimeout(300);
+	// Wait for at least one checkbox to be present
+	await page.waitForSelector('[data-message-uuid] input[type="checkbox"]', { timeout: 5000 });
+}
+
+/**
  * Helper to count checkboxes visible in rewind mode
+ * Checkboxes are inside div[data-message-uuid] in rewind mode
  */
 async function getCheckboxCount(page: Page): Promise<number> {
-	return await page.locator('input[type="checkbox"][data-message-uuid]').count();
+	return await page.locator('[data-message-uuid] input[type="checkbox"]').count();
 }
 
 /**
  * Helper to get selected checkbox count
+ * Checkboxes are inside div[data-message-uuid] in rewind mode
  */
 async function getSelectedCheckboxCount(page: Page): Promise<number> {
-	return await page.locator('input[type="checkbox"][data-message-uuid]:checked').count();
+	return await page.locator('[data-message-uuid] input[type="checkbox"]:checked').count();
 }
 
 test.describe('Rewind Mode', () => {
@@ -61,7 +74,7 @@ test.describe('Rewind Mode', () => {
 		if (sessionId) {
 			// Exit rewind mode if active
 			const rewindModeActive = await page
-				.locator('div.bg-amber-500\\/10')
+				.locator('div:has-text("Select a message to rewind to")')
 				.isVisible()
 				.catch(() => false);
 			if (rewindModeActive) {
@@ -85,10 +98,10 @@ test.describe('Rewind Mode', () => {
 		// Open InputActionsMenu
 		await openInputActionsMenu(page);
 
-		// Verify "Rewind Mode" menu item exists
+		// Verify "Rewind Mode" menu item exists - use more specific selector
 		const rewindModeItem = page
-			.locator('button:has-text("Rewind Mode")')
-			.or(page.locator('[role="menuitem"]:has-text("Rewind Mode")'));
+			.locator('button', { hasText: 'Rewind Mode' })
+			.filter({ has: page.locator('svg path[d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"]') });
 		await expect(rewindModeItem).toBeVisible();
 	});
 
@@ -105,14 +118,12 @@ test.describe('Rewind Mode', () => {
 		// Open InputActionsMenu and click "Rewind Mode"
 		await openInputActionsMenu(page);
 		const rewindModeItem = page
-			.locator('button:has-text("Rewind Mode")')
-			.or(page.locator('[role="menuitem"]:has-text("Rewind Mode")'));
+			.locator('button', { hasText: 'Rewind Mode' })
+			.filter({ has: page.locator('svg path[d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"]') });
 		await rewindModeItem.click();
 
 		// Verify rewind mode banner appears
-		const rewindBanner = page
-			.locator('div.bg-amber-500\\/10')
-			.or(page.locator('div:has(svg path[d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"])'));
+		const rewindBanner = page.locator('div:has-text("Select a message to rewind to")').first();
 		await expect(rewindBanner).toBeVisible({ timeout: 5000 });
 
 		// Verify banner shows "Select a message to rewind to"
@@ -133,10 +144,12 @@ test.describe('Rewind Mode', () => {
 		// Enter rewind mode
 		await openInputActionsMenu(page);
 		const rewindModeItem = page
-			.locator('button:has-text("Rewind Mode")')
-			.or(page.locator('[role="menuitem"]:has-text("Rewind Mode")'));
+			.locator('button', { hasText: 'Rewind Mode' })
+			.filter({ has: page.locator('svg path[d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"]') });
 		await rewindModeItem.click();
-		await page.waitForTimeout(500);
+
+		// Wait for rewind mode to be fully ready
+		await waitForRewindModeReady(page);
 
 		// Verify checkboxes appear next to messages
 		const checkboxCount = await getCheckboxCount(page);
@@ -151,15 +164,21 @@ test.describe('Rewind Mode', () => {
 
 		// Send a message that triggers tool use
 		await sendMessage(page, 'What files are in the current directory?');
-		await page.waitForTimeout(3000); // Wait for tool execution
+		await page.waitForTimeout(5000); // Wait for tool execution
+
+		// Wait for the "More options" button to be visible
+		const menuButton = page.locator('button[title="More options"]');
+		await menuButton.waitFor({ state: 'visible', timeout: 10000 });
 
 		// Enter rewind mode
 		await openInputActionsMenu(page);
 		const rewindModeItem = page
-			.locator('button:has-text("Rewind Mode")')
-			.or(page.locator('[role="menuitem"]:has-text("Rewind Mode")'));
+			.locator('button', { hasText: 'Rewind Mode' })
+			.filter({ has: page.locator('svg path[d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"]') });
 		await rewindModeItem.click();
-		await page.waitForTimeout(500);
+
+		// Wait for rewind mode to be fully ready
+		await waitForRewindModeReady(page);
 
 		// Verify user and assistant messages have checkboxes
 		const userCheckboxes = page.locator('[data-message-uuid]').locator('input[type="checkbox"]');
@@ -184,16 +203,18 @@ test.describe('Rewind Mode', () => {
 		// Enter rewind mode
 		await openInputActionsMenu(page);
 		const rewindModeItem = page
-			.locator('button:has-text("Rewind Mode")')
-			.or(page.locator('[role="menuitem"]:has-text("Rewind Mode")'));
+			.locator('button', { hasText: 'Rewind Mode' })
+			.filter({ has: page.locator('svg path[d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"]') });
 		await rewindModeItem.click();
-		await page.waitForTimeout(500);
+
+		// Wait for rewind mode to be fully ready
+		await waitForRewindModeReady(page);
 
 		// Get initial checkbox count
 		const initialCheckboxCount = await getCheckboxCount(page);
 
 		// Click the first message checkbox
-		const firstCheckbox = page.locator('input[type="checkbox"][data-message-uuid]').first();
+		const firstCheckbox = page.locator('[data-message-uuid] input[type="checkbox"]').first();
 		await firstCheckbox.click();
 		await page.waitForTimeout(300);
 
@@ -217,21 +238,23 @@ test.describe('Rewind Mode', () => {
 		// Enter rewind mode
 		await openInputActionsMenu(page);
 		const rewindModeItem = page
-			.locator('button:has-text("Rewind Mode")')
-			.or(page.locator('[role="menuitem"]:has-text("Rewind Mode")'));
+			.locator('button', { hasText: 'Rewind Mode' })
+			.filter({ has: page.locator('svg path[d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"]') });
 		await rewindModeItem.click();
-		await page.waitForTimeout(500);
+
+		// Wait for rewind mode to be fully ready
+		await waitForRewindModeReady(page);
 
 		// Verify initial banner text
 		await expect(page.locator('text=Select a message to rewind to')).toBeVisible();
 
 		// Select a message
-		const firstCheckbox = page.locator('input[type="checkbox"][data-message-uuid]').first();
+		const firstCheckbox = page.locator('[data-message-uuid] input[type="checkbox"]').first();
 		await firstCheckbox.click();
 		await page.waitForTimeout(300);
 
 		// Verify banner shows selection count
-		const selectionText = page.locator(/message.*selected/);
+		const selectionText = page.getByText(/message.*selected/);
 		await expect(selectionText).toBeVisible();
 	});
 
@@ -249,10 +272,12 @@ test.describe('Rewind Mode', () => {
 		// Enter rewind mode
 		await openInputActionsMenu(page);
 		const rewindModeItem = page
-			.locator('button:has-text("Rewind Mode")')
-			.or(page.locator('[role="menuitem"]:has-text("Rewind Mode")'));
+			.locator('button', { hasText: 'Rewind Mode' })
+			.filter({ has: page.locator('svg path[d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"]') });
 		await rewindModeItem.click();
-		await page.waitForTimeout(500);
+
+		// Wait for rewind mode to be fully ready
+		await waitForRewindModeReady(page);
 
 		// "Rewind to Here" button should not be visible initially
 		const rewindButton = page
@@ -263,7 +288,7 @@ test.describe('Rewind Mode', () => {
 			.catch(() => {});
 
 		// Select a message
-		const firstCheckbox = page.locator('input[type="checkbox"][data-message-uuid]').first();
+		const firstCheckbox = page.locator('[data-message-uuid] input[type="checkbox"]').first();
 		await firstCheckbox.click();
 		await page.waitForTimeout(300);
 
@@ -284,29 +309,29 @@ test.describe('Rewind Mode', () => {
 		// Enter rewind mode
 		await openInputActionsMenu(page);
 		const rewindModeItem = page
-			.locator('button:has-text("Rewind Mode")')
-			.or(page.locator('[role="menuitem"]:has-text("Rewind Mode")'));
+			.locator('button', { hasText: 'Rewind Mode' })
+			.filter({ has: page.locator('svg path[d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"]') });
 		await rewindModeItem.click();
-		await page.waitForTimeout(500);
+
+		// Wait for rewind mode to be fully ready
+		await waitForRewindModeReady(page);
 
 		// Verify rewind mode is active
 		await expect(
-			page
-				.locator('div.bg-amber-500\\/10')
-				.or(page.locator('div:has(svg path[d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"])'))
+			page.locator('div:has-text("Select a message to rewind to")').first()
 		).toBeVisible();
 
 		// Open InputActionsMenu and click "Exit Rewind Mode"
 		await openInputActionsMenu(page);
 		const exitRewindModeItem = page
-			.locator('button:has-text("Exit Rewind Mode")')
-			.or(page.locator('[role="menuitem"]:has-text("Exit Rewind Mode")'));
+			.locator('button', { hasText: 'Exit Rewind Mode' })
+			.filter({ has: page.locator('svg path[d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"]') });
 		await expect(exitRewindModeItem).toBeVisible();
 		await exitRewindModeItem.click();
 		await page.waitForTimeout(500);
 
 		// Verify rewind mode banner is gone
-		await expect(page.locator('div.bg-amber-500\\/10'))
+		await expect(page.locator('div:has-text("Select a message to rewind to")'))
 			.not.toBeVisible({ timeout: 3000 })
 			.catch(() => {});
 
@@ -328,18 +353,22 @@ test.describe('Rewind Mode', () => {
 		// Enter rewind mode
 		await openInputActionsMenu(page);
 		const rewindModeItem = page
-			.locator('button:has-text("Rewind Mode")')
-			.or(page.locator('[role="menuitem"]:has-text("Rewind Mode")'));
+			.locator('button', { hasText: 'Rewind Mode' })
+			.filter({ has: page.locator('svg path[d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"]') });
 		await rewindModeItem.click();
-		await page.waitForTimeout(500);
+
+		// Wait for rewind mode to be fully ready
+		await waitForRewindModeReady(page);
 
 		// Open menu again to verify checkmark appears
 		await openInputActionsMenu(page);
 
 		// Check for checkmark icon next to "Exit Rewind Mode"
 		const checkmarkIcon = page
-			.locator('button:has-text("Exit Rewind Mode") svg')
-			.or(page.locator('[role="menuitem"]:has-text("Exit Rewind Mode") svg'));
+			.locator('button', { hasText: 'Exit Rewind Mode' })
+			.filter({ has: page.locator('svg path[d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"]') })
+			.locator('svg')
+			.first();
 		await expect(checkmarkIcon).toBeVisible();
 	});
 
@@ -357,13 +386,15 @@ test.describe('Rewind Mode', () => {
 		// Enter rewind mode
 		await openInputActionsMenu(page);
 		const rewindModeItem = page
-			.locator('button:has-text("Rewind Mode")')
-			.or(page.locator('[role="menuitem"]:has-text("Rewind Mode")'));
+			.locator('button', { hasText: 'Rewind Mode' })
+			.filter({ has: page.locator('svg path[d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"]') });
 		await rewindModeItem.click();
-		await page.waitForTimeout(500);
+
+		// Wait for rewind mode to be fully ready
+		await waitForRewindModeReady(page);
 
 		// Select a message
-		const firstCheckbox = page.locator('input[type="checkbox"][data-message-uuid]').first();
+		const firstCheckbox = page.locator('[data-message-uuid] input[type="checkbox"]').first();
 		await firstCheckbox.click();
 		await page.waitForTimeout(300);
 
