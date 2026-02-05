@@ -15,24 +15,15 @@
 		"typecheck": "tsc --build --noEmit",
 		"knip": "knip --include files,dependencies,exports --no-config-hints",
 		"knip:all": "knip",
-		"check": "bun run lint && bun run typecheck && bun run knip",
-		"test": "bun run test:daemon && bun run test:shared && bun run test:cli && bun run test:web",
-		"test:coverage": "bun run test:daemon:coverage && bun run test:cli:coverage && bun run test:web:coverage",
-		"test:daemon": "cd packages/daemon && bun test",
-		"test:daemon:coverage": "bun test packages/daemon/tests/unit packages/shared/tests --coverage --coverage-reporter=lcov --coverage-dir=coverage",
-		"test:web": "cd packages/web && vitest run",
-		"test:web:coverage": "cd packages/web && vitest run --coverage",
-		"test:shared": "cd packages/shared && bun test",
-		"test:cli": "cd packages/cli && bun test",
-		"test:e2e": "cd packages/e2e && playwright test"
+		"check": "bun run lint && bun run typecheck && bun run knip"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.3.12",
+		"@biomejs/biome": "2.3.14",
 		"@testing-library/preact": "3.2.4",
-		"dotenv": "^17.2.3",
-		"happy-dom": "20.3.7",
-		"knip": "5.82.1",
-		"oxlint": "1.41.0",
+		"dotenv": "17.2.3",
+		"happy-dom": "20.5.0",
+		"knip": "5.83.0",
+		"oxlint": "1.43.0",
 		"typescript": "5.9.3"
 	}
 }

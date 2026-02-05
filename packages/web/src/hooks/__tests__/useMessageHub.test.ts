@@ -400,40 +400,12 @@ describe('useMessageHub', () => {
 	});
 
 	describe('debug mode', () => {
-		it('should log connection state changes when debug is true', () => {
-			const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
-			// Set connected state
+		it('should accept debug option without error', () => {
 			mockConnectionState.value = 'connected';
+			const { result } = renderHook(() => useMessageHub({ debug: true }));
 
-			renderHook(() => useMessageHub({ debug: true }));
-
-			// State subscription is registered, log happens on state change
-			mockConnectionState.value = 'disconnected';
-
-			// The log should have been called
-			expect(consoleSpy).toHaveBeenCalledWith(
-				'[useMessageHub] Connection state changed:',
-				'disconnected'
-			);
-
-			consoleSpy.mockRestore();
-		});
-
-		it('should not log when debug is false', () => {
-			const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
-			mockConnectionState.value = 'connected';
-			renderHook(() => useMessageHub({ debug: false }));
-
-			mockConnectionState.value = 'disconnected';
-
-			expect(consoleSpy).not.toHaveBeenCalledWith(
-				expect.stringContaining('[useMessageHub]'),
-				expect.anything()
-			);
-
-			consoleSpy.mockRestore();
+			// Debug mode registers a no-op subscriber but should not throw
+			expect(result.current.isConnected).toBe(true);
 		});
 	});
 

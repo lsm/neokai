@@ -147,18 +147,12 @@ function handlePopState(_event: PopStateEvent): void {
  */
 export function initializeRouter(): string | null {
 	if (routerState.isInitialized) {
-		console.warn('[Router] Already initialized');
 		return getSessionIdFromPath(getCurrentPath());
 	}
-
-	console.log('[Router] Initializing router');
 
 	// Read initial session from URL
 	const initialPath = getCurrentPath();
 	const initialSessionId = getSessionIdFromPath(initialPath);
-
-	console.log('[Router] Initial path:', initialPath);
-	console.log('[Router] Initial session ID:', initialSessionId || 'none');
 
 	// Set up popstate listener for back/forward navigation
 	window.addEventListener('popstate', handlePopState);

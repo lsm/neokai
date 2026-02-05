@@ -423,6 +423,76 @@ describe('SDKUserMessage', () => {
 		});
 	});
 
+	describe('Rewind Mode', () => {
+		const onMessageCheckboxChange = vi.fn();
+
+		it('should render checkbox in rewind mode', () => {
+			const message = createTextMessage('Hello world');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKUserMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeTruthy();
+		});
+
+		it('should call onMessageCheckboxChange when checkbox is clicked', () => {
+			const message = createTextMessage('Hello world');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKUserMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			fireEvent.click(checkbox!);
+
+			expect(onMessageCheckboxChange).toHaveBeenCalledWith(message.uuid, true);
+		});
+
+		it('should not render checkbox when message has no uuid', () => {
+			const message = createTextMessage('Hello world');
+			delete (message as Record<string, unknown>).uuid;
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKUserMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeFalsy();
+		});
+
+		it('should not render checkbox when onMessageCheckboxChange is not provided', () => {
+			const message = createTextMessage('Hello world');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKUserMessage message={message} rewindMode={true} selectedMessages={selectedMessages} />
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeFalsy();
+		});
+	});
+
 	describe('Styling', () => {
 		it('should be right-aligned (user messages)', () => {
 			const message = createTextMessage('Hello');

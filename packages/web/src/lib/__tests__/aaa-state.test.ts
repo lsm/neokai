@@ -235,19 +235,22 @@ describe('ApplicationState', () => {
 				currentSessionId
 			);
 
-			// Spy on console.warn
-			const warnSpy = vi.spyOn(console, 'warn');
+			// Access private initialized signal
+			const initialized = (appState as unknown as { initialized: { value: boolean } }).initialized;
+			expect(initialized.value).toBe(true);
 
-			// Try to initialize again
+			// Try to initialize again - should be a no-op (no error, no extra subscriptions)
+			const subscriptionsBefore = (appState as unknown as { subscriptions: Array<() => void> })
+				.subscriptions.length;
+
 			await initializeApplicationState(
 				mockHub as unknown as Parameters<typeof initializeApplicationState>[0],
 				currentSessionId
 			);
 
-			// Should have warned
-			expect(warnSpy).toHaveBeenCalledWith('State already initialized');
-
-			warnSpy.mockRestore();
+			const subscriptionsAfter = (appState as unknown as { subscriptions: Array<() => void> })
+				.subscriptions.length;
+			expect(subscriptionsAfter).toBe(subscriptionsBefore);
 		});
 
 		it('should reset initialized flag on cleanup', async () => {
@@ -369,14 +372,12 @@ describe('ApplicationState - refreshAll', () => {
 		appState.cleanup();
 	});
 
-	it('should warn when refreshAll called without initialization', async () => {
-		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-		// Don't initialize - call refreshAll
+	it('should return early when refreshAll called without initialization', async () => {
+		// Don't initialize - call refreshAll (should not throw)
 		await appState.refreshAll();
 
-		expect(warnSpy).toHaveBeenCalledWith('[State] Cannot refresh: state not initialized');
-		warnSpy.mockRestore();
+		// Verify no hub calls were made since we're not initialized
+		expect(mockHub.call).not.toHaveBeenCalled();
 	});
 
 	it('should refresh session channels when initialized', async () => {
@@ -389,18 +390,13 @@ describe('ApplicationState - refreshAll', () => {
 		currentSessionId.value = 'refresh-test-session';
 		await waitForSessionSwitch();
 
-		const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
-		// Call refreshAll
+		// Call refreshAll - should not throw
 		await appState.refreshAll();
 
-		// Should have logged refresh messages
-		expect(logSpy).toHaveBeenCalledWith(
-			'[State] Refreshing state channels after reconnection validation'
-		);
-		expect(logSpy).toHaveBeenCalledWith('[State] Session state channels refreshed');
-
-		logSpy.mockRestore();
+		// Verify the session channels exist after refresh
+		const activeSessionId = (appState as unknown as { activeSessionId: string | null })
+			.activeSessionId;
+		expect(activeSessionId).toBe('refresh-test-session');
 	});
 
 	it('should handle refreshAll when no active session channels', async () => {
@@ -410,14 +406,14 @@ describe('ApplicationState - refreshAll', () => {
 		);
 
 		// Don't set a session - no active channels
-		const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
 		// Call refreshAll - should not throw
 		await appState.refreshAll();
 
-		expect(logSpy).toHaveBeenCalledWith('[State] Session state channels refreshed');
-
-		logSpy.mockRestore();
+		// Verify no active session is set
+		const activeSessionId = (appState as unknown as { activeSessionId: string | null })
+			.activeSessionId;
+		expect(activeSessionId).toBeNull();
 	});
 });
 
@@ -456,11 +452,8 @@ describe('ApplicationState - Session Channel Switch Error Handling', () => {
 		// Wait a bit more for the async error handler
 		await new Promise((resolve) => setTimeout(resolve, 100));
 
-		// Should have logged the error
-		expect(errorSpy).toHaveBeenCalledWith(
-			'[State] Session channel switch error:',
-			expect.any(Error)
-		);
+		// Should have logged the error (caught by .catch(console.error))
+		expect(errorSpy).toHaveBeenCalledWith(expect.any(Error));
 
 		errorSpy.mockRestore();
 	});

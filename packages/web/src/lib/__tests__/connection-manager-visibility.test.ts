@@ -75,9 +75,7 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 	});
 
 	describe('Page Hidden Event', () => {
-		it('should log when page becomes hidden', () => {
-			const consoleSpy = vi.spyOn(console, 'log');
-
+		it('should handle page becoming hidden without error', () => {
 			// Simulate page becoming hidden
 			Object.defineProperty(document, 'hidden', {
 				value: true,
@@ -85,9 +83,8 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 				configurable: true,
 			});
 
-			visibilityChangeHandler?.(new Event('visibilitychange'));
-
-			expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Page hidden'));
+			// Should not throw when page becomes hidden
+			expect(() => visibilityChangeHandler?.(new Event('visibilitychange'))).not.toThrow();
 		});
 	});
 

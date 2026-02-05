@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'preact/hooks';
-import { currentSessionIdSignal, sidebarOpenSignal } from '../lib/signals.ts';
+import { sidebarOpenSignal } from '../lib/signals.ts';
 import {
 	sessions,
 	authStatus,
@@ -62,22 +62,8 @@ export default function Sidebar() {
 				return;
 			}
 
-			console.log('[Sidebar] Session created successfully, sessionId:', response.sessionId);
-			console.log('[Sidebar] Response includes session:', !!response.session);
-
 			// Navigate immediately - the session will sync via state channels
-			console.log('[Sidebar] Navigating to session:', response.sessionId);
 			navigateToSession(response.sessionId);
-
-			// Verify session appears in list after a short delay
-			setTimeout(() => {
-				const currentSessionIds = sessions.value.map((s) => s.id);
-				if (!currentSessionIds.includes(response.sessionId)) {
-					console.warn('[Sidebar] Session not in list after navigation - delta may be delayed');
-				} else {
-					console.log('[Sidebar] Session successfully appeared in list');
-				}
-			}, 1000);
 
 			toast.success('Session created successfully');
 		} catch (err) {
@@ -96,10 +82,7 @@ export default function Sidebar() {
 	};
 
 	const handleSessionClick = (sessionId: string) => {
-		console.log('[Sidebar] Session clicked:', sessionId);
-		console.log('[Sidebar] Current signal value before update:', currentSessionIdSignal.value);
 		navigateToSession(sessionId);
-		console.log('[Sidebar] Current signal value after update:', currentSessionIdSignal.value);
 		// Close sidebar on mobile after selecting a session
 		if (window.innerWidth < 768) {
 			sidebarOpenSignal.value = false;

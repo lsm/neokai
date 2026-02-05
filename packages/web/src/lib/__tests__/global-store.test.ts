@@ -824,14 +824,9 @@ describe('GlobalStore - refresh()', () => {
 	});
 
 	it('should return early if not initialized', async () => {
-		const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
 		await store.refresh();
 
-		expect(consoleSpy).toHaveBeenCalledWith('[GlobalStore] Cannot refresh: not initialized');
 		expect(mockHub.call).not.toHaveBeenCalled();
-
-		consoleSpy.mockRestore();
 	});
 
 	it('should fetch fresh snapshot when initialized', async () => {
@@ -869,9 +864,7 @@ describe('GlobalStore - refresh()', () => {
 		expect(store.settings.value).toEqual({ refreshed: true });
 	});
 
-	it('should log success message after refresh', async () => {
-		const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
+	it('should complete refresh successfully when initialized', async () => {
 		// Initialize first
 		mockHub.call.mockResolvedValueOnce({
 			sessions: { sessions: [], hasArchivedSessions: false },
@@ -888,9 +881,8 @@ describe('GlobalStore - refresh()', () => {
 		});
 		await store.refresh();
 
-		expect(consoleSpy).toHaveBeenCalledWith('[GlobalStore] State refreshed after reconnection');
-
-		consoleSpy.mockRestore();
+		// Verify refresh called the snapshot endpoint
+		expect(mockHub.call).toHaveBeenLastCalledWith('state.global.snapshot', {});
 	});
 
 	it('should throw error on refresh failure', async () => {

@@ -335,14 +335,12 @@ class SessionStore {
 	async refresh(): Promise<void> {
 		const sessionId = this.activeSessionId.value;
 		if (!sessionId) {
-			console.log('[SessionStore] No active session to refresh');
 			return;
 		}
 
 		try {
 			const hub = await connectionManager.getHub();
 			await this.fetchInitialState(hub, sessionId);
-			console.log('[SessionStore] State refreshed after reconnection');
 		} catch (err) {
 			console.error('[SessionStore] Failed to refresh state:', err);
 			// Don't throw - subscriptions will still receive updates
