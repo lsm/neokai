@@ -1,14 +1,13 @@
 /**
  * useInterrupt Hook
  *
- * Handles agent interrupt functionality with global Escape key support.
+ * Handles agent interrupt functionality.
  * Extracted from MessageInput.tsx for better separation of concerns.
  */
 
 import { useState, useEffect, useCallback } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
-import { isAgentWorking } from '../lib/state.ts';
 
 export interface UseInterruptOptions {
 	sessionId: string;
@@ -48,19 +47,6 @@ export function useInterrupt({ sessionId }: UseInterruptOptions): UseInterruptRe
 			setTimeout(() => setInterrupting(false), 500);
 		}
 	}, [sessionId, interrupting]);
-
-	// Global Escape key listener for interrupt
-	useEffect(() => {
-		const handleGlobalEscape = (e: KeyboardEvent) => {
-			if (e.key === 'Escape' && isAgentWorking.value && !interrupting) {
-				e.preventDefault();
-				handleInterrupt();
-			}
-		};
-
-		document.addEventListener('keydown', handleGlobalEscape);
-		return () => document.removeEventListener('keydown', handleGlobalEscape);
-	}, [interrupting, handleInterrupt]);
 
 	return {
 		interrupting,
