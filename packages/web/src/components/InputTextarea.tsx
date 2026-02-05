@@ -195,7 +195,7 @@ export function InputTextarea({
 						type="button"
 						onClick={onInterrupt}
 						disabled={interrupting}
-						title="Stop generation (Escape)"
+						title="Stop generation"
 						aria-label="Stop generation"
 						data-testid="stop-button"
 						class={cn(

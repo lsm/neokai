@@ -4,7 +4,6 @@
  * Tests the stop/interrupt button functionality:
  * - Button visibility and state during agent processing
  * - Click to interrupt functionality
- * - Escape key to interrupt functionality
  * - Loading states and UI feedback
  * - Button transitions between send/stop states
  */
@@ -125,32 +124,6 @@ test.describe('Interrupt Button', () => {
 		await cleanupTestSession(page, sessionId);
 	});
 
-	test('should interrupt agent when Escape key is pressed', async ({ page }) => {
-		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
-
-		// Send a long message
-		const messageInput = await waitForElement(page, 'textarea');
-		await messageInput.fill('Explain the history of the internet in detail with examples.');
-		await page.click('[data-testid="send-button"]');
-
-		// Wait for processing to start - stop button should appear
-		await expect(page.locator('[data-testid="stop-button"]')).toBeVisible({
-			timeout: 10000,
-		});
-
-		// Press Escape key
-		await page.keyboard.press('Escape');
-
-		// Send button should return - this is the key indicator of successful interrupt
-		await expect(page.locator('[data-testid="send-button"]')).toBeVisible({
-			timeout: 15000,
-		});
-
-		await cleanupTestSession(page, sessionId);
-	});
-
 	test('should show loading spinner while interrupting', async ({ page }) => {
 		// Create a session
 		await page.getByRole('button', { name: 'New Session', exact: true }).click();
@@ -257,36 +230,6 @@ test.describe('Interrupt Button', () => {
 		// Should eventually return to idle state (send button visible)
 		await expect(page.locator('[data-testid="send-button"]')).toBeVisible({
 			timeout: 20000,
-		});
-
-		await cleanupTestSession(page, sessionId);
-	});
-
-	test('Escape key should work even when textarea is disabled', async ({ page }) => {
-		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
-
-		// Send a message
-		const messageInput = await waitForElement(page, 'textarea');
-		await messageInput.fill('Write a tutorial on functional programming.');
-		await page.click('[data-testid="send-button"]');
-
-		// Wait for processing to start - stop button should appear
-		await expect(page.locator('[data-testid="stop-button"]')).toBeVisible({
-			timeout: 10000,
-		});
-
-		// Document textarea state during processing (for informational purposes)
-		const isTextareaDisabled = await messageInput.isDisabled();
-		console.log(`Textarea disabled during processing: ${isTextareaDisabled}`);
-
-		// Press Escape (should work regardless of textarea disabled state)
-		await page.keyboard.press('Escape');
-
-		// Send button should return - this is the key indicator of successful interrupt
-		await expect(page.locator('[data-testid="send-button"]')).toBeVisible({
-			timeout: 15000,
 		});
 
 		await cleanupTestSession(page, sessionId);
