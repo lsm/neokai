@@ -100,9 +100,7 @@ test.describe('Reconnection - Basic Message Sync', () => {
 		const messageIds = new Set<string>();
 
 		for (const element of messageElements) {
-			const uuid = await element.evaluate(
-				(el) => el.closest('[data-message-uuid]')?.getAttribute('data-message-uuid') || null
-			);
+			const uuid = await element.evaluate((el) => el.getAttribute('data-message-uuid') || null);
 			if (uuid) {
 				expect(messageIds.has(uuid)).toBe(false); // Should not be duplicate
 				messageIds.add(uuid);

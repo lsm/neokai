@@ -35,6 +35,12 @@ export async function waitForSessionCreated(page: Page): Promise<string> {
 	// Wait for session to be created and loaded
 	await page.waitForTimeout(1500);
 
+	// Verify we're NOT on the welcome screen
+	await page.waitForFunction(
+		() => !document.querySelector('h2')?.textContent?.includes('Welcome to NeoKai'),
+		{ timeout: 10000 }
+	);
+
 	// Verify we're in a chat view (message input should be visible)
 	const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 	await expect(messageInput).toBeVisible({ timeout: 10000 });
