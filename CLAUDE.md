@@ -36,8 +36,8 @@ make dev                  # Start dev server on port 9283 (workspace: tmp/worksp
 make dev-random           # Start dev server on random available port
 
 # Testing
-make test:daemon       # Daemon tests only (bun test)
-make test:web          # Web tests only (vitest run)
+make test:daemon       # Daemon tests only (bun test) with coverage
+make test:web          # Web tests only (vitest run) with coverage
 
 # Run a single test file
 cd packages/daemon && bun test tests/unit/some-test.test.ts

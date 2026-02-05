@@ -10,13 +10,14 @@ import { toast } from '../../lib/toast.ts';
 import { cn, copyToClipboard } from '../../lib/utils.ts';
 import { Dropdown } from '../ui/Dropdown.tsx';
 import { IconButton } from '../ui/IconButton.tsx';
+import { Spinner } from '../ui/Spinner.tsx';
 import { Tooltip } from '../ui/Tooltip.tsx';
 import { ErrorOutput, hasErrorOutput } from './ErrorOutput.tsx';
 import { MessageInfoButton } from './MessageInfoButton.tsx';
 import { MessageInfoDropdown } from './MessageInfoDropdown.tsx';
+import { renderRewindCheckbox } from './RewindCheckbox.tsx';
 import { isHiddenCommandOutput, SlashCommandOutput } from './SlashCommandOutput.tsx';
 import { SyntheticMessageBlock } from './SyntheticMessageBlock.tsx';
-import { Spinner } from '../ui/Spinner.tsx';
 
 type UserMessage = Extract<SDKMessage, { type: 'user' }>;
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
@@ -211,23 +212,14 @@ export function SDKUserMessage({
 	// Get message metadata for E2E tests
 	const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
 
-	// Checkbox rendering for rewind mode
-	const renderCheckbox = () => {
-		if (!rewindMode || !message.uuid || !onMessageCheckboxChange) {
-			return null;
-		}
-
-		return (
-			<input
-				type="checkbox"
-				checked={selectedMessages?.has(message.uuid) || false}
-				onChange={(e) =>
-					onMessageCheckboxChange(message.uuid!, (e.target as HTMLInputElement).checked)
-				}
-				class="w-5 h-5 appearance-none rounded border border-gray-600 bg-gray-800 dark:bg-gray-700 text-amber-500 focus:ring-amber-500 focus:ring-2 focus:ring-offset-gray-900 cursor-pointer transition-colors checked:bg-amber-500 checked:border-amber-500 hover:border-gray-500 checked:hover:bg-amber-600 checked:hover:border-amber-600 relative before:absolute before:inset-0 before:flex before:items-center before:justify-center before:content-['✓'] before:text-white before:text-sm before:font-bold before:opacity-0 checked:before:opacity-100 flex-shrink-0"
-			/>
-		);
-	};
+	// Checkbox rendering for rewind mode (using shared function)
+	const renderCheckbox = () =>
+		renderRewindCheckbox({
+			rewindMode,
+			messageUuid: message.uuid,
+			onMessageCheckboxChange,
+			selectedMessages,
+		});
 
 	// Message bubble component - extracted for proper checkbox alignment
 	const messageBubble = (

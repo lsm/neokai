@@ -8,26 +8,26 @@
  * - AskUserQuestion tool blocks with inline QuestionPrompt
  */
 
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { PendingUserQuestion, QuestionDraftResponse, ResolvedQuestion } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { AgentInput } from '@neokai/shared/sdk/sdk-tools.d.ts';
 import {
-	isTextBlock,
-	isToolUseBlock,
-	isThinkingBlock,
 	type ContentBlock,
+	isTextBlock,
+	isThinkingBlock,
+	isToolUseBlock,
 } from '@neokai/shared/sdk/type-guards';
+import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
+import { toast } from '../../lib/toast.ts';
+import { cn, copyToClipboard } from '../../lib/utils.ts';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
+import { QuestionPrompt } from '../QuestionPrompt.tsx';
 import { IconButton } from '../ui/IconButton.tsx';
 import { Tooltip } from '../ui/Tooltip.tsx';
-import { copyToClipboard } from '../../lib/utils.ts';
-import { toast } from '../../lib/toast.ts';
-import { messageSpacing, messageColors, borderRadius } from '../../lib/design-tokens.ts';
-import { cn } from '../../lib/utils.ts';
-import { ToolResultCard } from './tools/index.ts';
-import { ThinkingBlock } from './ThinkingBlock.tsx';
+import { renderRewindCheckbox } from './RewindCheckbox.tsx';
 import { SubagentBlock } from './SubagentBlock.tsx';
-import { QuestionPrompt } from '../QuestionPrompt.tsx';
-import type { AgentInput } from '@neokai/shared/sdk/sdk-tools.d.ts';
+import { ThinkingBlock } from './ThinkingBlock.tsx';
+import { ToolResultCard } from './tools/index.ts';
 
 type AssistantMessage = Extract<SDKMessage, { type: 'assistant' }>;
 
@@ -202,27 +202,15 @@ export function SDKAssistantMessage({
 			return msgWithParent.parent_tool_use_id === message.uuid;
 		}) || false;
 
-	// Checkbox rendering for rewind mode
-	const renderCheckbox = () => {
-		// Skip if has sub-agent children
-		if (hasSubagentChild) {
-			return null;
-		}
-		if (!rewindMode || !message.uuid || !onMessageCheckboxChange) {
-			return null;
-		}
-
-		return (
-			<input
-				type="checkbox"
-				checked={selectedMessages?.has(message.uuid) || false}
-				onChange={(e) =>
-					onMessageCheckboxChange(message.uuid!, (e.target as HTMLInputElement).checked)
-				}
-				class="w-5 h-5 appearance-none rounded border border-gray-600 bg-gray-800 dark:bg-gray-700 text-amber-500 focus:ring-amber-500 focus:ring-2 focus:ring-offset-gray-900 cursor-pointer transition-colors checked:bg-amber-500 checked:border-amber-500 hover:border-gray-500 checked:hover:bg-amber-600 checked:hover:border-amber-600 relative before:absolute before:inset-0 before:flex before:items-center before:justify-center before:content-['✓'] before:text-white before:text-sm before:font-bold before:opacity-0 checked:before:opacity-100 flex-shrink-0"
-			/>
-		);
-	};
+	// Checkbox rendering for rewind mode (using shared function)
+	const renderCheckbox = () =>
+		renderRewindCheckbox({
+			rewindMode,
+			messageUuid: message.uuid,
+			onMessageCheckboxChange,
+			selectedMessages,
+			hasSubagentChild,
+		});
 
 	// Wrap with checkbox if in rewind mode - simpler structure for proper alignment
 	if (rewindMode && message.uuid && onMessageCheckboxChange && !hasSubagentChild) {
