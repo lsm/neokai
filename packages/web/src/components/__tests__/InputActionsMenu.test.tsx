@@ -279,5 +279,38 @@ describe('InputActionsMenu', () => {
 
 			expect(onClose).toHaveBeenCalled();
 		});
+
+		it('should call onExitRewindMode when rewind mode is active', () => {
+			const onExitRewindMode = vi.fn(() => {});
+			const onClose = vi.fn(() => {});
+			const { container } = render(
+				<InputActionsMenu
+					{...defaultProps}
+					isOpen={true}
+					rewindMode={true}
+					onExitRewindMode={onExitRewindMode}
+					onClose={onClose}
+				/>
+			);
+
+			const buttons = container.querySelectorAll('button');
+			const rewindButton = Array.from(buttons).find((b) => b.textContent?.includes('Exit Rewind'));
+			rewindButton?.click();
+
+			expect(onExitRewindMode).toHaveBeenCalled();
+			expect(onClose).toHaveBeenCalled();
+		});
+
+		it('should show checkmark when rewind mode is active', () => {
+			const { container } = render(
+				<InputActionsMenu {...defaultProps} isOpen={true} rewindMode={true} />
+			);
+			const text = container.textContent;
+			expect(text).toContain('Exit Rewind Mode');
+
+			// Should have checkmark indicator
+			const checkmarks = container.querySelectorAll('svg');
+			expect(checkmarks.length).toBeGreaterThan(3);
+		});
 	});
 });

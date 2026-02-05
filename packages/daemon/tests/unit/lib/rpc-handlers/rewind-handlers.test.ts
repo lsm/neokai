@@ -303,7 +303,10 @@ describe('Rewind Handlers', () => {
 			})) as { result: typeof mockResult };
 
 			expect(result.result).toEqual(mockResult);
-			expect(mockAgentSession.executeSelectiveRewind).toHaveBeenCalledWith(['msg-1', 'msg-2']);
+			expect(mockAgentSession.executeSelectiveRewind).toHaveBeenCalledWith(
+				['msg-1', 'msg-2'],
+				'both'
+			);
 		});
 
 		it('should return error if no messages selected', async () => {

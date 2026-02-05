@@ -2,6 +2,7 @@
  * SDK Message Renderer - Routes SDK messages to appropriate renderers
  */
 
+import type { JSX } from 'preact';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { PendingUserQuestion, QuestionDraftResponse, ResolvedQuestion } from '@neokai/shared';
 import {
@@ -41,6 +42,7 @@ interface Props {
 		responses: QuestionDraftResponse[]
 	) => void;
 	onRewind?: (uuid: string) => void; // Rewind to this message
+	rewindingMessageUuid?: string | null; // UUID of message currently being rewound (shows spinner)
 	// Rewind mode props
 	rewindMode?: boolean;
 	selectedMessages?: Set<string>;
@@ -73,10 +75,11 @@ export function SDKMessageRenderer({
 	pendingQuestion,
 	onQuestionResolved,
 	onRewind,
+	rewindingMessageUuid,
 	rewindMode,
 	selectedMessages,
 	onMessageCheckboxChange,
-	allMessages,
+	allMessages: _allMessages,
 }: Props) {
 	// Skip messages that shouldn't be shown to user (e.g., stream events)
 	if (!isUserVisibleMessage(message)) {
@@ -93,41 +96,37 @@ export function SDKMessageRenderer({
 		return null;
 	}
 
+	// Compute the rendered message component
+	let renderedMessage: JSX.Element | null = null;
+
 	// Route to appropriate renderer based on message type
 	// Handle user replay messages (slash command responses) first
 	if (isSDKUserMessageReplay(message)) {
-		return (
+		renderedMessage = (
 			<SDKUserMessage
 				message={message}
 				sessionInfo={sessionInfo}
 				isReplay={true}
 				sessionId={sessionId}
-				onRewind={onRewind}
-				rewindMode={rewindMode}
-				selectedMessages={selectedMessages}
-				onMessageCheckboxChange={onMessageCheckboxChange}
-				allMessages={allMessages}
 			/>
 		);
-	}
-
-	if (isSDKUserMessage(message)) {
-		return (
+	} else if (isSDKUserMessage(message)) {
+		// Always render user messages - pass rewind mode props
+		renderedMessage = (
 			<SDKUserMessage
 				message={message}
 				sessionInfo={sessionInfo}
 				sessionId={sessionId}
-				onRewind={onRewind}
+				onRewind={rewindMode ? undefined : onRewind}
+				rewindingMessageUuid={rewindMode ? undefined : rewindingMessageUuid}
 				rewindMode={rewindMode}
 				selectedMessages={selectedMessages}
 				onMessageCheckboxChange={onMessageCheckboxChange}
-				allMessages={allMessages}
+				allMessages={_allMessages}
 			/>
 		);
-	}
-
-	if (isSDKAssistantMessage(message)) {
-		return (
+	} else if (isSDKAssistantMessage(message)) {
+		renderedMessage = (
 			<SDKAssistantMessage
 				message={message}
 				toolResultsMap={toolResultsMap}
@@ -136,25 +135,21 @@ export function SDKMessageRenderer({
 				resolvedQuestions={resolvedQuestions}
 				pendingQuestion={pendingQuestion}
 				onQuestionResolved={onQuestionResolved}
+				rewindMode={rewindMode}
+				selectedMessages={selectedMessages}
+				onMessageCheckboxChange={onMessageCheckboxChange}
+				allMessages={_allMessages}
 			/>
 		);
-	}
-
-	if (isSDKResultMessage(message)) {
-		return <SDKResultMessage message={message} />;
-	}
-
-	if (isSDKSystemMessage(message)) {
-		return <SDKSystemMessage message={message} />;
-	}
-
-	if (isSDKToolProgressMessage(message)) {
+	} else if (isSDKResultMessage(message)) {
+		renderedMessage = <SDKResultMessage message={message} />;
+	} else if (isSDKSystemMessage(message)) {
+		renderedMessage = <SDKSystemMessage message={message} />;
+	} else if (isSDKToolProgressMessage(message)) {
 		const toolInput = toolInputsMap?.get(message.tool_use_id);
-		return <SDKToolProgressMessage message={message} toolInput={toolInput} />;
-	}
-
-	if (isSDKAuthStatusMessage(message)) {
-		return (
+		renderedMessage = <SDKToolProgressMessage message={message} toolInput={toolInput} />;
+	} else if (isSDKAuthStatusMessage(message)) {
+		renderedMessage = (
 			<AuthStatusCard
 				isAuthenticating={message.isAuthenticating}
 				output={message.output}
@@ -162,18 +157,22 @@ export function SDKMessageRenderer({
 				variant="default"
 			/>
 		);
+	} else {
+		// Fallback for unknown message types (shouldn't happen, but safe)
+		renderedMessage = (
+			<div class="p-3 bg-gray-100 dark:bg-gray-800 rounded">
+				<div class="text-xs text-gray-600 dark:text-gray-400 mb-1">
+					Unknown message type: {message.type}
+				</div>
+				<details>
+					<summary class="text-xs cursor-pointer text-gray-500">Show raw data</summary>
+					<pre class="text-xs mt-2 overflow-x-auto">{JSON.stringify(message, null, 2)}</pre>
+				</details>
+			</div>
+		);
 	}
 
-	// Fallback for unknown message types (shouldn't happen, but safe)
-	return (
-		<div class="p-3 bg-gray-100 dark:bg-gray-800 rounded">
-			<div class="text-xs text-gray-600 dark:text-gray-400 mb-1">
-				Unknown message type: {message.type}
-			</div>
-			<details>
-				<summary class="text-xs cursor-pointer text-gray-500">Show raw data</summary>
-				<pre class="text-xs mt-2 overflow-x-auto">{JSON.stringify(message, null, 2)}</pre>
-			</details>
-		</div>
-	);
+	// Default path - just return the rendered message as-is
+	// Checkbox rendering is now handled by individual message components
+	return renderedMessage;
 }

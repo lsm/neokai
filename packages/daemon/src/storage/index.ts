@@ -122,6 +122,10 @@ export class Database {
 		return this.sdkMessageRepo.deleteMessagesAfter(sessionId, afterTimestamp);
 	}
 
+	deleteMessagesAtAndAfter(sessionId: string, atTimestamp: number): number {
+		return this.sdkMessageRepo.deleteMessagesAtAndAfter(sessionId, atTimestamp);
+	}
+
 	// Rewind feature: get user messages as checkpoints
 	getUserMessages(sessionId: string): Array<{ uuid: string; timestamp: number; content: string }> {
 		return this.sdkMessageRepo.getUserMessages(sessionId);

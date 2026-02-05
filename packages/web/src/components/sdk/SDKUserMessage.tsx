@@ -5,18 +5,19 @@
  */
 
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import { IconButton } from '../ui/IconButton.tsx';
-import { Dropdown } from '../ui/Dropdown.tsx';
-import { Tooltip } from '../ui/Tooltip.tsx';
-import { copyToClipboard } from '../../lib/utils.ts';
+import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
 import { toast } from '../../lib/toast.ts';
-import { cn } from '../../lib/utils.ts';
+import { cn, copyToClipboard } from '../../lib/utils.ts';
+import { Dropdown } from '../ui/Dropdown.tsx';
+import { IconButton } from '../ui/IconButton.tsx';
+import { Spinner } from '../ui/Spinner.tsx';
+import { Tooltip } from '../ui/Tooltip.tsx';
+import { ErrorOutput, hasErrorOutput } from './ErrorOutput.tsx';
 import { MessageInfoButton } from './MessageInfoButton.tsx';
 import { MessageInfoDropdown } from './MessageInfoDropdown.tsx';
-import { messageSpacing, messageColors, borderRadius } from '../../lib/design-tokens.ts';
-import { SlashCommandOutput, isHiddenCommandOutput } from './SlashCommandOutput.tsx';
+import { renderRewindCheckbox } from './RewindCheckbox.tsx';
+import { isHiddenCommandOutput, SlashCommandOutput } from './SlashCommandOutput.tsx';
 import { SyntheticMessageBlock } from './SyntheticMessageBlock.tsx';
-import { ErrorOutput, hasErrorOutput } from './ErrorOutput.tsx';
 
 type UserMessage = Extract<SDKMessage, { type: 'user' }>;
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
@@ -28,12 +29,13 @@ interface Props {
 	sessionInfo?: SystemInitMessage; // Optional session init info to display
 	isReplay?: boolean; // Whether this is a replay message (slash command response)
 	sessionId?: string; // Session ID for rewind operations
-	onRewind?: (uuid: string) => void; // Callback for rewind to this message
+	onRewind?: (uuid: string) => void; // Rewind to this message
+	rewindingMessageUuid?: string | null; // UUID of message currently being rewound
 	// Rewind mode props
 	rewindMode?: boolean;
 	selectedMessages?: Set<string>;
 	onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
-	allMessages?: Array<{ uuid?: string }>;
+	allMessages?: SDKMessage[];
 }
 
 export function SDKUserMessage({
@@ -44,10 +46,11 @@ export function SDKUserMessage({
 	isReplay,
 	sessionId,
 	onRewind,
+	rewindingMessageUuid,
 	rewindMode,
 	selectedMessages,
 	onMessageCheckboxChange,
-	allMessages,
+	allMessages: _allMessages,
 }: Props) {
 	const { message: apiMessage } = message;
 
@@ -209,142 +212,163 @@ export function SDKUserMessage({
 	// Get message metadata for E2E tests
 	const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
 
-	// Check if this message is selected in rewind mode
-	const isSelected = rewindMode && message.uuid && selectedMessages?.has(message.uuid);
+	// Checkbox rendering for rewind mode (using shared function)
+	const renderCheckbox = () =>
+		renderRewindCheckbox({
+			rewindMode,
+			messageUuid: message.uuid,
+			onMessageCheckboxChange,
+			selectedMessages,
+		});
 
-	return (
+	// Message bubble component - extracted for proper checkbox alignment
+	const messageBubble = (
 		<div
 			class={cn(
-				messageSpacing.user.container.combined,
-				rewindMode ? 'flex justify-start' : 'flex justify-end',
-				'gap-3'
+				messageColors.user.background,
+				borderRadius.message.bubble,
+				messageSpacing.user.bubble.combined
 			)}
+		>
+			{/* Main Content */}
+			<div class={cn(messageColors.user.text, 'whitespace-pre-wrap break-words')}>
+				{textContent}
+			</div>
+
+			{/* Attached images */}
+			{imageBlocks.length > 0 && (
+				<div class="mt-3 space-y-2">
+					{imageBlocks.map((img, idx) => {
+						const source = img.source as Record<string, unknown>;
+						const mediaType = source.media_type as string;
+						const data = source.data as string;
+
+						return (
+							<div key={idx} class="rounded overflow-hidden border border-gray-600/50">
+								<img
+									src={`data:${mediaType};base64,${data}`}
+									alt="Attached image"
+									class="max-w-full h-auto"
+								/>
+							</div>
+						);
+					})}
+				</div>
+			)}
+
+			{/* Parent tool use indicator (for sub-agent messages) */}
+			{message.parent_tool_use_id && (
+				<div class="mt-2 text-xs text-gray-500 dark:text-gray-400 italic">
+					Sub-agent message (parent: {message.parent_tool_use_id.slice(0, 8)}...)
+				</div>
+			)}
+		</div>
+	);
+
+	// Actions/toolbar component
+	const messageActions = (
+		<div
+			class={cn(
+				'flex items-center justify-end',
+				messageSpacing.actions.gap,
+				messageSpacing.actions.marginTop,
+				messageSpacing.actions.padding
+			)}
+		>
+			<Tooltip content={getFullTimestamp()} position="left">
+				<span class="text-xs text-gray-500">{getTimestamp()}</span>
+			</Tooltip>
+
+			{message.isSynthetic && (
+				<Tooltip content="System-generated message" position="left">
+					<span class="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded">
+						synthetic
+					</span>
+				</Tooltip>
+			)}
+
+			{/* Rewind button - only for non-replay user messages with valid UUID */}
+			{!isReplay &&
+				onRewind &&
+				sessionId &&
+				message.uuid &&
+				(rewindingMessageUuid === message.uuid ? (
+					<Spinner size="sm" color="border-amber-500" />
+				) : (
+					<Tooltip content="Rewind to this message" position="left">
+						<IconButton size="md" onClick={() => onRewind(message.uuid!)} title="Rewind to here">
+							<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
+								/>
+							</svg>
+						</IconButton>
+					</Tooltip>
+				))}
+
+			{/* Session info icon (if session info is attached) */}
+			{sessionInfo && (
+				<Dropdown
+					trigger={<MessageInfoButton />}
+					items={[]}
+					customContent={<MessageInfoDropdown sessionInfo={sessionInfo} />}
+				/>
+			)}
+
+			<IconButton size="md" onClick={handleCopy} title="Copy message">
+				<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={2}
+						d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+					/>
+				</svg>
+			</IconButton>
+		</div>
+	);
+
+	// Wrap with checkbox if in rewind mode - simpler structure for proper alignment
+	if (rewindMode && message.uuid && onMessageCheckboxChange) {
+		return (
+			<div
+				class={cn(messageSpacing.user.container.combined)}
+				data-testid="user-message"
+				data-message-role="user"
+				data-message-uuid={message.uuid}
+				data-message-timestamp={messageWithTimestamp.timestamp || 0}
+			>
+				<div class="flex items-center gap-2">
+					{renderCheckbox()}
+					<div class="flex justify-end flex-1">
+						<div class="max-w-[85%] md:max-w-[70%] w-auto">{messageBubble}</div>
+					</div>
+				</div>
+				<div class="flex justify-end">
+					<div class="max-w-[85%] md:max-w-[70%] w-auto">{messageActions}</div>
+				</div>
+			</div>
+		);
+	}
+
+	// Normal mode (non-rewind): original layout
+	const messageContent = (
+		<div
+			class={cn(messageSpacing.user.container.combined, 'flex justify-end')}
 			data-testid="user-message"
 			data-message-role="user"
-			data-message-uuid={message.uuid}
+			data-message-uuid={message.uuid ?? ''}
 			data-message-timestamp={messageWithTimestamp.timestamp || 0}
 		>
-			{/* Rewind Mode Checkbox */}
-			{rewindMode && message.uuid && onMessageCheckboxChange && allMessages && (
-				<div class="flex items-start pt-3">
-					<input
-						type="checkbox"
-						checked={isSelected}
-						onChange={(e) => {
-							const target = e.target as HTMLInputElement;
-							onMessageCheckboxChange(message.uuid!, target.checked);
-						}}
-						class="w-5 h-5 rounded border-gray-500 bg-dark-800 text-amber-500 focus:ring-amber-500 focus:ring-offset-dark-900 cursor-pointer"
-					/>
-				</div>
-			)}
-
 			<div class="max-w-[85%] md:max-w-[70%] w-auto">
-				{/* Message bubble */}
-				<div
-					class={cn(
-						messageColors.user.background,
-						borderRadius.message.bubble,
-						messageSpacing.user.bubble.combined
-					)}
-				>
-					{/* Main Content */}
-					<div class={cn(messageColors.user.text, 'whitespace-pre-wrap break-words')}>
-						{textContent}
-					</div>
-
-					{/* Attached images */}
-					{imageBlocks.length > 0 && (
-						<div class="mt-3 space-y-2">
-							{imageBlocks.map((img, idx) => {
-								const source = img.source as Record<string, unknown>;
-								const mediaType = source.media_type as string;
-								const data = source.data as string;
-
-								return (
-									<div key={idx} class="rounded overflow-hidden border border-gray-600/50">
-										<img
-											src={`data:${mediaType};base64,${data}`}
-											alt="Attached image"
-											class="max-w-full h-auto"
-										/>
-									</div>
-								);
-							})}
-						</div>
-					)}
-
-					{/* Parent tool use indicator (for sub-agent messages) */}
-					{message.parent_tool_use_id && (
-						<div class="mt-2 text-xs text-gray-500 dark:text-gray-400 italic">
-							Sub-agent message (parent: {message.parent_tool_use_id.slice(0, 8)}...)
-						</div>
-					)}
-				</div>
-
-				{/* Actions and timestamp - outside the bubble, bottom right */}
-				<div
-					class={cn(
-						'flex items-center justify-end',
-						messageSpacing.actions.gap,
-						messageSpacing.actions.marginTop,
-						messageSpacing.actions.padding
-					)}
-				>
-					<Tooltip content={getFullTimestamp()} position="left">
-						<span class="text-xs text-gray-500">{getTimestamp()}</span>
-					</Tooltip>
-
-					{message.isSynthetic && (
-						<Tooltip content="System-generated message" position="left">
-							<span class="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded">
-								synthetic
-							</span>
-						</Tooltip>
-					)}
-
-					{/* Rewind button - always visible for user messages with UUID */}
-					{!message.isSynthetic && message.uuid && sessionId && onRewind && (
-						<Tooltip content="Rewind to this message" position="left">
-							<IconButton
-								size="md"
-								onClick={() => onRewind(message.uuid!)}
-								title="Rewind to here"
-								class="text-gray-500 hover:text-amber-600 dark:text-gray-400 dark:hover:text-amber-500"
-							>
-								<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
-									/>
-								</svg>
-							</IconButton>
-						</Tooltip>
-					)}
-
-					{/* Session info icon (if session info is attached) */}
-					{sessionInfo && (
-						<Dropdown
-							trigger={<MessageInfoButton />}
-							items={[]}
-							customContent={<MessageInfoDropdown sessionInfo={sessionInfo} />}
-						/>
-					)}
-
-					<IconButton size="md" onClick={handleCopy} title="Copy message">
-						<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-							/>
-						</svg>
-					</IconButton>
-				</div>
+				{messageBubble}
+				{messageActions}
 			</div>
 		</div>
 	);
+
+	return messageContent;
 }

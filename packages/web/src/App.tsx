@@ -22,7 +22,6 @@ export function App() {
 		// STEP 1: Initialize URL-based router BEFORE any state management
 		// This ensures we read the session ID from URL on page load
 		const initialSessionId = initializeRouter();
-		console.log('[App] Router initialized with session:', initialSessionId || 'none');
 
 		// STEP 2: Initialize state management when app mounts
 		const init = async () => {
@@ -32,16 +31,13 @@ export function App() {
 
 				// Initialize new unified stores (Phase 3 migration)
 				await globalStore.initialize();
-				console.log('[App] GlobalStore initialized successfully');
 
 				// Initialize legacy state channels (will be removed in Phase 5)
 				// Pass initialSessionId so state channels know the URL state
 				await initializeApplicationState(hub, currentSessionIdSignal);
-				console.log('[App] Legacy state management initialized successfully');
 
 				// Initialize session status tracking for sidebar live indicators
 				initSessionStatusTracking();
-				console.log('[App] Session status tracking initialized');
 
 				// Sync currentSessionIdSignal with sessionStore.select()
 				// This bridges the old signal-based approach with the new store
@@ -54,7 +50,6 @@ export function App() {
 				// If the URL has a session ID, set it in the signal
 				// This is done AFTER state is initialized to ensure proper syncing
 				if (initialSessionId) {
-					console.log('[App] Restoring session from URL:', initialSessionId);
 					batch(() => {
 						currentSessionIdSignal.value = initialSessionId;
 					});

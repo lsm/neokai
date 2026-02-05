@@ -292,18 +292,16 @@ describe('Router Utility', () => {
 			expect(isRouterInitialized()).toBe(true);
 		});
 
-		it('should warn if already initialized', () => {
+		it('should return null if already initialized', () => {
 			mockLocation.pathname = '/';
 
 			initializeRouter();
-			const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
 			const secondCallResult = initializeRouter();
 
-			expect(consoleWarnSpy).toHaveBeenCalledWith('[Router] Already initialized');
+			// Second call should return null and not re-initialize
 			expect(secondCallResult).toBeNull();
-
-			consoleWarnSpy.mockRestore();
+			expect(isRouterInitialized()).toBe(true);
 		});
 	});
 

@@ -171,10 +171,6 @@ export class StateChannel<T> {
 	 * waits for ACK).
 	 */
 	async stop(): Promise<void> {
-		console.log(
-			`[StateChannel] Stopping channel: ${this.channelName} (${this.subscriptions.length} subscriptions)`
-		);
-
 		// Unsubscribe from all events (AWAIT to ensure unsubscribe completes)
 		await Promise.all(this.subscriptions.map((unsub) => unsub()));
 		this.subscriptions = [];
@@ -190,8 +186,6 @@ export class StateChannel<T> {
 			clearTimeout(update.timeout);
 		});
 		this.optimisticUpdates.clear();
-
-		console.log(`[StateChannel] Channel stopped: ${this.channelName}`);
 	}
 
 	/**
@@ -250,7 +244,6 @@ export class StateChannel<T> {
 	 */
 	updateOptimistic(id: string, updater: (current: T) => T, confirmed?: Promise<void>): void {
 		if (!this.state.value) {
-			console.warn(`Cannot update optimistically: state is null`);
 			return;
 		}
 
@@ -507,11 +500,8 @@ export class StateChannel<T> {
 								this.lastSync.value = Date.now();
 								this.error.value = null;
 							});
-						} else {
-							console.warn(
-								`[StateChannel:${this.channelName}] Cannot apply delta - state or mergeDelta missing`
-							);
 						}
+						// else: Cannot apply delta - state or mergeDelta missing
 					},
 					{ sessionId: this.options.sessionId }
 				)
@@ -569,9 +559,7 @@ export class StateChannel<T> {
 							this.error.value = null;
 						});
 					} else {
-						console.warn(
-							`[StateChannel:${this.channelName}] Cannot apply delta - state or mergeDelta missing`
-						);
+						// Cannot apply delta - state or mergeDelta missing
 					}
 				},
 				{ sessionId: this.options.sessionId }

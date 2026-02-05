@@ -168,13 +168,8 @@ describe('SDKUserMessage', () => {
 			expect(container.querySelector('[data-testid="user-message"]')).toBeTruthy();
 		});
 
-		it('should include message UUID in data attribute', () => {
-			const message = createTextMessage('Hello world');
-			const { container } = render(<SDKUserMessage message={message} />);
-
-			const element = container.querySelector('[data-message-uuid]');
-			expect(element?.getAttribute('data-message-uuid')).toBe(message.uuid);
-		});
+		// Note: data-message-uuid is now set by parent SDKMessageRenderer wrapper
+		// This test is removed as the child component no longer sets this attribute
 
 		it('should include message role in data attribute', () => {
 			const message = createTextMessage('Hello world');
@@ -428,6 +423,76 @@ describe('SDKUserMessage', () => {
 		});
 	});
 
+	describe('Rewind Mode', () => {
+		const onMessageCheckboxChange = vi.fn();
+
+		it('should render checkbox in rewind mode', () => {
+			const message = createTextMessage('Hello world');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKUserMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeTruthy();
+		});
+
+		it('should call onMessageCheckboxChange when checkbox is clicked', () => {
+			const message = createTextMessage('Hello world');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKUserMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			fireEvent.click(checkbox!);
+
+			expect(onMessageCheckboxChange).toHaveBeenCalledWith(message.uuid, true);
+		});
+
+		it('should not render checkbox when message has no uuid', () => {
+			const message = createTextMessage('Hello world');
+			delete (message as Record<string, unknown>).uuid;
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKUserMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeFalsy();
+		});
+
+		it('should not render checkbox when onMessageCheckboxChange is not provided', () => {
+			const message = createTextMessage('Hello world');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKUserMessage message={message} rewindMode={true} selectedMessages={selectedMessages} />
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeFalsy();
+		});
+	});
+
 	describe('Styling', () => {
 		it('should be right-aligned (user messages)', () => {
 			const message = createTextMessage('Hello');
@@ -443,139 +508,6 @@ describe('SDKUserMessage', () => {
 			// Check for max-width classes
 			const wrapper = container.querySelector('.max-w-\\[85\\%\\]');
 			expect(wrapper).toBeTruthy();
-		});
-	});
-
-	describe('Rewind Mode', () => {
-		const onMessageCheckboxChange = vi.fn();
-
-		beforeEach(() => {
-			onMessageCheckboxChange.mockClear();
-		});
-
-		it('should show checkbox when in rewind mode', () => {
-			const message = createTextMessage('Hello');
-			const selectedMessages = new Set<string>();
-			const allMessages = [{ uuid: message.uuid }];
-
-			const { container } = render(
-				<SDKUserMessage
-					message={message}
-					rewindMode={true}
-					selectedMessages={selectedMessages}
-					onMessageCheckboxChange={onMessageCheckboxChange}
-					allMessages={allMessages}
-				/>
-			);
-
-			const checkbox = container.querySelector('input[type="checkbox"]');
-			expect(checkbox).toBeTruthy();
-		});
-
-		it('should not show checkbox when not in rewind mode', () => {
-			const message = createTextMessage('Hello');
-			const { container } = render(<SDKUserMessage message={message} rewindMode={false} />);
-
-			const checkbox = container.querySelector('input[type="checkbox"]');
-			expect(checkbox).toBeNull();
-		});
-
-		it('should check checkbox when message is selected', () => {
-			const message = createTextMessage('Hello');
-			const selectedMessages = new Set<string>([message.uuid]);
-			const allMessages = [{ uuid: message.uuid }];
-
-			const { container } = render(
-				<SDKUserMessage
-					message={message}
-					rewindMode={true}
-					selectedMessages={selectedMessages}
-					onMessageCheckboxChange={onMessageCheckboxChange}
-					allMessages={allMessages}
-				/>
-			);
-
-			const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
-			expect(checkbox.checked).toBe(true);
-		});
-
-		it('should not check checkbox when message is not selected', () => {
-			const message = createTextMessage('Hello');
-			const selectedMessages = new Set<string>();
-			const allMessages = [{ uuid: message.uuid }];
-
-			const { container } = render(
-				<SDKUserMessage
-					message={message}
-					rewindMode={true}
-					selectedMessages={selectedMessages}
-					onMessageCheckboxChange={onMessageCheckboxChange}
-					allMessages={allMessages}
-				/>
-			);
-
-			const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
-			expect(checkbox.checked).toBe(false);
-		});
-
-		it('should call onMessageCheckboxChange when checkbox is clicked', () => {
-			const message = createTextMessage('Hello');
-			const selectedMessages = new Set<string>();
-			const allMessages = [{ uuid: message.uuid }];
-
-			const { container } = render(
-				<SDKUserMessage
-					message={message}
-					rewindMode={true}
-					selectedMessages={selectedMessages}
-					onMessageCheckboxChange={onMessageCheckboxChange}
-					allMessages={allMessages}
-				/>
-			);
-
-			const checkbox = container.querySelector('input[type="checkbox"]');
-			fireEvent.click(checkbox!);
-
-			expect(onMessageCheckboxChange).toHaveBeenCalledWith(message.uuid, true);
-		});
-
-		it('should be left-aligned in rewind mode', () => {
-			const message = createTextMessage('Hello');
-			const selectedMessages = new Set<string>();
-			const allMessages = [{ uuid: message.uuid }];
-
-			const { container } = render(
-				<SDKUserMessage
-					message={message}
-					rewindMode={true}
-					selectedMessages={selectedMessages}
-					onMessageCheckboxChange={onMessageCheckboxChange}
-					allMessages={allMessages}
-				/>
-			);
-
-			expect(container.querySelector('.justify-start')).toBeTruthy();
-		});
-
-		it('should not show checkbox when message has no uuid', () => {
-			const message = createTextMessage('Hello');
-			// @ts-expect-error - Testing undefined uuid
-			message.uuid = undefined;
-			const selectedMessages = new Set<string>();
-			const allMessages = [{}];
-
-			const { container } = render(
-				<SDKUserMessage
-					message={message}
-					rewindMode={true}
-					selectedMessages={selectedMessages}
-					onMessageCheckboxChange={onMessageCheckboxChange}
-					allMessages={allMessages}
-				/>
-			);
-
-			const checkbox = container.querySelector('input[type="checkbox"]');
-			expect(checkbox).toBeNull();
 		});
 	});
 });

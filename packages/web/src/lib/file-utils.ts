@@ -88,3 +88,20 @@ export function validateImageFile(file: File): string | null {
 
 	return null;
 }
+
+/**
+ * Extract image files from clipboard items
+ */
+export function extractImagesFromClipboard(items: DataTransferItemList): File[] {
+	const imageFiles: File[] = [];
+	for (let i = 0; i < items.length; i++) {
+		const item = items[i];
+		if (item.kind === 'file' && SUPPORTED_IMAGE_TYPES.includes(item.type as SupportedImageType)) {
+			const file = item.getAsFile();
+			if (file) {
+				imageFiles.push(file);
+			}
+		}
+	}
+	return imageFiles;
+}

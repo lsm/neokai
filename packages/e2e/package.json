@@ -1,6 +1,6 @@
 {
 	"name": "@neokai/e2e",
-	"version": "0.3.0",
+	"version": "0.4.0",
 	"private": true,
 	"license": "Apache-2.0",
 	"type": "module",
@@ -16,7 +16,7 @@
 	},
 	"devDependencies": {
 		"@playwright/test": "1.57.0",
-		"@types/node": "^24.10.1",
-		"monocart-reporter": "^2.9.23"
+		"@types/node": "24.10.1",
+		"monocart-reporter": "2.9.23"
 	}
 }

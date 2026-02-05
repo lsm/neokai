@@ -196,11 +196,12 @@ export async function executeRewind(
 
 export async function executeSelectiveRewind(
 	sessionId: string,
-	messageIds: string[]
+	messageIds: string[],
+	mode: import('@neokai/shared').RewindMode = 'both'
 ): Promise<{ result: import('@neokai/shared').SelectiveRewindResult }> {
 	const hub = getHubOrThrow();
 	return await hub.call<{ result: import('@neokai/shared').SelectiveRewindResult }>(
 		'rewind.executeSelective',
-		{ sessionId, messageIds }
+		{ sessionId, messageIds, mode }
 	);
 }

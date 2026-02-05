@@ -9,7 +9,11 @@ import { renderHook, act } from '@testing-library/preact';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useFileAttachments } from '../useFileAttachments.ts';
 import { toast } from '../../lib/toast.ts';
-import { fileToBase64, validateImageFile } from '../../lib/file-utils.ts';
+import {
+	fileToBase64,
+	validateImageFile,
+	extractImagesFromClipboard,
+} from '../../lib/file-utils.ts';
 
 // Mock the dependencies
 vi.mock('../../lib/toast.ts', () => ({
@@ -21,6 +25,7 @@ vi.mock('../../lib/toast.ts', () => ({
 vi.mock('../../lib/file-utils.ts', () => ({
 	validateImageFile: vi.fn(),
 	fileToBase64: vi.fn(),
+	extractImagesFromClipboard: vi.fn(),
 }));
 
 // Helper to create mock file
@@ -54,6 +59,20 @@ describe('useFileAttachments', () => {
 		vi.mocked(validateImageFile).mockReturnValue(null);
 		// Default: file conversion succeeds
 		vi.mocked(fileToBase64).mockResolvedValue('base64data');
+		// Default: extractImagesFromClipboard returns the files from mock
+		vi.mocked(extractImagesFromClipboard).mockImplementation((items: DataTransferItemList) => {
+			const files: File[] = [];
+			for (let i = 0; i < items.length; i++) {
+				const item = items[i];
+				if (item.kind === 'file') {
+					const file = item.getAsFile();
+					if (file) {
+						files.push(file);
+					}
+				}
+			}
+			return files;
+		});
 	});
 
 	describe('initialization', () => {
@@ -451,6 +470,107 @@ describe('useFileAttachments', () => {
 			});
 
 			expect(result.current.attachments.length).toBe(0);
+		});
+	});
+
+	describe('handlePaste', () => {
+		// Helper to create mock ClipboardEvent
+		function createMockPasteEvent(
+			items: Array<{ kind: string; type: string; file?: File | null }>
+		): ClipboardEvent {
+			const mockItems = { length: items.length } as DataTransferItemList;
+			for (let i = 0; i < items.length; i++) {
+				(mockItems as unknown as Record<number, DataTransferItem>)[i] = {
+					kind: items[i].kind,
+					type: items[i].type,
+					getAsFile: () => items[i].file ?? null,
+				};
+			}
+			return {
+				clipboardData: { items: mockItems },
+				preventDefault: vi.fn(),
+			} as unknown as ClipboardEvent;
+		}
+
+		it('should return handlePaste as a function', () => {
+			const { result } = renderHook(() => useFileAttachments());
+
+			expect(typeof result.current.handlePaste).toBe('function');
+		});
+
+		it('should ignore paste events with no clipboardData', async () => {
+			const { result } = renderHook(() => useFileAttachments());
+
+			const event = {
+				clipboardData: null,
+			} as unknown as ClipboardEvent;
+
+			await act(async () => {
+				await result.current.handlePaste(event);
+			});
+
+			expect(result.current.attachments.length).toBe(0);
+		});
+
+		it('should ignore paste events with no image files (text-only clipboard)', async () => {
+			const { result } = renderHook(() => useFileAttachments());
+
+			const event = createMockPasteEvent([{ kind: 'string', type: 'text/plain' }]);
+
+			await act(async () => {
+				await result.current.handlePaste(event);
+			});
+
+			expect(result.current.attachments.length).toBe(0);
+		});
+
+		it('should process image files from paste event', async () => {
+			const { result } = renderHook(() => useFileAttachments());
+
+			const imageFile = createMockFile('pasted.png', 'image/png');
+			const event = createMockPasteEvent([{ kind: 'file', type: 'image/png', file: imageFile }]);
+
+			await act(async () => {
+				await result.current.handlePaste(event);
+			});
+
+			expect(result.current.attachments.length).toBe(1);
+			expect(result.current.attachments[0].name).toBe('pasted.png');
+			expect(result.current.attachments[0].media_type).toBe('image/png');
+			expect(result.current.attachments[0].data).toBe('base64data');
+		});
+
+		it('should NOT call preventDefault (text paste must still work)', async () => {
+			const { result } = renderHook(() => useFileAttachments());
+
+			const imageFile = createMockFile('pasted.png', 'image/png');
+			const event = createMockPasteEvent([{ kind: 'file', type: 'image/png', file: imageFile }]);
+
+			await act(async () => {
+				await result.current.handlePaste(event);
+			});
+
+			// Critical: preventDefault should NOT be called
+			expect(event.preventDefault).not.toHaveBeenCalled();
+		});
+
+		it('should process multiple pasted images', async () => {
+			const { result } = renderHook(() => useFileAttachments());
+
+			const file1 = createMockFile('paste1.png', 'image/png');
+			const file2 = createMockFile('paste2.jpeg', 'image/jpeg');
+			const event = createMockPasteEvent([
+				{ kind: 'file', type: 'image/png', file: file1 },
+				{ kind: 'file', type: 'image/jpeg', file: file2 },
+			]);
+
+			await act(async () => {
+				await result.current.handlePaste(event);
+			});
+
+			expect(result.current.attachments.length).toBe(2);
+			expect(result.current.attachments[0].name).toBe('paste1.png');
+			expect(result.current.attachments[1].name).toBe('paste2.jpeg');
 		});
 	});
 });

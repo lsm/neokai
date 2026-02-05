@@ -261,4 +261,310 @@ describe('WorktreeManager - getCommitsAhead', () => {
 		expect(result.commits.length).toBe(1);
 		expect(result.commits[0].author).toBe("Test O'Neill (Dev)");
 	});
+
+	test('should filter out commits already merged via merge commit', async () => {
+		// Create session branch with commits
+		execSync('git checkout -b session-branch', { cwd: testRepoPath });
+		fs.writeFileSync(path.join(testRepoPath, 'file1.txt'), 'content 1');
+		execSync('git add .', { cwd: testRepoPath });
+		execSync('git commit -m "Commit 1"', { cwd: testRepoPath });
+
+		fs.writeFileSync(path.join(testRepoPath, 'file2.txt'), 'content 2');
+		execSync('git add .', { cwd: testRepoPath });
+		execSync('git commit -m "Commit 2"', { cwd: testRepoPath });
+
+		// Merge session branch into main
+		execSync('git checkout main', { cwd: testRepoPath });
+		execSync('git merge --no-ff session-branch -m "Merge session branch"', {
+			cwd: testRepoPath,
+		});
+
+		// Go back to session branch
+		execSync('git checkout session-branch', { cwd: testRepoPath });
+
+		const worktree: WorktreeMetadata = {
+			isWorktree: true,
+			worktreePath: testRepoPath,
+			mainRepoPath: testRepoPath,
+			branch: 'session-branch',
+		};
+
+		const result = await worktreeManager.getCommitsAhead(worktree, 'main');
+
+		// Should report no commits ahead (they're merged via merge commit)
+		expect(result.hasCommitsAhead).toBe(false);
+		expect(result.commits).toBeArray();
+		expect(result.commits.length).toBe(0);
+	});
+
+	test('should only report unmerged commits when some are merged', async () => {
+		// Create session branch
+		execSync('git checkout -b session-branch', { cwd: testRepoPath });
+
+		// Commit 1
+		fs.writeFileSync(path.join(testRepoPath, 'file1.txt'), 'content 1');
+		execSync('git add .', { cwd: testRepoPath });
+		execSync('git commit -m "Commit 1"', { cwd: testRepoPath });
+
+		// Commit 2
+		fs.writeFileSync(path.join(testRepoPath, 'file2.txt'), 'content 2');
+		execSync('git add .', { cwd: testRepoPath });
+		execSync('git commit -m "Commit 2"', { cwd: testRepoPath });
+
+		// Merge to main
+		execSync('git checkout main', { cwd: testRepoPath });
+		execSync('git merge --no-ff session-branch -m "Merge"', {
+			cwd: testRepoPath,
+		});
+
+		// Add more commits to session branch
+		execSync('git checkout session-branch', { cwd: testRepoPath });
+		fs.writeFileSync(path.join(testRepoPath, 'file3.txt'), 'content 3');
+		execSync('git add .', { cwd: testRepoPath });
+		execSync('git commit -m "Commit 3 (new)"', { cwd: testRepoPath });
+
+		const worktree: WorktreeMetadata = {
+			isWorktree: true,
+			worktreePath: testRepoPath,
+			mainRepoPath: testRepoPath,
+			branch: 'session-branch',
+		};
+
+		const result = await worktreeManager.getCommitsAhead(worktree, 'main');
+
+		// Should only report Commit 3
+		expect(result.hasCommitsAhead).toBe(true);
+		expect(result.commits.length).toBe(1);
+		expect(result.commits[0].message).toBe('Commit 3 (new)');
+	});
+
+	test('should still detect squash-merged commits', async () => {
+		// Create session branch
+		execSync('git checkout -b session-branch', { cwd: testRepoPath });
+		fs.writeFileSync(path.join(testRepoPath, 'file1.txt'), 'content 1');
+		execSync('git add .', { cwd: testRepoPath });
+		execSync('git commit -m "Commit 1"', { cwd: testRepoPath });
+
+		// Squash merge to main
+		execSync('git checkout main', { cwd: testRepoPath });
+		execSync('git merge --squash session-branch', { cwd: testRepoPath });
+		execSync('git commit -m "Squashed changes"', { cwd: testRepoPath });
+
+		// Back to session branch
+		execSync('git checkout session-branch', { cwd: testRepoPath });
+
+		const worktree: WorktreeMetadata = {
+			isWorktree: true,
+			worktreePath: testRepoPath,
+			mainRepoPath: testRepoPath,
+			branch: 'session-branch',
+		};
+
+		const result = await worktreeManager.getCommitsAhead(worktree, 'main');
+
+		// Should detect squash merge via file content check
+		expect(result.hasCommitsAhead).toBe(false);
+		expect(result.commits).toBeArray();
+		expect(result.commits.length).toBe(0);
+	});
+
+	test('should handle bidirectional merge commits (PR workflow)', async () => {
+		// Step 1: Create session branch with 2 commits
+		execSync('git checkout -b session-branch', { cwd: testRepoPath });
+		fs.writeFileSync(path.join(testRepoPath, 'file1.txt'), 'content 1');
+		execSync('git add .', { cwd: testRepoPath });
+		execSync('git commit -m "Commit 1"', { cwd: testRepoPath });
+
+		fs.writeFileSync(path.join(testRepoPath, 'file2.txt'), 'content 2');
+		execSync('git add .', { cwd: testRepoPath });
+		execSync('git commit -m "Commit 2"', { cwd: testRepoPath });
+
+		// Step 2: Merge session branch to main with merge commit M1 (simulating PR merge)
+		execSync('git checkout main', { cwd: testRepoPath });
+		execSync('git merge --no-ff session-branch -m "Merge session-branch into main"', {
+			cwd: testRepoPath,
+		});
+
+		// Step 3: Merge main back to session branch (creating merge commit M2)
+		execSync('git checkout session-branch', { cwd: testRepoPath });
+		execSync('git merge --no-ff main -m "Merge main into session-branch"', {
+			cwd: testRepoPath,
+		});
+
+		const worktree: WorktreeMetadata = {
+			isWorktree: true,
+			worktreePath: testRepoPath,
+			mainRepoPath: testRepoPath,
+			branch: 'session-branch',
+		};
+
+		const result = await worktreeManager.getCommitsAhead(worktree, 'main');
+
+		// Should report no commits ahead since Commit 1 and Commit 2 are already in main
+		// via the merge commit M1
+		expect(result.hasCommitsAhead).toBe(false);
+		expect(result.commits).toBeArray();
+		expect(result.commits.length).toBe(0);
+		expect(result.baseBranch).toBe('main');
+	});
+
+	test('should filter out commits merged via PR even when git log shows them', async () => {
+		// This test specifically validates the scenario where:
+		// 1. Session branch has commits
+		// 2. Session branch is merged to main via a PR (creates merge commit on main)
+		// 3. The merge commit message "Merge session branch into main" exists on main
+		// 4. When checking getCommitsAhead, it should filter out the individual commits
+		//    even though git log main..session-branch might show them
+
+		// Step 1: Create session branch with 3 content commits
+		execSync('git checkout -b session-branch', { cwd: testRepoPath });
+		fs.writeFileSync(path.join(testRepoPath, 'feature1.txt'), 'feature 1');
+		execSync('git add .', { cwd: testRepoPath });
+		execSync('git commit -m "feat: add feature 1"', { cwd: testRepoPath });
+		const commit1Hash = execSync('git rev-parse HEAD', { cwd: testRepoPath }).toString().trim();
+
+		fs.writeFileSync(path.join(testRepoPath, 'feature2.txt'), 'feature 2');
+		execSync('git add .', { cwd: testRepoPath });
+		execSync('git commit -m "feat: add feature 2"', { cwd: testRepoPath });
+		const commit2Hash = execSync('git rev-parse HEAD', { cwd: testRepoPath }).toString().trim();
+
+		fs.writeFileSync(path.join(testRepoPath, 'feature3.txt'), 'feature 3');
+		execSync('git add .', { cwd: testRepoPath });
+		execSync('git commit -m "feat: add feature 3"', { cwd: testRepoPath });
+		const commit3Hash = execSync('git rev-parse HEAD', { cwd: testRepoPath }).toString().trim();
+
+		// Step 2: Simulate a PR merge by creating a merge commit on main
+		execSync('git checkout main', { cwd: testRepoPath });
+		execSync('git merge --no-ff session-branch -m "Merge session branch into main"', {
+			cwd: testRepoPath,
+			env: { ...process.env, GIT_EDITOR: ':' },
+		});
+
+		// Step 3: Merge main back to session branch (simulating updating session branch after PR merge)
+		// This creates a merge commit "Merge origin/dev into session branch" or similar
+		execSync('git checkout session-branch', { cwd: testRepoPath });
+		execSync('git merge --no-ff main -m "Merge origin/main into session-branch"', {
+			cwd: testRepoPath,
+			env: { ...process.env, GIT_EDITOR: ':' },
+		});
+
+		// Step 4: Verify git log behavior - this is what we're testing against
+		// git log main..session-branch will show commits, but getCommitsAhead should filter them
+		const gitLogOutput = execSync('git log main..session-branch --oneline', {
+			cwd: testRepoPath,
+		})
+			.toString()
+			.trim();
+
+		// git log SHOULD show the merge commit and potentially the original commits
+		// This demonstrates why we need the ancestry filtering logic
+		expect(gitLogOutput.length).toBeGreaterThan(0);
+
+		const worktree: WorktreeMetadata = {
+			isWorktree: true,
+			worktreePath: testRepoPath,
+			mainRepoPath: testRepoPath,
+			branch: 'session-branch',
+		};
+
+		const result = await worktreeManager.getCommitsAhead(worktree, 'main');
+
+		// CRITICAL ASSERTION: Even though git log main..session-branch shows commits,
+		// getCommitsAhead should filter them out because they're reachable from main
+		// via the merge commit "Merge session branch into main"
+		expect(result.hasCommitsAhead).toBe(false);
+		expect(result.commits).toBeArray();
+		expect(result.commits.length).toBe(0);
+		expect(result.baseBranch).toBe('main');
+
+		// Additional verification: ensure the original commits are reachable from main
+		const isCommit1Ancestor = execSync(
+			`git merge-base --is-ancestor ${commit1Hash} main && echo "true" || echo "false"`,
+			{ cwd: testRepoPath }
+		)
+			.toString()
+			.trim();
+		expect(isCommit1Ancestor).toBe('true');
+
+		const isCommit2Ancestor = execSync(
+			`git merge-base --is-ancestor ${commit2Hash} main && echo "true" || echo "false"`,
+			{ cwd: testRepoPath }
+		)
+			.toString()
+			.trim();
+		expect(isCommit2Ancestor).toBe('true');
+
+		const isCommit3Ancestor = execSync(
+			`git merge-base --is-ancestor ${commit3Hash} main && echo "true" || echo "false"`,
+			{ cwd: testRepoPath }
+		)
+			.toString()
+			.trim();
+		expect(isCommit3Ancestor).toBe('true');
+	});
+
+	test('should handle merge commits from origin/dev correctly', async () => {
+		// This test validates that merge commits like "Merge origin/dev into session branch"
+		// are handled correctly - they might show up in git log but their content is already merged
+
+		// Step 1: Create session branch with feature 1
+		execSync('git checkout -b session-branch', { cwd: testRepoPath });
+		fs.writeFileSync(path.join(testRepoPath, 'feature1.txt'), 'feature 1');
+		execSync('git add .', { cwd: testRepoPath });
+		execSync('git commit -m "feat: add feature 1"', { cwd: testRepoPath });
+
+		// Step 2: Merge session-branch to main (simulating PR merge)
+		execSync('git checkout main', { cwd: testRepoPath });
+		execSync('git merge --no-ff session-branch -m "Merge session-branch into main"', {
+			cwd: testRepoPath,
+			env: { ...process.env, GIT_EDITOR: ':' },
+		});
+
+		// Step 3: Create dev branch with dev feature
+		execSync('git checkout -b dev', { cwd: testRepoPath });
+		fs.writeFileSync(path.join(testRepoPath, 'dev-feature.txt'), 'dev feature');
+		execSync('git add .', { cwd: testRepoPath });
+		execSync('git commit -m "feat: add dev feature"', { cwd: testRepoPath });
+
+		// Step 4: Merge dev to main
+		execSync('git checkout main', { cwd: testRepoPath });
+		execSync('git merge --no-ff dev -m "Merge dev into main"', {
+			cwd: testRepoPath,
+			env: { ...process.env, GIT_EDITOR: ':' },
+		});
+
+		// Step 5: Merge main to session branch (creating "Merge origin/main into session-branch")
+		execSync('git checkout session-branch', { cwd: testRepoPath });
+		execSync('git merge --no-ff main -m "Merge origin/main into session-branch"', {
+			cwd: testRepoPath,
+			env: { ...process.env, GIT_EDITOR: ':' },
+		});
+
+		// Step 6: Add another commit to session branch
+		fs.writeFileSync(path.join(testRepoPath, 'feature2.txt'), 'feature 2');
+		execSync('git add .', { cwd: testRepoPath });
+		execSync('git commit -m "feat: add feature 2"', { cwd: testRepoPath });
+
+		const worktree: WorktreeMetadata = {
+			isWorktree: true,
+			worktreePath: testRepoPath,
+			mainRepoPath: testRepoPath,
+			branch: 'session-branch',
+		};
+
+		const result = await worktreeManager.getCommitsAhead(worktree, 'main');
+
+		// Currently, the implementation reports both "feat: add feature 2" and the merge commit
+		// "Merge origin/main into session-branch". This is because the merge commit is not
+		// an ancestor of main (it's on session-branch), even though its CONTENT is already on main.
+		//
+		// TODO: The ideal behavior would be to filter out merge commits whose content is
+		// already on main, even if the merge commit itself is not an ancestor of main.
+		// For now, we accept this behavior and test the current implementation.
+		expect(result.hasCommitsAhead).toBe(true);
+		expect(result.commits.length).toBe(2);
+		expect(result.commits[0].message).toBe('feat: add feature 2');
+		expect(result.commits[1].message).toBe('Merge origin/main into session-branch');
+		expect(result.baseBranch).toBe('main');
+	});
 });

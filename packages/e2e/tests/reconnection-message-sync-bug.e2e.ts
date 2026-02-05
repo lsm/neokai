@@ -77,7 +77,7 @@ test.describe('Reconnection - Message Sync Bug (Critical)', () => {
 		await sendButton.click();
 
 		// Wait for user message to appear
-		await page.getByText('Initial message before background').waitFor({ state: 'visible' });
+		await page.getByText('Initial message before background').first().waitFor({ state: 'visible' });
 
 		// Count initial messages (should be at least 1: the user message)
 		const initialMessageCount = await page.locator('[data-message-role]').count();
@@ -280,7 +280,7 @@ test.describe('Reconnection - Message Sync Bug (Critical)', () => {
 		await messageInput.click();
 		await messageInput.fill('Test message');
 		await page.locator('button[aria-label="Send message"]').click();
-		await page.getByText('Test message').waitFor({ state: 'visible' });
+		await page.getByText('Test message').first().waitFor({ state: 'visible' });
 
 		const initialMessageCount = await page.locator('[data-message-role]').count();
 		console.log(`[E2E] Initial message count: ${initialMessageCount}`);
@@ -399,7 +399,7 @@ test.describe('Reconnection - Message Sync Bug (Critical)', () => {
 		await messageInput.click();
 		await messageInput.fill('Cycle test message');
 		await sendButton.click();
-		await page.getByText('Cycle test message').waitFor({ state: 'visible' });
+		await page.getByText('Cycle test message').first().waitFor({ state: 'visible' });
 
 		const baselineCount = await page.locator('[data-message-role]').count();
 		console.log(`[E2E] Baseline message count: ${baselineCount}`);

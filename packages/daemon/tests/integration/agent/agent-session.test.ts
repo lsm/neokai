@@ -520,5 +520,40 @@ describe('AgentSession', () => {
 
 			expect(result.success).toBe(false);
 		});
+
+		test('should pass mode parameter to executeSelectiveRewind', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/selective-rewind-mode',
+			});
+
+			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
+
+			// Execute with explicit mode should pass through (even though it fails due to no messages)
+			const resultFiles = await agentSession!.executeSelectiveRewind(
+				['non-existent-uuid'],
+				'files'
+			);
+			expect(resultFiles.success).toBe(false);
+
+			const resultMessages = await agentSession!.executeSelectiveRewind(
+				['non-existent-uuid'],
+				'messages'
+			);
+			expect(resultMessages.success).toBe(false);
+
+			const resultBoth = await agentSession!.executeSelectiveRewind(['non-existent-uuid'], 'both');
+			expect(resultBoth.success).toBe(false);
+
+			// Execute without mode should default to 'both'
+			const resultDefault = await agentSession!.executeSelectiveRewind(['non-existent-uuid']);
+			expect(resultDefault.success).toBe(false);
+
+			// Execute with explicit undefined should also default to 'both'
+			const resultUndefined = await agentSession!.executeSelectiveRewind(
+				['non-existent-uuid'],
+				undefined
+			);
+			expect(resultUndefined.success).toBe(false);
+		});
 	});
 });

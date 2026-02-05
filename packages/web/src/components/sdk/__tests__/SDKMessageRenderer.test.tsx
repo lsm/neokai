@@ -4,9 +4,9 @@
  *
  * Tests SDK message routing and rendering logic
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-import { render } from '@testing-library/preact';
+import { render, fireEvent } from '@testing-library/preact';
 import { SDKMessageRenderer } from '../SDKMessageRenderer';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
@@ -338,6 +338,360 @@ describe('SDKMessageRenderer', () => {
 
 			// Error result should be rendered with error styling
 			expect(container.querySelector('.bg-red-50, .bg-red-900\\/10')).toBeTruthy();
+		});
+	});
+
+	describe('Rewind Mode Wrapper', () => {
+		const onMessageCheckboxChange = vi.fn();
+
+		beforeEach(() => {
+			vi.clearAllMocks();
+		});
+
+		it('should render checkbox in rewind mode for user message with uuid', () => {
+			const message = createUserMessage('Hello world');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKMessageRenderer
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			// Should have checkbox
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeTruthy();
+
+			// Should have flex wrapper with gap for checkbox alignment
+			expect(container.querySelector('.flex.items-center.gap-2')).toBeTruthy();
+
+			// Should render the user message inside
+			expect(container.querySelector('[data-testid="user-message"]')).toBeTruthy();
+		});
+
+		it('should render checkbox in rewind mode for assistant message with uuid', () => {
+			const message = createAssistantMessage('Hello there!');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKMessageRenderer
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			// Should have checkbox
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeTruthy();
+
+			// Should render the assistant message inside
+			expect(container.querySelector('[data-testid="assistant-message"]')).toBeTruthy();
+		});
+
+		it('should check checkbox when message is selected', () => {
+			const message = createUserMessage('Test');
+			const selectedMessages = new Set<string>([message.uuid]);
+
+			const { container } = render(
+				<SDKMessageRenderer
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+			expect(checkbox.checked).toBe(true);
+		});
+
+		it('should not check checkbox when message is not selected', () => {
+			const message = createUserMessage('Test');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKMessageRenderer
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+			expect(checkbox.checked).toBe(false);
+		});
+
+		it('should call onMessageCheckboxChange when checkbox is clicked', () => {
+			const message = createUserMessage('Test');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKMessageRenderer
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			fireEvent.click(checkbox!);
+
+			expect(onMessageCheckboxChange).toHaveBeenCalledWith(message.uuid, true);
+		});
+
+		it('should not render checkbox when onMessageCheckboxChange is not provided', () => {
+			const message = createUserMessage('Test');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKMessageRenderer
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeFalsy();
+		});
+
+		it('should not render checkbox for message without uuid', () => {
+			const message = createUserMessage('Test');
+			// @ts-expect-error - Testing undefined uuid
+			message.uuid = undefined;
+
+			const { container } = render(
+				<SDKMessageRenderer
+					message={message}
+					rewindMode={true}
+					selectedMessages={new Set()}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeFalsy();
+		});
+
+		it('should return rendered message for tool progress in rewind mode (skips checkbox)', () => {
+			const message = createToolProgressMessage();
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKMessageRenderer
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			// Tool progress messages should be rendered without checkbox in rewind mode
+			// They're part of tool execution, not separate checkpoints
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeFalsy();
+
+			// But the message should still be rendered
+			expect(container.textContent).toContain('Read');
+		});
+	});
+
+	describe('Normal Mode Rewind Icon', () => {
+		const onRewind = vi.fn();
+
+		beforeEach(() => {
+			vi.clearAllMocks();
+		});
+
+		it('should render rewind icon on hover for user message with uuid', () => {
+			const message = createUserMessage('Hello');
+			const { container } = render(
+				<SDKMessageRenderer
+					message={message}
+					onRewind={onRewind}
+					rewindingMessageUuid={null}
+					sessionId="test-session"
+				/>
+			);
+
+			// Should have rewind button
+			const rewindButton = container.querySelector('button[title="Rewind to here"]');
+			expect(rewindButton).toBeTruthy();
+		});
+
+		it('should not render rewind icon for assistant message (only user messages have rewind)', () => {
+			const message = createAssistantMessage('Hello there');
+			const { container } = render(
+				<SDKMessageRenderer
+					message={message}
+					onRewind={onRewind}
+					rewindingMessageUuid={null}
+					sessionId="test-session"
+				/>
+			);
+
+			// Should NOT have rewind button (only user messages get rewind buttons)
+			const rewindButton = container.querySelector('button[title="Rewind to here"]');
+			expect(rewindButton).toBeFalsy();
+		});
+
+		it('should call onRewind when rewind button is clicked', () => {
+			const message = createUserMessage('Test');
+			const { container } = render(
+				<SDKMessageRenderer
+					message={message}
+					onRewind={onRewind}
+					rewindingMessageUuid={null}
+					sessionId="test-session"
+				/>
+			);
+
+			const rewindButton = container.querySelector('button[title="Rewind to here"]');
+			fireEvent.click(rewindButton!);
+
+			expect(onRewind).toHaveBeenCalledWith(message.uuid);
+		});
+
+		it('should show spinner when rewindingMessageUuid matches', () => {
+			const message = createUserMessage('Test');
+			const { container } = render(
+				<SDKMessageRenderer
+					message={message}
+					onRewind={onRewind}
+					rewindingMessageUuid={message.uuid}
+					sessionId="test-session"
+				/>
+			);
+
+			// Should show spinner instead of rewind button
+			const spinner = container.querySelector('[role="status"]');
+			expect(spinner).toBeTruthy();
+
+			const rewindButton = container.querySelector('button[title="Rewind to here"]');
+			expect(rewindButton).toBeFalsy();
+		});
+
+		it('should not show rewind icon when sessionId is missing', () => {
+			const message = createUserMessage('Test');
+			const { container } = render(
+				<SDKMessageRenderer message={message} onRewind={onRewind} rewindingMessageUuid={null} />
+			);
+
+			const rewindButton = container.querySelector('button[title="Rewind to here"]');
+			expect(rewindButton).toBeFalsy();
+		});
+
+		it('should not show rewind icon when onRewind is missing', () => {
+			const message = createUserMessage('Test');
+			const { container } = render(
+				<SDKMessageRenderer
+					message={message}
+					rewindingMessageUuid={null}
+					sessionId="test-session"
+				/>
+			);
+
+			const rewindButton = container.querySelector('button[title="Rewind to here"]');
+			expect(rewindButton).toBeFalsy();
+		});
+	});
+
+	describe('No Rewind UI Cases', () => {
+		const onRewind = vi.fn();
+
+		beforeEach(() => {
+			vi.clearAllMocks();
+		});
+
+		it('should not show rewind UI for messages without uuid', () => {
+			const message = createUserMessage('Test');
+			// @ts-expect-error - Testing undefined uuid
+			message.uuid = undefined;
+
+			const { container } = render(
+				<SDKMessageRenderer
+					message={message}
+					onRewind={onRewind}
+					sessionId="test-session"
+					rewindingMessageUuid={null}
+				/>
+			);
+
+			// Should not have rewind button
+			expect(container.querySelector('button[title="Rewind to here"]')).toBeFalsy();
+
+			// Should render message directly
+			expect(container.querySelector('[data-testid="user-message"]')).toBeTruthy();
+		});
+
+		it('should not show rewind UI for synthetic messages', () => {
+			const message = {
+				...createUserMessage('Synthetic message'),
+				isSynthetic: true,
+			};
+
+			const { container } = render(
+				<SDKMessageRenderer
+					message={message}
+					onRewind={onRewind}
+					sessionId="test-session"
+					rewindingMessageUuid={null}
+				/>
+			);
+
+			// Should not have rewind button (synthetic messages use SyntheticMessageBlock component)
+			expect(container.querySelector('button[title="Rewind to here"]')).toBeFalsy();
+		});
+
+		it('should not show rewind UI for result messages (only user messages have rewind)', () => {
+			const message = createResultMessage(true);
+
+			const { container } = render(
+				<SDKMessageRenderer
+					message={message}
+					onRewind={onRewind}
+					sessionId="test-session"
+					rewindingMessageUuid={null}
+				/>
+			);
+
+			// Result messages should NOT have rewind button (only user messages get rewind buttons)
+			const rewindButton = container.querySelector('button[title="Rewind to here"]');
+			expect(rewindButton).toBeFalsy();
+		});
+
+		it('should not show rewind UI for system messages (only user messages have rewind)', () => {
+			const message = createSystemCompactBoundaryMessage();
+
+			const { container } = render(
+				<SDKMessageRenderer
+					message={message}
+					onRewind={onRewind}
+					sessionId="test-session"
+					rewindingMessageUuid={null}
+				/>
+			);
+
+			// System messages should NOT have rewind button (only user messages get rewind buttons)
+			const rewindButton = container.querySelector('button[title="Rewind to here"]');
+			expect(rewindButton).toBeFalsy();
+		});
+
+		it('should render normal message in default mode without rewind props', () => {
+			const message = createUserMessage('Plain message');
+
+			const { container } = render(<SDKMessageRenderer message={message} />);
+
+			// Should render message without any wrappers
+			expect(container.querySelector('[data-testid="user-message"]')).toBeTruthy();
+			expect(container.querySelector('input[type="checkbox"]')).toBeFalsy();
 		});
 	});
 });

@@ -8,26 +8,26 @@
  * - AskUserQuestion tool blocks with inline QuestionPrompt
  */
 
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { PendingUserQuestion, QuestionDraftResponse, ResolvedQuestion } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { AgentInput } from '@neokai/shared/sdk/sdk-tools.d.ts';
 import {
-	isTextBlock,
-	isToolUseBlock,
-	isThinkingBlock,
 	type ContentBlock,
+	isTextBlock,
+	isThinkingBlock,
+	isToolUseBlock,
 } from '@neokai/shared/sdk/type-guards';
+import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
+import { toast } from '../../lib/toast.ts';
+import { cn, copyToClipboard } from '../../lib/utils.ts';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
+import { QuestionPrompt } from '../QuestionPrompt.tsx';
 import { IconButton } from '../ui/IconButton.tsx';
 import { Tooltip } from '../ui/Tooltip.tsx';
-import { copyToClipboard } from '../../lib/utils.ts';
-import { toast } from '../../lib/toast.ts';
-import { messageSpacing, messageColors, borderRadius } from '../../lib/design-tokens.ts';
-import { cn } from '../../lib/utils.ts';
-import { ToolResultCard } from './tools/index.ts';
-import { ThinkingBlock } from './ThinkingBlock.tsx';
+import { renderRewindCheckbox } from './RewindCheckbox.tsx';
 import { SubagentBlock } from './SubagentBlock.tsx';
-import { QuestionPrompt } from '../QuestionPrompt.tsx';
-import type { AgentInput } from '@neokai/shared/sdk/sdk-tools.d.ts';
+import { ThinkingBlock } from './ThinkingBlock.tsx';
+import { ToolResultCard } from './tools/index.ts';
 
 type AssistantMessage = Extract<SDKMessage, { type: 'assistant' }>;
 
@@ -43,6 +43,11 @@ interface Props {
 		state: 'submitted' | 'cancelled',
 		responses: QuestionDraftResponse[]
 	) => void;
+	// Rewind mode props
+	rewindMode?: boolean;
+	selectedMessages?: Set<string>;
+	onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
+	allMessages?: SDKMessage[];
 }
 
 export function SDKAssistantMessage({
@@ -53,6 +58,10 @@ export function SDKAssistantMessage({
 	resolvedQuestions,
 	pendingQuestion,
 	onQuestionResolved,
+	rewindMode,
+	selectedMessages,
+	onMessageCheckboxChange,
+	allMessages: _allMessages,
 }: Props) {
 	const { message: apiMessage } = message;
 	const hasError = 'error' in message && message.error !== undefined;
@@ -110,7 +119,149 @@ export function SDKAssistantMessage({
 	// Get message metadata for E2E tests
 	const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
 
-	return (
+	// Text block bubble component - extracted for proper checkbox alignment
+	const textBlockBubble =
+		textBlocks.length > 0 ? (
+			<div
+				class={cn(
+					hasError
+						? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
+						: messageColors.assistant.background,
+					borderRadius.message.bubble,
+					messageSpacing.assistant.bubble.combined,
+					'space-y-3'
+				)}
+			>
+				{hasError && (
+					<div class="flex items-center gap-2 text-red-700 dark:text-red-400 text-sm font-medium">
+						<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								stroke-width={2}
+								d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+							/>
+						</svg>
+						<span>API Error</span>
+					</div>
+				)}
+				{textBlocks.map((block: Extract<ContentBlock, { type: 'text' }>, idx: number) => (
+					<div
+						key={idx}
+						class={hasError ? 'text-red-900 dark:text-red-100' : messageColors.assistant.text}
+					>
+						<MarkdownRenderer
+							content={block.text}
+							class="dark:prose-invert prose-pre:bg-gray-900 prose-pre:text-gray-100"
+						/>
+					</div>
+				))}
+
+				{/* Parent tool use indicator (for sub-agent messages) */}
+				{message.parent_tool_use_id && (
+					<div class="text-xs text-gray-500 dark:text-gray-400 italic">
+						Sub-agent response (parent: {message.parent_tool_use_id.slice(0, 8)}...)
+					</div>
+				)}
+			</div>
+		) : null;
+
+	// Actions/toolbar component for text blocks
+	const textBlockActions =
+		textBlocks.length > 0 ? (
+			<div
+				class={cn(
+					'flex items-center',
+					messageSpacing.actions.gap,
+					messageSpacing.actions.marginTop,
+					messageSpacing.actions.padding
+				)}
+			>
+				<Tooltip content={getFullTimestamp()} position="right">
+					<span class="text-xs text-gray-500">{getTimestamp()}</span>
+				</Tooltip>
+
+				<IconButton size="md" onClick={handleCopy} title="Copy message">
+					<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path
+							strokeLinecap="round"
+							strokeLinejoin="round"
+							stroke-width={2}
+							d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+						/>
+					</svg>
+				</IconButton>
+			</div>
+		) : null;
+
+	// Check if this assistant message has sub-agent children
+	// If so, we should not show a checkbox for this message (the sub-agent messages will have their own)
+	const hasSubagentChild =
+		_allMessages?.some((msg) => {
+			const msgWithParent = msg as SDKMessage & { parent_tool_use_id?: string | null };
+			return msgWithParent.parent_tool_use_id === message.uuid;
+		}) || false;
+
+	// Checkbox rendering for rewind mode (using shared function)
+	const renderCheckbox = () =>
+		renderRewindCheckbox({
+			rewindMode,
+			messageUuid: message.uuid,
+			onMessageCheckboxChange,
+			selectedMessages,
+			hasSubagentChild,
+		});
+
+	// Wrap with checkbox if in rewind mode - simpler structure for proper alignment
+	if (rewindMode && message.uuid && onMessageCheckboxChange && !hasSubagentChild) {
+		return (
+			<div
+				class="py-2 space-y-3"
+				data-testid="assistant-message"
+				data-message-role="assistant"
+				data-message-uuid={message.uuid}
+				data-message-timestamp={messageWithTimestamp.timestamp || 0}
+			>
+				{/* Tool use blocks - full width, no checkbox alignment needed */}
+				{toolBlocks.map((block: Extract<ContentBlock, { type: 'tool_use' }>, idx: number) => {
+					const toolResult = toolResultsMap?.get(block.id);
+					const nestedMessages = subagentMessagesMap?.get(block.id) || [];
+					return (
+						<ToolUseBlock
+							key={`tool-${idx}`}
+							block={block}
+							toolResult={toolResult}
+							nestedMessages={nestedMessages}
+							toolResultsMap={toolResultsMap}
+							sessionId={sessionId}
+							resolvedQuestions={resolvedQuestions}
+							pendingQuestion={pendingQuestion}
+							onQuestionResolved={onQuestionResolved}
+						/>
+					);
+				})}
+
+				{/* Thinking blocks - full width, no checkbox alignment needed */}
+				{thinkingBlocks.map((block: Extract<ContentBlock, { type: 'thinking' }>, idx: number) => (
+					<ThinkingBlock key={`thinking-${idx}`} content={block.thinking} />
+				))}
+
+				{/* Text blocks with checkbox - simpler structure for proper alignment */}
+				{textBlockBubble && (
+					<>
+						<div class="flex items-center gap-2">
+							{renderCheckbox()}
+							{textBlockBubble}
+						</div>
+						{textBlockActions}
+					</>
+				)}
+			</div>
+		);
+	}
+
+	// Normal mode - original layout
+	const messageContent = (
 		<div
 			class="py-2 space-y-3"
 			data-testid="assistant-message"
@@ -142,80 +293,17 @@ export function SDKAssistantMessage({
 				<ThinkingBlock key={`thinking-${idx}`} content={block.thinking} />
 			))}
 
-			{/* Text blocks - full width like tool results */}
-			{textBlocks.length > 0 && (
-				<div class="w-full">
-					<div
-						class={cn(
-							hasError
-								? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
-								: messageColors.assistant.background,
-							borderRadius.message.bubble,
-							messageSpacing.assistant.bubble.combined,
-							'space-y-3'
-						)}
-					>
-						{hasError && (
-							<div class="flex items-center gap-2 text-red-700 dark:text-red-400 text-sm font-medium">
-								<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-									/>
-								</svg>
-								<span>API Error</span>
-							</div>
-						)}
-						{textBlocks.map((block: Extract<ContentBlock, { type: 'text' }>, idx: number) => (
-							<div
-								key={idx}
-								class={hasError ? 'text-red-900 dark:text-red-100' : messageColors.assistant.text}
-							>
-								<MarkdownRenderer
-									content={block.text}
-									class="dark:prose-invert prose-pre:bg-gray-900 prose-pre:text-gray-100"
-								/>
-							</div>
-						))}
-
-						{/* Parent tool use indicator (for sub-agent messages) */}
-						{message.parent_tool_use_id && (
-							<div class="text-xs text-gray-500 dark:text-gray-400 italic">
-								Sub-agent response (parent: {message.parent_tool_use_id.slice(0, 8)}...)
-							</div>
-						)}
-					</div>
-
-					{/* Actions and timestamp - bottom left */}
-					<div
-						class={cn(
-							'flex items-center',
-							messageSpacing.actions.gap,
-							messageSpacing.actions.marginTop,
-							messageSpacing.actions.padding
-						)}
-					>
-						<Tooltip content={getFullTimestamp()} position="right">
-							<span class="text-xs text-gray-500">{getTimestamp()}</span>
-						</Tooltip>
-
-						<IconButton size="md" onClick={handleCopy} title="Copy message">
-							<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
-									d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-								/>
-							</svg>
-						</IconButton>
-					</div>
+			{/* Text blocks - bubble + actions */}
+			{textBlockBubble && (
+				<div class="w-full space-y-3">
+					{textBlockBubble}
+					{textBlockActions}
 				</div>
 			)}
 		</div>
 	);
+
+	return messageContent;
 }
 
 /**

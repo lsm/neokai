@@ -10,17 +10,27 @@ config({ path: join(process.cwd(), '.env') });
 // This enriches process.env BEFORE any other code reads it.
 // Never overwrites existing env vars (explicit config always wins).
 import { discoverCredentials } from './lib/credential-discovery';
+import type { DiscoveryResult } from './lib/credential-discovery';
+
 const discoveryResult = discoverCredentials();
-if (discoveryResult.credentialSource !== 'none') {
-	console.log(`[Config] Credentials discovered from: ${discoveryResult.credentialSource}`);
-}
-if (discoveryResult.settingsEnvApplied > 0) {
-	console.log(
-		`[Config] Applied ${discoveryResult.settingsEnvApplied} env vars from ~/.claude/settings.json`
-	);
-}
-for (const error of discoveryResult.errors) {
-	console.warn(`[Config] Credential discovery warning: ${error}`);
+logCredentialDiscovery(discoveryResult);
+
+/**
+ * Logs credential discovery results
+ * Exported for testing purposes
+ */
+export function logCredentialDiscovery(result: DiscoveryResult): void {
+	if (result.credentialSource !== 'none') {
+		console.log(`[Config] Credentials discovered from: ${result.credentialSource}`);
+	}
+	if (result.settingsEnvApplied > 0) {
+		console.log(
+			`[Config] Applied ${result.settingsEnvApplied} env vars from ~/.claude/settings.json`
+		);
+	}
+	for (const error of result.errors) {
+		console.warn(`[Config] Credential discovery warning: ${error}`);
+	}
 }
 
 /**

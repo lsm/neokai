@@ -9,18 +9,18 @@
  */
 
 import {
-	existsSync,
-	readFileSync,
-	writeFileSync,
-	readdirSync,
-	statSync,
-	mkdirSync,
 	copyFileSync,
-	unlinkSync,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
 	renameSync,
+	statSync,
+	unlinkSync,
+	writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, dirname, basename } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type { Database } from '../storage/database';
 
 /**
@@ -201,7 +201,7 @@ export function removeToolResultFromSessionFile(
 		}
 
 		// Write back to file
-		writeFileSync(sessionFile, updatedLines.join('\n') + '\n', 'utf-8');
+		writeFileSync(sessionFile, `${updatedLines.join('\n')}\n`, 'utf-8');
 
 		console.info(
 			`[SDKSessionFileManager] Successfully removed tool_result from message ${messageUuid}`
@@ -505,7 +505,7 @@ export function repairSDKSessionFile(
 		}
 
 		// Write back to file
-		writeFileSync(sessionFile, lines.join('\n') + '\n', 'utf-8');
+		writeFileSync(sessionFile, `${lines.join('\n')}\n`, 'utf-8');
 
 		result.success = result.repairedCount > 0;
 
@@ -957,4 +957,83 @@ export function identifyOrphanedSDKFiles(
 	}
 
 	return orphaned;
+}
+
+/**
+ * Truncate the SDK session JSONL file at a specific message
+ *
+ * Removes the message with the given UUID and all subsequent messages from the JSONL file.
+ * This ensures the file is physically cleaned up during rewind, not just logically skipped
+ * via resumeSessionAt.
+ *
+ * @param workspacePath - The session's workspace path
+ * @param sdkSessionId - The SDK session ID (for direct file path lookup)
+ * @param kaiSessionId - The NeoKai session ID (fallback for file search)
+ * @param messageUuid - The UUID of the message to truncate at (this message is removed too)
+ * @returns Object with truncation result
+ */
+export function truncateSessionFileAtMessage(
+	workspacePath: string,
+	sdkSessionId: string | null | undefined,
+	kaiSessionId: string,
+	messageUuid: string
+): { truncated: boolean; linesRemoved: number } {
+	// Find the JSONL file
+	let filePath: string | null = null;
+	if (sdkSessionId) {
+		const candidatePath = getSDKSessionFilePath(workspacePath, sdkSessionId);
+		if (existsSync(candidatePath)) {
+			filePath = candidatePath;
+		}
+	}
+	if (!filePath) {
+		filePath = findSDKSessionFile(workspacePath, kaiSessionId);
+	}
+	if (!filePath || !existsSync(filePath)) {
+		return { truncated: false, linesRemoved: 0 };
+	}
+
+	try {
+		const content = readFileSync(filePath, 'utf-8');
+		const lines = content.split('\n');
+
+		// Find the line containing the message UUID
+		let truncateIndex = -1;
+		for (let i = 0; i < lines.length; i++) {
+			if (
+				lines[i].includes(`"uuid":"${messageUuid}"`) ||
+				lines[i].includes(`"uuid": "${messageUuid}"`)
+			) {
+				truncateIndex = i;
+				break;
+			}
+		}
+
+		if (truncateIndex === -1) {
+			// UUID not found - try looser match
+			for (let i = 0; i < lines.length; i++) {
+				if (lines[i].includes(messageUuid)) {
+					truncateIndex = i;
+					break;
+				}
+			}
+		}
+
+		if (truncateIndex === -1) {
+			return { truncated: false, linesRemoved: 0 };
+		}
+
+		// Keep lines before the message, remove it and everything after
+		const keptLines = lines.slice(0, truncateIndex);
+		const linesRemoved = lines.length - truncateIndex;
+
+		// Write back (ensure file ends with newline if non-empty)
+		const newContent = keptLines.length > 0 ? `${keptLines.join('\n')}\n` : '';
+		writeFileSync(filePath, newContent);
+
+		return { truncated: true, linesRemoved };
+	} catch (error) {
+		console.error('[SDKSessionFileManager] Error truncating session file:', error);
+		return { truncated: false, linesRemoved: 0 };
+	}
 }

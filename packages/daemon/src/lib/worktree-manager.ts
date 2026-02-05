@@ -498,6 +498,109 @@ export class WorktreeManager {
 	}
 
 	/**
+	 * Detect the current branch of the repository
+	 * Returns the branch that HEAD is currently on
+	 * @private
+	 */
+	private async detectCurrentBranch(repoPath: string): Promise<string> {
+		const git = this.getGit(repoPath);
+
+		try {
+			const currentBranch = (await git.raw(['branch', '--show-current'])).trim();
+			if (currentBranch) {
+				this.logger.info(`[WorktreeManager] Detected current branch: ${currentBranch}`);
+				return currentBranch;
+			}
+		} catch (error) {
+			this.logger.debug(`[WorktreeManager] Error getting current branch: ${error}`);
+		}
+
+		// Fallback to default branch
+		this.logger.info(' Using fallback: default branch');
+		return await this.getDefaultBranch(repoPath);
+	}
+
+	/**
+	 * Get the base branch to compare against for commit checking
+	 * Strategy:
+	 * 1. If main repo is on a session branch, use dev/develop/main/master as the base
+	 * 2. If main repo is on dev/develop, use that as the base
+	 * 3. Otherwise prefer main/master over current branch
+	 */
+	private async getBaseBranch(repoPath: string): Promise<string> {
+		const git = this.getGit(repoPath);
+		const currentBranch = await this.detectCurrentBranch(repoPath);
+
+		// If current branch is a session branch, look for a development branch to use as base
+		if (currentBranch.startsWith('session/')) {
+			// Try common development branches in order
+			const devBranches = ['dev', 'develop', 'development', 'main', 'master'];
+			for (const branch of devBranches) {
+				try {
+					await git.revparse(['--verify', branch]);
+					this.logger.info(
+						`[WorktreeManager] Main repo is on session branch, using ${branch} as base branch`
+					);
+					return branch;
+				} catch {
+					// Branch doesn't exist, continue
+				}
+			}
+		}
+
+		// If current branch is dev/develop, use it (this is the integration branch)
+		if (['dev', 'develop', 'development'].includes(currentBranch)) {
+			this.logger.info(`[WorktreeManager] Using current dev branch as base: ${currentBranch}`);
+			return currentBranch;
+		}
+
+		// Try to use main or master if they exist (preferred for production workflows)
+		for (const preferredBranch of ['main', 'master']) {
+			try {
+				await git.revparse(['--verify', preferredBranch]);
+				this.logger.info(`[WorktreeManager] Using preferred base branch: ${preferredBranch}`);
+				return preferredBranch;
+			} catch {
+				// Branch doesn't exist, continue
+			}
+		}
+
+		// Fallback to current branch
+		this.logger.info(`[WorktreeManager] Using current branch as base: ${currentBranch}`);
+		return currentBranch;
+	}
+
+	/**
+	 * Check if a commit is an ancestor of a branch
+	 * Returns true if the commit is reachable from the branch
+	 *
+	 * Uses git merge-base to determine ancestry:
+	 * If git merge-base(branch, commit) returns commit, then commit is an ancestor of branch
+	 */
+	private async isCommitAncestor(
+		repoPath: string,
+		commitHash: string,
+		branch: string
+	): Promise<boolean> {
+		try {
+			const git = this.getGit(repoPath);
+			// Get the merge base between the branch and the commit
+			const mergeBase = (await git.raw(['merge-base', branch, commitHash])).trim();
+
+			// If merge base equals the commit hash, the commit is an ancestor of the branch
+			// (The merge base is the best common ancestor; if it's the commit itself,
+			// then the commit is reachable from the branch)
+			return mergeBase === commitHash || mergeBase.startsWith(commitHash);
+		} catch (error) {
+			// On error, assume not an ancestor (safe default)
+			this.logger.debug(
+				`[WorktreeManager] Error checking ancestry of ${commitHash} in ${branch}: ${error}`
+			);
+			return false;
+		}
+	}
+
+	/**
 	 * Check if worktree branch has commits ahead of the base branch
 	 * Returns commit information for user confirmation before archiving
 	 */
@@ -526,10 +629,11 @@ export class WorktreeManager {
 				};
 			}
 
-			// Auto-detect base branch from repository's default branch
+			// Auto-detect base branch
+			// Prefer main/master for production branches, fallback to current branch for dev branches
 			let base = baseBranch;
 			if (!base) {
-				base = await this.getDefaultBranch(mainRepoPath);
+				base = await this.getBaseBranch(mainRepoPath);
 			}
 
 			// Verify base branch exists
@@ -566,6 +670,9 @@ export class WorktreeManager {
 			// For each file the session branch changed, check if it matches base
 			// If session branch's version matches base's version, the changes are already on base
 			let hasUniqueChanges = false;
+			this.logger.info(
+				`[WorktreeManager] Checking ${changedFiles.length} changed file(s) for uniqueness between ${branch} and ${base}`
+			);
 			for (const file of changedFiles) {
 				try {
 					// Compare the file content between session branch and base
@@ -577,12 +684,16 @@ export class WorktreeManager {
 							`[WorktreeManager] File ${file} differs between ${branch} and ${base}`
 						);
 						break;
+					} else {
+						this.logger.info(
+							`[WorktreeManager] File ${file} is identical between ${branch} and ${base}`
+						);
 					}
-				} catch {
+				} catch (diffError) {
 					// File might not exist on one side - that's a real difference
 					hasUniqueChanges = true;
 					this.logger.info(
-						`[WorktreeManager] File ${file} exists only on one branch (${branch} vs ${base})`
+						`[WorktreeManager] File ${file} exists only on one branch (${branch} vs ${base}): ${diffError}`
 					);
 					break;
 				}
@@ -591,7 +702,7 @@ export class WorktreeManager {
 			if (!hasUniqueChanges) {
 				// All files match - changes already on base (squash merged)
 				this.logger.info(
-					`[WorktreeManager] Branch ${branch} changes are all on ${base} (squash merged)`
+					`[WorktreeManager] Branch ${branch} changes are all on ${base} (squash merged) - returning hasCommitsAhead=false`
 				);
 				return {
 					hasCommitsAhead: false,
@@ -604,22 +715,61 @@ export class WorktreeManager {
 			const logFormat = '--format=%H|%an|%ai|%s';
 			const logOutput = await git.raw(['log', `${base}..${branch}`, logFormat]);
 
-			const commits: CommitInfo[] = [];
+			// Parse commits and store both full hash and display info
+			const commits: Array<{ fullHash: string; info: CommitInfo }> = [];
 			if (logOutput.trim()) {
 				for (const line of logOutput.trim().split('\n')) {
-					const [hash, author, date, ...messageParts] = line.split('|');
+					const [fullHash, author, date, ...messageParts] = line.split('|');
 					commits.push({
-						hash: hash.substring(0, 7), // Short hash
-						author,
-						date,
-						message: messageParts.join('|'), // Rejoin in case message had |
+						fullHash,
+						info: {
+							hash: fullHash.substring(0, 7), // Short hash for display
+							author,
+							date,
+							message: messageParts.join('|'),
+						},
 					});
 				}
 			}
 
+			// Filter out commits already reachable from base via merge commits
+			const unmergedCommits: CommitInfo[] = [];
+			let filteredCount = 0;
+
+			if (commits.length > 0) {
+				this.logger.info(
+					`[WorktreeManager] Checking ${commits.length} commit(s) from ${branch} for ancestry in ${base}`
+				);
+
+				for (const commit of commits) {
+					const isAncestor = await this.isCommitAncestor(mainRepoPath, commit.fullHash, base);
+
+					if (isAncestor) {
+						this.logger.info(
+							`[WorktreeManager] Commit ${commit.info.hash} (${commit.info.message}) is reachable from ${base} via merge commit, filtering out`
+						);
+						filteredCount++;
+					} else {
+						unmergedCommits.push(commit.info);
+					}
+				}
+
+				if (filteredCount > 0) {
+					this.logger.info(
+						`[WorktreeManager] Filtered ${filteredCount} of ${commits.length} commits already merged into ${base}`
+					);
+				}
+
+				if (commits.length > 0 && unmergedCommits.length === 0) {
+					this.logger.info(
+						`[WorktreeManager] All ${commits.length} commit(s) from ${branch} are reachable from ${base} (merged via merge commits)`
+					);
+				}
+			}
+
 			return {
-				hasCommitsAhead: commits.length > 0,
-				commits,
+				hasCommitsAhead: unmergedCommits.length > 0,
+				commits: unmergedCommits,
 				baseBranch: base,
 			};
 		} catch (error) {

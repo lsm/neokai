@@ -168,12 +168,10 @@ export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHub
 	const isConnected = useComputed(() => connectionState.value === 'connected');
 	const state = useComputed(() => connectionState.value);
 
-	// Debug logging
+	// Connection state tracking (for debug mode)
 	useEffect(() => {
 		if (debug) {
-			return connectionState.subscribe((newState) => {
-				console.log('[useMessageHub] Connection state changed:', newState);
-			});
+			return connectionState.subscribe(() => {});
 		}
 	}, [debug]);
 

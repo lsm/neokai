@@ -20,6 +20,7 @@ import {
 	scanSDKSessionFiles,
 	identifyOrphanedSDKFiles,
 	removeToolResultFromSessionFile,
+	truncateSessionFileAtMessage,
 } from '../../../src/lib/sdk-session-file-manager';
 import type { Database } from '../../../src/storage/database';
 
@@ -1066,6 +1067,324 @@ describe('SDK Session File Manager', () => {
 
 			expect(userMessage.message.content[0].content[0].text).toContain('Output removed by user');
 			expect(userMessage.message.content[1].content[0].text).toContain('Output removed by user');
+		});
+	});
+
+	// ============================================================================
+	// truncateSessionFileAtMessage Tests
+	// ============================================================================
+
+	describe('truncateSessionFileAtMessage', () => {
+		const testTruncateWorkspacePath = '/tmp/test-workspace-sdk-truncation';
+		const testTruncateSdkSessionId = 'test-sdk-session-truncation';
+		const testKaiSessionId = 'test-kai-session-truncation-12345';
+		let testTruncateSessionDir: string;
+		let testTruncateSessionFile: string;
+
+		beforeEach(() => {
+			// Create test directory structure
+			const projectKey = testTruncateWorkspacePath.replace(/[/.]/g, '-');
+			testTruncateSessionDir = join(homedir(), '.claude', 'projects', projectKey);
+			mkdirSync(testTruncateSessionDir, { recursive: true });
+			testTruncateSessionFile = join(testTruncateSessionDir, `${testTruncateSdkSessionId}.jsonl`);
+		});
+
+		afterEach(() => {
+			// Cleanup test files
+			if (existsSync(testTruncateSessionDir)) {
+				try {
+					rmSync(testTruncateSessionDir, { recursive: true, force: true });
+				} catch {
+					// Ignore cleanup errors
+				}
+			}
+		});
+
+		test('should return {truncated: false, linesRemoved: 0} when file does not exist (no sdkSessionId)', () => {
+			const result = truncateSessionFileAtMessage(
+				'/nonexistent/workspace',
+				null,
+				'nonexistent-kai-session',
+				'message-uuid-123'
+			);
+
+			expect(result.truncated).toBe(false);
+			expect(result.linesRemoved).toBe(0);
+		});
+
+		test('should return {truncated: false, linesRemoved: 0} when file does not exist (nonexistent workspace)', () => {
+			const result = truncateSessionFileAtMessage(
+				'/nonexistent/workspace',
+				'nonexistent-sdk-session',
+				'kai-session-id',
+				'message-uuid-123'
+			);
+
+			expect(result.truncated).toBe(false);
+			expect(result.linesRemoved).toBe(0);
+		});
+
+		test('should return {truncated: false, linesRemoved: 0} when UUID is not found in file', () => {
+			// Create a file without the target message UUID
+			const messages = [
+				JSON.stringify({
+					type: 'user',
+					uuid: 'message-uuid-1',
+					message: { role: 'user', content: [{ type: 'text', text: 'First message' }] },
+				}),
+				JSON.stringify({
+					type: 'assistant',
+					uuid: 'message-uuid-2',
+					message: { role: 'assistant', content: [{ type: 'text', text: 'Second message' }] },
+				}),
+			];
+			writeFileSync(testTruncateSessionFile, messages.join('\n') + '\n', 'utf-8');
+
+			const result = truncateSessionFileAtMessage(
+				testTruncateWorkspacePath,
+				testTruncateSdkSessionId,
+				testKaiSessionId,
+				'nonexistent-uuid-999'
+			);
+
+			expect(result.truncated).toBe(false);
+			expect(result.linesRemoved).toBe(0);
+
+			// File should remain unchanged
+			const content = readFileSync(testTruncateSessionFile, 'utf-8');
+			expect(content.split('\n').filter((l) => l.trim())).toHaveLength(2);
+		});
+
+		test('should truncate file at message with exact UUID format `"uuid":"<uuid>"`', () => {
+			const messages = [
+				JSON.stringify({
+					type: 'user',
+					uuid: 'message-uuid-1',
+					message: { role: 'user', content: [{ type: 'text', text: 'First message' }] },
+				}),
+				JSON.stringify({
+					type: 'assistant',
+					uuid: 'message-uuid-2',
+					message: { role: 'assistant', content: [{ type: 'text', text: 'Second message' }] },
+				}),
+				JSON.stringify({
+					type: 'user',
+					uuid: 'message-uuid-3',
+					message: { role: 'user', content: [{ type: 'text', text: 'Third message' }] },
+				}),
+			];
+			writeFileSync(testTruncateSessionFile, messages.join('\n') + '\n', 'utf-8');
+
+			const result = truncateSessionFileAtMessage(
+				testTruncateWorkspacePath,
+				testTruncateSdkSessionId,
+				testKaiSessionId,
+				'message-uuid-2'
+			);
+
+			expect(result.truncated).toBe(true);
+			expect(result.linesRemoved).toBe(3); // Line 2, line 3, and trailing newline
+
+			// Verify only the first message remains
+			const content = readFileSync(testTruncateSessionFile, 'utf-8');
+			const lines = content.split('\n').filter((l) => l.trim());
+			expect(lines).toHaveLength(1);
+			const msg = JSON.parse(lines[0]);
+			expect(msg.uuid).toBe('message-uuid-1');
+		});
+
+		test('should truncate file at message with spaced UUID format `"uuid": "<uuid>"`', () => {
+			const messages = [
+				// This message uses spaced format
+				JSON.stringify({ type: 'user', uuid: 'message-uuid-1', message: { role: 'user' } }).replace(
+					'"uuid":"message-uuid-1"',
+					'"uuid": "message-uuid-1"'
+				),
+				JSON.stringify({
+					type: 'assistant',
+					uuid: 'message-uuid-2',
+					message: { role: 'assistant' },
+				}),
+			];
+			writeFileSync(testTruncateSessionFile, messages.join('\n') + '\n', 'utf-8');
+
+			const result = truncateSessionFileAtMessage(
+				testTruncateWorkspacePath,
+				testTruncateSdkSessionId,
+				testKaiSessionId,
+				'message-uuid-1'
+			);
+
+			expect(result.truncated).toBe(true);
+			expect(result.linesRemoved).toBe(3); // First line, second line, trailing newline
+
+			// Verify file is empty (all lines removed)
+			const content = readFileSync(testTruncateSessionFile, 'utf-8');
+			expect(content).toBe('');
+		});
+
+		test('should fall back to loose UUID match when exact match fails', () => {
+			// Create a malformed message where uuid is not in standard JSON format
+			const messages = [
+				JSON.stringify({ type: 'user', uuid: 'message-uuid-1' }),
+				'{"type":"user","customField":"message-uuid-special","message":{}}', // UUID in custom field
+			];
+			writeFileSync(testTruncateSessionFile, messages.join('\n') + '\n', 'utf-8');
+
+			const result = truncateSessionFileAtMessage(
+				testTruncateWorkspacePath,
+				testTruncateSdkSessionId,
+				testKaiSessionId,
+				'message-uuid-special'
+			);
+
+			expect(result.truncated).toBe(true);
+			expect(result.linesRemoved).toBe(2); // Second line and trailing newline
+
+			// Verify only first message remains
+			const content = readFileSync(testTruncateSessionFile, 'utf-8');
+			const lines = content.split('\n').filter((l) => l.trim());
+			expect(lines).toHaveLength(1);
+		});
+
+		test('should preserve all lines before the truncation point', () => {
+			const messages = [
+				JSON.stringify({ type: 'user', uuid: 'msg-1', message: { content: 'First' } }),
+				JSON.stringify({ type: 'assistant', uuid: 'msg-2', message: { content: 'Second' } }),
+				JSON.stringify({ type: 'user', uuid: 'msg-3', message: { content: 'Third' } }),
+				JSON.stringify({ type: 'assistant', uuid: 'msg-4', message: { content: 'Fourth' } }),
+				JSON.stringify({ type: 'user', uuid: 'msg-5', message: { content: 'Fifth' } }),
+			];
+			writeFileSync(testTruncateSessionFile, messages.join('\n') + '\n', 'utf-8');
+
+			const result = truncateSessionFileAtMessage(
+				testTruncateWorkspacePath,
+				testTruncateSdkSessionId,
+				testKaiSessionId,
+				'msg-4'
+			);
+
+			expect(result.truncated).toBe(true);
+
+			// Verify first 3 messages are preserved
+			const content = readFileSync(testTruncateSessionFile, 'utf-8');
+			const lines = content.split('\n').filter((l) => l.trim());
+			expect(lines).toHaveLength(3);
+
+			const uuids = lines.map((line) => JSON.parse(line).uuid);
+			expect(uuids).toEqual(['msg-1', 'msg-2', 'msg-3']);
+		});
+
+		test('should result in empty file content when truncating at first message', () => {
+			const messages = [
+				JSON.stringify({ type: 'user', uuid: 'first-msg', message: { content: 'First' } }),
+				JSON.stringify({ type: 'assistant', uuid: 'second-msg', message: { content: 'Second' } }),
+			];
+			writeFileSync(testTruncateSessionFile, messages.join('\n') + '\n', 'utf-8');
+
+			const result = truncateSessionFileAtMessage(
+				testTruncateWorkspacePath,
+				testTruncateSdkSessionId,
+				testKaiSessionId,
+				'first-msg'
+			);
+
+			expect(result.truncated).toBe(true);
+			expect(result.linesRemoved).toBe(3); // Both lines plus trailing newline
+
+			// Verify file is empty
+			const content = readFileSync(testTruncateSessionFile, 'utf-8');
+			expect(content).toBe('');
+		});
+
+		test('should handle file with trailing empty lines correctly', () => {
+			const messages = [
+				JSON.stringify({ type: 'user', uuid: 'msg-1', message: { content: 'First' } }),
+				JSON.stringify({ type: 'assistant', uuid: 'msg-2', message: { content: 'Second' } }),
+				JSON.stringify({ type: 'user', uuid: 'msg-3', message: { content: 'Third' } }),
+			];
+			// Add extra trailing newlines
+			writeFileSync(testTruncateSessionFile, messages.join('\n') + '\n\n\n', 'utf-8');
+
+			const result = truncateSessionFileAtMessage(
+				testTruncateWorkspacePath,
+				testTruncateSdkSessionId,
+				testKaiSessionId,
+				'msg-3'
+			);
+
+			expect(result.truncated).toBe(true);
+			// linesRemoved includes the target line, empty lines, etc.
+			expect(result.linesRemoved).toBeGreaterThan(0);
+
+			// Verify only first 2 messages remain
+			const content = readFileSync(testTruncateSessionFile, 'utf-8');
+			const lines = content.split('\n').filter((l) => l.trim());
+			expect(lines).toHaveLength(2);
+			expect(JSON.parse(lines[0]).uuid).toBe('msg-1');
+			expect(JSON.parse(lines[1]).uuid).toBe('msg-2');
+		});
+
+		test('should return correct linesRemoved count', () => {
+			const messages = [
+				JSON.stringify({ type: 'user', uuid: 'msg-1' }),
+				JSON.stringify({ type: 'assistant', uuid: 'msg-2' }),
+				JSON.stringify({ type: 'user', uuid: 'msg-3' }),
+				JSON.stringify({ type: 'assistant', uuid: 'msg-4' }),
+				JSON.stringify({ type: 'user', uuid: 'msg-5' }),
+			];
+			writeFileSync(testTruncateSessionFile, messages.join('\n') + '\n', 'utf-8');
+
+			const originalContent = readFileSync(testTruncateSessionFile, 'utf-8');
+			const originalLines = originalContent.split('\n');
+
+			const result = truncateSessionFileAtMessage(
+				testTruncateWorkspacePath,
+				testTruncateSdkSessionId,
+				testKaiSessionId,
+				'msg-3'
+			);
+
+			// Should remove line 3 (index 2), line 4 (index 3), line 5 (index 4), and trailing newline (index 5)
+			expect(result.truncated).toBe(true);
+			expect(result.linesRemoved).toBe(originalLines.length - 2); // 6 total lines - 2 kept lines
+
+			const newContent = readFileSync(testTruncateSessionFile, 'utf-8');
+			const newLines = newContent.split('\n').filter((l) => l.trim());
+			expect(newLines).toHaveLength(2);
+		});
+
+		test('should handle errors gracefully (read-only file scenario)', () => {
+			const messages = [
+				JSON.stringify({ type: 'user', uuid: 'msg-1' }),
+				JSON.stringify({ type: 'assistant', uuid: 'msg-2' }),
+			];
+			writeFileSync(testTruncateSessionFile, messages.join('\n') + '\n', 'utf-8');
+
+			// Make file read-only (mode 0o444)
+			try {
+				const fs = require('node:fs');
+				fs.chmodSync(testTruncateSessionFile, 0o444);
+
+				const result = truncateSessionFileAtMessage(
+					testTruncateWorkspacePath,
+					testTruncateSdkSessionId,
+					testKaiSessionId,
+					'msg-2'
+				);
+
+				// Should handle error gracefully and return false
+				expect(result.truncated).toBe(false);
+				expect(result.linesRemoved).toBe(0);
+			} finally {
+				// Restore write permissions for cleanup
+				try {
+					const fs = require('node:fs');
+					fs.chmodSync(testTruncateSessionFile, 0o644);
+				} catch {
+					// Ignore cleanup errors
+				}
+			}
 		});
 	});
 });

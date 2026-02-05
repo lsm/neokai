@@ -199,13 +199,8 @@ describe('SDKAssistantMessage', () => {
 			expect(container.querySelector('[data-testid="assistant-message"]')).toBeTruthy();
 		});
 
-		it('should include message UUID in data attribute', () => {
-			const message = createTextOnlyMessage('Hello world');
-			const { container } = render(<SDKAssistantMessage message={message} />);
-
-			const element = container.querySelector('[data-message-uuid]');
-			expect(element?.getAttribute('data-message-uuid')).toBe(message.uuid);
-		});
+		// Note: data-message-uuid is now set by parent SDKMessageRenderer wrapper
+		// This test is removed as the child component no longer sets this attribute
 
 		it('should include message role in data attribute', () => {
 			const message = createTextOnlyMessage('Hello world');
@@ -923,6 +918,153 @@ describe('SDKAssistantMessage', () => {
 				// (header is always visible even when collapsed)
 				expect(container.textContent).toContain('Question skipped');
 			});
+		});
+	});
+
+	describe('Rewind Mode', () => {
+		const onMessageCheckboxChange = vi.fn();
+
+		it('should render checkbox in rewind mode', () => {
+			const message = createTextOnlyMessage('Hello world');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKAssistantMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeTruthy();
+		});
+
+		it('should check checkbox when message is selected', () => {
+			const message = createTextOnlyMessage('Hello world');
+			const selectedMessages = new Set<string>([message.uuid!]);
+
+			const { container } = render(
+				<SDKAssistantMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+			expect(checkbox.checked).toBe(true);
+		});
+
+		it('should call onMessageCheckboxChange when checkbox is clicked', () => {
+			const message = createTextOnlyMessage('Hello world');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKAssistantMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			fireEvent.click(checkbox!);
+
+			expect(onMessageCheckboxChange).toHaveBeenCalledWith(message.uuid, true);
+		});
+
+		it('should render tool use blocks in rewind mode', () => {
+			const message = createMixedContentMessage();
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKAssistantMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			// Should render the tool use block
+			expect(container.textContent).toContain('Read');
+			// Should also render text
+			expect(container.textContent).toContain('I will read the file');
+		});
+
+		it('should render thinking blocks in rewind mode', () => {
+			const message = createThinkingMessage();
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKAssistantMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			expect(container.querySelector('[data-testid="thinking-block"]')).toBeTruthy();
+		});
+
+		it('should not render checkbox when message has no uuid', () => {
+			const message = createTextOnlyMessage('Hello world');
+			delete (message as Record<string, unknown>).uuid;
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKAssistantMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeFalsy();
+		});
+
+		it('should not render checkbox when onMessageCheckboxChange is not provided', () => {
+			const message = createTextOnlyMessage('Hello world');
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKAssistantMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeFalsy();
+		});
+
+		it('should not render checkbox when message has sub-agent children', () => {
+			const message = createTextOnlyMessage('Parent message');
+			const childMessage = createTextOnlyMessage('Child message');
+			(childMessage as unknown as Record<string, unknown>).parent_tool_use_id = message.uuid;
+			const allMessages = [message, childMessage] as SDKMessage[];
+			const selectedMessages = new Set<string>();
+
+			const { container } = render(
+				<SDKAssistantMessage
+					message={message}
+					rewindMode={true}
+					selectedMessages={selectedMessages}
+					onMessageCheckboxChange={onMessageCheckboxChange}
+					allMessages={allMessages}
+				/>
+			);
+
+			const checkbox = container.querySelector('input[type="checkbox"]');
+			expect(checkbox).toBeFalsy();
 		});
 	});
 });

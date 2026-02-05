@@ -98,7 +98,7 @@ test.describe('Reconnection - Long Disconnection Period', () => {
 		const messageIds = new Set<string>();
 
 		for (const element of messageElements) {
-			const uuid = await element.getAttribute('data-message-uuid');
+			const uuid = await element.evaluate((el) => el.getAttribute('data-message-uuid') || null);
 			if (uuid) {
 				expect(messageIds.has(uuid)).toBe(false);
 				messageIds.add(uuid);

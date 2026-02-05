@@ -57,7 +57,7 @@ test.describe('Reconnection - Message Order', () => {
 		const timestampsBeforeDisconnect = await page.evaluate(() => {
 			const messages = Array.from(document.querySelectorAll('[data-message-role]'));
 			return messages.map((el) => ({
-				uuid: el.getAttribute('data-message-uuid'),
+				uuid: el.getAttribute('data-message-uuid') || null,
 				timestamp: el.getAttribute('data-message-timestamp'),
 			}));
 		});
@@ -85,7 +85,7 @@ test.describe('Reconnection - Message Order', () => {
 		const timestampsAfterReconnect = await page.evaluate(() => {
 			const messages = Array.from(document.querySelectorAll('[data-message-role]'));
 			return messages.map((el) => ({
-				uuid: el.getAttribute('data-message-uuid'),
+				uuid: el.getAttribute('data-message-uuid') || null,
 				timestamp: el.getAttribute('data-message-timestamp'),
 			}));
 		});
