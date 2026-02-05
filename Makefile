@@ -62,29 +62,15 @@ build:
 	@echo "📦 Building web production bundle..."
 	@cd packages/web && bun run build
 
-test:
-	@echo "Running all tests..."
-	@bun run test
+test: test-daemon test-web
 
 test-daemon:
 	@echo "Running daemon tests..."
-	@cd packages/daemon && bun test
+	@bun test --preload=./packages/daemon/tests/unit/setup.ts --dots packages/daemon/tests/unit packages/shared/tests --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage
 
 test-web:
 	@echo "Running web tests..."
-	@cd packages/web && bunx vitest run
-
-test-shared:
-	@echo "Running shared tests..."
-	@cd packages/shared && bun test
-
-e2e:
-	@echo "Running E2E tests..."
-	@cd packages/e2e && bun run test
-
-e2e-ui:
-	@echo "Running E2E tests in UI mode..."
-	@cd packages/e2e && bun run test:ui
+	@cd packages/web && bun run coverage
 
 lint:
 	@bun run lint
@@ -124,3 +110,43 @@ sync-sdk-types:
 # Full release pipeline: build + compile + package
 release: compile-all package-npm
 	@echo "Release artifacts ready in dist/npm/"
+
+# Check for outdated dependencies across all workspace packages
+outdated:
+	@echo "📦 Checking for outdated dependencies..."
+	@echo ""
+	@echo "=== Root ==="
+	@bun outdated || true
+	@echo ""
+	@echo "=== packages/cli ==="
+	@cd packages/cli && bun outdated || true
+	@echo ""
+	@echo "=== packages/daemon ==="
+	@cd packages/daemon && bun outdated || true
+	@echo ""
+	@echo "=== packages/web ==="
+	@cd packages/web && bun outdated || true
+	@echo ""
+	@echo "=== packages/shared ==="
+	@cd packages/shared && bun outdated || true
+
+# Interactive dependency update across all workspace packages
+update:
+	@echo "🔄 Updating dependencies interactively..."
+	@echo ""
+	@echo "=== Root ==="
+	@bun update --interactive
+	@echo ""
+	@echo "=== packages/cli ==="
+	@cd packages/cli && bun update --interactive
+	@echo ""
+	@echo "=== packages/daemon ==="
+	@cd packages/daemon && bun update --interactive
+	@echo ""
+	@echo "=== packages/web ==="
+	@cd packages/web && bun update --interactive
+	@echo ""
+	@echo "=== packages/shared ==="
+	@cd packages/shared && bun update --interactive
+	@echo ""
+	@echo "✅ All packages updated!"

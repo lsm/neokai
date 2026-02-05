@@ -16,7 +16,7 @@
 		"typecheck": "tsc --build",
 		"test": "vitest run",
 		"test:watch": "vitest",
-		"coverage": "vitest run --coverage"
+		"coverage": "vitest run --reporter dot --coverage"
 	},
 	"dependencies": {
 		"@preact/signals": "2.6.1",
