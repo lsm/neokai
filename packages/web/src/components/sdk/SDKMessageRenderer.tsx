@@ -96,11 +96,10 @@ export function SDKMessageRenderer({
 		return null;
 	}
 
-	// Compute the rendered message component without passing rewind props to child components
+	// Compute the rendered message component
 	let renderedMessage: JSX.Element | null = null;
 
 	// Route to appropriate renderer based on message type
-	// Skip user messages in rewind mode - they'll be handled in the special path below
 	// Handle user replay messages (slash command responses) first
 	if (isSDKUserMessageReplay(message)) {
 		renderedMessage = (
@@ -112,15 +111,20 @@ export function SDKMessageRenderer({
 			/>
 		);
 	} else if (isSDKUserMessage(message)) {
-		// Skip normal user messages here - they'll be handled in the special path below
-		// Only render replay user messages (slash command responses) in this section
-		if (!rewindMode) {
-			// Will be handled below with rewind props
-		} else {
-			renderedMessage = (
-				<SDKUserMessage message={message} sessionInfo={sessionInfo} sessionId={sessionId} />
-			);
-		}
+		// Always render user messages - pass rewind mode props
+		renderedMessage = (
+			<SDKUserMessage
+				message={message}
+				sessionInfo={sessionInfo}
+				sessionId={sessionId}
+				onRewind={rewindMode ? undefined : onRewind}
+				rewindingMessageUuid={rewindMode ? undefined : rewindingMessageUuid}
+				rewindMode={rewindMode}
+				selectedMessages={selectedMessages}
+				onMessageCheckboxChange={onMessageCheckboxChange}
+				allMessages={_allMessages}
+			/>
+		);
 	} else if (isSDKAssistantMessage(message)) {
 		renderedMessage = (
 			<SDKAssistantMessage
@@ -131,6 +135,10 @@ export function SDKMessageRenderer({
 				resolvedQuestions={resolvedQuestions}
 				pendingQuestion={pendingQuestion}
 				onQuestionResolved={onQuestionResolved}
+				rewindMode={rewindMode}
+				selectedMessages={selectedMessages}
+				onMessageCheckboxChange={onMessageCheckboxChange}
+				allMessages={_allMessages}
 			/>
 		);
 	} else if (isSDKResultMessage(message)) {
@@ -164,47 +172,7 @@ export function SDKMessageRenderer({
 		);
 	}
 
-	// Get message UUID
-	const messageUuid = message.uuid;
-
-	// Rewind mode path - wrap with checkbox
-	if (rewindMode && messageUuid && onMessageCheckboxChange) {
-		// Skip tool progress messages - they're part of tool execution, not separate checkpoints
-		if (isSDKToolProgressMessage(message)) {
-			return renderedMessage;
-		}
-		return (
-			<div class="flex items-start gap-2" data-message-uuid={messageUuid}>
-				<div class="flex items-start pt-3">
-					<input
-						type="checkbox"
-						checked={selectedMessages?.has(messageUuid) || false}
-						onChange={(e) =>
-							onMessageCheckboxChange(messageUuid, (e.target as HTMLInputElement).checked)
-						}
-						class="w-5 h-5 rounded border-gray-600 bg-transparent text-amber-500 focus:ring-amber-500 focus:ring-2 focus:ring-offset-dark-900 cursor-pointer transition-colors checked:border-amber-500 hover:border-gray-500"
-					/>
-				</div>
-				<div class="flex-1 min-w-0">{renderedMessage}</div>
-			</div>
-		);
-	}
-
-	// Normal mode (non-rewind) - only wrap user messages with rewind data attribute
-	if (!rewindMode && isSDKUserMessage(message)) {
-		// Pass rewind props to user message component
-		const userMessage = message as Extract<SDKMessage, { type: 'user' }>;
-		return (
-			<SDKUserMessage
-				message={userMessage}
-				sessionInfo={sessionInfo}
-				sessionId={sessionId}
-				onRewind={onRewind}
-				rewindingMessageUuid={rewindingMessageUuid}
-			/>
-		);
-	}
-
 	// Default path - just return the rendered message as-is
+	// Checkbox rendering is now handled by individual message components
 	return renderedMessage;
 }

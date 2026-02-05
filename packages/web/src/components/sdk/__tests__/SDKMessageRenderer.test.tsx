@@ -365,8 +365,8 @@ describe('SDKMessageRenderer', () => {
 			const checkbox = container.querySelector('input[type="checkbox"]');
 			expect(checkbox).toBeTruthy();
 
-			// Should have flex wrapper with gap
-			expect(container.querySelector('.flex.items-start.gap-2')).toBeTruthy();
+			// Should have grid wrapper with gap
+			expect(container.querySelector('.grid')).toBeTruthy();
 
 			// Should render the user message inside
 			expect(container.querySelector('[data-testid="user-message"]')).toBeTruthy();

@@ -101,7 +101,7 @@ export async function startDevServer(config: Config) {
 			strictPort: false, // Allow Vite to find another port if needed
 			hmr: {
 				protocol: 'ws',
-				host: 'localhost',
+				host: config.host,
 				port: vitePort,
 			},
 		},
@@ -121,6 +121,7 @@ export async function startDevServer(config: Config) {
 	server = Bun.serve({
 		hostname: config.host,
 		port: config.port,
+		idleTimeout: 255, // Max value (255 sec) - prevent timeout on long requests
 
 		async fetch(req, server) {
 			const url = new URL(req.url);

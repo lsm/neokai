@@ -1,10 +1,38 @@
-.PHONY: dev self run build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release sync-sdk-types
+.PHONY: dev dev-random serve-random self run build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release sync-sdk-types
 
 dev:
 	@echo "Starting development server..."
 	@mkdir -p tmp/workspace
-	@lsof -ti:9283 | xargs kill -9 2>/dev/null || true
 	@NODE_ENV=development bun run packages/cli/main.ts --workspace tmp/workspace
+
+# Development server on random port - finds available port and starts server
+dev-random:
+	@echo "Finding available port..."
+	@PORT=$$(node -e "const net = require('net'); const server = net.createServer(); server.listen(0, () => { const port = server.address().port; console.log(port); server.close(); });"); \
+	echo "Starting development server on port $$PORT..."; \
+	mkdir -p tmp/workspace; \
+	echo ""; \
+	echo "================================================"; \
+	echo "🚀 Server starting on http://localhost:$$PORT"; \
+	echo "================================================"; \
+	echo ""; \
+	NODE_ENV=development NEOKAI_PORT=$$PORT bun run packages/cli/main.ts --workspace tmp/workspace --port $$PORT
+
+# Production server on random port - starts production build on available port
+serve-random:
+	@echo "Finding available port..."
+	@PORT=$$(node -e "const net = require('net'); const server = net.createServer(); server.listen(0, () => { const port = server.address().port; console.log(port); server.close(); });"); \
+	echo "Building production bundle..."; \
+	$(MAKE) build; \
+	echo ""; \
+	echo "Starting production server on port $$PORT..."; \
+	mkdir -p tmp/workspace; \
+	echo ""; \
+	echo "================================================"; \
+	echo "🚀 Production server starting on http://localhost:$$PORT"; \
+	echo "================================================"; \
+	echo ""; \
+	NODE_ENV=production NEOKAI_PORT=$$PORT bun run packages/cli/main.ts --workspace tmp/workspace --port $$PORT
 
 # Self-developing mode - production build serving the current directory on port 9983
 # This is a convenience wrapper around `make run`
@@ -28,7 +56,6 @@ run:
 	@echo "   Workspace: $(WORKSPACE)"
 	@echo "   Listening on port $(PORT)"
 	@$(MAKE) build
-	@lsof -ti:$(PORT) | xargs kill -9 2>/dev/null || true
 	@NODE_ENV=production bun run packages/cli/main.ts --port $(PORT) --workspace $(WORKSPACE)
 
 build:
