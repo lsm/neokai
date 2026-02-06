@@ -35,7 +35,6 @@ export interface CreateSessionParams {
 	workspacePath?: string;
 	initialTools?: string[];
 	config?: Partial<Session['config']>;
-	useWorktree?: boolean;
 	worktreeBaseBranch?: string;
 	title?: string; // Optional title - if provided, skips auto-title generation
 }
@@ -67,7 +66,13 @@ export class SessionLifecycle {
 		// Detect git support before creating worktree
 		const gitSupport = await this.worktreeManager.detectGitSupport(baseWorkspacePath);
 		const isGitRepo = gitSupport.isGitRepo;
+
+		// Determine if worktree choice should be shown
 		const shouldShowChoice = isGitRepo && !this.config.disableWorktrees;
+
+		// Determine if worktree should be created immediately
+		// Only for non-git repos (git repos go through choice flow)
+		const shouldCreateWorktree = !this.config.disableWorktrees && !isGitRepo;
 
 		// Read global settings for defaults (model, thinkingLevel, autoScroll)
 		const globalSettings = this.db.getGlobalSettings();
@@ -90,11 +95,9 @@ export class SessionLifecycle {
 			? generateBranchName(providedTitle!, sessionId) // Title is defined when shouldSkipAutoTitle is true
 			: `session/${sessionId}`;
 
-		// Only create worktree if:
-		// - Not a git repo (no choice needed), OR
-		// - Worktrees disabled, OR
-		// - User doesn't need to choose (non-git workspace)
-		if (!shouldShowChoice && !this.config.disableWorktrees) {
+		// Create worktree for non-git repos
+		// Git repos will go through choice flow
+		if (shouldCreateWorktree) {
 			try {
 				const result = await this.createWorktreeInternal(
 					sessionId,
@@ -165,6 +168,7 @@ export class SessionLifecycle {
 				titleGenerated: shouldSkipAutoTitle,
 				// Workspace is already initialized (worktree created or using base path)
 				workspaceInitialized: true,
+				// Only set worktreeChoice if we're showing the choice UI
 				worktreeChoice: shouldShowChoice
 					? {
 							status: 'pending',

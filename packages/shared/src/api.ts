@@ -31,7 +31,6 @@ export interface CreateSessionRequest {
 	workspacePath?: string;
 	initialTools?: string[];
 	config?: Partial<SessionConfig>;
-	useWorktree?: boolean; // Enable worktree isolation (auto-detected if in git repo)
 	worktreeBaseBranch?: string; // Base branch for worktree (default: HEAD)
 	title?: string; // Optional title - if provided, skips auto-title generation
 }

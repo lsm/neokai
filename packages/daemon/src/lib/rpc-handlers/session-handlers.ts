@@ -31,7 +31,6 @@ export function setupSessionHandlers(
 			workspacePath: req.workspacePath,
 			initialTools: req.initialTools,
 			config: req.config,
-			useWorktree: req.useWorktree,
 			worktreeBaseBranch: req.worktreeBaseBranch,
 			title: req.title,
 		});
