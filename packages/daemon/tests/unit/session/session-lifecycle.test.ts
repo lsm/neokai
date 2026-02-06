@@ -241,6 +241,10 @@ describe('SessionLifecycle', () => {
 							enabled: true,
 							autoAllowBashIfSandboxed: true,
 							excludedCommands: ['git'],
+							network: expect.objectContaining({
+								allowLocalBinding: true,
+								allowAllUnixSockets: true,
+							}),
 						}),
 					}),
 				})

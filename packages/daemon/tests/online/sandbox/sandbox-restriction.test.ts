@@ -87,6 +87,10 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 						enabled: true,
 						autoAllowBashIfSandboxed: true,
 						excludedCommands: ['git'],
+						network: {
+							allowLocalBinding: true,
+							allowAllUnixSockets: true,
+						},
 					},
 				},
 			})) as { sessionId: string };
@@ -136,6 +140,10 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 						enabled: true,
 						autoAllowBashIfSandboxed: true,
 						excludedCommands: ['git'],
+						network: {
+							allowLocalBinding: true,
+							allowAllUnixSockets: true,
+						},
 					},
 				},
 			})) as { sessionId: string };
@@ -183,6 +191,10 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 						enabled: true,
 						autoAllowBashIfSandboxed: true,
 						excludedCommands: ['git'],
+						network: {
+							allowLocalBinding: true,
+							allowAllUnixSockets: true,
+						},
 					},
 				},
 			})) as { sessionId: string };
