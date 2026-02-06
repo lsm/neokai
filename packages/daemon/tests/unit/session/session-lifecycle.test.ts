@@ -230,6 +230,44 @@ describe('SessionLifecycle', () => {
 			);
 		});
 
+		it('should enable sandbox by default', async () => {
+			await lifecycle.create({});
+
+			expect(createSessionSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					config: expect.objectContaining({
+						sandbox: expect.objectContaining({
+							enabled: true,
+							autoAllowBashIfSandboxed: true,
+							excludedCommands: ['git'],
+						}),
+					}),
+				})
+			);
+		});
+
+		it('should allow override sandbox config via params', async () => {
+			await lifecycle.create({
+				config: {
+					sandbox: {
+						enabled: false,
+						autoAllowBashIfSandboxed: false,
+					},
+				},
+			});
+
+			expect(createSessionSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					config: expect.objectContaining({
+						sandbox: expect.objectContaining({
+							enabled: false,
+							autoAllowBashIfSandboxed: false,
+						}),
+					}),
+				})
+			);
+		});
+
 		it('should add session to cache', async () => {
 			const sessionId = await lifecycle.create({});
 
