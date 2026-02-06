@@ -12,11 +12,12 @@ import { globalSettings } from '../lib/state.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 
 // Model options with human-readable names
+// Uses SDK short IDs that match canonical model identifiers
 const MODEL_OPTIONS = [
-	{ value: '', label: 'Default (Sonnet)' },
-	{ value: 'claude-sonnet-4-5-20250929', label: 'Sonnet 4.5' },
-	{ value: 'claude-opus-4-5-20251101', label: 'Opus 4.5' },
-	{ value: 'claude-haiku-3-5-20241022', label: 'Haiku 3.5' },
+	{ value: 'sonnet', label: 'Sonnet 4.5' },
+	{ value: 'opus', label: 'Opus 4.5' },
+	{ value: 'haiku', label: 'Haiku 4.5' },
+	{ value: 'sonnet[1m]', label: 'Sonnet 4.5 (1M)' },
 ] as const;
 
 // Permission mode options with descriptions
@@ -144,7 +145,7 @@ export function GlobalSettingsEditor() {
 	const handleModelChange = async (value: string) => {
 		try {
 			setSaving(true);
-			await updateGlobalSettings({ model: value || undefined });
+			await updateGlobalSettings({ model: value });
 			showSavedIndicator('model');
 		} catch (error) {
 			console.error('Failed to update model:', error);
@@ -278,7 +279,7 @@ export function GlobalSettingsEditor() {
 		return <div class="text-gray-400 text-sm">Loading settings...</div>;
 	}
 
-	const currentModel = settings.model || '';
+	const currentModel = settings.model || 'sonnet';
 	const currentPermissionMode = settings.permissionMode || 'default';
 	const currentThinkingLevel = settings.thinkingLevel || 'auto';
 	const currentAutoScroll = settings.autoScroll ?? true;
