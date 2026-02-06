@@ -526,6 +526,182 @@ describe('SessionLifecycle', () => {
 		});
 	});
 
+	describe('completeWorktreeChoice', () => {
+		it('should create worktree when choice is worktree', async () => {
+			const sessionId = 'session-123';
+			const branchName = `session/${sessionId}`;
+
+			// Mock session in pending state
+			const pendingSession = {
+				id: sessionId,
+				status: 'pending_worktree_choice',
+				workspacePath: '/my/workspace',
+				metadata: {
+					worktreeChoice: {
+						status: 'pending',
+						createdAt: new Date().toISOString(),
+					},
+				},
+			};
+			cacheGetSpy.mockReturnValue({
+				getSessionData: () => pendingSession,
+				updateMetadata: mock(() => {}),
+			} as unknown as AgentSession);
+
+			// Mock worktree creation
+			const worktreeMetadata = {
+				worktreePath: '/my/workspace/worktrees/session-123',
+				branch: branchName,
+				isWorktree: true,
+			};
+			createWorktreeSpy.mockResolvedValue(worktreeMetadata);
+
+			// Call completeWorktreeChoice
+			await lifecycle.completeWorktreeChoice(sessionId, 'worktree');
+
+			// Verify worktree was created
+			expect(createWorktreeSpy).toHaveBeenCalledWith({
+				sessionId,
+				repoPath: '/my/workspace',
+				branchName,
+				baseBranch: 'HEAD',
+			});
+
+			// Verify session was updated
+			expect(updateSessionSpy).toHaveBeenCalledWith(
+				sessionId,
+				expect.objectContaining({
+					status: 'active',
+					worktree: worktreeMetadata,
+					gitBranch: branchName,
+					metadata: expect.objectContaining({
+						worktreeChoice: expect.objectContaining({
+							status: 'completed',
+							choice: 'worktree',
+						}),
+					}),
+				})
+			);
+
+			// Verify event was emitted
+			expect(emitSpy).toHaveBeenCalledWith(
+				'session.updated',
+				expect.objectContaining({
+					sessionId,
+				})
+			);
+		});
+
+		it('should not create worktree when choice is direct', async () => {
+			const sessionId = 'session-456';
+
+			// Mock session in pending state
+			const pendingSession = {
+				id: sessionId,
+				status: 'pending_worktree_choice',
+				workspacePath: '/my/workspace',
+				metadata: {
+					worktreeChoice: {
+						status: 'pending',
+						createdAt: new Date().toISOString(),
+					},
+				},
+			};
+			cacheGetSpy.mockReturnValue({
+				getSessionData: () => pendingSession,
+				updateMetadata: mock(() => {}),
+			} as unknown as AgentSession);
+
+			// Call completeWorktreeChoice with direct mode
+			await lifecycle.completeWorktreeChoice(sessionId, 'direct');
+
+			// Verify worktree was NOT created
+			expect(createWorktreeSpy).not.toHaveBeenCalled();
+
+			// Verify session was updated
+			expect(updateSessionSpy).toHaveBeenCalledWith(
+				sessionId,
+				expect.objectContaining({
+					status: 'active',
+					worktree: undefined,
+					gitBranch: undefined,
+					metadata: expect.objectContaining({
+						worktreeChoice: expect.objectContaining({
+							status: 'completed',
+							choice: 'direct',
+						}),
+					}),
+				})
+			);
+		});
+
+		it('should throw error when session not found', async () => {
+			cacheGetSpy.mockReturnValue(undefined);
+
+			await expect(lifecycle.completeWorktreeChoice('non-existent', 'worktree')).rejects.toThrow(
+				'Session non-existent not found'
+			);
+		});
+
+		it('should throw error when session is not in pending state', async () => {
+			const sessionId = 'session-789';
+
+			// Mock session in active state (not pending)
+			const activeSession = {
+				id: sessionId,
+				status: 'active',
+				workspacePath: '/my/workspace',
+			};
+			cacheGetSpy.mockReturnValue({
+				getSessionData: () => activeSession,
+				updateMetadata: mock(() => {}),
+			} as unknown as AgentSession);
+
+			await expect(lifecycle.completeWorktreeChoice(sessionId, 'worktree')).rejects.toThrow(
+				'is not pending worktree choice'
+			);
+		});
+
+		it('should preserve worktreeChoice timestamps when completing', async () => {
+			const sessionId = 'session-timestamp';
+			const createdAt = '2024-01-01T00:00:00.000Z';
+
+			// Mock session in pending state
+			const pendingSession = {
+				id: sessionId,
+				status: 'pending_worktree_choice',
+				workspacePath: '/my/workspace',
+				metadata: {
+					worktreeChoice: {
+						status: 'pending',
+						createdAt,
+					},
+				},
+			};
+			cacheGetSpy.mockReturnValue({
+				getSessionData: () => pendingSession,
+				updateMetadata: mock(() => {}),
+			} as unknown as AgentSession);
+
+			// Call completeWorktreeChoice
+			await lifecycle.completeWorktreeChoice(sessionId, 'direct');
+
+			// Verify timestamps
+			expect(updateSessionSpy).toHaveBeenCalledWith(
+				sessionId,
+				expect.objectContaining({
+					metadata: expect.objectContaining({
+						worktreeChoice: expect.objectContaining({
+							createdAt,
+							status: 'completed',
+							completedAt: expect.any(String),
+						}),
+					}),
+				})
+			);
+		});
+	});
+
 	describe('getFromDB', () => {
 		it('should return session from database', () => {
 			const mockSession = { id: 'test', title: 'Test Session' };
