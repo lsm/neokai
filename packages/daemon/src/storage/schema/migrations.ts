@@ -1,7 +1,7 @@
 /**
  * Database Migrations
  *
- * All 12 migrations for schema changes.
+ * All 13 migrations for schema changes.
  * CRITICAL: Preserve the order of migrations.
  */
 
@@ -56,6 +56,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 12: Ensure global_settings has autoScroll: true for existing databases
 	runMigration12(db);
+
+	// Migration 13: Update CHECK constraint to include 'pending_worktree_choice' status
+	runMigration13(db);
 }
 
 /**
@@ -338,5 +341,109 @@ export function runMigration12(db: BunDatabase): void {
 		}
 	} catch (err) {
 		logger.log(`Migration 12 failed: ${err}`);
+	}
+}
+
+/**
+ * Migration 13: Update CHECK constraint to include 'pending_worktree_choice' status
+ *
+ * SQLite doesn't support ALTER COLUMN, so we need to recreate the table.
+ *
+ * CRITICAL: Must disable foreign_keys during table recreation!
+ * With foreign_keys=ON, DROP TABLE cascades to child tables (sdk_messages),
+ * which would delete all messages. This was a data-loss bug.
+ */
+function runMigration13(db: BunDatabase): void {
+	try {
+		// Check if the CHECK constraint already includes 'pending_worktree_choice'
+		// We do this by trying to insert a test row with status='pending_worktree_choice'
+		const testId = '__migration_test_pending_worktree_choice_status__';
+		db.prepare(
+			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state, archived_at, parent_id, labels, sub_session_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		).run(
+			testId,
+			'Test',
+			'/tmp',
+			new Date().toISOString(),
+			new Date().toISOString(),
+			'pending_worktree_choice',
+			'{}',
+			'{}',
+			0,
+			null,
+			null,
+			null,
+			null,
+			null,
+			null,
+			null,
+			null,
+			null,
+			null,
+			0
+		);
+		// If we got here, the constraint already includes 'pending_worktree_choice', clean up and skip migration
+		db.prepare(`DELETE FROM sessions WHERE id = ?`).run(testId);
+	} catch {
+		// INSERT failed, which means CHECK constraint doesn't include 'pending_worktree_choice'
+		// Need to recreate the table with updated constraint
+		logger.log(
+			"Running migration: Updating sessions table CHECK constraint to include 'pending_worktree_choice' status"
+		);
+
+		// CRITICAL: Disable foreign keys during table recreation to prevent
+		// CASCADE delete from wiping sdk_messages when we DROP TABLE sessions
+		db.exec('PRAGMA foreign_keys = OFF');
+
+		try {
+			// SQLite table recreation pattern for modifying constraints
+			db.exec(`
+				-- Create new table with updated CHECK constraint
+				CREATE TABLE sessions_new (
+					id TEXT PRIMARY KEY,
+					title TEXT NOT NULL,
+					workspace_path TEXT NOT NULL,
+					created_at TEXT NOT NULL,
+					last_active_at TEXT NOT NULL,
+					status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
+					config TEXT NOT NULL,
+					metadata TEXT NOT NULL,
+					is_worktree INTEGER DEFAULT 0,
+					worktree_path TEXT,
+					main_repo_path TEXT,
+					worktree_branch TEXT,
+					git_branch TEXT,
+					sdk_session_id TEXT,
+					available_commands TEXT,
+					processing_state TEXT,
+					archived_at TEXT,
+					parent_id TEXT,
+					labels TEXT,
+					sub_session_order INTEGER DEFAULT 0
+				);
+
+				-- Copy all data from old table to new table
+				INSERT INTO sessions_new
+				SELECT id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+					   is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch,
+					   sdk_session_id, available_commands, processing_state, archived_at,
+					   parent_id, labels, sub_session_order
+				FROM sessions;
+
+				-- Drop old table (safe now that foreign_keys is OFF)
+				DROP TABLE sessions;
+
+				-- Rename new table to original name
+				ALTER TABLE sessions_new RENAME TO sessions;
+			`);
+
+			logger.log(
+				'Migration complete: sessions table CHECK constraint updated to include pending_worktree_choice'
+			);
+		} finally {
+			// Re-enable foreign keys
+			db.exec('PRAGMA foreign_keys = ON');
+		}
 	}
 }
