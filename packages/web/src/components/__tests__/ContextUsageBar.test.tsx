@@ -16,7 +16,7 @@ describe('ContextUsageBar', () => {
 		totalUsed: 50000,
 		totalCapacity: 200000,
 		percentUsed: 25,
-		model: 'claude-sonnet-4-20250514',
+		model: 'sonnet',
 		breakdown: {
 			'System Prompt': { tokens: 5000, percent: 2.5 },
 			Messages: { tokens: 40000, percent: 20 },
@@ -234,7 +234,7 @@ describe('ContextUsageBar', () => {
 			fireEvent.click(clickable);
 
 			expect(container.textContent).toContain('Model:');
-			expect(container.textContent).toContain('claude-sonnet-4-20250514');
+			expect(container.textContent).toContain('sonnet');
 		});
 
 		it('should not show model info when not available', () => {

@@ -11,28 +11,28 @@ describe('GlobalSettingsEditor Logic', () => {
 	describe('Model Selection', () => {
 		it('should have correct model options', () => {
 			const MODEL_OPTIONS = [
-				{ value: '', label: 'Default (Sonnet)' },
-				{ value: 'claude-sonnet-4-5-20250929', label: 'Sonnet 4.5' },
-				{ value: 'claude-opus-4-5-20251101', label: 'Opus 4.5' },
-				{ value: 'claude-haiku-3-5-20241022', label: 'Haiku 3.5' },
+				{ value: 'sonnet', label: 'Sonnet 4.5' },
+				{ value: 'opus', label: 'Opus 4.5' },
+				{ value: 'haiku', label: 'Haiku 4.5' },
+				{ value: 'sonnet[1m]', label: 'Sonnet 4.5 (1M)' },
 			];
 			expect(MODEL_OPTIONS.length).toBe(4);
-			expect(MODEL_OPTIONS[0].value).toBe('');
-			expect(MODEL_OPTIONS[0].label).toBe('Default (Sonnet)');
+			expect(MODEL_OPTIONS[0].value).toBe('sonnet');
+			expect(MODEL_OPTIONS[0].label).toBe('Sonnet 4.5');
 		});
 
 		it('should support model update calls', () => {
 			const updateFn = vi.fn(() => Promise.resolve());
-			updateFn({ model: 'claude-opus-4-5-20251101' });
+			updateFn({ model: 'opus' });
 			expect(updateFn).toHaveBeenCalledWith({
-				model: 'claude-opus-4-5-20251101',
+				model: 'opus',
 			});
 		});
 
-		it('should use undefined for default model', () => {
+		it('should use sonnet as default model', () => {
 			const updateFn = vi.fn(() => Promise.resolve());
-			updateFn({ model: undefined });
-			expect(updateFn).toHaveBeenCalledWith({ model: undefined });
+			updateFn({ model: 'sonnet' });
+			expect(updateFn).toHaveBeenCalledWith({ model: 'sonnet' });
 		});
 	});
 
