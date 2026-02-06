@@ -759,4 +759,100 @@ describe('Session Handlers', () => {
 			expect(result.commitStatus.hasCommitsAhead).toBe(true);
 		});
 	});
+
+	describe('session.setWorktreeMode', () => {
+		it('should complete worktree choice successfully', async () => {
+			const updatedSession = {
+				...mockSession,
+				status: 'active' as const,
+				worktree: {
+					isWorktree: true,
+					worktreePath: '/test/worktree',
+					branch: 'session/test-session-id',
+				},
+			};
+
+			const mockSessionLifecycle = {
+				completeWorktreeChoice: mock(
+					async (_sessionId: string, _mode: 'worktree' | 'direct') => updatedSession
+				),
+			};
+			(mockSessionManager as { getSessionLifecycle: ReturnType<typeof mock> }).getSessionLifecycle =
+				mock(() => mockSessionLifecycle);
+
+			const result = (await callHandler('session.setWorktreeMode', {
+				sessionId: 'test-session-id',
+				mode: 'worktree',
+			})) as {
+				success: boolean;
+				session: Session;
+			};
+
+			expect(result.success).toBe(true);
+			expect(result.session).toEqual(updatedSession);
+			expect(mockSessionLifecycle.completeWorktreeChoice).toHaveBeenCalledWith(
+				'test-session-id',
+				'worktree'
+			);
+			expect(mockMessageHub.publish).toHaveBeenCalledWith('session.updated', updatedSession, {
+				sessionId: 'test-session-id',
+			});
+		});
+
+		it('should throw error when sessionId is missing', async () => {
+			await expect(
+				callHandler('session.setWorktreeMode', {
+					sessionId: '',
+					mode: 'worktree',
+				})
+			).rejects.toThrow('Missing required fields: sessionId and mode');
+		});
+
+		it('should throw error when mode is missing', async () => {
+			await expect(
+				callHandler('session.setWorktreeMode', {
+					sessionId: 'test-session-id',
+					mode: undefined as unknown as 'worktree',
+				})
+			).rejects.toThrow('Missing required fields: sessionId and mode');
+		});
+
+		it('should throw error when mode is invalid', async () => {
+			await expect(
+				callHandler('session.setWorktreeMode', {
+					sessionId: 'test-session-id',
+					mode: 'invalid' as unknown as 'worktree',
+				})
+			).rejects.toThrow("Invalid mode: invalid. Must be 'worktree' or 'direct'");
+		});
+
+		it('should handle direct mode', async () => {
+			const updatedSession = {
+				...mockSession,
+				status: 'active' as const,
+			};
+
+			const mockSessionLifecycle = {
+				completeWorktreeChoice: mock(
+					async (_sessionId: string, _mode: 'worktree' | 'direct') => updatedSession
+				),
+			};
+			(mockSessionManager as { getSessionLifecycle: ReturnType<typeof mock> }).getSessionLifecycle =
+				mock(() => mockSessionLifecycle);
+
+			const result = (await callHandler('session.setWorktreeMode', {
+				sessionId: 'test-session-id',
+				mode: 'direct',
+			})) as {
+				success: boolean;
+				session: Session;
+			};
+
+			expect(result.success).toBe(true);
+			expect(mockSessionLifecycle.completeWorktreeChoice).toHaveBeenCalledWith(
+				'test-session-id',
+				'direct'
+			);
+		});
+	});
 });
