@@ -18,12 +18,13 @@ import { resolveSDKCliPath, isBundledBinary } from '../agent/sdk-cli-resolver.js
 /**
  * Canonical SDK model IDs (short-form IDs preferred by the SDK)
  * These are the preferred IDs that should be kept when duplicates exist
+ * Note: 'default' is included because SDK still returns it, but it's converted to 'sonnet'
  */
-const CANONICAL_SDK_IDS = new Set(['default', 'opus', 'haiku', 'sonnet[1m]']);
+const CANONICAL_SDK_IDS = new Set(['default', 'sonnet', 'opus', 'haiku', 'sonnet[1m]']);
 
 /**
  * Detect if a model ID is a full version-specific ID (e.g., claude-sonnet-4-5-20250929)
- * vs a canonical short ID (e.g., default, opus, haiku)
+ * vs a canonical short ID (e.g., sonnet, opus, haiku)
  */
 function isFullVersionId(modelId: string): boolean {
 	// Full IDs match pattern: claude-{family}-{version}-{date}
@@ -37,7 +38,8 @@ function isFullVersionId(modelId: string): boolean {
  */
 function parseModelId(modelId: string): { family: string; version?: string } | null {
 	// Canonical short IDs
-	if (modelId === 'default') return { family: 'sonnet', version: '4.5' };
+	if (modelId === 'sonnet') return { family: 'sonnet', version: '4.5' };
+	if (modelId === 'default') return { family: 'sonnet', version: '4.5' }; // Legacy: map 'default' to sonnet
 	if (modelId === 'opus') return { family: 'opus', version: '4.5' };
 	if (modelId === 'haiku') return { family: 'haiku', version: '4.5' };
 	if (modelId === 'sonnet[1m]') return { family: 'sonnet', version: '4.5-1m' };
@@ -173,7 +175,7 @@ export class AnthropicProvider implements Provider {
 	 * Public for use by external helpers like getAnthropicModelsFromQuery
 	 *
 	 * Intelligently filters out duplicate models:
-	 * - Prefers canonical short IDs (default, opus, haiku) over full version IDs
+	 * - Prefers canonical short IDs (sonnet, opus, haiku) over full version IDs
 	 * - Detects when multiple IDs represent the same model
 	 */
 	convertSdkModels(
@@ -221,6 +223,9 @@ export class AnthropicProvider implements Provider {
 				return true;
 			})
 			.map((sdkModel) => {
+				// Convert SDK's 'default' to 'sonnet' for consistency
+				const modelId = sdkModel.value === 'default' ? 'sonnet' : sdkModel.value;
+
 				// Extract display name from description (format: "Model X.Y · description")
 				const description = sdkModel.description || '';
 				const separatorIndex = description.indexOf(' · ');
@@ -247,9 +252,9 @@ export class AnthropicProvider implements Provider {
 				}
 
 				return {
-					id: sdkModel.value,
+					id: modelId,
 					name: displayName,
-					alias: sdkModel.value, // SDK uses short IDs like 'opus', 'default'
+					alias: modelId, // Use 'sonnet' instead of 'default'
 					family,
 					provider: 'anthropic',
 					contextWindow: 200000,
@@ -264,7 +269,7 @@ export class AnthropicProvider implements Provider {
 	 * Check if a model ID belongs to Anthropic
 	 *
 	 * Anthropic owns:
-	 * - 'default', 'opus', 'haiku' (SDK short IDs)
+	 * - 'sonnet', 'opus', 'haiku' (SDK short IDs)
 	 * - 'claude-*' model IDs
 	 *
 	 * Does NOT own models from other providers (glm-*, deepseek-*, etc.)
@@ -273,7 +278,12 @@ export class AnthropicProvider implements Provider {
 		const lower = modelId.toLowerCase();
 
 		// SDK short IDs
-		if (['default', 'opus', 'haiku', 'sonnet'].includes(lower)) {
+		if (['sonnet', 'opus', 'haiku'].includes(lower)) {
+			return true;
+		}
+
+		// Legacy: 'default' maps to sonnet
+		if (lower === 'default') {
 			return true;
 		}
 
@@ -298,10 +308,10 @@ export class AnthropicProvider implements Provider {
 	 */
 	getModelForTier(tier: ModelTier): string | undefined {
 		const tierMap: Record<ModelTier, string> = {
-			sonnet: 'default',
+			sonnet: 'sonnet',
 			haiku: 'haiku',
 			opus: 'opus',
-			default: 'default',
+			default: 'sonnet',
 		};
 		return tierMap[tier];
 	}
