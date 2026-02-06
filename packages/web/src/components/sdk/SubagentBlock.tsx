@@ -250,6 +250,12 @@ export function SubagentBlock({
 				</div>
 
 				<div class="flex items-center gap-2 flex-shrink-0">
+					{/* Message counter */}
+					{nestedMessages.length > 0 && (
+						<span class="text-xs font-semibold px-1.5 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
+							{nestedMessages.length}
+						</span>
+					)}
 					{isError && (
 						<svg
 							class="w-4 h-4 text-red-600 dark:text-red-400"

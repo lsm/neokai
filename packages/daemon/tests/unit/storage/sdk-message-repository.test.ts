@@ -282,6 +282,27 @@ describe('SDKMessageRepository', () => {
 			const count = repo.getSDKMessageCount('nonexistent');
 			expect(count).toBe(0);
 		});
+
+		it('should exclude subagent messages with parent_tool_use_id', () => {
+			// Create top-level messages
+			repo.saveSDKMessage('session-1', createUserMessage('top-level-1'));
+			repo.saveSDKMessage('session-1', createUserMessage('top-level-2'));
+
+			// Create subagent messages (nested)
+			const subagentMessage1 = createUserMessage('subagent-1');
+			(subagentMessage1 as SDKMessage & { parent_tool_use_id: string }).parent_tool_use_id =
+				'tool-123';
+			repo.saveSDKMessage('session-1', subagentMessage1);
+
+			const subagentMessage2 = createUserMessage('subagent-2');
+			(subagentMessage2 as SDKMessage & { parent_tool_use_id: string }).parent_tool_use_id =
+				'tool-456';
+			repo.saveSDKMessage('session-1', subagentMessage2);
+
+			// Count should only include top-level messages
+			const count = repo.getSDKMessageCount('session-1');
+			expect(count).toBe(2);
+		});
 	});
 
 	describe('saveUserMessage', () => {
