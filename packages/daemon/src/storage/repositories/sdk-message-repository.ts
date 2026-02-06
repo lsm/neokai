@@ -54,17 +54,21 @@ export class SDKMessageRepository {
 	 * Returns messages in chronological order (oldest to newest).
 	 *
 	 * Pagination modes:
-	 * 1. Initial load (no before): Returns the NEWEST `limit` messages
+	 * 1. Initial load (no before): Returns the NEWEST `limit` top-level messages + their subagent messages
 	 * 2. Load older (with before): Returns messages BEFORE the given timestamp
 	 * 3. Load newer (with since): Returns messages AFTER the given timestamp
 	 *
+	 * Note: The limit applies only to top-level messages. Subagent messages (with parent_tool_use_id)
+	 * are automatically included for the returned top-level messages to support SubagentBlock rendering.
+	 *
 	 * @param sessionId - The session ID to get messages for
-	 * @param limit - Maximum number of messages to return (default: 100)
+	 * @param limit - Maximum number of top-level messages to return (default: 100)
 	 * @param before - Cursor: get messages older than this timestamp (milliseconds)
 	 * @param since - Get messages newer than this timestamp (milliseconds)
 	 */
 	getSDKMessages(sessionId: string, limit = 100, before?: number, since?: number): SDKMessage[] {
-		let query = `SELECT sdk_message, timestamp FROM sdk_messages WHERE session_id = ?`;
+		// Step 1: Get top-level messages (excluding subagent messages)
+		let query = `SELECT sdk_message, timestamp FROM sdk_messages WHERE session_id = ? AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL`;
 		const params: SQLiteValue[] = [sessionId];
 
 		// Cursor-based pagination: get messages BEFORE a timestamp (for loading older)
@@ -95,7 +99,45 @@ export class SDKMessageRepository {
 		});
 
 		// Reverse to get chronological order (oldest to newest) for display
-		return messages.reverse();
+		const topLevelMessages = messages.reverse();
+
+		// Step 2: Get all subagent messages for the returned top-level messages
+		// Extract tool use IDs from Task blocks in the top-level messages
+		const toolUseIds = new Set<string>();
+		topLevelMessages.forEach((msg) => {
+			if (msg.type === 'assistant' && msg.message && Array.isArray(msg.message.content)) {
+				msg.message.content.forEach((block: unknown) => {
+					const blockObj = block as Record<string, unknown>;
+					if (blockObj.type === 'tool_use' && blockObj.id) {
+						toolUseIds.add(blockObj.id as string);
+					}
+				});
+			}
+		});
+
+		// Fetch subagent messages that have parent_tool_use_id matching any of the tool use IDs
+		let subagentMessages: SDKMessage[] = [];
+		if (toolUseIds.size > 0) {
+			const placeholders = Array.from(toolUseIds)
+				.map(() => '?')
+				.join(',');
+			const subagentQuery = `SELECT sdk_message, timestamp FROM sdk_messages
+       WHERE session_id = ? AND json_extract(sdk_message, '$.parent_tool_use_id') IN (${placeholders})
+       ORDER BY timestamp ASC`;
+			const subagentParams: SQLiteValue[] = [sessionId, ...Array.from(toolUseIds)];
+
+			const subagentStmt = this.db.prepare(subagentQuery);
+			const subagentRows = subagentStmt.all(...subagentParams) as Record<string, unknown>[];
+
+			subagentMessages = subagentRows.map((r) => {
+				const sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
+				const timestamp = new Date(r.timestamp as string).getTime();
+				return { ...sdkMessage, timestamp } as SDKMessage & { timestamp: number };
+			});
+		}
+
+		// Combine and return: top-level messages + their associated subagent messages
+		return [...topLevelMessages, ...subagentMessages];
 	}
 
 	/**
@@ -126,9 +168,15 @@ export class SDKMessageRepository {
 
 	/**
 	 * Get the count of SDK messages for a session
+	 *
+	 * Only counts top-level messages (excludes nested subagent messages with parent_tool_use_id)
+	 * to ensure accurate pagination.
 	 */
 	getSDKMessageCount(sessionId: string): number {
-		const stmt = this.db.prepare(`SELECT COUNT(*) as count FROM sdk_messages WHERE session_id = ?`);
+		const stmt = this.db.prepare(
+			`SELECT COUNT(*) as count FROM sdk_messages
+       WHERE session_id = ? AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL`
+		);
 		const result = stmt.get(sessionId) as { count: number };
 		return result.count;
 	}

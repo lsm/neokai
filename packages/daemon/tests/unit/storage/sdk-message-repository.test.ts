@@ -214,6 +214,126 @@ describe('SDKMessageRepository', () => {
 				new Date('2024-01-01T12:00:00.000Z').getTime()
 			);
 		});
+
+		it('should include subagent messages for tool use blocks in top-level messages', () => {
+			const stmt = db.prepare(
+				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+			);
+
+			// Create top-level assistant message with a tool_use block
+			const assistantMessage = {
+				type: 'assistant',
+				uuid: 'assistant-1',
+				message: {
+					content: [
+						{
+							type: 'text',
+							text: 'Starting task',
+						},
+						{
+							type: 'tool_use',
+							id: 'tool-123',
+							name: 'Task',
+							input: { subagent_type: 'explore', description: 'Test task' },
+						},
+					],
+				},
+			};
+			stmt.run(
+				'msg-1',
+				'session-1',
+				'assistant',
+				null,
+				JSON.stringify(assistantMessage),
+				'2024-01-01T00:00:00.000Z'
+			);
+
+			// Create another top-level user message
+			stmt.run(
+				'msg-2',
+				'session-1',
+				'user',
+				null,
+				'{"type":"user","uuid":"user-1","message":{"role":"user","content":"Next message"}}',
+				'2024-01-01T00:01:00.000Z'
+			);
+
+			// Create subagent messages (should be included)
+			const subagentMsg1 = {
+				type: 'assistant',
+				uuid: 'subagent-1',
+				parent_tool_use_id: 'tool-123',
+				message: { content: [{ type: 'text', text: 'Subagent response' }] },
+			};
+			stmt.run(
+				'msg-3',
+				'session-1',
+				'assistant',
+				null,
+				JSON.stringify(subagentMsg1),
+				'2024-01-01T00:00:30.000Z'
+			);
+
+			const subagentMsg2 = {
+				type: 'user',
+				uuid: 'subagent-2',
+				parent_tool_use_id: 'tool-123',
+				message: { role: 'user', content: 'Subagent user message' },
+			};
+			stmt.run(
+				'msg-4',
+				'session-1',
+				'user',
+				null,
+				JSON.stringify(subagentMsg2),
+				'2024-01-01T00:00:15.000Z'
+			);
+
+			// Create subagent message for a different tool (should NOT be included - no matching tool use)
+			const orphanSubagent = {
+				type: 'assistant',
+				uuid: 'orphan-1',
+				parent_tool_use_id: 'tool-999',
+				message: { content: [{ type: 'text', text: 'Orphan subagent' }] },
+			};
+			stmt.run(
+				'msg-5',
+				'session-1',
+				'assistant',
+				null,
+				JSON.stringify(orphanSubagent),
+				'2024-01-01T00:00:45.000Z'
+			);
+
+			// Get messages
+			const messages = repo.getSDKMessages('session-1');
+
+			// Should return: 2 top-level messages + 2 subagent messages (for tool-123) = 4 total
+			// The orphan subagent (tool-999) should NOT be included
+			expect(messages).toHaveLength(4);
+
+			// Verify top-level messages are present
+			const topLevelMessages = messages.filter((m) => {
+				const msgWithParent = m as SDKMessage & { parent_tool_use_id?: string | null };
+				return !msgWithParent.parent_tool_use_id;
+			});
+			expect(topLevelMessages).toHaveLength(2);
+
+			// Verify subagent messages for tool-123 are included
+			const subagentMessages = messages.filter((m) => {
+				const msgWithParent = m as SDKMessage & { parent_tool_use_id?: string | null };
+				return msgWithParent.parent_tool_use_id === 'tool-123';
+			});
+			expect(subagentMessages).toHaveLength(2);
+
+			// Verify orphan subagent is NOT included
+			const orphanMessages = messages.filter((m) => {
+				const msgWithParent = m as SDKMessage & { parent_tool_use_id?: string | null };
+				return msgWithParent.parent_tool_use_id === 'tool-999';
+			});
+			expect(orphanMessages).toHaveLength(0);
+		});
 	});
 
 	describe('getSDKMessagesByType', () => {
@@ -281,6 +401,27 @@ describe('SDKMessageRepository', () => {
 		it('should return 0 for non-existent session', () => {
 			const count = repo.getSDKMessageCount('nonexistent');
 			expect(count).toBe(0);
+		});
+
+		it('should exclude subagent messages with parent_tool_use_id', () => {
+			// Create top-level messages
+			repo.saveSDKMessage('session-1', createUserMessage('top-level-1'));
+			repo.saveSDKMessage('session-1', createUserMessage('top-level-2'));
+
+			// Create subagent messages (nested)
+			const subagentMessage1 = createUserMessage('subagent-1');
+			(subagentMessage1 as SDKMessage & { parent_tool_use_id: string }).parent_tool_use_id =
+				'tool-123';
+			repo.saveSDKMessage('session-1', subagentMessage1);
+
+			const subagentMessage2 = createUserMessage('subagent-2');
+			(subagentMessage2 as SDKMessage & { parent_tool_use_id: string }).parent_tool_use_id =
+				'tool-456';
+			repo.saveSDKMessage('session-1', subagentMessage2);
+
+			// Count should only include top-level messages
+			const count = repo.getSDKMessageCount('session-1');
+			expect(count).toBe(2);
 		});
 	});
 
