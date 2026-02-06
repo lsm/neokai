@@ -242,7 +242,7 @@ export class QueryOptionsBuilder {
 		// DEBUG: Log query options for verification
 		const useClaudeCodePreset = legacyToolsConfig?.useClaudeCodePreset ?? true;
 		this.logger.log(`Query options:`, {
-			originalModel: config.model || 'default',
+			originalModel: config.model || 'sonnet',
 			sdkModel: cleanedOptions.model,
 			fallbackModel: cleanedOptions.fallbackModel,
 			maxTurns: cleanedOptions.maxTurns,

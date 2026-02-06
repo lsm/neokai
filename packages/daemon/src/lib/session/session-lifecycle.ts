@@ -846,7 +846,7 @@ ${messageText.slice(0, 2000)}`;
 					);
 				}
 
-				// Use configured default model (from DEFAULT_MODEL env var or 'default')
+				// Use configured default model (from DEFAULT_MODEL env var or 'sonnet')
 				// Try to find it by alias or ID in available models
 				const configuredDefault = this.config.defaultModel;
 				const defaultByConfig = availableModels.find(
