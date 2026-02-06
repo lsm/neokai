@@ -714,6 +714,59 @@ describe('SessionStore - Comprehensive Coverage', () => {
 		});
 	});
 
+	describe('hasMoreMessages (pagination inference)', () => {
+		it('should return false when initial load returns less than 100 messages', async () => {
+			const messages: SDKMessage[] = Array(50)
+				.fill(null)
+				.map((_, i) => ({
+					uuid: `msg-${i}`,
+					type: 'text',
+					role: 'user',
+					content: [{ type: 'text', text: `Message ${i}` }],
+				}));
+
+			mockHub.call.mockResolvedValue({ sdkMessages: messages });
+
+			await sessionStore.select('session-1');
+
+			// Wait for state to settle
+			await vi.runAllPendingAsync();
+
+			expect(sessionStore.hasMoreMessages.value).toBe(false);
+		});
+
+		it('should return true when initial load returns exactly 100 messages', async () => {
+			const messages: SDKMessage[] = Array(100)
+				.fill(null)
+				.map((_, i) => ({
+					uuid: `msg-${i}`,
+					type: 'text',
+					role: 'user',
+					content: [{ type: 'text', text: `Message ${i}` }],
+				}));
+
+			mockHub.call.mockResolvedValue({ sdkMessages: messages });
+
+			await sessionStore.select('session-1');
+
+			// Wait for state to settle
+			await vi.runAllPendingAsync();
+
+			expect(sessionStore.hasMoreMessages.value).toBe(true);
+		});
+
+		it('should return false when no messages loaded', async () => {
+			mockHub.call.mockResolvedValue({ sdkMessages: [] });
+
+			await sessionStore.select('session-1');
+
+			// Wait for state to settle
+			await vi.runAllPendingAsync();
+
+			expect(sessionStore.hasMoreMessages.value).toBe(false);
+		});
+	});
+
 	describe('loadOlderMessages()', () => {
 		it('should load older messages from server', async () => {
 			const olderMessages: SDKMessage[] = [

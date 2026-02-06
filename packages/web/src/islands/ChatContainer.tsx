@@ -48,7 +48,6 @@ import { switchCoordinatorMode, updateSession } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager';
 import { borderColors } from '../lib/design-tokens.ts';
 import { sessionStore } from '../lib/session-store.ts';
-import { currentSessionIdSignal } from '../lib/signals.ts';
 import { connectionState } from '../lib/state.ts';
 import { getCurrentAction } from '../lib/status-actions.ts';
 import { toast } from '../lib/toast.ts';
@@ -78,7 +77,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// Local State (pagination, autoScroll)
 	// ========================================
 	const [loadingOlder, setLoadingOlder] = useState(false);
-	const [hasMoreMessages, setHasMoreMessages] = useState(true);
+	// Initialize hasMoreMessages from sessionStore (inferred from initial load count)
+	// This avoids an expensive COUNT query on every session load
+	const [hasMoreMessages, setHasMoreMessages] = useState(sessionStore.hasMoreMessages.value);
 	const [isInitialLoad, setIsInitialLoad] = useState(true);
 	const [localError, setLocalError] = useState<string | null>(null);
 	const [autoScroll, setAutoScroll] = useState(true);
@@ -280,6 +281,20 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		setStoreError(sessionStore.error.value);
 	});
 
+	// Sync hasMoreMessages from sessionStore (inferred from initial load count)
+	// This avoids an expensive COUNT query on every session load
+	useSignalEffect(() => {
+		setHasMoreMessages(sessionStore.hasMoreMessages.value);
+	});
+
+	// Track initial load state - set to false once messages have loaded
+	useSignalEffect(() => {
+		const hasMessages = sessionStore.sdkMessages.value.length > 0;
+		if (hasMessages) {
+			setIsInitialLoad(false);
+		}
+	});
+
 	// Sync resolved questions from session metadata when session loads/updates
 	// Also clears resolvingQuestionsRef for items now confirmed by server
 	useEffect(() => {
@@ -364,29 +379,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	});
 
 	// ========================================
-	// Pagination Check (on session load)
-	// ========================================
-	const checkPagination = useCallback(async () => {
-		try {
-			setIsInitialLoad(true);
-			setLocalError(null);
-
-			// Get total message count via RPC for pagination
-			const totalCount = await sessionStore.getTotalMessageCount();
-			setHasMoreMessages(totalCount > 100);
-		} catch (err) {
-			const message = err instanceof Error ? err.message : 'Failed to load session';
-			if (message.includes('Session not found') || message.includes('404')) {
-				currentSessionIdSignal.value = null;
-				toast.error('Session not found.');
-				return;
-			}
-			setLocalError(message);
-		}
-	}, []);
-
-	// ========================================
 	// Pagination (load older messages via RPC - pure WebSocket)
+	// hasMoreMessages is inferred from initial load count in sessionStore
+	// This avoids an expensive COUNT query on every session load
 	// ========================================
 	const loadOlderMessages = useCallback(async () => {
 		if (loadingOlder || !hasMoreMessages || messages.length === 0) return;
@@ -456,12 +451,6 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// ========================================
 	// Effects
 	// ========================================
-
-	// Check pagination on mount / session change
-	// Initial data is loaded via sessionStore.select() in App.tsx
-	useEffect(() => {
-		checkPagination();
-	}, [sessionId, checkPagination]);
 
 	// Restore scroll position after older messages are loaded and DOM has updated
 	useEffect(() => {
