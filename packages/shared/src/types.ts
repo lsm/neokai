@@ -83,7 +83,7 @@ export interface WorktreeCommitStatus {
 	baseBranch: string;
 }
 
-export type SessionStatus = 'active' | 'paused' | 'ended' | 'archived';
+export type SessionStatus = 'active' | 'pending_worktree_choice' | 'paused' | 'ended' | 'archived';
 
 // ============================================================================
 // Provider Types
@@ -404,6 +404,12 @@ export interface SessionMetadata {
 	lastSdkCost?: number; // Last SDK-reported total_cost_usd (resets when agent restarts)
 	costBaseline?: number; // Accumulated cost from previous runs before last reset
 	resumeSessionAt?: string; // Checkpoint ID to resume conversation from (for rewind feature)
+	worktreeChoice?: {
+		status: 'pending' | 'completed';
+		choice?: 'worktree' | 'direct';
+		createdAt?: string;
+		completedAt?: string;
+	};
 }
 
 // Message content types for streaming input (supports images and tool results)

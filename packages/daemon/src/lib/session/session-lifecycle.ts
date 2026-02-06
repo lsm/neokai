@@ -35,7 +35,6 @@ export interface CreateSessionParams {
 	workspacePath?: string;
 	initialTools?: string[];
 	config?: Partial<Session['config']>;
-	useWorktree?: boolean;
 	worktreeBaseBranch?: string;
 	title?: string; // Optional title - if provided, skips auto-title generation
 }
@@ -64,6 +63,17 @@ export class SessionLifecycle {
 
 		const baseWorkspacePath = params.workspacePath || this.config.workspaceRoot;
 
+		// Detect git support before creating worktree
+		const gitSupport = await this.worktreeManager.detectGitSupport(baseWorkspacePath);
+		const isGitRepo = gitSupport.isGitRepo;
+
+		// Determine if worktree choice should be shown
+		const shouldShowChoice = isGitRepo && !this.config.disableWorktrees;
+
+		// Determine if worktree should be created immediately
+		// Only for non-git repos (git repos go through choice flow)
+		const shouldCreateWorktree = !this.config.disableWorktrees && !isGitRepo;
+
 		// Read global settings for defaults (model, thinkingLevel, autoScroll)
 		const globalSettings = this.db.getGlobalSettings();
 
@@ -85,14 +95,16 @@ export class SessionLifecycle {
 			? generateBranchName(providedTitle!, sessionId) // Title is defined when shouldSkipAutoTitle is true
 			: `session/${sessionId}`;
 
-		if (!this.config.disableWorktrees) {
+		// Create worktree for non-git repos
+		// Git repos will go through choice flow
+		if (shouldCreateWorktree) {
 			try {
-				const result = await this.worktreeManager.createWorktree({
+				const result = await this.createWorktreeInternal(
 					sessionId,
-					repoPath: baseWorkspacePath,
-					branchName: initialBranchName,
-					baseBranch: params.worktreeBaseBranch || 'HEAD',
-				});
+					baseWorkspacePath,
+					initialBranchName,
+					params.worktreeBaseBranch || 'HEAD'
+				);
 
 				if (result) {
 					worktreeMetadata = result;
@@ -110,13 +122,18 @@ export class SessionLifecycle {
 			}
 		}
 
+		// Determine session status based on worktree choice needed
+		const sessionStatus: Session['status'] = shouldShowChoice
+			? 'pending_worktree_choice'
+			: 'active';
+
 		const session: Session = {
 			id: sessionId,
 			title: providedTitle || 'New Session',
 			workspacePath: sessionWorkspacePath,
 			createdAt: new Date().toISOString(),
 			lastActiveAt: new Date().toISOString(),
-			status: 'active',
+			status: sessionStatus,
 			config: {
 				model: modelId, // Use validated model ID
 				maxTokens: params.config?.maxTokens || this.config.maxTokens,
@@ -151,6 +168,13 @@ export class SessionLifecycle {
 				titleGenerated: shouldSkipAutoTitle,
 				// Workspace is already initialized (worktree created or using base path)
 				workspaceInitialized: true,
+				// Only set worktreeChoice if we're showing the choice UI
+				worktreeChoice: shouldShowChoice
+					? {
+							status: 'pending',
+							createdAt: new Date().toISOString(),
+						}
+					: undefined,
 			},
 			// Worktree set during creation (if enabled)
 			worktree: worktreeMetadata,
@@ -170,6 +194,127 @@ export class SessionLifecycle {
 		this.logger.info('[SessionLifecycle] Event emitted, returning sessionId:', sessionId);
 
 		return sessionId;
+	}
+
+	/**
+	 * Create worktree internal helper
+	 *
+	 * Private method to handle worktree creation with proper error handling.
+	 * Used during session creation and when completing worktree choice.
+	 *
+	 * @param sessionId - Session ID for logging
+	 * @param baseWorkspacePath - Base workspace path
+	 * @param branchName - Branch name for the worktree
+	 * @param baseBranch - Base branch to create worktree from (default: 'HEAD')
+	 * @returns WorktreeMetadata if successful, undefined if creation fails
+	 */
+	private async createWorktreeInternal(
+		sessionId: string,
+		baseWorkspacePath: string,
+		branchName: string,
+		baseBranch?: string
+	): Promise<WorktreeMetadata | undefined> {
+		try {
+			const result = await this.worktreeManager.createWorktree({
+				sessionId,
+				repoPath: baseWorkspacePath,
+				branchName,
+				baseBranch,
+			});
+
+			if (result) {
+				this.logger.info(
+					`[SessionLifecycle] Created worktree at ${result.worktreePath} with branch ${result.branch}`
+				);
+			}
+
+			return result || undefined;
+		} catch (error) {
+			this.logger.error(
+				`[SessionLifecycle] Failed to create worktree for session ${sessionId}:`,
+				error
+			);
+			return undefined;
+		}
+	}
+
+	/**
+	 * Complete worktree setup after user makes choice
+	 *
+	 * @param sessionId - Session ID
+	 * @param choice - User's worktree choice ('worktree' or 'direct')
+	 * @returns Updated session data
+	 */
+	async completeWorktreeChoice(sessionId: string, choice: 'worktree' | 'direct'): Promise<Session> {
+		const agentSession = this.sessionCache.get(sessionId);
+		if (!agentSession) {
+			throw new Error(`Session ${sessionId} not found`);
+		}
+
+		const session = agentSession.getSessionData();
+
+		// Verify session is in pending state
+		if (session.status !== 'pending_worktree_choice') {
+			throw new Error(
+				`Session ${sessionId} is not pending worktree choice (current status: ${session.status})`
+			);
+		}
+
+		let worktreeMetadata: WorktreeMetadata | undefined;
+		const baseWorkspacePath = session.workspacePath;
+
+		if (choice === 'worktree') {
+			// Create worktree now
+			// Generate branch name (use session ID based name since title should be generated by now)
+			const branchName = `session/${sessionId}`;
+
+			worktreeMetadata = await this.createWorktreeInternal(
+				sessionId,
+				baseWorkspacePath,
+				branchName,
+				'HEAD'
+			);
+
+			this.logger.info(
+				`[SessionLifecycle] Worktree choice completed: created worktree for session ${sessionId}`
+			);
+		} else {
+			// Direct mode - use workspace as-is
+			this.logger.info(
+				`[SessionLifecycle] Worktree choice completed: direct mode for session ${sessionId}`
+			);
+		}
+
+		// Update session
+		const updatedSession: Session = {
+			...session,
+			status: 'active',
+			worktree: worktreeMetadata,
+			gitBranch: worktreeMetadata?.branch,
+			metadata: {
+				...session.metadata,
+				worktreeChoice: {
+					status: 'completed',
+					choice,
+					createdAt: session.metadata.worktreeChoice?.createdAt,
+					completedAt: new Date().toISOString(),
+				},
+			},
+		};
+
+		// Save to database
+		this.db.updateSession(sessionId, updatedSession);
+
+		// Update in-memory agent session metadata
+		agentSession.updateMetadata(updatedSession);
+
+		// Emit event for state synchronization
+		await this.eventBus.emit('session.updated', {
+			sessionId,
+			session: updatedSession,
+		});
+
+		return updatedSession;
 	}
 
 	/**

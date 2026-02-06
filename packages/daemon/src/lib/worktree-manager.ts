@@ -68,6 +68,24 @@ export class WorktreeManager {
 	}
 
 	/**
+	 * Detect if workspace supports worktrees (is a git repository)
+	 * WITHOUT creating a worktree
+	 *
+	 * @param workspacePath - Path to check for git repository
+	 * @returns Object with isGitRepo flag and gitRoot path
+	 */
+	async detectGitSupport(workspacePath: string): Promise<{
+		isGitRepo: boolean;
+		gitRoot: string | null;
+	}> {
+		const gitRoot = await this.findGitRoot(workspacePath);
+		return {
+			isGitRepo: gitRoot !== null,
+			gitRoot,
+		};
+	}
+
+	/**
 	 * Check if a git branch exists
 	 */
 	private async checkBranchExists(repoPath: string, branchName: string): Promise<boolean> {

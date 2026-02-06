@@ -7,7 +7,7 @@
  * - Session deletion with cleanup cascade
  */
 
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 
 // Mock SDK type-guards at the top level
 mock.module('@neokai/shared/sdk/type-guards', () => ({
@@ -80,6 +80,7 @@ describe('SessionLifecycle', () => {
 			removeWorktree: removeWorktreeSpy,
 			verifyWorktree: verifyWorktreeSpy,
 			renameBranch: mock(async () => true),
+			detectGitSupport: mock(async () => ({ isGitRepo: false, gitRoot: null })),
 		} as unknown as WorktreeManager;
 
 		// Session cache mocks
@@ -525,6 +526,182 @@ describe('SessionLifecycle', () => {
 		});
 	});
 
+	describe('completeWorktreeChoice', () => {
+		it('should create worktree when choice is worktree', async () => {
+			const sessionId = 'session-123';
+			const branchName = `session/${sessionId}`;
+
+			// Mock session in pending state
+			const pendingSession = {
+				id: sessionId,
+				status: 'pending_worktree_choice',
+				workspacePath: '/my/workspace',
+				metadata: {
+					worktreeChoice: {
+						status: 'pending',
+						createdAt: new Date().toISOString(),
+					},
+				},
+			};
+			cacheGetSpy.mockReturnValue({
+				getSessionData: () => pendingSession,
+				updateMetadata: mock(() => {}),
+			} as unknown as AgentSession);
+
+			// Mock worktree creation
+			const worktreeMetadata = {
+				worktreePath: '/my/workspace/worktrees/session-123',
+				branch: branchName,
+				isWorktree: true,
+			};
+			createWorktreeSpy.mockResolvedValue(worktreeMetadata);
+
+			// Call completeWorktreeChoice
+			await lifecycle.completeWorktreeChoice(sessionId, 'worktree');
+
+			// Verify worktree was created
+			expect(createWorktreeSpy).toHaveBeenCalledWith({
+				sessionId,
+				repoPath: '/my/workspace',
+				branchName,
+				baseBranch: 'HEAD',
+			});
+
+			// Verify session was updated
+			expect(updateSessionSpy).toHaveBeenCalledWith(
+				sessionId,
+				expect.objectContaining({
+					status: 'active',
+					worktree: worktreeMetadata,
+					gitBranch: branchName,
+					metadata: expect.objectContaining({
+						worktreeChoice: expect.objectContaining({
+							status: 'completed',
+							choice: 'worktree',
+						}),
+					}),
+				})
+			);
+
+			// Verify event was emitted
+			expect(emitSpy).toHaveBeenCalledWith(
+				'session.updated',
+				expect.objectContaining({
+					sessionId,
+				})
+			);
+		});
+
+		it('should not create worktree when choice is direct', async () => {
+			const sessionId = 'session-456';
+
+			// Mock session in pending state
+			const pendingSession = {
+				id: sessionId,
+				status: 'pending_worktree_choice',
+				workspacePath: '/my/workspace',
+				metadata: {
+					worktreeChoice: {
+						status: 'pending',
+						createdAt: new Date().toISOString(),
+					},
+				},
+			};
+			cacheGetSpy.mockReturnValue({
+				getSessionData: () => pendingSession,
+				updateMetadata: mock(() => {}),
+			} as unknown as AgentSession);
+
+			// Call completeWorktreeChoice with direct mode
+			await lifecycle.completeWorktreeChoice(sessionId, 'direct');
+
+			// Verify worktree was NOT created
+			expect(createWorktreeSpy).not.toHaveBeenCalled();
+
+			// Verify session was updated
+			expect(updateSessionSpy).toHaveBeenCalledWith(
+				sessionId,
+				expect.objectContaining({
+					status: 'active',
+					worktree: undefined,
+					gitBranch: undefined,
+					metadata: expect.objectContaining({
+						worktreeChoice: expect.objectContaining({
+							status: 'completed',
+							choice: 'direct',
+						}),
+					}),
+				})
+			);
+		});
+
+		it('should throw error when session not found', async () => {
+			cacheGetSpy.mockReturnValue(undefined);
+
+			await expect(lifecycle.completeWorktreeChoice('non-existent', 'worktree')).rejects.toThrow(
+				'Session non-existent not found'
+			);
+		});
+
+		it('should throw error when session is not in pending state', async () => {
+			const sessionId = 'session-789';
+
+			// Mock session in active state (not pending)
+			const activeSession = {
+				id: sessionId,
+				status: 'active',
+				workspacePath: '/my/workspace',
+			};
+			cacheGetSpy.mockReturnValue({
+				getSessionData: () => activeSession,
+				updateMetadata: mock(() => {}),
+			} as unknown as AgentSession);
+
+			await expect(lifecycle.completeWorktreeChoice(sessionId, 'worktree')).rejects.toThrow(
+				'is not pending worktree choice'
+			);
+		});
+
+		it('should preserve worktreeChoice timestamps when completing', async () => {
+			const sessionId = 'session-timestamp';
+			const createdAt = '2024-01-01T00:00:00.000Z';
+
+			// Mock session in pending state
+			const pendingSession = {
+				id: sessionId,
+				status: 'pending_worktree_choice',
+				workspacePath: '/my/workspace',
+				metadata: {
+					worktreeChoice: {
+						status: 'pending',
+						createdAt,
+					},
+				},
+			};
+			cacheGetSpy.mockReturnValue({
+				getSessionData: () => pendingSession,
+				updateMetadata: mock(() => {}),
+			} as unknown as AgentSession);
+
+			// Call completeWorktreeChoice
+			await lifecycle.completeWorktreeChoice(sessionId, 'direct');
+
+			// Verify timestamps
+			expect(updateSessionSpy).toHaveBeenCalledWith(
+				sessionId,
+				expect.objectContaining({
+					metadata: expect.objectContaining({
+						worktreeChoice: expect.objectContaining({
+							createdAt,
+							status: 'completed',
+							completedAt: expect.any(String),
+						}),
+					}),
+				})
+			);
+		});
+	});
+
 	describe('getFromDB', () => {
 		it('should return session from database', () => {
 			const mockSession = { id: 'test', title: 'Test Session' };
@@ -588,6 +765,11 @@ describe('SessionLifecycle', () => {
 	});
 
 	describe('generateTitleAndRenameBranch', () => {
+		afterEach(() => {
+			// Reset mock SDK query to avoid interfering with other tests
+			__setMockSdkQuery(undefined);
+		});
+
 		it('should throw if session not found in cache', async () => {
 			cacheHasSpy.mockReturnValue(false);
 
@@ -617,6 +799,14 @@ describe('SessionLifecycle', () => {
 		});
 
 		it('should use fallback title on error', async () => {
+			// Mock SDK query to throw an error
+			__setMockSdkQuery(
+				// eslint-disable-next-line require-yield
+				(async function* () {
+					throw new Error('SDK query failed');
+				})()
+			);
+
 			const longMessage = 'This is a test message that should be truncated for the fallback title';
 			const updateMetadataSpy = mock(() => {});
 
@@ -639,6 +829,14 @@ describe('SessionLifecycle', () => {
 		});
 
 		it('should use "New Session" as fallback for empty message', async () => {
+			// Mock SDK query to throw an error
+			__setMockSdkQuery(
+				// eslint-disable-next-line require-yield
+				(async function* () {
+					throw new Error('SDK query failed');
+				})()
+			);
+
 			const updateMetadataSpy = mock(() => {});
 
 			cacheHasSpy.mockReturnValue(true);

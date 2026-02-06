@@ -31,7 +31,6 @@ export function setupSessionHandlers(
 			workspacePath: req.workspacePath,
 			initialTools: req.initialTools,
 			config: req.config,
-			useWorktree: req.useWorktree,
 			worktreeBaseBranch: req.worktreeBaseBranch,
 			title: req.title,
 		});
@@ -41,6 +40,36 @@ export function setupSessionHandlers(
 		const session = agentSession?.getSessionData();
 
 		return { sessionId, session };
+	});
+
+	/**
+	 * Set worktree mode for a session
+	 * Called when user makes their choice in the worktree choice modal
+	 */
+	messageHub.handle('session.setWorktreeMode', async (data) => {
+		const { sessionId, mode } = data as { sessionId: string; mode: 'worktree' | 'direct' };
+
+		// Validate input
+		if (!sessionId || !mode) {
+			throw new Error('Missing required fields: sessionId and mode');
+		}
+
+		if (mode !== 'worktree' && mode !== 'direct') {
+			throw new Error(`Invalid mode: ${mode}. Must be 'worktree' or 'direct'`);
+		}
+
+		// Get session lifecycle from session manager
+		const sessionLifecycle = sessionManager.getSessionLifecycle();
+
+		// Complete worktree choice
+		const updatedSession = await sessionLifecycle.completeWorktreeChoice(sessionId, mode);
+
+		// Broadcast update to all clients
+		await messageHub.publish('session.updated', updatedSession, {
+			sessionId,
+		});
+
+		return { success: true, session: updatedSession };
 	});
 
 	messageHub.handle('session.list', async () => {
