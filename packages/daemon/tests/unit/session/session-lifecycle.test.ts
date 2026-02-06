@@ -7,7 +7,7 @@
  * - Session deletion with cleanup cascade
  */
 
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 
 // Mock SDK type-guards at the top level
 mock.module('@neokai/shared/sdk/type-guards', () => ({
@@ -589,6 +589,11 @@ describe('SessionLifecycle', () => {
 	});
 
 	describe('generateTitleAndRenameBranch', () => {
+		afterEach(() => {
+			// Reset mock SDK query to avoid interfering with other tests
+			__setMockSdkQuery(undefined);
+		});
+
 		it('should throw if session not found in cache', async () => {
 			cacheHasSpy.mockReturnValue(false);
 
@@ -618,6 +623,14 @@ describe('SessionLifecycle', () => {
 		});
 
 		it('should use fallback title on error', async () => {
+			// Mock SDK query to throw an error
+			__setMockSdkQuery(
+				// eslint-disable-next-line require-yield
+				(async function* () {
+					throw new Error('SDK query failed');
+				})()
+			);
+
 			const longMessage = 'This is a test message that should be truncated for the fallback title';
 			const updateMetadataSpy = mock(() => {});
 
@@ -640,6 +653,14 @@ describe('SessionLifecycle', () => {
 		});
 
 		it('should use "New Session" as fallback for empty message', async () => {
+			// Mock SDK query to throw an error
+			__setMockSdkQuery(
+				// eslint-disable-next-line require-yield
+				(async function* () {
+					throw new Error('SDK query failed');
+				})()
+			);
+
 			const updateMetadataSpy = mock(() => {});
 
 			cacheHasSpy.mockReturnValue(true);

@@ -18,6 +18,7 @@ describe('AuthManager', () => {
 		delete process.env.ANTHROPIC_API_KEY;
 		delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
 		delete process.env.ANTHROPIC_AUTH_TOKEN;
+		delete process.env.GLM_API_KEY;
 
 		authManager = new AuthManager();
 	});
