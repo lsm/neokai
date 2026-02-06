@@ -23,11 +23,11 @@ import type { Provider } from '@neokai/shared/provider';
  */
 const LEGACY_MODEL_MAPPINGS: Record<string, string> = {
 	// Old alias mappings
-	sonnet: 'default', // SDK uses 'default' for Sonnet
-	// Full model IDs (any sonnet variant maps to default)
-	'claude-sonnet-4-5-20250929': 'default',
-	'claude-sonnet-4-20241022': 'default',
-	'claude-3-5-sonnet-20241022': 'default',
+	default: 'sonnet', // Legacy: 'default' maps to 'sonnet'
+	// Full model IDs (any sonnet variant maps to sonnet)
+	'claude-sonnet-4-5-20250929': 'sonnet',
+	'claude-sonnet-4-20241022': 'sonnet',
+	'claude-3-5-sonnet-20241022': 'sonnet',
 	// Opus - SDK uses 'opus'
 	'claude-opus-4-5-20251101': 'opus',
 	'claude-opus-4-20250514': 'opus',
