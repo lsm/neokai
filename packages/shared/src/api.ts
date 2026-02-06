@@ -41,6 +41,16 @@ export interface CreateSessionResponse {
 	session?: Session; // Optionally include the full session for optimistic updates
 }
 
+export interface SetWorktreeModeRequest {
+	sessionId: string;
+	mode: 'worktree' | 'direct';
+}
+
+export interface SetWorktreeModeResponse {
+	success: boolean;
+	session?: Session;
+}
+
 export interface ListSessionsResponse {
 	sessions: Session[];
 }
@@ -471,6 +481,7 @@ export interface APIClient {
 	getSession(sessionId: string): Promise<GetSessionResponse>;
 	updateSession(sessionId: string, req: UpdateSessionRequest): Promise<void>;
 	deleteSession(sessionId: string): Promise<void>;
+	setWorktreeMode(req: SetWorktreeModeRequest): Promise<SetWorktreeModeResponse>;
 
 	// Messages
 	sendMessage(sessionId: string, req: SendMessageRequest): Promise<SendMessageResponse>;

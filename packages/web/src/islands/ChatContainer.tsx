@@ -36,6 +36,7 @@ import { ContentContainer } from '../components/ui/ContentContainer.tsx';
 import { Modal } from '../components/ui/Modal.tsx';
 import { Skeleton, SkeletonMessage } from '../components/ui/Skeleton.tsx';
 import { Spinner } from '../components/ui/Spinner.tsx';
+import { WorktreeChoiceInline } from '../components/WorktreeChoiceInline.tsx';
 import { useAutoScroll } from '../hooks/useAutoScroll.ts';
 import { useMessageMaps } from '../hooks/useMessageMaps.ts';
 // Hooks
@@ -44,6 +45,7 @@ import { useModelSwitcher } from '../hooks/useModelSwitcher.ts';
 import { useSendMessage } from '../hooks/useSendMessage.ts';
 import { useSessionActions } from '../hooks/useSessionActions.ts';
 import { switchCoordinatorMode, updateSession } from '../lib/api-helpers.ts';
+import { connectionManager } from '../lib/connection-manager';
 import { borderColors } from '../lib/design-tokens.ts';
 import { sessionStore } from '../lib/session-store.ts';
 import { currentSessionIdSignal } from '../lib/signals.ts';
@@ -100,6 +102,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// Per-message rewind state
 	const [rewindTargetUuid, setRewindTargetUuid] = useState<string | null>(null);
 	const [isRewinding, setIsRewinding] = useState(false);
+
+	// Worktree choice modal state
+	const [showWorktreeChoice, setShowWorktreeChoice] = useState(false);
+	const [pendingWorktreeMode, setPendingWorktreeMode] = useState<'worktree' | 'direct'>('worktree');
 
 	// Reactive State from sessionStore (via useSignalEffect for re-renders)
 	// Moved here before callbacks that depend on it
@@ -291,6 +297,23 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			}
 		}
 	}, [session?.metadata?.resolvedQuestions]);
+
+	// Show worktree choice modal if session is pending worktree choice
+	useEffect(() => {
+		if (
+			session?.status === 'pending_worktree_choice' &&
+			session?.metadata?.worktreeChoice?.status === 'pending'
+		) {
+			setShowWorktreeChoice(true);
+		} else {
+			setShowWorktreeChoice(false);
+		}
+	}, [session]);
+
+	// Handler for worktree mode change
+	const handleWorktreeModeChange = (mode: 'worktree' | 'direct') => {
+		setPendingWorktreeMode(mode);
+	};
 
 	// Derived processing state
 	const isProcessing = agentState.status === 'processing' || agentState.status === 'queued';
@@ -503,9 +526,29 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// ========================================
 	const handleSendMessage = useCallback(
 		async (content: string, images?: MessageImage[]) => {
+			// If session is pending worktree choice, set the mode first
+			if (session?.status === 'pending_worktree_choice' && showWorktreeChoice) {
+				try {
+					const hub = connectionManager.getHubIfConnected();
+					if (!hub) {
+						toast.error('Connection lost.');
+						return;
+					}
+					await hub.call('session.setWorktreeMode', {
+						sessionId,
+						mode: pendingWorktreeMode,
+					});
+					// UI will auto-hide via session status update
+				} catch (error) {
+					console.error('Failed to set worktree mode:', error);
+					toast.error('Failed to set workspace mode');
+					return; // Don't send message if worktree setup failed
+				}
+			}
+
 			await sendMessage(content, images);
 		},
-		[sendMessage]
+		[sendMessage, session, showWorktreeChoice, pendingWorktreeMode, sessionId]
 	);
 
 	const handleAutoScrollChange = useCallback(
@@ -714,6 +757,15 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y pb-32"
 					style={{ WebkitOverflowScrolling: 'touch' }}
 				>
+					{/* Worktree Choice Inline */}
+					{showWorktreeChoice && session && (
+						<WorktreeChoiceInline
+							sessionId={sessionId}
+							workspacePath={session.workspacePath}
+							onModeChange={handleWorktreeModeChange}
+						/>
+					)}
+
 					{/* Loading overlay for rewind operation */}
 					{isRewinding && (
 						<div class="absolute inset-0 z-50 bg-dark-900/80 backdrop-blur-sm flex items-center justify-center">
