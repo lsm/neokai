@@ -105,21 +105,17 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 
 				// Check that the file was NOT created outside workspace
 				// (If sandbox is working, the file should not exist)
-				try {
-					await fs.access(testFilePath);
-					// File exists - sandbox FAILED!
-					const fileContent = await fs.readFile(testFilePath, 'utf-8');
-					expect(fileContent).not.toBe('SANDBOX TEST');
-					throw new Error('Sandbox test failed: File was created outside workspace');
-				} catch (error) {
-					if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-						// File doesn't exist - sandbox is working! ✅
-						expect(true).toBe(true);
-					} else {
-						// Some other error
-						throw error;
-					}
-				}
+				const fileExists = await fs
+					.access(testFilePath)
+					.then(() => true)
+					.catch((error) => {
+						if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+							return false; // File doesn't exist - sandbox is working! ✅
+						}
+						throw error; // Some other error
+					});
+
+				expect(fileExists).toBe(false);
 			} finally {
 				// Cleanup session
 				await daemon.messageHub.call('session.delete', { sessionId });
@@ -158,17 +154,8 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 
 				// Check that the file WAS created inside workspace
 				// (Sandbox should allow writes to cwd)
-				try {
-					await fs.access(testFilePath);
-					const fileContent = await fs.readFile(testFilePath, 'utf-8');
-					expect(fileContent).toContain('INSIDE WORKSPACE');
-				} catch (error) {
-					if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-						throw new Error('Sandbox test failed: File was NOT created inside workspace');
-					} else {
-						throw error;
-					}
-				}
+				const fileContent = await fs.readFile(testFilePath, 'utf-8');
+				expect(fileContent).toContain('INSIDE WORKSPACE');
 			} finally {
 				// Cleanup session
 				await daemon.messageHub.call('session.delete', { sessionId });
@@ -215,17 +202,8 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 
 				// Verify the file was created
 				const testFilePath = path.join(workspacePath, 'test-bash-sandbox.txt');
-				try {
-					await fs.access(testFilePath);
-					const fileContent = await fs.readFile(testFilePath, 'utf-8');
-					expect(fileContent).toContain('BASH SANDBOX TEST');
-				} catch (error) {
-					if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-						throw new Error('Sandbox bash test failed: File was NOT created');
-					} else {
-						throw error;
-					}
-				}
+				const fileContent = await fs.readFile(testFilePath, 'utf-8');
+				expect(fileContent).toContain('BASH SANDBOX TEST');
 			} finally {
 				// Cleanup session
 				await daemon.messageHub.call('session.delete', { sessionId });
@@ -272,17 +250,8 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 				await waitForIdle(daemon.messageHub, sessionId, 30000);
 
 				// Check that the file WAS created (sandbox was disabled)
-				try {
-					await fs.access(testFilePath);
-					const fileContent = await fs.readFile(testFilePath, 'utf-8');
-					expect(fileContent).toContain('NO SANDBOX');
-				} catch (error) {
-					if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-						throw new Error('No sandbox test failed: File was NOT created when sandbox disabled');
-					} else {
-						throw error;
-					}
-				}
+				const fileContent = await fs.readFile(testFilePath, 'utf-8');
+				expect(fileContent).toContain('NO SANDBOX');
 			} finally {
 				// Cleanup session
 				await daemon.messageHub.call('session.delete', { sessionId });
