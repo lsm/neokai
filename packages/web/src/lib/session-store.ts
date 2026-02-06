@@ -84,6 +84,17 @@ class SessionStore {
 		return state.status === 'processing' || state.status === 'queued';
 	});
 
+	/**
+	 * Whether there are more messages to load (pagination)
+	 * Inferred from initial message load: if we got exactly 100, there might be more
+	 */
+	readonly hasMoreMessages = computed<boolean>(() => {
+		// If initial load returned exactly 100 messages, there might be more
+		// Once we've loaded older messages, this inference becomes less accurate,
+		// but it's still a reasonable default that avoids an expensive COUNT query
+		return this._initialMessageCount === 100;
+	});
+
 	// ========================================
 	// Private State
 	// ========================================
@@ -96,6 +107,9 @@ class SessionStore {
 
 	/** Track the session switch time to avoid showing stale errors */
 	private sessionSwitchTime: number = 0;
+
+	/** Track initial message load count for pagination inference */
+	private _initialMessageCount: number = 0;
 
 	// ========================================
 	// Session Selection (with Promise-Chain Lock)
@@ -258,6 +272,11 @@ class SessionStore {
 
 				const snapshotTimestamp = (messagesState as unknown as { timestamp?: number }).timestamp;
 				const currentMessages = this.sdkMessages.value;
+				const initialSnapshot = messagesState.sdkMessages;
+
+				// Track initial message count for pagination inference
+				// If we got exactly 100 messages, there might be more
+				this._initialMessageCount = initialSnapshot.length;
 
 				if (snapshotTimestamp && currentMessages.length > 0) {
 					// Preserve newer messages that arrived via delta during reconnection
@@ -271,7 +290,7 @@ class SessionStore {
 						const messageMap = new Map<string, SDKMessage>();
 
 						// Add snapshot messages
-						for (const msg of messagesState.sdkMessages) {
+						for (const msg of initialSnapshot) {
 							if (msg.uuid) {
 								messageMap.set(msg.uuid, msg);
 							}
@@ -293,11 +312,11 @@ class SessionStore {
 						);
 					} else {
 						// No newer messages, use snapshot directly
-						this.sdkMessages.value = messagesState.sdkMessages;
+						this.sdkMessages.value = initialSnapshot;
 					}
 				} else {
 					// No timestamp in response or first load, use snapshot directly
-					this.sdkMessages.value = messagesState.sdkMessages;
+					this.sdkMessages.value = initialSnapshot;
 				}
 			}
 		} catch (err) {
