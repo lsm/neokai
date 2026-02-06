@@ -147,6 +147,7 @@ export interface SessionSettings extends GlobalSettings {
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
 	settingSources: ['user', 'project', 'local'],
 	permissionMode: 'default',
+	model: 'sonnet', // Default model for new sessions
 	disabledMcpServers: [],
 	showArchived: false,
 	// Default auto-scroll to true so new sessions inherit this setting
