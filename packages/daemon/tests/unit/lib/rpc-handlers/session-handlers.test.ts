@@ -184,7 +184,6 @@ describe('Session Handlers', () => {
 				workspacePath: '/new/path',
 				initialTools: undefined,
 				config: undefined,
-				useWorktree: undefined,
 				worktreeBaseBranch: undefined,
 				title: undefined,
 			});
@@ -196,7 +195,6 @@ describe('Session Handlers', () => {
 				workspacePath: '/new/path',
 				initialTools: ['Read', 'Write'],
 				config: { model: 'claude-opus-4-20250514' },
-				useWorktree: true,
 				worktreeBaseBranch: 'main',
 				title: 'Custom Title',
 			});
@@ -205,7 +203,6 @@ describe('Session Handlers', () => {
 				workspacePath: '/new/path',
 				initialTools: ['Read', 'Write'],
 				config: { model: 'claude-opus-4-20250514' },
-				useWorktree: true,
 				worktreeBaseBranch: 'main',
 				title: 'Custom Title',
 			});

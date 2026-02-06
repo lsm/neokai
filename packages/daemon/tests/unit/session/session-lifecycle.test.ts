@@ -80,6 +80,7 @@ describe('SessionLifecycle', () => {
 			removeWorktree: removeWorktreeSpy,
 			verifyWorktree: verifyWorktreeSpy,
 			renameBranch: mock(async () => true),
+			detectGitSupport: mock(async () => ({ isGitRepo: false, gitRoot: null })),
 		} as unknown as WorktreeManager;
 
 		// Session cache mocks
