@@ -50,6 +50,7 @@ describe('Sandbox Default Configuration', () => {
 
 		// Worktree manager mocks
 		mockWorktreeManager = {
+			detectGitSupport: mock(async () => ({ isGitRepo: false, isBare: false })),
 			createWorktree: mock(async () => null),
 			removeWorktree: mock(async () => {}),
 			verifyWorktree: mock(async () => false),
