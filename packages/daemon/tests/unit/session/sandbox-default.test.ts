@@ -1,0 +1,291 @@
+/**
+ * Sandbox Default Configuration Tests
+ *
+ * Unit tests to verify that sandbox is enabled by default
+ * and properly configured for new sessions.
+ */
+
+import { describe, expect, it, beforeEach, mock } from 'bun:test';
+
+// Mock SDK type-guards at the top level
+mock.module('@neokai/shared/sdk/type-guards', () => ({
+	isSDKAssistantMessage: (msg: { type: string }) => msg.type === 'assistant',
+}));
+
+import {
+	SessionLifecycle,
+	type SessionLifecycleConfig,
+} from '../../../src/lib/session/session-lifecycle';
+import type { Database } from '../../../src/storage/database';
+import type { DaemonHub } from '../../../src/lib/daemon-hub';
+import type { WorktreeManager } from '../../../src/lib/worktree-manager';
+import type { SessionCache, AgentSessionFactory } from '../../../src/lib/session/session-cache';
+import type { ToolsConfigManager } from '../../../src/lib/session/tools-config';
+import type { MessageHub } from '@neokai/shared';
+
+describe('Sandbox Default Configuration', () => {
+	let lifecycle: SessionLifecycle;
+	let mockDb: Database;
+	let mockWorktreeManager: WorktreeManager;
+	let mockSessionCache: SessionCache;
+	let mockEventBus: DaemonHub;
+	let mockMessageHub: MessageHub;
+	let mockToolsConfigManager: ToolsConfigManager;
+	let mockAgentSessionFactory: AgentSessionFactory;
+	let config: SessionLifecycleConfig;
+
+	beforeEach(() => {
+		// Database mocks
+		const createSessionSpy = mock(() => {});
+		mockDb = {
+			createSession: createSessionSpy,
+			updateSession: mock(() => {}),
+			deleteSession: mock(() => {}),
+			getSession: mock(() => null),
+			getGlobalSettings: mock(() => ({
+				settingSources: ['user', 'project', 'local'],
+				disabledMcpServers: [],
+			})),
+		} as unknown as Database;
+
+		// Worktree manager mocks
+		mockWorktreeManager = {
+			createWorktree: mock(async () => null),
+			removeWorktree: mock(async () => {}),
+			verifyWorktree: mock(async () => false),
+			renameBranch: mock(async () => true),
+		} as unknown as WorktreeManager;
+
+		// Session cache mocks
+		const mockAgentSession = {
+			cleanup: mock(async () => {}),
+			updateMetadata: mock(() => {}),
+			getSessionData: mock(() => ({
+				id: 'test-id',
+				title: 'Test',
+				workspacePath: '/test',
+				metadata: { titleGenerated: false },
+			})),
+		};
+		const cacheSetSpy = mock(() => {});
+		mockSessionCache = {
+			set: cacheSetSpy,
+			get: mock(() => mockAgentSession),
+			has: mock(() => false),
+			remove: mock(() => {}),
+			clear: mock(() => {}),
+		} as unknown as SessionCache;
+
+		// Event bus mocks
+		const emitSpy = mock(async () => {});
+		mockEventBus = {
+			on: mock(() => () => {}),
+			emit: emitSpy,
+		} as unknown as DaemonHub;
+
+		// Message hub mocks
+		mockMessageHub = {
+			publish: mock(async () => {}),
+		} as unknown as MessageHub;
+
+		// Tools config manager mocks
+		mockToolsConfigManager = {
+			getDefaultForNewSession: mock(() => ({
+				useClaudeCodePreset: true,
+				settingSources: ['project', 'local'],
+				disabledMcpServers: [],
+			})),
+		} as unknown as ToolsConfigManager;
+
+		// Agent session factory
+		mockAgentSessionFactory = mock(() => mockAgentSession);
+
+		// Config
+		config = {
+			defaultModel: 'default',
+			maxTokens: 8192,
+			temperature: 1.0,
+			workspaceRoot: '/default/workspace',
+			disableWorktrees: true, // Disable worktrees for simpler tests
+		};
+
+		lifecycle = new SessionLifecycle(
+			mockDb,
+			mockWorktreeManager,
+			mockSessionCache,
+			mockEventBus,
+			mockMessageHub,
+			config,
+			mockToolsConfigManager,
+			mockAgentSessionFactory
+		);
+	});
+
+	describe('default sandbox configuration', () => {
+		it('should enable sandbox by default', async () => {
+			await lifecycle.create({});
+
+			const createSessionSpy = mockDb.createSession as ReturnType<typeof mock>;
+			expect(createSessionSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					config: expect.objectContaining({
+						sandbox: expect.objectContaining({
+							enabled: true,
+						}),
+					}),
+				})
+			);
+		});
+
+		it('should set autoAllowBashIfSandboxed to true by default', async () => {
+			await lifecycle.create({});
+
+			const createSessionSpy = mockDb.createSession as ReturnType<typeof mock>;
+			expect(createSessionSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					config: expect.objectContaining({
+						sandbox: expect.objectContaining({
+							autoAllowBashIfSandboxed: true,
+						}),
+					}),
+				})
+			);
+		});
+
+		it('should exclude git from sandbox by default', async () => {
+			await lifecycle.create({});
+
+			const createSessionSpy = mockDb.createSession as ReturnType<typeof mock>;
+			expect(createSessionSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					config: expect.objectContaining({
+						sandbox: expect.objectContaining({
+							excludedCommands: expect.arrayContaining(['git']),
+						}),
+					}),
+				})
+			);
+		});
+
+		it('should have complete default sandbox config', async () => {
+			await lifecycle.create({});
+
+			const createSessionSpy = mockDb.createSession as ReturnType<typeof mock>;
+			expect(createSessionSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					config: expect.objectContaining({
+						sandbox: {
+							enabled: true,
+							autoAllowBashIfSandboxed: true,
+							excludedCommands: ['git'],
+						},
+					}),
+				})
+			);
+		});
+	});
+
+	describe('sandbox override capability', () => {
+		it('should allow disabling sandbox via config', async () => {
+			await lifecycle.create({
+				config: {
+					sandbox: {
+						enabled: false,
+					},
+				},
+			});
+
+			const createSessionSpy = mockDb.createSession as ReturnType<typeof mock>;
+			expect(createSessionSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					config: expect.objectContaining({
+						sandbox: expect.objectContaining({
+							enabled: false,
+						}),
+					}),
+				})
+			);
+		});
+
+		it('should allow customizing sandbox settings', async () => {
+			await lifecycle.create({
+				config: {
+					sandbox: {
+						enabled: true,
+						autoAllowBashIfSandboxed: false,
+						excludedCommands: ['git', 'npm'],
+					},
+				},
+			});
+
+			const createSessionSpy = mockDb.createSession as ReturnType<typeof mock>;
+			expect(createSessionSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					config: expect.objectContaining({
+						sandbox: {
+							enabled: true,
+							autoAllowBashIfSandboxed: false,
+							excludedCommands: ['git', 'npm'],
+						},
+					}),
+				})
+			);
+		});
+
+		it('should allow network sandbox configuration', async () => {
+			await lifecycle.create({
+				config: {
+					sandbox: {
+						enabled: true,
+						network: {
+							allowedDomains: ['api.example.com', 'registry.npmjs.org'],
+						},
+					},
+				},
+			});
+
+			const createSessionSpy = mockDb.createSession as ReturnType<typeof mock>;
+			expect(createSessionSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					config: expect.objectContaining({
+						sandbox: expect.objectContaining({
+							network: {
+								allowedDomains: ['api.example.com', 'registry.npmjs.org'],
+							},
+						}),
+					}),
+				})
+			);
+		});
+	});
+
+	describe('sandbox with other config', () => {
+		it('should not interfere with other config options', async () => {
+			await lifecycle.create({
+				config: {
+					model: 'opus',
+					maxTokens: 4096,
+					coordinatorMode: true,
+					thinkingLevel: 'think32k',
+				},
+			});
+
+			const createSessionSpy = mockDb.createSession as ReturnType<typeof mock>;
+			expect(createSessionSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					config: expect.objectContaining({
+						model: 'opus',
+						maxTokens: 4096,
+						coordinatorMode: true,
+						thinkingLevel: 'think32k',
+						sandbox: {
+							enabled: true,
+							autoAllowBashIfSandboxed: true,
+							excludedCommands: ['git'],
+						},
+					}),
+				})
+			);
+		});
+	});
+});
