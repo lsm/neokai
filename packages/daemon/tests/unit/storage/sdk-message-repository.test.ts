@@ -229,16 +229,16 @@ describe('SDKMessageRepository', () => {
 					content: [
 						{
 							type: 'text',
-							text: 'Starting task'
+							text: 'Starting task',
 						},
 						{
 							type: 'tool_use',
 							id: 'tool-123',
 							name: 'Task',
-							input: { subagent_type: 'explore', description: 'Test task' }
-						}
-					]
-				}
+							input: { subagent_type: 'explore', description: 'Test task' },
+						},
+					],
+				},
 			};
 			stmt.run(
 				'msg-1',
@@ -264,7 +264,7 @@ describe('SDKMessageRepository', () => {
 				type: 'assistant',
 				uuid: 'subagent-1',
 				parent_tool_use_id: 'tool-123',
-				message: { content: [{ type: 'text', text: 'Subagent response' }] }
+				message: { content: [{ type: 'text', text: 'Subagent response' }] },
 			};
 			stmt.run(
 				'msg-3',
@@ -279,7 +279,7 @@ describe('SDKMessageRepository', () => {
 				type: 'user',
 				uuid: 'subagent-2',
 				parent_tool_use_id: 'tool-123',
-				message: { role: 'user', content: 'Subagent user message' }
+				message: { role: 'user', content: 'Subagent user message' },
 			};
 			stmt.run(
 				'msg-4',
@@ -295,7 +295,7 @@ describe('SDKMessageRepository', () => {
 				type: 'assistant',
 				uuid: 'orphan-1',
 				parent_tool_use_id: 'tool-999',
-				message: { content: [{ type: 'text', text: 'Orphan subagent' }] }
+				message: { content: [{ type: 'text', text: 'Orphan subagent' }] },
 			};
 			stmt.run(
 				'msg-5',
