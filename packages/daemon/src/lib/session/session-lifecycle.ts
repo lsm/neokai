@@ -132,6 +132,13 @@ export class SessionLifecycle {
 				// SDK built-in tools are always enabled (not configurable)
 				// MCP and NeoKai tools are configurable based on global settings
 				tools: params.config?.tools ?? this.toolsConfigManager.getDefaultForNewSession(),
+				// Sandbox: Enable by default for all sessions (OS-level isolation for Bash)
+				// Can be overridden per-session via params.config.sandbox
+				sandbox: params.config?.sandbox ?? {
+					enabled: true,
+					autoAllowBashIfSandboxed: true,
+					excludedCommands: ['git'], // Git needs to run outside sandbox for worktree operations
+				},
 			},
 			metadata: {
 				messageCount: 0,
