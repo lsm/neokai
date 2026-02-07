@@ -775,6 +775,8 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
 			expect(sessionStore.hasMoreMessages.value).toBe(true);
 		});
+
+		it('should return false when initial load returns less than 100 messages', async () => {
 			const messages: SDKMessage[] = Array(50)
 				.fill(null)
 				.map((_, i) => ({
