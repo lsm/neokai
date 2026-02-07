@@ -144,6 +144,7 @@ class SessionStore {
 		// 2. Clear state
 		this.sessionState.value = null;
 		this.sdkMessages.value = [];
+		this._initialMessageCount = 0;
 		// Record session switch time to only show errors that occur AFTER this point
 		// This prevents showing stale errors that were already in the session state
 		this.sessionSwitchTime = Date.now();
