@@ -45,6 +45,21 @@ describe('Sandbox Default Configuration', () => {
 			getGlobalSettings: mock(() => ({
 				settingSources: ['user', 'project', 'local'],
 				disabledMcpServers: [],
+				sandbox: {
+					enabled: true,
+					autoAllowBashIfSandboxed: true,
+					excludedCommands: ['git'],
+					network: {
+						allowedDomains: [
+							'github.com',
+							'*.github.com',
+							'*.npmjs.org',
+							'*.yarnpkg.com',
+						],
+						allowLocalBinding: true,
+						allowAllUnixSockets: true,
+					},
+				},
 			})),
 		} as unknown as Database;
 

@@ -151,7 +151,8 @@ export class SessionLifecycle {
 				tools: params.config?.tools ?? this.toolsConfigManager.getDefaultForNewSession(),
 				// Sandbox: Use global settings default (enabled with network access)
 				// Global settings provide balanced security: filesystem isolation + dev domains allowed
-				sandbox: params.config?.sandbox,
+				// If user provides partial sandbox config (e.g., just enabled: false), respect that
+				sandbox: params.config?.sandbox ?? globalSettings.sandbox,
 			},
 			metadata: {
 				messageCount: 0,
