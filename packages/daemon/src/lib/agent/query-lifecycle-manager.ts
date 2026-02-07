@@ -83,7 +83,6 @@ export class QueryLifecycleManager {
 
 		// 1. Stop the message queue (no new messages processed)
 		messageQueue.stop();
-		this.logger.log('Message queue stopped');
 
 		// 2. Interrupt current query (only if transport is ready)
 		// ProcessTransport must be ready before calling interrupt() - otherwise we get
@@ -93,18 +92,11 @@ export class QueryLifecycleManager {
 			if (this.ctx.firstMessageReceived) {
 				try {
 					await queryObject.interrupt();
-					this.logger.log('Query interrupted successfully');
 				} catch (error) {
-					this.logger.warn('Query interrupt failed:', error);
 					// Continue - query might already be stopped
 				}
-			} else {
-				// Transport not ready - skip interrupt, just clear references
-				// The SDK subprocess will be terminated when we clear the query object
-				this.logger.log(
-					'Skipping interrupt - ProcessTransport not ready (no messages received yet)'
-				);
 			}
+			// Else: Transport not ready - skip interrupt, just clear references
 		}
 
 		// 3. Wait for termination
@@ -112,8 +104,8 @@ export class QueryLifecycleManager {
 		if (queryPromise) {
 			try {
 				const promiseToAwait = catchQueryErrors
-					? queryPromise.catch((e) => {
-							this.logger.warn('Query promise rejected during cleanup:', e);
+					? queryPromise.catch(() => {
+							// Ignore errors during cleanup
 						})
 					: queryPromise;
 
@@ -121,9 +113,8 @@ export class QueryLifecycleManager {
 					promiseToAwait,
 					new Promise((resolve) => setTimeout(resolve, timeoutMs)),
 				]);
-				this.logger.log('Previous query terminated');
 			} catch (error) {
-				this.logger.warn('Error waiting for query termination:', error);
+				// Ignore errors during termination
 			}
 		}
 
@@ -138,15 +129,11 @@ export class QueryLifecycleManager {
 	 * Used when MCP settings change and SDK needs to reload settings.local.json
 	 */
 	async restart(): Promise<void> {
-		this.logger.log('Executing query restart...');
-
 		try {
 			await this.stop();
 			await this.ctx.startStreamingQuery();
-			this.logger.log('Query restarted successfully with fresh settings');
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-			this.logger.error('Failed to restart query:', error);
 			throw new Error(`Query restart failed: ${errorMessage}`);
 		}
 	}
@@ -207,11 +194,9 @@ export class QueryLifecycleManager {
 
 			// Optionally restart
 			if (restartAfter) {
-				this.logger.log('Starting fresh query...');
 				// Small delay to ensure process cleanup completes
 				await new Promise((resolve) => setTimeout(resolve, 100));
 				await this.ctx.startStreamingQuery();
-				this.logger.log('Fresh query started successfully');
 			}
 
 			// Post-restart: Notify clients
@@ -241,11 +226,10 @@ export class QueryLifecycleManager {
 		// Wait for any pending interrupt
 		const interruptPromise = interruptHandler.getInterruptPromise();
 		if (interruptPromise) {
-			this.logger.log('Waiting for interrupt to complete before starting query...');
 			try {
 				await Promise.race([interruptPromise, new Promise((r) => setTimeout(r, 5000))]);
 			} catch (error) {
-				this.logger.warn('Error waiting for interrupt:', error);
+				// Ignore interrupt errors
 			}
 		}
 
@@ -258,7 +242,6 @@ export class QueryLifecycleManager {
 			validateAndRepairSDKSession(session.workspacePath, session.sdkSessionId, session.id, db);
 		}
 
-		this.logger.log('Lazy-starting streaming query...');
 		await this.ctx.startStreamingQuery();
 	}
 
@@ -347,11 +330,10 @@ export class QueryLifecycleManager {
 		const reason = this.ctx.pendingRestartReason;
 		this.ctx.pendingRestartReason = null;
 
-		this.logger.log(`Agent became idle, executing deferred restart (reason: ${reason})`);
 		try {
 			await this.restart();
 		} catch (error) {
-			this.logger.error(`Deferred restart failed (${reason}):`, error);
+			// Log but don't throw - deferred restart is best-effort
 		}
 	}
 
@@ -362,8 +344,6 @@ export class QueryLifecycleManager {
 	 * Called when session is being destroyed.
 	 */
 	async cleanup(): Promise<void> {
-		const cleanupStart = Date.now();
-		this.logger.log('[QueryLifecycleManager] Starting cleanup...');
 		this.ctx.setCleaningUp(true);
 
 		// Phase 1: Unsubscribe from events
@@ -379,11 +359,7 @@ export class QueryLifecycleManager {
 			await this.stop({ timeoutMs: 15000, catchQueryErrors: true });
 			await new Promise((r) => setTimeout(r, 1000));
 		} catch (error) {
-			this.logger.error('[QueryLifecycleManager] Error during query stop:', error);
+			// Ignore cleanup errors
 		}
-
-		this.logger.log(
-			`[QueryLifecycleManager] Cleanup complete (${Date.now() - cleanupStart}ms total)`
-		);
 	}
 }

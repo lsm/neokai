@@ -427,7 +427,6 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			sessionStore.prependMessages(olderMessages);
 			setHasMoreMessages(hasMore);
 		} catch (err) {
-			console.error('Failed to load older messages:', err);
 			toast.error('Failed to load older messages');
 		} finally {
 			setLoadingOlder(false);
@@ -561,7 +560,6 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			} catch (err) {
 				setAutoScroll(!newAutoScroll);
 				toast.error('Failed to save auto-scroll setting');
-				console.error('Failed to update autoScroll:', err);
 			}
 		},
 		[sessionId]
@@ -582,7 +580,6 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			} catch (err) {
 				setCoordinatorMode(!newMode);
 				toast.error('Failed to toggle coordinator mode');
-				console.error('Failed to toggle coordinator mode:', err);
 			} finally {
 				setCoordinatorSwitching(false);
 			}

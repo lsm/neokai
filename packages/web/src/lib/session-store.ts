@@ -314,8 +314,8 @@ class SessionStore {
 		for (const cleanup of this.cleanupFunctions) {
 			try {
 				cleanup();
-			} catch (err) {
-				console.warn('[SessionStore] Cleanup error:', err);
+			} catch {
+				// Ignore cleanup errors
 			}
 		}
 		this.cleanupFunctions = [];

@@ -43,7 +43,6 @@ export class SlashCommandManager {
 		// Restore from session if available
 		if (ctx.session.availableCommands && ctx.session.availableCommands.length > 0) {
 			this.slashCommands = ctx.session.availableCommands;
-			ctx.logger.log(`Restored ${this.slashCommands.length} slash commands from session data`);
 		}
 	}
 
@@ -103,8 +102,6 @@ export class SlashCommandManager {
 
 			this.slashCommands = allCommands;
 			this.commandsFetchedFromSDK = true;
-
-			logger.log(`Fetched ${this.slashCommands.length} slash commands from SDK`);
 
 			// Save to database
 			session.availableCommands = this.slashCommands;

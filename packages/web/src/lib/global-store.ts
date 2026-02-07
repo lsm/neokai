@@ -239,8 +239,8 @@ export class GlobalStore {
 		for (const cleanup of this.cleanupFunctions) {
 			try {
 				cleanup();
-			} catch (err) {
-				console.warn('[GlobalStore] Cleanup error:', err);
+			} catch {
+				// Ignore cleanup errors
 			}
 		}
 		this.cleanupFunctions = [];

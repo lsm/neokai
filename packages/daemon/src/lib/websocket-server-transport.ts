@@ -73,7 +73,6 @@ export class WebSocketServerTransport implements IMessageTransport {
 	 * Initialize transport and start stale connection checker
 	 */
 	async initialize(): Promise<void> {
-		this.logger.info('Transport initialized (Bun WebSocket managed by Elysia)');
 		this.startStaleConnectionChecker();
 	}
 
@@ -88,10 +87,6 @@ export class WebSocketServerTransport implements IMessageTransport {
 		this.staleCheckTimer = setInterval(() => {
 			this.checkStaleConnections();
 		}, this.staleCheckInterval);
-
-		this.logger.info(
-			`Stale connection checker started (timeout: ${this.staleTimeout}ms, interval: ${this.staleCheckInterval}ms)`
-		);
 	}
 
 	/**
@@ -101,7 +96,6 @@ export class WebSocketServerTransport implements IMessageTransport {
 		if (this.staleCheckTimer) {
 			clearInterval(this.staleCheckTimer);
 			this.staleCheckTimer = null;
-			this.logger.info('Stale connection checker stopped');
 		}
 	}
 
@@ -116,9 +110,6 @@ export class WebSocketServerTransport implements IMessageTransport {
 			const timeSinceActivity = now - lastActivity;
 			if (timeSinceActivity > this.staleTimeout) {
 				staleClientIds.push(clientId);
-				this.logger.warn(
-					`[${this.name}] Closing stale connection ${clientId} (inactive for ${Math.round(timeSinceActivity / 1000)}s)`
-				);
 			}
 		}
 
@@ -129,15 +120,11 @@ export class WebSocketServerTransport implements IMessageTransport {
 				try {
 					ws.close(1000, 'Connection timed out due to inactivity');
 				} catch (error) {
-					this.logger.info(`Error closing stale connection ${clientId}:`, error);
+					this.logger.error(`[${this.name}] Error closing stale connection ${clientId}:`, error);
 				}
 			}
 			// Cleanup will happen in the close handler
 			this.unregisterClient(clientId);
-		}
-
-		if (staleClientIds.length > 0) {
-			this.logger.info(`Closed ${staleClientIds.length} stale connections`);
 		}
 	}
 
@@ -155,8 +142,6 @@ export class WebSocketServerTransport implements IMessageTransport {
 	 * FIX P2.2: Clear both bidirectional maps
 	 */
 	async close(): Promise<void> {
-		this.logger.info('Closing transport and cleaning up connections');
-
 		// Stop stale connection checker
 		this.stopStaleConnectionChecker();
 
@@ -228,8 +213,6 @@ export class WebSocketServerTransport implements IMessageTransport {
 		// Initialize activity time for stale connection detection
 		this.lastActivityTime.set(clientId, Date.now());
 
-		this.logger.info(`Client registered: ${clientId} (session: ${connectionSessionId})`);
-
 		// Notify connection handlers
 		if (this.router.getClientCount() === 1) {
 			this.notifyConnectionHandlers('connected');
@@ -268,8 +251,6 @@ export class WebSocketServerTransport implements IMessageTransport {
 			}
 		}
 
-		this.logger.info(`Client unregistered: ${clientId}`);
-
 		// Notify connection handlers if no clients left
 		if (this.router.getClientCount() === 0) {
 			this.notifyConnectionHandlers('disconnected');
@@ -281,8 +262,6 @@ export class WebSocketServerTransport implements IMessageTransport {
 	 * Adds clientId to message for subscription tracking
 	 */
 	handleClientMessage(message: HubMessage, clientId?: string): void {
-		this.logger.info(`Received message: ${message.type} ${message.method}`, message);
-
 		// Add clientId to message metadata for SUBSCRIBE/UNSUBSCRIBE handling
 		// MessageHub needs this to track which client subscribed
 		if (clientId) {

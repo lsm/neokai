@@ -59,21 +59,12 @@ export class ToolsConfigManager {
 				const isAllowed = settings?.allowed !== false; // Default to true
 				const isDefaultOn = settings?.defaultOn === true; // Default to false (matches UI)
 
-				this.logger.info(
-					`[ToolsConfigManager] Server ${server.name}: allowed=${isAllowed}, defaultOn=${isDefaultOn}`
-				);
-
 				// Add to disabled list if not allowed OR not defaultOn
 				if (!isAllowed || !isDefaultOn) {
 					disabledMcpServers.push(server.name);
 				}
 			}
 		}
-
-		this.logger.info(
-			'[ToolsConfigManager] getDefaultForNewSession - disabledMcpServers:',
-			disabledMcpServers
-		);
 
 		return {
 			// System Prompt: Claude Code preset - Only enable if allowed AND default is on

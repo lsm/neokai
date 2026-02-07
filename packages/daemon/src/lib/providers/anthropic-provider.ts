@@ -128,7 +128,6 @@ export class AnthropicProvider implements Provider {
 			this.modelCache = models;
 			return models;
 		} catch (error) {
-			console.warn('[AnthropicProvider] Failed to load models from SDK:', error);
 			// No static fallback - return empty array
 			return [];
 		}
@@ -209,9 +208,6 @@ export class AnthropicProvider implements Provider {
 
 						if (canonicalId) {
 							// There's a canonical ID for this model - filter out the full ID
-							console.log(
-								`[AnthropicProvider] Filtering out ${sdkModel.value} (duplicate of canonical ${canonicalId})`
-							);
 							return false;
 						}
 					}
@@ -350,7 +346,6 @@ export async function getAnthropicModelsFromQuery(queryObject: Query | null): Pr
 		const sdkModels = await queryObject.supportedModels();
 		return provider.convertSdkModels(sdkModels);
 	} catch (error) {
-		console.warn('[AnthropicProvider] Failed to load models from query:', error);
 		return [];
 	}
 }

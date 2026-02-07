@@ -42,7 +42,6 @@ export class SettingsManager {
 	 * Update global settings (partial update)
 	 */
 	updateGlobalSettings(updates: Partial<GlobalSettings>): GlobalSettings {
-		this.logger.log('Updating global settings:', updates);
 		return this.db.updateGlobalSettings(updates);
 	}
 
@@ -50,7 +49,6 @@ export class SettingsManager {
 	 * Save global settings (full replace)
 	 */
 	saveGlobalSettings(settings: GlobalSettings): void {
-		this.logger.log('Saving global settings');
 		this.db.saveGlobalSettings(settings);
 	}
 
@@ -164,7 +162,6 @@ export class SettingsManager {
 			const userSettings = JSON.parse(content) as Record<string, unknown>;
 			return userSettings.attribution as { commit?: string; pr?: string } | undefined;
 		} catch (error) {
-			this.logger.log('Failed to read user attribution:', error);
 			return undefined;
 		}
 	}
@@ -186,7 +183,6 @@ export class SettingsManager {
 				localSettings = JSON.parse(content) as Record<string, unknown>;
 			}
 		} catch (error) {
-			this.logger.log('Failed to read existing settings.local.json:', error);
 			// Continue with empty object
 		}
 
@@ -248,7 +244,6 @@ export class SettingsManager {
 			const userAttribution = this.readUserAttribution();
 			if (userAttribution !== undefined) {
 				localSettings.attribution = userAttribution;
-				this.logger.log('Using attribution from user settings:', userAttribution);
 			}
 		}
 		// If localSettings.attribution is already set, preserve it
@@ -257,16 +252,13 @@ export class SettingsManager {
 		try {
 			mkdirSync(dirname(settingsLocalPath), { recursive: true });
 		} catch (error) {
-			this.logger.log('Failed to create .claude directory:', error);
 			throw error;
 		}
 
 		// Write back
 		try {
 			writeFileSync(settingsLocalPath, JSON.stringify(localSettings, null, 2));
-			this.logger.log('Updated .claude/settings.local.json');
 		} catch (error) {
-			this.logger.log('Failed to write settings.local.json:', error);
 			throw error;
 		}
 	}
@@ -301,7 +293,6 @@ export class SettingsManager {
 				attribution: (localSettings.attribution as { commit?: string; pr?: string }) || undefined,
 			};
 		} catch (error) {
-			this.logger.log('Failed to read file-only settings:', error);
 			return {};
 		}
 	}
@@ -312,8 +303,6 @@ export class SettingsManager {
 	 * This updates both the database and the .claude/settings.local.json file.
 	 */
 	async toggleMcpServer(serverName: string, enabled: boolean): Promise<void> {
-		this.logger.log(`Toggling MCP server ${serverName}: ${enabled ? 'enabled' : 'disabled'}`);
-
 		const currentSettings = this.getGlobalSettings();
 		const currentDisabled = currentSettings.disabledMcpServers || [];
 
@@ -351,8 +340,6 @@ export class SettingsManager {
 	 * Set list of disabled MCP servers
 	 */
 	async setDisabledMcpServers(disabledServers: string[]): Promise<void> {
-		this.logger.log('Setting disabled MCP servers:', disabledServers);
-
 		const updatedSettings = this.updateGlobalSettings({
 			disabledMcpServers: disabledServers,
 		});
@@ -406,7 +393,6 @@ export class SettingsManager {
 					};
 				});
 			} catch (error) {
-				this.logger.log(`Failed to read MCP servers from ${filePath}:`, error);
 				return [];
 			}
 		};

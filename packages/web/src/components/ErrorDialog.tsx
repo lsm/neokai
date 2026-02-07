@@ -51,7 +51,7 @@ export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: E
 			setCopied(true);
 			setTimeout(() => setCopied(false), 2000);
 		} catch (err) {
-			console.error('Failed to copy error report:', err);
+			// Clipboard copy failed - user can still copy manually
 		}
 	};
 

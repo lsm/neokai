@@ -86,23 +86,19 @@ export class QueryRunner {
 	 * Start the streaming query (called from AgentSession.startStreamingQuery)
 	 */
 	async start(): Promise<void> {
-		const { messageQueue, logger } = this.ctx;
+		const { messageQueue } = this.ctx;
 
 		if (messageQueue.isRunning()) {
-			logger.log('Query already running, skipping start');
 			return;
 		}
 
-		logger.log('Starting streaming query...');
 		messageQueue.start();
 
 		// Increment query generation for this new query
 		const currentGeneration = this.ctx.incrementQueryGeneration();
-		logger.log(`Starting query with generation ${currentGeneration}`);
 
 		// Reset firstMessageReceived flag for new query
 		this.ctx.firstMessageReceived = false;
-		logger.log('Reset firstMessageReceived flag for new query');
 
 		// Store query promise for cleanup
 		this.ctx.queryPromise = this.runQuery(currentGeneration);
@@ -145,17 +141,6 @@ export class QueryRunner {
 			const fs = await import('fs/promises');
 			await fs.mkdir(session.workspacePath, { recursive: true });
 
-			logger.log('Creating streaming query with AsyncGenerator');
-			logger.log(`SDK cwd (session.workspacePath): ${session.workspacePath}`);
-			if (session.worktree) {
-				logger.log(`Session uses worktree:`);
-				logger.log(`  - Worktree path: ${session.worktree.worktreePath}`);
-				logger.log(`  - Main repo: ${session.worktree.mainRepoPath}`);
-				logger.log(`  - Branch: ${session.worktree.branch}`);
-			} else {
-				logger.log('Session uses shared workspace (no worktree)');
-			}
-
 			// Build query options
 			optionsBuilder.setCanUseTool(this.ctx.askUserQuestionHandler.createCanUseToolCallback());
 			let queryOptions = await optionsBuilder.build();
@@ -167,9 +152,6 @@ export class QueryRunner {
 			this.ctx.originalEnvVars = originalEnvVars;
 
 			const provider = providerRegistry.detectProvider(modelId);
-			if (provider && provider.id === 'glm') {
-				logger.log(`Applied GLM env vars for model ${modelId} to process.env`);
-			}
 
 			// Create query with AsyncGenerator
 			const queryObject = query({
@@ -196,8 +178,6 @@ export class QueryRunner {
 				}
 			}, STARTUP_TIMEOUT_MS);
 			this.ctx.startupTimeoutTimer = startupTimer;
-
-			logger.log('Processing SDK stream...');
 
 			// Fetch slash commands and models in background
 			this.ctx.onSlashCommandsFetched().catch((e) => {
@@ -229,7 +209,6 @@ export class QueryRunner {
 				if (timer && messageCount === 1) {
 					clearTimeout(timer);
 					this.ctx.startupTimeoutTimer = null;
-					logger.log(`SDK first message received after ${Date.now() - queryStartTime}ms`);
 				}
 
 				this.ctx.firstMessageReceived = true;
@@ -253,8 +232,6 @@ export class QueryRunner {
 					);
 				}
 			}
-
-			logger.log('SDK stream ended');
 		} catch (error) {
 			logger.error('Streaming query error:', error);
 			messageQueue.clear();
@@ -332,18 +309,13 @@ export class QueryRunner {
 					const providerServiceRestore = getProviderServiceRestore();
 					providerServiceRestore.restoreEnvVars(originalEnvVars);
 					this.ctx.originalEnvVars = {};
-					logger.log('Restored original environment variables after SDK query');
 				}
 
 				if (!this.ctx.isCleaningUp()) {
 					await stateManager.setIdle();
 				}
-
-				logger.log(`Streaming query stopped (generation ${queryGeneration})`);
 			} else {
-				logger.log(
-					`Skipping all cleanup in finally block - stale query detected (generation ${queryGeneration} != current ${this.ctx.getQueryGeneration()})`
-				);
+				// Stale query detected - skip cleanup
 			}
 		}
 	}
@@ -381,9 +353,6 @@ export class QueryRunner {
 			if (queuedMessages.length > 0) {
 				const dbIds = queuedMessages.map((m) => m.dbId);
 				db.updateMessageStatus(dbIds, 'sent');
-				logger.log(
-					`Marked ${queuedMessages.length} queued messages as sent (received system:init)`
-				);
 			}
 		}
 
@@ -418,7 +387,6 @@ export class QueryRunner {
 
 		try {
 			if (signal.aborted) {
-				logger.log('Query already aborted at start of createAbortableQuery');
 				return;
 			}
 
@@ -430,34 +398,26 @@ export class QueryRunner {
 					const result = await Promise.race([nextPromise, abortPromise]);
 
 					if (signal.aborted) {
-						logger.log('Query aborted via immediate signal check after race');
 						break;
 					}
 
 					if (result.done) {
-						logger.log('Query iterator naturally completed');
 						break;
 					}
 
 					yield result.value;
 				} catch (error) {
 					if ((error as Error).message === 'Query aborted') {
-						logger.log('Query iterator aborted via Promise.race');
 						break;
 					}
 					throw error;
 				}
 			}
-
-			if (signal.aborted) {
-				logger.log('Query aborted via final signal check');
-			}
 		} finally {
 			try {
 				await iterator.return?.();
-				logger.log('Query iterator cleaned up via return()');
 			} catch (error) {
-				logger.debug('Error closing query iterator:', error);
+				// Ignore cleanup errors
 			}
 		}
 	}
@@ -488,14 +448,11 @@ export class QueryRunner {
 			const apiErrorMessage = errorBody.error?.message || errorMessage;
 			const apiErrorType = errorBody.error?.type || 'api_error';
 
-			logger.log(`Handling API validation error as assistant message: ${statusCode}`);
-
 			await this.displayErrorAsAssistantMessage(
 				`**API Error (${statusCode})**: ${apiErrorType}\n\n${apiErrorMessage}\n\nThis error occurred while processing your request. Please review the error message above and adjust your request accordingly.`,
 				{ markAsError: true }
 			);
 
-			logger.log('API validation error displayed as assistant message');
 			return true;
 		} catch (err) {
 			logger.warn('Failed to handle API validation error:', err);
