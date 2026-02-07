@@ -6,9 +6,6 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { Logger } from '../../lib/logger';
-
-const logger = new Logger('Database');
 
 /**
  * Run all database migrations
@@ -371,9 +368,7 @@ function runMigration13(db: BunDatabase): void {
 	} catch {
 		// INSERT failed, which means CHECK constraint doesn't include 'pending_worktree_choice'
 		// Need to recreate the table with updated constraint
-		logger.log(
-			"Running migration: Updating sessions table CHECK constraint to include 'pending_worktree_choice' status"
-		);
+		// Recreate table with updated CHECK constraint to include 'pending_worktree_choice'
 
 		// CRITICAL: Disable foreign keys during table recreation to prevent
 		// CASCADE delete from wiping sdk_messages when we DROP TABLE sessions
@@ -420,10 +415,6 @@ function runMigration13(db: BunDatabase): void {
 				-- Rename new table to original name
 				ALTER TABLE sessions_new RENAME TO sessions;
 			`);
-
-			logger.log(
-				'Migration complete: sessions table CHECK constraint updated to include pending_worktree_choice'
-			);
 		} finally {
 			// Re-enable foreign keys
 			db.exec('PRAGMA foreign_keys = ON');
