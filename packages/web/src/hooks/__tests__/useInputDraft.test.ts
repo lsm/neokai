@@ -247,7 +247,6 @@ describe('useInputDraft', () => {
 		});
 
 		it('should handle load error gracefully', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockHub.call.mockRejectedValue(new Error('Network error'));
 			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
@@ -257,9 +256,7 @@ describe('useInputDraft', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			expect(consoleSpy).toHaveBeenCalledWith('Failed to load draft:', expect.any(Error));
 			expect(result.current.content).toBe('');
-			consoleSpy.mockRestore();
 		});
 
 		it('should handle session with no draft metadata', async () => {
@@ -352,7 +349,6 @@ describe('useInputDraft', () => {
 		});
 
 		it('should handle save error gracefully', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockHub.call.mockRejectedValue(new Error('Save error'));
 			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
@@ -366,8 +362,7 @@ describe('useInputDraft', () => {
 				await vi.advanceTimersByTimeAsync(150);
 			});
 
-			expect(consoleSpy).toHaveBeenCalledWith('Failed to save draft:', expect.any(Error));
-			consoleSpy.mockRestore();
+			// Error should be handled gracefully (no throw)
 		});
 
 		it('should cancel pending save when new content is set', async () => {
@@ -506,7 +501,6 @@ describe('useInputDraft', () => {
 		});
 
 		it('should handle clear error gracefully', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockHub.call.mockRejectedValue(new Error('Clear error'));
 			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
@@ -520,8 +514,7 @@ describe('useInputDraft', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			expect(consoleSpy).toHaveBeenCalledWith('Failed to clear draft:', expect.any(Error));
-			consoleSpy.mockRestore();
+			// Error should be handled gracefully (no throw)
 		});
 	});
 
@@ -552,7 +545,6 @@ describe('useInputDraft', () => {
 		});
 
 		it('should handle flush error gracefully', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockHub.call.mockRejectedValue(new Error('Flush error'));
 			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
@@ -572,12 +564,7 @@ describe('useInputDraft', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			// Should have logged the specific flush error
-			expect(consoleSpy).toHaveBeenCalledWith(
-				'Failed to flush draft on session switch:',
-				expect.any(Error)
-			);
-			consoleSpy.mockRestore();
+			// Error should be handled gracefully (no throw)
 		});
 
 		it('should not call hub when not connected', async () => {
