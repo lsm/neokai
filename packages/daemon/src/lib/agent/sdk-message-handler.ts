@@ -80,7 +80,7 @@ export class SDKMessageHandler {
 		this.circuitBreaker = new ApiErrorCircuitBreaker(session.id);
 
 		// Set up circuit breaker callback - fully internalized
-		this.circuitBreaker.setOnTripCallback(async (reason, errorCount) => {
+		this.circuitBreaker.setOnTripCallback(async (reason, _errorCount) => {
 			const userMessage = this.circuitBreaker.getTripMessage();
 			await this.handleCircuitBreakerTrip(reason, userMessage);
 		});

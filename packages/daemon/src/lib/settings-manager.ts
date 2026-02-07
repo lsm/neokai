@@ -161,7 +161,7 @@ export class SettingsManager {
 			const content = readFileSync(userSettingsPath, 'utf-8');
 			const userSettings = JSON.parse(content) as Record<string, unknown>;
 			return userSettings.attribution as { commit?: string; pr?: string } | undefined;
-		} catch (error) {
+		} catch {
 			return undefined;
 		}
 	}
@@ -182,7 +182,7 @@ export class SettingsManager {
 				const content = readFileSync(settingsLocalPath, 'utf-8');
 				localSettings = JSON.parse(content) as Record<string, unknown>;
 			}
-		} catch (error) {
+		} catch {
 			// Continue with empty object
 		}
 
@@ -292,7 +292,7 @@ export class SettingsManager {
 				outputStyle: (localSettings.outputStyle as string) || undefined,
 				attribution: (localSettings.attribution as { commit?: string; pr?: string }) || undefined,
 			};
-		} catch (error) {
+		} catch {
 			return {};
 		}
 	}
@@ -392,7 +392,7 @@ export class SettingsManager {
 						args: serverConfig?.args as string[] | undefined,
 					};
 				});
-			} catch (error) {
+			} catch {
 				return [];
 			}
 		};

@@ -226,7 +226,7 @@ export function QuestionPrompt({
 
 			// Notify parent of resolution
 			onResolved?.('submitted', responses);
-		} catch (error) {
+		} catch {
 			// Error handled by toast
 		} finally {
 			setIsSubmitting(false);
@@ -244,7 +244,7 @@ export function QuestionPrompt({
 
 			// Notify parent of resolution with empty responses
 			onResolved?.('cancelled', []);
-		} catch (error) {
+		} catch {
 			// Error handled by toast
 		} finally {
 			setIsCancelling(false);

@@ -66,7 +66,7 @@ export class QueryOptionsBuilder {
 	 */
 	async build(): Promise<Options> {
 		const config = this.ctx.session.config;
-		const legacyToolsConfig = config.tools; // Legacy NeoKai-specific tools config
+		const _legacyToolsConfig = config.tools; // Legacy NeoKai-specific tools config
 
 		// Get settings-derived options (from global settings)
 		const sdkSettingsOptions = await this.getSettingsOptions();

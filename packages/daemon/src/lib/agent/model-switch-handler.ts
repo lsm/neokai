@@ -144,8 +144,8 @@ export class ModelSwitchHandler {
 			const isCrossProviderSwitch = currentProviderInstance?.id !== newProviderInstance?.id;
 
 			if (isCrossProviderSwitch) {
-				const currentProviderId = currentProviderInstance?.id || 'unknown';
-				const newProviderId = newProviderInstance?.id || 'unknown';
+				const _currentProviderId = currentProviderInstance?.id || 'unknown';
+				const _newProviderId = newProviderInstance?.id || 'unknown';
 			}
 
 			if (!queryObject || !transportReady) {
