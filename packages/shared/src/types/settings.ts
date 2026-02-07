@@ -45,9 +45,15 @@ export interface SDKSupportedSettings {
 	sandbox?: {
 		enabled?: boolean;
 		autoAllowBashIfSandboxed?: boolean;
+		excludedCommands?: string[];
+		allowUnsandboxedCommands?: boolean;
 		network?: {
 			allowUnixSockets?: string[];
 			allowLocalBinding?: boolean;
+			allowedDomains?: string[];
+			allowAllUnixSockets?: boolean;
+			httpProxyPort?: number;
+			socksProxyPort?: number;
 		};
 	};
 

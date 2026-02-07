@@ -551,7 +551,7 @@ CRITICAL RULES:
 	private getAdditionalDirectories(): string[] | undefined {
 		// For worktree sessions, allow temp directories for shell operations
 		if (this.ctx.session.worktree) {
-			const uid = process.getuid();
+			const uid = typeof process.getuid === 'function' ? process.getuid() : 501;
 			return ['/tmp/claude', `/tmp/zsh-${uid}`];
 		}
 		return undefined;
