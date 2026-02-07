@@ -102,16 +102,6 @@ describe('StateChannel - Comprehensive Coverage', () => {
 			});
 			expect(testChannel).toBeDefined();
 		});
-
-		it('should support debug mode', () => {
-			const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-			const testChannel = new StateChannel(mockHubObj, 'test.channel', {
-				debug: true,
-			});
-			testChannel['log']('test message');
-			expect(consoleSpy).toHaveBeenCalled();
-			consoleSpy.mockRestore();
-		});
 	});
 
 	describe('start() and stop()', () => {

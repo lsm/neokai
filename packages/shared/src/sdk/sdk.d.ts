@@ -226,6 +226,8 @@ declare namespace coreTypes {
         SubagentStartHookSpecificOutput,
         SubagentStopHookInput,
         SyncHookJSONOutput,
+        TaskCompletedHookInput,
+        TeammateIdleHookInput,
         UserPromptSubmitHookInput,
         UserPromptSubmitHookSpecificOutput
     }
@@ -249,7 +251,7 @@ export declare const EXIT_REASONS: readonly ["clear", "logout", "prompt_input_ex
 
 export declare type ExitReason = 'clear' | 'logout' | 'prompt_input_exit' | 'other' | 'bypass_permissions_disabled';
 
-export declare const HOOK_EVENTS: readonly ["PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification", "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop", "SubagentStart", "SubagentStop", "PreCompact", "PermissionRequest", "Setup"];
+export declare const HOOK_EVENTS: readonly ["PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification", "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop", "SubagentStart", "SubagentStop", "PreCompact", "PermissionRequest", "Setup", "TeammateIdle", "TaskCompleted"];
 
 /**
  * Hook callback function for responding to events during execution.
@@ -268,9 +270,9 @@ export declare interface HookCallbackMatcher {
     timeout?: number;
 }
 
-export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'Notification' | 'UserPromptSubmit' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PermissionRequest' | 'Setup';
+export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'Notification' | 'UserPromptSubmit' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PermissionRequest' | 'Setup' | 'TeammateIdle' | 'TaskCompleted';
 
-export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | NotificationHookInput | UserPromptSubmitHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PermissionRequestHookInput | SetupHookInput;
+export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | NotificationHookInput | UserPromptSubmitHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PermissionRequestHookInput | SetupHookInput | TeammateIdleHookInput | TaskCompletedHookInput;
 
 export declare type HookJSONOutput = AsyncHookJSONOutput | SyncHookJSONOutput;
 
@@ -691,6 +693,12 @@ export declare type Options = {
      */
     resume?: string;
     /**
+     * Use a specific session ID for the conversation instead of an auto-generated one.
+     * Must be a valid UUID. Cannot be used with `continue` or `resume` unless
+     * `forkSession` is also set (to specify a custom ID for the forked session).
+     */
+    sessionId?: string;
+    /**
      * When resuming, only resume messages up to and including the message with this UUID.
      * Use with `resume`. This allows you to resume from a specific point in the conversation.
      * The message ID should be from `SDKAssistantMessage.uuid`.
@@ -742,6 +750,19 @@ export declare type Options = {
      * Must include `'project'` to load CLAUDE.md files.
      */
     settingSources?: SettingSource[];
+    /**
+     * Enable debug mode for the Claude Code process.
+     * When true, enables verbose debug logging (equivalent to `--debug` CLI flag).
+     * Debug logs are written to a file (see `debugFile` option) or to stderr.
+     *
+     * You can also capture debug output via the `stderr` callback.
+     */
+    debug?: boolean;
+    /**
+     * Write debug logs to a specific file path.
+     * Implicitly enables debug mode. Equivalent to `--debug-file <path>` CLI flag.
+     */
+    debugFile?: string;
     /**
      * Callback for stderr output from the Claude Code process.
      * Useful for debugging and logging.
@@ -803,7 +824,7 @@ export declare type OutputFormatType = 'json_schema';
 export declare type PermissionBehavior = 'allow' | 'deny' | 'ask';
 
 /**
- * Permission mode for controlling how tool executions are handled. 'default' - Standard behavior, prompts for dangerous operations. 'acceptEdits' - Auto-accept file edit operations. 'bypassPermissions' - Bypass all permission checks (requires allowDangerouslySkipPermissions). 'plan' - Planning mode, no actual tool execution. 'dontAsk' - Don't prompt for permissions, deny if not pre-approved.
+ * Permission mode for controlling how tool executions are handled. 'default' - Standard behavior, prompts for dangerous operations. 'acceptEdits' - Auto-accept file edit operations. 'bypassPermissions' - Bypass all permission checks (requires allowDangerouslySkipPermissions). 'plan' - Planning mode, no actual tool execution. 'delegate' - Delegate mode, restricts team leader to only Teammate and Task tools. 'dontAsk' - Don't prompt for permissions, deny if not pre-approved.
  */
 export declare type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'delegate' | 'dontAsk';
 
@@ -966,6 +987,13 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
      */
     setMaxThinkingTokens(maxThinkingTokens: number | null): Promise<void>;
     /**
+     * Get the full initialization result, including supported commands, models,
+     * account info, and output style configuration.
+     *
+     * @returns The complete initialization response
+     */
+    initializationResult(): Promise<SDKControlInitializeResponse>;
+    /**
      * Get the list of available skills for the current session.
      *
      * @returns Array of available skills with their names and descriptions
@@ -1074,6 +1102,7 @@ export declare type SandboxNetworkConfig = NonNullable<z.infer<typeof SandboxNet
  */
 declare const SandboxNetworkConfigSchema: z.ZodOptional<z.ZodObject<{
     allowedDomains: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    allowManagedDomainsOnly: z.ZodOptional<z.ZodBoolean>;
     allowUnixSockets: z.ZodOptional<z.ZodArray<z.ZodString>>;
     allowAllUnixSockets: z.ZodOptional<z.ZodBoolean>;
     allowLocalBinding: z.ZodOptional<z.ZodBoolean>;
@@ -1092,6 +1121,7 @@ declare const SandboxSettingsSchema: z.ZodObject<{
     allowUnsandboxedCommands: z.ZodOptional<z.ZodBoolean>;
     network: z.ZodOptional<z.ZodObject<{
         allowedDomains: z.ZodOptional<z.ZodArray<z.ZodString>>;
+        allowManagedDomainsOnly: z.ZodOptional<z.ZodBoolean>;
         allowUnixSockets: z.ZodOptional<z.ZodArray<z.ZodString>>;
         allowAllUnixSockets: z.ZodOptional<z.ZodBoolean>;
         allowLocalBinding: z.ZodOptional<z.ZodBoolean>;
@@ -1158,6 +1188,17 @@ declare type SDKControlInitializeRequest = {
     agents?: Record<string, coreTypes.AgentDefinition>;
 };
 
+declare type SDKControlInitializeResponse = {
+    commands: coreTypes.SlashCommand[];
+    output_style: string;
+    available_output_styles: string[];
+    models: coreTypes.ModelInfo[];
+    /**
+     * Information about the logged in user's account.
+     */
+    account: coreTypes.AccountInfo;
+};
+
 declare type SDKControlInterruptRequest = {
     subtype: 'interrupt';
 };
@@ -1197,6 +1238,7 @@ declare type SDKControlPermissionRequest = {
     decision_reason?: string;
     tool_use_id: string;
     agent_id?: string;
+    description?: string;
 };
 
 declare type SDKControlRequest = {
@@ -1231,7 +1273,7 @@ declare type SDKControlSetModelRequest = {
 declare type SDKControlSetPermissionModeRequest = {
     subtype: 'set_permission_mode';
     /**
-     * Permission mode for controlling how tool executions are handled. 'default' - Standard behavior, prompts for dangerous operations. 'acceptEdits' - Auto-accept file edit operations. 'bypassPermissions' - Bypass all permission checks (requires allowDangerouslySkipPermissions). 'plan' - Planning mode, no actual tool execution. 'dontAsk' - Don't prompt for permissions, deny if not pre-approved.
+     * Permission mode for controlling how tool executions are handled. 'default' - Standard behavior, prompts for dangerous operations. 'acceptEdits' - Auto-accept file edit operations. 'bypassPermissions' - Bypass all permission checks (requires allowDangerouslySkipPermissions). 'plan' - Planning mode, no actual tool execution. 'delegate' - Delegate mode, restricts team leader to only Teammate and Task tools. 'dontAsk' - Don't prompt for permissions, deny if not pre-approved.
      */
     mode: coreTypes.PermissionMode;
 };
@@ -1363,6 +1405,7 @@ export declare type SDKResultError = {
     duration_api_ms: number;
     is_error: boolean;
     num_turns: number;
+    stop_reason: string | null;
     total_cost_usd: number;
     usage: NonNullableUsage;
     modelUsage: Record<string, ModelUsage>;
@@ -1382,6 +1425,7 @@ export declare type SDKResultSuccess = {
     is_error: boolean;
     num_turns: number;
     result: string;
+    stop_reason: string | null;
     total_cost_usd: number;
     usage: NonNullableUsage;
     modelUsage: Record<string, ModelUsage>;
@@ -1490,7 +1534,7 @@ export declare type SDKSystemMessage = {
     }[];
     model: string;
     /**
-     * Permission mode for controlling how tool executions are handled. 'default' - Standard behavior, prompts for dangerous operations. 'acceptEdits' - Auto-accept file edit operations. 'bypassPermissions' - Bypass all permission checks (requires allowDangerouslySkipPermissions). 'plan' - Planning mode, no actual tool execution. 'dontAsk' - Don't prompt for permissions, deny if not pre-approved.
+     * Permission mode for controlling how tool executions are handled. 'default' - Standard behavior, prompts for dangerous operations. 'acceptEdits' - Auto-accept file edit operations. 'bypassPermissions' - Bypass all permission checks (requires allowDangerouslySkipPermissions). 'plan' - Planning mode, no actual tool execution. 'delegate' - Delegate mode, restricts team leader to only Teammate and Task tools. 'dontAsk' - Don't prompt for permissions, deny if not pre-approved.
      */
     permissionMode: PermissionMode;
     slash_commands: string[];
@@ -1665,7 +1709,7 @@ export declare interface SpawnOptions {
     signal: AbortSignal;
 }
 
-declare type StdoutMessage = coreTypes.SDKMessage | SDKControlResponse | SDKControlRequest | SDKControlCancelRequest | SDKKeepAliveMessage;
+declare type StdoutMessage = coreTypes.SDKMessage | coreTypes.SDKStreamlinedTextMessage | coreTypes.SDKStreamlinedToolUseSummaryMessage | SDKControlResponse | SDKControlRequest | SDKControlCancelRequest | SDKKeepAliveMessage;
 
 export declare type StopHookInput = BaseHookInput & {
     hook_event_name: 'Stop';
@@ -1699,6 +1743,21 @@ export declare type SyncHookJSONOutput = {
     systemMessage?: string;
     reason?: string;
     hookSpecificOutput?: PreToolUseHookSpecificOutput | UserPromptSubmitHookSpecificOutput | SessionStartHookSpecificOutput | SetupHookSpecificOutput | SubagentStartHookSpecificOutput | PostToolUseHookSpecificOutput | PostToolUseFailureHookSpecificOutput | NotificationHookSpecificOutput | PermissionRequestHookSpecificOutput;
+};
+
+export declare type TaskCompletedHookInput = BaseHookInput & {
+    hook_event_name: 'TaskCompleted';
+    task_id: string;
+    task_subject: string;
+    task_description?: string;
+    teammate_name?: string;
+    team_name?: string;
+};
+
+export declare type TeammateIdleHookInput = BaseHookInput & {
+    hook_event_name: 'TeammateIdle';
+    teammate_name: string;
+    team_name: string;
 };
 
 export declare function tool<Schema extends AnyZodRawShape>(_name: string, _description: string, _inputSchema: Schema, _handler: (args: InferShape<Schema>, extra: unknown) => Promise<CallToolResult>, _extras?: {

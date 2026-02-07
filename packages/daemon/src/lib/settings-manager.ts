@@ -249,18 +249,10 @@ export class SettingsManager {
 		// If localSettings.attribution is already set, preserve it
 
 		// Ensure directory exists
-		try {
-			mkdirSync(dirname(settingsLocalPath), { recursive: true });
-		} catch (error) {
-			throw error;
-		}
+		mkdirSync(dirname(settingsLocalPath), { recursive: true });
 
 		// Write back
-		try {
-			writeFileSync(settingsLocalPath, JSON.stringify(localSettings, null, 2));
-		} catch (error) {
-			throw error;
-		}
+		writeFileSync(settingsLocalPath, JSON.stringify(localSettings, null, 2));
 	}
 
 	/**
