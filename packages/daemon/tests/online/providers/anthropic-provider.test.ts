@@ -39,7 +39,7 @@ describe('AnthropicProvider (Online)', () => {
 
 			// Check for expected models
 			const modelIds = models.map((m) => m.id);
-			expect(modelIds).toContain('sonnet');  // 'default' is now 'sonnet'
+			expect(modelIds).toContain('sonnet'); // 'default' is now 'sonnet'
 			expect(modelIds).toContain('opus');
 			expect(modelIds).toContain('haiku');
 
