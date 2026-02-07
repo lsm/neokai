@@ -92,7 +92,7 @@ export class QueryLifecycleManager {
 			if (this.ctx.firstMessageReceived) {
 				try {
 					await queryObject.interrupt();
-				} catch (error) {
+				} catch {
 					// Continue - query might already be stopped
 				}
 			}
@@ -113,7 +113,7 @@ export class QueryLifecycleManager {
 					promiseToAwait,
 					new Promise((resolve) => setTimeout(resolve, timeoutMs)),
 				]);
-			} catch (error) {
+			} catch {
 				// Ignore errors during termination
 			}
 		}
@@ -228,7 +228,7 @@ export class QueryLifecycleManager {
 		if (interruptPromise) {
 			try {
 				await Promise.race([interruptPromise, new Promise((r) => setTimeout(r, 5000))]);
-			} catch (error) {
+			} catch {
 				// Ignore interrupt errors
 			}
 		}
@@ -327,12 +327,12 @@ export class QueryLifecycleManager {
 			return;
 		}
 
-		const reason = this.ctx.pendingRestartReason;
+		const _reason = this.ctx.pendingRestartReason;
 		this.ctx.pendingRestartReason = null;
 
 		try {
 			await this.restart();
-		} catch (error) {
+		} catch {
 			// Log but don't throw - deferred restart is best-effort
 		}
 	}
@@ -358,7 +358,7 @@ export class QueryLifecycleManager {
 		try {
 			await this.stop({ timeoutMs: 15000, catchQueryErrors: true });
 			await new Promise((r) => setTimeout(r, 1000));
-		} catch (error) {
+		} catch {
 			// Ignore cleanup errors
 		}
 	}

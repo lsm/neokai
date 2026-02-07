@@ -322,7 +322,7 @@ export function runMigration12(db: BunDatabase): void {
         WHERE id = 1
       `);
 		}
-	} catch (err) {
+	} catch {
 		// Log but don't throw - migration errors shouldn't crash the app
 	}
 }

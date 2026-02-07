@@ -65,12 +65,12 @@ export default function Sidebar() {
 			navigateToSession(response.sessionId);
 
 			toast.success('Session created successfully');
-		} catch {
+		} catch (_err) {
 			// Handle connection-specific errors
-			if (err instanceof ConnectionNotReadyError) {
+			if (_err instanceof ConnectionNotReadyError) {
 				toast.error('Connection lost. Please try again.');
 			} else {
-				const message = err instanceof Error ? err.message : 'Failed to create session';
+				const message = _err instanceof Error ? _err.message : 'Failed to create session';
 				toast.error(message);
 			}
 		} finally {
