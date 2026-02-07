@@ -683,9 +683,6 @@ export function deleteSDKSessionFiles(
 		const files = findAllSDKFilesForSession(workspacePath, sdkSessionId, kaiSessionId);
 
 		if (files.length === 0) {
-			console.info(
-				`[SDKSessionFileManager] No SDK session files found for session ${kaiSessionId.slice(0, 8)}...`
-			);
 			return result;
 		}
 
