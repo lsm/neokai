@@ -162,7 +162,7 @@ export class QueryRunner {
 			queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
 
 			// Apply provider env vars
-			const modelId = session.config.model || 'default';
+			const modelId = session.config.model || 'sonnet';
 			const originalEnvVars = providerService.applyEnvVarsToProcess(modelId);
 			this.ctx.originalEnvVars = originalEnvVars;
 

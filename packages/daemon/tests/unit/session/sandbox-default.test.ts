@@ -45,6 +45,16 @@ describe('Sandbox Default Configuration', () => {
 			getGlobalSettings: mock(() => ({
 				settingSources: ['user', 'project', 'local'],
 				disabledMcpServers: [],
+				sandbox: {
+					enabled: true,
+					autoAllowBashIfSandboxed: true,
+					excludedCommands: ['git'],
+					network: {
+						allowedDomains: ['github.com', '*.github.com', '*.npmjs.org', '*.yarnpkg.com'],
+						allowLocalBinding: true,
+						allowAllUnixSockets: true,
+					},
+				},
 			})),
 		} as unknown as Database;
 
@@ -153,7 +163,7 @@ describe('Sandbox Default Configuration', () => {
 			);
 		});
 
-		it('should exclude git from sandbox by default', async () => {
+		it('should exclude git from sandbox by default (SSH, submodules, various git hosts)', async () => {
 			await lifecycle.create({});
 
 			const createSessionSpy = mockDb.createSession as ReturnType<typeof mock>;
@@ -168,18 +178,24 @@ describe('Sandbox Default Configuration', () => {
 			);
 		});
 
-		it('should have complete default sandbox config', async () => {
+		it('should allow network access to common development domains', async () => {
 			await lifecycle.create({});
 
 			const createSessionSpy = mockDb.createSession as ReturnType<typeof mock>;
 			expect(createSessionSpy).toHaveBeenCalledWith(
 				expect.objectContaining({
 					config: expect.objectContaining({
-						sandbox: {
-							enabled: true,
-							autoAllowBashIfSandboxed: true,
-							excludedCommands: ['git'],
-						},
+						sandbox: expect.objectContaining({
+							network: expect.objectContaining({
+								allowedDomains: expect.arrayContaining([
+									'github.com',
+									'*.npmjs.org',
+									'*.yarnpkg.com',
+								]),
+								allowLocalBinding: true,
+								allowAllUnixSockets: true,
+							}),
+						}),
 					}),
 				})
 			);
@@ -279,11 +295,14 @@ describe('Sandbox Default Configuration', () => {
 						maxTokens: 4096,
 						coordinatorMode: true,
 						thinkingLevel: 'think32k',
-						sandbox: {
+						sandbox: expect.objectContaining({
 							enabled: true,
 							autoAllowBashIfSandboxed: true,
-							excludedCommands: ['git'],
-						},
+							network: expect.objectContaining({
+								allowLocalBinding: true,
+								allowAllUnixSockets: true,
+							}),
+						}),
 					}),
 				})
 			);

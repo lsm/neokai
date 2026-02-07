@@ -16,7 +16,7 @@
     },
     "packages/cli": {
       "name": "@neokai/cli",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "bin": {
         "kai": "./main.ts",
       },
@@ -34,9 +34,9 @@
     },
     "packages/daemon": {
       "name": "@neokai/daemon",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "dependencies": {
-        "@anthropic-ai/claude-agent-sdk": "0.2.29",
+        "@anthropic-ai/claude-agent-sdk": "^0.2.29",
         "@neokai/shared": "workspace:*",
         "dotenv": "17.2.3",
         "simple-git": "3.30.0",
@@ -47,7 +47,7 @@
     },
     "packages/e2e": {
       "name": "@neokai/e2e",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "devDependencies": {
         "@playwright/test": "1.57.0",
         "@types/node": "24.10.1",
@@ -56,14 +56,14 @@
     },
     "packages/shared": {
       "name": "@neokai/shared",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "devDependencies": {
         "@types/bun": "latest",
       },
     },
     "packages/web": {
       "name": "@neokai/web",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "dependencies": {
         "@preact/signals": "2.7.0",
         "clsx": "2.1.1",

@@ -149,13 +149,10 @@ export class SessionLifecycle {
 				// SDK built-in tools are always enabled (not configurable)
 				// MCP and NeoKai tools are configurable based on global settings
 				tools: params.config?.tools ?? this.toolsConfigManager.getDefaultForNewSession(),
-				// Sandbox: Enable by default for all sessions (OS-level isolation for Bash)
-				// Can be overridden per-session via params.config.sandbox
-				sandbox: params.config?.sandbox ?? {
-					enabled: true,
-					autoAllowBashIfSandboxed: true,
-					excludedCommands: ['git'], // Git needs to run outside sandbox for worktree operations
-				},
+				// Sandbox: Use global settings default (enabled with network access)
+				// Global settings provide balanced security: filesystem isolation + dev domains allowed
+				// If user provides partial sandbox config (e.g., just enabled: false), respect that
+				sandbox: params.config?.sandbox ?? globalSettings.sandbox,
 			},
 			metadata: {
 				messageCount: 0,
@@ -846,7 +843,7 @@ ${messageText.slice(0, 2000)}`;
 					);
 				}
 
-				// Use configured default model (from DEFAULT_MODEL env var or 'default')
+				// Use configured default model (from DEFAULT_MODEL env var or 'sonnet')
 				// Try to find it by alias or ID in available models
 				const configuredDefault = this.config.defaultModel;
 				const defaultByConfig = availableModels.find(

@@ -68,6 +68,16 @@ describe('SessionLifecycle', () => {
 			getGlobalSettings: mock(() => ({
 				settingSources: ['user', 'project', 'local'],
 				disabledMcpServers: [],
+				sandbox: {
+					enabled: true,
+					autoAllowBashIfSandboxed: true,
+					excludedCommands: ['git'],
+					network: {
+						allowedDomains: ['github.com', '*.npmjs.org'],
+						allowLocalBinding: true,
+						allowAllUnixSockets: true,
+					},
+				},
 			})),
 		} as unknown as Database;
 
@@ -241,6 +251,10 @@ describe('SessionLifecycle', () => {
 							enabled: true,
 							autoAllowBashIfSandboxed: true,
 							excludedCommands: ['git'],
+							network: expect.objectContaining({
+								allowLocalBinding: true,
+								allowAllUnixSockets: true,
+							}),
 						}),
 					}),
 				})

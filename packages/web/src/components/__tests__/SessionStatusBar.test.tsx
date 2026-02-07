@@ -19,28 +19,28 @@ describe('SessionStatusBar', () => {
 	const mockOnCoordinatorModeChange = vi.fn(() => {});
 
 	const mockModelInfo: ModelInfo = {
-		id: 'claude-sonnet-4-20250514',
-		name: 'Claude Sonnet 4',
+		id: 'sonnet',
+		name: 'Sonnet 4.5',
 		family: 'sonnet',
 		isDefault: true,
 	};
 
 	const mockAvailableModels: ModelInfo[] = [
 		{
-			id: 'claude-opus-4-20250514',
-			name: 'Claude Opus 4',
+			id: 'opus',
+			name: 'Opus 4.5',
 			family: 'opus',
 			isDefault: false,
 		},
 		{
-			id: 'claude-sonnet-4-20250514',
-			name: 'Claude Sonnet 4',
+			id: 'sonnet',
+			name: 'Sonnet 4.5',
 			family: 'sonnet',
 			isDefault: true,
 		},
 		{
-			id: 'claude-haiku-3-20250514',
-			name: 'Claude Haiku 3',
+			id: 'haiku',
+			name: 'Haiku 4.5',
 			family: 'haiku',
 			isDefault: false,
 		},
@@ -50,7 +50,7 @@ describe('SessionStatusBar', () => {
 		totalUsed: 50000,
 		totalCapacity: 200000,
 		percentUsed: 25,
-		model: 'claude-sonnet-4-20250514',
+		model: 'sonnet',
 		breakdown: {
 			'System Prompt': { tokens: 5000, percent: 2.5 },
 			Messages: { tokens: 40000, percent: 20 },
@@ -61,7 +61,7 @@ describe('SessionStatusBar', () => {
 	const defaultProps = {
 		sessionId: 'session-1',
 		isProcessing: false,
-		currentModel: 'claude-sonnet-4-20250514',
+		currentModel: 'sonnet',
 		currentModelInfo: mockModelInfo,
 		availableModels: mockAvailableModels,
 		modelSwitching: false,
@@ -389,9 +389,9 @@ describe('SessionStatusBar', () => {
 			) as HTMLButtonElement;
 			fireEvent.click(modelButton);
 
-			expect(container.textContent).toContain('Claude Opus 4');
-			expect(container.textContent).toContain('Claude Sonnet 4');
-			expect(container.textContent).toContain('Claude Haiku 3');
+			expect(container.textContent).toContain('Opus 4.5');
+			expect(container.textContent).toContain('Sonnet 4.5');
+			expect(container.textContent).toContain('Haiku 4.5');
 		});
 
 		it('should show current model indicator', () => {
@@ -415,10 +415,10 @@ describe('SessionStatusBar', () => {
 
 			// Find and click the Opus model button
 			const buttons = Array.from(container.querySelectorAll('button'));
-			const opusButton = buttons.find((btn) => btn.textContent?.includes('Claude Opus 4'));
+			const opusButton = buttons.find((btn) => btn.textContent?.includes('Opus 4.5'));
 			fireEvent.click(opusButton!);
 
-			expect(mockOnModelSwitch).toHaveBeenCalledWith('claude-opus-4-20250514');
+			expect(mockOnModelSwitch).toHaveBeenCalledWith('opus');
 		});
 
 		it('should close model dropdown when clicking it again', () => {
@@ -651,7 +651,7 @@ describe('SessionStatusBar', () => {
 	describe('Model Family Icons', () => {
 		it('should show opus icon for opus model', () => {
 			const opusModelInfo: ModelInfo = {
-				id: 'claude-opus-4-20250514',
+				id: 'opus',
 				name: 'Claude Opus 4',
 				family: 'opus',
 				isDefault: false,
@@ -666,7 +666,7 @@ describe('SessionStatusBar', () => {
 
 		it('should show haiku icon for haiku model', () => {
 			const haikuModelInfo: ModelInfo = {
-				id: 'claude-haiku-3-20250514',
+				id: 'haiku',
 				name: 'Claude Haiku 3',
 				family: 'haiku',
 				isDefault: false,

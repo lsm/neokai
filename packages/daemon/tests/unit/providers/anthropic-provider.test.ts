@@ -171,10 +171,11 @@ describe('AnthropicProvider', () => {
 
 	describe('getModelForTier', () => {
 		it('should map tiers correctly', () => {
-			expect(provider.getModelForTier('sonnet')).toBe('default');
+			expect(provider.getModelForTier('sonnet')).toBe('sonnet');
 			expect(provider.getModelForTier('haiku')).toBe('haiku');
 			expect(provider.getModelForTier('opus')).toBe('opus');
-			expect(provider.getModelForTier('default')).toBe('default');
+			// 'default' tier maps to 'sonnet' (legacy fallback)
+			expect(provider.getModelForTier('default')).toBe('sonnet');
 		});
 	});
 

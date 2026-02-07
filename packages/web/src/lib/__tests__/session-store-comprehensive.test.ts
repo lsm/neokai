@@ -714,6 +714,111 @@ describe('SessionStore - Comprehensive Coverage', () => {
 		});
 	});
 
+	describe('hasMoreMessages (pagination inference)', () => {
+		beforeEach(async () => {
+			// Clear session state to ensure each test starts fresh
+			await sessionStore.select(null);
+		});
+
+		afterEach(async () => {
+			// Clear session state to avoid interference
+			await sessionStore.select(null);
+		});
+
+		it('should return false when initial load returns less than 100 messages', async () => {
+			const messages: SDKMessage[] = Array(50)
+				.fill(null)
+				.map((_, i) => ({
+					uuid: `msg-${i}`,
+					type: 'text',
+					role: 'user',
+					content: [{ type: 'text', text: `Message ${i}` }],
+				}));
+
+			mockHub.call.mockImplementation((method: string) => {
+				if (method === 'state.session') {
+					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
+				}
+				if (method === 'state.sdkMessages') {
+					return Promise.resolve({ sdkMessages: messages });
+				}
+				return Promise.resolve(undefined);
+			});
+
+			await sessionStore.select('session-1');
+
+			expect(sessionStore.hasMoreMessages.value).toBe(false);
+		});
+
+		it('should return true when initial load returns exactly 100 messages', async () => {
+			const messages: SDKMessage[] = Array(100)
+				.fill(null)
+				.map((_, i) => ({
+					uuid: `msg-${i}`,
+					type: 'text',
+					role: 'user',
+					content: [{ type: 'text', text: `Message ${i}` }],
+				}));
+
+			mockHub.call.mockImplementation((method: string) => {
+				if (method === 'state.session') {
+					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
+				}
+				if (method === 'state.sdkMessages') {
+					return Promise.resolve({ sdkMessages: messages });
+				}
+				return Promise.resolve(undefined);
+			});
+
+			await sessionStore.select('session-1');
+
+			// Verify messages were loaded and hasMoreMessages is true
+			expect(sessionStore.sdkMessages.value).toHaveLength(100);
+			expect(sessionStore.hasMoreMessages.value).toBe(true);
+		});
+
+		it('should return false when initial load returns less than 100 messages', async () => {
+			const messages: SDKMessage[] = Array(50)
+				.fill(null)
+				.map((_, i) => ({
+					uuid: `msg-${i}`,
+					type: 'text',
+					role: 'user',
+					content: [{ type: 'text', text: `Message ${i}` }],
+				}));
+
+			mockHub.call.mockImplementation((method: string) => {
+				if (method === 'state.session') {
+					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
+				}
+				if (method === 'state.sdkMessages') {
+					return Promise.resolve({ sdkMessages: messages });
+				}
+				return Promise.resolve(undefined);
+			});
+
+			await sessionStore.select('session-1');
+
+			expect(sessionStore.hasMoreMessages.value).toBe(false);
+		});
+
+		it('should return false when no messages loaded', async () => {
+			mockHub.call.mockImplementation((method: string) => {
+				if (method === 'state.session') {
+					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
+				}
+				if (method === 'state.sdkMessages') {
+					return Promise.resolve({ sdkMessages: [] });
+				}
+				return Promise.resolve(undefined);
+			});
+
+			await sessionStore.select('session-1');
+
+			expect(sessionStore.hasMoreMessages.value).toBe(false);
+		});
+	});
+
 	describe('loadOlderMessages()', () => {
 		it('should load older messages from server', async () => {
 			const olderMessages: SDKMessage[] = [

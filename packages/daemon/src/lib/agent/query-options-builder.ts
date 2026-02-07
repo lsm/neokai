@@ -242,7 +242,7 @@ export class QueryOptionsBuilder {
 		// DEBUG: Log query options for verification
 		const useClaudeCodePreset = legacyToolsConfig?.useClaudeCodePreset ?? true;
 		this.logger.log(`Query options:`, {
-			originalModel: config.model || 'default',
+			originalModel: config.model || 'sonnet',
 			sdkModel: cleanedOptions.model,
 			fallbackModel: cleanedOptions.fallbackModel,
 			maxTurns: cleanedOptions.maxTurns,
@@ -538,11 +538,23 @@ CRITICAL RULES:
 	/**
 	 * Get additional directories configuration
 	 *
-	 * For worktree sessions: Restrict to cwd only (strict isolation)
+	 * For worktree sessions: Allow cwd + temp directories
 	 * For non-worktree: Leave undefined for backward compatibility
+	 *
+	 * Note: Shell temp directories allowed:
+	 * - /tmp/claude: SDK sets TMPDIR=/tmp/claude, most shells (bash, fish, etc.) respect this
+	 * - /tmp/zsh-${uid}: Zsh's default behavior creates /tmp/zsh-UID paths
+	 *
+	 * This ensures shell operations (git commits, heredocs, etc.) work within the sandbox
+	 * without fighting any shell's natural temp file behavior.
 	 */
 	private getAdditionalDirectories(): string[] | undefined {
-		return this.ctx.session.worktree ? [] : undefined;
+		// For worktree sessions, allow temp directories for shell operations
+		if (this.ctx.session.worktree) {
+			const uid = typeof process.getuid === 'function' ? process.getuid() : 501;
+			return ['/tmp/claude', `/tmp/zsh-${uid}`];
+		}
+		return undefined;
 	}
 
 	/**

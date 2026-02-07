@@ -159,9 +159,14 @@ describe('Model Switch System Init Message', () => {
 		expect(systemInitMessage.subtype).toBe('init');
 		expect(systemInitMessage.model).toBeDefined();
 
-		// The model field should contain 'opus' or start with 'claude-opus'
+		// The model field should contain 'opus' (SDK uses short IDs: opus, sonnet, haiku, default)
+		// Note: 'default' is the legacy Sonnet identifier, 'sonnet' is the new canonical ID
 		const model = systemInitMessage.model as string;
 		const isOpusModel = model === 'opus' || model.includes('opus');
+		if (!isOpusModel) {
+			// Log the actual model value for debugging
+			console.error(`Expected model to be 'opus' or contain 'opus', got: '${model}'`);
+		}
 		expect(isOpusModel).toBe(true);
 
 		// Wait for processing to complete
@@ -209,6 +214,9 @@ describe('Model Switch System Init Message', () => {
 
 		const model = systemInitMessage.model as string;
 		const isHaikuModel = model === 'haiku' || model.includes('haiku');
+		if (!isHaikuModel) {
+			console.error(`Expected model to be 'haiku' or contain 'haiku', got: '${model}'`);
+		}
 		expect(isHaikuModel).toBe(true);
 
 		// Wait for completion
@@ -246,6 +254,9 @@ describe('Model Switch System Init Message', () => {
 		// System:init should show Haiku (the switched model)
 		const model = systemInitMessage.model as string;
 		const isHaikuModel = model === 'haiku' || model.includes('haiku');
+		if (!isHaikuModel) {
+			console.error(`Expected model to be 'haiku' or contain 'haiku', got: '${model}'`);
+		}
 		expect(isHaikuModel).toBe(true);
 
 		await waitForIdle(daemon, sessionId, 20000);
@@ -285,8 +296,13 @@ describe('Model Switch System Init Message', () => {
 		const systemInitMessage = await systemInitPromise;
 
 		// Verify system:init shows Opus (not Sonnet)
+		// The model field should contain 'opus' (SDK uses short IDs: opus, sonnet, haiku, default)
 		const model = systemInitMessage.model as string;
 		const isOpusModel = model === 'opus' || model.includes('opus');
+		if (!isOpusModel) {
+			// Log the actual model value for debugging
+			console.error(`Expected model to be 'opus' or contain 'opus', got: '${model}'`);
+		}
 		expect(isOpusModel).toBe(true);
 
 		await waitForIdle(daemon, sessionId, 20000);
@@ -327,8 +343,13 @@ describe('Model Switch System Init Message', () => {
 			const systemInitMessage = await systemInitPromise;
 
 			// Verify system:init shows GLM model
+			// The SDK's system:init message returns the original GLM model ID (glm-4.7)
+			// even though translateModelIdForSdk translates it to 'default' for the query
 			const model = systemInitMessage.model as string;
 			const isGlmModel = model.includes('glm');
+			if (!isGlmModel) {
+				console.error(`Expected model to contain 'glm', got: '${model}'`);
+			}
 			expect(isGlmModel).toBe(true);
 
 			await waitForIdle(daemon, sessionId, 20000);
@@ -370,6 +391,9 @@ describe('Model Switch System Init Message', () => {
 			// Verify system:init shows Claude/Haiku model
 			const model = systemInitMessage.model as string;
 			const isClaudeModel = model.includes('haiku') || model.includes('claude');
+			if (!isClaudeModel) {
+				console.error(`Expected model to contain 'haiku' or 'claude', got: '${model}'`);
+			}
 			expect(isClaudeModel).toBe(true);
 
 			await waitForIdle(daemon, sessionId, 20000);
@@ -394,7 +418,12 @@ describe('Model Switch System Init Message', () => {
 			await sendMessage(daemon, sessionId, 'Message 1');
 			let systemInitMessage = await systemInitPromise;
 			let model = systemInitMessage.model as string;
-			expect(model.includes('sonnet') || model.includes('claude')).toBe(true);
+			const isValidModel =
+				model.includes('sonnet') || model.includes('claude') || model === 'default';
+			if (!isValidModel) {
+				console.error(`Expected model to be Sonnet, got: '${model}'`);
+			}
+			expect(isValidModel).toBe(true);
 			await waitForIdle(daemon, sessionId, 20000);
 
 			// 2. Switch to GLM
@@ -406,7 +435,12 @@ describe('Model Switch System Init Message', () => {
 			await sendMessage(daemon, sessionId, 'Message 2');
 			systemInitMessage = await systemInitPromise;
 			model = systemInitMessage.model as string;
-			expect(model.includes('glm')).toBe(true);
+			// The SDK's system:init message returns the original GLM model ID
+			const isGlmModel = model.includes('glm');
+			if (!isGlmModel) {
+				console.error(`Expected model to contain 'glm', got: '${model}'`);
+			}
+			expect(isGlmModel).toBe(true);
 			await waitForIdle(daemon, sessionId, 20000);
 
 			// 3. Switch back to Claude Haiku
@@ -418,7 +452,11 @@ describe('Model Switch System Init Message', () => {
 			await sendMessage(daemon, sessionId, 'Message 3');
 			systemInitMessage = await systemInitPromise;
 			model = systemInitMessage.model as string;
-			expect(model.includes('haiku') || model.includes('claude')).toBe(true);
+			const isHaikuModel = model.includes('haiku') || model.includes('claude');
+			if (!isHaikuModel) {
+				console.error(`Expected model to contain 'haiku' or 'claude', got: '${model}'`);
+			}
+			expect(isHaikuModel).toBe(true);
 			await waitForIdle(daemon, sessionId, 20000);
 
 			// 4. Switch to GLM again
@@ -430,7 +468,12 @@ describe('Model Switch System Init Message', () => {
 			await sendMessage(daemon, sessionId, 'Message 4');
 			systemInitMessage = await systemInitPromise;
 			model = systemInitMessage.model as string;
-			expect(model.includes('glm')).toBe(true);
+			// The SDK's system:init message returns the original GLM model ID
+			const isGlmModel2 = model.includes('glm');
+			if (!isGlmModel2) {
+				console.error(`Expected model to contain 'glm', got: '${model}'`);
+			}
+			expect(isGlmModel2).toBe(true);
 			await waitForIdle(daemon, sessionId, 20000);
 		}, 120000);
 	});
