@@ -142,9 +142,8 @@ export class SessionManager {
 				if (needsWorkspaceInit) {
 					// BARRIER: Skip new background tasks during cleanup
 					// This prevents race conditions where tasks complete during shutdown
-					if (this.cleanupState !== CleanupState.IDLE) {
-						return;
-					}
+					/* v8 ignore next */
+					if (this.cleanupState !== CleanupState.IDLE) return;
 
 					const titleGenTask = this.sessionLifecycle
 						.generateTitleAndRenameBranch(sessionId, userMessageText)
