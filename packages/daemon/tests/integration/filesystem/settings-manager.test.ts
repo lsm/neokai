@@ -127,6 +127,37 @@ describe('SettingsManager', () => {
 					},
 					excludeTools: [],
 				},
+				// Include default sandbox settings since getGlobalSettings merges with defaults
+				sandbox: {
+					enabled: true,
+					autoAllowBashIfSandboxed: true,
+					excludedCommands: ['git'],
+					network: {
+						allowedDomains: [
+							'github.com',
+							'*.github.com',
+							'gist.github.com',
+							'*.npmjs.org',
+							'registry.npmjs.org',
+							'*.yarnpkg.com',
+							'registry.yarnpkg.com',
+							'packages.gitlab.com',
+							'*.pkg.dev',
+							'go.dev',
+							'crates.io',
+							'pypi.org',
+							'*.pypi.org',
+							'rubygems.org',
+							'*.rubygems.org',
+							'*.maven.org',
+							'*.gradle.org',
+							'cdn.jsdelivr.net',
+							'*.cloudflare.com',
+						],
+						allowLocalBinding: true,
+						allowAllUnixSockets: true,
+					},
+				},
 			};
 
 			settingsManager.saveGlobalSettings(customSettings);
