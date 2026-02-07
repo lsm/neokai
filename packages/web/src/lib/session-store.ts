@@ -95,6 +95,14 @@ class SessionStore {
 		return this._initialMessageCount === 100;
 	});
 
+	/**
+	 * Test-only: Get the initial message count
+	 * Used in tests to verify pagination inference is working correctly
+	 */
+	getInitialMessageCountForTest(): number {
+		return this._initialMessageCount;
+	}
+
 	// ========================================
 	// Private State
 	// ========================================
