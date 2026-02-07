@@ -774,6 +774,8 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
 			// Verify messages were loaded
 			expect(sessionStore.sdkMessages.value).toHaveLength(100);
+			// Check the internal count
+			expect(sessionStore.getInitialMessageCountForTest()).toBe(100);
 			expect(sessionStore.hasMoreMessages.value).toBe(true);
 		});
 
