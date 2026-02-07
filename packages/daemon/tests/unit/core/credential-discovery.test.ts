@@ -149,7 +149,7 @@ describe('discoverCredentials', () => {
 		it('should handle malformed .credentials.json', () => {
 			writeFileSync(join(claudeDir, '.credentials.json'), '{ not valid json }');
 
-			const result = discoverCredentials(claudeDir);
+			const result = discoverCredentials(claudeDir, { platformName: 'linux' });
 			expect(result.errors.length).toBeGreaterThan(0);
 			expect(result.errors[0]).toContain('.credentials.json');
 			expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
@@ -158,7 +158,7 @@ describe('discoverCredentials', () => {
 		it('should handle .credentials.json without claudeAiOauth field', () => {
 			writeFileSync(join(claudeDir, '.credentials.json'), JSON.stringify({ otherField: 'value' }));
 
-			const result = discoverCredentials(claudeDir);
+			const result = discoverCredentials(claudeDir, { platformName: 'linux' });
 			expect(result.errors).toHaveLength(0);
 			expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
 		});
@@ -169,7 +169,7 @@ describe('discoverCredentials', () => {
 				JSON.stringify({ claudeAiOauth: { accessToken: null } })
 			);
 
-			const _result = discoverCredentials(claudeDir);
+			const _result = discoverCredentials(claudeDir, { platformName: 'linux' });
 			expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
 		});
 
@@ -186,7 +186,7 @@ describe('discoverCredentials', () => {
 
 		it('should handle missing .claude directory', () => {
 			rmSync(claudeDir, { recursive: true, force: true });
-			const result = discoverCredentials(claudeDir);
+			const result = discoverCredentials(claudeDir, { platformName: 'linux' });
 			expect(result.credentialSource).toBe('none');
 			expect(result.errors).toHaveLength(0);
 		});
@@ -206,7 +206,7 @@ describe('discoverCredentials', () => {
 				})
 			);
 
-			const result = discoverCredentials(claudeDir);
+			const result = discoverCredentials(claudeDir, { platformName: 'linux' });
 			expect(result.settingsEnvApplied).toBe(4);
 			expect(result.credentialSource).toBe('settings-json');
 			expect(process.env.ANTHROPIC_AUTH_TOKEN).toBe('zhipu-key');
@@ -309,7 +309,7 @@ describe('discoverCredentials', () => {
 				})
 			);
 
-			const result = discoverCredentials(claudeDir);
+			const result = discoverCredentials(claudeDir, { platformName: 'linux' });
 			expect(result.credentialSource).toBe('settings-json');
 			expect(result.settingsEnvApplied).toBe(7);
 			expect(process.env.ANTHROPIC_AUTH_TOKEN).toBe('zhipu_key');

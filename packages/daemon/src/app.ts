@@ -62,6 +62,7 @@ export interface DaemonAppContext {
  */
 export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<DaemonAppContext> {
 	const { config, verbose = true, standalone = false } = options;
+	const logInfo = verbose ? console.log : () => {};
 	const logError = verbose ? console.error : () => {};
 
 	// Initialize database
@@ -82,6 +83,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	if (authStatus.isAuthenticated) {
 		const { initializeModels } = await import('./lib/model-service');
 		await initializeModels();
+	} else {
+		logInfo('[Daemon] NO CREDENTIALS DETECTED - set ANTHROPIC_API_KEY or authenticate via OAuth');
+		logInfo('[Daemon] Model initialization skipped - no credentials available');
 	}
 
 	// PHASE 3 ARCHITECTURE (FIXED): MessageHub owns Router, Transport is pure I/O
@@ -260,6 +264,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			const pendingCallsCount = messageHub.getPendingCallCount();
 			if (pendingCallsCount > 0) {
 				let checkInterval: ReturnType<typeof setInterval> | null = null;
+				let resolved = false;
 				await Promise.race([
 					new Promise((resolve) => {
 						checkInterval = setInterval(() => {
@@ -267,11 +272,21 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 							if (remaining === 0) {
 								clearInterval(checkInterval!);
 								checkInterval = null;
+								resolved = true;
+								logInfo('[Daemon] All pending calls completed');
 								resolve(null);
 							}
 						}, 100);
 					}),
-					new Promise((resolve) => setTimeout(resolve, 3000)),
+					new Promise((resolve) =>
+						setTimeout(() => {
+							if (!resolved) {
+								const remaining = messageHub.getPendingCallCount();
+								logInfo(`[Daemon] Timeout: ${remaining} calls still pending after 3s`);
+							}
+							resolve(null);
+						}, 3000)
+					),
 				]);
 				// CRITICAL: Clear interval if timeout fired first (prevents hang on exit)
 				if (checkInterval) {
@@ -287,6 +302,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 			// Close database
 			db.close();
+
+			logInfo('[Daemon] Graceful shutdown complete');
 		} catch (error) {
 			logError('Error during cleanup:', error);
 			throw error;
