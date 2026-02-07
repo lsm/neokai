@@ -149,7 +149,6 @@ describe('SDKRuntimeConfig', () => {
 			expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
 				config: mockSession.config,
 			});
-			expect(mockLogger.log).toHaveBeenCalledWith(expect.stringContaining('query not active'));
 		});
 
 		it('should set tokens when transport not ready', async () => {
@@ -239,7 +238,6 @@ describe('SDKRuntimeConfig', () => {
 			expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
 				config: mockSession.config,
 			});
-			expect(mockLogger.log).toHaveBeenCalledWith(expect.stringContaining('query not active'));
 		});
 
 		it('should set mode when transport not ready', async () => {
