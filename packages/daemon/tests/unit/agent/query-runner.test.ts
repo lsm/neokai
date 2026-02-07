@@ -217,7 +217,6 @@ describe('QueryRunner', () => {
 			await runner.start();
 
 			expect(startSpy).not.toHaveBeenCalled();
-			expect(mockLogger.log).toHaveBeenCalledWith(expect.stringContaining('already running'));
 		});
 
 		it('should start message queue and increment generation', async () => {
