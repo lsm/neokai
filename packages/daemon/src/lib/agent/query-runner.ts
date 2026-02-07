@@ -151,7 +151,7 @@ export class QueryRunner {
 			const originalEnvVars = providerService.applyEnvVarsToProcess(modelId);
 			this.ctx.originalEnvVars = originalEnvVars;
 
-			const provider = providerRegistry.detectProvider(modelId);
+			// const provider = providerRegistry.detectProvider(modelId);
 
 			// Create query with AsyncGenerator
 			const queryObject = query({
@@ -345,7 +345,7 @@ export class QueryRunner {
 	 * Public for testing
 	 */
 	async handleSDKMessage(message: SDKMessage): Promise<void> {
-		const { session, db, logger } = this.ctx;
+		const { session, db } = this.ctx;
 
 		// Mark queued messages as 'sent' when we receive system:init
 		if (isSDKSystemMessage(message) && message.subtype === 'init') {
