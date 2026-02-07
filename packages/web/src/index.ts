@@ -53,7 +53,3 @@ const server = serve({
 		console: true, // Stream browser console to terminal
 	},
 });
-
-console.log(`🚀 NeoKai Web UI running on ${server.url}`);
-console.log(`📡 Proxying API requests to ${DAEMON_URL}`);
-console.log(`⚡ HMR: ${isDev ? 'enabled' : 'disabled'}`);

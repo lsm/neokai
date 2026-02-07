@@ -19,7 +19,6 @@ renderApp();
 // Hot Module Replacement (HMR) support
 if (import.meta.hot) {
 	import.meta.hot.accept(() => {
-		console.log('🔥 HMR: Reloading app...');
 		renderApp();
 	});
 }

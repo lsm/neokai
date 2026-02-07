@@ -49,18 +49,13 @@ export class QueryModeHandler {
 	}> {
 		const { session, db, daemonHub, messageQueue, logger } = this.ctx;
 
-		logger.log('Handling query trigger (Manual mode)');
-
 		try {
 			// Get all saved messages
 			const savedMessages = db.getMessagesByStatus(session.id, 'saved');
 
 			if (savedMessages.length === 0) {
-				logger.log('No saved messages to send');
 				return { success: true, messageCount: 0 };
 			}
-
-			logger.log(`Found ${savedMessages.length} saved messages to send`);
 
 			// Update status to 'queued'
 			const dbIds = savedMessages.map((m) => m.dbId);
@@ -91,7 +86,6 @@ export class QueryModeHandler {
 				}
 			}
 
-			logger.log(`Successfully queued ${savedMessages.length} messages (waiting for system:init)`);
 			return { success: true, messageCount: savedMessages.length };
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -106,18 +100,13 @@ export class QueryModeHandler {
 	async sendQueuedMessagesOnTurnEnd(): Promise<void> {
 		const { session, db, messageQueue, logger } = this.ctx;
 
-		logger.log('Checking for queued messages on turn end');
-
 		try {
 			// Get all queued messages
 			const queuedMessages = db.getMessagesByStatus(session.id, 'queued');
 
 			if (queuedMessages.length === 0) {
-				logger.log('No queued messages to send on turn end');
 				return;
 			}
-
-			logger.log(`Found ${queuedMessages.length} queued messages to send on turn end`);
 
 			// Enqueue each message
 			for (const msg of queuedMessages) {
@@ -133,10 +122,6 @@ export class QueryModeHandler {
 					}
 				}
 			}
-
-			logger.log(
-				`Successfully queued ${queuedMessages.length} messages on turn end (waiting for system:init)`
-			);
 		} catch (error) {
 			logger.error('Failed to send queued messages on turn end:', error);
 		}

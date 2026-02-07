@@ -57,7 +57,6 @@ export default function Sidebar() {
 			});
 
 			if (!response?.sessionId) {
-				console.error('[Sidebar] Invalid response from createSession:', response);
 				toast.error('No sessionId in response');
 				return;
 			}
@@ -67,8 +66,6 @@ export default function Sidebar() {
 
 			toast.success('Session created successfully');
 		} catch (err) {
-			console.error('[Sidebar] Error creating session:', err);
-
 			// Handle connection-specific errors
 			if (err instanceof ConnectionNotReadyError) {
 				toast.error('Connection lost. Please try again.');
@@ -97,7 +94,6 @@ export default function Sidebar() {
 		try {
 			await updateGlobalSettings({ showArchived: !showArchived });
 		} catch (err) {
-			console.error('[Sidebar] Error toggling showArchived:', err);
 			toast.error('Failed to toggle archived sessions visibility');
 		}
 	};

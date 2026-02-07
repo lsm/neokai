@@ -68,14 +68,11 @@ export class SDKRuntimeConfig {
 	async setMaxThinkingTokens(tokens: number | null): Promise<ConfigUpdateResult> {
 		const { session, db, daemonHub, logger, queryObject, firstMessageReceived } = this.ctx;
 
-		logger.log(`Setting max thinking tokens to: ${tokens}`);
-
 		try {
 			// If query not running or transport not ready, just update config
 			if (!queryObject || !firstMessageReceived) {
 				session.config.maxThinkingTokens = tokens;
 				db.updateSession(session.id, { config: session.config });
-				logger.log('Max thinking tokens saved to config (query not active)');
 				return { success: true };
 			}
 
@@ -97,7 +94,6 @@ export class SDKRuntimeConfig {
 				session: { config: session.config },
 			});
 
-			logger.log('Max thinking tokens set successfully');
 			return { success: true };
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
@@ -112,14 +108,11 @@ export class SDKRuntimeConfig {
 	async setPermissionMode(mode: string): Promise<ConfigUpdateResult> {
 		const { session, db, daemonHub, logger, queryObject, firstMessageReceived } = this.ctx;
 
-		logger.log(`Setting permission mode to: ${mode}`);
-
 		try {
 			// If query not running or transport not ready, just update config
 			if (!queryObject || !firstMessageReceived) {
 				session.config.permissionMode = mode as Session['config']['permissionMode'];
 				db.updateSession(session.id, { config: session.config });
-				logger.log('Permission mode saved to config (query not active)');
 				return { success: true };
 			}
 
@@ -141,7 +134,6 @@ export class SDKRuntimeConfig {
 				session: { config: session.config },
 			});
 
-			logger.log('Permission mode set successfully');
 			return { success: true };
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
@@ -181,8 +173,6 @@ export class SDKRuntimeConfig {
 		const { session, db, daemonHub, settingsManager, messageQueue, logger } = this.ctx;
 
 		try {
-			logger.log('Updating tools config:', tools);
-
 			// 1. Update session config in memory and DB
 			const newConfig = { ...session.config, tools };
 			session.config = newConfig;
@@ -190,7 +180,6 @@ export class SDKRuntimeConfig {
 
 			// 2. Write MCP settings to .claude/settings.local.json
 			if (tools?.disabledMcpServers !== undefined) {
-				logger.log('Writing disabledMcpServers to settings.local.json:', tools.disabledMcpServers);
 				await settingsManager.setDisabledMcpServers(tools.disabledMcpServers);
 
 				// Restart query to reload MCP settings
@@ -200,7 +189,6 @@ export class SDKRuntimeConfig {
 			// 3. Queue /context to get updated context breakdown
 			if (messageQueue.isRunning()) {
 				try {
-					logger.log('Queuing /context for updated context breakdown...');
 					await messageQueue.enqueue('/context', true);
 				} catch (contextError) {
 					logger.warn('Failed to queue /context after tools update:', contextError);
@@ -214,7 +202,6 @@ export class SDKRuntimeConfig {
 				session: { config: session.config },
 			});
 
-			logger.log('Tools config updated successfully');
 			return { success: true };
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';

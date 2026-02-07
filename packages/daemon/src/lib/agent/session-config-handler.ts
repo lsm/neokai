@@ -53,8 +53,6 @@ export class SessionConfigHandler {
 			source: 'config-update',
 			session: { config: session.config },
 		});
-
-		this.logger.log('Config updated:', Object.keys(configUpdates).join(', '));
 	}
 
 	/**

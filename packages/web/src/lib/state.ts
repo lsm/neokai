@@ -226,7 +226,9 @@ class ApplicationState {
 
 			// Now start new session's channels
 			await channels.start();
-		})().catch(console.error);
+		})().catch(() => {
+			/* ignore errors during channel switch */
+		});
 
 		return channels;
 	}
@@ -277,7 +279,9 @@ class ApplicationState {
 					}
 
 					previousSessionId = sessionId;
-				})().catch(console.error);
+				})().catch(() => {
+					/* ignore errors during session switch */
+				});
 
 				debounceTimer = null;
 			}, DEBOUNCE_MS);
@@ -316,7 +320,9 @@ class ApplicationState {
 
 		// Stop active session channels (fire-and-forget, we're shutting down)
 		if (this.activeSessionChannels) {
-			this.activeSessionChannels.stop().catch(console.error);
+			this.activeSessionChannels.stop().catch(() => {
+				/* ignore errors during shutdown */
+			});
 			this.activeSessionId = null;
 			this.activeSessionChannels = null;
 		}

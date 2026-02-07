@@ -70,7 +70,6 @@ function runMigration1(db: BunDatabase): void {
 		db.prepare(`SELECT oauth_token_encrypted FROM auth_config LIMIT 1`).all();
 	} catch {
 		// Column doesn't exist, add it
-		logger.log('Running migration: Adding oauth_token_encrypted column');
 		db.exec(`ALTER TABLE auth_config ADD COLUMN oauth_token_encrypted TEXT`);
 	}
 }
@@ -83,7 +82,6 @@ function runMigration2(db: BunDatabase): void {
 		// Check if messages table exists
 		db.prepare(`SELECT 1 FROM messages LIMIT 1`).all();
 		// Table exists, drop it
-		logger.log('Running migration: Dropping messages and tool_calls tables');
 		db.exec(`DROP TABLE IF EXISTS tool_calls`);
 		db.exec(`DROP TABLE IF EXISTS messages`);
 		db.exec(`DROP INDEX IF EXISTS idx_messages_session`);
@@ -100,7 +98,6 @@ function runMigration3(db: BunDatabase): void {
 	try {
 		db.prepare(`SELECT is_worktree FROM sessions LIMIT 1`).all();
 	} catch {
-		logger.log('Running migration: Adding worktree columns to sessions table');
 		db.exec(`ALTER TABLE sessions ADD COLUMN is_worktree INTEGER DEFAULT 0`);
 		db.exec(`ALTER TABLE sessions ADD COLUMN worktree_path TEXT`);
 		db.exec(`ALTER TABLE sessions ADD COLUMN main_repo_path TEXT`);
@@ -115,7 +112,6 @@ function runMigration4(db: BunDatabase): void {
 	try {
 		db.prepare(`SELECT git_branch FROM sessions LIMIT 1`).all();
 	} catch {
-		logger.log('Running migration: Adding git_branch column to sessions table');
 		db.exec(`ALTER TABLE sessions ADD COLUMN git_branch TEXT`);
 	}
 }
@@ -127,7 +123,6 @@ function runMigration5(db: BunDatabase): void {
 	try {
 		db.prepare(`SELECT sdk_session_id FROM sessions LIMIT 1`).all();
 	} catch {
-		logger.log('Running migration: Adding sdk_session_id column to sessions table');
 		db.exec(`ALTER TABLE sessions ADD COLUMN sdk_session_id TEXT`);
 	}
 }
@@ -139,7 +134,6 @@ function runMigration6(db: BunDatabase): void {
 	try {
 		db.prepare(`SELECT available_commands FROM sessions LIMIT 1`).all();
 	} catch {
-		logger.log('Running migration: Adding available_commands column to sessions table');
 		db.exec(`ALTER TABLE sessions ADD COLUMN available_commands TEXT`);
 	}
 }
@@ -151,7 +145,6 @@ function runMigration7(db: BunDatabase): void {
 	try {
 		db.prepare(`SELECT processing_state FROM sessions LIMIT 1`).all();
 	} catch {
-		logger.log('Running migration: Adding processing_state column to sessions table');
 		db.exec(`ALTER TABLE sessions ADD COLUMN processing_state TEXT`);
 	}
 }
@@ -163,7 +156,6 @@ function runMigration8(db: BunDatabase): void {
 	try {
 		db.prepare(`SELECT archived_at FROM sessions LIMIT 1`).all();
 	} catch {
-		logger.log('Running migration: Adding archived_at column to sessions table');
 		db.exec(`ALTER TABLE sessions ADD COLUMN archived_at TEXT`);
 	}
 }
@@ -209,9 +201,6 @@ function runMigration9(db: BunDatabase): void {
 	} catch {
 		// INSERT failed, which means CHECK constraint doesn't include 'archived'
 		// Need to recreate the table with updated constraint
-		logger.log(
-			"Running migration: Updating sessions table CHECK constraint to include 'archived' status"
-		);
 
 		// CRITICAL: Disable foreign keys during table recreation to prevent
 		// CASCADE delete from wiping sdk_messages when we DROP TABLE sessions
@@ -254,8 +243,6 @@ function runMigration9(db: BunDatabase): void {
 				-- Rename new table to original name
 				ALTER TABLE sessions_new RENAME TO sessions;
 			`);
-
-			logger.log('Migration complete: sessions table CHECK constraint updated');
 		} finally {
 			// Re-enable foreign keys
 			db.exec('PRAGMA foreign_keys = ON');
@@ -272,7 +259,6 @@ function runMigration10(db: BunDatabase): void {
 	try {
 		db.prepare(`SELECT send_status FROM sdk_messages LIMIT 1`).all();
 	} catch {
-		logger.log('Running migration: Adding send_status column to sdk_messages table');
 		db.exec(
 			`ALTER TABLE sdk_messages ADD COLUMN send_status TEXT DEFAULT 'sent' CHECK(send_status IN ('saved', 'queued', 'sent'))`
 		);
@@ -294,7 +280,6 @@ function runMigration11(db: BunDatabase): void {
 	try {
 		db.prepare(`SELECT parent_id FROM sessions LIMIT 1`).all();
 	} catch {
-		logger.log('Running migration: Adding sub-session columns to sessions table');
 		// Note: SQLite doesn't support adding FK constraints via ALTER TABLE,
 		// but the application layer will enforce the constraint
 		db.exec(`ALTER TABLE sessions ADD COLUMN parent_id TEXT`);
@@ -318,7 +303,6 @@ export function runMigration12(db: BunDatabase): void {
 			| undefined;
 
 		if (!row) {
-			logger.log('Running migration: Initializing global_settings with autoScroll: true');
 			db.exec(`
         INSERT INTO global_settings (id, settings, updated_at)
         VALUES (1, '{"autoScroll":true}', datetime('now'))
@@ -330,7 +314,6 @@ export function runMigration12(db: BunDatabase): void {
 
 		// Only update if autoScroll is not already set
 		if (settings.autoScroll === undefined) {
-			logger.log('Running migration: Adding autoScroll: true to global_settings');
 			settings.autoScroll = true;
 			db.exec(`
         UPDATE global_settings
@@ -340,7 +323,7 @@ export function runMigration12(db: BunDatabase): void {
       `);
 		}
 	} catch (err) {
-		logger.log(`Migration 12 failed: ${err}`);
+		// Log but don't throw - migration errors shouldn't crash the app
 	}
 }
 

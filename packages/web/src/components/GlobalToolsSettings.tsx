@@ -60,7 +60,6 @@ export function GlobalToolsSettings() {
 			const response = await hub.call<{ config: GlobalToolsConfig }>('globalTools.getConfig');
 			config.value = response.config ?? DEFAULT_CONFIG;
 		} catch (error) {
-			console.error('Failed to load global tools config:', error);
 			config.value = DEFAULT_CONFIG;
 		} finally {
 			loading.value = false;
@@ -75,7 +74,6 @@ export function GlobalToolsSettings() {
 			config.value = newConfig;
 			toast.success('Global tools settings saved');
 		} catch (error) {
-			console.error('Failed to save global tools config:', error);
 			toast.error('Failed to save global tools settings');
 		} finally {
 			saving.value = false;

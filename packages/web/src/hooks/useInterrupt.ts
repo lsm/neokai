@@ -41,7 +41,6 @@ export function useInterrupt({ sessionId }: UseInterruptOptions): UseInterruptRe
 			}
 			await hub.call('client.interrupt', { sessionId });
 		} catch (error) {
-			console.error('Interrupt error:', error);
 			toast.error('Failed to stop generation');
 		} finally {
 			setTimeout(() => setInterrupting(false), 500);

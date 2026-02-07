@@ -95,8 +95,6 @@ export class AskUserQuestionHandler {
 				return { behavior: 'allow', updatedInput: input };
 			}
 
-			this.logger.log(`AskUserQuestion detected, waiting for user input...`);
-
 			const askInput = input as unknown as AskUserQuestionInput;
 
 			// Build the pending question structure for UI
@@ -124,8 +122,6 @@ export class AskUserQuestionHandler {
 				sessionId: session.id,
 				pendingQuestion,
 			});
-
-			this.logger.log('Transitioned to waiting_for_input state, awaiting user response');
 
 			// Return a Promise that waits for user input
 			return new Promise<PermissionResult>((resolve, reject) => {
@@ -175,8 +171,6 @@ export class AskUserQuestionHandler {
 			);
 		}
 
-		this.logger.log(`Handling question response for toolUseId: ${toolUseId}`);
-
 		// Capture the pending question before transitioning state
 		const pendingQuestion = currentState.pendingQuestion;
 
@@ -197,8 +191,6 @@ export class AskUserQuestionHandler {
 			}
 		}
 
-		this.logger.log(`Formatted answers:`, answers);
-
 		// Transition back to processing state
 		await stateManager.setProcessing(toolUseId, 'streaming');
 
@@ -217,8 +209,6 @@ export class AskUserQuestionHandler {
 				answers,
 			},
 		});
-
-		this.logger.log('Question response sent to SDK');
 	}
 
 	/**
@@ -250,8 +240,6 @@ export class AskUserQuestionHandler {
 			);
 		}
 
-		this.logger.log(`Handling question cancel for toolUseId: ${toolUseId}`);
-
 		// Capture the pending question before transitioning state
 		const pendingQuestion = currentState.pendingQuestion;
 
@@ -271,8 +259,6 @@ export class AskUserQuestionHandler {
 			message:
 				'User cancelled: The user chose not to answer this question. Please proceed accordingly or ask a different question if needed.',
 		});
-
-		this.logger.log('Question cancellation sent to SDK');
 	}
 
 	/**
@@ -303,8 +289,6 @@ export class AskUserQuestionHandler {
 
 		// Persist to database
 		db.updateSession(session.id, { metadata: updatedMetadata });
-
-		this.logger.log(`Tracked resolved question: ${toolUseId} (${state})`);
 	}
 
 	/**
@@ -314,7 +298,6 @@ export class AskUserQuestionHandler {
 	async updateQuestionDraft(draftResponses: QuestionDraftResponse[]): Promise<void> {
 		const { stateManager } = this.ctx;
 		await stateManager.updateQuestionDraft(draftResponses);
-		this.logger.log(`Updated question draft with ${draftResponses.length} responses`);
 	}
 
 	/**
