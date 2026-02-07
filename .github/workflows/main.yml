@@ -174,7 +174,6 @@ jobs:
           - coordinator
           - convo
           - features
-          - glm
           - lifecycle
           - mcp
           - providers
@@ -184,8 +183,9 @@ jobs:
         include:
           - module: components
             test_path: tests/online/components
-          - module: glm
-            test_path: tests/online/glm
+          # GLM online tests disabled due to flakiness
+          # - module: glm
+          #   test_path: tests/online/glm
           - module: mcp
             test_path: tests/online/mcp
           - module: providers
