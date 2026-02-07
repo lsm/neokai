@@ -124,7 +124,7 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 			// Sort by family order
 			modelInfos.sort((a, b) => FAMILY_ORDER[a.family] - FAMILY_ORDER[b.family]);
 			setAvailableModels(modelInfos);
-		} catch (error) {
+		} catch {
 			// Error handled silently - loading state will be cleared
 		} finally {
 			setLoading(false);

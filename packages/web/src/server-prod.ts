@@ -3,7 +3,7 @@ import { serve } from 'bun';
 const DAEMON_URL = process.env.DAEMON_URL || 'http://localhost:8283';
 const PORT = process.env.PORT || 9283;
 
-const server = serve({
+serve({
 	port: PORT,
 	async fetch(req) {
 		const url = new URL(req.url);
