@@ -46,8 +46,6 @@ export function createWebSocketHandlers(
 ) {
 	return {
 		open(ws: ServerWebSocket<WebSocketData>) {
-			console.info('WebSocket connection established');
-
 			// Register client with transport (starts in global session)
 			const clientId = transport.registerClient(ws, GLOBAL_SESSION_ID);
 
@@ -120,7 +118,6 @@ export function createWebSocketHandlers(
 
 				// Validate sessionId exists in message
 				if (!data.sessionId) {
-					console.warn('Message without sessionId, defaulting to global');
 					data.sessionId = GLOBAL_SESSION_ID;
 				}
 
@@ -165,7 +162,6 @@ export function createWebSocketHandlers(
 		},
 
 		close(ws: ServerWebSocket<WebSocketData>) {
-			console.info('WebSocket disconnected');
 			const clientId = ws.data.clientId;
 			if (clientId) {
 				transport.unregisterClient(clientId);

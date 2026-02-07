@@ -102,8 +102,6 @@ export function createOutputLimiterHook(config: Partial<OutputLimiterConfig> = {
 			return {};
 		}
 
-		logger.log(`Injected output limits for ${tool_name}`);
-
 		// Return modified input with allow decision
 		return {
 			hookSpecificOutput: {
@@ -155,8 +153,6 @@ function limitToolInput(
 			// 4. Clean up temp file
 			const limitedCommand = `tmpfile=$(mktemp); (${command}) 2>&1 > "$tmpfile"; total_lines=$(wc -l < "$tmpfile"); if [ "$total_lines" -gt ${headLines + tailLines} ]; then head -n ${headLines} "$tmpfile"; echo ""; echo "... [Truncated $(($total_lines - ${headLines + tailLines})) lines - showing first ${headLines} and last ${tailLines} lines] ..."; echo ""; tail -n ${tailLines} "$tmpfile"; else cat "$tmpfile"; fi; rm -f "$tmpfile"`;
 
-			logger.log(`Bash: Added smart truncation (first ${headLines} + last ${tailLines} lines)`);
-
 			return {
 				...input,
 				command: limitedCommand,
@@ -171,7 +167,6 @@ function limitToolInput(
 			}
 
 			const maxChars = config.read.maxChars;
-			logger.log(`Read: Added character limit (${maxChars} chars)`);
 
 			return {
 				...input,
@@ -187,7 +182,6 @@ function limitToolInput(
 			}
 
 			const maxMatches = config.grep.maxMatches;
-			logger.log(`Grep: Added match limit (${maxMatches} matches)`);
 
 			return {
 				...input,
@@ -204,7 +198,6 @@ function limitToolInput(
 			}
 
 			const maxFiles = config.glob.maxFiles;
-			logger.log(`Glob: Added file limit (${maxFiles} files)`);
 
 			return {
 				...input,

@@ -20,14 +20,6 @@ logCredentialDiscovery(discoveryResult);
  * Exported for testing purposes
  */
 export function logCredentialDiscovery(result: DiscoveryResult): void {
-	if (result.credentialSource !== 'none') {
-		console.log(`[Config] Credentials discovered from: ${result.credentialSource}`);
-	}
-	if (result.settingsEnvApplied > 0) {
-		console.log(
-			`[Config] Applied ${result.settingsEnvApplied} env vars from ~/.claude/settings.json`
-		);
-	}
 	for (const error of result.errors) {
 		console.warn(`[Config] Credential discovery warning: ${error}`);
 	}

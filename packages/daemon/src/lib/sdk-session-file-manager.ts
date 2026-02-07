@@ -203,9 +203,6 @@ export function removeToolResultFromSessionFile(
 		// Write back to file
 		writeFileSync(sessionFile, `${updatedLines.join('\n')}\n`, 'utf-8');
 
-		console.info(
-			`[SDKSessionFileManager] Successfully removed tool_result from message ${messageUuid}`
-		);
 		return true;
 	} catch (error) {
 		console.error('[SDKSessionFileManager] Failed to remove tool_result:', error);
@@ -334,11 +331,6 @@ export function validateSDKSessionFile(
 			}
 		}
 
-		if (!result.valid) {
-			console.warn(
-				`[SDKSessionFileManager] Found ${result.orphanedToolResults.length} orphaned tool_results in SDK session ${sdkSessionId}`
-			);
-		}
 	} catch (error) {
 		result.valid = false;
 		result.errors.push(`Validation error: ${error}`);
@@ -363,7 +355,6 @@ function backupSDKSessionFile(sessionFilePath: string): string | null {
 		const backupPath = join(backupDir, `${fileName}.backup.${timestamp}`);
 
 		copyFileSync(sessionFilePath, backupPath);
-		console.info(`[SDKSessionFileManager] Created backup: ${backupPath}`);
 		return backupPath;
 	} catch (error) {
 		console.error('[SDKSessionFileManager] Failed to create backup:', error);
@@ -508,12 +499,6 @@ export function repairSDKSessionFile(
 		writeFileSync(sessionFile, `${lines.join('\n')}\n`, 'utf-8');
 
 		result.success = result.repairedCount > 0;
-
-		if (result.success) {
-			console.info(
-				`[SDKSessionFileManager] Repaired ${result.repairedCount} orphaned tool_results in SDK session ${sdkSessionId}`
-			);
-		}
 	} catch (error) {
 		result.errors.push(`Repair error: ${error}`);
 		console.error('[SDKSessionFileManager] Repair failed:', error);
@@ -547,25 +532,13 @@ export function validateAndRepairSDKSession(
 		return true;
 	}
 
-	console.warn(
-		`[SDKSessionFileManager] SDK session ${sdkSessionId} has ${validation.orphanedToolResults.length} orphaned tool_results - attempting auto-repair`
-	);
-
 	// Attempt repair
 	const repair = repairSDKSessionFile(workspacePath, sdkSessionId, kaiSessionId, db);
 
 	if (repair.success) {
-		console.info(
-			`[SDKSessionFileManager] Auto-repair successful. Repaired ${repair.repairedCount} messages. Backup: ${repair.backupPath}`
-		);
 		return true;
 	}
 
-	// Repair failed - log errors
-	console.error(
-		`[SDKSessionFileManager] Auto-repair failed for SDK session ${sdkSessionId}:`,
-		repair.errors
-	);
 	return false;
 }
 
@@ -722,19 +695,11 @@ export function deleteSDKSessionFiles(
 				unlinkSync(file.path);
 				result.deletedFiles.push(file.path);
 				result.deletedSize += file.size;
-				console.info(`[SDKSessionFileManager] Deleted SDK file: ${file.path}`);
 			} catch (error) {
 				const errorMsg = error instanceof Error ? error.message : String(error);
 				result.errors.push(`Failed to delete ${file.path}: ${errorMsg}`);
 				result.success = false;
 			}
-		}
-
-		if (result.deletedFiles.length > 0) {
-			console.info(
-				`[SDKSessionFileManager] Deleted ${result.deletedFiles.length} SDK file(s), ` +
-					`${(result.deletedSize / 1024).toFixed(1)}KB freed for session ${kaiSessionId.slice(0, 8)}...`
-			);
 		}
 	} catch (error) {
 		const errorMsg = error instanceof Error ? error.message : String(error);
@@ -774,9 +739,6 @@ export function archiveSDKSessionFiles(
 		const files = findAllSDKFilesForSession(workspacePath, sdkSessionId, kaiSessionId);
 
 		if (files.length === 0) {
-			console.info(
-				`[SDKSessionFileManager] No SDK session files found for session ${kaiSessionId.slice(0, 8)}...`
-			);
 			return result;
 		}
 
@@ -805,7 +767,6 @@ export function archiveSDKSessionFiles(
 				result.archivedFiles.push(archivePath);
 				result.totalSize += file.size;
 				originalPaths.push(file.path);
-				console.info(`[SDKSessionFileManager] Archived SDK file: ${file.path} -> ${archivePath}`);
 			} catch (error) {
 				const errorMsg = error instanceof Error ? error.message : String(error);
 				result.errors.push(`Failed to archive ${file.path}: ${errorMsg}`);
@@ -826,11 +787,6 @@ export function archiveSDKSessionFiles(
 
 			const metadataPath = join(archiveDir, 'archive-metadata.json');
 			writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
-
-			console.info(
-				`[SDKSessionFileManager] Archived ${result.archivedFiles.length} SDK file(s), ` +
-					`${(result.totalSize / 1024).toFixed(1)}KB to ${archiveDir}`
-			);
 		}
 	} catch (error) {
 		const errorMsg = error instanceof Error ? error.message : String(error);

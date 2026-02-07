@@ -77,8 +77,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 				if (draft) {
 					contentSignal.value = draft;
 				}
-			} catch (error) {
-				console.error('Failed to load draft:', error);
+			} catch {
+				// Ignore errors loading draft
 			}
 		};
 
@@ -109,8 +109,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 							inputDraft: trimmedContent || undefined,
 						},
 					})
-					.catch((error) => {
-						console.error('Failed to flush draft on session switch:', error);
+					.catch(() => {
+						/* ignore flush errors */
 					});
 			}
 		}
@@ -129,8 +129,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 							inputDraft: undefined,
 						},
 					})
-					.catch((error) => {
-						console.error('Failed to clear draft:', error);
+					.catch(() => {
+						/* ignore clear errors */
 					});
 			}
 			return;
@@ -149,7 +149,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 					},
 				});
 			} catch (error) {
-				console.error('Failed to save draft:', error);
+				// Ignore draft save errors
 			}
 		}, debounceMs);
 

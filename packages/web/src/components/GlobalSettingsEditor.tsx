@@ -131,7 +131,7 @@ export function GlobalSettingsEditor() {
 			const response = await listMcpServersFromSources();
 			setMcpServers(response);
 		} catch (error) {
-			console.error('Failed to load MCP servers:', error);
+			// Error handled silently - toast shown elsewhere if needed
 		} finally {
 			setMcpLoading(false);
 		}
@@ -148,7 +148,6 @@ export function GlobalSettingsEditor() {
 			await updateGlobalSettings({ model: value });
 			showSavedIndicator('model');
 		} catch (error) {
-			console.error('Failed to update model:', error);
 			toast.error('Failed to update model');
 		} finally {
 			setSaving(false);
@@ -161,7 +160,6 @@ export function GlobalSettingsEditor() {
 			await updateGlobalSettings({ permissionMode: value });
 			showSavedIndicator('permission');
 		} catch (error) {
-			console.error('Failed to update permission mode:', error);
 			toast.error('Failed to update permission mode');
 		} finally {
 			setSaving(false);
@@ -174,7 +172,6 @@ export function GlobalSettingsEditor() {
 			await updateGlobalSettings({ thinkingLevel: value });
 			showSavedIndicator('thinking');
 		} catch (error) {
-			console.error('Failed to update thinking level:', error);
 			toast.error('Failed to update thinking level');
 		} finally {
 			setSaving(false);
@@ -187,7 +184,6 @@ export function GlobalSettingsEditor() {
 			await updateGlobalSettings({ autoScroll: value });
 			showSavedIndicator('autoScroll');
 		} catch (error) {
-			console.error('Failed to update auto scroll:', error);
 			toast.error('Failed to update auto scroll');
 		} finally {
 			setSaving(false);
@@ -200,7 +196,6 @@ export function GlobalSettingsEditor() {
 			await updateGlobalSettings({ coordinatorMode: value });
 			showSavedIndicator('coordinatorMode');
 		} catch (error) {
-			console.error('Failed to update coordinator mode:', error);
 			toast.error('Failed to update coordinator mode');
 		} finally {
 			setSaving(false);
@@ -232,7 +227,6 @@ export function GlobalSettingsEditor() {
 			// Reload MCP servers after source change
 			loadMcpServers();
 		} catch (error) {
-			console.error('Failed to update setting sources:', error);
 			toast.error('Failed to update setting sources');
 		} finally {
 			setSaving(false);
@@ -268,7 +262,6 @@ export function GlobalSettingsEditor() {
 			}
 			showSavedIndicator(`mcp-${serverName}`);
 		} catch (error) {
-			console.error('Failed to update MCP server settings:', error);
 			toast.error('Failed to update MCP server settings');
 		} finally {
 			setSaving(false);

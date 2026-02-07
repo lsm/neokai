@@ -136,11 +136,8 @@ export class StateChannel<T> {
 				this.setupOptimisticSubscriptions();
 			} else if (this.options.nonBlocking) {
 				// Non-blocking: Setup subscriptions in background
-				this.setupSubscriptions().catch((err) => {
-					console.error(
-						`[StateChannel:${this.channelName}] Background subscription setup failed:`,
-						err
-					);
+				this.setupSubscriptions().catch(() => {
+					/* ignore background subscription errors */
 				});
 			} else {
 				// Blocking (default): Wait for subscriptions
@@ -580,7 +577,9 @@ export class StateChannel<T> {
 		this.refreshTimer = setInterval(() => {
 			if (this.isStale(this.options.refreshInterval!)) {
 				this.log(`Auto-refreshing stale channel: ${this.channelName}`);
-				this.refresh().catch(console.error);
+				this.refresh().catch(() => {
+					/* ignore refresh errors */
+				});
 			}
 		}, this.options.refreshInterval);
 	}
@@ -592,7 +591,9 @@ export class StateChannel<T> {
 		const reconnectSub = this.hub.onConnection((state) => {
 			if (state === 'connected') {
 				this.log(`Reconnected, performing hybrid refresh: ${this.channelName}`);
-				this.hybridRefresh().catch(console.error);
+				this.hybridRefresh().catch(() => {
+					/* ignore refresh errors */
+				});
 			} else if (state === 'disconnected' || state === 'error') {
 				this.error.value = new Error(`Connection ${state}`);
 			}

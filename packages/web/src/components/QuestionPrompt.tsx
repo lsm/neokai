@@ -138,8 +138,8 @@ export function QuestionPrompt({
 				sessionId,
 				draftResponses: responses,
 			});
-		} catch (error) {
-			console.error('Failed to save draft:', error);
+		} catch {
+			// Ignore draft save errors
 		}
 	}, [sessionId, questions.length, selections, customInputs, callIfConnected]);
 
@@ -227,7 +227,7 @@ export function QuestionPrompt({
 			// Notify parent of resolution
 			onResolved?.('submitted', responses);
 		} catch (error) {
-			console.error('Failed to submit response:', error);
+			// Error handled by toast
 		} finally {
 			setIsSubmitting(false);
 		}
@@ -245,7 +245,7 @@ export function QuestionPrompt({
 			// Notify parent of resolution with empty responses
 			onResolved?.('cancelled', []);
 		} catch (error) {
-			console.error('Failed to cancel:', error);
+			// Error handled by toast
 		} finally {
 			setIsCancelling(false);
 		}

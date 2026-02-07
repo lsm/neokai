@@ -83,7 +83,6 @@ export class ContextTracker {
 	 */
 	restoreFromMetadata(savedContext: ContextInfo): void {
 		this.currentContextInfo = savedContext;
-		this.logger.log('Restored context info from session metadata');
 	}
 
 	/**
@@ -93,10 +92,6 @@ export class ContextTracker {
 	updateWithDetailedBreakdown(contextInfo: ContextInfo): void {
 		this.currentContextInfo = contextInfo;
 		this.persistContext(contextInfo);
-		this.logger.log(
-			`Updated context with detailed breakdown: ${contextInfo.totalUsed}/${contextInfo.totalCapacity} tokens ` +
-				`(${contextInfo.percentUsed}%) with ${Object.keys(contextInfo.breakdown).length} categories`
-		);
 	}
 
 	/**
@@ -155,7 +150,6 @@ export class ContextTracker {
 				const modelData = modelUsage[modelName];
 				if (modelData?.contextWindow) {
 					this.contextWindowSize = modelData.contextWindow;
-					this.logger.log(`Updated context window size from SDK: ${this.contextWindowSize}`);
 				}
 				// SDK 0.1.69+ provides webSearchRequests
 				if (typeof modelData?.webSearchRequests === 'number') {
@@ -255,13 +249,6 @@ export class ContextTracker {
 			sessionId: this.sessionId,
 			contextInfo: this.currentContextInfo,
 		});
-
-		// Log for debugging (only on result or significant changes)
-		if (source === 'result' || (source === 'message_start' && this.currentTurnInputTokens > 0)) {
-			this.logger.log(
-				`Context updated (${source}): ${totalUsed}/${this.contextWindowSize} tokens (${percentUsed.toFixed(1)}%)`
-			);
-		}
 	}
 
 	/**
