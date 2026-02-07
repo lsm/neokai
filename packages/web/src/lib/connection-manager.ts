@@ -486,7 +486,6 @@ export class ConnectionManager {
 			// Without this, status bar would show "Online" instead of actual state
 			await Promise.all([sessionStore.refresh(), appState.refreshAll(), globalStore.refresh()]);
 		} catch (error) {
-
 			// FIX: Use forceReconnect() instead of close()
 			// close() sets closed=true which prevents auto-reconnect
 			if (this.transport) {

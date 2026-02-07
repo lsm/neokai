@@ -330,7 +330,6 @@ export function validateSDKSessionFile(
 				result.valid = false;
 			}
 		}
-
 	} catch (error) {
 		result.valid = false;
 		result.errors.push(`Validation error: ${error}`);
