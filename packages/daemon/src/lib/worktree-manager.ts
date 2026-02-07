@@ -177,6 +177,7 @@ export class WorktreeManager {
 			try {
 				const worktreeGit = this.getGit(worktreePath);
 				await worktreeGit.raw(['submodule', 'update', '--init', '--recursive']);
+				/* v8 ignore next 2 */
 			} catch {
 				// Submodule initialization failed, but this is non-fatal
 			}

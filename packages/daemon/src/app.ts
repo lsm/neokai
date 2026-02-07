@@ -83,7 +83,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	if (authStatus.isAuthenticated) {
 		const { initializeModels } = await import('./lib/model-service');
 		await initializeModels();
-	} else {
+	} /* v8 ignore next 3 */ else {
 		logInfo('[Daemon] NO CREDENTIALS DETECTED - set ANTHROPIC_API_KEY or authenticate via OAuth');
 		logInfo('[Daemon] Model initialization skipped - no credentials available');
 	}

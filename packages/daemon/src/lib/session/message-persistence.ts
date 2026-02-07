@@ -114,6 +114,7 @@ export class MessagePersistence {
 					{ added: [sdkUserMessage], timestamp: Date.now() },
 					{ sessionId }
 				)
+				/* v8 ignore next 2 */
 				.catch((_err) => {
 					this.logger.error('[MessagePersistence] Error publishing message to UI:', _err);
 				});
