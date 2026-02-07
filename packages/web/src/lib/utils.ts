@@ -19,8 +19,7 @@ export async function copyToClipboard(text: string): Promise<boolean> {
 		try {
 			await navigator.clipboard.writeText(text);
 			return true;
-		} catch (err) {
-			console.warn('Clipboard API failed, trying fallback:', err);
+		} catch {
 			// Fall through to legacy method
 		}
 	}
@@ -47,9 +46,6 @@ export async function copyToClipboard(text: string): Promise<boolean> {
 		const successful = document.execCommand('copy');
 		document.body.removeChild(textarea);
 
-		if (!successful) {
-			console.error('execCommand copy failed');
-		}
 		return successful;
 	} catch (err) {
 		console.error('Failed to copy to clipboard:', err);

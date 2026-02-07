@@ -16,7 +16,7 @@ const discoveryResult = discoverCredentials();
 logCredentialDiscovery(discoveryResult);
 
 /**
- * Logs credential discovery results
+ * Logs credential discovery results (no-op after cleanup)
  * Exported for testing purposes
  */
 export function logCredentialDiscovery(result: DiscoveryResult): void {

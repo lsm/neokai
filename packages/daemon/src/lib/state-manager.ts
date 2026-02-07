@@ -82,7 +82,6 @@ export class StateManager {
 		// API connection state updates from ErrorManager
 		this.eventBus.on('api.connection', (data) => {
 			this.apiConnectionState = data as import('@neokai/shared').ApiConnectionState;
-			this.logger.log('API connection state updated:', this.apiConnectionState.status);
 			this.broadcastSystemChange().catch((err: unknown) => {
 				this.logger.error('Failed to broadcast system state after API connection change:', err);
 			});
@@ -91,7 +90,6 @@ export class StateManager {
 		// Session created - cache and broadcast
 		this.eventBus.on('session.created', async (data) => {
 			const { session } = data;
-			this.logger.log('Session created, caching and broadcasting:', session.id);
 
 			// Cache session and initial processing state
 			this.sessionCache.set(session.id, session);
@@ -198,8 +196,6 @@ export class StateManager {
 		this.eventBus.on(
 			'session.error',
 			async (data: { sessionId: string; error: string; details?: unknown }) => {
-				this.logger.log(`Session error for ${data.sessionId}: ${data.error}`);
-
 				// Update error cache
 				this.errorCache.set(data.sessionId, {
 					message: data.error,
@@ -214,7 +210,6 @@ export class StateManager {
 
 		// Clear error when session becomes idle or processing continues successfully
 		this.eventBus.on('session.errorClear', async (data: { sessionId: string }) => {
-			this.logger.log(`Clearing session error for ${data.sessionId}`);
 			this.errorCache.set(data.sessionId, null);
 			await this.broadcastSessionStateChange(data.sessionId);
 		});
@@ -246,7 +241,6 @@ export class StateManager {
 			// Skip sessions delta update if session is not cached
 			// (we need session data for sidebar updates)
 			if (!session) {
-				this.logger.log(`Session ${sessionId} not in cache, skipped sessions delta broadcast`);
 				return;
 			}
 
@@ -543,10 +537,7 @@ export class StateManager {
 	async broadcastSessionsDelta(update: SessionsUpdate): Promise<void> {
 		const version = this.incrementVersion(`${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`);
 		const channel = `${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`;
-		this.logger.info(' Broadcasting to channel:', channel);
-		this.logger.debug(' Delta payload:', JSON.stringify({ ...update, version }, null, 2));
 		await this.messageHub.publish(channel, { ...update, version }, { sessionId: 'global' });
-		this.logger.info(' Delta published successfully to:', channel);
 	}
 
 	/**
@@ -615,9 +606,6 @@ export class StateManager {
 					await this.messageHub.publish(STATE_CHANNELS.SESSION, fallbackState, {
 						sessionId,
 					});
-					this.logger.log(
-						`[StateManager] Used fallback state for ${sessionId} (agentState: ${cachedProcessingState.status})`
-					);
 				} catch (fallbackError) {
 					this.logger.error(
 						`[StateManager] Fallback broadcast also failed for ${sessionId}:`,

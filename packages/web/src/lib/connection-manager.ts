@@ -380,8 +380,8 @@ export class ConnectionManager {
 		for (const handler of handlers) {
 			try {
 				handler();
-			} catch (error) {
-				console.error('[ConnectionManager] Error in connection handler:', error);
+			} catch {
+				// Ignore handler errors
 			}
 		}
 	}
@@ -485,9 +485,7 @@ export class ConnectionManager {
 			// FIX: Added sessionStore.refresh() to sync agent state for status bar
 			// Without this, status bar would show "Online" instead of actual state
 			await Promise.all([sessionStore.refresh(), appState.refreshAll(), globalStore.refresh()]);
-		} catch (error) {
-			console.error('[ConnectionManager] Connection validation failed, forcing reconnect:', error);
-
+		} catch {
 			// FIX: Use forceReconnect() instead of close()
 			// close() sets closed=true which prevents auto-reconnect
 			if (this.transport) {

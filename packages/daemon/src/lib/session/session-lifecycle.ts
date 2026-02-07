@@ -109,9 +109,6 @@ export class SessionLifecycle {
 				if (result) {
 					worktreeMetadata = result;
 					sessionWorkspacePath = result.worktreePath;
-					this.logger.info(
-						`[SessionLifecycle] Created worktree at ${result.worktreePath} with branch ${result.branch}`
-					);
 				}
 			} catch (error) {
 				this.logger.error(
@@ -186,9 +183,7 @@ export class SessionLifecycle {
 		this.sessionCache.set(sessionId, agentSession);
 
 		// Emit event via EventBus (StateManager will handle publishing to MessageHub)
-		this.logger.info('[SessionLifecycle] Emitting session:created event for session:', sessionId);
 		await this.eventBus.emit('session.created', { sessionId, session });
-		this.logger.info('[SessionLifecycle] Event emitted, returning sessionId:', sessionId);
 
 		return sessionId;
 	}
@@ -351,8 +346,6 @@ export class SessionLifecycle {
 	 * Orphaned resources (worktrees, branches) can be cleaned up via global teardown.
 	 */
 	async delete(sessionId: string): Promise<void> {
-		this.logger.info(`[SessionLifecycle] Starting deletion for session ${sessionId}`);
-
 		// Get references before deletion
 		const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
 		const session = this.db.getSession(sessionId);
@@ -364,7 +357,6 @@ export class SessionLifecycle {
 			// PHASE 1: Cleanup AgentSession (stops SDK subprocess)
 			// This is critical - must complete before other cleanup
 			if (agentSession) {
-				this.logger.info(`[SessionLifecycle] PHASE 1: Cleaning up AgentSession`);
 				try {
 					await agentSession.cleanup();
 					completedPhases.push('agent-cleanup');
@@ -377,19 +369,12 @@ export class SessionLifecycle {
 			// PHASE 1.5: Delete SDK session files from ~/.claude/projects/
 			// This removes the .jsonl files created by Claude Agent SDK
 			if (session) {
-				this.logger.info(`[SessionLifecycle] PHASE 1.5: Removing SDK session files`);
 				try {
 					const deleteResult = deleteSDKSessionFiles(
 						session.workspacePath,
 						session.sdkSessionId ?? null,
 						sessionId
 					);
-					if (deleteResult.deletedFiles.length > 0) {
-						this.logger.info(
-							`[SessionLifecycle] Deleted ${deleteResult.deletedFiles.length} SDK file(s), ` +
-								`${(deleteResult.deletedSize / 1024).toFixed(1)}KB freed`
-						);
-					}
 					completedPhases.push(
 						deleteResult.success ? 'sdk-files-delete' : 'sdk-files-delete-partial'
 					);
@@ -402,20 +387,15 @@ export class SessionLifecycle {
 			// PHASE 2: Delete worktree and branch
 			// Must happen before DB deletion (we need the worktree metadata)
 			if (session?.worktree) {
-				this.logger.info(`[SessionLifecycle] PHASE 2: Removing worktree for session ${sessionId}`);
 				try {
 					await this.worktreeManager.removeWorktree(session.worktree, true);
 
 					// Verify worktree was actually removed
 					const stillExists = await this.worktreeManager.verifyWorktree(session.worktree);
 					if (stillExists) {
-						this.logger.warn(
-							`[SessionLifecycle] Worktree still exists after removal: ${session.worktree.worktreePath}`
-						);
 						// Track for global teardown
 						completedPhases.push('worktree-cleanup-partial');
 					} else {
-						this.logger.info(`[SessionLifecycle] Worktree successfully removed`);
 						completedPhases.push('worktree-cleanup');
 					}
 				} catch (error) {
@@ -429,7 +409,6 @@ export class SessionLifecycle {
 
 			// PHASE 3: Delete from database
 			// This is the point of no return - session is considered deleted
-			this.logger.info(`[SessionLifecycle] PHASE 3: Deleting session from database`);
 			try {
 				this.db.deleteSession(sessionId);
 				completedPhases.push('db-delete');
@@ -439,7 +418,6 @@ export class SessionLifecycle {
 			}
 
 			// PHASE 4: Remove from cache
-			this.logger.info(`[SessionLifecycle] PHASE 4: Removing session from cache`);
 			try {
 				this.sessionCache.remove(sessionId);
 				completedPhases.push('cache-remove');
@@ -450,7 +428,6 @@ export class SessionLifecycle {
 
 			// PHASE 5: Broadcast deletion event
 			// Best-effort notification - failure doesn't affect deletion
-			this.logger.info(`[SessionLifecycle] PHASE 5: Broadcasting deletion event`);
 			try {
 				await Promise.all([
 					this.messageHub.publish(
@@ -465,10 +442,6 @@ export class SessionLifecycle {
 				this.logger.error(`[SessionLifecycle] Failed to broadcast deletion:`, error);
 				// Non-critical - session is already deleted
 			}
-
-			this.logger.info(
-				`[SessionLifecycle] Session ${sessionId} deleted successfully (completed phases: ${completedPhases.join(', ')})`
-			);
 		} catch (error) {
 			// Critical failure - log what was completed
 			this.logger.error(
@@ -548,11 +521,8 @@ export class SessionLifecycle {
 
 		// Check if title already generated
 		if (session.metadata.titleGenerated) {
-			this.logger.info(`[SessionLifecycle] Session ${sessionId} title already generated`);
 			return { title: session.title, isFallback: false };
 		}
-
-		this.logger.info(`[SessionLifecycle] Generating title for session ${sessionId}...`);
 
 		try {
 			// Step 1: Generate title from user message using Haiku model
@@ -577,9 +547,6 @@ export class SessionLifecycle {
 
 					if (renamed) {
 						newBranchName = newBranch;
-						this.logger.info(`[SessionLifecycle] Renamed branch from ${oldBranch} to ${newBranch}`);
-					} else {
-						this.logger.info(`[SessionLifecycle] Failed to rename branch, keeping ${oldBranch}`);
 					}
 				}
 			}
@@ -615,14 +582,6 @@ export class SessionLifecycle {
 				session: updatedSession,
 			});
 
-			if (isFallback) {
-				this.logger.warn(
-					`[SessionLifecycle] Used fallback title for session ${sessionId}: "${title}"`
-				);
-			} else {
-				this.logger.info(`[SessionLifecycle] Title generated for session ${sessionId}: "${title}"`);
-			}
-
 			// Return result so caller can check if it was a fallback
 			return { title, isFallback };
 		} catch (error) {
@@ -648,10 +607,6 @@ export class SessionLifecycle {
 				source: 'title-generated',
 				session: fallbackSession,
 			});
-
-			this.logger.info(
-				`[SessionLifecycle] Used fallback title "${fallbackTitle}" for session ${sessionId}`
-			);
 
 			// Return result so caller can check if it was a fallback
 			return { title: fallbackTitle, isFallback: true };
@@ -686,10 +641,6 @@ export class SessionLifecycle {
 		// Get title generation configuration from provider service
 		const { modelId } = await providerService.getTitleGenerationConfig(provider);
 
-		this.logger.info(
-			`[SessionLifecycle] Generating title with ${provider} provider using model ${modelId}...`
-		);
-
 		try {
 			const title = await this.generateTitleWithSdk(provider, modelId, messageText);
 			return { title, isFallback: false };
@@ -722,10 +673,6 @@ export class SessionLifecycle {
 		// Use explicit provider to avoid model ID detection issues with shorthands like 'haiku'
 		const originalEnv = providerService.applyEnvVarsToProcessForProvider(provider, modelId);
 
-		this.logger.debug(
-			`[SessionLifecycle] Env vars applied for provider ${provider}, model ${modelId}`
-		);
-
 		try {
 			const prompt = `Based on the user's request below, generate a concise 3-7 word title that captures the main intent or topic.
 
@@ -744,9 +691,6 @@ ${messageText.slice(0, 2000)}`;
 			const providerEnvVars = providerService.getEnvVarsForModel(modelId);
 
 			const cliPath = resolveSDKCliPath();
-			this.logger.debug(
-				`[SessionLifecycle] Spawning title generation subprocess: cli=${cliPath}, bundled=${isBundledBinary()}, provider=${provider}, model=${modelId}`
-			);
 
 			// Merge provider env vars with parent process env vars
 			// This ensures inherited vars (like ANTHROPIC_API_KEY) are preserved
@@ -807,12 +751,10 @@ ${messageText.slice(0, 2000)}`;
 			// Remove backticks
 			title = title.replace(/`/g, '');
 
-			this.logger.info(`[SessionLifecycle] Generated title: "${title}"`);
 			return title;
 		} finally {
 			// Always restore original environment variables
 			providerService.restoreEnvVars(originalEnv);
-			this.logger.debug(`[SessionLifecycle] Env vars restored`);
 		}
 	}
 
@@ -833,14 +775,8 @@ ${messageText.slice(0, 2000)}`;
 						(m) => m.id === requestedModel || m.alias === requestedModel
 					);
 					if (found) {
-						this.logger.info(`[SessionLifecycle] Using requested model: ${found.id}`);
 						return found.id;
 					}
-					// Model not found - log warning but continue to try default
-					this.logger.info(
-						`[SessionLifecycle] Requested model "${requestedModel}" not found in available models:`,
-						availableModels.map((m) => m.id)
-					);
 				}
 
 				// Use configured default model (from DEFAULT_MODEL env var or 'sonnet')
@@ -851,9 +787,6 @@ ${messageText.slice(0, 2000)}`;
 				);
 
 				if (defaultByConfig) {
-					this.logger.info(
-						`[SessionLifecycle] Using configured default model: ${defaultByConfig.id} (from ${configuredDefault})`
-					);
 					return defaultByConfig.id;
 				}
 
@@ -862,20 +795,16 @@ ${messageText.slice(0, 2000)}`;
 					availableModels.find((m) => m.family === 'sonnet') || availableModels[0];
 
 				if (defaultModel) {
-					this.logger.info(`[SessionLifecycle] Using fallback default model: ${defaultModel.id}`);
 					return defaultModel.id;
 				}
-			} else {
-				this.logger.info('[SessionLifecycle] No available models loaded from cache');
 			}
 		} catch (error) {
-			this.logger.info('[SessionLifecycle] Error getting models:', error);
+			this.logger.error('[SessionLifecycle] Error getting models:', error);
 		}
 
 		// Fallback to config default model or requested model
 		// IMPORTANT: Always return full model ID, never aliases
 		const fallbackModel = requestedModel || this.config.defaultModel;
-		this.logger.info(`[SessionLifecycle] Using fallback model: ${fallbackModel}`);
 		return fallbackModel;
 	}
 }

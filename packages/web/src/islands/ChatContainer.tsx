@@ -421,8 +421,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			// Prepend older messages to sessionStore (will trigger re-render)
 			sessionStore.prependMessages(olderMessages);
 			setHasMoreMessages(hasMore);
-		} catch (err) {
-			console.error('Failed to load older messages:', err);
+		} catch {
 			toast.error('Failed to load older messages');
 		} finally {
 			setLoadingOlder(false);
@@ -547,10 +546,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				await updateSession(sessionId, {
 					config: { autoScroll: newAutoScroll },
 				});
-			} catch (err) {
+			} catch {
 				setAutoScroll(!newAutoScroll);
 				toast.error('Failed to save auto-scroll setting');
-				console.error('Failed to update autoScroll:', err);
 			}
 		},
 		[sessionId]
@@ -568,10 +566,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			setCoordinatorMode(newMode);
 			try {
 				await switchCoordinatorMode(sessionId, newMode);
-			} catch (err) {
+			} catch {
 				setCoordinatorMode(!newMode);
 				toast.error('Failed to toggle coordinator mode');
-				console.error('Failed to toggle coordinator mode:', err);
 			} finally {
 				setCoordinatorSwitching(false);
 			}

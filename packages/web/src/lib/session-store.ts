@@ -22,10 +22,13 @@
 import { signal, computed } from '@preact/signals';
 import type { Session, ContextInfo, AgentProcessingState, SessionState } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import { Logger } from '@neokai/shared';
 import { connectionManager } from './connection-manager';
 import { slashCommandsSignal } from './signals';
 import { toast } from './toast';
 import type { StructuredError } from '../types/error';
+
+const logger = new Logger('kai:web:sessionstore');
 
 class SessionStore {
 	// ========================================
@@ -228,7 +231,7 @@ class SessionStore {
 			// This replaces the old REST API calls and state.sdkMessages subscription
 			await this.fetchInitialState(hub, sessionId);
 		} catch (err) {
-			console.error('[SessionStore] Failed to start subscriptions:', err);
+			logger.error('Failed to start subscriptions:', err);
 			toast.error('Failed to connect to daemon');
 		}
 	}
@@ -321,7 +324,7 @@ class SessionStore {
 				}
 			}
 		} catch (err) {
-			console.error('[SessionStore] Failed to fetch initial state:', err);
+			logger.error('Failed to fetch initial state:', err);
 			// Don't show toast here - subscriptions are still active and will receive updates
 		}
 	}
@@ -334,8 +337,8 @@ class SessionStore {
 		for (const cleanup of this.cleanupFunctions) {
 			try {
 				cleanup();
-			} catch (err) {
-				console.warn('[SessionStore] Cleanup error:', err);
+			} catch {
+				// Ignore cleanup errors
 			}
 		}
 		this.cleanupFunctions = [];
@@ -362,7 +365,7 @@ class SessionStore {
 			const hub = await connectionManager.getHub();
 			await this.fetchInitialState(hub, sessionId);
 		} catch (err) {
-			console.error('[SessionStore] Failed to refresh state:', err);
+			logger.error('Failed to refresh state:', err);
 			// Don't throw - subscriptions will still receive updates
 		}
 	}
@@ -427,7 +430,7 @@ class SessionStore {
 			});
 			return result?.count ?? 0;
 		} catch (err) {
-			console.error('[SessionStore] Failed to get message count:', err);
+			logger.error('Failed to get message count:', err);
 			return 0;
 		}
 	}
@@ -457,7 +460,7 @@ class SessionStore {
 				hasMore: messages.length === limit,
 			};
 		} catch (err) {
-			console.error('[SessionStore] Failed to load older messages:', err);
+			logger.error('Failed to load older messages:', err);
 			throw err;
 		}
 	}

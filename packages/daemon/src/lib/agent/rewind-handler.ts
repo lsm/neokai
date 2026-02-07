@@ -245,10 +245,6 @@ export class RewindHandler {
 						insertions: sdkResult.insertions,
 						deletions: sdkResult.deletions,
 					};
-				} else {
-					logger.log(
-						`File rewind not available for ${checkpointId.slice(0, 8)}...: ${sdkResult.error || 'no checkpoint'}. Proceeding with conversation rewind only.`
-					);
 				}
 			} catch (fileError) {
 				logger.error('File rewind failed (proceeding with conversation rewind):', fileError);
@@ -304,21 +300,18 @@ export class RewindHandler {
 		checkpointId: string,
 		rewindPoint: RewindPoint
 	): Promise<RewindResult> {
-		const { session, db, lifecycleManager, logger } = this.ctx;
+		const { session, db, lifecycleManager } = this.ctx;
 
 		// Step 1: Delete the user message itself AND all messages after it from DB
 		const messagesDeleted = db.deleteMessagesAtAndAfter(session.id, rewindPoint.timestamp);
 
 		// Step 2: Truncate the SDK JSONL file at this message
-		const jsonlResult = truncateSessionFileAtMessage(
+		const _jsonlResult = truncateSessionFileAtMessage(
 			session.workspacePath,
 			session.sdkSessionId,
 			session.id,
 			checkpointId
 		);
-		if (jsonlResult.truncated) {
-			logger.log(`Truncated JSONL file: removed ${jsonlResult.linesRemoved} lines`);
-		}
 
 		// Step 3: Find the previous user message for resumeSessionAt
 		// After deleting the checkpoint message, the remaining user messages are the ones before it
@@ -338,10 +331,6 @@ export class RewindHandler {
 
 		// Step 4: Restart query to apply new state
 		await lifecycleManager.restart();
-
-		logger.log(
-			`Conversation rewound: deleted ${messagesDeleted} messages (including checkpoint ${checkpointId.slice(0, 8)}...)`
-		);
 
 		return { success: true, conversationRewound: true, messagesDeleted };
 	}
@@ -455,7 +444,6 @@ export class RewindHandler {
 			if (op.type === 'write') {
 				// Cannot automatically revert Write operations
 				skipped.push(op.filePath);
-				logger.log(`Skipping diff revert for Write operation: ${op.filePath}`);
 				continue;
 			}
 
@@ -672,10 +660,6 @@ export class RewindHandler {
 								const sdkResult = await queryObject.rewindFiles(checkpointUuid);
 								if (sdkResult.canRewind) {
 									filesReverted = sdkResult.filesChanged || [];
-								} else {
-									logger.log(
-										`SDK file rewind not available: ${sdkResult.error || 'no checkpoint'}`
-									);
 								}
 							} catch (e) {
 								logger.error('SDK file rewind failed:', e);
@@ -693,9 +677,6 @@ export class RewindHandler {
 							if (result.failed.length > 0) {
 								logger.warn('Diff revert failed for:', result.failed);
 							}
-							if (result.skipped.length > 0) {
-								logger.log('Diff revert skipped (Write ops):', result.skipped);
-							}
 						}
 						break;
 					}
@@ -706,10 +687,6 @@ export class RewindHandler {
 								const sdkResult = await queryObject.rewindFiles(analysis.oldestUserMessage.uuid);
 								if (sdkResult.canRewind) {
 									filesReverted = sdkResult.filesChanged || [];
-								} else {
-									logger.log(
-										`SDK file rewind not available: ${sdkResult.error || 'no checkpoint'}`
-									);
 								}
 							} catch (e) {
 								logger.error('SDK file rewind failed:', e);
@@ -723,9 +700,6 @@ export class RewindHandler {
 								diffRevertedFiles = result.reverted;
 								if (result.failed.length > 0) {
 									logger.warn('Diff revert failed for:', result.failed);
-								}
-								if (result.skipped.length > 0) {
-									logger.log('Diff revert skipped (Write ops):', result.skipped);
 								}
 							}
 						}
@@ -743,15 +717,12 @@ export class RewindHandler {
 				// Truncate JSONL at the earliest selected message
 				const jsonlUuid = (earliestMessage as { uuid?: string }).uuid;
 				if (jsonlUuid) {
-					const jsonlResult = truncateSessionFileAtMessage(
+					const _jsonlResult = truncateSessionFileAtMessage(
 						session.workspacePath,
 						session.sdkSessionId,
 						session.id,
 						jsonlUuid
 					);
-					if (jsonlResult.truncated) {
-						logger.log(`Truncated JSONL file: removed ${jsonlResult.linesRemoved} lines`);
-					}
 				}
 
 				// Update resumeSessionAt to the previous user message
@@ -771,10 +742,6 @@ export class RewindHandler {
 				// Restart query to apply new state
 				await lifecycleManager.restart();
 			}
-
-			logger.log(
-				`Selective rewind (${analysis.rewindCase}): deleted ${messagesDeleted} messages, reverted ${filesReverted.length + diffRevertedFiles.length} files`
-			);
 
 			return {
 				success: true,

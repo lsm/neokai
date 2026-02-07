@@ -91,7 +91,6 @@ export function ToolResultCard({
 		} catch (err) {
 			const errorMessage = err instanceof Error ? err.message : 'Failed to remove output';
 			toast.error(errorMessage);
-			console.error('Failed to remove tool output:', err);
 			setDeleting(false);
 		}
 	};

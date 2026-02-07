@@ -48,7 +48,6 @@ export class ProcessingStateManager {
 	restoreFromDatabase(): void {
 		const session = this.db.getSession(this.sessionId);
 		if (!session?.processingState) {
-			this.logger.log('No persisted processing state found, starting with idle');
 			return;
 		}
 
@@ -59,20 +58,16 @@ export class ProcessingStateManager {
 			if (restoredState.status === 'processing' || restoredState.status === 'queued') {
 				// Active processing states should reset to idle after restart
 				// The SDK query will need to be restarted anyway
-				this.logger.log('Restored processing state from database:', restoredState);
-				this.logger.log('Resetting to idle after restart for safety');
 				this.processingState = { status: 'idle' };
 			} else if (restoredState.status === 'waiting_for_input') {
 				// IMPORTANT: Preserve waiting_for_input state across restarts
 				// The user's pending question should still be answerable after page refresh
 				this.processingState = restoredState;
-				this.logger.log('Restored waiting_for_input state - user can still answer the question');
 			} else {
 				this.processingState = restoredState;
-				this.logger.log('Restored processing state from database:', restoredState);
 			}
 		} catch (error) {
-			this.logger.warn('Failed to parse persisted processing state:', error);
+			this.logger.error('Failed to parse persisted processing state:', error);
 			this.processingState = { status: 'idle' };
 		}
 	}
@@ -168,7 +163,6 @@ export class ProcessingStateManager {
 	 */
 	async setWaitingForInput(pendingQuestion: PendingUserQuestion): Promise<void> {
 		await this.setState({ status: 'waiting_for_input', pendingQuestion });
-		this.logger.log(`Waiting for user input: ${pendingQuestion.questions.length} question(s)`);
 	}
 
 	/**
@@ -212,8 +206,6 @@ export class ProcessingStateManager {
 			source: 'processing-state',
 			processingState: this.processingState,
 		});
-
-		this.logger.log('Updated question draft responses');
 	}
 
 	/**
@@ -237,8 +229,6 @@ export class ProcessingStateManager {
 				source: 'processing-state',
 				processingState: this.processingState,
 			});
-
-			this.logger.log(`Compacting state changed to: ${isCompacting}`);
 		}
 	}
 
@@ -283,8 +273,6 @@ export class ProcessingStateManager {
 			source: 'processing-state',
 			processingState: this.processingState,
 		});
-
-		this.logger.log(`Streaming phase changed to: ${phase}`);
 	}
 
 	/**
@@ -351,7 +339,5 @@ export class ProcessingStateManager {
 			source: 'processing-state',
 			processingState: newState,
 		});
-
-		this.logger.log(`Agent state changed:`, newState);
 	}
 }

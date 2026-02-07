@@ -176,8 +176,7 @@ export function useSessionActions({
 			document.body.removeChild(a);
 			URL.revokeObjectURL(url);
 			toast.success('Chat exported!');
-		} catch (err) {
-			console.error('Failed to export chat:', err);
+		} catch {
 			toast.error('Failed to export chat');
 		}
 	}, [sessionId, session?.title, isConnected]);

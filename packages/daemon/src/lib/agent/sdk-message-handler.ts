@@ -80,9 +80,8 @@ export class SDKMessageHandler {
 		this.circuitBreaker = new ApiErrorCircuitBreaker(session.id);
 
 		// Set up circuit breaker callback - fully internalized
-		this.circuitBreaker.setOnTripCallback(async (reason, errorCount) => {
+		this.circuitBreaker.setOnTripCallback(async (reason, _errorCount) => {
 			const userMessage = this.circuitBreaker.getTripMessage();
-			this.logger.log(`Circuit breaker tripped: ${reason} (${errorCount} errors)`);
 			await this.handleCircuitBreakerTrip(reason, userMessage);
 		});
 	}
@@ -114,7 +113,6 @@ export class SDKMessageHandler {
 	private async handleCircuitBreakerTrip(reason: string, userMessage: string): Promise<void> {
 		const { session, stateManager, messageQueue, daemonHub, errorManager, lifecycleManager } =
 			this.ctx;
-		this.logger.log(`Handling circuit breaker trip: ${reason}`);
 
 		try {
 			// Clear state before stopping
@@ -194,7 +192,6 @@ export class SDKMessageHandler {
 		if (circuitBreakerTripped) {
 			// Circuit breaker tripped - skip normal processing
 			// The callback will handle stopping the query and notifying the user
-			this.logger.log('Circuit breaker tripped, skipping message processing');
 			return;
 		}
 
@@ -225,7 +222,6 @@ export class SDKMessageHandler {
 		// Check if this is a result message immediately following a /context response
 		// Skip saving/broadcasting these result messages
 		if (message.type === 'result' && this.lastMessageWasContextResponse) {
-			this.logger.log('Skipping result message for internal /context command');
 			// Reset the flag - we've now handled both the context response AND its result
 			this.lastMessageWasContextResponse = false;
 			// Return early - don't save or broadcast this result
@@ -294,8 +290,6 @@ export class SDKMessageHandler {
 		// Capture SDK's internal session ID if we don't have it yet
 		// This enables session resumption after daemon restart
 		if (!session.sdkSessionId && message.session_id) {
-			this.logger.log(`Captured SDK session ID: ${message.session_id}`);
-
 			// Update in-memory session
 			session.sdkSessionId = message.session_id;
 
@@ -401,7 +395,6 @@ export class SDKMessageHandler {
 				const messageId = await messageQueue.enqueue('/context', true);
 				// Track this ID so we can skip the result message
 				this.internalContextCommandIds.add(messageId);
-				this.logger.log(`Queued /context for detailed breakdown (ID: ${messageId})`);
 			} catch (error) {
 				// Non-critical - just log the error
 				this.logger.warn('Failed to queue /context:', error);
@@ -468,7 +461,6 @@ export class SDKMessageHandler {
 
 		const statusMsg = message as { status: string | null };
 		if (statusMsg.status === 'compacting') {
-			this.logger.log('Context compaction started (auto)');
 			// Set isCompacting flag on processing state (flows through state.session)
 			await stateManager.setCompacting(true);
 		}
@@ -482,18 +474,6 @@ export class SDKMessageHandler {
 
 		if (!isSDKCompactBoundary(message)) return;
 
-		const compactMsg = message as {
-			compact_metadata: {
-				trigger: 'manual' | 'auto';
-				pre_tokens: number;
-			};
-		};
-
-		this.logger.log(
-			`Context compaction completed (${compactMsg.compact_metadata.trigger}), ` +
-				`pre-tokens: ${compactMsg.compact_metadata.pre_tokens}`
-		);
-
 		// Clear isCompacting flag on processing state (flows through state.session)
 		await stateManager.setCompacting(false);
 	}
@@ -504,8 +484,6 @@ export class SDKMessageHandler {
 	 */
 	private async handleContextResponse(message: SDKMessage): Promise<void> {
 		const { session, daemonHub, contextTracker } = this.ctx;
-
-		this.logger.log('Processing /context response...');
 
 		const parsedContext = this.contextFetcher.parseContextResponse(message);
 		if (!parsedContext) {

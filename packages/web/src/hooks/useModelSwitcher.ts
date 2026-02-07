@@ -124,8 +124,8 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 			// Sort by family order
 			modelInfos.sort((a, b) => FAMILY_ORDER[a.family] - FAMILY_ORDER[b.family]);
 			setAvailableModels(modelInfos);
-		} catch (error) {
-			console.error('Failed to load model info:', error);
+		} catch {
+			// Error handled silently - loading state will be cleared
 		} finally {
 			setLoading(false);
 		}
@@ -169,7 +169,6 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 					toast.error(result.error || 'Failed to switch model');
 				}
 			} catch (error) {
-				console.error('Model switch error:', error);
 				const errorMessage = error instanceof Error ? error.message : 'Failed to switch model';
 				toast.error(errorMessage);
 			} finally {

@@ -5,7 +5,7 @@ const DAEMON_URL = process.env.DAEMON_URL || 'http://localhost:8283';
 const PORT = process.env.PORT || 9283;
 const isDev = process.env.NODE_ENV !== 'production';
 
-const server = serve({
+const _server = serve({
 	port: PORT,
 
 	async fetch(req: Request, _server: unknown) {
@@ -53,7 +53,3 @@ const server = serve({
 		console: true, // Stream browser console to terminal
 	},
 });
-
-console.log(`🚀 NeoKai Web UI running on ${server.url}`);
-console.log(`📡 Proxying API requests to ${DAEMON_URL}`);
-console.log(`⚡ HMR: ${isDev ? 'enabled' : 'disabled'}`);

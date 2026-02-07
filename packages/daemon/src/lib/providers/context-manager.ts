@@ -106,9 +106,6 @@ export class ProviderContextManager {
 			if (provider) {
 				return provider;
 			}
-			console.warn(
-				`[ProviderContextManager] Explicit provider "${session.config.provider}" not registered, falling back to detection`
-			);
 		}
 
 		// 2. Detect provider from model ID

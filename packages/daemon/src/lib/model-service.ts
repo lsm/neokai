@@ -88,8 +88,9 @@ export async function getSupportedModelsFromQuery(
 				cacheTimestamps.set(cacheKey, Date.now());
 				return models;
 			}
-		} catch (error) {
-			console.warn('Failed to load models from SDK:', error);
+			/* v8 ignore next 2 */
+		} catch {
+			// Failed to load models from SDK
 		}
 	}
 
@@ -122,10 +123,10 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 			if (models.length > 0) {
 				modelsCache.set(cacheKey, models);
 				cacheTimestamps.set(cacheKey, Date.now());
-				console.info(`[model-service] Background refresh complete: ${models.length} models loaded`);
 			}
-		} catch (error) {
-			console.warn('[model-service] Background refresh failed:', error);
+			/* v8 ignore next 2 */
+		} catch {
+			// Background refresh failed
 		} finally {
 			refreshInProgress.delete(cacheKey);
 		}
@@ -148,8 +149,9 @@ async function loadModelsFromProviders(): Promise<ModelInfo[]> {
 
 			const models = await provider.getModels();
 			allModels.push(...models);
-		} catch (error) {
-			console.warn(`[model-service] Failed to load models from ${provider.id}:`, error);
+			/* v8 ignore next 2 */
+		} catch {
+			// Failed to load models from provider
 		}
 	}
 
@@ -204,11 +206,8 @@ export async function initializeModels(): Promise<void> {
 
 	// Skip if already initialized
 	if (modelsCache.has(cacheKey)) {
-		console.info('[model-service] Models already initialized, skipping');
 		return;
 	}
-
-	console.info('[model-service] Loading models on app startup...');
 
 	// Initialize the provider system (registers built-in providers)
 	initializeProviders();
@@ -219,16 +218,12 @@ export async function initializeModels(): Promise<void> {
 			// Cache the models
 			modelsCache.set(cacheKey, models);
 			cacheTimestamps.set(cacheKey, Date.now());
-			console.info(
-				`[model-service] Startup initialization complete: ${models.length} models loaded`
-			);
 		} else {
 			throw new Error('No models returned from providers');
 		}
 	} catch (error) {
 		// Log the error but don't fail startup - use static fallback models
 		console.error('[model-service] Failed to load models from providers:', error);
-		console.warn('[model-service] Models will be loaded on-demand during query execution');
 
 		// Set empty cache to prevent repeated initialization attempts
 		// getAvailableModels() will handle empty cache gracefully

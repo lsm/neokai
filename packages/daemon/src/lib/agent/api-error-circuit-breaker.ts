@@ -206,11 +206,6 @@ export class ApiErrorCircuitBreaker {
 
 		// Check for rapid-fire pattern for this specific agent
 		if (filteredTimestamps.length >= this.config.rapidFireThreshold) {
-			const agentLabel =
-				agentContext === 'main' ? 'main agent' : `subagent ${agentContext.slice(0, 8)}`;
-			this.logger.log(
-				`RAPID-FIRE DETECTED (${agentLabel}): ${filteredTimestamps.length} messages in ${this.config.rapidFireWindowMs}ms`
-			);
 			await this.trip('rapid_fire', filteredTimestamps.length);
 			return true;
 		}
@@ -259,10 +254,6 @@ export class ApiErrorCircuitBreaker {
 		// Count occurrences of this pattern
 		const patternCount = this.recentErrors.filter((e) => e.pattern === errorPattern).length;
 
-		this.logger.log(
-			`Detected error pattern: ${errorPattern} (count: ${patternCount}/${this.config.errorThreshold})`
-		);
-
 		// Check if threshold exceeded
 		if (patternCount >= this.config.errorThreshold) {
 			await this.trip(errorPattern, patternCount);
@@ -281,10 +272,6 @@ export class ApiErrorCircuitBreaker {
 		this.state.tripCount++;
 		this.state.lastTripTime = Date.now();
 
-		this.logger.log(
-			`CIRCUIT BREAKER TRIPPED: ${reason} (${errorCount} errors in ${this.config.timeWindowMs}ms)`
-		);
-
 		// Clear recent errors after trip
 		this.recentErrors = [];
 
@@ -302,9 +289,6 @@ export class ApiErrorCircuitBreaker {
 	 * Reset the circuit breaker (after successful operation or manual reset)
 	 */
 	reset(): void {
-		if (this.state.isTripped) {
-			this.logger.log('Circuit breaker reset');
-		}
 		this.state.isTripped = false;
 		this.state.tripReason = null;
 		this.recentErrors = [];
@@ -334,7 +318,6 @@ export class ApiErrorCircuitBreaker {
 		if (this.state.isTripped && this.state.lastTripTime) {
 			const elapsed = Date.now() - this.state.lastTripTime;
 			if (elapsed > this.config.cooldownMs) {
-				this.logger.log('Circuit breaker auto-reset after cooldown');
 				this.reset();
 			}
 		}

@@ -32,9 +32,7 @@ export class SubscriptionManager {
 	 * Called when client connects to the global session.
 	 * These are application-wide events that all clients should receive.
 	 */
-	async subscribeToGlobalEvents(clientId: string): Promise<void> {
-		this.logger.info(`[SubscriptionManager] Subscribing client ${clientId} to global events`);
-
+	async subscribeToGlobalEvents(_clientId: string): Promise<void> {
 		// Define global subscription patterns
 		// These are APPLICATION-SPECIFIC events defined by our business logic
 		const globalEvents = [
@@ -62,10 +60,6 @@ export class SubscriptionManager {
 				{ sessionId: 'global' }
 			);
 		}
-
-		this.logger.info(
-			`[SubscriptionManager] Client ${clientId} subscribed to ${globalEvents.length} global events`
-		);
 	}
 
 	/**
@@ -75,10 +69,6 @@ export class SubscriptionManager {
 	 * These events are scoped to a particular agent session.
 	 */
 	async subscribeToSessionEvents(clientId: string, sessionId: string): Promise<void> {
-		this.logger.info(
-			`[SubscriptionManager] Subscribing client ${clientId} to session ${sessionId} events`
-		);
-
 		// Define session subscription patterns
 		// These are APPLICATION-SPECIFIC events for agent sessions
 		// NOTE: sdk.message removed - messages now arrive via state.sdkMessages.delta only
@@ -105,10 +95,6 @@ export class SubscriptionManager {
 				{ sessionId }
 			);
 		}
-
-		this.logger.info(
-			`[SubscriptionManager] Client ${clientId} subscribed to ${sessionEvents.length} events for session ${sessionId}`
-		);
 	}
 
 	/**
@@ -117,13 +103,10 @@ export class SubscriptionManager {
 	 * Called when client leaves/closes a session.
 	 * Clean up subscriptions to prevent memory leaks.
 	 */
-	async unsubscribeFromSession(clientId: string, sessionId: string): Promise<void> {
-		this.logger.info(`[SubscriptionManager] Client ${clientId} leaving session ${sessionId}`);
-
+	async unsubscribeFromSession(_clientId: string, _sessionId: string): Promise<void> {
 		// Note: Actual unsubscribe is handled by MessageHub.unsubscribe()
 		// which sends UNSUBSCRIBE messages and removes from Router.
 		// This method is a placeholder for future session cleanup logic.
-
 		// In the future, could track active subscriptions and explicitly unsubscribe:
 		// for (const unsubscribe of this.activeSubscriptions.get(sessionId) || []) {
 		//   unsubscribe();
