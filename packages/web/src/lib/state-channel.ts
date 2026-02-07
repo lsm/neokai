@@ -634,12 +634,10 @@ export class StateChannel<T> {
 	}
 
 	/**
-	 * Debug logging
+	 * Debug logging (no-op after cleanup)
 	 */
-	private log(message: string, ...args: unknown[]): void {
-		if (this.options.debug) {
-			console.log(`[StateChannel:${this.channelName}] ${message}`, ...args);
-		}
+	private log(_message: string, ..._args: unknown[]): void {
+		// Debug logging removed as non-critical
 	}
 }
 
