@@ -257,13 +257,13 @@ export function getModelsCache(): Map<string, ModelInfo[]> {
  * Set models cache (for testing - allows reusing cached models)
  * @param cache Map of cached models to restore
  */
-export function setModelsCache(cache: Map<string, ModelInfo[]>): void {
+export function setModelsCache(cache: Map<string, ModelInfo[]>, timestamp?: number): void {
 	modelsCache.clear();
 	cacheTimestamps.clear();
-	const now = Date.now();
+	const ts = timestamp ?? Date.now();
 	for (const [key, models] of cache.entries()) {
 		modelsCache.set(key, models);
-		cacheTimestamps.set(key, now);
+		cacheTimestamps.set(key, ts);
 	}
 }
 
