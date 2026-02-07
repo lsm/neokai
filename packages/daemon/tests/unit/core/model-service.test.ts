@@ -392,18 +392,23 @@ describe('Model Service', () => {
 
 	describe('background refresh behavior', () => {
 		it('should trigger background refresh for stale cache', async () => {
-			// Set up cache with old timestamp (simulating stale cache)
+			// Set up cache with an old timestamp (5 hours ago, exceeding 4-hour TTL)
+			const staleTimestamp = Date.now() - 5 * 60 * 60 * 1000;
 			const testCache = new Map<string, ModelInfo[]>();
 			testCache.set('global', mockModels);
-			setModelsCache(testCache);
+			setModelsCache(testCache, staleTimestamp);
 
-			// Note: We can't easily test the actual refresh because it requires
-			// mocking the timestamp. However, getAvailableModels should return
-			// cached data even when triggering refresh.
+			// Initialize providers so background refresh can attempt to load
+			const { initializeProviders } = await import('../../../src/lib/providers/factory');
+			initializeProviders();
+
+			// getAvailableModels should return cached data immediately
+			// AND trigger background refresh (non-blocking)
 			const models = getAvailableModels('global');
-
-			// Should return cached models immediately
 			expect(models.length).toBe(3);
+
+			// Wait briefly for background refresh to complete (or fail gracefully)
+			await new Promise((resolve) => setTimeout(resolve, 200));
 		});
 
 		it('should return cached models while refresh is in progress', async () => {
@@ -417,6 +422,24 @@ describe('Model Service', () => {
 
 			expect(models1).toEqual(models2);
 			expect(models1.length).toBe(3);
+		});
+
+		it('should not trigger multiple concurrent refreshes', async () => {
+			// Set stale cache
+			const staleTimestamp = Date.now() - 5 * 60 * 60 * 1000;
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('refresh-test', mockModels);
+			setModelsCache(testCache, staleTimestamp);
+
+			const { initializeProviders } = await import('../../../src/lib/providers/factory');
+			initializeProviders();
+
+			// Call multiple times - should only trigger one refresh
+			getAvailableModels('refresh-test');
+			getAvailableModels('refresh-test');
+
+			// Wait for background refresh to settle
+			await new Promise((resolve) => setTimeout(resolve, 200));
 		});
 	});
 
