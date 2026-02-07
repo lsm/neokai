@@ -127,7 +127,7 @@ export class AnthropicProvider implements Provider {
 			const models = await this.loadModelsFromSdk();
 			this.modelCache = models;
 			return models;
-		} catch (error) {
+		} catch {
 			// No static fallback - return empty array
 			return [];
 		}
@@ -345,7 +345,7 @@ export async function getAnthropicModelsFromQuery(queryObject: Query | null): Pr
 	try {
 		const sdkModels = await queryObject.supportedModels();
 		return provider.convertSdkModels(sdkModels);
-	} catch (error) {
+	} catch {
 		return [];
 	}
 }

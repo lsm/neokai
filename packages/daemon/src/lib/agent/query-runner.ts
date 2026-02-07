@@ -115,7 +115,7 @@ export class QueryRunner {
 			const { getProviderService } = await import('../provider-service');
 			const providerService = getProviderService();
 			const { getProviderRegistry } = await import('../providers/factory.js');
-			const providerRegistry = getProviderRegistry();
+			const _providerRegistry = getProviderRegistry();
 
 			const hasAnthropicAuth = !!(
 				process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY
@@ -369,7 +369,6 @@ export class QueryRunner {
 		queryObj: Query,
 		signal: AbortSignal
 	): AsyncGenerator<unknown, void, unknown> {
-		const { logger } = this.ctx;
 		const iterator = queryObj[Symbol.asyncIterator]();
 		const abortError = new Error('Query aborted');
 
@@ -416,7 +415,7 @@ export class QueryRunner {
 		} finally {
 			try {
 				await iterator.return?.();
-			} catch (error) {
+			} catch {
 				// Ignore cleanup errors
 			}
 		}

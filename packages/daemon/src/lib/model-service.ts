@@ -88,7 +88,7 @@ export async function getSupportedModelsFromQuery(
 				cacheTimestamps.set(cacheKey, Date.now());
 				return models;
 			}
-		} catch (error) {
+		} catch {
 			// Failed to load models from SDK
 		}
 	}
@@ -123,7 +123,7 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 				modelsCache.set(cacheKey, models);
 				cacheTimestamps.set(cacheKey, Date.now());
 			}
-		} catch (error) {
+		} catch {
 			// Background refresh failed
 		} finally {
 			refreshInProgress.delete(cacheKey);
@@ -147,7 +147,7 @@ async function loadModelsFromProviders(): Promise<ModelInfo[]> {
 
 			const models = await provider.getModels();
 			allModels.push(...models);
-		} catch (error) {
+		} catch {
 			// Failed to load models from provider
 		}
 	}

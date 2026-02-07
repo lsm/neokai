@@ -121,7 +121,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 			mcpLoading.value = true;
 			const response = await listMcpServersFromSources(session.id);
 			mcpServersData.value = response;
-		} catch (error) {
+		} catch {
 			mcpServersData.value = null;
 		} finally {
 			mcpLoading.value = false;
@@ -133,7 +133,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 			const hub = await connectionManager.getHub();
 			const response = await hub.call<{ config: GlobalToolsConfig }>('globalTools.getConfig');
 			globalConfig.value = response.config;
-		} catch (error) {
+		} catch {
 			// Error loading global config - will use defaults
 		}
 	};
@@ -221,7 +221,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 			} else {
 				toast.error(result.error || 'Failed to save tools configuration');
 			}
-		} catch (error) {
+		} catch {
 			toast.error('Failed to save tools configuration');
 		} finally {
 			saving.value = false;

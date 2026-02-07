@@ -148,7 +148,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 						inputDraft: trimmedContent,
 					},
 				});
-			} catch (error) {
+			} catch {
 				// Ignore draft save errors
 			}
 		}, debounceMs);

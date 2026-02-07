@@ -121,7 +121,7 @@ function limitToolInput(
 	toolName: string,
 	toolInput: unknown,
 	config: OutputLimiterConfig,
-	logger: Logger
+	_logger: Logger
 ): Record<string, unknown> | null {
 	const input = toolInput as Record<string, unknown>;
 

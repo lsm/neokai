@@ -129,7 +129,7 @@ export function GlobalSettingsEditor() {
 			setMcpLoading(true);
 			const response = await listMcpServersFromSources();
 			setMcpServers(response);
-		} catch (error) {
+		} catch {
 			// Error handled silently - toast shown elsewhere if needed
 		} finally {
 			setMcpLoading(false);
@@ -146,7 +146,7 @@ export function GlobalSettingsEditor() {
 			setSaving(true);
 			await updateGlobalSettings({ model: value || undefined });
 			showSavedIndicator('model');
-		} catch (error) {
+		} catch {
 			toast.error('Failed to update model');
 		} finally {
 			setSaving(false);
@@ -158,7 +158,7 @@ export function GlobalSettingsEditor() {
 			setSaving(true);
 			await updateGlobalSettings({ permissionMode: value });
 			showSavedIndicator('permission');
-		} catch (error) {
+		} catch {
 			toast.error('Failed to update permission mode');
 		} finally {
 			setSaving(false);
@@ -170,7 +170,7 @@ export function GlobalSettingsEditor() {
 			setSaving(true);
 			await updateGlobalSettings({ thinkingLevel: value });
 			showSavedIndicator('thinking');
-		} catch (error) {
+		} catch {
 			toast.error('Failed to update thinking level');
 		} finally {
 			setSaving(false);
@@ -182,7 +182,7 @@ export function GlobalSettingsEditor() {
 			setSaving(true);
 			await updateGlobalSettings({ autoScroll: value });
 			showSavedIndicator('autoScroll');
-		} catch (error) {
+		} catch {
 			toast.error('Failed to update auto scroll');
 		} finally {
 			setSaving(false);
@@ -194,7 +194,7 @@ export function GlobalSettingsEditor() {
 			setSaving(true);
 			await updateGlobalSettings({ coordinatorMode: value });
 			showSavedIndicator('coordinatorMode');
-		} catch (error) {
+		} catch {
 			toast.error('Failed to update coordinator mode');
 		} finally {
 			setSaving(false);
@@ -225,7 +225,7 @@ export function GlobalSettingsEditor() {
 			showSavedIndicator('sources');
 			// Reload MCP servers after source change
 			loadMcpServers();
-		} catch (error) {
+		} catch {
 			toast.error('Failed to update setting sources');
 		} finally {
 			setSaving(false);
@@ -260,7 +260,7 @@ export function GlobalSettingsEditor() {
 				});
 			}
 			showSavedIndicator(`mcp-${serverName}`);
-		} catch (error) {
+		} catch {
 			toast.error('Failed to update MCP server settings');
 		} finally {
 			setSaving(false);

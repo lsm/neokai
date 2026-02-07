@@ -177,7 +177,7 @@ export class WorktreeManager {
 			try {
 				const worktreeGit = this.getGit(worktreePath);
 				await worktreeGit.raw(['submodule', 'update', '--init', '--recursive']);
-			} catch (submoduleError) {
+			} catch {
 				// Submodule initialization failed, but this is non-fatal
 			}
 
@@ -228,7 +228,7 @@ export class WorktreeManager {
 				try {
 					// -D force deletes even if not merged
 					await git.branch(['-D', branch]);
-				} catch (error) {
+				} catch {
 					// Branch might not exist or already deleted
 				}
 			}
@@ -347,7 +347,7 @@ export class WorktreeManager {
 						if (worktree.branch.startsWith('session/')) {
 							try {
 								await git.branch(['-D', worktree.branch]);
-							} catch (error) {
+							} catch {
 								// Could not delete branch, but this is non-fatal
 							}
 						}
@@ -478,7 +478,7 @@ export class WorktreeManager {
 			if (currentBranch) {
 				return currentBranch;
 			}
-		} catch (error) {
+		} catch {
 			// Error getting current branch, fall through to default
 		}
 
@@ -551,7 +551,7 @@ export class WorktreeManager {
 			// (The merge base is the best common ancestor; if it's the commit itself,
 			// then the commit is reachable from the branch)
 			return mergeBase === commitHash || mergeBase.startsWith(commitHash);
-		} catch (error) {
+		} catch {
 			// On error, assume not an ancestor (safe default)
 			return false;
 		}
@@ -631,7 +631,7 @@ export class WorktreeManager {
 						hasUniqueChanges = true;
 						break;
 					}
-				} catch (diffError) {
+				} catch {
 					// File might not exist on one side - that's a real difference
 					hasUniqueChanges = true;
 					break;

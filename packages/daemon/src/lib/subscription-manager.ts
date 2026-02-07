@@ -32,7 +32,7 @@ export class SubscriptionManager {
 	 * Called when client connects to the global session.
 	 * These are application-wide events that all clients should receive.
 	 */
-	async subscribeToGlobalEvents(clientId: string): Promise<void> {
+	async subscribeToGlobalEvents(_clientId: string): Promise<void> {
 		// Define global subscription patterns
 		// These are APPLICATION-SPECIFIC events defined by our business logic
 		const globalEvents = [
@@ -103,7 +103,7 @@ export class SubscriptionManager {
 	 * Called when client leaves/closes a session.
 	 * Clean up subscriptions to prevent memory leaks.
 	 */
-	async unsubscribeFromSession(clientId: string, sessionId: string): Promise<void> {
+	async unsubscribeFromSession(_clientId: string, _sessionId: string): Promise<void> {
 		// Note: Actual unsubscribe is handled by MessageHub.unsubscribe()
 		// which sends UNSUBSCRIBE messages and removes from Router.
 		// This method is a placeholder for future session cleanup logic.

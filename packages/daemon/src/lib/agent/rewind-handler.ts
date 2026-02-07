@@ -300,13 +300,13 @@ export class RewindHandler {
 		checkpointId: string,
 		rewindPoint: RewindPoint
 	): Promise<RewindResult> {
-		const { session, db, lifecycleManager, logger } = this.ctx;
+		const { session, db, lifecycleManager } = this.ctx;
 
 		// Step 1: Delete the user message itself AND all messages after it from DB
 		const messagesDeleted = db.deleteMessagesAtAndAfter(session.id, rewindPoint.timestamp);
 
 		// Step 2: Truncate the SDK JSONL file at this message
-		const jsonlResult = truncateSessionFileAtMessage(
+		const _jsonlResult = truncateSessionFileAtMessage(
 			session.workspacePath,
 			session.sdkSessionId,
 			session.id,
@@ -717,7 +717,7 @@ export class RewindHandler {
 				// Truncate JSONL at the earliest selected message
 				const jsonlUuid = (earliestMessage as { uuid?: string }).uuid;
 				if (jsonlUuid) {
-					const jsonlResult = truncateSessionFileAtMessage(
+					const _jsonlResult = truncateSessionFileAtMessage(
 						session.workspacePath,
 						session.sdkSessionId,
 						session.id,
