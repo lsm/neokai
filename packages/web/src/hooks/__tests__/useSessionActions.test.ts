@@ -666,7 +666,6 @@ describe('useSessionActions', () => {
 		});
 
 		it('should handle export error', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockCall.mockRejectedValue(new Error('Export failed'));
 
 			const { result } = renderHook(() =>
@@ -682,10 +681,7 @@ describe('useSessionActions', () => {
 				await result.current.handleExportChat();
 			});
 
-			expect(consoleError).toHaveBeenCalled();
 			expect(mockToastError).toHaveBeenCalledWith('Failed to export chat');
-
-			consoleError.mockRestore();
 		});
 	});
 

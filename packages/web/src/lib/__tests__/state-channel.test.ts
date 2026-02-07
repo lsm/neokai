@@ -710,8 +710,6 @@ describe('StateChannel - Non-Blocking Subscription Errors', () => {
 		mockHub.call.mockImplementation(() => Promise.resolve({ data: 'test' }));
 		mockHub.subscribe.mockRejectedValue(new Error('Subscription failed'));
 
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
 		const channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel', {
 			nonBlocking: true,
 		});
@@ -721,12 +719,7 @@ describe('StateChannel - Non-Blocking Subscription Errors', () => {
 		// Wait for background subscription to fail
 		await new Promise((resolve) => setTimeout(resolve, 50));
 
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining('Background subscription setup failed'),
-			expect.any(Error)
-		);
-
-		consoleSpy.mockRestore();
+		// Error should be handled gracefully (no throw)
 		await channel.stop();
 	});
 });

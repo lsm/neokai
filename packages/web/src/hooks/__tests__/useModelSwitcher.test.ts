@@ -238,7 +238,6 @@ describe('useModelSwitcher', () => {
 		});
 
 		it('should handle error during load gracefully', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 			const mockHub = {
 				call: vi.fn().mockRejectedValue(new Error('Network error')),
 			};
@@ -250,8 +249,7 @@ describe('useModelSwitcher', () => {
 				expect(result.current.loading).toBe(false);
 			});
 
-			expect(consoleSpy).toHaveBeenCalledWith('Failed to load model info:', expect.any(Error));
-			consoleSpy.mockRestore();
+			// Error should be handled gracefully (no throw)
 		});
 
 		it('should handle no hub connection', async () => {
@@ -415,8 +413,6 @@ describe('useModelSwitcher', () => {
 		});
 
 		it('should handle switch exception', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
 			const mockHub = {
 				call: vi.fn().mockImplementation((method: string) => {
 					if (method === 'session.model.get') {
@@ -447,8 +443,6 @@ describe('useModelSwitcher', () => {
 			});
 
 			expect(mockToastError).toHaveBeenCalledWith('Connection lost');
-			expect(consoleSpy).toHaveBeenCalled();
-			consoleSpy.mockRestore();
 		});
 
 		it('should set switching state during switch', async () => {

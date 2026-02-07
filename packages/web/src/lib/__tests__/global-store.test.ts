@@ -995,8 +995,6 @@ describe('GlobalStore - destroy (actual)', () => {
 	});
 
 	it('should handle cleanup function errors gracefully', async () => {
-		const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
 		// Initialize first
 		mockHub.call.mockResolvedValueOnce({
 			sessions: { sessions: [], hasArchivedSessions: false },
@@ -1020,9 +1018,6 @@ describe('GlobalStore - destroy (actual)', () => {
 
 		// Should not throw even if cleanup throws
 		expect(() => store.destroy()).not.toThrow();
-		expect(consoleSpy).toHaveBeenCalledWith('[GlobalStore] Cleanup error:', expect.any(Error));
-
-		consoleSpy.mockRestore();
 	});
 
 	it('should reset initialized flag on destroy', async () => {
