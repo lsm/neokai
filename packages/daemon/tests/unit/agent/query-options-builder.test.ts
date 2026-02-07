@@ -345,7 +345,7 @@ describe('QueryOptionsBuilder', () => {
 	});
 
 	describe('additional directories configuration', () => {
-		it('should restrict to cwd when worktree exists', async () => {
+		it('should allow temp directories for shell operations when worktree exists', async () => {
 			mockSession.worktree = {
 				worktreePath: '/worktree',
 				mainRepoPath: '/main',
@@ -357,7 +357,8 @@ describe('QueryOptionsBuilder', () => {
 			});
 			const options = await newBuilder.build();
 
-			expect(options.additionalDirectories).toEqual([]);
+			// Should include temp directories for shell operations (git, heredocs, etc.)
+			expect(options.additionalDirectories).toEqual(['/tmp/claude', expect.stringContaining('/tmp/zsh-')]);
 		});
 
 		it('should leave undefined when no worktree', async () => {
