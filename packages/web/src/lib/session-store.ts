@@ -92,7 +92,7 @@ class SessionStore {
 		// If initial load returned exactly 100 messages, there might be more
 		// Once we've loaded older messages, this inference becomes less accurate,
 		// but it's still a reasonable default that avoids an expensive COUNT query
-		return this._initialMessageCount === 100;
+		return this._initialMessageCount.value === 100;
 	});
 
 	/**
@@ -100,7 +100,7 @@ class SessionStore {
 	 * Used in tests to verify pagination inference is working correctly
 	 */
 	getInitialMessageCountForTest(): number {
-		return this._initialMessageCount;
+		return this._initialMessageCount.value;
 	}
 
 	// ========================================
@@ -117,7 +117,7 @@ class SessionStore {
 	private sessionSwitchTime: number = 0;
 
 	/** Track initial message load count for pagination inference */
-	private _initialMessageCount: number = 0;
+	private readonly _initialMessageCount = signal(0);
 
 	// ========================================
 	// Session Selection (with Promise-Chain Lock)
@@ -152,7 +152,7 @@ class SessionStore {
 		// 2. Clear state
 		this.sessionState.value = null;
 		this.sdkMessages.value = [];
-		this._initialMessageCount = 0;
+		this._initialMessageCount.value = 0;
 		// Record session switch time to only show errors that occur AFTER this point
 		// This prevents showing stale errors that were already in the session state
 		this.sessionSwitchTime = Date.now();
@@ -285,7 +285,7 @@ class SessionStore {
 
 				// Track initial message count for pagination inference
 				// If we got exactly 100 messages, there might be more
-				this._initialMessageCount = initialSnapshot.length;
+				this._initialMessageCount.value = initialSnapshot.length;
 
 				if (snapshotTimestamp && currentMessages.length > 0) {
 					// Preserve newer messages that arrived via delta during reconnection
