@@ -107,7 +107,6 @@ export class SubscriptionManager {
 		// Note: Actual unsubscribe is handled by MessageHub.unsubscribe()
 		// which sends UNSUBSCRIBE messages and removes from Router.
 		// This method is a placeholder for future session cleanup logic.
-
 		// In the future, could track active subscriptions and explicitly unsubscribe:
 		// for (const unsubscribe of this.activeSubscriptions.get(sessionId) || []) {
 		//   unsubscribe();

@@ -65,7 +65,7 @@ export default function Sidebar() {
 			navigateToSession(response.sessionId);
 
 			toast.success('Session created successfully');
-		} catch (err) {
+		} catch {
 			// Handle connection-specific errors
 			if (err instanceof ConnectionNotReadyError) {
 				toast.error('Connection lost. Please try again.');
@@ -93,7 +93,7 @@ export default function Sidebar() {
 	const handleToggleShowArchived = async () => {
 		try {
 			await updateGlobalSettings({ showArchived: !showArchived });
-		} catch (err) {
+		} catch {
 			toast.error('Failed to toggle archived sessions visibility');
 		}
 	};
