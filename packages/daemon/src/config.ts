@@ -16,13 +16,11 @@ const discoveryResult = discoverCredentials();
 logCredentialDiscovery(discoveryResult);
 
 /**
- * Logs credential discovery results
+ * Logs credential discovery results (no-op after cleanup)
  * Exported for testing purposes
  */
-export function logCredentialDiscovery(result: DiscoveryResult): void {
-	for (const error of result.errors) {
-		console.warn(`[Config] Credential discovery warning: ${error}`);
-	}
+export function logCredentialDiscovery(_result: DiscoveryResult): void {
+	// Credential discovery warnings removed as non-critical logging
 }
 
 /**
