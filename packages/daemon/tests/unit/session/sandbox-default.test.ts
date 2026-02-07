@@ -50,12 +50,7 @@ describe('Sandbox Default Configuration', () => {
 					autoAllowBashIfSandboxed: true,
 					excludedCommands: ['git'],
 					network: {
-						allowedDomains: [
-							'github.com',
-							'*.github.com',
-							'*.npmjs.org',
-							'*.yarnpkg.com',
-						],
+						allowedDomains: ['github.com', '*.github.com', '*.npmjs.org', '*.yarnpkg.com'],
 						allowLocalBinding: true,
 						allowAllUnixSockets: true,
 					},

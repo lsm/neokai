@@ -358,7 +358,10 @@ describe('QueryOptionsBuilder', () => {
 			const options = await newBuilder.build();
 
 			// Should include temp directories for shell operations (git, heredocs, etc.)
-			expect(options.additionalDirectories).toEqual(['/tmp/claude', expect.stringContaining('/tmp/zsh-')]);
+			expect(options.additionalDirectories).toEqual([
+				'/tmp/claude',
+				expect.stringContaining('/tmp/zsh-'),
+			]);
 		});
 
 		it('should leave undefined when no worktree', async () => {
