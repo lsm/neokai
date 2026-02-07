@@ -389,9 +389,9 @@ describe('SessionStatusBar', () => {
 			) as HTMLButtonElement;
 			fireEvent.click(modelButton);
 
-			expect(container.textContent).toContain('Claude Opus 4');
-			expect(container.textContent).toContain('Claude Sonnet 4');
-			expect(container.textContent).toContain('Claude Haiku 3');
+			expect(container.textContent).toContain('Opus 4.5');
+			expect(container.textContent).toContain('Sonnet 4.5');
+			expect(container.textContent).toContain('Haiku 4.5');
 		});
 
 		it('should show current model indicator', () => {
@@ -415,7 +415,7 @@ describe('SessionStatusBar', () => {
 
 			// Find and click the Opus model button
 			const buttons = Array.from(container.querySelectorAll('button'));
-			const opusButton = buttons.find((btn) => btn.textContent?.includes('Claude Opus 4'));
+			const opusButton = buttons.find((btn) => btn.textContent?.includes('Opus 4.5'));
 			fireEvent.click(opusButton!);
 
 			expect(mockOnModelSwitch).toHaveBeenCalledWith('opus');
