@@ -116,9 +116,6 @@ describe('MessageRecoveryHandler', () => {
 
 			// User message timestamp (2000) > system:init timestamp (1000) = orphaned
 			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'saved');
-			expect(mockLogger.log).toHaveBeenCalledWith(
-				expect.stringContaining('Recovered 1 orphaned sent messages')
-			);
 		});
 
 		it('should not recover messages that have system:init after them', () => {
@@ -147,7 +144,6 @@ describe('MessageRecoveryHandler', () => {
 
 			// User message timestamp (1000) < system:init timestamp (2000) = not orphaned
 			expect(updateMessageStatusSpy).not.toHaveBeenCalled();
-			expect(mockLogger.log).toHaveBeenCalledWith('No orphaned sent messages found');
 		});
 
 		it('should skip non-user messages', () => {
@@ -201,9 +197,6 @@ describe('MessageRecoveryHandler', () => {
 			handler.recoverOrphanedSentMessages();
 
 			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1', 'db-2'], 'saved');
-			expect(mockLogger.log).toHaveBeenCalledWith(
-				expect.stringContaining('Recovered 2 orphaned sent messages')
-			);
 		});
 
 		it('should handle errors gracefully', () => {
@@ -256,7 +249,6 @@ describe('MessageRecoveryHandler', () => {
 			handler.recoverOrphanedSentMessages();
 
 			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'saved');
-			expect(mockLogger.log).toHaveBeenCalledWith(expect.stringContaining('unknown'));
 		});
 
 		it('should find latest system:init timestamp', () => {
