@@ -343,12 +343,12 @@ describe('Model Switch System Init Message', () => {
 			const systemInitMessage = await systemInitPromise;
 
 			// Verify system:init shows GLM model
-			// GLM provider translates glm-4.7 to SDK 'default', so model field shows 'default'
+			// The SDK's system:init message returns the original GLM model ID (glm-4.7)
+			// even though translateModelIdForSdk translates it to 'default' for the query
 			const model = systemInitMessage.model as string;
-			// For GLM models, SDK uses 'default' (Sonnet tier)
-			const isGlmModel = model === 'default';
+			const isGlmModel = model.includes('glm');
 			if (!isGlmModel) {
-				console.error(`Expected model to be 'default' for GLM, got: '${model}'`);
+				console.error(`Expected model to contain 'glm', got: '${model}'`);
 			}
 			expect(isGlmModel).toBe(true);
 
@@ -435,10 +435,10 @@ describe('Model Switch System Init Message', () => {
 			await sendMessage(daemon, sessionId, 'Message 2');
 			systemInitMessage = await systemInitPromise;
 			model = systemInitMessage.model as string;
-			// GLM provider translates to 'default' for SDK
-			const isGlmModel = model === 'default';
+			// The SDK's system:init message returns the original GLM model ID
+			const isGlmModel = model.includes('glm');
 			if (!isGlmModel) {
-				console.error(`Expected model to be 'default' for GLM, got: '${model}'`);
+				console.error(`Expected model to contain 'glm', got: '${model}'`);
 			}
 			expect(isGlmModel).toBe(true);
 			await waitForIdle(daemon, sessionId, 20000);
@@ -468,10 +468,10 @@ describe('Model Switch System Init Message', () => {
 			await sendMessage(daemon, sessionId, 'Message 4');
 			systemInitMessage = await systemInitPromise;
 			model = systemInitMessage.model as string;
-			// GLM provider translates to 'default' for SDK
-			const isGlmModel2 = model === 'default';
+			// The SDK's system:init message returns the original GLM model ID
+			const isGlmModel2 = model.includes('glm');
 			if (!isGlmModel2) {
-				console.error(`Expected model to be 'default' for GLM, got: '${model}'`);
+				console.error(`Expected model to contain 'glm', got: '${model}'`);
 			}
 			expect(isGlmModel2).toBe(true);
 			await waitForIdle(daemon, sessionId, 20000);
