@@ -14,6 +14,7 @@ import { SDKMessageRepository, type SendStatus } from './repositories/sdk-messag
 import { SettingsRepository } from './repositories/settings-repository';
 
 export type { SendStatus } from './repositories/sdk-message-repository';
+export type { SessionSettingsOverride } from './repositories/settings-repository';
 export type { SQLiteValue } from './types';
 
 /**
@@ -26,7 +27,8 @@ export class Database {
 	private core: DatabaseCore;
 	private sessionRepo!: SessionRepository;
 	private sdkMessageRepo!: SDKMessageRepository;
-	private settingsRepo!: SettingsRepository;
+	private settingsRepo!: SettingsRepository; // For backward compatibility
+	public settings!: SettingsRepository; // Expose settings repository for RPC handlers
 
 	constructor(dbPath: string) {
 		this.core = new DatabaseCore(dbPath);
@@ -39,7 +41,8 @@ export class Database {
 		const db = this.core.getDb();
 		this.sessionRepo = new SessionRepository(db);
 		this.sdkMessageRepo = new SDKMessageRepository(db);
-		this.settingsRepo = new SettingsRepository(db);
+		this.settings = new SettingsRepository(db);
+		this.settingsRepo = this.settings; // Keep for backward compatibility
 	}
 
 	// ============================================================================

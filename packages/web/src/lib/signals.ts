@@ -18,3 +18,11 @@ export const sessionsSignal = signal<Session[]>([]);
 // Shared signal for available slash commands from SDK
 // TODO: Migrate to state channels when slash commands are added to state management
 export const slashCommandsSignal = signal<string[]>([]);
+
+// Shared signal for the current settings section (e.g., 'general', 'model', 'mcp')
+// Used for both global and session settings pages
+export const currentSettingsSectionSignal = signal<string | null>(null);
+
+// Shared signal for the session ID being edited in session settings view
+// When set, indicates we're viewing session settings; null indicates global settings
+export const settingsSessionIdSignal = signal<string | null>(null);
