@@ -40,7 +40,7 @@ function parseModelId(modelId: string): { family: string; version?: string } | n
 	// Canonical short IDs
 	if (modelId === 'sonnet') return { family: 'sonnet', version: '4.5' };
 	if (modelId === 'default') return { family: 'sonnet', version: '4.5' }; // Legacy: map 'default' to sonnet
-	if (modelId === 'opus') return { family: 'opus', version: '4.5' };
+	if (modelId === 'opus') return { family: 'opus', version: '4.6' };
 	if (modelId === 'haiku') return { family: 'haiku', version: '4.5' };
 	if (modelId === 'sonnet[1m]') return { family: 'sonnet', version: '4.5-1m' };
 
