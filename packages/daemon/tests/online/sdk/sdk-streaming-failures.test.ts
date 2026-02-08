@@ -16,14 +16,14 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 // Bun automatically loads .env from project root when running tests
-import type { DaemonServerContext } from '../helpers/daemon-server';
-import { createDaemonServer } from '../helpers/daemon-server';
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import { createDaemonServer } from '../../helpers/daemon-server';
 import {
 	sendMessage,
 	waitForIdle,
 	getProcessingState,
 	getSession,
-} from '../helpers/daemon-actions';
+} from '../../helpers/daemon-actions';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';

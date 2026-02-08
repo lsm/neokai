@@ -24,9 +24,9 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 // Bun automatically loads .env from project root when running tests
 import { WebSocket } from 'undici';
-import type { DaemonServerContext } from '../helpers/daemon-server';
-import { createDaemonServer } from '../helpers/daemon-server';
-import { getProcessingState, sendMessage, waitForIdle } from '../helpers/daemon-actions';
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import { createDaemonServer } from '../../helpers/daemon-server';
+import { getProcessingState, sendMessage, waitForIdle } from '../../helpers/daemon-actions';
 
 /**
  * Create a WebSocket connection and wait for the first message

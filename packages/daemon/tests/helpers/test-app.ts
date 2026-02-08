@@ -526,6 +526,24 @@ export function createWebSocketWithFirstMessage(
 }
 
 /**
+ * Create WebSocket connection to test server
+ * Note: Uses unified /ws endpoint - sessionId is passed in message payloads, not URL
+ */
+export function createWebSocket(baseUrl: string, _sessionId: string): WebSocket {
+	const wsUrl = baseUrl.replace('http://', 'ws://');
+	const ws = new WebSocket(`${wsUrl}/ws`);
+
+	// Set up error handler immediately to catch early errors
+	ws.addEventListener('error', (error) => {
+		if (process.env.TEST_VERBOSE) {
+			console.error('WebSocket error in test:', error);
+		}
+	});
+
+	return ws;
+}
+
+/**
  * Wait for WebSocket to be in a specific state
  */
 export async function waitForWebSocketState(

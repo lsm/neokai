@@ -27,7 +27,7 @@ import {
 	deleteSession,
 	listSessions,
 	getSDKMessages,
-} from '../helpers/rpc-behavior';
+} from '../../helpers/rpc-behavior';
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 

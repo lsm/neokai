@@ -19,9 +19,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import type { DaemonServerContext } from '../helpers/daemon-server';
-import { createDaemonServer } from '../helpers/daemon-server';
-import { getProcessingState, sendMessage, waitForIdle } from '../helpers/daemon-actions';
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import { createDaemonServer } from '../../helpers/daemon-server';
+import { getProcessingState, sendMessage, waitForIdle } from '../../helpers/daemon-actions';
 
 describe('Multi-Turn Conversation', () => {
 	let daemon: DaemonServerContext;

@@ -20,9 +20,9 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 // Bun automatically loads .env from project root when running tests
-import type { DaemonServerContext } from '../helpers/daemon-server';
-import { createDaemonServer } from '../helpers/daemon-server';
-import { sendMessage, waitForIdle, getSession } from '../helpers/daemon-actions';
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import { createDaemonServer } from '../../helpers/daemon-server';
+import { sendMessage, waitForIdle, getSession } from '../../helpers/daemon-actions';
 import type { ContextInfo } from '@neokai/shared';
 
 describe('Context Command Online Tests', () => {
