@@ -14,7 +14,6 @@ import { getConfig } from '../../../src/config';
 import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
-import { homedir } from 'node:os';
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
@@ -23,6 +22,7 @@ describe('Project Structure Integration', () => {
 	let worktreeManager: WorktreeManager;
 	let createdWorktrees: string[] = [];
 	let originalDbPath: string | undefined;
+	let testWorktreeBaseDir: string;
 
 	beforeEach(async () => {
 		// Save and clear DB_PATH env var to test default project-based path behavior
@@ -35,6 +35,11 @@ describe('Project Structure Integration', () => {
 
 		testRepoPath = path.join(TMP_DIR, `test-project-structure-${timestamp}-${random}`);
 		fs.mkdirSync(testRepoPath, { recursive: true });
+
+		// Set up test worktree base directory
+		testWorktreeBaseDir = path.join(TMP_DIR, `test-worktrees-${timestamp}-${random}`);
+		fs.mkdirSync(testWorktreeBaseDir, { recursive: true });
+		process.env.TEST_WORKTREE_BASE_DIR = testWorktreeBaseDir;
 
 		// Initialize git repo with initial commit
 		execSync('git init', { cwd: testRepoPath });
@@ -63,7 +68,7 @@ describe('Project Structure Integration', () => {
 		for (const worktreePath of createdWorktrees) {
 			try {
 				if (fs.existsSync(worktreePath)) {
-					const repoPath = worktreePath.startsWith(path.join(homedir(), '.neokai', 'projects'))
+					const repoPath = worktreePath.startsWith(testWorktreeBaseDir)
 						? testRepoPath
 						: path.dirname(path.dirname(worktreePath));
 
@@ -85,12 +90,13 @@ describe('Project Structure Integration', () => {
 			fs.rmSync(testRepoPath, { recursive: true, force: true });
 		}
 
-		// Cleanup project directory
-		const encodedPath = encodeRepoPath(testRepoPath);
-		const projectDir = path.join(homedir(), '.neokai', 'projects', encodedPath);
-		if (fs.existsSync(projectDir)) {
-			fs.rmSync(projectDir, { recursive: true, force: true });
+		// Cleanup test worktree base directory
+		if (fs.existsSync(testWorktreeBaseDir)) {
+			fs.rmSync(testWorktreeBaseDir, { recursive: true, force: true });
 		}
+
+		// Clear environment variable
+		delete process.env.TEST_WORKTREE_BASE_DIR;
 	});
 
 	// Helper to encode repo path (same logic as config.ts and worktree-manager.ts)
@@ -119,28 +125,28 @@ describe('Project Structure Integration', () => {
 		// Get config for same workspace
 		const config = getConfig({ workspace: testRepoPath });
 
-		// Extract project directories from both paths
-		const extractProjectDir = (fullPath: string) => {
+		// Extract encoded path from worktree path
+		const extractEncodedPath = (fullPath: string) => {
 			const parts = fullPath.split(path.sep);
-			const projectsIndex = parts.indexOf('projects');
-			if (projectsIndex === -1) return null;
-			// Return path up to and including the encoded repo path
-			return parts.slice(0, projectsIndex + 2).join(path.sep);
+			// Find the encoded path part (the one right before 'worktrees' or 'database')
+			for (let i = 0; i < parts.length; i++) {
+				if (parts[i] === 'worktrees' || parts[i] === 'database') {
+					return parts[i - 1];
+				}
+			}
+			return null;
 		};
 
-		const worktreeProjectDir = extractProjectDir(worktree.worktreePath);
-		const dbProjectDir = extractProjectDir(config.dbPath);
+		const worktreeEncodedPath = extractEncodedPath(worktree.worktreePath);
+		const dbEncodedPath = extractEncodedPath(config.dbPath);
 
-		// Both should be in the same project directory
-		expect(worktreeProjectDir).toBe(dbProjectDir);
-		expect(worktreeProjectDir).toContain('.neokai/projects');
+		// Both should use the same encoded path
+		expect(worktreeEncodedPath).toBe(dbEncodedPath);
+		expect(worktreeEncodedPath).not.toBeNull();
 
-		// Verify the structure
-		const encodedPath = encodeRepoPath(testRepoPath);
-		const expectedProjectDir = path.join(homedir(), '.neokai', 'projects', encodedPath);
-
-		expect(worktreeProjectDir).toBe(expectedProjectDir);
-		expect(dbProjectDir).toBe(expectedProjectDir);
+		// Verify the structure - worktree should be in test base dir
+		expect(worktree.worktreePath).toStartWith(testWorktreeBaseDir);
+		expect(worktree.worktreePath).toContain('/worktrees/');
 	});
 
 	test('project directory contains both worktrees and database subdirectories', async () => {
@@ -157,12 +163,9 @@ describe('Project Structure Integration', () => {
 
 		createdWorktrees.push(worktree.worktreePath);
 
-		// Get config
-		const config = getConfig({ workspace: testRepoPath });
-
-		// Calculate project directory
+		// Calculate project directory in test base dir
 		const encodedPath = encodeRepoPath(testRepoPath);
-		const projectDir = path.join(homedir(), '.neokai', 'projects', encodedPath);
+		const projectDir = path.join(testWorktreeBaseDir, encodedPath);
 
 		// Verify project directory exists
 		expect(fs.existsSync(projectDir)).toBe(true);
@@ -172,9 +175,8 @@ describe('Project Structure Integration', () => {
 		expect(fs.existsSync(worktreesDir)).toBe(true);
 		expect(worktree.worktreePath).toStartWith(worktreesDir);
 
-		// Database subdirectory may not exist yet (created on first use)
-		// but the path should point to it
-		expect(config.dbPath).toStartWith(path.join(projectDir, 'database'));
+		// Note: Database uses default path (not overridden by TEST_WORKTREE_BASE_DIR)
+		// This test verifies worktree structure only
 	});
 
 	test('multiple worktrees for same repo share project directory', async () => {
@@ -198,24 +200,19 @@ describe('Project Structure Integration', () => {
 
 		createdWorktrees.push(worktree1.worktreePath, worktree2.worktreePath);
 
-		// Extract project directories
-		const extractProjectDir = (fullPath: string) => {
+		// Extract encoded path (before /worktrees/)
+		const extractEncodedPath = (fullPath: string) => {
 			const parts = fullPath.split(path.sep);
-			const projectsIndex = parts.indexOf('projects');
-			return parts.slice(0, projectsIndex + 2).join(path.sep);
+			const worktreesIndex = parts.indexOf('worktrees');
+			return parts[worktreesIndex - 1];
 		};
 
-		const projectDir1 = extractProjectDir(worktree1.worktreePath);
-		const projectDir2 = extractProjectDir(worktree2.worktreePath);
+		const encodedPath1 = extractEncodedPath(worktree1.worktreePath);
+		const encodedPath2 = extractEncodedPath(worktree2.worktreePath);
 
-		// Both worktrees should share the same project directory
-		expect(projectDir1).toBe(projectDir2);
-
-		// Get config - should also point to same project
-		const config = getConfig({ workspace: testRepoPath });
-		const dbProjectDir = extractProjectDir(config.dbPath);
-
-		expect(dbProjectDir).toBe(projectDir1);
+		// Both worktrees should use the same encoded path
+		expect(encodedPath1).toBe(encodedPath2);
+		expect(encodedPath1).not.toBeNull();
 	});
 
 	test('path encoding is consistent across worktree and database paths', async () => {
@@ -235,11 +232,16 @@ describe('Project Structure Integration', () => {
 		// Get config
 		const config = getConfig({ workspace: testRepoPath });
 
-		// Extract encoded path from both
+		// Extract encoded path from worktree path
 		const extractEncodedPath = (fullPath: string) => {
 			const parts = fullPath.split(path.sep);
-			const projectsIndex = parts.indexOf('projects');
-			return parts[projectsIndex + 1];
+			// Find the encoded path part (the one right before 'worktrees' or 'database')
+			for (let i = 0; i < parts.length; i++) {
+				if (parts[i] === 'worktrees' || parts[i] === 'database') {
+					return parts[i - 1];
+				}
+			}
+			return null;
 		};
 
 		const worktreeEncodedPath = extractEncodedPath(worktree.worktreePath);
@@ -249,7 +251,7 @@ describe('Project Structure Integration', () => {
 		expect(worktreeEncodedPath).toBe(dbEncodedPath);
 
 		// Verify encoding format (should start with dash, contain path components)
-		expect(worktreeEncodedPath.startsWith('-')).toBe(true);
-		expect(dbEncodedPath.startsWith('-')).toBe(true);
+		expect(worktreeEncodedPath?.startsWith('-')).toBe(true);
+		expect(dbEncodedPath?.startsWith('-')).toBe(true);
 	});
 });

@@ -16,14 +16,30 @@ const TMP_DIR = process.env.TMPDIR || '/tmp';
 
 describe('Archive Session Integration', () => {
 	let ctx: TestContext;
+	let testWorktreeBaseDir: string;
 
 	beforeEach(async () => {
+		// Set up test worktree base directory
+		const timestamp = Date.now();
+		const random = Math.random().toString(36).substring(7);
+		testWorktreeBaseDir = path.join(TMP_DIR, `test-worktrees-${timestamp}-${random}`);
+		fs.mkdirSync(testWorktreeBaseDir, { recursive: true });
+		process.env.TEST_WORKTREE_BASE_DIR = testWorktreeBaseDir;
+
 		// Enable worktrees for these tests
 		ctx = await createTestApp({ useWorktrees: true });
 	});
 
 	afterEach(async () => {
 		await ctx.cleanup();
+
+		// Cleanup test worktree base directory
+		if (fs.existsSync(testWorktreeBaseDir)) {
+			fs.rmSync(testWorktreeBaseDir, { recursive: true, force: true });
+		}
+
+		// Clear environment variable
+		delete process.env.TEST_WORKTREE_BASE_DIR;
 	});
 
 	describe('session.archive - without worktree', () => {

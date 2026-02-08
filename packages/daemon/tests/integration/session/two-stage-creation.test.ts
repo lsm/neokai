@@ -453,11 +453,17 @@ describe('Session Creation and Title Generation', () => {
 		let gitWorkspace: string;
 		let sessionManagerWithWorktrees: SessionManager;
 		let worktreeDb: Database;
+		let testWorktreeBaseDir: string;
 
 		beforeEach(async () => {
 			// Create a git repository for testing
 			gitWorkspace = path.join(tmpdir(), `test-git-workspace-${Date.now()}`);
 			fs.mkdirSync(gitWorkspace, { recursive: true });
+
+			// Set up test worktree base directory
+			testWorktreeBaseDir = path.join(tmpdir(), `test-worktrees-${Date.now()}`);
+			fs.mkdirSync(testWorktreeBaseDir, { recursive: true });
+			process.env.TEST_WORKTREE_BASE_DIR = testWorktreeBaseDir;
 
 			// Initialize git repository
 			const { execSync } = require('node:child_process');
@@ -540,6 +546,18 @@ describe('Session Creation and Title Generation', () => {
 			} catch {
 				// Ignore cleanup errors
 			}
+
+			// Cleanup test worktree base directory
+			try {
+				if (fs.existsSync(testWorktreeBaseDir)) {
+					fs.rmSync(testWorktreeBaseDir, { recursive: true, force: true });
+				}
+			} catch {
+				// Ignore cleanup errors
+			}
+
+			// Clear environment variable
+			delete process.env.TEST_WORKTREE_BASE_DIR;
 		});
 
 		test('session created with pending_worktree_choice status in git repo', async () => {
