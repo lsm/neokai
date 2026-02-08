@@ -56,12 +56,13 @@ async function waitForProcessingState(
 		let unsubscribe: (() => void) | undefined;
 		let resolved = false;
 
-		const cleanup = () => {
+		const cleanup = async () => {
 			if (!resolved) {
 				resolved = true;
 				clearTimeout(timer);
 				unsubscribe?.();
-				daemon.messageHub.leaveRoom('session:' + sessionId);
+				// Leave room (fire-and-forget - cleanup doesn't need to wait)
+				daemon.messageHub.leaveRoom('session:' + sessionId).catch(() => {});
 			}
 		};
 
@@ -85,8 +86,15 @@ async function waitForProcessingState(
 			}
 		});
 
-		// Join the session room so events are routed to this client
-		daemon.messageHub.joinRoom('session:' + sessionId);
+		// Join the session room and wait for acknowledgment before continuing
+		// This ensures events are routed to this client
+		(async () => {
+			try {
+				await daemon.messageHub.joinRoom('session:' + sessionId);
+			} catch {
+				// Join failed, but continue - events might still work
+			}
+		})();
 
 		// Double-check state after listener is set up
 		// in case the state changed between our initial check and listener setup

@@ -367,39 +367,37 @@ export class MessageHub {
 
 	/**
 	 * Join a room (client → server)
-	 * Sends a reserved command that the router handles
+	 * Sends a query that the router handles and waits for acknowledgment
+	 * This ensures the client is added to the room before subsequent operations
 	 */
-	joinRoom(room: string): void {
+	async joinRoom(room: string): Promise<void> {
 		if (!this.isConnected()) {
 			this.logDebug(`joinRoom skipped (not connected): ${room}`);
 			return;
 		}
-		const message = createCommandMessage({
-			method: 'room.join',
-			data: { room },
-			sessionId: this.defaultSessionId,
-		});
-		this.sendMessage(message).catch((error) => {
+		try {
+			await this.query('room.join', { room });
+		} catch (error) {
 			log.error(`Failed to join room ${room}:`, error);
-		});
+			throw error;
+		}
 	}
 
 	/**
 	 * Leave a room (client → server)
+	 * Sends a query that the router handles and waits for acknowledgment
 	 */
-	leaveRoom(room: string): void {
+	async leaveRoom(room: string): Promise<void> {
 		if (!this.isConnected()) {
 			this.logDebug(`leaveRoom skipped (not connected): ${room}`);
 			return;
 		}
-		const message = createCommandMessage({
-			method: 'room.leave',
-			data: { room },
-			sessionId: this.defaultSessionId,
-		});
-		this.sendMessage(message).catch((error) => {
+		try {
+			await this.query('room.leave', { room });
+		} catch (error) {
 			log.error(`Failed to leave room ${room}:`, error);
-		});
+			throw error;
+		}
 	}
 
 	// ========================================
@@ -554,6 +552,45 @@ export class MessageHub {
 	 * Handle incoming QUERY message (returns response)
 	 */
 	private async handleIncomingQuery(message: HubMessage): Promise<void> {
+		// Handle reserved room queries
+		if (message.method === 'room.join' || message.method === 'room.leave') {
+			const clientId = (message as import('./protocol').HubMessageWithMetadata).clientId;
+			if (
+				this.router &&
+				clientId &&
+				message.data &&
+				typeof (message.data as Record<string, unknown>).room === 'string'
+			) {
+				const room = (message.data as Record<string, unknown>).room as string;
+				if (message.method === 'room.join') {
+					this.router.joinRoom(clientId, room);
+				} else {
+					this.router.leaveRoom(clientId, room);
+				}
+				// Send success response
+				const resultMsg = createResponseMessage({
+					method: message.method,
+					data: { success: true },
+					sessionId: message.sessionId,
+					requestId: message.id,
+				});
+				await this.sendResponseToClient(resultMsg, clientId);
+				return;
+			}
+			// If we get here, something was wrong - send error response
+			const errorMsg = createErrorResponseMessage({
+				method: message.method,
+				error: {
+					message: 'Invalid room.join/room.leave request',
+					code: ErrorCode.INVALID_PARAMS,
+				},
+				sessionId: message.sessionId,
+				requestId: message.id,
+			});
+			await this.sendResponseToClient(errorMsg, clientId);
+			return;
+		}
+
 		const handler = this.queryHandlers.get(message.method);
 		const clientId = (message as import('./protocol').HubMessageWithMetadata).clientId;
 
