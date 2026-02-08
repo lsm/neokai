@@ -9,8 +9,8 @@
 import { spawn } from 'child_process';
 import path from 'path';
 import { MessageHub, WebSocketClientTransport } from '@neokai/shared';
-import { createDaemonApp, type DaemonAppContext } from '../../../src/app';
-import { getConfig } from '../../../src/config';
+import { createDaemonApp, type DaemonAppContext } from '../../src/app';
+import { getConfig } from '../../src/config';
 
 export interface DaemonServerOptions {
 	/**
@@ -73,7 +73,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 		options;
 
 	// Create a standalone daemon server entry point
-	const serverPath = path.join(__dirname, 'standalone-daemon-server.ts');
+	const serverPath = path.join(__dirname, 'standalone-server.ts');
 
 	// Spawn the daemon server
 	const daemonProcess = spawn('bun', ['run', serverPath], {

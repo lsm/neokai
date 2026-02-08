@@ -17,8 +17,8 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import type { TestContext } from '../../test-utils';
-import { createTestApp, callRPCHandler } from '../../test-utils';
+import type { TestContext } from '../../helpers/test-app';
+import { createTestApp, callRPCHandler } from '../../helpers/test-app';
 
 describe('Message Remove Output Integration Tests', () => {
 	let ctx: TestContext;

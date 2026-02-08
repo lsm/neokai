@@ -21,7 +21,7 @@ import {
 	cleanupIntegrationTestEnv,
 	createTestSession,
 	type IntegrationTestEnv,
-} from '../../integration-test-utils';
+} from '../../helpers/integration-env';
 
 describe('Session Persistence Integration', () => {
 	let env: IntegrationTestEnv;

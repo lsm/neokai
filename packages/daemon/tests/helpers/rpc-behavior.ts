@@ -6,7 +6,7 @@
  */
 
 import type { MessageHub, Session } from '@neokai/shared';
-import { callRPCHandler } from '../../test-utils';
+import { callRPCHandler } from './test-app';
 
 /**
  * Create a session via RPC and return session ID

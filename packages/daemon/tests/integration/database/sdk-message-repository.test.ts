@@ -7,7 +7,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../src/storage/database';
 import type { SDKMessage } from '@neokai/shared/sdk';
-import { createTestSession } from './fixtures/database-test-utils';
+import { createTestSession } from '../../helpers/database';
 
 describe('SDKMessageRepository', () => {
 	let db: Database;

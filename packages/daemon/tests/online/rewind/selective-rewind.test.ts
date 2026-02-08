@@ -17,9 +17,9 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 // Bun automatically loads .env from project root when running tests
-import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { createDaemonServer } from '../helpers/daemon-server-helper';
-import { sendMessage, waitForIdle } from '../helpers/daemon-test-helpers';
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import { createDaemonServer } from '../../helpers/daemon-server';
+import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
 import type { RewindMode } from '@neokai/shared';
 
 /**

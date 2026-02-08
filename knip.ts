@@ -41,6 +41,7 @@ const config: KnipConfig = {
 		'packages/daemon/scripts/**', // Database recovery scripts
 		'packages/daemon/tests/manual/**', // Manual test scripts
 		'packages/daemon/tests/mocks/**', // Test mocks
+		'packages/daemon/tests/helpers/**', // Test helpers (used by online tests outside knip scan)
 		'packages/shared/src/sdk/**', // SDK types from Claude Agent SDK (not all used)
 		// 'packages/shared/src/message-hub/index.ts',
 		// 'packages/daemon/src/lib/agent/index.ts',
