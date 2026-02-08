@@ -1,10 +1,9 @@
-import { config } from 'dotenv';
 import { join } from 'path';
 import { homedir } from 'os';
 
-// Load environment variables from .env file in the current working directory
-// This allows each instance (dev, self-hosting, production) to have its own configuration
-config({ path: join(process.cwd(), '.env') });
+// Bun automatically loads .env files from the current working directory at startup
+// Files loaded: .env, .env.local (later files override earlier)
+// No dotenv package needed - this is built into Bun runtime
 
 // Discover credentials from Claude Code storage and ~/.claude/settings.json
 // This enriches process.env BEFORE any other code reads it.

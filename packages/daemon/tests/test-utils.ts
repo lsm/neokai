@@ -3,13 +3,9 @@
  */
 
 import type { Server } from 'bun';
-import { config as dotenvConfig } from 'dotenv';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-// Load .env from daemon package directory
-const __dirname = dirname(fileURLToPath(import.meta.url));
-dotenvConfig({ path: join(__dirname, '../.env') });
+// Bun automatically loads .env from the project root at startup
+// Test utilities rely on environment variables being set by the test runner
 import { Database } from '../src/storage/database';
 import { SessionManager } from '../src/lib/session-manager';
 import { AuthManager } from '../src/lib/auth-manager';
