@@ -23,7 +23,7 @@ import { setModelsCache } from '../../../src/lib/model-service';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { mockAgentSessionForOfflineTest } from '../../test-utils';
+import { mockAgentSessionForOfflineTest } from '../../helpers/test-app';
 
 describe('message.send EventBus Integration', () => {
 	let db: Database;

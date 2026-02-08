@@ -7,13 +7,13 @@
 
 import { describe, expect, it, test, beforeAll, beforeEach, afterEach, mock } from 'bun:test';
 import { setupMessageHandlers } from '../../../src/lib/rpc-handlers/message-handlers';
-import type { TestContext } from '../../test-utils';
+import type { TestContext } from '../../helpers/test-app';
 import {
 	createTestApp,
 	waitForWebSocketState,
 	waitForWebSocketMessage,
 	createWebSocketWithFirstMessage,
-} from '../../test-utils';
+} from '../../helpers/test-app';
 
 describe('Message RPC Handlers', () => {
 	let handlers: Map<string, Function>;

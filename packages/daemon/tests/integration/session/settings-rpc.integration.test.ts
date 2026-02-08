@@ -7,8 +7,8 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { TestContext } from '../../test-utils';
-import { createTestApp, callRPCHandler } from '../../test-utils';
+import type { TestContext } from '../../helpers/test-app';
+import { createTestApp, callRPCHandler } from '../../helpers/test-app';
 import type { GlobalSettings } from '@neokai/shared';
 
 describe('Settings RPC Integration', () => {
@@ -566,7 +566,7 @@ import {
 	waitForWebSocketState,
 	waitForWebSocketMessage,
 	createWebSocketWithFirstMessage,
-} from '../../test-utils';
+} from '../../helpers/test-app';
 
 describe('Settings RPC Handlers - Extended', () => {
 	let ctx: TestContext;

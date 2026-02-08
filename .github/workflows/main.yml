@@ -155,13 +155,15 @@ jobs:
           GLM_API_KEY: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
 
-      - name: Fix coverage paths for monorepo
+      - name: Fix coverage paths and strip test utilities
         working-directory: packages/daemon
         run: |
-          # Bun generates paths relative to package dir (src/...)
-          # Need to prefix with packages/daemon/ for repo root
-          sed -i 's|^SF:src/|SF:packages/daemon/src/|g' coverage-${{ matrix.module }}/lcov.info || true
-          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' coverage-${{ matrix.module }}/lcov.info || true
+          LCOV=coverage-${{ matrix.module }}/lcov.info
+          # Fix paths: Bun generates relative to package dir, need repo root paths
+          sed -i 's|^SF:src/|SF:packages/daemon/src/|g' $LCOV || true
+          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' $LCOV || true
+          # Strip test utility coverage (helpers, fixtures, mocks)
+          awk '/^SF:packages\/daemon\/tests\//{skip=1} /^end_of_record/{if(skip){skip=0;next}} !skip' $LCOV > ${LCOV}.clean && mv ${LCOV}.clean $LCOV || true
 
       - name: Upload to Coveralls (parallel)
         uses: coverallsapp/github-action@v2
@@ -243,13 +245,15 @@ jobs:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
-      - name: Fix coverage paths for monorepo
+      - name: Fix coverage paths and strip test utilities
         working-directory: packages/daemon
         run: |
-          # Bun generates paths relative to package dir (src/...)
-          # Need to prefix with packages/daemon/ for repo root
-          sed -i 's|^SF:src/|SF:packages/daemon/src/|g' coverage-online-${{ matrix.module }}/lcov.info || true
-          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' coverage-online-${{ matrix.module }}/lcov.info || true
+          LCOV=coverage-online-${{ matrix.module }}/lcov.info
+          # Fix paths: Bun generates relative to package dir, need repo root paths
+          sed -i 's|^SF:src/|SF:packages/daemon/src/|g' $LCOV || true
+          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' $LCOV || true
+          # Strip test utility coverage (helpers, fixtures, mocks)
+          awk '/^SF:packages\/daemon\/tests\//{skip=1} /^end_of_record/{if(skip){skip=0;next}} !skip' $LCOV > ${LCOV}.clean && mv ${LCOV}.clean $LCOV || true
 
       - name: Upload to Coveralls (parallel)
         uses: coverallsapp/github-action@v2
@@ -285,6 +289,11 @@ jobs:
         env:
           GLM_API_KEY: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
+
+      - name: Strip test utility coverage
+        run: |
+          # Strip test utility coverage (helpers, fixtures, mocks)
+          awk '/^SF:packages\/daemon\/tests\//{skip=1} /^end_of_record/{if(skip){skip=0;next}} !skip' coverage/lcov.info > coverage/lcov.clean && mv coverage/lcov.clean coverage/lcov.info || true
 
       - name: Upload to Coveralls (parallel)
         uses: coverallsapp/github-action@v2

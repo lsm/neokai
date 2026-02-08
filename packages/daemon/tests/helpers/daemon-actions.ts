@@ -7,7 +7,7 @@
  * - Observing agent behavior through events
  */
 
-import type { DaemonServerContext } from './daemon-server-helper';
+import type { DaemonServerContext } from './daemon-server';
 
 /**
  * Send a message via RPC and return the messageId

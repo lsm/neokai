@@ -6,17 +6,17 @@ import type { Server } from 'bun';
 
 // Bun automatically loads .env from the project root at startup
 // Test utilities rely on environment variables being set by the test runner
-import { Database } from '../src/storage/database';
-import { SessionManager } from '../src/lib/session-manager';
-import { AuthManager } from '../src/lib/auth-manager';
-import { SettingsManager } from '../src/lib/settings-manager';
-import { StateManager } from '../src/lib/state-manager';
-import { SubscriptionManager } from '../src/lib/subscription-manager';
+import { Database } from '../../src/storage/database';
+import { SessionManager } from '../../src/lib/session-manager';
+import { AuthManager } from '../../src/lib/auth-manager';
+import { SettingsManager } from '../../src/lib/settings-manager';
+import { StateManager } from '../../src/lib/state-manager';
+import { SubscriptionManager } from '../../src/lib/subscription-manager';
 import { MessageHub, MessageHubRouter } from '@neokai/shared';
-import { setupRPCHandlers } from '../src/lib/rpc-handlers';
-import { WebSocketServerTransport } from '../src/lib/websocket-server-transport';
-import { createWebSocketHandlers } from '../src/routes/setup-websocket';
-import type { Config } from '../src/config';
+import { setupRPCHandlers } from '../../src/lib/rpc-handlers';
+import { WebSocketServerTransport } from '../../src/lib/websocket-server-transport';
+import { createWebSocketHandlers } from '../../src/routes/setup-websocket';
+import type { Config } from '../../src/config';
 
 export interface TestContext {
 	server: Server;
@@ -28,7 +28,7 @@ export interface TestContext {
 	stateManager: StateManager;
 	subscriptionManager: SubscriptionManager;
 	authManager: AuthManager;
-	eventBus: Awaited<ReturnType<typeof import('../src/lib/daemon-hub').createDaemonHub>>;
+	eventBus: Awaited<ReturnType<typeof import('../../src/lib/daemon-hub').createDaemonHub>>;
 	baseUrl: string;
 	workspacePath: string;
 	config: Config;
@@ -44,7 +44,7 @@ let globalModelsCache: Map<string, unknown> | null = null;
 /**
  * Options for createTestApp
  */
-export interface TestAppOptions {
+interface TestAppOptions {
 	/**
 	 * Whether to use git worktrees for session isolation.
 	 * Default: false (disabled for speed - most tests don't need worktree isolation)
@@ -127,7 +127,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 	const settingsManager = new SettingsManager(db, config.workspaceRoot);
 
 	// Initialize DaemonHub (breaks circular dependency!)
-	const { createDaemonHub } = await import('../src/lib/daemon-hub');
+	const { createDaemonHub } = await import('../../src/lib/daemon-hub');
 	const eventBus = createDaemonHub('test-daemon');
 	await eventBus.initialize();
 
@@ -369,130 +369,6 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 			server.stop();
 		},
 	};
-}
-
-/**
- * Create WebSocket connection to test server and return both the WebSocket and a promise for the first message
- * Note: Uses unified /ws endpoint - sessionId is passed in message payloads, not URL
- */
-export function createWebSocketWithFirstMessage(
-	baseUrl: string,
-	_sessionId: string,
-	timeout = 5000
-): { ws: WebSocket; firstMessagePromise: Promise<unknown> } {
-	const wsUrl = baseUrl.replace('http://', 'ws://');
-	const ws = new WebSocket(`${wsUrl}/ws`);
-
-	// Set up message listener IMMEDIATELY (synchronously)
-	const firstMessagePromise = new Promise((resolve, reject) => {
-		const messageHandler = (event: MessageEvent) => {
-			clearTimeout(timer);
-			ws.removeEventListener('message', messageHandler);
-			ws.removeEventListener('error', errorHandler);
-			try {
-				const data = JSON.parse(event.data as string);
-				resolve(data);
-			} catch {
-				reject(new Error('Failed to parse WebSocket message'));
-			}
-		};
-
-		const errorHandler = (error: Event) => {
-			clearTimeout(timer);
-			ws.removeEventListener('message', messageHandler);
-			ws.removeEventListener('error', errorHandler);
-			reject(error);
-		};
-
-		ws.addEventListener('message', messageHandler);
-		ws.addEventListener('error', errorHandler);
-
-		const timer = setTimeout(() => {
-			ws.removeEventListener('message', messageHandler);
-			ws.removeEventListener('error', errorHandler);
-			reject(new Error(`No WebSocket message received within ${timeout}ms`));
-		}, timeout);
-	});
-
-	return { ws, firstMessagePromise };
-}
-
-/**
- * Create WebSocket connection to test server (legacy, for backward compatibility)
- * Note: Uses unified /ws endpoint - sessionId is passed in message payloads, not URL
- */
-export function createWebSocket(baseUrl: string, _sessionId: string): WebSocket {
-	const wsUrl = baseUrl.replace('http://', 'ws://');
-	const ws = new WebSocket(`${wsUrl}/ws`);
-
-	// Set up error handler immediately to catch early errors
-	ws.addEventListener('error', (error) => {
-		if (process.env.TEST_VERBOSE) {
-			console.error('WebSocket error in test:', error);
-		}
-	});
-
-	return ws;
-}
-
-/**
- * Wait for WebSocket to be in a specific state
- */
-export async function waitForWebSocketState(
-	ws: WebSocket,
-	state: number,
-	timeout = 5000
-): Promise<void> {
-	const startTime = Date.now();
-	while (ws.readyState !== state) {
-		if (Date.now() - startTime > timeout) {
-			throw new Error(`WebSocket did not reach state ${state} within ${timeout}ms`);
-		}
-		await Bun.sleep(10);
-	}
-}
-
-/**
- * Wait for WebSocket message
- * Sets up listener immediately to avoid race conditions
- */
-export async function waitForWebSocketMessage(ws: WebSocket, timeout = 5000): Promise<unknown> {
-	return new Promise((resolve, reject) => {
-		// Set up handlers first, before any timing checks
-		const messageHandler = (event: MessageEvent) => {
-			clearTimeout(timer);
-			ws.removeEventListener('message', messageHandler);
-			ws.removeEventListener('error', errorHandler);
-			try {
-				const data = JSON.parse(event.data as string);
-				resolve(data);
-			} catch {
-				reject(new Error('Failed to parse WebSocket message'));
-			}
-		};
-
-		const errorHandler = (error: Event) => {
-			clearTimeout(timer);
-			ws.removeEventListener('message', messageHandler);
-			ws.removeEventListener('error', errorHandler);
-			reject(error);
-		};
-
-		// Add listeners immediately
-		ws.addEventListener('message', messageHandler);
-		ws.addEventListener('error', errorHandler);
-
-		// Then set timeout
-		const timer = setTimeout(() => {
-			ws.removeEventListener('message', messageHandler);
-			ws.removeEventListener('error', errorHandler);
-			reject(
-				new Error(
-					`No WebSocket message received within ${timeout}ms (readyState: ${ws.readyState})`
-				)
-			);
-		}, timeout);
-	});
 }
 
 /**

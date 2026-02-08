@@ -24,9 +24,9 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { createDaemonServer } from '../helpers/daemon-server-helper';
-import { sendMessage, waitForIdle } from '../helpers/daemon-test-helpers';
+import type { DaemonServerContext } from '../helpers/daemon-server';
+import { createDaemonServer } from '../helpers/daemon-server';
+import { sendMessage, waitForIdle } from '../helpers/daemon-actions';
 
 // Skip on Windows (sandbox not supported)
 const platform = os.platform();

@@ -13,7 +13,7 @@
 
 const PORT = parseInt(process.env.PORT || '19400', 10);
 
-import { createDaemonApp } from '../../../src/app';
+import { createDaemonApp } from '../../src/app';
 
 async function main() {
 	const { cleanup } = await createDaemonApp({

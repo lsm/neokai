@@ -7,8 +7,8 @@
  * - MessageHub broadcasting
  */
 
-import { Database } from '../src/storage/database';
-import { createDaemonHub, type DaemonHub } from '../src/lib/daemon-hub';
+import { Database } from '../../src/storage/database';
+import { createDaemonHub, type DaemonHub } from '../../src/lib/daemon-hub';
 import type { Session, SessionConfig, SessionMetadata } from '@neokai/shared';
 import type {
 	PublishOptions,

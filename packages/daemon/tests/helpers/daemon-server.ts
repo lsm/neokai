@@ -9,8 +9,8 @@
 import { spawn } from 'child_process';
 import path from 'path';
 import { MessageHub, WebSocketClientTransport } from '@neokai/shared';
-import { createDaemonApp, type DaemonAppContext } from '../../../src/app';
-import { getConfig } from '../../../src/config';
+import { createDaemonApp, type DaemonAppContext } from '../../src/app';
+import { getConfig } from '../../src/config';
 
 export interface DaemonServerOptions {
 	/**

@@ -1,18 +1,28 @@
 /**
- * Shared test utilities for ProcessingStateManager tests
+ * Shared test utilities for database tests
+ *
+ * Consolidated from:
+ * - tests/integration/database/fixtures/database-test-utils.ts
+ * - tests/integration/database/processing-state/test-utils.ts
  */
 
 import type { Session } from '@neokai/shared';
 import { mock } from 'bun:test';
-import { Database } from '../../../../src/storage/database';
-import { createDaemonHub, type DaemonHub } from '../../../../src/lib/daemon-hub';
+import { Database } from '../../src/storage/database';
+import { createDaemonHub, type DaemonHub } from '../../src/lib/daemon-hub';
 
+/**
+ * Create an in-memory test database
+ */
 export async function createTestDb(): Promise<Database> {
 	const db = new Database(':memory:');
 	await db.initialize();
 	return db;
 }
 
+/**
+ * Create a mocked database with bun:test mocks
+ */
 export function createMockDb(): Database {
 	return {
 		getSession: mock(() => null),
@@ -20,12 +30,18 @@ export function createMockDb(): Database {
 	} as unknown as Database;
 }
 
+/**
+ * Create and initialize a test DaemonHub
+ */
 export async function createTestDaemonHub(name: string): Promise<DaemonHub> {
 	const eventBus = createDaemonHub(name);
 	await eventBus.initialize();
 	return eventBus;
 }
 
+/**
+ * Create a test session with default values
+ */
 export function createTestSession(id: string): Session {
 	return {
 		id,
@@ -104,3 +120,6 @@ export function createPersistablePendingQuestion() {
 		draftResponses: [{ questionIndex: 0, selectedLabels: ['A'] }],
 	};
 }
+
+// Re-export assertions for convenience
+export { assertEquals, assertExists } from './test-app';

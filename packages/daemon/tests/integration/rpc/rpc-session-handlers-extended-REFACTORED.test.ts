@@ -18,8 +18,8 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { TestContext } from '../../test-utils';
-import { createTestApp, callRPCHandler } from '../../test-utils';
+import type { TestContext } from '../../helpers/test-app';
+import { createTestApp, callRPCHandler } from '../../helpers/test-app';
 import {
 	createSession,
 	getSession,
@@ -27,7 +27,7 @@ import {
 	deleteSession,
 	listSessions,
 	getSDKMessages,
-} from '../helpers/rpc-behavior-helpers';
+} from '../helpers/rpc-behavior';
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 

@@ -11,9 +11,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { createDaemonServer } from '../helpers/daemon-server-helper';
-import { getSession, sendMessage, waitForIdle } from '../helpers/daemon-test-helpers';
+import type { DaemonServerContext } from '../helpers/daemon-server';
+import { createDaemonServer } from '../helpers/daemon-server';
+import { getSession, sendMessage, waitForIdle } from '../helpers/daemon-actions';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';

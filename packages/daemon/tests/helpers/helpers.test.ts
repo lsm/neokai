@@ -6,15 +6,15 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { TestContext } from '../../test-utils';
-import { createTestApp } from '../../test-utils';
-import { getProcessingState, sendMessage } from './rpc-behavior-helpers';
+import type { TestContext } from './test-app';
+import { createTestApp } from './test-app';
+import { getProcessingState, sendMessage } from './rpc-behavior';
 import {
 	waitForCondition,
 	waitForAsyncCondition,
 	waitFor,
 	collectSubscriptionValues,
-} from './wait-helpers';
+} from './wait';
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
