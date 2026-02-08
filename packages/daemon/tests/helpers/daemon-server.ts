@@ -73,7 +73,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 		options;
 
 	// Create a standalone daemon server entry point
-	const serverPath = path.join(__dirname, 'standalone-daemon-server.ts');
+	const serverPath = path.join(__dirname, 'standalone-server.ts');
 
 	// Spawn the daemon server
 	const daemonProcess = spawn('bun', ['run', serverPath], {
