@@ -67,8 +67,64 @@ flag_names:
     paths:
       - packages/daemon/src/
       - packages/shared/src/
+  # Online integration test coverage (matrixized by module)
+  daemon-online-agent:
+    description: Daemon online integration tests - agent module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-components:
+    description: Daemon online integration tests - components module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-coordinator:
+    description: Daemon online integration tests - coordinator module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-convo:
+    description: Daemon online integration tests - convo module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-features:
+    description: Daemon online integration tests - features module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-lifecycle:
+    description: Daemon online integration tests - lifecycle module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-mcp:
+    description: Daemon online integration tests - mcp module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-providers:
+    description: Daemon online integration tests - providers module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-rewind:
+    description: Daemon online integration tests - rewind module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-rpc:
+    description: Daemon online integration tests - rpc module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-sdk:
+    description: Daemon online integration tests - sdk module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
 
-# Ignore test files and fixtures (same as codecov.yml)
+# Ignore test files and fixtures
 ignore:
   - "**/*.test.ts"
   - "**/*.test.tsx"

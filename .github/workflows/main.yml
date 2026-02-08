@@ -11,7 +11,7 @@
 # 4. "All Tests Pass" gate (used by release.yml to verify CI status)
 #
 # Release is handled separately in release.yml (triggered by version tags).
-# Unit test coverage (daemon, web) is uploaded to Codecov.
+# Test coverage (unit, integration online/offline, web) is uploaded to Coveralls.
 
 name: CI
 
@@ -163,14 +163,6 @@ jobs:
           sed -i 's|^SF:src/|SF:packages/daemon/src/|g' coverage-${{ matrix.module }}/lcov.info || true
           sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' coverage-${{ matrix.module }}/lcov.info || true
 
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/daemon/coverage-${{ matrix.module }}/lcov.info
-          flags: daemon-offline-${{ matrix.module }}
-          fail_ci_if_error: false
-
       - name: Upload to Coveralls (parallel)
         uses: coverallsapp/github-action@v2
         with:
@@ -246,10 +238,27 @@ jobs:
 
       - name: Run daemon online tests (${{ matrix.module }})
         working-directory: packages/daemon
-        run: bun test ${{ matrix.test_path }}
+        run: bun test ${{ matrix.test_path }} --coverage --coverage-reporter=lcov --coverage-dir=coverage-online-${{ matrix.module }}
         env:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+      - name: Fix coverage paths for monorepo
+        working-directory: packages/daemon
+        run: |
+          # Bun generates paths relative to package dir (src/...)
+          # Need to prefix with packages/daemon/ for repo root
+          sed -i 's|^SF:src/|SF:packages/daemon/src/|g' coverage-online-${{ matrix.module }}/lcov.info || true
+          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' coverage-online-${{ matrix.module }}/lcov.info || true
+
+      - name: Upload to Coveralls (parallel)
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: packages/daemon/coverage-online-${{ matrix.module }}/lcov.info
+          flag-name: daemon-online-${{ matrix.module }}
+          parallel: true
+          fail-on-error: false
 
   # ============================================
   # DAEMON + SHARED UNIT TESTS (For coverage measurement)
@@ -276,14 +285,6 @@ jobs:
         env:
           GLM_API_KEY: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
-
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage/lcov.info
-          flags: daemon
-          fail_ci_if_error: false
 
       - name: Upload to Coveralls (parallel)
         uses: coverallsapp/github-action@v2
@@ -321,18 +322,10 @@ jobs:
       - name: Fix coverage paths for monorepo
         run: |
           # Vitest generates paths relative to package dir (src/...)
-          # Codecov needs paths relative to repo root (packages/web/src/...)
+          # Coveralls needs paths relative to repo root (packages/web/src/...)
           sed -i 's|^SF:src/|SF:packages/web/src/|g' packages/web/coverage/lcov.info
           # Fix cross-package paths (../shared/src/... -> packages/shared/src/...)
           sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' packages/web/coverage/lcov.info
-
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/web/coverage/lcov.info
-          flags: web
-          fail_ci_if_error: false
 
       - name: Upload to Coveralls (parallel)
         uses: coverallsapp/github-action@v2
@@ -375,7 +368,7 @@ jobs:
   coveralls-finalize:
     name: Finalize Coveralls
     runs-on: ubuntu-latest
-    needs: [test-daemon-shared-unit, test-web, test-daemon-offline]
+    needs: [test-daemon-shared-unit, test-web, test-daemon-offline, test-daemon-online]
     if: always()
     timeout-minutes: 1
 
