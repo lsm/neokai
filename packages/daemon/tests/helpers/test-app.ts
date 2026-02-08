@@ -603,3 +603,58 @@ export async function waitForWebSocketMessage(ws: WebSocket, timeout = 5000): Pr
 		}, timeout);
 	});
 }
+
+/**
+ * Wait for WebSocket message with specific type
+ * Useful when query handlers broadcast events AND return responses,
+ * and we need to find the RSP message specifically
+ */
+export async function waitForWebSocketMessageType(
+	ws: WebSocket,
+	messageType: string,
+	timeout = 5000
+): Promise<unknown> {
+	const messages: unknown[] = [];
+	return new Promise((resolve, reject) => {
+		const messageHandler = (event: MessageEvent) => {
+			try {
+				const data = JSON.parse(event.data as string);
+				messages.push(data);
+
+				// Check if this message matches the desired type
+				if ((data as { type?: string }).type === messageType) {
+					clearTimeout(timer);
+					ws.removeEventListener('message', messageHandler);
+					ws.removeEventListener('error', errorHandler);
+					resolve(data);
+				}
+			} catch {
+				clearTimeout(timer);
+				ws.removeEventListener('message', messageHandler);
+				ws.removeEventListener('error', errorHandler);
+				reject(new Error('Failed to parse WebSocket message'));
+			}
+		};
+
+		const errorHandler = (error: Event) => {
+			clearTimeout(timer);
+			ws.removeEventListener('message', messageHandler);
+			ws.removeEventListener('error', errorHandler);
+			reject(error);
+		};
+
+		ws.addEventListener('message', messageHandler);
+		ws.addEventListener('error', errorHandler);
+
+		const timer = setTimeout(() => {
+			ws.removeEventListener('message', messageHandler);
+			ws.removeEventListener('error', errorHandler);
+			const receivedTypes = messages.map((m) => (m as { type?: string }).type).join(', ');
+			reject(
+				new Error(
+					`No WebSocket message with type '${messageType}' received within ${timeout}ms. Received types: [${receivedTypes}]`
+				)
+			);
+		}, timeout);
+	});
+}

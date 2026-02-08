@@ -12,6 +12,7 @@ import {
 	createTestApp,
 	waitForWebSocketState,
 	waitForWebSocketMessage,
+	waitForWebSocketMessageType,
 	createWebSocketWithFirstMessage,
 } from '../../helpers/test-app';
 
@@ -129,7 +130,7 @@ describe('Agent RPC Handlers', () => {
 			await waitForWebSocketState(ws, WebSocket.OPEN);
 			await firstMessagePromise;
 
-			const responsePromise = waitForWebSocketMessage(ws);
+			const responsePromise = waitForWebSocketMessageType(ws, 'RSP');
 
 			ws.send(
 				JSON.stringify({
@@ -161,7 +162,7 @@ describe('Agent RPC Handlers', () => {
 			await waitForWebSocketState(ws, WebSocket.OPEN);
 			await firstMessagePromise;
 
-			const responsePromise = waitForWebSocketMessage(ws);
+			const responsePromise = waitForWebSocketMessageType(ws, 'RSP');
 
 			ws.send(
 				JSON.stringify({
@@ -194,7 +195,7 @@ describe('Agent RPC Handlers', () => {
 			await firstMessagePromise;
 
 			// Reset the query
-			const resetPromise = waitForWebSocketMessage(ws);
+			const resetPromise = waitForWebSocketMessageType(ws, 'RSP');
 
 			ws.send(
 				JSON.stringify({

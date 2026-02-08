@@ -170,7 +170,7 @@ describe('SDKMessageHandler', () => {
 				expect.objectContaining({
 					added: [message],
 				}),
-				{ sessionId: testSessionId }
+				{ room: `session:${testSessionId}` }
 			);
 		});
 
@@ -197,7 +197,7 @@ describe('SDKMessageHandler', () => {
 					added: [message],
 					version: expect.any(Number),
 				}),
-				{ sessionId: testSessionId }
+				{ room: `session:${testSessionId}` }
 			);
 		});
 

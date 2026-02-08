@@ -309,7 +309,7 @@ describe('QueryLifecycleManager', () => {
 			expect(publishSpy).toHaveBeenCalledWith(
 				'session.reset',
 				expect.objectContaining({ message: expect.any(String) }),
-				expect.objectContaining({ sessionId: 'test-session' })
+				expect.objectContaining({ room: 'session:test-session' })
 			);
 			expect(startStreamingCalled).toBe(true);
 		});

@@ -165,11 +165,12 @@ export function registerSettingsHandlers(
 	/**
 	 * Update session settings (placeholder for future session-specific settings)
 	 */
-	messageHub.onCommand(
+	messageHub.onQuery(
 		'settings.session.update',
-		async (_data: { sessionId: string; updates: Partial<SessionSettings> }) => {
+		async (data: { sessionId: string; updates: Partial<SessionSettings> }) => {
 			// Future: update session-specific settings
 			// For now, do nothing
+			return { success: true, sessionId: data.sessionId };
 		}
 	);
 }

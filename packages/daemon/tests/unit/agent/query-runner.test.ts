@@ -281,7 +281,7 @@ describe('QueryRunner', () => {
 						}),
 					]),
 				}),
-				{ sessionId: 'test-session-id' }
+				{ room: 'session:test-session-id' }
 			);
 		});
 

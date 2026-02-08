@@ -244,7 +244,7 @@ describe('InterruptHandler', () => {
 			expect(publishSpy).toHaveBeenCalledWith(
 				'session.interrupted',
 				{},
-				{ sessionId: 'test-session-id' }
+				{ room: 'session:test-session-id' }
 			);
 		});
 
