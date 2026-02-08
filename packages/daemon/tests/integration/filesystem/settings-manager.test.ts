@@ -5,7 +5,6 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { Database } from '../../../src/storage/database';
 import { SettingsManager } from '../../../src/lib/settings-manager';
 import { DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
@@ -371,36 +370,33 @@ describe('SettingsManager', () => {
 
 	describe('attribution fallback', () => {
 		let userSettingsPath: string;
-		let originalUserSettings: string | null = null;
+		let testUserSettingsDir: string;
+		let originalTestUserSettingsDir: string | undefined;
 
 		beforeEach(() => {
-			// Setup user settings path
-			userSettingsPath = join(homedir(), '.claude', 'settings.json');
+			// Set up isolated user settings directory for tests
+			testUserSettingsDir = join(testDir, 'test-user-settings');
+			mkdirSync(testUserSettingsDir, { recursive: true });
 
-			// Backup existing user settings if they exist
-			if (existsSync(userSettingsPath)) {
-				originalUserSettings = readFileSync(userSettingsPath, 'utf-8');
-			}
+			// Override user settings directory for tests
+			originalTestUserSettingsDir = process.env.TEST_USER_SETTINGS_DIR;
+			process.env.TEST_USER_SETTINGS_DIR = testUserSettingsDir;
+
+			// Setup user settings path
+			userSettingsPath = join(testUserSettingsDir, 'settings.json');
 		});
 
 		afterEach(() => {
-			// Restore original user settings
-			if (originalUserSettings !== null) {
-				mkdirSync(join(homedir(), '.claude'), { recursive: true });
-				writeFileSync(userSettingsPath, originalUserSettings);
+			// Restore original environment
+			if (originalTestUserSettingsDir !== undefined) {
+				process.env.TEST_USER_SETTINGS_DIR = originalTestUserSettingsDir;
 			} else {
-				// Remove if it didn't exist before
-				try {
-					rmSync(userSettingsPath);
-				} catch {
-					// Ignore if file doesn't exist
-				}
+				delete process.env.TEST_USER_SETTINGS_DIR;
 			}
 		});
 
 		test('falls back to user settings attribution when not in database', async () => {
 			// Create user settings with attribution
-			mkdirSync(join(homedir(), '.claude'), { recursive: true });
 			const userSettings = {
 				attribution: {
 					commit: '',
@@ -424,7 +420,6 @@ describe('SettingsManager', () => {
 
 		test('prefers database attribution over user settings', async () => {
 			// Create user settings with different attribution
-			mkdirSync(join(homedir(), '.claude'), { recursive: true });
 			const userSettings = {
 				attribution: {
 					commit: 'User attribution',
