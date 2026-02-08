@@ -428,7 +428,7 @@ jobs:
     name: Build Binary (linux-x64)
     runs-on: ubuntu-latest
     needs: [check, test-daemon-offline, test-daemon-online, test-daemon-shared-unit, test-web, test-cli]
-    if: github.event_name == 'push' || github.base_ref == 'main'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.base_ref == 'main'
     timeout-minutes: 10
 
     steps:
@@ -479,7 +479,7 @@ jobs:
   discover:
     name: Discover Tests
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.base_ref == 'main'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.base_ref == 'main'
     outputs:
       tests_no_llm: ${{ steps.categorize.outputs.tests_no_llm }}
       tests_llm: ${{ steps.categorize.outputs.tests_llm }}
@@ -557,7 +557,7 @@ jobs:
     name: E2E (${{ matrix.test }})
     runs-on: ubuntu-latest
     needs: [build, discover]
-    if: github.event_name == 'push' || github.base_ref == 'main'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.base_ref == 'main'
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -652,7 +652,7 @@ jobs:
     name: E2E LLM (${{ matrix.test }})
     runs-on: ubuntu-latest
     needs: [build, discover]
-    if: github.event_name == 'push' || github.base_ref == 'main'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.base_ref == 'main'
     timeout-minutes: 10
     strategy:
       fail-fast: false
