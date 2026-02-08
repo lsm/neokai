@@ -587,7 +587,9 @@ describe('Session Creation and Title Generation', () => {
 
 			expect(updatedSession.status).toBe('active');
 			expect(updatedSession.worktree).toBeUndefined(); // No worktree created
-			expect(updatedSession.gitBranch).toBeUndefined();
+			// gitBranch should now be detected for direct mode in git repos
+			expect(updatedSession.gitBranch).toBeDefined();
+			expect(typeof updatedSession.gitBranch).toBe('string');
 			expect(updatedSession.metadata.worktreeChoice?.status).toBe('completed');
 			expect(updatedSession.metadata.worktreeChoice?.choice).toBe('direct');
 		});

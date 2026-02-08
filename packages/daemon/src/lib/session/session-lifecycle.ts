@@ -122,6 +122,18 @@ export class SessionLifecycle {
 			? 'pending_worktree_choice'
 			: 'active';
 
+		// Detect current branch for non-worktree git repos
+		let currentBranch: string | undefined = worktreeMetadata?.branch;
+		if (!currentBranch && isGitRepo && gitSupport.gitRoot) {
+			try {
+				const branch = await this.worktreeManager.getCurrentBranch(gitSupport.gitRoot);
+				currentBranch = branch ?? undefined;
+			} catch (error) {
+				this.logger.debug('[SessionLifecycle] Failed to get current branch:', error);
+				// Continue without branch info
+			}
+		}
+
 		const session: Session = {
 			id: sessionId,
 			title: providedTitle || 'New Session',
@@ -170,7 +182,7 @@ export class SessionLifecycle {
 			},
 			// Worktree set during creation (if enabled)
 			worktree: worktreeMetadata,
-			gitBranch: worktreeMetadata?.branch,
+			gitBranch: currentBranch ?? undefined,
 		};
 
 		// Save to database
@@ -275,12 +287,24 @@ export class SessionLifecycle {
 			);
 		}
 
+		// Detect current branch for direct mode (non-worktree)
+		let currentBranch: string | undefined = worktreeMetadata?.branch;
+		if (!currentBranch && choice === 'direct') {
+			try {
+				const branch = await this.worktreeManager.getCurrentBranch(baseWorkspacePath);
+				currentBranch = branch ?? undefined;
+			} catch (error) {
+				this.logger.debug('[SessionLifecycle] Failed to get current branch:', error);
+				// Continue without branch info
+			}
+		}
+
 		// Update session
 		const updatedSession: Session = {
 			...session,
 			status: 'active',
 			worktree: worktreeMetadata,
-			gitBranch: worktreeMetadata?.branch,
+			gitBranch: currentBranch ?? undefined,
 			metadata: {
 				...session.metadata,
 				worktreeChoice: {
