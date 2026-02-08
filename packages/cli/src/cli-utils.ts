@@ -205,7 +205,7 @@ export function createJsonErrorResponse(message: string, status: number = 500): 
  * Get local network addresses for display
  * Returns an array of { label, address } for all non-internal IPv4 interfaces
  */
-export function getNetworkAddresses(): Array<{ label: string; address: string }> {
+function getNetworkAddresses(): Array<{ label: string; address: string }> {
 	const os = require('os');
 	const interfaces = os.networkInterfaces();
 	const addresses: Array<{ label: string; address: string }> = [];
