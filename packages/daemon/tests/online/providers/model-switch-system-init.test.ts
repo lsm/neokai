@@ -57,6 +57,7 @@ async function waitForSDKMessage(
 				resolved = true;
 				clearTimeout(timer);
 				unsubscribe?.();
+				daemon.messageHub.leaveRoom('session:' + sessionId);
 			}
 		};
 
@@ -87,6 +88,9 @@ async function waitForSDKMessage(
 				}
 			}
 		});
+
+		// Join the session room so events are routed to this client
+		daemon.messageHub.joinRoom('session:' + sessionId);
 	});
 }
 

@@ -70,34 +70,45 @@ export async function waitFor(ms: number): Promise<void> {
 }
 
 /**
- * DEPRECATED: Uses old subscribe() API which has been removed.
  * Collect values from a subscription until condition met or timeout
  *
- * TODO: Rewrite to use room-based onEvent() API
+ * Supports room-based onEvent() API. If subscriptionOptions contains a room,
+ * the client will join that room before listening and leave it after.
  *
  * @example
  * const values = await collectSubscriptionValues(
  *   messageHub,
  *   'state.session',
  *   (collected) => collected.length >= 3,
- *   { sessionId },
+ *   { room: 'session:abc123' },
  *   5000
  * );
  */
 export async function collectSubscriptionValues<T>(
 	messageHub: {
 		onEvent: (channel: string, handler: (data: T) => void) => () => void;
+		joinRoom?: (room: string) => void;
+		leaveRoom?: (room: string) => void;
 	},
 	channel: string,
 	stopCondition: (collected: T[]) => boolean,
-	subscriptionOptions?: unknown,
+	subscriptionOptions?: { room?: string },
 	timeoutMs: number = 5000
 ): Promise<T[]> {
 	const collected: T[] = [];
+	const room = subscriptionOptions?.room;
 
 	return new Promise((resolve, reject) => {
-		const timeout = setTimeout(() => {
+		const cleanup = () => {
+			clearTimeout(timeout);
 			unsubscribe();
+			if (room && messageHub.leaveRoom) {
+				messageHub.leaveRoom(room);
+			}
+		};
+
+		const timeout = setTimeout(() => {
+			cleanup();
 			reject(
 				new Error(
 					`collectSubscriptionValues timed out after ${timeoutMs}ms, collected ${collected.length} values`
@@ -109,10 +120,14 @@ export async function collectSubscriptionValues<T>(
 			collected.push(data);
 
 			if (stopCondition(collected)) {
-				clearTimeout(timeout);
-				unsubscribe();
+				cleanup();
 				resolve(collected);
 			}
 		});
+
+		// Join the room if specified (must be after onEvent to catch all events)
+		if (room && messageHub.joinRoom) {
+			messageHub.joinRoom(room);
+		}
 	});
 }

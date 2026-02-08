@@ -61,6 +61,7 @@ async function waitForProcessingState(
 				resolved = true;
 				clearTimeout(timer);
 				unsubscribe?.();
+				daemon.messageHub.leaveRoom('session:' + sessionId);
 			}
 		};
 
@@ -83,6 +84,9 @@ async function waitForProcessingState(
 				resolve();
 			}
 		});
+
+		// Join the session room so events are routed to this client
+		daemon.messageHub.joinRoom('session:' + sessionId);
 
 		// Double-check state after listener is set up
 		// in case the state changed between our initial check and listener setup
