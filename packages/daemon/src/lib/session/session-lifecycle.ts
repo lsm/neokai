@@ -21,7 +21,6 @@ import { getProviderService } from '../provider-service';
 import { deleteSDKSessionFiles } from '../sdk-session-file-manager';
 import { resolveSDKCliPath, isBundledBinary } from '../agent/sdk-cli-resolver.js';
 
-
 export interface SessionLifecycleConfig {
 	defaultModel: string;
 	maxTokens: number;
@@ -835,9 +834,7 @@ export function generateBranchName(title: string, sessionId: string): string {
  * @param providerEnvVars - Provider-specific environment variables
  * @returns Merged environment variables object
  */
-function buildSdkQueryEnv(
-	providerEnvVars: Record<string, string | undefined>
-): NodeJS.ProcessEnv {
+function buildSdkQueryEnv(providerEnvVars: Record<string, string | undefined>): NodeJS.ProcessEnv {
 	const { mergeProviderEnvVars } = require('../provider-service');
 	return mergeProviderEnvVars(providerEnvVars as Record<string, string>);
 }
