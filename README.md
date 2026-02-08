@@ -1,7 +1,7 @@
 # NeoKai
 
-[![CI](https://github.com/lsm/neokai/actions/workflows/main.yml/badge.svg)](https://github.com/lsm/neokai/actions/workflows/main.yml)
-[![Coverage Status](https://coveralls.io/repos/github/lsm/neokai/badge.svg?branch=main)](https://coveralls.io/github/lsm/neokai?branch=main)
+[![CI](https://github.com/lsm/neokai/actions/workflows/main.yml/badge.svg?branch=dev)](https://github.com/lsm/neokai/actions/workflows/main.yml)
+[![Coverage Status](https://coveralls.io/repos/github/lsm/neokai/badge.svg?branch=dev)](https://coveralls.io/github/lsm/neokai?branch=dev)
 
 Claude Code web UI for coding, life, and anything in between.
 
