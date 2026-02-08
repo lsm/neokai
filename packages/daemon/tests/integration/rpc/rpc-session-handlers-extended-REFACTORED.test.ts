@@ -20,7 +20,16 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { TestContext } from '../../test-utils';
 import { createTestApp, callRPCHandler } from '../../test-utils';
-import { createSession, getSession, listSessions } from '../helpers/rpc-behavior-helpers';
+import {
+	createSession,
+	getSession,
+	updateSession,
+	deleteSession,
+	listSessions,
+	getSDKMessages,
+} from '../helpers/rpc-behavior-helpers';
+
+const TMP_DIR = process.env.TMPDIR || '/tmp';
 
 describe('Session RPC Handlers - Extended (Behavior)', () => {
 	let ctx: TestContext;
@@ -379,6 +388,205 @@ describe('Session RPC Handlers - Extended (Behavior)', () => {
 					sessionId: 'non-existent',
 				})
 			).rejects.toThrow();
+		});
+	});
+
+	// =============================================================================
+	// Session RPC Behavior (merged from session-rpc-behavior.test.ts)
+	// =============================================================================
+
+	describe('session.create - events and config', () => {
+		test('should create a new session and verify via RPC', async () => {
+			const workspacePath = `${TMP_DIR}/test-workspace`;
+			const sessionId = await createSession(ctx.messageHub, { workspacePath });
+
+			expect(sessionId).toBeString();
+			expect(sessionId.length).toBeGreaterThan(0);
+
+			const session = await getSession(ctx.messageHub, sessionId);
+			expect(session).toBeDefined();
+			expect(session.workspacePath).toBe(workspacePath);
+			expect(session.status).toBe('active');
+		});
+
+		test('should create session with custom config', async () => {
+			const sessionId = await createSession(ctx.messageHub, {
+				workspacePath: `${TMP_DIR}/test-workspace`,
+				config: {
+					model: 'default',
+					maxTokens: 4096,
+					temperature: 0.5,
+				},
+			});
+
+			const session = await getSession(ctx.messageHub, sessionId);
+			// 'default' alias may resolve to full model ID when model cache is populated
+			expect(session.config.model).toMatch(/default|sonnet/);
+			expect(session.config.maxTokens).toBe(4096);
+			expect(session.config.temperature).toBe(0.5);
+		});
+
+		test('should broadcast session.created event via DaemonHub', async () => {
+			let createdSessionId: string | null = null;
+			const eventPromise = new Promise<void>((resolve) => {
+				(
+					ctx.stateManager as {
+						eventBus: {
+							on: (
+								event: string,
+								handler: (data: { sessionId: string; session: unknown }) => void
+							) => void;
+						};
+					}
+				).eventBus.on('session.created', (data) => {
+					createdSessionId = data.sessionId;
+					resolve();
+				});
+			});
+
+			const result = await callRPCHandler(ctx.messageHub, 'session.create', {
+				workspacePath: `${TMP_DIR}/test-workspace`,
+			});
+
+			await eventPromise;
+			expect(createdSessionId).toBe(result.sessionId);
+		});
+	});
+
+	describe('session.list - empty', () => {
+		test('should return empty array when no sessions exist', async () => {
+			const sessions = await listSessions(ctx.messageHub);
+			expect(sessions).toBeArray();
+			expect(sessions.length).toBe(0);
+		});
+	});
+
+	describe('session.get - error', () => {
+		test('should throw error for non-existent session', async () => {
+			await expect(
+				callRPCHandler(ctx.messageHub, 'session.get', {
+					sessionId: 'non-existent-id',
+				})
+			).rejects.toThrow('Session not found');
+		});
+	});
+
+	describe('session.update - events and autoScroll', () => {
+		test('should emit session.updated event via DaemonHub', async () => {
+			const sessionId = await createSession(ctx.messageHub, {
+				workspacePath: `${TMP_DIR}/test-workspace`,
+			});
+
+			let eventReceived = false;
+			const eventPromise = new Promise<void>((resolve) => {
+				(
+					ctx.stateManager as {
+						eventBus: {
+							on: (event: string, handler: (data: { sessionId: string }) => void) => void;
+						};
+					}
+				).eventBus.on('session.updated', (data) => {
+					if (data.sessionId === sessionId) {
+						eventReceived = true;
+						resolve();
+					}
+				});
+			});
+
+			await updateSession(ctx.messageHub, sessionId, { title: 'New Title' });
+			await eventPromise;
+			expect(eventReceived).toBe(true);
+		});
+
+		test('should update session config with autoScroll setting', async () => {
+			const sessionId = await createSession(ctx.messageHub, {
+				workspacePath: `${TMP_DIR}/test-workspace`,
+			});
+
+			let session = await getSession(ctx.messageHub, sessionId);
+			expect(session.config.autoScroll).toBe(true);
+
+			await updateSession(ctx.messageHub, sessionId, {
+				config: { autoScroll: false },
+			});
+
+			session = await getSession(ctx.messageHub, sessionId);
+			expect(session.config.autoScroll).toBe(false);
+			expect(session.config.model).toBeDefined();
+			expect(session.config.maxTokens).toBeDefined();
+		});
+
+		test('should toggle autoScroll setting', async () => {
+			const sessionId = await createSession(ctx.messageHub, {
+				workspacePath: `${TMP_DIR}/test-workspace`,
+			});
+
+			await updateSession(ctx.messageHub, sessionId, {
+				config: { autoScroll: true },
+			});
+			let session = await getSession(ctx.messageHub, sessionId);
+			expect(session.config.autoScroll).toBe(true);
+
+			await updateSession(ctx.messageHub, sessionId, {
+				config: { autoScroll: false },
+			});
+			session = await getSession(ctx.messageHub, sessionId);
+			expect(session.config.autoScroll).toBe(false);
+		});
+	});
+
+	describe('session.delete - events and cascading', () => {
+		test('should delete session and verify via RPC', async () => {
+			const sessionId = await createSession(ctx.messageHub, {
+				workspacePath: `${TMP_DIR}/test-workspace`,
+			});
+
+			await deleteSession(ctx.messageHub, sessionId);
+			await expect(getSession(ctx.messageHub, sessionId)).rejects.toThrow('Session not found');
+		}, 15000);
+
+		test('should emit session.deleted event via DaemonHub', async () => {
+			const sessionId = await createSession(ctx.messageHub, {
+				workspacePath: `${TMP_DIR}/test-workspace`,
+			});
+
+			let deletedSessionId: string | null = null;
+			const eventPromise = new Promise<void>((resolve) => {
+				(
+					ctx.stateManager as {
+						eventBus: {
+							on: (event: string, handler: (data: { sessionId: string }) => void) => void;
+						};
+					}
+				).eventBus.on('session.deleted', (data) => {
+					deletedSessionId = data.sessionId;
+					resolve();
+				});
+			});
+
+			await deleteSession(ctx.messageHub, sessionId);
+			await eventPromise;
+			expect(deletedSessionId).toBe(sessionId);
+		});
+
+		test('should cascade delete SDK messages', async () => {
+			const sessionId = await createSession(ctx.messageHub, {
+				workspacePath: `${TMP_DIR}/test-workspace`,
+			});
+
+			ctx.db.saveSDKMessage(sessionId, {
+				type: 'user',
+				message: { role: 'user', content: 'test message' },
+				parent_tool_use_id: null,
+				uuid: 'msg-1',
+				session_id: sessionId,
+			});
+
+			const messagesBefore = await getSDKMessages(ctx.messageHub, sessionId);
+			expect(messagesBefore.length).toBe(1);
+
+			await deleteSession(ctx.messageHub, sessionId);
+			await expect(getSDKMessages(ctx.messageHub, sessionId)).rejects.toThrow();
 		});
 	});
 });
