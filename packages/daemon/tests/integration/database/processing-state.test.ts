@@ -21,7 +21,7 @@ import {
 	createSamplePendingQuestion,
 	createMultiSelectPendingQuestion,
 	createPersistablePendingQuestion,
-} from './processing-state/test-utils';
+} from '../../helpers/database';
 
 // =============================================================================
 // Core State Machine

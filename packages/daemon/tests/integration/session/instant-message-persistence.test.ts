@@ -14,7 +14,7 @@ import { generateUUID } from '@neokai/shared';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { mkdirSync, rmSync } from 'fs';
-import { mockAgentSessionForOfflineTest } from '../../test-utils';
+import { mockAgentSessionForOfflineTest } from '../../helpers/test-app';
 
 describe('Instant Message Persistence UX', () => {
 	let db: Database;

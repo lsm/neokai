@@ -10,7 +10,7 @@ import {
 	createTestSession,
 	assertEquals,
 	assertExists,
-} from './fixtures/database-test-utils';
+} from '../../helpers/database';
 
 describe('Database', () => {
 	describe('Message Query Modes', () => {

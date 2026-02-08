@@ -7,7 +7,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../src/storage/database';
 import type { Session } from '@neokai/shared';
-import { createTestSession } from './fixtures/database-test-utils';
+import { createTestSession } from '../../helpers/database';
 
 describe('SessionRepository', () => {
 	let db: Database;

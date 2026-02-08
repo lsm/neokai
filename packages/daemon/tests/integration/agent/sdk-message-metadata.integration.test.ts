@@ -25,7 +25,7 @@ import {
 	cleanupIntegrationTestEnv,
 	createTestSession,
 	type IntegrationTestEnv,
-} from '../../integration-test-utils';
+} from '../../helpers/integration-env';
 
 describe('SDK Message Metadata Broadcasting', () => {
 	let env: IntegrationTestEnv;

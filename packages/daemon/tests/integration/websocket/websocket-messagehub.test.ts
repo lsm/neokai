@@ -6,13 +6,13 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { TestContext } from '../../test-utils';
+import type { TestContext } from '../../helpers/test-app';
 import {
 	createTestApp,
 	createWebSocket,
 	waitForWebSocketState,
 	waitForWebSocketMessage,
-} from '../../test-utils';
+} from '../../helpers/test-app';
 
 describe('WebSocket + MessageHub Integration', () => {
 	let ctx: TestContext;

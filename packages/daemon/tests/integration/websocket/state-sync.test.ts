@@ -7,14 +7,14 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { TestContext } from '../../test-utils';
+import type { TestContext } from '../../helpers/test-app';
 import {
 	createTestApp,
 	callRPCHandler,
 	createWebSocket,
 	waitForWebSocketState,
 	waitForWebSocketMessage,
-} from '../../test-utils';
+} from '../../helpers/test-app';
 import { STATE_CHANNELS, MessageType } from '@neokai/shared';
 
 // Use temp directory for test workspaces

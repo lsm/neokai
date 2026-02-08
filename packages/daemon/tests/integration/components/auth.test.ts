@@ -6,8 +6,8 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { TestContext } from '../../test-utils';
-import { createTestApp, callRPCHandler, hasApiKey, hasOAuthToken } from '../../test-utils';
+import type { TestContext } from '../../helpers/test-app';
+import { createTestApp, callRPCHandler, hasApiKey, hasOAuthToken } from '../../helpers/test-app';
 
 describe('Authentication Integration', () => {
 	let ctx: TestContext;

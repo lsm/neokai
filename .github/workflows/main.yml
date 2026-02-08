@@ -11,7 +11,7 @@
 # 4. "All Tests Pass" gate (used by release.yml to verify CI status)
 #
 # Release is handled separately in release.yml (triggered by version tags).
-# Unit test coverage (daemon, web) is uploaded to Codecov.
+# Test coverage (unit, integration online/offline, web) is uploaded to Coveralls.
 
 name: CI
 
@@ -150,10 +150,29 @@ jobs:
 
       - name: Run daemon tests (${{ matrix.module }})
         working-directory: packages/daemon
-        run: bun test ${{ matrix.test_path }}
+        run: bun test ${{ matrix.test_path }} --coverage --coverage-reporter=lcov --coverage-dir=coverage-${{ matrix.module }}
         env:
           GLM_API_KEY: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
+
+      - name: Fix coverage paths and strip test utilities
+        working-directory: packages/daemon
+        run: |
+          LCOV=coverage-${{ matrix.module }}/lcov.info
+          # Fix paths: Bun generates relative to package dir, need repo root paths
+          sed -i 's|^SF:src/|SF:packages/daemon/src/|g' $LCOV || true
+          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' $LCOV || true
+          # Strip test utility coverage (helpers, fixtures, mocks)
+          awk '/^SF:packages\/daemon\/tests\//{skip=1} /^end_of_record/{if(skip){skip=0;next}} !skip' $LCOV > ${LCOV}.clean && mv ${LCOV}.clean $LCOV || true
+
+      - name: Upload to Coveralls (parallel)
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: packages/daemon/coverage-${{ matrix.module }}/lcov.info
+          flag-name: daemon-offline-${{ matrix.module }}
+          parallel: true
+          fail-on-error: false
 
   # ============================================
   # DAEMON ONLINE TESTS (Require API credentials)
@@ -221,10 +240,29 @@ jobs:
 
       - name: Run daemon online tests (${{ matrix.module }})
         working-directory: packages/daemon
-        run: bun test ${{ matrix.test_path }}
+        run: bun test ${{ matrix.test_path }} --coverage --coverage-reporter=lcov --coverage-dir=coverage-online-${{ matrix.module }}
         env:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+      - name: Fix coverage paths and strip test utilities
+        working-directory: packages/daemon
+        run: |
+          LCOV=coverage-online-${{ matrix.module }}/lcov.info
+          # Fix paths: Bun generates relative to package dir, need repo root paths
+          sed -i 's|^SF:src/|SF:packages/daemon/src/|g' $LCOV || true
+          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' $LCOV || true
+          # Strip test utility coverage (helpers, fixtures, mocks)
+          awk '/^SF:packages\/daemon\/tests\//{skip=1} /^end_of_record/{if(skip){skip=0;next}} !skip' $LCOV > ${LCOV}.clean && mv ${LCOV}.clean $LCOV || true
+
+      - name: Upload to Coveralls (parallel)
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: packages/daemon/coverage-online-${{ matrix.module }}/lcov.info
+          flag-name: daemon-online-${{ matrix.module }}
+          parallel: true
+          fail-on-error: false
 
   # ============================================
   # DAEMON + SHARED UNIT TESTS (For coverage measurement)
@@ -252,13 +290,19 @@ jobs:
           GLM_API_KEY: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
 
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
+      - name: Strip test utility coverage
+        run: |
+          # Strip test utility coverage (helpers, fixtures, mocks)
+          awk '/^SF:packages\/daemon\/tests\//{skip=1} /^end_of_record/{if(skip){skip=0;next}} !skip' coverage/lcov.info > coverage/lcov.clean && mv coverage/lcov.clean coverage/lcov.info || true
+
+      - name: Upload to Coveralls (parallel)
+        uses: coverallsapp/github-action@v2
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage/lcov.info
-          flags: daemon
-          fail_ci_if_error: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: coverage/lcov.info
+          flag-name: daemon
+          parallel: true
+          fail-on-error: false
 
   # ============================================
   # WEB TESTS
@@ -287,18 +331,19 @@ jobs:
       - name: Fix coverage paths for monorepo
         run: |
           # Vitest generates paths relative to package dir (src/...)
-          # Codecov needs paths relative to repo root (packages/web/src/...)
+          # Coveralls needs paths relative to repo root (packages/web/src/...)
           sed -i 's|^SF:src/|SF:packages/web/src/|g' packages/web/coverage/lcov.info
           # Fix cross-package paths (../shared/src/... -> packages/shared/src/...)
           sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' packages/web/coverage/lcov.info
 
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
+      - name: Upload to Coveralls (parallel)
+        uses: coverallsapp/github-action@v2
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/web/coverage/lcov.info
-          flags: web
-          fail_ci_if_error: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: packages/web/coverage/lcov.info
+          flag-name: web
+          parallel: true
+          fail-on-error: false
 
   # ============================================
   # CLI TESTS
@@ -323,6 +368,26 @@ jobs:
       - name: Run CLI tests
         working-directory: packages/cli
         run: bun test
+
+  # ============================================
+  # COVERALLS FINALIZATION
+  # Merges all parallel coverage uploads
+  # ============================================
+
+  coveralls-finalize:
+    name: Finalize Coveralls
+    runs-on: ubuntu-latest
+    needs: [test-daemon-shared-unit, test-web, test-daemon-offline, test-daemon-online]
+    if: always()
+    timeout-minutes: 1
+
+    steps:
+      - name: Finalize Coveralls parallel build
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          parallel-finished: true
+          fail-on-error: false
 
   # ============================================
   # BUILD - Compile linux-x64 binary + smoke test
