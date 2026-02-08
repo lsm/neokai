@@ -387,7 +387,94 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           parallel-finished: true
-          fail-on-error: false
+          fail-on-error: true
+
+  # ============================================
+  # COVERAGE QUALITY GATE
+  # Verifies minimum coverage and regression thresholds via Coveralls API.
+  # Queries Coveralls API to verify coverage thresholds.
+  # ============================================
+
+  coverage-gate:
+    name: Coverage Quality Gate
+    runs-on: ubuntu-latest
+    needs: [coveralls-finalize]
+    if: always() && needs.coveralls-finalize.result != 'cancelled'
+    timeout-minutes: 3
+
+    steps:
+      - name: Check coverage thresholds via Coveralls API
+        run: |
+          echo "Querying Coveralls for commit ${{ github.sha }}..."
+
+          # Retry logic — Coveralls may take time to process the finalized build
+          MAX_RETRIES=6
+          RETRY_DELAY=15
+          RESPONSE=""
+
+          for attempt in $(seq 1 $MAX_RETRIES); do
+            HTTP_CODE=$(curl -s -o /tmp/coveralls.json -w "%{http_code}" \
+              "https://coveralls.io/builds/${{ github.sha }}.json" 2>/dev/null) || true
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              RESPONSE=$(cat /tmp/coveralls.json)
+              break
+            fi
+
+            echo "Attempt $attempt/$MAX_RETRIES: Coveralls API returned HTTP $HTTP_CODE, retrying in ${RETRY_DELAY}s..."
+            sleep $RETRY_DELAY
+          done
+
+          if [ -z "$RESPONSE" ]; then
+            echo "⚠️ Could not fetch coverage from Coveralls API after $MAX_RETRIES attempts"
+            echo "Skipping coverage gate (API unavailable)"
+            exit 0
+          fi
+
+          COVERED_PERCENT=$(echo "$RESPONSE" | jq -r '.covered_percent // empty')
+          COVERAGE_CHANGE=$(echo "$RESPONSE" | jq -r '.coverage_change // "0"')
+
+          if [ -z "$COVERED_PERCENT" ]; then
+            echo "⚠️ Coveralls response missing coverage data"
+            echo "Skipping coverage gate"
+            exit 0
+          fi
+
+          echo "==============================="
+          echo "📊 Project Coverage: ${COVERED_PERCENT}%"
+          echo "📈 Coverage Change:  ${COVERAGE_CHANGE}%"
+          echo "==============================="
+
+          FAILED=0
+
+          # --- Project gate: minimum overall coverage ---
+          MIN_COVERAGE=30
+          if (( $(echo "$COVERED_PERCENT < $MIN_COVERAGE" | bc -l) )); then
+            echo "❌ FAIL: Project coverage ${COVERED_PERCENT}% is below minimum ${MIN_COVERAGE}%"
+            FAILED=1
+          else
+            echo "✅ Project coverage meets minimum threshold (>= ${MIN_COVERAGE}%)"
+          fi
+
+          # --- Regression gate: coverage must not drop more than threshold ---
+          MAX_REGRESSION=-2
+          if [ "$COVERAGE_CHANGE" != "null" ] && [ -n "$COVERAGE_CHANGE" ]; then
+            if (( $(echo "$COVERAGE_CHANGE < $MAX_REGRESSION" | bc -l) )); then
+              echo "❌ FAIL: Coverage regressed by ${COVERAGE_CHANGE}% (max allowed: ${MAX_REGRESSION}%)"
+              FAILED=1
+            else
+              echo "✅ Coverage regression within acceptable range (change: ${COVERAGE_CHANGE}%)"
+            fi
+          fi
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "Coverage quality gate FAILED"
+            exit 1
+          fi
+
+          echo ""
+          echo "✅ Coverage quality gate passed!"
 
   # ============================================
   # BUILD - Compile linux-x64 binary + smoke test
@@ -707,6 +794,7 @@ jobs:
       - test-daemon-shared-unit
       - test-web
       - test-cli
+      - coverage-gate
       - e2e
       - e2e-llm
 
@@ -719,6 +807,7 @@ jobs:
              [[ "${{ needs.test-daemon-shared-unit.result }}" != "success" ]] || \
              [[ "${{ needs.test-web.result }}" != "success" ]] || \
              [[ "${{ needs.test-cli.result }}" != "success" ]] || \
+             [[ "${{ needs.coverage-gate.result }}" != "success" && "${{ needs.coverage-gate.result }}" != "skipped" ]] || \
              [[ "${{ needs.e2e.result }}" != "success" && "${{ needs.e2e.result }}" != "skipped" ]] || \
              [[ "${{ needs.e2e-llm.result }}" != "success" && "${{ needs.e2e-llm.result }}" != "skipped" ]]; then
             echo "One or more jobs failed:"
@@ -728,6 +817,7 @@ jobs:
             echo "  test-daemon-shared-unit: ${{ needs.test-daemon-shared-unit.result }}"
             echo "  test-web: ${{ needs.test-web.result }}"
             echo "  test-cli: ${{ needs.test-cli.result }}"
+            echo "  coverage-gate: ${{ needs.coverage-gate.result }}"
             echo "  e2e: ${{ needs.e2e.result }}"
             echo "  e2e-llm: ${{ needs.e2e-llm.result }}"
             exit 1
