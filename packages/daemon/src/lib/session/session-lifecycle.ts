@@ -20,8 +20,7 @@ import type { ToolsConfigManager } from './tools-config';
 import { getProviderService } from '../provider-service';
 import { deleteSDKSessionFiles } from '../sdk-session-file-manager';
 import { resolveSDKCliPath, isBundledBinary } from '../agent/sdk-cli-resolver.js';
-// Lazy import SDK query function for testability - can be mocked in tests
-let sdkQuery: typeof import('@anthropic-ai/claude-agent-sdk').query | undefined;
+
 
 export interface SessionLifecycleConfig {
 	defaultModel: string;
@@ -665,8 +664,7 @@ export class SessionLifecycle {
 		modelId: string,
 		messageText: string
 	): Promise<string> {
-		// Use lazy-loaded or mockable query function
-		const query = sdkQuery ?? (await import('@anthropic-ai/claude-agent-sdk')).query;
+		const { query } = await import('@anthropic-ai/claude-agent-sdk');
 		const providerService = getProviderService();
 
 		// Apply provider-specific environment variables to process.env
@@ -828,17 +826,6 @@ export function generateBranchName(title: string, sessionId: string): string {
 }
 
 /**
- * Slugify text for branch names
- */
-export function slugify(text: string): string {
-	return text
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, '-')
-		.replace(/^-|-$/g, '')
-		.substring(0, 50);
-}
-
-/**
  * Build environment variables for SDK query
  *
  * Merges provider-specific environment variables with parent process env vars.
@@ -848,21 +835,9 @@ export function slugify(text: string): string {
  * @param providerEnvVars - Provider-specific environment variables
  * @returns Merged environment variables object
  */
-export function buildSdkQueryEnv(
+function buildSdkQueryEnv(
 	providerEnvVars: Record<string, string | undefined>
 ): NodeJS.ProcessEnv {
 	const { mergeProviderEnvVars } = require('../provider-service');
 	return mergeProviderEnvVars(providerEnvVars as Record<string, string>);
-}
-
-/**
- * Set a mock SDK query function for testing
- * This allows tests to mock the SDK query without complex module mocking
- *
- * @param mockFn - Mock function to use instead of the real SDK query
- */
-export function __setMockSdkQuery(
-	mockFn: typeof import('@anthropic-ai/claude-agent-sdk').query | undefined
-): void {
-	sdkQuery = mockFn;
 }
