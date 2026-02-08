@@ -393,12 +393,10 @@ jobs:
             2-stage-creation
             auto-title-generation
             auto-scroll-toggle
-            chat-flow
             chat-flow-improved
             context-dropdown
-            context-usage-display
-            context-usage-dropdown-content
-            file-attachment-send
+            context-usage
+            file-attachment
             file-operations
             interrupt-button
             interrupt-error-bug
@@ -410,10 +408,7 @@ jobs:
             page-refresh-session-state
             processing-state
             question-form-persistence
-            slash-cmd-built-in
-            slash-cmd-edge-cases
-            slash-cmd-navigation
-            slash-cmd-selection
+            slash-cmd
           )
 
           # Tests to exclude entirely (disabled, pending refactor)
