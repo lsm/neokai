@@ -124,9 +124,18 @@ export class WorktreeManager {
 	 * Get the worktree base directory for a repository
 	 * Format: ~/.neokai/projects/{encoded-repo-path}/worktrees/
 	 * Example: ~/.neokai/projects/-Users-alice-project/worktrees/
+	 *
+	 * For testing, set TEST_WORKTREE_BASE_DIR to override the base directory
 	 */
 	private getWorktreeBaseDir(gitRoot: string): string {
 		const encodedPath = this.encodeRepoPath(gitRoot);
+
+		// Check for test environment variable
+		const testBaseDir = process.env.TEST_WORKTREE_BASE_DIR;
+		if (testBaseDir) {
+			return join(testBaseDir, encodedPath, 'worktrees');
+		}
+
 		return join(homedir(), '.neokai', 'projects', encodedPath, 'worktrees');
 	}
 
@@ -335,11 +344,13 @@ export class WorktreeManager {
 				}
 
 				// Check if worktree is prunable (directory missing) or if it's a session worktree that doesn't exist
-				// Support session worktrees (.neokai/projects)
-				if (
-					worktree.isPrunable ||
-					(!existsSync(worktree.path) && worktree.path.includes('.neokai/projects'))
-				) {
+				// Support session worktrees (both production .neokai/projects and test directories)
+				const testBaseDir = process.env.TEST_WORKTREE_BASE_DIR;
+				const isSessionWorktree = testBaseDir
+					? worktree.path.startsWith(testBaseDir)
+					: worktree.path.includes('.neokai/projects');
+
+				if (worktree.isPrunable || (!existsSync(worktree.path) && isSessionWorktree)) {
 					try {
 						await git.raw(['worktree', 'remove', worktree.path, '--force']);
 						cleaned.push(worktree.path);

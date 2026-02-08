@@ -32,7 +32,9 @@ import type { Database } from '../storage/database';
  */
 function getSDKProjectDir(workspacePath: string): string {
 	const projectKey = workspacePath.replace(/[/.]/g, '-');
-	return join(homedir(), '.claude', 'projects', projectKey);
+	// Support TEST_SDK_SESSION_DIR for isolated testing
+	const baseDir = process.env.TEST_SDK_SESSION_DIR || join(homedir(), '.claude');
+	return join(baseDir, 'projects', projectKey);
 }
 
 /**
@@ -600,7 +602,9 @@ interface ArchiveMetadata {
  * Get the archive directory for a NeoKai session
  */
 function getArchiveDir(kaiSessionId: string): string {
-	return join(homedir(), '.neokai', 'claude-session-archives', kaiSessionId);
+	// Support TEST_SDK_SESSION_DIR for isolated testing
+	const baseDir = process.env.TEST_SDK_SESSION_DIR || join(homedir(), '.neokai');
+	return join(baseDir, 'claude-session-archives', kaiSessionId);
 }
 
 /**
