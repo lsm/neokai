@@ -152,7 +152,9 @@ export class SettingsManager {
 	 * Returns undefined if not found or if there's an error reading the file
 	 */
 	private readUserAttribution(): { commit?: string; pr?: string } | undefined {
-		const userSettingsPath = join(homedir(), '.claude', 'settings.json');
+		// Support TEST_USER_SETTINGS_DIR for isolated testing
+		const baseDir = process.env.TEST_USER_SETTINGS_DIR || join(homedir(), '.claude');
+		const userSettingsPath = join(baseDir, 'settings.json');
 
 		try {
 			if (!existsSync(userSettingsPath)) {
@@ -391,10 +393,13 @@ export class SettingsManager {
 
 		// Read from each enabled source
 		if (enabledSources.includes('user')) {
-			const userSettingsPath = join(homedir(), '.claude', 'settings.json');
+			// Support TEST_USER_SETTINGS_DIR for isolated testing
+			const userBaseDir = process.env.TEST_USER_SETTINGS_DIR || join(homedir(), '.claude');
+			const userSettingsPath = join(userBaseDir, 'settings.json');
 			result.user = readMcpServers(userSettingsPath, 'user');
 			// Also check user-level .mcp.json
-			const userMcpPath = join(homedir(), '.mcp.json');
+			const userMcpDir = process.env.TEST_USER_SETTINGS_DIR || homedir();
+			const userMcpPath = join(userMcpDir, '.mcp.json');
 			result.user.push(...readMcpServers(userMcpPath, 'user'));
 		}
 
