@@ -10,6 +10,7 @@ import {
 	createJsonErrorResponse,
 	shouldHaveImmutableCache,
 	isHtmlFile,
+	printServerUrls,
 } from './cli-utils';
 
 const log = createLogger('kai:cli:prod-server');
@@ -162,8 +163,7 @@ export async function startProdServer(config: Config) {
 		},
 	});
 
-	log.info(`\n✨ Production server running!`);
-	log.info(`   🌐 UI: http://localhost:${config.port}`);
-	log.info(`   🔌 WebSocket: ws://localhost:${config.port}/ws`);
-	log.info(`\n📝 Press Ctrl+C to stop\n`);
+	console.log(`\n✨ Production server running!`);
+	printServerUrls(config.port, config.host);
+	console.log(`\n📝 Press Ctrl+C to stop\n`);
 }
