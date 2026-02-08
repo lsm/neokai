@@ -76,7 +76,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 			const testFilePath = path.join(tempDirOutsideWorkspace, 'test-sandbox.txt');
 
 			// Create session with sandbox enabled
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Sandbox File Test',
 				config: {
@@ -122,7 +122,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 				expect(fileExists).toBe(false);
 			} finally {
 				// Cleanup session
-				await daemon.messageHub.call('session.delete', { sessionId });
+				await daemon.messageHub.query('session.delete', { sessionId });
 			}
 		});
 
@@ -130,7 +130,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 			const testFilePath = path.join(workspacePath, 'test-inside-workspace.txt');
 
 			// Create session with sandbox enabled
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Sandbox Inside Workspace Test',
 				config: {
@@ -166,7 +166,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 				expect(fileContent).toContain('INSIDE WORKSPACE');
 			} finally {
 				// Cleanup session
-				await daemon.messageHub.call('session.delete', { sessionId });
+				await daemon.messageHub.query('session.delete', { sessionId });
 
 				// Cleanup test file
 				try {
@@ -181,7 +181,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 	describe('Bash command sandboxing', () => {
 		test('should run bash commands in sandbox', async () => {
 			// Create session with sandbox enabled
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Sandbox Bash Test',
 				config: {
@@ -218,7 +218,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 				expect(fileContent).toContain('BASH SANDBOX TEST');
 			} finally {
 				// Cleanup session
-				await daemon.messageHub.call('session.delete', { sessionId });
+				await daemon.messageHub.query('session.delete', { sessionId });
 
 				// Cleanup test file
 				try {
@@ -236,7 +236,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 			const testFilePath = path.join(tempDirOutsideWorkspace, 'test-no-sandbox.txt');
 
 			// Create session with sandbox DISABLED
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'No Sandbox Test',
 				config: {
@@ -266,7 +266,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 				expect(fileContent).toContain('NO SANDBOX');
 			} finally {
 				// Cleanup session
-				await daemon.messageHub.call('session.delete', { sessionId });
+				await daemon.messageHub.query('session.delete', { sessionId });
 
 				// Cleanup test file
 				try {
@@ -287,7 +287,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 			await fs.mkdir(path.join(homedir, '.claude'), { recursive: true });
 
 			// Create session with sandbox enabled
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Sandbox Claude Dir Test',
 				config: {
@@ -322,7 +322,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 				expect(fileContent).toContain('CLAUDE DIR TEST');
 			} finally {
 				// Cleanup session
-				await daemon.messageHub.call('session.delete', { sessionId });
+				await daemon.messageHub.query('session.delete', { sessionId });
 
 				// Cleanup test file
 				try {
@@ -341,7 +341,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 			await fs.mkdir(path.join(homedir, '.neokai', 'projects'), { recursive: true });
 
 			// Create session with sandbox enabled
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Sandbox Neokai Dir Test',
 				config: {
@@ -376,7 +376,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 				expect(fileContent).toContain('NEOKAI PROJECTS TEST');
 			} finally {
 				// Cleanup session
-				await daemon.messageHub.call('session.delete', { sessionId });
+				await daemon.messageHub.query('session.delete', { sessionId });
 
 				// Cleanup test file
 				try {
@@ -394,7 +394,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 			const testFilePath = path.join(homedir, 'test-sandbox-denied.txt');
 
 			// Create session with sandbox enabled
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Sandbox Home Dir Deny Test',
 				config: {
@@ -438,7 +438,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 				expect(fileExists).toBe(false);
 			} finally {
 				// Cleanup session
-				await daemon.messageHub.call('session.delete', { sessionId });
+				await daemon.messageHub.query('session.delete', { sessionId });
 
 				// Cleanup test file (in case sandbox failed)
 				try {
@@ -466,7 +466,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 			}
 
 			// Create session with sandbox enabled
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Sandbox Documents Deny Test',
 				config: {
@@ -510,7 +510,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 				expect(fileExists).toBe(false);
 			} finally {
 				// Cleanup session
-				await daemon.messageHub.call('session.delete', { sessionId });
+				await daemon.messageHub.query('session.delete', { sessionId });
 
 				// Cleanup test file (in case sandbox failed)
 				try {
@@ -527,7 +527,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 			const testFilePath = '/etc/test-sandbox-denied.txt';
 
 			// Create session with sandbox enabled
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Sandbox System Dir Deny Test',
 				config: {
@@ -571,7 +571,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 				expect(fileExists).toBe(false);
 			} finally {
 				// Cleanup session
-				await daemon.messageHub.call('session.delete', { sessionId });
+				await daemon.messageHub.query('session.delete', { sessionId });
 
 				// Cleanup test file (in case sandbox failed - though this would require root)
 				try {

@@ -48,26 +48,26 @@ function getHubOrThrow() {
 
 export async function createSession(req: CreateSessionRequest): Promise<CreateSessionResponse> {
 	const hub = getHubOrThrow();
-	return await hub.call<CreateSessionResponse>('session.create', req, {
+	return await hub.query<CreateSessionResponse>('session.create', req, {
 		timeout: 15000,
 	});
 }
 
 export async function listSessions(): Promise<ListSessionsResponse> {
 	const hub = getHubOrThrow();
-	return await hub.call<ListSessionsResponse>('session.list');
+	return await hub.query<ListSessionsResponse>('session.list');
 }
 
 export async function updateSession(sessionId: string, req: UpdateSessionRequest): Promise<void> {
 	const hub = getHubOrThrow();
-	await hub.call('session.update', { sessionId, ...req });
+	await hub.query('session.update', { sessionId, ...req });
 }
 
 export async function resetSessionQuery(
 	sessionId: string
 ): Promise<{ success: boolean; error?: string }> {
 	const hub = getHubOrThrow();
-	return await hub.call<{ success: boolean; error?: string }>('session.resetQuery', {
+	return await hub.query<{ success: boolean; error?: string }>('session.resetQuery', {
 		sessionId,
 		restartQuery: true,
 	});
@@ -78,7 +78,7 @@ export async function switchCoordinatorMode(
 	coordinatorMode: boolean
 ): Promise<{ success: boolean; coordinatorMode: boolean; error?: string }> {
 	const hub = getHubOrThrow();
-	return await hub.call<{ success: boolean; coordinatorMode: boolean; error?: string }>(
+	return await hub.query<{ success: boolean; coordinatorMode: boolean; error?: string }>(
 		'session.coordinator.switch',
 		{ sessionId, coordinatorMode }
 	);
@@ -86,7 +86,7 @@ export async function switchCoordinatorMode(
 
 export async function deleteSession(sessionId: string): Promise<void> {
 	const hub = getHubOrThrow();
-	await hub.call('session.delete', { sessionId });
+	await hub.query('session.delete', { sessionId });
 }
 
 export async function archiveSession(
@@ -94,7 +94,7 @@ export async function archiveSession(
 	confirmed = false
 ): Promise<ArchiveSessionResponse> {
 	const hub = getHubOrThrow();
-	return await hub.call<ArchiveSessionResponse>('session.archive', {
+	return await hub.query<ArchiveSessionResponse>('session.archive', {
 		sessionId,
 		confirmed,
 	});
@@ -104,7 +104,7 @@ export async function archiveSession(
 
 export async function getAuthStatus(): Promise<GetAuthStatusResponse> {
 	const hub = getHubOrThrow();
-	return await hub.call<GetAuthStatusResponse>('auth.status');
+	return await hub.query<GetAuthStatusResponse>('auth.status');
 }
 
 // ==================== Settings Operations ====================
@@ -116,7 +116,7 @@ export async function updateGlobalSettings(
 	settings: import('@neokai/shared').GlobalSettings;
 }> {
 	const hub = await connectionManager.getHub();
-	return await hub.call<{
+	return await hub.query<{
 		success: boolean;
 		settings: import('@neokai/shared').GlobalSettings;
 	}>('settings.global.update', { updates });
@@ -138,7 +138,7 @@ export async function listMcpServersFromSources(
 	sessionId?: string
 ): Promise<McpServersFromSourcesResponse> {
 	const hub = await connectionManager.getHub();
-	return await hub.call<McpServersFromSourcesResponse>(
+	return await hub.query<McpServersFromSourcesResponse>(
 		'settings.mcp.listFromSources',
 		sessionId ? { sessionId } : {}
 	);
@@ -149,7 +149,7 @@ export async function updateMcpServerSettings(
 	settings: { allowed?: boolean; defaultOn?: boolean }
 ): Promise<{ success: boolean }> {
 	const hub = await connectionManager.getHub();
-	return await hub.call<{ success: boolean }>('settings.mcp.updateServerSettings', {
+	return await hub.query<{ success: boolean }>('settings.mcp.updateServerSettings', {
 		serverName,
 		settings,
 	});
@@ -162,7 +162,7 @@ export async function getRewindPoints(sessionId: string): Promise<{
 	error?: string;
 }> {
 	const hub = getHubOrThrow();
-	return await hub.call<{
+	return await hub.query<{
 		rewindPoints: Array<{ uuid: string; timestamp: number; content: string; turnNumber: number }>;
 		error?: string;
 	}>('rewind.checkpoints', { sessionId });
@@ -173,7 +173,7 @@ export async function previewRewind(
 	checkpointId: string
 ): Promise<{ preview: import('@neokai/shared').RewindPreview }> {
 	const hub = getHubOrThrow();
-	return await hub.call<{ preview: import('@neokai/shared').RewindPreview }>('rewind.preview', {
+	return await hub.query<{ preview: import('@neokai/shared').RewindPreview }>('rewind.preview', {
 		sessionId,
 		checkpointId,
 	});
@@ -185,7 +185,7 @@ export async function executeRewind(
 	mode: import('@neokai/shared').RewindMode = 'files'
 ): Promise<{ result: import('@neokai/shared').RewindResult }> {
 	const hub = getHubOrThrow();
-	return await hub.call<{ result: import('@neokai/shared').RewindResult }>('rewind.execute', {
+	return await hub.query<{ result: import('@neokai/shared').RewindResult }>('rewind.execute', {
 		sessionId,
 		checkpointId,
 		mode,
@@ -200,7 +200,7 @@ export async function executeSelectiveRewind(
 	mode: import('@neokai/shared').RewindMode = 'both'
 ): Promise<{ result: import('@neokai/shared').SelectiveRewindResult }> {
 	const hub = getHubOrThrow();
-	return await hub.call<{ result: import('@neokai/shared').SelectiveRewindResult }>(
+	return await hub.query<{ result: import('@neokai/shared').SelectiveRewindResult }>(
 		'rewind.executeSelective',
 		{ sessionId, messageIds, mode }
 	);

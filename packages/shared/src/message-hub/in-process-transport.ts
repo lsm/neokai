@@ -26,11 +26,13 @@ import type {
 	IMessageTransport,
 	ConnectionState,
 	ConnectionStateHandler,
-	UnsubscribeFn,
 	BroadcastResult,
 } from './types.ts';
 import type { HubMessage } from './protocol.ts';
 import { generateUUID } from '../utils.ts';
+
+// Define UnsubscribeFn locally (removed from types.ts)
+type UnsubscribeFn = () => void;
 
 /**
  * Options for InProcessTransport

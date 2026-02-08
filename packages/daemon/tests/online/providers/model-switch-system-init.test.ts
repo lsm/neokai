@@ -69,36 +69,24 @@ async function waitForSDKMessage(
 			);
 		}, timeout);
 
-		daemon.messageHub
-			.subscribe(
-				'state.sdkMessages.delta',
-				(data: unknown) => {
-					if (resolved) return;
+		unsubscribe = daemon.messageHub.onEvent('state.sdkMessages.delta', (data: unknown) => {
+			if (resolved) return;
 
-					const delta = data as { added?: Array<Record<string, unknown>> };
-					const addedMessages = delta.added || [];
+			const delta = data as { added?: Array<Record<string, unknown>> };
+			const addedMessages = delta.added || [];
 
-					for (const msg of addedMessages) {
-						if (msg.type === messageType) {
-							// Check subtype if specified
-							if (messageSubtype && msg.subtype !== messageSubtype) {
-								continue;
-							}
-							cleanup();
-							resolve(msg);
-							return;
-						}
+			for (const msg of addedMessages) {
+				if (msg.type === messageType) {
+					// Check subtype if specified
+					if (messageSubtype && msg.subtype !== messageSubtype) {
+						continue;
 					}
-				},
-				{ sessionId }
-			)
-			.then((fn) => {
-				unsubscribe = fn;
-			})
-			.catch((error) => {
-				cleanup();
-				reject(error);
-			});
+					cleanup();
+					resolve(msg);
+					return;
+				}
+			}
+		});
 	});
 }
 
@@ -118,7 +106,7 @@ describe('Model Switch System Init Message', () => {
 
 	test('should show correct model in system:init after switching to opus', async () => {
 		// 1. Create session with Sonnet model (default)
-		const createResult = (await daemon.messageHub.call('session.create', {
+		const createResult = (await daemon.messageHub.query('session.create', {
 			workspacePath: `${TMP_DIR}/test-model-switch-system-init`,
 			title: 'Model Switch System Init Test',
 			config: {
@@ -131,7 +119,7 @@ describe('Model Switch System Init Message', () => {
 		daemon.trackSession(sessionId);
 
 		// 2. Switch model to Opus
-		const switchResult = (await daemon.messageHub.call('session.model.switch', {
+		const switchResult = (await daemon.messageHub.query('session.model.switch', {
 			sessionId,
 			model: 'opus',
 		})) as { success: boolean; model: string; error?: string };
@@ -140,7 +128,7 @@ describe('Model Switch System Init Message', () => {
 		expect(switchResult.model).toBe('opus');
 
 		// Verify session config was updated
-		const sessionAfterSwitch = (await daemon.messageHub.call('session.get', {
+		const sessionAfterSwitch = (await daemon.messageHub.query('session.get', {
 			sessionId,
 		})) as { session: { config: { model: string } } };
 		expect(sessionAfterSwitch.session.config.model).toBe('opus');
@@ -173,7 +161,7 @@ describe('Model Switch System Init Message', () => {
 		await waitForIdle(daemon, sessionId, 20000);
 
 		// Verify final state
-		const finalState = (await daemon.messageHub.call('agent.getState', {
+		const finalState = (await daemon.messageHub.query('agent.getState', {
 			sessionId,
 		})) as { state: { status: string } };
 		expect(finalState.state.status).toBe('idle');
@@ -181,7 +169,7 @@ describe('Model Switch System Init Message', () => {
 
 	test('should show correct model in system:init when switching from sonnet to haiku', async () => {
 		// Create session with Sonnet
-		const createResult = (await daemon.messageHub.call('session.create', {
+		const createResult = (await daemon.messageHub.query('session.create', {
 			workspacePath: `${TMP_DIR}/test-switch-sonnet-to-haiku`,
 			title: 'Sonnet to Haiku Test',
 			config: {
@@ -194,7 +182,7 @@ describe('Model Switch System Init Message', () => {
 		daemon.trackSession(sessionId);
 
 		// Switch to Haiku
-		const switchResult = (await daemon.messageHub.call('session.model.switch', {
+		const switchResult = (await daemon.messageHub.query('session.model.switch', {
 			sessionId,
 			model: 'haiku',
 		})) as { success: boolean; model: string };
@@ -225,7 +213,7 @@ describe('Model Switch System Init Message', () => {
 
 	test('should show correct model when switching before first message', async () => {
 		// Create session
-		const createResult = (await daemon.messageHub.call('session.create', {
+		const createResult = (await daemon.messageHub.query('session.create', {
 			workspacePath: `${TMP_DIR}/test-switch-before-first-message`,
 			title: 'Switch Before First Message Test',
 			config: {
@@ -238,7 +226,7 @@ describe('Model Switch System Init Message', () => {
 		daemon.trackSession(sessionId);
 
 		// Switch model BEFORE sending any messages
-		const switchResult = (await daemon.messageHub.call('session.model.switch', {
+		const switchResult = (await daemon.messageHub.query('session.model.switch', {
 			sessionId,
 			model: 'haiku',
 		})) as { success: boolean; model: string };
@@ -264,7 +252,7 @@ describe('Model Switch System Init Message', () => {
 
 	test('should show correct model when switching AFTER query is already running', async () => {
 		// Create session with Sonnet
-		const createResult = (await daemon.messageHub.call('session.create', {
+		const createResult = (await daemon.messageHub.query('session.create', {
 			workspacePath: `${TMP_DIR}/test-switch-after-running`,
 			title: 'Switch After Running Test',
 			config: {
@@ -281,7 +269,7 @@ describe('Model Switch System Init Message', () => {
 		await waitForIdle(daemon, sessionId, 20000);
 
 		// NOW switch to Opus (query is already running)
-		const switchResult = (await daemon.messageHub.call('session.model.switch', {
+		const switchResult = (await daemon.messageHub.query('session.model.switch', {
 			sessionId,
 			model: 'opus',
 		})) as { success: boolean; model: string };
@@ -311,7 +299,7 @@ describe('Model Switch System Init Message', () => {
 	describe('Cross-Provider Switching', () => {
 		test('should show correct model when switching from Claude to GLM', async () => {
 			// Create session with Claude Sonnet
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath: `${TMP_DIR}/test-switch-claude-to-glm`,
 				title: 'Claude to GLM Test',
 				config: {
@@ -328,7 +316,7 @@ describe('Model Switch System Init Message', () => {
 			await waitForIdle(daemon, sessionId, 20000);
 
 			// Switch to GLM (cross-provider switch)
-			const switchResult = (await daemon.messageHub.call('session.model.switch', {
+			const switchResult = (await daemon.messageHub.query('session.model.switch', {
 				sessionId,
 				model: 'glm-4.7',
 			})) as { success: boolean; model: string };
@@ -357,7 +345,7 @@ describe('Model Switch System Init Message', () => {
 
 		test('should show correct model when switching from GLM to Claude', async () => {
 			// Create session with GLM
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath: `${TMP_DIR}/test-switch-glm-to-claude`,
 				title: 'GLM to Claude Test',
 				config: {
@@ -374,7 +362,7 @@ describe('Model Switch System Init Message', () => {
 			await waitForIdle(daemon, sessionId, 20000);
 
 			// Switch to Claude Haiku (cross-provider switch)
-			const switchResult = (await daemon.messageHub.call('session.model.switch', {
+			const switchResult = (await daemon.messageHub.query('session.model.switch', {
 				sessionId,
 				model: 'haiku',
 			})) as { success: boolean; model: string };
@@ -401,7 +389,7 @@ describe('Model Switch System Init Message', () => {
 
 		test('should handle multiple cross-provider switches', async () => {
 			// Create session with Claude Sonnet
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath: `${TMP_DIR}/test-multiple-cross-provider-switches`,
 				title: 'Multiple Cross-Provider Switches Test',
 				config: {
@@ -427,7 +415,7 @@ describe('Model Switch System Init Message', () => {
 			await waitForIdle(daemon, sessionId, 20000);
 
 			// 2. Switch to GLM
-			await daemon.messageHub.call('session.model.switch', {
+			await daemon.messageHub.query('session.model.switch', {
 				sessionId,
 				model: 'glm-4.7',
 			});
@@ -444,7 +432,7 @@ describe('Model Switch System Init Message', () => {
 			await waitForIdle(daemon, sessionId, 20000);
 
 			// 3. Switch back to Claude Haiku
-			await daemon.messageHub.call('session.model.switch', {
+			await daemon.messageHub.query('session.model.switch', {
 				sessionId,
 				model: 'haiku',
 			});
@@ -460,7 +448,7 @@ describe('Model Switch System Init Message', () => {
 			await waitForIdle(daemon, sessionId, 20000);
 
 			// 4. Switch to GLM again
-			await daemon.messageHub.call('session.model.switch', {
+			await daemon.messageHub.query('session.model.switch', {
 				sessionId,
 				model: 'glm-4.7',
 			});

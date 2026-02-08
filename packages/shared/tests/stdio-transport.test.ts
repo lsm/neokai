@@ -6,7 +6,11 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { StdioTransport, createStdioPair } from '../src/message-hub/stdio-transport';
-import { MessageType, createCallMessage, createResultMessage } from '../src/message-hub/protocol';
+import {
+	MessageType,
+	createQueryMessage,
+	createResponseMessage,
+} from '../src/message-hub/protocol';
 
 describe('StdioTransport', () => {
 	describe('createStdioPair', () => {
@@ -33,7 +37,7 @@ describe('StdioTransport', () => {
 			const received: unknown[] = [];
 			server.onMessage((msg) => received.push(msg));
 
-			const message = createCallMessage({
+			const message = createQueryMessage({
 				method: 'test.ping',
 				data: { hello: 'world' },
 				sessionId: 'test-session',
@@ -53,7 +57,7 @@ describe('StdioTransport', () => {
 			const received: unknown[] = [];
 			client.onMessage((msg) => received.push(msg));
 
-			const message = createResultMessage({
+			const message = createResponseMessage({
 				method: 'test.pong',
 				data: { response: 'ok' },
 				sessionId: 'test-session',
@@ -67,7 +71,7 @@ describe('StdioTransport', () => {
 
 			expect(received.length).toBe(1);
 			expect((received[0] as { method: string }).method).toBe('test.pong');
-			expect((received[0] as { type: MessageType }).type).toBe(MessageType.RESULT);
+			expect((received[0] as { type: MessageType }).type).toBe(MessageType.RESPONSE);
 		});
 
 		it('should support bidirectional communication', async () => {
@@ -78,7 +82,7 @@ describe('StdioTransport', () => {
 			server.onMessage((msg) => serverReceived.push(msg));
 
 			// Client sends request
-			const request = createCallMessage({
+			const request = createQueryMessage({
 				method: 'echo.request',
 				data: { message: 'hello' },
 				sessionId: 'test-session',
@@ -89,7 +93,7 @@ describe('StdioTransport', () => {
 			await new Promise((resolve) => setTimeout(resolve, 50));
 
 			// Server sends response
-			const response = createResultMessage({
+			const response = createResponseMessage({
 				method: 'echo.request',
 				data: { echoed: 'hello' },
 				sessionId: 'test-session',
@@ -113,7 +117,7 @@ describe('StdioTransport', () => {
 
 			// Send multiple messages
 			for (let i = 0; i < 10; i++) {
-				const message = createCallMessage({
+				const message = createQueryMessage({
 					method: 'test.sequence',
 					data: { index: i },
 					sessionId: 'test-session',
@@ -145,7 +149,7 @@ describe('StdioTransport', () => {
 				special: 'line\nwith\nnewlines',
 			};
 
-			const message = createCallMessage({
+			const message = createQueryMessage({
 				method: 'test.complex',
 				data: complexData,
 				sessionId: 'test-session',
@@ -209,7 +213,7 @@ describe('StdioTransport', () => {
 		it('should throw when sending before connect', async () => {
 			const [client, server] = createStdioPair();
 
-			const message = createCallMessage({
+			const message = createQueryMessage({
 				method: 'test.error',
 				data: {},
 				sessionId: 'test-session',
@@ -234,7 +238,7 @@ describe('StdioTransport', () => {
 			// We can't easily send invalid JSON through the transport API,
 			// but we can verify valid messages still work
 
-			const validMessage = createCallMessage({
+			const validMessage = createQueryMessage({
 				method: 'test.valid',
 				data: { valid: true },
 				sessionId: 'test-session',
@@ -261,7 +265,7 @@ describe('StdioTransport', () => {
 
 			// Send first message
 			await client.send(
-				createCallMessage({
+				createQueryMessage({
 					method: 'test.first',
 					data: {},
 					sessionId: 'test-session',
@@ -276,7 +280,7 @@ describe('StdioTransport', () => {
 
 			// Send second message
 			await client.send(
-				createCallMessage({
+				createQueryMessage({
 					method: 'test.second',
 					data: {},
 					sessionId: 'test-session',

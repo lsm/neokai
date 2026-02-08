@@ -141,8 +141,16 @@ class SessionStore {
 			return;
 		}
 
-		// 1. Stop current subscriptions
+		const oldSessionId = this.activeSessionId.value;
+
+		// 1. Stop current subscriptions and leave old room
 		await this.stopSubscriptions();
+		if (oldSessionId) {
+			const hub = connectionManager.getHubIfConnected();
+			if (hub) {
+				hub.leaveRoom(`session:${oldSessionId}`);
+			}
+		}
 
 		// 2. Clear state
 		this.sessionState.value = null;
@@ -182,25 +190,24 @@ class SessionStore {
 		try {
 			const hub = await connectionManager.getHub();
 
+			// Join the session room first - this subscribes to all session-scoped events
+			hub.joinRoom(`session:${sessionId}`);
+
 			// 1. Session state subscription (unified: metadata + agent + commands + context + error)
-			const unsubSessionState = hub.subscribeOptimistic<SessionState>(
-				'state.session',
-				(state) => {
-					this.sessionState.value = state;
+			const unsubSessionState = hub.onEvent<SessionState>('state.session', (state) => {
+				this.sessionState.value = state;
 
-					// Sync slash commands signal (for autocomplete)
-					if (state.commandsData?.availableCommands) {
-						slashCommandsSignal.value = state.commandsData.availableCommands;
-					}
+				// Sync slash commands signal (for autocomplete)
+				if (state.commandsData?.availableCommands) {
+					slashCommandsSignal.value = state.commandsData.availableCommands;
+				}
 
-					// Handle error (show toast only for NEW errors that occurred after session was opened)
-					// Prevents showing stale errors from previous sessions or from before session switch
-					if (state.error && state.error.occurredAt > this.sessionSwitchTime) {
-						toast.error(state.error.message);
-					}
-				},
-				{ sessionId }
-			);
+				// Handle error (show toast only for NEW errors that occurred after session was opened)
+				// Prevents showing stale errors from previous sessions or from before session switch
+				if (state.error && state.error.occurredAt > this.sessionSwitchTime) {
+					toast.error(state.error.message);
+				}
+			});
 			this.cleanupFunctions.push(unsubSessionState);
 
 			// 2. SDK messages delta (for incremental updates)
@@ -208,23 +215,19 @@ class SessionStore {
 			// FIX: Add deduplication to prevent double messages after Safari reconnection
 			// This can happen when events are queued during reconnection and replayed,
 			// while the server also resends them after subscription re-establishment.
-			const unsubSDKMessagesDelta = hub.subscribeOptimistic<{
+			const unsubSDKMessagesDelta = hub.onEvent<{
 				added?: SDKMessage[];
-			}>(
-				'state.sdkMessages.delta',
-				(delta) => {
-					if (delta.added?.length) {
-						// Deduplicate: only add messages not already in the list
-						// Use `uuid` which is common to all SDKMessage types
-						const existingIds = new Set(this.sdkMessages.value.map((m) => m.uuid));
-						const newMessages = delta.added.filter((m) => !existingIds.has(m.uuid));
-						if (newMessages.length > 0) {
-							this.sdkMessages.value = [...this.sdkMessages.value, ...newMessages];
-						}
+			}>('state.sdkMessages.delta', (delta) => {
+				if (delta.added?.length) {
+					// Deduplicate: only add messages not already in the list
+					// Use `uuid` which is common to all SDKMessage types
+					const existingIds = new Set(this.sdkMessages.value.map((m) => m.uuid));
+					const newMessages = delta.added.filter((m) => !existingIds.has(m.uuid));
+					if (newMessages.length > 0) {
+						this.sdkMessages.value = [...this.sdkMessages.value, ...newMessages];
 					}
-				},
-				{ sessionId }
-			);
+				}
+			});
 			this.cleanupFunctions.push(unsubSDKMessagesDelta);
 
 			// 3. Fetch initial state via RPC (pure WebSocket - no REST API)
@@ -247,8 +250,8 @@ class SessionStore {
 		try {
 			// Fetch session state and messages in parallel
 			const [sessionState, messagesState] = await Promise.all([
-				hub.call<SessionState>('state.session', { sessionId }),
-				hub.call<{ sdkMessages: SDKMessage[] }>('state.sdkMessages', {
+				hub.query<SessionState>('state.session', { sessionId }),
+				hub.query<{ sdkMessages: SDKMessage[] }>('state.sdkMessages', {
 					sessionId,
 				}),
 			]);
@@ -425,7 +428,7 @@ class SessionStore {
 
 		try {
 			const hub = await connectionManager.getHub();
-			const result = await hub.call<{ count: number }>('message.count', {
+			const result = await hub.query<{ count: number }>('message.count', {
 				sessionId,
 			});
 			return result?.count ?? 0;
@@ -448,7 +451,7 @@ class SessionStore {
 
 		try {
 			const hub = await connectionManager.getHub();
-			const result = await hub.call<{ sdkMessages: SDKMessage[] }>('message.sdkMessages', {
+			const result = await hub.query<{ sdkMessages: SDKMessage[] }>('message.sdkMessages', {
 				sessionId,
 				before: beforeTimestamp,
 				limit,

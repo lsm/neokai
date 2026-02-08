@@ -66,7 +66,7 @@ describe('Selective Rewind Feature', () => {
 	 * Helper to list messages for a session
 	 */
 	async function listMessages(sessionId: string): Promise<SDKMessageResult[]> {
-		const result = (await daemon.messageHub.call('message.sdkMessages', {
+		const result = (await daemon.messageHub.query('message.sdkMessages', {
 			sessionId,
 		})) as { sdkMessages: SDKMessageResult[] };
 		return result.sdkMessages;
@@ -95,7 +95,7 @@ describe('Selective Rewind Feature', () => {
 		messageIds: string[],
 		mode: RewindMode = 'both'
 	): Promise<SelectiveRewindResult> {
-		const result = (await daemon.messageHub.call('rewind.executeSelective', {
+		const result = (await daemon.messageHub.query('rewind.executeSelective', {
 			sessionId,
 			messageIds,
 			mode,
@@ -107,7 +107,7 @@ describe('Selective Rewind Feature', () => {
 		test('should delete selected messages and all messages after', async () => {
 			const workspacePath = `${TMP_DIR}/selective-rewind-conversation-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Selective Rewind Conversation Test',
 				config: {
@@ -168,7 +168,7 @@ describe('Selective Rewind Feature', () => {
 		test('should execute selective rewind with mode=both', async () => {
 			const workspacePath = `${TMP_DIR}/selective-rewind-both-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Selective Rewind Both Test',
 				config: {
@@ -224,7 +224,7 @@ describe('Selective Rewind Feature', () => {
 		test('should fail gracefully with empty messageIds array', async () => {
 			const workspacePath = `${TMP_DIR}/selective-rewind-empty-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Selective Rewind Empty Test',
 				config: {
@@ -253,7 +253,7 @@ describe('Selective Rewind Feature', () => {
 		test('should handle invalid messageIds gracefully', async () => {
 			const workspacePath = `${TMP_DIR}/selective-rewind-invalid-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Selective Rewind Invalid Test',
 				config: {
@@ -311,7 +311,7 @@ describe('Selective Rewind Feature', () => {
 		test('should handle multiple messageIds correctly', async () => {
 			const workspacePath = `${TMP_DIR}/selective-rewind-multiple-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Selective Rewind Multiple Test',
 				config: {
@@ -383,7 +383,7 @@ describe('Selective Rewind Feature', () => {
 		test('should rewind to assistant message with multiple tool uses and accept new messages', async () => {
 			const workspacePath = `${TMP_DIR}/selective-rewind-nonuser-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Non-User Message Rewind Test',
 				config: {

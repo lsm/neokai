@@ -64,7 +64,11 @@ describe('MessagePersistence', () => {
 
 		// Mock MessageHub
 		mockMessageHub = {
-			publish: mock(async () => {}),
+			event: mock(async () => {}),
+			onQuery: mock((_method: string, _handler: Function) => () => {}),
+			onCommand: mock((_method: string, _handler: Function) => () => {}),
+			query: mock(async () => ({})),
+			command: mock(async () => {}),
 		} as unknown as MessageHub;
 
 		// Mock EventBus
@@ -85,7 +89,7 @@ describe('MessagePersistence', () => {
 
 			expect(mockSessionCache.getAsync).toHaveBeenCalledWith('test-session-id');
 			expect(mockDb.saveSDKMessage).toHaveBeenCalled();
-			expect(mockMessageHub.publish).toHaveBeenCalled();
+			expect(mockMessageHub.event).toHaveBeenCalled();
 			expect(mockEventBus.emit).toHaveBeenCalledWith(
 				'message.persisted',
 				expect.objectContaining({
@@ -197,7 +201,7 @@ describe('MessagePersistence', () => {
 				content: 'Hello',
 			});
 
-			expect(mockMessageHub.publish).toHaveBeenCalledWith(
+			expect(mockMessageHub.event).toHaveBeenCalledWith(
 				'state.sdkMessages.delta',
 				expect.objectContaining({
 					added: expect.any(Array),

@@ -72,7 +72,11 @@ describe('QueryLifecycleManager', () => {
 				updateSession: updateSessionSpy,
 			} as unknown as Database,
 			messageHub: {
-				publish: publishSpy,
+				event: publishSpy,
+				onQuery: mock((_method: string, _handler: Function) => () => {}),
+				onCommand: mock((_method: string, _handler: Function) => () => {}),
+				query: mock(async () => ({})),
+				command: mock(async () => {}),
 			} as unknown as MessageHub,
 			daemonHub: {
 				emit: emitSpy,

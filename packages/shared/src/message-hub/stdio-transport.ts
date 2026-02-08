@@ -26,17 +26,15 @@
  * ```
  */
 
-import type {
-	IMessageTransport,
-	ConnectionState,
-	ConnectionStateHandler,
-	UnsubscribeFn,
-} from './types.ts';
+import type { IMessageTransport, ConnectionState, ConnectionStateHandler } from './types.ts';
 import type { HubMessage } from './protocol.ts';
 import { isValidMessage } from './protocol.ts';
 import type { ChildProcess } from 'node:child_process';
 import type { Readable, Writable } from 'node:stream';
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline';
+
+// Define UnsubscribeFn locally (removed from types.ts)
+type UnsubscribeFn = () => void;
 
 /**
  * Options for StdioTransport

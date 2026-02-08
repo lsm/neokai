@@ -54,7 +54,7 @@ describe('Rewind Feature', () => {
 	 * Helper to get rewind points for a session
 	 */
 	async function getRewindPoints(sessionId: string): Promise<RewindPoint[]> {
-		const result = (await daemon.messageHub.call('rewind.checkpoints', {
+		const result = (await daemon.messageHub.query('rewind.checkpoints', {
 			sessionId,
 		})) as { rewindPoints: RewindPoint[]; error?: string };
 		return result.rewindPoints;
@@ -64,7 +64,7 @@ describe('Rewind Feature', () => {
 	 * Helper to preview a rewind operation
 	 */
 	async function previewRewind(sessionId: string, rewindPointId: string): Promise<RewindPreview> {
-		const result = (await daemon.messageHub.call('rewind.preview', {
+		const result = (await daemon.messageHub.query('rewind.preview', {
 			sessionId,
 			rewindPointId,
 		})) as { preview: RewindPreview };
@@ -79,7 +79,7 @@ describe('Rewind Feature', () => {
 		rewindPointId: string,
 		mode: 'files' | 'conversation' | 'both' = 'files'
 	): Promise<RewindResult> {
-		const result = (await daemon.messageHub.call('rewind.execute', {
+		const result = (await daemon.messageHub.query('rewind.execute', {
 			sessionId,
 			rewindPointId,
 			mode,
@@ -91,7 +91,7 @@ describe('Rewind Feature', () => {
 		test('should create rewind points when messages are sent', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-point-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Rewind Point Creation Test',
 				config: {
@@ -138,7 +138,7 @@ describe('Rewind Feature', () => {
 		test('should return rewind points sorted by turn number (newest first)', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-sort-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Rewind Point Sorting Test',
 				config: {
@@ -175,7 +175,7 @@ describe('Rewind Feature', () => {
 		test('should show preview when rewindPoint exists', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-preview-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Rewind Preview Test',
 				config: {
@@ -214,7 +214,7 @@ describe('Rewind Feature', () => {
 		test('should return error for non-existent rewindPoint', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-preview-invalid-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Rewind Preview Invalid Test',
 				config: {
@@ -243,7 +243,7 @@ describe('Rewind Feature', () => {
 		test('should execute files-only rewind successfully', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-execute-files-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Rewind Execute Files Test',
 				config: {
@@ -286,7 +286,7 @@ describe('Rewind Feature', () => {
 		test('should execute conversation-only rewind successfully', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-execute-conversation-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Rewind Execute Conversation Test',
 				config: {
@@ -343,7 +343,7 @@ describe('Rewind Feature', () => {
 		test('should execute both files and conversation rewind', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-execute-both-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Rewind Execute Both Test',
 				config: {
@@ -388,7 +388,7 @@ describe('Rewind Feature', () => {
 		test('should handle rewind with invalid rewindPoint gracefully', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-error-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Rewind Error Test',
 				config: {
@@ -415,7 +415,7 @@ describe('Rewind Feature', () => {
 		test('should maintain session state after failed rewind', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-recovery-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Rewind Recovery Test',
 				config: {
@@ -455,7 +455,7 @@ describe('Rewind Feature', () => {
 		test('should create rewindPoints when enableFileCheckpointing is true (default)', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-enabled-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Checkpointing Enabled Test',
 				config: {
@@ -494,7 +494,7 @@ describe('Rewind Feature', () => {
 		test('should still have rewindPoints but file rewind disabled when enableFileCheckpointing is false', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-disabled-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.query('session.create', {
 				workspacePath,
 				title: 'Checkpointing Disabled Test',
 				config: {

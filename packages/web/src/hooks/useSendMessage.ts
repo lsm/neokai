@@ -79,7 +79,7 @@ export function useSendMessage({
 					return;
 				}
 
-				await hub.call('message.send', { sessionId, content, images });
+				await hub.query('message.send', { sessionId, content, images });
 
 				// Clear timeout on successful send
 				clearSendTimeout();

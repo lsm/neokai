@@ -32,7 +32,15 @@ import { useComputed } from '@preact/signals';
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 import { ConnectionNotReadyError } from '../lib/errors';
-import type { MessageHub, SubscribeOptions, EventHandler } from '@neokai/shared';
+import type { MessageHub, RoomEventHandler } from '@neokai/shared';
+
+// Define SubscribeOptions locally (removed from shared types)
+interface SubscribeOptions {
+	once?: boolean;
+}
+
+// EventHandler is now RoomEventHandler in the new API
+type EventHandler<TData = unknown> = RoomEventHandler<TData>;
 
 /**
  * Options for the useMessageHub hook
@@ -73,7 +81,43 @@ export interface UseMessageHubResult {
 	getHub: () => MessageHub | null;
 
 	/**
+	 * Make a query call (request-response) (NON-BLOCKING - throws if not connected)
+	 * @throws {ConnectionNotReadyError} If not connected
+	 */
+	query: <TResult = unknown, TData = unknown>(
+		method: string,
+		data?: TData,
+		options?: { timeout?: number }
+	) => Promise<TResult>;
+
+	/**
+	 * Send a command (fire-and-forget) - does NOT throw if not connected
+	 */
+	command: <TData = unknown>(method: string, data?: TData) => void;
+
+	/**
+	 * Listen for events (replaces subscribe for new API)
+	 * Returns unsubscribe function
+	 */
+	onEvent: <TData = unknown>(
+		method: string,
+		handler: EventHandler<TData>,
+		options?: SubscribeOptions
+	) => () => void;
+
+	/**
+	 * Join a room for receiving room-specific events
+	 */
+	joinRoom: (room: string) => void;
+
+	/**
+	 * Leave a room
+	 */
+	leaveRoom: (room: string) => void;
+
+	/**
 	 * Make an RPC call (NON-BLOCKING - throws if not connected)
+	 * @deprecated Use query() instead
 	 * @throws {ConnectionNotReadyError} If not connected
 	 */
 	call: <TResult = unknown, TData = unknown>(
@@ -197,9 +241,9 @@ export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHub
 	}, []);
 
 	/**
-	 * Make an RPC call (NON-BLOCKING - throws if not connected)
+	 * Make a query call (request-response) (NON-BLOCKING - throws if not connected)
 	 */
-	const call = useCallback(
+	const query = useCallback(
 		async <TResult = unknown, TData = unknown>(
 			method: string,
 			data?: TData,
@@ -209,7 +253,7 @@ export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHub
 			if (!hub) {
 				throw new ConnectionNotReadyError(`Cannot call '${method}': not connected to server`);
 			}
-			return hub.call<TResult>(method, data, {
+			return hub.query<TResult>(method, data, {
 				timeout: callOptions?.timeout ?? defaultTimeout,
 			});
 		},
@@ -217,33 +261,23 @@ export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHub
 	);
 
 	/**
-	 * Make an RPC call if connected, returns null otherwise (NON-BLOCKING)
+	 * Send a command (fire-and-forget) - does NOT throw if not connected
 	 */
-	const callIfConnected = useCallback(
-		async <TResult = unknown, TData = unknown>(
-			method: string,
-			data?: TData,
-			callOptions?: { timeout?: number }
-		): Promise<TResult | null> => {
-			const hub = connectionManager.getHubIfConnected();
-			if (!hub) {
-				return null;
-			}
-			return hub.call<TResult>(method, data, {
-				timeout: callOptions?.timeout ?? defaultTimeout,
-			});
-		},
-		[defaultTimeout]
-	);
+	const command = useCallback(<TData = unknown>(method: string, data?: TData): void => {
+		const hub = connectionManager.getHubIfConnected();
+		if (hub) {
+			hub.command(method, data);
+		}
+	}, []);
 
 	/**
-	 * Subscribe to events with optimistic registration (NON-BLOCKING)
+	 * Listen for events (replaces subscribe for new API)
 	 */
-	const subscribe = useCallback(
+	const onEvent = useCallback(
 		<TData = unknown>(
 			method: string,
 			handler: EventHandler<TData>,
-			subOptions?: SubscribeOptions
+			_subOptions?: SubscribeOptions
 		): (() => void) => {
 			const hub = connectionManager.getHubIfConnected();
 
@@ -257,7 +291,7 @@ export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHub
 
 					const connectedHub = connectionManager.getHubIfConnected();
 					if (connectedHub) {
-						actualUnsub = connectedHub.subscribeOptimistic(method, handler, subOptions);
+						actualUnsub = connectedHub.onEvent(method, handler);
 					}
 				});
 
@@ -277,7 +311,121 @@ export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHub
 			}
 
 			// Already connected - subscribe immediately
-			const unsub = hub.subscribeOptimistic(method, handler, subOptions);
+			const unsub = hub.onEvent(method, handler);
+
+			// Track for cleanup
+			subscriptionsRef.current.push(unsub);
+
+			return () => {
+				unsub();
+				// Remove from tracked subscriptions
+				const index = subscriptionsRef.current.indexOf(unsub);
+				if (index !== -1) {
+					subscriptionsRef.current.splice(index, 1);
+				}
+			};
+		},
+		[]
+	);
+
+	/**
+	 * Join a room
+	 */
+	const joinRoom = useCallback((room: string): void => {
+		const hub = connectionManager.getHubIfConnected();
+		if (hub) {
+			hub.joinRoom(room);
+		}
+	}, []);
+
+	/**
+	 * Leave a room
+	 */
+	const leaveRoom = useCallback((room: string): void => {
+		const hub = connectionManager.getHubIfConnected();
+		if (hub) {
+			hub.leaveRoom(room);
+		}
+	}, []);
+
+	/**
+	 * Make an RPC call (NON-BLOCKING - throws if not connected)
+	 * @deprecated Use query() instead
+	 */
+	const call = useCallback(
+		async <TResult = unknown, TData = unknown>(
+			method: string,
+			data?: TData,
+			callOptions?: { timeout?: number }
+		): Promise<TResult> => {
+			return query<TResult, TData>(method, data, callOptions);
+		},
+		[query]
+	);
+
+	/**
+	 * Make an RPC call if connected, returns null otherwise (NON-BLOCKING)
+	 */
+	const callIfConnected = useCallback(
+		async <TResult = unknown, TData = unknown>(
+			method: string,
+			data?: TData,
+			callOptions?: { timeout?: number }
+		): Promise<TResult | null> => {
+			const hub = connectionManager.getHubIfConnected();
+			if (!hub) {
+				return null;
+			}
+			return hub.query<TResult>(method, data, {
+				timeout: callOptions?.timeout ?? defaultTimeout,
+			});
+		},
+		[defaultTimeout]
+	);
+
+	/**
+	 * Subscribe to events with optimistic registration (NON-BLOCKING)
+	 * @deprecated Use onEvent() instead
+	 */
+	const subscribe = useCallback(
+		<TData = unknown>(
+			method: string,
+			handler: EventHandler<TData>,
+			_subOptions?: SubscribeOptions
+		): (() => void) => {
+			const hub = connectionManager.getHubIfConnected();
+
+			if (!hub) {
+				// Queue subscription for when connected
+				let actualUnsub: (() => void) | null = null;
+				let cancelled = false;
+
+				const connectionUnsub = connectionManager.onceConnected(() => {
+					if (cancelled) return;
+
+					const connectedHub = connectionManager.getHubIfConnected();
+					if (connectedHub) {
+						actualUnsub = connectedHub.onEvent(method, handler);
+					}
+				});
+
+				// Return unsubscribe function
+				const unsub = () => {
+					cancelled = true;
+					connectionUnsub();
+					if (actualUnsub) {
+						actualUnsub();
+					}
+				};
+
+				// Track for cleanup
+				subscriptionsRef.current.push(unsub);
+
+				return unsub;
+			}
+
+			// Already connected - subscribe immediately
+			const unsub = hub.onEvent(method, handler);
 
 			// Track for cleanup
 			subscriptionsRef.current.push(unsub);
@@ -315,6 +463,11 @@ export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHub
 		isConnected: isConnected.value,
 		state: state.value,
 		getHub,
+		query,
+		command,
+		onEvent,
+		joinRoom,
+		leaveRoom,
 		call,
 		callIfConnected,
 		subscribe,

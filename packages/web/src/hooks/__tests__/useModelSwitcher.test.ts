@@ -34,7 +34,15 @@ vi.mock('../../lib/toast', () => ({
 describe('useModelSwitcher', () => {
 	beforeEach(() => {
 		vi.resetAllMocks();
-		mockGetHubIfConnected.mockReturnValue(null);
+		mockGetHubIfConnected.mockReturnValue({
+			query: vi.fn(),
+			command: vi.fn(),
+			onEvent: vi.fn().mockReturnValue(() => {}),
+			joinRoom: vi.fn(),
+			leaveRoom: vi.fn(),
+			isConnected: vi.fn().mockReturnValue(true),
+			onConnection: vi.fn().mockReturnValue(() => {}),
+		});
 	});
 
 	afterEach(() => {
@@ -103,7 +111,7 @@ describe('useModelSwitcher', () => {
 	describe('loadModelInfo with mocked hub', () => {
 		it('should load current model and available models on mount', async () => {
 			const mockHub = {
-				call: vi
+				query: vi
 					.fn()
 					.mockResolvedValueOnce({
 						currentModel: 'claude-sonnet-4-20250514',
@@ -152,7 +160,7 @@ describe('useModelSwitcher', () => {
 
 		it('should classify models by family correctly', async () => {
 			const mockHub = {
-				call: vi
+				query: vi
 					.fn()
 					.mockResolvedValueOnce({
 						currentModel: 'claude-sonnet-4-20250514',
@@ -184,7 +192,7 @@ describe('useModelSwitcher', () => {
 
 		it('should set glm provider for glm models', async () => {
 			const mockHub = {
-				call: vi
+				query: vi
 					.fn()
 					.mockResolvedValueOnce({
 						currentModel: 'glm-4-plus',
@@ -209,7 +217,7 @@ describe('useModelSwitcher', () => {
 
 		it('should sort models by family order', async () => {
 			const mockHub = {
-				call: vi
+				query: vi
 					.fn()
 					.mockResolvedValueOnce({
 						currentModel: 'claude-sonnet-4-20250514',
@@ -239,7 +247,7 @@ describe('useModelSwitcher', () => {
 
 		it('should handle error during load gracefully', async () => {
 			const mockHub = {
-				call: vi.fn().mockRejectedValue(new Error('Network error')),
+				query: vi.fn().mockRejectedValue(new Error('Network error')),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
 
@@ -269,7 +277,7 @@ describe('useModelSwitcher', () => {
 	describe('switchModel', () => {
 		it('should show info toast when switching to same model', async () => {
 			const mockHub = {
-				call: vi
+				query: vi
 					.fn()
 					.mockResolvedValueOnce({
 						currentModel: 'claude-sonnet-4-20250514',
@@ -294,7 +302,7 @@ describe('useModelSwitcher', () => {
 
 		it('should switch model successfully', async () => {
 			const mockHub = {
-				call: vi
+				query: vi
 					.fn()
 					.mockResolvedValueOnce({
 						currentModel: 'claude-sonnet-4-20250514',
@@ -329,7 +337,7 @@ describe('useModelSwitcher', () => {
 
 		it('should handle switch failure from server', async () => {
 			const mockHub = {
-				call: vi
+				query: vi
 					.fn()
 					.mockResolvedValueOnce({
 						currentModel: 'claude-sonnet-4-20250514',
@@ -358,7 +366,7 @@ describe('useModelSwitcher', () => {
 
 		it('should handle switch failure with default error', async () => {
 			const mockHub = {
-				call: vi
+				query: vi
 					.fn()
 					.mockResolvedValueOnce({
 						currentModel: 'claude-sonnet-4-20250514',
@@ -386,7 +394,7 @@ describe('useModelSwitcher', () => {
 
 		it('should handle switch error with no connection', async () => {
 			const mockHub = {
-				call: vi
+				query: vi
 					.fn()
 					.mockResolvedValueOnce({
 						currentModel: 'claude-sonnet-4-20250514',
@@ -414,7 +422,7 @@ describe('useModelSwitcher', () => {
 
 		it('should handle switch exception', async () => {
 			const mockHub = {
-				call: vi.fn().mockImplementation((method: string) => {
+				query: vi.fn().mockImplementation((method: string) => {
 					if (method === 'session.model.get') {
 						return Promise.resolve({
 							currentModel: 'claude-sonnet-4-20250514',
@@ -450,7 +458,7 @@ describe('useModelSwitcher', () => {
 			const switchingStates: boolean[] = [];
 
 			const mockHub = {
-				call: vi
+				query: vi
 					.fn()
 					.mockResolvedValueOnce({
 						currentModel: 'claude-sonnet-4-20250514',
@@ -483,7 +491,7 @@ describe('useModelSwitcher', () => {
 			switchingStates.push(result.current.switching);
 
 			// Verify the switch was called
-			expect(mockHub.call).toHaveBeenCalledWith('session.model.switch', {
+			expect(mockHub.query).toHaveBeenCalledWith('session.model.switch', {
 				sessionId: 'session-1',
 				model: 'claude-opus-4-5-20251101',
 			});
@@ -491,7 +499,7 @@ describe('useModelSwitcher', () => {
 
 		it('should update currentModelInfo after successful switch', async () => {
 			const mockHub = {
-				call: vi
+				query: vi
 					.fn()
 					.mockResolvedValueOnce({
 						currentModel: 'claude-sonnet-4-20250514',
@@ -527,7 +535,7 @@ describe('useModelSwitcher', () => {
 	describe('reload', () => {
 		it('should reload model info', async () => {
 			const mockHub = {
-				call: vi
+				query: vi
 					.fn()
 					// First load (mount)
 					.mockResolvedValueOnce({
@@ -563,7 +571,7 @@ describe('useModelSwitcher', () => {
 	describe('sessionId changes', () => {
 		it('should reload when sessionId changes', async () => {
 			const mockHub = {
-				call: vi
+				query: vi
 					.fn()
 					// First load (session-1)
 					.mockResolvedValueOnce({
@@ -601,7 +609,7 @@ describe('useModelSwitcher', () => {
 	describe('function stability', () => {
 		it('should return stable reload function on same sessionId', async () => {
 			const mockHub = {
-				call: vi
+				query: vi
 					.fn()
 					.mockResolvedValueOnce({
 						currentModel: 'claude-sonnet-4-20250514',
@@ -628,7 +636,7 @@ describe('useModelSwitcher', () => {
 	describe('model alias extraction', () => {
 		it('should extract alias from model ID', async () => {
 			const mockHub = {
-				call: vi
+				query: vi
 					.fn()
 					.mockResolvedValueOnce({
 						currentModel: 'claude-opus-4-5-20251101',

@@ -133,7 +133,7 @@ export function useSessionActions({
 				return;
 			}
 
-			const result = await hub.call<{ success: boolean; error?: string }>('session.resetQuery', {
+			const result = await hub.query<{ success: boolean; error?: string }>('session.resetQuery', {
 				sessionId,
 				restartQuery: true,
 			});
@@ -162,7 +162,7 @@ export function useSessionActions({
 				toast.error('Not connected to server');
 				return;
 			}
-			const result = await hub.call<{ markdown: string }>('session.export', {
+			const result = await hub.query<{ markdown: string }>('session.export', {
 				sessionId,
 				format: 'markdown',
 			});

@@ -76,7 +76,11 @@ describe('SDKMessageHandler', () => {
 		// Mock MessageHub
 		hubPublishSpy = mock(async () => {});
 		mockMessageHub = {
-			publish: hubPublishSpy,
+			event: hubPublishSpy,
+			onQuery: mock((_method: string, _handler: Function) => () => {}),
+			onCommand: mock((_method: string, _handler: Function) => () => {}),
+			query: mock(async () => ({})),
+			command: mock(async () => {}),
 		} as unknown as MessageHub;
 
 		// Mock DaemonHub

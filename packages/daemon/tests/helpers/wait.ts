@@ -70,7 +70,10 @@ export async function waitFor(ms: number): Promise<void> {
 }
 
 /**
+ * DEPRECATED: Uses old subscribe() API which has been removed.
  * Collect values from a subscription until condition met or timeout
+ *
+ * TODO: Rewrite to use room-based onEvent() API
  *
  * @example
  * const values = await collectSubscriptionValues(
@@ -83,7 +86,7 @@ export async function waitFor(ms: number): Promise<void> {
  */
 export async function collectSubscriptionValues<T>(
 	messageHub: {
-		subscribe: (channel: string, handler: (data: T) => void, options?: unknown) => void;
+		onEvent: (channel: string, handler: (data: T) => void) => () => void;
 	},
 	channel: string,
 	stopCondition: (collected: T[]) => boolean,
@@ -94,6 +97,7 @@ export async function collectSubscriptionValues<T>(
 
 	return new Promise((resolve, reject) => {
 		const timeout = setTimeout(() => {
+			unsubscribe();
 			reject(
 				new Error(
 					`collectSubscriptionValues timed out after ${timeoutMs}ms, collected ${collected.length} values`
@@ -101,17 +105,14 @@ export async function collectSubscriptionValues<T>(
 			);
 		}, timeoutMs);
 
-		messageHub.subscribe(
-			channel,
-			(data: T) => {
-				collected.push(data);
+		const unsubscribe = messageHub.onEvent(channel, (data: T) => {
+			collected.push(data);
 
-				if (stopCondition(collected)) {
-					clearTimeout(timeout);
-					resolve(collected);
-				}
-			},
-			subscriptionOptions
-		);
+			if (stopCondition(collected)) {
+				clearTimeout(timeout);
+				unsubscribe();
+				resolve(collected);
+			}
+		});
 	});
 }

@@ -70,7 +70,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 			if (!hub) return;
 
 			try {
-				const response = await hub.call<{
+				const response = await hub.query<{
 					session: { metadata?: { inputDraft?: string } };
 				}>('session.get', { sessionId });
 				const draft = response.session?.metadata?.inputDraft;
@@ -103,7 +103,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 			const hub = connectionManager.getHubIfConnected();
 			if (hub) {
 				hub
-					.call('session.update', {
+					.query('session.update', {
 						sessionId: prevSessionId,
 						metadata: {
 							inputDraft: trimmedContent || undefined,
@@ -123,7 +123,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 			const hub = connectionManager.getHubIfConnected();
 			if (hub) {
 				hub
-					.call('session.update', {
+					.query('session.update', {
 						sessionId,
 						metadata: {
 							inputDraft: undefined,
@@ -142,7 +142,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 			if (!hub) return;
 
 			try {
-				await hub.call('session.update', {
+				await hub.query('session.update', {
 					sessionId,
 					metadata: {
 						inputDraft: trimmedContent,

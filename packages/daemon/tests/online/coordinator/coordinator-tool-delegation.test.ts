@@ -31,7 +31,7 @@ async function getAllSDKMessages(
 	daemon: DaemonServerContext,
 	sessionId: string
 ): Promise<Array<Record<string, unknown>>> {
-	const result = (await daemon.messageHub.call('message.sdkMessages', {
+	const result = (await daemon.messageHub.query('message.sdkMessages', {
 		sessionId,
 	})) as { sdkMessages: Array<Record<string, unknown>> };
 	return result.sdkMessages || [];
@@ -115,7 +115,7 @@ describe('Coordinator Tool Delegation - Behavioral', () => {
 		writeFileSync(testFile, canary);
 
 		// 2. Create a coordinator mode session
-		const createResult = (await daemon.messageHub.call('session.create', {
+		const createResult = (await daemon.messageHub.query('session.create', {
 			workspacePath: testDir,
 			title: 'Coordinator Read Test',
 			config: {
@@ -151,7 +151,7 @@ describe('Coordinator Tool Delegation - Behavioral', () => {
 		const canary = `WRITTEN_BY_SPECIALIST_${Date.now()}`;
 
 		// 1. Create a coordinator mode session
-		const createResult = (await daemon.messageHub.call('session.create', {
+		const createResult = (await daemon.messageHub.query('session.create', {
 			workspacePath: testDir,
 			title: 'Coordinator Write Delegation Test',
 			config: {

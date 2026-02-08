@@ -21,7 +21,7 @@ export function setupMessageHandlers(messageHub: MessageHub, sessionManager: Ses
 	// Remove large task output from a message to reduce session size
 	// This modifies the .jsonl file in ~/.claude/projects/ (SDK session storage)
 	// No SDK initialization required - only file system operations
-	messageHub.handle('message.removeOutput', async (data) => {
+	messageHub.onQuery('message.removeOutput', async (data) => {
 		const { sessionId: targetSessionId, messageUuid } = data as {
 			sessionId: string;
 			messageUuid: string;
@@ -59,16 +59,16 @@ export function setupMessageHandlers(messageHub: MessageHub, sessionManager: Ses
 
 		// Broadcast update via state channel to refresh UI
 		// The client will reload messages after receiving this update
-		await messageHub.publish(
+		messageHub.event(
 			'sdk.message.updated',
 			{ sessionId: targetSessionId, messageUuid },
-			{ sessionId: targetSessionId }
+			{ room: `session:${targetSessionId}` }
 		);
 
 		return { success: true };
 	});
 
-	messageHub.handle('message.sdkMessages', async (data) => {
+	messageHub.onQuery('message.sdkMessages', async (data) => {
 		const {
 			sessionId: targetSessionId,
 			limit,
@@ -92,7 +92,7 @@ export function setupMessageHandlers(messageHub: MessageHub, sessionManager: Ses
 	});
 
 	// Get total message count for a session (useful for pagination UI)
-	messageHub.handle('message.count', async (data) => {
+	messageHub.onQuery('message.count', async (data) => {
 		const { sessionId: targetSessionId } = data as { sessionId: string };
 
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
@@ -106,7 +106,7 @@ export function setupMessageHandlers(messageHub: MessageHub, sessionManager: Ses
 	});
 
 	// Export session to markdown or JSON
-	messageHub.handle('session.export', async (data) => {
+	messageHub.onQuery('session.export', async (data) => {
 		const { sessionId: targetSessionId, format = 'markdown' } = data as {
 			sessionId: string;
 			format?: 'markdown' | 'json';
