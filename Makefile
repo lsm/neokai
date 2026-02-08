@@ -65,7 +65,7 @@ build:
 test: test-daemon test-web
 
 test-1:
-	@bun test --preload=./packages/daemon/tests/unit/setup.ts --only-failures --dots packages/daemon/tests/unit packages/shared/tests packages/daemon/tests/integration --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage
+	@bun test --preload=./packages/daemon/tests/unit/setup.ts --dots packages/daemon/tests/unit packages/shared/tests packages/daemon/tests/integration --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage
 
 test-daemon:
 	@echo "Running daemon tests..."
