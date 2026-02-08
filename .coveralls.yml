@@ -1,0 +1,35 @@
+# Coveralls configuration
+# https://docs.coveralls.io/configuration
+
+# Service name for GitHub Actions
+service_name: github-actions
+
+# Coverage precision
+coverage_precision: 2
+
+# Flag configuration for separate test suites
+# Flags allow tracking coverage from different test suites separately
+# and then merging them into a single report
+flag_names:
+  daemon:
+    description: Daemon + Shared unit test coverage
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  web:
+    description: Web unit test coverage
+    paths:
+      - packages/web/src/
+      - packages/shared/src/
+
+# Ignore test files and fixtures (same as codecov.yml)
+ignore:
+  - "**/*.test.ts"
+  - "**/*.test.tsx"
+  - "**/*.spec.ts"
+  - "**/tests/**"
+  - "**/fixtures/**"
+  - "**/__tests__/**"
+  - "**/node_modules/**"
+  - "**/dist/**"
+  - "**/index.ts"
