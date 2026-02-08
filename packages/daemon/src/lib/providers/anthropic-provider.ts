@@ -33,16 +33,48 @@ function isFullVersionId(modelId: string): boolean {
 }
 
 /**
- * Extract model family and version from a model ID
- * Returns null if not a recognizable Claude model
+ * Extract version from SDK model description
+ * SDK descriptions follow format: "{Family} {Version} · {description}"
+ * Example: "Opus 4.6 · Most capable for complex work"
+ * @returns Version string (e.g., "4.6") or null if not found
  */
-function parseModelId(modelId: string): { family: string; version?: string } | null {
-	// Canonical short IDs
-	if (modelId === 'sonnet') return { family: 'sonnet', version: '4.5' };
-	if (modelId === 'default') return { family: 'sonnet', version: '4.5' }; // Legacy: map 'default' to sonnet
-	if (modelId === 'opus') return { family: 'opus', version: '4.6' };
-	if (modelId === 'haiku') return { family: 'haiku', version: '4.5' };
-	if (modelId === 'sonnet[1m]') return { family: 'sonnet', version: '4.5-1m' };
+function extractVersionFromDescription(description: string): string | null {
+	// Match pattern: word + space + version number (e.g., "Opus 4.6")
+	// Handles: "Opus 4.6", "Sonnet 4.5", "Haiku 4.5", etc.
+	const match = description.match(/(?:Opus|Sonnet|Haiku)\s+(\d+\.\d+)/i);
+	return match ? match[1] : null;
+}
+
+/**
+ * Extract model family and version from a model ID and optional description
+ * Returns null if not a recognizable Claude model
+ * @param modelId - Model identifier (e.g., 'opus', 'claude-sonnet-4-5-20250929')
+ * @param description - Optional SDK description to extract version from
+ */
+function parseModelId(
+	modelId: string,
+	description?: string
+): { family: string; version?: string } | null {
+	// Canonical short IDs - extract version from description if available
+	const canonicalFamilies: Record<string, string> = {
+		sonnet: 'sonnet',
+		default: 'sonnet', // Legacy: map 'default' to sonnet
+		opus: 'opus',
+		haiku: 'haiku',
+		'sonnet[1m]': 'sonnet',
+	};
+
+	if (modelId in canonicalFamilies) {
+		const family = canonicalFamilies[modelId];
+		// Try to extract version from description first
+		const version = description ? extractVersionFromDescription(description) : null;
+		// Add suffix for special variants
+		const versionSuffix = modelId === 'sonnet[1m]' ? '-1m' : '';
+		return {
+			family,
+			version: version ? `${version}${versionSuffix}` : undefined,
+		};
+	}
 
 	// Full version IDs: claude-{family}-{major}-{minor}-{date}
 	// Example: claude-sonnet-4-5-20250929
@@ -183,11 +215,11 @@ export class AnthropicProvider implements Provider {
 		// Track which model families we've seen with canonical IDs
 		const canonicalIdsByFamily = new Map<string, string>();
 
-		// First pass: identify all canonical IDs
+		// First pass: identify all canonical IDs and extract versions from descriptions
 		for (const sdkModel of sdkModels) {
 			if (CANONICAL_SDK_IDS.has(sdkModel.value)) {
-				const parsed = parseModelId(sdkModel.value);
-				if (parsed) {
+				const parsed = parseModelId(sdkModel.value, sdkModel.description);
+				if (parsed && parsed.version) {
 					const key = `${parsed.family}-${parsed.version}`;
 					canonicalIdsByFamily.set(key, sdkModel.value);
 				}
@@ -203,8 +235,8 @@ export class AnthropicProvider implements Provider {
 
 				// For full version IDs, check if there's a canonical ID for the same model
 				if (isFullVersionId(sdkModel.value)) {
-					const parsed = parseModelId(sdkModel.value);
-					if (parsed) {
+					const parsed = parseModelId(sdkModel.value, sdkModel.description);
+					if (parsed && parsed.version) {
 						const key = `${parsed.family}-${parsed.version}`;
 						const canonicalId = canonicalIdsByFamily.get(key);
 
