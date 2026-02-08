@@ -277,4 +277,309 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 			}
 		});
 	});
+
+	describe('Allowed directory writes', () => {
+		test('should allow writes to ~/.claude/ directory (except settings.json)', async () => {
+			const homedir = os.homedir();
+			const testFilePath = path.join(homedir, '.claude', 'test-sandbox-write.txt');
+
+			// Ensure .claude directory exists
+			await fs.mkdir(path.join(homedir, '.claude'), { recursive: true });
+
+			// Create session with sandbox enabled
+			const createResult = (await daemon.messageHub.call('session.create', {
+				workspacePath,
+				title: 'Sandbox Claude Dir Test',
+				config: {
+					model: 'haiku-4.5',
+					permissionMode: 'acceptEdits',
+					sandbox: {
+						enabled: true,
+						autoAllowBashIfSandboxed: true,
+						excludedCommands: ['git'],
+						network: {
+							allowLocalBinding: true,
+							allowAllUnixSockets: true,
+						},
+					},
+				},
+			})) as { sessionId: string };
+
+			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
+
+			try {
+				// Ask agent to write to ~/.claude/ directory
+				const messageContent = `Write the text "CLAUDE DIR TEST" to the file ${testFilePath}`;
+
+				await sendMessage(daemon.messageHub, sessionId, messageContent);
+
+				// Wait for processing to complete
+				await waitForIdle(daemon.messageHub, sessionId, 30000);
+
+				// Check that the file WAS created in ~/.claude/
+				const fileContent = await fs.readFile(testFilePath, 'utf-8');
+				expect(fileContent).toContain('CLAUDE DIR TEST');
+			} finally {
+				// Cleanup session
+				await daemon.messageHub.call('session.delete', { sessionId });
+
+				// Cleanup test file
+				try {
+					await fs.rm(testFilePath, { force: true });
+				} catch {
+					// Ignore cleanup errors
+				}
+			}
+		});
+
+		test('should allow writes to ~/.neokai/projects/ directory', async () => {
+			const homedir = os.homedir();
+			const testFilePath = path.join(homedir, '.neokai', 'projects', 'test-sandbox-write.txt');
+
+			// Ensure .neokai/projects directory exists
+			await fs.mkdir(path.join(homedir, '.neokai', 'projects'), { recursive: true });
+
+			// Create session with sandbox enabled
+			const createResult = (await daemon.messageHub.call('session.create', {
+				workspacePath,
+				title: 'Sandbox Neokai Dir Test',
+				config: {
+					model: 'haiku-4.5',
+					permissionMode: 'acceptEdits',
+					sandbox: {
+						enabled: true,
+						autoAllowBashIfSandboxed: true,
+						excludedCommands: ['git'],
+						network: {
+							allowLocalBinding: true,
+							allowAllUnixSockets: true,
+						},
+					},
+				},
+			})) as { sessionId: string };
+
+			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
+
+			try {
+				// Ask agent to write to ~/.neokai/projects/ directory
+				const messageContent = `Write the text "NEOKAI PROJECTS TEST" to the file ${testFilePath}`;
+
+				await sendMessage(daemon.messageHub, sessionId, messageContent);
+
+				// Wait for processing to complete
+				await waitForIdle(daemon.messageHub, sessionId, 30000);
+
+				// Check that the file WAS created in ~/.neokai/projects/
+				const fileContent = await fs.readFile(testFilePath, 'utf-8');
+				expect(fileContent).toContain('NEOKAI PROJECTS TEST');
+			} finally {
+				// Cleanup session
+				await daemon.messageHub.call('session.delete', { sessionId });
+
+				// Cleanup test file
+				try {
+					await fs.rm(testFilePath, { force: true });
+				} catch {
+					// Ignore cleanup errors
+				}
+			}
+		});
+	});
+
+	describe('Denied directory writes', () => {
+		test('should deny writes to home directory root', async () => {
+			const homedir = os.homedir();
+			const testFilePath = path.join(homedir, 'test-sandbox-denied.txt');
+
+			// Create session with sandbox enabled
+			const createResult = (await daemon.messageHub.call('session.create', {
+				workspacePath,
+				title: 'Sandbox Home Dir Deny Test',
+				config: {
+					model: 'haiku-4.5',
+					permissionMode: 'acceptEdits',
+					sandbox: {
+						enabled: true,
+						autoAllowBashIfSandboxed: true,
+						excludedCommands: ['git'],
+						network: {
+							allowLocalBinding: true,
+							allowAllUnixSockets: true,
+						},
+					},
+				},
+			})) as { sessionId: string };
+
+			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
+
+			try {
+				// Ask agent to write to home directory root
+				const messageContent = `Write the text "HOME DIR TEST" to the file ${testFilePath}`;
+
+				await sendMessage(daemon.messageHub, sessionId, messageContent);
+
+				// Wait for processing to complete
+				await waitForIdle(daemon.messageHub, sessionId, 30000);
+
+				// Check that the file was NOT created in home directory root
+				const fileExists = await fs
+					.access(testFilePath)
+					.then(() => true)
+					.catch((error) => {
+						if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+							return false; // File doesn't exist - sandbox is working! ✅
+						}
+						throw error; // Some other error
+					});
+
+				expect(fileExists).toBe(false);
+			} finally {
+				// Cleanup session
+				await daemon.messageHub.call('session.delete', { sessionId });
+
+				// Cleanup test file (in case sandbox failed)
+				try {
+					await fs.rm(testFilePath, { force: true });
+				} catch {
+					// Ignore cleanup errors
+				}
+			}
+		});
+
+		test('should deny writes to ~/Documents/ directory', async () => {
+			const homedir = os.homedir();
+			const documentsPath = path.join(homedir, 'Documents');
+			const testFilePath = path.join(documentsPath, 'test-sandbox-denied.txt');
+
+			// Skip test if Documents directory doesn't exist
+			const documentsExists = await fs
+				.access(documentsPath)
+				.then(() => true)
+				.catch(() => false);
+
+			if (!documentsExists) {
+				console.log('Skipping ~/Documents/ test - directory does not exist');
+				return;
+			}
+
+			// Create session with sandbox enabled
+			const createResult = (await daemon.messageHub.call('session.create', {
+				workspacePath,
+				title: 'Sandbox Documents Deny Test',
+				config: {
+					model: 'haiku-4.5',
+					permissionMode: 'acceptEdits',
+					sandbox: {
+						enabled: true,
+						autoAllowBashIfSandboxed: true,
+						excludedCommands: ['git'],
+						network: {
+							allowLocalBinding: true,
+							allowAllUnixSockets: true,
+						},
+					},
+				},
+			})) as { sessionId: string };
+
+			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
+
+			try {
+				// Ask agent to write to ~/Documents/
+				const messageContent = `Write the text "DOCUMENTS TEST" to the file ${testFilePath}`;
+
+				await sendMessage(daemon.messageHub, sessionId, messageContent);
+
+				// Wait for processing to complete
+				await waitForIdle(daemon.messageHub, sessionId, 30000);
+
+				// Check that the file was NOT created in Documents
+				const fileExists = await fs
+					.access(testFilePath)
+					.then(() => true)
+					.catch((error) => {
+						if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+							return false; // File doesn't exist - sandbox is working! ✅
+						}
+						throw error; // Some other error
+					});
+
+				expect(fileExists).toBe(false);
+			} finally {
+				// Cleanup session
+				await daemon.messageHub.call('session.delete', { sessionId });
+
+				// Cleanup test file (in case sandbox failed)
+				try {
+					await fs.rm(testFilePath, { force: true });
+				} catch {
+					// Ignore cleanup errors
+				}
+			}
+		});
+
+		test('should deny writes to system directories', async () => {
+			// Test write to /etc (or /tmp for non-root users)
+			// Note: We'll test /tmp but with a very specific path that should be denied
+			const testFilePath = '/etc/test-sandbox-denied.txt';
+
+			// Create session with sandbox enabled
+			const createResult = (await daemon.messageHub.call('session.create', {
+				workspacePath,
+				title: 'Sandbox System Dir Deny Test',
+				config: {
+					model: 'haiku-4.5',
+					permissionMode: 'acceptEdits',
+					sandbox: {
+						enabled: true,
+						autoAllowBashIfSandboxed: true,
+						excludedCommands: ['git'],
+						network: {
+							allowLocalBinding: true,
+							allowAllUnixSockets: true,
+						},
+					},
+				},
+			})) as { sessionId: string };
+
+			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
+
+			try {
+				// Ask agent to write to /etc/
+				const messageContent = `Write the text "SYSTEM DIR TEST" to the file ${testFilePath}`;
+
+				await sendMessage(daemon.messageHub, sessionId, messageContent);
+
+				// Wait for processing to complete
+				await waitForIdle(daemon.messageHub, sessionId, 30000);
+
+				// Check that the file was NOT created in /etc/
+				const fileExists = await fs
+					.access(testFilePath)
+					.then(() => true)
+					.catch((error) => {
+						if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+							return false; // File doesn't exist - sandbox is working! ✅
+						}
+						throw error; // Some other error
+					});
+
+				expect(fileExists).toBe(false);
+			} finally {
+				// Cleanup session
+				await daemon.messageHub.call('session.delete', { sessionId });
+
+				// Cleanup test file (in case sandbox failed - though this would require root)
+				try {
+					await fs.rm(testFilePath, { force: true });
+				} catch {
+					// Ignore cleanup errors
+				}
+			}
+		});
+	});
 });

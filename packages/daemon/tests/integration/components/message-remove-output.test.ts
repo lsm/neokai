@@ -16,28 +16,45 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import type { TestContext } from '../../helpers/test-app';
 import { createTestApp, callRPCHandler } from '../../helpers/test-app';
+
+const TMP_DIR = process.env.TMPDIR || '/tmp/claude';
 
 describe('Message Remove Output Integration Tests', () => {
 	let ctx: TestContext;
 	let testSessionDir: string;
+	let originalTestSdkSessionDir: string | undefined;
 
 	beforeEach(async () => {
+		// Set up isolated SDK session directory for tests
+		const testSdkDir = join(
+			TMP_DIR,
+			`sdk-sessions-${Date.now()}-${Math.random().toString(36).slice(2)}`
+		);
+		originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
+		process.env.TEST_SDK_SESSION_DIR = testSdkDir;
+
 		ctx = await createTestApp();
 	});
 
 	afterEach(async () => {
 		await ctx.cleanup();
 
-		// Clean up test session directory
-		if (testSessionDir && existsSync(testSessionDir)) {
+		// Clean up test SDK session directory
+		if (process.env.TEST_SDK_SESSION_DIR && existsSync(process.env.TEST_SDK_SESSION_DIR)) {
 			try {
-				rmSync(testSessionDir, { recursive: true, force: true });
+				rmSync(process.env.TEST_SDK_SESSION_DIR, { recursive: true, force: true });
 			} catch {
 				// Ignore cleanup errors
 			}
+		}
+
+		// Restore original environment
+		if (originalTestSdkSessionDir !== undefined) {
+			process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
+		} else {
+			delete process.env.TEST_SDK_SESSION_DIR;
 		}
 	});
 
@@ -50,10 +67,10 @@ describe('Message Remove Output Integration Tests', () => {
 		sessionId: string,
 		messageUuid: string
 	): string {
-		// Create directory structure
+		// Create directory structure in test SDK session directory
 		// SDK replaces both / and . with - (e.g., /.neokai/ -> --neokai-)
 		const projectKey = workspacePath.replace(/[/.]/g, '-');
-		testSessionDir = join(homedir(), '.claude', 'projects', projectKey);
+		testSessionDir = join(process.env.TEST_SDK_SESSION_DIR!, 'projects', projectKey);
 		mkdirSync(testSessionDir, { recursive: true });
 
 		// Create mock session file with messages including tool_result
@@ -358,7 +375,7 @@ describe('Message Remove Output Integration Tests', () => {
 
 			const sdkSessionId = 'test-sdk-session-error-2';
 			const projectKey = process.cwd().replace(/[/.]/g, '-');
-			testSessionDir = join(homedir(), '.claude', 'projects', projectKey);
+			testSessionDir = join(process.env.TEST_SDK_SESSION_DIR!, 'projects', projectKey);
 			mkdirSync(testSessionDir, { recursive: true });
 
 			// Create file with message that has no tool_result
@@ -465,7 +482,7 @@ describe('Message Remove Output Integration Tests', () => {
 
 			const sdkSessionId = 'test-sdk-session-multiple';
 			const projectKey = process.cwd().replace(/[/.]/g, '-');
-			testSessionDir = join(homedir(), '.claude', 'projects', projectKey);
+			testSessionDir = join(process.env.TEST_SDK_SESSION_DIR!, 'projects', projectKey);
 			mkdirSync(testSessionDir, { recursive: true });
 
 			const targetMessageUuid = '00000000-0000-0000-0000-000000000003';
@@ -554,20 +571,37 @@ describe('Message Remove Output Integration Tests', () => {
 describe('SDK Session Load Validation', () => {
 	let ctx: TestContext;
 	let testSessionDir: string;
+	let originalTestSdkSessionDir: string | undefined;
 
 	beforeEach(async () => {
+		// Set up isolated SDK session directory for tests
+		const testSdkDir = join(
+			TMP_DIR,
+			`sdk-sessions-${Date.now()}-${Math.random().toString(36).slice(2)}`
+		);
+		originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
+		process.env.TEST_SDK_SESSION_DIR = testSdkDir;
+
 		ctx = await createTestApp();
 	});
 
 	afterEach(async () => {
 		await ctx.cleanup();
 
-		if (testSessionDir && existsSync(testSessionDir)) {
+		// Clean up test SDK session directory
+		if (process.env.TEST_SDK_SESSION_DIR && existsSync(process.env.TEST_SDK_SESSION_DIR)) {
 			try {
-				rmSync(testSessionDir, { recursive: true, force: true });
+				rmSync(process.env.TEST_SDK_SESSION_DIR, { recursive: true, force: true });
 			} catch {
-				// Ignore
+				// Ignore cleanup errors
 			}
+		}
+
+		// Restore original environment
+		if (originalTestSdkSessionDir !== undefined) {
+			process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
+		} else {
+			delete process.env.TEST_SDK_SESSION_DIR;
 		}
 	});
 
@@ -595,7 +629,7 @@ describe('SDK Session Load Validation', () => {
 		const messageUuid = '00000000-0000-0000-0000-000000000003';
 
 		const projectKey = process.cwd().replace(/[/.]/g, '-');
-		testSessionDir = join(homedir(), '.claude', 'projects', projectKey);
+		testSessionDir = join(process.env.TEST_SDK_SESSION_DIR!, 'projects', projectKey);
 		mkdirSync(testSessionDir, { recursive: true });
 
 		const sessionFilePath = join(testSessionDir, `${sdkSessionId}.jsonl`);
@@ -715,7 +749,7 @@ describe('SDK Session Load Validation', () => {
 		const messageUuid = '00000000-0000-0000-0000-000000000005';
 
 		const projectKey = process.cwd().replace(/[/.]/g, '-');
-		testSessionDir = join(homedir(), '.claude', 'projects', projectKey);
+		testSessionDir = join(process.env.TEST_SDK_SESSION_DIR!, 'projects', projectKey);
 		mkdirSync(testSessionDir, { recursive: true });
 
 		const sessionFilePath = join(testSessionDir, `${sdkSessionId}.jsonl`);
@@ -854,7 +888,7 @@ describe('SDK Session Load Validation', () => {
 		const sdkSessionId = 'test-sdk-multiple-placeholders';
 
 		const projectKey = process.cwd().replace(/[/.]/g, '-');
-		testSessionDir = join(homedir(), '.claude', 'projects', projectKey);
+		testSessionDir = join(process.env.TEST_SDK_SESSION_DIR!, 'projects', projectKey);
 		mkdirSync(testSessionDir, { recursive: true });
 
 		const sessionFilePath = join(testSessionDir, `${sdkSessionId}.jsonl`);
@@ -933,21 +967,37 @@ describe('SDK Session Load Validation', () => {
 describe('SDK Context Validation Tests', () => {
 	let ctx: TestContext;
 	let testSessionDir: string;
+	let originalTestSdkSessionDir: string | undefined;
 
 	beforeEach(async () => {
+		// Set up isolated SDK session directory for tests
+		const testSdkDir = join(
+			TMP_DIR,
+			`sdk-sessions-${Date.now()}-${Math.random().toString(36).slice(2)}`
+		);
+		originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
+		process.env.TEST_SDK_SESSION_DIR = testSdkDir;
+
 		ctx = await createTestApp();
 	});
 
 	afterEach(async () => {
 		await ctx.cleanup();
 
-		// Clean up test session directory
-		if (testSessionDir && existsSync(testSessionDir)) {
+		// Clean up test SDK session directory
+		if (process.env.TEST_SDK_SESSION_DIR && existsSync(process.env.TEST_SDK_SESSION_DIR)) {
 			try {
-				rmSync(testSessionDir, { recursive: true, force: true });
+				rmSync(process.env.TEST_SDK_SESSION_DIR, { recursive: true, force: true });
 			} catch {
 				// Ignore cleanup errors
 			}
+		}
+
+		// Restore original environment
+		if (originalTestSdkSessionDir !== undefined) {
+			process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
+		} else {
+			delete process.env.TEST_SDK_SESSION_DIR;
 		}
 	});
 
@@ -962,7 +1012,7 @@ describe('SDK Context Validation Tests', () => {
 		largeOutputSize = 10000 // 10KB of text
 	): string {
 		const projectKey = workspacePath.replace(/[/.]/g, '-');
-		testSessionDir = join(homedir(), '.claude', 'projects', projectKey);
+		testSessionDir = join(process.env.TEST_SDK_SESSION_DIR!, 'projects', projectKey);
 		mkdirSync(testSessionDir, { recursive: true });
 
 		const sessionFilePath = join(testSessionDir, `${sdkSessionId}.jsonl`);
@@ -1208,7 +1258,7 @@ describe('SDK Context Validation Tests', () => {
 
 		const sdkSessionId = 'test-sdk-session-preserve';
 		const projectKey = process.cwd().replace(/[/.]/g, '-');
-		testSessionDir = join(homedir(), '.claude', 'projects', projectKey);
+		testSessionDir = join(process.env.TEST_SDK_SESSION_DIR!, 'projects', projectKey);
 		mkdirSync(testSessionDir, { recursive: true });
 
 		// Create file with multiple tool results
@@ -1302,7 +1352,7 @@ describe('SDK Context Validation Tests', () => {
 
 		const sdkSessionId = 'test-sdk-session-realistic';
 		const projectKey = process.cwd().replace(/[/.]/g, '-');
-		testSessionDir = join(homedir(), '.claude', 'projects', projectKey);
+		testSessionDir = join(process.env.TEST_SDK_SESSION_DIR!, 'projects', projectKey);
 		mkdirSync(testSessionDir, { recursive: true });
 
 		const sessionFilePath = join(testSessionDir, `${sdkSessionId}.jsonl`);

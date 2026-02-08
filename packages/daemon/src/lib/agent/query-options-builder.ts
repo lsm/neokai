@@ -33,6 +33,8 @@ import type { SettingsManager } from '../settings-manager';
 import { Logger } from '../logger';
 import { getProviderContextManager } from '../providers/factory.js';
 import { resolveSDKCliPath, isBundledBinary } from './sdk-cli-resolver.js';
+import { homedir } from 'os';
+import { join } from 'path';
 
 /**
  * Context interface - what QueryOptionsBuilder needs from AgentSession
@@ -497,10 +499,11 @@ CRITICAL RULES:
 	/**
 	 * Get additional directories configuration
 	 *
-	 * For worktree sessions: Allow cwd + temp directories
-	 * For non-worktree: Leave undefined for backward compatibility
+	 * Always includes:
+	 * - ~/.claude/: For settings, database, and worktree storage
+	 * - ~/.neokai/: For NeoKai-specific configuration and state
 	 *
-	 * Note: Shell temp directories allowed:
+	 * For worktree sessions, also includes:
 	 * - /tmp/claude: SDK sets TMPDIR=/tmp/claude, most shells (bash, fish, etc.) respect this
 	 * - /tmp/zsh-${uid}: Zsh's default behavior creates /tmp/zsh-UID paths
 	 *
@@ -508,12 +511,19 @@ CRITICAL RULES:
 	 * without fighting any shell's natural temp file behavior.
 	 */
 	private getAdditionalDirectories(): string[] | undefined {
-		// For worktree sessions, allow temp directories for shell operations
+		const directories: string[] = [];
+
+		// Always include Claude and NeoKai directories for settings and storage
+		directories.push(join(homedir(), '.claude'));
+		directories.push(join(homedir(), '.neokai'));
+
+		// For worktree sessions, also allow temp directories for shell operations
 		if (this.ctx.session.worktree) {
 			const uid = typeof process.getuid === 'function' ? process.getuid() : 501;
-			return ['/tmp/claude', `/tmp/zsh-${uid}`];
+			directories.push('/tmp/claude', `/tmp/zsh-${uid}`);
 		}
-		return undefined;
+
+		return directories;
 	}
 
 	/**
