@@ -19,7 +19,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import 'dotenv/config';
+// Bun automatically loads .env from project root when running tests
 import type { DaemonServerContext } from '../helpers/daemon-server-helper';
 import { createDaemonServer } from '../helpers/daemon-server-helper';
 import {

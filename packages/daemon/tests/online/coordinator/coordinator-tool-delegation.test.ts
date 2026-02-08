@@ -11,7 +11,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import 'dotenv/config';
+// Bun automatically loads .env from project root when running tests
 import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import type { DaemonServerContext } from '../helpers/daemon-server-helper';
