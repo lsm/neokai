@@ -745,11 +745,15 @@ export class MessageHub {
 			// Room-based routing if room is set
 			if (message.room && this.router) {
 				this.router.routeEventToRoom(message);
-				return;
+			} else {
+				// Use router to route EVENT to subscribed clients
+				const result = this.router.routeEvent(message);
+				this.logDebug(`Routed event: ${result.sent}/${result.totalSubscribers} delivered`);
 			}
-			// Use router to route EVENT to subscribed clients
-			const result = this.router.routeEvent(message);
-			this.logDebug(`Routed event: ${result.sent}/${result.totalSubscribers} delivered`);
+			// Self-delivery: also invoke local event handlers on the same hub
+			// This ensures server-side onEvent() listeners receive events
+			// (e.g., test helpers, server-side state observers)
+			this.dispatchToRoomEventHandlers(message);
 			return;
 		}
 
