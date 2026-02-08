@@ -56,6 +56,47 @@ const cacheTimestamps = new Map<string, number>();
 const CACHE_TTL = 4 * 60 * 60 * 1000;
 
 /**
+ * Static fallback models used when no providers are available (e.g., no API keys).
+ * These are well-known Anthropic models with standard metadata so that model
+ * resolution (alias → ID) still works without a live API call.
+ */
+const FALLBACK_MODELS: ModelInfo[] = [
+	{
+		id: 'sonnet',
+		name: 'Claude Sonnet',
+		alias: 'default',
+		family: 'sonnet',
+		provider: 'anthropic',
+		contextWindow: 200000,
+		description: 'Best balance of speed and intelligence',
+		releaseDate: '2025-01-01',
+		available: true,
+	},
+	{
+		id: 'opus',
+		name: 'Claude Opus',
+		alias: 'opus',
+		family: 'opus',
+		provider: 'anthropic',
+		contextWindow: 200000,
+		description: 'Most capable model for complex tasks',
+		releaseDate: '2025-01-01',
+		available: true,
+	},
+	{
+		id: 'haiku',
+		name: 'Claude Haiku',
+		alias: 'haiku',
+		family: 'haiku',
+		provider: 'anthropic',
+		contextWindow: 200000,
+		description: 'Fastest and most compact model',
+		releaseDate: '2025-01-01',
+		available: true,
+	},
+];
+
+/**
  * Track if a background refresh is in progress for a given cache key
  */
 const refreshInProgress = new Map<string, Promise<void>>();
@@ -225,9 +266,8 @@ export async function initializeModels(): Promise<void> {
 		// Log the error but don't fail startup - use static fallback models
 		console.error('[model-service] Failed to load models from providers:', error);
 
-		// Set empty cache to prevent repeated initialization attempts
-		// getAvailableModels() will handle empty cache gracefully
-		modelsCache.set(cacheKey, []);
+		// Use well-known Anthropic models as fallback so model resolution still works
+		modelsCache.set(cacheKey, FALLBACK_MODELS);
 		cacheTimestamps.set(cacheKey, Date.now());
 	}
 }
