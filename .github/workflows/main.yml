@@ -150,10 +150,35 @@ jobs:
 
       - name: Run daemon tests (${{ matrix.module }})
         working-directory: packages/daemon
-        run: bun test ${{ matrix.test_path }}
+        run: bun test ${{ matrix.test_path }} --coverage --coverage-reporter=lcov --coverage-dir=coverage-${{ matrix.module }}
         env:
           GLM_API_KEY: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
+
+      - name: Fix coverage paths for monorepo
+        working-directory: packages/daemon
+        run: |
+          # Bun generates paths relative to package dir (src/...)
+          # Need to prefix with packages/daemon/ for repo root
+          sed -i 's|^SF:src/|SF:packages/daemon/src/|g' coverage-${{ matrix.module }}/lcov.info || true
+          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' coverage-${{ matrix.module }}/lcov.info || true
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/daemon/coverage-${{ matrix.module }}/lcov.info
+          flags: daemon-offline-${{ matrix.module }}
+          fail_ci_if_error: false
+
+      - name: Upload to Coveralls (parallel)
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: packages/daemon/coverage-${{ matrix.module }}/lcov.info
+          flag-name: daemon-offline-${{ matrix.module }}
+          parallel: true
+          fail-on-error: false
 
   # ============================================
   # DAEMON ONLINE TESTS (Require API credentials)
@@ -350,7 +375,7 @@ jobs:
   coveralls-finalize:
     name: Finalize Coveralls
     runs-on: ubuntu-latest
-    needs: [test-daemon-shared-unit, test-web]
+    needs: [test-daemon-shared-unit, test-web, test-daemon-offline]
     if: always()
     timeout-minutes: 1
 

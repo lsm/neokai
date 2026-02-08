@@ -72,6 +72,52 @@ flags:
     paths:
       - packages/web/src/
     carryforward: false
+  # Offline test flags (matrixized by module)
+  daemon-offline-agent:
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+    carryforward: false
+  daemon-offline-session:
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+    carryforward: false
+  daemon-offline-rpc:
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+    carryforward: false
+  daemon-offline-database:
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+    carryforward: false
+  daemon-offline-filesystem:
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+    carryforward: false
+  daemon-offline-websocket:
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+    carryforward: false
+  daemon-offline-git:
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+    carryforward: false
+  daemon-offline-components:
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+    carryforward: false
+  daemon-offline-mcp:
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+    carryforward: false
   e2e-matrix:
     paths:
       - packages/web/src/

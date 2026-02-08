@@ -21,6 +21,52 @@ flag_names:
     paths:
       - packages/web/src/
       - packages/shared/src/
+  # Offline integration test coverage (matrixized by module)
+  daemon-offline-agent:
+    description: Daemon offline integration tests - agent module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-offline-session:
+    description: Daemon offline integration tests - session module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-offline-rpc:
+    description: Daemon offline integration tests - rpc module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-offline-database:
+    description: Daemon offline integration tests - database module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-offline-filesystem:
+    description: Daemon offline integration tests - filesystem module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-offline-websocket:
+    description: Daemon offline integration tests - websocket module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-offline-git:
+    description: Daemon offline integration tests - git module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-offline-components:
+    description: Daemon offline integration tests - components module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-offline-mcp:
+    description: Daemon offline integration tests - mcp module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
 
 # Ignore test files and fixtures (same as codecov.yml)
 ignore:
