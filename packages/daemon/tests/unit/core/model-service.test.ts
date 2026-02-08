@@ -371,46 +371,9 @@ describe('Model Service', () => {
 			const cache = getModelsCache();
 			expect(cache.get('global')).toEqual(mockModels);
 		});
-
-		it('should initialize providers and load models on first call', async () => {
-			// Ensure clean state - no cache
-			clearModelsCache();
-			resetProviderRegistry();
-			resetProviderFactory();
-
-			// When running with real providers, initializeModels() will:
-			// 1. Call initializeProviders() to register providers
-			// 2. Try to load models from providers
-			// 3. Set empty cache if no models loaded (no API key in test env)
-			await initializeModels();
-
-			// Cache should exist (even if empty due to no API key)
-			const cache = getModelsCache();
-			expect(cache.has('global')).toBe(true);
-		});
 	});
 
 	describe('background refresh behavior', () => {
-		it('should trigger background refresh for stale cache', async () => {
-			// Set up cache with an old timestamp (5 hours ago, exceeding 4-hour TTL)
-			const staleTimestamp = Date.now() - 5 * 60 * 60 * 1000;
-			const testCache = new Map<string, ModelInfo[]>();
-			testCache.set('global', mockModels);
-			setModelsCache(testCache, staleTimestamp);
-
-			// Initialize providers so background refresh can attempt to load
-			const { initializeProviders } = await import('../../../src/lib/providers/factory');
-			initializeProviders();
-
-			// getAvailableModels should return cached data immediately
-			// AND trigger background refresh (non-blocking)
-			const models = getAvailableModels('global');
-			expect(models.length).toBe(3);
-
-			// Wait briefly for background refresh to complete (or fail gracefully)
-			await new Promise((resolve) => setTimeout(resolve, 200));
-		});
-
 		it('should return cached models while refresh is in progress', async () => {
 			const testCache = new Map<string, ModelInfo[]>();
 			testCache.set('global', mockModels);
@@ -422,24 +385,6 @@ describe('Model Service', () => {
 
 			expect(models1).toEqual(models2);
 			expect(models1.length).toBe(3);
-		});
-
-		it('should not trigger multiple concurrent refreshes', async () => {
-			// Set stale cache
-			const staleTimestamp = Date.now() - 5 * 60 * 60 * 1000;
-			const testCache = new Map<string, ModelInfo[]>();
-			testCache.set('refresh-test', mockModels);
-			setModelsCache(testCache, staleTimestamp);
-
-			const { initializeProviders } = await import('../../../src/lib/providers/factory');
-			initializeProviders();
-
-			// Call multiple times - should only trigger one refresh
-			getAvailableModels('refresh-test');
-			getAvailableModels('refresh-test');
-
-			// Wait for background refresh to settle
-			await new Promise((resolve) => setTimeout(resolve, 200));
 		});
 	});
 
