@@ -56,13 +56,13 @@ async function waitForProcessingState(
 		let unsubscribe: (() => void) | undefined;
 		let resolved = false;
 
-		const cleanup = async () => {
+		const cleanup = () => {
 			if (!resolved) {
 				resolved = true;
 				clearTimeout(timer);
 				unsubscribe?.();
-				// Leave room (fire-and-forget - cleanup doesn't need to wait)
-				daemon.messageHub.leaveRoom('session:' + sessionId).catch(() => {});
+				// Leave room (fire-and-forget)
+				daemon.messageHub.leaveRoom('session:' + sessionId);
 			}
 		};
 

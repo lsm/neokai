@@ -99,12 +99,12 @@ export async function collectSubscriptionValues<T>(
 	const room = subscriptionOptions?.room;
 
 	return new Promise((resolve, reject) => {
-		const cleanup = async () => {
+		const cleanup = () => {
 			clearTimeout(timeout);
 			unsubscribe();
 			if (room && messageHub.leaveRoom) {
-				// Leave room (fire-and-forget - cleanup doesn't need to wait)
-				messageHub.leaveRoom(room).catch(() => {});
+				// Leave room (fire-and-forget)
+				messageHub.leaveRoom(room);
 			}
 		};
 
@@ -129,13 +129,9 @@ export async function collectSubscriptionValues<T>(
 		// Join the room if specified and wait for acknowledgment
 		// This ensures events are routed to this client
 		if (room && messageHub.joinRoom) {
-			(async () => {
-				try {
-					await messageHub.joinRoom(room);
-				} catch {
-					// Join failed, but continue - events might still work
-				}
-			})();
+			messageHub.joinRoom(room).catch(() => {
+				// Join failed, but continue - events might still work
+			});
 		}
 	});
 }
