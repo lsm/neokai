@@ -254,7 +254,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 	// Initialize model service
 	try {
 		const { initializeModels, setModelsCache, getModelsCache } = await import(
-			'../src/lib/model-service'
+			'../../src/lib/model-service'
 		);
 
 		if (authStatus.isAuthenticated) {
@@ -477,4 +477,107 @@ export function mockAgentSessionForOfflineTest(
 		};
 	}
 	return agentSession || null;
+}
+
+/**
+ * Create WebSocket connection to test server and return both the WebSocket and a promise for the first message
+ * Note: Uses unified /ws endpoint - sessionId is passed in message payloads, not URL
+ */
+export function createWebSocketWithFirstMessage(
+	baseUrl: string,
+	_sessionId: string,
+	timeout = 5000
+): { ws: WebSocket; firstMessagePromise: Promise<unknown> } {
+	const wsUrl = baseUrl.replace('http://', 'ws://');
+	const ws = new WebSocket(`${wsUrl}/ws`);
+
+	// Set up message listener IMMEDIATELY (synchronously)
+	const firstMessagePromise = new Promise((resolve, reject) => {
+		const messageHandler = (event: MessageEvent) => {
+			clearTimeout(timer);
+			ws.removeEventListener('message', messageHandler);
+			ws.removeEventListener('error', errorHandler);
+			try {
+				const data = JSON.parse(event.data as string);
+				resolve(data);
+			} catch {
+				reject(new Error('Failed to parse WebSocket message'));
+			}
+		};
+
+		const errorHandler = (error: Event) => {
+			clearTimeout(timer);
+			ws.removeEventListener('message', messageHandler);
+			ws.removeEventListener('error', errorHandler);
+			reject(error);
+		};
+
+		ws.addEventListener('message', messageHandler);
+		ws.addEventListener('error', errorHandler);
+
+		const timer = setTimeout(() => {
+			ws.removeEventListener('message', messageHandler);
+			ws.removeEventListener('error', errorHandler);
+			reject(new Error(`No WebSocket message received within ${timeout}ms`));
+		}, timeout);
+	});
+
+	return { ws, firstMessagePromise };
+}
+
+/**
+ * Wait for WebSocket to be in a specific state
+ */
+export async function waitForWebSocketState(
+	ws: WebSocket,
+	state: number,
+	timeout = 5000
+): Promise<void> {
+	const startTime = Date.now();
+	while (ws.readyState !== state) {
+		if (Date.now() - startTime > timeout) {
+			throw new Error(`WebSocket did not reach state ${state} within ${timeout}ms`);
+		}
+		await Bun.sleep(10);
+	}
+}
+
+/**
+ * Wait for WebSocket message
+ * Sets up listener immediately to avoid race conditions
+ */
+export async function waitForWebSocketMessage(ws: WebSocket, timeout = 5000): Promise<unknown> {
+	return new Promise((resolve, reject) => {
+		const messageHandler = (event: MessageEvent) => {
+			clearTimeout(timer);
+			ws.removeEventListener('message', messageHandler);
+			ws.removeEventListener('error', errorHandler);
+			try {
+				const data = JSON.parse(event.data as string);
+				resolve(data);
+			} catch {
+				reject(new Error('Failed to parse WebSocket message'));
+			}
+		};
+
+		const errorHandler = (error: Event) => {
+			clearTimeout(timer);
+			ws.removeEventListener('message', messageHandler);
+			ws.removeEventListener('error', errorHandler);
+			reject(error);
+		};
+
+		ws.addEventListener('message', messageHandler);
+		ws.addEventListener('error', errorHandler);
+
+		const timer = setTimeout(() => {
+			ws.removeEventListener('message', messageHandler);
+			ws.removeEventListener('error', errorHandler);
+			reject(
+				new Error(
+					`No WebSocket message received within ${timeout}ms (readyState: ${ws.readyState})`
+				)
+			);
+		}, timeout);
+	});
 }
