@@ -13,7 +13,7 @@
 	"dependencies": {
 		"@neokai/daemon": "workspace:*",
 		"@neokai/shared": "workspace:*",
-		"hono": "4.11.8",
+		"hono": "4.11.9",
 		"vite": "7.3.1"
 	},
 	"devDependencies": {
