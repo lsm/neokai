@@ -148,7 +148,7 @@ describe('WebSocketServerTransport', () => {
 			transport.onMessage(messageHandler);
 
 			const message: HubMessage = {
-				type: 'QRY',
+				type: 'REQ',
 				method: 'test.method',
 				data: { foo: 'bar' },
 				id: 'test-id',
@@ -159,7 +159,7 @@ describe('WebSocketServerTransport', () => {
 
 			expect(messageHandler).toHaveBeenCalledWith(
 				expect.objectContaining({
-					type: 'QRY',
+					type: 'REQ',
 					method: 'test.method',
 					clientId: 'client-123',
 				})
@@ -221,14 +221,14 @@ describe('WebSocketServerTransport', () => {
 			const unsubscribe = transport.onMessage(handler);
 
 			// First message should trigger handler
-			transport.handleClientMessage({ type: 'QRY', method: 'test', id: '1', sessionId: 'test' });
+			transport.handleClientMessage({ type: 'REQ', method: 'test', id: '1', sessionId: 'test' });
 			expect(handler).toHaveBeenCalledTimes(1);
 
 			// Unsubscribe
 			unsubscribe();
 
 			// Second message should not trigger handler
-			transport.handleClientMessage({ type: 'QRY', method: 'test', id: '2', sessionId: 'test' });
+			transport.handleClientMessage({ type: 'REQ', method: 'test', id: '2', sessionId: 'test' });
 			expect(handler).toHaveBeenCalledTimes(1);
 		});
 	});

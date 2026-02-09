@@ -68,7 +68,7 @@ describe('WebSocket + MessageHub Integration', () => {
 			ws.send(
 				JSON.stringify({
 					id: messageId,
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.list',
 					data: {},
 					sessionId: 'global',
@@ -97,7 +97,7 @@ describe('WebSocket + MessageHub Integration', () => {
 			ws.send(
 				JSON.stringify({
 					id: messageId,
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.get',
 					data: { sessionId: 'non-existent' },
 					sessionId: 'global',
@@ -126,7 +126,7 @@ describe('WebSocket + MessageHub Integration', () => {
 			ws.send(
 				JSON.stringify({
 					id: messageId,
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.create',
 					data: { workspacePath: '/test/ws' },
 					sessionId: 'global',
@@ -177,7 +177,7 @@ describe('WebSocket + MessageHub Integration', () => {
 			// ws2 should still work
 			ws2.send(
 				JSON.stringify({
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.list',
 					data: {},
 					id: 'list-1',
@@ -223,7 +223,7 @@ describe('WebSocket + MessageHub Integration', () => {
 
 			ws.send(
 				JSON.stringify({
-					type: 'QRY',
+					type: 'REQ',
 					method: 'nonexistent.method',
 					data: {},
 					id: 'missing-1',

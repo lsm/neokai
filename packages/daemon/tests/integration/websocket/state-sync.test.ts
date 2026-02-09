@@ -239,7 +239,7 @@ describe('State Synchronization Integration', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'create-1',
-					type: MessageType.QUERY,
+					type: MessageType.REQUEST,
 					method: 'session.create',
 					data: { workspacePath: `${TMP_DIR}/test-workspace` },
 					sessionId: 'global',
@@ -294,7 +294,7 @@ describe('State Synchronization Integration', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'create-1',
-					type: MessageType.QUERY,
+					type: MessageType.REQUEST,
 					method: 'session.create',
 					data: { workspacePath: `${TMP_DIR}/test-workspace` },
 					sessionId: 'global',
@@ -313,7 +313,7 @@ describe('State Synchronization Integration', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'delete-1',
-					type: MessageType.QUERY,
+					type: MessageType.REQUEST,
 					method: 'session.delete',
 					data: { sessionId },
 					sessionId: 'global',

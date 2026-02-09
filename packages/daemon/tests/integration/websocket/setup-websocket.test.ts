@@ -123,7 +123,7 @@ describe('Setup WebSocket Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'test-1',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'message.send',
 					data: { content: 'test' },
 					sessionId: 'non-existent-session-id',
@@ -203,7 +203,7 @@ describe('Setup WebSocket Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'test-1',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.list',
 					data: {},
 					sessionId: 'global',
@@ -273,7 +273,7 @@ describe('Setup WebSocket Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'large-1',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'test.method',
 					data: { content: largeContent },
 					sessionId: 'global',
@@ -302,7 +302,7 @@ describe('Setup WebSocket Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'normal-1',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.list',
 					data: {},
 					sessionId: 'global',

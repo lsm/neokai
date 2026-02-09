@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { MessageHubRouter, type ClientConnection } from '../src/message-hub/router';
 import type { HubMessage } from '../src/message-hub/types';
-import { MessageType, createEventMessage, createCommandMessage } from '../src/message-hub/protocol';
+import { MessageType, createEventMessage, createRequestMessage } from '../src/message-hub/protocol';
 import { generateUUID } from '../src/utils';
 
 // Mock WebSocket
@@ -443,7 +443,7 @@ describe('MessageHubRouter', () => {
 
 	describe('Error Handling', () => {
 		test('should handle routing non-EVENT message gracefully', () => {
-			const commandMessage = createCommandMessage({
+			const commandMessage = createRequestMessage({
 				method: 'user.created',
 				data: {},
 				sessionId: 'session1',

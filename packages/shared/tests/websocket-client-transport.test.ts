@@ -231,7 +231,7 @@ describe('WebSocketClientTransport - Basic Interface', () => {
 
 			const message: HubMessage = {
 				id: 'test-1',
-				type: MessageType.QUERY,
+				type: MessageType.REQUEST,
 				method: 'test.method',
 				sessionId: 'session-1',
 				data: { foo: 'bar' },
@@ -561,7 +561,7 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
 			// Try to send message
 			const message: HubMessage = {
 				id: 'test-1',
-				type: MessageType.QUERY,
+				type: MessageType.REQUEST,
 				method: 'test',
 				sessionId: 'test-session',
 				timestamp: new Date().toISOString(),
@@ -706,7 +706,7 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
 			// Message should fail while disconnected
 			const message: HubMessage = {
 				id: 'test-1',
-				type: MessageType.QUERY,
+				type: MessageType.REQUEST,
 				method: 'test',
 				sessionId: 'test-session',
 				timestamp: new Date().toISOString(),
@@ -728,7 +728,7 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
 			const largeData = 'x'.repeat(11 * 1024 * 1024);
 			const message: HubMessage = {
 				id: 'test-1',
-				type: MessageType.QUERY,
+				type: MessageType.REQUEST,
 				method: 'test',
 				sessionId: 'test-session',
 				timestamp: new Date().toISOString(),
@@ -902,7 +902,7 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
 
 			const message: HubMessage = {
 				id: 'test-1',
-				type: MessageType.QUERY,
+				type: MessageType.REQUEST,
 				method: 'test',
 				sessionId: 'test-session',
 				timestamp: new Date().toISOString(),

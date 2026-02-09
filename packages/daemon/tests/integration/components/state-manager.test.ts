@@ -557,7 +557,7 @@ describe.skip('StateManager RPC - Global State (DEPRECATED - uses old SUBSCRIBE 
 		ws.send(
 			JSON.stringify({
 				id: 'snapshot-1',
-				type: 'QRY',
+				type: 'REQ',
 				method: STATE_CHANNELS.GLOBAL_SNAPSHOT,
 				data: {},
 				sessionId: 'global',
@@ -585,7 +585,7 @@ describe.skip('StateManager RPC - Global State (DEPRECATED - uses old SUBSCRIBE 
 		ws.send(
 			JSON.stringify({
 				id: 'system-1',
-				type: 'QRY',
+				type: 'REQ',
 				method: STATE_CHANNELS.GLOBAL_SYSTEM,
 				data: {},
 				sessionId: 'global',
@@ -615,7 +615,7 @@ describe.skip('StateManager RPC - Global State (DEPRECATED - uses old SUBSCRIBE 
 		ws.send(
 			JSON.stringify({
 				id: 'sessions-1',
-				type: 'QRY',
+				type: 'REQ',
 				method: STATE_CHANNELS.GLOBAL_SESSIONS,
 				data: {},
 				sessionId: 'global',
@@ -661,7 +661,7 @@ describe.skip('StateManager RPC - Session State (DEPRECATED - uses old SUBSCRIBE
 		ws.send(
 			JSON.stringify({
 				id: 'session-state-1',
-				type: 'QRY',
+				type: 'REQ',
 				method: STATE_CHANNELS.SESSION,
 				data: { sessionId },
 				sessionId: 'global',
@@ -689,7 +689,7 @@ describe.skip('StateManager RPC - Session State (DEPRECATED - uses old SUBSCRIBE
 		ws.send(
 			JSON.stringify({
 				id: 'session-state-2',
-				type: 'QRY',
+				type: 'REQ',
 				method: STATE_CHANNELS.SESSION,
 				data: { sessionId: 'non-existent' },
 				sessionId: 'global',
@@ -719,7 +719,7 @@ describe.skip('StateManager RPC - Session State (DEPRECATED - uses old SUBSCRIBE
 		ws.send(
 			JSON.stringify({
 				id: 'snapshot-2',
-				type: 'QRY',
+				type: 'REQ',
 				method: STATE_CHANNELS.SESSION_SNAPSHOT,
 				data: { sessionId },
 				sessionId: 'global',
@@ -751,7 +751,7 @@ describe.skip('StateManager RPC - Session State (DEPRECATED - uses old SUBSCRIBE
 		ws.send(
 			JSON.stringify({
 				id: 'sdk-msgs-1',
-				type: 'QRY',
+				type: 'REQ',
 				method: STATE_CHANNELS.SESSION_SDK_MESSAGES,
 				data: { sessionId },
 				sessionId: 'global',

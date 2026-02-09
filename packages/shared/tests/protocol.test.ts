@@ -3,14 +3,12 @@ import {
 	MessageType,
 	GLOBAL_SESSION_ID,
 	createEventMessage,
-	createCommandMessage,
-	createQueryMessage,
+	createRequestMessage,
 	createResponseMessage,
 	createErrorResponseMessage,
 	isValidMessage,
 	isEventMessage,
-	isCommandMessage,
-	isQueryMessage,
+	isRequestMessage,
 	isResponseMessage,
 	validateMethod,
 } from '../src/message-hub/protocol.ts';
@@ -21,8 +19,7 @@ describe('MessageHub Protocol', () => {
 			expect(MessageType.EVENT).toBe(MessageType.EVENT);
 			expect(MessageType.PING).toBe(MessageType.PING);
 			expect(MessageType.PONG).toBe(MessageType.PONG);
-			expect(MessageType.COMMAND).toBe(MessageType.COMMAND);
-			expect(MessageType.QUERY).toBe(MessageType.QUERY);
+			expect(MessageType.REQUEST).toBe(MessageType.REQUEST);
 			expect(MessageType.RESPONSE).toBe(MessageType.RESPONSE);
 		});
 
@@ -48,35 +45,19 @@ describe('MessageHub Protocol', () => {
 			expect(msg.timestamp).toBeTruthy();
 		});
 
-		test('createCommandMessage should create valid COMMAND message', () => {
-			const msg = createCommandMessage({
-				method: 'test.command',
+		test('createRequestMessage should create valid REQUEST message', () => {
+			const msg = createRequestMessage({
+				method: 'test.request',
 				data: { foo: 'bar' },
 				sessionId: 'session1',
-				id: 'cmd123',
+				id: 'req123',
 			});
 
-			expect(msg.type).toBe(MessageType.COMMAND);
+			expect(msg.type).toBe(MessageType.REQUEST);
 			expect(msg.sessionId).toBe('session1');
-			expect(msg.method).toBe('test.command');
+			expect(msg.method).toBe('test.request');
 			expect(msg.data).toEqual({ foo: 'bar' });
-			expect(msg.id).toBe('cmd123');
-			expect(msg.timestamp).toBeTruthy();
-		});
-
-		test('createQueryMessage should create valid QUERY message', () => {
-			const msg = createQueryMessage({
-				method: 'test.query',
-				data: { foo: 'bar' },
-				sessionId: 'session1',
-				id: 'qry123',
-			});
-
-			expect(msg.type).toBe(MessageType.QUERY);
-			expect(msg.sessionId).toBe('session1');
-			expect(msg.method).toBe('test.query');
-			expect(msg.data).toEqual({ foo: 'bar' });
-			expect(msg.id).toBe('qry123');
+			expect(msg.id).toBe('req123');
 			expect(msg.timestamp).toBeTruthy();
 		});
 
@@ -137,7 +118,7 @@ describe('MessageHub Protocol', () => {
 
 	describe('Message Validators', () => {
 		test('isValidMessage should validate message structure', () => {
-			const validMsg = createCommandMessage({
+			const validMsg = createRequestMessage({
 				method: 'test.method',
 				data: {},
 				sessionId: 'session1',
@@ -148,8 +129,8 @@ describe('MessageHub Protocol', () => {
 			// Missing required fields
 			expect(isValidMessage({})).toBe(false);
 			expect(isValidMessage({ id: '123' })).toBe(false);
-			expect(isValidMessage({ id: '123', type: 'CMD' })).toBe(false);
-			expect(isValidMessage({ id: '123', type: 'CMD', sessionId: 's1' })).toBe(false);
+			expect(isValidMessage({ id: '123', type: 'REQ' })).toBe(false);
+			expect(isValidMessage({ id: '123', type: 'REQ', sessionId: 's1' })).toBe(false);
 		});
 
 		test('isEventMessage should identify EVENT messages', () => {
@@ -159,51 +140,33 @@ describe('MessageHub Protocol', () => {
 				sessionId: 's1',
 				id: 'msg1',
 			});
-			const commandMsg = createCommandMessage({
-				method: 'event.command',
+			const requestMsg = createRequestMessage({
+				method: 'event.request',
 				data: {},
 				sessionId: 's1',
 				id: 'msg2',
 			});
 
 			expect(isEventMessage(eventMsg)).toBe(true);
-			expect(isEventMessage(commandMsg)).toBe(false);
+			expect(isEventMessage(requestMsg)).toBe(false);
 		});
 
-		test('isCommandMessage should identify COMMAND messages', () => {
-			const commandMsg = createCommandMessage({
-				method: 'test.command',
+		test('isRequestMessage should identify REQUEST messages', () => {
+			const requestMsg = createRequestMessage({
+				method: 'test.request',
 				data: {},
 				sessionId: 's1',
 				id: 'msg1',
 			});
-			const queryMsg = createQueryMessage({
-				method: 'test.query',
+			const eventMsg = createEventMessage({
+				method: 'test.event',
 				data: {},
 				sessionId: 's1',
 				id: 'msg2',
 			});
 
-			expect(isCommandMessage(commandMsg)).toBe(true);
-			expect(isCommandMessage(queryMsg)).toBe(false);
-		});
-
-		test('isQueryMessage should identify QUERY messages', () => {
-			const queryMsg = createQueryMessage({
-				method: 'test.query',
-				data: {},
-				sessionId: 's1',
-				id: 'msg1',
-			});
-			const commandMsg = createCommandMessage({
-				method: 'test.command',
-				data: {},
-				sessionId: 's1',
-				id: 'msg2',
-			});
-
-			expect(isQueryMessage(queryMsg)).toBe(true);
-			expect(isQueryMessage(commandMsg)).toBe(false);
+			expect(isRequestMessage(requestMsg)).toBe(true);
+			expect(isRequestMessage(eventMsg)).toBe(false);
 		});
 
 		test('isResponseMessage should identify RESPONSE messages', () => {
@@ -221,7 +184,7 @@ describe('MessageHub Protocol', () => {
 				requestId: 'req1',
 				id: 'msg2',
 			});
-			const queryMsg = createQueryMessage({
+			const requestMsg = createRequestMessage({
 				method: 'test',
 				data: {},
 				sessionId: 's1',
@@ -230,7 +193,7 @@ describe('MessageHub Protocol', () => {
 
 			expect(isResponseMessage(responseMsg)).toBe(true);
 			expect(isResponseMessage(errorMsg)).toBe(true);
-			expect(isResponseMessage(queryMsg)).toBe(false);
+			expect(isResponseMessage(requestMsg)).toBe(false);
 		});
 	});
 
@@ -256,14 +219,14 @@ describe('MessageHub Protocol', () => {
 
 	describe('Message IDs', () => {
 		test('should use provided message ID', () => {
-			const msg1 = createCommandMessage({
-				method: 'test.command',
+			const msg1 = createRequestMessage({
+				method: 'test.request',
 				data: {},
 				sessionId: 's1',
 				id: 'custom-id-1',
 			});
-			const msg2 = createCommandMessage({
-				method: 'test.command',
+			const msg2 = createRequestMessage({
+				method: 'test.request',
 				data: {},
 				sessionId: 's1',
 				id: 'custom-id-2',
@@ -275,8 +238,8 @@ describe('MessageHub Protocol', () => {
 		});
 
 		test('should include timestamp in all messages', () => {
-			const msg = createCommandMessage({
-				method: 'test.command',
+			const msg = createRequestMessage({
+				method: 'test.request',
 				data: {},
 				sessionId: 's1',
 				id: 'msg1',
