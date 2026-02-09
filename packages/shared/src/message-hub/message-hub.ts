@@ -397,8 +397,8 @@ export class MessageHub {
 	private async handleIncomingMessage(message: HubMessage): Promise<void> {
 		// Validate message structure
 		if (!isValidMessage(message)) {
-			log.error(`Invalid message format:`, message);
-			throw new Error(`Invalid message format: ${JSON.stringify(message)}`);
+			log.warn(`Dropping invalid message:`, message);
+			return;
 		}
 
 		this.logDebug(`← Incoming: ${message.type} ${message.method}`, message);
