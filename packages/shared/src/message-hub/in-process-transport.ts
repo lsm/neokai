@@ -275,8 +275,8 @@ export class InProcessTransport implements IMessageTransport {
 		for (const handler of this.messageHandlers) {
 			try {
 				handler(message);
-			} catch (error) {
-				console.error(`[${this.name}] Error in message handler:`, error);
+			} catch {
+				// Message handler error - silently continue
 			}
 		}
 	}
@@ -294,8 +294,8 @@ export class InProcessTransport implements IMessageTransport {
 		for (const handler of this.connectionHandlers) {
 			try {
 				handler(state, error);
-			} catch (err) {
-				console.error(`[${this.name}] Error in connection handler:`, err);
+			} catch {
+				// Connection handler error - silently continue
 			}
 		}
 	}

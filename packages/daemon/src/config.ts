@@ -9,18 +9,9 @@ import { homedir } from 'os';
 // This enriches process.env BEFORE any other code reads it.
 // Never overwrites existing env vars (explicit config always wins).
 import { discoverCredentials } from './lib/credential-discovery';
-import type { DiscoveryResult } from './lib/credential-discovery';
 
-const discoveryResult = discoverCredentials();
-logCredentialDiscovery(discoveryResult);
-
-/**
- * Logs credential discovery results (no-op after cleanup)
- * Exported for testing purposes
- */
-export function logCredentialDiscovery(_result: DiscoveryResult): void {
-	// Credential discovery logging removed - credentials are logged at startup if needed
-}
+// Discover credentials and enrich process.env at module load time
+discoverCredentials();
 
 /**
  * Encode an absolute path to a filesystem-safe directory name

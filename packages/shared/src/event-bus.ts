@@ -222,9 +222,11 @@ export class EventBus {
 				try {
 					const result = handler(data);
 					if (result instanceof Promise) {
-						promises.push(result.catch(() => {
-							// Handler errors are handler's responsibility to manage
-						}));
+						promises.push(
+							result.catch(() => {
+								// Handler errors are handler's responsibility to manage
+							})
+						);
 					}
 				} catch {
 					// Handler errors are handler's responsibility to manage
@@ -239,9 +241,11 @@ export class EventBus {
 				try {
 					const result = handler(data);
 					if (result instanceof Promise) {
-						promises.push(result.catch(() => {
-							// Handler errors are handler's responsibility to manage
-						}));
+						promises.push(
+							result.catch(() => {
+								// Handler errors are handler's responsibility to manage
+							})
+						);
 					}
 				} catch {
 					// Handler errors are handler's responsibility to manage

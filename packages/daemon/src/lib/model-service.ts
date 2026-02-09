@@ -262,11 +262,8 @@ export async function initializeModels(): Promise<void> {
 		} else {
 			throw new Error('No models returned from providers');
 		}
-	} catch (error) {
-		// Log the error but don't fail startup - use static fallback models
-		console.error('[model-service] Failed to load models from providers:', error);
-
-		// Use well-known Anthropic models as fallback so model resolution still works
+	} catch {
+		// Failed to load models - use well-known Anthropic models as fallback
 		modelsCache.set(cacheKey, FALLBACK_MODELS);
 		cacheTimestamps.set(cacheKey, Date.now());
 	}

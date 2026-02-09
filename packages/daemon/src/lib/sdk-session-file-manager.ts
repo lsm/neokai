@@ -144,7 +144,6 @@ export function removeToolResultFromSessionFile(
 
 			// Check if this is the target message
 			if (message.uuid === messageUuid) {
-				foundMessage = true;
 				// Modify tool_result content in this message
 				if (
 					message.type === 'user' &&
