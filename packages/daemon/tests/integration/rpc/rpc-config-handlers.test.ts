@@ -40,7 +40,7 @@ describe('SDK Config RPC Handlers', () => {
 		ws.send(
 			JSON.stringify({
 				id: callId,
-				type: 'QRY',
+				type: 'REQ',
 				method,
 				data,
 				sessionId: 'global',

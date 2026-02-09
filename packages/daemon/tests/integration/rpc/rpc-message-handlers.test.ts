@@ -175,7 +175,7 @@ describe('Message RPC Handlers (Integration)', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'msg-1',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'message.send',
 					data: {
 						sessionId: 'non-existent',

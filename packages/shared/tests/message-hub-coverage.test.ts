@@ -10,8 +10,7 @@ import type { IMessageTransport, ConnectionState } from '../src/message-hub/type
 import {
 	MessageType,
 	createEventMessage,
-	createQueryMessage,
-	createCommandMessage,
+	createRequestMessage,
 	type HubMessage,
 } from '../src/message-hub/protocol.ts';
 
@@ -121,53 +120,61 @@ describe('MessageHub - Coverage Tests', () => {
 		});
 	});
 
-	describe('Command Handler Error Handling', () => {
-		test('should catch and log command handler errors without throwing', async () => {
+	describe('Request Handler Error Handling', () => {
+		test('should send error response when handler throws', async () => {
 			// Mock console.error to suppress error output during test
 			const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
 			let handlerCalled = false;
 			const handler = jest.fn(() => {
 				handlerCalled = true;
-				throw new Error('Command handler error');
+				throw new Error('Handler error');
 			});
 
-			hub.onRequest('test.command', handler);
+			hub.onRequest('test.request', handler);
 
-			const commandMessage = createCommandMessage({
-				method: 'test.command',
+			const requestMessage = createRequestMessage({
+				method: 'test.request',
 				data: { test: true },
 				sessionId: 'test-session',
 			});
 
-			// Should not throw - commands are fire-and-forget and errors are caught internally
-			transport.simulateMessage(commandMessage);
+			// Should not throw - errors are caught and returned as error response
+			transport.simulateMessage(requestMessage);
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			expect(handler).toHaveBeenCalled();
 			expect(handlerCalled).toBe(true);
 
-			// Should not send any response for command errors
-			expect(transport.sentMessages.length).toBe(0);
+			// Should send error response
+			const errorResponses = transport.sentMessages.filter(
+				(m) => m.type === MessageType.RESPONSE && m.error
+			);
+			expect(errorResponses.length).toBe(1);
+			expect(errorResponses[0].error).toContain('Handler error');
 
 			consoleErrorSpy.mockRestore();
 		});
 
-		test('should handle command when no handler registered', async () => {
-			const commandMessage = createCommandMessage({
+		test('should send error response when no handler registered', async () => {
+			const requestMessage = createRequestMessage({
 				method: 'no.handler',
 				data: {},
 				sessionId: 'test-session',
 			});
 
 			// Should not throw
-			expect(() => transport.simulateMessage(commandMessage)).not.toThrow();
+			expect(() => transport.simulateMessage(requestMessage)).not.toThrow();
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
-			// No response sent
-			expect(transport.sentMessages.length).toBe(0);
+			// Should send error response for METHOD_NOT_FOUND
+			const errorResponses = transport.sentMessages.filter(
+				(m) => m.type === MessageType.RESPONSE && m.error
+			);
+			expect(errorResponses.length).toBe(1);
+			expect(errorResponses[0].error).toContain('No handler for method');
 		});
 	});
 
@@ -179,7 +186,7 @@ describe('MessageHub - Coverage Tests', () => {
 
 			hub.onRequest('test.query', handler);
 
-			const queryMessage = createQueryMessage({
+			const queryMessage = createRequestMessage({
 				method: 'test.query',
 				data: {},
 				sessionId: 'test-session',
@@ -200,7 +207,7 @@ describe('MessageHub - Coverage Tests', () => {
 		});
 
 		test('should send METHOD_NOT_FOUND error when no query handler registered', async () => {
-			const queryMessage = createQueryMessage({
+			const queryMessage = createRequestMessage({
 				method: 'no.handler',
 				data: {},
 				sessionId: 'test-session',
@@ -385,7 +392,7 @@ describe('MessageHub - Coverage Tests', () => {
 			};
 			router.registerConnection(mockConnection);
 
-			const joinMsg = createCommandMessage({
+			const joinMsg = createRequestMessage({
 				method: 'room.join',
 				data: { room: 'test-room' },
 				sessionId: 'test-session',
@@ -412,7 +419,7 @@ describe('MessageHub - Coverage Tests', () => {
 			router.registerConnection(mockConnection);
 
 			// First join
-			const joinMsg = createCommandMessage({
+			const joinMsg = createRequestMessage({
 				method: 'room.join',
 				data: { room: 'test-room' },
 				sessionId: 'test-session',
@@ -422,7 +429,7 @@ describe('MessageHub - Coverage Tests', () => {
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			// Then leave
-			const leaveMsg = createCommandMessage({
+			const leaveMsg = createRequestMessage({
 				method: 'room.leave',
 				data: { room: 'test-room' },
 				sessionId: 'test-session',
@@ -433,7 +440,7 @@ describe('MessageHub - Coverage Tests', () => {
 		});
 
 		test('should ignore room commands when no router registered', async () => {
-			const joinMsg = createCommandMessage({
+			const joinMsg = createRequestMessage({
 				method: 'room.join',
 				data: { room: 'test-room' },
 				sessionId: 'test-session',
@@ -573,7 +580,7 @@ describe('MessageHub - Coverage Tests', () => {
 			hub.registerRouter(router);
 
 			// Simulate client sending message with valid method name
-			const msg = createCommandMessage({
+			const msg = createRequestMessage({
 				method: 'test.method',
 				data: {},
 				sessionId: 'test',

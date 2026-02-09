@@ -36,7 +36,7 @@ describe('InProcessTransport', () => {
 
 			const testMessage: HubMessage = {
 				id: 'test-1',
-				type: MessageType.QUERY,
+				type: MessageType.REQUEST,
 				method: 'test.method',
 				sessionId: 'global',
 				timestamp: new Date().toISOString(),
@@ -90,7 +90,7 @@ describe('InProcessTransport', () => {
 			// Client -> Server
 			await client.send({
 				id: 'c2s',
-				type: MessageType.QUERY,
+				type: MessageType.REQUEST,
 				method: 'client.to.server',
 				sessionId: 'global',
 				timestamp: new Date().toISOString(),
@@ -158,7 +158,7 @@ describe('InProcessTransport', () => {
 			const sentData = { mutable: true };
 			const testMessage: HubMessage = {
 				id: 'ref-test',
-				type: MessageType.QUERY,
+				type: MessageType.REQUEST,
 				method: 'test.ref',
 				sessionId: 'global',
 				timestamp: new Date().toISOString(),
@@ -186,7 +186,7 @@ describe('InProcessTransport', () => {
 			const sentData = { mutable: true };
 			const testMessage: HubMessage = {
 				id: 'clone-test',
-				type: MessageType.QUERY,
+				type: MessageType.REQUEST,
 				method: 'test.clone',
 				sessionId: 'global',
 				timestamp: new Date().toISOString(),
@@ -218,7 +218,7 @@ describe('InProcessTransport', () => {
 			const sentAt = Date.now();
 			await client.send({
 				id: 'latency-test',
-				type: MessageType.QUERY,
+				type: MessageType.REQUEST,
 				method: 'test.latency',
 				sessionId: 'global',
 				timestamp: new Date().toISOString(),
@@ -239,7 +239,7 @@ describe('InProcessTransport', () => {
 			await expect(
 				transport.send({
 					id: 'error-test',
-					type: MessageType.QUERY,
+					type: MessageType.REQUEST,
 					method: 'test.error',
 					sessionId: 'global',
 					timestamp: new Date().toISOString(),

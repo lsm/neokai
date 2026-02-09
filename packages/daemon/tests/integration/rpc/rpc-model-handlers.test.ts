@@ -41,7 +41,7 @@ describe('Model RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'model-get-1',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.model.get',
 					data: {
 						sessionId: 'non-existent',
@@ -74,7 +74,7 @@ describe('Model RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'model-get-2',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.model.get',
 					data: { sessionId },
 					sessionId: 'global',
@@ -104,7 +104,7 @@ describe('Model RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'model-switch-1',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.model.switch',
 					data: {
 						sessionId: 'non-existent',
@@ -139,7 +139,7 @@ describe('Model RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'model-switch-2',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.model.switch',
 					data: {
 						sessionId,
@@ -176,7 +176,7 @@ describe('Model RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'model-get-3',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.model.get',
 					data: { sessionId },
 					sessionId: 'global',
@@ -193,7 +193,7 @@ describe('Model RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'model-switch-3',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.model.switch',
 					data: {
 						sessionId,
@@ -227,7 +227,7 @@ describe('Model RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'models-clear-1',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'models.clearCache',
 					data: {},
 					sessionId: 'global',

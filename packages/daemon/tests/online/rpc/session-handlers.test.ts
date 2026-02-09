@@ -152,7 +152,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 				ws.send(
 					JSON.stringify({
 						id: 'msg-2',
-						type: 'QRY',
+						type: 'REQ',
 						method: 'message.send',
 						data: {
 							sessionId,
@@ -193,7 +193,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'models-list-1',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'models.list',
 					data: {
 						useCache: true,
@@ -226,7 +226,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'models-list-2',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'models.list',
 					data: {
 						useCache: false,
@@ -259,7 +259,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'models-list-3',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'models.list',
 					data: {
 						useCache: true,

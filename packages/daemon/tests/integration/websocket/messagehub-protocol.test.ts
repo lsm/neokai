@@ -35,7 +35,7 @@ function sendRPCCall(
 	ws.send(
 		JSON.stringify({
 			id: messageId,
-			type: 'QRY',
+			type: 'REQ',
 			method,
 			data,
 			sessionId,

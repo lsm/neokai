@@ -3,11 +3,10 @@ import { MessageHub } from '../src/message-hub/message-hub';
 import type { IMessageTransport, ConnectionState, HubMessage } from '../src/message-hub/types';
 import {
 	MessageType,
-	createQueryMessage,
+	createRequestMessage,
 	createResponseMessage,
 	createErrorResponseMessage,
 	createEventMessage,
-	createCommandMessage,
 } from '../src/message-hub/protocol';
 
 class MockTransport implements IMessageTransport {
@@ -198,20 +197,20 @@ describe('MessageHub', () => {
 			).toBe(true);
 		});
 
-		test('should execute query handler when query message received', async () => {
+		test('should execute query handler when request message received', async () => {
 			const handler = mock(async (data: { message?: string }) => {
 				return { echo: data.message };
 			});
 
 			messageHub.onRequest('test.echo', handler);
 
-			const queryMessage = createQueryMessage({
+			const requestMessage = createRequestMessage({
 				method: 'test.echo',
 				data: { message: 'hello' },
 				sessionId: 'test-session',
 			});
 
-			transport.simulateMessage(queryMessage);
+			transport.simulateMessage(requestMessage);
 
 			// Wait for async handler
 			await new Promise((resolve) => setTimeout(resolve, 10));
@@ -227,7 +226,7 @@ describe('MessageHub', () => {
 			// Check that response was sent back
 			const sentMessages = transport.sentMessages;
 			const responseMessage = sentMessages.find(
-				(msg) => msg.type === MessageType.RESPONSE && msg.requestId === queryMessage.id
+				(msg) => msg.type === MessageType.RESPONSE && msg.requestId === requestMessage.id
 			);
 
 			expect(responseMessage).toBeDefined();
@@ -241,20 +240,21 @@ describe('MessageHub', () => {
 
 			messageHub.onRequest('test.error', handler);
 
-			const queryMessage = createQueryMessage({
+			const requestMessage = createRequestMessage({
 				method: 'test.error',
 				data: {},
 				sessionId: 'test-session',
 			});
 
-			transport.simulateMessage(queryMessage);
+			transport.simulateMessage(requestMessage);
 
 			// Wait for async handler
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			const sentMessages = transport.sentMessages;
 			const errorMessage = sentMessages.find(
-				(msg) => msg.type === MessageType.RESPONSE && msg.requestId === queryMessage.id && msg.error
+				(msg) =>
+					msg.type === MessageType.RESPONSE && msg.requestId === requestMessage.id && msg.error
 			);
 
 			expect(errorMessage).toBeDefined();
@@ -288,7 +288,7 @@ describe('MessageHub', () => {
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			const sentMessage = transport.sentMessages[0];
-			expect(sentMessage.type).toBe(MessageType.QUERY);
+			expect(sentMessage.type).toBe(MessageType.REQUEST);
 			expect(sentMessage.method).toBe('test.method');
 			expect(sentMessage.data).toEqual({ value: 42 });
 
@@ -379,33 +379,33 @@ describe('MessageHub', () => {
 		});
 	});
 
-	describe('Command Pattern', () => {
-		test('should register command handler', () => {
+	describe('Request Handler Pattern', () => {
+		test('should register request handler', () => {
 			const handler = mock((_data: unknown) => {});
 
-			messageHub.onRequest('test.command', handler);
+			messageHub.onRequest('test.request', handler);
 
 			expect(
 				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.has(
-					'test.command'
+					'test.request'
 				)
 			).toBe(true);
 		});
 
-		test('should execute command handler when command received', async () => {
+		test('should execute request handler when request received', async () => {
 			const handler = mock((data: { action?: string }) => {
 				expect(data.action).toBe('test');
 			});
 
-			messageHub.onRequest('test.command', handler);
+			messageHub.onRequest('test.request', handler);
 
-			const commandMessage = createCommandMessage({
-				method: 'test.command',
+			const requestMessage = createRequestMessage({
+				method: 'test.request',
 				data: { action: 'test' },
 				sessionId: 'test-session',
 			});
 
-			transport.simulateMessage(commandMessage);
+			transport.simulateMessage(requestMessage);
 
 			// Wait for async handler
 			await new Promise((resolve) => setTimeout(resolve, 10));
@@ -413,30 +413,31 @@ describe('MessageHub', () => {
 			expect(handler).toHaveBeenCalledWith(
 				{ action: 'test' },
 				expect.objectContaining({
-					method: 'test.command',
+					method: 'test.request',
 					sessionId: 'test-session',
 				})
 			);
 
-			// Commands don't send responses
+			// All requests now send responses (ACK if handler returns void)
 			const responses = transport.sentMessages.filter((m) => m.type === MessageType.RESPONSE);
-			expect(responses.length).toBe(0);
+			expect(responses.length).toBe(1);
+			expect(responses[0].data).toEqual({ acknowledged: true });
 		});
 
-		test('should unregister command handler', () => {
+		test('should unregister request handler', () => {
 			const handler = mock(() => {});
 
-			const unregister = messageHub.onRequest('test.command', handler);
+			const unregister = messageHub.onRequest('test.request', handler);
 			expect(
 				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.has(
-					'test.command'
+					'test.request'
 				)
 			).toBe(true);
 
 			unregister();
 			expect(
 				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.has(
-					'test.command'
+					'test.request'
 				)
 			).toBe(false);
 		});
@@ -552,29 +553,61 @@ describe('MessageHub', () => {
 	});
 
 	describe('Room Management', () => {
-		test('should send room.join command', () => {
-			messageHub.joinRoom('session-123');
+		test('should send room.join request', async () => {
+			// Start joinRoom but don't await yet
+			const joinPromise = messageHub.joinRoom('session-123');
+
+			// Wait for message to be sent
+			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			const sentMessage = transport.sentMessages[0];
-			expect(sentMessage.type).toBe(MessageType.COMMAND);
+			expect(sentMessage.type).toBe(MessageType.REQUEST);
 			expect(sentMessage.method).toBe('room.join');
 			expect(sentMessage.data).toEqual({ room: 'session-123' });
+
+			// Simulate ACK response
+			transport.simulateMessage(
+				createResponseMessage({
+					method: 'room.join',
+					data: { acknowledged: true },
+					sessionId: sentMessage.sessionId,
+					requestId: sentMessage.id,
+				})
+			);
+
+			await joinPromise;
 		});
 
-		test('should send room.leave command', () => {
-			messageHub.leaveRoom('session-123');
+		test('should send room.leave request', async () => {
+			// Start leaveRoom but don't await yet
+			const leavePromise = messageHub.leaveRoom('session-123');
+
+			// Wait for message to be sent
+			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			const sentMessage = transport.sentMessages[0];
-			expect(sentMessage.type).toBe(MessageType.COMMAND);
+			expect(sentMessage.type).toBe(MessageType.REQUEST);
 			expect(sentMessage.method).toBe('room.leave');
 			expect(sentMessage.data).toEqual({ room: 'session-123' });
+
+			// Simulate ACK response
+			transport.simulateMessage(
+				createResponseMessage({
+					method: 'room.leave',
+					data: { acknowledged: true },
+					sessionId: sentMessage.sessionId,
+					requestId: sentMessage.id,
+				})
+			);
+
+			await leavePromise;
 		});
 
-		test('should skip room operations when disconnected', () => {
+		test('should skip room operations when disconnected', async () => {
 			transport.simulateStateChange('disconnected');
 
-			messageHub.joinRoom('test-room');
-			messageHub.leaveRoom('test-room');
+			await messageHub.joinRoom('test-room');
+			await messageHub.leaveRoom('test-room');
 
 			expect(transport.sentMessages.length).toBe(0);
 		});
@@ -582,21 +615,21 @@ describe('MessageHub', () => {
 
 	describe('Message Routing', () => {
 		test('should route messages to correct handlers', async () => {
-			const queryHandler = mock(async () => ({}));
+			const requestHandler1 = mock(async () => ({}));
 			const eventHandler = mock(() => {});
-			const commandHandler = mock(() => {});
+			const requestHandler2 = mock(() => {});
 
-			messageHub.onRequest('test.query', queryHandler);
+			messageHub.onRequest('test.request1', requestHandler1);
 			messageHub.onEvent('test.event', eventHandler);
-			messageHub.onRequest('test.command', commandHandler);
+			messageHub.onRequest('test.request2', requestHandler2);
 
-			// Send query
-			const queryMessage = createQueryMessage({
-				method: 'test.query',
+			// Send request 1
+			const requestMessage1 = createRequestMessage({
+				method: 'test.request1',
 				data: {},
 				sessionId: 'test-session',
 			});
-			transport.simulateMessage(queryMessage);
+			transport.simulateMessage(requestMessage1);
 
 			// Send event
 			const eventMessage = createEventMessage({
@@ -606,19 +639,19 @@ describe('MessageHub', () => {
 			});
 			transport.simulateMessage(eventMessage);
 
-			// Send command
-			const commandMessage = createCommandMessage({
-				method: 'test.command',
+			// Send request 2
+			const requestMessage2 = createRequestMessage({
+				method: 'test.request2',
 				data: {},
 				sessionId: 'test-session',
 			});
-			transport.simulateMessage(commandMessage);
+			transport.simulateMessage(requestMessage2);
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
-			expect(queryHandler).toHaveBeenCalled();
+			expect(requestHandler1).toHaveBeenCalled();
 			expect(eventHandler).toHaveBeenCalled();
-			expect(commandHandler).toHaveBeenCalled();
+			expect(requestHandler2).toHaveBeenCalled();
 		});
 
 		test('should handle response messages for pending queries', async () => {
@@ -682,15 +715,15 @@ describe('MessageHub', () => {
 			const handler = mock(() => {});
 			messageHub.onMessage(handler);
 
-			// Send a query (outgoing)
-			const queryPromise = messageHub.request('test.method', {});
+			// Send a request (outgoing)
+			const requestPromise = messageHub.request('test.method', {});
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
-			// Should have been called for outgoing QUERY message
+			// Should have been called for outgoing REQUEST message
 			expect(handler).toHaveBeenCalledWith(
 				expect.objectContaining({
-					type: MessageType.QUERY,
+					type: MessageType.REQUEST,
 					method: 'test.method',
 				}),
 				'out'
@@ -715,7 +748,7 @@ describe('MessageHub', () => {
 				'in'
 			);
 
-			await queryPromise;
+			await requestPromise;
 		});
 
 		test('should unsubscribe from message handler', () => {

@@ -36,7 +36,7 @@ describe('Interrupt RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'int-1',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'client.interrupt',
 					data: {
 						sessionId: 'non-existent',
@@ -69,7 +69,7 @@ describe('Interrupt RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'int-2',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'client.interrupt',
 					data: { sessionId },
 					sessionId: 'global',

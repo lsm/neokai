@@ -40,7 +40,7 @@ describe('Rewind RPC Handlers', () => {
 		ws.send(
 			JSON.stringify({
 				id: `call-${Date.now()}`,
-				type: 'QRY',
+				type: 'REQ',
 				method,
 				data,
 				sessionId: 'global',

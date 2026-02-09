@@ -41,7 +41,7 @@ describe('Draft RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'draft-get-set',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.update',
 					data: {
 						sessionId,
@@ -69,7 +69,7 @@ describe('Draft RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'draft-get-1',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.get',
 					data: { sessionId },
 					sessionId: 'global',
@@ -107,7 +107,7 @@ describe('Draft RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'draft-update-1',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.update',
 					data: {
 						sessionId,
@@ -137,7 +137,7 @@ describe('Draft RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'draft-update-2',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.get',
 					data: { sessionId },
 					sessionId: 'global',
@@ -175,7 +175,7 @@ describe('Draft RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'draft-merge-set',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.update',
 					data: {
 						sessionId,
@@ -205,7 +205,7 @@ describe('Draft RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'draft-merge-1',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.update',
 					data: {
 						sessionId,
@@ -235,7 +235,7 @@ describe('Draft RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'draft-merge-2',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.get',
 					data: { sessionId },
 					sessionId: 'global',
@@ -275,7 +275,7 @@ describe('Draft RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'draft-clear-set',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.update',
 					data: {
 						sessionId,
@@ -303,7 +303,7 @@ describe('Draft RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'draft-clear-1',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.update',
 					data: {
 						sessionId,
@@ -333,7 +333,7 @@ describe('Draft RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'draft-clear-2',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.get',
 					data: { sessionId },
 					sessionId: 'global',

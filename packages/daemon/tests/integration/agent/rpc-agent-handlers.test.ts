@@ -38,7 +38,7 @@ describe('Agent RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'agent-state-1',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'agent.getState',
 					data: {
 						sessionId: 'non-existent',
@@ -71,7 +71,7 @@ describe('Agent RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'agent-state-2',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'agent.getState',
 					data: { sessionId },
 					sessionId: 'global',
@@ -101,7 +101,7 @@ describe('Agent RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'reset-1',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.resetQuery',
 					data: {
 						sessionId: 'non-existent',
@@ -135,7 +135,7 @@ describe('Agent RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'reset-2',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.resetQuery',
 					data: { sessionId, restartQuery: true },
 					sessionId: 'global',
@@ -167,7 +167,7 @@ describe('Agent RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'reset-3',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.resetQuery',
 					data: { sessionId, restartQuery: false },
 					sessionId: 'global',
@@ -200,7 +200,7 @@ describe('Agent RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'reset-4',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'session.resetQuery',
 					data: { sessionId },
 					sessionId: 'global',
@@ -220,7 +220,7 @@ describe('Agent RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'reset-5',
-					type: 'QRY',
+					type: 'REQ',
 					method: 'agent.getState',
 					data: { sessionId },
 					sessionId: 'global',

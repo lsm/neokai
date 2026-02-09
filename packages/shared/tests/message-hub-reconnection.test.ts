@@ -256,7 +256,7 @@ describe('MessageHub Reconnection', () => {
 		await new Promise((resolve) => setTimeout(resolve, 10));
 
 		// Should have sent query
-		const queries = transport.sentMessages.filter((m) => m.type === MessageType.QUERY);
+		const queries = transport.sentMessages.filter((m) => m.type === MessageType.REQUEST);
 		expect(queries.length).toBe(1);
 
 		// Clean up
