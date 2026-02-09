@@ -20,7 +20,7 @@ export async function sendMessage(
 		images?: Array<{ type: string; source: { type: string; data: string } }>;
 	} = {}
 ): Promise<{ messageId: string }> {
-	const result = (await daemon.messageHub.call('message.send', {
+	const result = (await daemon.messageHub.request('message.send', {
 		sessionId,
 		content,
 		...options,
@@ -61,6 +61,8 @@ async function waitForProcessingState(
 				resolved = true;
 				clearTimeout(timer);
 				unsubscribe?.();
+				// Leave room (fire-and-forget)
+				daemon.messageHub.leaveRoom('session:' + sessionId);
 			}
 		};
 
@@ -72,34 +74,39 @@ async function waitForProcessingState(
 			);
 		}, timeout);
 
-		// Subscribe to state changes - returns unsubscribe function
-		daemon.messageHub
-			.subscribe(
-				'state.session',
-				(data: unknown) => {
-					if (resolved) return;
-					const state = data as { agentState?: { status: string } };
-					const currentStatus = state.agentState?.status;
+		// Listen for state changes - returns unsubscribe function
+		unsubscribe = daemon.messageHub.onEvent('state.session', (data: unknown) => {
+			if (resolved) return;
+			const state = data as { agentState?: { status: string } };
+			const currentStatus = state.agentState?.status;
 
-					if (currentStatus === targetStatus) {
-						cleanup();
-						resolve();
-					}
-				},
-				{ sessionId }
-			)
-			.then(async (fn) => {
-				unsubscribe = fn;
-				// Double-check state after subscription is set up
-				// in case the state changed between our initial check and subscription
-				if (!resolved) {
-					const state = await getProcessingState(daemon, sessionId);
-					if (state.status === targetStatus) {
-						cleanup();
-						resolve();
-					}
+			if (currentStatus === targetStatus) {
+				cleanup();
+				resolve();
+			}
+		});
+
+		// Join the session room and wait for acknowledgment before continuing
+		// This ensures events are routed to this client
+		(async () => {
+			try {
+				await daemon.messageHub.joinRoom('session:' + sessionId);
+			} catch {
+				// Join failed, but continue - events might still work
+			}
+		})();
+
+		// Double-check state after listener is set up
+		// in case the state changed between our initial check and listener setup
+		(async () => {
+			if (!resolved) {
+				const state = await getProcessingState(daemon, sessionId);
+				if (state.status === targetStatus) {
+					cleanup();
+					resolve();
 				}
-			});
+			}
+		})();
 	});
 }
 
@@ -127,7 +134,7 @@ export async function getProcessingState(
 	daemon: DaemonServerContext,
 	sessionId: string
 ): Promise<{ status: string; phase?: string }> {
-	const result = (await daemon.messageHub.call('agent.getState', {
+	const result = (await daemon.messageHub.request('agent.getState', {
 		sessionId,
 	})) as { state: { status: string; phase?: string } } | undefined;
 
@@ -146,7 +153,7 @@ export async function getSession(
 	daemon: DaemonServerContext,
 	sessionId: string
 ): Promise<Record<string, unknown>> {
-	const result = (await daemon.messageHub.call('session.get', {
+	const result = (await daemon.messageHub.request('session.get', {
 		sessionId,
 	})) as { session: Record<string, unknown> } | undefined;
 
@@ -169,5 +176,5 @@ export async function getSession(
  * Interrupt the current processing via RPC
  */
 export async function interrupt(daemon: DaemonServerContext, sessionId: string): Promise<void> {
-	await daemon.messageHub.call('client.interrupt', { sessionId });
+	await daemon.messageHub.request('client.interrupt', { sessionId });
 }

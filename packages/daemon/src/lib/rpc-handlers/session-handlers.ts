@@ -25,7 +25,7 @@ export function setupSessionHandlers(
 	sessionManager: SessionManager,
 	daemonHub: DaemonHub
 ): void {
-	messageHub.handle('session.create', async (data) => {
+	messageHub.onRequest('session.create', async (data) => {
 		const req = data as CreateSessionRequest;
 		const sessionId = await sessionManager.createSession({
 			workspacePath: req.workspacePath,
@@ -46,7 +46,7 @@ export function setupSessionHandlers(
 	 * Set worktree mode for a session
 	 * Called when user makes their choice in the worktree choice modal
 	 */
-	messageHub.handle('session.setWorktreeMode', async (data) => {
+	messageHub.onRequest('session.setWorktreeMode', async (data) => {
 		const { sessionId, mode } = data as { sessionId: string; mode: 'worktree' | 'direct' };
 
 		// Validate input
@@ -65,19 +65,19 @@ export function setupSessionHandlers(
 		const updatedSession = await sessionLifecycle.completeWorktreeChoice(sessionId, mode);
 
 		// Broadcast update to all clients
-		await messageHub.publish('session.updated', updatedSession, {
-			sessionId,
+		messageHub.event('session.updated', updatedSession, {
+			room: `session:${sessionId}`,
 		});
 
 		return { success: true, session: updatedSession };
 	});
 
-	messageHub.handle('session.list', async () => {
+	messageHub.onRequest('session.list', async () => {
 		const sessions = sessionManager.listSessions();
 		return { sessions };
 	});
 
-	messageHub.handle('session.get', async (data) => {
+	messageHub.onRequest('session.get', async (data) => {
 		const { sessionId: targetSessionId } = data as { sessionId: string };
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
 
@@ -104,7 +104,7 @@ export function setupSessionHandlers(
 	// FIX: Session health check to detect and report stuck sessions
 	// Use case: Diagnose sessions that can't be loaded (zombie sessions)
 	// Returns: valid (boolean), error (string if invalid)
-	messageHub.handle('session.validate', async (data) => {
+	messageHub.onRequest('session.validate', async (data) => {
 		const { sessionId: targetSessionId } = data as { sessionId: string };
 		try {
 			const agentSession = await sessionManager.getSessionAsync(targetSessionId);
@@ -117,7 +117,7 @@ export function setupSessionHandlers(
 		}
 	});
 
-	messageHub.handle('session.update', async (data, _ctx) => {
+	messageHub.onRequest('session.update', async (data, _ctx) => {
 		const { sessionId: targetSessionId, ...updates } = data as UpdateSessionRequest & {
 			sessionId: string;
 		};
@@ -128,30 +128,30 @@ export function setupSessionHandlers(
 		await sessionManager.updateSession(targetSessionId, updates as Partial<Session>);
 
 		// Broadcast update event to all clients
-		await messageHub.publish('session.updated', updates, {
-			sessionId: targetSessionId,
+		messageHub.event('session.updated', updates, {
+			room: `session:${targetSessionId}`,
 		});
 
 		return { success: true };
 	});
 
-	messageHub.handle('session.delete', async (data, _ctx) => {
+	messageHub.onRequest('session.delete', async (data, _ctx) => {
 		const { sessionId: targetSessionId } = data as { sessionId: string };
 		await sessionManager.deleteSession(targetSessionId);
 
 		// Broadcast deletion event to all clients
-		await messageHub.publish(
+		messageHub.event(
 			'session.deleted',
-			{},
+			{ sessionId: targetSessionId },
 			{
-				sessionId: targetSessionId,
+				room: 'global',
 			}
 		);
 
 		return { success: true };
 	});
 
-	messageHub.handle('session.archive', async (data, _ctx) => {
+	messageHub.onRequest('session.archive', async (data, _ctx) => {
 		const { sessionId: targetSessionId, confirmed = false } = data as {
 			sessionId: string;
 			confirmed?: boolean;
@@ -249,7 +249,7 @@ export function setupSessionHandlers(
 	// Handle message sending to a session
 	// ARCHITECTURE: Fast RPC handler - emits event, returns immediately
 	// EventBus-centric pattern: RPC → emit event → SessionManager handles persistence
-	messageHub.handle('message.send', async (data) => {
+	messageHub.onRequest('message.send', async (data) => {
 		const {
 			sessionId: targetSessionId,
 			content,
@@ -289,7 +289,7 @@ export function setupSessionHandlers(
 
 	// Handle session interruption
 	// ARCHITECTURE: Fire-and-forget via EventBus, AgentSession subscribes
-	messageHub.handle('client.interrupt', async (data) => {
+	messageHub.onRequest('client.interrupt', async (data) => {
 		const { sessionId: targetSessionId } = data as { sessionId: string };
 
 		// Verify session exists before emitting event
@@ -307,7 +307,7 @@ export function setupSessionHandlers(
 	});
 
 	// Handle getting current model information
-	messageHub.handle('session.model.get', async (data) => {
+	messageHub.onRequest('session.model.get', async (data) => {
 		const { sessionId: targetSessionId } = data as { sessionId: string };
 
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
@@ -331,7 +331,7 @@ export function setupSessionHandlers(
 
 	// Handle model switching
 	// Returns synchronous result for test compatibility and immediate feedback
-	messageHub.handle('session.model.switch', async (data) => {
+	messageHub.onRequest('session.model.switch', async (data) => {
 		const { sessionId: targetSessionId, model } = data as {
 			sessionId: string;
 			model: string;
@@ -347,10 +347,10 @@ export function setupSessionHandlers(
 
 		// Broadcast model switch result via state channels for UI updates
 		if (result.success) {
-			await messageHub.publish(
+			messageHub.event(
 				'session.updated',
 				{ model: result.model },
-				{ sessionId: targetSessionId }
+				{ room: `session:${targetSessionId}` }
 			);
 		}
 
@@ -359,7 +359,7 @@ export function setupSessionHandlers(
 
 	// Handle coordinator mode switching
 	// Updates config and auto-restarts query so the new agent/tools take effect
-	messageHub.handle('session.coordinator.switch', async (data) => {
+	messageHub.onRequest('session.coordinator.switch', async (data) => {
 		const { sessionId: targetSessionId, coordinatorMode } = data as {
 			sessionId: string;
 			coordinatorMode: boolean;
@@ -386,10 +386,10 @@ export function setupSessionHandlers(
 		const result = await agentSession.resetQuery({ restartQuery: true });
 
 		// Broadcast update for UI
-		await messageHub.publish(
+		messageHub.event(
 			'session.updated',
 			{ config: { coordinatorMode } },
-			{ sessionId: targetSessionId }
+			{ room: `session:${targetSessionId}` }
 		);
 
 		return { success: result.success, coordinatorMode, error: result.error };
@@ -400,7 +400,7 @@ export function setupSessionHandlers(
 	// - auto: No thinking budget
 	// - think8k/16k/32k: Token budget set via maxThinkingTokens
 	// Note: "ultrathink" keyword is NOT auto-appended - users must type it manually
-	messageHub.handle('session.thinking.set', async (data) => {
+	messageHub.onRequest('session.thinking.set', async (data) => {
 		const { sessionId: targetSessionId, level } = data as {
 			sessionId: string;
 			level: 'auto' | 'think8k' | 'think16k' | 'think32k';
@@ -424,17 +424,17 @@ export function setupSessionHandlers(
 		});
 
 		// Broadcast the thinking level change
-		await messageHub.publish(
+		messageHub.event(
 			'session.updated',
 			{ config: { thinkingLevel } },
-			{ sessionId: targetSessionId }
+			{ room: `session:${targetSessionId}` }
 		);
 
 		return { success: true, thinkingLevel };
 	});
 
 	// Handle listing available models - uses hardcoded model list
-	messageHub.handle('models.list', async (data) => {
+	messageHub.onRequest('models.list', async (data) => {
 		try {
 			// Import model service for dynamic models (with static fallback)
 			const { getAvailableModels } = await import('../model-service');
@@ -470,14 +470,14 @@ export function setupSessionHandlers(
 	});
 
 	// Handle clearing the model cache
-	messageHub.handle('models.clearCache', async () => {
+	messageHub.onRequest('models.clearCache', async () => {
 		clearModelsCache();
 		return { success: true };
 	});
 
 	// FIX: Handle getting current agent processing state
 	// Called by clients after subscribing to agent.state to get initial snapshot
-	messageHub.handle('agent.getState', async (data) => {
+	messageHub.onRequest('agent.getState', async (data) => {
 		const { sessionId: targetSessionId } = data as { sessionId: string };
 
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
@@ -492,7 +492,7 @@ export function setupSessionHandlers(
 	});
 
 	// Handle manual cleanup of orphaned worktrees
-	messageHub.handle('worktree.cleanup', async (data) => {
+	messageHub.onRequest('worktree.cleanup', async (data) => {
 		const { workspacePath } = data as { workspacePath?: string };
 		const cleanedPaths = await sessionManager.cleanupOrphanedWorktrees(workspacePath);
 
@@ -504,7 +504,7 @@ export function setupSessionHandlers(
 	});
 
 	// Scan SDK session files in ~/.claude/projects/ for a workspace
-	messageHub.handle('sdk.scan', async (data) => {
+	messageHub.onRequest('sdk.scan', async (data) => {
 		const { workspacePath } = data as { workspacePath: string };
 
 		// Scan SDK project directory
@@ -533,7 +533,7 @@ export function setupSessionHandlers(
 	});
 
 	// Cleanup SDK session files (archive or delete)
-	messageHub.handle('sdk.cleanup', async (data) => {
+	messageHub.onRequest('sdk.cleanup', async (data) => {
 		const { workspacePath, mode, sdkSessionIds } = data as {
 			workspacePath: string;
 			mode: 'archive' | 'delete';
@@ -585,7 +585,7 @@ export function setupSessionHandlers(
 	// Handle resetting the SDK agent query
 	// This forcefully terminates and restarts the SDK query stream
 	// Use case: Recovering from stuck "queued" state or unresponsive SDK
-	messageHub.handle('session.resetQuery', async (data) => {
+	messageHub.onRequest('session.resetQuery', async (data) => {
 		const { sessionId: targetSessionId, restartQuery = true } = data as {
 			sessionId: string;
 			restartQuery?: boolean;
@@ -614,7 +614,7 @@ export function setupSessionHandlers(
 	// Handle triggering saved messages to be sent (Manual query mode)
 	// Use case: When user wants to manually send all saved messages in Manual mode
 	// ARCHITECTURE: Fire-and-forget via EventBus, AgentSession handles the actual sending
-	messageHub.handle('session.query.trigger', async (data) => {
+	messageHub.onRequest('session.query.trigger', async (data) => {
 		const { sessionId: targetSessionId } = data as { sessionId: string };
 
 		// Verify session exists before emitting event
@@ -632,7 +632,7 @@ export function setupSessionHandlers(
 
 	// Handle getting count of messages by status (for UI display)
 	// Use case: Show "3 messages pending" in Manual mode UI
-	messageHub.handle('session.messages.countByStatus', async (data) => {
+	messageHub.onRequest('session.messages.countByStatus', async (data) => {
 		const { sessionId: targetSessionId, status } = data as {
 			sessionId: string;
 			status: 'saved' | 'queued' | 'sent';

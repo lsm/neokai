@@ -64,7 +64,7 @@ describe('MCP Tools Toggle Integration', () => {
 		'disabledMcpServers is written to settings.local.json',
 		async () => {
 			// Step 1: Create session
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'MCP Tools Toggle Test',
 			})) as { sessionId: string };
@@ -73,7 +73,7 @@ describe('MCP Tools Toggle Integration', () => {
 			daemon.trackSession(sessionId);
 
 			// Verify session has proper setting sources
-			const session1 = (await daemon.messageHub.call('session.get', {
+			const session1 = (await daemon.messageHub.request('session.get', {
 				sessionId,
 			})) as { session: Session };
 			expect(session1.session.config.tools?.settingSources).toContain('user');
@@ -81,7 +81,7 @@ describe('MCP Tools Toggle Integration', () => {
 			expect(session1.session.config.tools?.settingSources).toContain('local');
 
 			// Step 2: Verify MCP servers are available from settings
-			const mcpServers = (await daemon.messageHub.call('settings.mcp.listFromSources', {
+			const mcpServers = (await daemon.messageHub.request('settings.mcp.listFromSources', {
 				sessionId,
 			})) as {
 				servers: Record<string, Array<{ name: string }>>;
@@ -95,7 +95,7 @@ describe('MCP Tools Toggle Integration', () => {
 
 			// Step 3: Disable dummy-test-server (add to disabled list)
 			console.log('[Test] Disabling dummy-test-server via disabledMcpServers');
-			const disableResult = (await daemon.messageHub.call('tools.save', {
+			const disableResult = (await daemon.messageHub.request('tools.save', {
 				sessionId,
 				tools: {
 					useClaudeCodePreset: true,
@@ -122,7 +122,7 @@ describe('MCP Tools Toggle Integration', () => {
 
 			// Step 5: Enable dummy-test-server (remove from disabled list)
 			console.log('[Test] Enabling dummy-test-server (removing from disabled list)');
-			const enableResult = (await daemon.messageHub.call('tools.save', {
+			const enableResult = (await daemon.messageHub.request('tools.save', {
 				sessionId,
 				tools: {
 					useClaudeCodePreset: true,
@@ -151,7 +151,7 @@ describe('MCP Tools Toggle Integration', () => {
 		'session config stores disabledMcpServers correctly',
 		async () => {
 			// Step 1: Create session
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'MCP Config Storage Test',
 			})) as { sessionId: string };
@@ -160,7 +160,7 @@ describe('MCP Tools Toggle Integration', () => {
 			daemon.trackSession(sessionId);
 
 			// Step 2: Save tools config with disabled servers
-			await daemon.messageHub.call('tools.save', {
+			await daemon.messageHub.request('tools.save', {
 				sessionId,
 				tools: {
 					useClaudeCodePreset: true,
@@ -171,7 +171,7 @@ describe('MCP Tools Toggle Integration', () => {
 			});
 
 			// Step 3: Get session and verify config is stored
-			const session = (await daemon.messageHub.call('session.get', {
+			const session = (await daemon.messageHub.request('session.get', {
 				sessionId,
 			})) as { session: Session };
 

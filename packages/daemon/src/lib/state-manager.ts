@@ -102,11 +102,7 @@ export class StateManager {
 			});
 
 			// Publish session.created event
-			await this.messageHub.publish(
-				'session.created',
-				{ sessionId: session.id },
-				{ sessionId: 'global' }
-			);
+			this.messageHub.event('session.created', { sessionId: session.id }, { room: 'global' });
 		});
 
 		// Session updated - update cache from event data and broadcast immediately
@@ -148,7 +144,7 @@ export class StateManager {
 				removed: [sessionId],
 				timestamp: Date.now(),
 			});
-			await this.messageHub.publish('session.deleted', { sessionId }, { sessionId: 'global' });
+			this.messageHub.event('session.deleted', { sessionId }, { room: 'global' });
 		});
 
 		// Auth events
@@ -182,8 +178,8 @@ export class StateManager {
 				this.contextCache.set(data.sessionId, data.contextInfo);
 
 				// Publish dedicated context.updated event
-				await this.messageHub.publish('context.updated', data.contextInfo, {
-					sessionId: data.sessionId,
+				this.messageHub.event('context.updated', data.contextInfo, {
+					room: `session:${data.sessionId}`,
 				});
 
 				// Also update unified session state
@@ -301,37 +297,37 @@ export class StateManager {
 	 */
 	private setupHandlers(): void {
 		// Global state snapshot
-		this.messageHub.handle(STATE_CHANNELS.GLOBAL_SNAPSHOT, async () => {
+		this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SNAPSHOT, async () => {
 			return await this.getGlobalSnapshot();
 		});
 
 		// Session state snapshot
-		this.messageHub.handle(STATE_CHANNELS.SESSION_SNAPSHOT, async (data) => {
+		this.messageHub.onRequest(STATE_CHANNELS.SESSION_SNAPSHOT, async (data) => {
 			const { sessionId } = data as { sessionId: string };
 			return await this.getSessionSnapshot(sessionId);
 		});
 
 		// Unified system state handler
-		this.messageHub.handle(STATE_CHANNELS.GLOBAL_SYSTEM, async () => {
+		this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SYSTEM, async () => {
 			return await this.getSystemState();
 		});
 
 		// Individual channel requests (for on-demand refresh)
-		this.messageHub.handle(STATE_CHANNELS.GLOBAL_SESSIONS, async () => {
+		this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SESSIONS, async () => {
 			return await this.getSessionsState();
 		});
 
-		this.messageHub.handle(STATE_CHANNELS.GLOBAL_SETTINGS, async () => {
+		this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SETTINGS, async () => {
 			return await this.getSettingsState();
 		});
 
 		// Session-specific channel requests
-		this.messageHub.handle(STATE_CHANNELS.SESSION, async (data) => {
+		this.messageHub.onRequest(STATE_CHANNELS.SESSION, async (data) => {
 			const { sessionId } = data as { sessionId: string };
 			return await this.getSessionState(sessionId);
 		});
 
-		this.messageHub.handle(STATE_CHANNELS.SESSION_SDK_MESSAGES, async (data) => {
+		this.messageHub.onRequest(STATE_CHANNELS.SESSION_SDK_MESSAGES, async (data) => {
 			const { sessionId, since } = data as {
 				sessionId: string;
 				since?: number;
@@ -524,8 +520,8 @@ export class StateManager {
 			? { sessions, timestamp: Date.now(), version }
 			: { ...(await this.getSessionsState()), version };
 
-		await this.messageHub.publish(STATE_CHANNELS.GLOBAL_SESSIONS, state, {
-			sessionId: 'global',
+		this.messageHub.event(STATE_CHANNELS.GLOBAL_SESSIONS, state, {
+			room: 'global',
 		});
 	}
 
@@ -537,7 +533,7 @@ export class StateManager {
 	async broadcastSessionsDelta(update: SessionsUpdate): Promise<void> {
 		const version = this.incrementVersion(`${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`);
 		const channel = `${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`;
-		await this.messageHub.publish(channel, { ...update, version }, { sessionId: 'global' });
+		this.messageHub.event(channel, { ...update, version }, { room: 'global' });
 	}
 
 	/**
@@ -548,8 +544,8 @@ export class StateManager {
 		const version = this.incrementVersion(STATE_CHANNELS.GLOBAL_SYSTEM);
 		const state = { ...(await this.getSystemState()), version };
 
-		await this.messageHub.publish(STATE_CHANNELS.GLOBAL_SYSTEM, state, {
-			sessionId: 'global',
+		this.messageHub.event(STATE_CHANNELS.GLOBAL_SYSTEM, state, {
+			room: 'global',
 		});
 	}
 
@@ -560,8 +556,8 @@ export class StateManager {
 		const version = this.incrementVersion(STATE_CHANNELS.GLOBAL_SETTINGS);
 		const state = { ...(await this.getSettingsState()), version };
 
-		await this.messageHub.publish(STATE_CHANNELS.GLOBAL_SETTINGS, state, {
-			sessionId: 'global',
+		this.messageHub.event(STATE_CHANNELS.GLOBAL_SETTINGS, state, {
+			room: 'global',
 		});
 	}
 
@@ -576,8 +572,8 @@ export class StateManager {
 		try {
 			const state = { ...(await this.getSessionState(sessionId)), version };
 
-			await this.messageHub.publish(STATE_CHANNELS.SESSION, state, {
-				sessionId,
+			this.messageHub.event(STATE_CHANNELS.SESSION, state, {
+				room: `session:${sessionId}`,
 			});
 		} catch (error) {
 			// Session may have been deleted or database may be closed during cleanup
@@ -603,8 +599,8 @@ export class StateManager {
 						timestamp: Date.now(),
 						version,
 					};
-					await this.messageHub.publish(STATE_CHANNELS.SESSION, fallbackState, {
-						sessionId,
+					this.messageHub.event(STATE_CHANNELS.SESSION, fallbackState, {
+						room: `session:${sessionId}`,
 					});
 				} catch (fallbackError) {
 					this.logger.error(
@@ -624,8 +620,8 @@ export class StateManager {
 		const version = this.incrementVersion(`${STATE_CHANNELS.SESSION_SDK_MESSAGES}:${sessionId}`);
 		const state = { ...(await this.getSDKMessagesState(sessionId)), version };
 
-		await this.messageHub.publish(STATE_CHANNELS.SESSION_SDK_MESSAGES, state, {
-			sessionId,
+		this.messageHub.event(STATE_CHANNELS.SESSION_SDK_MESSAGES, state, {
+			room: `session:${sessionId}`,
 		});
 	}
 
@@ -638,10 +634,10 @@ export class StateManager {
 		const version = this.incrementVersion(
 			`${STATE_CHANNELS.SESSION_SDK_MESSAGES}.delta:${sessionId}`
 		);
-		await this.messageHub.publish(
+		this.messageHub.event(
 			`${STATE_CHANNELS.SESSION_SDK_MESSAGES}.delta`,
 			{ ...update, version },
-			{ sessionId }
+			{ room: `session:${sessionId}` }
 		);
 	}
 }

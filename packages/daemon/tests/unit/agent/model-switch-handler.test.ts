@@ -134,7 +134,11 @@ describe('ModelSwitchHandler', () => {
 		} as unknown as Database;
 
 		mockMessageHub = {
-			publish: publishSpy,
+			event: publishSpy,
+			onQuery: mock((_method: string, _handler: Function) => () => {}),
+			onCommand: mock((_method: string, _handler: Function) => () => {}),
+			query: mock(async () => ({})),
+			command: mock(async () => {}),
 		} as unknown as MessageHub;
 
 		mockDaemonHub = {
@@ -283,7 +287,7 @@ describe('ModelSwitchHandler', () => {
 					expect.objectContaining({
 						from: 'default',
 					}),
-					{ sessionId: mockSession.id }
+					{ room: 'session:' + mockSession.id }
 				);
 			});
 
@@ -296,7 +300,7 @@ describe('ModelSwitchHandler', () => {
 					expect.objectContaining({
 						from: 'default',
 					}),
-					{ sessionId: mockSession.id }
+					{ room: 'session:' + mockSession.id }
 				);
 			});
 		});

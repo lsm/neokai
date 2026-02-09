@@ -25,45 +25,9 @@ const PROTOCOL_VERSION = '1.0.0';
  */
 export enum MessageType {
 	/**
-	 * RPC call (request)
-	 * Can be sent by either client or server
-	 */
-	CALL = 'CALL',
-
-	/**
-	 * RPC success response
-	 */
-	RESULT = 'RESULT',
-
-	/**
-	 * RPC error response
-	 */
-	ERROR = 'ERROR',
-
-	/**
 	 * Event delivery to subscriber
 	 */
 	EVENT = 'EVENT',
-
-	/**
-	 * Explicit subscription request (optional)
-	 */
-	SUBSCRIBE = 'SUBSCRIBE',
-
-	/**
-	 * Unsubscribe request
-	 */
-	UNSUBSCRIBE = 'UNSUBSCRIBE',
-
-	/**
-	 * Subscription confirmation (response to SUBSCRIBE)
-	 */
-	SUBSCRIBED = 'SUBSCRIBED',
-
-	/**
-	 * Unsubscription confirmation (response to UNSUBSCRIBE)
-	 */
-	UNSUBSCRIBED = 'UNSUBSCRIBED',
 
 	/**
 	 * Heartbeat/ping for connection health
@@ -74,6 +38,21 @@ export enum MessageType {
 	 * Pong response to ping
 	 */
 	PONG = 'PONG',
+
+	/**
+	 * Fire-and-forget command (client → server, no response)
+	 */
+	COMMAND = 'CMD',
+
+	/**
+	 * Request expecting a response
+	 */
+	QUERY = 'QRY',
+
+	/**
+	 * Response to query
+	 */
+	RESPONSE = 'RSP',
 }
 
 /**
@@ -140,36 +119,11 @@ export interface HubMessage {
 	 * Allows detection of out-of-order messages
 	 */
 	sequence?: number;
-}
 
-/**
- * CALL message (RPC request)
- */
-export interface CallMessage extends HubMessage {
-	type: MessageType.CALL;
-	method: string;
-	data?: unknown;
-}
-
-/**
- * RESULT message (RPC success response)
- */
-export interface ResultMessage extends HubMessage {
-	type: MessageType.RESULT;
-	method: string;
-	requestId: string;
-	data?: unknown;
-}
-
-/**
- * ERROR message (RPC error response)
- */
-export interface ErrorMessage extends HubMessage {
-	type: MessageType.ERROR;
-	method: string;
-	requestId: string;
-	error: string;
-	errorCode?: string;
+	/**
+	 * Optional room identifier for scoped messaging
+	 */
+	room?: string;
 }
 
 /**
@@ -182,81 +136,61 @@ export interface EventMessage extends HubMessage {
 }
 
 /**
- * SUBSCRIBE message (explicit subscription)
+ * COMMAND message (fire-and-forget)
  */
-export interface SubscribeMessage extends HubMessage {
-	type: MessageType.SUBSCRIBE;
+export interface CommandMessage extends HubMessage {
+	type: MessageType.COMMAND;
 	method: string;
+	data?: unknown;
 }
 
 /**
- * UNSUBSCRIBE message
+ * QUERY message (request expecting response)
  */
-export interface UnsubscribeMessage extends HubMessage {
-	type: MessageType.UNSUBSCRIBE;
+export interface QueryMessage extends HubMessage {
+	type: MessageType.QUERY;
 	method: string;
+	data?: unknown;
 }
 
 /**
- * SUBSCRIBED message (subscription confirmation)
+ * RESPONSE message (response to query)
  */
-export interface SubscribedMessage extends HubMessage {
-	type: MessageType.SUBSCRIBED;
+export interface ResponseMessage extends HubMessage {
+	type: MessageType.RESPONSE;
 	method: string;
 	requestId: string;
-	data?: {
-		subscribed: boolean;
-		method: string;
-		sessionId: string;
-	};
-}
-
-/**
- * UNSUBSCRIBED message (unsubscription confirmation)
- */
-export interface UnsubscribedMessage extends HubMessage {
-	type: MessageType.UNSUBSCRIBED;
-	method: string;
-	requestId: string;
-	data?: {
-		unsubscribed: boolean;
-		method: string;
-		sessionId: string;
-	};
+	data?: unknown;
+	error?: string;
+	errorCode?: string;
 }
 
 /**
  * Type guards
  */
-export function isCallMessage(msg: HubMessage): msg is CallMessage {
-	return msg.type === MessageType.CALL;
-}
-
 export function isEventMessage(msg: HubMessage): msg is EventMessage {
 	return msg.type === MessageType.EVENT;
 }
 
-export function isSubscribeMessage(msg: HubMessage): msg is SubscribeMessage {
-	return msg.type === MessageType.SUBSCRIBE;
-}
-
-export function isUnsubscribeMessage(msg: HubMessage): msg is UnsubscribeMessage {
-	return msg.type === MessageType.UNSUBSCRIBE;
-}
-
-export function isSubscribedMessage(msg: HubMessage): msg is SubscribedMessage {
-	return msg.type === MessageType.SUBSCRIBED;
-}
-
-export function isUnsubscribedMessage(msg: HubMessage): msg is UnsubscribedMessage {
-	return msg.type === MessageType.UNSUBSCRIBED;
+/**
+ * Check if message is a COMMAND
+ */
+export function isCommandMessage(msg: HubMessage): msg is CommandMessage {
+	return msg.type === MessageType.COMMAND;
 }
 
 /**
- * Check if message is a response (RESULT or ERROR)
+ * Check if message is a QUERY
  */
-export function isResponseMessage(msg: HubMessage): msg is ResultMessage | ErrorMessage {
-	return msg.type === MessageType.RESULT || msg.type === MessageType.ERROR;
+export function isQueryMessage(msg: HubMessage): msg is QueryMessage {
+	return msg.type === MessageType.QUERY;
+}
+
+/**
+ * Check if message is a RESPONSE
+ */
+export function isResponseMessage(msg: HubMessage): msg is ResponseMessage {
+	return msg.type === MessageType.RESPONSE;
 }
 
 /**
@@ -341,38 +275,6 @@ export interface ErrorDetail {
 }
 
 /**
- * Parameters for creating a CALL message
- */
-export interface CreateCallMessageParams {
-	method: string;
-	data: unknown;
-	sessionId: string;
-	id?: string;
-}
-
-/**
- * Parameters for creating a RESULT message
- */
-export interface CreateResultMessageParams {
-	method: string;
-	data: unknown;
-	sessionId: string;
-	requestId?: string;
-	id?: string;
-}
-
-/**
- * Parameters for creating an ERROR message
- */
-export interface CreateErrorMessageParams {
-	method: string;
-	error: string | ErrorDetail;
-	sessionId: string;
-	requestId?: string;
-	id?: string;
-}
-
-/**
  * Parameters for creating an EVENT message
  */
 export interface CreateEventMessageParams {
@@ -383,95 +285,49 @@ export interface CreateEventMessageParams {
 }
 
 /**
- * Parameters for creating a SUBSCRIBE message
+ * Parameters for creating a COMMAND message
  */
-export interface CreateSubscribeMessageParams {
+export interface CreateCommandMessageParams {
 	method: string;
+	data?: unknown;
 	sessionId: string;
+	room?: string;
 	id?: string;
 }
 
 /**
- * Parameters for creating an UNSUBSCRIBE message
+ * Parameters for creating a QUERY message
  */
-export interface CreateUnsubscribeMessageParams {
+export interface CreateQueryMessageParams {
 	method: string;
+	data?: unknown;
 	sessionId: string;
+	room?: string;
 	id?: string;
 }
 
 /**
- * Parameters for creating a SUBSCRIBED message
+ * Parameters for creating a RESPONSE message
  */
-export interface CreateSubscribedMessageParams {
+export interface CreateResponseMessageParams {
 	method: string;
-	sessionId: string;
-	requestId: string;
-	id?: string;
-}
-
-/**
- * Parameters for creating an UNSUBSCRIBED message
- */
-export interface CreateUnsubscribedMessageParams {
-	method: string;
+	data?: unknown;
 	sessionId: string;
 	requestId: string;
+	room?: string;
 	id?: string;
 }
 
 /**
- * Create a CALL message
+ * Parameters for creating an error RESPONSE message
  */
-export function createCallMessage(params: CreateCallMessageParams): CallMessage {
-	const { method, data, sessionId, id } = params;
-	return {
-		id: id || generateUUID(),
-		type: MessageType.CALL,
-		sessionId,
-		method,
-		data,
-		timestamp: new Date().toISOString(),
-		version: PROTOCOL_VERSION,
-	};
-}
-
-/**
- * Create a RESULT message
- */
-export function createResultMessage(params: CreateResultMessageParams): ResultMessage {
-	const { method, data, sessionId, requestId, id } = params;
-	return {
-		id: id || generateUUID(),
-		type: MessageType.RESULT,
-		sessionId,
-		method,
-		data,
-		requestId: requestId || '',
-		timestamp: new Date().toISOString(),
-		version: PROTOCOL_VERSION,
-	};
-}
-
-/**
- * Create an ERROR message
- */
-export function createErrorMessage(params: CreateErrorMessageParams): ErrorMessage {
-	const { method, error: errorParam, sessionId, requestId, id } = params;
-	const errorMessage = typeof errorParam === 'string' ? errorParam : errorParam.message;
-	const code = typeof errorParam === 'string' ? undefined : errorParam.code;
-
-	return {
-		id: id || generateUUID(),
-		type: MessageType.ERROR,
-		sessionId,
-		method,
-		error: errorMessage,
-		errorCode: code,
-		requestId: requestId || '',
-		timestamp: new Date().toISOString(),
-		version: PROTOCOL_VERSION,
-	};
+export interface CreateErrorResponseMessageParams {
+	method: string;
+	error: string | ErrorDetail;
+	sessionId: string;
+	requestId: string;
+	room?: string;
+	id?: string;
 }
 
 /**
@@ -491,76 +347,76 @@ export function createEventMessage(params: CreateEventMessageParams): EventMessa
 }
 
 /**
- * Create a SUBSCRIBE message
+ * Create a COMMAND message
  */
-export function createSubscribeMessage(params: CreateSubscribeMessageParams): SubscribeMessage {
-	const { method, sessionId, id } = params;
+export function createCommandMessage(params: CreateCommandMessageParams): CommandMessage {
+	const { method, data, sessionId, room, id } = params;
 	return {
 		id: id || generateUUID(),
-		type: MessageType.SUBSCRIBE,
+		type: MessageType.COMMAND,
 		sessionId,
 		method,
+		data,
+		room,
 		timestamp: new Date().toISOString(),
 		version: PROTOCOL_VERSION,
 	};
 }
 
 /**
- * Create an UNSUBSCRIBE message
+ * Create a QUERY message
  */
-export function createUnsubscribeMessage(
-	params: CreateUnsubscribeMessageParams
-): UnsubscribeMessage {
-	const { method, sessionId, id } = params;
+export function createQueryMessage(params: CreateQueryMessageParams): QueryMessage {
+	const { method, data, sessionId, room, id } = params;
 	return {
 		id: id || generateUUID(),
-		type: MessageType.UNSUBSCRIBE,
+		type: MessageType.QUERY,
 		sessionId,
 		method,
+		data,
+		room,
 		timestamp: new Date().toISOString(),
 		version: PROTOCOL_VERSION,
 	};
 }
 
 /**
- * Create a SUBSCRIBED message (subscription confirmation)
+ * Create a RESPONSE message (success)
  */
-export function createSubscribedMessage(params: CreateSubscribedMessageParams): SubscribedMessage {
-	const { method, sessionId, requestId, id } = params;
+export function createResponseMessage(params: CreateResponseMessageParams): ResponseMessage {
+	const { method, data, sessionId, requestId, room, id } = params;
 	return {
 		id: id || generateUUID(),
-		type: MessageType.SUBSCRIBED,
+		type: MessageType.RESPONSE,
 		sessionId,
 		method,
+		data,
 		requestId,
-		data: {
-			subscribed: true,
-			method,
-			sessionId,
-		},
+		room,
 		timestamp: new Date().toISOString(),
 		version: PROTOCOL_VERSION,
 	};
 }
 
 /**
- * Create an UNSUBSCRIBED message (unsubscription confirmation)
+ * Create an error RESPONSE message
  */
-export function createUnsubscribedMessage(
-	params: CreateUnsubscribedMessageParams
-): UnsubscribedMessage {
-	const { method, sessionId, requestId, id } = params;
+export function createErrorResponseMessage(
+	params: CreateErrorResponseMessageParams
+): ResponseMessage {
+	const { method, error: errorParam, sessionId, requestId, room, id } = params;
+	const errorMessage = typeof errorParam === 'string' ? errorParam : errorParam.message;
+	const code = typeof errorParam === 'string' ? undefined : errorParam.code;
+
 	return {
 		id: id || generateUUID(),
-		type: MessageType.UNSUBSCRIBED,
+		type: MessageType.RESPONSE,
 		sessionId,
 		method,
+		error: errorMessage,
+		errorCode: code,
 		requestId,
-		data: {
-			unsubscribed: true,
-			method,
-			sessionId,
-		},
+		room,
 		timestamp: new Date().toISOString(),
 		version: PROTOCOL_VERSION,
 	};
@@ -623,16 +479,8 @@ export function isValidMessage(msg: unknown): msg is HubMessage {
 		}
 	}
 
-	// Response messages must have requestId
-	if (
-		(m.type === MessageType.RESULT || m.type === MessageType.ERROR) &&
-		typeof m.requestId !== 'string'
-	) {
-		return false;
-	}
-
-	// ERROR messages must have error field
-	if (m.type === MessageType.ERROR && typeof m.error !== 'string') {
+	// RESPONSE messages must have requestId
+	if (m.type === MessageType.RESPONSE && typeof m.requestId !== 'string') {
 		return false;
 	}
 

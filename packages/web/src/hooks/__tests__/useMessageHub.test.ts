@@ -93,7 +93,7 @@ describe('useMessageHub', () => {
 		});
 
 		it('should return hub when connected', () => {
-			const mockHub = { call: vi.fn(), subscribeOptimistic: vi.fn() };
+			const mockHub = { call: vi.fn(), query: vi.fn(), subscribeOptimistic: vi.fn() };
 			mockGetHubIfConnected.mockReturnValue(mockHub);
 			const { result } = renderHook(() => useMessageHub());
 
@@ -129,6 +129,7 @@ describe('useMessageHub', () => {
 		it('should make RPC call when connected', async () => {
 			const mockHub = {
 				call: vi.fn().mockResolvedValue({ success: true, data: 'result' }),
+				query: vi.fn().mockResolvedValue({ success: true, data: 'result' }),
 				subscribeOptimistic: vi.fn(),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -136,7 +137,7 @@ describe('useMessageHub', () => {
 
 			const response = await result.current.call('test.method', { input: 'data' });
 
-			expect(mockHub.call).toHaveBeenCalledWith(
+			expect(mockHub.query).toHaveBeenCalledWith(
 				'test.method',
 				{ input: 'data' },
 				{ timeout: 10000 }
@@ -147,6 +148,7 @@ describe('useMessageHub', () => {
 		it('should use custom timeout when provided', async () => {
 			const mockHub = {
 				call: vi.fn().mockResolvedValue({}),
+				query: vi.fn().mockResolvedValue({}),
 				subscribeOptimistic: vi.fn(),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -154,12 +156,13 @@ describe('useMessageHub', () => {
 
 			await result.current.call('test.method', {}, { timeout: 5000 });
 
-			expect(mockHub.call).toHaveBeenCalledWith('test.method', {}, { timeout: 5000 });
+			expect(mockHub.query).toHaveBeenCalledWith('test.method', {}, { timeout: 5000 });
 		});
 
 		it('should use defaultTimeout from options', async () => {
 			const mockHub = {
 				call: vi.fn().mockResolvedValue({}),
+				query: vi.fn().mockResolvedValue({}),
 				subscribeOptimistic: vi.fn(),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -167,7 +170,7 @@ describe('useMessageHub', () => {
 
 			await result.current.call('test.method');
 
-			expect(mockHub.call).toHaveBeenCalledWith('test.method', undefined, { timeout: 20000 });
+			expect(mockHub.query).toHaveBeenCalledWith('test.method', undefined, { timeout: 20000 });
 		});
 	});
 
@@ -184,6 +187,7 @@ describe('useMessageHub', () => {
 		it('should make RPC call when connected', async () => {
 			const mockHub = {
 				call: vi.fn().mockResolvedValue({ success: true }),
+				query: vi.fn().mockResolvedValue({ success: true }),
 				subscribeOptimistic: vi.fn(),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -206,6 +210,7 @@ describe('useMessageHub', () => {
 		it('should use custom timeout when provided', async () => {
 			const mockHub = {
 				call: vi.fn().mockResolvedValue({}),
+				query: vi.fn().mockResolvedValue({}),
 				subscribeOptimistic: vi.fn(),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -213,7 +218,7 @@ describe('useMessageHub', () => {
 
 			await result.current.callIfConnected('test.method', {}, { timeout: 3000 });
 
-			expect(mockHub.call).toHaveBeenCalledWith('test.method', {}, { timeout: 3000 });
+			expect(mockHub.query).toHaveBeenCalledWith('test.method', {}, { timeout: 3000 });
 		});
 	});
 
@@ -234,6 +239,8 @@ describe('useMessageHub', () => {
 			const mockUnsub = vi.fn();
 			const mockHub = {
 				call: vi.fn(),
+				query: vi.fn(),
+				onEvent: vi.fn().mockReturnValue(mockUnsub),
 				subscribeOptimistic: vi.fn().mockReturnValue(mockUnsub),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -242,7 +249,8 @@ describe('useMessageHub', () => {
 			const handler = vi.fn();
 			const unsub = result.current.subscribe('test.event', handler);
 
-			expect(mockHub.subscribeOptimistic).toHaveBeenCalledWith('test.event', handler, undefined);
+			// After migration, onEvent takes only 2 arguments (method, handler)
+			expect(mockHub.onEvent).toHaveBeenCalledWith('test.event', handler);
 			expect(typeof unsub).toBe('function');
 		});
 
@@ -250,6 +258,8 @@ describe('useMessageHub', () => {
 			const mockUnsub = vi.fn();
 			const mockHub = {
 				call: vi.fn(),
+				query: vi.fn(),
+				onEvent: vi.fn().mockReturnValue(mockUnsub),
 				subscribeOptimistic: vi.fn().mockReturnValue(mockUnsub),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -261,9 +271,11 @@ describe('useMessageHub', () => {
 			expect(mockUnsub).toHaveBeenCalled();
 		});
 
-		it('should pass options to subscribeOptimistic', () => {
+		it('should pass options to onEvent', () => {
 			const mockHub = {
 				call: vi.fn(),
+				query: vi.fn(),
+				onEvent: vi.fn().mockReturnValue(() => {}),
 				subscribeOptimistic: vi.fn().mockReturnValue(() => {}),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -273,7 +285,8 @@ describe('useMessageHub', () => {
 			const options = { sessionId: 'test-session' };
 			result.current.subscribe('test.event', handler, options);
 
-			expect(mockHub.subscribeOptimistic).toHaveBeenCalledWith('test.event', handler, options);
+			// After migration, onEvent takes only 2 arguments; options are ignored
+			expect(mockHub.onEvent).toHaveBeenCalledWith('test.event', handler);
 		});
 
 		it('should cancel queued subscription on unsubscribe before connect', () => {
@@ -305,12 +318,15 @@ describe('useMessageHub', () => {
 			// Simulate connection
 			const mockHub = {
 				call: vi.fn(),
+				query: vi.fn(),
+				onEvent: vi.fn().mockReturnValue(() => {}),
 				subscribeOptimistic: vi.fn().mockReturnValue(() => {}),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
 			connectionCallback?.();
 
-			expect(mockHub.subscribeOptimistic).toHaveBeenCalledWith('test.event', handler, undefined);
+			// After migration, onEvent takes only 2 arguments (method, handler)
+			expect(mockHub.onEvent).toHaveBeenCalledWith('test.event', handler);
 		});
 
 		it('should not subscribe if cancelled before connection', () => {
@@ -329,6 +345,8 @@ describe('useMessageHub', () => {
 			// Simulate connection
 			const mockHub = {
 				call: vi.fn(),
+				query: vi.fn(),
+				onEvent: vi.fn().mockReturnValue(() => {}),
 				subscribeOptimistic: vi.fn().mockReturnValue(() => {}),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -414,6 +432,8 @@ describe('useMessageHub', () => {
 			const mockUnsub = vi.fn();
 			const mockHub = {
 				call: vi.fn(),
+				query: vi.fn(),
+				onEvent: vi.fn().mockReturnValue(mockUnsub),
 				subscribeOptimistic: vi.fn().mockReturnValue(mockUnsub),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -435,6 +455,8 @@ describe('useMessageHub', () => {
 			});
 			const mockHub = {
 				call: vi.fn(),
+				query: vi.fn(),
+				onEvent: vi.fn().mockReturnValue(mockUnsub),
 				subscribeOptimistic: vi.fn().mockReturnValue(mockUnsub),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);

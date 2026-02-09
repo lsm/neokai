@@ -36,13 +36,15 @@ describe('Instant Message Persistence UX', () => {
 
 		// Create mock MessageHub with fresh array for each test
 		messageHub = {
-			publish: mock(async (channel: string, data: unknown) => {
+			event: mock(async (channel: string, data: unknown) => {
 				const publishedMessages = (messageHub as unknown as { _publishedMessages: unknown[] })
 					._publishedMessages;
 				publishedMessages.push({ channel, data });
 			}),
-			handle: mock(() => {}),
-			call: mock(async () => ({})),
+			onQuery: mock((_method: string, _handler: Function) => () => {}),
+			onCommand: mock((_method: string, _handler: Function) => () => {}),
+			query: mock(async () => ({})),
+			command: mock(async () => {}),
 			subscribe: mock(() => () => {}),
 			unsubscribe: mock(() => {}),
 			on: mock(() => {}),

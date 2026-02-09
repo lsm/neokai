@@ -36,7 +36,7 @@ describe('InProcessTransport', () => {
 
 			const testMessage: HubMessage = {
 				id: 'test-1',
-				type: MessageType.CALL,
+				type: MessageType.QUERY,
 				method: 'test.method',
 				sessionId: 'global',
 				timestamp: new Date().toISOString(),
@@ -90,7 +90,7 @@ describe('InProcessTransport', () => {
 			// Client -> Server
 			await client.send({
 				id: 'c2s',
-				type: MessageType.CALL,
+				type: MessageType.QUERY,
 				method: 'client.to.server',
 				sessionId: 'global',
 				timestamp: new Date().toISOString(),
@@ -158,7 +158,7 @@ describe('InProcessTransport', () => {
 			const sentData = { mutable: true };
 			const testMessage: HubMessage = {
 				id: 'ref-test',
-				type: MessageType.CALL,
+				type: MessageType.QUERY,
 				method: 'test.ref',
 				sessionId: 'global',
 				timestamp: new Date().toISOString(),
@@ -186,7 +186,7 @@ describe('InProcessTransport', () => {
 			const sentData = { mutable: true };
 			const testMessage: HubMessage = {
 				id: 'clone-test',
-				type: MessageType.CALL,
+				type: MessageType.QUERY,
 				method: 'test.clone',
 				sessionId: 'global',
 				timestamp: new Date().toISOString(),
@@ -218,7 +218,7 @@ describe('InProcessTransport', () => {
 			const sentAt = Date.now();
 			await client.send({
 				id: 'latency-test',
-				type: MessageType.CALL,
+				type: MessageType.QUERY,
 				method: 'test.latency',
 				sessionId: 'global',
 				timestamp: new Date().toISOString(),
@@ -239,7 +239,7 @@ describe('InProcessTransport', () => {
 			await expect(
 				transport.send({
 					id: 'error-test',
-					type: MessageType.CALL,
+					type: MessageType.QUERY,
 					method: 'test.error',
 					sessionId: 'global',
 					timestamp: new Date().toISOString(),
@@ -642,12 +642,12 @@ describe('MessageHub with InProcessTransport', () => {
 		await clientTransport.initialize();
 
 		// Server handles RPC
-		serverHub.handle('math.add', async (data: { a: number; b: number }) => {
+		serverHub.onRequest('math.add', async (data: { a: number; b: number }) => {
 			return { result: data.a + data.b };
 		});
 
 		// Client calls server
-		const response = await clientHub.call<{ result: number }>('math.add', {
+		const response = await clientHub.request<{ result: number }>('math.add', {
 			a: 5,
 			b: 3,
 		});
@@ -658,7 +658,7 @@ describe('MessageHub with InProcessTransport', () => {
 		await serverTransport.close();
 	});
 
-	it('should support pub/sub via in-process transport (optimistic)', async () => {
+	it('should support pub/sub via in-process transport', async () => {
 		const [clientTransport, serverTransport] = InProcessTransport.createPair();
 
 		const clientHub = new MessageHub({ defaultSessionId: 'global' });
@@ -671,15 +671,10 @@ describe('MessageHub with InProcessTransport', () => {
 
 		const receivedEvents: unknown[] = [];
 
-		// Client subscribes (optimistic - doesn't wait for ACK)
-		// Note: For full subscribe() with ACK, server needs MessageHubRouter
-		clientHub.subscribeOptimistic(
-			'session.created',
-			(data) => {
-				receivedEvents.push(data);
-			},
-			{ sessionId: 'global' }
-		);
+		// Client subscribes to events
+		clientHub.onEvent('session.created', (data) => {
+			receivedEvents.push(data);
+		});
 
 		// Server publishes directly to client transport
 		// (In real setup, server would use MessageHub.publish which routes via Router)

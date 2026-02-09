@@ -105,7 +105,7 @@ export class GlobalStore {
 			const hub = await connectionManager.getHub();
 
 			// Fetch initial state snapshot
-			const snapshot = await hub.call<{
+			const snapshot = await hub.request<{
 				sessions: SessionsState;
 				system: SystemState;
 				settings: SettingsState;
@@ -119,44 +119,31 @@ export class GlobalStore {
 			}
 
 			// Subscribe to sessions changes (full state)
-			const unsubSessions = hub.subscribeOptimistic<SessionsState>(
-				STATE_CHANNELS.GLOBAL_SESSIONS,
-				(state) => {
-					this.sessions.value = state.sessions || [];
-					this.hasArchivedSessions.value = state.hasArchivedSessions || false;
-				},
-				{ sessionId: 'global' }
-			);
+			const unsubSessions = hub.onEvent<SessionsState>(STATE_CHANNELS.GLOBAL_SESSIONS, (state) => {
+				this.sessions.value = state.sessions || [];
+				this.hasArchivedSessions.value = state.hasArchivedSessions || false;
+			});
 			this.cleanupFunctions.push(unsubSessions);
 
 			// Subscribe to sessions delta updates (added/updated/removed)
-			const unsubSessionsDelta = hub.subscribeOptimistic<SessionsUpdate>(
+			const unsubSessionsDelta = hub.onEvent<SessionsUpdate>(
 				`${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`,
 				(delta) => {
 					this.applySessionsDelta(delta);
-				},
-				{ sessionId: 'global' }
+				}
 			);
 			this.cleanupFunctions.push(unsubSessionsDelta);
 
 			// Subscribe to system state changes
-			const unsubSystem = hub.subscribeOptimistic<SystemState>(
-				STATE_CHANNELS.GLOBAL_SYSTEM,
-				(state) => {
-					this.systemState.value = state;
-				},
-				{ sessionId: 'global' }
-			);
+			const unsubSystem = hub.onEvent<SystemState>(STATE_CHANNELS.GLOBAL_SYSTEM, (state) => {
+				this.systemState.value = state;
+			});
 			this.cleanupFunctions.push(unsubSystem);
 
 			// Subscribe to settings changes
-			const unsubSettings = hub.subscribeOptimistic<SettingsState>(
-				STATE_CHANNELS.GLOBAL_SETTINGS,
-				(state) => {
-					this.settings.value = state.settings || null;
-				},
-				{ sessionId: 'global' }
-			);
+			const unsubSettings = hub.onEvent<SettingsState>(STATE_CHANNELS.GLOBAL_SETTINGS, (state) => {
+				this.settings.value = state.settings || null;
+			});
 			this.cleanupFunctions.push(unsubSettings);
 
 			this.initialized = true;
@@ -181,7 +168,7 @@ export class GlobalStore {
 			const hub = await connectionManager.getHub();
 
 			// Fetch fresh snapshot
-			const snapshot = await hub.call<{
+			const snapshot = await hub.request<{
 				sessions: SessionsState;
 				system: SystemState;
 				settings: SettingsState;

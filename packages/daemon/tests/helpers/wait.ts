@@ -72,28 +72,44 @@ export async function waitFor(ms: number): Promise<void> {
 /**
  * Collect values from a subscription until condition met or timeout
  *
+ * Supports room-based onEvent() API. If subscriptionOptions contains a room,
+ * the client will join that room before listening and leave it after.
+ *
  * @example
  * const values = await collectSubscriptionValues(
  *   messageHub,
  *   'state.session',
  *   (collected) => collected.length >= 3,
- *   { sessionId },
+ *   { room: 'session:abc123' },
  *   5000
  * );
  */
 export async function collectSubscriptionValues<T>(
 	messageHub: {
-		subscribe: (channel: string, handler: (data: T) => void, options?: unknown) => void;
+		onEvent: (channel: string, handler: (data: T) => void) => () => void;
+		joinRoom?: (room: string) => void;
+		leaveRoom?: (room: string) => void;
 	},
 	channel: string,
 	stopCondition: (collected: T[]) => boolean,
-	subscriptionOptions?: unknown,
+	subscriptionOptions?: { room?: string },
 	timeoutMs: number = 5000
 ): Promise<T[]> {
 	const collected: T[] = [];
+	const room = subscriptionOptions?.room;
 
 	return new Promise((resolve, reject) => {
+		const cleanup = () => {
+			clearTimeout(timeout);
+			unsubscribe();
+			if (room && messageHub.leaveRoom) {
+				// Leave room (fire-and-forget)
+				messageHub.leaveRoom(room);
+			}
+		};
+
 		const timeout = setTimeout(() => {
+			cleanup();
 			reject(
 				new Error(
 					`collectSubscriptionValues timed out after ${timeoutMs}ms, collected ${collected.length} values`
@@ -101,17 +117,21 @@ export async function collectSubscriptionValues<T>(
 			);
 		}, timeoutMs);
 
-		messageHub.subscribe(
-			channel,
-			(data: T) => {
-				collected.push(data);
+		const unsubscribe = messageHub.onEvent(channel, (data: T) => {
+			collected.push(data);
 
-				if (stopCondition(collected)) {
-					clearTimeout(timeout);
-					resolve(collected);
-				}
-			},
-			subscriptionOptions
-		);
+			if (stopCondition(collected)) {
+				cleanup();
+				resolve(collected);
+			}
+		});
+
+		// Join the room if specified and wait for acknowledgment
+		// This ensures events are routed to this client
+		if (room && messageHub.joinRoom) {
+			messageHub.joinRoom(room).catch(() => {
+				// Join failed, but continue - events might still work
+			});
+		}
 	});
 }

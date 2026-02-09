@@ -19,14 +19,14 @@ export function registerSettingsHandlers(
 	/**
 	 * Get global settings
 	 */
-	messageHub.handle('settings.global.get', async () => {
+	messageHub.onRequest('settings.global.get', async () => {
 		return settingsManager.getGlobalSettings();
 	});
 
 	/**
 	 * Update global settings (partial update)
 	 */
-	messageHub.handle(
+	messageHub.onRequest(
 		'settings.global.update',
 		async (data: { updates: Partial<GlobalSettings> }) => {
 			const updated = settingsManager.updateGlobalSettings(data.updates);
@@ -49,7 +49,7 @@ export function registerSettingsHandlers(
 	/**
 	 * Save global settings (full replace)
 	 */
-	messageHub.handle('settings.global.save', async (data: { settings: GlobalSettings }) => {
+	messageHub.onRequest('settings.global.save', async (data: { settings: GlobalSettings }) => {
 		settingsManager.saveGlobalSettings(data.settings);
 		// Emit event for StateManager to broadcast (global event)
 		daemonHub.emit('settings.updated', {
@@ -62,7 +62,7 @@ export function registerSettingsHandlers(
 	/**
 	 * Toggle MCP server enabled/disabled
 	 */
-	messageHub.handle(
+	messageHub.onRequest(
 		'settings.mcp.toggle',
 		async (data: { serverName: string; enabled: boolean }) => {
 			await settingsManager.toggleMcpServer(data.serverName, data.enabled);
@@ -76,7 +76,7 @@ export function registerSettingsHandlers(
 	/**
 	 * Get list of disabled MCP servers
 	 */
-	messageHub.handle('settings.mcp.getDisabled', async () => {
+	messageHub.onRequest('settings.mcp.getDisabled', async () => {
 		return {
 			disabledServers: settingsManager.getDisabledMcpServers(),
 		};
@@ -85,7 +85,7 @@ export function registerSettingsHandlers(
 	/**
 	 * Set list of disabled MCP servers
 	 */
-	messageHub.handle('settings.mcp.setDisabled', async (data: { disabledServers: string[] }) => {
+	messageHub.onRequest('settings.mcp.setDisabled', async (data: { disabledServers: string[] }) => {
 		await settingsManager.setDisabledMcpServers(data.disabledServers);
 		// Emit event for StateManager to broadcast (global event)
 		const settings = settingsManager.getGlobalSettings();
@@ -96,7 +96,7 @@ export function registerSettingsHandlers(
 	/**
 	 * Read file-only settings from .claude/settings.local.json
 	 */
-	messageHub.handle('settings.fileOnly.read', async () => {
+	messageHub.onRequest('settings.fileOnly.read', async () => {
 		return settingsManager.readFileOnlySettings();
 	});
 
@@ -107,7 +107,7 @@ export function registerSettingsHandlers(
 	 * - If sessionId provided: Reads from session's workspace (worktree or shared)
 	 * - If sessionId omitted: Reads from global workspace root (for GlobalSettingsEditor)
 	 */
-	messageHub.handle('settings.mcp.listFromSources', async (data?: { sessionId?: string }) => {
+	messageHub.onRequest('settings.mcp.listFromSources', async (data?: { sessionId?: string }) => {
 		let effectiveSettings = settingsManager; // Default: global workspace root
 
 		// If sessionId provided, use session-specific workspace path
@@ -136,7 +136,7 @@ export function registerSettingsHandlers(
 	/**
 	 * Update per-server MCP settings (allowed/defaultOn)
 	 */
-	messageHub.handle(
+	messageHub.onRequest(
 		'settings.mcp.updateServerSettings',
 		async (data: { serverName: string; settings: { allowed?: boolean; defaultOn?: boolean } }) => {
 			settingsManager.updateMcpServerSettings(data.serverName, data.settings);
@@ -153,7 +153,7 @@ export function registerSettingsHandlers(
 	 * Currently, session settings are stored in session.config, but this
 	 * handler provides a unified interface for future expansion.
 	 */
-	messageHub.handle('settings.session.get', async (data: { sessionId: string }) => {
+	messageHub.onRequest('settings.session.get', async (data: { sessionId: string }) => {
 		// Future: retrieve session-specific settings
 		// For now, return empty object
 		return {
@@ -165,15 +165,12 @@ export function registerSettingsHandlers(
 	/**
 	 * Update session settings (placeholder for future session-specific settings)
 	 */
-	messageHub.handle(
+	messageHub.onRequest(
 		'settings.session.update',
 		async (data: { sessionId: string; updates: Partial<SessionSettings> }) => {
 			// Future: update session-specific settings
-			// For now, return success
-			return {
-				success: true,
-				sessionId: data.sessionId,
-			};
+			// For now, do nothing
+			return { success: true, sessionId: data.sessionId };
 		}
 	);
 }
