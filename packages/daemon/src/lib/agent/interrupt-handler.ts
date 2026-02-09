@@ -117,7 +117,7 @@ export class InterruptHandler {
 			messageQueue.stop();
 
 			// Publish interrupt event
-			await messageHub.publish('session.interrupted', {}, { sessionId: session.id });
+			messageHub.event('session.interrupted', {}, { room: `session:${session.id}` });
 
 			// Set state back to idle
 			await stateManager.setIdle();

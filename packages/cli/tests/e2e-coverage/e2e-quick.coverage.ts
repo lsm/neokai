@@ -74,8 +74,7 @@ describe('E2E Quick Coverage Tests', () => {
 		// WebSocket handlers
 		const wsHandlers = createWebSocketHandlers(
 			daemonContext.transport,
-			daemonContext.sessionManager,
-			daemonContext.subscriptionManager
+			daemonContext.sessionManager
 		);
 
 		// Hono for static files

@@ -52,7 +52,7 @@ describe('SDK SIGINT Cleanup (Online)', () => {
 			'should complete cleanup when SIGINT received during active query',
 			async () => {
 				// Create a session via WebSocket RPC
-				const sessionResult = (await daemon.messageHub.call('session.create', {
+				const sessionResult = (await daemon.messageHub.request('session.create', {
 					workspacePath: `${TMP_DIR}/test-sigint-active-query`,
 					title: 'SIGINT Cleanup Test',
 				})) as { sessionId: string };
@@ -62,7 +62,7 @@ describe('SDK SIGINT Cleanup (Online)', () => {
 
 				// Send a message to start the SDK query
 				// Use a long-running prompt to ensure the query is still active when we send SIGINT
-				await daemon.messageHub.call('message.send', {
+				await daemon.messageHub.request('message.send', {
 					sessionId,
 					content: 'Please write a detailed 500-word essay about the history of computing.',
 				});
@@ -72,7 +72,7 @@ describe('SDK SIGINT Cleanup (Online)', () => {
 				await new Promise((resolve) => setTimeout(resolve, 3000));
 
 				// Get the agent session to verify it's processing
-				const sessionResult2 = (await daemon.messageHub.call('session.get', {
+				const sessionResult2 = (await daemon.messageHub.request('session.get', {
 					sessionId,
 				})) as { session: { processingState: { status: string } } };
 

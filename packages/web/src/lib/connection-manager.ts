@@ -334,6 +334,9 @@ export class ConnectionManager {
 		// Wait for connection to be established (event-driven, not polling)
 		await this.waitForConnectionEventDriven(5000);
 
+		// Join global room after connection is established
+		this.messageHub.joinRoom('global');
+
 		// Mark ready for testing
 		if (typeof window !== 'undefined' && window.__messageHub) {
 			window.__messageHubReady = true;
@@ -471,14 +474,13 @@ export class ConnectionManager {
 		try {
 			// Send a lightweight health check with short timeout
 			// If this fails, the connection is dead and needs reconnect
-			await this.messageHub.call('system.health', {}, { timeout: 3000 });
+			await this.messageHub.request('system.health', {}, { timeout: 3000 });
 
-			// CRITICAL FIX: Force resubscribe even when health check succeeds
+			// CRITICAL FIX: Re-join global room on resume
 			// Safari may pause WebSocket without closing it, causing server-side
-			// subscriptions to timeout while client thinks it's still connected.
-			// This ensures subscriptions are re-established on the server.
-			// The debounce in resubscribeAll() prevents subscription storms.
-			this.messageHub.forceResubscribe();
+			// room memberships to expire while client thinks it's still connected.
+			// This ensures room membership is re-established on the server.
+			this.messageHub.joinRoom('global');
 
 			// CRITICAL: Refresh ALL state (session store, app state, and global state)
 			// This ensures UI is in sync even if events were missed during background

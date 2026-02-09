@@ -21,7 +21,11 @@ describe('ErrorManager - Error Throttling', () => {
 
 		// Mock MessageHub (still needed for API connection status)
 		messageHub = {
-			publish: async () => {},
+			event: async () => {},
+			onQuery: (_method: string, _handler: Function) => () => {},
+			onCommand: (_method: string, _handler: Function) => () => {},
+			query: async () => ({}),
+			command: async () => {},
 		} as unknown as MessageHub;
 
 		// Create DaemonHub and track emitted errors

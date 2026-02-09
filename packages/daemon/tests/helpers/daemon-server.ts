@@ -148,7 +148,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 		// Delete all tracked sessions via RPC
 		for (const sessionId of trackedSessions) {
 			try {
-				await messageHub.call('session.delete', { sessionId });
+				await messageHub.request('session.delete', { sessionId });
 			} catch {
 				// Session may already be deleted, ignore errors
 			}
@@ -241,7 +241,7 @@ async function createInProcessDaemonServer(
 			try {
 				// Use Promise.race to add timeout - session.delete may hang if SDK is busy
 				await Promise.race([
-					messageHub.call('session.delete', { sessionId }),
+					messageHub.request('session.delete', { sessionId }),
 					new Promise((_, reject) =>
 						setTimeout(() => reject(new Error('session.delete timeout')), 5000)
 					),

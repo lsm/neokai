@@ -41,7 +41,7 @@
 
 import { MessageHub } from './message-hub.ts';
 import { InProcessTransportBus, InProcessTransport } from './in-process-transport.ts';
-import type { UnsubscribeFn, EventHandler } from './types.ts';
+import type { RoomEventHandler } from './types.ts';
 
 /**
  * Base constraint for event data
@@ -113,7 +113,7 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 		new Map();
 
 	// Track MessageHub subscriptions for cleanup
-	private hubSubscriptions: Map<string, UnsubscribeFn[]> = new Map();
+	private hubSubscriptions: Map<string, (() => void)[]> = new Map();
 
 	constructor(options: TypedHubOptions = {}) {
 		this.name = options.name || 'typed-hub';
@@ -172,9 +172,9 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 		// This ensures publisher receives own events, even with single hub
 		await this.dispatchLocally(event, data);
 
-		// Also publish via MessageHub for cross-transport delivery
+		// Also send event via MessageHub for cross-transport delivery
 		// Note: Bus excludes sender, so this only reaches other participants
-		await this.hub.publish(event, data, { sessionId: data.sessionId });
+		await this.hub.event(event, data, { room: data.sessionId });
 	}
 
 	/**
@@ -249,7 +249,7 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 		event: K,
 		handler: (data: TEventMap[K]) => void | Promise<void>,
 		options?: TypedSubscribeOptions
-	): UnsubscribeFn {
+	): () => void {
 		const sessionId = options?.sessionId;
 		const subscriptionKey = sessionId || '__global__';
 
@@ -268,16 +268,19 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 
 		// Also subscribe via MessageHub for cross-transport events (from other participants)
 		// Create wrapper that applies session filtering
-		const hubHandler: EventHandler = (data) => {
+		const hubHandler: RoomEventHandler = (data) => {
 			const eventData = data as TEventMap[K];
 			if (sessionId && eventData.sessionId !== sessionId) {
 				return;
 			}
 			handler(eventData);
 		};
-		const hubUnsub = this.hub.subscribeOptimistic(event, hubHandler, {
-			sessionId: sessionId || 'global',
-		});
+		const hubUnsub = this.hub.onEvent(event, hubHandler);
+
+		// Join the room if sessionId is specified
+		if (sessionId) {
+			this.hub.joinRoom(sessionId);
+		}
 
 		// Track MessageHub subscription for cleanup
 		if (!this.hubSubscriptions.has(event)) {
@@ -318,8 +321,8 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 		event: K,
 		handler: (data: TEventMap[K]) => void | Promise<void>,
 		options?: TypedSubscribeOptions
-	): UnsubscribeFn {
-		let unsub: UnsubscribeFn | null = null;
+	): () => void {
+		let unsub: (() => void) | null = null;
 
 		const wrappedHandler = async (data: TEventMap[K]) => {
 			if (unsub) {
@@ -346,7 +349,7 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 		event: K,
 		handler: (data: TEventMap[K]) => void | Promise<void>,
 		options?: TypedSubscribeOptions
-	): UnsubscribeFn {
+	): () => void {
 		return this.subscribe(event, handler, options);
 	}
 

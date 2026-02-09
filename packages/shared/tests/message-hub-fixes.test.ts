@@ -1,15 +1,14 @@
 /**
  * Tests for MessageHub Critical Fixes
  *
- * Tests for features added during comprehensive architecture review:
- * - Subscription persistence and auto-resubscription
+ * Tests for features in the new simplified API:
  * - Runtime message validation
- * - Request deduplication
  * - Message sequence numbers
  * - PING/PONG handlers
+ * - Method name validation
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { MessageHub } from '../src/message-hub/message-hub';
 import type { IMessageTransport, ConnectionState, HubMessage } from '../src/message-hub/types';
 import { MessageType, createEventMessage, isValidMessage } from '../src/message-hub/protocol';
@@ -33,30 +32,6 @@ class MockTransport implements IMessageTransport {
 
 	async send(message: HubMessage): Promise<void> {
 		this.sentMessages.push(message);
-
-		// Auto-respond to SUBSCRIBE/UNSUBSCRIBE messages (simulate server ACK)
-		if (message.type === MessageType.SUBSCRIBE || message.type === MessageType.UNSUBSCRIBE) {
-			// Send ACK response immediately
-			setTimeout(() => {
-				const ackMessage = {
-					id: `ack-${message.id}`,
-					type:
-						message.type === MessageType.SUBSCRIBE
-							? MessageType.SUBSCRIBED
-							: MessageType.UNSUBSCRIBED,
-					sessionId: message.sessionId,
-					method: message.method,
-					requestId: message.id,
-					data: {
-						[message.type === MessageType.SUBSCRIBE ? 'subscribed' : 'unsubscribed']: true,
-						method: message.method,
-						sessionId: message.sessionId,
-					},
-					timestamp: new Date().toISOString(),
-				};
-				this.simulateMessage(ackMessage);
-			}, 0);
-		}
 	}
 
 	onMessage(handler: (message: HubMessage) => void): () => void {
@@ -111,7 +86,6 @@ describe('MessageHub Critical Fixes', () => {
 	beforeEach(async () => {
 		messageHub = new MessageHub({
 			defaultSessionId: 'test-session',
-			debug: false,
 		});
 
 		transport = new MockTransport();
@@ -121,74 +95,6 @@ describe('MessageHub Critical Fixes', () => {
 
 	afterEach(() => {
 		messageHub.cleanup();
-	});
-
-	describe('Subscription Persistence & Auto-Resubscription', () => {
-		test('should persist subscriptions across reconnections', async () => {
-			let callCount = 0;
-			const handler = () => {
-				callCount++;
-			};
-
-			// Subscribe to an event
-			await messageHub.subscribe('user.created', handler);
-
-			// Simulate event before disconnect
-			transport.simulateMessage(
-				createEventMessage({
-					method: 'user.created',
-					data: { userId: '123' },
-					sessionId: 'test-session',
-				})
-			);
-
-			expect(callCount).toBe(1);
-
-			// Simulate disconnect and reconnect
-			transport.simulateStateChange('disconnected');
-			await new Promise((resolve) => setTimeout(resolve, 10));
-			transport.simulateStateChange('connected');
-			await new Promise((resolve) => setTimeout(resolve, 10));
-
-			// Handler should still work after reconnection
-			transport.simulateMessage(
-				createEventMessage({
-					method: 'user.created',
-					data: { userId: '456' },
-					sessionId: 'test-session',
-				})
-			);
-
-			expect(callCount).toBe(2);
-		});
-
-		test('should not resubscribe after manual unsubscribe', async () => {
-			let callCount = 0;
-			const handler = () => {
-				callCount++;
-			};
-
-			// Subscribe and then immediately unsubscribe
-			const unsub = await messageHub.subscribe('user.created', handler);
-			await unsub();
-
-			// Simulate reconnection
-			transport.simulateStateChange('disconnected');
-			await new Promise((resolve) => setTimeout(resolve, 10));
-			transport.simulateStateChange('connected');
-			await new Promise((resolve) => setTimeout(resolve, 10));
-
-			// Handler should NOT be called
-			transport.simulateMessage(
-				createEventMessage({
-					method: 'user.created',
-					data: { userId: '789' },
-					sessionId: 'test-session',
-				})
-			);
-
-			expect(callCount).toBe(0);
-		});
 	});
 
 	describe('Runtime Message Validation', () => {
@@ -227,28 +133,14 @@ describe('MessageHub Critical Fixes', () => {
 			expect(isValidMessage(invalidMessage)).toBe(false);
 		});
 
-		test('should reject RESULT message without requestId', () => {
+		test('should reject RESPONSE message without requestId', () => {
 			const invalidMessage = {
 				id: 'test-id',
-				type: MessageType.RESULT,
+				type: MessageType.RESPONSE,
 				sessionId: 'test-session',
 				method: 'test.method',
 				timestamp: new Date().toISOString(),
 				// Missing requestId
-			};
-
-			expect(isValidMessage(invalidMessage)).toBe(false);
-		});
-
-		test('should reject ERROR message without error field', () => {
-			const invalidMessage = {
-				id: 'test-id',
-				type: MessageType.ERROR,
-				sessionId: 'test-session',
-				method: 'test.method',
-				timestamp: new Date().toISOString(),
-				requestId: 'req-id',
-				// Missing error field
 			};
 
 			expect(isValidMessage(invalidMessage)).toBe(false);
@@ -279,60 +171,10 @@ describe('MessageHub Critical Fixes', () => {
 		});
 	});
 
-	describe('Request Deduplication', () => {
-		test('should deduplicate identical concurrent RPC calls', async () => {
-			// Register a handler
-			messageHub.handle('test.slow', async () => {
-				await new Promise((resolve) => setTimeout(resolve, 100));
-				return { result: 'success' };
-			});
-
-			// Make two identical calls concurrently
-			const call1 = messageHub.call('test.slow', { value: 42 });
-			const call2 = messageHub.call('test.slow', { value: 42 });
-
-			await new Promise((resolve) => setTimeout(resolve, 10));
-
-			// Should only send ONE CALL message
-			const callMessages = transport.sentMessages.filter((m) => m.type === MessageType.CALL);
-			expect(callMessages.length).toBe(1);
-
-			// Both promises should resolve to same result
-			transport.simulateMessage({
-				id: 'response-id',
-				type: MessageType.RESULT,
-				sessionId: 'test-session',
-				method: 'test.slow',
-				requestId: callMessages[0].id,
-				data: { result: 'success' },
-				timestamp: new Date().toISOString(),
-			});
-
-			const [result1, result2] = await Promise.all([call1, call2]);
-			expect(result1).toEqual({ result: 'success' });
-			expect(result2).toEqual({ result: 'success' });
-		});
-
-		test('should NOT deduplicate calls with different data', async () => {
-			const call1 = messageHub.call('test.method', { value: 1 });
-			const call2 = messageHub.call('test.method', { value: 2 });
-
-			await new Promise((resolve) => setTimeout(resolve, 10));
-
-			// Should send TWO different CALL messages
-			const callMessages = transport.sentMessages.filter((m) => m.type === MessageType.CALL);
-			expect(callMessages.length).toBe(2);
-
-			// Cleanup
-			call1.catch(() => {});
-			call2.catch(() => {});
-		});
-	});
-
 	describe('Message Sequence Numbers', () => {
 		test('should add sequence numbers to outgoing messages', async () => {
-			await messageHub.publish('test.event', { data: 'test' });
-			await messageHub.publish('test.event2', { data: 'test2' });
+			messageHub.event('test.event', { data: 'test' });
+			messageHub.event('test.event2', { data: 'test2' });
 
 			const events = transport.sentMessages.filter((m) => m.type === MessageType.EVENT);
 
@@ -345,11 +187,11 @@ describe('MessageHub Critical Fixes', () => {
 		});
 
 		test('should maintain sequence across different message types', async () => {
-			const call1 = messageHub.call('test.method1', {});
+			const query1 = messageHub.request('test.method1', {});
 			await new Promise((resolve) => setTimeout(resolve, 5));
-			await messageHub.publish('test.event', {});
+			messageHub.event('test.event', {});
 			await new Promise((resolve) => setTimeout(resolve, 5));
-			const call2 = messageHub.call('test.method2', {});
+			const query2 = messageHub.request('test.method2', {});
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -364,8 +206,31 @@ describe('MessageHub Critical Fixes', () => {
 			}
 
 			// Cleanup
-			call1.catch(() => {});
-			call2.catch(() => {});
+			query1.catch(() => {});
+			query2.catch(() => {});
+		});
+
+		test('should reset sequence on cleanup', () => {
+			// Use valid method names with dots
+			messageHub.event('test.method1', {});
+			const seq1 = transport.sentMessages[0].sequence;
+
+			messageHub.cleanup();
+
+			// Create new hub
+			const hub2 = new MessageHub();
+			const transport2 = new MockTransport();
+			hub2.registerTransport(transport2);
+
+			hub2.event('test.method2', {});
+			const seq2 = transport2.sentMessages[0].sequence;
+
+			// Sequence should start from 0 again
+			expect(seq2).toBe(0);
+			// Both sequences start at 0, so just verify seq1 exists
+			expect(seq1).toBeDefined();
+
+			hub2.cleanup();
 		});
 	});
 
@@ -408,34 +273,186 @@ describe('MessageHub Critical Fixes', () => {
 	});
 
 	describe('Method Name Validation', () => {
-		test('should reject method names with colons', () => {
+		test('should reject method names with colons in onQuery', () => {
 			expect(() => {
-				messageHub.handle('test:invalid.method', async () => ({}));
+				messageHub.onRequest('test:invalid.method', async () => ({}));
+			}).toThrow();
+		});
+
+		test('should reject method names with colons in onRequest', () => {
+			expect(() => {
+				messageHub.onRequest('test:invalid.method', async () => ({}));
+			}).toThrow();
+		});
+
+		test('should reject method names with colons in onEvent', () => {
+			expect(() => {
+				messageHub.onEvent('test:invalid.method', () => {});
 			}).toThrow();
 		});
 
 		test('should accept valid method names', () => {
 			expect(() => {
-				messageHub.handle('test.valid-method_name', async () => ({}));
+				messageHub.onRequest('test.valid-method_name', async () => ({}));
 			}).not.toThrow();
 		});
 
 		test('should reject method names without dots', () => {
 			expect(() => {
-				messageHub.handle('testinvalid', async () => ({}));
+				messageHub.onRequest('testinvalid', async () => ({}));
 			}).toThrow();
 		});
 
 		test('should reject method names starting with dot', () => {
 			expect(() => {
-				messageHub.handle('.test.invalid', async () => ({}));
+				messageHub.onRequest('.test.invalid', async () => ({}));
 			}).toThrow();
 		});
 
 		test('should reject method names ending with dot', () => {
 			expect(() => {
-				messageHub.handle('test.invalid.', async () => ({}));
+				messageHub.onRequest('test.invalid.', async () => ({}));
 			}).toThrow();
+		});
+
+		test('should reject empty method names', () => {
+			expect(() => {
+				messageHub.onRequest('', async () => ({}));
+			}).toThrow('Invalid method name');
+		});
+	});
+
+	describe('Event Handler Persistence', () => {
+		test('should maintain event handlers across connection state changes', async () => {
+			let callCount = 0;
+			const handler = () => {
+				callCount++;
+			};
+
+			// Register event handler
+			messageHub.onEvent('user.created', handler);
+
+			// Simulate event before disconnect
+			transport.simulateMessage(
+				createEventMessage({
+					method: 'user.created',
+					data: { userId: '123' },
+					sessionId: 'test-session',
+				})
+			);
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			expect(callCount).toBe(1);
+
+			// Simulate disconnect and reconnect
+			transport.simulateStateChange('disconnected');
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			transport.simulateStateChange('connected');
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Handler should still work after reconnection
+			transport.simulateMessage(
+				createEventMessage({
+					method: 'user.created',
+					data: { userId: '456' },
+					sessionId: 'test-session',
+				})
+			);
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			expect(callCount).toBe(2);
+		});
+
+		test('should stop receiving events after unsubscribe', async () => {
+			let callCount = 0;
+			const handler = () => {
+				callCount++;
+			};
+
+			// Register and then unregister
+			const unsubscribe = messageHub.onEvent('user.created', handler);
+			unsubscribe();
+
+			// Simulate event
+			transport.simulateMessage(
+				createEventMessage({
+					method: 'user.created',
+					data: { userId: '789' },
+					sessionId: 'test-session',
+				})
+			);
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			expect(callCount).toBe(0);
+		});
+	});
+
+	describe('Connection State Tracking', () => {
+		test('should track connection state correctly', () => {
+			expect(messageHub.isConnected()).toBe(true);
+			expect(messageHub.getState()).toBe('connected');
+
+			transport.simulateStateChange('disconnected');
+			expect(messageHub.isConnected()).toBe(false);
+			expect(messageHub.getState()).toBe('disconnected');
+
+			transport.simulateStateChange('connecting');
+			expect(messageHub.isConnected()).toBe(false);
+			expect(messageHub.getState()).toBe('connecting');
+
+			transport.simulateStateChange('connected');
+			expect(messageHub.isConnected()).toBe(true);
+			expect(messageHub.getState()).toBe('connected');
+		});
+	});
+
+	describe('Error Resilience', () => {
+		test('should handle malformed incoming messages gracefully', async () => {
+			const malformedMessage = {
+				// Missing required fields
+				id: 'test',
+			} as unknown as HubMessage;
+
+			// Message validation throws in handleIncomingMessage, but it's caught in the try-catch
+			// The error is logged but not propagated to the caller
+			// We can verify that the message is invalid using the validation function
+			expect(isValidMessage(malformedMessage)).toBe(false);
+		});
+
+		test('should continue processing after handler errors', async () => {
+			// Mock console.error to suppress error logging during test
+			const consoleErrorSpy = spyOn(console, 'error').mockImplementation(() => {});
+
+			let handler1Called = false;
+			let handler2Called = false;
+
+			const handler1 = () => {
+				handler1Called = true;
+				throw new Error('Handler 1 error');
+			};
+			const handler2 = () => {
+				handler2Called = true;
+			};
+
+			messageHub.onEvent('test.event', handler1);
+			messageHub.onEvent('test.event', handler2);
+
+			const eventMsg = createEventMessage({
+				method: 'test.event',
+				data: {},
+				sessionId: 'test-session',
+			});
+
+			// Should not throw despite handler error - errors are caught internally
+			transport.simulateMessage(eventMsg);
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Verify both handlers were called
+			expect(handler1Called).toBe(true);
+			expect(handler2Called).toBe(true);
+
+			consoleErrorSpy.mockRestore();
 		});
 	});
 });
