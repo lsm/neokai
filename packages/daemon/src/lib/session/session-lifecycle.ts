@@ -451,12 +451,14 @@ export class SessionLifecycle {
 			// PHASE 5: Broadcast deletion event
 			// Best-effort notification - failure doesn't affect deletion
 			try {
-				this.messageHub.event(
-					'session.deleted',
-					{ sessionId, reason: 'deleted' },
-					{ room: 'global' }
-				);
-				await this.eventBus.emit('session.deleted', { sessionId });
+				await Promise.all([
+					this.messageHub.publish(
+						'session.deleted',
+						{ sessionId, reason: 'deleted' },
+						{ sessionId: 'global' }
+					),
+					this.eventBus.emit('session.deleted', { sessionId }),
+				]);
 				completedPhases.push('broadcast');
 			} catch (error) {
 				this.logger.error(`[SessionLifecycle] Failed to broadcast deletion:`, error);

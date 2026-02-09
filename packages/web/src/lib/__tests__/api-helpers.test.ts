@@ -10,11 +10,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // Mock connection-manager module - must be at top level and use inline factory
 vi.mock('../connection-manager.js', () => {
 	const mockHub = {
-		query: vi.fn(),
-		command: vi.fn(),
-		onEvent: vi.fn(() => () => {}),
-		joinRoom: vi.fn(),
-		leaveRoom: vi.fn(),
+		call: vi.fn(),
 		subscribe: vi.fn(),
 		subscribeOptimistic: vi.fn(),
 		forceResubscribe: vi.fn(),
@@ -47,11 +43,7 @@ describe('api-helpers', () => {
 				getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
 			}
 		).getHubIfConnected.mockReturnValue({
-			query: vi.fn(),
-			command: vi.fn(),
-			onEvent: vi.fn(() => () => {}),
-			joinRoom: vi.fn(),
-			leaveRoom: vi.fn(),
+			call: vi.fn(),
 			subscribe: vi.fn(),
 			subscribeOptimistic: vi.fn(),
 			forceResubscribe: vi.fn(),
@@ -63,11 +55,7 @@ describe('api-helpers', () => {
 				getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
 			}
 		).getHub.mockResolvedValue({
-			query: vi.fn(),
-			command: vi.fn(),
-			onEvent: vi.fn(() => () => {}),
-			joinRoom: vi.fn(),
-			leaveRoom: vi.fn(),
+			call: vi.fn(),
 			subscribe: vi.fn(),
 			subscribeOptimistic: vi.fn(),
 			forceResubscribe: vi.fn(),
@@ -97,7 +85,7 @@ describe('api-helpers', () => {
 		describe('createSession', () => {
 			it('should create a session with 15000ms timeout', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({ sessionId: 'sess-123', title: 'Test Session' }),
+					call: vi.fn().mockResolvedValue({ sessionId: 'sess-123', title: 'Test Session' }),
 				};
 				(
 					connectionManager as unknown as {
@@ -109,7 +97,7 @@ describe('api-helpers', () => {
 				const result = await apiHelpers.createSession({ workspacePath: '/test/path' });
 
 				expect(result).toEqual({ sessionId: 'sess-123', title: 'Test Session' });
-				expect(mockHub.query).toHaveBeenCalledWith(
+				expect(mockHub.call).toHaveBeenCalledWith(
 					'session.create',
 					{ workspacePath: '/test/path' },
 					{ timeout: 15000 }
@@ -118,7 +106,7 @@ describe('api-helpers', () => {
 
 			it('should pass through request data', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({ sessionId: 'sess-456' }),
+					call: vi.fn().mockResolvedValue({ sessionId: 'sess-456' }),
 				};
 				(
 					connectionManager as unknown as {
@@ -134,7 +122,7 @@ describe('api-helpers', () => {
 
 				await apiHelpers.createSession(req);
 
-				expect(mockHub.query).toHaveBeenCalledWith('session.create', req, { timeout: 15000 });
+				expect(mockHub.call).toHaveBeenCalledWith('session.create', req, { timeout: 15000 });
 			});
 
 			it('should throw ConnectionNotReadyError when not connected', async () => {
@@ -152,7 +140,7 @@ describe('api-helpers', () => {
 
 			it('should propagate errors from hub', async () => {
 				const mockHub = {
-					query: vi.fn().mockRejectedValue(new Error('Network error')),
+					call: vi.fn().mockRejectedValue(new Error('Network error')),
 				};
 				(
 					connectionManager as unknown as {
@@ -170,7 +158,7 @@ describe('api-helpers', () => {
 		describe('listSessions', () => {
 			it('should list all sessions', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({
+					call: vi.fn().mockResolvedValue({
 						sessions: [
 							{ id: 'sess-1', title: 'Session 1' },
 							{ id: 'sess-2', title: 'Session 2' },
@@ -192,12 +180,12 @@ describe('api-helpers', () => {
 						{ id: 'sess-2', title: 'Session 2' },
 					],
 				});
-				expect(mockHub.query).toHaveBeenCalledWith('session.list');
+				expect(mockHub.call).toHaveBeenCalledWith('session.list');
 			});
 
 			it('should handle empty sessions list', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({ sessions: [] }),
+					call: vi.fn().mockResolvedValue({ sessions: [] }),
 				};
 				(
 					connectionManager as unknown as {
@@ -226,7 +214,7 @@ describe('api-helpers', () => {
 		describe('updateSession', () => {
 			it('should update session metadata', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({ ok: true }),
+					call: vi.fn().mockResolvedValue({ ok: true }),
 				};
 				(
 					connectionManager as unknown as {
@@ -237,7 +225,7 @@ describe('api-helpers', () => {
 
 				await apiHelpers.updateSession('sess-123', { title: 'New Title' });
 
-				expect(mockHub.query).toHaveBeenCalledWith('session.update', {
+				expect(mockHub.call).toHaveBeenCalledWith('session.update', {
 					sessionId: 'sess-123',
 					title: 'New Title',
 				});
@@ -245,7 +233,7 @@ describe('api-helpers', () => {
 
 			it('should update session status', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({ ok: true }),
+					call: vi.fn().mockResolvedValue({ ok: true }),
 				};
 				(
 					connectionManager as unknown as {
@@ -256,7 +244,7 @@ describe('api-helpers', () => {
 
 				await apiHelpers.updateSession('sess-123', { status: 'archived' });
 
-				expect(mockHub.query).toHaveBeenCalledWith('session.update', {
+				expect(mockHub.call).toHaveBeenCalledWith('session.update', {
 					sessionId: 'sess-123',
 					status: 'archived',
 				});
@@ -264,7 +252,7 @@ describe('api-helpers', () => {
 
 			it('should update multiple fields', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({ ok: true }),
+					call: vi.fn().mockResolvedValue({ ok: true }),
 				};
 				(
 					connectionManager as unknown as {
@@ -278,7 +266,7 @@ describe('api-helpers', () => {
 					status: 'active',
 				});
 
-				expect(mockHub.query).toHaveBeenCalledWith('session.update', {
+				expect(mockHub.call).toHaveBeenCalledWith('session.update', {
 					sessionId: 'sess-123',
 					title: 'Updated Title',
 					status: 'active',
@@ -302,7 +290,7 @@ describe('api-helpers', () => {
 		describe('deleteSession', () => {
 			it('should delete a session', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({ ok: true }),
+					call: vi.fn().mockResolvedValue({ ok: true }),
 				};
 				(
 					connectionManager as unknown as {
@@ -313,14 +301,14 @@ describe('api-helpers', () => {
 
 				await apiHelpers.deleteSession('sess-123');
 
-				expect(mockHub.query).toHaveBeenCalledWith('session.delete', {
+				expect(mockHub.call).toHaveBeenCalledWith('session.delete', {
 					sessionId: 'sess-123',
 				});
 			});
 
 			it('should propagate delete errors', async () => {
 				const mockHub = {
-					query: vi.fn().mockRejectedValue(new Error('Session not found')),
+					call: vi.fn().mockRejectedValue(new Error('Session not found')),
 				};
 				(
 					connectionManager as unknown as {
@@ -349,7 +337,7 @@ describe('api-helpers', () => {
 		describe('resetSessionQuery', () => {
 			it('should reset session query with restartQuery flag', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({ success: true }),
+					call: vi.fn().mockResolvedValue({ success: true }),
 				};
 				(
 					connectionManager as unknown as {
@@ -361,7 +349,7 @@ describe('api-helpers', () => {
 				const result = await apiHelpers.resetSessionQuery('sess-123');
 
 				expect(result).toEqual({ success: true });
-				expect(mockHub.query).toHaveBeenCalledWith('session.resetQuery', {
+				expect(mockHub.call).toHaveBeenCalledWith('session.resetQuery', {
 					sessionId: 'sess-123',
 					restartQuery: true,
 				});
@@ -384,7 +372,7 @@ describe('api-helpers', () => {
 		describe('switchCoordinatorMode', () => {
 			it('should call session.coordinator.switch with correct params', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({ success: true, coordinatorMode: true }),
+					call: vi.fn().mockResolvedValue({ success: true, coordinatorMode: true }),
 				};
 				(
 					connectionManager as unknown as {
@@ -396,7 +384,7 @@ describe('api-helpers', () => {
 				const result = await apiHelpers.switchCoordinatorMode('sess-123', true);
 
 				expect(result).toEqual({ success: true, coordinatorMode: true });
-				expect(mockHub.query).toHaveBeenCalledWith('session.coordinator.switch', {
+				expect(mockHub.call).toHaveBeenCalledWith('session.coordinator.switch', {
 					sessionId: 'sess-123',
 					coordinatorMode: true,
 				});
@@ -419,7 +407,7 @@ describe('api-helpers', () => {
 		describe('archiveSession', () => {
 			it('should archive session with confirmation', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({ success: true, deleted: true }),
+					call: vi.fn().mockResolvedValue({ success: true, deleted: true }),
 				};
 				(
 					connectionManager as unknown as {
@@ -431,7 +419,7 @@ describe('api-helpers', () => {
 				const result = await apiHelpers.archiveSession('sess-123', true);
 
 				expect(result).toEqual({ success: true, deleted: true });
-				expect(mockHub.query).toHaveBeenCalledWith('session.archive', {
+				expect(mockHub.call).toHaveBeenCalledWith('session.archive', {
 					sessionId: 'sess-123',
 					confirmed: true,
 				});
@@ -439,7 +427,7 @@ describe('api-helpers', () => {
 
 			it('should archive session without confirmation (default)', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({ success: true, deleted: false }),
+					call: vi.fn().mockResolvedValue({ success: true, deleted: false }),
 				};
 				(
 					connectionManager as unknown as {
@@ -451,7 +439,7 @@ describe('api-helpers', () => {
 				const result = await apiHelpers.archiveSession('sess-123');
 
 				expect(result).toEqual({ success: true, deleted: false });
-				expect(mockHub.query).toHaveBeenCalledWith('session.archive', {
+				expect(mockHub.call).toHaveBeenCalledWith('session.archive', {
 					sessionId: 'sess-123',
 					confirmed: false,
 				});
@@ -459,7 +447,7 @@ describe('api-helpers', () => {
 
 			it('should handle unconfirmed archive response', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({
+					call: vi.fn().mockResolvedValue({
 						success: true,
 						deleted: false,
 						confirmationRequired: true,
@@ -496,7 +484,7 @@ describe('api-helpers', () => {
 		describe('getAuthStatus', () => {
 			it('should get auth status', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({
+					call: vi.fn().mockResolvedValue({
 						method: 'anthropic-api-key',
 						authenticated: true,
 						username: 'user@example.com',
@@ -516,12 +504,12 @@ describe('api-helpers', () => {
 					authenticated: true,
 					username: 'user@example.com',
 				});
-				expect(mockHub.query).toHaveBeenCalledWith('auth.status');
+				expect(mockHub.call).toHaveBeenCalledWith('auth.status');
 			});
 
 			it('should handle unauthenticated status', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({
+					call: vi.fn().mockResolvedValue({
 						method: null,
 						authenticated: false,
 					}),
@@ -540,7 +528,7 @@ describe('api-helpers', () => {
 
 			it('should handle OAuth auth status', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({
+					call: vi.fn().mockResolvedValue({
 						method: 'oauth',
 						authenticated: true,
 						username: 'oauth-user',
@@ -575,7 +563,7 @@ describe('api-helpers', () => {
 		describe('updateGlobalSettings', () => {
 			it('should update global settings using getHub (async)', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({
+					call: vi.fn().mockResolvedValue({
 						success: true,
 						settings: { permissionMode: 'bypassPermissions' },
 					}),
@@ -595,14 +583,14 @@ describe('api-helpers', () => {
 					success: true,
 					settings: { permissionMode: 'bypassPermissions' },
 				});
-				expect(mockHub.query).toHaveBeenCalledWith('settings.global.update', {
+				expect(mockHub.call).toHaveBeenCalledWith('settings.global.update', {
 					updates: { permissionMode: 'bypassPermissions' },
 				});
 			});
 
 			it('should update multiple settings', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({
+					call: vi.fn().mockResolvedValue({
 						success: true,
 						settings: {
 							permissionMode: 'acceptEdits',
@@ -631,7 +619,7 @@ describe('api-helpers', () => {
 		describe('listMcpServersFromSources', () => {
 			it('should list MCP servers without session', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({
+					call: vi.fn().mockResolvedValue({
 						servers: {
 							user: [
 								{ name: 'server1', source: 'user' as const },
@@ -667,12 +655,12 @@ describe('api-helpers', () => {
 						server2: { allowed: false, defaultOn: false },
 					},
 				});
-				expect(mockHub.query).toHaveBeenCalledWith('settings.mcp.listFromSources', {});
+				expect(mockHub.call).toHaveBeenCalledWith('settings.mcp.listFromSources', {});
 			});
 
 			it('should list MCP servers with session', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({
+					call: vi.fn().mockResolvedValue({
 						servers: {
 							session: [{ name: 'server4', source: 'session' as const }],
 						},
@@ -694,14 +682,14 @@ describe('api-helpers', () => {
 					},
 					serverSettings: {},
 				});
-				expect(mockHub.query).toHaveBeenCalledWith('settings.mcp.listFromSources', {
+				expect(mockHub.call).toHaveBeenCalledWith('settings.mcp.listFromSources', {
 					sessionId: 'sess-123',
 				});
 			});
 
 			it('should include command and args for servers', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({
+					call: vi.fn().mockResolvedValue({
 						servers: {
 							user: [
 								{
@@ -732,7 +720,7 @@ describe('api-helpers', () => {
 		describe('updateMcpServerSettings', () => {
 			it('should update MCP server allowed setting', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({ success: true }),
+					call: vi.fn().mockResolvedValue({ success: true }),
 				};
 				(
 					connectionManager as unknown as {
@@ -746,7 +734,7 @@ describe('api-helpers', () => {
 				});
 
 				expect(result).toEqual({ success: true });
-				expect(mockHub.query).toHaveBeenCalledWith('settings.mcp.updateServerSettings', {
+				expect(mockHub.call).toHaveBeenCalledWith('settings.mcp.updateServerSettings', {
 					serverName: 'test-server',
 					settings: { allowed: true },
 				});
@@ -754,7 +742,7 @@ describe('api-helpers', () => {
 
 			it('should update MCP server defaultOn setting', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({ success: true }),
+					call: vi.fn().mockResolvedValue({ success: true }),
 				};
 				(
 					connectionManager as unknown as {
@@ -772,7 +760,7 @@ describe('api-helpers', () => {
 
 			it('should update both server settings', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({ success: true }),
+					call: vi.fn().mockResolvedValue({ success: true }),
 				};
 				(
 					connectionManager as unknown as {
@@ -795,7 +783,7 @@ describe('api-helpers', () => {
 		describe('getRewindPoints', () => {
 			it('should get rewind points for session', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({
+					call: vi.fn().mockResolvedValue({
 						rewindPoints: [
 							{
 								uuid: 'msg-1',
@@ -837,14 +825,14 @@ describe('api-helpers', () => {
 						},
 					],
 				});
-				expect(mockHub.query).toHaveBeenCalledWith('rewind.checkpoints', {
+				expect(mockHub.call).toHaveBeenCalledWith('rewind.checkpoints', {
 					sessionId: 'sess-123',
 				});
 			});
 
 			it('should handle empty rewind points list', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({ rewindPoints: [] }),
+					call: vi.fn().mockResolvedValue({ rewindPoints: [] }),
 				};
 				(
 					connectionManager as unknown as {
@@ -860,7 +848,7 @@ describe('api-helpers', () => {
 
 			it('should handle error response', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({
+					call: vi.fn().mockResolvedValue({
 						rewindPoints: [],
 						error: 'Failed to fetch rewind points',
 					}),
@@ -894,7 +882,7 @@ describe('api-helpers', () => {
 		describe('previewRewind', () => {
 			it('should preview rewind to checkpoint', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({
+					call: vi.fn().mockResolvedValue({
 						preview: {
 							filesChanged: ['file1.ts', 'file2.ts'],
 							filesDeleted: ['old-file.ts'],
@@ -922,7 +910,7 @@ describe('api-helpers', () => {
 						targetTurnIndex: 5,
 					},
 				});
-				expect(mockHub.query).toHaveBeenCalledWith('rewind.preview', {
+				expect(mockHub.call).toHaveBeenCalledWith('rewind.preview', {
 					sessionId: 'sess-123',
 					checkpointId: 'cp-1',
 				});
@@ -945,7 +933,7 @@ describe('api-helpers', () => {
 		describe('executeRewind', () => {
 			it('should execute rewind with default mode (files)', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({
+					call: vi.fn().mockResolvedValue({
 						result: {
 							success: true,
 							filesRestored: ['file1.ts', 'file2.ts'],
@@ -973,7 +961,7 @@ describe('api-helpers', () => {
 						restoredTurnIndex: 5,
 					},
 				});
-				expect(mockHub.query).toHaveBeenCalledWith('rewind.execute', {
+				expect(mockHub.call).toHaveBeenCalledWith('rewind.execute', {
 					sessionId: 'sess-123',
 					checkpointId: 'cp-1',
 					mode: 'files',
@@ -982,7 +970,7 @@ describe('api-helpers', () => {
 
 			it('should execute rewind with explicit mode', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({
+					call: vi.fn().mockResolvedValue({
 						result: {
 							success: true,
 							messagesDeleted: [5, 6],
@@ -1006,7 +994,7 @@ describe('api-helpers', () => {
 						restoredTurnIndex: 3,
 					},
 				});
-				expect(mockHub.query).toHaveBeenCalledWith('rewind.execute', {
+				expect(mockHub.call).toHaveBeenCalledWith('rewind.execute', {
 					sessionId: 'sess-123',
 					checkpointId: 'cp-1',
 					mode: 'messages',
@@ -1030,7 +1018,7 @@ describe('api-helpers', () => {
 		describe('executeSelectiveRewind', () => {
 			it('should execute selective rewind with message IDs', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({
+					call: vi.fn().mockResolvedValue({
 						result: {
 							success: true,
 							messagesDeleted: 5,
@@ -1057,7 +1045,7 @@ describe('api-helpers', () => {
 						filesReverted: ['file1.ts', 'file2.ts'],
 					},
 				});
-				expect(mockHub.query).toHaveBeenCalledWith('rewind.executeSelective', {
+				expect(mockHub.call).toHaveBeenCalledWith('rewind.executeSelective', {
 					sessionId: 'sess-123',
 					messageIds: ['msg-uuid-1', 'msg-uuid-2'],
 					mode: 'both',
@@ -1066,7 +1054,7 @@ describe('api-helpers', () => {
 
 			it('should handle selective rewind failure', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({
+					call: vi.fn().mockResolvedValue({
 						result: {
 							success: false,
 							error: 'Failed to rewind',
@@ -1103,7 +1091,7 @@ describe('api-helpers', () => {
 
 			it('should handle single message ID', async () => {
 				const mockHub = {
-					query: vi.fn().mockResolvedValue({
+					call: vi.fn().mockResolvedValue({
 						result: {
 							success: true,
 							messagesDeleted: 2,
@@ -1121,7 +1109,7 @@ describe('api-helpers', () => {
 				const result = await apiHelpers.executeSelectiveRewind('sess-123', ['msg-1']);
 
 				expect(result.result.success).toBe(true);
-				expect(mockHub.query).toHaveBeenCalledWith('rewind.executeSelective', {
+				expect(mockHub.call).toHaveBeenCalledWith('rewind.executeSelective', {
 					sessionId: 'sess-123',
 					messageIds: ['msg-1'],
 					mode: 'both',

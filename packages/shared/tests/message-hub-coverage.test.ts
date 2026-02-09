@@ -1,6 +1,6 @@
 /**
- * Additional tests to achieve coverage for message-hub.ts
- * Focuses on edge cases and uncovered code paths with new API
+ * Additional tests to achieve 100% coverage for message-hub.ts
+ * Focuses on edge cases and uncovered code paths
  */
 
 import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
@@ -10,8 +10,10 @@ import type { IMessageTransport, ConnectionState } from '../src/message-hub/type
 import {
 	MessageType,
 	createEventMessage,
-	createQueryMessage,
-	createCommandMessage,
+	createSubscribeMessage,
+	createUnsubscribeMessage,
+	createSubscribedMessage,
+	createUnsubscribedMessage,
 	type HubMessage,
 } from '../src/message-hub/protocol.ts';
 
@@ -22,6 +24,7 @@ class MockTransport implements IMessageTransport {
 	private connectionHandler: ((state: ConnectionState, error?: Error) => void) | null = null;
 	private _state: ConnectionState = 'connected';
 	public sentMessages: HubMessage[] = [];
+	public autoAck: boolean = true; // Can be disabled for timeout tests
 
 	async initialize(): Promise<void> {
 		// Mock implementation - transport is immediately ready
@@ -33,6 +36,34 @@ class MockTransport implements IMessageTransport {
 
 	send(message: HubMessage): Promise<void> {
 		this.sentMessages.push(message);
+
+		// Auto-respond to SUBSCRIBE/UNSUBSCRIBE messages with ACKs (if enabled)
+		if (this.autoAck) {
+			if (message.type === MessageType.SUBSCRIBE && this.messageHandler) {
+				setTimeout(() => {
+					if (this.messageHandler) {
+						const ack = createSubscribedMessage({
+							method: message.method,
+							sessionId: message.sessionId,
+							requestId: message.id,
+						});
+						this.messageHandler(ack);
+					}
+				}, 10);
+			} else if (message.type === MessageType.UNSUBSCRIBE && this.messageHandler) {
+				setTimeout(() => {
+					if (this.messageHandler) {
+						const ack = createUnsubscribedMessage({
+							method: message.method,
+							sessionId: message.sessionId,
+							requestId: message.id,
+						});
+						this.messageHandler(ack);
+					}
+				}, 10);
+			}
+		}
+
 		return Promise.resolve();
 	}
 
@@ -89,7 +120,7 @@ describe('MessageHub - Coverage Tests', () => {
 	let transport: MockTransport;
 
 	beforeEach(() => {
-		hub = new MessageHub();
+		hub = new MessageHub({ debug: true });
 		transport = new MockTransport();
 		hub.registerTransport(transport);
 	});
@@ -121,154 +152,211 @@ describe('MessageHub - Coverage Tests', () => {
 		});
 	});
 
-	describe('Command Handler Error Handling', () => {
-		test('should catch and log command handler errors without throwing', async () => {
-			// Mock console.error to suppress error output during test
-			const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+	describe('Unsubscribe with Timeout', () => {
+		test('should handle unsubscribe timeout gracefully', async () => {
+			// Create hub with short timeout
+			const shortHub = new MessageHub({ timeout: 100, debug: false });
+			const shortTransport = new MockTransport();
+			shortTransport.autoAck = false; // Disable auto-ACK for timeout test
+			shortHub.registerTransport(shortTransport);
 
-			let handlerCalled = false;
-			const handler = jest.fn(() => {
-				handlerCalled = true;
-				throw new Error('Command handler error');
-			});
+			const handler = jest.fn();
 
-			hub.onRequest('test.command', handler);
-
-			const commandMessage = createCommandMessage({
-				method: 'test.command',
-				data: { test: true },
+			// Subscribe with ACK enabled first
+			shortTransport.autoAck = true;
+			const unsubscribe = await shortHub.subscribe('test.event', handler, {
 				sessionId: 'test-session',
 			});
 
-			// Should not throw - commands are fire-and-forget and errors are caught internally
-			transport.simulateMessage(commandMessage);
+			// Now disable ACK for unsubscribe - will timeout
+			shortTransport.autoAck = false;
 
-			await new Promise((resolve) => setTimeout(resolve, 10));
+			// Unsubscribe should complete (may timeout but doesn't throw)
+			await unsubscribe();
 
-			expect(handler).toHaveBeenCalled();
-			expect(handlerCalled).toBe(true);
-
-			// Should not send any response for command errors
-			expect(transport.sentMessages.length).toBe(0);
-
-			consoleErrorSpy.mockRestore();
+			shortHub.cleanup();
 		});
 
-		test('should handle command when no handler registered', async () => {
-			const commandMessage = createCommandMessage({
-				method: 'no.handler',
-				data: {},
+		test('should continue local cleanup even if unsubscribe fails', async () => {
+			const handler = jest.fn();
+			const unsubscribe = await hub.subscribe('test.event', handler, {
 				sessionId: 'test-session',
 			});
 
-			// Should not throw
-			expect(() => transport.simulateMessage(commandMessage)).not.toThrow();
+			// Disconnect transport before unsubscribe
+			transport.disconnect();
 
-			await new Promise((resolve) => setTimeout(resolve, 10));
+			// Should not throw when disconnected - just does local cleanup
+			await unsubscribe();
 
-			// No response sent
-			expect(transport.sentMessages.length).toBe(0);
+			// Verify local cleanup happened - handler should be removed from subscriptions
+			const count = hub.getSubscriptionCount('test.event', 'test-session');
+			expect(count).toBe(0);
 		});
 	});
 
-	describe('Query Handler Error Handling', () => {
-		test('should send error response when query handler throws', async () => {
-			const handler = jest.fn(async () => {
-				throw new Error('Query handler error');
-			});
+	describe('Server-side Message Handlers', () => {
+		test('should handle SUBSCRIBE message server-side', async () => {
+			// These tests verify server-side SUBSCRIBE/UNSUBSCRIBE handling
+			// WITHOUT router - just MessageHub direct handling
+			// Full routing tests are in message-hub-router.test.ts
 
-			hub.onRequest('test.query', handler);
-
-			const queryMessage = createQueryMessage({
-				method: 'test.query',
-				data: {},
-				sessionId: 'test-session',
-			});
-
-			transport.simulateMessage(queryMessage);
-
-			await new Promise((resolve) => setTimeout(resolve, 10));
-
-			expect(handler).toHaveBeenCalled();
-
-			// Should send error response
-			const errorResponses = transport.sentMessages.filter(
-				(m) => m.type === MessageType.RESPONSE && m.error
-			);
-			expect(errorResponses.length).toBe(1);
-			expect(errorResponses[0].error).toContain('Query handler error');
-		});
-
-		test('should send METHOD_NOT_FOUND error when no query handler registered', async () => {
-			const queryMessage = createQueryMessage({
-				method: 'no.handler',
-				data: {},
-				sessionId: 'test-session',
-			});
-
-			transport.simulateMessage(queryMessage);
-
-			await new Promise((resolve) => setTimeout(resolve, 10));
-
-			// Should send error response
-			const errorResponses = transport.sentMessages.filter(
-				(m) => m.type === MessageType.RESPONSE && m.error
-			);
-			expect(errorResponses.length).toBe(1);
-			expect(errorResponses[0].error).toContain('No handler for method');
-		});
-	});
-
-	describe('Event Handler Error Handling', () => {
-		test('should catch event handler errors and continue', async () => {
-			// Mock console.error to suppress error output during test
-			const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-
-			let handler1Called = false;
-			let handler2Called = false;
-
-			const handler1 = jest.fn(() => {
-				handler1Called = true;
-				throw new Error('Handler 1 error');
-			});
-			const handler2 = jest.fn(() => {
-				handler2Called = true;
-			});
-
-			hub.onEvent('test.event', handler1);
-			hub.onEvent('test.event', handler2);
-
-			const eventMessage = createEventMessage({
+			const subscribeMsg = createSubscribeMessage({
 				method: 'test.event',
-				data: { test: true },
 				sessionId: 'test-session',
+				id: 'sub-123',
 			});
 
-			// Errors are caught internally and logged, not thrown
-			transport.simulateMessage(eventMessage);
+			// Add clientId to message (normally added by transport)
+			(subscribeMsg as unknown as { clientId: string }).clientId = 'client-1';
 
-			await new Promise((resolve) => setTimeout(resolve, 10));
+			// Register router to enable server-side handling
+			const router = new MessageHubRouter();
+			hub.registerRouter(router);
 
-			// Both handlers should have been called despite error in first
-			expect(handler1).toHaveBeenCalled();
-			expect(handler2).toHaveBeenCalled();
-			expect(handler1Called).toBe(true);
-			expect(handler2Called).toBe(true);
+			// Register a mock client connection with the router
+			const mockConnection = {
+				id: 'client-1',
+				send: jest.fn(),
+				isOpen: () => true,
+			};
+			router.registerConnection(mockConnection);
 
-			consoleErrorSpy.mockRestore();
+			// Clear any previous messages
+			transport.sentMessages = [];
+			transport.autoAck = false; // Disable auto-ACK
+
+			// Simulate incoming SUBSCRIBE
+			transport.simulateMessage(subscribeMsg);
+
+			// Wait for async handling
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			// Verify the router subscription was registered
+			const subCount = router.getSubscriptionCount('test-session', 'test.event');
+			expect(subCount).toBeGreaterThan(0);
 		});
 
-		test('should handle event with no handlers registered', async () => {
-			const eventMessage = createEventMessage({
-				method: 'no.handler',
-				data: {},
+		test('should handle UNSUBSCRIBE message server-side', async () => {
+			const router = new MessageHubRouter();
+			hub.registerRouter(router);
+
+			// Register a mock client connection with the router
+			const mockConnection = {
+				id: 'client-1',
+				send: jest.fn(),
+				isOpen: () => true,
+			};
+			router.registerConnection(mockConnection);
+
+			// First subscribe
+			const subscribeMsg = createSubscribeMessage({
+				method: 'test.event',
+				sessionId: 'test-session',
+				id: 'sub-123',
+			});
+			(subscribeMsg as unknown as { clientId: string }).clientId = 'client-1';
+			transport.autoAck = false;
+			transport.simulateMessage(subscribeMsg);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			// Verify subscription exists
+			let subCount = router.getSubscriptionCount('test-session', 'test.event');
+			expect(subCount).toBeGreaterThan(0);
+
+			// Now unsubscribe
+			const unsubscribeMsg = createUnsubscribeMessage({
+				method: 'test.event',
+				sessionId: 'test-session',
+				id: 'unsub-123',
+			});
+			(unsubscribeMsg as unknown as { clientId: string }).clientId = 'client-1';
+
+			transport.simulateMessage(unsubscribeMsg);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			// Verify subscription was removed
+			subCount = router.getSubscriptionCount('test-session', 'test.event');
+			expect(subCount).toBe(0);
+		});
+
+		test('should ignore SUBSCRIBE when no router registered', async () => {
+			// No router registered
+			const subscribeMsg = createSubscribeMessage({
+				method: 'test.event',
 				sessionId: 'test-session',
 			});
 
-			// Should not throw
-			expect(() => transport.simulateMessage(eventMessage)).not.toThrow();
+			(subscribeMsg as unknown as { clientId: string }).clientId = 'client-1';
 
-			await new Promise((resolve) => setTimeout(resolve, 10));
+			// Should not throw
+			transport.simulateMessage(subscribeMsg);
+
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			// Should not send any response
+			expect(transport.sentMessages.length).toBe(0);
+		});
+
+		test('should handle SUBSCRIBE without clientId gracefully', async () => {
+			const router = new MessageHubRouter();
+			hub.registerRouter(router);
+
+			const subscribeMsg = createSubscribeMessage({
+				method: 'test.event',
+				sessionId: 'test-session',
+			});
+
+			// Send SUBSCRIBE without clientId - should be handled gracefully
+			expect(() => transport.simulateMessage(subscribeMsg)).not.toThrow();
+
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		test('should handle UNSUBSCRIBE without clientId gracefully', async () => {
+			const router = new MessageHubRouter();
+			hub.registerRouter(router);
+
+			const unsubscribeMsg = createUnsubscribeMessage({
+				method: 'test.event',
+				sessionId: 'test-session',
+			});
+
+			// Send UNSUBSCRIBE without clientId - should be handled gracefully
+			expect(() => transport.simulateMessage(unsubscribeMsg)).not.toThrow();
+
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		test('should handle SUBSCRIBE error and send ERROR response', async () => {
+			const router = new MessageHubRouter();
+			hub.registerRouter(router);
+
+			// Mock router.subscribe to throw
+			const originalSubscribe = router.subscribe.bind(router);
+			router.subscribe = () => {
+				throw new Error('Subscription failed');
+			};
+
+			const subscribeMsg = createSubscribeMessage({
+				method: 'test.event',
+				sessionId: 'test-session',
+				id: 'sub-123',
+			});
+
+			(subscribeMsg as unknown as { clientId: string }).clientId = 'client-1';
+
+			transport.simulateMessage(subscribeMsg);
+
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			// Should have sent ERROR response
+			const errors = transport.sentMessages.filter((m) => m.type === MessageType.ERROR);
+			expect(errors.length).toBeGreaterThan(0);
+			expect(errors[0].error).toContain('Subscription failed');
+
+			// Restore
+			router.subscribe = originalSubscribe;
 		});
 	});
 
@@ -312,7 +400,7 @@ describe('MessageHub - Coverage Tests', () => {
 	describe('Event Depth Tracking Cleanup', () => {
 		test('should cleanup event depth map after handling', async () => {
 			const handler = jest.fn();
-			hub.onEvent('test.event', handler);
+			await hub.subscribe('test.event', handler, { sessionId: 'test-session' });
 
 			const eventMsg = createEventMessage({
 				method: 'test.event',
@@ -333,116 +421,85 @@ describe('MessageHub - Coverage Tests', () => {
 				throw new Error('Handler error');
 			});
 
-			hub.onEvent('test.event', handler);
+			await hub.subscribe('test.event', handler, { sessionId: 'test-session' });
 
 			const eventMsg = createEventMessage({
 				method: 'test.event',
 				data: { test: true },
 				sessionId: 'test-session',
 			});
+
+			const originalError = console.error;
+			console.error = jest.fn(); // Suppress error logs
 
 			transport.simulateMessage(eventMsg);
 
 			await new Promise((resolve) => setTimeout(resolve, 50));
 
+			console.error = originalError;
+
 			// Depth map should still be cleaned up
 			expect(hub['eventDepthMap'].size).toBe(0);
 		});
+	});
 
-		test('should prevent infinite event recursion', async () => {
+	describe('Subscription Timeout Edge Cases', () => {
+		test('should handle subscription timeout during subscribe', async () => {
+			const shortHub = new MessageHub({ timeout: 50, debug: false });
+			const shortTransport = new MockTransport();
+			shortTransport.autoAck = false; // Disable auto-ACK for timeout test
+			shortHub.registerTransport(shortTransport);
+
 			const handler = jest.fn();
-			hub.onEvent('test.event', handler);
 
-			// Create same message ID to simulate recursion
-			const eventMsg = createEventMessage({
-				method: 'test.event',
-				data: { test: true },
-				sessionId: 'test-session',
-			});
+			// Don't send SUBSCRIBED response - let it timeout
+			let timeoutError: Error | null = null;
+			try {
+				await shortHub.subscribe('test.event', handler, {
+					sessionId: 'test-session',
+				});
+			} catch (error) {
+				timeoutError = error as Error;
+			}
 
-			// Manually set depth to max to trigger protection
-			const maxDepth = (hub as unknown as { maxEventDepth: number }).maxEventDepth;
-			hub['eventDepthMap'].set(eventMsg.id, maxDepth);
+			expect(timeoutError).toBeTruthy();
+			expect(timeoutError?.message).toContain('Subscription timeout');
 
-			transport.simulateMessage(eventMsg);
-
-			await new Promise((resolve) => setTimeout(resolve, 10));
-
-			// Handler should NOT be called when max depth reached
-			expect(handler).not.toHaveBeenCalled();
+			shortHub.cleanup();
 		});
 	});
 
-	describe('Room Command Handling', () => {
-		test('should handle room.join command with router', async () => {
-			const router = new MessageHubRouter();
-			hub.registerRouter(router);
+	describe('Resubscription Error Handling', () => {
+		test('should handle failed SUBSCRIBE during reconnection', async () => {
+			// This tests the error handler in resubscribeAll() at lines 1147-1150
+			const handler = jest.fn();
 
-			const mockConnection = {
-				id: 'client-1',
-				send: jest.fn(),
-				isOpen: () => true,
+			// Subscribe initially
+			await hub.subscribe('test.event', handler, { sessionId: 'test-session' });
+
+			// Mock sendMessage to throw error during resubscription
+			const originalSendMessage = hub['sendMessage'].bind(hub);
+			hub['sendMessage'] = async (message: HubMessage) => {
+				// Only fail for SUBSCRIBE messages during resubscription
+				if (message.type === MessageType.SUBSCRIBE) {
+					throw new Error('Failed to send SUBSCRIBE');
+				}
+				return originalSendMessage(message);
 			};
-			router.registerConnection(mockConnection);
 
-			const joinMsg = createCommandMessage({
-				method: 'room.join',
-				data: { room: 'test-room' },
-				sessionId: 'test-session',
-			});
-			(joinMsg as unknown as { clientId: string }).clientId = 'client-1';
-
-			transport.simulateMessage(joinMsg);
-
+			// Trigger reconnection (this calls resubscribeAll)
+			transport.simulateConnectionChange('disconnected');
 			await new Promise((resolve) => setTimeout(resolve, 10));
+			transport.simulateConnectionChange('connected');
 
-			// Verify room was joined via router
-			// (Router internals will track this)
-		});
+			// Wait for resubscription attempt
+			await new Promise((resolve) => setTimeout(resolve, 100));
 
-		test('should handle room.leave command with router', async () => {
-			const router = new MessageHubRouter();
-			hub.registerRouter(router);
+			// Restore
+			hub['sendMessage'] = originalSendMessage;
 
-			const mockConnection = {
-				id: 'client-1',
-				send: jest.fn(),
-				isOpen: () => true,
-			};
-			router.registerConnection(mockConnection);
-
-			// First join
-			const joinMsg = createCommandMessage({
-				method: 'room.join',
-				data: { room: 'test-room' },
-				sessionId: 'test-session',
-			});
-			(joinMsg as unknown as { clientId: string }).clientId = 'client-1';
-			transport.simulateMessage(joinMsg);
-			await new Promise((resolve) => setTimeout(resolve, 10));
-
-			// Then leave
-			const leaveMsg = createCommandMessage({
-				method: 'room.leave',
-				data: { room: 'test-room' },
-				sessionId: 'test-session',
-			});
-			(leaveMsg as unknown as { clientId: string }).clientId = 'client-1';
-			transport.simulateMessage(leaveMsg);
-			await new Promise((resolve) => setTimeout(resolve, 10));
-		});
-
-		test('should ignore room commands when no router registered', async () => {
-			const joinMsg = createCommandMessage({
-				method: 'room.join',
-				data: { room: 'test-room' },
-				sessionId: 'test-session',
-			});
-
-			// Should not throw
-			expect(() => transport.simulateMessage(joinMsg)).not.toThrow();
-
-			await new Promise((resolve) => setTimeout(resolve, 10));
+			// Should handle error gracefully - connection remains active
+			expect(transport['_state']).toBe('connected');
 		});
 	});
 
@@ -450,149 +507,18 @@ describe('MessageHub - Coverage Tests', () => {
 		test('should get pending call count', () => {
 			expect(hub.getPendingCallCount()).toBe(0);
 
-			// Make a query (won't complete because no handler)
-			hub.request('test.method', {}).catch(() => {});
+			// Make a call (won't complete because no handler)
+			hub.call('test.method', {}).catch(() => {});
 
 			expect(hub.getPendingCallCount()).toBe(1);
 		});
-	});
 
-	describe('Invalid Method Names', () => {
-		test('should reject invalid method names in query', async () => {
-			// query() is async and returns a promise that rejects
-			await expect(hub.request('', {})).rejects.toThrow('Invalid method name');
-		});
+		test('should get subscription count', async () => {
+			const handler = jest.fn();
+			await hub.subscribe('test.event', handler, { sessionId: 'test-session' });
 
-		test('should reject invalid method names in command', () => {
-			expect(() => {
-				hub.event('', {});
-			}).toThrow('Invalid method name');
-		});
-
-		test('should reject invalid method names in event', () => {
-			expect(() => {
-				hub.event('', {});
-			}).toThrow('Invalid method name');
-		});
-
-		test('should reject invalid method names in onQuery', () => {
-			expect(() => {
-				hub.onRequest('', async () => ({}));
-			}).toThrow('Invalid method name');
-		});
-
-		test('should reject invalid method names in onCommand', () => {
-			expect(() => {
-				hub.onRequest('', () => {});
-			}).toThrow('Invalid method name');
-		});
-
-		test('should reject invalid method names in onEvent', () => {
-			expect(() => {
-				hub.onEvent('', () => {});
-			}).toThrow('Invalid method name');
-		});
-	});
-
-	describe('Backpressure Limits', () => {
-		test('should enforce max pending calls limit', async () => {
-			const hubWithLimit = new MessageHub({ maxPendingCalls: 2 });
-			const limitTransport = new MockTransport();
-			hubWithLimit.registerTransport(limitTransport);
-
-			// Create 2 pending calls (at limit) - use valid method names with dots
-			hubWithLimit.request('test.method1', {}).catch(() => {});
-			hubWithLimit.request('test.method2', {}).catch(() => {});
-
-			// Third should throw
-			await expect(hubWithLimit.request('test.method3', {})).rejects.toThrow(
-				'Too many pending calls'
-			);
-
-			hubWithLimit.cleanup();
-		});
-	});
-
-	describe('Query Timeout on Disconnect', () => {
-		test('should timeout queries when transport disconnects', async () => {
-			const queryPromise = hub.request('test.method', {}, { timeout: 100 });
-
-			await new Promise((resolve) => setTimeout(resolve, 10));
-
-			// Disconnect before response
-			transport.disconnect();
-
-			// Should eventually timeout
-			await expect(queryPromise).rejects.toThrow('Request timeout');
-		});
-	});
-
-	describe('Sequence Number Tracking', () => {
-		test('should add sequence numbers to outgoing messages', async () => {
-			hub.event('test.cmd1', {});
-			hub.event('test.cmd2', {});
-			hub.event('test.event', {});
-
-			const sequences = transport.sentMessages.map((m) => m.sequence);
-
-			// All should have sequence numbers
-			expect(sequences.every((s) => typeof s === 'number')).toBe(true);
-
-			// Should be monotonically increasing
-			for (let i = 1; i < sequences.length; i++) {
-				expect(sequences[i]!).toBeGreaterThan(sequences[i - 1]!);
-			}
-		});
-
-		test('should reset sequence tracking on cleanup', () => {
-			// Use valid method names with dots
-			hub.event('test.method1', {});
-			const seq1 = transport.sentMessages[0].sequence;
-
-			hub.cleanup();
-
-			// Create new hub with same transport
-			const hub2 = new MessageHub();
-			const transport2 = new MockTransport();
-			hub2.registerTransport(transport2);
-			hub2.event('test.method2', {});
-			const seq2 = transport2.sentMessages[0].sequence;
-
-			// Sequence should start from 0 again
-			expect(seq2).toBe(0);
-			// Both sequences start at 0, so just verify seq1 exists
-			expect(seq1).toBeDefined();
-
-			hub2.cleanup();
-		});
-	});
-
-	describe('Client Sequence Cleanup', () => {
-		test('should cleanup client sequence on disconnect', () => {
-			const router = new MessageHubRouter();
-			hub.registerRouter(router);
-
-			// Simulate client sending message with valid method name
-			const msg = createCommandMessage({
-				method: 'test.method',
-				data: {},
-				sessionId: 'test',
-			});
-			msg.sequence = 1;
-			(msg as unknown as { clientId: string }).clientId = 'client-1';
-
-			// Mock console.error to suppress validation error
-			const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-
-			transport.simulateMessage(msg);
-
-			// Manually cleanup client sequence
-			hub.cleanupClientSequence('client-1');
-
-			// Should not throw
-			expect(hub['expectedSequencePerClient'].has('client-1')).toBe(false);
-
-			consoleErrorSpy.mockRestore();
+			expect(hub.getSubscriptionCount('test.event', 'test-session')).toBe(1);
+			expect(hub.getSubscriptionCount('other.event', 'test-session')).toBe(0);
 		});
 	});
 });

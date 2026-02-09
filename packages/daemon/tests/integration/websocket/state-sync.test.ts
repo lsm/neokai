@@ -212,7 +212,7 @@ describe('State Synchronization Integration', () => {
 		});
 	});
 
-	describe.skip('EventBus → State Broadcasting (DEPRECATED - uses old SUBSCRIBE protocol)', () => {
+	describe('EventBus → State Broadcasting', () => {
 		test('should broadcast sessions delta when session is created', async () => {
 			// Create WebSocket connection to receive broadcasts
 			const ws = createWebSocket(ctx.baseUrl, 'global');
@@ -222,7 +222,7 @@ describe('State Synchronization Integration', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'subscribe-1',
-					type: 'SUBSCRIBE' as unknown,
+					type: MessageType.SUBSCRIBE,
 					method: `${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`,
 					data: {},
 					sessionId: 'global',
@@ -233,13 +233,13 @@ describe('State Synchronization Integration', () => {
 
 			// Wait for subscription acknowledgment
 			const subAck = await waitForWebSocketMessage(ws);
-			expect(subAck.type).toBe('SUBSCRIBED' as unknown);
+			expect(subAck.type).toBe(MessageType.SUBSCRIBED);
 
 			// Create session (triggers EventBus → StateManager → MessageHub publish)
 			ws.send(
 				JSON.stringify({
 					id: 'create-1',
-					type: MessageType.QUERY,
+					type: MessageType.CALL,
 					method: 'session.create',
 					data: { workspacePath: `${TMP_DIR}/test-workspace` },
 					sessionId: 'global',
@@ -252,10 +252,10 @@ describe('State Synchronization Integration', () => {
 			const msg1 = await waitForWebSocketMessage(ws);
 			const msg2 = await waitForWebSocketMessage(ws);
 
-			const createResult = msg1.type === MessageType.RESPONSE ? msg1 : msg2;
+			const createResult = msg1.type === MessageType.RESULT ? msg1 : msg2;
 			const deltaEvent = msg1.type === MessageType.EVENT ? msg1 : msg2;
 
-			expect(createResult.type).toBe(MessageType.RESPONSE);
+			expect(createResult.type).toBe(MessageType.RESULT);
 			const sessionId = createResult.data.sessionId;
 
 			expect(deltaEvent.type).toBe(MessageType.EVENT);
@@ -277,7 +277,7 @@ describe('State Synchronization Integration', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'subscribe-1',
-					type: 'SUBSCRIBE' as unknown,
+					type: MessageType.SUBSCRIBE,
 					method: `${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`,
 					data: {},
 					sessionId: 'global',
@@ -288,13 +288,13 @@ describe('State Synchronization Integration', () => {
 
 			// Wait for subscription acknowledgment
 			const subAck = await waitForWebSocketMessage(ws);
-			expect(subAck.type).toBe('SUBSCRIBED' as unknown);
+			expect(subAck.type).toBe(MessageType.SUBSCRIBED);
 
 			// Create session via WebSocket
 			ws.send(
 				JSON.stringify({
 					id: 'create-1',
-					type: MessageType.QUERY,
+					type: MessageType.CALL,
 					method: 'session.create',
 					data: { workspacePath: `${TMP_DIR}/test-workspace` },
 					sessionId: 'global',
@@ -306,14 +306,14 @@ describe('State Synchronization Integration', () => {
 			// Get create messages
 			const createMsg1 = await waitForWebSocketMessage(ws);
 			const createMsg2 = await waitForWebSocketMessage(ws);
-			const createResult = createMsg1.type === MessageType.RESPONSE ? createMsg1 : createMsg2;
+			const createResult = createMsg1.type === MessageType.RESULT ? createMsg1 : createMsg2;
 			const sessionId = createResult.data.sessionId;
 
 			// Delete session
 			ws.send(
 				JSON.stringify({
 					id: 'delete-1',
-					type: MessageType.QUERY,
+					type: MessageType.CALL,
 					method: 'session.delete',
 					data: { sessionId },
 					sessionId: 'global',
@@ -326,10 +326,10 @@ describe('State Synchronization Integration', () => {
 			const msg1 = await waitForWebSocketMessage(ws, 15000);
 			const msg2 = await waitForWebSocketMessage(ws, 15000);
 
-			const deleteResult = msg1.type === MessageType.RESPONSE ? msg1 : msg2;
+			const deleteResult = msg1.type === MessageType.RESULT ? msg1 : msg2;
 			const deltaEvent = msg1.type === MessageType.EVENT ? msg1 : msg2;
 
-			expect(deleteResult.type).toBe(MessageType.RESPONSE);
+			expect(deleteResult.type).toBe(MessageType.RESULT);
 			expect(deltaEvent.type).toBe(MessageType.EVENT);
 			expect(deltaEvent.method).toBe(`${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`);
 			expect(deltaEvent.data.removed).toBeArray();
@@ -352,7 +352,7 @@ describe('State Synchronization Integration', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'subscribe-1',
-					type: 'SUBSCRIBE' as unknown,
+					type: MessageType.SUBSCRIBE,
 					method: STATE_CHANNELS.SESSION,
 					data: {},
 					sessionId: created.sessionId,
@@ -365,14 +365,14 @@ describe('State Synchronization Integration', () => {
 			let subAck;
 			for (let i = 0; i < 5; i++) {
 				const msg = await waitForWebSocketMessage(ws);
-				if (msg.type === ('SUBSCRIBED' as unknown)) {
+				if (msg.type === MessageType.SUBSCRIBED) {
 					subAck = msg;
 					break;
 				}
 				// Drain any EVENT messages that arrived before SUBSCRIBED
 			}
 			expect(subAck).toBeDefined();
-			expect(subAck.type).toBe('SUBSCRIBED' as unknown);
+			expect(subAck.type).toBe(MessageType.SUBSCRIBED);
 
 			// Use callRPCHandler instead of WebSocket to avoid RPC routing issues
 			await callRPCHandler(ctx.messageHub, 'session.update', {

@@ -76,11 +76,7 @@ describe('SDKMessageHandler', () => {
 		// Mock MessageHub
 		hubPublishSpy = mock(async () => {});
 		mockMessageHub = {
-			event: hubPublishSpy,
-			onQuery: mock((_method: string, _handler: Function) => () => {}),
-			onCommand: mock((_method: string, _handler: Function) => () => {}),
-			query: mock(async () => ({})),
-			command: mock(async () => {}),
+			publish: hubPublishSpy,
 		} as unknown as MessageHub;
 
 		// Mock DaemonHub
@@ -170,7 +166,7 @@ describe('SDKMessageHandler', () => {
 				expect.objectContaining({
 					added: [message],
 				}),
-				{ room: `session:${testSessionId}` }
+				{ sessionId: testSessionId }
 			);
 		});
 
@@ -197,7 +193,7 @@ describe('SDKMessageHandler', () => {
 					added: [message],
 					version: expect.any(Number),
 				}),
-				{ room: `session:${testSessionId}` }
+				{ sessionId: testSessionId }
 			);
 		});
 

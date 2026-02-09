@@ -65,7 +65,8 @@ describe(`E2E Matrix: ${TEST_NAME}`, () => {
 		// WebSocket handlers
 		const wsHandlers = createWebSocketHandlers(
 			daemonContext.transport,
-			daemonContext.sessionManager
+			daemonContext.sessionManager,
+			daemonContext.subscriptionManager
 		);
 
 		// Hono for static files

@@ -43,11 +43,6 @@ const mockHub = {
 	subscribe: vi.fn(() => Promise.resolve(() => Promise.resolve())),
 	subscribeOptimistic: vi.fn(() => () => {}),
 	call: vi.fn(() => Promise.resolve({})),
-	query: vi.fn(() => Promise.resolve({})),
-	command: vi.fn(),
-	onEvent: vi.fn(() => () => {}),
-	joinRoom: vi.fn(),
-	leaveRoom: vi.fn(),
 	onConnection: vi.fn(() => () => {}),
 };
 

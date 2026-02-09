@@ -18,7 +18,7 @@ export function setupSystemHandlers(
 	authManager: AuthManager,
 	config: Config
 ): void {
-	messageHub.onRequest('system.health', async () => {
+	messageHub.handle('system.health', async () => {
 		const response: HealthStatus = {
 			status: 'ok',
 			version: VERSION,
@@ -32,7 +32,7 @@ export function setupSystemHandlers(
 		return response;
 	});
 
-	messageHub.onRequest('system.config', async () => {
+	messageHub.handle('system.config', async () => {
 		const authStatus = await authManager.getAuthStatus();
 
 		const response: DaemonConfig = {
@@ -52,11 +52,11 @@ export function setupSystemHandlers(
 	// 1. Receives a message
 	// 2. Publishes an event with the message
 	// 3. Returns the message
-	messageHub.onRequest('test.echo', async (data: { message: string }) => {
+	messageHub.handle('test.echo', async (data: { message: string }) => {
 		const echoMessage = data.message || 'echo';
 
 		// Publish event to all subscribers of 'test.echo' on 'global' session
-		messageHub.event('test.echo', { echo: echoMessage }, { room: 'global' });
+		await messageHub.publish('test.echo', { echo: echoMessage }, { sessionId: 'global' });
 
 		return { echoed: echoMessage };
 	});

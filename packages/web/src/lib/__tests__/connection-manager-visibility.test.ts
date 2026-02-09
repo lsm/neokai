@@ -104,11 +104,8 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 			// Create mock MessageHub
 			mockMessageHub = {
 				call: vi.fn(() => Promise.resolve({ status: 'ok' })),
-				query: vi.fn(() => Promise.resolve({ status: 'ok' })),
 				forceResubscribe: vi.fn(() => {}),
 				isConnected: vi.fn(() => true),
-				joinRoom: vi.fn(() => {}),
-				leaveRoom: vi.fn(() => {}),
 			};
 
 			// Inject mocks into connection manager
@@ -181,7 +178,7 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 			expect(validateSpy).toHaveBeenCalled();
 		});
 
-		it('should call joinRoom when health check succeeds', async () => {
+		it('should call forceResubscribe when health check succeeds', async () => {
 			const _appStateRefreshSpy = vi.spyOn(appState, 'refreshAll').mockResolvedValue(undefined);
 			const _globalStoreRefreshSpy = vi.spyOn(globalStore, 'refresh').mockResolvedValue(undefined);
 
@@ -197,7 +194,7 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 			// Wait for async validation
 			await new Promise((resolve) => setTimeout(resolve, 100));
 
-			expect(mockMessageHub.joinRoom).toHaveBeenCalledWith('global');
+			expect(mockMessageHub.forceResubscribe).toHaveBeenCalled();
 		});
 
 		it('should refresh sessionStore, appState, and globalStore', async () => {
@@ -283,11 +280,8 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 
 			mockMessageHub = {
 				call: vi.fn(() => Promise.reject(new Error('Health check failed'))),
-				query: vi.fn(() => Promise.reject(new Error('Health check failed'))),
 				forceResubscribe: vi.fn(() => {}),
 				isConnected: vi.fn(() => true),
-				joinRoom: vi.fn(() => {}),
-				leaveRoom: vi.fn(() => {}),
 			};
 
 			(connectionManager as unknown as Record<string, unknown>).transport = mockTransport;

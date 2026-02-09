@@ -482,10 +482,10 @@ export class QueryRunner {
 
 		db.saveSDKMessage(session.id, assistantMessage);
 
-		messageHub.event(
+		await messageHub.publish(
 			'state.sdkMessages.delta',
 			{ added: [assistantMessage], timestamp: Date.now() },
-			{ room: `session:${session.id}` }
+			{ sessionId: session.id }
 		);
 	}
 }

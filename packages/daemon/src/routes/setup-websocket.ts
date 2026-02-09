@@ -6,15 +6,11 @@
  */
 
 import type { ServerWebSocket } from 'bun';
-import {
-	createEventMessage,
-	createErrorResponseMessage,
-	MessageType,
-	generateUUID,
-} from '@neokai/shared';
+import { createEventMessage, createErrorMessage, MessageType, generateUUID } from '@neokai/shared';
 import type { HubMessage } from '@neokai/shared/message-hub/protocol';
 import type { WebSocketServerTransport } from '../lib/websocket-server-transport';
 import type { SessionManager } from '../lib/session-manager';
+import type { SubscriptionManager } from '../lib/subscription-manager';
 
 const GLOBAL_SESSION_ID = 'global';
 
@@ -45,7 +41,8 @@ interface ParsedWebSocketMessage {
 
 export function createWebSocketHandlers(
 	transport: WebSocketServerTransport,
-	sessionManager: SessionManager
+	sessionManager: SessionManager,
+	_subscriptionManager: SubscriptionManager
 ) {
 	return {
 		open(ws: ServerWebSocket<WebSocketData>) {
@@ -55,8 +52,9 @@ export function createWebSocketHandlers(
 			// Store clientId on websocket data for cleanup and message handling
 			ws.data.clientId = clientId;
 
-			// NOTE: Clients receive events automatically through the MessageHub protocol.
-			// No explicit subscription mechanism needed.
+			// NOTE: We don't auto-subscribe clients to events anymore.
+			// Clients will subscribe themselves by sending SUBSCRIBE messages.
+			// This prevents the server-side subscription timeout issue.
 
 			// Send connection confirmation as a proper EVENT message
 			const connectionEvent = createEventMessage({
@@ -81,14 +79,13 @@ export function createWebSocketHandlers(
 					console.error(
 						`Message rejected: size ${(messageSize / (1024 * 1024)).toFixed(2)}MB exceeds limit ${MAX_MESSAGE_SIZE_MB}MB`
 					);
-					const errorMsg = createErrorResponseMessage({
+					const errorMsg = createErrorMessage({
 						method: 'message.process',
 						error: {
 							code: 'MESSAGE_TOO_LARGE',
 							message: `Message size ${(messageSize / (1024 * 1024)).toFixed(2)}MB exceeds maximum ${MAX_MESSAGE_SIZE_MB}MB`,
 						},
 						sessionId: GLOBAL_SESSION_ID,
-						requestId: '',
 					});
 					ws.send(JSON.stringify(errorMsg));
 					return;
@@ -125,17 +122,19 @@ export function createWebSocketHandlers(
 				}
 
 				// For session-specific messages, verify session exists (except for global)
-				if (data.sessionId !== GLOBAL_SESSION_ID) {
+				// SUBSCRIBE/UNSUBSCRIBE are protocol-level and don't require session validation
+				const isProtocolMessage = data.type === 'SUBSCRIBE' || data.type === 'UNSUBSCRIBE';
+				if (data.sessionId !== GLOBAL_SESSION_ID && !isProtocolMessage) {
 					const session = await sessionManager.getSessionAsync(data.sessionId);
 					if (!session) {
-						const errorMsg = createErrorResponseMessage({
+						const errorMsg = createErrorMessage({
 							method: data.method || 'unknown.method',
 							error: {
 								code: 'SESSION_NOT_FOUND',
 								message: `Session not found: ${data.sessionId}`,
 							},
 							sessionId: data.sessionId,
-							requestId: data.id || '',
+							requestId: data.id,
 						});
 						ws.send(JSON.stringify(errorMsg));
 						return;
@@ -150,14 +149,13 @@ export function createWebSocketHandlers(
 				}
 			} catch (error) {
 				console.error('Error processing WebSocket message:', error);
-				const errorMsg = createErrorResponseMessage({
+				const errorMsg = createErrorMessage({
 					method: 'message.process',
 					error: {
 						code: 'INVALID_MESSAGE',
 						message: error instanceof Error ? error.message : 'Invalid message format',
 					},
 					sessionId: GLOBAL_SESSION_ID,
-					requestId: '',
 				});
 				ws.send(JSON.stringify(errorMsg));
 			}

@@ -124,13 +124,13 @@ export class ModelSwitchHandler {
 			const previousModel = session.config.model;
 
 			// Emit model switching event
-			messageHub.event(
+			await messageHub.publish(
 				'session.model-switching',
 				{
 					from: previousModel,
 					to: resolvedModel,
 				},
-				{ room: `session:${session.id}` }
+				{ sessionId: session.id }
 			);
 
 			// Check if query is running AND ProcessTransport is ready
@@ -189,14 +189,14 @@ export class ModelSwitchHandler {
 			}
 
 			// Emit success event
-			messageHub.event(
+			await messageHub.publish(
 				'session.model-switched',
 				{
 					from: previousModel,
 					to: resolvedModel,
 					modelInfo: modelInfo || null,
 				},
-				{ room: `session:${session.id}` }
+				{ sessionId: session.id }
 			);
 
 			return {

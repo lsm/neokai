@@ -11,6 +11,7 @@ import { SessionManager } from '../../src/lib/session-manager';
 import { AuthManager } from '../../src/lib/auth-manager';
 import { SettingsManager } from '../../src/lib/settings-manager';
 import { StateManager } from '../../src/lib/state-manager';
+import { SubscriptionManager } from '../../src/lib/subscription-manager';
 import { MessageHub, MessageHubRouter } from '@neokai/shared';
 import { setupRPCHandlers } from '../../src/lib/rpc-handlers';
 import { WebSocketServerTransport } from '../../src/lib/websocket-server-transport';
@@ -25,6 +26,7 @@ export interface TestContext {
 	messageHub: MessageHub;
 	transport: WebSocketServerTransport;
 	stateManager: StateManager;
+	subscriptionManager: SubscriptionManager;
 	authManager: AuthManager;
 	eventBus: Awaited<ReturnType<typeof import('../../src/lib/daemon-hub').createDaemonHub>>;
 	baseUrl: string;
@@ -166,8 +168,11 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 		db,
 	});
 
+	// Initialize Subscription Manager
+	const subscriptionManager = new SubscriptionManager(messageHub);
+
 	// Create WebSocket handlers
-	const wsHandlers = createWebSocketHandlers(transport, sessionManager);
+	const wsHandlers = createWebSocketHandlers(transport, sessionManager, subscriptionManager);
 
 	// Create Bun server with native WebSocket support
 	const server = Bun.serve({
@@ -338,6 +343,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 		messageHub,
 		transport,
 		stateManager,
+		subscriptionManager,
 		authManager,
 		eventBus,
 		baseUrl,
@@ -420,20 +426,19 @@ export async function callRPCHandler<T = unknown>(
 	method: string,
 	data: Record<string, unknown> = {}
 ): Promise<T> {
-	// Access the handlers directly from MessageHub's internal maps
-	const hub = messageHub as {
-		requestHandlers: Map<string, (data: unknown, context: unknown) => Promise<unknown>>;
-	};
-
-	// Check request handlers
-	const handler = hub.requestHandlers.get(method);
-	if (handler) {
-		// Call request handler with data and minimal context
-		const result = await handler(data, { clientId: 'test-client', sessionId: 'global' });
-		return result as T;
+	// Access the handler directly from MessageHub's internal handlers map
+	const handler = (
+		messageHub as {
+			rpcHandlers: Map<string, (data: unknown) => Promise<unknown>>;
+		}
+	).rpcHandlers.get(method);
+	if (!handler) {
+		throw new Error(`RPC handler not found: ${method}`);
 	}
 
-	throw new Error(`RPC handler not found: ${method}`);
+	// Call handler with data
+	const result = await handler(data);
+	return result as T;
 }
 
 /**
@@ -589,61 +594,6 @@ export async function waitForWebSocketMessage(ws: WebSocket, timeout = 5000): Pr
 			reject(
 				new Error(
 					`No WebSocket message received within ${timeout}ms (readyState: ${ws.readyState})`
-				)
-			);
-		}, timeout);
-	});
-}
-
-/**
- * Wait for WebSocket message with specific type
- * Useful when query handlers broadcast events AND return responses,
- * and we need to find the RSP message specifically
- */
-export async function waitForWebSocketMessageType(
-	ws: WebSocket,
-	messageType: string,
-	timeout = 5000
-): Promise<unknown> {
-	const messages: unknown[] = [];
-	return new Promise((resolve, reject) => {
-		const messageHandler = (event: MessageEvent) => {
-			try {
-				const data = JSON.parse(event.data as string);
-				messages.push(data);
-
-				// Check if this message matches the desired type
-				if ((data as { type?: string }).type === messageType) {
-					clearTimeout(timer);
-					ws.removeEventListener('message', messageHandler);
-					ws.removeEventListener('error', errorHandler);
-					resolve(data);
-				}
-			} catch {
-				clearTimeout(timer);
-				ws.removeEventListener('message', messageHandler);
-				ws.removeEventListener('error', errorHandler);
-				reject(new Error('Failed to parse WebSocket message'));
-			}
-		};
-
-		const errorHandler = (error: Event) => {
-			clearTimeout(timer);
-			ws.removeEventListener('message', messageHandler);
-			ws.removeEventListener('error', errorHandler);
-			reject(error);
-		};
-
-		ws.addEventListener('message', messageHandler);
-		ws.addEventListener('error', errorHandler);
-
-		const timer = setTimeout(() => {
-			ws.removeEventListener('message', messageHandler);
-			ws.removeEventListener('error', errorHandler);
-			const receivedTypes = messages.map((m) => (m as { type?: string }).type).join(', ');
-			reject(
-				new Error(
-					`No WebSocket message with type '${messageType}' received within ${timeout}ms. Received types: [${receivedTypes}]`
 				)
 			);
 		}, timeout);

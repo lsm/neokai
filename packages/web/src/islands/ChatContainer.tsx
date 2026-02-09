@@ -522,7 +522,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 						toast.error('Connection lost.');
 						return;
 					}
-					await hub.request('session.setWorktreeMode', {
+					await hub.call('session.setWorktreeMode', {
 						sessionId,
 						mode: pendingWorktreeMode,
 					});

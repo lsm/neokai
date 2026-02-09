@@ -13,11 +13,10 @@ import { STATE_CHANNELS } from '@neokai/shared';
 // Mock connection-manager module - must be at top level and use inline factory
 vi.mock('../connection-manager.js', () => {
 	const mockHub = {
-		query: vi.fn(),
-		command: vi.fn(),
-		onEvent: vi.fn(() => vi.fn()),
-		joinRoom: vi.fn(),
-		leaveRoom: vi.fn(),
+		call: vi.fn(),
+		subscribe: vi.fn(() => vi.fn()),
+		subscribeOptimistic: vi.fn(() => vi.fn()),
+		forceResubscribe: vi.fn(),
 		isConnected: vi.fn(() => true),
 	};
 	return {
@@ -69,11 +68,10 @@ describe('GlobalStore', () => {
 				getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
 			}
 		).getHubIfConnected.mockReturnValue({
-			query: vi.fn(),
-			command: vi.fn(),
-			onEvent: vi.fn(() => vi.fn()),
-			joinRoom: vi.fn(),
-			leaveRoom: vi.fn(),
+			call: vi.fn(),
+			subscribe: vi.fn(() => vi.fn()),
+			subscribeOptimistic: vi.fn(() => vi.fn()),
+			forceResubscribe: vi.fn(),
 			isConnected: vi.fn(() => true),
 		});
 		(
@@ -82,11 +80,10 @@ describe('GlobalStore', () => {
 				getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
 			}
 		).getHub.mockResolvedValue({
-			query: vi.fn(),
-			command: vi.fn(),
-			onEvent: vi.fn(() => vi.fn()),
-			joinRoom: vi.fn(),
-			leaveRoom: vi.fn(),
+			call: vi.fn(),
+			subscribe: vi.fn(() => vi.fn()),
+			subscribeOptimistic: vi.fn(() => vi.fn()),
+			forceResubscribe: vi.fn(),
 			isConnected: vi.fn(() => true),
 		});
 	});
@@ -211,7 +208,7 @@ describe('GlobalStore', () => {
 	describe('initialize', () => {
 		it('should fetch snapshot and set initial state', async () => {
 			const mockHub = {
-				query: vi.fn().mockResolvedValue({
+				call: vi.fn().mockResolvedValue({
 					sessions: {
 						sessions: [createMockSession('sess-1')],
 						hasArchivedSessions: false,
@@ -223,10 +220,6 @@ describe('GlobalStore', () => {
 					},
 					settings: { settings: { permissionMode: 'bypassPermissions' } },
 				}),
-				onEvent: vi.fn(() => vi.fn()),
-				joinRoom: vi.fn(),
-				leaveRoom: vi.fn(),
-				isConnected: vi.fn(() => true),
 			};
 			(
 				connectionManager as unknown as {
@@ -245,15 +238,12 @@ describe('GlobalStore', () => {
 
 		it('should subscribe to all state channels', async () => {
 			const mockHub = {
-				query: vi.fn().mockResolvedValue({
+				call: vi.fn().mockResolvedValue({
 					sessions: { sessions: [], hasArchivedSessions: false },
 					system: null,
 					settings: null,
 				}),
-				onEvent: vi.fn(() => vi.fn()),
-				joinRoom: vi.fn(),
-				leaveRoom: vi.fn(),
-				isConnected: vi.fn(() => true),
+				subscribeOptimistic: vi.fn(() => vi.fn()),
 			};
 			(
 				connectionManager as unknown as {
@@ -264,36 +254,37 @@ describe('GlobalStore', () => {
 
 			await store.initialize();
 
-			expect(mockHub.onEvent).toHaveBeenCalledWith(
+			expect(mockHub.subscribeOptimistic).toHaveBeenCalledWith(
 				STATE_CHANNELS.GLOBAL_SESSIONS,
-				expect.any(Function)
+				expect.any(Function),
+				{ sessionId: 'global' }
 			);
-			expect(mockHub.onEvent).toHaveBeenCalledWith(
+			expect(mockHub.subscribeOptimistic).toHaveBeenCalledWith(
 				`${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`,
-				expect.any(Function)
+				expect.any(Function),
+				{ sessionId: 'global' }
 			);
-			expect(mockHub.onEvent).toHaveBeenCalledWith(
+			expect(mockHub.subscribeOptimistic).toHaveBeenCalledWith(
 				STATE_CHANNELS.GLOBAL_SYSTEM,
-				expect.any(Function)
+				expect.any(Function),
+				{ sessionId: 'global' }
 			);
-			expect(mockHub.onEvent).toHaveBeenCalledWith(
+			expect(mockHub.subscribeOptimistic).toHaveBeenCalledWith(
 				STATE_CHANNELS.GLOBAL_SETTINGS,
-				expect.any(Function)
+				expect.any(Function),
+				{ sessionId: 'global' }
 			);
 		});
 
 		it('should not initialize twice', async () => {
 			// Setup mock to return valid snapshot
 			const mockHub = {
-				query: vi.fn().mockResolvedValue({
+				call: vi.fn().mockResolvedValue({
 					sessions: { sessions: [], hasArchivedSessions: false },
 					system: null,
 					settings: null,
 				}),
-				onEvent: vi.fn(() => vi.fn()),
-				joinRoom: vi.fn(),
-				leaveRoom: vi.fn(),
-				isConnected: vi.fn(() => true),
+				subscribeOptimistic: vi.fn(() => vi.fn()),
 			};
 			(
 				connectionManager as unknown as {
@@ -309,18 +300,18 @@ describe('GlobalStore', () => {
 			expect(privateStore.initialized).toBe(true);
 
 			// Reset the mock call count
-			mockHub.query.mockClear();
+			mockHub.call.mockClear();
 
 			// Second initialize should be a no-op
 			await store.initialize();
 
 			// Hub call should not have been made again
-			expect(mockHub.query).not.toHaveBeenCalled();
+			expect(mockHub.call).not.toHaveBeenCalled();
 		});
 
 		it('should set hasArchivedSessions from snapshot', async () => {
 			const mockHub = {
-				query: vi.fn().mockResolvedValue({
+				call: vi.fn().mockResolvedValue({
 					sessions: {
 						sessions: [],
 						hasArchivedSessions: true,
@@ -328,10 +319,6 @@ describe('GlobalStore', () => {
 					system: null,
 					settings: null,
 				}),
-				onEvent: vi.fn(() => vi.fn()),
-				joinRoom: vi.fn(),
-				leaveRoom: vi.fn(),
-				isConnected: vi.fn(() => true),
 			};
 			(
 				connectionManager as unknown as {
@@ -350,15 +337,12 @@ describe('GlobalStore', () => {
 		beforeEach(async () => {
 			// Initialize store first
 			const mockHub = {
-				query: vi.fn().mockResolvedValue({
+				call: vi.fn().mockResolvedValue({
 					sessions: { sessions: [], hasArchivedSessions: false },
 					system: null,
 					settings: null,
 				}),
-				onEvent: vi.fn(() => vi.fn()),
-				joinRoom: vi.fn(),
-				leaveRoom: vi.fn(),
-				isConnected: vi.fn(() => true),
+				subscribeOptimistic: vi.fn(() => vi.fn()),
 			};
 			(
 				connectionManager as unknown as {
@@ -371,7 +355,7 @@ describe('GlobalStore', () => {
 
 		it('should fetch fresh snapshot from server', async () => {
 			const mockHub = {
-				query: vi.fn().mockResolvedValue({
+				call: vi.fn().mockResolvedValue({
 					sessions: {
 						sessions: [createMockSession('sess-refreshed')],
 						hasArchivedSessions: true,
@@ -383,10 +367,6 @@ describe('GlobalStore', () => {
 					},
 					settings: { settings: { permissionMode: 'acceptEdits' } },
 				}),
-				onEvent: vi.fn(() => vi.fn()),
-				joinRoom: vi.fn(),
-				leaveRoom: vi.fn(),
-				isConnected: vi.fn(() => true),
 			};
 			(
 				connectionManager as unknown as {
@@ -405,15 +385,11 @@ describe('GlobalStore', () => {
 
 		it('should call correct channel for refresh', async () => {
 			const mockHub = {
-				query: vi.fn().mockResolvedValue({
+				call: vi.fn().mockResolvedValue({
 					sessions: { sessions: [], hasArchivedSessions: false },
 					system: null,
 					settings: null,
 				}),
-				onEvent: vi.fn(() => vi.fn()),
-				joinRoom: vi.fn(),
-				leaveRoom: vi.fn(),
-				isConnected: vi.fn(() => true),
 			};
 			(
 				connectionManager as unknown as {
@@ -424,7 +400,7 @@ describe('GlobalStore', () => {
 
 			await store.refresh();
 
-			expect(mockHub.query).toHaveBeenCalledWith(STATE_CHANNELS.GLOBAL_SNAPSHOT, {});
+			expect(mockHub.call).toHaveBeenCalledWith(STATE_CHANNELS.GLOBAL_SNAPSHOT, {});
 		});
 	});
 
@@ -471,15 +447,12 @@ describe('GlobalStore', () => {
 	describe('destroy', () => {
 		it('should reset initialized flag', async () => {
 			const mockHub = {
-				query: vi.fn().mockResolvedValue({
+				call: vi.fn().mockResolvedValue({
 					sessions: { sessions: [], hasArchivedSessions: false },
 					system: null,
 					settings: null,
 				}),
-				onEvent: vi.fn(() => vi.fn()),
-				joinRoom: vi.fn(),
-				leaveRoom: vi.fn(),
-				isConnected: vi.fn(() => true),
+				subscribeOptimistic: vi.fn(() => vi.fn()),
 			};
 			(
 				connectionManager as unknown as {
@@ -497,15 +470,12 @@ describe('GlobalStore', () => {
 
 		it('should clear cleanup functions', async () => {
 			const mockHub = {
-				query: vi.fn().mockResolvedValue({
+				call: vi.fn().mockResolvedValue({
 					sessions: { sessions: [], hasArchivedSessions: false },
 					system: null,
 					settings: null,
 				}),
-				onEvent: vi.fn(() => vi.fn()),
-				joinRoom: vi.fn(),
-				leaveRoom: vi.fn(),
-				isConnected: vi.fn(() => true),
+				subscribeOptimistic: vi.fn(() => vi.fn()),
 			};
 			(
 				connectionManager as unknown as {

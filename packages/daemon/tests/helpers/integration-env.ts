@@ -40,11 +40,6 @@ export class MockMessageHub {
 		this.publishedMessages.push({ method, data, options });
 	}
 
-	// Broadcast event (sync version of publish)
-	event(method: string, data?: unknown, options?: { room?: string }): void {
-		this.publishedMessages.push({ method, data, options });
-	}
-
 	// Get published messages for verification
 	getPublishedMessages() {
 		return this.publishedMessages;

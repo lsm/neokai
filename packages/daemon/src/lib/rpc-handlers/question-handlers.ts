@@ -44,7 +44,7 @@ export function setupQuestionHandlers(
 	 * This sends the user's selected options as a tool_result message
 	 * to continue the SDK query that was paused waiting for input.
 	 */
-	messageHub.onRequest('question.respond', async (data) => {
+	messageHub.handle('question.respond', async (data) => {
 		const { sessionId, toolUseId, responses } = data as QuestionRespondPayload;
 
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
@@ -53,6 +53,7 @@ export function setupQuestionHandlers(
 		}
 
 		await agentSession.handleQuestionResponse(toolUseId, responses);
+
 		return { success: true };
 	});
 
@@ -62,7 +63,7 @@ export function setupQuestionHandlers(
 	 * This allows preserving the user's partial selections if they
 	 * navigate away or refresh the page before submitting.
 	 */
-	messageHub.onRequest('question.saveDraft', async (data) => {
+	messageHub.handle('question.saveDraft', async (data) => {
 		const { sessionId, draftResponses } = data as QuestionSaveDraftPayload;
 
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
@@ -71,6 +72,7 @@ export function setupQuestionHandlers(
 		}
 
 		await agentSession.updateQuestionDraft(draftResponses);
+
 		return { success: true };
 	});
 
@@ -80,7 +82,7 @@ export function setupQuestionHandlers(
 	 * This allows the user to dismiss the question. The agent will receive
 	 * a message indicating the user cancelled, and can decide how to proceed.
 	 */
-	messageHub.onRequest('question.cancel', async (data) => {
+	messageHub.handle('question.cancel', async (data) => {
 		const { sessionId, toolUseId } = data as QuestionCancelPayload;
 
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
@@ -89,6 +91,7 @@ export function setupQuestionHandlers(
 		}
 
 		await agentSession.handleQuestionCancel(toolUseId);
+
 		return { success: true };
 	});
 }

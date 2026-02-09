@@ -12,7 +12,6 @@ import {
 	createTestApp,
 	waitForWebSocketState,
 	waitForWebSocketMessage,
-	waitForWebSocketMessageType,
 	createWebSocketWithFirstMessage,
 } from '../../helpers/test-app';
 
@@ -38,7 +37,7 @@ describe('Agent RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'agent-state-1',
-					type: 'QRY',
+					type: 'CALL',
 					method: 'agent.getState',
 					data: {
 						sessionId: 'non-existent',
@@ -51,8 +50,7 @@ describe('Agent RPC Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('RSP');
-			expect(response.error).toBeDefined();
+			expect(response.type).toBe('ERROR');
 
 			ws.close();
 		});
@@ -71,7 +69,7 @@ describe('Agent RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'agent-state-2',
-					type: 'QRY',
+					type: 'CALL',
 					method: 'agent.getState',
 					data: { sessionId },
 					sessionId: 'global',
@@ -82,7 +80,7 @@ describe('Agent RPC Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('RSP');
+			expect(response.type).toBe('RESULT');
 			expect(response.data.state).toBeDefined();
 			expect(response.data.state.status).toBe('idle');
 
@@ -101,7 +99,7 @@ describe('Agent RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'reset-1',
-					type: 'QRY',
+					type: 'CALL',
 					method: 'session.resetQuery',
 					data: {
 						sessionId: 'non-existent',
@@ -114,8 +112,7 @@ describe('Agent RPC Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('RSP');
-			expect(response.error).toBeDefined();
+			expect(response.type).toBe('ERROR');
 
 			ws.close();
 		});
@@ -130,12 +127,12 @@ describe('Agent RPC Handlers', () => {
 			await waitForWebSocketState(ws, WebSocket.OPEN);
 			await firstMessagePromise;
 
-			const responsePromise = waitForWebSocketMessageType(ws, 'RSP');
+			const responsePromise = waitForWebSocketMessage(ws);
 
 			ws.send(
 				JSON.stringify({
 					id: 'reset-2',
-					type: 'QRY',
+					type: 'CALL',
 					method: 'session.resetQuery',
 					data: { sessionId, restartQuery: true },
 					sessionId: 'global',
@@ -146,7 +143,7 @@ describe('Agent RPC Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('RSP');
+			expect(response.type).toBe('RESULT');
 			// RPC returns success/failure directly
 			expect(response.data.success).toBe(true);
 
@@ -162,12 +159,12 @@ describe('Agent RPC Handlers', () => {
 			await waitForWebSocketState(ws, WebSocket.OPEN);
 			await firstMessagePromise;
 
-			const responsePromise = waitForWebSocketMessageType(ws, 'RSP');
+			const responsePromise = waitForWebSocketMessage(ws);
 
 			ws.send(
 				JSON.stringify({
 					id: 'reset-3',
-					type: 'QRY',
+					type: 'CALL',
 					method: 'session.resetQuery',
 					data: { sessionId, restartQuery: false },
 					sessionId: 'global',
@@ -178,7 +175,7 @@ describe('Agent RPC Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('RSP');
+			expect(response.type).toBe('RESULT');
 			// RPC returns success/failure directly
 			expect(response.data.success).toBe(true);
 
@@ -195,12 +192,12 @@ describe('Agent RPC Handlers', () => {
 			await firstMessagePromise;
 
 			// Reset the query
-			const resetPromise = waitForWebSocketMessageType(ws, 'RSP');
+			const resetPromise = waitForWebSocketMessage(ws);
 
 			ws.send(
 				JSON.stringify({
 					id: 'reset-4',
-					type: 'QRY',
+					type: 'CALL',
 					method: 'session.resetQuery',
 					data: { sessionId },
 					sessionId: 'global',
@@ -210,7 +207,7 @@ describe('Agent RPC Handlers', () => {
 			);
 
 			const resetResponse = await resetPromise;
-			expect(resetResponse.type).toBe('RSP');
+			expect(resetResponse.type).toBe('RESULT');
 			// RPC returns success/failure directly
 			expect(resetResponse.data.success).toBe(true);
 
@@ -220,7 +217,7 @@ describe('Agent RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'reset-5',
-					type: 'QRY',
+					type: 'CALL',
 					method: 'agent.getState',
 					data: { sessionId },
 					sessionId: 'global',
@@ -230,7 +227,7 @@ describe('Agent RPC Handlers', () => {
 			);
 
 			const stateResponse = await statePromise;
-			expect(stateResponse.type).toBe('RSP');
+			expect(stateResponse.type).toBe('RESULT');
 			expect(stateResponse.data.state.status).toBe('idle');
 
 			ws.close();

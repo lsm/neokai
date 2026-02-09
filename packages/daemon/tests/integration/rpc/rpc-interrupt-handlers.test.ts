@@ -36,7 +36,7 @@ describe('Interrupt RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'int-1',
-					type: 'QRY',
+					type: 'CALL',
 					method: 'client.interrupt',
 					data: {
 						sessionId: 'non-existent',
@@ -49,8 +49,7 @@ describe('Interrupt RPC Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('RSP');
-			expect(response.error).toBeDefined();
+			expect(response.type).toBe('ERROR');
 
 			ws.close();
 		});
@@ -69,7 +68,7 @@ describe('Interrupt RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'int-2',
-					type: 'QRY',
+					type: 'CALL',
 					method: 'client.interrupt',
 					data: { sessionId },
 					sessionId: 'global',
@@ -80,7 +79,7 @@ describe('Interrupt RPC Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('RSP');
+			expect(response.type).toBe('RESULT');
 			// EventBus-centric: RPC returns accepted, actual result via EventBus
 			expect(response.data.accepted).toBe(true);
 

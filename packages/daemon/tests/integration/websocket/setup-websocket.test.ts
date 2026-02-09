@@ -123,7 +123,7 @@ describe('Setup WebSocket Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'test-1',
-					type: 'QRY',
+					type: 'CALL',
 					method: 'message.send',
 					data: { content: 'test' },
 					sessionId: 'non-existent-session-id',
@@ -134,64 +134,61 @@ describe('Setup WebSocket Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('RSP');
-			expect(response.error).toBeDefined();
+			expect(response.type).toBe('ERROR');
 			expect(response.errorCode).toBe('SESSION_NOT_FOUND');
 			expect(response.error).toContain('Session not found');
 
 			ws.close();
 		});
 
-		// REMOVED: SUBSCRIBE/UNSUBSCRIBE no longer supported in new protocol (use rooms)
-		// test('should allow SUBSCRIBE for non-existent session (protocol-level)', async () => {
-		// 	const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
-		// 	await waitForWebSocketState(ws, WebSocket.OPEN);
-		// 	await firstMessagePromise;
+		test('should allow SUBSCRIBE for non-existent session (protocol-level)', async () => {
+			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+			await waitForWebSocketState(ws, WebSocket.OPEN);
+			await firstMessagePromise;
 
-		// 	const responsePromise = waitForWebSocketMessage(ws, 2000);
+			const responsePromise = waitForWebSocketMessage(ws, 2000);
 
-		// 	ws.send(
-		// 		JSON.stringify({
-		// 			id: 'sub-1',
-		// 			type: 'SUBSCRIBE', // DEPRECATED - needs room-based rewrite
-		// 			method: 'test.event',
-		// 			sessionId: 'non-existent-session',
-		// 			timestamp: new Date().toISOString(),
-		// 			version: '1.0.0',
-		// 		})
-		// 	);
+			ws.send(
+				JSON.stringify({
+					id: 'sub-1',
+					type: 'SUBSCRIBE',
+					method: 'test.event',
+					sessionId: 'non-existent-session',
+					timestamp: new Date().toISOString(),
+					version: '1.0.0',
+				})
+			);
 
-		// 	const response = await responsePromise;
-		// 	// Protocol messages like SUBSCRIBE should get a success response
-		// 	expect(response.type).not.toBe('ERROR');
+			const response = await responsePromise;
+			// Protocol messages like SUBSCRIBE should get a success response
+			expect(response.type).not.toBe('ERROR');
 
-		// 	ws.close();
-		// });
+			ws.close();
+		});
 
-		// REMOVED: SUBSCRIBE/UNSUBSCRIBE no longer supported in new protocol (use rooms)
-		// test('should allow UNSUBSCRIBE for non-existent session (protocol-level)', async () => {
-		// 	const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
-		// 	await waitForWebSocketState(ws, WebSocket.OPEN);
-		// 	await firstMessagePromise;
+		test('should allow UNSUBSCRIBE for non-existent session (protocol-level)', async () => {
+			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+			await waitForWebSocketState(ws, WebSocket.OPEN);
+			await firstMessagePromise;
 
-		// 	const responsePromise = waitForWebSocketMessage(ws, 2000);
+			const responsePromise = waitForWebSocketMessage(ws, 2000);
 
-		// 	ws.send(
-		// 		JSON.stringify({
-		// 			id: 'unsub-1',
-		// 			type: 'UNSUBSCRIBE',
-		// 			method: 'test.event',
-		// 			sessionId: 'non-existent-session',
-		// 			timestamp: new Date().toISOString(),
-		// 			version: '1.0.0',
-		// 		})
-		// 	);
+			ws.send(
+				JSON.stringify({
+					id: 'unsub-1',
+					type: 'UNSUBSCRIBE',
+					method: 'test.event',
+					sessionId: 'non-existent-session',
+					timestamp: new Date().toISOString(),
+					version: '1.0.0',
+				})
+			);
 
-		// 	const response = await responsePromise;
-		// 	expect(response.type).not.toBe('ERROR');
+			const response = await responsePromise;
+			expect(response.type).not.toBe('ERROR');
 
-		// 	ws.close();
-		// });
+			ws.close();
+		});
 
 		test('should default to global sessionId when not provided', async () => {
 			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
@@ -203,7 +200,7 @@ describe('Setup WebSocket Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'test-1',
-					type: 'QRY',
+					type: 'CALL',
 					method: 'session.list',
 					data: {},
 					sessionId: 'global',
@@ -214,7 +211,7 @@ describe('Setup WebSocket Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('RSP');
+			expect(response.type).toBe('RESULT');
 			expect(response.data.sessions).toBeArray();
 
 			ws.close();
@@ -273,7 +270,7 @@ describe('Setup WebSocket Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'large-1',
-					type: 'QRY',
+					type: 'CALL',
 					method: 'test.method',
 					data: { content: largeContent },
 					sessionId: 'global',
@@ -284,8 +281,7 @@ describe('Setup WebSocket Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('RSP');
-			expect(response.error).toBeDefined();
+			expect(response.type).toBe('ERROR');
 			expect(response.errorCode).toBe('MESSAGE_TOO_LARGE');
 			expect(response.error).toContain('exceeds maximum');
 
@@ -302,7 +298,7 @@ describe('Setup WebSocket Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'normal-1',
-					type: 'QRY',
+					type: 'CALL',
 					method: 'session.list',
 					data: {},
 					sessionId: 'global',
@@ -313,7 +309,7 @@ describe('Setup WebSocket Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('RSP');
+			expect(response.type).toBe('RESULT');
 
 			ws.close();
 		});
