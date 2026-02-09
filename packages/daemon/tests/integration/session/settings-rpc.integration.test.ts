@@ -589,7 +589,7 @@ describe('Settings RPC Handlers - Extended', () => {
 		ws.send(
 			JSON.stringify({
 				id: `call-${Date.now()}`,
-				type: 'CALL',
+				type: 'QRY',
 				method,
 				data,
 				sessionId: 'global',
@@ -608,7 +608,7 @@ describe('Settings RPC Handlers - Extended', () => {
 
 			const response = await sendRpcCall(ws, 'settings.mcp.listFromSources', {});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('servers');
 			expect(response.data).toHaveProperty('serverSettings');
 			ws.close();
@@ -627,7 +627,7 @@ describe('Settings RPC Handlers - Extended', () => {
 				sessionId,
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('servers');
 			ws.close();
 		});
@@ -641,7 +641,8 @@ describe('Settings RPC Handlers - Extended', () => {
 				sessionId: 'non-existent-session',
 			});
 
-			expect(response.type).toBe('ERROR');
+			expect(response.type).toBe('RSP');
+			expect(response.error).toBeDefined();
 			ws.close();
 		});
 	});
@@ -660,7 +661,7 @@ describe('Settings RPC Handlers - Extended', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { success: boolean };
 			expect(data.success).toBe(true);
 			ws.close();
@@ -678,7 +679,7 @@ describe('Settings RPC Handlers - Extended', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { success: boolean };
 			expect(data.success).toBe(true);
 			ws.close();
@@ -699,7 +700,7 @@ describe('Settings RPC Handlers - Extended', () => {
 				sessionId,
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as {
 				sessionId: string;
 				settings: Record<string, unknown>;
@@ -725,7 +726,7 @@ describe('Settings RPC Handlers - Extended', () => {
 				updates: { someKey: 'someValue' },
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { success: boolean; sessionId: string };
 			expect(data.success).toBe(true);
 			expect(data.sessionId).toBe(sessionId);

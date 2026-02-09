@@ -57,7 +57,7 @@ export function GlobalToolsSettings() {
 		try {
 			loading.value = true;
 			const hub = await connectionManager.getHub();
-			const response = await hub.call<{ config: GlobalToolsConfig }>('globalTools.getConfig');
+			const response = await hub.request<{ config: GlobalToolsConfig }>('globalTools.getConfig');
 			config.value = response.config ?? DEFAULT_CONFIG;
 		} catch {
 			config.value = DEFAULT_CONFIG;
@@ -70,7 +70,7 @@ export function GlobalToolsSettings() {
 		try {
 			saving.value = true;
 			const hub = await connectionManager.getHub();
-			await hub.call('globalTools.saveConfig', { config: newConfig });
+			hub.request('globalTools.saveConfig', { config: newConfig });
 			config.value = newConfig;
 			toast.success('Global tools settings saved');
 		} catch {

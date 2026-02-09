@@ -36,11 +36,11 @@ describe('SDK Config RPC Handlers', () => {
 		method: string,
 		data: Record<string, unknown>
 	): Promise<Record<string, unknown>> {
-		const responsePromise = waitForWebSocketMessage(ws);
+		const callId = `call-${Date.now()}-${Math.random()}`;
 		ws.send(
 			JSON.stringify({
-				id: `call-${Date.now()}`,
-				type: 'CALL',
+				id: callId,
+				type: 'QRY',
 				method,
 				data,
 				sessionId: 'global',
@@ -48,7 +48,18 @@ describe('SDK Config RPC Handlers', () => {
 				version: '1.0.0',
 			})
 		);
-		return responsePromise;
+
+		// Wait for RSP (skip EVENTs) - max 10 attempts to prevent infinite loop
+		let attempts = 0;
+		while (attempts < 10) {
+			const response = (await waitForWebSocketMessage(ws)) as Record<string, unknown>;
+			if (response.type === 'RSP' && response.requestId === callId) {
+				return response;
+			}
+			attempts++;
+		}
+
+		throw new Error(`Timeout waiting for RSP to ${method} (call ID: ${callId})`);
 	}
 
 	describe('config.model.get', () => {
@@ -61,7 +72,8 @@ describe('SDK Config RPC Handlers', () => {
 				sessionId: 'non-existent',
 			});
 
-			expect(response.type).toBe('ERROR');
+			expect(response.type).toBe('RSP');
+			expect(response.error).toBeDefined();
 			ws.close();
 		});
 
@@ -76,7 +88,7 @@ describe('SDK Config RPC Handlers', () => {
 
 			const response = await sendRpcCall(ws, 'config.model.get', { sessionId });
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('model');
 			ws.close();
 		});
@@ -100,7 +112,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('applied');
 			ws.close();
 		});
@@ -123,7 +135,7 @@ describe('SDK Config RPC Handlers', () => {
 			});
 
 			// Handler returns RESULT with errors array when model switch fails
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as {
 				errors?: Array<{ field: string; error: string }>;
 			};
@@ -146,7 +158,7 @@ describe('SDK Config RPC Handlers', () => {
 				sessionId,
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			// systemPrompt may be undefined for default
 			expect(response.data).toBeDefined();
 			ws.close();
@@ -168,7 +180,7 @@ describe('SDK Config RPC Handlers', () => {
 				systemPrompt: 'You are a helpful coding assistant',
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -192,7 +204,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -216,7 +228,7 @@ describe('SDK Config RPC Handlers', () => {
 			});
 
 			// Handler returns RESULT with success: false for validation errors
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { success: boolean; error?: string };
 			expect(data.success).toBe(false);
 			expect(data.error).toBeDefined();
@@ -236,7 +248,7 @@ describe('SDK Config RPC Handlers', () => {
 
 			const response = await sendRpcCall(ws, 'config.tools.get', { sessionId });
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toBeDefined();
 			ws.close();
 		});
@@ -260,7 +272,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -283,7 +295,7 @@ describe('SDK Config RPC Handlers', () => {
 			});
 
 			// Handler returns RESULT with success: false for validation errors
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { success: boolean; error?: string };
 			expect(data.success).toBe(false);
 			expect(data.error).toBeDefined();
@@ -305,7 +317,7 @@ describe('SDK Config RPC Handlers', () => {
 				sessionId,
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toBeDefined();
 			ws.close();
 		});
@@ -326,7 +338,7 @@ describe('SDK Config RPC Handlers', () => {
 				permissionMode: 'acceptEdits',
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -347,7 +359,7 @@ describe('SDK Config RPC Handlers', () => {
 			});
 
 			// Handler returns RESULT with success: false for validation errors
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { success: boolean; error?: string };
 			expect(data.success).toBe(false);
 			expect(data.error).toBeDefined();
@@ -367,7 +379,7 @@ describe('SDK Config RPC Handlers', () => {
 
 			const response = await sendRpcCall(ws, 'config.getAll', { sessionId });
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('config');
 			expect((response.data as Record<string, unknown>).config).toHaveProperty('model');
 			ws.close();
@@ -394,7 +406,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('applied');
 			ws.close();
 		});
@@ -416,7 +428,7 @@ describe('SDK Config RPC Handlers', () => {
 			});
 
 			// Handler returns RESULT but with errors in the result
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as {
 				applied?: string[];
 				errors?: Array<{ field: string; error: string }>;
@@ -440,7 +452,7 @@ describe('SDK Config RPC Handlers', () => {
 				sessionId,
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			ws.close();
 		});
 
@@ -464,7 +476,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -490,7 +502,7 @@ describe('SDK Config RPC Handlers', () => {
 			});
 
 			// Handler returns RESULT with success: false for validation errors
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { success: boolean; error?: string };
 			expect(data.success).toBe(false);
 			expect(data.error).toBeDefined();
@@ -512,7 +524,7 @@ describe('SDK Config RPC Handlers', () => {
 				sessionId,
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			ws.close();
 		});
 
@@ -534,7 +546,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -553,7 +565,7 @@ describe('SDK Config RPC Handlers', () => {
 
 			const response = await sendRpcCall(ws, 'config.betas.get', { sessionId });
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('betas');
 			ws.close();
 		});
@@ -572,7 +584,7 @@ describe('SDK Config RPC Handlers', () => {
 				betas: ['context-1m-2025-08-07'],
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -593,7 +605,7 @@ describe('SDK Config RPC Handlers', () => {
 			});
 
 			// Handler returns RESULT with success: false for validation errors
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { success: boolean; error?: string };
 			expect(data.success).toBe(false);
 			expect(data.error).toBeDefined();
@@ -615,7 +627,7 @@ describe('SDK Config RPC Handlers', () => {
 				sessionId,
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			ws.close();
 		});
 
@@ -641,7 +653,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -661,7 +673,7 @@ describe('SDK Config RPC Handlers', () => {
 				outputFormat: null,
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -682,7 +694,7 @@ describe('SDK Config RPC Handlers', () => {
 
 			const response = await sendRpcCall(ws, 'config.mcp.get', { sessionId });
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			// Response includes MCP config and runtime status
 			// mcpServers may be undefined if not configured
 			expect(response.data).toBeDefined();
@@ -713,7 +725,7 @@ describe('SDK Config RPC Handlers', () => {
 				strictMcpConfig: false,
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -739,7 +751,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { success: boolean; error?: string };
 			expect(data.success).toBe(false);
 			expect(data.error).toBeDefined();
@@ -766,7 +778,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -790,7 +802,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { success: boolean; error?: string };
 			expect(data.success).toBe(false);
 			expect(data.error).toBeDefined();
@@ -821,7 +833,7 @@ describe('SDK Config RPC Handlers', () => {
 				name: 'temp-server',
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -840,7 +852,7 @@ describe('SDK Config RPC Handlers', () => {
 
 			const response = await sendRpcCall(ws, 'config.env.get', { sessionId });
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toBeDefined();
 			ws.close();
 		});
@@ -864,7 +876,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -887,7 +899,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { success: boolean; error?: string };
 			expect(data.success).toBe(false);
 			expect(data.error).toBeDefined();
@@ -912,7 +924,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { applied?: string[] };
 			expect(data.applied).toContain('maxThinkingTokens');
 			ws.close();
@@ -938,7 +950,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { pending?: string[] };
 			expect(data.pending).toContain('fallbackModel');
 			expect(data.pending).toContain('maxTurns');
@@ -965,7 +977,7 @@ describe('SDK Config RPC Handlers', () => {
 				restartQuery: false,
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { pending?: string[] };
 			expect(data.pending).toContain('systemPrompt');
 			ws.close();
@@ -988,7 +1000,7 @@ describe('SDK Config RPC Handlers', () => {
 				restartQuery: false,
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			ws.close();
 		});
 	});
@@ -1003,7 +1015,8 @@ describe('SDK Config RPC Handlers', () => {
 				sessionId: 'non-existent',
 			});
 
-			expect(response.type).toBe('ERROR');
+			expect(response.type).toBe('RSP');
+			expect(response.error).toBeDefined();
 			ws.close();
 		});
 
@@ -1016,7 +1029,8 @@ describe('SDK Config RPC Handlers', () => {
 				sessionId: 'non-existent',
 			});
 
-			expect(response.type).toBe('ERROR');
+			expect(response.type).toBe('RSP');
+			expect(response.error).toBeDefined();
 			ws.close();
 		});
 	});

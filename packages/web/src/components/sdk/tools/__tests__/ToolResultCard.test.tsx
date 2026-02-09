@@ -10,7 +10,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/preact';
 import { ToolResultCard } from '../ToolResultCard.tsx';
 
 // Mock connection manager
-const mockCall = vi.fn();
+const mockQuery = vi.fn();
 const mockGetHub = vi.fn();
 
 vi.mock('../../../../lib/connection-manager', () => ({
@@ -114,8 +114,8 @@ vi.mock('../tool-utils.ts', () => ({
 describe('ToolResultCard Component', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		mockGetHub.mockResolvedValue({ call: mockCall });
-		mockCall.mockResolvedValue({});
+		mockGetHub.mockResolvedValue({ query: mockQuery });
+		mockQuery.mockResolvedValue({});
 	});
 
 	afterEach(() => {
@@ -530,7 +530,7 @@ old2`;
 
 			// Wait for API call to complete
 			await vi.waitFor(() => {
-				expect(mockCall).toHaveBeenCalledWith('message.removeOutput', {
+				expect(mockQuery).toHaveBeenCalledWith('message.removeOutput', {
 					sessionId: 'session-456',
 					messageUuid: 'msg-123',
 				});
@@ -548,7 +548,7 @@ old2`;
 		});
 
 		it('should show error toast on delete failure', async () => {
-			mockCall.mockRejectedValue(new Error('Delete failed'));
+			mockQuery.mockRejectedValue(new Error('Delete failed'));
 			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 			render(
@@ -581,7 +581,7 @@ old2`;
 		});
 
 		it('should show fallback error message on non-Error exception', async () => {
-			mockCall.mockRejectedValue('Unknown error');
+			mockQuery.mockRejectedValue('Unknown error');
 			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 			render(

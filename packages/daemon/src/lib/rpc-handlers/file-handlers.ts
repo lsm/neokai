@@ -8,7 +8,7 @@ import type { ReadFileRequest, ListFilesRequest, GetFileTreeRequest } from '@neo
 import { FileManager } from '../file-manager';
 
 export function setupFileHandlers(messageHub: MessageHub, sessionManager: SessionManager): void {
-	messageHub.handle('file.read', async (data) => {
+	messageHub.onRequest('file.read', async (data) => {
 		const {
 			sessionId: targetSessionId,
 			path,
@@ -26,7 +26,7 @@ export function setupFileHandlers(messageHub: MessageHub, sessionManager: Sessio
 		return fileData;
 	});
 
-	messageHub.handle('file.list', async (data) => {
+	messageHub.onRequest('file.list', async (data) => {
 		const {
 			sessionId: targetSessionId,
 			path,
@@ -44,7 +44,7 @@ export function setupFileHandlers(messageHub: MessageHub, sessionManager: Sessio
 		return { files };
 	});
 
-	messageHub.handle('file.tree', async (data) => {
+	messageHub.onRequest('file.tree', async (data) => {
 		const {
 			sessionId: targetSessionId,
 			path,

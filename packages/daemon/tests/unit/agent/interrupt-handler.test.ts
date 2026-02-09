@@ -49,7 +49,11 @@ describe('InterruptHandler', () => {
 
 		publishSpy = mock(async () => {});
 		mockMessageHub = {
-			publish: publishSpy,
+			event: publishSpy,
+			onQuery: mock((_method: string, _handler: Function) => () => {}),
+			onCommand: mock((_method: string, _handler: Function) => () => {}),
+			query: mock(async () => ({})),
+			command: mock(async () => {}),
 		} as unknown as MessageHub;
 
 		queueSizeSpy = mock(() => 0);
@@ -240,7 +244,7 @@ describe('InterruptHandler', () => {
 			expect(publishSpy).toHaveBeenCalledWith(
 				'session.interrupted',
 				{},
-				{ sessionId: 'test-session-id' }
+				{ room: 'session:test-session-id' }
 			);
 		});
 
