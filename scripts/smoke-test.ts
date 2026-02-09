@@ -71,7 +71,7 @@ function rpcCall(
 		ws.send(
 			JSON.stringify({
 				id,
-				type: 'QRY',
+				type: 'REQ',
 				sessionId,
 				method,
 				data,
