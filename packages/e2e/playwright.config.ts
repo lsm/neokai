@@ -153,6 +153,14 @@ export default defineConfig({
 
 	/* Configure projects for parallel execution */
 	projects: [
+		// Group 0: Smoke tests (quick critical path tests) - run first
+		{
+			name: 'smoke',
+			testDir: './tests/smoke',
+			testMatch: '**/*.e2e.ts',
+			use: { ...devices['Desktop Chrome'] },
+			// Smoke tests should be fast (< 1 minute total)
+		},
 		// Group 1: Read-only tests (no session creation) - fully parallel
 		{
 			name: 'read-only',
@@ -160,16 +168,35 @@ export default defineConfig({
 			testMatch: '**/*.e2e.ts',
 			use: { ...devices['Desktop Chrome'] },
 		},
-		// Group 2: Isolated sessions (with cleanup) - parallel
-		// Tests in the main tests/ directory (not in read-only or serial subdirectories)
+		// Group 2: Core tests (critical functionality) - parallel
 		{
-			name: 'isolated-sessions',
-			testDir: './tests',
+			name: 'core',
+			testDir: './tests/core',
 			testMatch: '**/*.e2e.ts',
-			testIgnore: ['read-only/**/*.e2e.ts', 'serial/**/*.e2e.ts'],
 			use: { ...devices['Desktop Chrome'] },
 		},
-		// Group 3: Complex/Serial tests (stress tests, error scenarios)
+		// Group 3: Feature tests (secondary functionality) - parallel
+		{
+			name: 'features',
+			testDir: './tests/features',
+			testMatch: '**/*.e2e.ts',
+			use: { ...devices['Desktop Chrome'] },
+		},
+		// Group 4: Settings tests - parallel
+		{
+			name: 'settings',
+			testDir: './tests/settings',
+			testMatch: '**/*.e2e.ts',
+			use: { ...devices['Desktop Chrome'] },
+		},
+		// Group 5: Responsive tests (mobile, tablet) - parallel
+		{
+			name: 'responsive',
+			testDir: './tests/responsive',
+			testMatch: '**/*.e2e.ts',
+			use: { ...devices['Desktop Chrome'] },
+		},
+		// Group 6: Serial tests (stress tests, error scenarios) - run sequentially
 		{
 			name: 'serial',
 			testDir: './tests/serial',
