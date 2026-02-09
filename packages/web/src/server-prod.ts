@@ -20,8 +20,8 @@ serve({
 				});
 
 				return response;
-			} catch (error) {
-				console.error('API proxy error:', error);
+			} catch {
+				// Proxy error - return error response to client
 				return new Response(JSON.stringify({ error: 'Failed to connect to daemon' }), {
 					status: 502,
 					headers: { 'Content-Type': 'application/json' },

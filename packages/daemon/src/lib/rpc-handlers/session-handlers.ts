@@ -278,8 +278,8 @@ export function setupSessionHandlers(
 				content,
 				images,
 			})
-			.catch((err) => {
-				console.error('[message.send] Error emitting message send event:', err);
+			.catch(() => {
+				// Event emission error - non-critical, continue
 			});
 
 		// Return immediately with messageId
@@ -299,8 +299,8 @@ export function setupSessionHandlers(
 		}
 
 		// Fire-and-forget: emit event, AgentSession handles it
-		daemonHub.emit('agent.interruptRequest', { sessionId: targetSessionId }).catch((err) => {
-			console.error('[client.interrupt] Error emitting interrupt event:', err);
+		daemonHub.emit('agent.interruptRequest', { sessionId: targetSessionId }).catch(() => {
+			// Interrupt event emission error - non-critical, continue
 		});
 
 		return { accepted: true };
@@ -464,7 +464,7 @@ export function setupSessionHandlers(
 			};
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
-			console.error('[RPC] Failed to list models:', errorMessage);
+			// Model listing failed - throw error to caller
 			throw new Error(`Failed to list models: ${errorMessage}`);
 		}
 	});
