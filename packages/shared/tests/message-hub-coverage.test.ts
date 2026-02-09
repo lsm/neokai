@@ -132,7 +132,7 @@ describe('MessageHub - Coverage Tests', () => {
 				throw new Error('Command handler error');
 			});
 
-			hub.onCommand('test.command', handler);
+			hub.onRequest('test.command', handler);
 
 			const commandMessage = createCommandMessage({
 				method: 'test.command',
@@ -177,7 +177,7 @@ describe('MessageHub - Coverage Tests', () => {
 				throw new Error('Query handler error');
 			});
 
-			hub.onQuery('test.query', handler);
+			hub.onRequest('test.query', handler);
 
 			const queryMessage = createQueryMessage({
 				method: 'test.query',
@@ -451,7 +451,7 @@ describe('MessageHub - Coverage Tests', () => {
 			expect(hub.getPendingCallCount()).toBe(0);
 
 			// Make a query (won't complete because no handler)
-			hub.query('test.method', {}).catch(() => {});
+			hub.request('test.method', {}).catch(() => {});
 
 			expect(hub.getPendingCallCount()).toBe(1);
 		});
@@ -460,12 +460,12 @@ describe('MessageHub - Coverage Tests', () => {
 	describe('Invalid Method Names', () => {
 		test('should reject invalid method names in query', async () => {
 			// query() is async and returns a promise that rejects
-			await expect(hub.query('', {})).rejects.toThrow('Invalid method name');
+			await expect(hub.request('', {})).rejects.toThrow('Invalid method name');
 		});
 
 		test('should reject invalid method names in command', () => {
 			expect(() => {
-				hub.command('', {});
+				hub.event('', {});
 			}).toThrow('Invalid method name');
 		});
 
@@ -477,13 +477,13 @@ describe('MessageHub - Coverage Tests', () => {
 
 		test('should reject invalid method names in onQuery', () => {
 			expect(() => {
-				hub.onQuery('', async () => ({}));
+				hub.onRequest('', async () => ({}));
 			}).toThrow('Invalid method name');
 		});
 
 		test('should reject invalid method names in onCommand', () => {
 			expect(() => {
-				hub.onCommand('', () => {});
+				hub.onRequest('', () => {});
 			}).toThrow('Invalid method name');
 		});
 
@@ -501,11 +501,11 @@ describe('MessageHub - Coverage Tests', () => {
 			hubWithLimit.registerTransport(limitTransport);
 
 			// Create 2 pending calls (at limit) - use valid method names with dots
-			hubWithLimit.query('test.method1', {}).catch(() => {});
-			hubWithLimit.query('test.method2', {}).catch(() => {});
+			hubWithLimit.request('test.method1', {}).catch(() => {});
+			hubWithLimit.request('test.method2', {}).catch(() => {});
 
 			// Third should throw
-			await expect(hubWithLimit.query('test.method3', {})).rejects.toThrow(
+			await expect(hubWithLimit.request('test.method3', {})).rejects.toThrow(
 				'Too many pending calls'
 			);
 
@@ -515,7 +515,7 @@ describe('MessageHub - Coverage Tests', () => {
 
 	describe('Query Timeout on Disconnect', () => {
 		test('should timeout queries when transport disconnects', async () => {
-			const queryPromise = hub.query('test.method', {}, { timeout: 100 });
+			const queryPromise = hub.request('test.method', {}, { timeout: 100 });
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -523,14 +523,14 @@ describe('MessageHub - Coverage Tests', () => {
 			transport.disconnect();
 
 			// Should eventually timeout
-			await expect(queryPromise).rejects.toThrow('Query timeout');
+			await expect(queryPromise).rejects.toThrow('Request timeout');
 		});
 	});
 
 	describe('Sequence Number Tracking', () => {
 		test('should add sequence numbers to outgoing messages', async () => {
-			hub.command('test.cmd1', {});
-			hub.command('test.cmd2', {});
+			hub.event('test.cmd1', {});
+			hub.event('test.cmd2', {});
 			hub.event('test.event', {});
 
 			const sequences = transport.sentMessages.map((m) => m.sequence);
@@ -546,7 +546,7 @@ describe('MessageHub - Coverage Tests', () => {
 
 		test('should reset sequence tracking on cleanup', () => {
 			// Use valid method names with dots
-			hub.command('test.method1', {});
+			hub.event('test.method1', {});
 			const seq1 = transport.sentMessages[0].sequence;
 
 			hub.cleanup();
@@ -555,7 +555,7 @@ describe('MessageHub - Coverage Tests', () => {
 			const hub2 = new MessageHub();
 			const transport2 = new MockTransport();
 			hub2.registerTransport(transport2);
-			hub2.command('test.method2', {});
+			hub2.event('test.method2', {});
 			const seq2 = transport2.sentMessages[0].sequence;
 
 			// Sequence should start from 0 again

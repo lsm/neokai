@@ -250,8 +250,8 @@ class SessionStore {
 		try {
 			// Fetch session state and messages in parallel
 			const [sessionState, messagesState] = await Promise.all([
-				hub.query<SessionState>('state.session', { sessionId }),
-				hub.query<{ sdkMessages: SDKMessage[] }>('state.sdkMessages', {
+				hub.request<SessionState>('state.session', { sessionId }),
+				hub.request<{ sdkMessages: SDKMessage[] }>('state.sdkMessages', {
 					sessionId,
 				}),
 			]);
@@ -428,7 +428,7 @@ class SessionStore {
 
 		try {
 			const hub = await connectionManager.getHub();
-			const result = await hub.query<{ count: number }>('message.count', {
+			const result = await hub.request<{ count: number }>('message.count', {
 				sessionId,
 			});
 			return result?.count ?? 0;
@@ -451,7 +451,7 @@ class SessionStore {
 
 		try {
 			const hub = await connectionManager.getHub();
-			const result = await hub.query<{ sdkMessages: SDKMessage[] }>('message.sdkMessages', {
+			const result = await hub.request<{ sdkMessages: SDKMessage[] }>('message.sdkMessages', {
 				sessionId,
 				before: beforeTimestamp,
 				limit,

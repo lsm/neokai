@@ -642,12 +642,12 @@ describe('MessageHub with InProcessTransport', () => {
 		await clientTransport.initialize();
 
 		// Server handles RPC
-		serverHub.onQuery('math.add', async (data: { a: number; b: number }) => {
+		serverHub.onRequest('math.add', async (data: { a: number; b: number }) => {
 			return { result: data.a + data.b };
 		});
 
 		// Client calls server
-		const response = await clientHub.query<{ result: number }>('math.add', {
+		const response = await clientHub.request<{ result: number }>('math.add', {
 			a: 5,
 			b: 3,
 		});

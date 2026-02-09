@@ -474,7 +474,7 @@ export class ConnectionManager {
 		try {
 			// Send a lightweight health check with short timeout
 			// If this fails, the connection is dead and needs reconnect
-			await this.messageHub.query('system.health', {}, { timeout: 3000 });
+			await this.messageHub.request('system.health', {}, { timeout: 3000 });
 
 			// CRITICAL FIX: Re-join global room on resume
 			// Safari may pause WebSocket without closing it, causing server-side

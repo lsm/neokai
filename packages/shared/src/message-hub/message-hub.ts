@@ -38,11 +38,10 @@ import type {
 	IMessageTransport,
 	CallContext,
 	ConnectionState,
-	CommandHandler,
-	QueryHandler,
 	RoomEventHandler,
 	QueryOptions,
 	EventOptions,
+	RequestHandler,
 } from './types.ts';
 import type { MessageHubRouter } from './router.ts';
 
@@ -73,9 +72,8 @@ export class MessageHub {
 	// RPC state
 	private pendingCalls: Map<string, PendingCall<unknown>> = new Map();
 
-	// Room-based command/query handlers (new API)
-	private commandHandlers: Map<string, CommandHandler> = new Map();
-	private queryHandlers: Map<string, QueryHandler> = new Map();
+	// Unified request handlers (new API - replaces commandHandlers and queryHandlers)
+	private requestHandlers: Map<string, RequestHandler> = new Map();
 	// Room event handlers (client-side - keyed by method)
 	private roomEventHandlers: Map<string, Set<RoomEventHandler>> = new Map();
 
@@ -222,27 +220,12 @@ export class MessageHub {
 	// ========================================
 
 	/**
-	 * Send a fire-and-forget command (no response expected)
+	 * Send a request and wait for response
+	 * Unified API that replaces both command() and query()
+	 * - If server handler returns nothing, client receives { acknowledged: true }
+	 * - If server handler returns value, client receives that value
 	 */
-	command(method: string, data?: unknown, options: EventOptions = {}): void {
-		if (!this.isConnected()) {
-			throw new Error('Not connected to transport');
-		}
-		if (!validateMethod(method)) {
-			throw new Error(`Invalid method name: ${method}`);
-		}
-		const sessionId = options.room || this.defaultSessionId;
-		const message = createCommandMessage({ method, data, sessionId });
-		this.sendMessage(message).catch((error) => {
-			log.error(`Failed to send command ${method}:`, error);
-		});
-	}
-
-	/**
-	 * Send a query and wait for response
-	 * Reuses the pendingCalls infrastructure from call()
-	 */
-	async query<TResult = unknown>(
+	async request<TResult = unknown>(
 		method: string,
 		data?: unknown,
 		options: QueryOptions = {}
@@ -266,7 +249,7 @@ export class MessageHub {
 		return new Promise<TResult>((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.pendingCalls.delete(messageId);
-				reject(new Error(`Query timeout: ${method} (${timeout}ms)`));
+				reject(new Error(`Request timeout: ${method} (${timeout}ms)`));
 			}, timeout);
 
 			this.pendingCalls.set(messageId, {
@@ -277,6 +260,7 @@ export class MessageHub {
 				sessionId,
 			});
 
+			// Use QUERY message type for requests (it already supports request-response)
 			const message = createQueryMessage({ method, data, sessionId, id: messageId });
 			this.sendMessage(message).catch((error) => {
 				clearTimeout(timer);
@@ -308,41 +292,26 @@ export class MessageHub {
 	}
 
 	/**
-	 * Register a command handler (server-side, no response sent)
+	 * Register a request handler (server-side)
+	 * Unified API that replaces both onCommand() and onQuery()
+	 * - If handler returns void/undefined, sends { acknowledged: true }
+	 * - If handler returns value, sends that value as response
 	 */
-	onCommand<TData = unknown>(method: string, handler: CommandHandler<TData>): UnsubscribeFn {
-		if (!validateMethod(method)) {
-			throw new Error(`Invalid method name: ${method}`);
-		}
-		if (this.commandHandlers.has(method)) {
-			log.warn(`Overwriting existing command handler for: ${method}`);
-		}
-		this.commandHandlers.set(method, handler as CommandHandler);
-		this.logDebug(`Command handler registered: ${method}`);
-		return () => {
-			this.commandHandlers.delete(method);
-			this.logDebug(`Command handler unregistered: ${method}`);
-		};
-	}
-
-	/**
-	 * Register a query handler (server-side, return value becomes response)
-	 */
-	onQuery<TData = unknown, TResult = unknown>(
+	onRequest<TData = unknown, TResult = unknown>(
 		method: string,
-		handler: QueryHandler<TData, TResult>
+		handler: RequestHandler<TData, TResult>
 	): UnsubscribeFn {
 		if (!validateMethod(method)) {
 			throw new Error(`Invalid method name: ${method}`);
 		}
-		if (this.queryHandlers.has(method)) {
-			log.warn(`Overwriting existing query handler for: ${method}`);
+		if (this.requestHandlers.has(method)) {
+			log.warn(`Overwriting existing request handler for: ${method}`);
 		}
-		this.queryHandlers.set(method, handler as QueryHandler);
-		this.logDebug(`Query handler registered: ${method}`);
+		this.requestHandlers.set(method, handler as RequestHandler);
+		this.logDebug(`Request handler registered: ${method}`);
 		return () => {
-			this.queryHandlers.delete(method);
-			this.logDebug(`Query handler unregistered: ${method}`);
+			this.requestHandlers.delete(method);
+			this.logDebug(`Request handler unregistered: ${method}`);
 		};
 	}
 
@@ -535,7 +504,7 @@ export class MessageHub {
 			return;
 		}
 
-		const handler = this.commandHandlers.get(message.method);
+		const handler = this.requestHandlers.get(message.method);
 		if (!handler) {
 			this.logDebug(`No command handler for: ${message.method}`);
 			return; // Commands are fire-and-forget, no error response
@@ -557,9 +526,10 @@ export class MessageHub {
 
 	/**
 	 * Handle incoming QUERY message (returns response)
+	 * Uses requestHandlers with auto-ACK behavior
 	 */
 	private async handleIncomingQuery(message: HubMessage): Promise<void> {
-		const handler = this.queryHandlers.get(message.method);
+		const handler = this.requestHandlers.get(message.method);
 		const clientId = (message as import('./protocol').HubMessageWithMetadata).clientId;
 
 		if (!handler) {
@@ -585,9 +555,12 @@ export class MessageHub {
 			};
 			const result = await Promise.resolve(handler(message.data, context));
 
+			// Auto-ACK: if handler returns undefined, send { acknowledged: true }
+			const responseData = result === undefined ? { acknowledged: true } : result;
+
 			const resultMsg = createResponseMessage({
 				method: message.method,
-				data: result,
+				data: responseData,
 				sessionId: message.sessionId,
 				requestId: message.id,
 			});
@@ -838,8 +811,7 @@ export class MessageHub {
 		this.pendingCalls.clear();
 
 		// Clear handlers
-		this.commandHandlers.clear();
-		this.queryHandlers.clear();
+		this.requestHandlers.clear();
 		this.roomEventHandlers.clear();
 		this.messageHandlers.clear();
 		this.connectionStateHandlers.clear();

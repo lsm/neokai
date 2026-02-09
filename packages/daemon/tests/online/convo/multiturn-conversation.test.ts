@@ -41,7 +41,7 @@ describe('Multi-Turn Conversation', () => {
 	); // 30s timeout for cleanup (slower API + subprocess exit)
 
 	test('should handle multi-turn conversation with context retention', async () => {
-		const createResult = (await daemon.messageHub.query('session.create', {
+		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: process.cwd(),
 			title: 'Context Retention Test',
 			config: {
@@ -80,7 +80,7 @@ describe('Multi-Turn Conversation', () => {
 	}, 90000); // 90 second timeout for 2 API calls
 
 	test('should handle multi-turn conversation with code analysis', async () => {
-		const createResult = (await daemon.messageHub.query('session.create', {
+		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: process.cwd(),
 			title: 'Code Analysis Test',
 			config: {
@@ -122,7 +122,7 @@ describe('Multi-Turn Conversation', () => {
 	}, 150000);
 
 	test('should handle rapid successive messages correctly', async () => {
-		const createResult = (await daemon.messageHub.query('session.create', {
+		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: process.cwd(),
 			title: 'Rapid Messages Test',
 			config: {
@@ -157,7 +157,7 @@ describe('Multi-Turn Conversation', () => {
 
 	describe('Processing state transitions across turns', () => {
 		test('should correctly transition through states for each turn', async () => {
-			const createResult = (await daemon.messageHub.query('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: process.cwd(),
 				title: 'State Transitions Test',
 				config: {

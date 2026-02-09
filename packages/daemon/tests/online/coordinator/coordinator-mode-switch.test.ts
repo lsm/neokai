@@ -143,7 +143,7 @@ async function toggleCoordinatorMode(
 	sessionId: string,
 	coordinatorMode: boolean
 ): Promise<void> {
-	const result = (await daemon.messageHub.query('session.coordinator.switch', {
+	const result = (await daemon.messageHub.request('session.coordinator.switch', {
 		sessionId,
 		coordinatorMode,
 	})) as { success: boolean; coordinatorMode: boolean; error?: string };
@@ -168,7 +168,7 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 
 	test('default ON → send → assert coordinator → OFF → send → assert no coordinator → ON → send → assert coordinator', async () => {
 		// 1. Create session with coordinator mode ON
-		const createResult = (await daemon.messageHub.query('session.create', {
+		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: `${TMP_DIR}/test-coordinator-default-on-${Date.now()}`,
 			title: 'Coordinator Default ON Test',
 			config: {
@@ -211,7 +211,7 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 
 	test('default OFF → send → assert no coordinator → ON → send → assert coordinator → OFF → send → assert no coordinator', async () => {
 		// 1. Create session with coordinator mode OFF
-		const createResult = (await daemon.messageHub.query('session.create', {
+		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: `${TMP_DIR}/test-coordinator-default-off-${Date.now()}`,
 			title: 'Coordinator Default OFF Test',
 			config: {
@@ -256,7 +256,7 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 		// This test verifies that each system:init message is tied to its query,
 		// and toggling coordinator mode doesn't retroactively change earlier messages.
 
-		const createResult = (await daemon.messageHub.query('session.create', {
+		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: `${TMP_DIR}/test-coordinator-immutable-${Date.now()}`,
 			title: 'Coordinator Immutability Test',
 			config: {
@@ -284,7 +284,7 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 		await waitForIdle(daemon, sessionId, 60000);
 
 		// Verify: Fetch all SDK messages and check each system:init is preserved
-		const allMessages = (await daemon.messageHub.query('message.sdkMessages', {
+		const allMessages = (await daemon.messageHub.request('message.sdkMessages', {
 			sessionId,
 		})) as { sdkMessages: Array<Record<string, unknown>> };
 

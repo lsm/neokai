@@ -12,7 +12,7 @@ import type { SDKMessage } from '@neokai/shared/sdk';
 export function setupTestHandlers(messageHub: MessageHub, db: Database): void {
 	// Inject an SDK message directly into the database (bypasses normal message flow)
 	// This is used by E2E tests to simulate agent working in background
-	messageHub.onQuery('test.injectSDKMessage', async (data) => {
+	messageHub.onRequest('test.injectSDKMessage', async (data) => {
 		const { sessionId, message } = data as {
 			sessionId: string;
 			message: SDKMessage;
@@ -43,7 +43,7 @@ export function setupTestHandlers(messageHub: MessageHub, db: Database): void {
 
 	// Broadcast a delta update directly to a state channel
 	// Used to test delta synchronization scenarios
-	messageHub.onCommand('test.broadcastDelta', async (data) => {
+	messageHub.onRequest('test.broadcastDelta', async (data) => {
 		const {
 			sessionId,
 			channel,

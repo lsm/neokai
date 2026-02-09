@@ -186,7 +186,7 @@ describe('MessageHub Reconnection', () => {
 		await transport.initialize();
 
 		// 2. Send some messages to increment sequence counter
-		hub.command('test.cmd', {});
+		hub.event('test.cmd', {});
 
 		// Wait for message
 		await new Promise((resolve) => setTimeout(resolve, 10));
@@ -226,7 +226,7 @@ describe('MessageHub Reconnection', () => {
 		await transport.initialize();
 
 		// 2. Start a query
-		const queryPromise = hub.query('test.method', {}, { timeout: 100 });
+		const queryPromise = hub.request('test.method', {}, { timeout: 100 });
 
 		await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -234,7 +234,7 @@ describe('MessageHub Reconnection', () => {
 		transport.simulateDisconnect();
 
 		// 4. Query should timeout
-		await expect(queryPromise).rejects.toThrow('Query timeout');
+		await expect(queryPromise).rejects.toThrow('Request timeout');
 	});
 
 	it('should allow new queries after reconnection', async () => {
@@ -251,7 +251,7 @@ describe('MessageHub Reconnection', () => {
 		await new Promise((resolve) => setTimeout(resolve, 10));
 
 		// 4. Make new query
-		const queryPromise = hub.query('test.method', {}, { timeout: 1000 });
+		const queryPromise = hub.request('test.method', {}, { timeout: 1000 });
 
 		await new Promise((resolve) => setTimeout(resolve, 10));
 

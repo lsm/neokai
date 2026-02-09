@@ -80,7 +80,7 @@ describe('Auto-Title Generation', () => {
 		const workspacePath = `${TMP_DIR}/auto-title-test-${Date.now()}`;
 
 		// Create session with workspace path
-		const createResult = (await daemon.messageHub.query('session.create', {
+		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath,
 			config: { model: 'haiku-4.5' },
 		})) as { sessionId: string };
@@ -119,7 +119,7 @@ describe('Auto-Title Generation', () => {
 		const workspacePath = `${TMP_DIR}/auto-title-test-${Date.now()}`;
 
 		// Create session
-		const createResult = (await daemon.messageHub.query('session.create', {
+		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath,
 			config: { model: 'haiku-4.5' },
 		})) as { sessionId: string };
@@ -171,7 +171,7 @@ describe('Auto-Title Generation', () => {
 		const workspacePath = `${TMP_DIR}/auto-title-workspace-test-${Date.now()}`;
 
 		// Create session with explicit workspace path
-		const createResult = (await daemon.messageHub.query('session.create', {
+		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath,
 			config: { model: 'haiku-4.5' },
 		})) as { sessionId: string };
@@ -201,7 +201,7 @@ describe('Auto-Title Generation', () => {
 		const workspacePath = `${TMP_DIR}/auto-title-graceful-test-${Date.now()}`;
 
 		// Create session
-		const createResult = (await daemon.messageHub.query('session.create', {
+		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath,
 			config: { model: 'haiku-4.5' },
 		})) as { sessionId: string };

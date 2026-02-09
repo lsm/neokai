@@ -36,7 +36,7 @@ describe('Authentication Integration (API-dependent)', () => {
 
 	describe('Session Creation with Auth', () => {
 		test('should create session only if authenticated', async () => {
-			const result = (await daemon.messageHub.query('session.create', {
+			const result = (await daemon.messageHub.request('session.create', {
 				workspacePath: `${TMP_DIR}/test-auth`,
 				title: 'Auth Test Session',
 				config: { model: 'haiku-4.5' },
@@ -46,7 +46,7 @@ describe('Authentication Integration (API-dependent)', () => {
 			expect(result.sessionId).toBeString();
 
 			// Verify session was created via RPC
-			const sessionResult = (await daemon.messageHub.query('session.get', {
+			const sessionResult = (await daemon.messageHub.request('session.get', {
 				sessionId: result.sessionId,
 			})) as { session: Record<string, unknown> };
 

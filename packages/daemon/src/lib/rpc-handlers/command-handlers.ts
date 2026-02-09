@@ -6,7 +6,7 @@ import type { MessageHub } from '@neokai/shared';
 import type { SessionManager } from '../session-manager';
 
 export function setupCommandHandlers(messageHub: MessageHub, sessionManager: SessionManager): void {
-	messageHub.onQuery('commands.list', async (data) => {
+	messageHub.onRequest('commands.list', async (data) => {
 		const { sessionId: targetSessionId } = data as { sessionId: string };
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
 

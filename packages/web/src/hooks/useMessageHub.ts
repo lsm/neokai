@@ -81,19 +81,14 @@ export interface UseMessageHubResult {
 	getHub: () => MessageHub | null;
 
 	/**
-	 * Make a query call (request-response) (NON-BLOCKING - throws if not connected)
+	 * Make a request call (request-response) (NON-BLOCKING - throws if not connected)
 	 * @throws {ConnectionNotReadyError} If not connected
 	 */
-	query: <TResult = unknown, TData = unknown>(
+	request: <TResult = unknown, TData = unknown>(
 		method: string,
 		data?: TData,
 		options?: { timeout?: number }
 	) => Promise<TResult>;
-
-	/**
-	 * Send a command (fire-and-forget) - does NOT throw if not connected
-	 */
-	command: <TData = unknown>(method: string, data?: TData) => void;
 
 	/**
 	 * Listen for events (replaces subscribe for new API)
@@ -241,9 +236,9 @@ export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHub
 	}, []);
 
 	/**
-	 * Make a query call (request-response) (NON-BLOCKING - throws if not connected)
+	 * Make a request call (request-response) (NON-BLOCKING - throws if not connected)
 	 */
-	const query = useCallback(
+	const request = useCallback(
 		async <TResult = unknown, TData = unknown>(
 			method: string,
 			data?: TData,
@@ -253,22 +248,12 @@ export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHub
 			if (!hub) {
 				throw new ConnectionNotReadyError(`Cannot call '${method}': not connected to server`);
 			}
-			return hub.query<TResult>(method, data, {
+			return hub.request<TResult>(method, data, {
 				timeout: callOptions?.timeout ?? defaultTimeout,
 			});
 		},
 		[defaultTimeout]
 	);
-
-	/**
-	 * Send a command (fire-and-forget) - does NOT throw if not connected
-	 */
-	const command = useCallback(<TData = unknown>(method: string, data?: TData): void => {
-		const hub = connectionManager.getHubIfConnected();
-		if (hub) {
-			hub.command(method, data);
-		}
-	}, []);
 
 	/**
 	 * Listen for events (replaces subscribe for new API)
@@ -350,7 +335,7 @@ export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHub
 
 	/**
 	 * Make an RPC call (NON-BLOCKING - throws if not connected)
-	 * @deprecated Use query() instead
+	 * @deprecated Use request() instead
 	 */
 	const call = useCallback(
 		async <TResult = unknown, TData = unknown>(
@@ -358,9 +343,9 @@ export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHub
 			data?: TData,
 			callOptions?: { timeout?: number }
 		): Promise<TResult> => {
-			return query<TResult, TData>(method, data, callOptions);
+			return request<TResult, TData>(method, data, callOptions);
 		},
-		[query]
+		[request]
 	);
 
 	/**
@@ -376,7 +361,7 @@ export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHub
 			if (!hub) {
 				return null;
 			}
-			return hub.query<TResult>(method, data, {
+			return hub.request<TResult>(method, data, {
 				timeout: callOptions?.timeout ?? defaultTimeout,
 			});
 		},
@@ -463,8 +448,7 @@ export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHub
 		isConnected: isConnected.value,
 		state: state.value,
 		getHub,
-		query,
-		command,
+		request,
 		onEvent,
 		joinRoom,
 		leaveRoom,

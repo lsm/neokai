@@ -187,11 +187,11 @@ describe('MessageHub Critical Fixes', () => {
 		});
 
 		test('should maintain sequence across different message types', async () => {
-			const query1 = messageHub.query('test.method1', {});
+			const query1 = messageHub.request('test.method1', {});
 			await new Promise((resolve) => setTimeout(resolve, 5));
 			messageHub.event('test.event', {});
 			await new Promise((resolve) => setTimeout(resolve, 5));
-			const query2 = messageHub.query('test.method2', {});
+			const query2 = messageHub.request('test.method2', {});
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -212,7 +212,7 @@ describe('MessageHub Critical Fixes', () => {
 
 		test('should reset sequence on cleanup', () => {
 			// Use valid method names with dots
-			messageHub.command('test.method1', {});
+			messageHub.event('test.method1', {});
 			const seq1 = transport.sentMessages[0].sequence;
 
 			messageHub.cleanup();
@@ -222,7 +222,7 @@ describe('MessageHub Critical Fixes', () => {
 			const transport2 = new MockTransport();
 			hub2.registerTransport(transport2);
 
-			hub2.command('test.method2', {});
+			hub2.event('test.method2', {});
 			const seq2 = transport2.sentMessages[0].sequence;
 
 			// Sequence should start from 0 again
@@ -275,13 +275,13 @@ describe('MessageHub Critical Fixes', () => {
 	describe('Method Name Validation', () => {
 		test('should reject method names with colons in onQuery', () => {
 			expect(() => {
-				messageHub.onQuery('test:invalid.method', async () => ({}));
+				messageHub.onRequest('test:invalid.method', async () => ({}));
 			}).toThrow();
 		});
 
-		test('should reject method names with colons in onCommand', () => {
+		test('should reject method names with colons in onRequest', () => {
 			expect(() => {
-				messageHub.onCommand('test:invalid.method', () => {});
+				messageHub.onRequest('test:invalid.method', async () => ({}));
 			}).toThrow();
 		});
 
@@ -293,31 +293,31 @@ describe('MessageHub Critical Fixes', () => {
 
 		test('should accept valid method names', () => {
 			expect(() => {
-				messageHub.onQuery('test.valid-method_name', async () => ({}));
+				messageHub.onRequest('test.valid-method_name', async () => ({}));
 			}).not.toThrow();
 		});
 
 		test('should reject method names without dots', () => {
 			expect(() => {
-				messageHub.onQuery('testinvalid', async () => ({}));
+				messageHub.onRequest('testinvalid', async () => ({}));
 			}).toThrow();
 		});
 
 		test('should reject method names starting with dot', () => {
 			expect(() => {
-				messageHub.onQuery('.test.invalid', async () => ({}));
+				messageHub.onRequest('.test.invalid', async () => ({}));
 			}).toThrow();
 		});
 
 		test('should reject method names ending with dot', () => {
 			expect(() => {
-				messageHub.onQuery('test.invalid.', async () => ({}));
+				messageHub.onRequest('test.invalid.', async () => ({}));
 			}).toThrow();
 		});
 
 		test('should reject empty method names', () => {
 			expect(() => {
-				messageHub.onQuery('', async () => ({}));
+				messageHub.onRequest('', async () => ({}));
 			}).toThrow('Invalid method name');
 		});
 	});

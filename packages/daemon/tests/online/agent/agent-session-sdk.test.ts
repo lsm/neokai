@@ -143,7 +143,7 @@ describe('AgentSession SDK Integration', () => {
 
 	describe('sendMessage', () => {
 		test('should send message and receive real SDK response', async () => {
-			const createResult = (await daemon.messageHub.query('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: process.cwd(),
 				title: 'Send Message Test',
 				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
@@ -171,7 +171,7 @@ describe('AgentSession SDK Integration', () => {
 		}, 20000); // 20 second timeout
 
 		test('should handle message with images', async () => {
-			const createResult = (await daemon.messageHub.query('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: process.cwd(),
 				title: 'Image Message Test',
 				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
@@ -212,7 +212,7 @@ describe('AgentSession SDK Integration', () => {
 
 	describe('enqueueMessage', () => {
 		test('should enqueue multiple messages in sequence', async () => {
-			const createResult = (await daemon.messageHub.query('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: process.cwd(),
 				title: 'Enqueue Messages Test',
 				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
@@ -240,7 +240,7 @@ describe('AgentSession SDK Integration', () => {
 
 	describe('handleInterrupt', () => {
 		test('should interrupt ongoing processing', async () => {
-			const createResult = (await daemon.messageHub.query('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: process.cwd(),
 				title: 'Interrupt Test',
 				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
@@ -254,7 +254,7 @@ describe('AgentSession SDK Integration', () => {
 			await waitForIdle(daemon, sessionId);
 
 			// Now interrupt (should work even on idle - it's a no-op but shouldn't error)
-			await daemon.messageHub.query('client.interrupt', { sessionId });
+			await daemon.messageHub.request('client.interrupt', { sessionId });
 
 			// State should be idle after interrupt
 			const state = await getProcessingState(daemon, sessionId);
@@ -264,7 +264,7 @@ describe('AgentSession SDK Integration', () => {
 
 	describe.skip('WebSocket SDK message events (DEPRECATED - uses old SUBSCRIBE protocol)', () => {
 		test('should broadcast sdk.message events via WebSocket', async () => {
-			const createResult = (await daemon.messageHub.query('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: process.cwd(),
 				title: 'WebSocket Events Test',
 				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
@@ -314,7 +314,7 @@ describe('AgentSession SDK Integration', () => {
 
 	describe('State transitions', () => {
 		test('should transition through processing states', async () => {
-			const createResult = (await daemon.messageHub.query('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: process.cwd(),
 				title: 'State Transitions Test',
 				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
@@ -343,7 +343,7 @@ describe('AgentSession SDK Integration', () => {
 		}, 15000);
 
 		test('should handle multiple messages in sequence', async () => {
-			const createResult = (await daemon.messageHub.query('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: process.cwd(),
 				title: 'Multiple Messages Test',
 				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
@@ -371,7 +371,7 @@ describe('AgentSession SDK Integration', () => {
 
 	describe('session.interrupted event', () => {
 		test('should handle interrupt gracefully on active session', async () => {
-			const createResult = (await daemon.messageHub.query('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: process.cwd(),
 				title: 'Interrupt Event Test',
 				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
@@ -389,7 +389,7 @@ describe('AgentSession SDK Integration', () => {
 			expect(state1.status).toBe('idle');
 
 			// Call interrupt on idle session - should be a no-op
-			await daemon.messageHub.query('client.interrupt', { sessionId });
+			await daemon.messageHub.request('client.interrupt', { sessionId });
 
 			// State should still be idle
 			const state2 = await getProcessingState(daemon, sessionId);

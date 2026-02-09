@@ -189,10 +189,10 @@ describe('MessageHub', () => {
 		test('should register query handler', () => {
 			const handler = mock(async (_data: unknown) => ({ result: 'success' }));
 
-			messageHub.onQuery('test.method', handler);
+			messageHub.onRequest('test.method', handler);
 
 			expect(
-				(messageHub as unknown as { queryHandlers: Map<string, unknown> }).queryHandlers.has(
+				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.has(
 					'test.method'
 				)
 			).toBe(true);
@@ -203,7 +203,7 @@ describe('MessageHub', () => {
 				return { echo: data.message };
 			});
 
-			messageHub.onQuery('test.echo', handler);
+			messageHub.onRequest('test.echo', handler);
 
 			const queryMessage = createQueryMessage({
 				method: 'test.echo',
@@ -239,7 +239,7 @@ describe('MessageHub', () => {
 				throw new Error('Handler failed');
 			});
 
-			messageHub.onQuery('test.error', handler);
+			messageHub.onRequest('test.error', handler);
 
 			const queryMessage = createQueryMessage({
 				method: 'test.error',
@@ -264,16 +264,16 @@ describe('MessageHub', () => {
 		test('should unregister query handler', () => {
 			const handler = mock(async () => ({}));
 
-			const unregister = messageHub.onQuery('test.method', handler);
+			const unregister = messageHub.onRequest('test.method', handler);
 			expect(
-				(messageHub as unknown as { queryHandlers: Map<string, unknown> }).queryHandlers.has(
+				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.has(
 					'test.method'
 				)
 			).toBe(true);
 
 			unregister();
 			expect(
-				(messageHub as unknown as { queryHandlers: Map<string, unknown> }).queryHandlers.has(
+				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.has(
 					'test.method'
 				)
 			).toBe(false);
@@ -282,7 +282,7 @@ describe('MessageHub', () => {
 
 	describe('Query Calls', () => {
 		test('should send query message and receive response', async () => {
-			const queryPromise = messageHub.query('test.method', { value: 42 });
+			const queryPromise = messageHub.request('test.method', { value: 42 });
 
 			// Simulate receiving result
 			await new Promise((resolve) => setTimeout(resolve, 10));
@@ -307,13 +307,13 @@ describe('MessageHub', () => {
 		});
 
 		test('should handle query timeout', async () => {
-			const queryPromise = messageHub.query('test.timeout', {}, { timeout: 100 });
+			const queryPromise = messageHub.request('test.timeout', {}, { timeout: 100 });
 
-			await expect(queryPromise).rejects.toThrow('Query timeout');
+			await expect(queryPromise).rejects.toThrow('Request timeout');
 		});
 
 		test('should receive error response for failed query', async () => {
-			const queryPromise = messageHub.query('test.error', {});
+			const queryPromise = messageHub.request('test.error', {});
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -338,7 +338,7 @@ describe('MessageHub', () => {
 		test('should throw error when not connected', async () => {
 			transport.simulateStateChange('disconnected');
 
-			await expect(messageHub.query('test.method', {})).rejects.toThrow(
+			await expect(messageHub.request('test.method', {})).rejects.toThrow(
 				'Not connected to transport'
 			);
 		});
@@ -356,11 +356,11 @@ describe('MessageHub', () => {
 			newHub.registerTransport(failingTransport);
 			await failingTransport.connect();
 
-			await expect(newHub.query('test.method', {})).rejects.toThrow('Transport send failed');
+			await expect(newHub.request('test.method', {})).rejects.toThrow('Transport send failed');
 		});
 
 		test('should use custom room in query', async () => {
-			const queryPromise = messageHub.query('test.method', {}, { room: 'custom-room' });
+			const queryPromise = messageHub.request('test.method', {}, { room: 'custom-room' });
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -383,10 +383,10 @@ describe('MessageHub', () => {
 		test('should register command handler', () => {
 			const handler = mock((_data: unknown) => {});
 
-			messageHub.onCommand('test.command', handler);
+			messageHub.onRequest('test.command', handler);
 
 			expect(
-				(messageHub as unknown as { commandHandlers: Map<string, unknown> }).commandHandlers.has(
+				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.has(
 					'test.command'
 				)
 			).toBe(true);
@@ -397,7 +397,7 @@ describe('MessageHub', () => {
 				expect(data.action).toBe('test');
 			});
 
-			messageHub.onCommand('test.command', handler);
+			messageHub.onRequest('test.command', handler);
 
 			const commandMessage = createCommandMessage({
 				method: 'test.command',
@@ -423,36 +423,19 @@ describe('MessageHub', () => {
 			expect(responses.length).toBe(0);
 		});
 
-		test('should send command message', () => {
-			messageHub.command('test.action', { value: 123 });
-
-			const sentMessage = transport.sentMessages[0];
-			expect(sentMessage.type).toBe(MessageType.COMMAND);
-			expect(sentMessage.method).toBe('test.action');
-			expect(sentMessage.data).toEqual({ value: 123 });
-		});
-
-		test('should throw when sending command while disconnected', () => {
-			transport.simulateStateChange('disconnected');
-
-			expect(() => {
-				messageHub.command('test.command', {});
-			}).toThrow('Not connected to transport');
-		});
-
 		test('should unregister command handler', () => {
 			const handler = mock(() => {});
 
-			const unregister = messageHub.onCommand('test.command', handler);
+			const unregister = messageHub.onRequest('test.command', handler);
 			expect(
-				(messageHub as unknown as { commandHandlers: Map<string, unknown> }).commandHandlers.has(
+				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.has(
 					'test.command'
 				)
 			).toBe(true);
 
 			unregister();
 			expect(
-				(messageHub as unknown as { commandHandlers: Map<string, unknown> }).commandHandlers.has(
+				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.has(
 					'test.command'
 				)
 			).toBe(false);
@@ -603,9 +586,9 @@ describe('MessageHub', () => {
 			const eventHandler = mock(() => {});
 			const commandHandler = mock(() => {});
 
-			messageHub.onQuery('test.query', queryHandler);
+			messageHub.onRequest('test.query', queryHandler);
 			messageHub.onEvent('test.event', eventHandler);
-			messageHub.onCommand('test.command', commandHandler);
+			messageHub.onRequest('test.command', commandHandler);
 
 			// Send query
 			const queryMessage = createQueryMessage({
@@ -639,7 +622,7 @@ describe('MessageHub', () => {
 		});
 
 		test('should handle response messages for pending queries', async () => {
-			const queryPromise = messageHub.query('test.method', {});
+			const queryPromise = messageHub.request('test.method', {});
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -700,7 +683,7 @@ describe('MessageHub', () => {
 			messageHub.onMessage(handler);
 
 			// Send a query (outgoing)
-			const queryPromise = messageHub.query('test.method', {});
+			const queryPromise = messageHub.request('test.method', {});
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -799,8 +782,8 @@ describe('MessageHub', () => {
 
 	describe('Cleanup and Disposal', () => {
 		test('should cleanup pending queries on cleanup', async () => {
-			const _query1 = messageHub.query('test.method1', {}).catch(() => {});
-			const _query2 = messageHub.query('test.method2', {}).catch(() => {});
+			const _query1 = messageHub.request('test.method1', {}).catch(() => {});
+			const _query2 = messageHub.request('test.method2', {}).catch(() => {});
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -812,17 +795,17 @@ describe('MessageHub', () => {
 		});
 
 		test('should clear all handlers on cleanup', () => {
-			messageHub.onQuery('test.query', async () => ({}));
-			messageHub.onCommand('test.command', () => {});
+			messageHub.onRequest('test.query', async () => ({}));
+			messageHub.onRequest('test.command', () => {});
 			messageHub.onEvent('test.event', () => {});
 
 			messageHub.cleanup();
 
 			expect(
-				(messageHub as unknown as { queryHandlers: Map<string, unknown> }).queryHandlers.size
+				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.size
 			).toBe(0);
 			expect(
-				(messageHub as unknown as { commandHandlers: Map<string, unknown> }).commandHandlers.size
+				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.size
 			).toBe(0);
 			expect(
 				(messageHub as unknown as { roomEventHandlers: Map<string, unknown> }).roomEventHandlers
@@ -858,8 +841,8 @@ describe('MessageHub', () => {
 			expect(messageHub.getPendingCallCount()).toBe(0);
 
 			// Create some pending queries
-			const query1 = messageHub.query('test.method1', {});
-			const query2 = messageHub.query('test.method2', {});
+			const query1 = messageHub.request('test.method1', {});
+			const query2 = messageHub.request('test.method2', {});
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 

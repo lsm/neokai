@@ -422,24 +422,15 @@ export async function callRPCHandler<T = unknown>(
 ): Promise<T> {
 	// Access the handlers directly from MessageHub's internal maps
 	const hub = messageHub as {
-		queryHandlers: Map<string, (data: unknown, context: unknown) => Promise<unknown>>;
-		commandHandlers: Map<string, (data: unknown, context: unknown) => void | Promise<void>>;
+		requestHandlers: Map<string, (data: unknown, context: unknown) => Promise<unknown>>;
 	};
 
-	// Check query handlers first
-	const queryHandler = hub.queryHandlers.get(method);
-	if (queryHandler) {
-		// Call query handler with data and minimal context
-		const result = await queryHandler(data, { clientId: 'test-client', sessionId: 'global' });
+	// Check request handlers
+	const handler = hub.requestHandlers.get(method);
+	if (handler) {
+		// Call request handler with data and minimal context
+		const result = await handler(data, { clientId: 'test-client', sessionId: 'global' });
 		return result as T;
-	}
-
-	// Check command handlers
-	const commandHandler = hub.commandHandlers.get(method);
-	if (commandHandler) {
-		// Command handlers return void - call and return undefined
-		await commandHandler(data, { clientId: 'test-client', sessionId: 'global' });
-		return undefined as T;
 	}
 
 	throw new Error(`RPC handler not found: ${method}`);

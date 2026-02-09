@@ -35,7 +35,7 @@ describe('Session Resume', () => {
 	test('should maintain session consistency across multiple operations', async () => {
 		const workspacePath = `${TMP_DIR}/session-resume-test-${Date.now()}`;
 
-		const createResult = (await daemon.messageHub.query('session.create', {
+		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath,
 			title: 'Session Resume Test',
 			config: {

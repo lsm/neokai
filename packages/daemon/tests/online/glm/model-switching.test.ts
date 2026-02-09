@@ -40,7 +40,7 @@ describe('GLM Model Switching', () => {
 	describe('Switch to GLM model', () => {
 		test('should switch from Claude to GLM model', async () => {
 			// Create session with Claude model
-			const createResult = (await daemon.messageHub.query('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: `${TMP_DIR}/test-switch-to-glm`,
 				title: 'Switch to GLM Test',
 				config: {
@@ -52,7 +52,7 @@ describe('GLM Model Switching', () => {
 			daemon.trackSession(sessionId);
 
 			// Switch to GLM model
-			const result = (await daemon.messageHub.query('session.model.switch', {
+			const result = (await daemon.messageHub.request('session.model.switch', {
 				sessionId,
 				model: 'glm-4.7',
 			})) as { success: boolean; model: string; error?: string };
@@ -62,7 +62,7 @@ describe('GLM Model Switching', () => {
 			expect(result.error).toBeUndefined();
 
 			// Verify model was updated in session config
-			const sessionResult = (await daemon.messageHub.query('session.get', {
+			const sessionResult = (await daemon.messageHub.request('session.get', {
 				sessionId,
 			})) as { session: { config: { model: string } } };
 
@@ -71,7 +71,7 @@ describe('GLM Model Switching', () => {
 
 		test('should preserve session state when switching to GLM', async () => {
 			// Create session
-			const createResult = (await daemon.messageHub.query('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: `${TMP_DIR}/test-glm-state-preservation`,
 				title: 'GLM State Preservation Test',
 				config: {
@@ -83,7 +83,7 @@ describe('GLM Model Switching', () => {
 			daemon.trackSession(sessionId);
 
 			// Get initial state
-			const sessionBefore = (await daemon.messageHub.query('session.get', {
+			const sessionBefore = (await daemon.messageHub.request('session.get', {
 				sessionId,
 			})) as {
 				session: {
@@ -95,13 +95,13 @@ describe('GLM Model Switching', () => {
 			};
 
 			// Switch to GLM model
-			await daemon.messageHub.query('session.model.switch', {
+			await daemon.messageHub.request('session.model.switch', {
 				sessionId,
 				model: 'glm-4.7',
 			});
 
 			// Get state after switch
-			const sessionAfter = (await daemon.messageHub.query('session.get', {
+			const sessionAfter = (await daemon.messageHub.request('session.get', {
 				sessionId,
 			})) as {
 				session: {
@@ -130,7 +130,7 @@ describe('GLM Model Switching', () => {
 	describe('GLM model switching edge cases', () => {
 		test('should handle rapid switches involving GLM', async () => {
 			// Create session
-			const createResult = (await daemon.messageHub.query('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: `${TMP_DIR}/test-rapid-glm-switches`,
 				title: 'Rapid GLM Switches Test',
 				config: {
@@ -145,7 +145,7 @@ describe('GLM Model Switching', () => {
 			const switches = ['glm-4.7', 'haiku', 'glm-4.7', 'sonnet', 'glm-4.7'];
 
 			for (const model of switches) {
-				const result = (await daemon.messageHub.query('session.model.switch', {
+				const result = (await daemon.messageHub.request('session.model.switch', {
 					sessionId,
 					model,
 				})) as { success: boolean };
@@ -153,7 +153,7 @@ describe('GLM Model Switching', () => {
 			}
 
 			// Final model should be glm-4.7
-			const modelInfo = (await daemon.messageHub.query('session.model.get', {
+			const modelInfo = (await daemon.messageHub.request('session.model.get', {
 				sessionId,
 			})) as { currentModel: string };
 			expect(modelInfo.currentModel).toBe('glm-4.7');
@@ -161,7 +161,7 @@ describe('GLM Model Switching', () => {
 
 		test('should switch to GLM before first message', async () => {
 			// Create session with Claude model
-			const createResult = (await daemon.messageHub.query('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: `${TMP_DIR}/test-glm-before-message`,
 				title: 'GLM Before Message Test',
 				config: {
@@ -173,7 +173,7 @@ describe('GLM Model Switching', () => {
 			daemon.trackSession(sessionId);
 
 			// Switch to GLM before sending any messages
-			const result = (await daemon.messageHub.query('session.model.switch', {
+			const result = (await daemon.messageHub.request('session.model.switch', {
 				sessionId,
 				model: 'glm-4.7',
 			})) as { success: boolean; model: string };
@@ -182,7 +182,7 @@ describe('GLM Model Switching', () => {
 			expect(result.model).toBe('glm-4.7');
 
 			// Verify config was updated
-			const sessionResult = (await daemon.messageHub.query('session.get', {
+			const sessionResult = (await daemon.messageHub.request('session.get', {
 				sessionId,
 			})) as { session: { config: { model: string } } };
 			expect(sessionResult.session.config.model).toBe('glm-4.7');

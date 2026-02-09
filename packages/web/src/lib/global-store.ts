@@ -105,7 +105,7 @@ export class GlobalStore {
 			const hub = await connectionManager.getHub();
 
 			// Fetch initial state snapshot
-			const snapshot = await hub.query<{
+			const snapshot = await hub.request<{
 				sessions: SessionsState;
 				system: SystemState;
 				settings: SettingsState;
@@ -168,7 +168,7 @@ export class GlobalStore {
 			const hub = await connectionManager.getHub();
 
 			// Fetch fresh snapshot
-			const snapshot = await hub.query<{
+			const snapshot = await hub.request<{
 				sessions: SessionsState;
 				system: SystemState;
 				settings: SettingsState;

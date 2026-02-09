@@ -297,37 +297,37 @@ export class StateManager {
 	 */
 	private setupHandlers(): void {
 		// Global state snapshot
-		this.messageHub.onQuery(STATE_CHANNELS.GLOBAL_SNAPSHOT, async () => {
+		this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SNAPSHOT, async () => {
 			return await this.getGlobalSnapshot();
 		});
 
 		// Session state snapshot
-		this.messageHub.onQuery(STATE_CHANNELS.SESSION_SNAPSHOT, async (data) => {
+		this.messageHub.onRequest(STATE_CHANNELS.SESSION_SNAPSHOT, async (data) => {
 			const { sessionId } = data as { sessionId: string };
 			return await this.getSessionSnapshot(sessionId);
 		});
 
 		// Unified system state handler
-		this.messageHub.onQuery(STATE_CHANNELS.GLOBAL_SYSTEM, async () => {
+		this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SYSTEM, async () => {
 			return await this.getSystemState();
 		});
 
 		// Individual channel requests (for on-demand refresh)
-		this.messageHub.onQuery(STATE_CHANNELS.GLOBAL_SESSIONS, async () => {
+		this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SESSIONS, async () => {
 			return await this.getSessionsState();
 		});
 
-		this.messageHub.onQuery(STATE_CHANNELS.GLOBAL_SETTINGS, async () => {
+		this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SETTINGS, async () => {
 			return await this.getSettingsState();
 		});
 
 		// Session-specific channel requests
-		this.messageHub.onQuery(STATE_CHANNELS.SESSION, async (data) => {
+		this.messageHub.onRequest(STATE_CHANNELS.SESSION, async (data) => {
 			const { sessionId } = data as { sessionId: string };
 			return await this.getSessionState(sessionId);
 		});
 
-		this.messageHub.onQuery(STATE_CHANNELS.SESSION_SDK_MESSAGES, async (data) => {
+		this.messageHub.onRequest(STATE_CHANNELS.SESSION_SDK_MESSAGES, async (data) => {
 			const { sessionId, since } = data as {
 				sessionId: string;
 				since?: number;

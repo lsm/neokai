@@ -77,7 +77,7 @@ export function ToolResultCard({
 		try {
 			setDeleting(true);
 			const hub = await connectionManager.getHub();
-			await hub.query('message.removeOutput', {
+			await hub.request('message.removeOutput', {
 				sessionId,
 				messageUuid,
 			});

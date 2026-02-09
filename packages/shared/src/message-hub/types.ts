@@ -40,6 +40,17 @@ export type QueryHandler<TData = unknown, TResult = unknown> = (
 ) => TResult | Promise<TResult>;
 
 /**
+ * Request handler function
+ * Handles REQUEST messages and returns optional result
+ * If handler returns void/undefined, auto-ACK is sent
+ * If handler returns value, that becomes the response
+ */
+export type RequestHandler<TData = unknown, TResult = unknown> = (
+	data: TData,
+	context: CallContext
+) => TResult | Promise<TResult> | void | Promise<void>;
+
+/**
  * Room event handler function
  * Handles room-scoped EVENT messages
  */

@@ -352,7 +352,7 @@ export class StateChannel<T> {
 						? { since }
 						: {};
 
-			const snapshot = await this.hub.query<T>(this.channelName, callData);
+			const snapshot = await this.hub.request<T>(this.channelName, callData);
 
 			// Smart merge: if incremental (since provided), merge; otherwise replace
 			if (since !== undefined && since > 0) {

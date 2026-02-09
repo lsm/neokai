@@ -20,7 +20,7 @@ export async function sendMessage(
 		images?: Array<{ type: string; source: { type: string; data: string } }>;
 	} = {}
 ): Promise<{ messageId: string }> {
-	const result = (await daemon.messageHub.query('message.send', {
+	const result = (await daemon.messageHub.request('message.send', {
 		sessionId,
 		content,
 		...options,
@@ -134,7 +134,7 @@ export async function getProcessingState(
 	daemon: DaemonServerContext,
 	sessionId: string
 ): Promise<{ status: string; phase?: string }> {
-	const result = (await daemon.messageHub.query('agent.getState', {
+	const result = (await daemon.messageHub.request('agent.getState', {
 		sessionId,
 	})) as { state: { status: string; phase?: string } } | undefined;
 
@@ -153,7 +153,7 @@ export async function getSession(
 	daemon: DaemonServerContext,
 	sessionId: string
 ): Promise<Record<string, unknown>> {
-	const result = (await daemon.messageHub.query('session.get', {
+	const result = (await daemon.messageHub.request('session.get', {
 		sessionId,
 	})) as { session: Record<string, unknown> } | undefined;
 
@@ -176,5 +176,5 @@ export async function getSession(
  * Interrupt the current processing via RPC
  */
 export async function interrupt(daemon: DaemonServerContext, sessionId: string): Promise<void> {
-	await daemon.messageHub.query('client.interrupt', { sessionId });
+	await daemon.messageHub.request('client.interrupt', { sessionId });
 }

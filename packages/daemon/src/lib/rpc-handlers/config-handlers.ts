@@ -65,7 +65,7 @@ export function setupConfigHandlers(
 	// Model Settings
 	// ============================================================================
 
-	messageHub.onQuery('config.model.get', async (data) => {
+	messageHub.onRequest('config.model.get', async (data) => {
 		const { sessionId } = data as GetModelSettingsRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -80,7 +80,7 @@ export function setupConfigHandlers(
 		};
 	});
 
-	messageHub.onQuery('config.model.update', async (data) => {
+	messageHub.onRequest('config.model.update', async (data) => {
 		const { sessionId, settings } = data as UpdateModelSettingsRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -143,7 +143,7 @@ export function setupConfigHandlers(
 	// System Prompt
 	// ============================================================================
 
-	messageHub.onQuery('config.systemPrompt.get', async (data) => {
+	messageHub.onRequest('config.systemPrompt.get', async (data) => {
 		const { sessionId } = data as GetSystemPromptRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -153,7 +153,7 @@ export function setupConfigHandlers(
 		};
 	});
 
-	messageHub.onQuery('config.systemPrompt.update', async (data) => {
+	messageHub.onRequest('config.systemPrompt.update', async (data) => {
 		const { sessionId, systemPrompt, restartQuery } = data as UpdateSystemPromptRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -192,7 +192,7 @@ export function setupConfigHandlers(
 	// Tools Configuration
 	// ============================================================================
 
-	messageHub.onQuery('config.tools.get', async (data) => {
+	messageHub.onRequest('config.tools.get', async (data) => {
 		const { sessionId } = data as GetToolsConfigRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -205,7 +205,7 @@ export function setupConfigHandlers(
 		};
 	});
 
-	messageHub.onQuery('config.tools.update', async (data) => {
+	messageHub.onRequest('config.tools.update', async (data) => {
 		const { sessionId, settings, restartQuery } = data as UpdateToolsConfigRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -250,7 +250,7 @@ export function setupConfigHandlers(
 	// Agents/Subagents
 	// ============================================================================
 
-	messageHub.onQuery('config.agents.get', async (data) => {
+	messageHub.onRequest('config.agents.get', async (data) => {
 		const { sessionId } = data as GetAgentsConfigRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -260,7 +260,7 @@ export function setupConfigHandlers(
 		};
 	});
 
-	messageHub.onQuery('config.agents.update', async (data) => {
+	messageHub.onRequest('config.agents.update', async (data) => {
 		const { sessionId, agents, restartQuery } = data as UpdateAgentsConfigRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -299,7 +299,7 @@ export function setupConfigHandlers(
 	// Sandbox
 	// ============================================================================
 
-	messageHub.onQuery('config.sandbox.get', async (data) => {
+	messageHub.onRequest('config.sandbox.get', async (data) => {
 		const { sessionId } = data as GetSandboxConfigRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -309,7 +309,7 @@ export function setupConfigHandlers(
 		};
 	});
 
-	messageHub.onQuery('config.sandbox.update', async (data) => {
+	messageHub.onRequest('config.sandbox.update', async (data) => {
 		const { sessionId, sandbox, restartQuery } = data as UpdateSandboxConfigRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -348,7 +348,7 @@ export function setupConfigHandlers(
 	// MCP Servers
 	// ============================================================================
 
-	messageHub.onQuery('config.mcp.get', async (data) => {
+	messageHub.onRequest('config.mcp.get', async (data) => {
 		const { sessionId } = data as GetMcpConfigRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -363,7 +363,7 @@ export function setupConfigHandlers(
 		};
 	});
 
-	messageHub.onQuery('config.mcp.update', async (data) => {
+	messageHub.onRequest('config.mcp.update', async (data) => {
 		const { sessionId, mcpServers, strictMcpConfig, restartQuery } = data as UpdateMcpConfigRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -404,7 +404,7 @@ export function setupConfigHandlers(
 		};
 	});
 
-	messageHub.onQuery('config.mcp.addServer', async (data) => {
+	messageHub.onRequest('config.mcp.addServer', async (data) => {
 		const { sessionId, name, config, restartQuery } = data as AddMcpServerRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -446,7 +446,7 @@ export function setupConfigHandlers(
 		};
 	});
 
-	messageHub.onQuery('config.mcp.removeServer', async (data) => {
+	messageHub.onRequest('config.mcp.removeServer', async (data) => {
 		const { sessionId, name, restartQuery } = data as RemoveMcpServerRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -483,7 +483,7 @@ export function setupConfigHandlers(
 	// Output Format
 	// ============================================================================
 
-	messageHub.onQuery('config.outputFormat.get', async (data) => {
+	messageHub.onRequest('config.outputFormat.get', async (data) => {
 		const { sessionId } = data as GetOutputFormatRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -493,7 +493,7 @@ export function setupConfigHandlers(
 		};
 	});
 
-	messageHub.onQuery('config.outputFormat.update', async (data) => {
+	messageHub.onRequest('config.outputFormat.update', async (data) => {
 		const { sessionId, outputFormat, restartQuery } = data as UpdateOutputFormatRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -536,7 +536,7 @@ export function setupConfigHandlers(
 	// Beta Features
 	// ============================================================================
 
-	messageHub.onQuery('config.betas.get', async (data) => {
+	messageHub.onRequest('config.betas.get', async (data) => {
 		const { sessionId } = data as GetBetasConfigRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -546,7 +546,7 @@ export function setupConfigHandlers(
 		};
 	});
 
-	messageHub.onQuery('config.betas.update', async (data) => {
+	messageHub.onRequest('config.betas.update', async (data) => {
 		const { sessionId, betas, restartQuery } = data as UpdateBetasConfigRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -585,7 +585,7 @@ export function setupConfigHandlers(
 	// Environment Settings
 	// ============================================================================
 
-	messageHub.onQuery('config.env.get', async (data) => {
+	messageHub.onRequest('config.env.get', async (data) => {
 		const { sessionId } = data as GetEnvConfigRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -600,7 +600,7 @@ export function setupConfigHandlers(
 		};
 	});
 
-	messageHub.onQuery('config.env.update', async (data) => {
+	messageHub.onRequest('config.env.update', async (data) => {
 		const { sessionId, settings, restartQuery } = data as UpdateEnvConfigRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -639,7 +639,7 @@ export function setupConfigHandlers(
 	// Permissions
 	// ============================================================================
 
-	messageHub.onQuery('config.permissions.get', async (data) => {
+	messageHub.onRequest('config.permissions.get', async (data) => {
 		const { sessionId } = data as GetPermissionsConfigRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -651,7 +651,7 @@ export function setupConfigHandlers(
 		};
 	});
 
-	messageHub.onQuery('config.permissions.update', async (data) => {
+	messageHub.onRequest('config.permissions.update', async (data) => {
 		const { sessionId, permissionMode } = data as UpdatePermissionsConfigRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -680,7 +680,7 @@ export function setupConfigHandlers(
 	// Bulk Configuration
 	// ============================================================================
 
-	messageHub.onQuery('config.getAll', async (data) => {
+	messageHub.onRequest('config.getAll', async (data) => {
 		const { sessionId } = data as GetAllConfigRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
@@ -690,7 +690,7 @@ export function setupConfigHandlers(
 		};
 	});
 
-	messageHub.onQuery('config.updateBulk', async (data) => {
+	messageHub.onRequest('config.updateBulk', async (data) => {
 		const { sessionId, config, restartQuery } = data as UpdateBulkConfigRequest;
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
