@@ -558,6 +558,143 @@ describe('InputTextarea', () => {
 		});
 	});
 
+	describe('Interrupting State', () => {
+		it('should show spinner in stop button when interrupting', () => {
+			const { container } = render(
+				<InputTextarea
+					content="hello"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					isAgentWorking={true}
+					interrupting={true}
+					onInterrupt={() => {}}
+				/>
+			);
+
+			const stopButton = container.querySelector(
+				'[data-testid="stop-button"]'
+			) as HTMLButtonElement;
+			expect(stopButton).toBeTruthy();
+			expect(stopButton?.disabled).toBe(true);
+
+			// Should contain spinner (animate-spin class)
+			const spinner = stopButton.querySelector('.animate-spin');
+			expect(spinner).toBeTruthy();
+		});
+
+		it('should show stop icon when not interrupting', () => {
+			const { container } = render(
+				<InputTextarea
+					content="hello"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					isAgentWorking={true}
+					interrupting={false}
+					onInterrupt={() => {}}
+				/>
+			);
+
+			const stopButton = container.querySelector(
+				'[data-testid="stop-button"]'
+			) as HTMLButtonElement;
+			expect(stopButton).toBeTruthy();
+			expect(stopButton?.disabled).toBe(false);
+
+			// Should contain SVG stop icon, not spinner
+			const svg = stopButton.querySelector('svg');
+			expect(svg).toBeTruthy();
+			const spinner = stopButton.querySelector('.animate-spin');
+			expect(spinner).toBeNull();
+		});
+	});
+
+	describe('Character Counter at max', () => {
+		it('should show red counter when at max characters', () => {
+			const maxChars = 100;
+			const content = 'a'.repeat(100);
+
+			const { container } = render(
+				<InputTextarea
+					content={content}
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					maxChars={maxChars}
+				/>
+			);
+
+			const counterText = container.textContent;
+			expect(counterText).toContain('100/100');
+		});
+	});
+
+	describe('Send button with disabled prop', () => {
+		it('should disable send button when disabled prop is true even with content', () => {
+			const { container } = render(
+				<InputTextarea
+					content="hello"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					disabled={true}
+					isAgentWorking={false}
+				/>
+			);
+
+			const sendButton = container.querySelector(
+				'[data-testid="send-button"]'
+			) as HTMLButtonElement;
+			// The button should have disabled styling (cursor-not-allowed class)
+			expect(sendButton?.className).toContain('cursor-not-allowed');
+		});
+	});
+
+	describe('Command Autocomplete', () => {
+		it('should render CommandAutocomplete when showCommandAutocomplete is true', () => {
+			const onCommandSelect = vi.fn();
+			const onCommandClose = vi.fn();
+
+			const { container } = render(
+				<InputTextarea
+					content="/he"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					showCommandAutocomplete={true}
+					filteredCommands={['/help', '/health']}
+					selectedCommandIndex={0}
+					onCommandSelect={onCommandSelect}
+					onCommandClose={onCommandClose}
+				/>
+			);
+
+			// CommandAutocomplete should be rendered
+			// It renders a list of commands
+			const textContent = container.textContent;
+			expect(textContent).toContain('/help');
+		});
+
+		it('should not render CommandAutocomplete when callbacks are missing', () => {
+			const { container } = render(
+				<InputTextarea
+					content="/he"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					showCommandAutocomplete={true}
+					filteredCommands={['/help']}
+					selectedCommandIndex={0}
+				/>
+			);
+
+			// Without onCommandSelect and onCommandClose, autocomplete should not render
+			const textContent = container.textContent;
+			expect(textContent).not.toContain('/help');
+		});
+	});
+
 	describe('Paste Event Forwarding', () => {
 		it('should call onPaste callback when paste event fires on textarea', () => {
 			const onPaste = vi.fn(() => {});

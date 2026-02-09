@@ -897,11 +897,27 @@ describe('ConnectionManager - Comprehensive Coverage', () => {
 
 	describe('getDaemonWsUrl() edge cases', () => {
 		it('should fallback to port 8283 when no port specified (line 79)', () => {
-			// Test by creating a manager with explicit baseUrl that mimics no-port scenario
-			// The getDaemonWsUrl function is called during construction
-			// Since we can't easily mock window.location.port, we verify the default behavior
 			const customManager = new ConnectionManager('ws://testhost:8283');
 			expect(customManager).toBeDefined();
+		});
+
+		it('should create manager with default URL when no baseUrl provided', () => {
+			const mgr = new ConnectionManager();
+			expect(mgr).toBeDefined();
+		});
+	});
+
+	describe('getHubIfConnected() edge cases', () => {
+		it('should return null when hub exists but transport is not ready', async () => {
+			mockTransportObj.initialize.mockResolvedValue(undefined);
+			mockTransportObj.isReady.mockReturnValue(true);
+			await manager.getHub();
+			mockHubObj._connectionCallback?.('connected');
+
+			// Now make transport not ready
+			mockTransportObj.isReady.mockReturnValue(false);
+			const hub = manager.getHubIfConnected();
+			expect(hub).toBeNull();
 		});
 	});
 
