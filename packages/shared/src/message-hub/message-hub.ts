@@ -23,12 +23,10 @@ import {
 	isEventMessage,
 	validateMethod,
 	isValidMessage,
-	createCommandMessage,
-	createQueryMessage,
+	createRequestMessage,
 	createResponseMessage,
 	createErrorResponseMessage,
-	isCommandMessage,
-	isQueryMessage,
+	isRequestMessage,
 } from './protocol.ts';
 import type {
 	MessageHubOptions,
@@ -260,8 +258,7 @@ export class MessageHub {
 				sessionId,
 			});
 
-			// Use QUERY message type for requests (it already supports request-response)
-			const message = createQueryMessage({ method, data, sessionId, id: messageId });
+			const message = createRequestMessage({ method, data, sessionId, id: messageId });
 			this.sendMessage(message).catch((error) => {
 				clearTimeout(timer);
 				this.pendingCalls.delete(messageId);
@@ -336,44 +333,26 @@ export class MessageHub {
 
 	/**
 	 * Join a room (client → server)
-	 * Sends a command that the router handles
-	 * Returns after a small delay to ensure the server has processed the join
+	 * Sends a request that the router handles
 	 */
 	async joinRoom(room: string): Promise<void> {
 		if (!this.isConnected()) {
 			this.logDebug(`joinRoom skipped (not connected): ${room}`);
 			return;
 		}
-		const message = createCommandMessage({
-			method: 'room.join',
-			data: { room },
-			sessionId: this.defaultSessionId,
-		});
-		this.sendMessage(message).catch((error) => {
-			log.error(`Failed to join room ${room}:`, error);
-		});
-		// Small delay to ensure server has added us to the room before we continue
-		// This is especially important for test helpers that wait for events immediately after
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		await this.request('room.join', { room });
 	}
 
 	/**
 	 * Leave a room (client → server)
-	 * Sends a command that the router handles
+	 * Sends a request that the router handles
 	 */
-	leaveRoom(room: string): void {
+	async leaveRoom(room: string): Promise<void> {
 		if (!this.isConnected()) {
 			this.logDebug(`leaveRoom skipped (not connected): ${room}`);
 			return;
 		}
-		const message = createCommandMessage({
-			method: 'room.leave',
-			data: { room },
-			sessionId: this.defaultSessionId,
-		});
-		this.sendMessage(message).catch((error) => {
-			log.error(`Failed to leave room ${room}:`, error);
-		});
+		await this.request('room.leave', { room });
 	}
 
 	// ========================================
@@ -466,10 +445,8 @@ export class MessageHub {
 				await this.handlePing(message);
 			} else if (message.type === MessageType.PONG) {
 				this.handlePong(message);
-			} else if (isCommandMessage(message)) {
-				await this.handleIncomingCommand(message);
-			} else if (isQueryMessage(message)) {
-				await this.handleIncomingQuery(message);
+			} else if (isRequestMessage(message)) {
+				await this.handleIncomingRequest(message);
 			} else if (isResponseMessage(message)) {
 				this.handleResponse(message);
 			} else if (isEventMessage(message)) {
@@ -481,13 +458,15 @@ export class MessageHub {
 	}
 
 	/**
-	 * Handle incoming COMMAND message (fire-and-forget, no response)
+	 * Handle incoming REQUEST message (returns response)
+	 * Uses requestHandlers with auto-ACK behavior
 	 */
-	private async handleIncomingCommand(message: HubMessage): Promise<void> {
+	private async handleIncomingRequest(message: HubMessage): Promise<void> {
+		const clientId = (message as import('./protocol').HubMessageWithMetadata).clientId;
+
 		// Handle reserved room commands
 		if (message.method === 'room.join' || message.method === 'room.leave') {
 			if (this.router) {
-				const clientId = (message as import('./protocol').HubMessageWithMetadata).clientId;
 				if (
 					clientId &&
 					message.data &&
@@ -501,36 +480,18 @@ export class MessageHub {
 					}
 				}
 			}
+			// Send ACK response for room commands
+			const ackMsg = createResponseMessage({
+				method: message.method,
+				data: { acknowledged: true },
+				sessionId: message.sessionId,
+				requestId: message.id,
+			});
+			await this.sendResponseToClient(ackMsg, clientId);
 			return;
 		}
 
 		const handler = this.requestHandlers.get(message.method);
-		if (!handler) {
-			this.logDebug(`No command handler for: ${message.method}`);
-			return; // Commands are fire-and-forget, no error response
-		}
-
-		try {
-			const context: CallContext = {
-				messageId: message.id,
-				sessionId: message.sessionId,
-				method: message.method,
-				timestamp: message.timestamp,
-			};
-			await Promise.resolve(handler(message.data, context));
-		} catch (error) {
-			log.error(`Command handler error for ${message.method}:`, error);
-			// No response sent - commands are fire-and-forget
-		}
-	}
-
-	/**
-	 * Handle incoming QUERY message (returns response)
-	 * Uses requestHandlers with auto-ACK behavior
-	 */
-	private async handleIncomingQuery(message: HubMessage): Promise<void> {
-		const handler = this.requestHandlers.get(message.method);
-		const clientId = (message as import('./protocol').HubMessageWithMetadata).clientId;
 
 		if (!handler) {
 			const errorMsg = createErrorResponseMessage({

@@ -40,17 +40,12 @@ export enum MessageType {
 	PONG = 'PONG',
 
 	/**
-	 * Fire-and-forget command (client → server, no response)
-	 */
-	COMMAND = 'CMD',
-
-	/**
 	 * Request expecting a response
 	 */
-	QUERY = 'QRY',
+	REQUEST = 'REQ',
 
 	/**
-	 * Response to query
+	 * Response to request
 	 */
 	RESPONSE = 'RSP',
 }
@@ -136,25 +131,16 @@ export interface EventMessage extends HubMessage {
 }
 
 /**
- * COMMAND message (fire-and-forget)
+ * REQUEST message (request expecting response)
  */
-export interface CommandMessage extends HubMessage {
-	type: MessageType.COMMAND;
+export interface RequestMessage extends HubMessage {
+	type: MessageType.REQUEST;
 	method: string;
 	data?: unknown;
 }
 
 /**
- * QUERY message (request expecting response)
- */
-export interface QueryMessage extends HubMessage {
-	type: MessageType.QUERY;
-	method: string;
-	data?: unknown;
-}
-
-/**
- * RESPONSE message (response to query)
+ * RESPONSE message (response to request)
  */
 export interface ResponseMessage extends HubMessage {
 	type: MessageType.RESPONSE;
@@ -173,17 +159,10 @@ export function isEventMessage(msg: HubMessage): msg is EventMessage {
 }
 
 /**
- * Check if message is a COMMAND
+ * Check if message is a REQUEST
  */
-export function isCommandMessage(msg: HubMessage): msg is CommandMessage {
-	return msg.type === MessageType.COMMAND;
-}
-
-/**
- * Check if message is a QUERY
- */
-export function isQueryMessage(msg: HubMessage): msg is QueryMessage {
-	return msg.type === MessageType.QUERY;
+export function isRequestMessage(msg: HubMessage): msg is RequestMessage {
+	return msg.type === MessageType.REQUEST;
 }
 
 /**
@@ -285,20 +264,9 @@ export interface CreateEventMessageParams {
 }
 
 /**
- * Parameters for creating a COMMAND message
+ * Parameters for creating a REQUEST message
  */
-export interface CreateCommandMessageParams {
-	method: string;
-	data?: unknown;
-	sessionId: string;
-	room?: string;
-	id?: string;
-}
-
-/**
- * Parameters for creating a QUERY message
- */
-export interface CreateQueryMessageParams {
+export interface CreateRequestMessageParams {
 	method: string;
 	data?: unknown;
 	sessionId: string;
@@ -347,30 +315,13 @@ export function createEventMessage(params: CreateEventMessageParams): EventMessa
 }
 
 /**
- * Create a COMMAND message
+ * Create a REQUEST message
  */
-export function createCommandMessage(params: CreateCommandMessageParams): CommandMessage {
+export function createRequestMessage(params: CreateRequestMessageParams): RequestMessage {
 	const { method, data, sessionId, room, id } = params;
 	return {
 		id: id || generateUUID(),
-		type: MessageType.COMMAND,
-		sessionId,
-		method,
-		data,
-		room,
-		timestamp: new Date().toISOString(),
-		version: PROTOCOL_VERSION,
-	};
-}
-
-/**
- * Create a QUERY message
- */
-export function createQueryMessage(params: CreateQueryMessageParams): QueryMessage {
-	const { method, data, sessionId, room, id } = params;
-	return {
-		id: id || generateUUID(),
-		type: MessageType.QUERY,
+		type: MessageType.REQUEST,
 		sessionId,
 		method,
 		data,

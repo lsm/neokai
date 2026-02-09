@@ -22,24 +22,6 @@ export type TimeoutId = ReturnType<typeof setTimeout>;
 export type IntervalId = ReturnType<typeof setInterval>;
 
 /**
- * Command handler function
- * Handles fire-and-forget COMMAND messages
- */
-export type CommandHandler<TData = unknown> = (
-	data: TData,
-	context: CallContext
-) => void | Promise<void>;
-
-/**
- * Query handler function
- * Handles QUERY messages and returns result
- */
-export type QueryHandler<TData = unknown, TResult = unknown> = (
-	data: TData,
-	context: CallContext
-) => TResult | Promise<TResult>;
-
-/**
  * Request handler function
  * Handles REQUEST messages and returns optional result
  * If handler returns void/undefined, auto-ACK is sent
