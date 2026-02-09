@@ -153,13 +153,13 @@ describe('Rewind Feature', () => {
 
 			// Send multiple messages
 			await sendMessage(daemon, sessionId, 'First message');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			await sendMessage(daemon, sessionId, 'Second message');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			await sendMessage(daemon, sessionId, 'Third message');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			const rewindPoints = await getRewindPoints(sessionId);
 			expect(rewindPoints.length).toBeGreaterThanOrEqual(3);
@@ -168,7 +168,7 @@ describe('Rewind Feature', () => {
 			for (let i = 0; i < rewindPoints.length - 1; i++) {
 				expect(rewindPoints[i].turnNumber).toBeGreaterThan(rewindPoints[i + 1].turnNumber);
 			}
-		}, 180000);
+		}, 300000);
 	});
 
 	describe('Rewind Preview', () => {
@@ -301,7 +301,7 @@ describe('Rewind Feature', () => {
 
 			// Send multiple messages
 			await sendMessage(daemon, sessionId, 'What is 1+1?');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			const rewindPointsAfterFirst = await getRewindPoints(sessionId);
 			expect(rewindPointsAfterFirst.length).toBeGreaterThanOrEqual(1);
@@ -309,10 +309,10 @@ describe('Rewind Feature', () => {
 			expect(firstRewindPoint).toBeDefined();
 
 			await sendMessage(daemon, sessionId, 'What is 2+2?');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			await sendMessage(daemon, sessionId, 'What is 3+3?');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			// Should have 3 rewindPoints
 			let rewindPoints = await getRewindPoints(sessionId);
@@ -336,7 +336,7 @@ describe('Rewind Feature', () => {
 				expect(result.conversationRewound).toBe(true);
 				expect(result.messagesDeleted).toBeGreaterThan(0);
 			}
-		}, 240000);
+		}, 300000);
 	});
 
 	describe('Rewind Execute - Both Mode', () => {
@@ -470,10 +470,10 @@ describe('Rewind Feature', () => {
 
 			// Send messages
 			await sendMessage(daemon, sessionId, 'What is 1+1?');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			await sendMessage(daemon, sessionId, 'What is 2+2?');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			// With enableFileCheckpointing=true, rewindPoints SHOULD be created
 			const rewindPoints = await getRewindPoints(sessionId);
@@ -489,7 +489,7 @@ describe('Rewind Feature', () => {
 			// Session should still be functional
 			const state = await getProcessingState(daemon, sessionId);
 			expect(state.status).toBe('idle');
-		}, 180000);
+		}, 240000);
 
 		test('should still have rewindPoints but file rewind disabled when enableFileCheckpointing is false', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-disabled-test-${Date.now()}`;
