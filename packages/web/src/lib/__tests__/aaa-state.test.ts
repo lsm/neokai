@@ -43,8 +43,7 @@ const mockHub = {
 	subscribe: vi.fn(() => Promise.resolve(() => Promise.resolve())),
 	subscribeOptimistic: vi.fn(() => () => {}),
 	call: vi.fn(() => Promise.resolve({})),
-	query: vi.fn(() => Promise.resolve({})),
-	command: vi.fn(),
+	request: vi.fn(() => Promise.resolve({})),
 	onEvent: vi.fn(() => () => {}),
 	joinRoom: vi.fn(),
 	leaveRoom: vi.fn(),
@@ -60,12 +59,12 @@ describe('ApplicationState', () => {
 	beforeEach(() => {
 		// Reset MessageHub mocks
 		mockHub.subscribe.mockReset();
-		mockHub.call.mockReset();
+		mockHub.request.mockReset();
 		mockHub.onConnection.mockReset();
 
 		// Restore default mock implementations
 		mockHub.subscribe.mockImplementation(() => Promise.resolve(() => Promise.resolve()));
-		mockHub.call.mockImplementation(() => Promise.resolve({}));
+		mockHub.request.mockImplementation(() => Promise.resolve({}));
 		mockHub.onConnection.mockImplementation(() => () => {});
 
 		// Create fresh session ID signal for each test with explicit type
@@ -365,10 +364,10 @@ describe('ApplicationState - refreshAll', () => {
 
 	beforeEach(() => {
 		mockHub.subscribe.mockReset();
-		mockHub.call.mockReset();
+		mockHub.request.mockReset();
 		mockHub.onConnection.mockReset();
 		mockHub.subscribe.mockImplementation(() => Promise.resolve(() => Promise.resolve()));
-		mockHub.call.mockImplementation(() => Promise.resolve({}));
+		mockHub.request.mockImplementation(() => Promise.resolve({}));
 		mockHub.onConnection.mockImplementation(() => () => {});
 		currentSessionId = signal(null) as import('@preact/signals').Signal<string | null>;
 	});
@@ -382,7 +381,7 @@ describe('ApplicationState - refreshAll', () => {
 		await appState.refreshAll();
 
 		// Verify no hub calls were made since we're not initialized
-		expect(mockHub.call).not.toHaveBeenCalled();
+		expect(mockHub.request).not.toHaveBeenCalled();
 	});
 
 	it('should refresh session channels when initialized', async () => {
@@ -427,10 +426,10 @@ describe('ApplicationState - Session Channel Switch Error Handling', () => {
 
 	beforeEach(() => {
 		mockHub.subscribe.mockReset();
-		mockHub.call.mockReset();
+		mockHub.request.mockReset();
 		mockHub.onConnection.mockReset();
 		mockHub.subscribe.mockImplementation(() => Promise.resolve(() => Promise.resolve()));
-		mockHub.call.mockImplementation(() => Promise.resolve({}));
+		mockHub.request.mockImplementation(() => Promise.resolve({}));
 		mockHub.onConnection.mockImplementation(() => () => {});
 		currentSessionId = signal(null) as import('@preact/signals').Signal<string | null>;
 	});

@@ -23,7 +23,7 @@ vi.mock('../../lib/state', () => ({
 }));
 
 // Mock the connection manager
-const mockQuery = vi.fn();
+const mockRequest = vi.fn();
 const mockGetHubIfConnected = vi.fn();
 
 vi.mock('../../lib/connection-manager', () => ({
@@ -80,8 +80,8 @@ describe('useSessionActions', () => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
 		mockConnectionState.value = 'connected';
-		mockGetHubIfConnected.mockReturnValue({ query: mockQuery });
-		mockQuery.mockResolvedValue({ success: true });
+		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+		mockRequest.mockResolvedValue({ success: true });
 		mockDeleteSession.mockResolvedValue({});
 		mockListSessions.mockResolvedValue({ sessions: [] });
 		mockArchiveSession.mockResolvedValue({ success: true });
@@ -428,7 +428,7 @@ describe('useSessionActions', () => {
 	describe('handleResetAgent', () => {
 		it('should reset agent successfully', async () => {
 			const onStateReset = vi.fn();
-			mockQuery.mockResolvedValue({ success: true });
+			mockRequest.mockResolvedValue({ success: true });
 
 			const { result } = renderHook(() =>
 				useSessionActions({
@@ -443,7 +443,7 @@ describe('useSessionActions', () => {
 				await result.current.handleResetAgent();
 			});
 
-			expect(mockQuery).toHaveBeenCalledWith('session.resetQuery', {
+			expect(mockRequest).toHaveBeenCalledWith('session.resetQuery', {
 				sessionId: 'session-1',
 				restartQuery: true,
 			});
@@ -453,7 +453,7 @@ describe('useSessionActions', () => {
 		});
 
 		it('should handle reset agent failure', async () => {
-			mockQuery.mockResolvedValue({ success: false, error: 'Reset failed' });
+			mockRequest.mockResolvedValue({ success: false, error: 'Reset failed' });
 
 			const { result } = renderHook(() =>
 				useSessionActions({
@@ -472,7 +472,7 @@ describe('useSessionActions', () => {
 		});
 
 		it('should handle reset agent failure without error message', async () => {
-			mockQuery.mockResolvedValue({ success: false });
+			mockRequest.mockResolvedValue({ success: false });
 
 			const { result } = renderHook(() =>
 				useSessionActions({
@@ -507,7 +507,7 @@ describe('useSessionActions', () => {
 			});
 
 			expect(mockToastError).toHaveBeenCalledWith('Not connected to server');
-			expect(mockQuery).not.toHaveBeenCalled();
+			expect(mockRequest).not.toHaveBeenCalled();
 		});
 
 		it('should handle no hub connection', async () => {
@@ -530,7 +530,7 @@ describe('useSessionActions', () => {
 		});
 
 		it('should handle reset agent exception with Error instance', async () => {
-			mockQuery.mockRejectedValue(new Error('Network error'));
+			mockRequest.mockRejectedValue(new Error('Network error'));
 
 			const { result } = renderHook(() =>
 				useSessionActions({
@@ -550,7 +550,7 @@ describe('useSessionActions', () => {
 		});
 
 		it('should handle reset agent exception with non-Error', async () => {
-			mockQuery.mockRejectedValue('Unknown error');
+			mockRequest.mockRejectedValue('Unknown error');
 
 			const { result } = renderHook(() =>
 				useSessionActions({
@@ -573,7 +573,7 @@ describe('useSessionActions', () => {
 			const callPromise = new Promise((resolve) => {
 				resolveCall = resolve;
 			});
-			mockQuery.mockImplementation(() => callPromise);
+			mockRequest.mockImplementation(() => callPromise);
 
 			const { result } = renderHook(() =>
 				useSessionActions({
@@ -604,7 +604,7 @@ describe('useSessionActions', () => {
 
 	describe('handleExportChat', () => {
 		it('should call export API successfully', async () => {
-			mockQuery.mockResolvedValue({ markdown: '# Test Chat\n\nContent here' });
+			mockRequest.mockResolvedValue({ markdown: '# Test Chat\n\nContent here' });
 
 			const { result } = renderHook(() =>
 				useSessionActions({
@@ -619,7 +619,7 @@ describe('useSessionActions', () => {
 				await result.current.handleExportChat();
 			});
 
-			expect(mockQuery).toHaveBeenCalledWith('session.export', {
+			expect(mockRequest).toHaveBeenCalledWith('session.export', {
 				sessionId: 'session-1',
 				format: 'markdown',
 			});
@@ -643,7 +643,7 @@ describe('useSessionActions', () => {
 			});
 
 			expect(mockToastError).toHaveBeenCalledWith('Not connected to server');
-			expect(mockQuery).not.toHaveBeenCalled();
+			expect(mockRequest).not.toHaveBeenCalled();
 		});
 
 		it('should handle no hub connection', async () => {
@@ -666,7 +666,7 @@ describe('useSessionActions', () => {
 		});
 
 		it('should handle export error', async () => {
-			mockQuery.mockRejectedValue(new Error('Export failed'));
+			mockRequest.mockRejectedValue(new Error('Export failed'));
 
 			const { result } = renderHook(() =>
 				useSessionActions({
