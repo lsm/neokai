@@ -78,9 +78,7 @@ export function createWebSocketHandlers(
 				const messageSize = new TextEncoder().encode(messageStr).length;
 
 				if (messageSize > MAX_MESSAGE_SIZE) {
-					console.error(
-						`Message rejected: size ${(messageSize / (1024 * 1024)).toFixed(2)}MB exceeds limit ${MAX_MESSAGE_SIZE_MB}MB`
-					);
+					// Message size limit exceeded - send error response
 					const errorMsg = createErrorResponseMessage({
 						method: 'message.process',
 						error: {
@@ -149,7 +147,7 @@ export function createWebSocketHandlers(
 					transport.handleClientMessage(data as unknown as HubMessage, clientId);
 				}
 			} catch (error) {
-				console.error('Error processing WebSocket message:', error);
+				// Error processing message - send error response
 				const errorMsg = createErrorResponseMessage({
 					method: 'message.process',
 					error: {
@@ -170,8 +168,8 @@ export function createWebSocketHandlers(
 			}
 		},
 
-		error(ws: ServerWebSocket<WebSocketData>, error: Error) {
-			console.error('WebSocket error:', error);
+		error(ws: ServerWebSocket<WebSocketData>, _error: Error) {
+			// WebSocket error - unregister client
 			const clientId = ws.data.clientId;
 			if (clientId) {
 				transport.unregisterClient(clientId);

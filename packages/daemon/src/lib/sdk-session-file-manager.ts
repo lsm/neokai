@@ -88,8 +88,7 @@ function findSDKSessionFile(workspacePath: string, kaiSessionId: string): string
 
 		matchingFiles.sort((a, b) => b.mtime - a.mtime);
 		return matchingFiles[0].path;
-	} catch (error) {
-		console.error('[SDKSessionFileManager] Error finding session file:', error);
+	} catch {
 		return null;
 	}
 }
@@ -120,9 +119,6 @@ export function removeToolResultFromSessionFile(
 		if (sdkSessionId) {
 			sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
 			if (!existsSync(sessionFile)) {
-				console.error(
-					`[SDKSessionFileManager] SDK session file not found: ${sessionFile}. SDK session may have been deleted.`
-				);
 				return false;
 			}
 		}
@@ -131,15 +127,9 @@ export function removeToolResultFromSessionFile(
 		else if (kaiSessionId) {
 			sessionFile = findSDKSessionFile(workspacePath, kaiSessionId);
 			if (!sessionFile) {
-				console.error(
-					'[SDKSessionFileManager] Could not find session file by searching for NeoKai session ID'
-				);
 				return false;
 			}
 		} else {
-			console.error(
-				'[SDKSessionFileManager] Neither SDK session ID nor NeoKai session ID provided'
-			);
 			return false;
 		}
 
@@ -149,7 +139,6 @@ export function removeToolResultFromSessionFile(
 
 		// Process each line to find and modify the target message
 		let modified = false;
-		let foundMessage = false;
 		const updatedLines = lines.map((line) => {
 			const message = JSON.parse(line) as Record<string, unknown>;
 
@@ -190,15 +179,6 @@ export function removeToolResultFromSessionFile(
 		});
 
 		if (!modified) {
-			if (!foundMessage) {
-				console.error(
-					`[SDKSessionFileManager] Message UUID ${messageUuid} not found in session file. File contains ${lines.length} messages.`
-				);
-			} else {
-				console.error(
-					`[SDKSessionFileManager] Message ${messageUuid} found but has no tool_result blocks`
-				);
-			}
 			return false;
 		}
 
@@ -206,8 +186,7 @@ export function removeToolResultFromSessionFile(
 		writeFileSync(sessionFile, `${updatedLines.join('\n')}\n`, 'utf-8');
 
 		return true;
-	} catch (error) {
-		console.error('[SDKSessionFileManager] Failed to remove tool_result:', error);
+	} catch {
 		return false;
 	}
 }
@@ -357,8 +336,7 @@ function backupSDKSessionFile(sessionFilePath: string): string | null {
 
 		copyFileSync(sessionFilePath, backupPath);
 		return backupPath;
-	} catch (error) {
-		console.error('[SDKSessionFileManager] Failed to create backup:', error);
+	} catch {
 		return null;
 	}
 }
@@ -502,7 +480,6 @@ export function repairSDKSessionFile(
 		result.success = result.repairedCount > 0;
 	} catch (error) {
 		result.errors.push(`Repair error: ${error}`);
-		console.error('[SDKSessionFileManager] Repair failed:', error);
 	}
 
 	return result;
@@ -656,8 +633,8 @@ function findAllSDKFilesForSession(
 				// Skip files we can't read
 			}
 		}
-	} catch (error) {
-		console.error('[SDKSessionFileManager] Error finding SDK files for session:', error);
+	} catch {
+		// Silent failure - caller will handle empty results
 	}
 
 	return results;
@@ -705,7 +682,6 @@ export function deleteSDKSessionFiles(
 		const errorMsg = error instanceof Error ? error.message : String(error);
 		result.errors.push(`Delete operation failed: ${errorMsg}`);
 		result.success = false;
-		console.error('[SDKSessionFileManager] Delete failed:', error);
 	}
 
 	return result;
@@ -792,7 +768,6 @@ export function archiveSDKSessionFiles(
 		const errorMsg = error instanceof Error ? error.message : String(error);
 		result.errors.push(`Archive operation failed: ${errorMsg}`);
 		result.success = false;
-		console.error('[SDKSessionFileManager] Archive failed:', error);
 	}
 
 	return result;
@@ -837,8 +812,8 @@ export function scanSDKSessionFiles(workspacePath: string): SDKSessionFileInfo[]
 				// Skip files we can't stat
 			}
 		}
-	} catch (error) {
-		console.error('[SDKSessionFileManager] Error scanning SDK files:', error);
+	} catch {
+		// Silent failure - caller will handle empty results
 	}
 
 	return results;
@@ -988,8 +963,7 @@ export function truncateSessionFileAtMessage(
 		writeFileSync(filePath, newContent);
 
 		return { truncated: true, linesRemoved };
-	} catch (error) {
-		console.error('[SDKSessionFileManager] Error truncating session file:', error);
+	} catch {
 		return { truncated: false, linesRemoved: 0 };
 	}
 }

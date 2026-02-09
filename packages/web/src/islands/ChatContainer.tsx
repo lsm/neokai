@@ -527,8 +527,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 						mode: pendingWorktreeMode,
 					});
 					// UI will auto-hide via session status update
-				} catch (error) {
-					console.error('Failed to set worktree mode:', error);
+				} catch {
 					toast.error('Failed to set workspace mode');
 					return; // Don't send message if worktree setup failed
 				}
