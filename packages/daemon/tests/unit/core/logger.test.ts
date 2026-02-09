@@ -50,6 +50,12 @@ describe('Logger', () => {
 			process.env.NODE_ENV = 'development';
 			// Configure for INFO level (development default)
 			configureLogger({ level: LogLevel.INFO });
+			// Clear any calls from module-level logging during setup
+			consoleSpy.log.mockClear();
+			consoleSpy.error.mockClear();
+			consoleSpy.warn.mockClear();
+			consoleSpy.info.mockClear();
+			consoleSpy.debug.mockClear();
 		});
 
 		test('log should output to console.info', () => {
@@ -107,6 +113,11 @@ describe('Logger', () => {
 			process.env.NODE_ENV = 'test';
 			// Configure for SILENT level (test default)
 			configureLogger({ level: LogLevel.SILENT });
+			consoleSpy.log.mockClear();
+			consoleSpy.error.mockClear();
+			consoleSpy.warn.mockClear();
+			consoleSpy.info.mockClear();
+			consoleSpy.debug.mockClear();
 		});
 
 		test('log should be silent', () => {
@@ -145,6 +156,11 @@ describe('Logger', () => {
 			process.env.NODE_ENV = 'production';
 			// Configure for WARN level (production default)
 			configureLogger({ level: LogLevel.WARN });
+			consoleSpy.log.mockClear();
+			consoleSpy.error.mockClear();
+			consoleSpy.warn.mockClear();
+			consoleSpy.info.mockClear();
+			consoleSpy.debug.mockClear();
 		});
 
 		test('log should be silent', () => {
@@ -184,6 +200,11 @@ describe('Logger', () => {
 	describe('SILENT mode', () => {
 		beforeEach(() => {
 			configureLogger({ level: LogLevel.SILENT });
+			consoleSpy.log.mockClear();
+			consoleSpy.error.mockClear();
+			consoleSpy.warn.mockClear();
+			consoleSpy.info.mockClear();
+			consoleSpy.debug.mockClear();
 		});
 
 		test('nothing should output', () => {
@@ -205,6 +226,11 @@ describe('Logger', () => {
 	describe('DEBUG mode', () => {
 		beforeEach(() => {
 			configureLogger({ level: LogLevel.DEBUG });
+			consoleSpy.log.mockClear();
+			consoleSpy.error.mockClear();
+			consoleSpy.warn.mockClear();
+			consoleSpy.info.mockClear();
+			consoleSpy.debug.mockClear();
 		});
 
 		test('debug should output', () => {
@@ -235,6 +261,11 @@ describe('Logger', () => {
 				filter: ['kai:daemon:*'],
 				excludeFilter: [],
 			});
+			consoleSpy.log.mockClear();
+			consoleSpy.error.mockClear();
+			consoleSpy.warn.mockClear();
+			consoleSpy.info.mockClear();
+			consoleSpy.debug.mockClear();
 		});
 
 		test('matching namespace should log', () => {
