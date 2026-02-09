@@ -91,7 +91,6 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 	describe('Page Visible Event - Reconnection Flow', () => {
 		let mockTransport: Record<string, unknown>;
 		let mockMessageHub: Record<string, unknown>;
-
 		beforeEach(() => {
 			// Create mock transport with resetReconnectState
 			mockTransport = {
