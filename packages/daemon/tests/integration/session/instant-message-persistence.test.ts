@@ -41,8 +41,7 @@ describe('Instant Message Persistence UX', () => {
 					._publishedMessages;
 				publishedMessages.push({ channel, data });
 			}),
-			onQuery: mock((_method: string, _handler: Function) => () => {}),
-			onCommand: mock((_method: string, _handler: Function) => () => {}),
+			onRequest: mock((_method: string, _handler: Function) => () => {}),
 			query: mock(async () => ({})),
 			command: mock(async () => {}),
 			subscribe: mock(() => () => {}),
