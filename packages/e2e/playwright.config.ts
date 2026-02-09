@@ -16,7 +16,7 @@ const coverageOptions: CoverageReportOptions = {
 		// HTML report for visual browsing
 		['v8'],
 		['html-spa', { subdir: 'html' }],
-		// LCOV for CI integration (Coveralls)
+		// LCOV for CI integration (Codecov, Coveralls, etc.)
 		['lcovonly', { file: 'lcov.info' }],
 		// Console summary
 		['console-summary'],

@@ -131,7 +131,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	const loadGlobalConfig = async () => {
 		try {
 			const hub = await connectionManager.getHub();
-			const response = await hub.call<{ config: GlobalToolsConfig }>('globalTools.getConfig');
+			const response = await hub.query<{ config: GlobalToolsConfig }>('globalTools.getConfig');
 			globalConfig.value = response.config;
 		} catch {
 			// Error loading global config - will use defaults
@@ -209,7 +209,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 			};
 
 			const hub = await connectionManager.getHub();
-			const result = await hub.call<{ success: boolean; error?: string }>('tools.save', {
+			const result = await hub.query<{ success: boolean; error?: string }>('tools.save', {
 				sessionId: session.id,
 				tools: toolsConfig,
 			});

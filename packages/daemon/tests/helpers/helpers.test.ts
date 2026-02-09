@@ -94,11 +94,14 @@ describe('Behavior Test Helpers', () => {
 		test('collectSubscriptionValues should collect from subscriptions', async () => {
 			// Create a mock message hub for testing subscription collection
 			const mockHub = {
-				subscribe: (_channel: string, handler: (data: number) => void, _options?: unknown) => {
+				onEvent: (_channel: string, handler: (data: number) => void) => {
 					// Simulate async data arriving
 					setTimeout(() => handler(1), 50);
 					setTimeout(() => handler(2), 100);
 					setTimeout(() => handler(3), 150);
+
+					// Return unsubscribe function
+					return () => {};
 				},
 			};
 

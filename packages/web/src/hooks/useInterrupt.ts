@@ -39,7 +39,7 @@ export function useInterrupt({ sessionId }: UseInterruptOptions): UseInterruptRe
 				toast.error('Not connected to server');
 				return;
 			}
-			await hub.call('client.interrupt', { sessionId });
+			await hub.request('client.interrupt', { sessionId });
 		} catch {
 			toast.error('Failed to stop generation');
 		} finally {

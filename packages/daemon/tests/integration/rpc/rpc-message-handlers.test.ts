@@ -18,17 +18,20 @@ import {
 describe('Message RPC Handlers', () => {
 	let handlers: Map<string, Function>;
 	let mockMessageHub: {
-		handle: ReturnType<typeof mock>;
+		onQuery: ReturnType<typeof mock>;
 	};
 	let mockSessionManager: {
 		getSessionAsync: ReturnType<typeof mock>;
+		getSessionFromDB: ReturnType<typeof mock>;
+		getSession: ReturnType<typeof mock>;
 	};
 
 	beforeAll(() => {
 		handlers = new Map();
 		mockMessageHub = {
-			handle: mock((method: string, handler: Function) => {
+			onQuery: mock((method: string, handler: Function) => {
 				handlers.set(method, handler);
+				return () => {}; // Return unsubscribe function
 			}),
 		};
 
@@ -49,9 +52,11 @@ describe('Message RPC Handlers', () => {
 				}
 				return null;
 			}),
+			getSessionFromDB: mock(() => null),
+			getSession: mock(() => null),
 		};
 
-		setupMessageHandlers(mockMessageHub, mockSessionManager);
+		setupMessageHandlers(mockMessageHub as never, mockSessionManager as never);
 	});
 
 	describe('message.sdkMessages', () => {
@@ -170,7 +175,7 @@ describe('Message RPC Handlers (Integration)', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'msg-1',
-					type: 'CALL',
+					type: 'QRY',
 					method: 'message.send',
 					data: {
 						sessionId: 'non-existent',
@@ -184,7 +189,8 @@ describe('Message RPC Handlers (Integration)', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('ERROR');
+			expect(response.type).toBe('RSP');
+			expect(response.error).toBeDefined();
 			// Could be either SESSION_NOT_FOUND from setup-websocket.ts or "Session not found" from handler
 			expect(
 				response.errorCode === 'SESSION_NOT_FOUND' || response.error?.includes('Session not found')
@@ -202,8 +208,11 @@ describe('Message RPC Handlers (Integration)', () => {
 describe('Message RPC Handlers - Extended', () => {
 	let handlers: Map<string, Function>;
 	let mockMessageHub: {
-		handle: ReturnType<typeof mock>;
-		publish: ReturnType<typeof mock>;
+		onQuery: ReturnType<typeof mock>;
+		onCommand: ReturnType<typeof mock>;
+		event: ReturnType<typeof mock>;
+		query: ReturnType<typeof mock>;
+		command: ReturnType<typeof mock>;
 	};
 	let mockSessionManager: {
 		getSessionAsync: ReturnType<typeof mock>;
@@ -215,10 +224,17 @@ describe('Message RPC Handlers - Extended', () => {
 	beforeAll(() => {
 		handlers = new Map();
 		mockMessageHub = {
-			handle: mock((method: string, handler: Function) => {
+			onQuery: mock((method: string, handler: Function) => {
 				handlers.set(method, handler);
+				return () => {}; // Return unsubscribe function
 			}),
-			publish: mock(async () => {}),
+			onCommand: mock((method: string, handler: Function) => {
+				handlers.set(method, handler);
+				return () => {}; // Return unsubscribe function
+			}),
+			event: mock(async () => {}),
+			query: mock(async () => ({})),
+			command: mock(async () => {}),
 		};
 
 		const mockUserMessage = {

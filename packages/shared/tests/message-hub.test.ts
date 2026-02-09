@@ -3,10 +3,11 @@ import { MessageHub } from '../src/message-hub/message-hub';
 import type { IMessageTransport, ConnectionState, HubMessage } from '../src/message-hub/types';
 import {
 	MessageType,
-	createCallMessage,
-	createResultMessage,
-	createErrorMessage,
+	createQueryMessage,
+	createResponseMessage,
+	createErrorResponseMessage,
 	createEventMessage,
+	createCommandMessage,
 } from '../src/message-hub/protocol';
 
 class MockTransport implements IMessageTransport {
@@ -38,30 +39,6 @@ class MockTransport implements IMessageTransport {
 
 	async send(message: HubMessage): Promise<void> {
 		this.sentMessages.push(message);
-
-		// Auto-respond to SUBSCRIBE/UNSUBSCRIBE messages (simulate server ACK)
-		if (message.type === MessageType.SUBSCRIBE || message.type === MessageType.UNSUBSCRIBE) {
-			// Send ACK response immediately
-			setTimeout(() => {
-				const ackMessage = {
-					id: `ack-${message.id}`,
-					type:
-						message.type === MessageType.SUBSCRIBE
-							? MessageType.SUBSCRIBED
-							: MessageType.UNSUBSCRIBED,
-					sessionId: message.sessionId,
-					method: message.method,
-					requestId: message.id,
-					data: {
-						[message.type === MessageType.SUBSCRIBE ? 'subscribed' : 'unsubscribed']: true,
-						method: message.method,
-						sessionId: message.sessionId,
-					},
-					timestamp: new Date().toISOString(),
-				};
-				this.simulateMessage(ackMessage);
-			}, 0);
-		}
 	}
 
 	onMessage(handler: (message: HubMessage) => void): () => void {
@@ -116,7 +93,6 @@ describe('MessageHub', () => {
 	beforeEach(async () => {
 		messageHub = new MessageHub({
 			defaultSessionId: 'test-session',
-			debug: false,
 		});
 
 		transport = new MockTransport();
@@ -209,33 +185,33 @@ describe('MessageHub', () => {
 		});
 	});
 
-	describe('RPC - Method Handlers', () => {
-		test('should register RPC handler', () => {
+	describe('Query/Response Pattern', () => {
+		test('should register query handler', () => {
 			const handler = mock(async (_data: unknown) => ({ result: 'success' }));
 
-			messageHub.handle('test.method', handler);
+			messageHub.onRequest('test.method', handler);
 
 			expect(
-				(messageHub as unknown as { rpcHandlers: Map<string, unknown> }).rpcHandlers.has(
+				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.has(
 					'test.method'
 				)
 			).toBe(true);
 		});
 
-		test('should execute RPC handler when call message received', async () => {
+		test('should execute query handler when query message received', async () => {
 			const handler = mock(async (data: { message?: string }) => {
 				return { echo: data.message };
 			});
 
-			messageHub.handle('test.echo', handler);
+			messageHub.onRequest('test.echo', handler);
 
-			const callMessage = createCallMessage({
+			const queryMessage = createQueryMessage({
 				method: 'test.echo',
 				data: { message: 'hello' },
 				sessionId: 'test-session',
 			});
 
-			transport.simulateMessage(callMessage);
+			transport.simulateMessage(queryMessage);
 
 			// Wait for async handler
 			await new Promise((resolve) => setTimeout(resolve, 10));
@@ -248,14 +224,14 @@ describe('MessageHub', () => {
 				})
 			);
 
-			// Check that result was sent back
+			// Check that response was sent back
 			const sentMessages = transport.sentMessages;
-			const resultMessage = sentMessages.find(
-				(msg) => msg.type === MessageType.RESULT && msg.requestId === callMessage.id
+			const responseMessage = sentMessages.find(
+				(msg) => msg.type === MessageType.RESPONSE && msg.requestId === queryMessage.id
 			);
 
-			expect(resultMessage).toBeDefined();
-			expect(resultMessage?.data).toEqual({ echo: 'hello' });
+			expect(responseMessage).toBeDefined();
+			expect(responseMessage?.data).toEqual({ echo: 'hello' });
 		});
 
 		test('should send error response when handler throws', async () => {
@@ -263,111 +239,111 @@ describe('MessageHub', () => {
 				throw new Error('Handler failed');
 			});
 
-			messageHub.handle('test.error', handler);
+			messageHub.onRequest('test.error', handler);
 
-			const callMessage = createCallMessage({
+			const queryMessage = createQueryMessage({
 				method: 'test.error',
 				data: {},
 				sessionId: 'test-session',
 			});
 
-			transport.simulateMessage(callMessage);
+			transport.simulateMessage(queryMessage);
 
 			// Wait for async handler
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			const sentMessages = transport.sentMessages;
 			const errorMessage = sentMessages.find(
-				(msg) => msg.type === MessageType.ERROR && msg.requestId === callMessage.id
+				(msg) => msg.type === MessageType.RESPONSE && msg.requestId === queryMessage.id && msg.error
 			);
 
 			expect(errorMessage).toBeDefined();
 			expect(errorMessage?.error).toContain('Handler failed');
 		});
 
-		test('should unregister RPC handler', () => {
+		test('should unregister query handler', () => {
 			const handler = mock(async () => ({}));
 
-			const unregister = messageHub.handle('test.method', handler);
+			const unregister = messageHub.onRequest('test.method', handler);
 			expect(
-				(messageHub as unknown as { rpcHandlers: Map<string, unknown> }).rpcHandlers.has(
+				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.has(
 					'test.method'
 				)
 			).toBe(true);
 
 			unregister();
 			expect(
-				(messageHub as unknown as { rpcHandlers: Map<string, unknown> }).rpcHandlers.has(
+				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.has(
 					'test.method'
 				)
 			).toBe(false);
 		});
 	});
 
-	describe('RPC - Method Calls', () => {
-		test('should send call message and receive result', async () => {
-			const callPromise = messageHub.call('test.method', { value: 42 });
+	describe('Query Calls', () => {
+		test('should send query message and receive response', async () => {
+			const queryPromise = messageHub.request('test.method', { value: 42 });
 
 			// Simulate receiving result
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			const sentMessage = transport.sentMessages[0];
-			expect(sentMessage.type).toBe(MessageType.CALL);
+			expect(sentMessage.type).toBe(MessageType.QUERY);
 			expect(sentMessage.method).toBe('test.method');
 			expect(sentMessage.data).toEqual({ value: 42 });
 
-			// Simulate result from server
-			const resultMessage = createResultMessage({
+			// Simulate response from server
+			const responseMessage = createResponseMessage({
 				method: sentMessage.method,
 				data: { result: 'success' },
 				sessionId: sentMessage.sessionId,
-				requestId: sentMessage.id, // Link back to the CALL message
+				requestId: sentMessage.id,
 			});
 
-			transport.simulateMessage(resultMessage);
+			transport.simulateMessage(responseMessage);
 
-			const result = await callPromise;
+			const result = await queryPromise;
 			expect(result).toEqual({ result: 'success' });
 		});
 
-		test('should handle RPC call timeout', async () => {
-			const callPromise = messageHub.call('test.timeout', {}, { timeout: 100 });
+		test('should handle query timeout', async () => {
+			const queryPromise = messageHub.request('test.timeout', {}, { timeout: 100 });
 
-			await expect(callPromise).rejects.toThrow('RPC timeout');
+			await expect(queryPromise).rejects.toThrow('Request timeout');
 		});
 
-		test('should receive error response for failed call', async () => {
-			const callPromise = messageHub.call('test.error', {});
+		test('should receive error response for failed query', async () => {
+			const queryPromise = messageHub.request('test.error', {});
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			const sentMessage = transport.sentMessages[0];
 
 			// Simulate error from server
-			const errorMessage = createErrorMessage({
+			const errorMessage = createErrorResponseMessage({
 				method: sentMessage.method,
 				error: {
-					code: 'INTERNAL_ERROR',
 					message: 'Something went wrong',
+					code: 'INTERNAL_ERROR',
 				},
 				sessionId: sentMessage.sessionId,
-				requestId: sentMessage.id, // Link back to the CALL message
+				requestId: sentMessage.id,
 			});
 
 			transport.simulateMessage(errorMessage);
 
-			await expect(callPromise).rejects.toThrow('Something went wrong');
+			await expect(queryPromise).rejects.toThrow('Something went wrong');
 		});
 
 		test('should throw error when not connected', async () => {
 			transport.simulateStateChange('disconnected');
 
-			await expect(messageHub.call('test.method', {})).rejects.toThrow(
+			await expect(messageHub.request('test.method', {})).rejects.toThrow(
 				'Not connected to transport'
 			);
 		});
 
-		test('should handle sendMessage error in call', async () => {
+		test('should handle sendMessage error in query', async () => {
 			// Create a transport that throws on send
 			class FailingTransport extends MockTransport {
 				async send(_message: HubMessage): Promise<void> {
@@ -380,32 +356,95 @@ describe('MessageHub', () => {
 			newHub.registerTransport(failingTransport);
 			await failingTransport.connect();
 
-			await expect(newHub.call('test.method', {})).rejects.toThrow('Transport send failed');
+			await expect(newHub.request('test.method', {})).rejects.toThrow('Transport send failed');
 		});
 
-		test('should use custom session ID in call', async () => {
-			const callPromise = messageHub.call('test.method', {}, { sessionId: 'custom-session' });
+		test('should use custom room in query', async () => {
+			const queryPromise = messageHub.request('test.method', {}, { room: 'custom-room' });
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			const sentMessage = transport.sentMessages[0];
-			expect(sentMessage.sessionId).toBe('custom-session');
+			expect(sentMessage.sessionId).toBe('custom-room');
 
-			// Clean up pending call
-			const resultMessage = createResultMessage({
+			// Clean up pending query
+			const responseMessage = createResponseMessage({
 				method: sentMessage.method,
 				data: {},
 				sessionId: sentMessage.sessionId,
-				requestId: sentMessage.id, // Link back to the CALL message
+				requestId: sentMessage.id,
 			});
-			transport.simulateMessage(resultMessage);
-			await callPromise;
+			transport.simulateMessage(responseMessage);
+			await queryPromise;
 		});
 	});
 
-	describe('Pub/Sub - Publishing', () => {
-		test('should publish event message', async () => {
-			await messageHub.publish('user.created', { userId: '123' });
+	describe('Command Pattern', () => {
+		test('should register command handler', () => {
+			const handler = mock((_data: unknown) => {});
+
+			messageHub.onRequest('test.command', handler);
+
+			expect(
+				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.has(
+					'test.command'
+				)
+			).toBe(true);
+		});
+
+		test('should execute command handler when command received', async () => {
+			const handler = mock((data: { action?: string }) => {
+				expect(data.action).toBe('test');
+			});
+
+			messageHub.onRequest('test.command', handler);
+
+			const commandMessage = createCommandMessage({
+				method: 'test.command',
+				data: { action: 'test' },
+				sessionId: 'test-session',
+			});
+
+			transport.simulateMessage(commandMessage);
+
+			// Wait for async handler
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			expect(handler).toHaveBeenCalledWith(
+				{ action: 'test' },
+				expect.objectContaining({
+					method: 'test.command',
+					sessionId: 'test-session',
+				})
+			);
+
+			// Commands don't send responses
+			const responses = transport.sentMessages.filter((m) => m.type === MessageType.RESPONSE);
+			expect(responses.length).toBe(0);
+		});
+
+		test('should unregister command handler', () => {
+			const handler = mock(() => {});
+
+			const unregister = messageHub.onRequest('test.command', handler);
+			expect(
+				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.has(
+					'test.command'
+				)
+			).toBe(true);
+
+			unregister();
+			expect(
+				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.has(
+					'test.command'
+				)
+			).toBe(false);
+		});
+	});
+
+	describe('Event Pattern', () => {
+		test('should emit event message', () => {
+			messageHub.event('user.created', { userId: '123' });
 
 			const sentMessage = transport.sentMessages[0];
 			expect(sentMessage.type).toBe(MessageType.EVENT);
@@ -413,45 +452,42 @@ describe('MessageHub', () => {
 			expect(sentMessage.data).toEqual({ userId: '123' });
 		});
 
-		test('should use custom session ID when publishing', async () => {
-			await messageHub.publish('user.created', { userId: '123' }, { sessionId: 'custom-session' });
+		test('should use custom room when emitting event', () => {
+			messageHub.event('user.created', { userId: '123' }, { room: 'custom-room' });
 
 			const sentMessage = transport.sentMessages[0];
-			expect(sentMessage.sessionId).toBe('custom-session');
+			expect(sentMessage.sessionId).toBe('custom-room');
+			expect(sentMessage.room).toBe('custom-room');
 		});
 
-		test('should not throw when publishing while disconnected (skips send)', async () => {
+		test('should not throw when emitting event while disconnected (skips send)', () => {
 			transport.simulateStateChange('disconnected');
 
 			// Should not throw, just skip sending
-			await messageHub.publish('test.event', {});
+			messageHub.event('test.event', {});
 
 			// No message should be sent
 			expect(transport.sentMessages.length).toBe(0);
 		});
 	});
 
-	describe('Pub/Sub - Subscribing', () => {
-		test('should subscribe to event pattern', async () => {
+	describe('Event Listening', () => {
+		test('should register event handler', () => {
 			const handler = mock((_data: unknown) => {});
 
-			await messageHub.subscribe('user.created', handler, {
-				sessionId: 'test-session',
-			});
+			messageHub.onEvent('user.created', handler);
 
-			const sessionSubs = (
-				messageHub as unknown as {
-					subscriptions: Map<string, Map<string, unknown>>;
-				}
-			).subscriptions.get('test-session');
-			expect(sessionSubs).toBeDefined();
-			expect(sessionSubs?.has('user.created')).toBe(true);
+			expect(
+				(
+					messageHub as unknown as { roomEventHandlers: Map<string, Set<unknown>> }
+				).roomEventHandlers.has('user.created')
+			).toBe(true);
 		});
 
-		test('should receive events matching subscription', async () => {
+		test('should receive events matching handler', async () => {
 			const handler = mock((_data: unknown) => {});
 
-			await messageHub.subscribe('user.created', handler);
+			messageHub.onEvent('user.created', handler);
 
 			const eventMessage = createEventMessage({
 				method: 'user.created',
@@ -460,6 +496,9 @@ describe('MessageHub', () => {
 			});
 
 			transport.simulateMessage(eventMessage);
+
+			// Wait for async handling
+			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			expect(handler).toHaveBeenCalledWith(
 				{ userId: '123' },
@@ -470,37 +509,12 @@ describe('MessageHub', () => {
 			);
 		});
 
-		test('should support wildcard subscriptions', async () => {
-			const handler = mock((_data: unknown) => {});
+		test('should support multiple handlers for same event', async () => {
+			const handler1 = mock((_data: unknown) => {});
+			const handler2 = mock((_data: unknown) => {});
 
-			// Subscribe to specific methods and manually test wildcard pattern matching
-			await messageHub.subscribe('user.created', handler);
-			await messageHub.subscribe('user.updated', handler);
-
-			const event1 = createEventMessage({
-				method: 'user.created',
-				data: { userId: '123' },
-				sessionId: 'test-session',
-			});
-
-			const event2 = createEventMessage({
-				method: 'user.updated',
-				data: { userId: '123' },
-				sessionId: 'test-session',
-			});
-
-			transport.simulateMessage(event1);
-			transport.simulateMessage(event2);
-
-			expect(handler).toHaveBeenCalledTimes(2);
-		});
-
-		test('should unsubscribe from events', async () => {
-			const handler = mock((_data: unknown) => {});
-
-			const unsubscribe = await messageHub.subscribe('user.created', handler);
-
-			await unsubscribe();
+			messageHub.onEvent('user.created', handler1);
+			messageHub.onEvent('user.created', handler2);
 
 			const eventMessage = createEventMessage({
 				method: 'user.created',
@@ -510,135 +524,79 @@ describe('MessageHub', () => {
 
 			transport.simulateMessage(eventMessage);
 
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			expect(handler1).toHaveBeenCalled();
+			expect(handler2).toHaveBeenCalled();
+		});
+
+		test('should unregister event handler', async () => {
+			const handler = mock((_data: unknown) => {});
+
+			const unregister = messageHub.onEvent('user.created', handler);
+
+			unregister();
+
+			const eventMessage = createEventMessage({
+				method: 'user.created',
+				data: { userId: '123' },
+				sessionId: 'test-session',
+			});
+
+			transport.simulateMessage(eventMessage);
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
 			expect(handler).not.toHaveBeenCalled();
-		});
-
-		test('should track subscriptions internally', async () => {
-			const handler = mock(() => {});
-			await messageHub.subscribe('user.created', handler, {
-				sessionId: 'test-session',
-			});
-
-			const sessionSubs = (
-				messageHub as unknown as {
-					subscriptions: Map<string, Map<string, unknown>>;
-				}
-			).subscriptions.get('test-session');
-			expect(sessionSubs).toBeDefined();
-			expect(sessionSubs?.has('user.created')).toBe(true);
-		});
-
-		test('should remove subscriptions on unsubscribe', async () => {
-			const handler = mock(() => {});
-			const unsubscribe = await messageHub.subscribe('user.created', handler, {
-				sessionId: 'test-session',
-			});
-
-			// Verify subscription exists first
-			let sessionSubs = (
-				messageHub as unknown as {
-					subscriptions: Map<string, Map<string, unknown>>;
-				}
-			).subscriptions.get('test-session');
-			expect(sessionSubs?.has('user.created')).toBe(true);
-
-			await unsubscribe();
-
-			// After unsubscribe, the method should be removed from the set
-			sessionSubs = (
-				messageHub as unknown as {
-					subscriptions: Map<string, Map<string, unknown>>;
-				}
-			).subscriptions.get('test-session');
-			const handlers = sessionSubs?.get('user.created') as Set<unknown> | undefined;
-			expect(!handlers || handlers.size === 0).toBe(true);
 		});
 	});
 
-	describe('Hybrid - Call and Publish', () => {
-		test('should execute RPC call and publish event', async () => {
-			const handler = mock(async (_data: unknown) => {
-				return { result: 'success' };
-			});
+	describe('Room Management', () => {
+		test('should send room.join command', () => {
+			messageHub.joinRoom('session-123');
 
-			messageHub.handle('user.create', handler);
-
-			// Use call() directly and then publish separately to test the pattern
-			const callPromise = messageHub.call('user.create', { name: 'John' });
-
-			await new Promise((resolve) => setTimeout(resolve, 10));
-
-			// Should have CALL message
-			const callMessage = transport.sentMessages.find(
-				(msg) => msg.type === MessageType.CALL && msg.method === 'user.create'
-			);
-			expect(callMessage).toBeDefined();
-
-			// Simulate result to resolve the promise
-			const resultMessage = createResultMessage({
-				method: callMessage!.method,
-				data: { result: 'success' },
-				sessionId: callMessage!.sessionId,
-				requestId: callMessage!.id, // Link back to the CALL message
-			});
-
-			transport.simulateMessage(resultMessage);
-
-			const result = await callPromise;
-			expect(result).toEqual({ result: 'success' });
-
-			// Manually publish after call succeeds
-			await messageHub.publish('user.created', { userId: '123' });
-
-			// Should have EVENT message
-			const eventMessage = transport.sentMessages.find(
-				(msg) => msg.type === MessageType.EVENT && msg.method === 'user.created'
-			);
-			expect(eventMessage).toBeDefined();
+			const sentMessage = transport.sentMessages[0];
+			expect(sentMessage.type).toBe(MessageType.COMMAND);
+			expect(sentMessage.method).toBe('room.join');
+			expect(sentMessage.data).toEqual({ room: 'session-123' });
 		});
 
-		test('should not publish if RPC call fails', async () => {
-			transport.clearSentMessages();
+		test('should send room.leave command', () => {
+			messageHub.leaveRoom('session-123');
 
-			const callPromise = messageHub.callAndPublish('test.fail', 'test.event', {});
+			const sentMessage = transport.sentMessages[0];
+			expect(sentMessage.type).toBe(MessageType.COMMAND);
+			expect(sentMessage.method).toBe('room.leave');
+			expect(sentMessage.data).toEqual({ room: 'session-123' });
+		});
 
-			await new Promise((resolve) => setTimeout(resolve, 10));
+		test('should skip room operations when disconnected', () => {
+			transport.simulateStateChange('disconnected');
 
-			const callMessage = transport.sentMessages.find((msg) => msg.type === MessageType.CALL);
+			messageHub.joinRoom('test-room');
+			messageHub.leaveRoom('test-room');
 
-			// Simulate error
-			const errorMessage = createErrorMessage({
-				method: callMessage!.method,
-				error: { code: 'INTERNAL_ERROR', message: 'Failed' },
-				sessionId: callMessage!.sessionId,
-				requestId: callMessage!.id, // Link back to the CALL message
-			});
-
-			transport.simulateMessage(errorMessage);
-
-			await expect(callPromise).rejects.toThrow();
-
-			// Should NOT have EVENT message
-			const eventMessage = transport.sentMessages.find((msg) => msg.type === MessageType.EVENT);
-			expect(eventMessage).toBeUndefined();
+			expect(transport.sentMessages.length).toBe(0);
 		});
 	});
 
 	describe('Message Routing', () => {
 		test('should route messages to correct handlers', async () => {
-			const rpcHandler = mock(async () => ({}));
+			const queryHandler = mock(async () => ({}));
 			const eventHandler = mock(() => {});
+			const commandHandler = mock(() => {});
 
-			messageHub.handle('test.rpc', rpcHandler);
-			await messageHub.subscribe('test.event', eventHandler);
+			messageHub.onRequest('test.query', queryHandler);
+			messageHub.onEvent('test.event', eventHandler);
+			messageHub.onRequest('test.command', commandHandler);
 
-			// Send RPC call
-			const callMessage = createCallMessage({
-				method: 'test.rpc',
+			// Send query
+			const queryMessage = createQueryMessage({
+				method: 'test.query',
 				data: {},
 				sessionId: 'test-session',
 			});
-			transport.simulateMessage(callMessage);
+			transport.simulateMessage(queryMessage);
 
 			// Send event
 			const eventMessage = createEventMessage({
@@ -648,40 +606,51 @@ describe('MessageHub', () => {
 			});
 			transport.simulateMessage(eventMessage);
 
-			expect(rpcHandler).toHaveBeenCalled();
+			// Send command
+			const commandMessage = createCommandMessage({
+				method: 'test.command',
+				data: {},
+				sessionId: 'test-session',
+			});
+			transport.simulateMessage(commandMessage);
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			expect(queryHandler).toHaveBeenCalled();
 			expect(eventHandler).toHaveBeenCalled();
+			expect(commandHandler).toHaveBeenCalled();
 		});
 
-		test('should handle result messages for pending calls', async () => {
-			const callPromise = messageHub.call('test.method', {});
+		test('should handle response messages for pending queries', async () => {
+			const queryPromise = messageHub.request('test.method', {});
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			const sentMessage = transport.sentMessages[0];
-			const resultMessage = createResultMessage({
+			const responseMessage = createResponseMessage({
 				method: sentMessage.method,
 				data: { value: 42 },
 				sessionId: sentMessage.sessionId,
-				requestId: sentMessage.id, // Link back to the CALL message
+				requestId: sentMessage.id,
 			});
 
-			transport.simulateMessage(resultMessage);
+			transport.simulateMessage(responseMessage);
 
-			const result = await callPromise;
+			const result = await queryPromise;
 			expect(result).toEqual({ value: 42 });
 		});
 
-		test('should ignore result for unknown call ID', () => {
-			const resultMessage = createResultMessage({
+		test('should ignore response for unknown query ID', () => {
+			const responseMessage = createResponseMessage({
 				method: 'test.method',
 				data: {},
 				sessionId: 'test-session',
-				requestId: 'unknown-id', // Non-existent request ID
+				requestId: 'unknown-id',
 			});
 
 			// Should not throw
 			expect(() => {
-				transport.simulateMessage(resultMessage);
+				transport.simulateMessage(responseMessage);
 			}).not.toThrow();
 		});
 
@@ -713,48 +682,48 @@ describe('MessageHub', () => {
 			const handler = mock(() => {});
 			messageHub.onMessage(handler);
 
-			// Send a call (outgoing)
-			const callPromise = messageHub.call('test.method', {});
+			// Send a query (outgoing)
+			const queryPromise = messageHub.request('test.method', {});
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
-			// Should have been called for outgoing CALL message
+			// Should have been called for outgoing QUERY message
 			expect(handler).toHaveBeenCalledWith(
 				expect.objectContaining({
-					type: MessageType.CALL,
+					type: MessageType.QUERY,
 					method: 'test.method',
 				}),
 				'out'
 			);
 
-			// Simulate result (incoming)
+			// Simulate response (incoming)
 			const sentMessage = transport.sentMessages[0];
-			const resultMessage = createResultMessage({
+			const responseMessage = createResponseMessage({
 				method: sentMessage.method,
 				data: {},
 				sessionId: sentMessage.sessionId,
 				requestId: sentMessage.id,
 			});
 
-			transport.simulateMessage(resultMessage);
+			transport.simulateMessage(responseMessage);
 
-			// Should have been called for incoming RESULT message
+			// Should have been called for incoming RESPONSE message
 			expect(handler).toHaveBeenCalledWith(
 				expect.objectContaining({
-					type: MessageType.RESULT,
+					type: MessageType.RESPONSE,
 				}),
 				'in'
 			);
 
-			await callPromise;
+			await queryPromise;
 		});
 
-		test('should unsubscribe from message handler', async () => {
+		test('should unsubscribe from message handler', () => {
 			const handler = mock(() => {});
 			const unsubscribe = messageHub.onMessage(handler);
 
 			// Send a message
-			await messageHub.publish('test.event', {});
+			messageHub.event('test.event', {});
 
 			// Handler should have been called
 			expect(handler).toHaveBeenCalled();
@@ -766,17 +735,55 @@ describe('MessageHub', () => {
 			unsubscribe();
 
 			// Send another message
-			await messageHub.publish('test.event2', {});
+			messageHub.event('test.event2', {});
 
 			// Handler should NOT have been called
 			expect(handler).not.toHaveBeenCalled();
 		});
 	});
 
+	describe('PING/PONG', () => {
+		test('should respond to PING with PONG', async () => {
+			transport.clearSentMessages();
+
+			const pingMessage: HubMessage = {
+				id: 'ping-123',
+				type: MessageType.PING,
+				sessionId: 'test-session',
+				method: 'heartbeat',
+				timestamp: new Date().toISOString(),
+			};
+
+			transport.simulateMessage(pingMessage);
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			const pongMessages = transport.sentMessages.filter((m) => m.type === MessageType.PONG);
+			expect(pongMessages.length).toBe(1);
+			expect(pongMessages[0].requestId).toBe('ping-123');
+		});
+
+		test('should handle PONG message', () => {
+			const pongMessage: HubMessage = {
+				id: 'pong-123',
+				type: MessageType.PONG,
+				sessionId: 'test-session',
+				method: 'heartbeat',
+				requestId: 'ping-123',
+				timestamp: new Date().toISOString(),
+			};
+
+			// Should not throw
+			expect(() => {
+				transport.simulateMessage(pongMessage);
+			}).not.toThrow();
+		});
+	});
+
 	describe('Cleanup and Disposal', () => {
-		test('should cleanup pending calls on cleanup', async () => {
-			const _call1 = messageHub.call('test.method1', {}).catch(() => {}); // Ignore rejection
-			const _call2 = messageHub.call('test.method2', {}).catch(() => {}); // Ignore rejection
+		test('should cleanup pending queries on cleanup', async () => {
+			const _query1 = messageHub.request('test.method1', {}).catch(() => {});
+			const _query2 = messageHub.request('test.method2', {}).catch(() => {});
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -787,17 +794,22 @@ describe('MessageHub', () => {
 			).toBe(0);
 		});
 
-		test('should clear all handlers on cleanup', async () => {
-			messageHub.handle('test.rpc', async () => ({}));
-			await messageHub.subscribe('test.event', () => {});
+		test('should clear all handlers on cleanup', () => {
+			messageHub.onRequest('test.query', async () => ({}));
+			messageHub.onRequest('test.command', () => {});
+			messageHub.onEvent('test.event', () => {});
 
 			messageHub.cleanup();
 
 			expect(
-				(messageHub as unknown as { rpcHandlers: Map<string, unknown> }).rpcHandlers.size
+				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.size
 			).toBe(0);
 			expect(
-				(messageHub as unknown as { subscriptions: Map<string, unknown> }).subscriptions.size
+				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.size
+			).toBe(0);
+			expect(
+				(messageHub as unknown as { roomEventHandlers: Map<string, unknown> }).roomEventHandlers
+					.size
 			).toBe(0);
 		});
 
@@ -823,232 +835,23 @@ describe('MessageHub', () => {
 		});
 	});
 
-	// Debug Mode tests removed - logging has been intentionally reduced to minimize CI noise
-	// The debug option is accepted but no longer used for console logging
-
-	describe('Optimistic Subscriptions (Non-blocking)', () => {
-		test('should subscribe synchronously and return immediately', () => {
-			const handler = mock((_data: unknown) => {});
-
-			const start = Date.now();
-			const unsubscribe = messageHub.subscribeOptimistic('user.created', handler, {
-				sessionId: 'test-session',
-			});
-			const elapsed = Date.now() - start;
-
-			// Should return immediately (< 10ms)
-			expect(elapsed).toBeLessThan(10);
-			expect(typeof unsubscribe).toBe('function');
-		});
-
-		test('should register handler locally immediately', () => {
-			const handler = mock((_data: unknown) => {});
-
-			messageHub.subscribeOptimistic('user.created', handler, {
-				sessionId: 'test-session',
-			});
-
-			const sessionSubs = (
-				messageHub as unknown as {
-					subscriptions: Map<string, Map<string, Set<unknown>>>;
-				}
-			).subscriptions.get('test-session');
-			expect(sessionSubs).toBeDefined();
-			expect(sessionSubs?.has('user.created')).toBe(true);
-			expect(sessionSubs?.get('user.created')?.has(handler)).toBe(true);
-		});
-
-		test('should receive events matching subscription', async () => {
-			const handler = mock((_data: unknown) => {});
-
-			messageHub.subscribeOptimistic('user.created', handler, {
-				sessionId: 'test-session',
-			});
-
-			const eventMessage = createEventMessage({
-				method: 'user.created',
-				data: { userId: '123' },
-				sessionId: 'test-session',
-			});
-
-			transport.simulateMessage(eventMessage);
-
-			expect(handler).toHaveBeenCalledWith(
-				{ userId: '123' },
-				expect.objectContaining({
-					method: 'user.created',
-					sessionId: 'test-session',
-				})
-			);
-		});
-
-		test('should send SUBSCRIBE message to server in background', async () => {
-			const handler = mock((_data: unknown) => {});
-
-			transport.clearSentMessages();
-			messageHub.subscribeOptimistic('user.created', handler, {
-				sessionId: 'test-session',
-			});
-
-			// Wait for background send
-			await new Promise((resolve) => setTimeout(resolve, 10));
-
-			// Should have sent SUBSCRIBE message
-			const subscribeMsg = transport.sentMessages.find(
-				(msg) => msg.type === MessageType.SUBSCRIBE && msg.method === 'user.created'
-			);
-			expect(subscribeMsg).toBeDefined();
-			expect(subscribeMsg?.sessionId).toBe('test-session');
-		});
-
-		test('should unsubscribe synchronously', async () => {
-			const handler = mock((_data: unknown) => {});
-
-			const unsubscribe = messageHub.subscribeOptimistic('user.created', handler, {
-				sessionId: 'test-session',
-			});
-
-			const start = Date.now();
-			unsubscribe();
-			const elapsed = Date.now() - start;
-
-			// Should be synchronous (< 10ms)
-			expect(elapsed).toBeLessThan(10);
-
-			// Handler should be removed
-			const eventMessage = createEventMessage({
-				method: 'user.created',
-				data: { userId: '123' },
-				sessionId: 'test-session',
-			});
-			transport.simulateMessage(eventMessage);
-
-			expect(handler).not.toHaveBeenCalled();
-		});
-
-		test('should send UNSUBSCRIBE message to server in background', async () => {
-			const handler = mock((_data: unknown) => {});
-
-			const unsubscribe = messageHub.subscribeOptimistic('user.created', handler, {
-				sessionId: 'test-session',
-			});
-
-			transport.clearSentMessages();
-			unsubscribe();
-
-			// Wait for background send
-			await new Promise((resolve) => setTimeout(resolve, 10));
-
-			// Should have sent UNSUBSCRIBE message
-			const unsubscribeMsg = transport.sentMessages.find(
-				(msg) => msg.type === MessageType.UNSUBSCRIBE && msg.method === 'user.created'
-			);
-			expect(unsubscribeMsg).toBeDefined();
-		});
-
-		test('should persist subscription for auto-resubscription', () => {
-			const handler = mock((_data: unknown) => {});
-
-			messageHub.subscribeOptimistic('user.created', handler, {
-				sessionId: 'test-session',
-			});
-
-			const persistedSubs = (
-				messageHub as unknown as {
-					persistedSubscriptions: Map<string, unknown>;
-				}
-			).persistedSubscriptions;
-			expect(persistedSubs.size).toBeGreaterThan(0);
-		});
-
-		test('should work when not connected (local-only subscription)', async () => {
-			transport.simulateStateChange('disconnected');
-
-			const handler = mock((_data: unknown) => {});
-
-			// Should not throw
-			const unsubscribe = messageHub.subscribeOptimistic('user.created', handler, {
-				sessionId: 'test-session',
-			});
-			expect(typeof unsubscribe).toBe('function');
-
-			// Handler should be registered locally
-			const sessionSubs = (
-				messageHub as unknown as {
-					subscriptions: Map<string, Map<string, Set<unknown>>>;
-				}
-			).subscriptions.get('test-session');
-			expect(sessionSubs?.get('user.created')?.has(handler)).toBe(true);
-
-			unsubscribe();
-		});
-
-		test('should throw for invalid method name', () => {
-			const handler = mock((_data: unknown) => {});
-
-			expect(() => {
-				messageHub.subscribeOptimistic('', handler);
-			}).toThrow('Invalid method name');
-		});
-
-		test('should support multiple handlers for same event', async () => {
-			const handler1 = mock((_data: unknown) => {});
-			const handler2 = mock((_data: unknown) => {});
-
-			messageHub.subscribeOptimistic('user.created', handler1, {
-				sessionId: 'test-session',
-			});
-			messageHub.subscribeOptimistic('user.created', handler2, {
-				sessionId: 'test-session',
-			});
-
-			const eventMessage = createEventMessage({
-				method: 'user.created',
-				data: { userId: '123' },
-				sessionId: 'test-session',
-			});
-
-			transport.simulateMessage(eventMessage);
-
-			// Wait for async event handling to complete
-			await new Promise((resolve) => setTimeout(resolve, 10));
-
-			expect(handler1).toHaveBeenCalled();
-			expect(handler2).toHaveBeenCalled();
-		});
-
-		test('should use default session ID when not specified', () => {
-			const handler = mock((_data: unknown) => {});
-
-			messageHub.subscribeOptimistic('user.created', handler);
-
-			// Default session ID is 'test-session' from beforeEach
-			const sessionSubs = (
-				messageHub as unknown as {
-					subscriptions: Map<string, Map<string, Set<unknown>>>;
-				}
-			).subscriptions.get('test-session');
-			expect(sessionSubs?.get('user.created')?.has(handler)).toBe(true);
-		});
-	});
-
 	describe('Utility Methods', () => {
 		test('should get pending call count', async () => {
 			// No pending calls initially
 			expect(messageHub.getPendingCallCount()).toBe(0);
 
-			// Create some pending calls
-			const call1 = messageHub.call('test.method1', {});
-			const call2 = messageHub.call('test.method2', {});
+			// Create some pending queries
+			const query1 = messageHub.request('test.method1', {});
+			const query2 = messageHub.request('test.method2', {});
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			expect(messageHub.getPendingCallCount()).toBe(2);
 
-			// Resolve one call
+			// Resolve one query
 			const sentMessage1 = transport.sentMessages[0];
 			transport.simulateMessage(
-				createResultMessage({
+				createResponseMessage({
 					method: sentMessage1.method,
 					data: {},
 					sessionId: sentMessage1.sessionId,
@@ -1056,13 +859,13 @@ describe('MessageHub', () => {
 				})
 			);
 
-			await call1;
+			await query1;
 			expect(messageHub.getPendingCallCount()).toBe(1);
 
-			// Resolve second call
+			// Resolve second query
 			const sentMessage2 = transport.sentMessages[1];
 			transport.simulateMessage(
-				createResultMessage({
+				createResponseMessage({
 					method: sentMessage2.method,
 					data: {},
 					sessionId: sentMessage2.sessionId,
@@ -1070,37 +873,8 @@ describe('MessageHub', () => {
 				})
 			);
 
-			await call2;
+			await query2;
 			expect(messageHub.getPendingCallCount()).toBe(0);
-		});
-
-		test('should get subscription count', async () => {
-			// Add subscriptions
-			const unsub1 = await messageHub.subscribe('user.created', () => {});
-			expect(messageHub.getSubscriptionCount('user.created')).toBe(1);
-
-			const unsub2 = await messageHub.subscribe('user.updated', () => {});
-			expect(messageHub.getSubscriptionCount('user.updated')).toBe(1);
-
-			const unsub3 = await messageHub.subscribe('user.deleted', () => {});
-			expect(messageHub.getSubscriptionCount('user.deleted')).toBe(1);
-
-			// Multiple handlers for same event
-			const unsub4 = await messageHub.subscribe('user.created', () => {});
-			expect(messageHub.getSubscriptionCount('user.created')).toBe(2);
-
-			// Unsubscribe
-			await unsub1();
-			expect(messageHub.getSubscriptionCount('user.created')).toBe(1);
-
-			await unsub4();
-			expect(messageHub.getSubscriptionCount('user.created')).toBe(0);
-
-			await unsub2();
-			expect(messageHub.getSubscriptionCount('user.updated')).toBe(0);
-
-			await unsub3();
-			expect(messageHub.getSubscriptionCount('user.deleted')).toBe(0);
 		});
 	});
 });

@@ -44,7 +44,7 @@ describe('Context Command Online Tests', () => {
 
 	describe('Automatic /context at turn end', () => {
 		test('should queue /context after turn and parse response correctly', async () => {
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: process.cwd(),
 				title: 'Context Command Test',
 				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
@@ -124,7 +124,7 @@ describe('Context Command Online Tests', () => {
 		}, 60000);
 
 		test('should handle zero token usage (no k suffix)', async () => {
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: process.cwd(),
 				title: 'Zero Token Context Test',
 				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
@@ -164,7 +164,7 @@ describe('Context Command Online Tests', () => {
 
 	describe('Context info format compatibility', () => {
 		test('should parse both "Categories" and "Estimated usage by category" headers', async () => {
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: process.cwd(),
 				title: 'Context Format Test',
 				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
