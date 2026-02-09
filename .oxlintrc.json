@@ -3,7 +3,7 @@
 	"rules": {
 		"typescript/no-explicit-any": "error",
 		"eslint/no-unused-vars": "error",
-		"eslint/no-console": "warn"
+		"eslint/no-console": "error"
 	},
 	"ignorePatterns": [
 		"**/node_modules",
@@ -18,6 +18,10 @@
 		"**/*.config.ts",
 		"packages/shared/src/sdk/**",
 		"packages/shared/src/logger.ts",
+		"packages/shared/tests/logger.test.ts",
+		"**/setup.ts",
+		"**/global-setup.ts",
+		"**/global-teardown.ts",
 		"packages/cli/**",
 		"**/scripts/**",
 		"**/build.ts",
