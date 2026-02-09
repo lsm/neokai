@@ -18,7 +18,7 @@ import {
 describe('Message RPC Handlers', () => {
 	let handlers: Map<string, Function>;
 	let mockMessageHub: {
-		onQuery: ReturnType<typeof mock>;
+		onRequest: ReturnType<typeof mock>;
 	};
 	let mockSessionManager: {
 		getSessionAsync: ReturnType<typeof mock>;
@@ -29,7 +29,7 @@ describe('Message RPC Handlers', () => {
 	beforeAll(() => {
 		handlers = new Map();
 		mockMessageHub = {
-			onQuery: mock((method: string, handler: Function) => {
+			onRequest: mock((method: string, handler: Function) => {
 				handlers.set(method, handler);
 				return () => {}; // Return unsubscribe function
 			}),
@@ -208,7 +208,7 @@ describe('Message RPC Handlers (Integration)', () => {
 describe('Message RPC Handlers - Extended', () => {
 	let handlers: Map<string, Function>;
 	let mockMessageHub: {
-		onQuery: ReturnType<typeof mock>;
+		onRequest: ReturnType<typeof mock>;
 		onCommand: ReturnType<typeof mock>;
 		event: ReturnType<typeof mock>;
 		query: ReturnType<typeof mock>;
@@ -224,7 +224,7 @@ describe('Message RPC Handlers - Extended', () => {
 	beforeAll(() => {
 		handlers = new Map();
 		mockMessageHub = {
-			onQuery: mock((method: string, handler: Function) => {
+			onRequest: mock((method: string, handler: Function) => {
 				handlers.set(method, handler);
 				return () => {}; // Return unsubscribe function
 			}),
