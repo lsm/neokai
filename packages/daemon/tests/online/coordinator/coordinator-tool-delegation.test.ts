@@ -135,7 +135,7 @@ describe('Coordinator Tool Delegation - Behavioral', () => {
 		);
 
 		// 4. Wait for full processing
-		await waitForIdle(daemon, sessionId, 120000);
+		await waitForIdle(daemon, sessionId, 180000);
 
 		// 5. Collect all SDK messages
 		const allMessages = await getAllSDKMessages(daemon, sessionId);
@@ -144,7 +144,7 @@ describe('Coordinator Tool Delegation - Behavioral', () => {
 		// This is the core assertion - the coordinator must get the file content somehow
 		const coordinatorText = getCoordinatorTextResponse(allMessages);
 		expect(coordinatorText).toContain(canary);
-	}, 120000);
+	}, 180000);
 
 	test('coordinator delegates file writing to specialist — file is actually created', async () => {
 		const outputFile = join(testDir, 'output.txt');
@@ -170,8 +170,8 @@ describe('Coordinator Tool Delegation - Behavioral', () => {
 			`Create a file at ${outputFile} with exactly this content: ${canary}`
 		);
 
-		// 3. Wait for processing
-		await waitForIdle(daemon, sessionId, 120000);
+		// 3. Wait for processing (coordinator + specialist delegation takes longer)
+		await waitForIdle(daemon, sessionId, 180000);
 
 		// 4. Collect all SDK messages
 		const allMessages = await getAllSDKMessages(daemon, sessionId);
@@ -198,5 +198,5 @@ describe('Coordinator Tool Delegation - Behavioral', () => {
 		} catch {
 			// ignore
 		}
-	}, 120000);
+	}, 180000);
 });

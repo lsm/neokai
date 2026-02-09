@@ -55,14 +55,14 @@ async function waitForProcessingState(
 	return new Promise((resolve, reject) => {
 		let unsubscribe: (() => void) | undefined;
 		let resolved = false;
+		let poller: ReturnType<typeof setInterval> | undefined;
 
 		const cleanup = () => {
 			if (!resolved) {
 				resolved = true;
 				clearTimeout(timer);
+				if (poller) clearInterval(poller);
 				unsubscribe?.();
-				// Leave room (fire-and-forget)
-				daemon.messageHub.leaveRoom('session:' + sessionId);
 			}
 		};
 
@@ -74,7 +74,7 @@ async function waitForProcessingState(
 			);
 		}, timeout);
 
-		// Listen for state changes - returns unsubscribe function
+		// Subscribe to events FIRST to ensure no events are missed once room is joined
 		unsubscribe = daemon.messageHub.onEvent('state.session', (data: unknown) => {
 			if (resolved) return;
 			const state = data as { agentState?: { status: string } };
@@ -86,21 +86,40 @@ async function waitForProcessingState(
 			}
 		});
 
-		// Join the session room and wait for acknowledgment before continuing
-		// This ensures events are routed to this client
-		// Fire and forget - don't block on room join, and handle errors gracefully
-		daemon.messageHub.joinRoom('session:' + sessionId).catch(() => {
-			// Join failed, but continue - events might still work
-		});
-
-		// Double-check state after listener is set up
-		// in case the state changed between our initial check and listener setup
-		(async () => {
-			if (!resolved) {
+		// Polling fallback: re-check state periodically in case events are missed.
+		// This closes any remaining race windows regardless of event delivery.
+		poller = setInterval(async () => {
+			if (resolved) return;
+			try {
 				const state = await getProcessingState(daemon, sessionId);
 				if (state.status === targetStatus) {
 					cleanup();
 					resolve();
+				}
+			} catch {
+				// Ignore polling errors
+			}
+		}, 2000);
+
+		// Join room, then re-check state to close the primary race window.
+		// The re-check AFTER joinRoom ensures: if state changed before join completed,
+		// we catch it. If it changes after, the event handler catches it.
+		(async () => {
+			try {
+				await daemon.messageHub.joinRoom('session:' + sessionId);
+			} catch {
+				// Join failed, polling fallback will still work
+			}
+			// Re-check after room join completes
+			if (!resolved) {
+				try {
+					const state = await getProcessingState(daemon, sessionId);
+					if (state.status === targetStatus) {
+						cleanup();
+						resolve();
+					}
+				} catch {
+					// Ignore errors, polling will retry
 				}
 			}
 		})();
