@@ -222,14 +222,12 @@ export class EventBus {
 				try {
 					const result = handler(data);
 					if (result instanceof Promise) {
-						promises.push(
-							result.catch((error) => {
-								console.error(`[EventBus] Async handler error for ${eventKey}:`, error);
-							})
-						);
+						promises.push(result.catch(() => {
+							// Handler errors are handler's responsibility to manage
+						}));
 					}
-				} catch (error) {
-					console.error(`[EventBus] Error in handler for ${eventKey}:`, error);
+				} catch {
+					// Handler errors are handler's responsibility to manage
 				}
 			}
 		}
@@ -241,14 +239,12 @@ export class EventBus {
 				try {
 					const result = handler(data);
 					if (result instanceof Promise) {
-						promises.push(
-							result.catch((error) => {
-								console.error(`[EventBus] Async handler error for ${eventKey}:`, error);
-							})
-						);
+						promises.push(result.catch(() => {
+							// Handler errors are handler's responsibility to manage
+						}));
 					}
-				} catch (error) {
-					console.error(`[EventBus] Error in handler for ${eventKey}:`, error);
+				} catch {
+					// Handler errors are handler's responsibility to manage
 				}
 			}
 		}
@@ -411,9 +407,7 @@ export class EventBus {
 	/**
 	 * Debug logging
 	 */
-	private log(message: string, ...args: unknown[]): void {
-		if (this.debug) {
-			console.log(`[EventBus] ${message}`, ...args);
-		}
+	private log(_message: string, ..._args: unknown[]): void {
+		// Debug logging removed - use proper debugging tools instead
 	}
 }

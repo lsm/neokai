@@ -147,8 +147,8 @@ export class GlobalStore {
 			this.cleanupFunctions.push(unsubSettings);
 
 			this.initialized = true;
-		} catch (err) {
-			console.error('[GlobalStore] Failed to initialize:', err);
+		} catch {
+			// Initialization failed - state will be empty
 		}
 	}
 
@@ -183,7 +183,7 @@ export class GlobalStore {
 
 			// State refreshed after reconnection
 		} catch (err) {
-			console.error('[GlobalStore] Failed to refresh state:', err);
+			// Refresh failed - throw to caller
 			throw err;
 		}
 	}

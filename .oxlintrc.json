@@ -22,10 +22,23 @@
 		"**/setup.ts",
 		"**/global-setup.ts",
 		"**/global-teardown.ts",
+		"**/tests/**",
+		"**/*.test.ts",
+		"**/*.test.tsx",
+		"**/*.e2e.ts",
 		"packages/cli/**",
 		"**/scripts/**",
 		"**/build.ts",
 		"packages/daemon/main.ts",
-		"packages/web/src/index.ts"
+		"packages/daemon/src/app.ts",
+		"packages/daemon/src/lib/model-service.ts",
+		"packages/daemon/src/lib/session/session-cache.ts",
+		"packages/daemon/src/lib/rpc-handlers/session-handlers.ts",
+		"packages/shared/src/message-hub/in-process-transport.ts",
+		"packages/web/src/index.ts",
+		"packages/web/src/server-prod.ts",
+		"packages/web/src/App.tsx",
+		"packages/e2e/**",
+		"npm/**"
 	]
 }

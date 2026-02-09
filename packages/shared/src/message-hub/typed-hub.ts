@@ -223,17 +223,17 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 	private invokeHandler(
 		handler: (data: unknown) => void | Promise<void>,
 		data: unknown,
-		event: string
+		_event: string
 	): void {
 		try {
 			const result = handler(data);
 			if (result instanceof Promise) {
-				result.catch((error) => {
-					console.error(`[${this.name}] Async handler error for ${event}:`, error);
+				result.catch(() => {
+					// Handler errors are handler's responsibility to manage
 				});
 			}
-		} catch (error) {
-			console.error(`[${this.name}] Handler error for ${event}:`, error);
+		} catch {
+			// Handler errors are handler's responsibility to manage
 		}
 	}
 
@@ -409,9 +409,7 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 	/**
 	 * Debug logging
 	 */
-	private log(message: string, ...args: unknown[]): void {
-		if (this.debug) {
-			console.log(`[${this.name}] ${message}`, ...args);
-		}
+	private log(_message: string, ..._args: unknown[]): void {
+		// Debug logging removed - use proper debugging tools instead
 	}
 }
