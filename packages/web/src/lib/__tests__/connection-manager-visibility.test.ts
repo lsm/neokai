@@ -48,9 +48,12 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 	});
 
 	afterEach(() => {
-		if (originalAddEventListener) global.document.addEventListener = originalAddEventListener;
-		if (originalRemoveEventListener)
+		if (originalAddEventListener) {
+			global.document.addEventListener = originalAddEventListener;
+		}
+		if (originalRemoveEventListener) {
 			global.document.removeEventListener = originalRemoveEventListener;
+		}
 		visibilityChangeHandler = null;
 		pageHideHandler = null;
 	});
@@ -102,7 +105,6 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 
 			// Create mock MessageHub
 			mockMessageHub = {
-				request: vi.fn(() => Promise.resolve({ status: 'ok' })),
 				request: vi.fn(() => Promise.resolve({ status: 'ok' })),
 				forceResubscribe: vi.fn(() => {}),
 				isConnected: vi.fn(() => true),
@@ -281,7 +283,6 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 			};
 
 			mockMessageHub = {
-				request: vi.fn(() => Promise.reject(new Error('Health check failed'))),
 				request: vi.fn(() => Promise.reject(new Error('Health check failed'))),
 				forceResubscribe: vi.fn(() => {}),
 				isConnected: vi.fn(() => true),
