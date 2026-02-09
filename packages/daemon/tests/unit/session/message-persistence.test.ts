@@ -64,11 +64,7 @@ describe('MessagePersistence', () => {
 
 		// Mock MessageHub
 		mockMessageHub = {
-			event: mock(async () => {}),
-			onQuery: mock((_method: string, _handler: Function) => () => {}),
-			onCommand: mock((_method: string, _handler: Function) => () => {}),
-			query: mock(async () => ({})),
-			command: mock(async () => {}),
+			publish: mock(async () => {}),
 		} as unknown as MessageHub;
 
 		// Mock EventBus
@@ -89,7 +85,7 @@ describe('MessagePersistence', () => {
 
 			expect(mockSessionCache.getAsync).toHaveBeenCalledWith('test-session-id');
 			expect(mockDb.saveSDKMessage).toHaveBeenCalled();
-			expect(mockMessageHub.event).toHaveBeenCalled();
+			expect(mockMessageHub.publish).toHaveBeenCalled();
 			expect(mockEventBus.emit).toHaveBeenCalledWith(
 				'message.persisted',
 				expect.objectContaining({
@@ -201,13 +197,13 @@ describe('MessagePersistence', () => {
 				content: 'Hello',
 			});
 
-			expect(mockMessageHub.event).toHaveBeenCalledWith(
+			expect(mockMessageHub.publish).toHaveBeenCalledWith(
 				'state.sdkMessages.delta',
 				expect.objectContaining({
 					added: expect.any(Array),
 					timestamp: expect.any(Number),
 				}),
-				{ room: 'session:test-session-id' }
+				{ sessionId: 'test-session-id' }
 			);
 		});
 	});

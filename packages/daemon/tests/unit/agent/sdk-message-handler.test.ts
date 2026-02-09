@@ -83,11 +83,7 @@ describe('SDKMessageHandler', () => {
 		// MessageHub spies
 		publishSpy = mock(async () => {});
 		mockMessageHub = {
-			event: publishSpy,
-			onQuery: mock((_method: string, _handler: Function) => () => {}),
-			onCommand: mock((_method: string, _handler: Function) => () => {}),
-			query: mock(async () => ({})),
-			command: mock(async () => {}),
+			publish: publishSpy,
 		} as unknown as MessageHub;
 
 		// DaemonHub spies
@@ -219,7 +215,7 @@ describe('SDKMessageHandler', () => {
 					timestamp: expect.any(Number),
 					version: expect.any(Number),
 				}),
-				{ room: 'session:test-session-id' }
+				{ sessionId: 'test-session-id' }
 			);
 		});
 

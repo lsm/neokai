@@ -96,11 +96,7 @@ describe('Sandbox Default Configuration', () => {
 
 		// Message hub mocks
 		mockMessageHub = {
-			event: mock(async () => {}),
-			onQuery: mock((_method: string, _handler: Function) => () => {}),
-			onCommand: mock((_method: string, _handler: Function) => () => {}),
-			query: mock(async () => ({})),
-			command: mock(async () => {}),
+			publish: mock(async () => {}),
 		} as unknown as MessageHub;
 
 		// Tools config manager mocks

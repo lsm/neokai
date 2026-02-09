@@ -4,13 +4,15 @@
  * Client-side WebSocket transport without sessionId in URL
  */
 
-import type { IMessageTransport, ConnectionState, ConnectionStateHandler } from './types.ts';
+import type {
+	IMessageTransport,
+	ConnectionState,
+	ConnectionStateHandler,
+	UnsubscribeFn,
+} from './types.ts';
 import type { HubMessage } from './protocol.ts';
 import { generateUUID } from '../utils.ts';
 import { createLogger } from '../logger.ts';
-
-// Define UnsubscribeFn locally (removed from types.ts)
-type UnsubscribeFn = () => void;
 
 // Create logger for WebSocket transport (uses unified log levels)
 const log = createLogger('kai:transport:client');

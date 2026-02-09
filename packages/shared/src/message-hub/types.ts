@@ -22,41 +22,26 @@ export type TimeoutId = ReturnType<typeof setTimeout>;
 export type IntervalId = ReturnType<typeof setInterval>;
 
 /**
- * Command handler function
- * Handles fire-and-forget COMMAND messages
+ * Unsubscribe function returned by subscribe operations
  */
-export type CommandHandler<TData = unknown> = (
-	data: TData,
-	context: CallContext
-) => void | Promise<void>;
+export type UnsubscribeFn = () => void;
 
 /**
- * Query handler function
- * Handles QUERY messages and returns result
+ * RPC handler function
+ * Handles incoming CALL messages and returns result
  */
-export type QueryHandler<TData = unknown, TResult = unknown> = (
+export type RPCHandler<TData = unknown, TResult = unknown> = (
 	data: TData,
 	context: CallContext
-) => TResult | Promise<TResult>;
+) => Promise<TResult> | TResult;
 
 /**
- * Request handler function
- * Handles REQUEST messages and returns optional result
- * If handler returns void/undefined, auto-ACK is sent
- * If handler returns value, that becomes the response
+ * Event handler function
+ * Handles incoming EVENT messages
  */
-export type RequestHandler<TData = unknown, TResult = unknown> = (
+export type EventHandler<TData = unknown> = (
 	data: TData,
-	context: CallContext
-) => TResult | Promise<TResult> | void | Promise<void>;
-
-/**
- * Room event handler function
- * Handles room-scoped EVENT messages
- */
-export type RoomEventHandler<TData = unknown> = (
-	data: TData,
-	context: EventContext & { room?: string }
+	context: EventContext
 ) => void | Promise<void>;
 
 /**
@@ -131,29 +116,53 @@ export type ConnectionState =
 	| 'failed';
 
 /**
- * Options for query()
+ * Options for call()
  */
-export interface QueryOptions {
+export interface CallOptions {
 	/**
-	 * Query timeout in milliseconds
+	 * Override session ID
+	 */
+	sessionId?: string;
+
+	/**
+	 * RPC timeout in milliseconds
 	 * @default 10000
 	 */
 	timeout?: number;
-
-	/**
-	 * Optional room identifier
-	 */
-	room?: string;
 }
 
 /**
- * Options for event operations with room support
+ * Options for publish()
  */
-export interface EventOptions {
+export interface PublishOptions {
 	/**
-	 * Optional room identifier
+	 * Target session ID
+	 * If not specified, uses default session ID
 	 */
-	room?: string;
+	sessionId?: string;
+
+	/**
+	 * Whether to broadcast to all connected clients
+	 * @default true
+	 */
+	broadcast?: boolean;
+}
+
+/**
+ * Options for subscribe()
+ */
+export interface SubscribeOptions {
+	/**
+	 * Filter by session ID
+	 * If not specified, subscribes to all sessions
+	 */
+	sessionId?: string;
+
+	/**
+	 * Subscription timeout in milliseconds (deprecated, not used)
+	 * @deprecated This option is no longer used
+	 */
+	timeout?: number;
 }
 
 /**
@@ -310,18 +319,18 @@ export interface IMessageTransport {
 	/**
 	 * Register handler for incoming messages
 	 */
-	onMessage(handler: (message: HubMessage) => void): () => void;
+	onMessage(handler: (message: HubMessage) => void): UnsubscribeFn;
 
 	/**
 	 * Register handler for connection state changes
 	 */
-	onConnectionChange(handler: ConnectionStateHandler): () => void;
+	onConnectionChange(handler: ConnectionStateHandler): UnsubscribeFn;
 
 	/**
 	 * Register handler for client disconnect events (server-side only)
 	 * Used for per-client cleanup like sequence tracking
 	 */
-	onClientDisconnect?(handler: (clientId: string) => void): () => void;
+	onClientDisconnect?(handler: (clientId: string) => void): UnsubscribeFn;
 }
 
 /**
@@ -354,6 +363,75 @@ export interface PendingCall<TResult = unknown> {
 	 */
 	sessionId: string;
 }
+
+/**
+ * Pending subscription ACK tracker
+ * Used for reliable subscribe/unsubscribe operations
+ */
+export interface PendingSubscription {
+	/**
+	 * Promise resolve function
+	 */
+	resolve: (value: void) => void;
+
+	/**
+	 * Promise reject function
+	 */
+	reject: (error: Error) => void;
+
+	/**
+	 * Timeout timer
+	 */
+	timer: TimeoutId;
+
+	/**
+	 * Method/Event name
+	 */
+	method: string;
+
+	/**
+	 * Operation type
+	 */
+	type: 'subscribe' | 'unsubscribe';
+}
+
+/**
+ * Persisted subscription for auto-resubscription
+ * Stores subscription details to re-establish after reconnection
+ */
+export interface PersistedSubscription<TData = unknown> {
+	/**
+	 * Method/Event name
+	 */
+	method: string;
+
+	/**
+	 * Event handler function
+	 */
+	handler: EventHandler<TData>;
+
+	/**
+	 * Subscription options
+	 */
+	options: SubscribeOptions;
+
+	/**
+	 * Timestamp when subscription was created
+	 */
+	createdAt: number;
+}
+
+/**
+ * Type alias for method-level event handler collections
+ * Maps method names to sets of event handlers
+ */
+export type MethodHandlers = Map<string, Set<EventHandler>>;
+
+/**
+ * Type alias for session-level subscription collections
+ * Maps session IDs to method handler maps
+ */
+export type SessionSubscriptions = Map<string, MethodHandlers>;
 
 /**
  * Type alias for router-level client subscription tracking

@@ -12,19 +12,14 @@ import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 
 // Mock connection manager
 const mockHub = {
-	query: vi.fn(),
-	command: vi.fn(),
-	onEvent: vi.fn(() => vi.fn()),
-	joinRoom: vi.fn(),
-	leaveRoom: vi.fn(),
-	isConnected: vi.fn(() => true),
-	getHubIfConnected: vi.fn(() => mockHub),
+	subscribeOptimistic: vi.fn(() => vi.fn()),
+	subscribe: vi.fn(() => Promise.resolve(vi.fn())),
+	call: vi.fn(),
 };
 
 vi.mock('../connection-manager', () => ({
 	connectionManager: {
 		getHub: vi.fn(() => Promise.resolve(mockHub)),
-		getHubIfConnected: vi.fn(() => mockHub),
 	},
 }));
 
@@ -99,8 +94,8 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
 	describe('select() - session switching', () => {
 		it('should update activeSessionId when selecting session', async () => {
-			mockHub.query.mockResolvedValue({ sessionInfo: { id: 'session-1' } });
-			mockHub.onEvent.mockReturnValue(vi.fn());
+			mockHub.call.mockResolvedValue({ sessionInfo: { id: 'session-1' } });
+			mockHub.subscribeOptimistic.mockReturnValue(vi.fn());
 
 			await sessionStore.select('session-1');
 
@@ -109,11 +104,11 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
 		it('should clear state when selecting null', async () => {
 			// First select a session
-			mockHub.query.mockResolvedValue({
+			mockHub.call.mockResolvedValue({
 				sessionInfo: { id: 'session-1' },
 				sdkMessages: [],
 			});
-			mockHub.onEvent.mockReturnValue(vi.fn());
+			mockHub.subscribeOptimistic.mockReturnValue(vi.fn());
 
 			await sessionStore.select('session-1');
 
@@ -126,28 +121,28 @@ describe('SessionStore - Comprehensive Coverage', () => {
 		});
 
 		it('should skip selection if already on same session', async () => {
-			mockHub.query.mockResolvedValue({
+			mockHub.call.mockResolvedValue({
 				sessionInfo: { id: 'session-1' },
 				sdkMessages: [],
 			});
-			mockHub.onEvent.mockReturnValue(vi.fn());
+			mockHub.subscribeOptimistic.mockReturnValue(vi.fn());
 
 			await sessionStore.select('session-1');
-			const initialCallCount = mockHub.query.mock.calls.length;
+			const initialCallCount = mockHub.call.mock.calls.length;
 
 			// Select same session again
 			await sessionStore.select('session-1');
 
 			// Should not call hub again (early return in doSelect)
-			expect(mockHub.query.mock.calls.length).toBe(initialCallCount);
+			expect(mockHub.call.mock.calls.length).toBe(initialCallCount);
 		});
 
 		it('should handle rapid session switches via promise chain', async () => {
-			mockHub.query.mockResolvedValue({
+			mockHub.call.mockResolvedValue({
 				sessionInfo: { id: 'test' },
 				sdkMessages: [],
 			});
-			mockHub.onEvent.mockReturnValue(vi.fn());
+			mockHub.subscribeOptimistic.mockReturnValue(vi.fn());
 
 			// Rapidly switch sessions
 			const p1 = sessionStore.select('session-1');
@@ -169,13 +164,13 @@ describe('SessionStore - Comprehensive Coverage', () => {
 				commandsData: { availableCommands: ['/test', '/help'] },
 			};
 
-			mockHub.query.mockImplementation((channel) => {
+			mockHub.call.mockImplementation((channel) => {
 				if (channel === 'state.session') {
 					return Promise.resolve(mockSessionState);
 				}
 				return Promise.resolve({ sdkMessages: [] });
 			});
-			mockHub.onEvent.mockReturnValue(vi.fn());
+			mockHub.subscribeOptimistic.mockReturnValue(vi.fn());
 
 			await sessionStore.select('session-1');
 
@@ -188,13 +183,13 @@ describe('SessionStore - Comprehensive Coverage', () => {
 				{ uuid: 'msg-2', type: 'text', role: 'assistant', content: [{ type: 'text', text: 'Hi' }] },
 			];
 
-			mockHub.query.mockImplementation((channel) => {
+			mockHub.call.mockImplementation((channel) => {
 				if (channel === 'state.session') {
 					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
 				}
 				return Promise.resolve({ sdkMessages: mockMessages, timestamp: 1000 });
 			});
-			mockHub.onEvent.mockReturnValue(vi.fn());
+			mockHub.subscribeOptimistic.mockReturnValue(vi.fn());
 
 			await sessionStore.select('session-1');
 
@@ -220,7 +215,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 			(newerMessage as SDKMessage & { timestamp: number }).timestamp = 2000;
 
 			// Simulate newer message arriving via delta before fetch completes
-			mockHub.onEvent.mockImplementation((channel, callback) => {
+			mockHub.subscribeOptimistic.mockImplementation((channel, callback) => {
 				if (channel === 'state.sdkMessages.delta') {
 					// Simulate delta arriving immediately
 					setTimeout(() => {
@@ -230,7 +225,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 				return vi.fn();
 			});
 
-			mockHub.query.mockImplementation((channel) => {
+			mockHub.call.mockImplementation((channel) => {
 				if (channel === 'state.session') {
 					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
 				}
@@ -246,8 +241,8 @@ describe('SessionStore - Comprehensive Coverage', () => {
 		});
 
 		it('should handle fetch errors gracefully', async () => {
-			mockHub.query.mockRejectedValue(new Error('Fetch failed'));
-			mockHub.onEvent.mockReturnValue(vi.fn());
+			mockHub.call.mockRejectedValue(new Error('Fetch failed'));
+			mockHub.subscribeOptimistic.mockReturnValue(vi.fn());
 
 			// Should not throw, but log error
 			await expect(sessionStore.select('session-1')).resolves.not.toThrow();
@@ -445,13 +440,13 @@ describe('SessionStore - Comprehensive Coverage', () => {
 				{ uuid: 'msg-2', type: 'text', role: 'assistant', content: [{ type: 'text', text: 'Hi' }] },
 			];
 
-			mockHub.query.mockResolvedValue({
+			mockHub.call.mockResolvedValue({
 				sessionInfo: { id: 'session-1' },
 				sdkMessages: [],
 			});
 
 			let deltaCallback: ((delta: { added?: SDKMessage[] }) => void) | null = null;
-			mockHub.onEvent.mockImplementation((channel, callback) => {
+			mockHub.subscribeOptimistic.mockImplementation((channel, callback) => {
 				if (channel === 'state.sdkMessages.delta') {
 					deltaCallback = callback;
 				}
@@ -483,13 +478,13 @@ describe('SessionStore - Comprehensive Coverage', () => {
 				content: [{ type: 'text', text: 'Updated' }],
 			};
 
-			mockHub.query.mockResolvedValue({
+			mockHub.call.mockResolvedValue({
 				sessionInfo: { id: 'session-1' },
 				sdkMessages: [],
 			});
 
 			let deltaCallback: ((delta: { added?: SDKMessage[] }) => void) | null = null;
-			mockHub.onEvent.mockImplementation((channel, callback) => {
+			mockHub.subscribeOptimistic.mockImplementation((channel, callback) => {
 				if (channel === 'state.sdkMessages.delta') {
 					deltaCallback = callback;
 				}
@@ -514,13 +509,13 @@ describe('SessionStore - Comprehensive Coverage', () => {
 		});
 
 		it('should not add messages when delta has no added array', async () => {
-			mockHub.query.mockResolvedValue({
+			mockHub.call.mockResolvedValue({
 				sessionInfo: { id: 'session-1' },
 				sdkMessages: [],
 			});
 
 			let deltaCallback: ((delta: { added?: SDKMessage[] }) => void) | null = null;
-			mockHub.onEvent.mockImplementation((channel, callback) => {
+			mockHub.subscribeOptimistic.mockImplementation((channel, callback) => {
 				if (channel === 'state.sdkMessages.delta') {
 					deltaCallback = callback;
 				}
@@ -540,13 +535,13 @@ describe('SessionStore - Comprehensive Coverage', () => {
 		});
 
 		it('should not add messages when delta has empty added array', async () => {
-			mockHub.query.mockResolvedValue({
+			mockHub.call.mockResolvedValue({
 				sessionInfo: { id: 'session-1' },
 				sdkMessages: [],
 			});
 
 			let deltaCallback: ((delta: { added?: SDKMessage[] }) => void) | null = null;
-			mockHub.onEvent.mockImplementation((channel, callback) => {
+			mockHub.subscribeOptimistic.mockImplementation((channel, callback) => {
 				if (channel === 'state.sdkMessages.delta') {
 					deltaCallback = callback;
 				}
@@ -570,11 +565,11 @@ describe('SessionStore - Comprehensive Coverage', () => {
 		it('should sync slash commands on session state update', async () => {
 			const { slashCommandsSignal } = await import('../signals');
 
-			mockHub.query.mockResolvedValue({
+			mockHub.call.mockResolvedValue({
 				sessionInfo: { id: 'session-1' },
 				commandsData: { availableCommands: ['/cmd1', '/cmd2'] },
 			});
-			mockHub.onEvent.mockReturnValue(vi.fn());
+			mockHub.subscribeOptimistic.mockReturnValue(vi.fn());
 
 			await sessionStore.select('session-1');
 
@@ -585,16 +580,16 @@ describe('SessionStore - Comprehensive Coverage', () => {
 	describe('refresh()', () => {
 		it('should refresh current session state', async () => {
 			// First select a session
-			mockHub.query.mockResolvedValue({
+			mockHub.call.mockResolvedValue({
 				sessionInfo: { id: 'session-1', title: 'Original' },
 				sdkMessages: [],
 			});
-			mockHub.onEvent.mockReturnValue(vi.fn());
+			mockHub.subscribeOptimistic.mockReturnValue(vi.fn());
 
 			await sessionStore.select('session-1');
 
 			// Mock updated state
-			mockHub.query.mockResolvedValue({
+			mockHub.call.mockResolvedValue({
 				sessionInfo: { id: 'session-1', title: 'Updated' },
 				sdkMessages: [],
 			});
@@ -605,26 +600,26 @@ describe('SessionStore - Comprehensive Coverage', () => {
 		});
 
 		it('should return early when no active session', async () => {
-			mockHub.query.mockResolvedValue({ sessionInfo: { id: 'test' } });
+			mockHub.call.mockResolvedValue({ sessionInfo: { id: 'test' } });
 
 			await sessionStore.refresh();
 
 			// Should not call hub.call
-			expect(mockHub.query).not.toHaveBeenCalled();
+			expect(mockHub.call).not.toHaveBeenCalled();
 		});
 
 		it('should handle refresh errors gracefully', async () => {
 			// First select a session
-			mockHub.query.mockResolvedValue({
+			mockHub.call.mockResolvedValue({
 				sessionInfo: { id: 'session-1' },
 				sdkMessages: [],
 			});
-			mockHub.onEvent.mockReturnValue(vi.fn());
+			mockHub.subscribeOptimistic.mockReturnValue(vi.fn());
 
 			await sessionStore.select('session-1');
 
 			// Mock refresh error
-			mockHub.query.mockRejectedValue(new Error('Refresh failed'));
+			mockHub.call.mockRejectedValue(new Error('Refresh failed'));
 
 			// Should not throw
 			await expect(sessionStore.refresh()).resolves.not.toThrow();
@@ -683,7 +678,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
 	describe('getTotalMessageCount()', () => {
 		it('should return total message count from server', async () => {
-			mockHub.query.mockResolvedValue({ count: 42 });
+			mockHub.call.mockResolvedValue({ count: 42 });
 
 			await sessionStore.select('session-1');
 
@@ -699,7 +694,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 		});
 
 		it('should return 0 on error', async () => {
-			mockHub.query.mockRejectedValue(new Error('Failed'));
+			mockHub.call.mockRejectedValue(new Error('Failed'));
 
 			await sessionStore.select('session-1');
 
@@ -709,7 +704,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 		});
 
 		it('should return 0 when server returns null', async () => {
-			mockHub.query.mockResolvedValue(null);
+			mockHub.call.mockResolvedValue(null);
 
 			await sessionStore.select('session-1');
 
@@ -740,7 +735,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 					content: [{ type: 'text', text: `Message ${i}` }],
 				}));
 
-			mockHub.query.mockImplementation((method: string) => {
+			mockHub.call.mockImplementation((method: string) => {
 				if (method === 'state.session') {
 					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
 				}
@@ -765,7 +760,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 					content: [{ type: 'text', text: `Message ${i}` }],
 				}));
 
-			mockHub.query.mockImplementation((method: string) => {
+			mockHub.call.mockImplementation((method: string) => {
 				if (method === 'state.session') {
 					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
 				}
@@ -792,7 +787,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 					content: [{ type: 'text', text: `Message ${i}` }],
 				}));
 
-			mockHub.query.mockImplementation((method: string) => {
+			mockHub.call.mockImplementation((method: string) => {
 				if (method === 'state.session') {
 					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
 				}
@@ -808,7 +803,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 		});
 
 		it('should return false when no messages loaded', async () => {
-			mockHub.query.mockImplementation((method: string) => {
+			mockHub.call.mockImplementation((method: string) => {
 				if (method === 'state.session') {
 					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
 				}
@@ -830,7 +825,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 				{ uuid: 'msg-1', type: 'text', role: 'user', content: [{ type: 'text', text: 'Old' }] },
 			];
 
-			mockHub.query.mockResolvedValue({ sdkMessages: olderMessages });
+			mockHub.call.mockResolvedValue({ sdkMessages: olderMessages });
 
 			await sessionStore.select('session-1');
 
@@ -850,7 +845,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 					content: [{ type: 'text', text: `Message ${i}` }],
 				}));
 
-			mockHub.query.mockResolvedValue({ sdkMessages: messages });
+			mockHub.call.mockResolvedValue({ sdkMessages: messages });
 
 			await sessionStore.select('session-1');
 
@@ -867,7 +862,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 		});
 
 		it('should throw on error', async () => {
-			mockHub.query.mockRejectedValue(new Error('Failed to load'));
+			mockHub.call.mockRejectedValue(new Error('Failed to load'));
 
 			await sessionStore.select('session-1');
 
@@ -875,7 +870,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 		});
 
 		it('should return empty array when server returns null', async () => {
-			mockHub.query.mockResolvedValue(null);
+			mockHub.call.mockResolvedValue(null);
 
 			await sessionStore.select('session-1');
 
@@ -886,26 +881,26 @@ describe('SessionStore - Comprehensive Coverage', () => {
 		});
 
 		it('should use default limit of 100', async () => {
-			mockHub.query.mockResolvedValue({ sdkMessages: [] });
+			mockHub.call.mockResolvedValue({ sdkMessages: [] });
 
 			await sessionStore.select('session-1');
 
 			await sessionStore.loadOlderMessages(Date.now());
 
-			expect(mockHub.query).toHaveBeenCalledWith(
+			expect(mockHub.call).toHaveBeenCalledWith(
 				'message.sdkMessages',
 				expect.objectContaining({ limit: 100 })
 			);
 		});
 
 		it('should use custom limit when provided', async () => {
-			mockHub.query.mockResolvedValue({ sdkMessages: [] });
+			mockHub.call.mockResolvedValue({ sdkMessages: [] });
 
 			await sessionStore.select('session-1');
 
 			await sessionStore.loadOlderMessages(Date.now(), 50);
 
-			expect(mockHub.query).toHaveBeenCalledWith(
+			expect(mockHub.call).toHaveBeenCalledWith(
 				'message.sdkMessages',
 				expect.objectContaining({ limit: 50 })
 			);
@@ -920,14 +915,14 @@ describe('SessionStore - Comprehensive Coverage', () => {
 		it('should show toast for NEW errors that occurred after session switch', async () => {
 			const { toast } = await import('../toast');
 
-			mockHub.query.mockResolvedValue({
+			mockHub.call.mockResolvedValue({
 				sessionInfo: { id: 'session-1' },
 				sdkMessages: [],
 			});
 
 			let sessionStateCallback: ((state: import('@neokai/shared').SessionState) => void) | null =
 				null;
-			mockHub.onEvent.mockImplementation((channel, callback) => {
+			mockHub.subscribeOptimistic.mockImplementation((channel, callback) => {
 				if (channel === 'state.session') {
 					sessionStateCallback = callback;
 				}
@@ -957,14 +952,14 @@ describe('SessionStore - Comprehensive Coverage', () => {
 			const { toast } = await import('../toast');
 			vi.mocked(toast.error).mockClear();
 
-			mockHub.query.mockResolvedValue({
+			mockHub.call.mockResolvedValue({
 				sessionInfo: { id: 'session-1' },
 				sdkMessages: [],
 			});
 
 			let sessionStateCallback: ((state: import('@neokai/shared').SessionState) => void) | null =
 				null;
-			mockHub.onEvent.mockImplementation((channel, callback) => {
+			mockHub.subscribeOptimistic.mockImplementation((channel, callback) => {
 				if (channel === 'state.session') {
 					sessionStateCallback = callback;
 				}
@@ -993,14 +988,14 @@ describe('SessionStore - Comprehensive Coverage', () => {
 		it('should sync slash commands from session state callback', async () => {
 			const { slashCommandsSignal } = await import('../signals');
 
-			mockHub.query.mockResolvedValue({
+			mockHub.call.mockResolvedValue({
 				sessionInfo: { id: 'session-1' },
 				sdkMessages: [],
 			});
 
 			let sessionStateCallback: ((state: import('@neokai/shared').SessionState) => void) | null =
 				null;
-			mockHub.onEvent.mockImplementation((channel, callback) => {
+			mockHub.subscribeOptimistic.mockImplementation((channel, callback) => {
 				if (channel === 'state.session') {
 					sessionStateCallback = callback;
 				}
@@ -1054,14 +1049,14 @@ describe('SessionStore - Comprehensive Coverage', () => {
 			(deltaMessage as SDKMessage & { timestamp: number }).timestamp = 2000;
 
 			let deltaCallback: ((delta: { added?: SDKMessage[] }) => void) | null = null;
-			mockHub.onEvent.mockImplementation((channel, callback) => {
+			mockHub.subscribeOptimistic.mockImplementation((channel, callback) => {
 				if (channel === 'state.sdkMessages.delta') {
 					deltaCallback = callback;
 				}
 				return vi.fn();
 			});
 
-			mockHub.query.mockImplementation((channel) => {
+			mockHub.call.mockImplementation((channel) => {
 				if (channel === 'state.session') {
 					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
 				}
@@ -1093,14 +1088,14 @@ describe('SessionStore - Comprehensive Coverage', () => {
 				{ uuid: 'msg-1', type: 'text', role: 'user', content: [{ type: 'text', text: 'Test' }] },
 			];
 
-			mockHub.query.mockImplementation((channel) => {
+			mockHub.call.mockImplementation((channel) => {
 				if (channel === 'state.session') {
 					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
 				}
 				// No timestamp in response
 				return Promise.resolve({ sdkMessages: snapshotMessages });
 			});
-			mockHub.onEvent.mockReturnValue(vi.fn());
+			mockHub.subscribeOptimistic.mockReturnValue(vi.fn());
 
 			await sessionStore.select('session-1');
 
@@ -1112,13 +1107,13 @@ describe('SessionStore - Comprehensive Coverage', () => {
 				{ uuid: 'msg-1', type: 'text', role: 'user', content: [{ type: 'text', text: 'Test' }] },
 			];
 
-			mockHub.query.mockImplementation((channel) => {
+			mockHub.call.mockImplementation((channel) => {
 				if (channel === 'state.session') {
 					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
 				}
 				return Promise.resolve({ sdkMessages: snapshotMessages, timestamp: 1000 });
 			});
-			mockHub.onEvent.mockReturnValue(vi.fn());
+			mockHub.subscribeOptimistic.mockReturnValue(vi.fn());
 
 			// Clear messages before select
 			sessionStore.sdkMessages.value = [];
@@ -1145,14 +1140,14 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
 			// Set up delta callback
 			let deltaCallback: ((delta: { added?: SDKMessage[] }) => void) | null = null;
-			mockHub.onEvent.mockImplementation((channel, callback) => {
+			mockHub.subscribeOptimistic.mockImplementation((channel, callback) => {
 				if (channel === 'state.sdkMessages.delta') {
 					deltaCallback = callback;
 				}
 				return vi.fn();
 			});
 
-			mockHub.query.mockImplementation((channel) => {
+			mockHub.call.mockImplementation((channel) => {
 				if (channel === 'state.session') {
 					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
 				}
@@ -1213,7 +1208,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 			(newerDeltaMsg as SDKMessage & { timestamp: number }).timestamp = 1600; // After snapshotTimestamp
 
 			// Trigger delta IMMEDIATELY when subscription is set up (before fetch completes)
-			mockHub.onEvent.mockImplementation((channel, callback) => {
+			mockHub.subscribeOptimistic.mockImplementation((channel, callback) => {
 				if (channel === 'state.sdkMessages.delta') {
 					// Trigger delta immediately when subscription starts
 					setTimeout(() => {
@@ -1223,7 +1218,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 				return vi.fn();
 			});
 
-			mockHub.query.mockImplementation((channel) => {
+			mockHub.call.mockImplementation((channel) => {
 				if (channel === 'state.session') {
 					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
 				}
@@ -1271,7 +1266,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 			(snapshotMsg as SDKMessage & { timestamp: number }).timestamp = 1200;
 
 			// Trigger delta IMMEDIATELY when subscription is set up (before fetch completes)
-			mockHub.onEvent.mockImplementation((channel, callback) => {
+			mockHub.subscribeOptimistic.mockImplementation((channel, callback) => {
 				if (channel === 'state.sdkMessages.delta') {
 					// Trigger delta immediately when subscription starts
 					setTimeout(() => {
@@ -1281,7 +1276,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 				return vi.fn();
 			});
 
-			mockHub.query.mockImplementation((channel) => {
+			mockHub.call.mockImplementation((channel) => {
 				if (channel === 'state.session') {
 					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
 				}
@@ -1324,7 +1319,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 			(deltaMsg as SDKMessage & { timestamp: number }).timestamp = 1600;
 
 			// Trigger delta IMMEDIATELY when subscription is set up (before fetch completes)
-			mockHub.onEvent.mockImplementation((channel, callback) => {
+			mockHub.subscribeOptimistic.mockImplementation((channel, callback) => {
 				if (channel === 'state.sdkMessages.delta') {
 					setTimeout(() => {
 						callback({ added: [deltaMsg] });
@@ -1333,7 +1328,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 				return vi.fn();
 			});
 
-			mockHub.query.mockImplementation((channel) => {
+			mockHub.call.mockImplementation((channel) => {
 				if (channel === 'state.session') {
 					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
 				}
@@ -1382,7 +1377,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 			};
 			(newerMsgWithUuid as SDKMessage & { timestamp: number }).timestamp = 1700;
 
-			mockHub.onEvent.mockImplementation((channel, callback) => {
+			mockHub.subscribeOptimistic.mockImplementation((channel, callback) => {
 				if (channel === 'state.sdkMessages.delta') {
 					setTimeout(() => {
 						callback({ added: [newerMsgNoUuid, newerMsgWithUuid] });
@@ -1391,7 +1386,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 				return vi.fn();
 			});
 
-			mockHub.query.mockImplementation((channel) => {
+			mockHub.call.mockImplementation((channel) => {
 				if (channel === 'state.session') {
 					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
 				}
@@ -1442,7 +1437,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 			};
 			(newerMsg as SDKMessage & { timestamp: number }).timestamp = 1600;
 
-			mockHub.onEvent.mockImplementation((channel, callback) => {
+			mockHub.subscribeOptimistic.mockImplementation((channel, callback) => {
 				if (channel === 'state.sdkMessages.delta') {
 					setTimeout(() => {
 						// Add both - one without timestamp, one with
@@ -1452,7 +1447,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 				return vi.fn();
 			});
 
-			mockHub.query.mockImplementation((channel) => {
+			mockHub.call.mockImplementation((channel) => {
 				if (channel === 'state.session') {
 					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
 				}
@@ -1504,7 +1499,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 			(newerMsg as SDKMessage & { timestamp: number }).timestamp = 1600;
 
 			// Trigger delta IMMEDIATELY when subscription is set up (before fetch completes)
-			mockHub.onEvent.mockImplementation((channel, callback) => {
+			mockHub.subscribeOptimistic.mockImplementation((channel, callback) => {
 				if (channel === 'state.sdkMessages.delta') {
 					setTimeout(() => {
 						callback({ added: [newerMsg] });
@@ -1513,7 +1508,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 				return vi.fn();
 			});
 
-			mockHub.query.mockImplementation((channel) => {
+			mockHub.call.mockImplementation((channel) => {
 				if (channel === 'state.session') {
 					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
 				}
@@ -1572,7 +1567,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 			};
 			(newerMsg as SDKMessage & { timestamp: number }).timestamp = 1600;
 
-			mockHub.onEvent.mockImplementation((channel, callback) => {
+			mockHub.subscribeOptimistic.mockImplementation((channel, callback) => {
 				if (channel === 'state.sdkMessages.delta') {
 					setTimeout(() => {
 						callback({ added: [newerMsg] });
@@ -1581,7 +1576,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 				return vi.fn();
 			});
 
-			mockHub.query.mockImplementation((channel) => {
+			mockHub.call.mockImplementation((channel) => {
 				if (channel === 'state.session') {
 					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
 				}
@@ -1615,19 +1610,19 @@ describe('SessionStore - Comprehensive Coverage', () => {
 	describe('stopSubscriptions warning log', () => {
 		it('should log warning when cleanup throws', async () => {
 			// Set up a cleanup function that throws
-			mockHub.query.mockResolvedValue({
+			mockHub.call.mockResolvedValue({
 				sessionInfo: { id: 'session-1' },
 				sdkMessages: [],
 			});
 
-			mockHub.onEvent.mockReturnValue(() => {
+			mockHub.subscribeOptimistic.mockReturnValue(() => {
 				throw new Error('Cleanup error');
 			});
 
 			await sessionStore.select('session-1');
 
 			// Select another session to trigger cleanup
-			mockHub.onEvent.mockReturnValue(vi.fn()); // Reset for next session
+			mockHub.subscribeOptimistic.mockReturnValue(vi.fn()); // Reset for next session
 			await sessionStore.select('session-2');
 
 			// Should not throw even though cleanup throws
@@ -1637,16 +1632,16 @@ describe('SessionStore - Comprehensive Coverage', () => {
 	describe('refresh error logging', () => {
 		it('should log error when refresh fails', async () => {
 			// First select a session
-			mockHub.query.mockResolvedValue({
+			mockHub.call.mockResolvedValue({
 				sessionInfo: { id: 'session-1' },
 				sdkMessages: [],
 			});
-			mockHub.onEvent.mockReturnValue(vi.fn());
+			mockHub.subscribeOptimistic.mockReturnValue(vi.fn());
 
 			await sessionStore.select('session-1');
 
 			// Make refresh fail
-			mockHub.query.mockRejectedValue(new Error('Refresh network error'));
+			mockHub.call.mockRejectedValue(new Error('Refresh network error'));
 
 			await sessionStore.refresh();
 
@@ -1655,11 +1650,11 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
 		it('should catch error when getHub fails during refresh', async () => {
 			// First select a session
-			mockHub.query.mockResolvedValue({
+			mockHub.call.mockResolvedValue({
 				sessionInfo: { id: 'session-1' },
 				sdkMessages: [],
 			});
-			mockHub.onEvent.mockReturnValue(vi.fn());
+			mockHub.subscribeOptimistic.mockReturnValue(vi.fn());
 
 			await sessionStore.select('session-1');
 

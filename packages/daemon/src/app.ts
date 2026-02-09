@@ -6,6 +6,7 @@ import { SessionManager } from './lib/session-manager';
 import { AuthManager } from './lib/auth-manager';
 import { SettingsManager } from './lib/settings-manager';
 import { StateManager } from './lib/state-manager';
+import { SubscriptionManager } from './lib/subscription-manager';
 import { MessageHub, MessageHubRouter } from '@neokai/shared';
 import { createDaemonHub } from './lib/daemon-hub';
 import { setupRPCHandlers } from './lib/rpc-handlers';
@@ -36,6 +37,7 @@ export interface DaemonAppContext {
 	authManager: AuthManager;
 	settingsManager: SettingsManager;
 	stateManager: StateManager;
+	subscriptionManager: SubscriptionManager;
 	transport: WebSocketServerTransport;
 	/**
 	 * Cleanup function for graceful shutdown.
@@ -91,6 +93,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const router = new MessageHubRouter({
 		logger: console,
 		debug: config.nodeEnv === 'development',
+		// Rate limit: Allow burst of subscriptions on connection
+		// Development/Production: 50 ops/sec (18 subscriptions on connect + overhead)
+		// E2E tests: 100 ops/sec (7 parallel workers connecting simultaneously)
+		subscriptionRateLimit: config.nodeEnv === 'test' ? 100 : 50,
 	});
 
 	// 2. Initialize MessageHub (protocol layer)
@@ -152,8 +158,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		db,
 	});
 
+	// Initialize Subscription Manager (application layer)
+	const subscriptionManager = new SubscriptionManager(messageHub);
+
 	// Create WebSocket handlers
-	const wsHandlers = createWebSocketHandlers(transport, sessionManager);
+	const wsHandlers = createWebSocketHandlers(transport, sessionManager, subscriptionManager);
 
 	// Create Bun server with native WebSocket support
 	const server = Bun.serve({
@@ -309,6 +318,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		authManager,
 		settingsManager,
 		stateManager,
+		subscriptionManager,
 		transport,
 		cleanup,
 	};

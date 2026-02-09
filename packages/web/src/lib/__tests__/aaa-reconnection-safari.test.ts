@@ -27,13 +27,12 @@ describe('Safari Background Tab - Integration Tests', () => {
 			const connectionHandlers: Array<(state: string) => void> = [];
 
 			mockHub = {
-				query: vi.fn(async () => ({
+				call: vi.fn(async () => ({
 					data: 'test',
 					timestamp: Date.now(),
 				})) as unknown,
 				subscribe: vi.fn(async () => vi.fn(() => Promise.resolve())),
 				subscribeOptimistic: vi.fn(() => vi.fn(() => {})),
-				onEvent: vi.fn(() => vi.fn(() => {})),
 				onConnection: vi.fn((handler: (state: string) => void) => {
 					connectionHandlers.push(handler);
 					reconnectionHandler = handler;
@@ -41,8 +40,6 @@ describe('Safari Background Tab - Integration Tests', () => {
 				}),
 				publish: vi.fn(async () => {}),
 				isConnected: vi.fn(() => true),
-				joinRoom: vi.fn(() => {}),
-				leaveRoom: vi.fn(() => {}),
 			} as unknown as MessageHub;
 
 			stateChannel = new StateChannel(mockHub, 'test.channel', {
@@ -68,19 +65,19 @@ describe('Safari Background Tab - Integration Tests', () => {
 			await new Promise((resolve) => setTimeout(resolve, 50));
 
 			// Verify snapshot was fetched (hybridRefresh calls fetchSnapshot)
-			// After migration, query() is called with 2 args: (method, data, options merged)
-			expect(mockHub.query).toHaveBeenCalledWith(
+			expect(mockHub.call).toHaveBeenCalledWith(
 				'test.channel',
-				expect.objectContaining({ sessionId: expect.any(String) })
+				expect.any(Object),
+				expect.any(Object)
 			);
 		});
 
 		it('should use server timestamp from snapshot', async () => {
 			const serverTime = Date.now() - 5000; // 5 seconds ago
-			mockHub.query = vi.fn(async () => ({
+			mockHub.call = vi.fn(async () => ({
 				data: 'test',
 				timestamp: serverTime,
-			})) as unknown as typeof mockHub.query;
+			})) as unknown as typeof mockHub.call;
 
 			await stateChannel.start();
 
@@ -92,7 +89,7 @@ describe('Safari Background Tab - Integration Tests', () => {
 			await stateChannel.start();
 
 			// Count calls before reconnection
-			const callsBefore = (mockHub.query as ReturnType<typeof mock>).mock.calls.length;
+			const callsBefore = (mockHub.call as ReturnType<typeof mock>).mock.calls.length;
 
 			// Trigger reconnection
 			reconnectionHandler?.('connected');
@@ -100,7 +97,7 @@ describe('Safari Background Tab - Integration Tests', () => {
 			await new Promise((resolve) => setTimeout(resolve, 50));
 
 			// Verify fetchSnapshot was called again during reconnection
-			const calls = (mockHub.query as ReturnType<typeof mock>).mock.calls;
+			const calls = (mockHub.call as ReturnType<typeof mock>).mock.calls;
 			expect(calls.length).toBeGreaterThan(callsBefore);
 
 			// Check the call made during reconnection (after the initial start)
@@ -122,7 +119,7 @@ describe('Safari Background Tab - Integration Tests', () => {
 
 		beforeEach(() => {
 			mockHub = {
-				query: vi.fn(async (channel: string) => {
+				call: vi.fn(async (channel: string) => {
 					if (channel === 'state.global.snapshot') {
 						return {
 							sessions: {
@@ -136,9 +133,6 @@ describe('Safari Background Tab - Integration Tests', () => {
 					return {};
 				}),
 				subscribeOptimistic: vi.fn(() => vi.fn(() => {})),
-				onEvent: vi.fn(() => vi.fn(() => {})),
-				joinRoom: vi.fn(() => {}),
-				leaveRoom: vi.fn(() => {}),
 			} as unknown as MessageHub;
 
 			// Mock connectionManager.getHub() to return our mock hub
@@ -188,14 +182,14 @@ describe('Safari Background Tab - Integration Tests', () => {
 			await globalStore.initialize();
 
 			// Then set up mock to reject for refresh() call
-			mockHub.query = vi.fn(() => Promise.reject(new Error('Network error')));
+			mockHub.call = vi.fn(() => Promise.reject(new Error('Network error')));
 
 			// Should throw the network error
 			await expect(globalStore.refresh()).rejects.toThrow('Network error');
 		});
 
 		it('should skip refresh if not initialized', async () => {
-			const callSpy = mockHub.query;
+			const callSpy = mockHub.call;
 
 			// Don't initialize
 			await globalStore.refresh();
@@ -236,7 +230,7 @@ describe('Safari Background Tab - Integration Tests', () => {
 
 			// Mock MessageHub with tracking
 			mockMessageHub = {
-				query: vi.fn(async (method: string) => {
+				call: vi.fn(async (method: string) => {
 					if (method === 'system.health') {
 						return { status: 'ok' };
 					}
@@ -249,11 +243,13 @@ describe('Safari Background Tab - Integration Tests', () => {
 					}
 					return {};
 				}),
-				joinRoom: vi.fn(() => {
-					subscriptionCalls.push('joinRoom');
+				forceResubscribe: vi.fn(() => {
+					subscriptionCalls.push('forceResubscribe');
+				}),
+				resubscribeAll: vi.fn(() => {
+					subscriptionCalls.push('resubscribeAll');
 				}),
 				isConnected: vi.fn(() => true),
-				leaveRoom: vi.fn(() => {}),
 			};
 
 			connectionManager = new ConnectionManager();
@@ -271,16 +267,16 @@ describe('Safari Background Tab - Integration Tests', () => {
 			const executionOrder: string[] = [];
 
 			// Spy on key methods
-			mockMessageHub.query = vi.fn(async (method: string) => {
-				executionOrder.push(`query:${method}`);
+			mockMessageHub.call = vi.fn(async (method: string) => {
+				executionOrder.push(`call:${method}`);
 				if (method === 'system.health') {
 					return { status: 'ok' };
 				}
 				return {};
 			});
 
-			mockMessageHub.joinRoom = vi.fn((room: string) => {
-				executionOrder.push(`joinRoom:${room}`);
+			mockMessageHub.forceResubscribe = vi.fn(() => {
+				executionOrder.push('forceResubscribe');
 			});
 
 			// Trigger visibility change (which calls validateConnectionOnResume)
@@ -298,19 +294,19 @@ describe('Safari Background Tab - Integration Tests', () => {
 
 			// Verify basic order:
 			// 1. Health check happens first
-			// 2. joinRoom happens after health check
-			expect(executionOrder[0]).toBe('query:system.health');
-			expect(executionOrder).toContain('joinRoom:global');
+			// 2. Force resubscribe happens after health check
+			expect(executionOrder[0]).toBe('call:system.health');
+			expect(executionOrder).toContain('forceResubscribe');
 
-			// Verify joinRoom comes after health check
-			const healthIndex = executionOrder.indexOf('query:system.health');
-			const joinRoomIndex = executionOrder.indexOf('joinRoom:global');
-			expect(joinRoomIndex).toBeGreaterThan(healthIndex);
+			// Verify forceResubscribe comes after health check
+			const healthIndex = executionOrder.indexOf('call:system.health');
+			const resubscribeIndex = executionOrder.indexOf('forceResubscribe');
+			expect(resubscribeIndex).toBeGreaterThan(healthIndex);
 		});
 
-		it('should call joinRoom even when health check succeeds', async () => {
+		it('should call forceResubscribe even when health check succeeds', async () => {
 			// This is the critical fix - resubscribe even when connection appears healthy
-			mockMessageHub.query = vi.fn(async () => ({ status: 'ok' }));
+			mockMessageHub.call = vi.fn(async () => ({ status: 'ok' }));
 
 			Object.defineProperty(document, 'hidden', {
 				value: false,
@@ -323,13 +319,11 @@ describe('Safari Background Tab - Integration Tests', () => {
 
 			await new Promise((resolve) => setTimeout(resolve, 150));
 
-			expect(mockMessageHub.joinRoom).toHaveBeenCalled();
+			expect(mockMessageHub.forceResubscribe).toHaveBeenCalled();
 		});
 
-		it('should NOT call joinRoom when health check fails', async () => {
-			// Clear previous joinRoom calls from setup
-			vi.clearAllMocks();
-			mockMessageHub.query = vi.fn(() => Promise.reject(new Error('Health check failed')));
+		it('should NOT call forceResubscribe when health check fails', async () => {
+			mockMessageHub.call = vi.fn(() => Promise.reject(new Error('Health check failed')));
 
 			Object.defineProperty(document, 'hidden', {
 				value: false,
@@ -343,7 +337,7 @@ describe('Safari Background Tab - Integration Tests', () => {
 			await new Promise((resolve) => setTimeout(resolve, 150));
 
 			// Should call forceReconnect instead
-			expect(mockMessageHub.joinRoom).not.toHaveBeenCalled();
+			expect(mockMessageHub.forceResubscribe).not.toHaveBeenCalled();
 			expect(mockTransport.forceReconnect).toHaveBeenCalled();
 		});
 	});
@@ -394,7 +388,7 @@ describe('Safari Background Tab - Integration Tests', () => {
 
 			// Simulate StateChannel using server timestamp
 			const mockHub = {
-				query: vi.fn(async () => ({ data: 'test', timestamp: serverTime })),
+				call: vi.fn(async () => ({ data: 'test', timestamp: serverTime })),
 			} as unknown as MessageHub;
 
 			const _channel = new StateChannel(mockHub, 'test', {});

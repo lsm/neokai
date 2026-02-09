@@ -200,10 +200,10 @@ export class QueryLifecycleManager {
 			}
 
 			// Post-restart: Notify clients
-			messageHub.event(
+			await messageHub.publish(
 				'session.reset',
 				{ message: 'Agent has been reset and is ready for new messages' },
-				{ room: `session:${session.id}` }
+				{ sessionId: session.id }
 			);
 
 			return { success: true };

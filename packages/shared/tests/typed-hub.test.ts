@@ -302,12 +302,8 @@ describe('TypedHub', () => {
 			const messageHub = hub.getMessageHub();
 			expect(messageHub).toBeDefined();
 			// Can use MessageHub for RPC if needed
-			expect(typeof messageHub.query).toBe('function');
-			expect(typeof messageHub.onQuery).toBe('function');
-			expect(typeof messageHub.command).toBe('function');
-			expect(typeof messageHub.onCommand).toBe('function');
-			expect(typeof messageHub.event).toBe('function');
-			expect(typeof messageHub.onEvent).toBe('function');
+			expect(typeof messageHub.call).toBe('function');
+			expect(typeof messageHub.handle).toBe('function');
 		});
 
 		it('should provide access to underlying bus', () => {

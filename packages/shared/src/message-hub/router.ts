@@ -17,9 +17,10 @@
  * - Decoupled from WebSocket specifics
  */
 
+// import { generateUUID } from '../utils.ts';
 import type { HubMessage } from './protocol.ts';
 import { isEventMessage } from './protocol.ts';
-import { RoomManager } from './room-manager.ts';
+import type { RouterSubscriptions } from './types.ts';
 
 /**
  * Abstract connection interface
@@ -53,6 +54,27 @@ export interface RouterLogger {
 export interface MessageHubRouterOptions {
 	logger?: RouterLogger;
 	debug?: boolean;
+	/**
+	 * Maximum subscriptions per client (prevents subscription bombing)
+	 * @default 1000
+	 */
+	maxSubscriptionsPerClient?: number;
+	/**
+	 * FIX P2.4: Rate limit for subscribe/unsubscribe operations (per client)
+	 * Using token bucket: max operations per second
+	 * @default 50 operations/sec
+	 */
+	subscriptionRateLimit?: number;
+}
+
+/**
+ * FIX P2.4: Token bucket for rate limiting
+ */
+interface TokenBucket {
+	tokens: number;
+	lastRefill: number;
+	capacity: number;
+	refillRate: number; // tokens per second
 }
 
 /**
@@ -62,6 +84,8 @@ interface ClientInfo {
 	clientId: string;
 	connection: ClientConnection;
 	connectedAt: number;
+	subscriptions: Map<string, Set<string>>; // Map<sessionId, Set<method>>
+	rateLimitBucket?: TokenBucket; // FIX P2.4: Rate limiting
 }
 
 /**
@@ -80,19 +104,23 @@ export interface RouteResult {
  *
  * Responsibilities:
  * - Route messages by sessionId
- * - Manage room-based event routing
- * - Broadcast events to clients in rooms
+ * - Manage client subscriptions
+ * - Broadcast events to subscribed clients
  */
 export class MessageHubRouter {
 	private clients: Map<string, ClientInfo> = new Map(); // Now keyed by clientId
-	private roomManager: RoomManager = new RoomManager();
+	private subscriptions: RouterSubscriptions = new Map();
 
 	private logger: RouterLogger;
 	private debug: boolean;
+	private readonly maxSubscriptionsPerClient: number;
+	private readonly subscriptionRateLimit: number; // FIX P2.4
 
 	constructor(options: MessageHubRouterOptions = {}) {
 		this.logger = options.logger || console;
 		this.debug = options.debug || false;
+		this.maxSubscriptionsPerClient = options.maxSubscriptionsPerClient || 1000;
+		this.subscriptionRateLimit = options.subscriptionRateLimit || 50; // FIX P2.4: 50 ops/sec default
 	}
 
 	/**
@@ -111,11 +139,20 @@ export class MessageHubRouter {
 			clientId: connection.id,
 			connection,
 			connectedAt: Date.now(),
+			subscriptions: new Map(),
+			// FIX P2.4: Initialize rate limit bucket
+			rateLimitBucket:
+				this.subscriptionRateLimit > 0
+					? {
+							tokens: this.subscriptionRateLimit,
+							lastRefill: Date.now(),
+							capacity: this.subscriptionRateLimit,
+							refillRate: this.subscriptionRateLimit,
+						}
+					: undefined,
 		};
 
 		this.clients.set(connection.id, info);
-		// Auto-join global room
-		this.roomManager.joinRoom(connection.id, 'global');
 		this.log(`Client registered: ${connection.id}`);
 
 		return connection.id;
@@ -123,7 +160,7 @@ export class MessageHubRouter {
 
 	/**
 	 * Unregister a client by clientId
-	 * Cleans up room memberships
+	 * Cleans up all subscriptions
 	 */
 	unregisterConnection(clientId: string): void {
 		const info = this.clients.get(clientId);
@@ -131,16 +168,204 @@ export class MessageHubRouter {
 			return;
 		}
 
-		// Clean up room membership
-		this.roomManager.removeClient(clientId);
+		// Remove all subscriptions for this client
+		for (const [sessionId, methods] of info.subscriptions.entries()) {
+			for (const method of methods) {
+				this.unsubscribeClient(sessionId, method, info.clientId);
+			}
+		}
 
 		this.clients.delete(clientId);
 		this.log(`Client unregistered: ${info.clientId}`);
 	}
 
 	/**
-	 * Route an EVENT message to room members (legacy method, delegates to routeEventToRoom)
+	 * FIX P2.4: Check and consume rate limit token
+	 * Returns true if operation allowed, false if rate limit exceeded
+	 */
+	private checkRateLimit(clientId: string): boolean {
+		const client = this.getClientById(clientId);
+		if (!client || !client.rateLimitBucket) {
+			return true; // No rate limiting enabled
+		}
+
+		const bucket = client.rateLimitBucket;
+		const now = Date.now();
+		const elapsed = (now - bucket.lastRefill) / 1000; // seconds
+
+		// Refill tokens based on elapsed time
+		const newTokens = Math.min(bucket.capacity, bucket.tokens + elapsed * bucket.refillRate);
+
+		bucket.tokens = newTokens;
+		bucket.lastRefill = now;
+
+		// Check if we have a token
+		if (bucket.tokens >= 1) {
+			bucket.tokens -= 1;
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Subscribe a client to a method in a session
+	 *
+	 * FIXES:
+	 * - ✅ P1.4: Validates clientId (non-empty string)
+	 * - ✅ P1.3: Enforces max subscriptions limit per client
+	 * - ✅ P2.4: Rate limits subscribe operations (token bucket)
+	 * - ✅ P2.5: Warns on duplicate subscriptions (idempotent)
+	 */
+	subscribe(sessionId: string, method: string, clientId: string): void {
+		// FIX P1.4: Validate clientId
+		if (!clientId || typeof clientId !== 'string' || clientId.trim().length === 0) {
+			throw new Error(`Invalid clientId: ${JSON.stringify(clientId)}`);
+		}
+
+		// FIX P2.4: Check rate limit
+		if (!this.checkRateLimit(clientId)) {
+			throw new Error(
+				`Rate limit exceeded for client ${clientId}. Max ${this.subscriptionRateLimit} subscribe operations per second.`
+			);
+		}
+
+		// Validate sessionId - colons not allowed (reserved for internal routing)
+		if (sessionId.includes(':')) {
+			throw new Error('SessionId cannot contain colon character (reserved for internal use)');
+		}
+
+		// Validate method format (including colon restriction)
+		if (method.includes(':')) {
+			throw new Error('Method cannot contain colon character (reserved for internal use)');
+		}
+
+		// FIX P1.3: Check subscription limit before adding
+		const client = this.getClientById(clientId);
+		if (client) {
+			// Count total subscriptions across all sessions
+			let totalSubs = 0;
+			for (const methods of client.subscriptions.values()) {
+				totalSubs += methods.size;
+			}
+
+			// Check if already subscribed (idempotent)
+			const existingMethods = client.subscriptions.get(sessionId);
+			const alreadySubscribed = existingMethods?.has(method);
+
+			if (!alreadySubscribed && totalSubs >= this.maxSubscriptionsPerClient) {
+				throw new Error(
+					`Client ${clientId} has reached max subscriptions limit (${this.maxSubscriptionsPerClient})`
+				);
+			}
+
+			// FIX P2.5: Warn on duplicate subscriptions (but allow - idempotent)
+			if (alreadySubscribed) {
+				this.logger.warn(
+					`[MessageHubRouter] Client ${clientId} already subscribed to ${sessionId}:${method}`
+				);
+				return; // Idempotent - do nothing
+			}
+		}
+
+		// Initialize maps if needed
+		if (!this.subscriptions.has(sessionId)) {
+			this.subscriptions.set(sessionId, new Map());
+		}
+
+		const sessionSubs = this.subscriptions.get(sessionId)!;
+
+		if (!sessionSubs.has(method)) {
+			sessionSubs.set(method, new Set());
+		}
+
+		sessionSubs.get(method)!.add(clientId);
+
+		// FIX P0.1: Re-check client exists AFTER adding subscription (race condition fix)
+		// Client could have disconnected between line 180 and here!
+		const clientNow = this.getClientById(clientId);
+		if (!clientNow) {
+			// Client disconnected - cleanup the subscription we just added
+			sessionSubs.get(method)!.delete(clientId);
+
+			// Cleanup empty maps
+			if (sessionSubs.get(method)!.size === 0) {
+				sessionSubs.delete(method);
+				if (sessionSubs.size === 0) {
+					this.subscriptions.delete(sessionId);
+				}
+			}
+
+			this.logger.warn(
+				`Client ${clientId} disconnected during subscription to ${sessionId}:${method} - cleaned up`
+			);
+			return;
+		}
+
+		// Track subscription in client info using O(1) lookup
+		if (!clientNow.subscriptions.has(sessionId)) {
+			clientNow.subscriptions.set(sessionId, new Set());
+		}
+		clientNow.subscriptions.get(sessionId)!.add(method);
+
+		this.log(`Client ${clientId} subscribed to ${sessionId}:${method}`);
+	}
+
+	/**
+	 * Unsubscribe a client from a method in a session
+	 * Cleans up empty Maps to prevent memory leaks
+	 * FIX P2.4: Rate limits unsubscribe operations
+	 */
+	unsubscribeClient(sessionId: string, method: string, clientId: string): void {
+		// FIX P2.4: Check rate limit (same limit as subscribe)
+		if (!this.checkRateLimit(clientId)) {
+			this.logger.warn(
+				`Rate limit exceeded for client ${clientId} during unsubscribe. Max ${this.subscriptionRateLimit} operations per second.`
+			);
+			// Don't throw for unsubscribe - just log warning and proceed
+			// Allows cleanup to continue even if rate limited
+		}
+
+		const sessionSubs = this.subscriptions.get(sessionId);
+		if (!sessionSubs) {
+			return;
+		}
+
+		const methodSubs = sessionSubs.get(method);
+		if (!methodSubs) {
+			return;
+		}
+
+		methodSubs.delete(clientId);
+
+		// MEMORY LEAK FIX: Cleanup empty structures
+		if (methodSubs.size === 0) {
+			sessionSubs.delete(method);
+			if (sessionSubs.size === 0) {
+				this.subscriptions.delete(sessionId);
+			}
+		}
+
+		// Remove from client info using O(1) lookup
+		const client = this.getClientById(clientId);
+		if (client) {
+			const clientMethods = client.subscriptions.get(sessionId);
+			if (clientMethods) {
+				clientMethods.delete(method);
+				if (clientMethods.size === 0) {
+					client.subscriptions.delete(sessionId);
+				}
+			}
+		}
+
+		this.log(`Client ${clientId} unsubscribed from ${sessionId}:${method}`);
+	}
+
+	/**
+	 * Route an EVENT message to subscribed clients
 	 * Returns delivery statistics for observability
+	 * FIX P2.1: Handle serialization errors (circular refs, etc.)
+	 * Also sends to "global" subscribers for cross-session orchestration
 	 */
 	routeEvent(message: HubMessage): RouteResult {
 		if (!isEventMessage(message)) {
@@ -154,8 +379,100 @@ export class MessageHubRouter {
 			};
 		}
 
-		// Delegate to room-based routing
-		return this.routeEventToRoom(message);
+		// Collect all subscriber clientIds (session-specific + global)
+		const allSubscribers = new Set<string>();
+
+		// Add session-specific subscribers
+		const sessionSubs = this.subscriptions.get(message.sessionId);
+		if (sessionSubs) {
+			const methodSubs = sessionSubs.get(message.method);
+			if (methodSubs) {
+				for (const clientId of methodSubs) {
+					allSubscribers.add(clientId);
+				}
+			}
+		}
+
+		// Also add "global" subscribers (for orchestrators that want all events)
+		if (message.sessionId !== 'global') {
+			const globalSubs = this.subscriptions.get('global');
+			if (globalSubs) {
+				const globalMethodSubs = globalSubs.get(message.method);
+				if (globalMethodSubs) {
+					for (const clientId of globalMethodSubs) {
+						allSubscribers.add(clientId);
+					}
+				}
+			}
+		}
+
+		// Debug logging for event routing
+		this.log(
+			`[routeEvent] ${message.sessionId}:${message.method} - session subs: ${sessionSubs?.get(message.method)?.size ?? 0}, global subs: ${this.subscriptions.get('global')?.get(message.method)?.size ?? 0}, total: ${allSubscribers.size}`
+		);
+
+		if (allSubscribers.size === 0) {
+			this.log(`No subscribers for ${message.sessionId}:${message.method}`);
+			return {
+				sent: 0,
+				failed: 0,
+				totalSubscribers: 0,
+				sessionId: message.sessionId,
+				method: message.method,
+			};
+		}
+
+		// Use allSubscribers instead of methodSubs
+		const methodSubs = allSubscribers;
+
+		// FIX P2.1: Handle serialization errors (circular refs, BigInt, etc.)
+		let json: string;
+		try {
+			json = JSON.stringify(message);
+		} catch (error) {
+			this.logger.error(
+				`[MessageHubRouter] Failed to serialize message for ${message.sessionId}:${message.method}:`,
+				error
+			);
+			return {
+				sent: 0,
+				failed: methodSubs.size,
+				totalSubscribers: methodSubs.size,
+				sessionId: message.sessionId,
+				method: message.method,
+			};
+		}
+
+		// Send to all subscribed clients
+		let sentCount = 0;
+		let failedCount = 0;
+
+		for (const clientId of methodSubs) {
+			const client = this.getClientById(clientId);
+			if (client && client.connection.isOpen()) {
+				try {
+					client.connection.send(json);
+					sentCount++;
+				} catch (error) {
+					this.logger.error(`Failed to send to client ${clientId}:`, error);
+					failedCount++;
+				}
+			} else {
+				failedCount++;
+			}
+		}
+
+		this.log(
+			`Routed ${message.sessionId}:${message.method} to ${sentCount}/${methodSubs.size} clients`
+		);
+
+		return {
+			sent: sentCount,
+			failed: failedCount,
+			totalSubscribers: methodSubs.size,
+			sessionId: message.sessionId,
+			method: message.method,
+		};
 	}
 
 	/**
@@ -264,104 +581,28 @@ export class MessageHubRouter {
 	}
 
 	/**
+	 * Get subscription count for a method
+	 */
+	getSubscriptionCount(sessionId: string, method: string): number {
+		const sessionSubs = this.subscriptions.get(sessionId);
+		if (!sessionSubs) {
+			return 0;
+		}
+		return sessionSubs.get(method)?.size || 0;
+	}
+
+	/**
+	 * Get all subscriptions for debugging
+	 */
+	getSubscriptions(): RouterSubscriptions {
+		return new Map(this.subscriptions);
+	}
+
+	/**
 	 * Get all connected client IDs
 	 */
 	getClientIds(): string[] {
 		return Array.from(this.clients.keys());
-	}
-
-	/**
-	 * Join a client to a room
-	 */
-	joinRoom(clientId: string, room: string): void {
-		const client = this.getClientById(clientId);
-		if (!client) {
-			this.logger.warn(`[MessageHubRouter] Cannot join room - client not found: ${clientId}`);
-			return;
-		}
-		this.roomManager.joinRoom(clientId, room);
-		this.log(`Client ${clientId} joined room: ${room}`);
-	}
-
-	/**
-	 * Remove a client from a room
-	 */
-	leaveRoom(clientId: string, room: string): void {
-		this.roomManager.leaveRoom(clientId, room);
-		this.log(`Client ${clientId} left room: ${room}`);
-	}
-
-	/**
-	 * Route an EVENT message to all clients in the message's room
-	 */
-	routeEventToRoom(message: HubMessage): RouteResult {
-		const room = message.room || 'global';
-		const members = this.roomManager.getRoomMembers(room);
-
-		// Only include members of the specific room (no global cross-pollution)
-		const allRecipients = new Set(members);
-
-		if (allRecipients.size === 0) {
-			this.log(`No room members for room ${room}, method ${message.method}`);
-			return {
-				sent: 0,
-				failed: 0,
-				totalSubscribers: 0,
-				sessionId: message.sessionId,
-				method: message.method,
-			};
-		}
-
-		// Serialize once
-		let json: string;
-		try {
-			json = JSON.stringify(message);
-		} catch (error) {
-			this.logger.error(`[MessageHubRouter] Failed to serialize room event:`, error);
-			return {
-				sent: 0,
-				failed: allRecipients.size,
-				totalSubscribers: allRecipients.size,
-				sessionId: message.sessionId,
-				method: message.method,
-			};
-		}
-
-		let sent = 0,
-			failed = 0;
-		for (const clientId of allRecipients) {
-			const client = this.getClientById(clientId);
-			if (client && client.connection.isOpen()) {
-				try {
-					client.connection.send(json);
-					sent++;
-				} catch (error) {
-					this.logger.error(`Failed to send room event to client ${clientId}:`, error);
-					failed++;
-				}
-			} else {
-				failed++;
-			}
-		}
-
-		this.log(
-			`Routed room event ${room}:${message.method} to ${sent}/${allRecipients.size} clients`
-		);
-
-		return {
-			sent,
-			failed,
-			totalSubscribers: allRecipients.size,
-			sessionId: message.sessionId,
-			method: message.method,
-		};
-	}
-
-	/**
-	 * Get the room manager for inspection
-	 */
-	getRoomManager(): RoomManager {
-		return this.roomManager;
 	}
 
 	/**

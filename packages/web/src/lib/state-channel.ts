@@ -10,9 +10,7 @@
 
 import { signal, type Signal, batch } from '@preact/signals';
 import type { MessageHub } from '@neokai/shared';
-
-// Define UnsubscribeFn locally (removed from types.ts)
-type UnsubscribeFn = () => void;
+import type { UnsubscribeFn } from '@neokai/shared/message-hub/types';
 
 /**
  * State Channel Options
@@ -352,7 +350,12 @@ export class StateChannel<T> {
 						? { since }
 						: {};
 
-			const snapshot = await this.hub.query<T>(this.channelName, callData);
+			const snapshot = await this.hub.call<T>(
+				this.channelName,
+				callData,
+				// Always use "global" for RPC routing - handlers are registered globally
+				{ sessionId: 'global' }
+			);
 
 			// Smart merge: if incremental (since provided), merge; otherwise replace
 			if (since !== undefined && since > 0) {
@@ -450,66 +453,88 @@ export class StateChannel<T> {
 	}
 
 	/**
-	 * Setup subscriptions to state updates (NEW API - uses onEvent)
+	 * Setup subscriptions to state updates (PARALLEL - uses Promise.all)
 	 *
-	 * With the new room-based API, we don't need to wait for server ACKs.
-	 * Handlers are registered locally and will receive events based on room membership.
+	 * This method was refactored from sequential awaits to parallel Promise.all
+	 * to reduce total subscription time from O(n*timeout) to O(timeout)
 	 */
 	private async setupSubscriptions(): Promise<void> {
+		// Collect all subscription promises for parallel execution
+		const subscriptionPromises: Promise<UnsubscribeFn>[] = [];
+
 		// 1. Subscribe to full updates
-		const unsubFull = this.hub.onEvent<T>(this.channelName, (data) => {
-			this.log(`Full update received: ${this.channelName}`, data);
-			// Batch signal updates to prevent cascading renders
-			batch(() => {
-				this.state.value = data;
-				this.lastSync.value = Date.now();
-				this.error.value = null;
-			});
-		});
-		this.subscriptions.push(unsubFull);
+		subscriptionPromises.push(
+			this.hub.subscribe<T>(
+				this.channelName,
+				(data) => {
+					this.log(`Full update received: ${this.channelName}`, data);
+					// Batch signal updates to prevent cascading renders
+					batch(() => {
+						this.state.value = data;
+						this.lastSync.value = Date.now();
+						this.error.value = null;
+					});
+				},
+				{ sessionId: this.options.sessionId }
+			)
+		);
 
 		// 2. Subscribe to delta updates if enabled
 		if (this.options.enableDeltas && this.options.mergeDelta) {
 			const deltaChannel = `${this.channelName}.delta`;
 			this.log(`Subscribing to delta channel: ${deltaChannel}`);
 
-			const unsubDelta = this.hub.onEvent<unknown>(deltaChannel, (delta) => {
-				this.log(`Delta update received: ${this.channelName}`, delta);
+			subscriptionPromises.push(
+				this.hub.subscribe<unknown>(
+					deltaChannel,
+					(delta) => {
+						this.log(`Delta update received: ${this.channelName}`, delta);
 
-				if (this.state.value && this.options.mergeDelta) {
-					// Batch signal updates to prevent cascading renders
-					batch(() => {
-						this.state.value = this.options.mergeDelta!(this.state.value!, delta);
-						this.lastSync.value = Date.now();
-						this.error.value = null;
-					});
-				}
-				// else: Cannot apply delta - state or mergeDelta missing
-			});
-			this.subscriptions.push(unsubDelta);
+						if (this.state.value && this.options.mergeDelta) {
+							// Batch signal updates to prevent cascading renders
+							batch(() => {
+								this.state.value = this.options.mergeDelta!(this.state.value!, delta);
+								this.lastSync.value = Date.now();
+								this.error.value = null;
+							});
+						}
+						// else: Cannot apply delta - state or mergeDelta missing
+					},
+					{ sessionId: this.options.sessionId }
+				)
+			);
 		}
 
-		this.log(`Subscriptions setup complete: ${this.subscriptions.length} subscriptions`);
+		// Execute all subscriptions in parallel (reduces timeout from O(n) to O(1))
+		const results = await Promise.all(subscriptionPromises);
+		this.subscriptions.push(...results);
+
+		this.log(`Subscriptions setup complete: ${results.length} subscriptions`);
 	}
 
 	/**
-	 * Setup optimistic subscriptions (NON-BLOCKING - uses onEvent)
+	 * Setup optimistic subscriptions (NON-BLOCKING - uses subscribeOptimistic)
 	 *
-	 * This method uses onEvent for completely synchronous subscription
-	 * setup. Handlers are registered locally immediately.
-	 * This provides the best UI responsiveness.
+	 * This method uses subscribeOptimistic for completely synchronous subscription
+	 * setup. Handlers are registered locally immediately, server ACKs happen in background.
+	 * This provides the best UI responsiveness at the cost of possibly missing
+	 * the first few events before server-side subscription is confirmed.
 	 */
 	private setupOptimisticSubscriptions(): void {
 		// 1. Subscribe to full updates (synchronous, immediate)
-		const fullUpdateSub = this.hub.onEvent<T>(this.channelName, (data) => {
-			this.log(`Full update received: ${this.channelName}`, data);
-			// Batch signal updates to prevent cascading renders
-			batch(() => {
-				this.state.value = data;
-				this.lastSync.value = Date.now();
-				this.error.value = null;
-			});
-		});
+		const fullUpdateSub = this.hub.subscribeOptimistic<T>(
+			this.channelName,
+			(data) => {
+				this.log(`Full update received: ${this.channelName}`, data);
+				// Batch signal updates to prevent cascading renders
+				batch(() => {
+					this.state.value = data;
+					this.lastSync.value = Date.now();
+					this.error.value = null;
+				});
+			},
+			{ sessionId: this.options.sessionId }
+		);
 
 		this.subscriptions.push(fullUpdateSub);
 
@@ -518,20 +543,24 @@ export class StateChannel<T> {
 			const deltaChannel = `${this.channelName}.delta`;
 			this.log(`Subscribing (optimistic) to delta channel: ${deltaChannel}`);
 
-			const deltaUpdateSub = this.hub.onEvent<unknown>(deltaChannel, (delta) => {
-				this.log(`Delta update received: ${this.channelName}`, delta);
+			const deltaUpdateSub = this.hub.subscribeOptimistic<unknown>(
+				deltaChannel,
+				(delta) => {
+					this.log(`Delta update received: ${this.channelName}`, delta);
 
-				if (this.state.value && this.options.mergeDelta) {
-					// Batch signal updates to prevent cascading renders
-					batch(() => {
-						this.state.value = this.options.mergeDelta!(this.state.value!, delta);
-						this.lastSync.value = Date.now();
-						this.error.value = null;
-					});
-				} else {
-					// Cannot apply delta - state or mergeDelta missing
-				}
-			});
+					if (this.state.value && this.options.mergeDelta) {
+						// Batch signal updates to prevent cascading renders
+						batch(() => {
+							this.state.value = this.options.mergeDelta!(this.state.value!, delta);
+							this.lastSync.value = Date.now();
+							this.error.value = null;
+						});
+					} else {
+						// Cannot apply delta - state or mergeDelta missing
+					}
+				},
+				{ sessionId: this.options.sessionId }
+			);
 
 			this.subscriptions.push(deltaUpdateSub);
 		}

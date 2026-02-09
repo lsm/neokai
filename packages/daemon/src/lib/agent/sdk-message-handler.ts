@@ -170,10 +170,10 @@ export class SDKMessageHandler {
 
 		db.saveSDKMessage(session.id, assistantMessage);
 
-		messageHub.event(
+		await messageHub.publish(
 			'state.sdkMessages.delta',
 			{ added: [assistantMessage], timestamp: Date.now() },
-			{ room: `session:${session.id}` }
+			{ sessionId: session.id }
 		);
 	}
 
@@ -247,14 +247,14 @@ export class SDKMessageHandler {
 		}
 
 		// Broadcast SDK message delta (only channel - sdk.message removed as redundant)
-		messageHub.event(
+		await messageHub.publish(
 			'state.sdkMessages.delta',
 			{
 				added: [message],
 				timestamp: Date.now(),
 				version: ++this.sdkMessageDeltaVersion,
 			},
-			{ room: `session:${session.id}` }
+			{ sessionId: session.id }
 		);
 
 		// Handle specific message types

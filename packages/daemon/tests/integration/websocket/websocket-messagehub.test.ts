@@ -68,7 +68,7 @@ describe('WebSocket + MessageHub Integration', () => {
 			ws.send(
 				JSON.stringify({
 					id: messageId,
-					type: 'QRY',
+					type: 'CALL',
 					method: 'session.list',
 					data: {},
 					sessionId: 'global',
@@ -80,7 +80,7 @@ describe('WebSocket + MessageHub Integration', () => {
 			// Wait for response
 			const response = await waitForWebSocketMessage(ws);
 
-			expect(response.type).toBe('RSP');
+			expect(response.type).toBe('RESULT');
 			expect(response.requestId).toBe(messageId);
 			expect(response.data).toBeDefined();
 			expect(response.data.sessions).toBeArray();
@@ -97,7 +97,7 @@ describe('WebSocket + MessageHub Integration', () => {
 			ws.send(
 				JSON.stringify({
 					id: messageId,
-					type: 'QRY',
+					type: 'CALL',
 					method: 'session.get',
 					data: { sessionId: 'non-existent' },
 					sessionId: 'global',
@@ -109,9 +109,9 @@ describe('WebSocket + MessageHub Integration', () => {
 			// Wait for error response
 			const response = await waitForWebSocketMessage(ws);
 
-			expect(response.type).toBe('RSP');
-			expect(response.error).toBeDefined();
+			expect(response.type).toBe('ERROR');
 			expect(response.requestId).toBe(messageId);
+			expect(response.error).toBeDefined();
 			expect(response.error).toContain('Session not found');
 
 			ws.close();
@@ -126,7 +126,7 @@ describe('WebSocket + MessageHub Integration', () => {
 			ws.send(
 				JSON.stringify({
 					id: messageId,
-					type: 'QRY',
+					type: 'CALL',
 					method: 'session.create',
 					data: { workspacePath: '/test/ws' },
 					sessionId: 'global',
@@ -135,20 +135,10 @@ describe('WebSocket + MessageHub Integration', () => {
 				})
 			);
 
-			// Wait for RSP message (skip any EVENTs that arrive first)
-			let response: unknown;
-			let attempts = 0;
-			const maxAttempts = 10;
+			// Wait for result
+			const response = await waitForWebSocketMessage(ws);
 
-			while (attempts < maxAttempts) {
-				response = await waitForWebSocketMessage(ws);
-				if (response.type === 'RSP' && response.requestId === messageId) {
-					break;
-				}
-				attempts++;
-			}
-
-			expect(response.type).toBe('RSP');
+			expect(response.type).toBe('RESULT');
 			expect(response.data.sessionId).toBeString();
 
 			// Verify in database
@@ -177,7 +167,7 @@ describe('WebSocket + MessageHub Integration', () => {
 			// ws2 should still work
 			ws2.send(
 				JSON.stringify({
-					type: 'QRY',
+					type: 'CALL',
 					method: 'session.list',
 					data: {},
 					id: 'list-1',
@@ -190,7 +180,7 @@ describe('WebSocket + MessageHub Integration', () => {
 			);
 
 			const response = await waitForWebSocketMessage(ws2);
-			expect(response.type).toBe('RSP');
+			expect(response.type).toBe('RESULT');
 
 			ws2.close();
 		});
@@ -223,7 +213,7 @@ describe('WebSocket + MessageHub Integration', () => {
 
 			ws.send(
 				JSON.stringify({
-					type: 'QRY',
+					type: 'CALL',
 					method: 'nonexistent.method',
 					data: {},
 					id: 'missing-1',
@@ -236,8 +226,7 @@ describe('WebSocket + MessageHub Integration', () => {
 			);
 
 			const response = await waitForWebSocketMessage(ws);
-			expect(response.type).toBe('RSP');
-			expect(response.error).toBeDefined();
+			expect(response.type).toBe('ERROR');
 			expect(response.error).toContain('No handler');
 
 			ws.close();

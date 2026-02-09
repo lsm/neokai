@@ -108,16 +108,16 @@ export class MessagePersistence {
 			this.db.saveSDKMessage(sessionId, sdkUserMessage);
 
 			// 6. Publish to UI (fire-and-forget)
-			try {
-				this.messageHub.event(
+			this.messageHub
+				.publish(
 					'state.sdkMessages.delta',
 					{ added: [sdkUserMessage], timestamp: Date.now() },
-					{ room: `session:${sessionId}` }
-				);
-			} catch (_err) {
+					{ sessionId }
+				)
 				/* v8 ignore next 2 */
-				this.logger.error('[MessagePersistence] Error publishing message to UI:', _err);
-			}
+				.catch((_err) => {
+					this.logger.error('[MessagePersistence] Error publishing message to UI:', _err);
+				});
 
 			// 7. Emit 'message.persisted' event for downstream processing
 			// AgentSession will start query and enqueue message

@@ -100,11 +100,7 @@ describe('QueryRunner', () => {
 		// MessageHub spies
 		publishSpy = mock(async () => {});
 		mockMessageHub = {
-			event: publishSpy,
-			onQuery: mock((_method: string, _handler: Function) => () => {}),
-			onCommand: mock((_method: string, _handler: Function) => () => {}),
-			query: mock(async () => ({})),
-			command: mock(async () => {}),
+			publish: publishSpy,
 		} as unknown as MessageHub;
 
 		// MessageQueue spies
@@ -281,7 +277,7 @@ describe('QueryRunner', () => {
 						}),
 					]),
 				}),
-				{ room: 'session:test-session-id' }
+				{ sessionId: 'test-session-id' }
 			);
 		});
 

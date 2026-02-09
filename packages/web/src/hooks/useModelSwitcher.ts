@@ -76,7 +76,7 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 			if (!hub) return;
 
 			// Fetch current model
-			const { currentModel: modelId, modelInfo } = (await hub.request('session.model.get', {
+			const { currentModel: modelId, modelInfo } = (await hub.call('session.model.get', {
 				sessionId,
 			})) as {
 				currentModel: string;
@@ -87,7 +87,7 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 			setCurrentModelInfo(modelInfo);
 
 			// Fetch available models (includes all providers for cross-provider switching)
-			const { models } = (await hub.request('models.list', {
+			const { models } = (await hub.call('models.list', {
 				useCache: true,
 			})) as {
 				models: Array<{
@@ -151,7 +151,7 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 					return;
 				}
 
-				const result = (await hub.request('session.model.switch', {
+				const result = (await hub.call('session.model.switch', {
 					sessionId,
 					model: newModelId,
 				})) as {

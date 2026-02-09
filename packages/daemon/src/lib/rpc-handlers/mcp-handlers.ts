@@ -25,7 +25,7 @@ export function registerMcpHandlers(messageHub: MessageHub, sessionManager: Sess
 	 *
 	 * Timeout: 30 seconds
 	 */
-	messageHub.onRequest('tools.save', async (data: { sessionId: string; tools: ToolsConfig }) => {
+	messageHub.handle('tools.save', async (data: { sessionId: string; tools: ToolsConfig }) => {
 		const { sessionId, tools } = data;
 
 		const agentSession = sessionManager.getSession(sessionId);
@@ -44,7 +44,7 @@ export function registerMcpHandlers(messageHub: MessageHub, sessionManager: Sess
 	 * Update disabled MCP servers for a session (new approach)
 	 * Uses disabledMcpServers which is written to settings.local.json
 	 */
-	messageHub.onRequest(
+	messageHub.handle(
 		'mcp.updateDisabledServers',
 		async (data: { sessionId: string; disabledServers: string[] }) => {
 			const { sessionId, disabledServers } = data;
@@ -73,7 +73,7 @@ export function registerMcpHandlers(messageHub: MessageHub, sessionManager: Sess
 	/**
 	 * Get disabled MCP servers for a session
 	 */
-	messageHub.onRequest('mcp.getDisabledServers', async (data: { sessionId: string }) => {
+	messageHub.handle('mcp.getDisabledServers', async (data: { sessionId: string }) => {
 		const { sessionId } = data;
 
 		const agentSession = sessionManager.getSession(sessionId);
@@ -91,7 +91,7 @@ export function registerMcpHandlers(messageHub: MessageHub, sessionManager: Sess
 	/**
 	 * List available MCP servers from .mcp.json
 	 */
-	messageHub.onRequest('mcp.listServers', async (data: { sessionId: string }) => {
+	messageHub.handle('mcp.listServers', async (data: { sessionId: string }) => {
 		const { sessionId } = data;
 
 		const agentSession = sessionManager.getSession(sessionId);
@@ -125,7 +125,7 @@ export function registerMcpHandlers(messageHub: MessageHub, sessionManager: Sess
 	/**
 	 * Get the global tools configuration
 	 */
-	messageHub.onRequest('globalTools.getConfig', async () => {
+	messageHub.handle('globalTools.getConfig', async () => {
 		const config = sessionManager.getGlobalToolsConfig();
 		return { config };
 	});
@@ -133,7 +133,8 @@ export function registerMcpHandlers(messageHub: MessageHub, sessionManager: Sess
 	/**
 	 * Save the global tools configuration
 	 */
-	messageHub.onRequest('globalTools.saveConfig', async (data: { config: GlobalToolsConfig }) => {
+	messageHub.handle('globalTools.saveConfig', async (data: { config: GlobalToolsConfig }) => {
 		sessionManager.saveGlobalToolsConfig(data.config);
+		return { success: true };
 	});
 }

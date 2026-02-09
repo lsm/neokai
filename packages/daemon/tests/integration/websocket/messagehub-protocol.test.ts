@@ -35,7 +35,7 @@ function sendRPCCall(
 	ws.send(
 		JSON.stringify({
 			id: messageId,
-			type: 'QRY',
+			type: 'CALL',
 			method,
 			data,
 			sessionId,
@@ -56,7 +56,7 @@ async function subscribeToEvent(
 	ws.send(
 		JSON.stringify({
 			id: messageId,
-			type: 'SUBSCRIBE', // DEPRECATED - needs room-based rewrite // DEPRECATED - needs room-based rewrite
+			type: 'SUBSCRIBE',
 			method: event,
 			data: {},
 			sessionId,
@@ -104,7 +104,7 @@ describe('MessageHub RPC Protocol', () => {
 		// Wait for response
 		const response = await waitForWebSocketMessage(ws);
 
-		expect(response.type).toBe('RSP');
+		expect(response.type).toBe('RESULT');
 		expect(response.requestId).toBe(messageId);
 		expect(response.data).toHaveProperty('sessions');
 		expect(Array.isArray(response.data.sessions)).toBe(true);
@@ -122,8 +122,7 @@ describe('MessageHub RPC Protocol', () => {
 		// Wait for error response
 		const response = await waitForWebSocketMessage(ws);
 
-		expect(response.type).toBe('RSP');
-		expect(response.error).toBeDefined();
+		expect(response.type).toBe('ERROR');
 		expect(response.requestId).toBe(messageId);
 		expect(response.error).toBeTruthy();
 		expect(response.error).toContain('No handler');
@@ -143,8 +142,7 @@ describe('MessageHub RPC Protocol', () => {
 		// Wait for error response
 		const response = await waitForWebSocketMessage(ws);
 
-		expect(response.type).toBe('RSP');
-		expect(response.error).toBeDefined();
+		expect(response.type).toBe('ERROR');
 		expect(response.requestId).toBe(messageId);
 		expect(response.error).toContain('not found');
 
@@ -167,7 +165,7 @@ describe('MessageHub RPC Protocol', () => {
 		}
 
 		expect(responses.length).toBe(3);
-		expect(responses.every((r) => r.type === 'RSP')).toBe(true);
+		expect(responses.every((r) => r.type === 'RESULT')).toBe(true);
 		expect(responses.every((r) => Array.isArray(r.data?.sessions))).toBe(true);
 
 		ws.close();
@@ -186,8 +184,8 @@ describe('MessageHub RPC Protocol', () => {
 		const response2 = await waitForWebSocketMessage(ws);
 
 		// Both should be RESULT
-		expect(response1.type).toBe('RSP');
-		expect(response2.type).toBe('RSP');
+		expect(response1.type).toBe('RESULT');
+		expect(response2.type).toBe('RESULT');
 
 		// Check that both request IDs are present
 		const receivedIds = [response1.requestId, response2.requestId];
@@ -198,7 +196,7 @@ describe('MessageHub RPC Protocol', () => {
 	});
 });
 
-describe.skip('MessageHub Pub/Sub Protocol (DEPRECATED - uses old SUBSCRIBE protocol)', () => {
+describe('MessageHub Pub/Sub Protocol', () => {
 	let ctx: TestContext;
 
 	beforeEach(async () => {
@@ -221,7 +219,7 @@ describe.skip('MessageHub Pub/Sub Protocol (DEPRECATED - uses old SUBSCRIBE prot
 
 		// Wait for session.created event (skip the RPC RESULT first)
 		let message = await waitForWebSocketMessage(ws);
-		if (message.type === 'RSP') {
+		if (message.type === 'RESULT') {
 			// This is the create response, get the next message
 			message = await waitForWebSocketMessage(ws);
 		}
@@ -258,7 +256,7 @@ describe.skip('MessageHub Pub/Sub Protocol (DEPRECATED - uses old SUBSCRIBE prot
 		const _createId = sendRPCCall(ws, 'session.create', {});
 		const createResponse = await waitForWebSocketMessage(ws);
 
-		expect(createResponse.type).toBe('RSP');
+		expect(createResponse.type).toBe('RESULT');
 		const sessionId = createResponse.data.sessionId;
 		expect(sessionId).toBeTruthy();
 
@@ -358,7 +356,7 @@ describe('WebSocket Connection Management', () => {
 		const getResult = async (ws: WebSocket) => {
 			while (true) {
 				const msg = await waitForWebSocketMessage(ws, 10000);
-				if (msg.type === 'RSP') return msg;
+				if (msg.type === 'RESULT') return msg;
 				// Skip any EVENT messages (like connection.established)
 			}
 		};
@@ -369,9 +367,9 @@ describe('WebSocket Connection Management', () => {
 			getResult(ws3),
 		]);
 
-		expect(response1.type).toBe('RSP');
-		expect(response2.type).toBe('RSP');
-		expect(response3.type).toBe('RSP');
+		expect(response1.type).toBe('RESULT');
+		expect(response2.type).toBe('RESULT');
+		expect(response3.type).toBe('RESULT');
 
 		ws1.close();
 		ws2.close();
@@ -395,14 +393,14 @@ describe('WebSocket Connection Management', () => {
 		}
 
 		// All should succeed
-		const successCount = responses.filter((r) => r.type === 'RSP').length;
+		const successCount = responses.filter((r) => r.type === 'RESULT').length;
 		expect(successCount).toBeGreaterThan(45); // At least 90% success rate
 
 		ws.close();
 	});
 });
 
-describe.skip('Multi-Client Event Routing (DEPRECATED - uses old SUBSCRIBE protocol)', () => {
+describe('Multi-Client Event Routing', () => {
 	let ctx: TestContext;
 
 	beforeEach(async () => {
@@ -508,7 +506,7 @@ describe.skip('Multi-Client Event Routing (DEPRECATED - uses old SUBSCRIBE proto
 		expect(ws2Event.method).toBe('session.created');
 
 		// ws1 should have received RESULT and EVENT (order may vary)
-		const result = ws1Messages.find((m) => (m as { type: string }).type === 'RSP') as
+		const result = ws1Messages.find((m) => (m as { type: string }).type === 'RESULT') as
 			| { type: string; data: { sessionId: string } }
 			| undefined;
 		const event = ws1Messages.find(

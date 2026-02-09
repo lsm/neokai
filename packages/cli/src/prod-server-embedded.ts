@@ -79,7 +79,11 @@ export async function startProdServer(config: Config) {
 
 	// Get WebSocket handlers from daemon
 	const { createWebSocketHandlers } = await import('@neokai/daemon/routes/setup-websocket');
-	const wsHandlers = createWebSocketHandlers(daemonContext.transport, daemonContext.sessionManager);
+	const wsHandlers = createWebSocketHandlers(
+		daemonContext.transport,
+		daemonContext.sessionManager,
+		daemonContext.subscriptionManager
+	);
 
 	// Pre-load index.html for SPA fallback
 	const indexAsset = embeddedAssets.get('/index.html');

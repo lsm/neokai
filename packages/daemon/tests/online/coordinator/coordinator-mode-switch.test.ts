@@ -63,8 +63,6 @@ async function waitForSystemInit(
 				resolved = true;
 				clearTimeout(timer);
 				unsubscribe?.();
-				// Leave room (fire-and-forget)
-				daemon.messageHub.leaveRoom('session:' + sessionId);
 			}
 		};
 
@@ -73,30 +71,32 @@ async function waitForSystemInit(
 			reject(new Error(`Timeout waiting for system:init message after ${timeout}ms`));
 		}, timeout);
 
-		unsubscribe = daemon.messageHub.onEvent('state.sdkMessages.delta', (data: unknown) => {
-			if (resolved) return;
+		daemon.messageHub
+			.subscribe(
+				'state.sdkMessages.delta',
+				(data: unknown) => {
+					if (resolved) return;
 
-			const delta = data as { added?: Array<Record<string, unknown>> };
-			const addedMessages = delta.added || [];
+					const delta = data as { added?: Array<Record<string, unknown>> };
+					const addedMessages = delta.added || [];
 
-			for (const msg of addedMessages) {
-				if (msg.type === 'system' && msg.subtype === 'init') {
-					cleanup();
-					resolve(msg);
-					return;
-				}
-			}
-		});
-
-		// Join the session room and wait for acknowledgment before continuing
-		// This ensures events are routed to this client
-		(async () => {
-			try {
-				await daemon.messageHub.joinRoom('session:' + sessionId);
-			} catch {
-				// Join failed, but continue - events might still work
-			}
-		})();
+					for (const msg of addedMessages) {
+						if (msg.type === 'system' && msg.subtype === 'init') {
+							cleanup();
+							resolve(msg);
+							return;
+						}
+					}
+				},
+				{ sessionId }
+			)
+			.then((fn) => {
+				unsubscribe = fn;
+			})
+			.catch((error) => {
+				cleanup();
+				reject(error);
+			});
 	});
 }
 
@@ -143,7 +143,7 @@ async function toggleCoordinatorMode(
 	sessionId: string,
 	coordinatorMode: boolean
 ): Promise<void> {
-	const result = (await daemon.messageHub.request('session.coordinator.switch', {
+	const result = (await daemon.messageHub.call('session.coordinator.switch', {
 		sessionId,
 		coordinatorMode,
 	})) as { success: boolean; coordinatorMode: boolean; error?: string };
@@ -168,7 +168,7 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 
 	test('default ON → send → assert coordinator → OFF → send → assert no coordinator → ON → send → assert coordinator', async () => {
 		// 1. Create session with coordinator mode ON
-		const createResult = (await daemon.messageHub.request('session.create', {
+		const createResult = (await daemon.messageHub.call('session.create', {
 			workspacePath: `${TMP_DIR}/test-coordinator-default-on-${Date.now()}`,
 			title: 'Coordinator Default ON Test',
 			config: {
@@ -211,7 +211,7 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 
 	test('default OFF → send → assert no coordinator → ON → send → assert coordinator → OFF → send → assert no coordinator', async () => {
 		// 1. Create session with coordinator mode OFF
-		const createResult = (await daemon.messageHub.request('session.create', {
+		const createResult = (await daemon.messageHub.call('session.create', {
 			workspacePath: `${TMP_DIR}/test-coordinator-default-off-${Date.now()}`,
 			title: 'Coordinator Default OFF Test',
 			config: {
@@ -256,7 +256,7 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 		// This test verifies that each system:init message is tied to its query,
 		// and toggling coordinator mode doesn't retroactively change earlier messages.
 
-		const createResult = (await daemon.messageHub.request('session.create', {
+		const createResult = (await daemon.messageHub.call('session.create', {
 			workspacePath: `${TMP_DIR}/test-coordinator-immutable-${Date.now()}`,
 			title: 'Coordinator Immutability Test',
 			config: {
@@ -284,7 +284,7 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 		await waitForIdle(daemon, sessionId, 60000);
 
 		// Verify: Fetch all SDK messages and check each system:init is preserved
-		const allMessages = (await daemon.messageHub.request('message.sdkMessages', {
+		const allMessages = (await daemon.messageHub.call('message.sdkMessages', {
 			sessionId,
 		})) as { sdkMessages: Array<Record<string, unknown>> };
 

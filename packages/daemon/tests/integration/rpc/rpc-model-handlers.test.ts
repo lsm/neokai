@@ -41,7 +41,7 @@ describe('Model RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'model-get-1',
-					type: 'QRY',
+					type: 'CALL',
 					method: 'session.model.get',
 					data: {
 						sessionId: 'non-existent',
@@ -54,8 +54,7 @@ describe('Model RPC Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('RSP');
-			expect(response.error).toBeDefined();
+			expect(response.type).toBe('ERROR');
 
 			ws.close();
 		});
@@ -74,7 +73,7 @@ describe('Model RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'model-get-2',
-					type: 'QRY',
+					type: 'CALL',
 					method: 'session.model.get',
 					data: { sessionId },
 					sessionId: 'global',
@@ -85,7 +84,7 @@ describe('Model RPC Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('RSP');
+			expect(response.type).toBe('RESULT');
 			expect(response.data.currentModel).toBeString();
 			expect(response.data.modelInfo).toBeDefined();
 
@@ -104,7 +103,7 @@ describe('Model RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'model-switch-1',
-					type: 'QRY',
+					type: 'CALL',
 					method: 'session.model.switch',
 					data: {
 						sessionId: 'non-existent',
@@ -118,8 +117,7 @@ describe('Model RPC Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('RSP');
-			expect(response.error).toBeDefined();
+			expect(response.type).toBe('ERROR');
 
 			ws.close();
 		});
@@ -139,7 +137,7 @@ describe('Model RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'model-switch-2',
-					type: 'QRY',
+					type: 'CALL',
 					method: 'session.model.switch',
 					data: {
 						sessionId,
@@ -153,7 +151,7 @@ describe('Model RPC Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('RSP');
+			expect(response.type).toBe('RESULT');
 			// Synchronous: RPC returns {success: false, error} for invalid model
 			expect(response.data.success).toBe(false);
 			expect(response.data.error).toBeDefined();
@@ -176,7 +174,7 @@ describe('Model RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'model-get-3',
-					type: 'QRY',
+					type: 'CALL',
 					method: 'session.model.get',
 					data: { sessionId },
 					sessionId: 'global',
@@ -193,7 +191,7 @@ describe('Model RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'model-switch-3',
-					type: 'QRY',
+					type: 'CALL',
 					method: 'session.model.switch',
 					data: {
 						sessionId,
@@ -207,7 +205,7 @@ describe('Model RPC Handlers', () => {
 
 			const response = await switchPromise;
 
-			expect(response.type).toBe('RSP');
+			expect(response.type).toBe('RESULT');
 			// Synchronous: RPC returns {success: true, model} for same model
 			expect(response.data.success).toBe(true);
 			expect(response.data.model).toBe(currentModel);
@@ -227,7 +225,7 @@ describe('Model RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'models-clear-1',
-					type: 'QRY',
+					type: 'CALL',
 					method: 'models.clearCache',
 					data: {},
 					sessionId: 'global',
@@ -238,7 +236,7 @@ describe('Model RPC Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('RSP');
+			expect(response.type).toBe('RESULT');
 			expect(response.data.success).toBe(true);
 
 			ws.close();

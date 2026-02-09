@@ -92,7 +92,11 @@ async function setup(): Promise<void> {
 	}
 
 	// WebSocket handlers
-	const wsHandlers = createWebSocketHandlers(daemonContext.transport, daemonContext.sessionManager);
+	const wsHandlers = createWebSocketHandlers(
+		daemonContext.transport,
+		daemonContext.sessionManager,
+		daemonContext.subscriptionManager
+	);
 
 	// Hono for static files
 	const app = new Hono();

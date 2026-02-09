@@ -26,7 +26,7 @@ export function setupRewindHandlers(
 	 * Request: { sessionId: string }
 	 * Response: { rewindPoints: RewindPoint[]; error?: string }
 	 */
-	messageHub.onRequest('rewind.checkpoints', async (data) => {
+	messageHub.handle('rewind.checkpoints', async (data) => {
 		const { sessionId } = data as { sessionId: string };
 
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
@@ -47,7 +47,7 @@ export function setupRewindHandlers(
 	 * Request: { sessionId: string; checkpointId: string }
 	 * Response: { preview: RewindPreview }
 	 */
-	messageHub.onRequest('rewind.preview', async (data) => {
+	messageHub.handle('rewind.preview', async (data) => {
 		const { sessionId, checkpointId } = data as { sessionId: string; checkpointId: string };
 
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
@@ -75,7 +75,7 @@ export function setupRewindHandlers(
 	 * - 'conversation': Resume conversation from checkpoint (deletes messages after checkpoint)
 	 * - 'both': Full rewind of both files and conversation
 	 */
-	messageHub.onRequest('rewind.execute', async (data) => {
+	messageHub.handle('rewind.execute', async (data) => {
 		const {
 			sessionId,
 			checkpointId,
@@ -109,7 +109,7 @@ export function setupRewindHandlers(
 	 * Request: SelectiveRewindRequest
 	 * Response: { preview: SelectiveRewindPreview }
 	 */
-	messageHub.onRequest('rewind.previewSelective', async (data) => {
+	messageHub.handle('rewind.previewSelective', async (data) => {
 		const { sessionId, messageIds } = data as SelectiveRewindRequest;
 
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
@@ -147,7 +147,7 @@ export function setupRewindHandlers(
 	 * Request: SelectiveRewindRequest
 	 * Response: { result: SelectiveRewindResult }
 	 */
-	messageHub.onRequest('rewind.executeSelective', async (data) => {
+	messageHub.handle('rewind.executeSelective', async (data) => {
 		const {
 			sessionId,
 			messageIds,

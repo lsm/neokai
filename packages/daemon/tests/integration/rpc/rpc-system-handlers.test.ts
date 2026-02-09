@@ -8,7 +8,7 @@ import { setupSystemHandlers } from '../../../src/lib/rpc-handlers/system-handle
 describe('System RPC Handlers', () => {
 	let handlers: Map<string, Function>;
 	let mockMessageHub: {
-		onQuery: ReturnType<typeof mock>;
+		handle: ReturnType<typeof mock>;
 	};
 	let mockSessionManager: {
 		getActiveSessions: ReturnType<typeof mock>;
@@ -26,9 +26,8 @@ describe('System RPC Handlers', () => {
 	beforeAll(() => {
 		handlers = new Map();
 		mockMessageHub = {
-			onQuery: mock((method: string, handler: Function) => {
+			handle: mock((method: string, handler: Function) => {
 				handlers.set(method, handler);
-				return () => {}; // Return unsubscribe function
 			}),
 		};
 
@@ -51,12 +50,7 @@ describe('System RPC Handlers', () => {
 			dbPath: './test.db',
 		};
 
-		setupSystemHandlers(
-			mockMessageHub as never,
-			mockSessionManager as never,
-			mockAuthManager as never,
-			mockConfig as never
-		);
+		setupSystemHandlers(mockMessageHub, mockSessionManager, mockAuthManager, mockConfig);
 	});
 
 	describe('system.health', () => {

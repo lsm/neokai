@@ -44,8 +44,7 @@ describe('Question RPC Handlers', () => {
 			const sessionManager = createMockSessionManager(mockAgentSession);
 			setupQuestionHandlers(messageHub, sessionManager as unknown as never, eventBus);
 
-			const handlers = (messageHub as unknown as { queryHandlers: Map<string, unknown> })
-				.queryHandlers;
+			const handlers = (messageHub as unknown as { rpcHandlers: Map<string, unknown> }).rpcHandlers;
 
 			expect(handlers.has('question.respond')).toBe(true);
 			expect(handlers.has('question.saveDraft')).toBe(true);
@@ -61,9 +60,9 @@ describe('Question RPC Handlers', () => {
 			// Get the handler directly
 			const handlers = (
 				messageHub as unknown as {
-					queryHandlers: Map<string, (data: unknown) => Promise<unknown>>;
+					rpcHandlers: Map<string, (data: unknown) => Promise<unknown>>;
 				}
-			).queryHandlers;
+			).rpcHandlers;
 			const respondHandler = handlers.get('question.respond')!;
 
 			const responses: QuestionDraftResponse[] = [
@@ -87,9 +86,9 @@ describe('Question RPC Handlers', () => {
 
 			const handlers = (
 				messageHub as unknown as {
-					queryHandlers: Map<string, (data: unknown) => Promise<unknown>>;
+					rpcHandlers: Map<string, (data: unknown) => Promise<unknown>>;
 				}
-			).queryHandlers;
+			).rpcHandlers;
 			const respondHandler = handlers.get('question.respond')!;
 
 			await expect(
@@ -107,9 +106,9 @@ describe('Question RPC Handlers', () => {
 
 			const handlers = (
 				messageHub as unknown as {
-					queryHandlers: Map<string, (data: unknown) => Promise<unknown>>;
+					rpcHandlers: Map<string, (data: unknown) => Promise<unknown>>;
 				}
-			).queryHandlers;
+			).rpcHandlers;
 			const respondHandler = handlers.get('question.respond')!;
 
 			const responses: QuestionDraftResponse[] = [
@@ -138,9 +137,9 @@ describe('Question RPC Handlers', () => {
 
 			const handlers = (
 				messageHub as unknown as {
-					queryHandlers: Map<string, (data: unknown) => Promise<unknown>>;
+					rpcHandlers: Map<string, (data: unknown) => Promise<unknown>>;
 				}
-			).queryHandlers;
+			).rpcHandlers;
 			const saveDraftHandler = handlers.get('question.saveDraft')!;
 
 			const draftResponses: QuestionDraftResponse[] = [
@@ -162,9 +161,9 @@ describe('Question RPC Handlers', () => {
 
 			const handlers = (
 				messageHub as unknown as {
-					queryHandlers: Map<string, (data: unknown) => Promise<unknown>>;
+					rpcHandlers: Map<string, (data: unknown) => Promise<unknown>>;
 				}
-			).queryHandlers;
+			).rpcHandlers;
 			const saveDraftHandler = handlers.get('question.saveDraft')!;
 
 			await expect(
@@ -181,9 +180,9 @@ describe('Question RPC Handlers', () => {
 
 			const handlers = (
 				messageHub as unknown as {
-					queryHandlers: Map<string, (data: unknown) => Promise<unknown>>;
+					rpcHandlers: Map<string, (data: unknown) => Promise<unknown>>;
 				}
-			).queryHandlers;
+			).rpcHandlers;
 			const saveDraftHandler = handlers.get('question.saveDraft')!;
 
 			const draftResponses: QuestionDraftResponse[] = [
@@ -210,9 +209,9 @@ describe('Question RPC Handlers', () => {
 
 			const handlers = (
 				messageHub as unknown as {
-					queryHandlers: Map<string, (data: unknown) => Promise<unknown>>;
+					rpcHandlers: Map<string, (data: unknown) => Promise<unknown>>;
 				}
-			).queryHandlers;
+			).rpcHandlers;
 			const cancelHandler = handlers.get('question.cancel')!;
 
 			const result = await cancelHandler({
@@ -230,9 +229,9 @@ describe('Question RPC Handlers', () => {
 
 			const handlers = (
 				messageHub as unknown as {
-					queryHandlers: Map<string, (data: unknown) => Promise<unknown>>;
+					rpcHandlers: Map<string, (data: unknown) => Promise<unknown>>;
 				}
-			).queryHandlers;
+			).rpcHandlers;
 			const cancelHandler = handlers.get('question.cancel')!;
 
 			await expect(
