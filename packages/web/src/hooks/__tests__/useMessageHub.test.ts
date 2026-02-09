@@ -562,6 +562,229 @@ describe('useMessageHub', () => {
 		});
 	});
 
+	describe('onEvent', () => {
+		it('should subscribe immediately when connected', () => {
+			const mockUnsub = vi.fn();
+			const mockHub = {
+				call: vi.fn(),
+				request: vi.fn().mockResolvedValue({ acknowledged: true }),
+				onEvent: vi.fn().mockReturnValue(mockUnsub),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+			const { result } = renderHook(() => useMessageHub());
+
+			const handler = vi.fn();
+			const unsub = result.current.onEvent('test.event', handler);
+
+			expect(mockHub.onEvent).toHaveBeenCalledWith('test.event', handler);
+			expect(typeof unsub).toBe('function');
+		});
+
+		it('should return unsubscribe function that removes from tracking when connected', () => {
+			const mockUnsub = vi.fn();
+			const mockHub = {
+				call: vi.fn(),
+				request: vi.fn().mockResolvedValue({ acknowledged: true }),
+				onEvent: vi.fn().mockReturnValue(mockUnsub),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+			const { result } = renderHook(() => useMessageHub());
+
+			const unsub = result.current.onEvent('test.event', vi.fn());
+			unsub();
+
+			expect(mockUnsub).toHaveBeenCalled();
+		});
+
+		it('should queue subscription when not connected', () => {
+			mockGetHubIfConnected.mockReturnValue(null);
+			mockOnceConnected.mockReturnValue(() => {});
+			const { result } = renderHook(() => useMessageHub());
+
+			const handler = vi.fn();
+			const unsub = result.current.onEvent('test.event', handler);
+
+			expect(typeof unsub).toBe('function');
+			expect(mockOnceConnected).toHaveBeenCalled();
+		});
+
+		it('should cancel queued onEvent subscription on unsubscribe before connect', () => {
+			const mockConnectionUnsub = vi.fn();
+			mockGetHubIfConnected.mockReturnValue(null);
+			mockOnceConnected.mockReturnValue(mockConnectionUnsub);
+			const { result } = renderHook(() => useMessageHub());
+
+			const unsub = result.current.onEvent('test.event', vi.fn());
+			unsub();
+
+			expect(mockConnectionUnsub).toHaveBeenCalled();
+		});
+
+		it('should subscribe after connection when queued via onEvent', () => {
+			let connectionCallback: (() => void) | null = null;
+			mockOnceConnected.mockImplementation((cb) => {
+				connectionCallback = cb;
+				return () => {};
+			});
+
+			mockGetHubIfConnected.mockReturnValue(null);
+			const { result } = renderHook(() => useMessageHub());
+
+			const handler = vi.fn();
+			result.current.onEvent('test.event', handler);
+
+			// Simulate connection
+			const mockHub = {
+				call: vi.fn(),
+				request: vi.fn().mockResolvedValue({ acknowledged: true }),
+				onEvent: vi.fn().mockReturnValue(() => {}),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+			connectionCallback?.();
+
+			expect(mockHub.onEvent).toHaveBeenCalledWith('test.event', handler);
+		});
+
+		it('should not subscribe if onEvent cancelled before connection', () => {
+			let connectionCallback: (() => void) | null = null;
+			mockOnceConnected.mockImplementation((cb) => {
+				connectionCallback = cb;
+				return () => {};
+			});
+
+			mockGetHubIfConnected.mockReturnValue(null);
+			const { result } = renderHook(() => useMessageHub());
+
+			const unsub = result.current.onEvent('test.event', vi.fn());
+			unsub(); // Cancel
+
+			// Simulate connection
+			const mockHub = {
+				call: vi.fn(),
+				request: vi.fn().mockResolvedValue({ acknowledged: true }),
+				onEvent: vi.fn().mockReturnValue(() => {}),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+			connectionCallback?.();
+
+			expect(mockHub.onEvent).not.toHaveBeenCalled();
+		});
+
+		it('should cleanup actualUnsub when unsubscribing after queued connection', () => {
+			let connectionCallback: (() => void) | null = null;
+			mockOnceConnected.mockImplementation((cb) => {
+				connectionCallback = cb;
+				return () => {};
+			});
+
+			mockGetHubIfConnected.mockReturnValue(null);
+			const { result } = renderHook(() => useMessageHub());
+
+			const handler = vi.fn();
+			const unsub = result.current.onEvent('test.event', handler);
+
+			// Simulate connection - this sets actualUnsub
+			const mockEventUnsub = vi.fn();
+			const mockHub = {
+				onEvent: vi.fn().mockReturnValue(mockEventUnsub),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+			connectionCallback?.();
+
+			// Now unsubscribe - should call actualUnsub
+			unsub();
+			expect(mockEventUnsub).toHaveBeenCalled();
+		});
+	});
+
+	describe('joinRoom', () => {
+		it('should join room when connected', () => {
+			const mockHub = {
+				call: vi.fn(),
+				request: vi.fn().mockResolvedValue({ acknowledged: true }),
+				onEvent: vi.fn(),
+				joinRoom: vi.fn(),
+				leaveRoom: vi.fn(),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+			const { result } = renderHook(() => useMessageHub());
+
+			result.current.joinRoom('test-room');
+
+			expect(mockHub.joinRoom).toHaveBeenCalledWith('test-room');
+		});
+
+		it('should not throw when not connected', () => {
+			mockGetHubIfConnected.mockReturnValue(null);
+			const { result } = renderHook(() => useMessageHub());
+
+			expect(() => result.current.joinRoom('test-room')).not.toThrow();
+		});
+	});
+
+	describe('leaveRoom', () => {
+		it('should leave room when connected', () => {
+			const mockHub = {
+				call: vi.fn(),
+				request: vi.fn().mockResolvedValue({ acknowledged: true }),
+				onEvent: vi.fn(),
+				joinRoom: vi.fn(),
+				leaveRoom: vi.fn(),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+			const { result } = renderHook(() => useMessageHub());
+
+			result.current.leaveRoom('test-room');
+
+			expect(mockHub.leaveRoom).toHaveBeenCalledWith('test-room');
+		});
+
+		it('should not throw when not connected', () => {
+			mockGetHubIfConnected.mockReturnValue(null);
+			const { result } = renderHook(() => useMessageHub());
+
+			expect(() => result.current.leaveRoom('test-room')).not.toThrow();
+		});
+	});
+
+	describe('request', () => {
+		it('should throw ConnectionNotReadyError when not connected', async () => {
+			mockGetHubIfConnected.mockReturnValue(null);
+			const { result } = renderHook(() => useMessageHub());
+
+			await expect(result.current.request('test.method')).rejects.toThrow(ConnectionNotReadyError);
+		});
+
+		it('should make request call when connected', async () => {
+			const mockHub = {
+				request: vi.fn().mockResolvedValue({ data: 'result' }),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+			const { result } = renderHook(() => useMessageHub());
+
+			const response = await result.current.request('test.method', { input: 'data' });
+
+			expect(mockHub.request).toHaveBeenCalledWith(
+				'test.method',
+				{ input: 'data' },
+				{ timeout: 10000 }
+			);
+			expect(response).toEqual({ data: 'result' });
+		});
+
+		it('should use custom timeout', async () => {
+			const mockHub = {
+				request: vi.fn().mockResolvedValue({}),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+			const { result } = renderHook(() => useMessageHub());
+
+			await result.current.request('test.method', {}, { timeout: 5000 });
+
+			expect(mockHub.request).toHaveBeenCalledWith('test.method', {}, { timeout: 5000 });
+		});
+	});
+
 	describe('function stability', () => {
 		it('should return stable function references', () => {
 			const { result, rerender } = renderHook(() => useMessageHub());

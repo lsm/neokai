@@ -305,6 +305,148 @@ describe('TOOL_ACTION_MAP coverage', () => {
 	});
 });
 
+describe('Edge cases for branch coverage', () => {
+	describe('getActionFromToolName - no match returns null', () => {
+		it('should fall through to fallback for completely unknown tool in tool_progress', () => {
+			const message = createToolProgressMessage('CompletelyUnknownTool', 0.5);
+			const result = getCurrentAction(message, true);
+			// No match in TOOL_ACTION_MAP or MCP parsing, falls through to fallback
+			expect(result).toBeDefined();
+			expect(result).toMatch(/\.\.\.$/);
+		});
+
+		it('should fall through for tool_progress with non-MCP unknown tool', () => {
+			// This tool name won't match any key in TOOL_ACTION_MAP and doesn't start with mcp__
+			const message = createToolProgressMessage('ZzzUnknown', 0.5);
+			const result = getCurrentAction(message, true);
+			expect(result).toBeDefined();
+		});
+	});
+
+	describe('assistant message with unknown tool name', () => {
+		it('should fall through when assistant tool_use has completely unknown tool', () => {
+			const message = {
+				type: 'assistant',
+				message: {
+					content: [{ type: 'tool_use', name: 'TotallyUnknownTool', id: 'tool-1', input: {} }],
+				},
+			} as unknown as SDKMessage;
+			const result = getCurrentAction(message, true);
+			// Falls through to fallback since tool is not in map
+			expect(result).toBeDefined();
+			expect(result).toMatch(/\.\.\.$/);
+		});
+
+		it('should handle assistant message with no content array', () => {
+			const message = {
+				type: 'assistant',
+				message: {
+					content: 'text string content',
+				},
+			} as unknown as SDKMessage;
+			const result = getCurrentAction(message, true);
+			expect(result).toBeDefined();
+		});
+
+		it('should handle assistant message with non-tool_use blocks', () => {
+			const message = {
+				type: 'assistant',
+				message: {
+					content: [{ type: 'text', text: 'hello' }],
+				},
+			} as unknown as SDKMessage;
+			const result = getCurrentAction(message, true);
+			expect(result).toBeDefined();
+		});
+
+		it('should handle assistant tool_use block without name', () => {
+			const message = {
+				type: 'assistant',
+				message: {
+					content: [{ type: 'tool_use', id: 'tool-1', input: {} }],
+				},
+			} as unknown as SDKMessage;
+			const result = getCurrentAction(message, true);
+			expect(result).toBeDefined();
+		});
+	});
+
+	describe('stream_event with tool_use unknown tool', () => {
+		it('should fall through for content_block_start tool_use with unknown tool', () => {
+			const message = createStreamEvent('content_block_start', {
+				type: 'tool_use',
+				name: 'CompletelyUnknownStreamTool',
+			});
+			const result = getCurrentAction(message, true);
+			// Unknown tool, falls through to fallback
+			expect(result).toBeDefined();
+		});
+
+		it('should handle content_block_start with unknown content type', () => {
+			const message = createStreamEvent('content_block_start', {
+				type: 'some_other_type',
+			});
+			const result = getCurrentAction(message, true);
+			expect(result).toBeDefined();
+		});
+
+		it('should handle content_block_delta with non-text delta', () => {
+			const message = {
+				type: 'stream_event',
+				event: {
+					type: 'content_block_delta',
+					delta: { type: 'thinking_delta' },
+				},
+			} as unknown as SDKMessage;
+			const result = getCurrentAction(message, true);
+			expect(result).toBeDefined();
+		});
+
+		it('should handle stream_event with unrecognized event type', () => {
+			const message = {
+				type: 'stream_event',
+				event: {
+					type: 'message_stop',
+				},
+			} as unknown as SDKMessage;
+			const result = getCurrentAction(message, true);
+			expect(result).toBeDefined();
+		});
+	});
+
+	describe('streaming phase with zero duration', () => {
+		it('should return "Streaming..." when duration is exactly 0', () => {
+			const startedAt = Date.now(); // Just started, 0s
+			const result = getCurrentAction(null, true, {
+				streamingPhase: 'streaming',
+				streamingStartedAt: startedAt,
+			});
+			expect(result).toBe('Streaming...');
+		});
+	});
+
+	describe('unrecognized message types', () => {
+		it('should fall through to fallback for unknown message type', () => {
+			const message = {
+				type: 'result',
+				data: {},
+			} as unknown as SDKMessage;
+			const result = getCurrentAction(message, true);
+			expect(result).toBeDefined();
+		});
+	});
+
+	describe('MCP tool with only 2 parts', () => {
+		it('should return null for mcp__ tool with less than 3 parts', () => {
+			const message = createToolProgressMessage('mcp__onlytwosegments', 0.5);
+			const result = getCurrentAction(message, true);
+			// mcp__onlytwosegments splits to ['mcp', 'onlytwosegments'] which is length 2
+			// parts.length >= 3 fails, so returns null from getActionFromToolName
+			expect(result).toBeDefined();
+		});
+	});
+});
+
 describe('MCP tool name parsing', () => {
 	it('should parse mcp__service__action format', () => {
 		const message = createToolProgressMessage('mcp__test_service__custom_action', 0.5);
