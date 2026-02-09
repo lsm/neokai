@@ -209,7 +209,6 @@ describe('Message RPC Handlers - Extended', () => {
 	let handlers: Map<string, Function>;
 	let mockMessageHub: {
 		onRequest: ReturnType<typeof mock>;
-		onCommand: ReturnType<typeof mock>;
 		event: ReturnType<typeof mock>;
 		query: ReturnType<typeof mock>;
 		command: ReturnType<typeof mock>;
@@ -225,10 +224,6 @@ describe('Message RPC Handlers - Extended', () => {
 		handlers = new Map();
 		mockMessageHub = {
 			onRequest: mock((method: string, handler: Function) => {
-				handlers.set(method, handler);
-				return () => {}; // Return unsubscribe function
-			}),
-			onCommand: mock((method: string, handler: Function) => {
 				handlers.set(method, handler);
 				return () => {}; // Return unsubscribe function
 			}),
