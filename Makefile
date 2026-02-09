@@ -69,7 +69,7 @@ test-1:
 
 test-daemon:
 	@echo "Running daemon tests..."
-	@bun test --preload=./packages/daemon/tests/unit/setup.ts --dots packages/daemon/tests/unit packages/shared/tests --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage
+	@NODE_ENV=test bun test --preload=./packages/daemon/tests/unit/setup.ts --dots packages/daemon/tests/unit packages/shared/tests --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage
 
 test-web:
 	@echo "Running web tests..."

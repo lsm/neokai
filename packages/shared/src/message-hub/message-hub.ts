@@ -340,7 +340,13 @@ export class MessageHub {
 			this.logDebug(`joinRoom skipped (not connected): ${room}`);
 			return;
 		}
-		await this.request('room.join', { room });
+		try {
+			await this.request('room.join', { room });
+		} catch (error) {
+			// Room join is optional - log but don't throw
+			// This prevents crashes when room join times out or fails
+			this.logDebug(`joinRoom failed for ${room}:`, error);
+		}
 	}
 
 	/**
@@ -352,7 +358,13 @@ export class MessageHub {
 			this.logDebug(`leaveRoom skipped (not connected): ${room}`);
 			return;
 		}
-		await this.request('room.leave', { room });
+		try {
+			await this.request('room.leave', { room });
+		} catch (error) {
+			// Room leave is optional - log but don't throw
+			// This prevents crashes when room leave times out or fails
+			this.logDebug(`leaveRoom failed for ${room}:`, error);
+		}
 	}
 
 	// ========================================

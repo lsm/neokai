@@ -88,13 +88,10 @@ async function waitForProcessingState(
 
 		// Join the session room and wait for acknowledgment before continuing
 		// This ensures events are routed to this client
-		(async () => {
-			try {
-				await daemon.messageHub.joinRoom('session:' + sessionId);
-			} catch {
-				// Join failed, but continue - events might still work
-			}
-		})();
+		// Fire and forget - don't block on room join, and handle errors gracefully
+		daemon.messageHub.joinRoom('session:' + sessionId).catch(() => {
+			// Join failed, but continue - events might still work
+		});
 
 		// Double-check state after listener is set up
 		// in case the state changed between our initial check and listener setup
