@@ -32,7 +32,7 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 			} else if (type === 'pagehide') {
 				pageHideHandler = listener as (event: Event) => void;
 			}
-			// Don't call original - just track handlers
+			// Don't request original - just track handlers
 		}) as unknown as typeof global.document.addEventListener;
 
 		global.document.removeEventListener = vi.fn((type: string, listener: EventListener) => {
@@ -41,7 +41,7 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 			} else if (type === 'pagehide' && listener === pageHideHandler) {
 				pageHideHandler = null;
 			}
-			// Don't call original - just track handlers
+			// Don't request original - just track handlers
 		}) as unknown as typeof global.document.addEventListener;
 
 		connectionManager = new ConnectionManager();
@@ -103,8 +103,8 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 
 			// Create mock MessageHub
 			mockMessageHub = {
-				call: vi.fn(() => Promise.resolve({ status: 'ok' })),
-				query: vi.fn(() => Promise.resolve({ status: 'ok' })),
+				request: vi.fn(() => Promise.resolve({ status: 'ok' })),
+				request: vi.fn(() => Promise.resolve({ status: 'ok' })),
 				forceResubscribe: vi.fn(() => {}),
 				isConnected: vi.fn(() => true),
 				joinRoom: vi.fn(() => {}),
@@ -175,13 +175,13 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 
 			visibilityChangeHandler?.(new Event('visibilitychange'));
 
-			// Wait for async call
+			// Wait for async request
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			expect(validateSpy).toHaveBeenCalled();
 		});
 
-		it('should call joinRoom when health check succeeds', async () => {
+		it('should request joinRoom when health check succeeds', async () => {
 			const _appStateRefreshSpy = vi.spyOn(appState, 'refreshAll').mockResolvedValue(undefined);
 			const _globalStoreRefreshSpy = vi.spyOn(globalStore, 'refresh').mockResolvedValue(undefined);
 
@@ -217,13 +217,13 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 			// Wait for async validation
 			await new Promise((resolve) => setTimeout(resolve, 100));
 
-			// FIX: sessionStore.refresh() is now called to sync agent state for status bar
+			// FIX: sessionStore.refresh() is now requested to sync agent state for status bar
 			expect(sessionStoreRefreshSpy).toHaveBeenCalled();
 			expect(appStateRefreshSpy).toHaveBeenCalled();
 			expect(globalStoreRefreshSpy).toHaveBeenCalled();
 		});
 
-		it('should call refreshes in parallel (Promise.all)', async () => {
+		it('should request refreshes in parallel (Promise.all)', async () => {
 			const refreshStartTimes: number[] = [];
 
 			const _sessionStoreRefreshSpy = vi
@@ -271,7 +271,7 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 		let globalStoreRefreshSpy: ReturnType<typeof spyOn> | null = null;
 
 		beforeEach(() => {
-			// Set up spies in beforeEach to track all calls in this describe block
+			// Set up spies in beforeEach to track all requests in this describe block
 			appStateRefreshSpy = vi.spyOn(appState, 'refreshAll').mockResolvedValue(undefined);
 			globalStoreRefreshSpy = vi.spyOn(globalStore, 'refresh').mockResolvedValue(undefined);
 
@@ -282,8 +282,8 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 			};
 
 			mockMessageHub = {
-				call: vi.fn(() => Promise.reject(new Error('Health check failed'))),
-				query: vi.fn(() => Promise.reject(new Error('Health check failed'))),
+				request: vi.fn(() => Promise.reject(new Error('Health check failed'))),
+				request: vi.fn(() => Promise.reject(new Error('Health check failed'))),
 				forceResubscribe: vi.fn(() => {}),
 				isConnected: vi.fn(() => true),
 				joinRoom: vi.fn(() => {}),
@@ -306,7 +306,7 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 			}
 		});
 
-		it('should call forceReconnect when health check fails', async () => {
+		it('should request forceReconnect when health check fails', async () => {
 			// Simulate page becoming visible
 			Object.defineProperty(document, 'hidden', {
 				value: false,
@@ -322,7 +322,7 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 			expect(mockTransport.forceReconnect).toHaveBeenCalled();
 		});
 
-		it('should NOT call refresh methods when health check fails', async () => {
+		it('should NOT request refresh methods when health check fails', async () => {
 			// Simulate page becoming visible
 			Object.defineProperty(document, 'hidden', {
 				value: false,
@@ -359,7 +359,7 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 
 			visibilityChangeHandler?.(new Event('visibilitychange'));
 
-			// Wait for async call
+			// Wait for async request
 			await new Promise((resolve) => setTimeout(resolve, 100));
 
 			expect(reconnectSpy).toHaveBeenCalled();

@@ -16,13 +16,13 @@ vi.mock('@neokai/shared', () => ({
 
 // Module-level mock objects
 const mockHubObj: {
-	query: ReturnType<typeof vi.fn>;
+	request: ReturnType<typeof vi.fn>;
 	onEvent: ReturnType<typeof vi.fn>;
 	onConnection: ReturnType<typeof vi.fn>;
 	joinRoom: ReturnType<typeof vi.fn>;
 	leaveRoom: ReturnType<typeof vi.fn>;
 } = {
-	query: vi.fn(() => Promise.resolve({ data: 'test', timestamp: 123456 })),
+	request: vi.fn(() => Promise.resolve({ data: 'test', timestamp: 123456 })),
 	onEvent: vi.fn(() => vi.fn()),
 	onConnection: vi.fn(() => vi.fn()),
 	joinRoom: vi.fn(() => {}),
@@ -41,7 +41,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 		vi.clearAllMocks();
 
 		// Reset mock hub
-		mockHubObj.query = vi.fn(() => Promise.resolve({ data: 'test', timestamp: 123456 }));
+		mockHubObj.request = vi.fn(() => Promise.resolve({ data: 'test', timestamp: 123456 }));
 		mockHubObj.onEvent = vi.fn(() => vi.fn());
 		mockHubObj.onConnection = vi.fn(() => vi.fn());
 		mockHubObj.joinRoom = vi.fn(() => {});
@@ -111,8 +111,8 @@ describe('StateChannel - Comprehensive Coverage', () => {
 		it('should fetch snapshot and setup subscriptions on start', async () => {
 			await channel.start();
 
-			// After migration, query() takes 2 args: method and merged options
-			expect(mockHubObj.query).toHaveBeenCalledWith('test.channel', {});
+			// After migration, request() takes 2 args: method and merged options
+			expect(mockHubObj.request).toHaveBeenCalledWith('test.channel', {});
 			expect(mockHubObj.onEvent).toHaveBeenCalled();
 		});
 
@@ -139,7 +139,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 			await nonBlockingChannel.start();
 
 			// Should still fetch snapshot
-			expect(mockHubObj.query).toHaveBeenCalled();
+			expect(mockHubObj.request).toHaveBeenCalled();
 			await nonBlockingChannel.stop();
 		});
 
@@ -209,7 +209,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 		});
 
 		it('should set error state on start failure', async () => {
-			mockHubObj.query.mockRejectedValue(new Error('Connection failed'));
+			mockHubObj.request.mockRejectedValue(new Error('Connection failed'));
 
 			const errorChannel = new StateChannel(mockHubObj as unknown as MessageHub, 'test.channel');
 
@@ -218,7 +218,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 		});
 
 		it('should handle fetch error gracefully', async () => {
-			mockHubObj.query.mockRejectedValueOnce(new Error('Fetch failed'));
+			mockHubObj.request.mockRejectedValueOnce(new Error('Fetch failed'));
 
 			const errorChannel = new StateChannel(mockHubObj as unknown as MessageHub, 'test.channel');
 
@@ -228,18 +228,18 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
 	describe('refresh()', () => {
 		it('should fetch new snapshot', async () => {
-			mockHubObj.query.mockResolvedValue({ data: 'refreshed', timestamp: 123457 });
+			mockHubObj.request.mockResolvedValue({ data: 'refreshed', timestamp: 123457 });
 
 			await channel.start();
 			await channel.refresh();
 
-			expect(mockHubObj.query).toHaveBeenCalledTimes(2);
+			expect(mockHubObj.request).toHaveBeenCalledTimes(2);
 			expect(channel.value?.data).toBe('refreshed');
 		});
 
 		it('should handle refresh errors', async () => {
-			mockHubObj.query.mockResolvedValueOnce({ data: 'test' });
-			mockHubObj.query.mockRejectedValueOnce(new Error('Refresh failed'));
+			mockHubObj.request.mockResolvedValueOnce({ data: 'test' });
+			mockHubObj.request.mockRejectedValueOnce(new Error('Refresh failed'));
 
 			await channel.start();
 
@@ -318,7 +318,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 				optimisticTimeout: 100, // 100ms timeout
 			});
 
-			mockHubObj.query.mockResolvedValue({ data: 'original' });
+			mockHubObj.request.mockResolvedValue({ data: 'original' });
 			await testChannel.start();
 
 			// Create a promise that never resolves
@@ -376,7 +376,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 				lastSync: { value: number };
 			};
 
-			mockHubObj.query.mockResolvedValue({ data: 'test', timestamp: Date.now() - 120000 });
+			mockHubObj.request.mockResolvedValue({ data: 'test', timestamp: Date.now() - 120000 });
 
 			await channel.start();
 
@@ -390,7 +390,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 				lastSync: { value: number };
 			};
 
-			mockHubObj.query.mockResolvedValue({ data: 'test', timestamp: Date.now() - 30000 });
+			mockHubObj.request.mockResolvedValue({ data: 'test', timestamp: Date.now() - 30000 });
 
 			await channel.start();
 
@@ -412,7 +412,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 		});
 
 		it('should set loading during fetch', async () => {
-			mockHubObj.query.mockImplementation(
+			mockHubObj.request.mockImplementation(
 				() =>
 					new Promise((resolve) => {
 						setTimeout(() => resolve({ data: 'test' }), 50);
@@ -456,8 +456,8 @@ describe('StateChannel - Comprehensive Coverage', () => {
 				{ uuid: 'msg-3', content: 'New', timestamp: 300 },
 			];
 
-			mockHubObj.query.mockResolvedValue({ sdkMessages: incoming });
-			mockHubObj.query.mockResolvedValueOnce({ sdkMessages: existing });
+			mockHubObj.request.mockResolvedValue({ sdkMessages: incoming });
+			mockHubObj.request.mockResolvedValueOnce({ sdkMessages: existing });
 
 			await messagesChannel.start();
 
@@ -477,7 +477,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 				{ uuid: 'msg-2', content: 'Second', timestamp: 200 },
 			];
 
-			mockHubObj.query.mockResolvedValue({ sdkMessages: incoming });
+			mockHubObj.request.mockResolvedValue({ sdkMessages: incoming });
 
 			await messagesChannel.start();
 
@@ -490,7 +490,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 				sdkMessages: Array<{ uuid: string; content: string; timestamp: number }>;
 			}>(mockHubObj as unknown as MessageHub, 'state.sdkMessages');
 
-			mockHubObj.query.mockResolvedValue({ sdkMessages: [] });
+			mockHubObj.request.mockResolvedValue({ sdkMessages: [] });
 
 			await messagesChannel.start();
 
@@ -548,7 +548,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
 	describe('edge cases', () => {
 		it('should handle empty snapshots', async () => {
-			mockHubObj.query.mockResolvedValue(null);
+			mockHubObj.request.mockResolvedValue(null);
 
 			await channel.start();
 
@@ -556,7 +556,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 		});
 
 		it('should handle snapshots without timestamp', async () => {
-			mockHubObj.query.mockResolvedValue({ data: 'test-no-timestamp' });
+			mockHubObj.request.mockResolvedValue({ data: 'test-no-timestamp' });
 
 			await channel.start();
 
@@ -631,7 +631,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 		});
 
 		it('should skip delta when state is null', async () => {
-			mockHubObj.query.mockResolvedValue(null); // state will be null
+			mockHubObj.request.mockResolvedValue(null); // state will be null
 
 			const mergeFn = vi.fn((current, delta) => ({ ...current, ...delta }));
 			const deltaChannel = new StateChannel(mockHubObj as unknown as MessageHub, 'test.channel', {
@@ -664,7 +664,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 			await channel.start();
 
 			// Make fetchSnapshot fail on reconnect
-			mockHubObj.query.mockRejectedValue(new Error('Fetch failed'));
+			mockHubObj.request.mockRejectedValue(new Error('Fetch failed'));
 
 			const onConnectionCall = mockHubObj.onConnection.mock.calls[0];
 			if (onConnectionCall) {

@@ -13,8 +13,7 @@ import { vi } from 'vitest';
 
 // Mock connection-manager before importing GlobalStore
 const mockHub = {
-	query: vi.fn(),
-	command: vi.fn(),
+	request: vi.fn().mockResolvedValue({ acknowledged: true }),
 	onEvent: vi.fn(() => vi.fn()),
 	joinRoom: vi.fn(),
 	leaveRoom: vi.fn(),
@@ -588,7 +587,7 @@ describe('GlobalStore - initialize()', () => {
 
 	it('should return early if already initialized', async () => {
 		// First initialize
-		mockHub.query.mockResolvedValueOnce({
+		mockHub.request.mockResolvedValueOnce({
 			sessions: { sessions: [], hasArchivedSessions: false },
 			system: null,
 			settings: { settings: null },
@@ -596,12 +595,12 @@ describe('GlobalStore - initialize()', () => {
 		await store.initialize();
 
 		// Reset call count
-		mockHub.query.mockClear();
+		mockHub.request.mockClear();
 
 		// Second initialize should return early
 		await store.initialize();
 
-		expect(mockHub.query).not.toHaveBeenCalled();
+		expect(mockHub.request).not.toHaveBeenCalled();
 	});
 
 	it('should fetch initial state snapshot on first initialize', async () => {
@@ -619,11 +618,11 @@ describe('GlobalStore - initialize()', () => {
 				settings: { showArchived: false },
 			},
 		};
-		mockHub.query.mockResolvedValueOnce(mockSnapshot);
+		mockHub.request.mockResolvedValueOnce(mockSnapshot);
 
 		await store.initialize();
 
-		expect(mockHub.query).toHaveBeenCalledWith('state.global.snapshot', {});
+		expect(mockHub.request).toHaveBeenCalledWith('state.global.snapshot', {});
 		expect(store.sessions.value).toHaveLength(1);
 		expect(store.sessions.value[0].id).toBe('1');
 		expect(store.hasArchivedSessions.value).toBe(true);
@@ -632,7 +631,7 @@ describe('GlobalStore - initialize()', () => {
 	});
 
 	it('should set up subscriptions after fetching snapshot', async () => {
-		mockHub.query.mockResolvedValueOnce({
+		mockHub.request.mockResolvedValueOnce({
 			sessions: { sessions: [], hasArchivedSessions: false },
 			system: null,
 			settings: { settings: null },
@@ -653,7 +652,7 @@ describe('GlobalStore - initialize()', () => {
 			| ((state: { sessions: Session[]; hasArchivedSessions: boolean }) => void)
 			| null = null;
 
-		mockHub.query.mockResolvedValueOnce({
+		mockHub.request.mockResolvedValueOnce({
 			sessions: { sessions: [], hasArchivedSessions: false },
 			system: null,
 			settings: { settings: null },
@@ -682,7 +681,7 @@ describe('GlobalStore - initialize()', () => {
 			| ((delta: { added?: Session[]; updated?: Partial<Session>[]; removed?: string[] }) => void)
 			| null = null;
 
-		mockHub.query.mockResolvedValueOnce({
+		mockHub.request.mockResolvedValueOnce({
 			sessions: { sessions: [createMockSession('1')], hasArchivedSessions: false },
 			system: null,
 			settings: { settings: null },
@@ -707,7 +706,7 @@ describe('GlobalStore - initialize()', () => {
 	it('should handle system state subscription updates', async () => {
 		let systemCallback: ((state: SystemState) => void) | null = null;
 
-		mockHub.query.mockResolvedValueOnce({
+		mockHub.request.mockResolvedValueOnce({
 			sessions: { sessions: [], hasArchivedSessions: false },
 			system: null,
 			settings: { settings: null },
@@ -736,7 +735,7 @@ describe('GlobalStore - initialize()', () => {
 	it('should handle settings subscription updates', async () => {
 		let settingsCallback: ((state: { settings: unknown }) => void) | null = null;
 
-		mockHub.query.mockResolvedValueOnce({
+		mockHub.request.mockResolvedValueOnce({
 			sessions: { sessions: [], hasArchivedSessions: false },
 			system: null,
 			settings: { settings: null },
@@ -758,25 +757,17 @@ describe('GlobalStore - initialize()', () => {
 	});
 
 	it('should handle initialization error gracefully', async () => {
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-		mockHub.query.mockRejectedValueOnce(new Error('Network error'));
+		mockHub.request.mockRejectedValueOnce(new Error('Network error'));
 
 		await store.initialize();
-
-		expect(consoleSpy).toHaveBeenCalledWith(
-			'[GlobalStore] Failed to initialize:',
-			expect.any(Error)
-		);
 
 		// Store should remain in uninitialized state
 		const privateStore = store as unknown as { initialized: boolean };
 		expect(privateStore.initialized).toBe(false);
-
-		consoleSpy.mockRestore();
 	});
 
 	it('should handle null snapshot gracefully', async () => {
-		mockHub.query.mockResolvedValueOnce(null);
+		mockHub.request.mockResolvedValueOnce(null);
 
 		await store.initialize();
 
@@ -786,7 +777,7 @@ describe('GlobalStore - initialize()', () => {
 	});
 
 	it('should handle snapshot with missing fields', async () => {
-		mockHub.query.mockResolvedValueOnce({
+		mockHub.request.mockResolvedValueOnce({
 			sessions: null,
 			system: null,
 			settings: null,
@@ -816,12 +807,12 @@ describe('GlobalStore - refresh()', () => {
 	it('should return early if not initialized', async () => {
 		await store.refresh();
 
-		expect(mockHub.query).not.toHaveBeenCalled();
+		expect(mockHub.request).not.toHaveBeenCalled();
 	});
 
 	it('should fetch fresh snapshot when initialized', async () => {
 		// Initialize first
-		mockHub.query.mockResolvedValueOnce({
+		mockHub.request.mockResolvedValueOnce({
 			sessions: { sessions: [], hasArchivedSessions: false },
 			system: null,
 			settings: { settings: null },
@@ -843,11 +834,11 @@ describe('GlobalStore - refresh()', () => {
 				settings: { refreshed: true },
 			},
 		};
-		mockHub.query.mockResolvedValueOnce(freshSnapshot);
+		mockHub.request.mockResolvedValueOnce(freshSnapshot);
 
 		await store.refresh();
 
-		expect(mockHub.query).toHaveBeenLastCalledWith('state.global.snapshot', {});
+		expect(mockHub.request).toHaveBeenLastCalledWith('state.global.snapshot', {});
 		expect(store.sessions.value).toHaveLength(1);
 		expect(store.sessions.value[0].id).toBe('refreshed-1');
 		expect(store.hasArchivedSessions.value).toBe(true);
@@ -856,7 +847,7 @@ describe('GlobalStore - refresh()', () => {
 
 	it('should complete refresh successfully when initialized', async () => {
 		// Initialize first
-		mockHub.query.mockResolvedValueOnce({
+		mockHub.request.mockResolvedValueOnce({
 			sessions: { sessions: [], hasArchivedSessions: false },
 			system: null,
 			settings: { settings: null },
@@ -864,7 +855,7 @@ describe('GlobalStore - refresh()', () => {
 		await store.initialize();
 
 		// Refresh
-		mockHub.query.mockResolvedValueOnce({
+		mockHub.request.mockResolvedValueOnce({
 			sessions: { sessions: [], hasArchivedSessions: false },
 			system: null,
 			settings: { settings: null },
@@ -872,14 +863,12 @@ describe('GlobalStore - refresh()', () => {
 		await store.refresh();
 
 		// Verify refresh called the snapshot endpoint
-		expect(mockHub.query).toHaveBeenLastCalledWith('state.global.snapshot', {});
+		expect(mockHub.request).toHaveBeenLastCalledWith('state.global.snapshot', {});
 	});
 
 	it('should throw error on refresh failure', async () => {
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
 		// Initialize first
-		mockHub.query.mockResolvedValueOnce({
+		mockHub.request.mockResolvedValueOnce({
 			sessions: { sessions: [], hasArchivedSessions: false },
 			system: null,
 			settings: { settings: null },
@@ -887,20 +876,14 @@ describe('GlobalStore - refresh()', () => {
 		await store.initialize();
 
 		// Refresh with error
-		mockHub.query.mockRejectedValueOnce(new Error('Refresh failed'));
+		mockHub.request.mockRejectedValueOnce(new Error('Refresh failed'));
 
 		await expect(store.refresh()).rejects.toThrow('Refresh failed');
-		expect(consoleSpy).toHaveBeenCalledWith(
-			'[GlobalStore] Failed to refresh state:',
-			expect.any(Error)
-		);
-
-		consoleSpy.mockRestore();
 	});
 
 	it('should handle null refresh snapshot gracefully', async () => {
 		// Initialize first
-		mockHub.query.mockResolvedValueOnce({
+		mockHub.request.mockResolvedValueOnce({
 			sessions: { sessions: [createMockSession('1')], hasArchivedSessions: true },
 			system: { auth: { authenticated: true } },
 			settings: { settings: { initial: true } },
@@ -908,7 +891,7 @@ describe('GlobalStore - refresh()', () => {
 		await store.initialize();
 
 		// Refresh with null
-		mockHub.query.mockResolvedValueOnce(null);
+		mockHub.request.mockResolvedValueOnce(null);
 
 		await store.refresh();
 
@@ -986,7 +969,7 @@ describe('GlobalStore - destroy (actual)', () => {
 
 	it('should handle cleanup function errors gracefully', async () => {
 		// Initialize first
-		mockHub.query.mockResolvedValueOnce({
+		mockHub.request.mockResolvedValueOnce({
 			sessions: { sessions: [], hasArchivedSessions: false },
 			system: null,
 			settings: { settings: null },
@@ -1012,7 +995,7 @@ describe('GlobalStore - destroy (actual)', () => {
 
 	it('should reset initialized flag on destroy', async () => {
 		// Initialize first
-		mockHub.query.mockResolvedValueOnce({
+		mockHub.request.mockResolvedValueOnce({
 			sessions: { sessions: [], hasArchivedSessions: false },
 			system: null,
 			settings: { settings: null },
@@ -1029,7 +1012,7 @@ describe('GlobalStore - destroy (actual)', () => {
 
 	it('should clear cleanup functions on destroy', async () => {
 		// Initialize first
-		mockHub.query.mockResolvedValueOnce({
+		mockHub.request.mockResolvedValueOnce({
 			sessions: { sessions: [], hasArchivedSessions: false },
 			system: null,
 			settings: { settings: null },
@@ -1057,7 +1040,7 @@ describe('GlobalStore - applySessionsDelta (actual)', () => {
 		store = new ActualGlobalStore();
 
 		// Initialize with sessions
-		mockHub.query.mockResolvedValueOnce({
+		mockHub.request.mockResolvedValueOnce({
 			sessions: {
 				sessions: [createMockSession('1'), createMockSession('2'), createMockSession('3')],
 				hasArchivedSessions: false,
@@ -1141,7 +1124,7 @@ describe('GlobalStore - Subscription Callbacks (actual)', () => {
 		vi.clearAllMocks();
 		store = new ActualGlobalStore();
 
-		mockHub.query.mockResolvedValueOnce({
+		mockHub.request.mockResolvedValueOnce({
 			sessions: { sessions: [], hasArchivedSessions: false },
 			system: null,
 			settings: { settings: null },

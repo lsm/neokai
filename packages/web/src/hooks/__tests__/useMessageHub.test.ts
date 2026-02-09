@@ -93,7 +93,11 @@ describe('useMessageHub', () => {
 		});
 
 		it('should return hub when connected', () => {
-			const mockHub = { call: vi.fn(), query: vi.fn(), subscribeOptimistic: vi.fn() };
+			const mockHub = {
+				call: vi.fn(),
+				request: vi.fn().mockResolvedValue({ acknowledged: true }),
+				subscribeOptimistic: vi.fn(),
+			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
 			const { result } = renderHook(() => useMessageHub());
 
@@ -129,7 +133,10 @@ describe('useMessageHub', () => {
 		it('should make RPC call when connected', async () => {
 			const mockHub = {
 				call: vi.fn().mockResolvedValue({ success: true, data: 'result' }),
-				query: vi.fn().mockResolvedValue({ success: true, data: 'result' }),
+				request: vi
+					.fn()
+					.mockResolvedValue({ acknowledged: true })
+					.mockResolvedValue({ success: true, data: 'result' }),
 				subscribeOptimistic: vi.fn(),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -137,7 +144,7 @@ describe('useMessageHub', () => {
 
 			const response = await result.current.call('test.method', { input: 'data' });
 
-			expect(mockHub.query).toHaveBeenCalledWith(
+			expect(mockHub.request).toHaveBeenCalledWith(
 				'test.method',
 				{ input: 'data' },
 				{ timeout: 10000 }
@@ -148,7 +155,7 @@ describe('useMessageHub', () => {
 		it('should use custom timeout when provided', async () => {
 			const mockHub = {
 				call: vi.fn().mockResolvedValue({}),
-				query: vi.fn().mockResolvedValue({}),
+				request: vi.fn().mockResolvedValue({ acknowledged: true }).mockResolvedValue({}),
 				subscribeOptimistic: vi.fn(),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -156,13 +163,13 @@ describe('useMessageHub', () => {
 
 			await result.current.call('test.method', {}, { timeout: 5000 });
 
-			expect(mockHub.query).toHaveBeenCalledWith('test.method', {}, { timeout: 5000 });
+			expect(mockHub.request).toHaveBeenCalledWith('test.method', {}, { timeout: 5000 });
 		});
 
 		it('should use defaultTimeout from options', async () => {
 			const mockHub = {
 				call: vi.fn().mockResolvedValue({}),
-				query: vi.fn().mockResolvedValue({}),
+				request: vi.fn().mockResolvedValue({ acknowledged: true }).mockResolvedValue({}),
 				subscribeOptimistic: vi.fn(),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -170,7 +177,7 @@ describe('useMessageHub', () => {
 
 			await result.current.call('test.method');
 
-			expect(mockHub.query).toHaveBeenCalledWith('test.method', undefined, { timeout: 20000 });
+			expect(mockHub.request).toHaveBeenCalledWith('test.method', undefined, { timeout: 20000 });
 		});
 	});
 
@@ -187,7 +194,10 @@ describe('useMessageHub', () => {
 		it('should make RPC call when connected', async () => {
 			const mockHub = {
 				call: vi.fn().mockResolvedValue({ success: true }),
-				query: vi.fn().mockResolvedValue({ success: true }),
+				request: vi
+					.fn()
+					.mockResolvedValue({ acknowledged: true })
+					.mockResolvedValue({ success: true }),
 				subscribeOptimistic: vi.fn(),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -210,7 +220,7 @@ describe('useMessageHub', () => {
 		it('should use custom timeout when provided', async () => {
 			const mockHub = {
 				call: vi.fn().mockResolvedValue({}),
-				query: vi.fn().mockResolvedValue({}),
+				request: vi.fn().mockResolvedValue({ acknowledged: true }).mockResolvedValue({}),
 				subscribeOptimistic: vi.fn(),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -218,7 +228,7 @@ describe('useMessageHub', () => {
 
 			await result.current.callIfConnected('test.method', {}, { timeout: 3000 });
 
-			expect(mockHub.query).toHaveBeenCalledWith('test.method', {}, { timeout: 3000 });
+			expect(mockHub.request).toHaveBeenCalledWith('test.method', {}, { timeout: 3000 });
 		});
 	});
 
@@ -239,7 +249,7 @@ describe('useMessageHub', () => {
 			const mockUnsub = vi.fn();
 			const mockHub = {
 				call: vi.fn(),
-				query: vi.fn(),
+				request: vi.fn().mockResolvedValue({ acknowledged: true }),
 				onEvent: vi.fn().mockReturnValue(mockUnsub),
 				subscribeOptimistic: vi.fn().mockReturnValue(mockUnsub),
 			};
@@ -258,7 +268,7 @@ describe('useMessageHub', () => {
 			const mockUnsub = vi.fn();
 			const mockHub = {
 				call: vi.fn(),
-				query: vi.fn(),
+				request: vi.fn().mockResolvedValue({ acknowledged: true }),
 				onEvent: vi.fn().mockReturnValue(mockUnsub),
 				subscribeOptimistic: vi.fn().mockReturnValue(mockUnsub),
 			};
@@ -274,7 +284,7 @@ describe('useMessageHub', () => {
 		it('should pass options to onEvent', () => {
 			const mockHub = {
 				call: vi.fn(),
-				query: vi.fn(),
+				request: vi.fn().mockResolvedValue({ acknowledged: true }),
 				onEvent: vi.fn().mockReturnValue(() => {}),
 				subscribeOptimistic: vi.fn().mockReturnValue(() => {}),
 			};
@@ -318,7 +328,7 @@ describe('useMessageHub', () => {
 			// Simulate connection
 			const mockHub = {
 				call: vi.fn(),
-				query: vi.fn(),
+				request: vi.fn().mockResolvedValue({ acknowledged: true }),
 				onEvent: vi.fn().mockReturnValue(() => {}),
 				subscribeOptimistic: vi.fn().mockReturnValue(() => {}),
 			};
@@ -345,7 +355,7 @@ describe('useMessageHub', () => {
 			// Simulate connection
 			const mockHub = {
 				call: vi.fn(),
-				query: vi.fn(),
+				request: vi.fn().mockResolvedValue({ acknowledged: true }),
 				onEvent: vi.fn().mockReturnValue(() => {}),
 				subscribeOptimistic: vi.fn().mockReturnValue(() => {}),
 			};
@@ -432,7 +442,7 @@ describe('useMessageHub', () => {
 			const mockUnsub = vi.fn();
 			const mockHub = {
 				call: vi.fn(),
-				query: vi.fn(),
+				request: vi.fn().mockResolvedValue({ acknowledged: true }),
 				onEvent: vi.fn().mockReturnValue(mockUnsub),
 				subscribeOptimistic: vi.fn().mockReturnValue(mockUnsub),
 			};
@@ -455,7 +465,7 @@ describe('useMessageHub', () => {
 			});
 			const mockHub = {
 				call: vi.fn(),
-				query: vi.fn(),
+				request: vi.fn().mockResolvedValue({ acknowledged: true }),
 				onEvent: vi.fn().mockReturnValue(mockUnsub),
 				subscribeOptimistic: vi.fn().mockReturnValue(mockUnsub),
 			};

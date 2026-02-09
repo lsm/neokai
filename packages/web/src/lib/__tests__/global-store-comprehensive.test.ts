@@ -13,8 +13,7 @@ import { STATE_CHANNELS } from '@neokai/shared';
 // Mock connection-manager module - must be at top level and use inline factory
 vi.mock('../connection-manager.js', () => {
 	const mockHub = {
-		query: vi.fn(),
-		command: vi.fn(),
+		request: vi.fn().mockResolvedValue({ acknowledged: true }),
 		onEvent: vi.fn(() => vi.fn()),
 		joinRoom: vi.fn(),
 		leaveRoom: vi.fn(),
@@ -69,8 +68,7 @@ describe('GlobalStore', () => {
 				getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
 			}
 		).getHubIfConnected.mockReturnValue({
-			query: vi.fn(),
-			command: vi.fn(),
+			request: vi.fn().mockResolvedValue({ acknowledged: true }),
 			onEvent: vi.fn(() => vi.fn()),
 			joinRoom: vi.fn(),
 			leaveRoom: vi.fn(),
@@ -82,8 +80,7 @@ describe('GlobalStore', () => {
 				getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
 			}
 		).getHub.mockResolvedValue({
-			query: vi.fn(),
-			command: vi.fn(),
+			request: vi.fn().mockResolvedValue({ acknowledged: true }),
 			onEvent: vi.fn(() => vi.fn()),
 			joinRoom: vi.fn(),
 			leaveRoom: vi.fn(),
@@ -211,18 +208,21 @@ describe('GlobalStore', () => {
 	describe('initialize', () => {
 		it('should fetch snapshot and set initial state', async () => {
 			const mockHub = {
-				query: vi.fn().mockResolvedValue({
-					sessions: {
-						sessions: [createMockSession('sess-1')],
-						hasArchivedSessions: false,
-					},
-					system: {
-						auth: { authenticated: true, method: 'api_key' },
-						health: { status: 'healthy' },
-						apiConnection: { status: 'connected' },
-					},
-					settings: { settings: { permissionMode: 'bypassPermissions' } },
-				}),
+				request: vi
+					.fn()
+					.mockResolvedValue({ acknowledged: true })
+					.mockResolvedValue({
+						sessions: {
+							sessions: [createMockSession('sess-1')],
+							hasArchivedSessions: false,
+						},
+						system: {
+							auth: { authenticated: true, method: 'api_key' },
+							health: { status: 'healthy' },
+							apiConnection: { status: 'connected' },
+						},
+						settings: { settings: { permissionMode: 'bypassPermissions' } },
+					}),
 				onEvent: vi.fn(() => vi.fn()),
 				joinRoom: vi.fn(),
 				leaveRoom: vi.fn(),
@@ -245,11 +245,14 @@ describe('GlobalStore', () => {
 
 		it('should subscribe to all state channels', async () => {
 			const mockHub = {
-				query: vi.fn().mockResolvedValue({
-					sessions: { sessions: [], hasArchivedSessions: false },
-					system: null,
-					settings: null,
-				}),
+				request: vi
+					.fn()
+					.mockResolvedValue({ acknowledged: true })
+					.mockResolvedValue({
+						sessions: { sessions: [], hasArchivedSessions: false },
+						system: null,
+						settings: null,
+					}),
 				onEvent: vi.fn(() => vi.fn()),
 				joinRoom: vi.fn(),
 				leaveRoom: vi.fn(),
@@ -285,11 +288,14 @@ describe('GlobalStore', () => {
 		it('should not initialize twice', async () => {
 			// Setup mock to return valid snapshot
 			const mockHub = {
-				query: vi.fn().mockResolvedValue({
-					sessions: { sessions: [], hasArchivedSessions: false },
-					system: null,
-					settings: null,
-				}),
+				request: vi
+					.fn()
+					.mockResolvedValue({ acknowledged: true })
+					.mockResolvedValue({
+						sessions: { sessions: [], hasArchivedSessions: false },
+						system: null,
+						settings: null,
+					}),
 				onEvent: vi.fn(() => vi.fn()),
 				joinRoom: vi.fn(),
 				leaveRoom: vi.fn(),
@@ -309,25 +315,28 @@ describe('GlobalStore', () => {
 			expect(privateStore.initialized).toBe(true);
 
 			// Reset the mock call count
-			mockHub.query.mockClear();
+			mockHub.request.mockClear();
 
 			// Second initialize should be a no-op
 			await store.initialize();
 
 			// Hub call should not have been made again
-			expect(mockHub.query).not.toHaveBeenCalled();
+			expect(mockHub.request).not.toHaveBeenCalled();
 		});
 
 		it('should set hasArchivedSessions from snapshot', async () => {
 			const mockHub = {
-				query: vi.fn().mockResolvedValue({
-					sessions: {
-						sessions: [],
-						hasArchivedSessions: true,
-					},
-					system: null,
-					settings: null,
-				}),
+				request: vi
+					.fn()
+					.mockResolvedValue({ acknowledged: true })
+					.mockResolvedValue({
+						sessions: {
+							sessions: [],
+							hasArchivedSessions: true,
+						},
+						system: null,
+						settings: null,
+					}),
 				onEvent: vi.fn(() => vi.fn()),
 				joinRoom: vi.fn(),
 				leaveRoom: vi.fn(),
@@ -350,11 +359,14 @@ describe('GlobalStore', () => {
 		beforeEach(async () => {
 			// Initialize store first
 			const mockHub = {
-				query: vi.fn().mockResolvedValue({
-					sessions: { sessions: [], hasArchivedSessions: false },
-					system: null,
-					settings: null,
-				}),
+				request: vi
+					.fn()
+					.mockResolvedValue({ acknowledged: true })
+					.mockResolvedValue({
+						sessions: { sessions: [], hasArchivedSessions: false },
+						system: null,
+						settings: null,
+					}),
 				onEvent: vi.fn(() => vi.fn()),
 				joinRoom: vi.fn(),
 				leaveRoom: vi.fn(),
@@ -371,18 +383,21 @@ describe('GlobalStore', () => {
 
 		it('should fetch fresh snapshot from server', async () => {
 			const mockHub = {
-				query: vi.fn().mockResolvedValue({
-					sessions: {
-						sessions: [createMockSession('sess-refreshed')],
-						hasArchivedSessions: true,
-					},
-					system: {
-						auth: { authenticated: true, method: 'oauth' },
-						health: { status: 'healthy' },
-						apiConnection: { status: 'connected' },
-					},
-					settings: { settings: { permissionMode: 'acceptEdits' } },
-				}),
+				request: vi
+					.fn()
+					.mockResolvedValue({ acknowledged: true })
+					.mockResolvedValue({
+						sessions: {
+							sessions: [createMockSession('sess-refreshed')],
+							hasArchivedSessions: true,
+						},
+						system: {
+							auth: { authenticated: true, method: 'oauth' },
+							health: { status: 'healthy' },
+							apiConnection: { status: 'connected' },
+						},
+						settings: { settings: { permissionMode: 'acceptEdits' } },
+					}),
 				onEvent: vi.fn(() => vi.fn()),
 				joinRoom: vi.fn(),
 				leaveRoom: vi.fn(),
@@ -405,11 +420,14 @@ describe('GlobalStore', () => {
 
 		it('should call correct channel for refresh', async () => {
 			const mockHub = {
-				query: vi.fn().mockResolvedValue({
-					sessions: { sessions: [], hasArchivedSessions: false },
-					system: null,
-					settings: null,
-				}),
+				request: vi
+					.fn()
+					.mockResolvedValue({ acknowledged: true })
+					.mockResolvedValue({
+						sessions: { sessions: [], hasArchivedSessions: false },
+						system: null,
+						settings: null,
+					}),
 				onEvent: vi.fn(() => vi.fn()),
 				joinRoom: vi.fn(),
 				leaveRoom: vi.fn(),
@@ -424,7 +442,7 @@ describe('GlobalStore', () => {
 
 			await store.refresh();
 
-			expect(mockHub.query).toHaveBeenCalledWith(STATE_CHANNELS.GLOBAL_SNAPSHOT, {});
+			expect(mockHub.request).toHaveBeenCalledWith(STATE_CHANNELS.GLOBAL_SNAPSHOT, {});
 		});
 	});
 
@@ -471,11 +489,14 @@ describe('GlobalStore', () => {
 	describe('destroy', () => {
 		it('should reset initialized flag', async () => {
 			const mockHub = {
-				query: vi.fn().mockResolvedValue({
-					sessions: { sessions: [], hasArchivedSessions: false },
-					system: null,
-					settings: null,
-				}),
+				request: vi
+					.fn()
+					.mockResolvedValue({ acknowledged: true })
+					.mockResolvedValue({
+						sessions: { sessions: [], hasArchivedSessions: false },
+						system: null,
+						settings: null,
+					}),
 				onEvent: vi.fn(() => vi.fn()),
 				joinRoom: vi.fn(),
 				leaveRoom: vi.fn(),
@@ -497,11 +518,14 @@ describe('GlobalStore', () => {
 
 		it('should clear cleanup functions', async () => {
 			const mockHub = {
-				query: vi.fn().mockResolvedValue({
-					sessions: { sessions: [], hasArchivedSessions: false },
-					system: null,
-					settings: null,
-				}),
+				request: vi
+					.fn()
+					.mockResolvedValue({ acknowledged: true })
+					.mockResolvedValue({
+						sessions: { sessions: [], hasArchivedSessions: false },
+						system: null,
+						settings: null,
+					}),
 				onEvent: vi.fn(() => vi.fn()),
 				joinRoom: vi.fn(),
 				leaveRoom: vi.fn(),

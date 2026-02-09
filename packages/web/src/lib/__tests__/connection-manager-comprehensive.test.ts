@@ -33,7 +33,6 @@ const mockHubObj: {
 	isConnected: vi.fn(() => true),
 	call: vi.fn(() => Promise.resolve({ ok: true })),
 	query: vi.fn(() => Promise.resolve({ ok: true })),
-	command: vi.fn(),
 	onEvent: vi.fn(() => vi.fn()),
 	joinRoom: vi.fn(),
 	leaveRoom: vi.fn(),

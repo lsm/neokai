@@ -12,7 +12,7 @@ import type { MessageHub } from '@neokai/shared';
 // Create mock MessageHub
 function createMockHub() {
 	return {
-		query: vi.fn(() => Promise.resolve(null)),
+		request: vi.fn(() => Promise.resolve(null)),
 		onEvent: vi.fn(() => () => {}),
 		onConnection: vi.fn(() => () => {}),
 		joinRoom: vi.fn(() => {}),
@@ -122,14 +122,14 @@ describe('StateChannel', () => {
 
 	describe('start', () => {
 		beforeEach(() => {
-			mockHub.query.mockImplementation(() => Promise.resolve({ data: 'test' }));
+			mockHub.request.mockImplementation(() => Promise.resolve({ data: 'test' }));
 		});
 
 		it('should fetch initial snapshot', async () => {
 			channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel');
 			await channel.start();
 
-			expect(mockHub.query).toHaveBeenCalledWith('test.channel', {});
+			expect(mockHub.request).toHaveBeenCalledWith('test.channel', {});
 		});
 
 		it('should update state with snapshot', async () => {
@@ -156,14 +156,14 @@ describe('StateChannel', () => {
 		});
 
 		it('should throw on fetch error', async () => {
-			mockHub.query.mockImplementation(() => Promise.reject(new Error('Network error')));
+			mockHub.request.mockImplementation(() => Promise.reject(new Error('Network error')));
 			channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel');
 
 			await expect(channel.start()).rejects.toThrow('Network error');
 		});
 
 		it('should set error state on fetch error', async () => {
-			mockHub.query.mockImplementation(() => Promise.reject(new Error('Network error')));
+			mockHub.request.mockImplementation(() => Promise.reject(new Error('Network error')));
 			channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel');
 
 			try {
@@ -183,7 +183,7 @@ describe('StateChannel', () => {
 			const unsubscribe2 = vi.fn(() => Promise.resolve());
 			mockHub.onEvent.mockImplementation(() => unsubscribe1);
 			mockHub.onConnection.mockImplementation(() => unsubscribe2);
-			mockHub.query.mockImplementation(() => Promise.resolve({ data: 'test' }));
+			mockHub.request.mockImplementation(() => Promise.resolve({ data: 'test' }));
 
 			channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel');
 			await channel.start();
@@ -193,7 +193,7 @@ describe('StateChannel', () => {
 		});
 
 		it('should clear refresh timer', async () => {
-			mockHub.query.mockImplementation(() => Promise.resolve({ data: 'test' }));
+			mockHub.request.mockImplementation(() => Promise.resolve({ data: 'test' }));
 
 			channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel', {
 				refreshInterval: 1000,
@@ -212,11 +212,11 @@ describe('StateChannel', () => {
 
 	describe('refresh', () => {
 		it('should fetch new snapshot', async () => {
-			mockHub.query.mockImplementation(() => Promise.resolve({ data: 'initial' }));
+			mockHub.request.mockImplementation(() => Promise.resolve({ data: 'initial' }));
 			channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel');
 			await channel.start();
 
-			mockHub.query.mockImplementation(() => Promise.resolve({ data: 'refreshed' }));
+			mockHub.request.mockImplementation(() => Promise.resolve({ data: 'refreshed' }));
 			await channel.refresh();
 
 			expect(channel.value).toEqual({ data: 'refreshed' });
@@ -225,7 +225,7 @@ describe('StateChannel', () => {
 
 	describe('updateOptimistic', () => {
 		beforeEach(async () => {
-			mockHub.query.mockImplementation(() => Promise.resolve({ data: 'initial' }));
+			mockHub.request.mockImplementation(() => Promise.resolve({ data: 'initial' }));
 			channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel', {
 				optimisticTimeout: 100,
 			});
@@ -302,7 +302,7 @@ describe('StateChannel - Optimistic Subscriptions', () => {
 	});
 
 	it('should use onEvent when option enabled', async () => {
-		mockHub.query.mockImplementation(() => Promise.resolve({ data: 'test' }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ data: 'test' }));
 
 		const channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel', {
 			useOptimisticSubscriptions: true,
@@ -315,7 +315,7 @@ describe('StateChannel - Optimistic Subscriptions', () => {
 	});
 
 	it('should setup delta subscription when enableDeltas and mergeDelta provided', async () => {
-		mockHub.query.mockImplementation(() => Promise.resolve({ data: 'test' }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ data: 'test' }));
 
 		const mergeDelta = vi.fn((current, delta) => ({ ...current, ...delta }));
 
@@ -334,7 +334,7 @@ describe('StateChannel - Optimistic Subscriptions', () => {
 	});
 
 	it('should handle delta updates by calling mergeDelta', async () => {
-		mockHub.query.mockImplementation(() => Promise.resolve({ count: 0 }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ count: 0 }));
 
 		// Capture the delta handler
 		let deltaHandler: ((delta: unknown) => void) | null = null;
@@ -368,7 +368,7 @@ describe('StateChannel - Optimistic Subscriptions', () => {
 	});
 
 	it('should skip delta when state is null', async () => {
-		mockHub.query.mockImplementation(() => Promise.resolve(null));
+		mockHub.request.mockImplementation(() => Promise.resolve(null));
 
 		let deltaHandler: ((delta: unknown) => void) | null = null;
 		mockHub.onEvent.mockImplementation((channel, handler) => {
@@ -406,7 +406,7 @@ describe('StateChannel - Non-Blocking Mode', () => {
 	});
 
 	it('should setup subscriptions in background when nonBlocking is true', async () => {
-		mockHub.query.mockImplementation(() => Promise.resolve({ data: 'test' }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ data: 'test' }));
 
 		// onEvent is synchronous, so this test just verifies it doesn't throw
 		const channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel', {
@@ -431,7 +431,7 @@ describe('StateChannel - Reconnection Handling', () => {
 	});
 
 	it('should setup reconnection handler on start', async () => {
-		mockHub.query.mockImplementation(() => Promise.resolve({ data: 'test' }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ data: 'test' }));
 
 		const channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel');
 		await channel.start();
@@ -442,7 +442,7 @@ describe('StateChannel - Reconnection Handling', () => {
 	});
 
 	it('should refresh state on reconnection', async () => {
-		mockHub.query.mockImplementation(() => Promise.resolve({ data: 'initial' }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ data: 'initial' }));
 
 		// Capture the onConnection handler
 		let connectionHandler: ((state: string) => void) | null = null;
@@ -457,7 +457,7 @@ describe('StateChannel - Reconnection Handling', () => {
 		expect(channel.value).toEqual({ data: 'initial' });
 
 		// Simulate reconnection with new data
-		mockHub.query.mockImplementation(() => Promise.resolve({ data: 'reconnected' }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ data: 'reconnected' }));
 
 		if (connectionHandler) {
 			connectionHandler('connected');
@@ -472,7 +472,7 @@ describe('StateChannel - Reconnection Handling', () => {
 	});
 
 	it('should set error on disconnection', async () => {
-		mockHub.query.mockImplementation(() => Promise.resolve({ data: 'test' }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ data: 'test' }));
 
 		let connectionHandler: ((state: string) => void) | null = null;
 		mockHub.onConnection.mockImplementation((handler) => {
@@ -494,7 +494,7 @@ describe('StateChannel - Reconnection Handling', () => {
 	});
 
 	it('should set error on connection error', async () => {
-		mockHub.query.mockImplementation(() => Promise.resolve({ data: 'test' }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ data: 'test' }));
 
 		let connectionHandler: ((state: string) => void) | null = null;
 		mockHub.onConnection.mockImplementation((handler) => {
@@ -524,7 +524,7 @@ describe('StateChannel - Auto Refresh', () => {
 	});
 
 	it('should not setup auto-refresh when refreshInterval is 0', async () => {
-		mockHub.query.mockImplementation(() => Promise.resolve({ data: 'test' }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ data: 'test' }));
 
 		const channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel', {
 			refreshInterval: 0,
@@ -532,14 +532,14 @@ describe('StateChannel - Auto Refresh', () => {
 		await channel.start();
 
 		// Only initial call
-		expect(mockHub.query).toHaveBeenCalledTimes(1);
+		expect(mockHub.request).toHaveBeenCalledTimes(1);
 
 		await channel.stop();
 	});
 
 	it('should clear auto-refresh timer on stop', async () => {
 		vi.useFakeTimers();
-		mockHub.query.mockImplementation(() => Promise.resolve({ data: 'test' }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ data: 'test' }));
 
 		const channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel', {
 			refreshInterval: 1000,
@@ -548,17 +548,17 @@ describe('StateChannel - Auto Refresh', () => {
 
 		await channel.stop();
 
-		const callCountAfterStop = mockHub.query.mock.calls.length;
+		const callCountAfterStop = mockHub.request.mock.calls.length;
 
 		// Advance time - should NOT trigger more calls
 		vi.advanceTimersByTime(5000);
 
-		expect(mockHub.query).toHaveBeenCalledTimes(callCountAfterStop);
+		expect(mockHub.request).toHaveBeenCalledTimes(callCountAfterStop);
 		vi.useRealTimers();
 	});
 
 	it('should detect stale state correctly', async () => {
-		mockHub.query.mockImplementation(() => Promise.resolve({ data: 'test' }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ data: 'test' }));
 
 		const channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel');
 		await channel.start();
@@ -570,7 +570,7 @@ describe('StateChannel - Auto Refresh', () => {
 	});
 
 	it('should report stale when maxAge exceeded', async () => {
-		mockHub.query.mockImplementation(() => Promise.resolve({ data: 'test', timestamp: 1000 }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ data: 'test', timestamp: 1000 }));
 
 		const channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel');
 		await channel.start();
@@ -596,7 +596,7 @@ describe('StateChannel - Reconnection Replaces State', () => {
 			{ uuid: '2', timestamp: 200, content: 'msg2' },
 		];
 
-		mockHub.query.mockImplementation(() => Promise.resolve({ sdkMessages: initialMessages }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ sdkMessages: initialMessages }));
 
 		let connectionHandler: ((state: string) => void) | null = null;
 		mockHub.onConnection.mockImplementation((handler) => {
@@ -617,7 +617,7 @@ describe('StateChannel - Reconnection Replaces State', () => {
 			{ uuid: '3', timestamp: 300, content: 'msg3' },
 		];
 
-		mockHub.query.mockImplementation(() => Promise.resolve({ sdkMessages: reconnectMessages }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ sdkMessages: reconnectMessages }));
 
 		if (connectionHandler) {
 			connectionHandler('connected');
@@ -643,7 +643,7 @@ describe('StateChannel - Session-scoped Channels', () => {
 	});
 
 	it('should include sessionId in call data for non-global channels', async () => {
-		mockHub.query.mockImplementation(() => Promise.resolve({ data: 'test' }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ data: 'test' }));
 
 		const channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel', {
 			sessionId: 'session-123',
@@ -651,13 +651,13 @@ describe('StateChannel - Session-scoped Channels', () => {
 		await channel.start();
 
 		// Should include sessionId in call data (2nd parameter)
-		expect(mockHub.query).toHaveBeenCalledWith('test.channel', { sessionId: 'session-123' });
+		expect(mockHub.request).toHaveBeenCalledWith('test.channel', { sessionId: 'session-123' });
 
 		await channel.stop();
 	});
 
 	it('should not include sessionId in call data for global channels', async () => {
-		mockHub.query.mockImplementation(() => Promise.resolve({ data: 'test' }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ data: 'test' }));
 
 		const channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel', {
 			sessionId: 'global',
@@ -665,7 +665,7 @@ describe('StateChannel - Session-scoped Channels', () => {
 		await channel.start();
 
 		// Should not include sessionId in call data for global channels
-		expect(mockHub.query).toHaveBeenCalledWith('test.channel', {});
+		expect(mockHub.request).toHaveBeenCalledWith('test.channel', {});
 
 		await channel.stop();
 	});
@@ -679,7 +679,7 @@ describe('StateChannel - Non-Blocking Subscription Errors', () => {
 	});
 
 	it('should handle non-blocking mode gracefully', async () => {
-		mockHub.query.mockImplementation(() => Promise.resolve({ data: 'test' }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ data: 'test' }));
 
 		const channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel', {
 			nonBlocking: true,
@@ -701,7 +701,7 @@ describe('StateChannel - Incremental Sync', () => {
 
 	it('should merge SDK messages when fetching with since parameter', async () => {
 		// First fetch returns initial messages
-		mockHub.query.mockImplementationOnce(() =>
+		mockHub.request.mockImplementationOnce(() =>
 			Promise.resolve({
 				sdkMessages: [
 					{ uuid: 'msg-1', content: 'First', timestamp: 100 },
@@ -717,7 +717,7 @@ describe('StateChannel - Incremental Sync', () => {
 		await channel.start();
 
 		// Manually call fetchSnapshot with since parameter to trigger merge
-		mockHub.query.mockImplementationOnce(() =>
+		mockHub.request.mockImplementationOnce(() =>
 			Promise.resolve({
 				sdkMessages: [
 					{ uuid: 'msg-2', content: 'Second Updated', timestamp: 200 },
@@ -743,7 +743,7 @@ describe('StateChannel - Incremental Sync', () => {
 	});
 
 	it('should handle messages without uuid in merge', async () => {
-		mockHub.query.mockImplementationOnce(() =>
+		mockHub.request.mockImplementationOnce(() =>
 			Promise.resolve({
 				sdkMessages: [{ content: 'No UUID 1', timestamp: 100 }],
 			})
@@ -755,7 +755,7 @@ describe('StateChannel - Incremental Sync', () => {
 
 		await channel.start();
 
-		mockHub.query.mockImplementationOnce(() =>
+		mockHub.request.mockImplementationOnce(() =>
 			Promise.resolve({
 				sdkMessages: [{ content: 'No UUID 2', timestamp: 200 }],
 			})
@@ -780,7 +780,7 @@ describe('StateChannel - Full Subscription Callbacks', () => {
 
 	it('should update state when full update received via onEvent subscription', async () => {
 		let fullUpdateCallback: ((data: unknown) => void) | null = null;
-		mockHub.query.mockImplementation(() => Promise.resolve({ data: 'initial' }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ data: 'initial' }));
 		mockHub.onEvent.mockImplementation((_channel: string, callback: unknown) => {
 			if (!_channel.includes('.delta')) {
 				fullUpdateCallback = callback as (data: unknown) => void;
@@ -805,7 +805,7 @@ describe('StateChannel - Full Subscription Callbacks', () => {
 
 	it('should apply delta via onEvent subscription when state exists', async () => {
 		let deltaCallback: ((data: unknown) => void) | null = null;
-		mockHub.query.mockImplementation(() => Promise.resolve({ count: 0 }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ count: 0 }));
 		mockHub.onEvent.mockImplementation((channelName: string, callback: unknown) => {
 			if (channelName.includes('.delta')) {
 				deltaCallback = callback as (data: unknown) => void;
@@ -836,7 +836,7 @@ describe('StateChannel - Full Subscription Callbacks', () => {
 
 	it('should skip delta via onEvent subscription when state is null', async () => {
 		let deltaCallback: ((data: unknown) => void) | null = null;
-		mockHub.query.mockImplementation(() => Promise.resolve(null));
+		mockHub.request.mockImplementation(() => Promise.resolve(null));
 		mockHub.onEvent.mockImplementation((channelName: string, callback: unknown) => {
 			if (channelName.includes('.delta')) {
 				deltaCallback = callback as (data: unknown) => void;
@@ -871,7 +871,7 @@ describe('StateChannel - Optimistic Subscription Full Update', () => {
 
 	it('should update state when full update received via optimistic subscription', async () => {
 		let fullUpdateCallback: ((data: unknown) => void) | null = null;
-		mockHub.query.mockImplementation(() => Promise.resolve({ data: 'initial' }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ data: 'initial' }));
 		mockHub.onEvent.mockImplementation((_channel: string, callback: unknown) => {
 			if (!_channel.includes('.delta')) {
 				fullUpdateCallback = callback as (data: unknown) => void;
@@ -898,7 +898,7 @@ describe('StateChannel - Optimistic Subscription Full Update', () => {
 
 	it('should apply delta via optimistic subscription when state exists', async () => {
 		let deltaCallback: ((data: unknown) => void) | null = null;
-		mockHub.query.mockImplementation(() => Promise.resolve({ count: 10 }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ count: 10 }));
 		mockHub.onEvent.mockImplementation((channelName: string, callback: unknown) => {
 			if (channelName.includes('.delta')) {
 				deltaCallback = callback as (data: unknown) => void;
@@ -930,7 +930,7 @@ describe('StateChannel - Optimistic Subscription Full Update', () => {
 
 	it('should skip delta via optimistic subscription when state is null', async () => {
 		let deltaCallback: ((data: unknown) => void) | null = null;
-		mockHub.query.mockImplementation(() => Promise.resolve(null));
+		mockHub.request.mockImplementation(() => Promise.resolve(null));
 		mockHub.onEvent.mockImplementation((channelName: string, callback: unknown) => {
 			if (channelName.includes('.delta')) {
 				deltaCallback = callback as (data: unknown) => void;
@@ -967,7 +967,7 @@ describe('StateChannel - Auto-Refresh Trigger', () => {
 	it('should auto-refresh when stale', async () => {
 		vi.useFakeTimers();
 
-		mockHub.query.mockImplementation(() => Promise.resolve({ data: 'test' }));
+		mockHub.request.mockImplementation(() => Promise.resolve({ data: 'test' }));
 
 		const channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel', {
 			refreshInterval: 1000,
@@ -975,13 +975,13 @@ describe('StateChannel - Auto-Refresh Trigger', () => {
 		await channel.start();
 
 		// Initial call
-		expect(mockHub.query).toHaveBeenCalledTimes(1);
+		expect(mockHub.request).toHaveBeenCalledTimes(1);
 
 		// Make the state stale by advancing time
 		vi.advanceTimersByTime(2000);
 
 		// Should have auto-refreshed
-		expect(mockHub.query.mock.calls.length).toBeGreaterThan(1);
+		expect(mockHub.request.mock.calls.length).toBeGreaterThan(1);
 
 		await channel.stop();
 		vi.useRealTimers();
