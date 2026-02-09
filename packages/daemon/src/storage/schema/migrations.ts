@@ -1,7 +1,7 @@
 /**
  * Database Migrations
  *
- * All 13 migrations for schema changes.
+ * All 14 migrations for schema changes.
  * CRITICAL: Preserve the order of migrations.
  */
 
@@ -56,6 +56,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 13: Update CHECK constraint to include 'pending_worktree_choice' status
 	runMigration13(db);
+
+	// Migration 14: Add session_settings table for per-session overrides
+	runMigration14(db);
 }
 
 /**
@@ -419,5 +422,32 @@ function runMigration13(db: BunDatabase): void {
 			// Re-enable foreign keys
 			db.exec('PRAGMA foreign_keys = ON');
 		}
+	}
+}
+
+/**
+ * Migration 14: Add session_settings table for per-session overrides
+ *
+ * Creates a new table to store session-specific settings overrides.
+ * This allows sessions to have their own settings that override global defaults.
+ */
+function runMigration14(db: BunDatabase): void {
+	try {
+		// Check if session_settings table exists
+		db.prepare(`SELECT 1 FROM session_settings LIMIT 1`).all();
+		// Table exists, migration already complete
+	} catch {
+		db.exec(`
+			CREATE TABLE IF NOT EXISTS session_settings (
+				session_id TEXT PRIMARY KEY,
+				settings TEXT NOT NULL,
+				updated_at TEXT NOT NULL,
+				FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+			)
+		`);
+		// Add index for efficient queries (though we mostly query by primary key)
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_session_settings_updated ON session_settings(updated_at)`
+		);
 	}
 }

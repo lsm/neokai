@@ -15,9 +15,12 @@ import {
 	navigateToSession,
 	navigateToHome,
 	createSessionPath,
+	isSettingsPath,
 } from './lib/router.ts';
 
 export function App() {
+	const currentPath = window.location.pathname;
+
 	useEffect(() => {
 		// STEP 1: Initialize URL-based router BEFORE any state management
 		// This ensures we read the session ID from URL on page load
@@ -85,7 +88,9 @@ export function App() {
 		<>
 			<div class="flex h-dvh overflow-hidden bg-dark-950 relative" style={{ height: '100dvh' }}>
 				{/* Sidebar */}
-				<Sidebar />
+				<div class={isSettingsPath(currentPath) ? 'hidden' : ''}>
+					<Sidebar />
+				</div>
 
 				{/* Main Content */}
 				<MainContent />

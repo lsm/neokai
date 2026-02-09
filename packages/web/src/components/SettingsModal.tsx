@@ -6,6 +6,7 @@ import { Modal } from './ui/Modal.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
 import { GlobalToolsSettings } from './GlobalToolsSettings.tsx';
 import { GlobalSettingsEditor } from './GlobalSettingsEditor.tsx';
+import { navigateToSettings } from '../lib/router.ts';
 
 interface SettingsModalProps {
 	isOpen: boolean;
@@ -37,6 +38,53 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 	return (
 		<Modal isOpen={isOpen} onClose={onClose} title="Settings" size="md">
 			<div class="space-y-6">
+				{/* Migration Notice */}
+				<div class="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4">
+					<div class="flex items-start gap-3">
+						<svg
+							class="w-5 h-5 text-purple-400 flex-shrink-0 mt-0.5"
+							fill="currentColor"
+							viewBox="0 0 20 20"
+						>
+							<path
+								fill-rule="evenodd"
+								d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+								clip-rule="evenodd"
+							/>
+						</svg>
+						<div class="flex-1">
+							<h4 class="text-sm font-medium text-purple-300 mb-2">New Settings Page Available</h4>
+							<p class="text-xs text-purple-200/80 mb-3">
+								Settings have moved to a dedicated page with better organization and more features.
+							</p>
+							<button
+								type="button"
+								onClick={() => {
+									navigateToSettings();
+									onClose();
+								}}
+								class="inline-flex items-center gap-2 px-3 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/30 rounded-lg text-sm font-medium text-purple-200 transition-colors"
+							>
+								<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+									/>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+									/>
+								</svg>
+								Open Settings Page
+							</button>
+						</div>
+					</div>
+				</div>
+
 				{/* Current Auth Status */}
 				{loading ? (
 					<div class="text-center py-4">

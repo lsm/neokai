@@ -6,9 +6,10 @@
 
 import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
-import type { GlobalSettings, SessionSettings } from '@neokai/shared';
+import type { GlobalSettings } from '@neokai/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { Database } from '../../storage/database';
+import type { SessionSettingsOverride } from '../../storage';
 
 export function registerSettingsHandlers(
 	messageHub: MessageHub,
@@ -148,32 +149,119 @@ export function registerSettingsHandlers(
 	);
 
 	/**
-	 * Get session settings (placeholder for future session-specific settings)
+	 * Get session settings (including merged global + overrides)
 	 *
-	 * Currently, session settings are stored in session.config, but this
-	 * handler provides a unified interface for future expansion.
+	 * Returns the effective settings for a session, merging global settings
+	 * with any session-specific overrides.
 	 */
 	messageHub.handle('settings.session.get', async (data: { sessionId: string }) => {
-		// Future: retrieve session-specific settings
-		// For now, return empty object
+		const { sessionId } = data;
+
+		// Validate session exists
+		const session = db.getSession(sessionId);
+		if (!session) {
+			throw new Error(`Session not found: ${sessionId}`);
+		}
+
+		// Get global settings as base
+		const globalSettings = settingsManager.getGlobalSettings();
+
+		// Get session overrides
+		const overrides = db.settings.getSessionSettings(sessionId);
+
+		// Merge: global + overrides (overrides take precedence)
+		const effectiveSettings: GlobalSettings & { sessionId: string } = {
+			...globalSettings,
+			...overrides,
+			sessionId,
+		};
+
 		return {
-			sessionId: data.sessionId,
-			settings: {},
+			sessionId,
+			settings: effectiveSettings,
+			overrides,
+			hasOverrides: Object.keys(overrides).length > 0,
 		};
 	});
 
 	/**
-	 * Update session settings (placeholder for future session-specific settings)
+	 * Update session settings (partial update)
+	 *
+	 * Updates session-specific settings overrides. Only the fields provided
+	 * in updates will be modified; other fields remain unchanged.
 	 */
 	messageHub.handle(
 		'settings.session.update',
-		async (data: { sessionId: string; updates: Partial<SessionSettings> }) => {
-			// Future: update session-specific settings
-			// For now, return success
+		async (data: { sessionId: string; updates: Partial<SessionSettingsOverride> }) => {
+			const { sessionId, updates } = data;
+
+			// Validate session exists
+			const session = db.getSession(sessionId);
+			if (!session) {
+				throw new Error(`Session not found: ${sessionId}`);
+			}
+
+			// Validate that only allowed override fields are being updated
+			const allowedFields: Array<keyof SessionSettingsOverride> = [
+				'model',
+				'thinkingLevel',
+				'autoScroll',
+				'coordinatorMode',
+			];
+
+			const invalidFields = Object.keys(updates).filter(
+				(key) => !allowedFields.includes(key as keyof SessionSettingsOverride)
+			);
+
+			if (invalidFields.length > 0) {
+				throw new Error(
+					`Invalid session settings fields: ${invalidFields.join(', ')}. ` +
+						`Allowed fields: ${allowedFields.join(', ')}`
+				);
+			}
+
+			// Update session overrides
+			const updatedOverrides = db.settings.updateSessionSettings(sessionId, updates);
+
+			// Emit event for StateManager to broadcast
+			daemonHub.emit('session.settings.updated', {
+				sessionId,
+			});
+
 			return {
 				success: true,
-				sessionId: data.sessionId,
+				sessionId,
+				overrides: updatedOverrides,
 			};
 		}
 	);
+
+	/**
+	 * Reset session settings (clear all overrides)
+	 *
+	 * Removes all session-specific overrides, causing the session to use
+	 * global settings exclusively.
+	 */
+	messageHub.handle('settings.session.reset', async (data: { sessionId: string }) => {
+		const { sessionId } = data;
+
+		// Validate session exists
+		const session = db.getSession(sessionId);
+		if (!session) {
+			throw new Error(`Session not found: ${sessionId}`);
+		}
+
+		// Delete session overrides
+		db.settings.deleteSessionSettings(sessionId);
+
+		// Emit event for StateManager to broadcast
+		daemonHub.emit('session.settings.updated', {
+			sessionId,
+		});
+
+		return {
+			success: true,
+			sessionId,
+		};
+	});
 }

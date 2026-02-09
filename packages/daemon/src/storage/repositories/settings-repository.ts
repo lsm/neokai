@@ -11,6 +11,18 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import type { GlobalToolsConfig, GlobalSettings } from '@neokai/shared';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
 
+/**
+ * Session settings overrides (stored in session_settings table)
+ *
+ * Only the fields that can be overridden per session are included.
+ */
+export interface SessionSettingsOverride {
+	model?: string;
+	thinkingLevel?: GlobalSettings['thinkingLevel'];
+	autoScroll?: boolean;
+	coordinatorMode?: boolean;
+}
+
 export class SettingsRepository {
 	constructor(private db: BunDatabase) {}
 
@@ -164,5 +176,78 @@ export class SettingsRepository {
 		const updated = { ...current, ...updates };
 		this.saveGlobalSettings(updated);
 		return updated;
+	}
+
+	// ============================================================================
+	// Session Settings operations
+	// ============================================================================
+
+	/**
+	 * Get session settings overrides for a specific session
+	 *
+	 * Returns only the overrides stored for this session (not merged with global).
+	 * Use SettingsManager.getEffectiveSettings() to get merged settings.
+	 */
+	getSessionSettings(sessionId: string): SessionSettingsOverride {
+		const stmt = this.db.prepare(`SELECT settings FROM session_settings WHERE session_id = ?`);
+		const row = stmt.get(sessionId) as { settings: string } | undefined;
+
+		if (!row) {
+			return {}; // No overrides for this session
+		}
+
+		try {
+			return JSON.parse(row.settings) as SessionSettingsOverride;
+		} catch {
+			return {};
+		}
+	}
+
+	/**
+	 * Save session settings overrides for a specific session
+	 *
+	 * Stores the overrides that will be merged with global settings.
+	 * Only the fields that can be overridden are stored.
+	 */
+	saveSessionSettings(sessionId: string, overrides: SessionSettingsOverride): void {
+		const stmt = this.db.prepare(`
+			INSERT OR REPLACE INTO session_settings (session_id, settings, updated_at)
+			VALUES (?, ?, datetime('now'))
+		`);
+		stmt.run(sessionId, JSON.stringify(overrides));
+	}
+
+	/**
+	 * Update session settings (partial update)
+	 *
+	 * Merges the provided updates with existing session settings.
+	 */
+	updateSessionSettings(
+		sessionId: string,
+		updates: Partial<SessionSettingsOverride>
+	): SessionSettingsOverride {
+		const current = this.getSessionSettings(sessionId);
+		const updated = { ...current, ...updates };
+		this.saveSessionSettings(sessionId, updated);
+		return updated;
+	}
+
+	/**
+	 * Delete session settings (reset to global defaults)
+	 *
+	 * Removes all overrides for a session, causing it to use global settings.
+	 */
+	deleteSessionSettings(sessionId: string): void {
+		const stmt = this.db.prepare(`DELETE FROM session_settings WHERE session_id = ?`);
+		stmt.run(sessionId);
+	}
+
+	/**
+	 * Check if a session has any custom settings overrides
+	 */
+	hasSessionOverrides(sessionId: string): boolean {
+		const stmt = this.db.prepare(`SELECT 1 FROM session_settings WHERE session_id = ? LIMIT 1`);
+		const row = stmt.get(sessionId);
+		return row !== undefined;
 	}
 }
