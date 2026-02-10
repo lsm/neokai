@@ -165,11 +165,11 @@ interface TestMessageHub {
 		handler: (data: T) => void | Promise<void>,
 		options?: { sessionId?: string }
 	): Promise<() => Promise<void>>;
-	call<T = unknown, R = unknown>(
+	request<TResult = unknown>(
 		method: string,
-		data?: T,
+		data?: unknown,
 		options?: { sessionId?: string; timeout?: number }
-	): Promise<R>;
+	): Promise<TResult>;
 }
 
 /**
