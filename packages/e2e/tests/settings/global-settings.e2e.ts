@@ -22,8 +22,8 @@ import { waitForWebSocketConnected } from '../helpers/wait-helpers';
 async function updateGlobalSettings(page: Page, updates: Record<string, unknown>): Promise<void> {
 	const result = await page.evaluate(async (settingsUpdates) => {
 		const hub = window.__messageHub || window.appState?.messageHub;
-		if (!hub || !hub.call) throw new Error('MessageHub not available');
-		return await hub.call(
+		if (!hub || !hub.request) throw new Error('MessageHub not available');
+		return await hub.request(
 			'settings.global.update',
 			{ updates: settingsUpdates },
 			{ timeout: 5000 }
@@ -39,8 +39,8 @@ async function updateGlobalSettings(page: Page, updates: Record<string, unknown>
 async function getGlobalSettings(page: Page): Promise<Record<string, unknown>> {
 	return await page.evaluate(async () => {
 		const hub = window.__messageHub || window.appState?.messageHub;
-		if (!hub || !hub.call) throw new Error('MessageHub not available');
-		return (await hub.call('settings.global.get', {}, { timeout: 5000 })) as Record<
+		if (!hub || !hub.request) throw new Error('MessageHub not available');
+		return (await hub.request('settings.global.get', {}, { timeout: 5000 })) as Record<
 			string,
 			unknown
 		>;
@@ -53,8 +53,8 @@ async function getGlobalSettings(page: Page): Promise<Record<string, unknown>> {
 async function saveGlobalSettings(page: Page, settings: Record<string, unknown>): Promise<void> {
 	await page.evaluate(async (s) => {
 		const hub = window.__messageHub || window.appState?.messageHub;
-		if (!hub || !hub.call) throw new Error('MessageHub not available');
-		await hub.call('settings.global.save', { settings: s }, { timeout: 5000 });
+		if (!hub || !hub.request) throw new Error('MessageHub not available');
+		await hub.request('settings.global.save', { settings: s }, { timeout: 5000 });
 	}, settings);
 }
 
@@ -64,8 +64,8 @@ async function saveGlobalSettings(page: Page, settings: Record<string, unknown>)
 async function getSessionConfig(page: Page, sessionId: string): Promise<Record<string, unknown>> {
 	return await page.evaluate(async (sid) => {
 		const hub = window.__messageHub || window.appState?.messageHub;
-		if (!hub || !hub.call) throw new Error('MessageHub not available');
-		const result = (await hub.call('session.get', { sessionId: sid }, { timeout: 5000 })) as {
+		if (!hub || !hub.request) throw new Error('MessageHub not available');
+		const result = (await hub.request('session.get', { sessionId: sid }, { timeout: 5000 })) as {
 			session?: { config?: Record<string, unknown> };
 		};
 		return result?.session?.config || {};
@@ -78,8 +78,8 @@ async function getSessionConfig(page: Page, sessionId: string): Promise<Record<s
 async function createSessionViaRPC(page: Page): Promise<string> {
 	return await page.evaluate(async () => {
 		const hub = window.__messageHub || window.appState?.messageHub;
-		if (!hub || !hub.call) throw new Error('MessageHub not available');
-		const result = (await hub.call(
+		if (!hub || !hub.request) throw new Error('MessageHub not available');
+		const result = (await hub.request(
 			'session.create',
 			{ workspacePath: undefined },
 			{ timeout: 15000 }
@@ -96,9 +96,9 @@ async function createSessionViaRPC(page: Page): Promise<string> {
 async function deleteSessionViaRPC(page: Page, sessionId: string): Promise<void> {
 	await page.evaluate(async (sid) => {
 		const hub = window.__messageHub || window.appState?.messageHub;
-		if (!hub || !hub.call) return;
+		if (!hub || !hub.request) return;
 		try {
-			await hub.call('session.delete', { sessionId: sid }, { timeout: 10000 });
+			await hub.request('session.delete', { sessionId: sid }, { timeout: 10000 });
 		} catch {
 			// Ignore cleanup errors
 		}
@@ -111,8 +111,8 @@ async function deleteSessionViaRPC(page: Page, sessionId: string): Promise<void>
 async function getTestModels(page: Page): Promise<{ defaultModel?: string; testModel?: string }> {
 	const models = await page.evaluate(async () => {
 		const hub = window.__messageHub || window.appState?.messageHub;
-		if (!hub || !hub.call) throw new Error('MessageHub not available');
-		const result = (await hub.call('models.list', { useCache: true }, { timeout: 10000 })) as {
+		if (!hub || !hub.request) throw new Error('MessageHub not available');
+		const result = (await hub.request('models.list', { useCache: true }, { timeout: 10000 })) as {
 			models: Array<{ id: string; display_name: string }>;
 		};
 		return result.models || [];
@@ -228,8 +228,12 @@ test.describe
 			// Use a different model if available, or same model with different settings
 			const models = await page.evaluate(async () => {
 				const hub = window.__messageHub || window.appState?.messageHub;
-				if (!hub || !hub.call) throw new Error('MessageHub not available');
-				const result = (await hub.call('models.list', { useCache: true }, { timeout: 10000 })) as {
+				if (!hub || !hub.request) throw new Error('MessageHub not available');
+				const result = (await hub.request(
+					'models.list',
+					{ useCache: true },
+					{ timeout: 10000 }
+				)) as {
 					models: Array<{ id: string; display_name: string }>;
 				};
 				return result.models || [];

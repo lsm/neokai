@@ -44,11 +44,11 @@ async function globalTeardown(config: FullConfig) {
 							appState?: { messageHub?: unknown };
 						}
 					).appState?.messageHub;
-				if (!hub || !hub.call) {
+				if (!hub || !hub.request) {
 					return { success: false, sessions: [] };
 				}
 
-				const result = await hub.call('session.list', {}, { timeout: 5000 });
+				const result = await hub.request('session.list', {}, { timeout: 5000 });
 				return { success: true, sessions: result?.sessions || [] };
 			} catch (error: unknown) {
 				console.error('Failed to fetch sessions:', error);
@@ -98,11 +98,11 @@ async function globalTeardown(config: FullConfig) {
 								appState?: { messageHub?: unknown };
 							}
 						).appState?.messageHub;
-					if (!hub || !hub.call) {
+					if (!hub || !hub.request) {
 						return { success: false };
 					}
 
-					await hub.call('session.delete', { sessionId: sid }, { timeout: 5000 });
+					await hub.request('session.delete', { sessionId: sid }, { timeout: 5000 });
 					return { success: true };
 				} catch (error: unknown) {
 					return { success: false, error: (error as Error)?.message };

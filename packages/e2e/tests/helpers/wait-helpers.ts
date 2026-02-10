@@ -282,12 +282,12 @@ export async function cleanupTestSession(page: Page, sessionId: string): Promise
 		const result = await page.evaluate(async (sid) => {
 			try {
 				const hub = window.__messageHub || window.appState?.messageHub;
-				if (!hub || !hub.call) {
+				if (!hub || !hub.request) {
 					return { success: false, error: 'MessageHub not available' };
 				}
 
 				// 10s timeout - if it takes longer, something is likely stuck/deadlocked
-				await hub.call('session.delete', { sessionId: sid }, { timeout: 10000 });
+				await hub.request('session.delete', { sessionId: sid }, { timeout: 10000 });
 				return { success: true, error: undefined };
 			} catch (error: unknown) {
 				return {

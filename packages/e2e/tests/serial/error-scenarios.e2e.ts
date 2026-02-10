@@ -131,7 +131,7 @@ test.describe('Error Scenarios', () => {
 
 			try {
 				// Call with impossibly short timeout - use actual session ID
-				await hub.call('session.send', { sessionId: sid, message: 'test' }, { timeout: 1 });
+				await hub.request('session.send', { sessionId: sid, message: 'test' }, { timeout: 1 });
 				return null;
 			} catch (error: unknown) {
 				return error.message || error.toString();

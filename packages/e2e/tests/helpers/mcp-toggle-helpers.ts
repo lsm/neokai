@@ -236,7 +236,7 @@ export async function getMcpConfigViaRPC(
 			throw new Error('MessageHub not found');
 		}
 
-		const result = await hub.call('session.get', { sessionId: sid });
+		const result = await hub.request('session.get', { sessionId: sid });
 		const session = result.session as {
 			config: {
 				tools?: {
