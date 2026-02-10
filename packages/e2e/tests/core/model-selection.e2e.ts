@@ -115,7 +115,7 @@ test.describe('Model Selection Persistence', () => {
 
 		// Wait for session to be created and chat interface to load
 		await page.waitForSelector(
-			'[data-testid="message-input"], textarea[placeholder*="message"], input[placeholder*="message"]',
+			'[data-testid="message-input"], textarea[placeholder*="Ask"], input[placeholder*="Ask"]',
 			{ timeout: 15000 }
 		);
 
@@ -124,7 +124,7 @@ test.describe('Model Selection Persistence', () => {
 		// Send first message
 		const messageInput = page
 			.locator(
-				'[data-testid="message-input"], textarea[placeholder*="message"], input[placeholder*="message"]'
+				'[data-testid="message-input"], textarea[placeholder*="Ask"], input[placeholder*="Ask"]'
 			)
 			.first();
 		await messageInput.fill('Hello');
