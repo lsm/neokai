@@ -164,43 +164,6 @@ export async function waitForSDKSystemInitMessage(
 }
 
 /**
- * Wait for specific event to be published
- */
-export async function waitForEvent(
-	page: Page,
-	eventName: string,
-	sessionId: string = 'global'
-): Promise<unknown> {
-	return page.evaluate(
-		async ({ event, sid }) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub) {
-				throw new Error('MessageHub not found');
-			}
-
-			return new Promise((resolve) => {
-				const timeout = setTimeout(() => {
-					resolve({ timeout: true });
-				}, 10000);
-
-				(async () => {
-					const unsubscribe = await hub.subscribe(
-						event,
-						async (data: unknown) => {
-							clearTimeout(timeout);
-							await unsubscribe();
-							resolve(data);
-						},
-						{ sessionId: sid }
-					);
-				})();
-			});
-		},
-		{ event: eventName, sid: sessionId }
-	);
-}
-
-/**
  * Wait for UI element with retry logic
  */
 export async function waitForElement(
@@ -220,48 +183,14 @@ export async function waitForElement(
 }
 
 /**
- * Wait for slash commands to be loaded
- * NOTE: Uses sessionStore.sessionState.value?.commandsData for current session
- */
-export async function waitForSlashCommands(page: Page, sessionId: string): Promise<void> {
-	await page.waitForFunction(
-		(sid) => {
-			const sessionStoreState = window.sessionStore?.sessionState?.value;
-			if (!sessionStoreState || window.sessionStore?.activeSessionId?.value !== sid) {
-				return false;
-			}
-			const commands = sessionStoreState.commandsData?.availableCommands;
-			return commands && commands.length > 0;
-		},
-		sessionId,
-		{ timeout: 10000 }
-	);
-}
-
-/**
- * Helper to setup MessageHub exposure for testing
- * Uses simpler approach matching the passing chat-flow.e2e.ts pattern
+ * Setup page for testing - navigate to home and wait for connection
  */
 export async function setupMessageHubTesting(page: Page): Promise<void> {
 	// Navigate to home page
 	await page.goto('/');
 
-	// Wait for app to initialize - check for sidebar heading
-	await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible({
-		timeout: 10000,
-	});
-
-	// Wait for WebSocket connection - simple timeout like chat-flow.e2e.ts
-	await page.waitForTimeout(1000);
-
-	// Optionally inject MessageHub tracking (for tests that need it)
-	await page.evaluate(() => {
-		window.__sdkMessages = [];
-		const hub = window.appState?.messageHub;
-		if (hub) {
-			window.__messageHub = hub;
-		}
-	});
+	// Wait for WebSocket connection
+	await waitForWebSocketConnected(page);
 }
 
 /**
@@ -319,25 +248,4 @@ export async function cleanupTestSession(page: Page, sessionId: string): Promise
 	}
 
 	// Never throw errors from cleanup - just log warnings
-}
-
-/**
- * Wait for model to be switched
- * NOTE: Uses globalStore.sessions to find session and check config.model
- */
-export async function waitForModelSwitch(
-	page: Page,
-	sessionId: string,
-	modelId: string
-): Promise<void> {
-	await page.waitForFunction(
-		({ sid, expected }) => {
-			const session = window.globalStore?.sessions?.value?.find(
-				(s: { id: string }) => s.id === sid
-			);
-			return session?.config?.model === expected;
-		},
-		{ sid: sessionId, expected: modelId },
-		{ timeout: 10000 }
-	);
 }
