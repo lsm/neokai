@@ -84,6 +84,17 @@ export async function switchCoordinatorMode(
 	);
 }
 
+export async function switchSandboxMode(
+	sessionId: string,
+	sandboxEnabled: boolean
+): Promise<{ success: boolean; sandboxEnabled: boolean; error?: string }> {
+	const hub = getHubOrThrow();
+	return await hub.request<{ success: boolean; sandboxEnabled: boolean; error?: string }>(
+		'session.sandbox.switch',
+		{ sessionId, sandboxEnabled }
+	);
+}
+
 export async function deleteSession(sessionId: string): Promise<void> {
 	const hub = getHubOrThrow();
 	await hub.request('session.delete', { sessionId });

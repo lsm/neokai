@@ -44,7 +44,7 @@ import { useModal } from '../hooks/useModal.ts';
 import { useModelSwitcher } from '../hooks/useModelSwitcher.ts';
 import { useSendMessage } from '../hooks/useSendMessage.ts';
 import { useSessionActions } from '../hooks/useSessionActions.ts';
-import { switchCoordinatorMode, updateSession } from '../lib/api-helpers.ts';
+import { switchCoordinatorMode, switchSandboxMode, updateSession } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager';
 import { borderColors } from '../lib/design-tokens.ts';
 import { sessionStore } from '../lib/session-store.ts';
@@ -85,6 +85,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const [autoScroll, setAutoScroll] = useState(true);
 	const [coordinatorMode, setCoordinatorMode] = useState(true);
 	const [coordinatorSwitching, setCoordinatorSwitching] = useState(false);
+	const [sandboxEnabled, setSandboxEnabled] = useState(true);
+	const [sandboxSwitching, setSandboxSwitching] = useState(false);
 
 	// Track resolved questions to keep showing them in disabled state
 	// Map of toolUseId -> resolved question data
@@ -263,6 +265,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		}
 		if (info?.config.coordinatorMode !== undefined) {
 			setCoordinatorMode(info.config.coordinatorMode);
+		}
+		if (info?.config.sandbox?.enabled !== undefined) {
+			setSandboxEnabled(info.config.sandbox.enabled);
 		}
 	});
 
@@ -570,6 +575,28 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				toast.error('Failed to toggle coordinator mode');
 			} finally {
 				setCoordinatorSwitching(false);
+			}
+		},
+		[sessionId, isProcessing]
+	);
+
+	const handleSandboxModeChange = useCallback(
+		async (newMode: boolean) => {
+			if (isProcessing) {
+				const confirmed = confirm(
+					'The agent is currently processing. Changing sandbox mode will interrupt the current operation. Continue?'
+				);
+				if (!confirmed) return;
+			}
+			setSandboxSwitching(true);
+			setSandboxEnabled(newMode);
+			try {
+				await switchSandboxMode(sessionId, newMode);
+			} catch {
+				setSandboxEnabled(!newMode);
+				toast.error('Failed to toggle sandbox mode');
+			} finally {
+				setSandboxSwitching(false);
 			}
 		},
 		[sessionId, isProcessing]
@@ -891,6 +918,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 						coordinatorMode={coordinatorMode}
 						coordinatorSwitching={coordinatorSwitching}
 						onCoordinatorModeChange={handleCoordinatorModeChange}
+						sandboxEnabled={sandboxEnabled}
+						sandboxSwitching={sandboxSwitching}
+						onSandboxModeChange={handleSandboxModeChange}
 						thinkingLevel={session?.config?.thinkingLevel}
 					/>
 

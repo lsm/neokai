@@ -395,6 +395,49 @@ export function setupSessionHandlers(
 		return { success: result.success, coordinatorMode, error: result.error };
 	});
 
+	// Handle sandbox mode switching
+	// Updates config and auto-restarts query so the new sandbox settings take effect
+	messageHub.onRequest('session.sandbox.switch', async (data) => {
+		const { sessionId: targetSessionId, sandboxEnabled } = data as {
+			sessionId: string;
+			sandboxEnabled: boolean;
+		};
+
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+
+		const session = agentSession.getSessionData();
+		const previousMode = session.config.sandbox?.enabled ?? true;
+
+		if (previousMode === sandboxEnabled) {
+			return { success: true, sandboxEnabled };
+		}
+
+		// Update session config - preserve existing sandbox settings, only toggle enabled
+		const updatedSandbox = {
+			...session.config.sandbox,
+			enabled: sandboxEnabled,
+		};
+
+		await sessionManager.updateSession(targetSessionId, {
+			config: { ...session.config, sandbox: updatedSandbox },
+		});
+
+		// Restart query to apply new sandbox configuration
+		const result = await agentSession.resetQuery({ restartQuery: true });
+
+		// Broadcast update for UI
+		messageHub.event(
+			'session.updated',
+			{ config: { sandbox: updatedSandbox } },
+			{ room: `session:${targetSessionId}` }
+		);
+
+		return { success: result.success, sandboxEnabled, error: result.error };
+	});
+
 	// Handle thinking level changes
 	// Levels: auto, think8k, think16k, think32k
 	// - auto: No thinking budget
