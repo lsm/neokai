@@ -10,6 +10,7 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected } from '../helpers/wait-helpers';
+import { openSettingsModal, closeSettingsModal } from '../helpers/settings-modal-helpers';
 
 test.describe('Settings Modal - Basic Interaction', () => {
 	test.beforeEach(async ({ page }) => {

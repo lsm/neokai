@@ -68,11 +68,17 @@ export async function startProdServer(config: Config) {
 	process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 	// Create daemon app (returns Bun server)
-	daemonContext = await createDaemonApp({
-		config,
-		verbose: true,
-		standalone: false,
-	});
+	try {
+		daemonContext = await createDaemonApp({
+			config,
+			verbose: true,
+			standalone: false,
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		log.error(`[Server] Fatal: Failed to initialize daemon: ${message}`, error);
+		throw error;
+	}
 
 	// Stop the daemon's internal server (we'll create a unified one)
 	daemonContext.server.stop();

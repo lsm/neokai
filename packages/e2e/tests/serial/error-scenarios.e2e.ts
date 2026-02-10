@@ -198,13 +198,13 @@ test.describe('Error Scenarios', () => {
 			const hub = window.__messageHub;
 
 			// Publish malformed SDK message
-			hub.publish(
+			hub.event(
 				'sdk.message',
 				{
 					type: 'invalid_type',
 					// Missing required fields
 				},
-				{ sessionId: sid }
+				{ room: sid }
 			);
 		}, sessionId);
 

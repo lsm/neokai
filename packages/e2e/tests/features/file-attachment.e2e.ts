@@ -11,6 +11,14 @@
 import { test, expect } from '../../fixtures';
 import { cleanupTestSession, waitForSessionCreated } from '../helpers/wait-helpers';
 import * as fs from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const fixturesDir = join(__dirname, '../test-fixtures/images');
+const testImagePath = join(fixturesDir, 'test-image.png');
+const largeImagePath = join(fixturesDir, 'large-image.png');
 
 test.describe('File Attachment - UI', () => {
 	let sessionId: string | null = null;

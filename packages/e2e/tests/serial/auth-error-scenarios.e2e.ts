@@ -44,13 +44,13 @@ test.describe('Authentication Error Scenarios', () => {
 			const hub = window.__messageHub;
 
 			// Publish auth error event
-			hub.publish(
+			hub.event(
 				'auth.error',
 				{
 					error: 'Token expired',
 					code: 'TOKEN_EXPIRED',
 				},
-				{ sessionId: 'global' }
+				{ room: 'global' }
 			);
 		});
 
@@ -82,7 +82,7 @@ test.describe('Authentication Error Scenarios', () => {
 			const hub = window.__messageHub;
 
 			// Update system state to not authenticated
-			hub.publish(
+			hub.event(
 				'state.system',
 				{
 					version: '0.1.1',
@@ -103,7 +103,7 @@ test.describe('Authentication Error Scenarios', () => {
 					},
 					timestamp: Date.now(),
 				},
-				{ sessionId: 'global' }
+				{ room: 'global' }
 			);
 		});
 
