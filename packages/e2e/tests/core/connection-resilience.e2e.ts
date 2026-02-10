@@ -22,6 +22,7 @@ import {
 	waitForSessionCreated,
 	cleanupTestSession,
 } from '../helpers/wait-helpers';
+import { closeWebSocket, restoreWebSocket } from '../helpers/connection-helpers';
 
 test.describe('Reconnection - Basic Message Sync', () => {
 	let sessionId: string | null = null;
@@ -68,7 +69,7 @@ test.describe('Reconnection - Basic Message Sync', () => {
 		console.log(`Messages before disconnect: ${messagesBeforeDisconnect}`);
 
 		// 5. Go offline
-		await page.context().setOffline(true);
+		await closeWebSocket(page);
 
 		// 6. Verify offline status
 		await expect(page.locator('text=Offline').first()).toBeVisible({
@@ -79,7 +80,7 @@ test.describe('Reconnection - Basic Message Sync', () => {
 		await page.waitForTimeout(6000);
 
 		// 8. Come back online
-		await page.context().setOffline(false);
+		await restoreWebSocket(page);
 
 		// 9. Wait for reconnection and state sync to complete
 		await page.waitForTimeout(3000);
@@ -148,27 +149,27 @@ test.describe('Reconnection - Multiple Cycles', () => {
 		await page.waitForTimeout(3000);
 
 		// 3. First disconnect cycle
-		await page.context().setOffline(true);
+		await closeWebSocket(page);
 		await expect(page.locator('text=Offline').first()).toBeVisible({
 			timeout: 5000,
 		});
 		await page.waitForTimeout(2000);
 
 		// Come back online
-		await page.context().setOffline(false);
+		await restoreWebSocket(page);
 		await page.waitForTimeout(3000);
 
 		const messagesAfterCycle1 = await page.locator('[data-message-role]').count();
 
 		// 4. Second disconnect cycle
-		await page.context().setOffline(true);
+		await closeWebSocket(page);
 		await expect(page.locator('text=Offline').first()).toBeVisible({
 			timeout: 5000,
 		});
 		await page.waitForTimeout(2000);
 
 		// Come back online
-		await page.context().setOffline(false);
+		await restoreWebSocket(page);
 		await page.waitForTimeout(3000);
 
 		const messagesAfterCycle2 = await page.locator('[data-message-role]').count();
@@ -233,14 +234,14 @@ test.describe('Reconnection - Long Disconnection Period', () => {
 		await page.waitForTimeout(2000);
 
 		// 4. Go offline for extended period
-		await page.context().setOffline(true);
+		await closeWebSocket(page);
 		await expect(page.locator('text=Offline').first()).toBeVisible({
 			timeout: 5000,
 		});
 		await page.waitForTimeout(5000);
 
 		// 5. Come back online
-		await page.context().setOffline(false);
+		await restoreWebSocket(page);
 		await page.waitForTimeout(3000);
 
 		// 6. Verify messages are still present
@@ -312,14 +313,14 @@ test.describe('Reconnection - Message Order', () => {
 		});
 
 		// 4. Go offline
-		await page.context().setOffline(true);
+		await closeWebSocket(page);
 		await expect(page.locator('text=Offline').first()).toBeVisible({
 			timeout: 5000,
 		});
 		await page.waitForTimeout(2000);
 
 		// 5. Come back online
-		await page.context().setOffline(false);
+		await restoreWebSocket(page);
 		await page.waitForTimeout(3000);
 
 		// 6. Get message timestamps after reconnect
@@ -382,7 +383,7 @@ test.describe('Connection - Input Blocking', () => {
 		expect(isEnabledBefore).toBe(true);
 
 		// Go offline
-		await page.context().setOffline(true);
+		await closeWebSocket(page);
 		await expect(page.locator('text=Offline').first()).toBeVisible({
 			timeout: 5000,
 		});
@@ -391,7 +392,7 @@ test.describe('Connection - Input Blocking', () => {
 		await page.waitForTimeout(300);
 
 		// Come back online
-		await page.context().setOffline(false);
+		await restoreWebSocket(page);
 		await page.waitForTimeout(3000);
 
 		// After reconnect, textarea should be enabled again
@@ -442,13 +443,13 @@ test.describe('Connection - State Transitions', () => {
 		const messagesBeforeDisconnect = await page.locator('[data-message-role]').count();
 
 		// Go offline
-		await page.context().setOffline(true);
+		await closeWebSocket(page);
 		await expect(page.locator('text=Offline').first()).toBeVisible({
 			timeout: 5000,
 		});
 
 		// Come back online
-		await page.context().setOffline(false);
+		await restoreWebSocket(page);
 		await page.waitForTimeout(3000);
 
 		// Verify messages are still present (session data maintained)

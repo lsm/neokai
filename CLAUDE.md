@@ -107,13 +107,13 @@ E2E tests are **pure browser-based Playwright tests** simulating real end-user i
 - All test actions must go through the UI: clicks, typing, navigation, keyboard shortcuts
 - All assertions must verify visible DOM state: text content, element visibility, CSS classes
 - Sessions must be created via the "New Session" button, never via RPC (`session.create`)
-- Network failure simulation must use Playwright's `page.context().setOffline(true/false)`, never internal APIs like `connectionManager.simulateDisconnect()`
+- WebSocket disconnection simulation must use `closeWebSocket()` / `restoreWebSocket()` helpers (from `connection-helpers.ts`), which close the WebSocket via `page.evaluate()` to trigger real browser close events. Do NOT use `page.context().setOffline()` - it blocks new requests but doesn't close existing WebSockets
 
 **Prohibited in test actions/assertions:**
 - `hub.request()`, `hub.event()` — no direct MessageHub RPC calls
 - `window.sessionStore`, `window.globalStore`, `window.appState` — no reading internal state for assertions
-- `connectionManager.simulateDisconnect()` — use `page.context().setOffline()` instead
-- `hub.transport.ws.close()` — internal WebSocket manipulation
+- `connectionManager.simulateDisconnect()` — use `closeWebSocket()` helper instead
+- `page.context().setOffline()` — doesn't close WebSockets, use `closeWebSocket()` helper instead
 - `window.__stateChannels` — internal state channel access
 
 **Allowed exceptions (infrastructure only):**

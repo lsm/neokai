@@ -15,6 +15,7 @@ import {
 	cleanupTestSession,
 } from '../helpers/wait-helpers';
 import { simulateNetworkFailure, restoreNetwork } from '../helpers/interruption-helpers';
+import { closeWebSocket, restoreWebSocket } from '../helpers/connection-helpers';
 
 test.describe('Error Scenarios', () => {
 	test.beforeEach(async ({ page }) => {
@@ -39,7 +40,7 @@ test.describe('Error Scenarios', () => {
 		await expect(messageInput).toBeEnabled();
 
 		// Simulate connection lost by going offline
-		await page.context().setOffline(true);
+		await closeWebSocket(page);
 
 		// Wait for offline indicator to appear
 		await expect(page.locator('text=Offline').first()).toBeVisible({
@@ -64,7 +65,7 @@ test.describe('Error Scenarios', () => {
 		await expect(messageInput).toBeEnabled();
 
 		// Restore network
-		await page.context().setOffline(false);
+		await restoreWebSocket(page);
 
 		await cleanupTestSession(page, sessionId);
 	});
@@ -133,7 +134,7 @@ test.describe('Error Scenarios', () => {
 		const sessionId = await waitForSessionCreated(page);
 
 		// Simulate WebSocket disconnection by going offline
-		await page.context().setOffline(true);
+		await closeWebSocket(page);
 
 		// Wait for offline indicator to appear
 		await expect(page.locator('text=Offline').first()).toBeVisible({
@@ -141,7 +142,7 @@ test.describe('Error Scenarios', () => {
 		});
 
 		// Restore network connection
-		await page.context().setOffline(false);
+		await restoreWebSocket(page);
 
 		// Wait for online indicator to return
 		await expect(page.locator('.text-green-400:has-text("Online")').first()).toBeVisible({
