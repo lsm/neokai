@@ -38,6 +38,7 @@ export interface OriginalEnvVars {
 	ANTHROPIC_DEFAULT_SONNET_MODEL?: string;
 	ANTHROPIC_DEFAULT_HAIKU_MODEL?: string;
 	ANTHROPIC_DEFAULT_OPUS_MODEL?: string;
+	CLAUDE_AGENT_SDK_CLIENT_APP?: string;
 }
 
 /**
@@ -150,6 +151,11 @@ export class QueryRunner {
 			const modelId = session.config.model || 'sonnet';
 			const originalEnvVars = providerService.applyEnvVarsToProcess(modelId);
 			this.ctx.originalEnvVars = originalEnvVars;
+
+			// Set SDK client identifier for analytics
+			this.ctx.originalEnvVars.CLAUDE_AGENT_SDK_CLIENT_APP =
+				process.env.CLAUDE_AGENT_SDK_CLIENT_APP;
+			process.env.CLAUDE_AGENT_SDK_CLIENT_APP = 'neokai/0.5.0';
 
 			// const provider = providerRegistry.detectProvider(modelId);
 

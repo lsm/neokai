@@ -531,6 +531,14 @@ export declare type Options = {
     /**
      * Environment variables to pass to the Claude Code process.
      * Defaults to `process.env`.
+     *
+     * SDK consumers can identify their app/library to include in the User-Agent header by setting:
+     * - `CLAUDE_AGENT_SDK_CLIENT_APP` - Your app/library identifier (e.g., "my-app/1.0.0", "my-library/2.1")
+     *
+     * @example
+     * ```typescript
+     * env: { CLAUDE_AGENT_SDK_CLIENT_APP: 'my-app/1.0.0' }
+     * ```
      */
     env?: {
         [envVar: string]: string | undefined;
@@ -603,8 +611,44 @@ export declare type Options = {
      */
     includePartialMessages?: boolean;
     /**
+     * Controls Claude's thinking/reasoning behavior.
+     *
+     * - `{ type: 'adaptive' }` — Claude decides when and how much to think (Opus 4.6+).
+     *   This is the default for models that support it.
+     * - `{ type: 'enabled', budgetTokens: number }` — Fixed thinking token budget (older models)
+     * - `{ type: 'disabled' }` — No extended thinking
+     *
+     * When set, takes precedence over the deprecated `maxThinkingTokens`.
+     *
+     * @see https://docs.anthropic.com/en/docs/build-with-claude/adaptive-thinking
+     */
+    thinking?: {
+        type: 'adaptive';
+    } | {
+        type: 'enabled';
+        budgetTokens: number;
+    } | {
+        type: 'disabled';
+    };
+    /**
+     * Controls how much effort Claude puts into its response.
+     * Works with adaptive thinking to guide thinking depth.
+     *
+     * - `'low'` — Minimal thinking, fastest responses
+     * - `'medium'` — Moderate thinking
+     * - `'high'` — Deep reasoning (default)
+     * - `'max'` — Maximum effort (Opus 4.6 only)
+     *
+     * @see https://docs.anthropic.com/en/docs/build-with-claude/effort
+     */
+    effort?: 'low' | 'medium' | 'high' | 'max';
+    /**
      * Maximum number of tokens the model can use for its thinking/reasoning process.
      * Helps control cost and latency for complex tasks.
+     *
+     * @deprecated Use `thinking` instead. On Opus 4.6, this is treated as on/off
+     * (0 = disabled, any other value = adaptive). For explicit control, use
+     * `thinking: { type: 'adaptive' }` or `thinking: { type: 'enabled', budgetTokens: N }`.
      */
     maxThinkingTokens?: number;
     /**
@@ -983,6 +1027,11 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
      * Use `null` to clear any previously set limit and allow the model to
      * use the default maximum thinking tokens.
      *
+     * @deprecated Use the `thinking` option in `query()` instead. On Opus 4.6,
+     * this is treated as on/off (0 = disabled, any other value = adaptive).
+     * For explicit control, use `thinking: { type: 'adaptive' }` or
+     * `thinking: { type: 'enabled', budgetTokens: N }`.
+     *
      * @param maxThinkingTokens - Maximum tokens for thinking, or null to clear the limit
      */
     setMaxThinkingTokens(maxThinkingTokens: number | null): Promise<void>;
@@ -1146,7 +1195,7 @@ export declare type SDKAssistantMessage = {
     session_id: string;
 };
 
-export declare type SDKAssistantMessageError = 'authentication_failed' | 'billing_error' | 'rate_limit' | 'invalid_request' | 'server_error' | 'unknown';
+export declare type SDKAssistantMessageError = 'authentication_failed' | 'billing_error' | 'rate_limit' | 'invalid_request' | 'server_error' | 'unknown' | 'max_output_tokens';
 
 export declare type SDKAuthStatusMessage = {
     type: 'auth_status';
@@ -1178,6 +1227,9 @@ declare type SDKControlCancelRequest = {
     request_id: string;
 };
 
+/**
+ * Initializes the SDK session with hooks, MCP servers, and agent configuration.
+ */
 declare type SDKControlInitializeRequest = {
     subtype: 'initialize';
     hooks?: Partial<Record<coreTypes.HookEvent, SDKHookCallbackMatcher[]>>;
@@ -1188,6 +1240,9 @@ declare type SDKControlInitializeRequest = {
     agents?: Record<string, coreTypes.AgentDefinition>;
 };
 
+/**
+ * Response from session initialization with available commands, models, and account info.
+ */
 declare type SDKControlInitializeResponse = {
     commands: coreTypes.SlashCommand[];
     output_style: string;
@@ -1199,36 +1254,57 @@ declare type SDKControlInitializeResponse = {
     account: coreTypes.AccountInfo;
 };
 
+/**
+ * Interrupts the currently running conversation turn.
+ */
 declare type SDKControlInterruptRequest = {
     subtype: 'interrupt';
 };
 
+/**
+ * Sends a JSON-RPC message to a specific MCP server.
+ */
 declare type SDKControlMcpMessageRequest = {
     subtype: 'mcp_message';
     server_name: string;
     message: JSONRPCMessage;
 };
 
+/**
+ * Reconnects a disconnected or failed MCP server.
+ */
 declare type SDKControlMcpReconnectRequest = {
     subtype: 'mcp_reconnect';
     serverName: string;
 };
 
+/**
+ * Replaces the set of dynamically managed MCP servers.
+ */
 declare type SDKControlMcpSetServersRequest = {
     subtype: 'mcp_set_servers';
     servers: Record<string, coreTypes.McpServerConfigForProcessTransport>;
 };
 
+/**
+ * Requests the current status of all MCP server connections.
+ */
 declare type SDKControlMcpStatusRequest = {
     subtype: 'mcp_status';
 };
 
+/**
+ * Enables or disables an MCP server.
+ */
 declare type SDKControlMcpToggleRequest = {
     subtype: 'mcp_toggle';
     serverName: string;
     enabled: boolean;
 };
 
+/**
+ * Requests permission to use a tool with the given input.
+ */
 declare type SDKControlPermissionRequest = {
     subtype: 'can_use_tool';
     tool_name: string;
@@ -1254,22 +1330,34 @@ declare type SDKControlResponse = {
     response: ControlResponse | ControlErrorResponse;
 };
 
+/**
+ * Rewinds file changes made since a specific user message.
+ */
 declare type SDKControlRewindFilesRequest = {
     subtype: 'rewind_files';
     user_message_id: string;
     dry_run?: boolean;
 };
 
+/**
+ * Sets the maximum number of thinking tokens for extended thinking.
+ */
 declare type SDKControlSetMaxThinkingTokensRequest = {
     subtype: 'set_max_thinking_tokens';
     max_thinking_tokens: number | null;
 };
 
+/**
+ * Sets the model to use for subsequent conversation turns.
+ */
 declare type SDKControlSetModelRequest = {
     subtype: 'set_model';
     model?: string;
 };
 
+/**
+ * Sets the permission mode for tool execution handling.
+ */
 declare type SDKControlSetPermissionModeRequest = {
     subtype: 'set_permission_mode';
     /**
@@ -1303,6 +1391,9 @@ declare type SDKHookCallbackMatcher = {
     timeout?: number;
 };
 
+/**
+ * Delivers a hook callback with its input data.
+ */
 declare type SDKHookCallbackRequest = {
     subtype: 'hook_callback';
     callback_id: string;
@@ -1475,6 +1566,9 @@ export declare type SDKSessionOptions = {
     /**
      * Environment variables to pass to the Claude Code process.
      * Defaults to `process.env`.
+     *
+     * SDK consumers can identify their app/library to include in the User-Agent header by setting:
+     * - `CLAUDE_AGENT_SDK_CLIENT_APP` - Your app/library identifier (e.g., "my-app/1.0.0", "my-library/2.1")
      */
     env?: {
         [envVar: string]: string | undefined;

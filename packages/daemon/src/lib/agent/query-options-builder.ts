@@ -22,6 +22,7 @@ import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type {
 	Session,
 	ThinkingLevel,
+	ThinkingConfig,
 	SystemPromptConfig,
 	ClaudeCodePreset,
 	AgentDefinition,
@@ -245,11 +246,26 @@ export class QueryOptionsBuilder {
 	}
 
 	/**
+	 * Convert ThinkingLevel enum to new thinking option
+	 * Maps the UI-friendly enum to SDK's new thinking API
+	 */
+	private thinkingLevelToThinkingConfig(level: ThinkingLevel): ThinkingConfig {
+		const tokens = THINKING_LEVEL_TOKENS[level];
+
+		if (tokens === undefined) {
+			// 'auto' mode
+			return { type: 'adaptive' };
+		}
+
+		return { type: 'enabled', budgetTokens: tokens };
+	}
+
+	/**
 	 * Add resume and thinking tokens to options
 	 * Called separately since these depend on session state at query time
 	 */
 	addSessionStateOptions(options: Options): Options {
-		const result = { ...options };
+		const result = { ...options } as Options & { thinking?: ThinkingConfig };
 
 		// Add resume parameter if SDK session ID exists (session resumption)
 		if (this.ctx.session.sdkSessionId) {
@@ -262,14 +278,11 @@ export class QueryOptionsBuilder {
 			result.resumeSessionAt = this.ctx.session.metadata.resumeSessionAt;
 		}
 
-		// Add thinking token budget based on thinkingLevel config
+		// Add thinking configuration based on thinkingLevel config
 		const thinkingLevel = (this.ctx.session.config.thinkingLevel || 'auto') as ThinkingLevel;
-		const maxThinkingTokens = THINKING_LEVEL_TOKENS[thinkingLevel];
-		if (maxThinkingTokens !== undefined) {
-			result.maxThinkingTokens = maxThinkingTokens;
-		}
+		result.thinking = this.thinkingLevelToThinkingConfig(thinkingLevel);
 
-		return result;
+		return result as Options;
 	}
 
 	/**

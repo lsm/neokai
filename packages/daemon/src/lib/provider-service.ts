@@ -93,6 +93,7 @@ interface OriginalEnvVars {
 	ANTHROPIC_DEFAULT_SONNET_MODEL?: string;
 	ANTHROPIC_DEFAULT_HAIKU_MODEL?: string;
 	ANTHROPIC_DEFAULT_OPUS_MODEL?: string;
+	CLAUDE_AGENT_SDK_CLIENT_APP?: string;
 }
 
 /**
@@ -528,6 +529,11 @@ export class ProviderService {
 			process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = original.ANTHROPIC_DEFAULT_OPUS_MODEL;
 		} else {
 			delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+		}
+		if (original.CLAUDE_AGENT_SDK_CLIENT_APP !== undefined) {
+			process.env.CLAUDE_AGENT_SDK_CLIENT_APP = original.CLAUDE_AGENT_SDK_CLIENT_APP;
+		} else {
+			delete process.env.CLAUDE_AGENT_SDK_CLIENT_APP;
 		}
 	}
 

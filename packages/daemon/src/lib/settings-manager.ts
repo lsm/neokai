@@ -106,11 +106,16 @@ export class SettingsManager {
 			sdkOptions.additionalDirectories = settings.additionalDirectories;
 		}
 
-		// Thinking
-		if (settings.maxThinkingTokens !== undefined) {
-			// null means disabled, so pass undefined to SDK
-			sdkOptions.maxThinkingTokens = settings.maxThinkingTokens ?? undefined;
+		// Thinking (new SDK API)
+		if (settings.maxThinkingTokens !== undefined && settings.maxThinkingTokens !== null) {
+			sdkOptions.thinking = {
+				type: 'enabled',
+				budgetTokens: settings.maxThinkingTokens,
+			};
+		} else if (settings.maxThinkingTokens === null) {
+			sdkOptions.thinking = { type: 'disabled' };
 		}
+		// Otherwise, session-level thinkingLevel will be used in query-options-builder
 
 		// Environment
 		if (settings.env) {
