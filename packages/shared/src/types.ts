@@ -26,6 +26,7 @@ export type {
 	PluginConfig,
 	SdkBeta,
 	ModelSettings,
+	ThinkingConfig,
 	EnvironmentSettings,
 	SessionResumptionSettings,
 	ConfigUpdateResult,

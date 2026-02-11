@@ -178,7 +178,7 @@ describe('SettingsManager', () => {
 
 			expect(sdkOptions.model).toBe('claude-opus-4-5-20251101');
 			expect(sdkOptions.permissionMode).toBe('acceptEdits');
-			expect(sdkOptions.maxThinkingTokens).toBe(10000);
+			expect(sdkOptions.thinking).toEqual({ type: 'enabled', budgetTokens: 10000 });
 			expect(sdkOptions.settingSources).toEqual(['user', 'project', 'local']);
 		});
 
@@ -194,14 +194,14 @@ describe('SettingsManager', () => {
 			expect(sdkOptions).not.toHaveProperty('outputStyle');
 		});
 
-		test('handles maxThinkingTokens null as undefined', async () => {
+		test('handles maxThinkingTokens null as disabled thinking', async () => {
 			settingsManager.updateGlobalSettings({
 				maxThinkingTokens: null,
 			});
 
 			const sdkOptions = await settingsManager.prepareSDKOptions();
 
-			expect(sdkOptions.maxThinkingTokens).toBeUndefined();
+			expect(sdkOptions.thinking).toEqual({ type: 'disabled' });
 		});
 	});
 

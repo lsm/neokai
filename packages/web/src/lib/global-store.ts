@@ -164,28 +164,23 @@ export class GlobalStore {
 			return;
 		}
 
-		try {
-			const hub = await connectionManager.getHub();
+		const hub = await connectionManager.getHub();
 
-			// Fetch fresh snapshot
-			const snapshot = await hub.request<{
-				sessions: SessionsState;
-				system: SystemState;
-				settings: SettingsState;
-			}>(STATE_CHANNELS.GLOBAL_SNAPSHOT, {});
+		// Fetch fresh snapshot
+		const snapshot = await hub.request<{
+			sessions: SessionsState;
+			system: SystemState;
+			settings: SettingsState;
+		}>(STATE_CHANNELS.GLOBAL_SNAPSHOT, {});
 
-			if (snapshot) {
-				this.sessions.value = snapshot.sessions?.sessions || [];
-				this.hasArchivedSessions.value = snapshot.sessions?.hasArchivedSessions || false;
-				this.systemState.value = snapshot.system || null;
-				this.settings.value = snapshot.settings?.settings || null;
-			}
-
-			// State refreshed after reconnection
-		} catch (err) {
-			// Refresh failed - throw to caller
-			throw err;
+		if (snapshot) {
+			this.sessions.value = snapshot.sessions?.sessions || [];
+			this.hasArchivedSessions.value = snapshot.sessions?.hasArchivedSessions || false;
+			this.systemState.value = snapshot.system || null;
+			this.settings.value = snapshot.settings?.settings || null;
 		}
+
+		// State refreshed after reconnection
 	}
 
 	/**

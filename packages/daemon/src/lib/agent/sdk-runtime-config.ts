@@ -64,6 +64,8 @@ export class SDKRuntimeConfig {
 
 	/**
 	 * Set max thinking tokens at runtime
+	 * @deprecated Use session.setThinkingLevel() instead. This uses the deprecated
+	 * SDK API which is treated as on/off (0 = disabled, any value = adaptive) on Opus 4.6.
 	 */
 	async setMaxThinkingTokens(tokens: number | null): Promise<ConfigUpdateResult> {
 		const { session, db, daemonHub, logger, queryObject, firstMessageReceived } = this.ctx;

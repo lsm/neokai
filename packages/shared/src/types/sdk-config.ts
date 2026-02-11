@@ -15,6 +15,15 @@ import type { SettingSource, PermissionMode } from './settings.ts';
 // ============================================================================
 
 /**
+ * Thinking/reasoning configuration for Claude
+ * Replaces deprecated maxThinkingTokens
+ */
+export type ThinkingConfig =
+	| { type: 'adaptive' } // Claude decides (Opus 4.6+ default)
+	| { type: 'enabled'; budgetTokens: number } // Fixed token budget
+	| { type: 'disabled' }; // No extended thinking
+
+/**
  * Model and execution configuration
  */
 export interface ModelSettings {
@@ -26,8 +35,10 @@ export interface ModelSettings {
 	maxTurns?: number;
 	/** Maximum budget in USD - stops if exceeded */
 	maxBudgetUsd?: number;
-	/** Max tokens for extended thinking (null = disabled) */
+	/** @deprecated Use thinking instead. Max tokens for extended thinking (null = disabled) */
 	maxThinkingTokens?: number | null;
+	/** NEW: Thinking configuration (preferred over maxThinkingTokens) */
+	thinking?: ThinkingConfig;
 }
 
 // ============================================================================
