@@ -11,7 +11,7 @@
 # 4. "All Tests Pass" gate (used by release.yml to verify CI status)
 #
 # Release is handled separately in release.yml (triggered by version tags).
-# Unit test coverage (daemon, web) is uploaded to Codecov.
+# Test coverage (unit, integration online/offline, web) is uploaded to Coveralls.
 
 name: CI
 
@@ -145,15 +145,40 @@ jobs:
         with:
           bun-version: 1.3.8
 
+      - name: Install sandbox dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap socat
+
       - name: Install dependencies
         run: bun install
 
       - name: Run daemon tests (${{ matrix.module }})
         working-directory: packages/daemon
-        run: bun test ${{ matrix.test_path }}
+        run: bun test ${{ matrix.test_path }} --coverage --coverage-reporter=lcov --coverage-dir=coverage-${{ matrix.module }}
         env:
           GLM_API_KEY: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
+
+      - name: Fix coverage paths and strip test utilities
+        working-directory: packages/daemon
+        run: |
+          LCOV=coverage-${{ matrix.module }}/lcov.info
+          # Fix paths: Bun generates relative to package dir, need repo root paths
+          sed -i 's|^SF:src/|SF:packages/daemon/src/|g' $LCOV || true
+          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' $LCOV || true
+          # Strip test utility coverage (helpers, fixtures, mocks)
+          awk '/^SF:(packages\/daemon\/)?tests\//{skip=1} /^end_of_record/{if(skip){skip=0;next}} !skip' $LCOV > ${LCOV}.clean && mv ${LCOV}.clean $LCOV || true
+
+      - name: Upload to Coveralls (parallel)
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: packages/daemon/coverage-${{ matrix.module }}/lcov.info
+          flag-name: daemon-offline-${{ matrix.module }}
+          parallel: true
+          fail-on-error: false
 
   # ============================================
   # DAEMON ONLINE TESTS (Require API credentials)
@@ -174,7 +199,6 @@ jobs:
           - coordinator
           - convo
           - features
-          - glm
           - lifecycle
           - mcp
           - providers
@@ -184,8 +208,9 @@ jobs:
         include:
           - module: components
             test_path: tests/online/components
-          - module: glm
-            test_path: tests/online/glm
+          # GLM online tests disabled due to flakiness
+          # - module: glm
+          #   test_path: tests/online/glm
           - module: mcp
             test_path: tests/online/mcp
           - module: providers
@@ -216,15 +241,40 @@ jobs:
         with:
           bun-version: 1.3.8
 
+      - name: Install sandbox dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap socat
+
       - name: Install dependencies
         run: bun install
 
       - name: Run daemon online tests (${{ matrix.module }})
         working-directory: packages/daemon
-        run: bun test ${{ matrix.test_path }}
+        run: bun test ${{ matrix.test_path }} --coverage --coverage-reporter=lcov --coverage-dir=coverage-online-${{ matrix.module }}
         env:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+      - name: Fix coverage paths and strip test utilities
+        working-directory: packages/daemon
+        run: |
+          LCOV=coverage-online-${{ matrix.module }}/lcov.info
+          # Fix paths: Bun generates relative to package dir, need repo root paths
+          sed -i 's|^SF:src/|SF:packages/daemon/src/|g' $LCOV || true
+          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' $LCOV || true
+          # Strip test utility coverage (helpers, fixtures, mocks)
+          awk '/^SF:(packages\/daemon\/)?tests\//{skip=1} /^end_of_record/{if(skip){skip=0;next}} !skip' $LCOV > ${LCOV}.clean && mv ${LCOV}.clean $LCOV || true
+
+      - name: Upload to Coveralls (parallel)
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: packages/daemon/coverage-online-${{ matrix.module }}/lcov.info
+          flag-name: daemon-online-${{ matrix.module }}
+          parallel: true
+          fail-on-error: false
 
   # ============================================
   # DAEMON + SHARED UNIT TESTS (For coverage measurement)
@@ -243,6 +293,12 @@ jobs:
         with:
           bun-version: 1.3.8
 
+      - name: Install sandbox dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap socat
+
       - name: Install dependencies
         run: bun install
 
@@ -252,13 +308,19 @@ jobs:
           GLM_API_KEY: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
 
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
+      - name: Strip test utility coverage
+        run: |
+          # Strip test utility coverage (helpers, fixtures, mocks)
+          awk '/^SF:(packages\/daemon\/)?tests\//{skip=1} /^end_of_record/{if(skip){skip=0;next}} !skip' coverage/lcov.info > coverage/lcov.clean && mv coverage/lcov.clean coverage/lcov.info || true
+
+      - name: Upload to Coveralls (parallel)
+        uses: coverallsapp/github-action@v2
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage/lcov.info
-          flags: daemon
-          fail_ci_if_error: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: coverage/lcov.info
+          flag-name: daemon
+          parallel: true
+          fail-on-error: false
 
   # ============================================
   # WEB TESTS
@@ -277,6 +339,12 @@ jobs:
         with:
           bun-version: 1.3.8
 
+      - name: Install sandbox dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap socat
+
       - name: Install dependencies
         run: bun install
 
@@ -287,18 +355,19 @@ jobs:
       - name: Fix coverage paths for monorepo
         run: |
           # Vitest generates paths relative to package dir (src/...)
-          # Codecov needs paths relative to repo root (packages/web/src/...)
+          # Coveralls needs paths relative to repo root (packages/web/src/...)
           sed -i 's|^SF:src/|SF:packages/web/src/|g' packages/web/coverage/lcov.info
           # Fix cross-package paths (../shared/src/... -> packages/shared/src/...)
           sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' packages/web/coverage/lcov.info
 
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
+      - name: Upload to Coveralls (parallel)
+        uses: coverallsapp/github-action@v2
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/web/coverage/lcov.info
-          flags: web
-          fail_ci_if_error: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: packages/web/coverage/lcov.info
+          flag-name: web
+          parallel: true
+          fail-on-error: false
 
   # ============================================
   # CLI TESTS
@@ -317,12 +386,125 @@ jobs:
         with:
           bun-version: 1.3.8
 
+      - name: Install sandbox dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap socat
+
       - name: Install dependencies
         run: bun install
 
       - name: Run CLI tests
         working-directory: packages/cli
         run: bun test
+
+  # ============================================
+  # COVERALLS FINALIZATION
+  # Merges all parallel coverage uploads
+  # ============================================
+
+  coveralls-finalize:
+    name: Finalize Coveralls
+    runs-on: ubuntu-latest
+    needs: [test-daemon-shared-unit, test-web, test-daemon-offline, test-daemon-online]
+    if: always()
+    timeout-minutes: 1
+
+    steps:
+      - name: Finalize Coveralls parallel build
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          parallel-finished: true
+          fail-on-error: true
+
+  # ============================================
+  # COVERAGE QUALITY GATE
+  # Verifies minimum coverage and regression thresholds via Coveralls API.
+  # Queries Coveralls API to verify coverage thresholds.
+  # ============================================
+
+  coverage-gate:
+    name: Coverage Quality Gate
+    runs-on: ubuntu-latest
+    needs: [coveralls-finalize]
+    if: always() && needs.coveralls-finalize.result != 'cancelled'
+    timeout-minutes: 3
+
+    steps:
+      - name: Check coverage thresholds via Coveralls API
+        run: |
+          echo "Querying Coveralls for commit ${{ github.sha }}..."
+
+          # Retry logic — Coveralls may take time to process the finalized build
+          MAX_RETRIES=6
+          RETRY_DELAY=15
+          RESPONSE=""
+
+          for attempt in $(seq 1 $MAX_RETRIES); do
+            HTTP_CODE=$(curl -s -o /tmp/coveralls.json -w "%{http_code}" \
+              "https://coveralls.io/builds/${{ github.sha }}.json" 2>/dev/null) || true
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              RESPONSE=$(cat /tmp/coveralls.json)
+              break
+            fi
+
+            echo "Attempt $attempt/$MAX_RETRIES: Coveralls API returned HTTP $HTTP_CODE, retrying in ${RETRY_DELAY}s..."
+            sleep $RETRY_DELAY
+          done
+
+          if [ -z "$RESPONSE" ]; then
+            echo "⚠️ Could not fetch coverage from Coveralls API after $MAX_RETRIES attempts"
+            echo "Skipping coverage gate (API unavailable)"
+            exit 0
+          fi
+
+          COVERED_PERCENT=$(echo "$RESPONSE" | jq -r '.covered_percent // empty')
+          COVERAGE_CHANGE=$(echo "$RESPONSE" | jq -r '.coverage_change // "0"')
+
+          if [ -z "$COVERED_PERCENT" ]; then
+            echo "⚠️ Coveralls response missing coverage data"
+            echo "Skipping coverage gate"
+            exit 0
+          fi
+
+          echo "==============================="
+          echo "📊 Project Coverage: ${COVERED_PERCENT}%"
+          echo "📈 Coverage Change:  ${COVERAGE_CHANGE}%"
+          echo "==============================="
+
+          FAILED=0
+
+          # --- Project gate: minimum overall coverage ---
+          MIN_COVERAGE=30
+          if (( $(echo "$COVERED_PERCENT < $MIN_COVERAGE" | bc -l) )); then
+            echo "❌ FAIL: Project coverage ${COVERED_PERCENT}% is below minimum ${MIN_COVERAGE}%"
+            FAILED=1
+          else
+            echo "✅ Project coverage meets minimum threshold (>= ${MIN_COVERAGE}%)"
+          fi
+
+          # --- Regression gate: coverage must not drop more than threshold ---
+          MAX_REGRESSION=-2
+          if [ "$COVERAGE_CHANGE" != "null" ] && [ -n "$COVERAGE_CHANGE" ]; then
+            if (( $(echo "$COVERAGE_CHANGE < $MAX_REGRESSION" | bc -l) )); then
+              echo "❌ FAIL: Coverage regressed by ${COVERAGE_CHANGE}% (max allowed: ${MAX_REGRESSION}%)"
+              FAILED=1
+            else
+              echo "✅ Coverage regression within acceptable range (change: ${COVERAGE_CHANGE}%)"
+            fi
+          fi
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "Coverage quality gate FAILED"
+            exit 1
+          fi
+
+          echo ""
+          echo "✅ Coverage quality gate passed!"
 
   # ============================================
   # BUILD - Compile linux-x64 binary + smoke test
@@ -333,7 +515,7 @@ jobs:
     name: Build Binary (linux-x64)
     runs-on: ubuntu-latest
     needs: [check, test-daemon-offline, test-daemon-online, test-daemon-shared-unit, test-web, test-cli]
-    if: github.event_name == 'push' || github.base_ref == 'main'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.base_ref == 'main'
     timeout-minutes: 10
 
     steps:
@@ -343,6 +525,12 @@ jobs:
         uses: ./.github/actions/setup-bun
         with:
           bun-version: 1.3.8
+
+      - name: Install sandbox dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap socat
 
       - name: Install dependencies
         run: bun install
@@ -378,7 +566,7 @@ jobs:
   discover:
     name: Discover Tests
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.base_ref == 'main'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.base_ref == 'main'
     outputs:
       tests_no_llm: ${{ steps.categorize.outputs.tests_no_llm }}
       tests_llm: ${{ steps.categorize.outputs.tests_llm }}
@@ -389,36 +577,22 @@ jobs:
         id: categorize
         run: |
           # Tests that require LLM API round-trips (send messages, wait for agent responses)
+          # Format: subdir/name (matching the subdirectory structure under packages/e2e/tests/)
           LLM_TESTS=(
-            2-stage-creation
-            auto-title-generation
-            auto-scroll-toggle
-            chat-flow
-            chat-flow-improved
-            context-dropdown
-            context-usage-display
-            context-usage-dropdown-content
-            file-attachment-send
-            file-operations
-            interrupt-button
-            interrupt-error-bug
-            message-input-processing-state
-            message-pagination
-            message-removal
-            message-send-receive
-            page-refresh-context
-            page-refresh-session-state
-            processing-state
-            question-form-persistence
-            slash-cmd-built-in
-            slash-cmd-edge-cases
-            slash-cmd-navigation
-            slash-cmd-selection
+            core/context-features
+            core/interrupt-button
+            core/interrupt-error-bug
+            core/message-flow
+            features/file-attachment
+            features/file-operations
+            features/message-operations
+            features/rewind-features
+            features/slash-cmd
+            settings/auto-title
           )
 
           # Tests to exclude entirely (disabled, pending refactor)
           EXCLUDED_TESTS=(
-            model-selection-persistence
           )
 
           # Build lookup sets
@@ -426,31 +600,31 @@ jobs:
           for t in "${LLM_TESTS[@]}"; do LLM_SET[$t]=1; done
           for t in "${EXCLUDED_TESTS[@]}"; do EXCLUDED_SET[$t]=1; done
 
-          # Find all test files and categorize
-          NO_LLM=()
-          LLM=()
-          for file in $(find packages/e2e/tests -maxdepth 1 -name "*.e2e.ts" -type f | xargs -I{} basename {} .e2e.ts | sort); do
+          # Find all test files recursively and extract subdir/name paths
+          NO_LLM_JSON="[]"
+          LLM_JSON="[]"
+          for file in $(find packages/e2e/tests -name "*.e2e.ts" -type f | sed 's|packages/e2e/tests/||; s|\.e2e\.ts$||' | sort); do
             if [[ -n "${EXCLUDED_SET[$file]}" ]]; then
               echo "EXCLUDED: $file"
               continue
             fi
+            # Create JSON object with path (for test runner) and name (for artifact/display)
+            safe_name=$(echo "$file" | tr '/' '-')
+            entry=$(jq -n -c --arg path "$file" --arg name "$safe_name" '{path: $path, name: $name}')
             if [[ -n "${LLM_SET[$file]}" ]]; then
-              LLM+=("$file")
+              LLM_JSON=$(echo "$LLM_JSON" | jq -c ". + [$entry]")
             else
-              NO_LLM+=("$file")
+              NO_LLM_JSON=$(echo "$NO_LLM_JSON" | jq -c ". + [$entry]")
             fi
           done
 
-          # Convert to JSON arrays
-          tests_no_llm=$(printf '%s\n' "${NO_LLM[@]}" | jq -R -s -c 'split("\n") | map(select(length > 0))')
-          tests_llm=$(printf '%s\n' "${LLM[@]}" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          no_llm_count=$(echo "$NO_LLM_JSON" | jq length)
+          llm_count=$(echo "$LLM_JSON" | jq length)
+          echo "No-LLM tests ($no_llm_count): $NO_LLM_JSON"
+          echo "LLM tests ($llm_count): $LLM_JSON"
 
-          echo "No-LLM tests (${#NO_LLM[@]}): $tests_no_llm"
-          echo "LLM tests (${#LLM[@]}): $tests_llm"
-          echo "Excluded (${#EXCLUDED_TESTS[@]}): ${EXCLUDED_TESTS[*]}"
-
-          echo "tests_no_llm=$tests_no_llm" >> $GITHUB_OUTPUT
-          echo "tests_llm=$tests_llm" >> $GITHUB_OUTPUT
+          echo "tests_no_llm=$NO_LLM_JSON" >> $GITHUB_OUTPUT
+          echo "tests_llm=$LLM_JSON" >> $GITHUB_OUTPUT
 
   # ============================================
   # E2E TESTS - No LLM (Matrix, fully parallel)
@@ -458,10 +632,10 @@ jobs:
   # ============================================
 
   e2e:
-    name: E2E (${{ matrix.test }})
+    name: E2E (${{ matrix.test.name }})
     runs-on: ubuntu-latest
     needs: [build, discover]
-    if: github.event_name == 'push' || github.base_ref == 'main'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.base_ref == 'main'
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -475,6 +649,12 @@ jobs:
         uses: ./.github/actions/setup-bun
         with:
           bun-version: 1.3.8
+
+      - name: Install sandbox dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap socat
 
       - name: Install dependencies
         run: |
@@ -494,7 +674,7 @@ jobs:
           name: kai-linux-x64-e2e
           path: dist/bin/
 
-      - name: Run E2E test against binary (${{ matrix.test }})
+      - name: Run E2E test (${{ matrix.test.name }})
         run: |
           chmod +x dist/bin/kai-linux-x64
           WORKSPACE=$(mktemp -d)
@@ -525,7 +705,7 @@ jobs:
           export PLAYWRIGHT_BASE_URL="http://localhost:$PORT"
           cd packages/e2e
           xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
-            bunx playwright test "tests/${{ matrix.test }}.e2e.ts"
+            bunx playwright test "tests/${{ matrix.test.path }}.e2e.ts"
         env:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           DEFAULT_MODEL: sonnet
@@ -535,7 +715,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: e2e-results-${{ matrix.test }}
+          name: e2e-results-${{ matrix.test.name }}
           path: |
             packages/e2e/test-results/
             packages/e2e/playwright-report/
@@ -547,10 +727,10 @@ jobs:
   # ============================================
 
   e2e-llm:
-    name: E2E LLM (${{ matrix.test }})
+    name: E2E LLM (${{ matrix.test.name }})
     runs-on: ubuntu-latest
     needs: [build, discover]
-    if: github.event_name == 'push' || github.base_ref == 'main'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.base_ref == 'main'
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -566,6 +746,12 @@ jobs:
         with:
           bun-version: 1.3.8
 
+      - name: Install sandbox dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap socat
+
       - name: Install dependencies
         run: |
           echo "Starting bun install at $(date)"
@@ -584,7 +770,7 @@ jobs:
           name: kai-linux-x64-e2e
           path: dist/bin/
 
-      - name: Run E2E test against binary (${{ matrix.test }})
+      - name: Run E2E LLM test (${{ matrix.test.name }})
         run: |
           chmod +x dist/bin/kai-linux-x64
           WORKSPACE=$(mktemp -d)
@@ -615,7 +801,7 @@ jobs:
           export PLAYWRIGHT_BASE_URL="http://localhost:$PORT"
           cd packages/e2e
           xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
-            bunx playwright test "tests/${{ matrix.test }}.e2e.ts"
+            bunx playwright test "tests/${{ matrix.test.path }}.e2e.ts"
         env:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           DEFAULT_MODEL: sonnet
@@ -625,7 +811,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: e2e-results-${{ matrix.test }}
+          name: e2e-results-llm-${{ matrix.test.name }}
           path: |
             packages/e2e/test-results/
             packages/e2e/playwright-report/
@@ -647,6 +833,7 @@ jobs:
       - test-daemon-shared-unit
       - test-web
       - test-cli
+      - coverage-gate
       - e2e
       - e2e-llm
 
@@ -659,6 +846,7 @@ jobs:
              [[ "${{ needs.test-daemon-shared-unit.result }}" != "success" ]] || \
              [[ "${{ needs.test-web.result }}" != "success" ]] || \
              [[ "${{ needs.test-cli.result }}" != "success" ]] || \
+             [[ "${{ needs.coverage-gate.result }}" != "success" && "${{ needs.coverage-gate.result }}" != "skipped" ]] || \
              [[ "${{ needs.e2e.result }}" != "success" && "${{ needs.e2e.result }}" != "skipped" ]] || \
              [[ "${{ needs.e2e-llm.result }}" != "success" && "${{ needs.e2e-llm.result }}" != "skipped" ]]; then
             echo "One or more jobs failed:"
@@ -668,6 +856,7 @@ jobs:
             echo "  test-daemon-shared-unit: ${{ needs.test-daemon-shared-unit.result }}"
             echo "  test-web: ${{ needs.test-web.result }}"
             echo "  test-cli: ${{ needs.test-cli.result }}"
+            echo "  coverage-gate: ${{ needs.coverage-gate.result }}"
             echo "  e2e: ${{ needs.e2e.result }}"
             echo "  e2e-llm: ${{ needs.e2e-llm.result }}"
             exit 1

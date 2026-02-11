@@ -22,10 +22,13 @@
 import { signal, computed } from '@preact/signals';
 import type { Session, ContextInfo, AgentProcessingState, SessionState } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import { Logger } from '@neokai/shared';
 import { connectionManager } from './connection-manager';
 import { slashCommandsSignal } from './signals';
 import { toast } from './toast';
 import type { StructuredError } from '../types/error';
+
+const logger = new Logger('kai:web:sessionstore');
 
 class SessionStore {
 	// ========================================
@@ -84,6 +87,17 @@ class SessionStore {
 		return state.status === 'processing' || state.status === 'queued';
 	});
 
+	/**
+	 * Whether there are more messages to load (pagination)
+	 * Inferred from initial message load: if we got exactly 100, there might be more
+	 */
+	readonly hasMoreMessages = computed<boolean>(() => {
+		// If initial load returned exactly 100 messages, there might be more
+		// Once we've loaded older messages, this inference becomes less accurate,
+		// but it's still a reasonable default that avoids an expensive COUNT query
+		return this._initialMessageCount.value === 100;
+	});
+
 	// ========================================
 	// Private State
 	// ========================================
@@ -96,6 +110,9 @@ class SessionStore {
 
 	/** Track the session switch time to avoid showing stale errors */
 	private sessionSwitchTime: number = 0;
+
+	/** Track initial message load count for pagination inference */
+	private readonly _initialMessageCount = signal(0);
 
 	// ========================================
 	// Session Selection (with Promise-Chain Lock)
@@ -124,12 +141,21 @@ class SessionStore {
 			return;
 		}
 
-		// 1. Stop current subscriptions
+		const oldSessionId = this.activeSessionId.value;
+
+		// 1. Stop current subscriptions and leave old room
 		await this.stopSubscriptions();
+		if (oldSessionId) {
+			const hub = connectionManager.getHubIfConnected();
+			if (hub) {
+				hub.leaveRoom(`session:${oldSessionId}`);
+			}
+		}
 
 		// 2. Clear state
 		this.sessionState.value = null;
 		this.sdkMessages.value = [];
+		this._initialMessageCount.value = 0;
 		// Record session switch time to only show errors that occur AFTER this point
 		// This prevents showing stale errors that were already in the session state
 		this.sessionSwitchTime = Date.now();
@@ -164,25 +190,24 @@ class SessionStore {
 		try {
 			const hub = await connectionManager.getHub();
 
+			// Join the session room first - this subscribes to all session-scoped events
+			hub.joinRoom(`session:${sessionId}`);
+
 			// 1. Session state subscription (unified: metadata + agent + commands + context + error)
-			const unsubSessionState = hub.subscribeOptimistic<SessionState>(
-				'state.session',
-				(state) => {
-					this.sessionState.value = state;
+			const unsubSessionState = hub.onEvent<SessionState>('state.session', (state) => {
+				this.sessionState.value = state;
 
-					// Sync slash commands signal (for autocomplete)
-					if (state.commandsData?.availableCommands) {
-						slashCommandsSignal.value = state.commandsData.availableCommands;
-					}
+				// Sync slash commands signal (for autocomplete)
+				if (state.commandsData?.availableCommands) {
+					slashCommandsSignal.value = state.commandsData.availableCommands;
+				}
 
-					// Handle error (show toast only for NEW errors that occurred after session was opened)
-					// Prevents showing stale errors from previous sessions or from before session switch
-					if (state.error && state.error.occurredAt > this.sessionSwitchTime) {
-						toast.error(state.error.message);
-					}
-				},
-				{ sessionId }
-			);
+				// Handle error (show toast only for NEW errors that occurred after session was opened)
+				// Prevents showing stale errors from previous sessions or from before session switch
+				if (state.error && state.error.occurredAt > this.sessionSwitchTime) {
+					toast.error(state.error.message);
+				}
+			});
 			this.cleanupFunctions.push(unsubSessionState);
 
 			// 2. SDK messages delta (for incremental updates)
@@ -190,30 +215,26 @@ class SessionStore {
 			// FIX: Add deduplication to prevent double messages after Safari reconnection
 			// This can happen when events are queued during reconnection and replayed,
 			// while the server also resends them after subscription re-establishment.
-			const unsubSDKMessagesDelta = hub.subscribeOptimistic<{
+			const unsubSDKMessagesDelta = hub.onEvent<{
 				added?: SDKMessage[];
-			}>(
-				'state.sdkMessages.delta',
-				(delta) => {
-					if (delta.added?.length) {
-						// Deduplicate: only add messages not already in the list
-						// Use `uuid` which is common to all SDKMessage types
-						const existingIds = new Set(this.sdkMessages.value.map((m) => m.uuid));
-						const newMessages = delta.added.filter((m) => !existingIds.has(m.uuid));
-						if (newMessages.length > 0) {
-							this.sdkMessages.value = [...this.sdkMessages.value, ...newMessages];
-						}
+			}>('state.sdkMessages.delta', (delta) => {
+				if (delta.added?.length) {
+					// Deduplicate: only add messages not already in the list
+					// Use `uuid` which is common to all SDKMessage types
+					const existingIds = new Set(this.sdkMessages.value.map((m) => m.uuid));
+					const newMessages = delta.added.filter((m) => !existingIds.has(m.uuid));
+					if (newMessages.length > 0) {
+						this.sdkMessages.value = [...this.sdkMessages.value, ...newMessages];
 					}
-				},
-				{ sessionId }
-			);
+				}
+			});
 			this.cleanupFunctions.push(unsubSDKMessagesDelta);
 
 			// 3. Fetch initial state via RPC (pure WebSocket - no REST API)
 			// This replaces the old REST API calls and state.sdkMessages subscription
 			await this.fetchInitialState(hub, sessionId);
 		} catch (err) {
-			console.error('[SessionStore] Failed to start subscriptions:', err);
+			logger.error('Failed to start subscriptions:', err);
 			toast.error('Failed to connect to daemon');
 		}
 	}
@@ -229,8 +250,8 @@ class SessionStore {
 		try {
 			// Fetch session state and messages in parallel
 			const [sessionState, messagesState] = await Promise.all([
-				hub.call<SessionState>('state.session', { sessionId }),
-				hub.call<{ sdkMessages: SDKMessage[] }>('state.sdkMessages', {
+				hub.request<SessionState>('state.session', { sessionId }),
+				hub.request<{ sdkMessages: SDKMessage[] }>('state.sdkMessages', {
 					sessionId,
 				}),
 			]);
@@ -258,6 +279,11 @@ class SessionStore {
 
 				const snapshotTimestamp = (messagesState as unknown as { timestamp?: number }).timestamp;
 				const currentMessages = this.sdkMessages.value;
+				const initialSnapshot = messagesState.sdkMessages;
+
+				// Track initial message count for pagination inference
+				// If we got exactly 100 messages, there might be more
+				this._initialMessageCount.value = initialSnapshot.length;
 
 				if (snapshotTimestamp && currentMessages.length > 0) {
 					// Preserve newer messages that arrived via delta during reconnection
@@ -271,7 +297,7 @@ class SessionStore {
 						const messageMap = new Map<string, SDKMessage>();
 
 						// Add snapshot messages
-						for (const msg of messagesState.sdkMessages) {
+						for (const msg of initialSnapshot) {
 							if (msg.uuid) {
 								messageMap.set(msg.uuid, msg);
 							}
@@ -293,15 +319,15 @@ class SessionStore {
 						);
 					} else {
 						// No newer messages, use snapshot directly
-						this.sdkMessages.value = messagesState.sdkMessages;
+						this.sdkMessages.value = initialSnapshot;
 					}
 				} else {
 					// No timestamp in response or first load, use snapshot directly
-					this.sdkMessages.value = messagesState.sdkMessages;
+					this.sdkMessages.value = initialSnapshot;
 				}
 			}
 		} catch (err) {
-			console.error('[SessionStore] Failed to fetch initial state:', err);
+			logger.error('Failed to fetch initial state:', err);
 			// Don't show toast here - subscriptions are still active and will receive updates
 		}
 	}
@@ -314,8 +340,8 @@ class SessionStore {
 		for (const cleanup of this.cleanupFunctions) {
 			try {
 				cleanup();
-			} catch (err) {
-				console.warn('[SessionStore] Cleanup error:', err);
+			} catch {
+				// Ignore cleanup errors
 			}
 		}
 		this.cleanupFunctions = [];
@@ -342,7 +368,7 @@ class SessionStore {
 			const hub = await connectionManager.getHub();
 			await this.fetchInitialState(hub, sessionId);
 		} catch (err) {
-			console.error('[SessionStore] Failed to refresh state:', err);
+			logger.error('Failed to refresh state:', err);
 			// Don't throw - subscriptions will still receive updates
 		}
 	}
@@ -402,12 +428,12 @@ class SessionStore {
 
 		try {
 			const hub = await connectionManager.getHub();
-			const result = await hub.call<{ count: number }>('message.count', {
+			const result = await hub.request<{ count: number }>('message.count', {
 				sessionId,
 			});
 			return result?.count ?? 0;
 		} catch (err) {
-			console.error('[SessionStore] Failed to get message count:', err);
+			logger.error('Failed to get message count:', err);
 			return 0;
 		}
 	}
@@ -425,7 +451,7 @@ class SessionStore {
 
 		try {
 			const hub = await connectionManager.getHub();
-			const result = await hub.call<{ sdkMessages: SDKMessage[] }>('message.sdkMessages', {
+			const result = await hub.request<{ sdkMessages: SDKMessage[] }>('message.sdkMessages', {
 				sessionId,
 				before: beforeTimestamp,
 				limit,
@@ -437,7 +463,7 @@ class SessionStore {
 				hasMore: messages.length === limit,
 			};
 		} catch (err) {
-			console.error('[SessionStore] Failed to load older messages:', err);
+			logger.error('Failed to load older messages:', err);
 			throw err;
 		}
 	}

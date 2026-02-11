@@ -6,11 +6,15 @@
  */
 
 import type { ServerWebSocket } from 'bun';
-import { createEventMessage, createErrorMessage, MessageType, generateUUID } from '@neokai/shared';
+import {
+	createEventMessage,
+	createErrorResponseMessage,
+	MessageType,
+	generateUUID,
+} from '@neokai/shared';
 import type { HubMessage } from '@neokai/shared/message-hub/protocol';
 import type { WebSocketServerTransport } from '../lib/websocket-server-transport';
 import type { SessionManager } from '../lib/session-manager';
-import type { SubscriptionManager } from '../lib/subscription-manager';
 
 const GLOBAL_SESSION_ID = 'global';
 
@@ -41,22 +45,18 @@ interface ParsedWebSocketMessage {
 
 export function createWebSocketHandlers(
 	transport: WebSocketServerTransport,
-	sessionManager: SessionManager,
-	_subscriptionManager: SubscriptionManager
+	sessionManager: SessionManager
 ) {
 	return {
 		open(ws: ServerWebSocket<WebSocketData>) {
-			console.info('WebSocket connection established');
-
 			// Register client with transport (starts in global session)
 			const clientId = transport.registerClient(ws, GLOBAL_SESSION_ID);
 
 			// Store clientId on websocket data for cleanup and message handling
 			ws.data.clientId = clientId;
 
-			// NOTE: We don't auto-subscribe clients to events anymore.
-			// Clients will subscribe themselves by sending SUBSCRIBE messages.
-			// This prevents the server-side subscription timeout issue.
+			// NOTE: Clients receive events automatically through the MessageHub protocol.
+			// No explicit subscription mechanism needed.
 
 			// Send connection confirmation as a proper EVENT message
 			const connectionEvent = createEventMessage({
@@ -78,16 +78,15 @@ export function createWebSocketHandlers(
 				const messageSize = new TextEncoder().encode(messageStr).length;
 
 				if (messageSize > MAX_MESSAGE_SIZE) {
-					console.error(
-						`Message rejected: size ${(messageSize / (1024 * 1024)).toFixed(2)}MB exceeds limit ${MAX_MESSAGE_SIZE_MB}MB`
-					);
-					const errorMsg = createErrorMessage({
+					// Message size limit exceeded - send error response
+					const errorMsg = createErrorResponseMessage({
 						method: 'message.process',
 						error: {
 							code: 'MESSAGE_TOO_LARGE',
 							message: `Message size ${(messageSize / (1024 * 1024)).toFixed(2)}MB exceeds maximum ${MAX_MESSAGE_SIZE_MB}MB`,
 						},
 						sessionId: GLOBAL_SESSION_ID,
+						requestId: '',
 					});
 					ws.send(JSON.stringify(errorMsg));
 					return;
@@ -120,24 +119,21 @@ export function createWebSocketHandlers(
 
 				// Validate sessionId exists in message
 				if (!data.sessionId) {
-					console.warn('Message without sessionId, defaulting to global');
 					data.sessionId = GLOBAL_SESSION_ID;
 				}
 
 				// For session-specific messages, verify session exists (except for global)
-				// SUBSCRIBE/UNSUBSCRIBE are protocol-level and don't require session validation
-				const isProtocolMessage = data.type === 'SUBSCRIBE' || data.type === 'UNSUBSCRIBE';
-				if (data.sessionId !== GLOBAL_SESSION_ID && !isProtocolMessage) {
+				if (data.sessionId !== GLOBAL_SESSION_ID) {
 					const session = await sessionManager.getSessionAsync(data.sessionId);
 					if (!session) {
-						const errorMsg = createErrorMessage({
+						const errorMsg = createErrorResponseMessage({
 							method: data.method || 'unknown.method',
 							error: {
 								code: 'SESSION_NOT_FOUND',
 								message: `Session not found: ${data.sessionId}`,
 							},
 							sessionId: data.sessionId,
-							requestId: data.id,
+							requestId: data.id || '',
 						});
 						ws.send(JSON.stringify(errorMsg));
 						return;
@@ -151,29 +147,29 @@ export function createWebSocketHandlers(
 					transport.handleClientMessage(data as unknown as HubMessage, clientId);
 				}
 			} catch (error) {
-				console.error('Error processing WebSocket message:', error);
-				const errorMsg = createErrorMessage({
+				// Error processing message - send error response
+				const errorMsg = createErrorResponseMessage({
 					method: 'message.process',
 					error: {
 						code: 'INVALID_MESSAGE',
 						message: error instanceof Error ? error.message : 'Invalid message format',
 					},
 					sessionId: GLOBAL_SESSION_ID,
+					requestId: '',
 				});
 				ws.send(JSON.stringify(errorMsg));
 			}
 		},
 
 		close(ws: ServerWebSocket<WebSocketData>) {
-			console.info('WebSocket disconnected');
 			const clientId = ws.data.clientId;
 			if (clientId) {
 				transport.unregisterClient(clientId);
 			}
 		},
 
-		error(ws: ServerWebSocket<WebSocketData>, error: Error) {
-			console.error('WebSocket error:', error);
+		error(ws: ServerWebSocket<WebSocketData>, _error: Error) {
+			// WebSocket error - unregister client
 			const clientId = ws.data.clientId;
 			if (clientId) {
 				transport.unregisterClient(clientId);

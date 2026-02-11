@@ -81,32 +81,6 @@ export async function waitForSessionCreated(page: Page): Promise<string> {
 }
 
 /**
- * Wait for session to be deleted and UI to update
- */
-export async function waitForSessionDeleted(page: Page, sessionId: string): Promise<void> {
-	// Wait for redirect to home
-	await page.waitForFunction(
-		() => document.querySelector('h2')?.textContent?.includes('Welcome to NeoKai'),
-		{ timeout: 10000 }
-	);
-
-	// Wait for session to disappear from sidebar
-	await page.waitForFunction(
-		(sid) => {
-			const sessionElements = Array.from(document.querySelectorAll('[data-session-id]'));
-			for (const el of sessionElements) {
-				if (el.getAttribute('data-session-id') === sid) {
-					return false;
-				}
-			}
-			return true;
-		},
-		sessionId,
-		{ timeout: 5000 }
-	);
-}
-
-/**
  * Wait for user message to be sent
  */
 export async function waitForMessageSent(page: Page, messageText: string): Promise<void> {
@@ -170,69 +144,6 @@ export async function waitForMessageProcessed(page: Page, messageText: string): 
 }
 
 /**
- * Wait for state channel to be initialized and data loaded
- */
-export async function waitForStateChannel(
-	page: Page,
-	channel: string,
-	sessionId: string = 'global'
-): Promise<void> {
-	await page.waitForFunction(
-		({ chan, sid }) => {
-			const state = window.appState;
-			if (!state) return false;
-
-			if (sid === 'global') {
-				// Access dynamic channel property
-				const globalValue = state.global?.value as Record<string, { $?: unknown }> | undefined;
-				return globalValue?.[chan]?.$ !== undefined;
-			} else {
-				const sessionState = state.sessions?.get(sid) as
-					| Record<string, { $?: unknown }>
-					| undefined;
-				return sessionState?.[chan]?.$ !== undefined;
-			}
-		},
-		{ chan: channel, sid: sessionId },
-		{ timeout: 10000 }
-	);
-}
-
-/**
- * Wait for sessions list to be loaded in sidebar
- */
-export async function waitForSessionsList(page: Page): Promise<void> {
-	await waitForStateChannel(page, 'sessions', 'global');
-
-	// Also wait for visual confirmation
-	await page.waitForFunction(
-		() => {
-			const sidebar = document.querySelector('[data-sidebar]') || document.querySelector('aside');
-			return sidebar !== null;
-		},
-		{ timeout: 5000 }
-	);
-}
-
-/**
- * Wait for specific SDK message type to appear
- */
-export async function waitForSDKMessage(
-	page: Page,
-	messageType: string,
-	timeout: number = 10000
-): Promise<void> {
-	await page.waitForFunction(
-		(type) => {
-			const messages = window.__sdkMessages || [];
-			return messages.some((m) => m.type === type);
-		},
-		messageType,
-		{ timeout }
-	);
-}
-
-/**
  * Wait for SDK system:init message to be received
  * This indicates the SDK has accepted the message and started processing
  *
@@ -250,43 +161,6 @@ export async function waitForSDKSystemInitMessage(
 	// Use locator.waitFor() for better retry logic with async signal-based rendering
 	// Use .last() to wait for the most recent button (handles multiple messages)
 	await page.locator('button[title="Session info"]').last().waitFor({ state: 'visible', timeout });
-}
-
-/**
- * Wait for specific event to be published
- */
-export async function waitForEvent(
-	page: Page,
-	eventName: string,
-	sessionId: string = 'global'
-): Promise<unknown> {
-	return page.evaluate(
-		async ({ event, sid }) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub) {
-				throw new Error('MessageHub not found');
-			}
-
-			return new Promise((resolve) => {
-				const timeout = setTimeout(() => {
-					resolve({ timeout: true });
-				}, 10000);
-
-				(async () => {
-					const unsubscribe = await hub.subscribe(
-						event,
-						async (data: unknown) => {
-							clearTimeout(timeout);
-							await unsubscribe();
-							resolve(data);
-						},
-						{ sessionId: sid }
-					);
-				})();
-			});
-		},
-		{ event: eventName, sid: sessionId }
-	);
 }
 
 /**
@@ -309,146 +183,14 @@ export async function waitForElement(
 }
 
 /**
- * Wait for navigation to complete
- */
-export async function waitForNavigation(page: Page, url?: string | RegExp): Promise<void> {
-	if (url) {
-		await page.waitForURL(url, { timeout: 10000 });
-	} else {
-		await page.waitForLoadState('networkidle', { timeout: 10000 });
-	}
-}
-
-/**
- * Wait for multi-tab synchronization
- */
-export async function waitForTabSync(pages: Page[], timeout: number = 5000): Promise<void> {
-	const startTime = Date.now();
-
-	while (Date.now() - startTime < timeout) {
-		// Check if all tabs have the same session count
-		const sessionCounts = await Promise.all(
-			pages.map((page) =>
-				page.evaluate(() => {
-					const sessions = window.globalStore?.sessions?.value;
-					return sessions?.length || 0;
-				})
-			)
-		);
-
-		// If all tabs have the same count, sync is likely complete
-		if (sessionCounts.every((count) => count === sessionCounts[0])) {
-			// Wait a bit more to ensure full sync
-			await pages[0].waitForTimeout(500);
-			return;
-		}
-
-		// Wait before checking again
-		await pages[0].waitForTimeout(100);
-	}
-
-	throw new Error(`Tab sync did not complete within ${timeout}ms`);
-}
-
-/**
- * Wait for agent state change
- * NOTE: For current session, uses sessionStore.sessionState.value?.agentState
- * For non-current sessions, uses globalStore.sessions with parsed processingState
- */
-export async function waitForAgentState(
-	page: Page,
-	sessionId: string,
-	expectedState: 'idle' | 'working' | 'interrupted'
-): Promise<void> {
-	await page.waitForFunction(
-		({ sid, state }) => {
-			// Try sessionStore first (current session - live state)
-			const sessionStoreState = window.sessionStore?.sessionState?.value;
-			if (sessionStoreState?.agentState && window.sessionStore?.activeSessionId?.value === sid) {
-				return sessionStoreState.agentState.status === state;
-			}
-
-			// Fall back to globalStore for non-current sessions
-			const session = window.globalStore?.sessions?.value?.find(
-				(s: { id: string }) => s.id === sid
-			);
-			if (!session?.processingState) return false;
-
-			try {
-				const agentState = JSON.parse(session.processingState);
-				return agentState.status === state;
-			} catch {
-				return false;
-			}
-		},
-		{ sid: sessionId, state: expectedState },
-		{ timeout: 10000 }
-	);
-}
-
-/**
- * Wait for context update (after /context command)
- * NOTE: Uses sessionStore.sessionState.value?.contextInfo for current session
- */
-export async function waitForContextUpdate(page: Page, sessionId: string): Promise<void> {
-	// Wait for context state channel update
-	await page.waitForFunction(
-		(sid) => {
-			const sessionStoreState = window.sessionStore?.sessionState?.value;
-			if (!sessionStoreState || window.sessionStore?.activeSessionId?.value !== sid) {
-				return false;
-			}
-			// Check if contextInfo exists
-			return sessionStoreState.contextInfo !== null && sessionStoreState.contextInfo !== undefined;
-		},
-		sessionId,
-		{ timeout: 10000 }
-	);
-}
-
-/**
- * Wait for slash commands to be loaded
- * NOTE: Uses sessionStore.sessionState.value?.commandsData for current session
- */
-export async function waitForSlashCommands(page: Page, sessionId: string): Promise<void> {
-	await page.waitForFunction(
-		(sid) => {
-			const sessionStoreState = window.sessionStore?.sessionState?.value;
-			if (!sessionStoreState || window.sessionStore?.activeSessionId?.value !== sid) {
-				return false;
-			}
-			const commands = sessionStoreState.commandsData?.availableCommands;
-			return commands && commands.length > 0;
-		},
-		sessionId,
-		{ timeout: 10000 }
-	);
-}
-
-/**
- * Helper to setup MessageHub exposure for testing
- * Uses simpler approach matching the passing chat-flow.e2e.ts pattern
+ * Setup page for testing - navigate to home and wait for connection
  */
 export async function setupMessageHubTesting(page: Page): Promise<void> {
 	// Navigate to home page
 	await page.goto('/');
 
-	// Wait for app to initialize - check for sidebar heading
-	await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible({
-		timeout: 10000,
-	});
-
-	// Wait for WebSocket connection - simple timeout like chat-flow.e2e.ts
-	await page.waitForTimeout(1000);
-
-	// Optionally inject MessageHub tracking (for tests that need it)
-	await page.evaluate(() => {
-		window.__sdkMessages = [];
-		const hub = window.appState?.messageHub;
-		if (hub) {
-			window.__messageHub = hub;
-		}
-	});
+	// Wait for WebSocket connection
+	await waitForWebSocketConnected(page);
 }
 
 /**
@@ -469,12 +211,12 @@ export async function cleanupTestSession(page: Page, sessionId: string): Promise
 		const result = await page.evaluate(async (sid) => {
 			try {
 				const hub = window.__messageHub || window.appState?.messageHub;
-				if (!hub || !hub.call) {
+				if (!hub || !hub.request) {
 					return { success: false, error: 'MessageHub not available' };
 				}
 
 				// 10s timeout - if it takes longer, something is likely stuck/deadlocked
-				await hub.call('session.delete', { sessionId: sid }, { timeout: 10000 });
+				await hub.request('session.delete', { sessionId: sid }, { timeout: 10000 });
 				return { success: true, error: undefined };
 			} catch (error: unknown) {
 				return {
@@ -506,176 +248,4 @@ export async function cleanupTestSession(page: Page, sessionId: string): Promise
 	}
 
 	// Never throw errors from cleanup - just log warnings
-}
-
-/**
- * Cleanup multiple sessions at once (for test suites)
- */
-export async function cleanupTestSessions(page: Page, sessionIds: string[]): Promise<void> {
-	for (const sessionId of sessionIds) {
-		await cleanupTestSession(page, sessionId);
-	}
-}
-
-/**
- * Wait for session to be archived
- * NOTE: Uses globalStore.sessions to find session by ID and check status
- */
-export async function waitForSessionArchived(page: Page, sessionId: string): Promise<void> {
-	await page.waitForFunction(
-		(sid) => {
-			const session = window.globalStore?.sessions?.value?.find(
-				(s: { id: string; status?: string }) => s.id === sid
-			);
-			return session?.status === 'archived';
-		},
-		sessionId,
-		{ timeout: 10000 }
-	);
-
-	// Also wait for visual confirmation (archived label)
-	await page.locator('text=Session archived').waitFor({ state: 'visible', timeout: 5000 });
-}
-
-/**
- * Wait for processing state change
- * @param state - Expected state: 'idle', 'queued', or 'processing'
- * @param phase - Optional phase when state is 'processing': 'initializing', 'thinking', 'streaming', 'finalizing'
- * NOTE: For current session, uses sessionStore.sessionState.value?.agentState
- */
-export async function waitForProcessingState(
-	page: Page,
-	sessionId: string,
-	state: 'idle' | 'queued' | 'processing',
-	phase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing'
-): Promise<void> {
-	await page.waitForFunction(
-		({ sid, expectedState, expectedPhase }) => {
-			// Try sessionStore first (current session - live state)
-			const sessionStoreState = window.sessionStore?.sessionState?.value;
-			let agentState;
-			if (sessionStoreState?.agentState && window.sessionStore?.activeSessionId?.value === sid) {
-				agentState = sessionStoreState.agentState;
-			} else {
-				// Fall back to globalStore for non-current sessions
-				const session = window.globalStore?.sessions?.value?.find(
-					(s: { id: string }) => s.id === sid
-				);
-				if (!session?.processingState) return false;
-
-				try {
-					agentState = JSON.parse(session.processingState);
-				} catch {
-					return false;
-				}
-			}
-
-			if (!agentState) return false;
-			if (agentState.status !== expectedState) return false;
-
-			// If phase is specified and state is 'processing', check the phase
-			if (expectedPhase && expectedState === 'processing') {
-				return agentState.phase === expectedPhase;
-			}
-
-			return true;
-		},
-		{ sid: sessionId, expectedState: state, expectedPhase: phase },
-		{ timeout: 30000 }
-	);
-}
-
-/**
- * Wait for slash command autocomplete dropdown to appear
- */
-export async function waitForCommandAutocomplete(page: Page): Promise<Locator> {
-	const dropdown = page.locator('text=Slash Commands').locator('..');
-	await dropdown.waitFor({ state: 'visible', timeout: 5000 });
-	return dropdown;
-}
-
-/**
- * Wait for slash command autocomplete dropdown to close
- */
-export async function waitForCommandAutocompleteClosed(page: Page): Promise<void> {
-	const dropdown = page.locator('text=Slash Commands').locator('..');
-	await dropdown.waitFor({ state: 'hidden', timeout: 5000 });
-}
-
-/**
- * Wait for error message to appear
- */
-export async function waitForError(page: Page, errorText?: string): Promise<Locator> {
-	if (errorText) {
-		const errorElement = page.locator(`[data-error-message]:has-text("${errorText}")`);
-		await errorElement.waitFor({ state: 'visible', timeout: 10000 });
-		return errorElement;
-	}
-
-	const errorElement = page.locator('[data-error-message]').first();
-	await errorElement.waitFor({ state: 'visible', timeout: 10000 });
-	return errorElement;
-}
-
-/**
- * Wait for Settings modal to open
- */
-export async function waitForSettingsModal(page: Page): Promise<void> {
-	await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 5000 });
-}
-
-/**
- * Wait for Settings modal to close
- */
-export async function waitForSettingsModalClosed(page: Page): Promise<void> {
-	await page.locator('h2:has-text("Settings")').waitFor({ state: 'hidden', timeout: 5000 });
-}
-
-/**
- * Wait for plus menu dropdown to open
- */
-export async function waitForPlusMenu(page: Page): Promise<void> {
-	// Click the plus/more options button
-	const plusButton = page.locator('button[title="More options"]');
-	await plusButton.waitFor({ state: 'visible', timeout: 5000 });
-	await plusButton.click();
-	await page.waitForTimeout(300);
-}
-
-/**
- * Wait for toast notification to appear
- */
-export async function waitForToast(page: Page, text?: string): Promise<Locator> {
-	if (text) {
-		const toast = page.locator(
-			`[data-testid="toast"]:has-text("${text}"), [role="alert"]:has-text("${text}")`
-		);
-		await toast.waitFor({ state: 'visible', timeout: 5000 });
-		return toast;
-	}
-
-	const toast = page.locator('[data-testid="toast"], [role="alert"]').first();
-	await toast.waitFor({ state: 'visible', timeout: 5000 });
-	return toast;
-}
-
-/**
- * Wait for model to be switched
- * NOTE: Uses globalStore.sessions to find session and check config.model
- */
-export async function waitForModelSwitch(
-	page: Page,
-	sessionId: string,
-	modelId: string
-): Promise<void> {
-	await page.waitForFunction(
-		({ sid, expected }) => {
-			const session = window.globalStore?.sessions?.value?.find(
-				(s: { id: string }) => s.id === sid
-			);
-			return session?.config?.model === expected;
-		},
-		{ sid: sessionId, expected: modelId },
-		{ timeout: 10000 }
-	);
 }

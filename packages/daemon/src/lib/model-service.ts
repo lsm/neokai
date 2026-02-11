@@ -23,11 +23,11 @@ import type { Provider } from '@neokai/shared/provider';
  */
 const LEGACY_MODEL_MAPPINGS: Record<string, string> = {
 	// Old alias mappings
-	sonnet: 'default', // SDK uses 'default' for Sonnet
-	// Full model IDs (any sonnet variant maps to default)
-	'claude-sonnet-4-5-20250929': 'default',
-	'claude-sonnet-4-20241022': 'default',
-	'claude-3-5-sonnet-20241022': 'default',
+	default: 'sonnet', // Legacy: 'default' maps to 'sonnet'
+	// Full model IDs (any sonnet variant maps to sonnet)
+	'claude-sonnet-4-5-20250929': 'sonnet',
+	'claude-sonnet-4-20241022': 'sonnet',
+	'claude-3-5-sonnet-20241022': 'sonnet',
 	// Opus - SDK uses 'opus'
 	'claude-opus-4-5-20251101': 'opus',
 	'claude-opus-4-20250514': 'opus',
@@ -54,6 +54,47 @@ const cacheTimestamps = new Map<string, number>();
  * Cache TTL in milliseconds (4 hours)
  */
 const CACHE_TTL = 4 * 60 * 60 * 1000;
+
+/**
+ * Static fallback models used when no providers are available (e.g., no API keys).
+ * These are well-known Anthropic models with standard metadata so that model
+ * resolution (alias → ID) still works without a live API call.
+ */
+const FALLBACK_MODELS: ModelInfo[] = [
+	{
+		id: 'sonnet',
+		name: 'Claude Sonnet',
+		alias: 'default',
+		family: 'sonnet',
+		provider: 'anthropic',
+		contextWindow: 200000,
+		description: 'Best balance of speed and intelligence',
+		releaseDate: '2025-01-01',
+		available: true,
+	},
+	{
+		id: 'opus',
+		name: 'Claude Opus',
+		alias: 'opus',
+		family: 'opus',
+		provider: 'anthropic',
+		contextWindow: 200000,
+		description: 'Most capable model for complex tasks',
+		releaseDate: '2025-01-01',
+		available: true,
+	},
+	{
+		id: 'haiku',
+		name: 'Claude Haiku',
+		alias: 'haiku',
+		family: 'haiku',
+		provider: 'anthropic',
+		contextWindow: 200000,
+		description: 'Fastest and most compact model',
+		releaseDate: '2025-01-01',
+		available: true,
+	},
+];
 
 /**
  * Track if a background refresh is in progress for a given cache key
@@ -88,8 +129,9 @@ export async function getSupportedModelsFromQuery(
 				cacheTimestamps.set(cacheKey, Date.now());
 				return models;
 			}
-		} catch (error) {
-			console.warn('Failed to load models from SDK:', error);
+			/* v8 ignore next 2 */
+		} catch {
+			// Failed to load models from SDK
 		}
 	}
 
@@ -122,10 +164,10 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 			if (models.length > 0) {
 				modelsCache.set(cacheKey, models);
 				cacheTimestamps.set(cacheKey, Date.now());
-				console.info(`[model-service] Background refresh complete: ${models.length} models loaded`);
 			}
-		} catch (error) {
-			console.warn('[model-service] Background refresh failed:', error);
+			/* v8 ignore next 2 */
+		} catch {
+			// Background refresh failed
 		} finally {
 			refreshInProgress.delete(cacheKey);
 		}
@@ -148,8 +190,9 @@ async function loadModelsFromProviders(): Promise<ModelInfo[]> {
 
 			const models = await provider.getModels();
 			allModels.push(...models);
-		} catch (error) {
-			console.warn(`[model-service] Failed to load models from ${provider.id}:`, error);
+			/* v8 ignore next 2 */
+		} catch {
+			// Failed to load models from provider
 		}
 	}
 
@@ -204,11 +247,8 @@ export async function initializeModels(): Promise<void> {
 
 	// Skip if already initialized
 	if (modelsCache.has(cacheKey)) {
-		console.info('[model-service] Models already initialized, skipping');
 		return;
 	}
-
-	console.info('[model-service] Loading models on app startup...');
 
 	// Initialize the provider system (registers built-in providers)
 	initializeProviders();
@@ -219,20 +259,12 @@ export async function initializeModels(): Promise<void> {
 			// Cache the models
 			modelsCache.set(cacheKey, models);
 			cacheTimestamps.set(cacheKey, Date.now());
-			console.info(
-				`[model-service] Startup initialization complete: ${models.length} models loaded`
-			);
 		} else {
 			throw new Error('No models returned from providers');
 		}
-	} catch (error) {
-		// Log the error but don't fail startup - use static fallback models
-		console.error('[model-service] Failed to load models from providers:', error);
-		console.warn('[model-service] Models will be loaded on-demand during query execution');
-
-		// Set empty cache to prevent repeated initialization attempts
-		// getAvailableModels() will handle empty cache gracefully
-		modelsCache.set(cacheKey, []);
+	} catch {
+		// Failed to load models - use well-known Anthropic models as fallback
+		modelsCache.set(cacheKey, FALLBACK_MODELS);
 		cacheTimestamps.set(cacheKey, Date.now());
 	}
 }
@@ -262,13 +294,13 @@ export function getModelsCache(): Map<string, ModelInfo[]> {
  * Set models cache (for testing - allows reusing cached models)
  * @param cache Map of cached models to restore
  */
-export function setModelsCache(cache: Map<string, ModelInfo[]>): void {
+export function setModelsCache(cache: Map<string, ModelInfo[]>, timestamp?: number): void {
 	modelsCache.clear();
 	cacheTimestamps.clear();
-	const now = Date.now();
+	const ts = timestamp ?? Date.now();
 	for (const [key, models] of cache.entries()) {
 		modelsCache.set(key, models);
-		cacheTimestamps.set(key, now);
+		cacheTimestamps.set(key, ts);
 	}
 }
 

@@ -16,15 +16,17 @@ vi.mock('@neokai/shared', () => ({
 
 // Module-level mock objects
 const mockHubObj: {
-	call: ReturnType<typeof vi.fn>;
-	subscribe: ReturnType<typeof vi.fn>;
-	subscribeOptimistic: ReturnType<typeof vi.fn>;
+	request: ReturnType<typeof vi.fn>;
+	onEvent: ReturnType<typeof vi.fn>;
 	onConnection: ReturnType<typeof vi.fn>;
+	joinRoom: ReturnType<typeof vi.fn>;
+	leaveRoom: ReturnType<typeof vi.fn>;
 } = {
-	call: vi.fn(() => Promise.resolve({ data: 'test', timestamp: 123456 })),
-	subscribe: vi.fn(() => Promise.resolve(vi.fn())),
-	subscribeOptimistic: vi.fn(() => vi.fn()),
+	request: vi.fn(() => Promise.resolve({ data: 'test', timestamp: 123456 })),
+	onEvent: vi.fn(() => vi.fn()),
 	onConnection: vi.fn(() => vi.fn()),
+	joinRoom: vi.fn(() => {}),
+	leaveRoom: vi.fn(() => {}),
 };
 
 vi.mock('../state', () => ({
@@ -39,10 +41,11 @@ describe('StateChannel - Comprehensive Coverage', () => {
 		vi.clearAllMocks();
 
 		// Reset mock hub
-		mockHubObj.call = vi.fn(() => Promise.resolve({ data: 'test', timestamp: 123456 }));
-		mockHubObj.subscribe = vi.fn(() => Promise.resolve(vi.fn()));
-		mockHubObj.subscribeOptimistic = vi.fn(() => vi.fn());
+		mockHubObj.request = vi.fn(() => Promise.resolve({ data: 'test', timestamp: 123456 }));
+		mockHubObj.onEvent = vi.fn(() => vi.fn());
 		mockHubObj.onConnection = vi.fn(() => vi.fn());
+		mockHubObj.joinRoom = vi.fn(() => {});
+		mockHubObj.leaveRoom = vi.fn(() => {});
 
 		// Create channel
 		channel = new StateChannel(mockHubObj as unknown as MessageHub, 'test.channel');
@@ -102,24 +105,15 @@ describe('StateChannel - Comprehensive Coverage', () => {
 			});
 			expect(testChannel).toBeDefined();
 		});
-
-		it('should support debug mode', () => {
-			const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-			const testChannel = new StateChannel(mockHubObj, 'test.channel', {
-				debug: true,
-			});
-			testChannel['log']('test message');
-			expect(consoleSpy).toHaveBeenCalled();
-			consoleSpy.mockRestore();
-		});
 	});
 
 	describe('start() and stop()', () => {
 		it('should fetch snapshot and setup subscriptions on start', async () => {
 			await channel.start();
 
-			expect(mockHubObj.call).toHaveBeenCalledWith('test.channel', {}, { sessionId: 'global' });
-			expect(mockHubObj.subscribe).toHaveBeenCalled();
+			// After migration, request() takes 2 args: method and merged options
+			expect(mockHubObj.request).toHaveBeenCalledWith('test.channel', {});
+			expect(mockHubObj.onEvent).toHaveBeenCalled();
 		});
 
 		it('should setup optimistic subscriptions when enabled', async () => {
@@ -131,7 +125,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
 			await optimisticChannel.start();
 
-			expect(mockHubObj.subscribeOptimistic).toHaveBeenCalled();
+			expect(mockHubObj.onEvent).toHaveBeenCalled();
 			await optimisticChannel.stop();
 		});
 
@@ -145,7 +139,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 			await nonBlockingChannel.start();
 
 			// Should still fetch snapshot
-			expect(mockHubObj.call).toHaveBeenCalled();
+			expect(mockHubObj.request).toHaveBeenCalled();
 			await nonBlockingChannel.stop();
 		});
 
@@ -215,7 +209,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 		});
 
 		it('should set error state on start failure', async () => {
-			mockHubObj.call.mockRejectedValue(new Error('Connection failed'));
+			mockHubObj.request.mockRejectedValue(new Error('Connection failed'));
 
 			const errorChannel = new StateChannel(mockHubObj as unknown as MessageHub, 'test.channel');
 
@@ -224,7 +218,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 		});
 
 		it('should handle fetch error gracefully', async () => {
-			mockHubObj.call.mockRejectedValueOnce(new Error('Fetch failed'));
+			mockHubObj.request.mockRejectedValueOnce(new Error('Fetch failed'));
 
 			const errorChannel = new StateChannel(mockHubObj as unknown as MessageHub, 'test.channel');
 
@@ -234,18 +228,18 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
 	describe('refresh()', () => {
 		it('should fetch new snapshot', async () => {
-			mockHubObj.call.mockResolvedValue({ data: 'refreshed', timestamp: 123457 });
+			mockHubObj.request.mockResolvedValue({ data: 'refreshed', timestamp: 123457 });
 
 			await channel.start();
 			await channel.refresh();
 
-			expect(mockHubObj.call).toHaveBeenCalledTimes(2);
+			expect(mockHubObj.request).toHaveBeenCalledTimes(2);
 			expect(channel.value?.data).toBe('refreshed');
 		});
 
 		it('should handle refresh errors', async () => {
-			mockHubObj.call.mockResolvedValueOnce({ data: 'test' });
-			mockHubObj.call.mockRejectedValueOnce(new Error('Refresh failed'));
+			mockHubObj.request.mockResolvedValueOnce({ data: 'test' });
+			mockHubObj.request.mockRejectedValueOnce(new Error('Refresh failed'));
 
 			await channel.start();
 
@@ -324,7 +318,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 				optimisticTimeout: 100, // 100ms timeout
 			});
 
-			mockHubObj.call.mockResolvedValue({ data: 'original' });
+			mockHubObj.request.mockResolvedValue({ data: 'original' });
 			await testChannel.start();
 
 			// Create a promise that never resolves
@@ -382,7 +376,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 				lastSync: { value: number };
 			};
 
-			mockHubObj.call.mockResolvedValue({ data: 'test', timestamp: Date.now() - 120000 });
+			mockHubObj.request.mockResolvedValue({ data: 'test', timestamp: Date.now() - 120000 });
 
 			await channel.start();
 
@@ -396,7 +390,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 				lastSync: { value: number };
 			};
 
-			mockHubObj.call.mockResolvedValue({ data: 'test', timestamp: Date.now() - 30000 });
+			mockHubObj.request.mockResolvedValue({ data: 'test', timestamp: Date.now() - 30000 });
 
 			await channel.start();
 
@@ -418,7 +412,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 		});
 
 		it('should set loading during fetch', async () => {
-			mockHubObj.call.mockImplementation(
+			mockHubObj.request.mockImplementation(
 				() =>
 					new Promise((resolve) => {
 						setTimeout(() => resolve({ data: 'test' }), 50);
@@ -462,8 +456,8 @@ describe('StateChannel - Comprehensive Coverage', () => {
 				{ uuid: 'msg-3', content: 'New', timestamp: 300 },
 			];
 
-			mockHubObj.call.mockResolvedValue({ sdkMessages: incoming });
-			mockHubObj.call.mockResolvedValueOnce({ sdkMessages: existing });
+			mockHubObj.request.mockResolvedValue({ sdkMessages: incoming });
+			mockHubObj.request.mockResolvedValueOnce({ sdkMessages: existing });
 
 			await messagesChannel.start();
 
@@ -483,7 +477,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 				{ uuid: 'msg-2', content: 'Second', timestamp: 200 },
 			];
 
-			mockHubObj.call.mockResolvedValue({ sdkMessages: incoming });
+			mockHubObj.request.mockResolvedValue({ sdkMessages: incoming });
 
 			await messagesChannel.start();
 
@@ -496,7 +490,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 				sdkMessages: Array<{ uuid: string; content: string; timestamp: number }>;
 			}>(mockHubObj as unknown as MessageHub, 'state.sdkMessages');
 
-			mockHubObj.call.mockResolvedValue({ sdkMessages: [] });
+			mockHubObj.request.mockResolvedValue({ sdkMessages: [] });
 
 			await messagesChannel.start();
 
@@ -554,7 +548,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
 	describe('edge cases', () => {
 		it('should handle empty snapshots', async () => {
-			mockHubObj.call.mockResolvedValue(null);
+			mockHubObj.request.mockResolvedValue(null);
 
 			await channel.start();
 
@@ -562,7 +556,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 		});
 
 		it('should handle snapshots without timestamp', async () => {
-			mockHubObj.call.mockResolvedValue({ data: 'test-no-timestamp' });
+			mockHubObj.request.mockResolvedValue({ data: 'test-no-timestamp' });
 
 			await channel.start();
 
@@ -601,9 +595,9 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
 			await deltaChannel.start();
 
-			// Should have called subscribeOptimistic for the delta channel
-			expect(mockHubObj.subscribeOptimistic).toHaveBeenCalled();
-			const calls = mockHubObj.subscribeOptimistic.mock.calls;
+			// Should have called onEvent for the delta channel
+			expect(mockHubObj.onEvent).toHaveBeenCalled();
+			const calls = mockHubObj.onEvent.mock.calls;
 			const deltaCall = calls.find((call) => call[0] === 'test.channel.delta');
 			expect(deltaCall).toBeDefined();
 
@@ -621,7 +615,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 			await deltaChannel.start();
 
 			// Get the delta callback
-			const calls = mockHubObj.subscribeOptimistic.mock.calls;
+			const calls = mockHubObj.onEvent.mock.calls;
 			const deltaCall = calls.find((call) => call[0] === 'test.channel.delta');
 
 			if (deltaCall) {
@@ -637,7 +631,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 		});
 
 		it('should skip delta when state is null', async () => {
-			mockHubObj.call.mockResolvedValue(null); // state will be null
+			mockHubObj.request.mockResolvedValue(null); // state will be null
 
 			const mergeFn = vi.fn((current, delta) => ({ ...current, ...delta }));
 			const deltaChannel = new StateChannel(mockHubObj as unknown as MessageHub, 'test.channel', {
@@ -649,7 +643,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 			await deltaChannel.start();
 
 			// Get the delta callback
-			const calls = mockHubObj.subscribeOptimistic.mock.calls;
+			const calls = mockHubObj.onEvent.mock.calls;
 			const deltaCall = calls.find((call) => call[0] === 'test.channel.delta');
 
 			if (deltaCall) {
@@ -670,7 +664,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 			await channel.start();
 
 			// Make fetchSnapshot fail on reconnect
-			mockHubObj.call.mockRejectedValue(new Error('Fetch failed'));
+			mockHubObj.request.mockRejectedValue(new Error('Fetch failed'));
 
 			const onConnectionCall = mockHubObj.onConnection.mock.calls[0];
 			if (onConnectionCall) {
@@ -678,16 +672,12 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
 				// Trigger reconnection - this calls hybridRefresh internally
 				// The error should be caught by the .catch(console.error) handler
-				const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
 				callback('connected');
 
 				// Wait for async operation
 				await new Promise((resolve) => setTimeout(resolve, 10));
 
-				// Console.error should have been called with the error
-				expect(consoleSpy).toHaveBeenCalled();
-				consoleSpy.mockRestore();
+				// Error should be handled (caught by catch block)
 			}
 		});
 	});

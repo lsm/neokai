@@ -6,8 +6,8 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { TestContext } from '../../test-utils';
-import { createTestApp, callRPCHandler } from '../../test-utils';
+import type { TestContext } from '../../helpers/test-app';
+import { createTestApp, callRPCHandler } from '../../helpers/test-app';
 import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
@@ -16,22 +16,37 @@ const TMP_DIR = process.env.TMPDIR || '/tmp';
 
 describe('Archive Session Integration', () => {
 	let ctx: TestContext;
+	let testWorktreeBaseDir: string;
 
 	beforeEach(async () => {
+		// Set up test worktree base directory
+		const timestamp = Date.now();
+		const random = Math.random().toString(36).substring(7);
+		testWorktreeBaseDir = path.join(TMP_DIR, `test-worktrees-${timestamp}-${random}`);
+		fs.mkdirSync(testWorktreeBaseDir, { recursive: true });
+		process.env.TEST_WORKTREE_BASE_DIR = testWorktreeBaseDir;
+
 		// Enable worktrees for these tests
 		ctx = await createTestApp({ useWorktrees: true });
 	});
 
 	afterEach(async () => {
 		await ctx.cleanup();
+
+		// Cleanup test worktree base directory
+		if (fs.existsSync(testWorktreeBaseDir)) {
+			fs.rmSync(testWorktreeBaseDir, { recursive: true, force: true });
+		}
+
+		// Clear environment variable
+		delete process.env.TEST_WORKTREE_BASE_DIR;
 	});
 
 	describe('session.archive - without worktree', () => {
 		test('should archive session without worktree directly', async () => {
-			// Create session without worktree
+			// Create session without worktree (non-git path)
 			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
-				workspacePath: `${TMP_DIR}/test-no-worktree`,
-				useWorktree: false,
+				workspacePath: `${TMP_DIR}/test-no-worktree-${Date.now()}`,
 			});
 
 			// Archive the session
@@ -55,8 +70,7 @@ describe('Archive Session Integration', () => {
 
 		test('should broadcast session.updated event when archiving', async () => {
 			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
-				workspacePath: `${TMP_DIR}/test-event`,
-				useWorktree: false,
+				workspacePath: `${TMP_DIR}/test-event-${Date.now()}`,
 			});
 
 			// Subscribe to session updated event
@@ -98,10 +112,15 @@ describe('Archive Session Integration', () => {
 			execSync('git commit -m "Initial commit"', { cwd: repoPath });
 			execSync('git branch -M main', { cwd: repoPath });
 
-			// Create session with worktree
+			// Create session - will be in pending_worktree_choice state
 			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: repoPath,
-				useWorktree: true,
+			});
+
+			// Complete worktree choice to create worktree
+			await callRPCHandler(ctx.messageHub, 'session.setWorktreeMode', {
+				sessionId: created.sessionId,
+				mode: 'worktree',
 			});
 
 			// Trigger workspace initialization (2-stage session creation)
@@ -152,10 +171,15 @@ describe('Archive Session Integration', () => {
 			execSync('git commit -m "Initial commit"', { cwd: repoPath });
 			execSync('git branch -M main', { cwd: repoPath });
 
-			// Create session with worktree
+			// Create session - will be in pending_worktree_choice state
 			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: repoPath,
-				useWorktree: true,
+			});
+
+			// Complete worktree choice to create worktree
+			await callRPCHandler(ctx.messageHub, 'session.setWorktreeMode', {
+				sessionId: created.sessionId,
+				mode: 'worktree',
 			});
 
 			// Trigger workspace initialization (2-stage session creation)
@@ -209,10 +233,15 @@ describe('Archive Session Integration', () => {
 			execSync('git commit -m "Initial commit"', { cwd: repoPath });
 			execSync('git branch -M main', { cwd: repoPath });
 
-			// Create session with worktree
+			// Create session - will be in pending_worktree_choice state
 			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: repoPath,
-				useWorktree: true,
+			});
+
+			// Complete worktree choice to create worktree
+			await callRPCHandler(ctx.messageHub, 'session.setWorktreeMode', {
+				sessionId: created.sessionId,
+				mode: 'worktree',
 			});
 
 			// Trigger workspace initialization (2-stage session creation)
@@ -269,10 +298,15 @@ describe('Archive Session Integration', () => {
 			execSync('git commit -m "Initial commit"', { cwd: repoPath });
 			execSync('git branch -M main', { cwd: repoPath });
 
-			// Create session with worktree
+			// Create session - will be in pending_worktree_choice state
 			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: repoPath,
-				useWorktree: true,
+			});
+
+			// Complete worktree choice to create worktree
+			await callRPCHandler(ctx.messageHub, 'session.setWorktreeMode', {
+				sessionId: created.sessionId,
+				mode: 'worktree',
 			});
 
 			// Trigger workspace initialization
@@ -329,10 +363,15 @@ describe('Archive Session Integration', () => {
 			execSync('git commit -m "Initial commit"', { cwd: repoPath });
 			execSync('git branch -M main', { cwd: repoPath });
 
-			// Create session with worktree
+			// Create session - will be in pending_worktree_choice state
 			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: repoPath,
-				useWorktree: true,
+			});
+
+			// Complete worktree choice to create worktree
+			await callRPCHandler(ctx.messageHub, 'session.setWorktreeMode', {
+				sessionId: created.sessionId,
+				mode: 'worktree',
 			});
 
 			// Trigger workspace initialization
@@ -387,10 +426,15 @@ describe('Archive Session Integration', () => {
 			execSync('git commit -m "Initial commit"', { cwd: repoPath });
 			execSync('git branch -M main', { cwd: repoPath });
 
-			// Create session with worktree
+			// Create session - will be in pending_worktree_choice state
 			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: repoPath,
-				useWorktree: true,
+			});
+
+			// Complete worktree choice to create worktree
+			await callRPCHandler(ctx.messageHub, 'session.setWorktreeMode', {
+				sessionId: created.sessionId,
+				mode: 'worktree',
 			});
 
 			// Trigger workspace initialization
@@ -450,8 +494,7 @@ describe('Archive Session Integration', () => {
 		test('should handle already archived session gracefully', async () => {
 			// Create and archive a session
 			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
-				workspacePath: `${TMP_DIR}/test-already-archived`,
-				useWorktree: false,
+				workspacePath: `${TMP_DIR}/test-already-archived-${Date.now()}`,
 			});
 
 			await callRPCHandler(ctx.messageHub, 'session.archive', {
@@ -471,8 +514,7 @@ describe('Archive Session Integration', () => {
 	describe('Archived session behavior', () => {
 		test('archived sessions should be retrievable via session.get', async () => {
 			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
-				workspacePath: `${TMP_DIR}/test-get-archived`,
-				useWorktree: false,
+				workspacePath: `${TMP_DIR}/test-get-archived-${Date.now()}`,
 			});
 
 			await callRPCHandler(ctx.messageHub, 'session.archive', {
@@ -493,8 +535,7 @@ describe('Archive Session Integration', () => {
 		test('archived sessions should appear in session.list', async () => {
 			// Create and archive a session
 			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
-				workspacePath: `${TMP_DIR}/test-list-archived`,
-				useWorktree: false,
+				workspacePath: `${TMP_DIR}/test-list-archived-${Date.now()}`,
 			});
 
 			await callRPCHandler(ctx.messageHub, 'session.archive', {
@@ -515,8 +556,7 @@ describe('Archive Session Integration', () => {
 		test('archived sessions should preserve metadata', async () => {
 			// Create session with metadata
 			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
-				workspacePath: `${TMP_DIR}/test-metadata`,
-				useWorktree: false,
+				workspacePath: `${TMP_DIR}/test-metadata-${Date.now()}`,
 			});
 
 			// Update metadata before archiving

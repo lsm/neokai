@@ -19,6 +19,18 @@ import embeddedSdkCliPath from '../daemon/node_modules/@anthropic-ai/claude-agen
 import { setEmbeddedCliPath } from '@neokai/daemon/sdk-cli-resolver';
 setEmbeddedCliPath(embeddedSdkCliPath);
 
+// Handle uncaught errors to prevent silent crashes
+process.on('unhandledRejection', (reason, promise) => {
+	console.error('[Fatal] Unhandled Promise Rejection:', reason);
+	console.error('Promise:', promise);
+	process.exit(1);
+});
+
+process.on('uncaughtException', (error) => {
+	console.error('[Fatal] Uncaught Exception:', error);
+	process.exit(1);
+});
+
 const { options: cliOptions, error } = parseArgs(process.argv.slice(2));
 
 if (error) {
@@ -50,4 +62,9 @@ const config = getConfig(cliOptions);
 console.log(`\nNeoKai Server`);
 console.log(`   Workspace: ${config.workspaceRoot}\n`);
 
-await startProdServer(config);
+try {
+	await startProdServer(config);
+} catch (error) {
+	console.error('[Fatal] Server startup failed:', error);
+	process.exit(1);
+}

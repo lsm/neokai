@@ -12,8 +12,8 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { createDaemonServer } from '../helpers/daemon-server-helper';
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import { createDaemonServer } from '../../helpers/daemon-server';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
@@ -134,7 +134,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 		test(
 			'should accept message for existing session',
 			async () => {
-				const createResult = (await daemon.messageHub.call('session.create', {
+				const createResult = (await daemon.messageHub.request('session.create', {
 					workspacePath: `${TMP_DIR}/neokai-test-message-send-${Date.now()}`,
 					title: 'Message Send Test',
 					config: { model: 'haiku-4.5' },
@@ -152,7 +152,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 				ws.send(
 					JSON.stringify({
 						id: 'msg-2',
-						type: 'CALL',
+						type: 'REQ',
 						method: 'message.send',
 						data: {
 							sessionId,
@@ -170,10 +170,10 @@ describe('Session RPC Handlers (API-dependent)', () => {
 					error?: unknown;
 				};
 
-				if (response.type === 'ERROR') {
+				if (response.error) {
 					console.error('Error response:', response.error);
 				}
-				expect(response.type).toBe('RESULT');
+				expect(response.type).toBe('RSP');
 				expect(response.data.messageId).toBeString();
 
 				ws.close();
@@ -193,7 +193,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'models-list-1',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'models.list',
 					data: {
 						useCache: true,
@@ -210,7 +210,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 				data: { models: unknown[] };
 			};
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data.models).toBeArray();
 
 			ws.close();
@@ -226,7 +226,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'models-list-2',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'models.list',
 					data: {
 						useCache: false,
@@ -242,7 +242,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 				data: { models: unknown[]; cached: boolean };
 			};
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data.models).toBeArray();
 			expect(response.data.cached).toBe(false);
 
@@ -259,7 +259,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'models-list-3',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'models.list',
 					data: {
 						useCache: true,
@@ -276,7 +276,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 				data: { models: unknown[] };
 			};
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data.models).toBeArray();
 
 			ws.close();

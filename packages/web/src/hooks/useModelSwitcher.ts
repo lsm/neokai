@@ -76,7 +76,7 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 			if (!hub) return;
 
 			// Fetch current model
-			const { currentModel: modelId, modelInfo } = (await hub.call('session.model.get', {
+			const { currentModel: modelId, modelInfo } = (await hub.request('session.model.get', {
 				sessionId,
 			})) as {
 				currentModel: string;
@@ -87,7 +87,7 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 			setCurrentModelInfo(modelInfo);
 
 			// Fetch available models (includes all providers for cross-provider switching)
-			const { models } = (await hub.call('models.list', {
+			const { models } = (await hub.request('models.list', {
 				useCache: true,
 			})) as {
 				models: Array<{
@@ -124,8 +124,8 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 			// Sort by family order
 			modelInfos.sort((a, b) => FAMILY_ORDER[a.family] - FAMILY_ORDER[b.family]);
 			setAvailableModels(modelInfos);
-		} catch (error) {
-			console.error('Failed to load model info:', error);
+		} catch {
+			// Error handled silently - loading state will be cleared
 		} finally {
 			setLoading(false);
 		}
@@ -151,7 +151,7 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 					return;
 				}
 
-				const result = (await hub.call('session.model.switch', {
+				const result = (await hub.request('session.model.switch', {
 					sessionId,
 					model: newModelId,
 				})) as {
@@ -169,7 +169,6 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 					toast.error(result.error || 'Failed to switch model');
 				}
 			} catch (error) {
-				console.error('Model switch error:', error);
 				const errorMessage = error instanceof Error ? error.message : 'Failed to switch model';
 				toast.error(errorMessage);
 			} finally {

@@ -100,7 +100,10 @@ describe('QueryRunner', () => {
 		// MessageHub spies
 		publishSpy = mock(async () => {});
 		mockMessageHub = {
-			publish: publishSpy,
+			event: publishSpy,
+			onRequest: mock((_method: string, _handler: Function) => () => {}),
+			query: mock(async () => ({})),
+			command: mock(async () => {}),
 		} as unknown as MessageHub;
 
 		// MessageQueue spies
@@ -217,7 +220,6 @@ describe('QueryRunner', () => {
 			await runner.start();
 
 			expect(startSpy).not.toHaveBeenCalled();
-			expect(mockLogger.log).toHaveBeenCalledWith(expect.stringContaining('already running'));
 		});
 
 		it('should start message queue and increment generation', async () => {
@@ -278,7 +280,7 @@ describe('QueryRunner', () => {
 						}),
 					]),
 				}),
-				{ sessionId: 'test-session-id' }
+				{ room: 'session:test-session-id' }
 			);
 		});
 

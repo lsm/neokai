@@ -81,78 +81,10 @@ interface GlobalStore {
 }
 
 /**
- * State signal structure (from Preact signals)
- */
-interface StateSignal<T> {
-	value?: T;
-}
-
-/**
- * Wrapper signal for state channels
- */
-interface StateChannelSignal<T> {
-	$: StateSignal<T>;
-}
-
-/**
- * Sessions state structure
- */
-interface SessionsState {
-	sessions: Session[];
-}
-
-/**
- * Agent state for a session
- */
-interface AgentState {
-	status?: 'idle' | 'processing' | 'error';
-	currentTool?: string;
-}
-
-/**
- * Context state for a session
- */
-interface ContextState {
-	model?: string;
-	totalUsed?: number;
-	totalCapacity?: number;
-	percentUsed?: number;
-}
-
-/**
- * Commands state for a session
- */
-interface CommandsState {
-	commands?: string[];
-}
-
-/**
- * Session-specific state map
- */
-interface SessionStateMap {
-	agent?: StateChannelSignal<AgentState>;
-	context?: StateChannelSignal<ContextState>;
-	commands?: StateChannelSignal<CommandsState>;
-}
-
-/**
  * Global application state exposed on window
  */
 interface AppState {
 	messageHub?: MessageHub;
-	currentSessionIdSignal?: StateSignal<string>;
-	global?: StateSignal<{
-		sessions?: StateChannelSignal<SessionsState>;
-	}>;
-	sessions?: Map<string, SessionStateMap>;
-}
-
-/**
- * Connection manager exposed on window
- */
-interface ConnectionManager {
-	simulateDisconnect: () => void;
-	getState: () => ConnectionState;
 }
 
 /**
@@ -165,11 +97,11 @@ interface TestMessageHub {
 		handler: (data: T) => void | Promise<void>,
 		options?: { sessionId?: string }
 	): Promise<() => Promise<void>>;
-	call<T = unknown, R = unknown>(
+	request<TResult = unknown>(
 		method: string,
-		data?: T,
+		data?: unknown,
 		options?: { sessionId?: string; timeout?: number }
-	): Promise<R>;
+	): Promise<TResult>;
 }
 
 /**
@@ -183,30 +115,17 @@ declare global {
 		/** MessageHub instance for direct RPC/event access in tests */
 		__messageHub?: TestMessageHub;
 
-		/** Collected SDK messages for test assertions */
-		__sdkMessages?: SDKMessage[];
-
 		/** Application state for observing signals */
 		appState?: AppState;
 
 		/** Current session ID signal (if exposed globally) */
 		currentSessionIdSignal?: Signal<string | null>;
 
-		/** Slash commands signal */
-		slashCommandsSignal?: Signal<string[]>;
-
-		/** Connection manager for simulating connection issues */
-		connectionManager?: ConnectionManager;
-
 		/** GlobalStore for sessions list */
 		globalStore?: GlobalStore;
 
 		/** SessionStore for current session state */
 		sessionStore?: SessionStore;
-
-		/** Test-specific helper functions (set dynamically by tests) */
-		__checkInterrupt?: () => boolean;
-		__getConnectionStates?: () => string[];
 	}
 }
 

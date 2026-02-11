@@ -59,7 +59,7 @@ function rpcCall(
 			if (msg.requestId === id || msg.id === id) {
 				clearTimeout(timeout);
 				ws.removeEventListener('message', handler);
-				if (msg.type === 'ERROR') {
+				if (msg.type === 'RSP' && msg.error) {
 					resolve({ data: null, error: msg.error });
 				} else {
 					resolve({ data: msg.data });
@@ -71,7 +71,7 @@ function rpcCall(
 		ws.send(
 			JSON.stringify({
 				id,
-				type: 'CALL',
+				type: 'REQ',
 				sessionId,
 				method,
 				data,

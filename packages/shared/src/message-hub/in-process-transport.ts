@@ -26,11 +26,13 @@ import type {
 	IMessageTransport,
 	ConnectionState,
 	ConnectionStateHandler,
-	UnsubscribeFn,
 	BroadcastResult,
 } from './types.ts';
 import type { HubMessage } from './protocol.ts';
 import { generateUUID } from '../utils.ts';
+
+// Define UnsubscribeFn locally (removed from types.ts)
+type UnsubscribeFn = () => void;
 
 /**
  * Options for InProcessTransport
@@ -273,8 +275,8 @@ export class InProcessTransport implements IMessageTransport {
 		for (const handler of this.messageHandlers) {
 			try {
 				handler(message);
-			} catch (error) {
-				console.error(`[${this.name}] Error in message handler:`, error);
+			} catch {
+				// Message handler error - silently continue
 			}
 		}
 	}
@@ -292,8 +294,8 @@ export class InProcessTransport implements IMessageTransport {
 		for (const handler of this.connectionHandlers) {
 			try {
 				handler(state, error);
-			} catch (err) {
-				console.error(`[${this.name}] Error in connection handler:`, err);
+			} catch {
+				// Connection handler error - silently continue
 			}
 		}
 	}

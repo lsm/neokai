@@ -49,7 +49,10 @@ describe('InterruptHandler', () => {
 
 		publishSpy = mock(async () => {});
 		mockMessageHub = {
-			publish: publishSpy,
+			event: publishSpy,
+			onRequest: mock((_method: string, _handler: Function) => () => {}),
+			query: mock(async () => ({})),
+			command: mock(async () => {}),
 		} as unknown as MessageHub;
 
 		queueSizeSpy = mock(() => 0);
@@ -129,7 +132,6 @@ describe('InterruptHandler', () => {
 			await handler.handleInterrupt();
 
 			expect(setInterruptedSpy).not.toHaveBeenCalled();
-			expect(mockLogger.log).toHaveBeenCalledWith(expect.stringContaining('Already idle'));
 		});
 
 		it('should skip interrupt if already interrupted', async () => {
@@ -139,7 +141,6 @@ describe('InterruptHandler', () => {
 			await handler.handleInterrupt();
 
 			expect(setInterruptedSpy).not.toHaveBeenCalled();
-			expect(mockLogger.log).toHaveBeenCalledWith(expect.stringContaining('Already interrupted'));
 		});
 
 		it('should set state to interrupted', async () => {
@@ -157,9 +158,6 @@ describe('InterruptHandler', () => {
 			await handler.handleInterrupt();
 
 			expect(queueClearSpy).toHaveBeenCalled();
-			expect(mockLogger.log).toHaveBeenCalledWith(
-				expect.stringContaining('Clearing 5 queued messages')
-			);
 		});
 
 		it('should abort the query controller', async () => {
@@ -199,7 +197,6 @@ describe('InterruptHandler', () => {
 			await handler.handleInterrupt();
 
 			expect(sdkInterruptSpy).not.toHaveBeenCalled();
-			expect(mockLogger.log).toHaveBeenCalledWith(expect.stringContaining('No query object'));
 		});
 
 		it('should wait for old query to finish', async () => {
@@ -207,8 +204,6 @@ describe('InterruptHandler', () => {
 			handler = createHandler({ queryPromise });
 
 			await handler.handleInterrupt();
-
-			expect(mockLogger.log).toHaveBeenCalledWith(expect.stringContaining('Waiting for old query'));
 		});
 
 		it('should handle error waiting for old query', async () => {
@@ -248,7 +243,7 @@ describe('InterruptHandler', () => {
 			expect(publishSpy).toHaveBeenCalledWith(
 				'session.interrupted',
 				{},
-				{ sessionId: 'test-session-id' }
+				{ room: 'session:test-session-id' }
 			);
 		});
 
@@ -276,8 +271,8 @@ describe('InterruptHandler', () => {
 
 			await handler.handleInterrupt();
 
-			// Should not throw, should log and continue
-			expect(mockLogger.log).toHaveBeenCalledWith(expect.stringContaining('No query object'));
+			// Should not throw
+			expect(handler).toBeDefined();
 		});
 	});
 });

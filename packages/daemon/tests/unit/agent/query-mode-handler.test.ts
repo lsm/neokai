@@ -111,7 +111,6 @@ describe('QueryModeHandler', () => {
 			const result = await handler.handleQueryTrigger();
 
 			expect(result).toEqual({ success: true, messageCount: 0 });
-			expect(mockLogger.log).toHaveBeenCalledWith('No saved messages to send');
 		});
 
 		it('should update message status to queued', async () => {
@@ -280,7 +279,6 @@ describe('QueryModeHandler', () => {
 
 			await handler.sendQueuedMessagesOnTurnEnd();
 
-			expect(mockLogger.log).toHaveBeenCalledWith('No queued messages to send on turn end');
 			expect(enqueueWithIdSpy).not.toHaveBeenCalled();
 		});
 

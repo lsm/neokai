@@ -27,8 +27,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 			setLoading(true);
 			const response = await getAuthStatus();
 			setAuthStatus(response.authStatus);
-		} catch (error) {
-			console.error('Failed to load auth status:', error);
+		} catch {
 			toast.error('Failed to load authentication status');
 		} finally {
 			setLoading(false);

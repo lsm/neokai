@@ -16,10 +16,10 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import 'dotenv/config';
-import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { createDaemonServer } from '../helpers/daemon-server-helper';
-import { sendMessage, waitForIdle } from '../helpers/daemon-test-helpers';
+// Bun automatically loads .env from project root when running tests
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import { createDaemonServer } from '../../helpers/daemon-server';
+import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
 import type { RewindMode } from '@neokai/shared';
 
 /**
@@ -66,7 +66,7 @@ describe('Selective Rewind Feature', () => {
 	 * Helper to list messages for a session
 	 */
 	async function listMessages(sessionId: string): Promise<SDKMessageResult[]> {
-		const result = (await daemon.messageHub.call('message.sdkMessages', {
+		const result = (await daemon.messageHub.request('message.sdkMessages', {
 			sessionId,
 		})) as { sdkMessages: SDKMessageResult[] };
 		return result.sdkMessages;
@@ -95,7 +95,7 @@ describe('Selective Rewind Feature', () => {
 		messageIds: string[],
 		mode: RewindMode = 'both'
 	): Promise<SelectiveRewindResult> {
-		const result = (await daemon.messageHub.call('rewind.executeSelective', {
+		const result = (await daemon.messageHub.request('rewind.executeSelective', {
 			sessionId,
 			messageIds,
 			mode,
@@ -107,7 +107,7 @@ describe('Selective Rewind Feature', () => {
 		test('should delete selected messages and all messages after', async () => {
 			const workspacePath = `${TMP_DIR}/selective-rewind-conversation-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Selective Rewind Conversation Test',
 				config: {
@@ -122,13 +122,13 @@ describe('Selective Rewind Feature', () => {
 
 			// Send 3 simple messages
 			await sendMessage(daemon, sessionId, 'What is 1+1?');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			await sendMessage(daemon, sessionId, 'What is 2+2?');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			await sendMessage(daemon, sessionId, 'What is 3+3?');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			// Get messages
 			const messages = await listMessages(sessionId);
@@ -161,14 +161,14 @@ describe('Selective Rewind Feature', () => {
 			const hasThirdMessage = userMessagesAfter.some((m) => getMessageText(m).includes('3+3'));
 			expect(hasSecondMessage).toBe(false);
 			expect(hasThirdMessage).toBe(false);
-		}, 240000);
+		}, 300000);
 	});
 
 	describe('Selective Rewind with mode=both', () => {
 		test('should execute selective rewind with mode=both', async () => {
 			const workspacePath = `${TMP_DIR}/selective-rewind-both-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Selective Rewind Both Test',
 				config: {
@@ -183,13 +183,13 @@ describe('Selective Rewind Feature', () => {
 
 			// Send 3 simple messages
 			await sendMessage(daemon, sessionId, 'What is 1+1?');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			await sendMessage(daemon, sessionId, 'What is 2+2?');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			await sendMessage(daemon, sessionId, 'What is 3+3?');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			// Get messages
 			const messages = await listMessages(sessionId);
@@ -217,14 +217,14 @@ describe('Selective Rewind Feature', () => {
 			// Verify messages were deleted
 			const messagesAfterRewind = await listMessages(sessionId);
 			expect(messagesAfterRewind.length).toBeLessThan(messages.length);
-		}, 240000);
+		}, 300000);
 	});
 
 	describe('Error Handling', () => {
 		test('should fail gracefully with empty messageIds array', async () => {
 			const workspacePath = `${TMP_DIR}/selective-rewind-empty-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Selective Rewind Empty Test',
 				config: {
@@ -253,7 +253,7 @@ describe('Selective Rewind Feature', () => {
 		test('should handle invalid messageIds gracefully', async () => {
 			const workspacePath = `${TMP_DIR}/selective-rewind-invalid-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Selective Rewind Invalid Test',
 				config: {
@@ -311,7 +311,7 @@ describe('Selective Rewind Feature', () => {
 		test('should handle multiple messageIds correctly', async () => {
 			const workspacePath = `${TMP_DIR}/selective-rewind-multiple-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Selective Rewind Multiple Test',
 				config: {
@@ -326,16 +326,16 @@ describe('Selective Rewind Feature', () => {
 
 			// Send 4 simple messages
 			await sendMessage(daemon, sessionId, 'What is 1+1?');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			await sendMessage(daemon, sessionId, 'What is 2+2?');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			await sendMessage(daemon, sessionId, 'What is 3+3?');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			await sendMessage(daemon, sessionId, 'What is 4+4?');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			// Get messages
 			const messages = await listMessages(sessionId);
@@ -376,14 +376,14 @@ describe('Selective Rewind Feature', () => {
 			expect(hasSecondMessage).toBe(false);
 			expect(hasThirdMessage).toBe(false);
 			expect(hasFourthMessage).toBe(false);
-		}, 240000);
+		}, 360000);
 	});
 
 	describe('Non-User Message Rewind', () => {
 		test('should rewind to assistant message with multiple tool uses and accept new messages', async () => {
 			const workspacePath = `${TMP_DIR}/selective-rewind-nonuser-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Non-User Message Rewind Test',
 				config: {
@@ -402,7 +402,7 @@ describe('Selective Rewind Feature', () => {
 				sessionId,
 				'Create a file called test.txt with content "hello world", then read it back to me'
 			);
-			await waitForIdle(daemon, sessionId, 120000);
+			await waitForIdle(daemon, sessionId, 180000);
 
 			// Get messages
 			const messages = await listMessages(sessionId);
@@ -439,7 +439,7 @@ describe('Selective Rewind Feature', () => {
 
 			// Send a new message to verify SDK still accepts messages after non-native rewind
 			await sendMessage(daemon, sessionId, 'What is 2+2?');
-			await waitForIdle(daemon, sessionId, 120000);
+			await waitForIdle(daemon, sessionId, 180000);
 
 			// Verify new message was processed
 			const messagesAfterNew = await listMessages(sessionId);
@@ -449,6 +449,6 @@ describe('Selective Rewind Feature', () => {
 			// Verify the session is still functional (has at least a user message)
 			const userMessagesAfterNew = messagesAfterNew.filter((m) => m.type === 'user');
 			expect(userMessagesAfterNew.length).toBeGreaterThan(0);
-		}, 300000);
+		}, 360000);
 	});
 });

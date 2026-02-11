@@ -20,16 +20,16 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import 'dotenv/config';
-import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { createDaemonServer } from '../helpers/daemon-server-helper';
+// Bun automatically loads .env from project root when running tests
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import { createDaemonServer } from '../../helpers/daemon-server';
 import {
 	getProcessingState,
 	getSession,
 	interrupt,
 	sendMessage,
 	waitForIdle,
-} from '../helpers/daemon-test-helpers';
+} from '../../helpers/daemon-actions';
 
 // Use temp directory for test database
 const TMP_DIR = process.env.TMPDIR || '/tmp';
@@ -53,7 +53,7 @@ describe('Message Persistence', () => {
 		test('should persist user messages to database', async () => {
 			const workspacePath = `${TMP_DIR}/persistence-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Persist Messages Test',
 				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
@@ -80,7 +80,7 @@ describe('Message Persistence', () => {
 		test('should maintain message order across multiple sends', async () => {
 			const workspacePath = `${TMP_DIR}/persistence-order-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Message Order Test',
 				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
@@ -114,7 +114,7 @@ describe('Message Persistence', () => {
 		test('should not lose messages when interrupted', async () => {
 			const workspacePath = `${TMP_DIR}/persistence-interrupt-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Interrupt Persistence Test',
 				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
@@ -153,7 +153,7 @@ describe('Message Persistence', () => {
 		test('should maintain consistent session state across operations', async () => {
 			const workspacePath = `${TMP_DIR}/persistence-state-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'State Consistency Test',
 				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
@@ -186,7 +186,7 @@ describe('Message Persistence', () => {
 		test('should handle multiple message sends in sequence', async () => {
 			const workspacePath = `${TMP_DIR}/persistence-concurrent-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Concurrent Messages Test',
 				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },

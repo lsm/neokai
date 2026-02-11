@@ -31,7 +31,6 @@ export interface CreateSessionRequest {
 	workspacePath?: string;
 	initialTools?: string[];
 	config?: Partial<SessionConfig>;
-	useWorktree?: boolean; // Enable worktree isolation (auto-detected if in git repo)
 	worktreeBaseBranch?: string; // Base branch for worktree (default: HEAD)
 	title?: string; // Optional title - if provided, skips auto-title generation
 }
@@ -39,6 +38,16 @@ export interface CreateSessionRequest {
 export interface CreateSessionResponse {
 	sessionId: string;
 	session?: Session; // Optionally include the full session for optimistic updates
+}
+
+export interface SetWorktreeModeRequest {
+	sessionId: string;
+	mode: 'worktree' | 'direct';
+}
+
+export interface SetWorktreeModeResponse {
+	success: boolean;
+	session?: Session;
 }
 
 export interface ListSessionsResponse {
@@ -471,6 +480,7 @@ export interface APIClient {
 	getSession(sessionId: string): Promise<GetSessionResponse>;
 	updateSession(sessionId: string, req: UpdateSessionRequest): Promise<void>;
 	deleteSession(sessionId: string): Promise<void>;
+	setWorktreeMode(req: SetWorktreeModeRequest): Promise<SetWorktreeModeResponse>;
 
 	// Messages
 	sendMessage(sessionId: string, req: SendMessageRequest): Promise<SendMessageResponse>;

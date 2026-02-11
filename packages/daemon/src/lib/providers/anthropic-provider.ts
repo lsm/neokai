@@ -18,12 +18,13 @@ import { resolveSDKCliPath, isBundledBinary } from '../agent/sdk-cli-resolver.js
 /**
  * Canonical SDK model IDs (short-form IDs preferred by the SDK)
  * These are the preferred IDs that should be kept when duplicates exist
+ * Note: 'default' is included because SDK still returns it, but it's converted to 'sonnet'
  */
-const CANONICAL_SDK_IDS = new Set(['default', 'opus', 'haiku', 'sonnet[1m]']);
+const CANONICAL_SDK_IDS = new Set(['default', 'sonnet', 'opus', 'haiku', 'sonnet[1m]']);
 
 /**
  * Detect if a model ID is a full version-specific ID (e.g., claude-sonnet-4-5-20250929)
- * vs a canonical short ID (e.g., default, opus, haiku)
+ * vs a canonical short ID (e.g., sonnet, opus, haiku)
  */
 function isFullVersionId(modelId: string): boolean {
 	// Full IDs match pattern: claude-{family}-{version}-{date}
@@ -32,15 +33,48 @@ function isFullVersionId(modelId: string): boolean {
 }
 
 /**
- * Extract model family and version from a model ID
- * Returns null if not a recognizable Claude model
+ * Extract version from SDK model description
+ * SDK descriptions follow format: "{Family} {Version} · {description}"
+ * Example: "Opus 4.6 · Most capable for complex work"
+ * @returns Version string (e.g., "4.6") or null if not found
  */
-function parseModelId(modelId: string): { family: string; version?: string } | null {
-	// Canonical short IDs
-	if (modelId === 'default') return { family: 'sonnet', version: '4.5' };
-	if (modelId === 'opus') return { family: 'opus', version: '4.5' };
-	if (modelId === 'haiku') return { family: 'haiku', version: '4.5' };
-	if (modelId === 'sonnet[1m]') return { family: 'sonnet', version: '4.5-1m' };
+function extractVersionFromDescription(description: string): string | null {
+	// Match pattern: word + space + version number (e.g., "Opus 4.6")
+	// Handles: "Opus 4.6", "Sonnet 4.5", "Haiku 4.5", etc.
+	const match = description.match(/(?:Opus|Sonnet|Haiku)\s+(\d+\.\d+)/i);
+	return match ? match[1] : null;
+}
+
+/**
+ * Extract model family and version from a model ID and optional description
+ * Returns null if not a recognizable Claude model
+ * @param modelId - Model identifier (e.g., 'opus', 'claude-sonnet-4-5-20250929')
+ * @param description - Optional SDK description to extract version from
+ */
+function parseModelId(
+	modelId: string,
+	description?: string
+): { family: string; version?: string } | null {
+	// Canonical short IDs - extract version from description if available
+	const canonicalFamilies: Record<string, string> = {
+		sonnet: 'sonnet',
+		default: 'sonnet', // Legacy: map 'default' to sonnet
+		opus: 'opus',
+		haiku: 'haiku',
+		'sonnet[1m]': 'sonnet',
+	};
+
+	if (modelId in canonicalFamilies) {
+		const family = canonicalFamilies[modelId];
+		// Try to extract version from description first
+		const version = description ? extractVersionFromDescription(description) : null;
+		// Add suffix for special variants
+		const versionSuffix = modelId === 'sonnet[1m]' ? '-1m' : '';
+		return {
+			family,
+			version: version ? `${version}${versionSuffix}` : undefined,
+		};
+	}
 
 	// Full version IDs: claude-{family}-{major}-{minor}-{date}
 	// Example: claude-sonnet-4-5-20250929
@@ -127,8 +161,7 @@ export class AnthropicProvider implements Provider {
 			const models = await this.loadModelsFromSdk();
 			this.modelCache = models;
 			return models;
-		} catch (error) {
-			console.warn('[AnthropicProvider] Failed to load models from SDK:', error);
+		} catch {
 			// No static fallback - return empty array
 			return [];
 		}
@@ -173,7 +206,7 @@ export class AnthropicProvider implements Provider {
 	 * Public for use by external helpers like getAnthropicModelsFromQuery
 	 *
 	 * Intelligently filters out duplicate models:
-	 * - Prefers canonical short IDs (default, opus, haiku) over full version IDs
+	 * - Prefers canonical short IDs (sonnet, opus, haiku) over full version IDs
 	 * - Detects when multiple IDs represent the same model
 	 */
 	convertSdkModels(
@@ -182,11 +215,11 @@ export class AnthropicProvider implements Provider {
 		// Track which model families we've seen with canonical IDs
 		const canonicalIdsByFamily = new Map<string, string>();
 
-		// First pass: identify all canonical IDs
+		// First pass: identify all canonical IDs and extract versions from descriptions
 		for (const sdkModel of sdkModels) {
 			if (CANONICAL_SDK_IDS.has(sdkModel.value)) {
-				const parsed = parseModelId(sdkModel.value);
-				if (parsed) {
+				const parsed = parseModelId(sdkModel.value, sdkModel.description);
+				if (parsed && parsed.version) {
 					const key = `${parsed.family}-${parsed.version}`;
 					canonicalIdsByFamily.set(key, sdkModel.value);
 				}
@@ -202,16 +235,13 @@ export class AnthropicProvider implements Provider {
 
 				// For full version IDs, check if there's a canonical ID for the same model
 				if (isFullVersionId(sdkModel.value)) {
-					const parsed = parseModelId(sdkModel.value);
-					if (parsed) {
+					const parsed = parseModelId(sdkModel.value, sdkModel.description);
+					if (parsed && parsed.version) {
 						const key = `${parsed.family}-${parsed.version}`;
 						const canonicalId = canonicalIdsByFamily.get(key);
 
 						if (canonicalId) {
 							// There's a canonical ID for this model - filter out the full ID
-							console.log(
-								`[AnthropicProvider] Filtering out ${sdkModel.value} (duplicate of canonical ${canonicalId})`
-							);
 							return false;
 						}
 					}
@@ -221,6 +251,9 @@ export class AnthropicProvider implements Provider {
 				return true;
 			})
 			.map((sdkModel) => {
+				// Convert SDK's 'default' to 'sonnet' for consistency
+				const modelId = sdkModel.value === 'default' ? 'sonnet' : sdkModel.value;
+
 				// Extract display name from description (format: "Model X.Y · description")
 				const description = sdkModel.description || '';
 				const separatorIndex = description.indexOf(' · ');
@@ -247,9 +280,9 @@ export class AnthropicProvider implements Provider {
 				}
 
 				return {
-					id: sdkModel.value,
+					id: modelId,
 					name: displayName,
-					alias: sdkModel.value, // SDK uses short IDs like 'opus', 'default'
+					alias: modelId, // Use 'sonnet' instead of 'default'
 					family,
 					provider: 'anthropic',
 					contextWindow: 200000,
@@ -264,7 +297,7 @@ export class AnthropicProvider implements Provider {
 	 * Check if a model ID belongs to Anthropic
 	 *
 	 * Anthropic owns:
-	 * - 'default', 'opus', 'haiku' (SDK short IDs)
+	 * - 'sonnet', 'opus', 'haiku' (SDK short IDs)
 	 * - 'claude-*' model IDs
 	 *
 	 * Does NOT own models from other providers (glm-*, deepseek-*, etc.)
@@ -273,7 +306,12 @@ export class AnthropicProvider implements Provider {
 		const lower = modelId.toLowerCase();
 
 		// SDK short IDs
-		if (['default', 'opus', 'haiku', 'sonnet'].includes(lower)) {
+		if (['sonnet', 'opus', 'haiku'].includes(lower)) {
+			return true;
+		}
+
+		// Legacy: 'default' maps to sonnet
+		if (lower === 'default') {
 			return true;
 		}
 
@@ -298,10 +336,10 @@ export class AnthropicProvider implements Provider {
 	 */
 	getModelForTier(tier: ModelTier): string | undefined {
 		const tierMap: Record<ModelTier, string> = {
-			sonnet: 'default',
+			sonnet: 'sonnet',
 			haiku: 'haiku',
 			opus: 'opus',
-			default: 'default',
+			default: 'sonnet',
 		};
 		return tierMap[tier];
 	}
@@ -349,8 +387,7 @@ export async function getAnthropicModelsFromQuery(queryObject: Query | null): Pr
 	try {
 		const sdkModels = await queryObject.supportedModels();
 		return provider.convertSdkModels(sdkModels);
-	} catch (error) {
-		console.warn('[AnthropicProvider] Failed to load models from query:', error);
+	} catch {
 		return [];
 	}
 }

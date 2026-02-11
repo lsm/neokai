@@ -21,7 +21,10 @@ describe('ErrorManager', () => {
 		// Create mock MessageHub
 		publishSpy = mock(async () => {});
 		mockMessageHub = {
-			publish: publishSpy,
+			event: publishSpy,
+			onRequest: mock((_method: string, _handler: Function) => () => {}),
+			query: mock(async () => ({})),
+			command: mock(async () => {}),
 		} as unknown as MessageHub;
 
 		// Create mock DaemonHub (errors now emit via DaemonHub, not direct publish)

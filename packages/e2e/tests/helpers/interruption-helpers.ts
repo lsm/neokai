@@ -6,17 +6,18 @@
  */
 
 import type { Page } from '../fixtures';
+import { closeWebSocket, restoreWebSocket } from './connection-helpers';
 
 /**
- * Simulate network failure by going offline
+ * Simulate network failure by closing WebSocket connection
  */
 export async function simulateNetworkFailure(page: Page): Promise<void> {
-	await page.context().setOffline(true);
+	await closeWebSocket(page);
 }
 
 /**
- * Restore network by going back online
+ * Restore network by allowing WebSocket to reconnect
  */
 export async function restoreNetwork(page: Page): Promise<void> {
-	await page.context().setOffline(false);
+	await restoreWebSocket(page);
 }

@@ -36,6 +36,7 @@ import { ContentContainer } from '../components/ui/ContentContainer.tsx';
 import { Modal } from '../components/ui/Modal.tsx';
 import { Skeleton, SkeletonMessage } from '../components/ui/Skeleton.tsx';
 import { Spinner } from '../components/ui/Spinner.tsx';
+import { WorktreeChoiceInline } from '../components/WorktreeChoiceInline.tsx';
 import { useAutoScroll } from '../hooks/useAutoScroll.ts';
 import { useMessageMaps } from '../hooks/useMessageMaps.ts';
 // Hooks
@@ -43,10 +44,10 @@ import { useModal } from '../hooks/useModal.ts';
 import { useModelSwitcher } from '../hooks/useModelSwitcher.ts';
 import { useSendMessage } from '../hooks/useSendMessage.ts';
 import { useSessionActions } from '../hooks/useSessionActions.ts';
-import { switchCoordinatorMode, updateSession } from '../lib/api-helpers.ts';
+import { switchCoordinatorMode, switchSandboxMode, updateSession } from '../lib/api-helpers.ts';
+import { connectionManager } from '../lib/connection-manager';
 import { borderColors } from '../lib/design-tokens.ts';
 import { sessionStore } from '../lib/session-store.ts';
-import { currentSessionIdSignal } from '../lib/signals.ts';
 import { connectionState } from '../lib/state.ts';
 import { getCurrentAction } from '../lib/status-actions.ts';
 import { toast } from '../lib/toast.ts';
@@ -76,12 +77,16 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// Local State (pagination, autoScroll)
 	// ========================================
 	const [loadingOlder, setLoadingOlder] = useState(false);
-	const [hasMoreMessages, setHasMoreMessages] = useState(true);
+	// Initialize hasMoreMessages from sessionStore (inferred from initial load count)
+	// This avoids an expensive COUNT query on every session load
+	const [hasMoreMessages, setHasMoreMessages] = useState(sessionStore.hasMoreMessages.value);
 	const [isInitialLoad, setIsInitialLoad] = useState(true);
 	const [localError, setLocalError] = useState<string | null>(null);
 	const [autoScroll, setAutoScroll] = useState(true);
 	const [coordinatorMode, setCoordinatorMode] = useState(true);
 	const [coordinatorSwitching, setCoordinatorSwitching] = useState(false);
+	const [sandboxEnabled, setSandboxEnabled] = useState(true);
+	const [sandboxSwitching, setSandboxSwitching] = useState(false);
 
 	// Track resolved questions to keep showing them in disabled state
 	// Map of toolUseId -> resolved question data
@@ -100,6 +105,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// Per-message rewind state
 	const [rewindTargetUuid, setRewindTargetUuid] = useState<string | null>(null);
 	const [isRewinding, setIsRewinding] = useState(false);
+
+	// Worktree choice modal state
+	const [showWorktreeChoice, setShowWorktreeChoice] = useState(false);
+	const [pendingWorktreeMode, setPendingWorktreeMode] = useState<'worktree' | 'direct'>('worktree');
 
 	// Reactive State from sessionStore (via useSignalEffect for re-renders)
 	// Moved here before callbacks that depend on it
@@ -257,6 +266,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		if (info?.config.coordinatorMode !== undefined) {
 			setCoordinatorMode(info.config.coordinatorMode);
 		}
+		if (info?.config.sandbox?.enabled !== undefined) {
+			setSandboxEnabled(info.config.sandbox.enabled);
+		}
 	});
 
 	// Sync context from sessionStore
@@ -272,6 +284,20 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// Sync error from sessionStore
 	useSignalEffect(() => {
 		setStoreError(sessionStore.error.value);
+	});
+
+	// Sync hasMoreMessages from sessionStore (inferred from initial load count)
+	// This avoids an expensive COUNT query on every session load
+	useSignalEffect(() => {
+		setHasMoreMessages(sessionStore.hasMoreMessages.value);
+	});
+
+	// Track initial load state - set to false once messages have loaded
+	useSignalEffect(() => {
+		const hasMessages = sessionStore.sdkMessages.value.length > 0;
+		if (hasMessages) {
+			setIsInitialLoad(false);
+		}
 	});
 
 	// Sync resolved questions from session metadata when session loads/updates
@@ -291,6 +317,23 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			}
 		}
 	}, [session?.metadata?.resolvedQuestions]);
+
+	// Show worktree choice modal if session is pending worktree choice
+	useEffect(() => {
+		if (
+			session?.status === 'pending_worktree_choice' &&
+			session?.metadata?.worktreeChoice?.status === 'pending'
+		) {
+			setShowWorktreeChoice(true);
+		} else {
+			setShowWorktreeChoice(false);
+		}
+	}, [session]);
+
+	// Handler for worktree mode change
+	const handleWorktreeModeChange = (mode: 'worktree' | 'direct') => {
+		setPendingWorktreeMode(mode);
+	};
 
 	// Derived processing state
 	const isProcessing = agentState.status === 'processing' || agentState.status === 'queued';
@@ -341,29 +384,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	});
 
 	// ========================================
-	// Pagination Check (on session load)
-	// ========================================
-	const checkPagination = useCallback(async () => {
-		try {
-			setIsInitialLoad(true);
-			setLocalError(null);
-
-			// Get total message count via RPC for pagination
-			const totalCount = await sessionStore.getTotalMessageCount();
-			setHasMoreMessages(totalCount > 100);
-		} catch (err) {
-			const message = err instanceof Error ? err.message : 'Failed to load session';
-			if (message.includes('Session not found') || message.includes('404')) {
-				currentSessionIdSignal.value = null;
-				toast.error('Session not found.');
-				return;
-			}
-			setLocalError(message);
-		}
-	}, []);
-
-	// ========================================
 	// Pagination (load older messages via RPC - pure WebSocket)
+	// hasMoreMessages is inferred from initial load count in sessionStore
+	// This avoids an expensive COUNT query on every session load
 	// ========================================
 	const loadOlderMessages = useCallback(async () => {
 		if (loadingOlder || !hasMoreMessages || messages.length === 0) return;
@@ -403,8 +426,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			// Prepend older messages to sessionStore (will trigger re-render)
 			sessionStore.prependMessages(olderMessages);
 			setHasMoreMessages(hasMore);
-		} catch (err) {
-			console.error('Failed to load older messages:', err);
+		} catch {
 			toast.error('Failed to load older messages');
 		} finally {
 			setLoadingOlder(false);
@@ -433,12 +455,6 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// ========================================
 	// Effects
 	// ========================================
-
-	// Check pagination on mount / session change
-	// Initial data is loaded via sessionStore.select() in App.tsx
-	useEffect(() => {
-		checkPagination();
-	}, [sessionId, checkPagination]);
 
 	// Restore scroll position after older messages are loaded and DOM has updated
 	useEffect(() => {
@@ -503,9 +519,28 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// ========================================
 	const handleSendMessage = useCallback(
 		async (content: string, images?: MessageImage[]) => {
+			// If session is pending worktree choice, set the mode first
+			if (session?.status === 'pending_worktree_choice' && showWorktreeChoice) {
+				try {
+					const hub = connectionManager.getHubIfConnected();
+					if (!hub) {
+						toast.error('Connection lost.');
+						return;
+					}
+					await hub.request('session.setWorktreeMode', {
+						sessionId,
+						mode: pendingWorktreeMode,
+					});
+					// UI will auto-hide via session status update
+				} catch {
+					toast.error('Failed to set workspace mode');
+					return; // Don't send message if worktree setup failed
+				}
+			}
+
 			await sendMessage(content, images);
 		},
-		[sendMessage]
+		[sendMessage, session, showWorktreeChoice, pendingWorktreeMode, sessionId]
 	);
 
 	const handleAutoScrollChange = useCallback(
@@ -515,10 +550,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				await updateSession(sessionId, {
 					config: { autoScroll: newAutoScroll },
 				});
-			} catch (err) {
+			} catch {
 				setAutoScroll(!newAutoScroll);
 				toast.error('Failed to save auto-scroll setting');
-				console.error('Failed to update autoScroll:', err);
 			}
 		},
 		[sessionId]
@@ -536,12 +570,33 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			setCoordinatorMode(newMode);
 			try {
 				await switchCoordinatorMode(sessionId, newMode);
-			} catch (err) {
+			} catch {
 				setCoordinatorMode(!newMode);
 				toast.error('Failed to toggle coordinator mode');
-				console.error('Failed to toggle coordinator mode:', err);
 			} finally {
 				setCoordinatorSwitching(false);
+			}
+		},
+		[sessionId, isProcessing]
+	);
+
+	const handleSandboxModeChange = useCallback(
+		async (newMode: boolean) => {
+			if (isProcessing) {
+				const confirmed = confirm(
+					'The agent is currently processing. Changing sandbox mode will interrupt the current operation. Continue?'
+				);
+				if (!confirmed) return;
+			}
+			setSandboxSwitching(true);
+			setSandboxEnabled(newMode);
+			try {
+				await switchSandboxMode(sessionId, newMode);
+			} catch {
+				setSandboxEnabled(!newMode);
+				toast.error('Failed to toggle sandbox mode');
+			} finally {
+				setSandboxSwitching(false);
 			}
 		},
 		[sessionId, isProcessing]
@@ -714,6 +769,15 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 					class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y pb-32"
 					style={{ WebkitOverflowScrolling: 'touch' }}
 				>
+					{/* Worktree Choice Inline */}
+					{showWorktreeChoice && session && (
+						<WorktreeChoiceInline
+							sessionId={sessionId}
+							workspacePath={session.workspacePath}
+							onModeChange={handleWorktreeModeChange}
+						/>
+					)}
+
 					{/* Loading overlay for rewind operation */}
 					{isRewinding && (
 						<div class="absolute inset-0 z-50 bg-dark-900/80 backdrop-blur-sm flex items-center justify-center">
@@ -854,6 +918,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 						coordinatorMode={coordinatorMode}
 						coordinatorSwitching={coordinatorSwitching}
 						onCoordinatorModeChange={handleCoordinatorModeChange}
+						sandboxEnabled={sandboxEnabled}
+						sandboxSwitching={sandboxSwitching}
+						onSandboxModeChange={handleSandboxModeChange}
 						thinkingLevel={session?.config?.thinkingLevel}
 					/>
 

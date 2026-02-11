@@ -7,13 +7,14 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { TestContext } from '../../test-utils';
+import type { TestContext } from '../../helpers/test-app';
 import {
 	createTestApp,
 	waitForWebSocketState,
 	waitForWebSocketMessage,
+	waitForWebSocketMessageType,
 	createWebSocketWithFirstMessage,
-} from '../../test-utils';
+} from '../../helpers/test-app';
 
 describe('Agent RPC Handlers', () => {
 	let ctx: TestContext;
@@ -37,7 +38,7 @@ describe('Agent RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'agent-state-1',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'agent.getState',
 					data: {
 						sessionId: 'non-existent',
@@ -50,7 +51,8 @@ describe('Agent RPC Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('ERROR');
+			expect(response.type).toBe('RSP');
+			expect(response.error).toBeDefined();
 
 			ws.close();
 		});
@@ -69,7 +71,7 @@ describe('Agent RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'agent-state-2',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'agent.getState',
 					data: { sessionId },
 					sessionId: 'global',
@@ -80,7 +82,7 @@ describe('Agent RPC Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data.state).toBeDefined();
 			expect(response.data.state.status).toBe('idle');
 
@@ -99,7 +101,7 @@ describe('Agent RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'reset-1',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'session.resetQuery',
 					data: {
 						sessionId: 'non-existent',
@@ -112,7 +114,8 @@ describe('Agent RPC Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('ERROR');
+			expect(response.type).toBe('RSP');
+			expect(response.error).toBeDefined();
 
 			ws.close();
 		});
@@ -127,12 +130,12 @@ describe('Agent RPC Handlers', () => {
 			await waitForWebSocketState(ws, WebSocket.OPEN);
 			await firstMessagePromise;
 
-			const responsePromise = waitForWebSocketMessage(ws);
+			const responsePromise = waitForWebSocketMessageType(ws, 'RSP');
 
 			ws.send(
 				JSON.stringify({
 					id: 'reset-2',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'session.resetQuery',
 					data: { sessionId, restartQuery: true },
 					sessionId: 'global',
@@ -143,7 +146,7 @@ describe('Agent RPC Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			// RPC returns success/failure directly
 			expect(response.data.success).toBe(true);
 
@@ -159,12 +162,12 @@ describe('Agent RPC Handlers', () => {
 			await waitForWebSocketState(ws, WebSocket.OPEN);
 			await firstMessagePromise;
 
-			const responsePromise = waitForWebSocketMessage(ws);
+			const responsePromise = waitForWebSocketMessageType(ws, 'RSP');
 
 			ws.send(
 				JSON.stringify({
 					id: 'reset-3',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'session.resetQuery',
 					data: { sessionId, restartQuery: false },
 					sessionId: 'global',
@@ -175,7 +178,7 @@ describe('Agent RPC Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			// RPC returns success/failure directly
 			expect(response.data.success).toBe(true);
 
@@ -192,12 +195,12 @@ describe('Agent RPC Handlers', () => {
 			await firstMessagePromise;
 
 			// Reset the query
-			const resetPromise = waitForWebSocketMessage(ws);
+			const resetPromise = waitForWebSocketMessageType(ws, 'RSP');
 
 			ws.send(
 				JSON.stringify({
 					id: 'reset-4',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'session.resetQuery',
 					data: { sessionId },
 					sessionId: 'global',
@@ -207,7 +210,7 @@ describe('Agent RPC Handlers', () => {
 			);
 
 			const resetResponse = await resetPromise;
-			expect(resetResponse.type).toBe('RESULT');
+			expect(resetResponse.type).toBe('RSP');
 			// RPC returns success/failure directly
 			expect(resetResponse.data.success).toBe(true);
 
@@ -217,7 +220,7 @@ describe('Agent RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'reset-5',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'agent.getState',
 					data: { sessionId },
 					sessionId: 'global',
@@ -227,7 +230,7 @@ describe('Agent RPC Handlers', () => {
 			);
 
 			const stateResponse = await statePromise;
-			expect(stateResponse.type).toBe('RESULT');
+			expect(stateResponse.type).toBe('RSP');
 			expect(stateResponse.data.state.status).toBe('idle');
 
 			ws.close();

@@ -448,4 +448,193 @@ describe('Session Creation and Title Generation', () => {
 			expect(updatedSession.metadata.titleGenerated).toBe(true);
 		});
 	});
+
+	describe('Worktree Choice Flow', () => {
+		let gitWorkspace: string;
+		let sessionManagerWithWorktrees: SessionManager;
+		let worktreeDb: Database;
+		let testWorktreeBaseDir: string;
+
+		beforeEach(async () => {
+			// Create a git repository for testing
+			gitWorkspace = path.join(tmpdir(), `test-git-workspace-${Date.now()}`);
+			fs.mkdirSync(gitWorkspace, { recursive: true });
+
+			// Set up test worktree base directory
+			testWorktreeBaseDir = path.join(tmpdir(), `test-worktrees-${Date.now()}`);
+			fs.mkdirSync(testWorktreeBaseDir, { recursive: true });
+			process.env.TEST_WORKTREE_BASE_DIR = testWorktreeBaseDir;
+
+			// Initialize git repository
+			const { execSync } = require('node:child_process');
+			try {
+				execSync('git init', { cwd: gitWorkspace });
+				execSync('git config user.email "test@example.com"', { cwd: gitWorkspace });
+				execSync('git config user.name "Test User"', { cwd: gitWorkspace });
+				execSync('echo "test" > test.txt', { cwd: gitWorkspace });
+				execSync('git add .', { cwd: gitWorkspace });
+				execSync('git commit -m "Initial commit"', { cwd: gitWorkspace });
+			} catch (error) {
+				console.error('Failed to initialize git repository:', error);
+			}
+
+			// Create separate database for worktree-enabled tests
+			const worktreeDbPath = path.join(tmpdir(), `test-db-worktree-${Date.now()}.db`);
+			worktreeDb = new Database(worktreeDbPath);
+			await worktreeDb.initialize();
+
+			// Initialize MessageHub
+			const worktreeMessageHub = new MessageHub();
+
+			// Initialize DaemonHub
+			const worktreeEventBus = createDaemonHub('test-hub-worktree');
+			await worktreeEventBus.initialize();
+
+			// Mock AuthManager
+			const worktreeAuthManager = {
+				getCurrentApiKey: async () => process.env.ANTHROPIC_API_KEY || null,
+			} as AuthManager;
+
+			// Mock SettingsManager
+			const worktreeSettingsManager = {
+				prepareSDKOptions: async () => ({}),
+				getGlobalSettings: () => ({
+					settingSources: ['user', 'project', 'local'],
+					disabledMcpServers: [],
+					mcpServerSettings: {},
+				}),
+				listMcpServersFromSources: () => [],
+			} as unknown as import('../settings-manager').SettingsManager;
+
+			// Initialize SessionManager with worktrees ENABLED
+			sessionManagerWithWorktrees = new SessionManager(
+				worktreeDb,
+				worktreeMessageHub,
+				worktreeAuthManager,
+				worktreeSettingsManager,
+				worktreeEventBus,
+				{
+					defaultModel: 'claude-sonnet-4-5-20250929',
+					maxTokens: 8192,
+					temperature: 1.0,
+					workspaceRoot: gitWorkspace,
+					disableWorktrees: false, // Enable worktrees for these tests
+				}
+			);
+		});
+
+		afterEach(async () => {
+			// Cleanup session resources
+			try {
+				await sessionManagerWithWorktrees.cleanup();
+			} catch {
+				// Ignore cleanup errors
+			}
+
+			await new Promise((resolve) => setTimeout(resolve, 100));
+
+			// Close database
+			try {
+				worktreeDb?.close();
+			} catch {
+				// Ignore if db is already closed
+			}
+
+			// Remove test files
+			try {
+				fs.rmSync(gitWorkspace, { recursive: true, force: true });
+			} catch {
+				// Ignore cleanup errors
+			}
+
+			// Cleanup test worktree base directory
+			try {
+				if (fs.existsSync(testWorktreeBaseDir)) {
+					fs.rmSync(testWorktreeBaseDir, { recursive: true, force: true });
+				}
+			} catch {
+				// Ignore cleanup errors
+			}
+
+			// Clear environment variable
+			delete process.env.TEST_WORKTREE_BASE_DIR;
+		});
+
+		test('session created with pending_worktree_choice status in git repo', async () => {
+			const sessionId = await sessionManagerWithWorktrees.createSession({
+				workspacePath: gitWorkspace,
+			});
+
+			const agentSession = sessionManagerWithWorktrees.getSession(sessionId);
+			expect(agentSession).toBeDefined();
+
+			const session = agentSession!.getSessionData();
+			expect(session.status).toBe('pending_worktree_choice');
+			expect(session.worktree).toBeUndefined(); // No worktree created yet
+			expect(session.metadata.worktreeChoice).toBeDefined();
+			expect(session.metadata.worktreeChoice?.status).toBe('pending');
+		});
+
+		test('completeWorktreeChoice creates worktree when mode is worktree', async () => {
+			const sessionId = await sessionManagerWithWorktrees.createSession({
+				workspacePath: gitWorkspace,
+			});
+
+			const lifecycle = sessionManagerWithWorktrees.getSessionLifecycle();
+
+			// Complete worktree choice with 'worktree' mode
+			const updatedSession = await lifecycle.completeWorktreeChoice(sessionId, 'worktree');
+
+			expect(updatedSession.status).toBe('active');
+			expect(updatedSession.worktree).toBeDefined();
+			expect(updatedSession.worktree?.isWorktree).toBe(true);
+			expect(updatedSession.gitBranch).toBeDefined();
+			expect(updatedSession.metadata.worktreeChoice?.status).toBe('completed');
+			expect(updatedSession.metadata.worktreeChoice?.choice).toBe('worktree');
+		});
+
+		test('completeWorktreeChoice does not create worktree when mode is direct', async () => {
+			const sessionId = await sessionManagerWithWorktrees.createSession({
+				workspacePath: gitWorkspace,
+			});
+
+			const lifecycle = sessionManagerWithWorktrees.getSessionLifecycle();
+
+			// Complete worktree choice with 'direct' mode
+			const updatedSession = await lifecycle.completeWorktreeChoice(sessionId, 'direct');
+
+			expect(updatedSession.status).toBe('active');
+			expect(updatedSession.worktree).toBeUndefined(); // No worktree created
+			// gitBranch should now be detected for direct mode in git repos
+			expect(updatedSession.gitBranch).toBeDefined();
+			expect(typeof updatedSession.gitBranch).toBe('string');
+			expect(updatedSession.metadata.worktreeChoice?.status).toBe('completed');
+			expect(updatedSession.metadata.worktreeChoice?.choice).toBe('direct');
+		});
+
+		test('session created immediately active in non-git workspace', async () => {
+			// Use the original testWorkspace which is NOT a git repo
+			const sessionId = await sessionManagerWithWorktrees.createSession({
+				workspacePath: testWorkspace,
+			});
+
+			const agentSession = sessionManagerWithWorktrees.getSession(sessionId);
+			const session = agentSession!.getSessionData();
+
+			// Should be immediately active (no choice needed)
+			expect(session.status).toBe('active');
+			expect(session.metadata.worktreeChoice).toBeUndefined();
+		});
+
+		test('completeWorktreeChoice throws error for non-pending session', async () => {
+			const sessionId = await sessionManagerWithWorktrees.createSession({
+				workspacePath: testWorkspace, // Non-git repo, so session is active
+			});
+
+			const lifecycle = sessionManagerWithWorktrees.getSessionLifecycle();
+
+			// Should throw error because session is not pending
+			await expect(lifecycle.completeWorktreeChoice(sessionId, 'worktree')).rejects.toThrow();
+		});
+	});
 });

@@ -4,20 +4,30 @@
  * Tests for various error handling scenarios extracted from interruption-error.e2e.ts.
  *
  * IMPORTANT: Tests actual UI behavior - does not bypass via RPC
+ * Uses only real user interactions (no direct API calls, no MessageHub manipulation)
  */
 
 import { test, expect } from '../../fixtures';
 import {
-	setupMessageHubTesting,
+	waitForWebSocketConnected,
 	waitForSessionCreated,
 	waitForElement,
 	cleanupTestSession,
 } from '../helpers/wait-helpers';
 import { simulateNetworkFailure, restoreNetwork } from '../helpers/interruption-helpers';
+import { closeWebSocket, restoreWebSocket } from '../helpers/connection-helpers';
 
 test.describe('Error Scenarios', () => {
 	test.beforeEach(async ({ page }) => {
-		await setupMessageHubTesting(page);
+		await page.goto('/');
+
+		// Wait for app to initialize
+		await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible({
+			timeout: 10000,
+		});
+
+		// Wait for WebSocket connection
+		await waitForWebSocketConnected(page);
 	});
 
 	test('should prevent message send when connection is lost', async ({ page }) => {
@@ -29,24 +39,19 @@ test.describe('Error Scenarios', () => {
 		const messageInput = await waitForElement(page, 'textarea');
 		await expect(messageInput).toBeEnabled();
 
-		// Simulate connection lost by closing WebSocket
-		await page.evaluate(() => {
-			// Force disconnect by simulating connection state change
-			const state = window.appState?.connectionState;
-			if (state) {
-				state.value = 'disconnected';
-			}
-		});
+		// Simulate connection lost by going offline
+		await closeWebSocket(page);
 
-		// Wait for state to update
-		await page.waitForTimeout(500);
+		// Wait for offline indicator to appear
+		await expect(page.locator('text=Offline').first()).toBeVisible({
+			timeout: 5000,
+		});
 
 		// Try to send a message while disconnected
 		await messageInput.fill('This message should not send');
 		await page.click('[data-testid="send-button"]');
 
-		// Should show connection error toast (not error banner)
-		// The handleSendMessage function checks connectionState and shows toast.error
+		// Wait a moment to verify nothing happens
 		await page.waitForTimeout(1000);
 
 		// Message should not have been sent - verify by checking no "Sending..." status appears
@@ -58,6 +63,9 @@ test.describe('Error Scenarios', () => {
 
 		// Input should still be enabled (message was blocked before sending)
 		await expect(messageInput).toBeEnabled();
+
+		// Restore network
+		await restoreWebSocket(page);
 
 		await cleanupTestSession(page, sessionId);
 	});
@@ -120,100 +128,26 @@ test.describe('Error Scenarios', () => {
 		expect(isOnHome || hasErrorToast).toBe(true);
 	});
 
-	test('should handle API timeout gracefully', async ({ page }) => {
-		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
-
-		// Simulate timeout by calling with very short timeout
-		const timeoutError = await page.evaluate(async (sid) => {
-			const hub = window.__messageHub;
-
-			try {
-				// Call with impossibly short timeout - use actual session ID
-				await hub.call('session.send', { sessionId: sid, message: 'test' }, { timeout: 1 });
-				return null;
-			} catch (error: unknown) {
-				return error.message || error.toString();
-			}
-		}, sessionId);
-
-		expect(timeoutError).toBeTruthy(); // Just verify we got an error
-
-		await cleanupTestSession(page, sessionId);
-	});
-
 	test('should recover from temporary WebSocket disconnection', async ({ page }) => {
-		// Track reconnection
-		await page.evaluate(() => {
-			const hub = window.__messageHub;
-			const states: string[] = [];
-
-			hub.onConnection((state: string) => {
-				states.push(state);
-			});
-
-			window.__getConnectionStates = () => states;
-		});
-
 		// Create a session
 		await page.getByRole('button', { name: 'New Session', exact: true }).click();
 		const sessionId = await waitForSessionCreated(page);
 
-		// Simulate WebSocket disconnection by calling internal method
-		await page.evaluate(() => {
-			const hub = window.__messageHub;
-			if (hub.transport && hub.transport.ws) {
-				// Force close WebSocket
-				hub.transport.ws.close();
-			}
+		// Simulate WebSocket disconnection by going offline
+		await closeWebSocket(page);
+
+		// Wait for offline indicator to appear
+		await expect(page.locator('text=Offline').first()).toBeVisible({
+			timeout: 5000,
 		});
 
-		// Wait for reconnection
-		await page.waitForTimeout(3000);
+		// Restore network connection
+		await restoreWebSocket(page);
 
-		// Check connection states
-		const states = await page.evaluate(() => {
-			return window.__getConnectionStates();
-		});
-
-		// Should have disconnected and reconnected
-		const _hasReconnect = states.includes('connected');
-
-		// Connection indicator should show connected - be more specific
+		// Wait for online indicator to return
 		await expect(page.locator('.text-green-400:has-text("Online")').first()).toBeVisible({
 			timeout: 10000,
 		});
-
-		await cleanupTestSession(page, sessionId);
-	});
-
-	test('should handle malformed message responses', async ({ page }) => {
-		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
-
-		// Send malformed SDK message
-		await page.evaluate((sid) => {
-			const hub = window.__messageHub;
-
-			// Publish malformed SDK message
-			hub.publish(
-				'sdk.message',
-				{
-					type: 'invalid_type',
-					// Missing required fields
-				},
-				{ sessionId: sid }
-			);
-		}, sessionId);
-
-		// App should not crash
-		await page.waitForTimeout(1000);
-
-		// UI should still be functional
-		const messageInput = await waitForElement(page, 'textarea');
-		await expect(messageInput).toBeEnabled();
 
 		await cleanupTestSession(page, sessionId);
 	});

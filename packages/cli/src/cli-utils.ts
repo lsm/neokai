@@ -202,6 +202,46 @@ export function createJsonErrorResponse(message: string, status: number = 500): 
 }
 
 /**
+ * Get local network addresses for display
+ * Returns an array of { label, address } for all non-internal IPv4 interfaces
+ */
+function getNetworkAddresses(): Array<{ label: string; address: string }> {
+	const os = require('os');
+	const interfaces = os.networkInterfaces();
+	const addresses: Array<{ label: string; address: string }> = [];
+
+	for (const [name, nets] of Object.entries(interfaces)) {
+		if (!nets) continue;
+		for (const net of nets as Array<{ family: string; address: string; internal: boolean }>) {
+			// Skip internal (loopback) and non-IPv4 addresses
+			if (net.family === 'IPv4' && !net.internal) {
+				addresses.push({ label: name, address: net.address });
+			}
+		}
+	}
+
+	return addresses;
+}
+
+/**
+ * Print server listening info with all network addresses
+ */
+export function printServerUrls(port: number, host: string): void {
+	console.log(`   🌐 Local:   http://localhost:${port}`);
+
+	if (host === '0.0.0.0' || host === '::') {
+		const addresses = getNetworkAddresses();
+		for (const { label, address } of addresses) {
+			console.log(`   🌐 Network: http://${address}:${port}  (${label})`);
+		}
+	} else if (host !== 'localhost' && host !== '127.0.0.1') {
+		console.log(`   🌐 Network: http://${host}:${port}`);
+	}
+
+	console.log(`   🔌 WebSocket: ws://localhost:${port}/ws`);
+}
+
+/**
  * Find an available port by creating a temporary server
  * Uses Node.js net module to bind to port 0 (OS assigns available port)
  */

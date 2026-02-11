@@ -148,17 +148,18 @@ describe('WebSocketServerTransport', () => {
 			transport.onMessage(messageHandler);
 
 			const message: HubMessage = {
-				type: 'CALL',
+				type: 'REQ',
 				method: 'test.method',
-				params: { foo: 'bar' },
+				data: { foo: 'bar' },
 				id: 'test-id',
+				sessionId: 'test-session',
 			};
 
 			transport.handleClientMessage(message, 'client-123');
 
 			expect(messageHandler).toHaveBeenCalledWith(
 				expect.objectContaining({
-					type: 'CALL',
+					type: 'REQ',
 					method: 'test.method',
 					clientId: 'client-123',
 				})
@@ -172,9 +173,10 @@ describe('WebSocketServerTransport', () => {
 			});
 
 			const message: HubMessage = {
-				type: 'SUBSCRIBE',
+				type: 'EVENT',
 				method: 'test.channel',
 				id: 'test-id',
+				sessionId: 'test-session',
 			};
 
 			transport.handleClientMessage(message, 'client-456');
@@ -186,9 +188,11 @@ describe('WebSocketServerTransport', () => {
 	describe('send', () => {
 		it('should broadcast non-EVENT messages', async () => {
 			const message: HubMessage = {
-				type: 'RESULT',
+				type: 'RSP',
 				id: 'test-id',
-				result: { success: true },
+				method: 'test.method',
+				sessionId: 'test-session',
+				data: { success: true },
 			};
 
 			await transport.send(message);
@@ -200,7 +204,9 @@ describe('WebSocketServerTransport', () => {
 			const message: HubMessage = {
 				type: 'EVENT',
 				method: 'test.event',
-				params: { data: 'test' },
+				id: 'test-id',
+				sessionId: 'test-session',
+				data: { data: 'test' },
 			};
 
 			await transport.send(message);
@@ -215,14 +221,14 @@ describe('WebSocketServerTransport', () => {
 			const unsubscribe = transport.onMessage(handler);
 
 			// First message should trigger handler
-			transport.handleClientMessage({ type: 'CALL', method: 'test', id: '1' });
+			transport.handleClientMessage({ type: 'REQ', method: 'test', id: '1', sessionId: 'test' });
 			expect(handler).toHaveBeenCalledTimes(1);
 
 			// Unsubscribe
 			unsubscribe();
 
 			// Second message should not trigger handler
-			transport.handleClientMessage({ type: 'CALL', method: 'test', id: '2' });
+			transport.handleClientMessage({ type: 'REQ', method: 'test', id: '2', sessionId: 'test' });
 			expect(handler).toHaveBeenCalledTimes(1);
 		});
 	});
@@ -401,7 +407,9 @@ describe('WebSocketServerTransport', () => {
 			const message: HubMessage = {
 				type: 'EVENT',
 				method: 'test.event',
-				params: { data: 'test' },
+				id: 'test-id',
+				sessionId: 'test-session',
+				data: { data: 'test' },
 			};
 
 			await transport.broadcastToSession('session-123', message);

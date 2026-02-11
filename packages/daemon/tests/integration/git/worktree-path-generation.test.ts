@@ -15,7 +15,6 @@ import { WorktreeManager } from '../../../src/lib/worktree-manager';
 import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
-import { homedir } from 'node:os';
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
@@ -24,6 +23,7 @@ describe('WorktreeManager - Path Generation', () => {
 	let testRepoPath2: string;
 	let worktreeManager: WorktreeManager;
 	let createdWorktrees: string[] = [];
+	let testWorktreeBaseDir: string;
 
 	beforeEach(async () => {
 		// Create two unique test repositories
@@ -32,6 +32,11 @@ describe('WorktreeManager - Path Generation', () => {
 
 		testRepoPath1 = path.join(TMP_DIR, `test-git-repo-1-${timestamp}-${random}`);
 		testRepoPath2 = path.join(TMP_DIR, `test-git-repo-2-${timestamp}-${random}`);
+
+		// Set up test worktree base directory
+		testWorktreeBaseDir = path.join(TMP_DIR, `test-worktrees-${timestamp}-${random}`);
+		fs.mkdirSync(testWorktreeBaseDir, { recursive: true });
+		process.env.TEST_WORKTREE_BASE_DIR = testWorktreeBaseDir;
 
 		for (const repoPath of [testRepoPath1, testRepoPath2]) {
 			fs.mkdirSync(repoPath, { recursive: true });
@@ -58,8 +63,8 @@ describe('WorktreeManager - Path Generation', () => {
 			try {
 				if (fs.existsSync(worktreePath)) {
 					// Remove via git if possible
-					// For new worktrees in ~/.neokai/projects, always use testRepoPath1
-					const repoPath = worktreePath.startsWith(path.join(homedir(), '.neokai', 'projects'))
+					// For new worktrees in test base dir, always use testRepoPath1
+					const repoPath = worktreePath.startsWith(testWorktreeBaseDir)
 						? testRepoPath1
 						: path.dirname(path.dirname(worktreePath));
 
@@ -84,26 +89,13 @@ describe('WorktreeManager - Path Generation', () => {
 			}
 		}
 
-		// Cleanup ~/.neokai/projects test directories
-		const neoKaiProjectsDir = path.join(homedir(), '.neokai', 'projects');
-		if (fs.existsSync(neoKaiProjectsDir)) {
-			// Only remove test project directories
-			try {
-				const entries = fs.readdirSync(neoKaiProjectsDir);
-				for (const entry of entries) {
-					const fullPath = path.join(neoKaiProjectsDir, entry);
-					const stat = fs.statSync(fullPath);
-					if (stat.isDirectory()) {
-						// Check if this is a test directory (contains test-git-repo in path)
-						if (entry.includes('test-git-repo')) {
-							fs.rmSync(fullPath, { recursive: true, force: true });
-						}
-					}
-				}
-			} catch {
-				// Ignore cleanup errors
-			}
+		// Cleanup test worktree base directory
+		if (fs.existsSync(testWorktreeBaseDir)) {
+			fs.rmSync(testWorktreeBaseDir, { recursive: true, force: true });
 		}
+
+		// Clear environment variable
+		delete process.env.TEST_WORKTREE_BASE_DIR;
 	});
 
 	test('Creates worktree in ~/.neokai/projects/{encoded-repo-path}/worktrees/ instead of repo/.worktrees/', async () => {
@@ -119,11 +111,10 @@ describe('WorktreeManager - Path Generation', () => {
 
 		createdWorktrees.push(worktree.worktreePath);
 
-		// Verify path format: ~/.neokai/projects/{encoded-path}/worktrees/{sessionId}
-		expect(worktree.worktreePath).toContain('.neokai/projects');
+		// Verify path format: {testWorktreeBaseDir}/{encoded-path}/worktrees/{sessionId}
 		expect(worktree.worktreePath).toContain('/worktrees/');
 		expect(worktree.worktreePath).toContain(sessionId);
-		expect(worktree.worktreePath).toStartWith(homedir());
+		expect(worktree.worktreePath).toStartWith(testWorktreeBaseDir);
 
 		// Verify it contains encoded repo path (with dashes)
 		// testRepoPath1 is like /var/folders/.../test-git-repo-1-... or /tmp/test-git-repo-1-...
@@ -163,11 +154,11 @@ describe('WorktreeManager - Path Generation', () => {
 		createdWorktrees.push(worktree1.worktreePath, worktree2.worktreePath);
 
 		// Extract encoded repo path from worktree paths
-		// Path format: ~/.neokai/projects/{encoded-path}/worktrees/{sessionId}
+		// Path format: {testWorktreeBaseDir}/{encoded-path}/worktrees/{sessionId}
 		const extractEncodedPath = (p: string) => {
 			const parts = p.split(path.sep);
-			const projectsIndex = parts.indexOf('projects');
-			return parts[projectsIndex + 1];
+			const worktreesIndex = parts.indexOf('worktrees');
+			return parts[worktreesIndex - 1];
 		};
 
 		const encodedPath1 = extractEncodedPath(worktree1.worktreePath);
@@ -207,11 +198,11 @@ describe('WorktreeManager - Path Generation', () => {
 		createdWorktrees.push(worktree1.worktreePath, worktree2.worktreePath);
 
 		// Extract encoded repo path from worktree paths
-		// Path format: ~/.neokai/projects/{encoded-path}/worktrees/{sessionId}
+		// Path format: {testWorktreeBaseDir}/{encoded-path}/worktrees/{sessionId}
 		const extractEncodedPath = (p: string) => {
 			const parts = p.split(path.sep);
-			const projectsIndex = parts.indexOf('projects');
-			return parts[projectsIndex + 1];
+			const worktreesIndex = parts.indexOf('worktrees');
+			return parts[worktreesIndex - 1];
 		};
 
 		const encodedPath1 = extractEncodedPath(worktree1.worktreePath);
@@ -239,7 +230,6 @@ describe('WorktreeManager - Path Generation', () => {
 		if (!worktree) return;
 
 		// Verify worktree was created with new path format
-		expect(worktree.worktreePath).toContain('.neokai/projects');
 		expect(worktree.worktreePath).toContain('/worktrees/');
 
 		// Remove the worktree properly via git first, then manually delete to create orphan state
@@ -254,7 +244,7 @@ describe('WorktreeManager - Path Generation', () => {
 		// Now create an orphaned state by re-adding metadata but keeping directory gone
 		// Actually, let's just verify that cleanup can detect the new path format
 		// by checking the path contains the new location
-		expect(worktree.worktreePath).toStartWith(homedir());
+		expect(worktree.worktreePath).toStartWith(testWorktreeBaseDir);
 	});
 
 	test('Worktree path structure is correct', async () => {
@@ -270,25 +260,24 @@ describe('WorktreeManager - Path Generation', () => {
 
 		createdWorktrees.push(worktree.worktreePath);
 
-		// Expected structure: ~/.neokai/projects/{encoded-repo-path}/worktrees/{sessionId}
+		// Expected structure: {testWorktreeBaseDir}/{encoded-repo-path}/worktrees/{sessionId}
 		const pathParts = worktree.worktreePath.split(path.sep);
 
-		// Find the projects index
-		const projectsIndex = pathParts.indexOf('projects');
-		expect(projectsIndex).toBeGreaterThan(0);
+		// Find the worktrees index
+		const worktreesIndex = pathParts.indexOf('worktrees');
+		expect(worktreesIndex).toBeGreaterThan(0);
 
-		// Next part should be the encoded repo path (starts with dash, contains dashes)
-		const encodedPath = pathParts[projectsIndex + 1];
+		// Previous part should be the encoded repo path (starts with dash, contains dashes)
+		const encodedPath = pathParts[worktreesIndex - 1];
 		expect(encodedPath.startsWith('-')).toBe(true);
 		// Should contain path components (varies by OS - macOS uses /var/folders, Linux uses /tmp)
 		expect(encodedPath).toMatch(/test-git-repo-1-/);
 
-		// After encoded path should be 'worktrees'
-		const worktreesDir = pathParts[projectsIndex + 2];
-		expect(worktreesDir).toBe('worktrees');
-
 		// Last part should be the session ID
 		const lastPart = pathParts[pathParts.length - 1];
 		expect(lastPart).toBe(sessionId);
+
+		// Verify it's in the test base directory
+		expect(worktree.worktreePath).toStartWith(testWorktreeBaseDir);
 	});
 });

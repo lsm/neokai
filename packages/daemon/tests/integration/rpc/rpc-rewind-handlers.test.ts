@@ -11,13 +11,13 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { TestContext } from '../../test-utils';
+import type { TestContext } from '../../helpers/test-app';
 import {
 	createTestApp,
 	waitForWebSocketState,
 	waitForWebSocketMessage,
 	createWebSocketWithFirstMessage,
-} from '../../test-utils';
+} from '../../helpers/test-app';
 
 describe('Rewind RPC Handlers', () => {
 	let ctx: TestContext;
@@ -40,7 +40,7 @@ describe('Rewind RPC Handlers', () => {
 		ws.send(
 			JSON.stringify({
 				id: `call-${Date.now()}`,
-				type: 'CALL',
+				type: 'REQ',
 				method,
 				data,
 				sessionId: 'global',
@@ -65,7 +65,7 @@ describe('Rewind RPC Handlers', () => {
 				sessionId,
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { rewindPoints: unknown[]; error?: string };
 			expect(data.rewindPoints).toEqual([]);
 			expect(data.error).toBeUndefined();
@@ -81,7 +81,7 @@ describe('Rewind RPC Handlers', () => {
 				sessionId: 'non-existent-session-id',
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { rewindPoints: unknown[]; error?: string };
 			expect(data.rewindPoints).toEqual([]);
 			expect(data.error).toBe('Session not found');
@@ -96,7 +96,7 @@ describe('Rewind RPC Handlers', () => {
 			const response = await sendRpcCall(ws, 'rewind.checkpoints', {});
 
 			// Should return an error or empty result
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { rewindPoints: unknown[]; error?: string };
 			expect(data.rewindPoints).toEqual([]);
 			ws.close();
@@ -114,7 +114,7 @@ describe('Rewind RPC Handlers', () => {
 				checkpointId: 'some-checkpoint-id',
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { preview: { canRewind: boolean; error?: string } };
 			expect(data.preview.canRewind).toBe(false);
 			expect(data.preview.error).toBe('Session not found');
@@ -135,7 +135,7 @@ describe('Rewind RPC Handlers', () => {
 				checkpointId: 'some-checkpoint-id',
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { preview: { canRewind: boolean; error?: string } };
 			expect(data.preview.canRewind).toBe(false);
 			// Either checkpoint not found or SDK query not active
@@ -157,7 +157,7 @@ describe('Rewind RPC Handlers', () => {
 				checkpointId: 'non-existent-checkpoint',
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { preview: { canRewind: boolean; error?: string } };
 			expect(data.preview.canRewind).toBe(false);
 			expect(data.preview.error).toContain('not found');
@@ -177,7 +177,7 @@ describe('Rewind RPC Handlers', () => {
 				mode: 'files',
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { result: { success: boolean; error?: string } };
 			expect(data.result.success).toBe(false);
 			expect(data.result.error).toBe('Session not found');
@@ -199,7 +199,7 @@ describe('Rewind RPC Handlers', () => {
 				mode: 'files',
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { result: { success: boolean; error?: string } };
 			expect(data.result.success).toBe(false);
 			// Either checkpoint not found or SDK query not active
@@ -222,7 +222,7 @@ describe('Rewind RPC Handlers', () => {
 				mode: 'files',
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { result: { success: boolean; error?: string } };
 			expect(data.result.success).toBe(false);
 			expect(data.result.error).toContain('not found');
@@ -244,7 +244,7 @@ describe('Rewind RPC Handlers', () => {
 				checkpointId: 'some-checkpoint-id',
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { result: { success: boolean; error?: string } };
 			// Should fail due to checkpoint not found, but not due to mode
 			expect(data.result.success).toBe(false);
@@ -267,7 +267,7 @@ describe('Rewind RPC Handlers', () => {
 				mode: 'conversation',
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { result: { success: boolean; error?: string } };
 			// Should fail due to checkpoint not found
 			expect(data.result.success).toBe(false);
@@ -289,7 +289,7 @@ describe('Rewind RPC Handlers', () => {
 				mode: 'both',
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { result: { success: boolean; error?: string } };
 			// Should fail due to checkpoint not found
 			expect(data.result.success).toBe(false);
@@ -307,19 +307,19 @@ describe('Rewind RPC Handlers', () => {
 			const checkpointsResponse = await sendRpcCall(ws, 'rewind.checkpoints', {
 				sessionId: 'test',
 			});
-			expect(checkpointsResponse.type).toBe('RESULT');
+			expect(checkpointsResponse.type).toBe('RSP');
 
 			const previewResponse = await sendRpcCall(ws, 'rewind.preview', {
 				sessionId: 'test',
 				checkpointId: 'test',
 			});
-			expect(previewResponse.type).toBe('RESULT');
+			expect(previewResponse.type).toBe('RSP');
 
 			const executeResponse = await sendRpcCall(ws, 'rewind.execute', {
 				sessionId: 'test',
 				checkpointId: 'test',
 			});
-			expect(executeResponse.type).toBe('RESULT');
+			expect(executeResponse.type).toBe('RSP');
 
 			ws.close();
 		});

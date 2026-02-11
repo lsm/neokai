@@ -7,7 +7,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../src/storage/database';
 import type { Session } from '@neokai/shared';
-import { createTestSession } from './fixtures/database-test-utils';
+import { createTestSession } from '../../helpers/database';
 
 describe('SessionRepository', () => {
 	let db: Database;
@@ -337,6 +337,96 @@ describe('SessionRepository', () => {
 				const retrieved = db.getSession(`status-${status}`);
 				expect(retrieved?.status).toBe(status);
 			}
+		});
+	});
+
+	// === Merged from session-crud.test.ts ===
+
+	describe('autoScroll config', () => {
+		it('should update session config with autoScroll', () => {
+			const session = createTestSession('autoscroll-session');
+			db.createSession(session);
+
+			const initial = db.getSession('autoscroll-session');
+			expect(initial?.config.autoScroll).toBeUndefined();
+
+			db.updateSession('autoscroll-session', { config: { autoScroll: true } });
+
+			const updated = db.getSession('autoscroll-session');
+			expect(updated?.config.autoScroll).toBe(true);
+			expect(updated?.config.model).toBe('claude-sonnet-4-5-20250929');
+		});
+
+		it('should merge partial config updates without overwriting other fields', () => {
+			const session = createTestSession('partial-config-session');
+			session.config.autoScroll = false;
+			db.createSession(session);
+
+			db.updateSession('partial-config-session', { config: { autoScroll: true } });
+			let updated = db.getSession('partial-config-session');
+			expect(updated?.config.autoScroll).toBe(true);
+			expect(updated?.config.model).toBe('claude-sonnet-4-5-20250929');
+
+			db.updateSession('partial-config-session', { config: { model: 'claude-opus-4-20250514' } });
+			updated = db.getSession('partial-config-session');
+			expect(updated?.config.autoScroll).toBe(true);
+			expect(updated?.config.model).toBe('claude-opus-4-20250514');
+		});
+	});
+
+	describe('inputDraft persistence', () => {
+		it('should save inputDraft to metadata', () => {
+			const session = createTestSession('draft-session');
+			db.createSession(session);
+
+			db.updateSession('draft-session', { metadata: { inputDraft: 'test draft' } });
+			const updated = db.getSession('draft-session');
+			expect(updated?.metadata.inputDraft).toBe('test draft');
+		});
+
+		it('should merge inputDraft with existing metadata fields', () => {
+			const session = createTestSession('draft-merge-session');
+			session.metadata.messageCount = 5;
+			session.metadata.totalTokens = 1000;
+			db.createSession(session);
+
+			db.updateSession('draft-merge-session', { metadata: { inputDraft: 'draft text' } });
+			const updated = db.getSession('draft-merge-session');
+			expect(updated?.metadata.inputDraft).toBe('draft text');
+			expect(updated?.metadata.messageCount).toBe(5);
+			expect(updated?.metadata.totalTokens).toBe(1000);
+		});
+
+		it('should clear inputDraft when set to undefined', () => {
+			const session = createTestSession('draft-clear-session');
+			session.metadata.inputDraft = 'initial draft';
+			db.createSession(session);
+
+			expect(db.getSession('draft-clear-session')?.metadata.inputDraft).toBe('initial draft');
+
+			db.updateSession('draft-clear-session', { metadata: { inputDraft: undefined } });
+			expect(db.getSession('draft-clear-session')?.metadata.inputDraft).toBeUndefined();
+		});
+
+		it('should handle empty string inputDraft', () => {
+			const session = createTestSession('draft-empty-session');
+			db.createSession(session);
+
+			db.updateSession('draft-empty-session', { metadata: { inputDraft: '' } });
+			expect(db.getSession('draft-empty-session')?.metadata.inputDraft).toBe('');
+		});
+
+		it('should persist inputDraft across session retrieval', () => {
+			const session = createTestSession('draft-persist-session');
+			db.createSession(session);
+
+			db.updateSession('draft-persist-session', { metadata: { inputDraft: 'persisted draft' } });
+			expect(db.getSession('draft-persist-session')?.metadata.inputDraft).toBe('persisted draft');
+			expect(db.getSession('draft-persist-session')?.metadata.inputDraft).toBe('persisted draft');
+
+			const sessions = db.listSessions();
+			const found = sessions.find((s) => s.id === 'draft-persist-session');
+			expect(found?.metadata.inputDraft).toBe('persisted draft');
 		});
 	});
 });

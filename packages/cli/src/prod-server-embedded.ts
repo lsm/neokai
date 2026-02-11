@@ -68,22 +68,24 @@ export async function startProdServer(config: Config) {
 	process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 	// Create daemon app (returns Bun server)
-	daemonContext = await createDaemonApp({
-		config,
-		verbose: true,
-		standalone: false,
-	});
+	try {
+		daemonContext = await createDaemonApp({
+			config,
+			verbose: true,
+			standalone: false,
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		log.error(`[Server] Fatal: Failed to initialize daemon: ${message}`, error);
+		throw error;
+	}
 
 	// Stop the daemon's internal server (we'll create a unified one)
 	daemonContext.server.stop();
 
 	// Get WebSocket handlers from daemon
 	const { createWebSocketHandlers } = await import('@neokai/daemon/routes/setup-websocket');
-	const wsHandlers = createWebSocketHandlers(
-		daemonContext.transport,
-		daemonContext.sessionManager,
-		daemonContext.subscriptionManager
-	);
+	const wsHandlers = createWebSocketHandlers(daemonContext.transport, daemonContext.sessionManager);
 
 	// Pre-load index.html for SPA fallback
 	const indexAsset = embeddedAssets.get('/index.html');

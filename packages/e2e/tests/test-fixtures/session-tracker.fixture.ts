@@ -41,11 +41,11 @@ async function cleanupSessionDirect(page: Page, sessionId: string): Promise<bool
 		const result = await page.evaluate(async (sid) => {
 			try {
 				const hub = window.__messageHub || window.appState?.messageHub;
-				if (!hub || !hub.call) {
+				if (!hub || !hub.request) {
 					return { success: false, error: 'MessageHub not available' };
 				}
 
-				await hub.call('session.delete', { sessionId: sid }, { timeout: 5000 });
+				await hub.request('session.delete', { sessionId: sid }, { timeout: 5000 });
 				return { success: true };
 			} catch (error: unknown) {
 				return {

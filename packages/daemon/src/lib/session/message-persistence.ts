@@ -86,10 +86,6 @@ export class MessagePersistence {
 			const expandedContent = expandBuiltInCommand(content);
 			const finalContent = expandedContent || content;
 
-			if (expandedContent) {
-				this.logger.info(`[MessagePersistence] Expanding built-in command: ${content.trim()}`);
-			}
-
 			// 3. Build message content (text + images)
 			const messageContent = buildMessageContent(finalContent, images);
 
@@ -112,19 +108,16 @@ export class MessagePersistence {
 			this.db.saveSDKMessage(sessionId, sdkUserMessage);
 
 			// 6. Publish to UI (fire-and-forget)
-			this.messageHub
-				.publish(
+			try {
+				this.messageHub.event(
 					'state.sdkMessages.delta',
 					{ added: [sdkUserMessage], timestamp: Date.now() },
-					{ sessionId }
-				)
-				.catch((err) => {
-					this.logger.error('[MessagePersistence] Error publishing message to UI:', err);
-				});
-
-			this.logger.info(
-				`[MessagePersistence] User message ${messageId} persisted and published to UI`
-			);
+					{ room: `session:${sessionId}` }
+				);
+			} catch (_err) {
+				/* v8 ignore next 2 */
+				this.logger.error('[MessagePersistence] Error publishing message to UI:', _err);
+			}
 
 			// 7. Emit 'message.persisted' event for downstream processing
 			// AgentSession will start query and enqueue message

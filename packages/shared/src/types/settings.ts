@@ -45,9 +45,15 @@ export interface SDKSupportedSettings {
 	sandbox?: {
 		enabled?: boolean;
 		autoAllowBashIfSandboxed?: boolean;
+		excludedCommands?: string[];
+		allowUnsandboxedCommands?: boolean;
 		network?: {
 			allowUnixSockets?: string[];
 			allowLocalBinding?: boolean;
+			allowedDomains?: string[];
+			allowAllUnixSockets?: boolean;
+			httpProxyPort?: number;
+			socksProxyPort?: number;
 		};
 	};
 
@@ -147,6 +153,7 @@ export interface SessionSettings extends GlobalSettings {
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
 	settingSources: ['user', 'project', 'local'],
 	permissionMode: 'default',
+	model: 'sonnet', // Default model for new sessions
 	disabledMcpServers: [],
 	showArchived: false,
 	// Default auto-scroll to true so new sessions inherit this setting
@@ -154,6 +161,69 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
 	autoScroll: true,
 	// Default coordinator mode to false (user opts in when needed)
 	coordinatorMode: false,
+	// Sandbox: Enable with balanced network permissions for development
+	// Provides filesystem isolation while allowing common development operations
+	sandbox: {
+		enabled: true,
+		autoAllowBashIfSandboxed: true,
+		excludedCommands: ['git'], // Git runs outside sandbox for SSH, submodules, LFS, various git hosts
+		network: {
+			// Allow outbound network to common development domains (git, npm, pip, etc.)
+			allowedDomains: [
+				'github.com',
+				'*.github.com',
+				'gist.github.com',
+				'*.npmjs.org',
+				'registry.npmjs.org',
+				'*.yarnpkg.com',
+				'registry.yarnpkg.com',
+				'packages.gitlab.com',
+				'*.pkg.dev',
+				'go.dev',
+				'crates.io',
+				'pypi.org',
+				'*.pypi.org',
+				'rubygems.org',
+				'*.rubygems.org',
+				'*.maven.org',
+				'*.gradle.org',
+				'cdn.jsdelivr.net',
+				'*.cloudflare.com',
+				// AI provider APIs
+				'openai.com',
+				'*.openai.com',
+				'anthropic.com',
+				'*.anthropic.com',
+				// Google AI & Cloud services
+				'*.google.dev',
+				'*.google.com',
+				'*.googleapis.com',
+				'*.googleusercontent.com',
+				'*.gcp.goog',
+				'*.run.app',
+				'*.appspot.com',
+				'*.cloudfunctions.net',
+				// Other AI providers
+				'cohere.com',
+				'*.cohere.com',
+				'mistral.ai',
+				'*.mistral.ai',
+				'huggingface.co',
+				'*.huggingface.co',
+				'replicate.com',
+				'*.replicate.com',
+				'together.ai',
+				'*.together.ai',
+				'api.together.xyz',
+				'groq.com',
+				'*.groq.com',
+			],
+			// Allow binding to localhost for dev servers (vite, webpack, etc.)
+			allowLocalBinding: true,
+			// Allow SSH agent and other Unix sockets
+			allowAllUnixSockets: true,
+		},
+	},
 	outputLimiter: {
 		enabled: true,
 		bash: {

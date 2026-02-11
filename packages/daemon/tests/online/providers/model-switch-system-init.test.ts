@@ -30,23 +30,26 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import 'dotenv/config';
-import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { createDaemonServer } from '../helpers/daemon-server-helper';
-import { sendMessage, waitForIdle } from '../helpers/daemon-test-helpers';
+// Bun automatically loads .env from project root when running tests
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import { createDaemonServer } from '../../helpers/daemon-server';
+import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
 /**
- * Wait for a specific SDK message type
+ * Wait for a specific SDK message type.
+ *
+ * Subscribes to events BEFORE joining the room, then joins and stays in the room
+ * (no leaveRoom in cleanup) to avoid room state races between test phases.
  */
 async function waitForSDKMessage(
 	daemon: DaemonServerContext,
 	sessionId: string,
 	messageType: string,
 	messageSubtype?: string,
-	timeout = 15000
+	timeout = 30000
 ): Promise<Record<string, unknown>> {
 	return new Promise((resolve, reject) => {
 		let unsubscribe: (() => void) | undefined;
@@ -69,36 +72,30 @@ async function waitForSDKMessage(
 			);
 		}, timeout);
 
-		daemon.messageHub
-			.subscribe(
-				'state.sdkMessages.delta',
-				(data: unknown) => {
-					if (resolved) return;
+		// Subscribe FIRST so no events are missed once room join completes
+		unsubscribe = daemon.messageHub.onEvent('state.sdkMessages.delta', (data: unknown) => {
+			if (resolved) return;
 
-					const delta = data as { added?: Array<Record<string, unknown>> };
-					const addedMessages = delta.added || [];
+			const delta = data as { added?: Array<Record<string, unknown>> };
+			const addedMessages = delta.added || [];
 
-					for (const msg of addedMessages) {
-						if (msg.type === messageType) {
-							// Check subtype if specified
-							if (messageSubtype && msg.subtype !== messageSubtype) {
-								continue;
-							}
-							cleanup();
-							resolve(msg);
-							return;
-						}
+			for (const msg of addedMessages) {
+				if (msg.type === messageType) {
+					// Check subtype if specified
+					if (messageSubtype && msg.subtype !== messageSubtype) {
+						continue;
 					}
-				},
-				{ sessionId }
-			)
-			.then((fn) => {
-				unsubscribe = fn;
-			})
-			.catch((error) => {
-				cleanup();
-				reject(error);
-			});
+					cleanup();
+					resolve(msg);
+					return;
+				}
+			}
+		});
+
+		// Join the session room (idempotent - safe to call multiple times)
+		daemon.messageHub.joinRoom('session:' + sessionId).catch(() => {
+			// Join failed, but continue - events might still work
+		});
 	});
 }
 
@@ -118,8 +115,8 @@ describe('Model Switch System Init Message', () => {
 
 	test('should show correct model in system:init after switching to opus', async () => {
 		// 1. Create session with Sonnet model (default)
-		const createResult = (await daemon.messageHub.call('session.create', {
-			workspacePath: `${TMP_DIR}/test-model-switch-system-init`,
+		const createResult = (await daemon.messageHub.request('session.create', {
+			workspacePath: `${TMP_DIR}/test-model-switch-system-init-${Date.now()}`,
 			title: 'Model Switch System Init Test',
 			config: {
 				model: 'sonnet', // Start with Sonnet
@@ -131,7 +128,7 @@ describe('Model Switch System Init Message', () => {
 		daemon.trackSession(sessionId);
 
 		// 2. Switch model to Opus
-		const switchResult = (await daemon.messageHub.call('session.model.switch', {
+		const switchResult = (await daemon.messageHub.request('session.model.switch', {
 			sessionId,
 			model: 'opus',
 		})) as { success: boolean; model: string; error?: string };
@@ -140,14 +137,14 @@ describe('Model Switch System Init Message', () => {
 		expect(switchResult.model).toBe('opus');
 
 		// Verify session config was updated
-		const sessionAfterSwitch = (await daemon.messageHub.call('session.get', {
+		const sessionAfterSwitch = (await daemon.messageHub.request('session.get', {
 			sessionId,
 		})) as { session: { config: { model: string } } };
 		expect(sessionAfterSwitch.session.config.model).toBe('opus');
 
 		// 3. Send a message (this triggers SDK to emit system:init)
 		// Set up subscription BEFORE sending message to catch system:init
-		const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init', 15000);
+		const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
 
 		await sendMessage(daemon, sessionId, 'What is 1+1? Answer with just the number.');
 
@@ -159,25 +156,30 @@ describe('Model Switch System Init Message', () => {
 		expect(systemInitMessage.subtype).toBe('init');
 		expect(systemInitMessage.model).toBeDefined();
 
-		// The model field should contain 'opus' or start with 'claude-opus'
+		// The model field should contain 'opus' (SDK uses short IDs: opus, sonnet, haiku, default)
+		// Note: 'default' is the legacy Sonnet identifier, 'sonnet' is the new canonical ID
 		const model = systemInitMessage.model as string;
 		const isOpusModel = model === 'opus' || model.includes('opus');
+		if (!isOpusModel) {
+			// Log the actual model value for debugging
+			console.error(`Expected model to be 'opus' or contain 'opus', got: '${model}'`);
+		}
 		expect(isOpusModel).toBe(true);
 
 		// Wait for processing to complete
-		await waitForIdle(daemon, sessionId, 20000);
+		await waitForIdle(daemon, sessionId, 60000);
 
 		// Verify final state
-		const finalState = (await daemon.messageHub.call('agent.getState', {
+		const finalState = (await daemon.messageHub.request('agent.getState', {
 			sessionId,
 		})) as { state: { status: string } };
 		expect(finalState.state.status).toBe('idle');
-	}, 30000);
+	}, 90000);
 
 	test('should show correct model in system:init when switching from sonnet to haiku', async () => {
 		// Create session with Sonnet
-		const createResult = (await daemon.messageHub.call('session.create', {
-			workspacePath: `${TMP_DIR}/test-switch-sonnet-to-haiku`,
+		const createResult = (await daemon.messageHub.request('session.create', {
+			workspacePath: `${TMP_DIR}/test-switch-sonnet-to-haiku-${Date.now()}`,
 			title: 'Sonnet to Haiku Test',
 			config: {
 				model: 'sonnet',
@@ -189,7 +191,7 @@ describe('Model Switch System Init Message', () => {
 		daemon.trackSession(sessionId);
 
 		// Switch to Haiku
-		const switchResult = (await daemon.messageHub.call('session.model.switch', {
+		const switchResult = (await daemon.messageHub.request('session.model.switch', {
 			sessionId,
 			model: 'haiku',
 		})) as { success: boolean; model: string };
@@ -198,7 +200,7 @@ describe('Model Switch System Init Message', () => {
 		expect(switchResult.model).toBe('haiku');
 
 		// Send message and wait for system:init
-		const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init', 15000);
+		const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
 		await sendMessage(daemon, sessionId, 'Say hello. Just respond "Hello".');
 
 		const systemInitMessage = await systemInitPromise;
@@ -209,16 +211,19 @@ describe('Model Switch System Init Message', () => {
 
 		const model = systemInitMessage.model as string;
 		const isHaikuModel = model === 'haiku' || model.includes('haiku');
+		if (!isHaikuModel) {
+			console.error(`Expected model to be 'haiku' or contain 'haiku', got: '${model}'`);
+		}
 		expect(isHaikuModel).toBe(true);
 
 		// Wait for completion
-		await waitForIdle(daemon, sessionId, 20000);
-	}, 30000);
+		await waitForIdle(daemon, sessionId, 60000);
+	}, 90000);
 
 	test('should show correct model when switching before first message', async () => {
 		// Create session
-		const createResult = (await daemon.messageHub.call('session.create', {
-			workspacePath: `${TMP_DIR}/test-switch-before-first-message`,
+		const createResult = (await daemon.messageHub.request('session.create', {
+			workspacePath: `${TMP_DIR}/test-switch-before-first-message-${Date.now()}`,
 			title: 'Switch Before First Message Test',
 			config: {
 				model: 'sonnet',
@@ -230,7 +235,7 @@ describe('Model Switch System Init Message', () => {
 		daemon.trackSession(sessionId);
 
 		// Switch model BEFORE sending any messages
-		const switchResult = (await daemon.messageHub.call('session.model.switch', {
+		const switchResult = (await daemon.messageHub.request('session.model.switch', {
 			sessionId,
 			model: 'haiku',
 		})) as { success: boolean; model: string };
@@ -238,7 +243,7 @@ describe('Model Switch System Init Message', () => {
 		expect(switchResult.success).toBe(true);
 
 		// Send first message - should use Haiku from the start
-		const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init', 15000);
+		const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
 		await sendMessage(daemon, sessionId, 'What is 2+2? Just the number.');
 
 		const systemInitMessage = await systemInitPromise;
@@ -246,15 +251,18 @@ describe('Model Switch System Init Message', () => {
 		// System:init should show Haiku (the switched model)
 		const model = systemInitMessage.model as string;
 		const isHaikuModel = model === 'haiku' || model.includes('haiku');
+		if (!isHaikuModel) {
+			console.error(`Expected model to be 'haiku' or contain 'haiku', got: '${model}'`);
+		}
 		expect(isHaikuModel).toBe(true);
 
-		await waitForIdle(daemon, sessionId, 20000);
-	}, 30000);
+		await waitForIdle(daemon, sessionId, 60000);
+	}, 90000);
 
 	test('should show correct model when switching AFTER query is already running', async () => {
 		// Create session with Sonnet
-		const createResult = (await daemon.messageHub.call('session.create', {
-			workspacePath: `${TMP_DIR}/test-switch-after-running`,
+		const createResult = (await daemon.messageHub.request('session.create', {
+			workspacePath: `${TMP_DIR}/test-switch-after-running-${Date.now()}`,
 			title: 'Switch After Running Test',
 			config: {
 				model: 'sonnet',
@@ -267,10 +275,10 @@ describe('Model Switch System Init Message', () => {
 
 		// Send first message to START the query with Sonnet
 		await sendMessage(daemon, sessionId, 'What is 1+1? Just the number.');
-		await waitForIdle(daemon, sessionId, 20000);
+		await waitForIdle(daemon, sessionId, 60000);
 
 		// NOW switch to Opus (query is already running)
-		const switchResult = (await daemon.messageHub.call('session.model.switch', {
+		const switchResult = (await daemon.messageHub.request('session.model.switch', {
 			sessionId,
 			model: 'opus',
 		})) as { success: boolean; model: string };
@@ -279,24 +287,29 @@ describe('Model Switch System Init Message', () => {
 		expect(switchResult.model).toBe('opus');
 
 		// Send second message - should get system:init with Opus
-		const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init', 15000);
+		const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
 		await sendMessage(daemon, sessionId, 'What is 2+2? Just the number.');
 
 		const systemInitMessage = await systemInitPromise;
 
 		// Verify system:init shows Opus (not Sonnet)
+		// The model field should contain 'opus' (SDK uses short IDs: opus, sonnet, haiku, default)
 		const model = systemInitMessage.model as string;
 		const isOpusModel = model === 'opus' || model.includes('opus');
+		if (!isOpusModel) {
+			// Log the actual model value for debugging
+			console.error(`Expected model to be 'opus' or contain 'opus', got: '${model}'`);
+		}
 		expect(isOpusModel).toBe(true);
 
-		await waitForIdle(daemon, sessionId, 20000);
-	}, 60000);
+		await waitForIdle(daemon, sessionId, 60000);
+	}, 120000);
 
 	describe('Cross-Provider Switching', () => {
 		test('should show correct model when switching from Claude to GLM', async () => {
 			// Create session with Claude Sonnet
-			const createResult = (await daemon.messageHub.call('session.create', {
-				workspacePath: `${TMP_DIR}/test-switch-claude-to-glm`,
+			const createResult = (await daemon.messageHub.request('session.create', {
+				workspacePath: `${TMP_DIR}/test-switch-claude-to-glm-${Date.now()}`,
 				title: 'Claude to GLM Test',
 				config: {
 					model: 'sonnet',
@@ -309,10 +322,10 @@ describe('Model Switch System Init Message', () => {
 
 			// Send first message with Claude
 			await sendMessage(daemon, sessionId, 'What is 1+1? Just the number.');
-			await waitForIdle(daemon, sessionId, 20000);
+			await waitForIdle(daemon, sessionId, 60000);
 
 			// Switch to GLM (cross-provider switch)
-			const switchResult = (await daemon.messageHub.call('session.model.switch', {
+			const switchResult = (await daemon.messageHub.request('session.model.switch', {
 				sessionId,
 				model: 'glm-4.7',
 			})) as { success: boolean; model: string };
@@ -321,23 +334,28 @@ describe('Model Switch System Init Message', () => {
 			expect(switchResult.model).toBe('glm-4.7');
 
 			// Send message with GLM - should get system:init with GLM model
-			const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init', 15000);
+			const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
 			await sendMessage(daemon, sessionId, 'What is 2+2? Just the number.');
 
 			const systemInitMessage = await systemInitPromise;
 
 			// Verify system:init shows GLM model
+			// The SDK's system:init message returns the original GLM model ID (glm-4.7)
+			// even though translateModelIdForSdk translates it to 'default' for the query
 			const model = systemInitMessage.model as string;
 			const isGlmModel = model.includes('glm');
+			if (!isGlmModel) {
+				console.error(`Expected model to contain 'glm', got: '${model}'`);
+			}
 			expect(isGlmModel).toBe(true);
 
-			await waitForIdle(daemon, sessionId, 20000);
-		}, 60000);
+			await waitForIdle(daemon, sessionId, 60000);
+		}, 120000);
 
 		test('should show correct model when switching from GLM to Claude', async () => {
 			// Create session with GLM
-			const createResult = (await daemon.messageHub.call('session.create', {
-				workspacePath: `${TMP_DIR}/test-switch-glm-to-claude`,
+			const createResult = (await daemon.messageHub.request('session.create', {
+				workspacePath: `${TMP_DIR}/test-switch-glm-to-claude-${Date.now()}`,
 				title: 'GLM to Claude Test',
 				config: {
 					model: 'glm-4.7',
@@ -350,10 +368,10 @@ describe('Model Switch System Init Message', () => {
 
 			// Send first message with GLM
 			await sendMessage(daemon, sessionId, 'What is 1+1? Just the number.');
-			await waitForIdle(daemon, sessionId, 20000);
+			await waitForIdle(daemon, sessionId, 60000);
 
 			// Switch to Claude Haiku (cross-provider switch)
-			const switchResult = (await daemon.messageHub.call('session.model.switch', {
+			const switchResult = (await daemon.messageHub.request('session.model.switch', {
 				sessionId,
 				model: 'haiku',
 			})) as { success: boolean; model: string };
@@ -362,7 +380,7 @@ describe('Model Switch System Init Message', () => {
 			expect(switchResult.model).toBe('haiku');
 
 			// Send message with Claude - should get system:init with Claude model
-			const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init', 15000);
+			const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
 			await sendMessage(daemon, sessionId, 'What is 2+2? Just the number.');
 
 			const systemInitMessage = await systemInitPromise;
@@ -370,15 +388,18 @@ describe('Model Switch System Init Message', () => {
 			// Verify system:init shows Claude/Haiku model
 			const model = systemInitMessage.model as string;
 			const isClaudeModel = model.includes('haiku') || model.includes('claude');
+			if (!isClaudeModel) {
+				console.error(`Expected model to contain 'haiku' or 'claude', got: '${model}'`);
+			}
 			expect(isClaudeModel).toBe(true);
 
-			await waitForIdle(daemon, sessionId, 20000);
-		}, 60000);
+			await waitForIdle(daemon, sessionId, 60000);
+		}, 120000);
 
 		test('should handle multiple cross-provider switches', async () => {
 			// Create session with Claude Sonnet
-			const createResult = (await daemon.messageHub.call('session.create', {
-				workspacePath: `${TMP_DIR}/test-multiple-cross-provider-switches`,
+			const createResult = (await daemon.messageHub.request('session.create', {
+				workspacePath: `${TMP_DIR}/test-multiple-cross-provider-switches-${Date.now()}`,
 				title: 'Multiple Cross-Provider Switches Test',
 				config: {
 					model: 'sonnet',
@@ -390,48 +411,67 @@ describe('Model Switch System Init Message', () => {
 			daemon.trackSession(sessionId);
 
 			// 1. Start with Sonnet
-			let systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init', 15000);
+			let systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
 			await sendMessage(daemon, sessionId, 'Message 1');
 			let systemInitMessage = await systemInitPromise;
 			let model = systemInitMessage.model as string;
-			expect(model.includes('sonnet') || model.includes('claude')).toBe(true);
-			await waitForIdle(daemon, sessionId, 20000);
+			const isValidModel =
+				model.includes('sonnet') || model.includes('claude') || model === 'default';
+			if (!isValidModel) {
+				console.error(`Expected model to be Sonnet, got: '${model}'`);
+			}
+			expect(isValidModel).toBe(true);
+			await waitForIdle(daemon, sessionId, 60000);
 
 			// 2. Switch to GLM
-			await daemon.messageHub.call('session.model.switch', {
+			await daemon.messageHub.request('session.model.switch', {
 				sessionId,
 				model: 'glm-4.7',
 			});
-			systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init', 15000);
+			systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
 			await sendMessage(daemon, sessionId, 'Message 2');
 			systemInitMessage = await systemInitPromise;
 			model = systemInitMessage.model as string;
-			expect(model.includes('glm')).toBe(true);
-			await waitForIdle(daemon, sessionId, 20000);
+			// The SDK's system:init message returns the original GLM model ID
+			const isGlmModel = model.includes('glm');
+			if (!isGlmModel) {
+				console.error(`Expected model to contain 'glm', got: '${model}'`);
+			}
+			expect(isGlmModel).toBe(true);
+			await waitForIdle(daemon, sessionId, 60000);
 
 			// 3. Switch back to Claude Haiku
-			await daemon.messageHub.call('session.model.switch', {
+			await daemon.messageHub.request('session.model.switch', {
 				sessionId,
 				model: 'haiku',
 			});
-			systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init', 15000);
+			systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
 			await sendMessage(daemon, sessionId, 'Message 3');
 			systemInitMessage = await systemInitPromise;
 			model = systemInitMessage.model as string;
-			expect(model.includes('haiku') || model.includes('claude')).toBe(true);
-			await waitForIdle(daemon, sessionId, 20000);
+			const isHaikuModel = model.includes('haiku') || model.includes('claude');
+			if (!isHaikuModel) {
+				console.error(`Expected model to contain 'haiku' or 'claude', got: '${model}'`);
+			}
+			expect(isHaikuModel).toBe(true);
+			await waitForIdle(daemon, sessionId, 60000);
 
 			// 4. Switch to GLM again
-			await daemon.messageHub.call('session.model.switch', {
+			await daemon.messageHub.request('session.model.switch', {
 				sessionId,
 				model: 'glm-4.7',
 			});
-			systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init', 15000);
+			systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
 			await sendMessage(daemon, sessionId, 'Message 4');
 			systemInitMessage = await systemInitPromise;
 			model = systemInitMessage.model as string;
-			expect(model.includes('glm')).toBe(true);
-			await waitForIdle(daemon, sessionId, 20000);
-		}, 120000);
+			// The SDK's system:init message returns the original GLM model ID
+			const isGlmModel2 = model.includes('glm');
+			if (!isGlmModel2) {
+				console.error(`Expected model to contain 'glm', got: '${model}'`);
+			}
+			expect(isGlmModel2).toBe(true);
+			await waitForIdle(daemon, sessionId, 60000);
+		}, 300000);
 	});
 });

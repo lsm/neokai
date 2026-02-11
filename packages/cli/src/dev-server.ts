@@ -8,6 +8,7 @@ import {
 	createCorsPreflightResponse,
 	isWebSocketPath,
 	createJsonErrorResponse,
+	printServerUrls,
 } from './cli-utils';
 
 const log = createLogger('kai:cli:dev-server');
@@ -111,11 +112,7 @@ export async function startDevServer(config: Config) {
 
 	// Get WebSocket handlers from daemon
 	const { createWebSocketHandlers } = await import('@neokai/daemon/routes/setup-websocket');
-	const wsHandlers = createWebSocketHandlers(
-		daemonContext.transport,
-		daemonContext.sessionManager,
-		daemonContext.subscriptionManager
-	);
+	const wsHandlers = createWebSocketHandlers(daemonContext.transport, daemonContext.sessionManager);
 
 	// Create unified Bun server that combines daemon + Vite proxy
 	server = Bun.serve({
@@ -188,9 +185,8 @@ export async function startDevServer(config: Config) {
 		},
 	});
 
-	log.info(`\n✨ Unified development server running!`);
-	log.info(`   🌐 Frontend: http://localhost:${config.port}`);
-	log.info(`   🔌 WebSocket: ws://localhost:${config.port}/ws`);
-	log.info(`   🔥 HMR enabled (Vite on port ${vitePort}, proxied)`);
-	log.info(`\n📝 Press Ctrl+C to stop\n`);
+	console.log(`\n✨ Unified development server running!`);
+	printServerUrls(config.port, config.host);
+	console.log(`   🔥 HMR enabled (Vite on port ${vitePort}, proxied)`);
+	console.log(`\n📝 Press Ctrl+C to stop\n`);
 }

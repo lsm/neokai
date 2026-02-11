@@ -12,6 +12,7 @@ import {
 import type { Session } from '@neokai/shared';
 import type { SettingsManager } from '../../../src/lib/settings-manager';
 import { generateUUID } from '@neokai/shared';
+import { homedir } from 'os';
 
 describe('QueryOptionsBuilder', () => {
 	let builder: QueryOptionsBuilder;
@@ -345,7 +346,7 @@ describe('QueryOptionsBuilder', () => {
 	});
 
 	describe('additional directories configuration', () => {
-		it('should restrict to cwd when worktree exists', async () => {
+		it('should allow temp directories for shell operations when worktree exists', async () => {
 			mockSession.worktree = {
 				worktreePath: '/worktree',
 				mainRepoPath: '/main',
@@ -357,12 +358,21 @@ describe('QueryOptionsBuilder', () => {
 			});
 			const options = await newBuilder.build();
 
-			expect(options.additionalDirectories).toEqual([]);
+			// Should include home directories for settings/storage and temp directories for shell operations
+			expect(options.additionalDirectories).toEqual([
+				homedir() + '/.claude',
+				homedir() + '/.neokai',
+				'/tmp/claude',
+				expect.stringContaining('/tmp/zsh-'),
+			]);
 		});
 
-		it('should leave undefined when no worktree', async () => {
+		it('should include home directories when no worktree', async () => {
 			const options = await builder.build();
-			expect(options.additionalDirectories).toBeUndefined();
+			expect(options.additionalDirectories).toEqual([
+				homedir() + '/.claude',
+				homedir() + '/.neokai',
+			]);
 		});
 	});
 

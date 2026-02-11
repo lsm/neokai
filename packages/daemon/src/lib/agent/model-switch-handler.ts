@@ -96,8 +96,6 @@ export class ModelSwitchHandler {
 			firstMessageReceived,
 		} = this.ctx;
 
-		logger.log(`Handling model switch to: ${newModel}`);
-
 		try {
 			// Validate the model
 			const isValid = await isValidModel(newModel);
@@ -116,7 +114,6 @@ export class ModelSwitchHandler {
 
 			// Check if already using this model (compare resolved IDs)
 			if (currentResolvedModel === resolvedModel) {
-				logger.log(`Already using model: ${resolvedModel}`);
 				return {
 					success: true,
 					model: resolvedModel,
@@ -127,13 +124,13 @@ export class ModelSwitchHandler {
 			const previousModel = session.config.model;
 
 			// Emit model switching event
-			await messageHub.publish(
+			messageHub.event(
 				'session.model-switching',
 				{
 					from: previousModel,
 					to: resolvedModel,
 				},
-				{ sessionId: session.id }
+				{ room: `session:${session.id}` }
 			);
 
 			// Check if query is running AND ProcessTransport is ready
@@ -147,16 +144,12 @@ export class ModelSwitchHandler {
 			const isCrossProviderSwitch = currentProviderInstance?.id !== newProviderInstance?.id;
 
 			if (isCrossProviderSwitch) {
-				const currentProviderId = currentProviderInstance?.id || 'unknown';
-				const newProviderId = newProviderInstance?.id || 'unknown';
-				logger.log(`Cross-provider switch detected: ${currentProviderId} → ${newProviderId}`);
+				const _currentProviderId = currentProviderInstance?.id || 'unknown';
+				const _newProviderId = newProviderInstance?.id || 'unknown';
 			}
 
 			if (!queryObject || !transportReady) {
 				// Query not started yet OR transport not ready - just update config
-				logger.log(
-					`${!queryObject ? 'Query not started yet' : 'ProcessTransport not ready yet'}, updating config only`
-				);
 				session.config.model = resolvedModel;
 				db.updateSession(session.id, {
 					config: session.config,
@@ -176,7 +169,6 @@ export class ModelSwitchHandler {
 				// FIX: SDK's setModel() doesn't update the cached system:init message,
 				// causing MessageInfoDropdown to show stale model info.
 				// Restarting forces SDK to emit fresh system:init with correct model.
-				logger.log(`Restarting query for model switch to ${resolvedModel}`);
 
 				// Update session config first (will be used when query restarts)
 				session.config.model = resolvedModel;
@@ -194,22 +186,18 @@ export class ModelSwitchHandler {
 				// Restart the query via lifecycle manager
 				// This spawns a new SDK subprocess with the new model configuration
 				await lifecycleManager.restart();
-
-				logger.log(`Query restarted for model switch to ${resolvedModel}`);
 			}
 
 			// Emit success event
-			await messageHub.publish(
+			messageHub.event(
 				'session.model-switched',
 				{
 					from: previousModel,
 					to: resolvedModel,
 					modelInfo: modelInfo || null,
 				},
-				{ sessionId: session.id }
+				{ room: `session:${session.id}` }
 			);
-
-			logger.log(`Model switched successfully to: ${resolvedModel}`);
 
 			return {
 				success: true,

@@ -2,198 +2,88 @@
 /**
  * Tests for useInterrupt Hook
  *
- * Tests agent interrupt functionality including error handling and Escape key.
+ * Tests agent interrupt functionality including:
+ * - Initial state
+ * - Session change reset
+ * - Interrupt flow (connected / disconnected)
+ * - Error handling
+ * - Debounce behavior
  */
 
-import { renderHook, act } from '@testing-library/preact';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { useInterrupt } from '../useInterrupt.ts';
-import { connectionManager } from '../../lib/connection-manager.ts';
-import { toast } from '../../lib/toast.ts';
-import { isAgentWorking } from '../../lib/state.ts';
+import { renderHook, act } from '@testing-library/preact';
 
-// Mock the dependencies
-vi.mock('../../lib/connection-manager.ts', () => ({
+// Define mock functions
+const { mockGetHubIfConnected, mockToastError } = vi.hoisted(() => ({
+	mockGetHubIfConnected: vi.fn(),
+	mockToastError: vi.fn(),
+}));
+
+vi.mock('../../lib/connection-manager', () => ({
 	connectionManager: {
-		getHubIfConnected: vi.fn(),
+		getHubIfConnected: () => mockGetHubIfConnected(),
 	},
 }));
 
-vi.mock('../../lib/toast.ts', () => ({
+vi.mock('../../lib/toast', () => ({
 	toast: {
-		error: vi.fn(),
+		error: (...args: unknown[]) => mockToastError(...args),
 	},
 }));
 
-vi.mock('../../lib/state.ts', () => ({
-	isAgentWorking: { value: false },
-}));
+import { useInterrupt } from '../useInterrupt';
 
 describe('useInterrupt', () => {
-	const mockHub = {
-		call: vi.fn(),
-	};
-
 	beforeEach(() => {
-		vi.clearAllMocks();
 		vi.useFakeTimers();
-		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
-		(isAgentWorking as { value: boolean }).value = false;
+		vi.resetAllMocks();
+		mockGetHubIfConnected.mockReturnValue(null);
 	});
 
 	afterEach(() => {
 		vi.useRealTimers();
+		vi.resetAllMocks();
 	});
 
-	describe('initialization', () => {
-		it('should initialize with interrupting as false', () => {
+	describe('initial state', () => {
+		it('should return interrupting as false initially', () => {
 			const { result } = renderHook(() => useInterrupt({ sessionId: 'session-1' }));
-
 			expect(result.current.interrupting).toBe(false);
 		});
 
-		it('should provide handleInterrupt function', () => {
+		it('should return handleInterrupt as a function', () => {
 			const { result } = renderHook(() => useInterrupt({ sessionId: 'session-1' }));
-
 			expect(typeof result.current.handleInterrupt).toBe('function');
 		});
 	});
 
-	describe('session change', () => {
-		it('should reset interrupting state when sessionId changes', () => {
+	describe('session change reset', () => {
+		it('should reset interrupting state when sessionId changes', async () => {
+			const mockHub = {
+				request: vi.fn().mockResolvedValue(undefined),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+
 			const { result, rerender } = renderHook(({ sessionId }) => useInterrupt({ sessionId }), {
 				initialProps: { sessionId: 'session-1' },
 			});
 
-			// Start interrupt to set interrupting=true (may not work without connection, but tests state management)
-			act(() => {
-				result.current.handleInterrupt();
-			});
-
-			// Change session - should reset interrupting
-			rerender({ sessionId: 'session-2' });
-
-			expect(result.current.interrupting).toBe(false);
-		});
-
-		it('should return a new handleInterrupt callback when sessionId changes', () => {
-			const { result, rerender } = renderHook(({ sessionId }) => useInterrupt({ sessionId }), {
-				initialProps: { sessionId: 'session-1' },
-			});
-
-			const _firstCallback = result.current.handleInterrupt;
-
-			rerender({ sessionId: 'session-2' });
-
-			// Callback should be different due to sessionId dependency
-			expect(typeof result.current.handleInterrupt).toBe('function');
-		});
-	});
-
-	describe('handleInterrupt behavior', () => {
-		it('should be callable without throwing', async () => {
-			const { result } = renderHook(() => useInterrupt({ sessionId: 'session-1' }));
-
-			// Should not throw even if connection fails
+			// Trigger interrupt
 			await act(async () => {
 				await result.current.handleInterrupt();
-			});
-
-			// Should have returned (either success or failure handled gracefully)
-			expect(true).toBe(true);
-		});
-	});
-
-	describe('function stability', () => {
-		it('should return handleInterrupt function on each render', () => {
-			const { result, rerender } = renderHook(() => useInterrupt({ sessionId: 'session-1' }));
-
-			expect(typeof result.current.handleInterrupt).toBe('function');
-
-			rerender();
-
-			expect(typeof result.current.handleInterrupt).toBe('function');
-		});
-	});
-
-	describe('hub connection', () => {
-		it('should show error toast when hub is not connected', async () => {
-			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
-
-			const { result } = renderHook(() => useInterrupt({ sessionId: 'session-1' }));
-
-			await act(async () => {
-				await result.current.handleInterrupt();
-			});
-
-			expect(toast.error).toHaveBeenCalledWith('Not connected to server');
-		});
-
-		it('should call hub.call when connected', async () => {
-			mockHub.call.mockResolvedValue({});
-			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
-
-			const { result } = renderHook(() => useInterrupt({ sessionId: 'session-1' }));
-
-			await act(async () => {
-				await result.current.handleInterrupt();
-			});
-
-			expect(mockHub.call).toHaveBeenCalledWith('client.interrupt', { sessionId: 'session-1' });
-		});
-
-		it('should set interrupting to true during interrupt', async () => {
-			mockHub.call.mockResolvedValue({});
-			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
-
-			const { result } = renderHook(() => useInterrupt({ sessionId: 'session-1' }));
-
-			// Start interrupt
-			act(() => {
-				result.current.handleInterrupt();
 			});
 
 			expect(result.current.interrupting).toBe(true);
 
-			// Wait for promise to resolve
-			await act(async () => {
-				await Promise.resolve();
-			});
-
-			// Wait for timeout to reset interrupting
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(600);
-			});
-
+			// Change session - should reset interrupting
+			rerender({ sessionId: 'session-2' });
 			expect(result.current.interrupting).toBe(false);
-		});
-
-		it('should not call interrupt again while interrupting', async () => {
-			mockHub.call.mockResolvedValue({});
-			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
-
-			const { result } = renderHook(() => useInterrupt({ sessionId: 'session-1' }));
-
-			// Start first interrupt
-			act(() => {
-				result.current.handleInterrupt();
-			});
-
-			// Try to interrupt again
-			act(() => {
-				result.current.handleInterrupt();
-			});
-
-			// Should only have called once
-			expect(mockHub.call).toHaveBeenCalledTimes(1);
 		});
 	});
 
-	describe('error handling', () => {
-		it('should show error toast and log when hub.call fails', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-			mockHub.call.mockRejectedValue(new Error('Network error'));
-			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+	describe('handleInterrupt - not connected', () => {
+		it('should show toast error when not connected', async () => {
+			mockGetHubIfConnected.mockReturnValue(null);
 
 			const { result } = renderHook(() => useInterrupt({ sessionId: 'session-1' }));
 
@@ -201,15 +91,16 @@ describe('useInterrupt', () => {
 				await result.current.handleInterrupt();
 			});
 
-			expect(consoleSpy).toHaveBeenCalledWith('Interrupt error:', expect.any(Error));
-			expect(toast.error).toHaveBeenCalledWith('Failed to stop generation');
-			consoleSpy.mockRestore();
+			expect(mockToastError).toHaveBeenCalledWith('Not connected to server');
 		});
+	});
 
-		it('should reset interrupting state after error', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-			mockHub.call.mockRejectedValue(new Error('Network error'));
-			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+	describe('handleInterrupt - connected', () => {
+		it('should call client.interrupt with sessionId', async () => {
+			const mockHub = {
+				request: vi.fn().mockResolvedValue(undefined),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
 
 			const { result } = renderHook(() => useInterrupt({ sessionId: 'session-1' }));
 
@@ -217,132 +108,106 @@ describe('useInterrupt', () => {
 				await result.current.handleInterrupt();
 			});
 
-			// Wait for timeout to reset interrupting
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(600);
-			});
-
-			expect(result.current.interrupting).toBe(false);
-			consoleSpy.mockRestore();
-		});
-	});
-
-	describe('Escape key handling', () => {
-		it('should call handleInterrupt on Escape when agent is working', async () => {
-			mockHub.call.mockResolvedValue({});
-			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
-			(isAgentWorking as { value: boolean }).value = true;
-
-			renderHook(() => useInterrupt({ sessionId: 'session-1' }));
-
-			// Simulate Escape key press
-			const escapeEvent = new KeyboardEvent('keydown', {
-				key: 'Escape',
-				bubbles: true,
-				cancelable: true,
-			});
-			document.dispatchEvent(escapeEvent);
-
-			// Wait for async handling
-			await act(async () => {
-				await Promise.resolve();
-			});
-
-			expect(mockHub.call).toHaveBeenCalledWith('client.interrupt', { sessionId: 'session-1' });
+			expect(mockHub.request).toHaveBeenCalledWith('client.interrupt', { sessionId: 'session-1' });
 		});
 
-		it('should not call handleInterrupt on Escape when agent is not working', async () => {
-			mockHub.call.mockResolvedValue({});
-			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
-			(isAgentWorking as { value: boolean }).value = false;
-
-			renderHook(() => useInterrupt({ sessionId: 'session-1' }));
-
-			// Simulate Escape key press
-			const escapeEvent = new KeyboardEvent('keydown', {
-				key: 'Escape',
-				bubbles: true,
-			});
-			document.dispatchEvent(escapeEvent);
-
-			expect(mockHub.call).not.toHaveBeenCalled();
-		});
-
-		it('should not call handleInterrupt on Escape when already interrupting', async () => {
-			mockHub.call.mockResolvedValue({});
-			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
-			(isAgentWorking as { value: boolean }).value = true;
+		it('should set interrupting to true during request', async () => {
+			const mockHub = {
+				request: vi.fn().mockResolvedValue(undefined),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
 
 			const { result } = renderHook(() => useInterrupt({ sessionId: 'session-1' }));
 
-			// Start first interrupt
-			act(() => {
-				result.current.handleInterrupt();
+			await act(async () => {
+				await result.current.handleInterrupt();
 			});
 
-			// Simulate Escape key press while interrupting
-			const escapeEvent = new KeyboardEvent('keydown', {
-				key: 'Escape',
-				bubbles: true,
-			});
-			document.dispatchEvent(escapeEvent);
-
-			// Should only have called once from the first handleInterrupt
-			expect(mockHub.call).toHaveBeenCalledTimes(1);
+			// Should still be true (500ms timeout hasn't elapsed)
+			expect(result.current.interrupting).toBe(true);
 		});
 
-		it('should not call handleInterrupt on other keys', async () => {
-			mockHub.call.mockResolvedValue({});
-			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
-			(isAgentWorking as { value: boolean }).value = true;
+		it('should reset interrupting after 500ms timeout', async () => {
+			const mockHub = {
+				request: vi.fn().mockResolvedValue(undefined),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
 
-			renderHook(() => useInterrupt({ sessionId: 'session-1' }));
+			const { result } = renderHook(() => useInterrupt({ sessionId: 'session-1' }));
 
-			// Simulate other key press
-			const enterEvent = new KeyboardEvent('keydown', {
-				key: 'Enter',
-				bubbles: true,
+			await act(async () => {
+				await result.current.handleInterrupt();
 			});
-			document.dispatchEvent(enterEvent);
 
-			expect(mockHub.call).not.toHaveBeenCalled();
+			expect(result.current.interrupting).toBe(true);
+
+			// Advance timer by 500ms
+			await act(async () => {
+				vi.advanceTimersByTime(500);
+			});
+
+			expect(result.current.interrupting).toBe(false);
 		});
 
-		it('should prevent default on Escape when interrupting', async () => {
-			mockHub.call.mockResolvedValue({});
-			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
-			(isAgentWorking as { value: boolean }).value = true;
+		it('should not call interrupt again if already interrupting', async () => {
+			const mockHub = {
+				request: vi.fn().mockResolvedValue(undefined),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
 
-			renderHook(() => useInterrupt({ sessionId: 'session-1' }));
+			const { result } = renderHook(() => useInterrupt({ sessionId: 'session-1' }));
 
-			// Simulate Escape key press
-			const escapeEvent = new KeyboardEvent('keydown', {
-				key: 'Escape',
-				bubbles: true,
-				cancelable: true,
+			await act(async () => {
+				await result.current.handleInterrupt();
 			});
-			const preventDefaultSpy = vi.spyOn(escapeEvent, 'preventDefault');
 
-			document.dispatchEvent(escapeEvent);
+			// Try to interrupt again while still interrupting
+			await act(async () => {
+				await result.current.handleInterrupt();
+			});
 
-			expect(preventDefaultSpy).toHaveBeenCalled();
+			// Should only have been called once
+			expect(mockHub.request).toHaveBeenCalledTimes(1);
 		});
 	});
 
-	describe('cleanup', () => {
-		it('should remove event listener on unmount', async () => {
-			mockHub.call.mockResolvedValue({});
-			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
-			(isAgentWorking as { value: boolean }).value = true;
+	describe('handleInterrupt - error handling', () => {
+		it('should show toast error when request fails', async () => {
+			const mockHub = {
+				request: vi.fn().mockRejectedValue(new Error('Network error')),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
 
-			const removeEventListenerSpy = vi.spyOn(document, 'removeEventListener');
+			const { result } = renderHook(() => useInterrupt({ sessionId: 'session-1' }));
 
-			const { unmount } = renderHook(() => useInterrupt({ sessionId: 'session-1' }));
+			await act(async () => {
+				await result.current.handleInterrupt();
+			});
 
-			unmount();
+			expect(mockToastError).toHaveBeenCalledWith('Failed to stop generation');
+		});
 
-			expect(removeEventListenerSpy).toHaveBeenCalledWith('keydown', expect.any(Function));
-			removeEventListenerSpy.mockRestore();
+		it('should still reset interrupting after error', async () => {
+			const mockHub = {
+				request: vi.fn().mockRejectedValue(new Error('Network error')),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+
+			const { result } = renderHook(() => useInterrupt({ sessionId: 'session-1' }));
+
+			await act(async () => {
+				await result.current.handleInterrupt();
+			});
+
+			// Should still be in interrupting state
+			expect(result.current.interrupting).toBe(true);
+
+			// Should reset after 500ms
+			await act(async () => {
+				vi.advanceTimersByTime(500);
+			});
+
+			expect(result.current.interrupting).toBe(false);
 		});
 	});
 });

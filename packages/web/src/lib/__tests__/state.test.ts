@@ -459,6 +459,10 @@ describe('state', () => {
 				subscribe: vi.fn(),
 				unsubscribe: vi.fn(),
 				call: vi.fn(),
+				request: vi.fn().mockResolvedValue({ acknowledged: true }),
+				onEvent: vi.fn(() => vi.fn()),
+				joinRoom: vi.fn(),
+				leaveRoom: vi.fn(),
 			};
 			mockSessionId = signal<string | null>(null);
 
@@ -592,6 +596,10 @@ describe('state', () => {
 				subscribe: vi.fn(),
 				unsubscribe: vi.fn(),
 				call: vi.fn(),
+				request: vi.fn().mockResolvedValue({ acknowledged: true }),
+				onEvent: vi.fn(() => vi.fn()),
+				joinRoom: vi.fn(),
+				leaveRoom: vi.fn(),
 			};
 			mockSessionId = signal<string | null>(null);
 			vi.useFakeTimers();
@@ -671,6 +679,10 @@ describe('state', () => {
 				subscribe: vi.fn(),
 				unsubscribe: vi.fn(),
 				call: vi.fn(),
+				request: vi.fn().mockResolvedValue({ acknowledged: true }),
+				onEvent: vi.fn(() => vi.fn()),
+				joinRoom: vi.fn(),
+				leaveRoom: vi.fn(),
 			};
 			mockSessionId = signal<string | null>(null);
 			appState.cleanup();

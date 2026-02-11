@@ -121,8 +121,6 @@ export class SessionManager {
 		const unsubMessageSendRequest = this.eventBus.on('message.sendRequest', async (data) => {
 			const { sessionId, messageId, content, images } = data;
 
-			this.logger.info(`[SessionManager] Processing message:send:request for session ${sessionId}`);
-
 			await this.messagePersistence.persist({
 				sessionId,
 				messageId,
@@ -137,8 +135,6 @@ export class SessionManager {
 		const unsubMessagePersisted = this.eventBus.on('message.persisted', async (data) => {
 			const { sessionId, userMessageText, needsWorkspaceInit, hasDraftToClear } = data;
 
-			this.logger.info(`[SessionManager] Processing message:persisted for session ${sessionId}`);
-
 			try {
 				// STEP 1: Generate title and rename branch (if needed)
 				// Only run if workspace initialization is needed (first message)
@@ -146,12 +142,8 @@ export class SessionManager {
 				if (needsWorkspaceInit) {
 					// BARRIER: Skip new background tasks during cleanup
 					// This prevents race conditions where tasks complete during shutdown
-					if (this.cleanupState !== CleanupState.IDLE) {
-						this.logger.warn(
-							`[SessionManager] Skipping title generation during cleanup (state: ${this.cleanupState})`
-						);
-						return;
-					}
+					/* v8 ignore next */
+					if (this.cleanupState !== CleanupState.IDLE) return;
 
 					const titleGenTask = this.sessionLifecycle
 						.generateTitleAndRenameBranch(sessionId, userMessageText)
@@ -175,10 +167,6 @@ export class SessionManager {
 						metadata: { inputDraft: undefined },
 					} as Partial<Session>);
 				}
-
-				this.logger.info(
-					`[SessionManager] Post-persistence processing complete for session ${sessionId}`
-				);
 			} catch (error) {
 				this.logger.error(
 					`[SessionManager] Error in post-persistence processing for session ${sessionId}:`,
@@ -188,8 +176,6 @@ export class SessionManager {
 			}
 		});
 		this.eventBusUnsubscribers.push(unsubMessagePersisted);
-
-		this.logger.info('[SessionManager] EventBus subscriptions setup complete');
 	}
 
 	// ==================== Session CRUD Operations ====================
@@ -314,25 +300,15 @@ export class SessionManager {
 	async cleanup(): Promise<void> {
 		// State check: prevent concurrent cleanup
 		if (this.cleanupState !== CleanupState.IDLE) {
-			this.logger.warn(
-				`[SessionManager] Cleanup already in progress or complete (state: ${this.cleanupState})`
-			);
 			return;
 		}
 
-		const cleanupStart = Date.now();
-		this.logger.info(
-			`[SessionManager] Starting cleanup for ${this.sessionCache.getActiveCount()} active sessions...`
-		);
-
 		// Transition to CLEANING state - sets the barrier for new background tasks
 		this.cleanupState = CleanupState.CLEANING;
-		this.logger.info(`[SessionManager] Cleanup state: IDLE → CLEANING`);
 
 		try {
 			// PHASE 1: Unsubscribe from EventBus FIRST
 			// This prevents new events from being processed during cleanup
-			const phase1Start = Date.now();
 			for (const unsubscribe of this.eventBusUnsubscribers) {
 				try {
 					unsubscribe();
@@ -341,27 +317,19 @@ export class SessionManager {
 				}
 			}
 			this.eventBusUnsubscribers = [];
-			this.logger.info(
-				`[SessionManager] PHASE 1: EventBus unsubscribed (${Date.now() - phase1Start}ms)`
-			);
 
 			// PHASE 2: Wait for pending background tasks (like title generation) with timeout
 			// These are fire-and-forget operations from EventBus handlers
 			// The cleanup barrier prevents new tasks from starting
 			// Use a timeout to prevent hanging in CI when title generation takes too long
-			const phase2Start = Date.now();
 			const BACKGROUND_TASK_TIMEOUT_MS = 5000; // 5 seconds max wait
 
 			if (this.pendingBackgroundTasks.size > 0) {
-				this.logger.info(
-					`[SessionManager] PHASE 2A: Waiting for ${this.pendingBackgroundTasks.size} pending background tasks (max ${BACKGROUND_TASK_TIMEOUT_MS}ms)...`
-				);
-
 				const timeoutPromise = new Promise<'timeout'>((resolve) =>
 					setTimeout(() => resolve('timeout'), BACKGROUND_TASK_TIMEOUT_MS)
 				);
 
-				const result = await Promise.race([
+				await Promise.race([
 					Promise.all(Array.from(this.pendingBackgroundTasks))
 						.then(() => 'completed' as const)
 						.catch((error) => {
@@ -371,56 +339,29 @@ export class SessionManager {
 					timeoutPromise,
 				]);
 
-				if (result === 'timeout') {
-					this.logger.warn(
-						`[SessionManager] PHASE 2: Background tasks timed out after ${BACKGROUND_TASK_TIMEOUT_MS}ms, proceeding with cleanup`
-					);
-				} else {
-					this.logger.info(
-						`[SessionManager] PHASE 2: Background tasks ${result} (${Date.now() - phase2Start}ms)`
-					);
-				}
 				this.pendingBackgroundTasks.clear();
-			} else {
-				this.logger.info(
-					`[SessionManager] PHASE 2: No background tasks (${Date.now() - phase2Start}ms)`
-				);
 			}
 
 			// PHASE 3: Cleanup all in-memory sessions in parallel
 			// CRITICAL: Each AgentSession.cleanup() now properly stops SDK queries
 			// with lifecycle manager, ensuring subprocesses exit before we continue
-			const phase3Start = Date.now();
 			const cleanupPromises: Promise<void>[] = [];
 			for (const [sessionId, agentSession] of this.sessionCache.entries()) {
-				const sessionStart = Date.now();
 				cleanupPromises.push(
-					agentSession
-						.cleanup()
-						.then(() => {
-							this.logger.debug(
-								`[SessionManager] Session ${sessionId.slice(0, 8)}... cleanup took ${Date.now() - sessionStart}ms`
-							);
-						})
-						.catch((error) => {
-							this.logger.error(`[SessionManager] Error cleaning up session ${sessionId}:`, error);
-						})
+					agentSession.cleanup().catch((error) => {
+						this.logger.error(`[SessionManager] Error cleaning up session ${sessionId}:`, error);
+					})
 				);
 			}
 
 			// Wait for all cleanups to complete
 			await Promise.all(cleanupPromises);
-			this.logger.info(
-				`[SessionManager] PHASE 3: All ${this.sessionCache.getActiveCount()} sessions cleaned (${Date.now() - phase3Start}ms)`
-			);
 
 			// Clear session cache
 			this.sessionCache.clear();
 
 			// Transition to CLEANED state
 			this.cleanupState = CleanupState.CLEANED;
-			this.logger.info(`[SessionManager] Cleanup state: CLEANING → CLEANED`);
-			this.logger.info(`[SessionManager] Total cleanup time: ${Date.now() - cleanupStart}ms`);
 		} catch (error) {
 			// On failure, rollback to IDLE to allow retry
 			this.cleanupState = CleanupState.IDLE;
@@ -442,7 +383,6 @@ export class SessionManager {
 	 */
 	async cleanupOrphanedWorktrees(workspacePath?: string): Promise<string[]> {
 		const path = workspacePath || this.config.workspaceRoot;
-		this.logger.info(`[SessionManager] Cleaning up orphaned worktrees in ${path}`);
 		return await this.worktreeManager.cleanupOrphanedWorktrees(path);
 	}
 

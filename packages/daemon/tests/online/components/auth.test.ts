@@ -14,8 +14,8 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { createDaemonServer } from '../helpers/daemon-server-helper';
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import { createDaemonServer } from '../../helpers/daemon-server';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
@@ -36,7 +36,7 @@ describe('Authentication Integration (API-dependent)', () => {
 
 	describe('Session Creation with Auth', () => {
 		test('should create session only if authenticated', async () => {
-			const result = (await daemon.messageHub.call('session.create', {
+			const result = (await daemon.messageHub.request('session.create', {
 				workspacePath: `${TMP_DIR}/test-auth`,
 				title: 'Auth Test Session',
 				config: { model: 'haiku-4.5' },
@@ -46,7 +46,7 @@ describe('Authentication Integration (API-dependent)', () => {
 			expect(result.sessionId).toBeString();
 
 			// Verify session was created via RPC
-			const sessionResult = (await daemon.messageHub.call('session.get', {
+			const sessionResult = (await daemon.messageHub.request('session.get', {
 				sessionId: result.sessionId,
 			})) as { session: Record<string, unknown> };
 

@@ -133,7 +133,7 @@ export function useSessionActions({
 				return;
 			}
 
-			const result = await hub.call<{ success: boolean; error?: string }>('session.resetQuery', {
+			const result = await hub.request<{ success: boolean; error?: string }>('session.resetQuery', {
 				sessionId,
 				restartQuery: true,
 			});
@@ -162,7 +162,7 @@ export function useSessionActions({
 				toast.error('Not connected to server');
 				return;
 			}
-			const result = await hub.call<{ markdown: string }>('session.export', {
+			const result = await hub.request<{ markdown: string }>('session.export', {
 				sessionId,
 				format: 'markdown',
 			});
@@ -176,8 +176,7 @@ export function useSessionActions({
 			document.body.removeChild(a);
 			URL.revokeObjectURL(url);
 			toast.success('Chat exported!');
-		} catch (err) {
-			console.error('Failed to export chat:', err);
+		} catch {
 			toast.error('Failed to export chat');
 		}
 	}, [sessionId, session?.title, isConnected]);

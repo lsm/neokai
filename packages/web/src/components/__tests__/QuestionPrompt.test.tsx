@@ -923,7 +923,6 @@ describe('QuestionPrompt', () => {
 
 	describe('Error handling', () => {
 		it('should handle submit error gracefully', async () => {
-			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockCallIfConnected.mockRejectedValue(new Error('Submit failed'));
 
 			const { container } = render(
@@ -949,17 +948,11 @@ describe('QuestionPrompt', () => {
 			// Wait for async operation
 			await new Promise((resolve) => setTimeout(resolve, 50));
 
-			// Error should have been logged
-			expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to submit response:', expect.any(Error));
-
 			// onResolved should NOT have been called since submit failed
 			expect(mockOnResolved).not.toHaveBeenCalled();
-
-			consoleErrorSpy.mockRestore();
 		});
 
 		it('should handle cancel error gracefully', async () => {
-			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockCallIfConnected.mockRejectedValue(new Error('Cancel failed'));
 
 			const { container } = render(
@@ -979,17 +972,11 @@ describe('QuestionPrompt', () => {
 			// Wait for async operation
 			await new Promise((resolve) => setTimeout(resolve, 50));
 
-			// Error should have been logged
-			expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to cancel:', expect.any(Error));
-
 			// onResolved should NOT have been called since cancel failed
 			expect(mockOnResolved).not.toHaveBeenCalled();
-
-			consoleErrorSpy.mockRestore();
 		});
 
 		it('should handle draft save error gracefully', async () => {
-			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockCallIfConnected.mockRejectedValue(new Error('Draft save failed'));
 
 			const { container } = render(
@@ -1005,10 +992,7 @@ describe('QuestionPrompt', () => {
 			// Wait for debounced draft save (500ms + buffer)
 			await new Promise((resolve) => setTimeout(resolve, 600));
 
-			// Error should have been logged
-			expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to save draft:', expect.any(Error));
-
-			consoleErrorSpy.mockRestore();
+			// Draft save error should be handled gracefully (no throw)
 		});
 	});
 

@@ -3,7 +3,7 @@ import { serve } from 'bun';
 const DAEMON_URL = process.env.DAEMON_URL || 'http://localhost:8283';
 const PORT = process.env.PORT || 9283;
 
-const server = serve({
+serve({
 	port: PORT,
 	async fetch(req) {
 		const url = new URL(req.url);
@@ -20,8 +20,8 @@ const server = serve({
 				});
 
 				return response;
-			} catch (error) {
-				console.error('API proxy error:', error);
+			} catch {
+				// Proxy error - return error response to client
 				return new Response(JSON.stringify({ error: 'Failed to connect to daemon' }), {
 					status: 502,
 					headers: { 'Content-Type': 'application/json' },
@@ -41,7 +41,3 @@ const server = serve({
 		return new Response(Bun.file('./dist/index.html'));
 	},
 });
-
-console.log(`🚀 NeoKai Web UI running on ${server.url}`);
-console.log(`📡 Proxying API requests to ${DAEMON_URL}`);
-console.log(`📦 Serving static files from ./dist`);

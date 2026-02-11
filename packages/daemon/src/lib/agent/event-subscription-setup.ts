@@ -62,7 +62,6 @@ export class EventSubscriptionSetup {
 		const unsubModelSwitch = daemonHub.on(
 			'model.switchRequest',
 			async ({ sessionId: sid, model }) => {
-				this.logger.log(`Received model.switchRequest for model: ${model}`);
 				const result = await modelSwitchHandler.switchModel(model);
 
 				// Emit result
@@ -81,7 +80,6 @@ export class EventSubscriptionSetup {
 		const unsubInterrupt = daemonHub.on(
 			'agent.interruptRequest',
 			async ({ sessionId: sid }) => {
-				this.logger.log('Received agent.interruptRequest');
 				await interruptHandler.handleInterrupt();
 				await daemonHub.emit('agent.interrupted', { sessionId: sid });
 			},
@@ -93,7 +91,6 @@ export class EventSubscriptionSetup {
 		const unsubReset = daemonHub.on(
 			'agent.resetRequest',
 			async ({ sessionId: sid, restartQuery }) => {
-				this.logger.log(`Received agent.resetRequest (restartQuery: ${restartQuery})`);
 				const result = await this.ctx.resetQuery({ restartQuery: restartQuery ?? true });
 
 				await daemonHub.emit('agent.reset', {
@@ -110,7 +107,6 @@ export class EventSubscriptionSetup {
 		const unsubMessagePersisted = daemonHub.on(
 			'message.persisted',
 			async (data) => {
-				this.logger.log(`Received message.persisted event (messageId: ${data.messageId})`);
 				// Start query and enqueue message
 				// Note: User messages in the DB serve as rewind points - no separate checkpoint tracking needed
 				await this.ctx.startQueryAndEnqueue(
@@ -126,7 +122,6 @@ export class EventSubscriptionSetup {
 		const unsubQueryTrigger = daemonHub.on(
 			'query.trigger',
 			async () => {
-				this.logger.log('Received query.trigger event');
 				await queryModeHandler.handleQueryTrigger();
 			},
 			{ sessionId }
@@ -137,14 +132,11 @@ export class EventSubscriptionSetup {
 		const unsubSendQueuedOnTurnEnd = daemonHub.on(
 			'query.sendQueuedOnTurnEnd',
 			async () => {
-				this.logger.log('Received query.sendQueuedOnTurnEnd event');
 				await queryModeHandler.sendQueuedMessagesOnTurnEnd();
 			},
 			{ sessionId }
 		);
 		this.unsubscribers.push(unsubSendQueuedOnTurnEnd);
-
-		this.logger.log('DaemonHub subscriptions initialized with session filtering');
 	}
 
 	/**

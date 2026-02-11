@@ -12,17 +12,20 @@ describe('EnvManager', () => {
 	let originalApiKey: string | undefined;
 	let originalOAuthToken: string | undefined;
 	let originalAuthToken: string | undefined;
+	let originalGlmApiKey: string | undefined;
 
 	beforeEach(() => {
 		// Save original env vars
 		originalApiKey = process.env.ANTHROPIC_API_KEY;
 		originalOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
 		originalAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
+		originalGlmApiKey = process.env.GLM_API_KEY;
 
 		// Clear env vars for clean test state
 		delete process.env.ANTHROPIC_API_KEY;
 		delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
 		delete process.env.ANTHROPIC_AUTH_TOKEN;
+		delete process.env.GLM_API_KEY;
 
 		envManager = new EnvManager();
 	});
@@ -45,6 +48,12 @@ describe('EnvManager', () => {
 			process.env.ANTHROPIC_AUTH_TOKEN = originalAuthToken;
 		} else {
 			delete process.env.ANTHROPIC_AUTH_TOKEN;
+		}
+
+		if (originalGlmApiKey !== undefined) {
+			process.env.GLM_API_KEY = originalGlmApiKey;
+		} else {
+			delete process.env.GLM_API_KEY;
 		}
 	});
 

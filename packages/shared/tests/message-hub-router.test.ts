@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { MessageHubRouter, type ClientConnection } from '../src/message-hub/router';
 import type { HubMessage } from '../src/message-hub/types';
-import { MessageType, createEventMessage, createCallMessage } from '../src/message-hub/protocol';
+import { MessageType, createEventMessage, createRequestMessage } from '../src/message-hub/protocol';
 import { generateUUID } from '../src/utils';
 
 // Mock WebSocket
@@ -60,6 +60,15 @@ describe('MessageHubRouter', () => {
 			expect(router.getClientCount()).toBe(2);
 		});
 
+		test('should auto-join global room on registration', () => {
+			const conn1 = createMockConnection(mockWs1);
+			const clientId = router.registerConnection(conn1);
+
+			const roomManager = router.getRoomManager();
+			const globalMembers = roomManager.getRoomMembers('global');
+			expect(globalMembers).toContain(clientId);
+		});
+
 		test('should unregister a client', () => {
 			const conn1 = createMockConnection(mockWs1);
 			const clientId = router.registerConnection(conn1);
@@ -69,7 +78,24 @@ describe('MessageHubRouter', () => {
 			expect(router.getClientCount()).toBe(0);
 		});
 
-		test('should get client info by WebSocket', () => {
+		test('should clean up room memberships when client is unregistered', () => {
+			const conn1 = createMockConnection(mockWs1);
+			const clientId = router.registerConnection(conn1);
+
+			router.joinRoom(clientId, 'session1');
+			router.joinRoom(clientId, 'session2');
+
+			const roomManager = router.getRoomManager();
+			expect(roomManager.getRoomMembers('session1')).toContain(clientId);
+			expect(roomManager.getRoomMembers('session2')).toContain(clientId);
+
+			router.unregisterConnection(clientId);
+
+			expect(roomManager.getRoomMembers('session1')).not.toContain(clientId);
+			expect(roomManager.getRoomMembers('session2')).not.toContain(clientId);
+		});
+
+		test('should get client info by clientId', () => {
 			const conn1 = createMockConnection(mockWs1);
 			const clientId = router.registerConnection(conn1);
 			const info = router.getClientById(clientId);
@@ -78,82 +104,91 @@ describe('MessageHubRouter', () => {
 			expect(info?.clientId).toBe(clientId);
 			expect(info?.connection.metadata?.ws).toBe(mockWs1);
 		});
+
+		test('should prevent duplicate registration', () => {
+			const conn1 = createMockConnection(mockWs1, 'client-123');
+			const clientId1 = router.registerConnection(conn1);
+			const clientId2 = router.registerConnection(conn1);
+
+			expect(clientId1).toBe(clientId2);
+			expect(router.getClientCount()).toBe(1);
+		});
 	});
 
-	describe('Subscription Management', () => {
-		test('should subscribe client to method', () => {
+	describe('Room Management', () => {
+		test('should join client to a room', () => {
 			const conn1 = createMockConnection(mockWs1);
 			const clientId = router.registerConnection(conn1);
-			router.subscribe('session1', 'user.created', clientId);
 
-			const count = router.getSubscriptionCount('session1', 'user.created');
-			expect(count).toBe(1);
+			router.joinRoom(clientId, 'session1');
+
+			const roomManager = router.getRoomManager();
+			const members = roomManager.getRoomMembers('session1');
+			expect(members).toContain(clientId);
 		});
 
-		test('should subscribe multiple clients to same method', () => {
+		test('should join client to multiple rooms', () => {
+			const conn1 = createMockConnection(mockWs1);
+			const clientId = router.registerConnection(conn1);
+
+			router.joinRoom(clientId, 'session1');
+			router.joinRoom(clientId, 'session2');
+			router.joinRoom(clientId, 'session3');
+
+			const roomManager = router.getRoomManager();
+			expect(roomManager.getRoomMembers('session1')).toContain(clientId);
+			expect(roomManager.getRoomMembers('session2')).toContain(clientId);
+			expect(roomManager.getRoomMembers('session3')).toContain(clientId);
+		});
+
+		test('should remove client from a room', () => {
+			const conn1 = createMockConnection(mockWs1);
+			const clientId = router.registerConnection(conn1);
+
+			router.joinRoom(clientId, 'session1');
+			const roomManager = router.getRoomManager();
+			expect(roomManager.getRoomMembers('session1')).toContain(clientId);
+
+			router.leaveRoom(clientId, 'session1');
+			expect(roomManager.getRoomMembers('session1')).not.toContain(clientId);
+		});
+
+		test('should handle joining room for non-existent client', () => {
+			expect(() => {
+				router.joinRoom('non-existent-id', 'session1');
+			}).not.toThrow();
+		});
+
+		test('should handle leaving room for non-existent client', () => {
+			expect(() => {
+				router.leaveRoom('non-existent-id', 'session1');
+			}).not.toThrow();
+		});
+	});
+
+	describe('Event Routing with Rooms', () => {
+		test('should route event to all clients in the same room', () => {
 			const conn1 = createMockConnection(mockWs1);
 			const conn2 = createMockConnection(mockWs2);
 			const clientId1 = router.registerConnection(conn1);
 			const clientId2 = router.registerConnection(conn2);
 
-			router.subscribe('session1', 'user.created', clientId1);
-			router.subscribe('session1', 'user.created', clientId2);
-
-			const count = router.getSubscriptionCount('session1', 'user.created');
-			expect(count).toBe(2);
-		});
-
-		test('should unsubscribe client from method', () => {
-			const conn1 = createMockConnection(mockWs1);
-			const clientId = router.registerConnection(conn1);
-			router.subscribe('session1', 'user.created', clientId);
-
-			router.unsubscribeClient('session1', 'user.created', clientId);
-
-			const count = router.getSubscriptionCount('session1', 'user.created');
-			expect(count).toBe(0);
-		});
-
-		test('should track subscriptions per session', () => {
-			const conn1 = createMockConnection(mockWs1);
-			const clientId = router.registerConnection(conn1);
-
-			router.subscribe('session1', 'user.created', clientId);
-			router.subscribe('session2', 'user.created', clientId);
-
-			expect(router.getSubscriptionCount('session1', 'user.created')).toBe(1);
-			expect(router.getSubscriptionCount('session2', 'user.created')).toBe(1);
-		});
-
-		test('should unregister all subscriptions when client is removed', () => {
-			const conn1 = createMockConnection(mockWs1);
-			const clientId = router.registerConnection(conn1);
-
-			router.subscribe('session1', 'user.created', clientId);
-			router.subscribe('session1', 'user.updated', clientId);
-
-			router.unregisterConnection(clientId);
-
-			expect(router.getSubscriptionCount('session1', 'user.created')).toBe(0);
-			expect(router.getSubscriptionCount('session1', 'user.updated')).toBe(0);
-		});
-	});
-
-	describe('Message Routing', () => {
-		test('should route EVENT message to subscribed client', () => {
-			const conn1 = createMockConnection(mockWs1);
-			const clientId = router.registerConnection(conn1);
-			router.subscribe('session1', 'user.created', clientId);
+			router.joinRoom(clientId1, 'session1');
+			router.joinRoom(clientId2, 'session1');
 
 			const eventMessage = createEventMessage({
 				method: 'user.created',
 				data: { userId: '123' },
 				sessionId: 'session1',
 			});
+			eventMessage.room = 'session1';
 
-			router.routeEvent(eventMessage);
+			const result = router.routeEvent(eventMessage);
 
 			expect(mockWs1.sentMessages.length).toBe(1);
+			expect(mockWs2.sentMessages.length).toBe(1);
+			expect(result.sent).toBe(2);
+			expect(result.failed).toBe(0);
 
 			const sentMessage = JSON.parse(mockWs1.sentMessages[0]);
 			expect(sentMessage.type).toBe(MessageType.EVENT);
@@ -161,69 +196,53 @@ describe('MessageHubRouter', () => {
 			expect(sentMessage.data).toEqual({ userId: '123' });
 		});
 
-		test('should route to multiple subscribed clients', () => {
+		test('should route event to global room by default', () => {
+			const conn1 = createMockConnection(mockWs1);
+			const conn2 = createMockConnection(mockWs2);
+			router.registerConnection(conn1); // Auto-joins global
+			router.registerConnection(conn2); // Auto-joins global
+
+			const eventMessage = createEventMessage({
+				method: 'system.update',
+				data: { version: '1.0.0' },
+				sessionId: 'global',
+			});
+			// No room specified - should default to global
+
+			const result = router.routeEvent(eventMessage);
+
+			expect(mockWs1.sentMessages.length).toBe(1);
+			expect(mockWs2.sentMessages.length).toBe(1);
+			expect(result.sent).toBe(2);
+		});
+
+		test('should not route event to clients in different room', () => {
 			const conn1 = createMockConnection(mockWs1);
 			const conn2 = createMockConnection(mockWs2);
 			const clientId1 = router.registerConnection(conn1);
 			const clientId2 = router.registerConnection(conn2);
 
-			router.subscribe('session1', 'user.created', clientId1);
-			router.subscribe('session1', 'user.created', clientId2);
+			router.joinRoom(clientId1, 'session1');
+			router.joinRoom(clientId2, 'session2'); // Different room
 
 			const eventMessage = createEventMessage({
 				method: 'user.created',
 				data: { userId: '123' },
 				sessionId: 'session1',
 			});
+			eventMessage.room = 'session1';
 
 			router.routeEvent(eventMessage);
 
 			expect(mockWs1.sentMessages.length).toBe(1);
-			expect(mockWs2.sentMessages.length).toBe(1);
+			expect(mockWs2.sentMessages.length).toBe(0); // Not in room
 		});
 
-		test('should not route to unsubscribed clients', () => {
-			const conn1 = createMockConnection(mockWs1);
-			const conn2 = createMockConnection(mockWs2);
-			const clientId1 = router.registerConnection(conn1);
-			const _clientId2 = router.registerConnection(conn2);
-
-			router.subscribe('session1', 'user.created', clientId1);
-			// clientId2 is not subscribed
-
-			const eventMessage = createEventMessage({
-				method: 'user.created',
-				data: { userId: '123' },
-				sessionId: 'session1',
-			});
-
-			router.routeEvent(eventMessage);
-
-			expect(mockWs1.sentMessages.length).toBe(1);
-			expect(mockWs2.sentMessages.length).toBe(0);
-		});
-
-		test('should not route to wrong session', () => {
+		test('should skip clients with closed connections', () => {
 			const conn1 = createMockConnection(mockWs1);
 			const clientId = router.registerConnection(conn1);
-			router.subscribe('session1', 'user.created', clientId);
 
-			const eventMessage = createEventMessage({
-				method: 'user.created',
-				data: { userId: '123' },
-				sessionId: 'session2', // Different session
-			});
-
-			router.routeEvent(eventMessage);
-
-			expect(mockWs1.sentMessages.length).toBe(0);
-		});
-
-		test('should skip clients with closed WebSocket', () => {
-			const conn1 = createMockConnection(mockWs1);
-			const clientId = router.registerConnection(conn1);
-			router.subscribe('session1', 'user.created', clientId);
-
+			router.joinRoom(clientId, 'session1');
 			mockWs1.close();
 
 			const eventMessage = createEventMessage({
@@ -231,11 +250,87 @@ describe('MessageHubRouter', () => {
 				data: { userId: '123' },
 				sessionId: 'session1',
 			});
+			eventMessage.room = 'session1';
 
-			router.routeEvent(eventMessage);
+			const result = router.routeEvent(eventMessage);
 
-			// Should not send to closed WebSocket
 			expect(mockWs1.sentMessages.length).toBe(0);
+			expect(result.sent).toBe(0);
+			expect(result.failed).toBe(1);
+		});
+
+		test('should return zero stats for room with no members', () => {
+			const eventMessage = createEventMessage({
+				method: 'unsubscribed.event',
+				data: {},
+				sessionId: 'session1',
+			});
+			eventMessage.room = 'empty-room';
+
+			const result = router.routeEvent(eventMessage);
+
+			expect(result.sent).toBe(0);
+			expect(result.failed).toBe(0);
+			expect(result.totalSubscribers).toBe(0);
+		});
+	});
+
+	describe('routeEventToRoom', () => {
+		test('should route event explicitly to room', () => {
+			const conn1 = createMockConnection(mockWs1);
+			const conn2 = createMockConnection(mockWs2);
+			const clientId1 = router.registerConnection(conn1);
+			const clientId2 = router.registerConnection(conn2);
+
+			router.joinRoom(clientId1, 'session1');
+			router.joinRoom(clientId2, 'session1');
+
+			const eventMessage = createEventMessage({
+				method: 'chat.message',
+				data: { text: 'Hello' },
+				sessionId: 'session1',
+			});
+			eventMessage.room = 'session1';
+
+			const result = router.routeEventToRoom(eventMessage);
+
+			expect(result.sent).toBe(2);
+			expect(result.failed).toBe(0);
+			expect(result.totalSubscribers).toBe(2);
+			expect(result.sessionId).toBe('session1');
+			expect(result.method).toBe('chat.message');
+		});
+
+		test('should return delivery statistics from routeEventToRoom', () => {
+			const conn1 = createMockConnection(mockWs1);
+			const conn2 = createMockConnection(mockWs2);
+			const mockWs3 = new MockWebSocket();
+			const conn3 = createMockConnection(mockWs3);
+			const clientId1 = router.registerConnection(conn1);
+			const clientId2 = router.registerConnection(conn2);
+			const clientId3 = router.registerConnection(conn3);
+
+			router.joinRoom(clientId1, 'session1');
+			router.joinRoom(clientId2, 'session1');
+			router.joinRoom(clientId3, 'session1');
+
+			// Close one websocket to create a failure
+			mockWs3.close();
+
+			const eventMessage = createEventMessage({
+				method: 'user.created',
+				data: { userId: '123' },
+				sessionId: 'session1',
+			});
+			eventMessage.room = 'session1';
+
+			const result = router.routeEventToRoom(eventMessage);
+
+			expect(result.sent).toBe(2); // mockWs1 and mockWs2
+			expect(result.failed).toBe(1); // mockWs3 is closed
+			expect(result.totalSubscribers).toBe(3);
+			expect(result.sessionId).toBe('session1');
+			expect(result.method).toBe('user.created');
 		});
 	});
 
@@ -253,26 +348,48 @@ describe('MessageHubRouter', () => {
 				timestamp: new Date().toISOString(),
 			};
 
-			router.sendToClient(clientId, message);
+			const success = router.sendToClient(clientId, message);
 
+			expect(success).toBe(true);
 			expect(mockWs1.sentMessages.length).toBe(1);
 
 			const sentMessage = JSON.parse(mockWs1.sentMessages[0]);
 			expect(sentMessage.method).toBe('test.event');
 		});
 
-		test('should not send to non-existent client', () => {
-			router.sendToClient('non-existent-id', {
+		test('should return false when sending to non-existent client', () => {
+			const message: HubMessage = {
 				id: 'msg1',
 				type: MessageType.EVENT,
 				method: 'test.event',
 				sessionId: 'session1',
 				data: {},
 				timestamp: new Date().toISOString(),
-			});
+			};
 
-			// Should not throw, just log warning
+			const success = router.sendToClient('non-existent-id', message);
+
+			expect(success).toBe(false);
 			expect(mockWs1.sentMessages.length).toBe(0);
+		});
+
+		test('should return false when sending to closed connection', () => {
+			const conn1 = createMockConnection(mockWs1);
+			const clientId = router.registerConnection(conn1);
+			mockWs1.close();
+
+			const message: HubMessage = {
+				id: 'msg1',
+				type: MessageType.EVENT,
+				method: 'test.event',
+				sessionId: 'session1',
+				data: {},
+				timestamp: new Date().toISOString(),
+			};
+
+			const success = router.sendToClient(clientId, message);
+
+			expect(success).toBe(false);
 		});
 
 		test('should broadcast to all clients', () => {
@@ -290,29 +407,53 @@ describe('MessageHubRouter', () => {
 				timestamp: new Date().toISOString(),
 			};
 
-			router.broadcast(message);
+			const result = router.broadcast(message);
 
+			expect(result.sent).toBe(2);
+			expect(result.failed).toBe(0);
 			expect(mockWs1.sentMessages.length).toBe(1);
 			expect(mockWs2.sentMessages.length).toBe(1);
 		});
-	});
 
-	// Auto-subscription tests removed - this is now application-layer logic
-	// handled by SubscriptionManager, not Router
-	// Router is pure infrastructure - no business logic
+		test('broadcast should return delivery statistics', () => {
+			const conn1 = createMockConnection(mockWs1);
+			const conn2 = createMockConnection(mockWs2);
+			const mockWs3 = new MockWebSocket();
+			mockWs3.close();
+			const conn3 = createMockConnection(mockWs3);
+			router.registerConnection(conn1);
+			router.registerConnection(conn2);
+			router.registerConnection(conn3);
+
+			const message: HubMessage = {
+				id: 'msg1',
+				type: MessageType.EVENT,
+				method: 'broadcast.event',
+				sessionId: 'global',
+				data: {},
+				timestamp: new Date().toISOString(),
+			};
+
+			const result = router.broadcast(message);
+
+			expect(result.sent).toBe(2); // mockWs1 and mockWs2
+			expect(result.failed).toBe(1); // mockWs3 is closed
+		});
+	});
 
 	describe('Error Handling', () => {
 		test('should handle routing non-EVENT message gracefully', () => {
-			const callMessage = createCallMessage({
+			const commandMessage = createRequestMessage({
 				method: 'user.created',
 				data: {},
 				sessionId: 'session1',
 			});
 
-			// Should not throw
-			expect(() => {
-				router.routeEvent(callMessage);
-			}).not.toThrow();
+			const result = router.routeEvent(commandMessage);
+
+			expect(result.sent).toBe(0);
+			expect(result.failed).toBe(0);
+			expect(result.totalSubscribers).toBe(0);
 		});
 
 		test('should handle sending to closed WebSocket gracefully', () => {
@@ -329,272 +470,199 @@ describe('MessageHubRouter', () => {
 				timestamp: new Date().toISOString(),
 			};
 
-			// Should not throw
 			expect(() => {
 				router.sendToClient(clientId, message);
 			}).not.toThrow();
 		});
+
+		test('should handle serialization errors gracefully', () => {
+			const conn1 = createMockConnection(mockWs1);
+			const clientId = router.registerConnection(conn1);
+
+			// Create a circular reference to cause serialization error
+			const circular: { data: unknown } = { data: {} };
+			circular.data = circular;
+
+			const message: HubMessage = {
+				id: 'msg1',
+				type: MessageType.EVENT,
+				method: 'test.event',
+				sessionId: 'session1',
+				data: circular,
+				timestamp: new Date().toISOString(),
+			};
+
+			const success = router.sendToClient(clientId, message);
+
+			expect(success).toBe(false);
+		});
+
+		test('should handle broadcast serialization errors gracefully', () => {
+			const conn1 = createMockConnection(mockWs1);
+			const conn2 = createMockConnection(mockWs2);
+			router.registerConnection(conn1);
+			router.registerConnection(conn2);
+
+			// Create a circular reference
+			const circular: { data: unknown } = { data: {} };
+			circular.data = circular;
+
+			const message: HubMessage = {
+				id: 'msg1',
+				type: MessageType.EVENT,
+				method: 'broadcast.event',
+				sessionId: 'global',
+				data: circular,
+				timestamp: new Date().toISOString(),
+			};
+
+			const result = router.broadcast(message);
+
+			expect(result.sent).toBe(0);
+			expect(result.failed).toBe(2);
+		});
 	});
 
-	describe('Phase 1 Improvements', () => {
-		describe('Duplicate Registration Prevention', () => {
-			test('should return existing clientId when registering same WebSocket twice', () => {
-				const conn1 = createMockConnection(mockWs1);
-				const clientId1 = router.registerConnection(conn1);
-				const clientId2 = router.registerConnection(conn1);
+	describe('Client Lookup', () => {
+		test('should get client by clientId efficiently', () => {
+			const conn1 = createMockConnection(mockWs1);
+			const clientId = router.registerConnection(conn1);
+			const client = router.getClientById(clientId);
 
-				expect(clientId1).toBe(clientId2);
-				expect(router.getClientCount()).toBe(1);
-			});
+			expect(client).toBeDefined();
+			expect(client?.clientId).toBe(clientId);
+			expect(client?.connection.metadata?.ws).toBe(mockWs1);
 		});
 
-		describe('O(1) Client Lookup', () => {
-			test('should get client by clientId efficiently', () => {
-				const conn1 = createMockConnection(mockWs1);
-				const clientId = router.registerConnection(conn1);
-				const client = router.getClientById(clientId);
-
-				expect(client).toBeDefined();
-				expect(client?.clientId).toBe(clientId);
-				expect(client?.connection.metadata?.ws).toBe(mockWs1);
-			});
-
-			test('should return undefined for non-existent clientId', () => {
-				const client = router.getClientById('non-existent');
-				expect(client).toBeUndefined();
-			});
+		test('should return undefined for non-existent clientId', () => {
+			const client = router.getClientById('non-existent');
+			expect(client).toBeUndefined();
 		});
 
-		describe('Route Result Observability', () => {
-			test('should return delivery statistics from routeEvent', () => {
-				const conn1 = createMockConnection(mockWs1);
-				const conn2 = createMockConnection(mockWs2);
-				const mockWs3 = new MockWebSocket();
-				const conn3 = createMockConnection(mockWs3);
-				const clientId1 = router.registerConnection(conn1);
-				const clientId2 = router.registerConnection(conn2);
-				const clientId3 = router.registerConnection(conn3);
+		test('should get all connected client IDs', () => {
+			const conn1 = createMockConnection(mockWs1);
+			const conn2 = createMockConnection(mockWs2);
+			const clientId1 = router.registerConnection(conn1);
+			const clientId2 = router.registerConnection(conn2);
 
-				router.subscribe('session1', 'user.created', clientId1);
-				router.subscribe('session1', 'user.created', clientId2);
-				router.subscribe('session1', 'user.created', clientId3);
-
-				// Close one websocket to create a failure
-				mockWs3.close();
-
-				const eventMessage = createEventMessage({
-					method: 'user.created',
-					data: { userId: '123' },
-					sessionId: 'session1',
-				});
-
-				const result = router.routeEvent(eventMessage);
-
-				expect(result.sent).toBe(2); // mockWs1 and mockWs2
-				expect(result.failed).toBe(1); // mockWs3 is closed
-				expect(result.totalSubscribers).toBe(3);
-				expect(result.sessionId).toBe('session1');
-				expect(result.method).toBe('user.created');
-			});
-
-			test('should return zero stats for unsubscribed event', () => {
-				const conn1 = createMockConnection(mockWs1);
-				router.registerConnection(conn1);
-
-				const eventMessage = createEventMessage({
-					method: 'unsubscribed.event',
-					data: {},
-					sessionId: 'session1',
-				});
-
-				const result = router.routeEvent(eventMessage);
-
-				expect(result.sent).toBe(0);
-				expect(result.failed).toBe(0);
-				expect(result.totalSubscribers).toBe(0);
-			});
-
-			test('broadcast should return delivery statistics', () => {
-				const conn1 = createMockConnection(mockWs1);
-				const conn2 = createMockConnection(mockWs2);
-				const mockWs3 = new MockWebSocket();
-				mockWs3.close();
-				const conn3 = createMockConnection(mockWs3);
-				router.registerConnection(conn1);
-				router.registerConnection(conn2);
-				router.registerConnection(conn3);
-
-				const message: HubMessage = {
-					id: 'msg1',
-					type: MessageType.EVENT,
-					method: 'broadcast.event',
-					sessionId: 'global',
-					data: {},
-					timestamp: new Date().toISOString(),
-				};
-
-				const result = router.broadcast(message);
-
-				expect(result.sent).toBe(2); // mockWs1 and mockWs2
-				expect(result.failed).toBe(1); // mockWs3 is closed
-			});
-
-			test('sendToClient should return boolean success indicator', () => {
-				const conn1 = createMockConnection(mockWs1);
-				const clientId = router.registerConnection(conn1);
-
-				const message: HubMessage = {
-					id: 'msg1',
-					type: MessageType.EVENT,
-					method: 'test.event',
-					sessionId: 'session1',
-					data: {},
-					timestamp: new Date().toISOString(),
-				};
-
-				const success = router.sendToClient(clientId, message);
-				expect(success).toBe(true);
-
-				const failure = router.sendToClient('non-existent', message);
-				expect(failure).toBe(false);
-			});
+			const clientIds = router.getClientIds();
+			expect(clientIds).toContain(clientId1);
+			expect(clientIds).toContain(clientId2);
+			expect(clientIds.length).toBe(2);
 		});
 
-		describe('Memory Leak Prevention', () => {
-			test('should cleanup empty subscription Maps', () => {
-				const conn1 = createMockConnection(mockWs1);
-				const clientId = router.registerConnection(conn1);
+		test('should return empty array when no clients', () => {
+			const clientIds = router.getClientIds();
+			expect(clientIds.length).toBe(0);
+		});
+	});
 
-				router.subscribe('session1', 'user.created', clientId);
-				router.subscribe('session1', 'user.updated', clientId);
+	describe('Custom Logger', () => {
+		test('should use custom logger', () => {
+			const mockLogger = {
+				log: mock(() => {}),
+				warn: mock(() => {}),
+				error: mock(() => {}),
+			};
 
-				// Unsubscribe all
-				router.unsubscribeClient('session1', 'user.created', clientId);
-				router.unsubscribeClient('session1', 'user.updated', clientId);
-
-				// Verify cleanup by checking subscriptions
-				const subs = router.getSubscriptions();
-				expect(subs.has('session1')).toBe(false);
+			const customRouter = new MessageHubRouter({
+				logger: mockLogger,
+				debug: true,
 			});
 
-			test('should cleanup nested Maps when last method is unsubscribed', () => {
-				const conn1 = createMockConnection(mockWs1);
-				const conn2 = createMockConnection(mockWs2);
-				const clientId1 = router.registerConnection(conn1);
-				const clientId2 = router.registerConnection(conn2);
+			const conn1 = createMockConnection(mockWs1);
+			customRouter.registerConnection(conn1);
 
-				router.subscribe('session1', 'user.created', clientId1);
-				router.subscribe('session1', 'user.created', clientId2);
-
-				// Unsubscribe first client
-				router.unsubscribeClient('session1', 'user.created', clientId1);
-				expect(router.getSubscriptionCount('session1', 'user.created')).toBe(1);
-
-				// Unsubscribe second client - should cleanup Maps
-				router.unsubscribeClient('session1', 'user.created', clientId2);
-				expect(router.getSubscriptionCount('session1', 'user.created')).toBe(0);
-
-				const subs = router.getSubscriptions();
-				expect(subs.has('session1')).toBe(false);
-			});
+			expect(mockLogger.log).toHaveBeenCalled();
 		});
 
-		describe('Subscription Key Validation', () => {
-			test('should reject sessionId with colon', () => {
-				const conn1 = createMockConnection(mockWs1);
-				const clientId = router.registerConnection(conn1);
+		test('should not log when debug is false', () => {
+			const mockLogger = {
+				log: mock(() => {}),
+				warn: mock(() => {}),
+				error: mock(() => {}),
+			};
 
-				expect(() => {
-					router.subscribe('session:1', 'user.created', clientId);
-				}).toThrow('SessionId cannot contain colon character');
+			const customRouter = new MessageHubRouter({
+				logger: mockLogger,
+				debug: false,
 			});
 
-			test('should reject method with colon', () => {
-				const conn1 = createMockConnection(mockWs1);
-				const clientId = router.registerConnection(conn1);
+			const conn1 = createMockConnection(mockWs1);
+			customRouter.registerConnection(conn1);
 
-				expect(() => {
-					router.subscribe('session1', 'user:created', clientId);
-				}).toThrow('Method cannot contain colon character');
-			});
+			// Should not call debug logs
+			expect(mockLogger.log).toHaveBeenCalledTimes(0);
+		});
+	});
+
+	describe('RoomManager Integration', () => {
+		test('should access room manager', () => {
+			const roomManager = router.getRoomManager();
+			expect(roomManager).toBeDefined();
 		});
 
-		describe('Custom Logger', () => {
-			test('should use custom logger', () => {
-				const mockLogger = {
-					log: mock(() => {}),
-					warn: mock(() => {}),
-					error: mock(() => {}),
-				};
+		test('should track room members through room manager', () => {
+			const conn1 = createMockConnection(mockWs1);
+			const conn2 = createMockConnection(mockWs2);
+			const clientId1 = router.registerConnection(conn1);
+			const clientId2 = router.registerConnection(conn2);
 
-				const customRouter = new MessageHubRouter({
-					logger: mockLogger,
-					debug: true,
-				});
+			router.joinRoom(clientId1, 'session1');
+			router.joinRoom(clientId2, 'session1');
 
-				const conn1 = createMockConnection(mockWs1);
-				customRouter.registerConnection(conn1);
+			const roomManager = router.getRoomManager();
+			const members = roomManager.getRoomMembers('session1');
 
-				expect(mockLogger.log).toHaveBeenCalled();
-			});
-
-			test('should not log when debug is false', () => {
-				const mockLogger = {
-					log: mock(() => {}),
-					warn: mock(() => {}),
-					error: mock(() => {}),
-				};
-
-				const customRouter = new MessageHubRouter({
-					logger: mockLogger,
-					debug: false,
-				});
-
-				const conn1 = createMockConnection(mockWs1);
-				customRouter.registerConnection(conn1);
-
-				// Should still call for registration (not debug log)
-				// But internal debug logs should be skipped
-				expect(mockLogger.log).toHaveBeenCalledTimes(0);
-			});
+			expect(members.size).toBe(2);
+			expect(members).toContain(clientId1);
+			expect(members).toContain(clientId2);
 		});
 
-		// Configurable Auto-Subscribe tests removed - this is now application-layer logic
-		// handled by SubscriptionManager, not Router
+		test('should clean up empty rooms', () => {
+			const conn1 = createMockConnection(mockWs1);
+			const clientId = router.registerConnection(conn1);
 
-		describe('Subscription Storage', () => {
-			test('should track subscriptions as Map<sessionId, Set<method>>', () => {
-				const conn1 = createMockConnection(mockWs1);
-				const clientId = router.registerConnection(conn1);
+			router.joinRoom(clientId, 'temp-room');
 
-				router.subscribe('session1', 'user.created', clientId);
-				router.subscribe('session1', 'user.updated', clientId);
-				router.subscribe('session2', 'user.deleted', clientId);
+			const roomManager = router.getRoomManager();
+			expect(roomManager.getRoomMembers('temp-room')).toContain(clientId);
 
-				const client = router.getClientById(clientId);
-				expect(client?.subscriptions.size).toBe(2); // 2 sessions
-				expect(client?.subscriptions.get('session1')?.size).toBe(2); // 2 methods in session1
-				expect(client?.subscriptions.get('session2')?.size).toBe(1); // 1 method in session2
-			});
+			router.leaveRoom(clientId, 'temp-room');
+
+			// Empty room should still exist but be empty
+			expect(roomManager.getRoomMembers('temp-room').size).toBe(0);
 		});
+	});
 
-		describe('getClientIds', () => {
-			test('should return all connected client IDs', () => {
-				const conn1 = createMockConnection(mockWs1);
-				const conn2 = createMockConnection(mockWs2);
-				const clientId1 = router.registerConnection(conn1);
-				const clientId2 = router.registerConnection(conn2);
+	describe('Backpressure Handling', () => {
+		test('should skip clients that cannot accept messages', () => {
+			const mockWs3 = new MockWebSocket();
+			const conn1 = createMockConnection(mockWs1);
+			const conn2 = createMockConnection(mockWs2);
+			const conn3: ClientConnection = {
+				...createMockConnection(mockWs3),
+				canAccept: () => false, // Simulate backpressure
+			};
 
-				const clientIds = router.getClientIds();
-				expect(clientIds).toContain(clientId1);
-				expect(clientIds).toContain(clientId2);
-				expect(clientIds.length).toBe(2);
-			});
+			router.registerConnection(conn1);
+			router.registerConnection(conn2);
+			router.registerConnection(conn3);
 
-			test('should return empty array when no clients', () => {
-				const clientIds = router.getClientIds();
-				expect(clientIds.length).toBe(0);
-			});
+			const message: HubMessage = {
+				id: 'msg1',
+				type: MessageType.EVENT,
+				method: 'broadcast.event',
+				sessionId: 'global',
+				data: {},
+				timestamp: new Date().toISOString(),
+			};
+
+			const result = router.broadcast(message);
+
+			expect(result.sent).toBe(2); // conn1 and conn2
+			expect(result.skipped).toBe(1); // conn3 skipped due to backpressure
+			expect(result.failed).toBe(0);
 		});
 	});
 });

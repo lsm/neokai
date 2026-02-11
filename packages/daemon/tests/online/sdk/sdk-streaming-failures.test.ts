@@ -15,15 +15,15 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import 'dotenv/config';
-import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { createDaemonServer } from '../helpers/daemon-server-helper';
+// Bun automatically loads .env from project root when running tests
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import { createDaemonServer } from '../../helpers/daemon-server';
 import {
 	sendMessage,
 	waitForIdle,
 	getProcessingState,
 	getSession,
-} from '../helpers/daemon-test-helpers';
+} from '../../helpers/daemon-actions';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
@@ -50,7 +50,7 @@ describe('SDK Streaming Behavior', () => {
 		test('should work with acceptEdits permission mode', async () => {
 			const workspacePath = `${TMP_DIR}/accept-edits-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Accept Edits Test',
 				config: {
@@ -86,7 +86,7 @@ describe('SDK Streaming Behavior', () => {
 		test('should process messages correctly through WebSocket API', async () => {
 			const workspacePath = `${TMP_DIR}/message-processing-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Message Processing Test',
 				config: {
@@ -123,7 +123,7 @@ describe('SDK Streaming Behavior', () => {
 		test('should handle simple prompt pattern correctly', async () => {
 			const workspacePath = `${TMP_DIR}/simple-prompt-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Simple Prompt Test',
 				config: {
@@ -159,7 +159,7 @@ describe('SDK Streaming Behavior', () => {
 		test('should maintain consistent session state', async () => {
 			const workspacePath = `${TMP_DIR}/session-state-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Session State Test',
 				config: {
@@ -199,7 +199,7 @@ describe('SDK Streaming Behavior', () => {
 		test('should persist messages across session operations', async () => {
 			const workspacePath = `${TMP_DIR}/persistence-reload-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Persistence Reload Test',
 				config: {

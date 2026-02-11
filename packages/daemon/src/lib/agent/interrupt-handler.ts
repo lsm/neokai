@@ -60,11 +60,9 @@ export class InterruptHandler {
 		const { session, messageHub, messageQueue, stateManager, logger } = this.ctx;
 
 		const currentState = stateManager.getState();
-		logger.log(`Handling interrupt (current state: ${currentState.status})...`);
 
 		// Edge case: already idle or interrupted
 		if (currentState.status === 'idle' || currentState.status === 'interrupted') {
-			logger.log(`Already ${currentState.status}, skipping interrupt`);
 			return;
 		}
 
@@ -81,13 +79,11 @@ export class InterruptHandler {
 			// Clear pending messages in queue
 			const queueSize = messageQueue.size();
 			if (queueSize > 0) {
-				logger.log(`Clearing ${queueSize} queued messages`);
 				messageQueue.clear();
 			}
 
 			// STEP 1: Abort the query to break the for-await loop
 			if (this.ctx.queryAbortController) {
-				logger.log('Aborting query controller to break for-await loop...');
 				this.ctx.queryAbortController.abort();
 				this.ctx.queryAbortController = null;
 			}
@@ -95,26 +91,20 @@ export class InterruptHandler {
 			// STEP 2: Call SDK interrupt()
 			if (this.ctx.queryObject && typeof this.ctx.queryObject.interrupt === 'function') {
 				try {
-					logger.log('Calling SDK interrupt()...');
 					await this.ctx.queryObject.interrupt();
-					logger.log('SDK interrupt() completed successfully');
 				} catch (error) {
 					const errorMessage = error instanceof Error ? error.message : String(error);
 					logger.warn('SDK interrupt() failed (may be expected):', errorMessage);
 				}
-			} else {
-				logger.log('No query object, interrupt complete (queue cleared)');
 			}
 
 			// STEP 3: Wait for old query to finish
 			if (this.ctx.queryPromise) {
-				logger.log('Waiting for old query to finish...');
 				try {
 					await Promise.race([
 						this.ctx.queryPromise,
 						new Promise((resolve) => setTimeout(resolve, 200)),
 					]);
-					logger.log('Old query finished or timeout reached');
 				} catch (error) {
 					logger.warn('Error waiting for old query:', error);
 				}
@@ -122,18 +112,15 @@ export class InterruptHandler {
 
 			// STEP 4: Clear queryObject
 			this.ctx.queryObject = null;
-			logger.log('Cleared queryObject reference');
 
 			// STEP 5: Stop the message queue
 			messageQueue.stop();
-			logger.log('Stopped message queue to allow immediate query restart');
 
 			// Publish interrupt event
-			await messageHub.publish('session.interrupted', {}, { sessionId: session.id });
+			messageHub.event('session.interrupted', {}, { room: `session:${session.id}` });
 
 			// Set state back to idle
 			await stateManager.setIdle();
-			logger.log('Interrupt complete, state reset to idle');
 		} finally {
 			// Always resolve the interrupt promise
 			if (this.interruptResolve) {
@@ -141,7 +128,6 @@ export class InterruptHandler {
 				this.interruptResolve = null;
 			}
 			this.interruptPromise = null;
-			logger.log('Interrupt promise resolved');
 		}
 	}
 }

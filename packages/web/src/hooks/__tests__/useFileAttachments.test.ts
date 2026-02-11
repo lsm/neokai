@@ -319,7 +319,6 @@ describe('useFileAttachments', () => {
 
 	describe('file read errors', () => {
 		it('should show toast error when file read fails', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 			vi.mocked(fileToBase64).mockRejectedValue(new Error('Read error'));
 
 			const { result } = renderHook(() => useFileAttachments());
@@ -335,14 +334,11 @@ describe('useFileAttachments', () => {
 				await result.current.handleFileSelect(event);
 			});
 
-			expect(consoleSpy).toHaveBeenCalledWith('Failed to read file:', expect.any(Error));
 			expect(toast.error).toHaveBeenCalledWith('Read error');
 			expect(result.current.attachments.length).toBe(0);
-			consoleSpy.mockRestore();
 		});
 
 		it('should show generic error when error has no message', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 			vi.mocked(fileToBase64).mockRejectedValue('non-error');
 
 			const { result } = renderHook(() => useFileAttachments());
@@ -359,7 +355,6 @@ describe('useFileAttachments', () => {
 			});
 
 			expect(toast.error).toHaveBeenCalledWith('Failed to read test.png');
-			consoleSpy.mockRestore();
 		});
 	});
 

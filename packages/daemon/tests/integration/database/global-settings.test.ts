@@ -6,7 +6,7 @@
 
 import { describe, test } from 'bun:test';
 import { Database } from '../../../src/storage/database';
-import { createTestDb, assertEquals, assertExists } from './fixtures/database-test-utils';
+import { createTestDb, assertEquals, assertExists } from '../../helpers/database';
 
 describe('Database', () => {
 	describe('Global Settings', () => {

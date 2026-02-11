@@ -7,13 +7,13 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { TestContext } from '../../test-utils';
+import type { TestContext } from '../../helpers/test-app';
 import {
 	createTestApp,
 	waitForWebSocketState,
 	waitForWebSocketMessage,
 	createWebSocketWithFirstMessage,
-} from '../../test-utils';
+} from '../../helpers/test-app';
 
 describe('Draft RPC Handlers', () => {
 	let ctx: TestContext;
@@ -38,12 +38,10 @@ describe('Draft RPC Handlers', () => {
 			await firstMessagePromise;
 
 			// Set inputDraft via RPC
-			const setPromise = waitForWebSocketMessage(ws);
-
 			ws.send(
 				JSON.stringify({
 					id: 'draft-get-set',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'session.update',
 					data: {
 						sessionId,
@@ -57,16 +55,21 @@ describe('Draft RPC Handlers', () => {
 				})
 			);
 
-			const setResponse = await setPromise;
-			expect(setResponse.type).toBe('RESULT');
+			// Wait for RSP (skip EVENTs)
+			let setResponse: unknown;
+			let attempts = 0;
+			while (attempts < 10) {
+				setResponse = await waitForWebSocketMessage(ws);
+				if (setResponse.type === 'RSP' && setResponse.requestId === 'draft-get-set') break;
+				attempts++;
+			}
+			expect(setResponse.type).toBe('RSP');
 
 			// Get session and verify inputDraft is included
-			const getPromise = waitForWebSocketMessage(ws);
-
 			ws.send(
 				JSON.stringify({
 					id: 'draft-get-1',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'session.get',
 					data: { sessionId },
 					sessionId: 'global',
@@ -75,9 +78,16 @@ describe('Draft RPC Handlers', () => {
 				})
 			);
 
-			const getResponse = await getPromise;
+			// Wait for RSP (skip EVENTs)
+			let getResponse: unknown;
+			attempts = 0;
+			while (attempts < 10) {
+				getResponse = await waitForWebSocketMessage(ws);
+				if (getResponse.type === 'RSP' && getResponse.requestId === 'draft-get-1') break;
+				attempts++;
+			}
 
-			expect(getResponse.type).toBe('RESULT');
+			expect(getResponse.type).toBe('RSP');
 			expect(getResponse.data.session).toBeDefined();
 			expect(getResponse.data.session.metadata.inputDraft).toBe('test draft content');
 
@@ -94,12 +104,10 @@ describe('Draft RPC Handlers', () => {
 			await waitForWebSocketState(ws, WebSocket.OPEN);
 			await firstMessagePromise;
 
-			const updatePromise = waitForWebSocketMessage(ws);
-
 			ws.send(
 				JSON.stringify({
 					id: 'draft-update-1',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'session.update',
 					data: {
 						sessionId,
@@ -113,18 +121,23 @@ describe('Draft RPC Handlers', () => {
 				})
 			);
 
-			const updateResponse = await updatePromise;
+			// Wait for RSP (skip EVENTs)
+			let updateResponse: unknown;
+			let attempts = 0;
+			while (attempts < 10) {
+				updateResponse = await waitForWebSocketMessage(ws);
+				if (updateResponse.type === 'RSP' && updateResponse.requestId === 'draft-update-1') break;
+				attempts++;
+			}
 
-			expect(updateResponse.type).toBe('RESULT');
+			expect(updateResponse.type).toBe('RSP');
 			expect(updateResponse.data.success).toBe(true);
 
 			// Verify database updated correctly via session.get
-			const getPromise = waitForWebSocketMessage(ws);
-
 			ws.send(
 				JSON.stringify({
 					id: 'draft-update-2',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'session.get',
 					data: { sessionId },
 					sessionId: 'global',
@@ -133,9 +146,16 @@ describe('Draft RPC Handlers', () => {
 				})
 			);
 
-			const getResponse = await getPromise;
+			// Wait for RSP (skip EVENTs)
+			let getResponse: unknown;
+			attempts = 0;
+			while (attempts < 10) {
+				getResponse = await waitForWebSocketMessage(ws);
+				if (getResponse.type === 'RSP' && getResponse.requestId === 'draft-update-2') break;
+				attempts++;
+			}
 
-			expect(getResponse.type).toBe('RESULT');
+			expect(getResponse.type).toBe('RSP');
 			expect(getResponse.data.session.metadata.inputDraft).toBe('new draft content');
 
 			ws.close();
@@ -152,12 +172,10 @@ describe('Draft RPC Handlers', () => {
 			await firstMessagePromise;
 
 			// Set some initial metadata via RPC
-			const setInitialPromise = waitForWebSocketMessage(ws);
-
 			ws.send(
 				JSON.stringify({
 					id: 'draft-merge-set',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'session.update',
 					data: {
 						sessionId,
@@ -172,16 +190,22 @@ describe('Draft RPC Handlers', () => {
 				})
 			);
 
-			const setInitialResponse = await setInitialPromise;
-			expect(setInitialResponse.type).toBe('RESULT');
-
-			const updatePromise = waitForWebSocketMessage(ws);
+			// Wait for RSP (skip EVENTs)
+			let setInitialResponse: unknown;
+			let attempts = 0;
+			while (attempts < 10) {
+				setInitialResponse = await waitForWebSocketMessage(ws);
+				if (setInitialResponse.type === 'RSP' && setInitialResponse.requestId === 'draft-merge-set')
+					break;
+				attempts++;
+			}
+			expect(setInitialResponse.type).toBe('RSP');
 
 			// Update only inputDraft
 			ws.send(
 				JSON.stringify({
 					id: 'draft-merge-1',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'session.update',
 					data: {
 						sessionId,
@@ -195,18 +219,23 @@ describe('Draft RPC Handlers', () => {
 				})
 			);
 
-			const updateResponse = await updatePromise;
+			// Wait for RSP (skip EVENTs)
+			let updateResponse: unknown;
+			attempts = 0;
+			while (attempts < 10) {
+				updateResponse = await waitForWebSocketMessage(ws);
+				if (updateResponse.type === 'RSP' && updateResponse.requestId === 'draft-merge-1') break;
+				attempts++;
+			}
 
-			expect(updateResponse.type).toBe('RESULT');
+			expect(updateResponse.type).toBe('RSP');
 			expect(updateResponse.data.success).toBe(true);
 
 			// Verify merge behavior (inputDraft updated, other fields preserved) via session.get
-			const getPromise = waitForWebSocketMessage(ws);
-
 			ws.send(
 				JSON.stringify({
 					id: 'draft-merge-2',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'session.get',
 					data: { sessionId },
 					sessionId: 'global',
@@ -215,9 +244,16 @@ describe('Draft RPC Handlers', () => {
 				})
 			);
 
-			const getResponse = await getPromise;
+			// Wait for RSP (skip EVENTs)
+			let getResponse: unknown;
+			attempts = 0;
+			while (attempts < 10) {
+				getResponse = await waitForWebSocketMessage(ws);
+				if (getResponse.type === 'RSP' && getResponse.requestId === 'draft-merge-2') break;
+				attempts++;
+			}
 
-			expect(getResponse.type).toBe('RESULT');
+			expect(getResponse.type).toBe('RSP');
 			expect(getResponse.data.session.metadata.inputDraft).toBe('merged draft');
 			expect(getResponse.data.session.metadata.messageCount).toBe(5);
 			expect(getResponse.data.session.metadata.titleGenerated).toBe(true);
@@ -236,12 +272,10 @@ describe('Draft RPC Handlers', () => {
 			await firstMessagePromise;
 
 			// Set inputDraft via RPC
-			const setPromise = waitForWebSocketMessage(ws);
-
 			ws.send(
 				JSON.stringify({
 					id: 'draft-clear-set',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'session.update',
 					data: {
 						sessionId,
@@ -255,16 +289,21 @@ describe('Draft RPC Handlers', () => {
 				})
 			);
 
-			const setResponse = await setPromise;
-			expect(setResponse.type).toBe('RESULT');
-
-			const updatePromise = waitForWebSocketMessage(ws);
+			// Wait for RSP (skip EVENTs)
+			let setResponse: unknown;
+			let attempts = 0;
+			while (attempts < 10) {
+				setResponse = await waitForWebSocketMessage(ws);
+				if (setResponse.type === 'RSP' && setResponse.requestId === 'draft-clear-set') break;
+				attempts++;
+			}
+			expect(setResponse.type).toBe('RSP');
 
 			// Clear inputDraft (use null instead of undefined, as JSON.stringify strips undefined)
 			ws.send(
 				JSON.stringify({
 					id: 'draft-clear-1',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'session.update',
 					data: {
 						sessionId,
@@ -278,18 +317,23 @@ describe('Draft RPC Handlers', () => {
 				})
 			);
 
-			const updateResponse = await updatePromise;
+			// Wait for RSP (skip EVENTs)
+			let updateResponse: unknown;
+			attempts = 0;
+			while (attempts < 10) {
+				updateResponse = await waitForWebSocketMessage(ws);
+				if (updateResponse.type === 'RSP' && updateResponse.requestId === 'draft-clear-1') break;
+				attempts++;
+			}
 
-			expect(updateResponse.type).toBe('RESULT');
+			expect(updateResponse.type).toBe('RSP');
 			expect(updateResponse.data.success).toBe(true);
 
 			// Verify inputDraft cleared from database via session.get
-			const getPromise = waitForWebSocketMessage(ws);
-
 			ws.send(
 				JSON.stringify({
 					id: 'draft-clear-2',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'session.get',
 					data: { sessionId },
 					sessionId: 'global',
@@ -298,9 +342,16 @@ describe('Draft RPC Handlers', () => {
 				})
 			);
 
-			const getResponse = await getPromise;
+			// Wait for RSP (skip EVENTs)
+			let getResponse: unknown;
+			attempts = 0;
+			while (attempts < 10) {
+				getResponse = await waitForWebSocketMessage(ws);
+				if (getResponse.type === 'RSP' && getResponse.requestId === 'draft-clear-2') break;
+				attempts++;
+			}
 
-			expect(getResponse.type).toBe('RESULT');
+			expect(getResponse.type).toBe('RSP');
 			expect(getResponse.data.session.metadata.inputDraft).toBeUndefined();
 
 			ws.close();

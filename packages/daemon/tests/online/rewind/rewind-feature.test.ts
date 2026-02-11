@@ -17,10 +17,10 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import 'dotenv/config';
-import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { createDaemonServer } from '../helpers/daemon-server-helper';
-import { sendMessage, waitForIdle, getProcessingState } from '../helpers/daemon-test-helpers';
+// Bun automatically loads .env from project root when running tests
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import { createDaemonServer } from '../../helpers/daemon-server';
+import { sendMessage, waitForIdle, getProcessingState } from '../../helpers/daemon-actions';
 import type { RewindPreview, RewindResult } from '@neokai/shared';
 
 /**
@@ -54,7 +54,7 @@ describe('Rewind Feature', () => {
 	 * Helper to get rewind points for a session
 	 */
 	async function getRewindPoints(sessionId: string): Promise<RewindPoint[]> {
-		const result = (await daemon.messageHub.call('rewind.checkpoints', {
+		const result = (await daemon.messageHub.request('rewind.checkpoints', {
 			sessionId,
 		})) as { rewindPoints: RewindPoint[]; error?: string };
 		return result.rewindPoints;
@@ -64,7 +64,7 @@ describe('Rewind Feature', () => {
 	 * Helper to preview a rewind operation
 	 */
 	async function previewRewind(sessionId: string, rewindPointId: string): Promise<RewindPreview> {
-		const result = (await daemon.messageHub.call('rewind.preview', {
+		const result = (await daemon.messageHub.request('rewind.preview', {
 			sessionId,
 			rewindPointId,
 		})) as { preview: RewindPreview };
@@ -79,7 +79,7 @@ describe('Rewind Feature', () => {
 		rewindPointId: string,
 		mode: 'files' | 'conversation' | 'both' = 'files'
 	): Promise<RewindResult> {
-		const result = (await daemon.messageHub.call('rewind.execute', {
+		const result = (await daemon.messageHub.request('rewind.execute', {
 			sessionId,
 			rewindPointId,
 			mode,
@@ -91,7 +91,7 @@ describe('Rewind Feature', () => {
 		test('should create rewind points when messages are sent', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-point-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Rewind Point Creation Test',
 				config: {
@@ -138,7 +138,7 @@ describe('Rewind Feature', () => {
 		test('should return rewind points sorted by turn number (newest first)', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-sort-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Rewind Point Sorting Test',
 				config: {
@@ -153,13 +153,13 @@ describe('Rewind Feature', () => {
 
 			// Send multiple messages
 			await sendMessage(daemon, sessionId, 'First message');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			await sendMessage(daemon, sessionId, 'Second message');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			await sendMessage(daemon, sessionId, 'Third message');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			const rewindPoints = await getRewindPoints(sessionId);
 			expect(rewindPoints.length).toBeGreaterThanOrEqual(3);
@@ -168,14 +168,14 @@ describe('Rewind Feature', () => {
 			for (let i = 0; i < rewindPoints.length - 1; i++) {
 				expect(rewindPoints[i].turnNumber).toBeGreaterThan(rewindPoints[i + 1].turnNumber);
 			}
-		}, 180000);
+		}, 300000);
 	});
 
 	describe('Rewind Preview', () => {
 		test('should show preview when rewindPoint exists', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-preview-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Rewind Preview Test',
 				config: {
@@ -214,7 +214,7 @@ describe('Rewind Feature', () => {
 		test('should return error for non-existent rewindPoint', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-preview-invalid-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Rewind Preview Invalid Test',
 				config: {
@@ -243,7 +243,7 @@ describe('Rewind Feature', () => {
 		test('should execute files-only rewind successfully', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-execute-files-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Rewind Execute Files Test',
 				config: {
@@ -286,7 +286,7 @@ describe('Rewind Feature', () => {
 		test('should execute conversation-only rewind successfully', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-execute-conversation-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Rewind Execute Conversation Test',
 				config: {
@@ -301,7 +301,7 @@ describe('Rewind Feature', () => {
 
 			// Send multiple messages
 			await sendMessage(daemon, sessionId, 'What is 1+1?');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			const rewindPointsAfterFirst = await getRewindPoints(sessionId);
 			expect(rewindPointsAfterFirst.length).toBeGreaterThanOrEqual(1);
@@ -309,10 +309,10 @@ describe('Rewind Feature', () => {
 			expect(firstRewindPoint).toBeDefined();
 
 			await sendMessage(daemon, sessionId, 'What is 2+2?');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			await sendMessage(daemon, sessionId, 'What is 3+3?');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			// Should have 3 rewindPoints
 			let rewindPoints = await getRewindPoints(sessionId);
@@ -336,14 +336,14 @@ describe('Rewind Feature', () => {
 				expect(result.conversationRewound).toBe(true);
 				expect(result.messagesDeleted).toBeGreaterThan(0);
 			}
-		}, 240000);
+		}, 300000);
 	});
 
 	describe('Rewind Execute - Both Mode', () => {
 		test('should execute both files and conversation rewind', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-execute-both-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Rewind Execute Both Test',
 				config: {
@@ -388,7 +388,7 @@ describe('Rewind Feature', () => {
 		test('should handle rewind with invalid rewindPoint gracefully', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-error-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Rewind Error Test',
 				config: {
@@ -415,7 +415,7 @@ describe('Rewind Feature', () => {
 		test('should maintain session state after failed rewind', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-recovery-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Rewind Recovery Test',
 				config: {
@@ -455,7 +455,7 @@ describe('Rewind Feature', () => {
 		test('should create rewindPoints when enableFileCheckpointing is true (default)', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-enabled-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Checkpointing Enabled Test',
 				config: {
@@ -470,10 +470,10 @@ describe('Rewind Feature', () => {
 
 			// Send messages
 			await sendMessage(daemon, sessionId, 'What is 1+1?');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			await sendMessage(daemon, sessionId, 'What is 2+2?');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 90000);
 
 			// With enableFileCheckpointing=true, rewindPoints SHOULD be created
 			const rewindPoints = await getRewindPoints(sessionId);
@@ -489,12 +489,12 @@ describe('Rewind Feature', () => {
 			// Session should still be functional
 			const state = await getProcessingState(daemon, sessionId);
 			expect(state.status).toBe('idle');
-		}, 180000);
+		}, 240000);
 
 		test('should still have rewindPoints but file rewind disabled when enableFileCheckpointing is false', async () => {
 			const workspacePath = `${TMP_DIR}/rewind-disabled-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.call('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Checkpointing Disabled Test',
 				config: {

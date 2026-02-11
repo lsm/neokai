@@ -7,8 +7,8 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { TestContext } from '../../test-utils';
-import { createTestApp } from '../../test-utils';
+import type { TestContext } from '../../helpers/test-app';
+import { createTestApp } from '../../helpers/test-app';
 
 describe('AgentSession', () => {
 	let ctx: TestContext;

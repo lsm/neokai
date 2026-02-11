@@ -11,13 +11,13 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { TestContext } from '../../test-utils';
+import type { TestContext } from '../../helpers/test-app';
 import {
 	createTestApp,
 	waitForWebSocketState,
 	waitForWebSocketMessage,
 	createWebSocketWithFirstMessage,
-} from '../../test-utils';
+} from '../../helpers/test-app';
 
 describe('SDK Config RPC Handlers', () => {
 	let ctx: TestContext;
@@ -36,11 +36,11 @@ describe('SDK Config RPC Handlers', () => {
 		method: string,
 		data: Record<string, unknown>
 	): Promise<Record<string, unknown>> {
-		const responsePromise = waitForWebSocketMessage(ws);
+		const callId = `call-${Date.now()}-${Math.random()}`;
 		ws.send(
 			JSON.stringify({
-				id: `call-${Date.now()}`,
-				type: 'CALL',
+				id: callId,
+				type: 'REQ',
 				method,
 				data,
 				sessionId: 'global',
@@ -48,7 +48,18 @@ describe('SDK Config RPC Handlers', () => {
 				version: '1.0.0',
 			})
 		);
-		return responsePromise;
+
+		// Wait for RSP (skip EVENTs) - max 10 attempts to prevent infinite loop
+		let attempts = 0;
+		while (attempts < 10) {
+			const response = (await waitForWebSocketMessage(ws)) as Record<string, unknown>;
+			if (response.type === 'RSP' && response.requestId === callId) {
+				return response;
+			}
+			attempts++;
+		}
+
+		throw new Error(`Timeout waiting for RSP to ${method} (call ID: ${callId})`);
 	}
 
 	describe('config.model.get', () => {
@@ -61,7 +72,8 @@ describe('SDK Config RPC Handlers', () => {
 				sessionId: 'non-existent',
 			});
 
-			expect(response.type).toBe('ERROR');
+			expect(response.type).toBe('RSP');
+			expect(response.error).toBeDefined();
 			ws.close();
 		});
 
@@ -76,7 +88,7 @@ describe('SDK Config RPC Handlers', () => {
 
 			const response = await sendRpcCall(ws, 'config.model.get', { sessionId });
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('model');
 			ws.close();
 		});
@@ -100,7 +112,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('applied');
 			ws.close();
 		});
@@ -123,7 +135,7 @@ describe('SDK Config RPC Handlers', () => {
 			});
 
 			// Handler returns RESULT with errors array when model switch fails
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as {
 				errors?: Array<{ field: string; error: string }>;
 			};
@@ -146,7 +158,7 @@ describe('SDK Config RPC Handlers', () => {
 				sessionId,
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			// systemPrompt may be undefined for default
 			expect(response.data).toBeDefined();
 			ws.close();
@@ -168,7 +180,7 @@ describe('SDK Config RPC Handlers', () => {
 				systemPrompt: 'You are a helpful coding assistant',
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -192,7 +204,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -216,7 +228,7 @@ describe('SDK Config RPC Handlers', () => {
 			});
 
 			// Handler returns RESULT with success: false for validation errors
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { success: boolean; error?: string };
 			expect(data.success).toBe(false);
 			expect(data.error).toBeDefined();
@@ -236,7 +248,7 @@ describe('SDK Config RPC Handlers', () => {
 
 			const response = await sendRpcCall(ws, 'config.tools.get', { sessionId });
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toBeDefined();
 			ws.close();
 		});
@@ -260,7 +272,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -283,7 +295,7 @@ describe('SDK Config RPC Handlers', () => {
 			});
 
 			// Handler returns RESULT with success: false for validation errors
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { success: boolean; error?: string };
 			expect(data.success).toBe(false);
 			expect(data.error).toBeDefined();
@@ -305,7 +317,7 @@ describe('SDK Config RPC Handlers', () => {
 				sessionId,
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toBeDefined();
 			ws.close();
 		});
@@ -326,7 +338,7 @@ describe('SDK Config RPC Handlers', () => {
 				permissionMode: 'acceptEdits',
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -347,7 +359,7 @@ describe('SDK Config RPC Handlers', () => {
 			});
 
 			// Handler returns RESULT with success: false for validation errors
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { success: boolean; error?: string };
 			expect(data.success).toBe(false);
 			expect(data.error).toBeDefined();
@@ -367,7 +379,7 @@ describe('SDK Config RPC Handlers', () => {
 
 			const response = await sendRpcCall(ws, 'config.getAll', { sessionId });
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('config');
 			expect((response.data as Record<string, unknown>).config).toHaveProperty('model');
 			ws.close();
@@ -394,7 +406,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('applied');
 			ws.close();
 		});
@@ -416,7 +428,7 @@ describe('SDK Config RPC Handlers', () => {
 			});
 
 			// Handler returns RESULT but with errors in the result
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as {
 				applied?: string[];
 				errors?: Array<{ field: string; error: string }>;
@@ -440,7 +452,7 @@ describe('SDK Config RPC Handlers', () => {
 				sessionId,
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			ws.close();
 		});
 
@@ -464,7 +476,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -490,7 +502,7 @@ describe('SDK Config RPC Handlers', () => {
 			});
 
 			// Handler returns RESULT with success: false for validation errors
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { success: boolean; error?: string };
 			expect(data.success).toBe(false);
 			expect(data.error).toBeDefined();
@@ -512,7 +524,7 @@ describe('SDK Config RPC Handlers', () => {
 				sessionId,
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			ws.close();
 		});
 
@@ -534,7 +546,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -553,7 +565,7 @@ describe('SDK Config RPC Handlers', () => {
 
 			const response = await sendRpcCall(ws, 'config.betas.get', { sessionId });
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('betas');
 			ws.close();
 		});
@@ -572,7 +584,7 @@ describe('SDK Config RPC Handlers', () => {
 				betas: ['context-1m-2025-08-07'],
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -593,7 +605,7 @@ describe('SDK Config RPC Handlers', () => {
 			});
 
 			// Handler returns RESULT with success: false for validation errors
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			const data = response.data as { success: boolean; error?: string };
 			expect(data.success).toBe(false);
 			expect(data.error).toBeDefined();
@@ -615,7 +627,7 @@ describe('SDK Config RPC Handlers', () => {
 				sessionId,
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			ws.close();
 		});
 
@@ -641,7 +653,7 @@ describe('SDK Config RPC Handlers', () => {
 				},
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
 			ws.close();
@@ -661,9 +673,364 @@ describe('SDK Config RPC Handlers', () => {
 				outputFormat: null,
 			});
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			expect(response.data).toHaveProperty('success');
 			expect((response.data as Record<string, unknown>).success).toBe(true);
+			ws.close();
+		});
+	});
+
+	// === Extended config handler tests (merged from rpc-config-handlers-extended.test.ts) ===
+
+	describe('config.mcp.get', () => {
+		test('should return MCP config for session', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/config-mcp-get',
+			});
+
+			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+			await waitForWebSocketState(ws, WebSocket.OPEN);
+			await firstMessagePromise;
+
+			const response = await sendRpcCall(ws, 'config.mcp.get', { sessionId });
+
+			expect(response.type).toBe('RSP');
+			// Response includes MCP config and runtime status
+			// mcpServers may be undefined if not configured
+			expect(response.data).toBeDefined();
+			const data = response.data as { runtimeStatus?: unknown[] };
+			expect(data.runtimeStatus).toBeArray();
+			ws.close();
+		});
+	});
+
+	describe('config.mcp.update', () => {
+		test('should update MCP servers', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/config-mcp-update',
+			});
+
+			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+			await waitForWebSocketState(ws, WebSocket.OPEN);
+			await firstMessagePromise;
+
+			const response = await sendRpcCall(ws, 'config.mcp.update', {
+				sessionId,
+				mcpServers: {
+					'test-server': {
+						command: 'test-command',
+						args: [],
+					},
+				},
+				strictMcpConfig: false,
+			});
+
+			expect(response.type).toBe('RSP');
+			expect(response.data).toHaveProperty('success');
+			expect((response.data as Record<string, unknown>).success).toBe(true);
+			ws.close();
+		});
+
+		test('should reject invalid MCP server config', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/config-mcp-invalid',
+			});
+
+			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+			await waitForWebSocketState(ws, WebSocket.OPEN);
+			await firstMessagePromise;
+
+			const response = await sendRpcCall(ws, 'config.mcp.update', {
+				sessionId,
+				mcpServers: {
+					'': {
+						// Empty name should fail
+						command: 'test-command',
+						args: [],
+					},
+				},
+			});
+
+			expect(response.type).toBe('RSP');
+			const data = response.data as { success: boolean; error?: string };
+			expect(data.success).toBe(false);
+			expect(data.error).toBeDefined();
+			ws.close();
+		});
+	});
+
+	describe('config.mcp.addServer', () => {
+		test('should add MCP server', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/config-mcp-add',
+			});
+
+			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+			await waitForWebSocketState(ws, WebSocket.OPEN);
+			await firstMessagePromise;
+
+			const response = await sendRpcCall(ws, 'config.mcp.addServer', {
+				sessionId,
+				name: 'new-server',
+				config: {
+					command: 'npx',
+					args: ['-y', '@modelcontextprotocol/server-test'],
+				},
+			});
+
+			expect(response.type).toBe('RSP');
+			expect(response.data).toHaveProperty('success');
+			expect((response.data as Record<string, unknown>).success).toBe(true);
+			ws.close();
+		});
+
+		test('should reject adding invalid server', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/config-mcp-add-invalid',
+			});
+
+			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+			await waitForWebSocketState(ws, WebSocket.OPEN);
+			await firstMessagePromise;
+
+			const response = await sendRpcCall(ws, 'config.mcp.addServer', {
+				sessionId,
+				name: '', // Empty name should fail
+				config: {
+					command: 'test-command',
+					args: [],
+				},
+			});
+
+			expect(response.type).toBe('RSP');
+			const data = response.data as { success: boolean; error?: string };
+			expect(data.success).toBe(false);
+			expect(data.error).toBeDefined();
+			ws.close();
+		});
+	});
+
+	describe('config.mcp.removeServer', () => {
+		test('should remove MCP server', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/config-mcp-remove',
+			});
+
+			// First add a server
+			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+			await waitForWebSocketState(ws, WebSocket.OPEN);
+			await firstMessagePromise;
+
+			await sendRpcCall(ws, 'config.mcp.addServer', {
+				sessionId,
+				name: 'temp-server',
+				config: { command: 'test', args: [] },
+			});
+
+			// Then remove it
+			const response = await sendRpcCall(ws, 'config.mcp.removeServer', {
+				sessionId,
+				name: 'temp-server',
+			});
+
+			expect(response.type).toBe('RSP');
+			expect(response.data).toHaveProperty('success');
+			expect((response.data as Record<string, unknown>).success).toBe(true);
+			ws.close();
+		});
+	});
+
+	describe('config.env.get', () => {
+		test('should return environment config for session', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/config-env-get',
+			});
+
+			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+			await waitForWebSocketState(ws, WebSocket.OPEN);
+			await firstMessagePromise;
+
+			const response = await sendRpcCall(ws, 'config.env.get', { sessionId });
+
+			expect(response.type).toBe('RSP');
+			expect(response.data).toBeDefined();
+			ws.close();
+		});
+	});
+
+	describe('config.env.update', () => {
+		test('should update environment settings', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/config-env-update',
+			});
+
+			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+			await waitForWebSocketState(ws, WebSocket.OPEN);
+			await firstMessagePromise;
+
+			const response = await sendRpcCall(ws, 'config.env.update', {
+				sessionId,
+				settings: {
+					additionalDirectories: ['/extra/dir'],
+					env: { MY_VAR: 'test-value' },
+				},
+			});
+
+			expect(response.type).toBe('RSP');
+			expect(response.data).toHaveProperty('success');
+			expect((response.data as Record<string, unknown>).success).toBe(true);
+			ws.close();
+		});
+
+		test('should reject invalid env settings', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/config-env-invalid',
+			});
+
+			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+			await waitForWebSocketState(ws, WebSocket.OPEN);
+			await firstMessagePromise;
+
+			const response = await sendRpcCall(ws, 'config.env.update', {
+				sessionId,
+				settings: {
+					// additionalDirectories should be array of strings
+					additionalDirectories: 'not-an-array',
+				},
+			});
+
+			expect(response.type).toBe('RSP');
+			const data = response.data as { success: boolean; error?: string };
+			expect(data.success).toBe(false);
+			expect(data.error).toBeDefined();
+			ws.close();
+		});
+	});
+
+	describe('config.model.update with maxThinkingTokens', () => {
+		test('should update maxThinkingTokens', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/config-thinking-tokens',
+			});
+
+			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+			await waitForWebSocketState(ws, WebSocket.OPEN);
+			await firstMessagePromise;
+
+			const response = await sendRpcCall(ws, 'config.model.update', {
+				sessionId,
+				settings: {
+					maxThinkingTokens: 4096,
+				},
+			});
+
+			expect(response.type).toBe('RSP');
+			const data = response.data as { applied?: string[] };
+			expect(data.applied).toContain('maxThinkingTokens');
+			ws.close();
+		});
+	});
+
+	describe('config.model.update with fallback settings', () => {
+		test('should update fallbackModel, maxTurns, maxBudgetUsd', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/config-model-fallback',
+			});
+
+			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+			await waitForWebSocketState(ws, WebSocket.OPEN);
+			await firstMessagePromise;
+
+			const response = await sendRpcCall(ws, 'config.model.update', {
+				sessionId,
+				settings: {
+					fallbackModel: 'claude-haiku-4-20250514',
+					maxTurns: 100,
+					maxBudgetUsd: 10.0,
+				},
+			});
+
+			expect(response.type).toBe('RSP');
+			const data = response.data as { pending?: string[] };
+			expect(data.pending).toContain('fallbackModel');
+			expect(data.pending).toContain('maxTurns');
+			expect(data.pending).toContain('maxBudgetUsd');
+			ws.close();
+		});
+	});
+
+	describe('config.updateBulk with restartQuery', () => {
+		test('should update config with restartQuery=false', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/config-bulk-no-restart',
+			});
+
+			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+			await waitForWebSocketState(ws, WebSocket.OPEN);
+			await firstMessagePromise;
+
+			const response = await sendRpcCall(ws, 'config.updateBulk', {
+				sessionId,
+				config: {
+					systemPrompt: 'New system prompt',
+				},
+				restartQuery: false,
+			});
+
+			expect(response.type).toBe('RSP');
+			const data = response.data as { pending?: string[] };
+			expect(data.pending).toContain('systemPrompt');
+			ws.close();
+		});
+
+		test('should handle tools in bulk config (maps to sdkToolsPreset)', async () => {
+			const sessionId = await ctx.sessionManager.createSession({
+				workspacePath: '/test/config-bulk-tools',
+			});
+
+			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+			await waitForWebSocketState(ws, WebSocket.OPEN);
+			await firstMessagePromise;
+
+			const response = await sendRpcCall(ws, 'config.updateBulk', {
+				sessionId,
+				config: {
+					tools: 'sdk',
+				},
+				restartQuery: false,
+			});
+
+			expect(response.type).toBe('RSP');
+			ws.close();
+		});
+	});
+
+	describe('Error handling for non-existent sessions', () => {
+		test('config.env.get should error for non-existent session', async () => {
+			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+			await waitForWebSocketState(ws, WebSocket.OPEN);
+			await firstMessagePromise;
+
+			const response = await sendRpcCall(ws, 'config.env.get', {
+				sessionId: 'non-existent',
+			});
+
+			expect(response.type).toBe('RSP');
+			expect(response.error).toBeDefined();
+			ws.close();
+		});
+
+		test('config.mcp.get should error for non-existent session', async () => {
+			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
+			await waitForWebSocketState(ws, WebSocket.OPEN);
+			await firstMessagePromise;
+
+			const response = await sendRpcCall(ws, 'config.mcp.get', {
+				sessionId: 'non-existent',
+			});
+
+			expect(response.type).toBe('RSP');
+			expect(response.error).toBeDefined();
 			ws.close();
 		});
 	});

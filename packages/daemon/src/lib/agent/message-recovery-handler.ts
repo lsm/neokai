@@ -92,17 +92,12 @@ export class MessageRecoveryHandler {
 			}
 
 			if (orphanedMessages.length === 0) {
-				logger.log('No orphaned sent messages found');
 				return;
 			}
 
 			// Reset orphaned messages to 'saved' status
 			const dbIds = orphanedMessages.map((m) => m.dbId);
 			db.updateMessageStatus(dbIds, 'saved');
-
-			logger.log(
-				`Recovered ${orphanedMessages.length} orphaned sent messages: ${orphanedMessages.map((m) => m.uuid.slice(0, 8)).join(', ')}`
-			);
 		} catch (error) {
 			logger.warn('Failed to recover orphaned sent messages:', error);
 			// Don't throw - recovery failure shouldn't prevent session from loading

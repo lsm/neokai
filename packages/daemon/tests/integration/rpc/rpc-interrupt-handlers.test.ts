@@ -6,13 +6,13 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { TestContext } from '../../test-utils';
+import type { TestContext } from '../../helpers/test-app';
 import {
 	createTestApp,
 	waitForWebSocketState,
 	waitForWebSocketMessage,
 	createWebSocketWithFirstMessage,
-} from '../../test-utils';
+} from '../../helpers/test-app';
 
 describe('Interrupt RPC Handlers', () => {
 	let ctx: TestContext;
@@ -36,7 +36,7 @@ describe('Interrupt RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'int-1',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'client.interrupt',
 					data: {
 						sessionId: 'non-existent',
@@ -49,7 +49,8 @@ describe('Interrupt RPC Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('ERROR');
+			expect(response.type).toBe('RSP');
+			expect(response.error).toBeDefined();
 
 			ws.close();
 		});
@@ -68,7 +69,7 @@ describe('Interrupt RPC Handlers', () => {
 			ws.send(
 				JSON.stringify({
 					id: 'int-2',
-					type: 'CALL',
+					type: 'REQ',
 					method: 'client.interrupt',
 					data: { sessionId },
 					sessionId: 'global',
@@ -79,7 +80,7 @@ describe('Interrupt RPC Handlers', () => {
 
 			const response = await responsePromise;
 
-			expect(response.type).toBe('RESULT');
+			expect(response.type).toBe('RSP');
 			// EventBus-centric: RPC returns accepted, actual result via EventBus
 			expect(response.data.accepted).toBe(true);
 

@@ -70,15 +70,15 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 			if (!hub) return;
 
 			try {
-				const response = await hub.call<{
+				const response = await hub.request<{
 					session: { metadata?: { inputDraft?: string } };
 				}>('session.get', { sessionId });
 				const draft = response.session?.metadata?.inputDraft;
 				if (draft) {
 					contentSignal.value = draft;
 				}
-			} catch (error) {
-				console.error('Failed to load draft:', error);
+			} catch {
+				// Ignore errors loading draft
 			}
 		};
 
@@ -103,14 +103,14 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 			const hub = connectionManager.getHubIfConnected();
 			if (hub) {
 				hub
-					.call('session.update', {
+					.request('session.update', {
 						sessionId: prevSessionId,
 						metadata: {
 							inputDraft: trimmedContent || undefined,
 						},
 					})
-					.catch((error) => {
-						console.error('Failed to flush draft on session switch:', error);
+					.catch(() => {
+						/* ignore flush errors */
 					});
 			}
 		}
@@ -123,14 +123,14 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 			const hub = connectionManager.getHubIfConnected();
 			if (hub) {
 				hub
-					.call('session.update', {
+					.request('session.update', {
 						sessionId,
 						metadata: {
 							inputDraft: undefined,
 						},
 					})
-					.catch((error) => {
-						console.error('Failed to clear draft:', error);
+					.catch(() => {
+						/* ignore clear errors */
 					});
 			}
 			return;
@@ -142,14 +142,14 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 			if (!hub) return;
 
 			try {
-				await hub.call('session.update', {
+				await hub.request('session.update', {
 					sessionId,
 					metadata: {
 						inputDraft: trimmedContent,
 					},
 				});
-			} catch (error) {
-				console.error('Failed to save draft:', error);
+			} catch {
+				// Ignore draft save errors
 			}
 		}, debounceMs);
 

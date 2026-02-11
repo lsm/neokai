@@ -27,10 +27,10 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import 'dotenv/config';
-import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { createDaemonServer } from '../helpers/daemon-server-helper';
-import { sendMessage, waitForIdle } from '../helpers/daemon-test-helpers';
+// Bun automatically loads .env from project root when running tests
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import { createDaemonServer } from '../../helpers/daemon-server';
+import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
@@ -47,7 +47,10 @@ const COORDINATOR_AGENTS = [
 ];
 
 /**
- * Wait for a system:init SDK message via subscription
+ * Wait for a system:init SDK message via subscription.
+ *
+ * Subscribes to events BEFORE joining the room, then joins and stays in the room
+ * (no leaveRoom in cleanup) to avoid room state races between multi-phase tests.
  */
 async function waitForSystemInit(
 	daemon: DaemonServerContext,
@@ -71,32 +74,26 @@ async function waitForSystemInit(
 			reject(new Error(`Timeout waiting for system:init message after ${timeout}ms`));
 		}, timeout);
 
-		daemon.messageHub
-			.subscribe(
-				'state.sdkMessages.delta',
-				(data: unknown) => {
-					if (resolved) return;
+		// Subscribe FIRST so no events are missed once room join completes
+		unsubscribe = daemon.messageHub.onEvent('state.sdkMessages.delta', (data: unknown) => {
+			if (resolved) return;
 
-					const delta = data as { added?: Array<Record<string, unknown>> };
-					const addedMessages = delta.added || [];
+			const delta = data as { added?: Array<Record<string, unknown>> };
+			const addedMessages = delta.added || [];
 
-					for (const msg of addedMessages) {
-						if (msg.type === 'system' && msg.subtype === 'init') {
-							cleanup();
-							resolve(msg);
-							return;
-						}
-					}
-				},
-				{ sessionId }
-			)
-			.then((fn) => {
-				unsubscribe = fn;
-			})
-			.catch((error) => {
-				cleanup();
-				reject(error);
-			});
+			for (const msg of addedMessages) {
+				if (msg.type === 'system' && msg.subtype === 'init') {
+					cleanup();
+					resolve(msg);
+					return;
+				}
+			}
+		});
+
+		// Join the session room (idempotent - safe to call multiple times)
+		daemon.messageHub.joinRoom('session:' + sessionId).catch(() => {
+			// Join failed, but continue - events might still work
+		});
 	});
 }
 
@@ -143,7 +140,7 @@ async function toggleCoordinatorMode(
 	sessionId: string,
 	coordinatorMode: boolean
 ): Promise<void> {
-	const result = (await daemon.messageHub.call('session.coordinator.switch', {
+	const result = (await daemon.messageHub.request('session.coordinator.switch', {
 		sessionId,
 		coordinatorMode,
 	})) as { success: boolean; coordinatorMode: boolean; error?: string };
@@ -168,7 +165,7 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 
 	test('default ON → send → assert coordinator → OFF → send → assert no coordinator → ON → send → assert coordinator', async () => {
 		// 1. Create session with coordinator mode ON
-		const createResult = (await daemon.messageHub.call('session.create', {
+		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: `${TMP_DIR}/test-coordinator-default-on-${Date.now()}`,
 			title: 'Coordinator Default ON Test',
 			config: {
@@ -186,7 +183,7 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 		let systemInit = await systemInitPromise;
 
 		assertCoordinatorOn(systemInit);
-		await waitForIdle(daemon, sessionId, 60000);
+		await waitForIdle(daemon, sessionId, 90000);
 
 		// --- Phase 2: Toggle OFF - send message ---
 		await toggleCoordinatorMode(daemon, sessionId, false);
@@ -196,7 +193,7 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 		systemInit = await systemInitPromise;
 
 		assertCoordinatorOff(systemInit);
-		await waitForIdle(daemon, sessionId, 60000);
+		await waitForIdle(daemon, sessionId, 90000);
 
 		// --- Phase 3: Toggle back ON - send message ---
 		await toggleCoordinatorMode(daemon, sessionId, true);
@@ -206,12 +203,12 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 		systemInit = await systemInitPromise;
 
 		assertCoordinatorOn(systemInit);
-		await waitForIdle(daemon, sessionId, 60000);
-	}, 180000);
+		await waitForIdle(daemon, sessionId, 90000);
+	}, 300000);
 
 	test('default OFF → send → assert no coordinator → ON → send → assert coordinator → OFF → send → assert no coordinator', async () => {
 		// 1. Create session with coordinator mode OFF
-		const createResult = (await daemon.messageHub.call('session.create', {
+		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: `${TMP_DIR}/test-coordinator-default-off-${Date.now()}`,
 			title: 'Coordinator Default OFF Test',
 			config: {
@@ -229,7 +226,7 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 		let systemInit = await systemInitPromise;
 
 		assertCoordinatorOff(systemInit);
-		await waitForIdle(daemon, sessionId, 60000);
+		await waitForIdle(daemon, sessionId, 90000);
 
 		// --- Phase 2: Toggle ON - send message ---
 		await toggleCoordinatorMode(daemon, sessionId, true);
@@ -239,7 +236,7 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 		systemInit = await systemInitPromise;
 
 		assertCoordinatorOn(systemInit);
-		await waitForIdle(daemon, sessionId, 60000);
+		await waitForIdle(daemon, sessionId, 90000);
 
 		// --- Phase 3: Toggle back OFF - send message ---
 		await toggleCoordinatorMode(daemon, sessionId, false);
@@ -249,14 +246,14 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 		systemInit = await systemInitPromise;
 
 		assertCoordinatorOff(systemInit);
-		await waitForIdle(daemon, sessionId, 60000);
-	}, 180000);
+		await waitForIdle(daemon, sessionId, 90000);
+	}, 300000);
 
 	test('system:init messages are immutable - each message preserves its coordinator state', async () => {
 		// This test verifies that each system:init message is tied to its query,
 		// and toggling coordinator mode doesn't retroactively change earlier messages.
 
-		const createResult = (await daemon.messageHub.call('session.create', {
+		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: `${TMP_DIR}/test-coordinator-immutable-${Date.now()}`,
 			title: 'Coordinator Immutability Test',
 			config: {
@@ -273,7 +270,7 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 		await sendMessage(daemon, sessionId, 'Message 1');
 		const initWithCoordinator = await systemInitPromise;
 		assertCoordinatorOn(initWithCoordinator);
-		await waitForIdle(daemon, sessionId, 60000);
+		await waitForIdle(daemon, sessionId, 90000);
 
 		// Phase 2: Toggle OFF and send
 		await toggleCoordinatorMode(daemon, sessionId, false);
@@ -281,10 +278,10 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 		await sendMessage(daemon, sessionId, 'Message 2');
 		const initWithoutCoordinator = await systemInitPromise;
 		assertCoordinatorOff(initWithoutCoordinator);
-		await waitForIdle(daemon, sessionId, 60000);
+		await waitForIdle(daemon, sessionId, 90000);
 
 		// Verify: Fetch all SDK messages and check each system:init is preserved
-		const allMessages = (await daemon.messageHub.call('message.sdkMessages', {
+		const allMessages = (await daemon.messageHub.request('message.sdkMessages', {
 			sessionId,
 		})) as { sdkMessages: Array<Record<string, unknown>> };
 

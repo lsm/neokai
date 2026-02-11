@@ -19,15 +19,15 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import 'dotenv/config';
-import type { DaemonServerContext } from '../helpers/daemon-server-helper';
-import { createDaemonServer } from '../helpers/daemon-server-helper';
+// Bun automatically loads .env from project root when running tests
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import { createDaemonServer } from '../../helpers/daemon-server';
 import {
 	getProcessingState,
 	getSession,
 	sendMessage,
 	waitForIdle,
-} from '../helpers/daemon-test-helpers';
+} from '../../helpers/daemon-actions';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
@@ -80,7 +80,7 @@ describe('Auto-Title Generation', () => {
 		const workspacePath = `${TMP_DIR}/auto-title-test-${Date.now()}`;
 
 		// Create session with workspace path
-		const createResult = (await daemon.messageHub.call('session.create', {
+		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath,
 			config: { model: 'haiku-4.5' },
 		})) as { sessionId: string };
@@ -119,7 +119,7 @@ describe('Auto-Title Generation', () => {
 		const workspacePath = `${TMP_DIR}/auto-title-test-${Date.now()}`;
 
 		// Create session
-		const createResult = (await daemon.messageHub.call('session.create', {
+		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath,
 			config: { model: 'haiku-4.5' },
 		})) as { sessionId: string };
@@ -171,7 +171,7 @@ describe('Auto-Title Generation', () => {
 		const workspacePath = `${TMP_DIR}/auto-title-workspace-test-${Date.now()}`;
 
 		// Create session with explicit workspace path
-		const createResult = (await daemon.messageHub.call('session.create', {
+		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath,
 			config: { model: 'haiku-4.5' },
 		})) as { sessionId: string };
@@ -201,7 +201,7 @@ describe('Auto-Title Generation', () => {
 		const workspacePath = `${TMP_DIR}/auto-title-graceful-test-${Date.now()}`;
 
 		// Create session
-		const createResult = (await daemon.messageHub.call('session.create', {
+		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath,
 			config: { model: 'haiku-4.5' },
 		})) as { sessionId: string };

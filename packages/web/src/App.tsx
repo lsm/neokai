@@ -54,8 +54,8 @@ export function App() {
 						currentSessionIdSignal.value = initialSessionId;
 					});
 				}
-			} catch (error) {
-				console.error('[App] Failed to initialize state management:', error);
+			} catch {
+				// State initialization failed - app will use default state
 			}
 		};
 

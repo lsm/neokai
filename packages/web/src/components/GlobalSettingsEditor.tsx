@@ -12,11 +12,12 @@ import { globalSettings } from '../lib/state.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 
 // Model options with human-readable names
+// Uses SDK short IDs that match canonical model identifiers
 const MODEL_OPTIONS = [
-	{ value: '', label: 'Default (Sonnet)' },
-	{ value: 'claude-sonnet-4-5-20250929', label: 'Sonnet 4.5' },
-	{ value: 'claude-opus-4-5-20251101', label: 'Opus 4.5' },
-	{ value: 'claude-haiku-3-5-20241022', label: 'Haiku 3.5' },
+	{ value: 'sonnet', label: 'Sonnet 4.5' },
+	{ value: 'opus', label: 'Opus 4.5' },
+	{ value: 'haiku', label: 'Haiku 4.5' },
+	{ value: 'sonnet[1m]', label: 'Sonnet 4.5 (1M)' },
 ] as const;
 
 // Permission mode options with descriptions
@@ -129,8 +130,8 @@ export function GlobalSettingsEditor() {
 			setMcpLoading(true);
 			const response = await listMcpServersFromSources();
 			setMcpServers(response);
-		} catch (error) {
-			console.error('Failed to load MCP servers:', error);
+		} catch {
+			// Error handled silently - toast shown elsewhere if needed
 		} finally {
 			setMcpLoading(false);
 		}
@@ -144,10 +145,9 @@ export function GlobalSettingsEditor() {
 	const handleModelChange = async (value: string) => {
 		try {
 			setSaving(true);
-			await updateGlobalSettings({ model: value || undefined });
+			await updateGlobalSettings({ model: value });
 			showSavedIndicator('model');
-		} catch (error) {
-			console.error('Failed to update model:', error);
+		} catch {
 			toast.error('Failed to update model');
 		} finally {
 			setSaving(false);
@@ -159,8 +159,7 @@ export function GlobalSettingsEditor() {
 			setSaving(true);
 			await updateGlobalSettings({ permissionMode: value });
 			showSavedIndicator('permission');
-		} catch (error) {
-			console.error('Failed to update permission mode:', error);
+		} catch {
 			toast.error('Failed to update permission mode');
 		} finally {
 			setSaving(false);
@@ -172,8 +171,7 @@ export function GlobalSettingsEditor() {
 			setSaving(true);
 			await updateGlobalSettings({ thinkingLevel: value });
 			showSavedIndicator('thinking');
-		} catch (error) {
-			console.error('Failed to update thinking level:', error);
+		} catch {
 			toast.error('Failed to update thinking level');
 		} finally {
 			setSaving(false);
@@ -185,8 +183,7 @@ export function GlobalSettingsEditor() {
 			setSaving(true);
 			await updateGlobalSettings({ autoScroll: value });
 			showSavedIndicator('autoScroll');
-		} catch (error) {
-			console.error('Failed to update auto scroll:', error);
+		} catch {
 			toast.error('Failed to update auto scroll');
 		} finally {
 			setSaving(false);
@@ -198,8 +195,7 @@ export function GlobalSettingsEditor() {
 			setSaving(true);
 			await updateGlobalSettings({ coordinatorMode: value });
 			showSavedIndicator('coordinatorMode');
-		} catch (error) {
-			console.error('Failed to update coordinator mode:', error);
+		} catch {
 			toast.error('Failed to update coordinator mode');
 		} finally {
 			setSaving(false);
@@ -230,8 +226,7 @@ export function GlobalSettingsEditor() {
 			showSavedIndicator('sources');
 			// Reload MCP servers after source change
 			loadMcpServers();
-		} catch (error) {
-			console.error('Failed to update setting sources:', error);
+		} catch {
 			toast.error('Failed to update setting sources');
 		} finally {
 			setSaving(false);
@@ -266,8 +261,7 @@ export function GlobalSettingsEditor() {
 				});
 			}
 			showSavedIndicator(`mcp-${serverName}`);
-		} catch (error) {
-			console.error('Failed to update MCP server settings:', error);
+		} catch {
 			toast.error('Failed to update MCP server settings');
 		} finally {
 			setSaving(false);
@@ -278,7 +272,7 @@ export function GlobalSettingsEditor() {
 		return <div class="text-gray-400 text-sm">Loading settings...</div>;
 	}
 
-	const currentModel = settings.model || '';
+	const currentModel = settings.model || 'sonnet';
 	const currentPermissionMode = settings.permissionMode || 'default';
 	const currentThinkingLevel = settings.thinkingLevel || 'auto';
 	const currentAutoScroll = settings.autoScroll ?? true;

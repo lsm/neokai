@@ -99,8 +99,32 @@ MessageHub protocol provides unified RPC + pub/sub over WebSocket between web cl
 - `packages/daemon/tests/online/` — Tests requiring API credentials
 - `packages/e2e/tests/` — Browser automation tests
 
-#### Notes for E2E 
-Always run single e2e testing file at a time, it's too slow to run all e2e together because we have so many.
+#### E2E Test Rules
+
+E2E tests are **pure browser-based Playwright tests** simulating real end-user interactions. They must NOT contain direct API calls or internal state access.
+
+**Core Principles:**
+- All test actions must go through the UI: clicks, typing, navigation, keyboard shortcuts
+- All assertions must verify visible DOM state: text content, element visibility, CSS classes
+- Sessions must be created via the "New Session" button, never via RPC (`session.create`)
+- WebSocket disconnection simulation must use `closeWebSocket()` / `restoreWebSocket()` helpers (from `connection-helpers.ts`), which close the WebSocket via `page.evaluate()` to trigger real browser close events. Do NOT use `page.context().setOffline()` - it blocks new requests but doesn't close existing WebSockets
+
+**Prohibited in test actions/assertions:**
+- `hub.request()`, `hub.event()` — no direct MessageHub RPC calls
+- `window.sessionStore`, `window.globalStore`, `window.appState` — no reading internal state for assertions
+- `connectionManager.simulateDisconnect()` — use `closeWebSocket()` helper instead
+- `page.context().setOffline()` — doesn't close WebSockets, use `closeWebSocket()` helper instead
+- `window.__stateChannels` — internal state channel access
+
+**Allowed exceptions (infrastructure only):**
+- Session cleanup in `afterEach`/teardown via `hub.request('session.delete', ...)` — reliability matters for cleanup
+- Session ID extraction in `waitForSessionCreated()` helper — reads signals as fallback for URL-based extraction
+- `waitForWebSocketConnected()` — may check hub state as fallback alongside UI indicator
+- Global teardown (`global-teardown.ts`) — RPC-based session/worktree cleanup
+
+**Other notes:**
+- Always run a single E2E test file at a time — too slow to run all together
+- If a test scenario can't be triggered through the UI (e.g., token expiry, malformed server responses), it belongs in daemon integration tests, not E2E
 
 ## Branching Strategy
 

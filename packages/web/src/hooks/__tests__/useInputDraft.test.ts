@@ -21,7 +21,15 @@ vi.mock('../../lib/connection-manager.ts', () => ({
 
 describe('useInputDraft', () => {
 	const mockHub = {
-		call: vi.fn(),
+		// Current unified API
+		request: vi.fn().mockResolvedValue({ acknowledged: true }),
+		event: vi.fn(),
+		onRequest: vi.fn().mockReturnValue(() => {}),
+		onEvent: vi.fn().mockReturnValue(() => {}),
+		joinRoom: vi.fn(),
+		leaveRoom: vi.fn(),
+		isConnected: vi.fn().mockReturnValue(true),
+		onConnection: vi.fn().mockReturnValue(() => {}),
 	};
 
 	beforeEach(() => {
@@ -217,7 +225,7 @@ describe('useInputDraft', () => {
 
 	describe('draft loading', () => {
 		it('should load draft from session when hub is connected', async () => {
-			mockHub.call.mockResolvedValue({
+			mockHub.request.mockResolvedValue({
 				session: { metadata: { inputDraft: 'Saved draft' } },
 			});
 			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
@@ -229,7 +237,7 @@ describe('useInputDraft', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			expect(mockHub.call).toHaveBeenCalledWith('session.get', { sessionId: 'session-1' });
+			expect(mockHub.request).toHaveBeenCalledWith('session.get', { sessionId: 'session-1' });
 			expect(result.current.content).toBe('Saved draft');
 		});
 
@@ -242,13 +250,12 @@ describe('useInputDraft', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			expect(mockHub.call).not.toHaveBeenCalled();
+			expect(mockHub.request).not.toHaveBeenCalled();
 			expect(result.current.content).toBe('');
 		});
 
 		it('should handle load error gracefully', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-			mockHub.call.mockRejectedValue(new Error('Network error'));
+			mockHub.request.mockRejectedValue(new Error('Network error'));
 			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
 			const { result } = renderHook(() => useInputDraft('session-1'));
@@ -257,13 +264,11 @@ describe('useInputDraft', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			expect(consoleSpy).toHaveBeenCalledWith('Failed to load draft:', expect.any(Error));
 			expect(result.current.content).toBe('');
-			consoleSpy.mockRestore();
 		});
 
 		it('should handle session with no draft metadata', async () => {
-			mockHub.call.mockResolvedValue({
+			mockHub.request.mockResolvedValue({
 				session: { metadata: {} },
 			});
 			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
@@ -278,7 +283,7 @@ describe('useInputDraft', () => {
 		});
 
 		it('should handle session with null metadata', async () => {
-			mockHub.call.mockResolvedValue({
+			mockHub.request.mockResolvedValue({
 				session: {},
 			});
 			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
@@ -295,7 +300,8 @@ describe('useInputDraft', () => {
 
 	describe('debounced saving', () => {
 		it('should save draft after debounce delay', async () => {
-			mockHub.call.mockResolvedValue({});
+			mockHub.request.mockResolvedValue({});
+			mockHub.request.mockResolvedValue({});
 			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
 			const { result } = renderHook(() => useInputDraft('session-1', 100));
@@ -306,14 +312,14 @@ describe('useInputDraft', () => {
 			});
 
 			// Clear mock calls from initialization
-			mockHub.call.mockClear();
+			mockHub.request.mockClear();
 
 			act(() => {
 				result.current.setContent('New content');
 			});
 
 			// Should not save immediately (need to check specifically for this content)
-			const callsBeforeDebounce = mockHub.call.mock.calls.filter(
+			const callsBeforeDebounce = mockHub.request.mock.calls.filter(
 				(call) => call[0] === 'session.update' && call[1]?.metadata?.inputDraft === 'New content'
 			);
 			expect(callsBeforeDebounce.length).toBe(0);
@@ -323,14 +329,15 @@ describe('useInputDraft', () => {
 				await vi.advanceTimersByTimeAsync(150);
 			});
 
-			expect(mockHub.call).toHaveBeenCalledWith('session.update', {
+			expect(mockHub.request).toHaveBeenCalledWith('session.update', {
 				sessionId: 'session-1',
 				metadata: { inputDraft: 'New content' },
 			});
 		});
 
 		it('should clear draft immediately when content is empty', async () => {
-			mockHub.call.mockResolvedValue({});
+			mockHub.request.mockResolvedValue({});
+			mockHub.request.mockResolvedValue({});
 			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
 			const { result } = renderHook(() => useInputDraft('session-1'));
@@ -345,15 +352,15 @@ describe('useInputDraft', () => {
 			});
 
 			// Should save immediately with undefined (no debounce for clearing)
-			expect(mockHub.call).toHaveBeenCalledWith('session.update', {
+			expect(mockHub.request).toHaveBeenCalledWith('session.update', {
 				sessionId: 'session-1',
 				metadata: { inputDraft: undefined },
 			});
 		});
 
 		it('should handle save error gracefully', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-			mockHub.call.mockRejectedValue(new Error('Save error'));
+			mockHub.request.mockResolvedValue({});
+			mockHub.request.mockRejectedValue(new Error('Save error'));
 			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
 			const { result } = renderHook(() => useInputDraft('session-1', 100));
@@ -366,12 +373,12 @@ describe('useInputDraft', () => {
 				await vi.advanceTimersByTimeAsync(150);
 			});
 
-			expect(consoleSpy).toHaveBeenCalledWith('Failed to save draft:', expect.any(Error));
-			consoleSpy.mockRestore();
+			// Error should be handled gracefully (no throw)
 		});
 
 		it('should cancel pending save when new content is set', async () => {
-			mockHub.call.mockResolvedValue({});
+			mockHub.request.mockResolvedValue({});
+			mockHub.request.mockResolvedValue({});
 			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
 			const { result } = renderHook(() => useInputDraft('session-1', 100));
@@ -381,7 +388,7 @@ describe('useInputDraft', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			mockHub.call.mockClear();
+			mockHub.request.mockClear();
 
 			// Set content - this schedules a timeout
 			act(() => {
@@ -404,7 +411,7 @@ describe('useInputDraft', () => {
 			});
 
 			// Should only have saved 'Second', not 'First'
-			const updateCalls = mockHub.call.mock.calls.filter(
+			const updateCalls = mockHub.request.mock.calls.filter(
 				(call) => call[0] === 'session.update' && call[1]?.metadata?.inputDraft
 			);
 			expect(updateCalls).toEqual([
@@ -413,7 +420,8 @@ describe('useInputDraft', () => {
 		});
 
 		it('should clear existing timeout when content changes rapidly', async () => {
-			mockHub.call.mockResolvedValue({});
+			mockHub.request.mockResolvedValue({});
+			mockHub.request.mockResolvedValue({});
 			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
 			const { result } = renderHook(() => useInputDraft('session-1', 200));
@@ -423,7 +431,7 @@ describe('useInputDraft', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			mockHub.call.mockClear();
+			mockHub.request.mockClear();
 
 			// Simulate rapid typing - each call should cancel the previous pending save
 			act(() => {
@@ -460,7 +468,7 @@ describe('useInputDraft', () => {
 			});
 
 			// Should only save the final content
-			const updateCalls = mockHub.call.mock.calls.filter(
+			const updateCalls = mockHub.request.mock.calls.filter(
 				(call) => call[0] === 'session.update' && call[1]?.metadata?.inputDraft
 			);
 			expect(updateCalls).toEqual([
@@ -469,7 +477,8 @@ describe('useInputDraft', () => {
 		});
 
 		it('should trim content before saving', async () => {
-			mockHub.call.mockResolvedValue({});
+			mockHub.request.mockResolvedValue({});
+			mockHub.request.mockResolvedValue({});
 			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
 			const { result } = renderHook(() => useInputDraft('session-1', 100));
@@ -482,14 +491,15 @@ describe('useInputDraft', () => {
 				await vi.advanceTimersByTimeAsync(150);
 			});
 
-			expect(mockHub.call).toHaveBeenCalledWith('session.update', {
+			expect(mockHub.request).toHaveBeenCalledWith('session.update', {
 				sessionId: 'session-1',
 				metadata: { inputDraft: 'Content with spaces' },
 			});
 		});
 
 		it('should clear draft when content is only whitespace', async () => {
-			mockHub.call.mockResolvedValue({});
+			mockHub.request.mockResolvedValue({});
+			mockHub.request.mockResolvedValue({});
 			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
 			const { result } = renderHook(() => useInputDraft('session-1'));
@@ -499,15 +509,15 @@ describe('useInputDraft', () => {
 			});
 
 			// Should clear immediately
-			expect(mockHub.call).toHaveBeenCalledWith('session.update', {
+			expect(mockHub.request).toHaveBeenCalledWith('session.update', {
 				sessionId: 'session-1',
 				metadata: { inputDraft: undefined },
 			});
 		});
 
 		it('should handle clear error gracefully', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-			mockHub.call.mockRejectedValue(new Error('Clear error'));
+			mockHub.request.mockResolvedValue({});
+			mockHub.request.mockRejectedValue(new Error('Clear error'));
 			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
 			const { result } = renderHook(() => useInputDraft('session-1'));
@@ -520,14 +530,14 @@ describe('useInputDraft', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			expect(consoleSpy).toHaveBeenCalledWith('Failed to clear draft:', expect.any(Error));
-			consoleSpy.mockRestore();
+			// Error should be handled gracefully (no throw)
 		});
 	});
 
 	describe('session switch behavior', () => {
 		it('should call session.update when switching sessions', async () => {
-			mockHub.call.mockResolvedValue({});
+			mockHub.request.mockResolvedValue({});
+			mockHub.request.mockResolvedValue({});
 			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
 			const { result, rerender } = renderHook(({ sessionId }) => useInputDraft(sessionId, 100), {
@@ -547,13 +557,13 @@ describe('useInputDraft', () => {
 			rerender({ sessionId: 'session-2' });
 
 			// Should have made session.update calls (flush and/or clear)
-			const updateCalls = mockHub.call.mock.calls.filter((call) => call[0] === 'session.update');
+			const updateCalls = mockHub.request.mock.calls.filter((call) => call[0] === 'session.update');
 			expect(updateCalls.length).toBeGreaterThan(0);
 		});
 
 		it('should handle flush error gracefully', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-			mockHub.call.mockRejectedValue(new Error('Flush error'));
+			mockHub.request.mockResolvedValue({});
+			mockHub.request.mockRejectedValue(new Error('Flush error'));
 			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
 			const { result, rerender } = renderHook(({ sessionId }) => useInputDraft(sessionId), {
@@ -572,12 +582,7 @@ describe('useInputDraft', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			// Should have logged the specific flush error
-			expect(consoleSpy).toHaveBeenCalledWith(
-				'Failed to flush draft on session switch:',
-				expect.any(Error)
-			);
-			consoleSpy.mockRestore();
+			// Error should be handled gracefully (no throw)
 		});
 
 		it('should not call hub when not connected', async () => {
@@ -593,11 +598,12 @@ describe('useInputDraft', () => {
 
 			rerender({ sessionId: 'session-2' });
 
-			expect(mockHub.call).not.toHaveBeenCalled();
+			expect(mockHub.request).not.toHaveBeenCalled();
 		});
 
 		it('should clear content when session changes', async () => {
-			mockHub.call.mockResolvedValue({});
+			mockHub.request.mockResolvedValue({});
+			mockHub.request.mockResolvedValue({});
 			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
 			const { result, rerender } = renderHook(({ sessionId }) => useInputDraft(sessionId), {
@@ -624,7 +630,8 @@ describe('useInputDraft', () => {
 
 	describe('cleanup', () => {
 		it('should cleanup timeouts on unmount', async () => {
-			mockHub.call.mockResolvedValue({});
+			mockHub.request.mockResolvedValue({});
+			mockHub.request.mockResolvedValue({});
 			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
 			const { result, unmount } = renderHook(() => useInputDraft('session-1', 100));
@@ -642,7 +649,7 @@ describe('useInputDraft', () => {
 			});
 
 			// Should not have saved (was unmounted)
-			expect(mockHub.call).not.toHaveBeenCalledWith('session.update', {
+			expect(mockHub.request).not.toHaveBeenCalledWith('session.update', {
 				sessionId: 'session-1',
 				metadata: { inputDraft: 'Content' },
 			});

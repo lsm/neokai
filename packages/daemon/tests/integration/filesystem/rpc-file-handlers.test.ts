@@ -15,7 +15,7 @@ describe('File RPC Handlers', () => {
 		getSessionAsync: ReturnType<typeof mock>;
 	};
 	let mockMessageHub: {
-		handle: ReturnType<typeof mock>;
+		onRequest: ReturnType<typeof mock>;
 	};
 
 	beforeAll(async () => {
@@ -29,8 +29,9 @@ describe('File RPC Handlers', () => {
 		// Setup mocks
 		handlers = new Map();
 		mockMessageHub = {
-			handle: mock((method: string, handler: Function) => {
+			onRequest: mock((method: string, handler: Function) => {
 				handlers.set(method, handler);
+				return () => {}; // Return unsubscribe function
 			}),
 		};
 
@@ -47,7 +48,7 @@ describe('File RPC Handlers', () => {
 			}),
 		};
 
-		setupFileHandlers(mockMessageHub, mockSessionManager);
+		setupFileHandlers(mockMessageHub as never, mockSessionManager as never);
 	});
 
 	afterAll(async () => {

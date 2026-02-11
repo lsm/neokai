@@ -1,7 +1,10 @@
 /**
  * Test MessageHub reconnection behavior
  *
- * Verifies that subscriptions are properly re-established after reconnection
+ * In the new simplified API:
+ * - No automatic resubscription (no SUBSCRIBE messages)
+ * - Event handlers persist across reconnects (local state)
+ * - Queries timeout on disconnect
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
@@ -31,30 +34,6 @@ class MockTransport implements IMessageTransport {
 
 	async send(message: HubMessage): Promise<void> {
 		this.sentMessages.push(message);
-
-		// Auto-respond to SUBSCRIBE/UNSUBSCRIBE messages with ACK
-		if (message.type === MessageType.SUBSCRIBE || message.type === MessageType.UNSUBSCRIBE) {
-			const ackMessage: HubMessage = {
-				id: `ack-${message.id}`,
-				type:
-					message.type === MessageType.SUBSCRIBE
-						? MessageType.SUBSCRIBED
-						: MessageType.UNSUBSCRIBED,
-				method: message.method,
-				sessionId: message.sessionId,
-				data: {
-					subscribed: message.type === MessageType.SUBSCRIBE,
-					method: message.method,
-					sessionId: message.sessionId,
-				},
-				timestamp: new Date().toISOString(),
-				version: '1.0.0',
-				requestId: message.id,
-			};
-
-			// Send ACK after a small delay to simulate network
-			setTimeout(() => this.receiveMessage(ackMessage), 5);
-		}
 	}
 
 	onMessage(handler: (message: HubMessage) => void): () => void {
@@ -109,32 +88,24 @@ describe('MessageHub Reconnection', () => {
 
 	beforeEach(() => {
 		transport = new MockTransport();
-		hub = new MessageHub({ debug: true });
+		hub = new MessageHub();
 	});
 
 	afterEach(async () => {
-		// Clean up MessageHub resources
 		hub.cleanup();
-		// Close transport connection
 		await transport.close();
 	});
 
-	it('should send SUBSCRIBE messages to server after reconnection', async () => {
+	it('should maintain event handlers across reconnection', async () => {
 		// 1. Register transport and initialize
 		hub.registerTransport(transport);
 		await transport.initialize();
 
-		// 2. Subscribe to an event
-		const handler = () => {};
-		await hub.subscribe('test.event', handler, { sessionId: 'test-session' });
-
-		// Verify initial SUBSCRIBE was sent
-		const initialSubscribes = transport.sentMessages.filter(
-			(m) => m.type === MessageType.SUBSCRIBE
-		);
-		expect(initialSubscribes.length).toBe(1);
-		expect(initialSubscribes[0].method).toBe('test.event');
-		expect(initialSubscribes[0].sessionId).toBe('test-session');
+		// 2. Register event handler
+		let eventCount = 0;
+		hub.onEvent('test.event', () => {
+			eventCount++;
+		});
 
 		// 3. Clear sent messages
 		transport.clearSentMessages();
@@ -147,47 +118,27 @@ describe('MessageHub Reconnection', () => {
 		transport.simulateReconnect();
 		expect(hub.isConnected()).toBe(true);
 
-		// Wait a bit for async resubscribe to complete
+		// Wait for any connection logic
 		await new Promise((resolve) => setTimeout(resolve, 10));
 
-		// 6. Verify SUBSCRIBE messages were sent again after reconnection
-		const resubscribes = transport.sentMessages.filter((m) => m.type === MessageType.SUBSCRIBE);
+		// 6. No messages should be sent on reconnect (new API doesn't auto-resubscribe)
+		// Event handlers persist as local state, no network messages needed
+		expect(transport.sentMessages.length).toBe(0);
 
-		expect(resubscribes.length).toBeGreaterThan(0);
-		const testEventResubscribe = resubscribes.find(
-			(m) => m.method === 'test.event' && m.sessionId === 'test-session'
-		);
-		expect(testEventResubscribe).toBeDefined();
-	});
+		// 7. But event handler should still work (local state persists)
+		const testEvent: HubMessage = {
+			id: 'event-1',
+			type: MessageType.EVENT,
+			method: 'test.event',
+			sessionId: 'test-session',
+			data: { message: 'test' },
+			timestamp: new Date().toISOString(),
+		};
 
-	it('should send SUBSCRIBE for multiple subscriptions after reconnection', async () => {
-		// 1. Setup
-		hub.registerTransport(transport);
-		await transport.initialize();
-
-		// 2. Subscribe to multiple events
-		const handler1 = () => {};
-		const handler2 = () => {};
-		const handler3 = () => {};
-
-		await hub.subscribe('event.1', handler1, { sessionId: 'session-1' });
-		await hub.subscribe('event.2', handler2, { sessionId: 'session-2' });
-		await hub.subscribe('event.3', handler3, { sessionId: 'session-1' });
-
-		// 3. Clear and reconnect
-		transport.clearSentMessages();
-		transport.simulateDisconnect();
-		transport.simulateReconnect();
-
+		transport.receiveMessage(testEvent);
 		await new Promise((resolve) => setTimeout(resolve, 10));
 
-		// 4. Verify all subscriptions were re-established
-		const resubscribes = transport.sentMessages.filter((m) => m.type === MessageType.SUBSCRIBE);
-
-		expect(resubscribes.length).toBe(3);
-
-		const methods = resubscribes.map((m) => m.method).sort();
-		expect(methods).toEqual(['event.1', 'event.2', 'event.3']);
+		expect(eventCount).toBe(1);
 	});
 
 	it('should handle events after reconnection', async () => {
@@ -195,13 +146,13 @@ describe('MessageHub Reconnection', () => {
 		hub.registerTransport(transport);
 		await transport.initialize();
 
-		// 2. Subscribe to event
+		// 2. Register event handler
 		let eventReceived = false;
 		const handler = (_data: unknown) => {
 			eventReceived = true;
 		};
 
-		await hub.subscribe('test.event', handler, { sessionId: 'test-session' });
+		hub.onEvent('test.event', handler);
 
 		// 3. Reconnect
 		transport.clearSentMessages();
@@ -218,7 +169,6 @@ describe('MessageHub Reconnection', () => {
 			sessionId: 'test-session',
 			data: { message: 'test' },
 			timestamp: new Date().toISOString(),
-			version: '1.0.0',
 		};
 
 		transport.receiveMessage(testEvent);
@@ -230,48 +180,18 @@ describe('MessageHub Reconnection', () => {
 		expect(eventReceived).toBe(true);
 	});
 
-	it('should deduplicate subscription requests during reconnection', async () => {
-		// 1. Setup
-		hub.registerTransport(transport);
-		await transport.initialize();
-
-		// 2. Subscribe to same event multiple times with different handlers
-		const handler1 = () => {};
-		const handler2 = () => {};
-		const handler3 = () => {};
-
-		await hub.subscribe('test.event', handler1, { sessionId: 'test-session' });
-		await hub.subscribe('test.event', handler2, { sessionId: 'test-session' });
-		await hub.subscribe('test.event', handler3, { sessionId: 'test-session' });
-
-		// 3. Clear and reconnect
-		transport.clearSentMessages();
-		transport.simulateDisconnect();
-		transport.simulateReconnect();
-
-		await new Promise((resolve) => setTimeout(resolve, 10));
-
-		// 4. Verify only ONE SUBSCRIBE message was sent for the duplicate subscriptions
-		const resubscribes = transport.sentMessages.filter((m) => m.type === MessageType.SUBSCRIBE);
-
-		// Should only send 1 SUBSCRIBE for test.event despite 3 handlers
-		expect(resubscribes.length).toBe(1);
-		expect(resubscribes[0].method).toBe('test.event');
-		expect(resubscribes[0].sessionId).toBe('test-session');
-	});
-
 	it('should reset sequence number tracking on reconnection', async () => {
 		// 1. Setup
 		hub.registerTransport(transport);
 		await transport.initialize();
 
 		// 2. Send some messages to increment sequence counter
-		await hub.subscribe('test.event', () => {}, { sessionId: 'test-session' });
+		hub.event('test.cmd', {});
 
-		// Wait for subscription to complete
+		// Wait for message
 		await new Promise((resolve) => setTimeout(resolve, 10));
 
-		// 3. Simulate server restart (disconnect + reconnect)
+		// 3. Simulate disconnect + reconnect
 		transport.simulateDisconnect();
 		transport.simulateReconnect();
 
@@ -285,20 +205,14 @@ describe('MessageHub Reconnection', () => {
 			sessionId: 'test-session',
 			data: { message: 'test' },
 			timestamp: new Date().toISOString(),
-			version: '1.0.0',
 			sequence: 0, // Server restarted, sequence reset to 0
 		};
 
-		// This should NOT trigger an out-of-order warning since we cleared expectedSequence
-		// We verify this by checking that no error is thrown and the event is processed
+		// Register handler to verify event is processed
 		let eventReceived = false;
-		await hub.subscribe(
-			'test.event',
-			() => {
-				eventReceived = true;
-			},
-			{ sessionId: 'test-session' }
-		);
+		hub.onEvent('test.event', () => {
+			eventReceived = true;
+		});
 
 		transport.receiveMessage(testEvent);
 		await new Promise((resolve) => setTimeout(resolve, 10));
@@ -306,141 +220,143 @@ describe('MessageHub Reconnection', () => {
 		expect(eventReceived).toBe(true);
 	});
 
-	it('should debounce rapid resubscription calls to prevent subscription storm', async () => {
-		// 1. Setup with subscription
-		hub.registerTransport(transport);
-		await transport.initialize();
-
-		await hub.subscribe('test.event', () => {}, { sessionId: 'test-session' });
-		await new Promise((resolve) => setTimeout(resolve, 10));
-
-		// 2. Clear sent messages
-		transport.clearSentMessages();
-
-		// 3. Simulate rapid reconnection (what causes subscription storm)
-		transport.simulateDisconnect();
-		transport.simulateReconnect();
-
-		// 4. Immediately call forceResubscribe multiple times (simulating multiple sources)
-		// This simulates: MessageHub auto-resubscribe + StateChannel + ConnectionManager
-		hub.forceResubscribe();
-		hub.forceResubscribe();
-		hub.forceResubscribe();
-
-		await new Promise((resolve) => setTimeout(resolve, 20));
-
-		// 5. Verify only ONE batch of SUBSCRIBE messages was sent
-		// Without debounce, we would see 4 batches (1 from reconnect + 3 from forceResubscribe)
-		const resubscribes = transport.sentMessages.filter((m) => m.type === MessageType.SUBSCRIBE);
-
-		// Should only have 1 SUBSCRIBE message (debounced)
-		expect(resubscribes.length).toBe(1);
-		expect(resubscribes[0].method).toBe('test.event');
-	});
-
-	it('should clear queued events on reconnection to prevent double messages', async () => {
-		// This test verifies the fix for the double messages bug:
-		// Previously, events queued during resubscription were replayed,
-		// but the server ALSO resends recent events after SUBSCRIBE ACK.
-		// This caused the same event to be processed twice.
-		// Fix: Clear queued events instead of replaying them.
-
+	it('should timeout pending queries on disconnect', async () => {
 		// 1. Setup
 		hub.registerTransport(transport);
 		await transport.initialize();
 
-		// 2. Subscribe to event and track received events
-		const receivedEvents: unknown[] = [];
-		await hub.subscribe(
-			'test.event',
-			(data) => {
-				receivedEvents.push(data);
-			},
-			{ sessionId: 'test-session' }
-		);
+		// 2. Start a query
+		const queryPromise = hub.request('test.method', {}, { timeout: 100 });
 
 		await new Promise((resolve) => setTimeout(resolve, 10));
 
-		// 3. Simulate disconnect
+		// 3. Disconnect before receiving response
 		transport.simulateDisconnect();
 
-		// 4. Create an event that would be "queued" during resubscription
-		// In real scenario, this arrives during the resubscribing=true window
+		// 4. Query should timeout
+		await expect(queryPromise).rejects.toThrow('Request timeout');
+	});
+
+	it('should allow new queries after reconnection', async () => {
+		// 1. Setup
+		hub.registerTransport(transport);
+		await transport.initialize();
+
+		// 2. Disconnect
+		transport.simulateDisconnect();
+
+		// 3. Reconnect
+		transport.simulateReconnect();
+
+		await new Promise((resolve) => setTimeout(resolve, 10));
+
+		// 4. Make new query
+		const queryPromise = hub.request('test.method', {}, { timeout: 1000 });
+
+		await new Promise((resolve) => setTimeout(resolve, 10));
+
+		// Should have sent query
+		const queries = transport.sentMessages.filter((m) => m.type === MessageType.REQUEST);
+		expect(queries.length).toBe(1);
+
+		// Clean up
+		queryPromise.catch(() => {});
+	});
+
+	it('should handle multiple reconnections without errors', async () => {
+		// 1. Setup
+		hub.registerTransport(transport);
+		await transport.initialize();
+
+		// 2. Register event handler
+		let eventCount = 0;
+		hub.onEvent('test.event', () => {
+			eventCount++;
+		});
+
+		// 3. Multiple disconnect/reconnect cycles
+		for (let i = 0; i < 3; i++) {
+			transport.simulateDisconnect();
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			transport.simulateReconnect();
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+
+		// 4. Event handler should still work
 		const testEvent: HubMessage = {
-			id: 'event-during-resubscribe',
+			id: `event-${Date.now()}`,
 			type: MessageType.EVENT,
 			method: 'test.event',
 			sessionId: 'test-session',
-			data: { message: 'test', eventId: 'E1' },
+			data: { message: 'test' },
 			timestamp: new Date().toISOString(),
-			version: '1.0.0',
 		};
 
-		// 5. Simulate reconnect
-		transport.simulateReconnect();
-
-		// Wait for resubscription to complete
-		await new Promise((resolve) => setTimeout(resolve, 20));
-
-		// 6. Now send the event (simulating server resend after SUBSCRIBE)
 		transport.receiveMessage(testEvent);
-
 		await new Promise((resolve) => setTimeout(resolve, 10));
 
-		// 7. Verify event was received exactly ONCE (not duplicated)
-		// Before the fix, if the event was queued AND resent by server,
-		// it would appear twice in receivedEvents
-		expect(receivedEvents.length).toBe(1);
-		expect((receivedEvents[0] as { eventId: string }).eventId).toBe('E1');
+		expect(eventCount).toBe(1);
 	});
 
-	it('should not lose events that arrive after reconnection completes', async () => {
-		// This test ensures that clearing the queue doesn't cause event loss
-		// Events arriving AFTER resubscription completes should be delivered
-
+	it('should not throw when reconnecting with no handlers', async () => {
 		// 1. Setup
 		hub.registerTransport(transport);
 		await transport.initialize();
 
-		// 2. Subscribe to event
-		const receivedEvents: unknown[] = [];
-		await hub.subscribe(
-			'test.event',
-			(data) => {
-				receivedEvents.push(data);
-			},
-			{ sessionId: 'test-session' }
-		);
+		// 2. Disconnect and reconnect with no handlers registered
+		transport.simulateDisconnect();
+
+		// Should not throw
+		expect(() => {
+			transport.simulateReconnect();
+		}).not.toThrow();
 
 		await new Promise((resolve) => setTimeout(resolve, 10));
+	});
 
-		// 3. Disconnect and reconnect
+	it('should continue to handle events after multiple reconnects', async () => {
+		// 1. Setup
+		hub.registerTransport(transport);
+		await transport.initialize();
+
+		// 2. Register event handler
+		const receivedEvents: unknown[] = [];
+		hub.onEvent('test.event', (data) => {
+			receivedEvents.push(data);
+		});
+
+		// 3. Send event before disconnect
+		const event1: HubMessage = {
+			id: 'event-1',
+			type: MessageType.EVENT,
+			method: 'test.event',
+			sessionId: 'test-session',
+			data: { eventId: 'E1' },
+			timestamp: new Date().toISOString(),
+		};
+		transport.receiveMessage(event1);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+
+		// 4. Disconnect and reconnect
 		transport.simulateDisconnect();
 		transport.simulateReconnect();
-
-		// Wait for resubscription to complete
-		await new Promise((resolve) => setTimeout(resolve, 20));
-
-		// 4. Send multiple events after reconnection
-		for (let i = 1; i <= 3; i++) {
-			const event: HubMessage = {
-				id: `event-${i}`,
-				type: MessageType.EVENT,
-				method: 'test.event',
-				sessionId: 'test-session',
-				data: { eventId: `E${i}` },
-				timestamp: new Date().toISOString(),
-				version: '1.0.0',
-			};
-			transport.receiveMessage(event);
-		}
-
 		await new Promise((resolve) => setTimeout(resolve, 10));
 
-		// 5. Verify all events were received
-		expect(receivedEvents.length).toBe(3);
+		// 5. Send event after reconnect
+		const event2: HubMessage = {
+			id: 'event-2',
+			type: MessageType.EVENT,
+			method: 'test.event',
+			sessionId: 'test-session',
+			data: { eventId: 'E2' },
+			timestamp: new Date().toISOString(),
+		};
+		transport.receiveMessage(event2);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+
+		// 6. Verify both events were received
+		expect(receivedEvents.length).toBe(2);
 		expect((receivedEvents[0] as { eventId: string }).eventId).toBe('E1');
 		expect((receivedEvents[1] as { eventId: string }).eventId).toBe('E2');
-		expect((receivedEvents[2] as { eventId: string }).eventId).toBe('E3');
 	});
 });

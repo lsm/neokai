@@ -6,7 +6,6 @@ import { SessionManager } from './lib/session-manager';
 import { AuthManager } from './lib/auth-manager';
 import { SettingsManager } from './lib/settings-manager';
 import { StateManager } from './lib/state-manager';
-import { SubscriptionManager } from './lib/subscription-manager';
 import { MessageHub, MessageHubRouter } from '@neokai/shared';
 import { createDaemonHub } from './lib/daemon-hub';
 import { setupRPCHandlers } from './lib/rpc-handlers';
@@ -37,7 +36,6 @@ export interface DaemonAppContext {
 	authManager: AuthManager;
 	settingsManager: SettingsManager;
 	stateManager: StateManager;
-	subscriptionManager: SubscriptionManager;
 	transport: WebSocketServerTransport;
 	/**
 	 * Cleanup function for graceful shutdown.
@@ -62,54 +60,30 @@ export interface DaemonAppContext {
  */
 export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<DaemonAppContext> {
 	const { config, verbose = true, standalone = false } = options;
-	const log = verbose ? console.log : () => {};
+	const logInfo = verbose ? console.log : () => {};
 	const logError = verbose ? console.error : () => {};
 
 	// Initialize database
 	const db = new Database(config.dbPath);
 	await db.initialize();
-	log(`✅ Database initialized at ${config.dbPath}`);
 
 	// Initialize authentication manager
 	const authManager = new AuthManager(db, config);
 	await authManager.initialize();
-	log('✅ Authentication manager initialized');
 
 	// Initialize settings manager
 	const settingsManager = new SettingsManager(db, config.workspaceRoot);
-	log('✅ Settings manager initialized');
 
 	// Check authentication status
 	const authStatus = await authManager.getAuthStatus();
-	if (authStatus.isAuthenticated) {
-		log(`✅ Authenticated via ${authStatus.method} (source: ${authStatus.source})`);
-	} else {
-		log('\n⚠️  NO CREDENTIALS DETECTED');
-		log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-		log('No authentication credentials found. The daemon will start');
-		log('but sessions cannot be created until credentials are configured.');
-		log('');
-		log('If you have Claude Code installed, try:');
-		log('  claude login          # Login via browser');
-		log('  Then restart Kai to auto-detect credentials');
-		log('');
-		log('Or set credentials manually:');
-		log('  export ANTHROPIC_API_KEY=sk-ant-...');
-		log('  export CLAUDE_CODE_OAUTH_TOKEN=...');
-		log('');
-		log('For third-party providers (Zhipu, etc.):');
-		log('  Configure env vars in ~/.claude/settings.json');
-		log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-	}
 
 	// Initialize dynamic models on app startup (global cache fallback)
 	if (authStatus.isAuthenticated) {
-		log('Loading dynamic models from Claude SDK...');
 		const { initializeModels } = await import('./lib/model-service');
 		await initializeModels();
-		log('✅ Model service initialized');
-	} else {
-		log('⏭️  Model initialization skipped (no credentials configured)');
+	} /* v8 ignore next 3 */ else {
+		logInfo('[Daemon] NO CREDENTIALS DETECTED - set ANTHROPIC_API_KEY or authenticate via OAuth');
+		logInfo('[Daemon] Model initialization skipped - no credentials available');
 	}
 
 	// PHASE 3 ARCHITECTURE (FIXED): MessageHub owns Router, Transport is pure I/O
@@ -117,12 +91,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const router = new MessageHubRouter({
 		logger: console,
 		debug: config.nodeEnv === 'development',
-		// Rate limit: Allow burst of subscriptions on connection
-		// Development/Production: 50 ops/sec (18 subscriptions on connect + overhead)
-		// E2E tests: 100 ops/sec (7 parallel workers connecting simultaneously)
-		subscriptionRateLimit: config.nodeEnv === 'test' ? 100 : 50,
 	});
-	log('✅ MessageHubRouter initialized (clean - no application logic)');
 
 	// 2. Initialize MessageHub (protocol layer)
 	const messageHub = new MessageHub({
@@ -132,7 +101,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// 3. Register Router with MessageHub (MessageHub owns routing)
 	messageHub.registerRouter(router);
-	log('✅ Router registered with MessageHub');
 
 	// 4. Initialize Transport (I/O layer) - needs router for client management
 	const transport = new WebSocketServerTransport({
@@ -143,13 +111,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// 5. Register Transport with MessageHub
 	messageHub.registerTransport(transport);
-	log('✅ MessageHub initialized with corrected architecture');
-	log('   Flow: MessageHub (protocol) → Router (routing) → ClientConnection (I/O)');
 
 	// Initialize DaemonHub (TypedHub-based event coordination)
 	const eventBus = createDaemonHub('daemon');
 	await eventBus.initialize();
-	log('✅ DaemonHub initialized (async event coordination)');
 
 	// Initialize session manager (with EventBus, SettingsManager, no StateManager dependency!)
 	const sessionManager = new SessionManager(
@@ -165,9 +130,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			workspaceRoot: config.workspaceRoot,
 		}
 	);
-	log('✅ Session manager initialized (no circular dependency!)');
-	log(`   Environment: ${config.nodeEnv}`);
-	log(`   Workspace root: ${config.workspaceRoot}`);
 
 	// Initialize State Manager (listens to EventBus, clean dependency graph!)
 	const stateManager = new StateManager(
@@ -178,7 +140,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		config,
 		eventBus // FIX: Listens to events instead of being called directly
 	);
-	log('✅ State manager initialized (fine-grained channels + per-channel versioning)');
 
 	// Setup RPC handlers
 	setupRPCHandlers({
@@ -190,14 +151,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		daemonHub: eventBus,
 		db,
 	});
-	log('✅ RPC handlers registered');
-
-	// Initialize Subscription Manager (application layer)
-	const subscriptionManager = new SubscriptionManager(messageHub);
-	log('✅ Subscription manager initialized (application-level subscription patterns)');
 
 	// Create WebSocket handlers
-	const wsHandlers = createWebSocketHandlers(transport, sessionManager, subscriptionManager);
+	const wsHandlers = createWebSocketHandlers(transport, sessionManager);
 
 	// Create Bun server with native WebSocket support
 	const server = Bun.serve({
@@ -280,31 +236,26 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		},
 	});
 
-	log(`✅ Bun server listening on ${config.host}:${config.port}`);
-
 	// Cleanup function for graceful shutdown
 	let isCleanedUp = false;
 	const cleanup = async () => {
 		if (isCleanedUp) {
-			log('⚠️  Cleanup already in progress or completed, skipping');
 			return;
 		}
 		isCleanedUp = true;
 
 		try {
-			log('   1/5 Stopping server...');
 			try {
 				server.stop();
 			} catch {
-				log('       (server already stopped)');
+				// Server already stopped
 			}
 
 			// Wait for pending RPC calls (with 3s timeout)
-			log('   2/5 Waiting for pending RPC calls...');
 			const pendingCallsCount = messageHub.getPendingCallCount();
 			if (pendingCallsCount > 0) {
-				log(`       ${pendingCallsCount} pending calls detected`);
 				let checkInterval: ReturnType<typeof setInterval> | null = null;
+				let resolved = false;
 				await Promise.race([
 					new Promise((resolve) => {
 						checkInterval = setInterval(() => {
@@ -312,39 +263,40 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 							if (remaining === 0) {
 								clearInterval(checkInterval!);
 								checkInterval = null;
+								resolved = true;
+								logInfo('[Daemon] All pending calls completed');
 								resolve(null);
 							}
 						}, 100);
 					}),
-					new Promise((resolve) => setTimeout(resolve, 3000)),
+					new Promise((resolve) =>
+						setTimeout(() => {
+							if (!resolved) {
+								const remaining = messageHub.getPendingCallCount();
+								logInfo(`[Daemon] Timeout: ${remaining} calls still pending after 3s`);
+							}
+							resolve(null);
+						}, 3000)
+					),
 				]);
 				// CRITICAL: Clear interval if timeout fired first (prevents hang on exit)
 				if (checkInterval) {
 					clearInterval(checkInterval);
 				}
-				const remaining = messageHub.getPendingCallCount();
-				if (remaining > 0) {
-					log(`       ⚠️  Timeout: ${remaining} calls still pending`);
-				} else {
-					log(`       ✅ All pending calls completed`);
-				}
 			}
 
 			// Cleanup MessageHub (rejects remaining calls)
-			log('   3/5 Cleaning up MessageHub...');
 			messageHub.cleanup();
 
 			// Stop all agent sessions
-			log('   4/5 Stopping agent sessions...');
 			await sessionManager.cleanup();
 
 			// Close database
-			log('   5/5 Closing database...');
 			db.close();
 
-			log('✅ Graceful shutdown complete');
+			logInfo('[Daemon] Graceful shutdown complete');
 		} catch (error) {
-			log('❌ Error during cleanup:', error);
+			logError('Error during cleanup:', error);
 			throw error;
 		}
 	};
@@ -357,7 +309,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		authManager,
 		settingsManager,
 		stateManager,
-		subscriptionManager,
 		transport,
 		cleanup,
 	};

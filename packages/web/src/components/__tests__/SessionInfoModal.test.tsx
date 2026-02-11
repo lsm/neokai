@@ -26,7 +26,7 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 		lastActiveAt: '2024-01-01T00:00:00.000Z',
 		status: 'active',
 		config: {
-			model: 'claude-sonnet-4-5-20250929',
+			model: 'sonnet',
 			maxTokens: 8192,
 			temperature: 1.0,
 		},

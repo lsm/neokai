@@ -33,6 +33,8 @@ import type { SettingsManager } from '../settings-manager';
 import { Logger } from '../logger';
 import { getProviderContextManager } from '../providers/factory.js';
 import { resolveSDKCliPath, isBundledBinary } from './sdk-cli-resolver.js';
+import { homedir } from 'os';
+import { join } from 'path';
 
 /**
  * Context interface - what QueryOptionsBuilder needs from AgentSession
@@ -66,7 +68,7 @@ export class QueryOptionsBuilder {
 	 */
 	async build(): Promise<Options> {
 		const config = this.ctx.session.config;
-		const legacyToolsConfig = config.tools; // Legacy NeoKai-specific tools config
+		const _legacyToolsConfig = config.tools; // Legacy NeoKai-specific tools config
 
 		// Get settings-derived options (from global settings)
 		const sdkSettingsOptions = await this.getSettingsOptions();
@@ -239,40 +241,6 @@ export class QueryOptionsBuilder {
 			Object.entries(queryOptions).filter(([_, v]) => v !== undefined)
 		) as Options;
 
-		// DEBUG: Log query options for verification
-		const useClaudeCodePreset = legacyToolsConfig?.useClaudeCodePreset ?? true;
-		this.logger.log(`Query options:`, {
-			originalModel: config.model || 'default',
-			sdkModel: cleanedOptions.model,
-			fallbackModel: cleanedOptions.fallbackModel,
-			maxTurns: cleanedOptions.maxTurns,
-			maxBudgetUsd: cleanedOptions.maxBudgetUsd,
-			permissionMode: cleanedOptions.permissionMode,
-			allowDangerouslySkipPermissions: cleanedOptions.allowDangerouslySkipPermissions,
-			useClaudeCodePreset,
-			settingSources: cleanedOptions.settingSources,
-			tools: cleanedOptions.tools,
-			spawnClaudeCodeProcess: typeof config.spawnClaudeCodeProcess, // Log if hook is present
-			allowedTools: cleanedOptions.allowedTools,
-			disallowedTools: cleanedOptions.disallowedTools,
-			agent: cleanedOptions.agent,
-			agents: cleanedOptions.agents ? Object.keys(cleanedOptions.agents) : undefined,
-			coordinatorMode: config.coordinatorMode ?? false,
-			sandbox: cleanedOptions.sandbox?.enabled,
-			mcpServers:
-				cleanedOptions.mcpServers === undefined
-					? 'auto-load'
-					: Object.keys(cleanedOptions.mcpServers),
-			outputFormat: cleanedOptions.outputFormat?.type,
-			betas: cleanedOptions.betas,
-			enableFileCheckpointing: cleanedOptions.enableFileCheckpointing,
-			additionalDirectories:
-				cleanedOptions.additionalDirectories === undefined
-					? 'unrestricted'
-					: `restricted to cwd (${cleanedOptions.additionalDirectories.length} additional dirs)`,
-			legacyToolsConfig,
-		});
-
 		return cleanedOptions;
 	}
 
@@ -286,18 +254,12 @@ export class QueryOptionsBuilder {
 		// Add resume parameter if SDK session ID exists (session resumption)
 		if (this.ctx.session.sdkSessionId) {
 			result.resume = this.ctx.session.sdkSessionId;
-			this.logger.log(`Resuming SDK session: ${this.ctx.session.sdkSessionId}`);
-		} else {
-			this.logger.log(`Starting new SDK session`);
 		}
 
 		// Add resumeSessionAt for conversation rewind
 		// When set, only messages up to and including this UUID are resumed
 		if (this.ctx.session.metadata?.resumeSessionAt) {
 			result.resumeSessionAt = this.ctx.session.metadata.resumeSessionAt;
-			this.logger.log(
-				`Rewinding conversation to checkpoint: ${this.ctx.session.metadata.resumeSessionAt.slice(0, 8)}...`
-			);
 		}
 
 		// Add thinking token budget based on thinkingLevel config
@@ -305,7 +267,6 @@ export class QueryOptionsBuilder {
 		const maxThinkingTokens = THINKING_LEVEL_TOKENS[thinkingLevel];
 		if (maxThinkingTokens !== undefined) {
 			result.maxThinkingTokens = maxThinkingTokens;
-			this.logger.log(`Extended thinking enabled: ${thinkingLevel} (${maxThinkingTokens} tokens)`);
 		}
 
 		return result;
@@ -538,11 +499,31 @@ CRITICAL RULES:
 	/**
 	 * Get additional directories configuration
 	 *
-	 * For worktree sessions: Restrict to cwd only (strict isolation)
-	 * For non-worktree: Leave undefined for backward compatibility
+	 * Always includes:
+	 * - ~/.claude/: For settings, database, and worktree storage
+	 * - ~/.neokai/: For NeoKai-specific configuration and state
+	 *
+	 * For worktree sessions, also includes:
+	 * - /tmp/claude: SDK sets TMPDIR=/tmp/claude, most shells (bash, fish, etc.) respect this
+	 * - /tmp/zsh-${uid}: Zsh's default behavior creates /tmp/zsh-UID paths
+	 *
+	 * This ensures shell operations (git commits, heredocs, etc.) work within the sandbox
+	 * without fighting any shell's natural temp file behavior.
 	 */
 	private getAdditionalDirectories(): string[] | undefined {
-		return this.ctx.session.worktree ? [] : undefined;
+		const directories: string[] = [];
+
+		// Always include Claude and NeoKai directories for settings and storage
+		directories.push(join(homedir(), '.claude'));
+		directories.push(join(homedir(), '.neokai'));
+
+		// For worktree sessions, also allow temp directories for shell operations
+		if (this.ctx.session.worktree) {
+			const uid = typeof process.getuid === 'function' ? process.getuid() : 501;
+			directories.push('/tmp/claude', `/tmp/zsh-${uid}`);
+		}
+
+		return directories;
 	}
 
 	/**
@@ -677,7 +658,6 @@ CRITICAL RULES:
 		// resolution produces virtual /$bunfs/root paths
 		const resolvedPath = resolveSDKCliPath();
 		if (resolvedPath) {
-			this.logger.log(`Auto-resolved SDK CLI path: ${resolvedPath}`);
 			return resolvedPath;
 		}
 

@@ -109,9 +109,8 @@ export class DatabaseCore {
 
 		try {
 			copyFileSync(this.dbPath, backupPath);
-			this.logger.log(`Database backup created: ${backupPath}`);
 		} catch (err) {
-			this.logger.log(`Failed to create backup: ${err}`);
+			this.logger.error('Failed to create backup:', err);
 			return;
 		}
 
@@ -137,7 +136,6 @@ export class DatabaseCore {
 			for (const file of files.slice(keepCount)) {
 				try {
 					unlinkSync(file.path);
-					this.logger.log(`Removed old backup: ${file.name}`);
 				} catch {
 					// Ignore deletion errors
 				}

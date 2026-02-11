@@ -23,7 +23,7 @@ vi.mock('../../lib/state', () => ({
 }));
 
 // Mock the connection manager
-const mockCall = vi.fn();
+const mockRequest = vi.fn();
 const mockGetHubIfConnected = vi.fn();
 
 vi.mock('../../lib/connection-manager', () => ({
@@ -58,8 +58,8 @@ describe('useSendMessage', () => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
 		mockConnectionState.value = 'connected';
-		mockGetHubIfConnected.mockReturnValue({ call: mockCall });
-		mockCall.mockResolvedValue({});
+		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+		mockRequest.mockResolvedValue({});
 	});
 
 	afterEach(() => {
@@ -119,7 +119,7 @@ describe('useSendMessage', () => {
 			});
 
 			expect(onSendStart).not.toHaveBeenCalled();
-			expect(mockCall).not.toHaveBeenCalled();
+			expect(mockRequest).not.toHaveBeenCalled();
 		});
 
 		it('should not send whitespace-only message', async () => {
@@ -265,7 +265,7 @@ describe('useSendMessage', () => {
 			});
 
 			expect(onSendStart).toHaveBeenCalled();
-			expect(mockCall).toHaveBeenCalledWith('message.send', {
+			expect(mockRequest).toHaveBeenCalledWith('message.send', {
 				sessionId: 'session-1',
 				content: 'Hello',
 				images: undefined,
@@ -292,7 +292,7 @@ describe('useSendMessage', () => {
 				await result.current.sendMessage('Hello with image', images);
 			});
 
-			expect(mockCall).toHaveBeenCalledWith('message.send', {
+			expect(mockRequest).toHaveBeenCalledWith('message.send', {
 				sessionId: 'session-1',
 				content: 'Hello with image',
 				images,
@@ -330,7 +330,7 @@ describe('useSendMessage', () => {
 
 	describe('error handling', () => {
 		it('should handle send error', async () => {
-			mockCall.mockRejectedValue(new Error('Network error'));
+			mockRequest.mockRejectedValue(new Error('Network error'));
 
 			const onError = vi.fn();
 			const onSendComplete = vi.fn();
@@ -356,7 +356,7 @@ describe('useSendMessage', () => {
 		});
 
 		it('should handle non-Error exception', async () => {
-			mockCall.mockRejectedValue('Unknown error');
+			mockRequest.mockRejectedValue('Unknown error');
 
 			const onError = vi.fn();
 
@@ -385,7 +385,7 @@ describe('useSendMessage', () => {
 			const callPromise = new Promise((resolve) => {
 				resolveCall = resolve;
 			});
-			mockCall.mockImplementation(() => callPromise);
+			mockRequest.mockImplementation(() => callPromise);
 
 			const onError = vi.fn();
 			const onSendComplete = vi.fn();
@@ -577,7 +577,7 @@ describe('useSendMessage', () => {
 
 			// Message with whitespace around it should still be sent
 			expect(onSendStart).toHaveBeenCalled();
-			expect(mockCall).toHaveBeenCalled();
+			expect(mockRequest).toHaveBeenCalled();
 		});
 
 		it('should handle message with newlines only', async () => {

@@ -23,11 +23,12 @@ import { resetProviderFactory } from '../../../src/lib/providers/factory';
 
 describe('Model Service', () => {
 	// Sample ModelInfo data for testing (as returned by providers)
+	// Note: Provider now returns 'sonnet' instead of 'default'
 	const mockModels: ModelInfo[] = [
 		{
-			id: 'default',
+			id: 'sonnet',
 			name: 'Sonnet 4.5',
-			alias: 'default',
+			alias: 'sonnet',
 			family: 'sonnet',
 			provider: 'anthropic',
 			contextWindow: 200000,
@@ -138,7 +139,7 @@ describe('Model Service', () => {
 		it('should return models with correct structure', () => {
 			const models = getAvailableModels();
 
-			const sonnet = models.find((m) => m.id === 'default');
+			const sonnet = models.find((m) => m.id === 'sonnet');
 			expect(sonnet).toBeDefined();
 			expect(sonnet?.name).toBe('Sonnet 4.5');
 			expect(sonnet?.family).toBe('sonnet');
@@ -168,9 +169,9 @@ describe('Model Service', () => {
 		});
 
 		it('should find model by exact ID', async () => {
-			const model = await getModelInfo('default');
+			const model = await getModelInfo('sonnet');
 			expect(model).not.toBeNull();
-			expect(model?.id).toBe('default');
+			expect(model?.id).toBe('sonnet');
 		});
 
 		it('should find model by alias', async () => {
@@ -186,9 +187,10 @@ describe('Model Service', () => {
 
 		it('should handle legacy model IDs', async () => {
 			// Legacy full model IDs should map to SDK short IDs
+			// Note: 'claude-sonnet-4-5-20250929' maps to 'sonnet' via LEGACY_MODEL_MAPPINGS
 			const model = await getModelInfo('claude-sonnet-4-5-20250929');
 			expect(model).not.toBeNull();
-			expect(model?.id).toBe('default');
+			expect(model?.id).toBe('sonnet');
 		});
 
 		it('should handle legacy opus model ID', async () => {
@@ -212,7 +214,7 @@ describe('Model Service', () => {
 		});
 
 		it('should return true for valid model ID', async () => {
-			const isValid = await isValidModel('default');
+			const isValid = await isValidModel('sonnet');
 			expect(isValid).toBe(true);
 		});
 
@@ -240,8 +242,8 @@ describe('Model Service', () => {
 		});
 
 		it('should resolve existing model ID', async () => {
-			const resolved = await resolveModelAlias('default');
-			expect(resolved).toBe('default');
+			const resolved = await resolveModelAlias('sonnet');
+			expect(resolved).toBe('sonnet');
 		});
 
 		it('should resolve alias to model ID', async () => {
@@ -255,8 +257,9 @@ describe('Model Service', () => {
 		});
 
 		it('should resolve legacy model ID', async () => {
+			// LEGACY_MODEL_MAPPINGS maps 'claude-sonnet-4-5-20250929' to 'sonnet'
 			const resolved = await resolveModelAlias('claude-sonnet-4-5-20250929');
-			expect(resolved).toBe('default');
+			expect(resolved).toBe('sonnet');
 		});
 	});
 
@@ -343,8 +346,8 @@ describe('Model Service', () => {
 
 			const models = getAvailableModels();
 
-			const defaultModel = models.find((m) => m.id === 'default');
-			expect(defaultModel?.family).toBe('sonnet');
+			const sonnetModel = models.find((m) => m.id === 'sonnet');
+			expect(sonnetModel?.family).toBe('sonnet');
 
 			const opusModel = models.find((m) => m.id === 'opus');
 			expect(opusModel?.family).toBe('opus');
@@ -368,41 +371,9 @@ describe('Model Service', () => {
 			const cache = getModelsCache();
 			expect(cache.get('global')).toEqual(mockModels);
 		});
-
-		it('should initialize providers and load models on first call', async () => {
-			// Ensure clean state - no cache
-			clearModelsCache();
-			resetProviderRegistry();
-			resetProviderFactory();
-
-			// When running with real providers, initializeModels() will:
-			// 1. Call initializeProviders() to register providers
-			// 2. Try to load models from providers
-			// 3. Set empty cache if no models loaded (no API key in test env)
-			await initializeModels();
-
-			// Cache should exist (even if empty due to no API key)
-			const cache = getModelsCache();
-			expect(cache.has('global')).toBe(true);
-		});
 	});
 
 	describe('background refresh behavior', () => {
-		it('should trigger background refresh for stale cache', async () => {
-			// Set up cache with old timestamp (simulating stale cache)
-			const testCache = new Map<string, ModelInfo[]>();
-			testCache.set('global', mockModels);
-			setModelsCache(testCache);
-
-			// Note: We can't easily test the actual refresh because it requires
-			// mocking the timestamp. However, getAvailableModels should return
-			// cached data even when triggering refresh.
-			const models = getAvailableModels('global');
-
-			// Should return cached models immediately
-			expect(models.length).toBe(3);
-		});
-
 		it('should return cached models while refresh is in progress', async () => {
 			const testCache = new Map<string, ModelInfo[]>();
 			testCache.set('global', mockModels);

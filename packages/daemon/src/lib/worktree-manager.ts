@@ -68,6 +68,24 @@ export class WorktreeManager {
 	}
 
 	/**
+	 * Detect if workspace supports worktrees (is a git repository)
+	 * WITHOUT creating a worktree
+	 *
+	 * @param workspacePath - Path to check for git repository
+	 * @returns Object with isGitRepo flag and gitRoot path
+	 */
+	async detectGitSupport(workspacePath: string): Promise<{
+		isGitRepo: boolean;
+		gitRoot: string | null;
+	}> {
+		const gitRoot = await this.findGitRoot(workspacePath);
+		return {
+			isGitRepo: gitRoot !== null,
+			gitRoot,
+		};
+	}
+
+	/**
 	 * Check if a git branch exists
 	 */
 	private async checkBranchExists(repoPath: string, branchName: string): Promise<boolean> {
@@ -106,9 +124,18 @@ export class WorktreeManager {
 	 * Get the worktree base directory for a repository
 	 * Format: ~/.neokai/projects/{encoded-repo-path}/worktrees/
 	 * Example: ~/.neokai/projects/-Users-alice-project/worktrees/
+	 *
+	 * For testing, set TEST_WORKTREE_BASE_DIR to override the base directory
 	 */
 	private getWorktreeBaseDir(gitRoot: string): string {
 		const encodedPath = this.encodeRepoPath(gitRoot);
+
+		// Check for test environment variable
+		const testBaseDir = process.env.TEST_WORKTREE_BASE_DIR;
+		if (testBaseDir) {
+			return join(testBaseDir, encodedPath, 'worktrees');
+		}
+
 		return join(homedir(), '.neokai', 'projects', encodedPath, 'worktrees');
 	}
 
@@ -122,7 +149,6 @@ export class WorktreeManager {
 		// Find git root
 		const gitRoot = await this.findGitRoot(repoPath);
 		if (!gitRoot) {
-			this.logger.info(`[WorktreeManager] Not a git repository: ${repoPath}`);
 			return null;
 		}
 
@@ -142,7 +168,6 @@ export class WorktreeManager {
 		try {
 			// Check if worktree already exists (shouldn't happen, but safety check)
 			if (existsSync(worktreePath)) {
-				this.logger.warn(`[WorktreeManager] Worktree already exists: ${worktreePath}`);
 				throw new Error(`Worktree directory already exists: ${worktreePath}`);
 			}
 
@@ -150,32 +175,21 @@ export class WorktreeManager {
 			if (customBranchName) {
 				const branchExists = await this.checkBranchExists(gitRoot, customBranchName);
 				if (branchExists) {
-					this.logger.warn(
-						`[WorktreeManager] Branch ${customBranchName} already exists, using UUID fallback`
-					);
 					branchName = `session/${sessionId}`; // Fallback to UUID-based branch
 				}
 			}
 
 			// Create worktree with new branch
-			this.logger.info(
-				`[WorktreeManager] Creating worktree at ${worktreePath} with branch ${branchName} from ${baseBranch}`
-			);
 			await git.raw(['worktree', 'add', worktreePath, '-b', branchName, baseBranch]);
 
 			// Initialize git submodules in the new worktree (no-op if no submodules)
 			try {
 				const worktreeGit = this.getGit(worktreePath);
 				await worktreeGit.raw(['submodule', 'update', '--init', '--recursive']);
-				this.logger.info(`[WorktreeManager] Submodules initialized in worktree`);
-			} catch (submoduleError) {
-				this.logger.warn(
-					`[WorktreeManager] Failed to initialize submodules (non-fatal):`,
-					submoduleError
-				);
+				/* v8 ignore next 2 */
+			} catch {
+				// Submodule initialization failed, but this is non-fatal
 			}
-
-			this.logger.info(`[WorktreeManager] Successfully created worktree for session ${sessionId}`);
 
 			return {
 				isWorktree: true,
@@ -215,28 +229,19 @@ export class WorktreeManager {
 			const exists = worktrees.some((w) => w.path === worktreePath);
 
 			if (exists) {
-				this.logger.info(`[WorktreeManager] Removing worktree: ${worktreePath}`);
 				// --force flag handles uncommitted changes
 				await git.raw(['worktree', 'remove', worktreePath, '--force']);
-			} else {
-				this.logger.info(
-					`[WorktreeManager] Worktree not found in git, may have been manually removed: ${worktreePath}`
-				);
 			}
 
 			// Delete branch (auto-delete strategy as specified)
 			if (deleteBranch && branch) {
 				try {
-					this.logger.info(`[WorktreeManager] Deleting branch: ${branch}`);
 					// -D force deletes even if not merged
 					await git.branch(['-D', branch]);
-				} catch (error) {
+				} catch {
 					// Branch might not exist or already deleted
-					this.logger.warn(`[WorktreeManager] Failed to delete branch ${branch}:`, error);
 				}
 			}
-
-			this.logger.info(`[WorktreeManager] Successfully removed worktree: ${worktreePath}`);
 		} catch (error) {
 			this.logger.error(' Failed to remove worktree:', error);
 			throw new Error(
@@ -319,7 +324,6 @@ export class WorktreeManager {
 	async cleanupOrphanedWorktrees(repoPath: string): Promise<string[]> {
 		const gitRoot = await this.findGitRoot(repoPath);
 		if (!gitRoot) {
-			this.logger.info(' Not a git repository, no worktrees to clean up');
 			return [];
 		}
 
@@ -328,12 +332,7 @@ export class WorktreeManager {
 
 		try {
 			// Prune removes worktree information for directories that no longer exist
-			this.logger.info(' Pruning stale worktree metadata...');
-			const pruneOutput = await git.raw(['worktree', 'prune', '--verbose']);
-
-			if (pruneOutput.trim()) {
-				this.logger.info(' Prune output:', pruneOutput);
-			}
+			await git.raw(['worktree', 'prune', '--verbose']);
 
 			// List remaining worktrees and check for prunable ones
 			const worktrees = await this.listWorktrees(gitRoot);
@@ -345,13 +344,13 @@ export class WorktreeManager {
 				}
 
 				// Check if worktree is prunable (directory missing) or if it's a session worktree that doesn't exist
-				// Support session worktrees (.neokai/projects)
-				if (
-					worktree.isPrunable ||
-					(!existsSync(worktree.path) && worktree.path.includes('.neokai/projects'))
-				) {
-					this.logger.info(`[WorktreeManager] Removing orphaned worktree: ${worktree.path}`);
+				// Support session worktrees (both production .neokai/projects and test directories)
+				const testBaseDir = process.env.TEST_WORKTREE_BASE_DIR;
+				const isSessionWorktree = testBaseDir
+					? worktree.path.startsWith(testBaseDir)
+					: worktree.path.includes('.neokai/projects');
 
+				if (worktree.isPrunable || (!existsSync(worktree.path) && isSessionWorktree)) {
 					try {
 						await git.raw(['worktree', 'remove', worktree.path, '--force']);
 						cleaned.push(worktree.path);
@@ -360,12 +359,8 @@ export class WorktreeManager {
 						if (worktree.branch.startsWith('session/')) {
 							try {
 								await git.branch(['-D', worktree.branch]);
-								this.logger.info(`[WorktreeManager] Deleted orphaned branch: ${worktree.branch}`);
-							} catch (error) {
-								this.logger.warn(
-									`[WorktreeManager] Could not delete branch ${worktree.branch}:`,
-									error
-								);
+							} catch {
+								// Could not delete branch, but this is non-fatal
 							}
 						}
 					} catch (error) {
@@ -376,10 +371,6 @@ export class WorktreeManager {
 					}
 				}
 			}
-
-			this.logger.info(
-				`[WorktreeManager] Cleanup complete. Removed ${cleaned.length} orphaned worktrees`
-			);
 			return cleaned;
 		} catch (error) {
 			this.logger.error(' Failed to cleanup orphaned worktrees:', error);
@@ -397,7 +388,6 @@ export class WorktreeManager {
 
 		// Check if directory exists
 		if (!existsSync(worktreePath)) {
-			this.logger.warn(`[WorktreeManager] Worktree directory missing: ${worktreePath}`);
 			return false;
 		}
 
@@ -406,7 +396,6 @@ export class WorktreeManager {
 		const exists = worktrees.some((w) => w.path === worktreePath);
 
 		if (!exists) {
-			this.logger.warn(`[WorktreeManager] Worktree not in git worktree list: ${worktreePath}`);
 			return false;
 		}
 
@@ -443,16 +432,13 @@ export class WorktreeManager {
 			// Check if new branch name already exists
 			const branchExists = await this.checkBranchExists(repoPath, newBranch);
 			if (branchExists) {
-				this.logger.warn(`[WorktreeManager] Branch ${newBranch} already exists, cannot rename`);
 				return false;
 			}
 
-			this.logger.info(`[WorktreeManager] Renaming branch ${oldBranch} to ${newBranch}`);
 			await git.branch(['-m', oldBranch, newBranch]);
-			this.logger.info(`[WorktreeManager] Successfully renamed branch to ${newBranch}`);
 			return true;
 		} catch (error) {
-			this.logger.error(' Failed to rename branch:', error);
+			this.logger.error('Failed to rename branch:', error);
 			return false;
 		}
 	}
@@ -470,9 +456,6 @@ export class WorktreeManager {
 			// Returns "origin/main" or "origin/master", extract just the branch name
 			const branchName = defaultBranch.trim().replace('origin/', '');
 			if (branchName) {
-				this.logger.info(
-					`[WorktreeManager] Detected default branch from origin/HEAD: ${branchName}`
-				);
 				return branchName;
 			}
 		} catch {
@@ -482,16 +465,13 @@ export class WorktreeManager {
 		// Fallback: try common branch names
 		try {
 			await git.revparse(['--verify', 'main']);
-			this.logger.info(' Using fallback default branch: main');
 			return 'main';
 		} catch {
 			try {
 				await git.revparse(['--verify', 'master']);
-				this.logger.info(' Using fallback default branch: master');
 				return 'master';
 			} catch {
 				// Ultimate fallback
-				this.logger.info(' Using ultimate fallback: HEAD');
 				return 'HEAD';
 			}
 		}
@@ -508,15 +488,13 @@ export class WorktreeManager {
 		try {
 			const currentBranch = (await git.raw(['branch', '--show-current'])).trim();
 			if (currentBranch) {
-				this.logger.info(`[WorktreeManager] Detected current branch: ${currentBranch}`);
 				return currentBranch;
 			}
-		} catch (error) {
-			this.logger.debug(`[WorktreeManager] Error getting current branch: ${error}`);
+		} catch {
+			// Error getting current branch, fall through to default
 		}
 
 		// Fallback to default branch
-		this.logger.info(' Using fallback: default branch');
 		return await this.getDefaultBranch(repoPath);
 	}
 
@@ -538,9 +516,6 @@ export class WorktreeManager {
 			for (const branch of devBranches) {
 				try {
 					await git.revparse(['--verify', branch]);
-					this.logger.info(
-						`[WorktreeManager] Main repo is on session branch, using ${branch} as base branch`
-					);
 					return branch;
 				} catch {
 					// Branch doesn't exist, continue
@@ -550,7 +525,6 @@ export class WorktreeManager {
 
 		// If current branch is dev/develop, use it (this is the integration branch)
 		if (['dev', 'develop', 'development'].includes(currentBranch)) {
-			this.logger.info(`[WorktreeManager] Using current dev branch as base: ${currentBranch}`);
 			return currentBranch;
 		}
 
@@ -558,7 +532,6 @@ export class WorktreeManager {
 		for (const preferredBranch of ['main', 'master']) {
 			try {
 				await git.revparse(['--verify', preferredBranch]);
-				this.logger.info(`[WorktreeManager] Using preferred base branch: ${preferredBranch}`);
 				return preferredBranch;
 			} catch {
 				// Branch doesn't exist, continue
@@ -566,7 +539,6 @@ export class WorktreeManager {
 		}
 
 		// Fallback to current branch
-		this.logger.info(`[WorktreeManager] Using current branch as base: ${currentBranch}`);
 		return currentBranch;
 	}
 
@@ -591,11 +563,8 @@ export class WorktreeManager {
 			// (The merge base is the best common ancestor; if it's the commit itself,
 			// then the commit is reachable from the branch)
 			return mergeBase === commitHash || mergeBase.startsWith(commitHash);
-		} catch (error) {
+		} catch {
 			// On error, assume not an ancestor (safe default)
-			this.logger.debug(
-				`[WorktreeManager] Error checking ancestry of ${commitHash} in ${branch}: ${error}`
-			);
 			return false;
 		}
 	}
@@ -618,9 +587,6 @@ export class WorktreeManager {
 				await git.revparse(['--verify', branch]);
 			} catch {
 				// Branch doesn't exist yet - no commits ahead
-				this.logger.info(
-					`[WorktreeManager] Branch ${branch} does not exist yet, no commits to check`
-				);
 				const defaultBranch = await this.getDefaultBranch(mainRepoPath);
 				return {
 					hasCommitsAhead: false,
@@ -641,7 +607,6 @@ export class WorktreeManager {
 				await git.revparse(['--verify', base]);
 			} catch {
 				// Base branch doesn't exist - this is an edge case
-				this.logger.info(`[WorktreeManager] Base branch ${base} does not exist`);
 				return {
 					hasCommitsAhead: false,
 					commits: [],
@@ -659,7 +624,6 @@ export class WorktreeManager {
 
 			if (changedFiles.length === 0) {
 				// No files changed by session branch
-				this.logger.info(`[WorktreeManager] Branch ${branch} has no changes from ${base}`);
 				return {
 					hasCommitsAhead: false,
 					commits: [],
@@ -670,9 +634,6 @@ export class WorktreeManager {
 			// For each file the session branch changed, check if it matches base
 			// If session branch's version matches base's version, the changes are already on base
 			let hasUniqueChanges = false;
-			this.logger.info(
-				`[WorktreeManager] Checking ${changedFiles.length} changed file(s) for uniqueness between ${branch} and ${base}`
-			);
 			for (const file of changedFiles) {
 				try {
 					// Compare the file content between session branch and base
@@ -680,30 +641,17 @@ export class WorktreeManager {
 					if (diff.trim()) {
 						// File differs - session has changes not on base
 						hasUniqueChanges = true;
-						this.logger.info(
-							`[WorktreeManager] File ${file} differs between ${branch} and ${base}`
-						);
 						break;
-					} else {
-						this.logger.info(
-							`[WorktreeManager] File ${file} is identical between ${branch} and ${base}`
-						);
 					}
-				} catch (diffError) {
+				} catch {
 					// File might not exist on one side - that's a real difference
 					hasUniqueChanges = true;
-					this.logger.info(
-						`[WorktreeManager] File ${file} exists only on one branch (${branch} vs ${base}): ${diffError}`
-					);
 					break;
 				}
 			}
 
 			if (!hasUniqueChanges) {
 				// All files match - changes already on base (squash merged)
-				this.logger.info(
-					`[WorktreeManager] Branch ${branch} changes are all on ${base} (squash merged) - returning hasCommitsAhead=false`
-				);
 				return {
 					hasCommitsAhead: false,
 					commits: [],
@@ -734,36 +682,12 @@ export class WorktreeManager {
 
 			// Filter out commits already reachable from base via merge commits
 			const unmergedCommits: CommitInfo[] = [];
-			let filteredCount = 0;
 
-			if (commits.length > 0) {
-				this.logger.info(
-					`[WorktreeManager] Checking ${commits.length} commit(s) from ${branch} for ancestry in ${base}`
-				);
+			for (const commit of commits) {
+				const isAncestor = await this.isCommitAncestor(mainRepoPath, commit.fullHash, base);
 
-				for (const commit of commits) {
-					const isAncestor = await this.isCommitAncestor(mainRepoPath, commit.fullHash, base);
-
-					if (isAncestor) {
-						this.logger.info(
-							`[WorktreeManager] Commit ${commit.info.hash} (${commit.info.message}) is reachable from ${base} via merge commit, filtering out`
-						);
-						filteredCount++;
-					} else {
-						unmergedCommits.push(commit.info);
-					}
-				}
-
-				if (filteredCount > 0) {
-					this.logger.info(
-						`[WorktreeManager] Filtered ${filteredCount} of ${commits.length} commits already merged into ${base}`
-					);
-				}
-
-				if (commits.length > 0 && unmergedCommits.length === 0) {
-					this.logger.info(
-						`[WorktreeManager] All ${commits.length} commit(s) from ${branch} are reachable from ${base} (merged via merge commits)`
-					);
+				if (!isAncestor) {
+					unmergedCommits.push(commit.info);
 				}
 			}
 

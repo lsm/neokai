@@ -2,17 +2,13 @@ import { describe, test, expect } from 'bun:test';
 import {
 	MessageType,
 	GLOBAL_SESSION_ID,
-	createCallMessage,
-	createResultMessage,
-	createErrorMessage,
 	createEventMessage,
-	createSubscribeMessage,
-	createUnsubscribeMessage,
+	createRequestMessage,
+	createResponseMessage,
+	createErrorResponseMessage,
 	isValidMessage,
-	isCallMessage,
 	isEventMessage,
-	isSubscribeMessage,
-	isUnsubscribeMessage,
+	isRequestMessage,
 	isResponseMessage,
 	validateMethod,
 } from '../src/message-hub/protocol.ts';
@@ -20,14 +16,11 @@ import {
 describe('MessageHub Protocol', () => {
 	describe('Message Type Constants', () => {
 		test('should define all message types', () => {
-			expect(MessageType.CALL).toBe(MessageType.CALL);
-			expect(MessageType.RESULT).toBe(MessageType.RESULT);
-			expect(MessageType.ERROR).toBe(MessageType.ERROR);
 			expect(MessageType.EVENT).toBe(MessageType.EVENT);
-			expect(MessageType.SUBSCRIBE).toBe(MessageType.SUBSCRIBE);
-			expect(MessageType.UNSUBSCRIBE).toBe(MessageType.UNSUBSCRIBE);
 			expect(MessageType.PING).toBe(MessageType.PING);
 			expect(MessageType.PONG).toBe(MessageType.PONG);
+			expect(MessageType.REQUEST).toBe(MessageType.REQUEST);
+			expect(MessageType.RESPONSE).toBe(MessageType.RESPONSE);
 		});
 
 		test('should define global session ID', () => {
@@ -36,58 +29,6 @@ describe('MessageHub Protocol', () => {
 	});
 
 	describe('Message Creators', () => {
-		test('createCallMessage should create valid CALL message', () => {
-			const msg = createCallMessage({
-				method: 'test.method',
-				data: { foo: 'bar' },
-				sessionId: 'session1',
-				id: 'msg123',
-			});
-
-			expect(msg.type).toBe(MessageType.CALL);
-			expect(msg.sessionId).toBe('session1');
-			expect(msg.method).toBe('test.method');
-			expect(msg.data).toEqual({ foo: 'bar' });
-			expect(msg.id).toBe('msg123');
-			expect(msg.timestamp).toBeTruthy();
-		});
-
-		test('createResultMessage should create valid RESULT message', () => {
-			const msg = createResultMessage({
-				method: 'test.method',
-				data: { result: 'success' },
-				sessionId: 'session1',
-				requestId: 'req123',
-				id: 'msg456',
-			});
-
-			expect(msg.type).toBe(MessageType.RESULT);
-			expect(msg.requestId).toBe('req123');
-			expect(msg.sessionId).toBe('session1');
-			expect(msg.method).toBe('test.method');
-			expect(msg.data).toEqual({ result: 'success' });
-		});
-
-		test('createErrorMessage should create valid ERROR message', () => {
-			const msg = createErrorMessage({
-				method: 'test.method',
-				error: {
-					code: 'TEST_ERROR',
-					message: 'Something went wrong',
-				},
-				sessionId: 'session1',
-				requestId: 'req123',
-				id: 'msg789',
-			});
-
-			expect(msg.type).toBe(MessageType.ERROR);
-			expect(msg.requestId).toBe('req123');
-			expect(msg.sessionId).toBe('session1');
-			expect(msg.method).toBe('test.method');
-			expect(msg.error).toBe('Something went wrong');
-			expect(msg.errorCode).toBe('TEST_ERROR');
-		});
-
 		test('createEventMessage should create valid EVENT message', () => {
 			const msg = createEventMessage({
 				method: 'user.created',
@@ -100,36 +41,84 @@ describe('MessageHub Protocol', () => {
 			expect(msg.sessionId).toBe('session1');
 			expect(msg.method).toBe('user.created');
 			expect(msg.data).toEqual({ userId: 123 });
+			expect(msg.id).toBe('evt123');
+			expect(msg.timestamp).toBeTruthy();
 		});
 
-		test('createSubscribeMessage should create valid SUBSCRIBE message', () => {
-			const msg = createSubscribeMessage({
-				method: 'user.*',
+		test('createRequestMessage should create valid REQUEST message', () => {
+			const msg = createRequestMessage({
+				method: 'test.request',
+				data: { foo: 'bar' },
 				sessionId: 'session1',
-				id: 'sub123',
+				id: 'req123',
 			});
 
-			expect(msg.type).toBe(MessageType.SUBSCRIBE);
+			expect(msg.type).toBe(MessageType.REQUEST);
 			expect(msg.sessionId).toBe('session1');
-			expect(msg.method).toBe('user.*');
+			expect(msg.method).toBe('test.request');
+			expect(msg.data).toEqual({ foo: 'bar' });
+			expect(msg.id).toBe('req123');
+			expect(msg.timestamp).toBeTruthy();
 		});
 
-		test('createUnsubscribeMessage should create valid UNSUBSCRIBE message', () => {
-			const msg = createUnsubscribeMessage({
-				method: 'user.*',
+		test('createResponseMessage should create valid RESPONSE message', () => {
+			const msg = createResponseMessage({
+				method: 'test.method',
+				data: { result: 'success' },
 				sessionId: 'session1',
-				id: 'unsub123',
+				requestId: 'req123',
+				id: 'rsp456',
 			});
 
-			expect(msg.type).toBe(MessageType.UNSUBSCRIBE);
+			expect(msg.type).toBe(MessageType.RESPONSE);
+			expect(msg.requestId).toBe('req123');
 			expect(msg.sessionId).toBe('session1');
-			expect(msg.method).toBe('user.*');
+			expect(msg.method).toBe('test.method');
+			expect(msg.data).toEqual({ result: 'success' });
+			expect(msg.id).toBe('rsp456');
+			expect(msg.timestamp).toBeTruthy();
+		});
+
+		test('createErrorResponseMessage should create valid error RESPONSE message', () => {
+			const msg = createErrorResponseMessage({
+				method: 'test.method',
+				error: {
+					code: 'TEST_ERROR',
+					message: 'Something went wrong',
+				},
+				sessionId: 'session1',
+				requestId: 'req123',
+				id: 'err789',
+			});
+
+			expect(msg.type).toBe(MessageType.RESPONSE);
+			expect(msg.requestId).toBe('req123');
+			expect(msg.sessionId).toBe('session1');
+			expect(msg.method).toBe('test.method');
+			expect(msg.error).toBe('Something went wrong');
+			expect(msg.errorCode).toBe('TEST_ERROR');
+			expect(msg.id).toBe('err789');
+			expect(msg.timestamp).toBeTruthy();
+		});
+
+		test('createErrorResponseMessage should handle string error', () => {
+			const msg = createErrorResponseMessage({
+				method: 'test.method',
+				error: 'Simple error message',
+				sessionId: 'session1',
+				requestId: 'req123',
+				id: 'err999',
+			});
+
+			expect(msg.type).toBe(MessageType.RESPONSE);
+			expect(msg.error).toBe('Simple error message');
+			expect(msg.errorCode).toBeUndefined();
 		});
 	});
 
 	describe('Message Validators', () => {
 		test('isValidMessage should validate message structure', () => {
-			const validMsg = createCallMessage({
+			const validMsg = createRequestMessage({
 				method: 'test.method',
 				data: {},
 				sessionId: 'session1',
@@ -140,104 +129,71 @@ describe('MessageHub Protocol', () => {
 			// Missing required fields
 			expect(isValidMessage({})).toBe(false);
 			expect(isValidMessage({ id: '123' })).toBe(false);
-			expect(isValidMessage({ id: '123', type: 'CALL' })).toBe(false);
-			expect(isValidMessage({ id: '123', type: 'CALL', sessionId: 's1' })).toBe(false);
-		});
-
-		test('isCallMessage should identify CALL messages', () => {
-			const callMsg = createCallMessage({
-				method: 'test',
-				data: {},
-				sessionId: 's1',
-				id: 'msg1',
-			});
-			const resultMsg = createResultMessage({
-				method: 'test',
-				data: {},
-				sessionId: 's1',
-				requestId: 'req1',
-				id: 'msg2',
-			});
-
-			expect(isCallMessage(callMsg)).toBe(true);
-			expect(isCallMessage(resultMsg)).toBe(false);
+			expect(isValidMessage({ id: '123', type: 'REQ' })).toBe(false);
+			expect(isValidMessage({ id: '123', type: 'REQ', sessionId: 's1' })).toBe(false);
 		});
 
 		test('isEventMessage should identify EVENT messages', () => {
 			const eventMsg = createEventMessage({
-				method: 'event',
+				method: 'event.happened',
 				data: {},
 				sessionId: 's1',
 				id: 'msg1',
 			});
-			const callMsg = createCallMessage({
-				method: 'event',
+			const requestMsg = createRequestMessage({
+				method: 'event.request',
 				data: {},
 				sessionId: 's1',
 				id: 'msg2',
 			});
 
 			expect(isEventMessage(eventMsg)).toBe(true);
-			expect(isEventMessage(callMsg)).toBe(false);
+			expect(isEventMessage(requestMsg)).toBe(false);
 		});
 
-		test('isSubscribeMessage should identify SUBSCRIBE messages', () => {
-			const subMsg = createSubscribeMessage({
-				method: 'pattern',
+		test('isRequestMessage should identify REQUEST messages', () => {
+			const requestMsg = createRequestMessage({
+				method: 'test.request',
+				data: {},
 				sessionId: 's1',
 				id: 'msg1',
 			});
-			const unsubMsg = createUnsubscribeMessage({
-				method: 'pattern',
+			const eventMsg = createEventMessage({
+				method: 'test.event',
+				data: {},
 				sessionId: 's1',
 				id: 'msg2',
 			});
 
-			expect(isSubscribeMessage(subMsg)).toBe(true);
-			expect(isSubscribeMessage(unsubMsg)).toBe(false);
+			expect(isRequestMessage(requestMsg)).toBe(true);
+			expect(isRequestMessage(eventMsg)).toBe(false);
 		});
 
-		test('isUnsubscribeMessage should identify UNSUBSCRIBE messages', () => {
-			const unsubMsg = createUnsubscribeMessage({
-				method: 'pattern',
-				sessionId: 's1',
-				id: 'msg1',
-			});
-			const subMsg = createSubscribeMessage({
-				method: 'pattern',
-				sessionId: 's1',
-				id: 'msg2',
-			});
-
-			expect(isUnsubscribeMessage(unsubMsg)).toBe(true);
-			expect(isUnsubscribeMessage(subMsg)).toBe(false);
-		});
-
-		test('isResponseMessage should identify RESULT and ERROR messages', () => {
-			const resultMsg = createResultMessage({
+		test('isResponseMessage should identify RESPONSE messages', () => {
+			const responseMsg = createResponseMessage({
 				method: 'test',
 				data: {},
 				sessionId: 's1',
 				requestId: 'req1',
 				id: 'msg1',
 			});
-			const errorMsg = createErrorMessage({
+			const errorMsg = createErrorResponseMessage({
 				method: 'test',
 				error: 'fail',
 				sessionId: 's1',
 				requestId: 'req1',
 				id: 'msg2',
 			});
-			const callMsg = createCallMessage({
+			const requestMsg = createRequestMessage({
 				method: 'test',
 				data: {},
 				sessionId: 's1',
 				id: 'msg3',
 			});
 
-			expect(isResponseMessage(resultMsg)).toBe(true);
+			expect(isResponseMessage(responseMsg)).toBe(true);
 			expect(isResponseMessage(errorMsg)).toBe(true);
-			expect(isResponseMessage(callMsg)).toBe(false);
+			expect(isResponseMessage(requestMsg)).toBe(false);
 		});
 	});
 
@@ -263,14 +219,14 @@ describe('MessageHub Protocol', () => {
 
 	describe('Message IDs', () => {
 		test('should use provided message ID', () => {
-			const msg1 = createCallMessage({
-				method: 'test',
+			const msg1 = createRequestMessage({
+				method: 'test.request',
 				data: {},
 				sessionId: 's1',
 				id: 'custom-id-1',
 			});
-			const msg2 = createCallMessage({
-				method: 'test',
+			const msg2 = createRequestMessage({
+				method: 'test.request',
 				data: {},
 				sessionId: 's1',
 				id: 'custom-id-2',
@@ -282,8 +238,8 @@ describe('MessageHub Protocol', () => {
 		});
 
 		test('should include timestamp in all messages', () => {
-			const msg = createCallMessage({
-				method: 'test',
+			const msg = createRequestMessage({
+				method: 'test.request',
 				data: {},
 				sessionId: 's1',
 				id: 'msg1',

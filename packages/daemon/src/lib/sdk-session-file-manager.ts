@@ -32,7 +32,9 @@ import type { Database } from '../storage/database';
  */
 function getSDKProjectDir(workspacePath: string): string {
 	const projectKey = workspacePath.replace(/[/.]/g, '-');
-	return join(homedir(), '.claude', 'projects', projectKey);
+	// Support TEST_SDK_SESSION_DIR for isolated testing
+	const baseDir = process.env.TEST_SDK_SESSION_DIR || join(homedir(), '.claude');
+	return join(baseDir, 'projects', projectKey);
 }
 
 /**
@@ -86,8 +88,7 @@ function findSDKSessionFile(workspacePath: string, kaiSessionId: string): string
 
 		matchingFiles.sort((a, b) => b.mtime - a.mtime);
 		return matchingFiles[0].path;
-	} catch (error) {
-		console.error('[SDKSessionFileManager] Error finding session file:', error);
+	} catch {
 		return null;
 	}
 }
@@ -118,9 +119,6 @@ export function removeToolResultFromSessionFile(
 		if (sdkSessionId) {
 			sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
 			if (!existsSync(sessionFile)) {
-				console.error(
-					`[SDKSessionFileManager] SDK session file not found: ${sessionFile}. SDK session may have been deleted.`
-				);
 				return false;
 			}
 		}
@@ -129,15 +127,9 @@ export function removeToolResultFromSessionFile(
 		else if (kaiSessionId) {
 			sessionFile = findSDKSessionFile(workspacePath, kaiSessionId);
 			if (!sessionFile) {
-				console.error(
-					'[SDKSessionFileManager] Could not find session file by searching for NeoKai session ID'
-				);
 				return false;
 			}
 		} else {
-			console.error(
-				'[SDKSessionFileManager] Neither SDK session ID nor NeoKai session ID provided'
-			);
 			return false;
 		}
 
@@ -147,13 +139,11 @@ export function removeToolResultFromSessionFile(
 
 		// Process each line to find and modify the target message
 		let modified = false;
-		let foundMessage = false;
 		const updatedLines = lines.map((line) => {
 			const message = JSON.parse(line) as Record<string, unknown>;
 
 			// Check if this is the target message
 			if (message.uuid === messageUuid) {
-				foundMessage = true;
 				// Modify tool_result content in this message
 				if (
 					message.type === 'user' &&
@@ -188,27 +178,14 @@ export function removeToolResultFromSessionFile(
 		});
 
 		if (!modified) {
-			if (!foundMessage) {
-				console.error(
-					`[SDKSessionFileManager] Message UUID ${messageUuid} not found in session file. File contains ${lines.length} messages.`
-				);
-			} else {
-				console.error(
-					`[SDKSessionFileManager] Message ${messageUuid} found but has no tool_result blocks`
-				);
-			}
 			return false;
 		}
 
 		// Write back to file
 		writeFileSync(sessionFile, `${updatedLines.join('\n')}\n`, 'utf-8');
 
-		console.info(
-			`[SDKSessionFileManager] Successfully removed tool_result from message ${messageUuid}`
-		);
 		return true;
-	} catch (error) {
-		console.error('[SDKSessionFileManager] Failed to remove tool_result:', error);
+	} catch {
 		return false;
 	}
 }
@@ -333,12 +310,6 @@ export function validateSDKSessionFile(
 				result.valid = false;
 			}
 		}
-
-		if (!result.valid) {
-			console.warn(
-				`[SDKSessionFileManager] Found ${result.orphanedToolResults.length} orphaned tool_results in SDK session ${sdkSessionId}`
-			);
-		}
 	} catch (error) {
 		result.valid = false;
 		result.errors.push(`Validation error: ${error}`);
@@ -363,10 +334,8 @@ function backupSDKSessionFile(sessionFilePath: string): string | null {
 		const backupPath = join(backupDir, `${fileName}.backup.${timestamp}`);
 
 		copyFileSync(sessionFilePath, backupPath);
-		console.info(`[SDKSessionFileManager] Created backup: ${backupPath}`);
 		return backupPath;
-	} catch (error) {
-		console.error('[SDKSessionFileManager] Failed to create backup:', error);
+	} catch {
 		return null;
 	}
 }
@@ -508,15 +477,8 @@ export function repairSDKSessionFile(
 		writeFileSync(sessionFile, `${lines.join('\n')}\n`, 'utf-8');
 
 		result.success = result.repairedCount > 0;
-
-		if (result.success) {
-			console.info(
-				`[SDKSessionFileManager] Repaired ${result.repairedCount} orphaned tool_results in SDK session ${sdkSessionId}`
-			);
-		}
 	} catch (error) {
 		result.errors.push(`Repair error: ${error}`);
-		console.error('[SDKSessionFileManager] Repair failed:', error);
 	}
 
 	return result;
@@ -547,25 +509,13 @@ export function validateAndRepairSDKSession(
 		return true;
 	}
 
-	console.warn(
-		`[SDKSessionFileManager] SDK session ${sdkSessionId} has ${validation.orphanedToolResults.length} orphaned tool_results - attempting auto-repair`
-	);
-
 	// Attempt repair
 	const repair = repairSDKSessionFile(workspacePath, sdkSessionId, kaiSessionId, db);
 
 	if (repair.success) {
-		console.info(
-			`[SDKSessionFileManager] Auto-repair successful. Repaired ${repair.repairedCount} messages. Backup: ${repair.backupPath}`
-		);
 		return true;
 	}
 
-	// Repair failed - log errors
-	console.error(
-		`[SDKSessionFileManager] Auto-repair failed for SDK session ${sdkSessionId}:`,
-		repair.errors
-	);
 	return false;
 }
 
@@ -628,7 +578,9 @@ interface ArchiveMetadata {
  * Get the archive directory for a NeoKai session
  */
 function getArchiveDir(kaiSessionId: string): string {
-	return join(homedir(), '.neokai', 'claude-session-archives', kaiSessionId);
+	// Support TEST_SDK_SESSION_DIR for isolated testing
+	const baseDir = process.env.TEST_SDK_SESSION_DIR || join(homedir(), '.neokai');
+	return join(baseDir, 'claude-session-archives', kaiSessionId);
 }
 
 /**
@@ -680,8 +632,8 @@ function findAllSDKFilesForSession(
 				// Skip files we can't read
 			}
 		}
-	} catch (error) {
-		console.error('[SDKSessionFileManager] Error finding SDK files for session:', error);
+	} catch {
+		// Silent failure - caller will handle empty results
 	}
 
 	return results;
@@ -711,9 +663,6 @@ export function deleteSDKSessionFiles(
 		const files = findAllSDKFilesForSession(workspacePath, sdkSessionId, kaiSessionId);
 
 		if (files.length === 0) {
-			console.info(
-				`[SDKSessionFileManager] No SDK session files found for session ${kaiSessionId.slice(0, 8)}...`
-			);
 			return result;
 		}
 
@@ -722,25 +671,16 @@ export function deleteSDKSessionFiles(
 				unlinkSync(file.path);
 				result.deletedFiles.push(file.path);
 				result.deletedSize += file.size;
-				console.info(`[SDKSessionFileManager] Deleted SDK file: ${file.path}`);
 			} catch (error) {
 				const errorMsg = error instanceof Error ? error.message : String(error);
 				result.errors.push(`Failed to delete ${file.path}: ${errorMsg}`);
 				result.success = false;
 			}
 		}
-
-		if (result.deletedFiles.length > 0) {
-			console.info(
-				`[SDKSessionFileManager] Deleted ${result.deletedFiles.length} SDK file(s), ` +
-					`${(result.deletedSize / 1024).toFixed(1)}KB freed for session ${kaiSessionId.slice(0, 8)}...`
-			);
-		}
 	} catch (error) {
 		const errorMsg = error instanceof Error ? error.message : String(error);
 		result.errors.push(`Delete operation failed: ${errorMsg}`);
 		result.success = false;
-		console.error('[SDKSessionFileManager] Delete failed:', error);
 	}
 
 	return result;
@@ -774,9 +714,6 @@ export function archiveSDKSessionFiles(
 		const files = findAllSDKFilesForSession(workspacePath, sdkSessionId, kaiSessionId);
 
 		if (files.length === 0) {
-			console.info(
-				`[SDKSessionFileManager] No SDK session files found for session ${kaiSessionId.slice(0, 8)}...`
-			);
 			return result;
 		}
 
@@ -805,7 +742,6 @@ export function archiveSDKSessionFiles(
 				result.archivedFiles.push(archivePath);
 				result.totalSize += file.size;
 				originalPaths.push(file.path);
-				console.info(`[SDKSessionFileManager] Archived SDK file: ${file.path} -> ${archivePath}`);
 			} catch (error) {
 				const errorMsg = error instanceof Error ? error.message : String(error);
 				result.errors.push(`Failed to archive ${file.path}: ${errorMsg}`);
@@ -826,17 +762,11 @@ export function archiveSDKSessionFiles(
 
 			const metadataPath = join(archiveDir, 'archive-metadata.json');
 			writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
-
-			console.info(
-				`[SDKSessionFileManager] Archived ${result.archivedFiles.length} SDK file(s), ` +
-					`${(result.totalSize / 1024).toFixed(1)}KB to ${archiveDir}`
-			);
 		}
 	} catch (error) {
 		const errorMsg = error instanceof Error ? error.message : String(error);
 		result.errors.push(`Archive operation failed: ${errorMsg}`);
 		result.success = false;
-		console.error('[SDKSessionFileManager] Archive failed:', error);
 	}
 
 	return result;
@@ -881,8 +811,8 @@ export function scanSDKSessionFiles(workspacePath: string): SDKSessionFileInfo[]
 				// Skip files we can't stat
 			}
 		}
-	} catch (error) {
-		console.error('[SDKSessionFileManager] Error scanning SDK files:', error);
+	} catch {
+		// Silent failure - caller will handle empty results
 	}
 
 	return results;
@@ -1032,8 +962,7 @@ export function truncateSessionFileAtMessage(
 		writeFileSync(filePath, newContent);
 
 		return { truncated: true, linesRemoved };
-	} catch (error) {
-		console.error('[SDKSessionFileManager] Error truncating session file:', error);
+	} catch {
 		return { truncated: false, linesRemoved: 0 };
 	}
 }

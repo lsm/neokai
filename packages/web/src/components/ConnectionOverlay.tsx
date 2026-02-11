@@ -47,8 +47,8 @@ export function ConnectionOverlay() {
 		setReconnecting(true);
 		try {
 			await connectionManager.reconnect();
-		} catch (error) {
-			console.error('[ConnectionOverlay] Reconnect failed:', error);
+		} catch {
+			// Reconnect failed - user can try again
 		} finally {
 			setReconnecting(false);
 		}

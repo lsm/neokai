@@ -7,7 +7,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../src/storage/database';
 import type { SDKMessage } from '@neokai/shared/sdk';
-import { createTestSession } from './fixtures/database-test-utils';
+import { createTestSession } from '../../helpers/database';
 
 describe('SDKMessageRepository', () => {
 	let db: Database;
@@ -437,6 +437,105 @@ describe('SDKMessageRepository', () => {
 			const deletedCount = db.deleteMessagesAfter(sessionId, Date.now() + 100000);
 
 			expect(deletedCount).toBe(0);
+		});
+	});
+
+	// === Merged from sdk-messages.test.ts ===
+
+	describe('cursor-based pagination', () => {
+		it('should support cursor-based pagination for SDK messages', async () => {
+			// Create 10 SDK messages with small delays to ensure distinct timestamps
+			for (let i = 0; i < 10; i++) {
+				const sdkMsg = {
+					type: 'user' as const,
+					message: { role: 'user' as const, content: `Message ${i}` },
+					parent_tool_use_id: null,
+					uuid: `msg-${i}`,
+					session_id: sessionId,
+				} as unknown as SDKMessage;
+				db.saveSDKMessage(sessionId, sdkMsg);
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+
+			// Initial load: get newest 5 messages (no cursor)
+			const page1 = db.getSDKMessages(sessionId, 5);
+			expect(page1.length).toBe(5);
+			expect(page1[0].uuid).toBe('msg-5');
+			expect(page1[4].uuid).toBe('msg-9');
+
+			// Get the timestamp of the oldest message in page1 for cursor
+			const cursor = (page1[0] as { timestamp: number }).timestamp;
+
+			// Load older: get messages before the cursor
+			const page2 = db.getSDKMessages(sessionId, 5, cursor);
+			expect(page2.length).toBe(5);
+			expect(page2[0].uuid).toBe('msg-0');
+			expect(page2[4].uuid).toBe('msg-4');
+
+			expect(db.getSDKMessageCount(sessionId)).toBe(10);
+		});
+	});
+
+	describe('tool call extraction', () => {
+		it('should extract tool calls from SDK messages', () => {
+			const sdkMessage = {
+				type: 'assistant' as const,
+				message: {
+					role: 'assistant' as const,
+					content: [
+						{ type: 'text' as const, text: 'Reading file...' },
+						{
+							type: 'tool_use' as const,
+							id: 'tool-1',
+							name: 'read_file',
+							input: { path: '/test/file.txt' },
+						},
+					],
+				},
+				parent_tool_use_id: null,
+				uuid: 'tool-msg-1',
+				session_id: sessionId,
+			} as unknown as SDKMessage;
+
+			db.saveSDKMessage(sessionId, sdkMessage);
+			const messages = db.getSDKMessages(sessionId);
+
+			expect(messages.length).toBe(1);
+			expect(messages[0].message.content.length).toBe(2);
+			expect(messages[0].message.content[1].name).toBe('read_file');
+		});
+
+		it('should handle multiple tool uses in SDK messages', () => {
+			const sdkMessage = {
+				type: 'assistant' as const,
+				message: {
+					role: 'assistant' as const,
+					content: [
+						{
+							type: 'tool_use' as const,
+							id: 'tool-1',
+							name: 'read_file',
+							input: { path: '/file1.txt' },
+						},
+						{
+							type: 'tool_use' as const,
+							id: 'tool-2',
+							name: 'write_file',
+							input: { path: '/file2.txt', content: 'data' },
+						},
+					],
+				},
+				parent_tool_use_id: null,
+				uuid: 'tool-msg-2',
+				session_id: sessionId,
+			} as unknown as SDKMessage;
+
+			db.saveSDKMessage(sessionId, sdkMessage);
+			const messages = db.getSDKMessages(sessionId);
+
+			expect(messages[0].message.content.length).toBe(2);
+			expect(messages[0].message.content[0].name).toBe('read_file');
+			expect(messages[0].message.content[1].name).toBe('write_file');
 		});
 	});
 });

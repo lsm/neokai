@@ -14,7 +14,7 @@ import { generateUUID } from '@neokai/shared';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { mkdirSync, rmSync } from 'fs';
-import { mockAgentSessionForOfflineTest } from '../../test-utils';
+import { mockAgentSessionForOfflineTest } from '../../helpers/test-app';
 
 describe('Instant Message Persistence UX', () => {
 	let db: Database;
@@ -36,13 +36,14 @@ describe('Instant Message Persistence UX', () => {
 
 		// Create mock MessageHub with fresh array for each test
 		messageHub = {
-			publish: mock(async (channel: string, data: unknown) => {
+			event: mock(async (channel: string, data: unknown) => {
 				const publishedMessages = (messageHub as unknown as { _publishedMessages: unknown[] })
 					._publishedMessages;
 				publishedMessages.push({ channel, data });
 			}),
-			handle: mock(() => {}),
-			call: mock(async () => ({})),
+			onRequest: mock((_method: string, _handler: Function) => () => {}),
+			query: mock(async () => ({})),
+			command: mock(async () => {}),
 			subscribe: mock(() => () => {}),
 			unsubscribe: mock(() => {}),
 			on: mock(() => {}),

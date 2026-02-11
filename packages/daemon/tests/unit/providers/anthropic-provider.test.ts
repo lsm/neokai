@@ -14,6 +14,7 @@ describe('AnthropicProvider', () => {
 		originalEnv = { ...process.env };
 		delete process.env.ANTHROPIC_API_KEY;
 		delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+		delete process.env.ANTHROPIC_AUTH_TOKEN;
 		provider = new AnthropicProvider();
 	});
 
@@ -56,6 +57,7 @@ describe('AnthropicProvider', () => {
 		it('should return false when no credentials are set', () => {
 			delete process.env.ANTHROPIC_API_KEY;
 			delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+			delete process.env.ANTHROPIC_AUTH_TOKEN;
 			expect(provider.isAvailable()).toBe(false);
 		});
 	});
@@ -76,6 +78,7 @@ describe('AnthropicProvider', () => {
 		it('should return undefined when neither is set', () => {
 			delete process.env.ANTHROPIC_API_KEY;
 			delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+			delete process.env.ANTHROPIC_AUTH_TOKEN;
 			expect(provider.getApiKey()).toBeUndefined();
 		});
 	});
@@ -85,6 +88,7 @@ describe('AnthropicProvider', () => {
 			// Remove credentials
 			delete process.env.ANTHROPIC_API_KEY;
 			delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+			delete process.env.ANTHROPIC_AUTH_TOKEN;
 
 			// Create new provider instance without credentials
 			const providerWithoutCreds = new AnthropicProvider();
@@ -99,6 +103,7 @@ describe('AnthropicProvider', () => {
 			// Remove credentials
 			delete process.env.ANTHROPIC_API_KEY;
 			delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+			delete process.env.ANTHROPIC_AUTH_TOKEN;
 
 			const providerWithoutCreds = new AnthropicProvider();
 
@@ -166,10 +171,11 @@ describe('AnthropicProvider', () => {
 
 	describe('getModelForTier', () => {
 		it('should map tiers correctly', () => {
-			expect(provider.getModelForTier('sonnet')).toBe('default');
+			expect(provider.getModelForTier('sonnet')).toBe('sonnet');
 			expect(provider.getModelForTier('haiku')).toBe('haiku');
 			expect(provider.getModelForTier('opus')).toBe('opus');
-			expect(provider.getModelForTier('default')).toBe('default');
+			// 'default' tier maps to 'sonnet' (legacy fallback)
+			expect(provider.getModelForTier('default')).toBe('sonnet');
 		});
 	});
 
