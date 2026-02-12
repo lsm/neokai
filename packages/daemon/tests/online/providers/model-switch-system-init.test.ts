@@ -327,11 +327,11 @@ describe('Model Switch System Init Message', () => {
 			// Switch to GLM (cross-provider switch)
 			const switchResult = (await daemon.messageHub.request('session.model.switch', {
 				sessionId,
-				model: 'glm-4.7',
+				model: 'glm-5',
 			})) as { success: boolean; model: string };
 
 			expect(switchResult.success).toBe(true);
-			expect(switchResult.model).toBe('glm-4.7');
+			expect(switchResult.model).toBe('glm-5');
 
 			// Send message with GLM - should get system:init with GLM model
 			const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
@@ -340,7 +340,7 @@ describe('Model Switch System Init Message', () => {
 			const systemInitMessage = await systemInitPromise;
 
 			// Verify system:init shows GLM model
-			// The SDK's system:init message returns the original GLM model ID (glm-4.7)
+			// The SDK's system:init message returns the original GLM model ID (glm-5)
 			// even though translateModelIdForSdk translates it to 'default' for the query
 			const model = systemInitMessage.model as string;
 			const isGlmModel = model.includes('glm');
@@ -358,7 +358,7 @@ describe('Model Switch System Init Message', () => {
 				workspacePath: `${TMP_DIR}/test-switch-glm-to-claude-${Date.now()}`,
 				title: 'GLM to Claude Test',
 				config: {
-					model: 'glm-4.7',
+					model: 'glm-5',
 					permissionMode: 'acceptEdits',
 				},
 			})) as { sessionId: string };
@@ -426,7 +426,7 @@ describe('Model Switch System Init Message', () => {
 			// 2. Switch to GLM
 			await daemon.messageHub.request('session.model.switch', {
 				sessionId,
-				model: 'glm-4.7',
+				model: 'glm-5',
 			});
 			systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
 			await sendMessage(daemon, sessionId, 'Message 2');
@@ -459,7 +459,7 @@ describe('Model Switch System Init Message', () => {
 			// 4. Switch to GLM again
 			await daemon.messageHub.request('session.model.switch', {
 				sessionId,
-				model: 'glm-4.7',
+				model: 'glm-5',
 			});
 			systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
 			await sendMessage(daemon, sessionId, 'Message 4');

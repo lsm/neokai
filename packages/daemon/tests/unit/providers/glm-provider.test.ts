@@ -73,7 +73,7 @@ describe('GlmProvider', () => {
 			const models = await provider.getModels();
 
 			expect(models).toHaveLength(1);
-			expect(models.map((m) => m.id)).toEqual(['glm-4.7']);
+			expect(models.map((m) => m.id)).toEqual(['glm-5']);
 		});
 
 		it('should return empty array when API key is not available', async () => {
@@ -97,7 +97,7 @@ describe('GlmProvider', () => {
 
 	describe('ownsModel', () => {
 		it('should own glm- prefixed models', () => {
-			expect(provider.ownsModel('glm-4.7')).toBe(true);
+			expect(provider.ownsModel('glm-5')).toBe(true);
 			expect(provider.ownsModel('GLM-4')).toBe(true); // case insensitive
 		});
 
@@ -109,28 +109,28 @@ describe('GlmProvider', () => {
 	});
 
 	describe('getModelForTier', () => {
-		it('should map all tiers to glm-4.7', () => {
-			expect(provider.getModelForTier('haiku')).toBe('glm-4.7');
-			expect(provider.getModelForTier('sonnet')).toBe('glm-4.7');
-			expect(provider.getModelForTier('opus')).toBe('glm-4.7');
-			expect(provider.getModelForTier('default')).toBe('glm-4.7');
+		it('should map all tiers to glm-5', () => {
+			expect(provider.getModelForTier('haiku')).toBe('glm-5');
+			expect(provider.getModelForTier('sonnet')).toBe('glm-5');
+			expect(provider.getModelForTier('opus')).toBe('glm-5');
+			expect(provider.getModelForTier('default')).toBe('glm-5');
 		});
 	});
 
 	describe('buildSdkConfig', () => {
-		it('should build correct config for glm-4.7', () => {
+		it('should build correct config for glm-5', () => {
 			process.env.GLM_API_KEY = 'test-key';
 
-			const config = provider.buildSdkConfig('glm-4.7');
+			const config = provider.buildSdkConfig('glm-5');
 
 			expect(config.envVars).toEqual({
 				ANTHROPIC_BASE_URL: 'https://open.bigmodel.cn/api/anthropic',
 				ANTHROPIC_AUTH_TOKEN: 'test-key',
 				API_TIMEOUT_MS: '3000000',
 				CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-				ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-4.7',
-				ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-4.7',
-				ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-4.7',
+				ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-5',
+				ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5',
+				ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5',
 			});
 			expect(config.isAnthropicCompatible).toBe(true);
 		});
@@ -138,7 +138,7 @@ describe('GlmProvider', () => {
 		it('should use session config API key override', () => {
 			process.env.GLM_API_KEY = 'env-key';
 
-			const config = provider.buildSdkConfig('glm-4.7', {
+			const config = provider.buildSdkConfig('glm-5', {
 				apiKey: 'session-key',
 			});
 
@@ -148,7 +148,7 @@ describe('GlmProvider', () => {
 		it('should use session config baseUrl override', () => {
 			process.env.GLM_API_KEY = 'test-key';
 
-			const config = provider.buildSdkConfig('glm-4.7', {
+			const config = provider.buildSdkConfig('glm-5', {
 				baseUrl: 'https://custom.example.com',
 			});
 
@@ -159,13 +159,13 @@ describe('GlmProvider', () => {
 			delete process.env.GLM_API_KEY;
 			delete process.env.ZHIPU_API_KEY;
 
-			expect(() => provider.buildSdkConfig('glm-4.7')).toThrow('GLM API key not configured');
+			expect(() => provider.buildSdkConfig('glm-5')).toThrow('GLM API key not configured');
 		});
 	});
 
 	describe('translateModelIdForSdk', () => {
-		it('should translate glm-4.7 to default', () => {
-			expect(provider.translateModelIdForSdk('glm-4.7')).toBe('default');
+		it('should translate glm-5 to default', () => {
+			expect(provider.translateModelIdForSdk('glm-5')).toBe('default');
 		});
 
 		it('should translate other GLM models to default', () => {
@@ -174,15 +174,15 @@ describe('GlmProvider', () => {
 	});
 
 	describe('getTitleGenerationModel', () => {
-		it('should return glm-4.7 for title generation', () => {
-			expect(provider.getTitleGenerationModel()).toBe('glm-4.7');
+		it('should return glm-5 for title generation', () => {
+			expect(provider.getTitleGenerationModel()).toBe('glm-5');
 		});
 	});
 
 	describe('static models', () => {
 		it('should have static models defined', () => {
 			expect(GlmProvider.MODELS).toHaveLength(1);
-			expect(GlmProvider.MODELS.map((m) => m.id)).toEqual(['glm-4.7']);
+			expect(GlmProvider.MODELS.map((m) => m.id)).toEqual(['glm-5']);
 		});
 
 		it('should have correct base URL', () => {

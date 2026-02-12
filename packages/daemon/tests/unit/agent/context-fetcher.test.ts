@@ -157,7 +157,7 @@ describe('ContextFetcher', () => {
 				message: {
 					content: `<local-command-stdout>## Context Usage
 
-**Model:** glm-4.7
+**Model:** glm-5
 **Tokens:** 0 / 200.0k (0%)
 
 ### Estimated usage by category
@@ -182,7 +182,7 @@ describe('ContextFetcher', () => {
 			expect(result?.totalCapacity).toBe(200000);
 			// percentUsed = Math.round(62021 / 200000 * 100) = 31%
 			expect(result?.percentUsed).toBe(31);
-			expect(result?.model).toBe('glm-4.7');
+			expect(result?.model).toBe('glm-5');
 			expect(result?.slashCommandTool).toBeUndefined();
 		});
 	});

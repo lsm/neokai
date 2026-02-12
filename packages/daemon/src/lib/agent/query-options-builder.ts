@@ -76,7 +76,7 @@ export class QueryOptionsBuilder {
 
 		// Translate model ID for SDK compatibility using provider context
 		// FIX: Recreate context each time to pick up model changes from model switching
-		// GLM model IDs (glm-4.7, glm-4.5-air) need to be mapped to SDK-recognized IDs
+		// GLM model IDs (glm-5, glm-4.5-air) need to be mapped to SDK-recognized IDs
 		// (default, haiku, opus) since the SDK only knows Anthropic model IDs
 		const contextManager = getProviderContextManager();
 		const providerContext = contextManager.createContext(this.ctx.session);

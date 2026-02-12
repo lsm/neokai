@@ -31,7 +31,7 @@
  *    - Applied to process.env by applyEnvVarsToProcess()
  *    - Always OVERRIDE user settings to ensure provider works correctly
  *
- * This ensures that when a user selects "glm-4.7" model:
+ * This ensures that when a user selects "glm-5" model:
  * - GLM's ANTHROPIC_BASE_URL points to GLM's endpoint (not user's custom Anthropic endpoint)
  * - GLM's API key is used (not user's Anthropic key)
  * - User's other custom env vars are still passed through
