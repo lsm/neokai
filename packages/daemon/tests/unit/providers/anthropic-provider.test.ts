@@ -159,7 +159,7 @@ describe('AnthropicProvider', () => {
 		});
 
 		it('should not own other provider models', () => {
-			expect(provider.ownsModel('glm-4.7')).toBe(false);
+			expect(provider.ownsModel('glm-5')).toBe(false);
 			expect(provider.ownsModel('deepseek-coder')).toBe(false);
 			expect(provider.ownsModel('gpt-4')).toBe(false);
 		});

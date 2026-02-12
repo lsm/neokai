@@ -150,16 +150,16 @@ function restoreEnvVars(originals: Map<string, string | undefined>): void {
 }
 
 describe('GLM SDK - Stable Tests with Promise.race', () => {
-	test('should work with GLM via sonnet/default model (glm-4.7)', async () => {
+	test('should work with GLM via sonnet/default model (glm-5)', async () => {
 		if (!GLM_API_KEY) {
 			console.log('Skipping test - GLM_API_KEY not set');
 			return;
 		}
 
-		console.log('[GLM Test] Starting minimal SDK test with default → glm-4.7...');
+		console.log('[GLM Test] Starting minimal SDK test with default → glm-5...');
 		console.log('[GLM Test] API Key:', GLM_API_KEY.substring(0, 10) + '...');
 
-		const originals = setGlmEnvVars(GLM_API_KEY, 'glm-4.7');
+		const originals = setGlmEnvVars(GLM_API_KEY, 'glm-5');
 		const tempDir = mkdtempSync(join(tmpdir(), 'glm-test-'));
 
 		try {
@@ -184,15 +184,15 @@ describe('GLM SDK - Stable Tests with Promise.race', () => {
 		}
 	}, 150000); // 150s test timeout for GLM API on CI
 
-	test('should work with GLM via default/sonnet model (glm-4.7)', async () => {
+	test('should work with GLM via default/sonnet model (glm-5)', async () => {
 		if (!GLM_API_KEY) {
 			console.log('Skipping test - GLM_API_KEY not set');
 			return;
 		}
 
-		console.log('[GLM Test] Starting SDK test with default → glm-4.7...');
+		console.log('[GLM Test] Starting SDK test with default → glm-5...');
 
-		const originals = setGlmEnvVars(GLM_API_KEY, undefined, 'glm-4.7');
+		const originals = setGlmEnvVars(GLM_API_KEY, undefined, 'glm-5');
 		const tempDir = mkdtempSync(join(tmpdir(), 'glm-test-'));
 
 		try {
@@ -215,15 +215,15 @@ describe('GLM SDK - Stable Tests with Promise.race', () => {
 		}
 	}, 150000); // 150s test timeout for GLM API on CI
 
-	test('should work with GLM via opus model (glm-4.7)', async () => {
+	test('should work with GLM via opus model (glm-5)', async () => {
 		if (!GLM_API_KEY) {
 			console.log('Skipping test - GLM_API_KEY not set');
 			return;
 		}
 
-		console.log('[GLM Test] Starting SDK test with opus → glm-4.7...');
+		console.log('[GLM Test] Starting SDK test with opus → glm-5...');
 
-		const originals = setGlmEnvVars(GLM_API_KEY, undefined, undefined, 'glm-4.7');
+		const originals = setGlmEnvVars(GLM_API_KEY, undefined, undefined, 'glm-5');
 		const tempDir = mkdtempSync(join(tmpdir(), 'glm-test-'));
 
 		try {

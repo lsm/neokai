@@ -42,7 +42,7 @@ describe('GLM Provider Integration', () => {
 			const providerService = new ProviderService();
 
 			// GLM models start with "glm-"
-			expect(providerService.isGlmModel('glm-4.7')).toBe(true);
+			expect(providerService.isGlmModel('glm-5')).toBe(true);
 			expect(providerService.isGlmModel('glm-4')).toBe(true);
 			expect(providerService.isGlmModel('GLM-4.7')).toBe(true); // case insensitive
 
@@ -56,7 +56,7 @@ describe('GLM Provider Integration', () => {
 		it('should detect provider from model ID', () => {
 			const providerService = new ProviderService();
 
-			expect(providerService.detectProviderFromModel('glm-4.7')).toBe('glm');
+			expect(providerService.detectProviderFromModel('glm-5')).toBe('glm');
 			expect(providerService.detectProviderFromModel('GLM-4')).toBe('glm');
 			expect(providerService.detectProviderFromModel('default')).toBe('anthropic');
 			expect(providerService.detectProviderFromModel('opus')).toBe('anthropic');
@@ -70,7 +70,7 @@ describe('GLM Provider Integration', () => {
 			process.env.GLM_API_KEY = 'test-glm-api-key';
 
 			try {
-				const envVars = providerService.getEnvVarsForModel('glm-4.7');
+				const envVars = providerService.getEnvVarsForModel('glm-5');
 
 				// Verify all required env vars are set
 				expect(envVars.ANTHROPIC_BASE_URL).toBe('https://open.bigmodel.cn/api/anthropic');
@@ -83,10 +83,10 @@ describe('GLM Provider Integration', () => {
 				expect(envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');
 				// API_TIMEOUT_MS is set for GLM (50 minutes)
 				expect(envVars.API_TIMEOUT_MS).toBe('3000000');
-				// Model mapping should be set (glm-4.7 maps to all tiers)
-				expect(envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-4.7');
-				expect(envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-4.7');
-				expect(envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-4.7');
+				// Model mapping should be set (glm-5 maps to all tiers)
+				expect(envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5');
+				expect(envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5');
+				expect(envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5');
 			} finally {
 				if (originalGlmKey !== undefined) {
 					process.env.GLM_API_KEY = originalGlmKey;
@@ -96,7 +96,7 @@ describe('GLM Provider Integration', () => {
 			}
 		});
 
-		it('should return correct env vars for glm-4.7', () => {
+		it('should return correct env vars for glm-5', () => {
 			const providerService = new ProviderService();
 
 			// Mock GLM_API_KEY
@@ -104,7 +104,7 @@ describe('GLM Provider Integration', () => {
 			process.env.GLM_API_KEY = 'test-glm-api-key';
 
 			try {
-				const envVars = providerService.getEnvVarsForModel('glm-4.7');
+				const envVars = providerService.getEnvVarsForModel('glm-5');
 
 				// Verify base env vars are set
 				expect(envVars.ANTHROPIC_BASE_URL).toBe('https://open.bigmodel.cn/api/anthropic');
@@ -114,10 +114,10 @@ describe('GLM Provider Integration', () => {
 				expect(envVars.ANTHROPIC_API_KEY).toBeUndefined();
 				// ANTHROPIC_MODEL is NOT set - model ID is passed directly to SDK
 				expect(envVars.ANTHROPIC_MODEL).toBeUndefined();
-				// All tiers map to glm-4.7
-				expect(envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-4.7');
-				expect(envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-4.7');
-				expect(envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-4.7');
+				// All tiers map to glm-5
+				expect(envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5');
+				expect(envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5');
+				expect(envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5');
 				// Extended timeout
 				expect(envVars.API_TIMEOUT_MS).toBe('3000000');
 			} finally {
@@ -189,7 +189,7 @@ describe('GLM Provider Integration', () => {
 			const providerService = new ProviderService();
 
 			expect(await providerService.getDefaultModelForProvider('anthropic')).toBe('default');
-			expect(await providerService.getDefaultModelForProvider('glm')).toBe('glm-4.7');
+			expect(await providerService.getDefaultModelForProvider('glm')).toBe('glm-5');
 		});
 
 		it('should validate provider switch correctly', async () => {
@@ -260,9 +260,9 @@ describe('GLM Provider Integration', () => {
 					},
 					// GLM models are included when GLM_API_KEY is set
 					{
-						id: 'glm-4.7',
+						id: 'glm-5',
 						name: 'GLM-4.7',
-						alias: 'glm-4.7',
+						alias: 'glm-5',
 						family: 'glm' as const,
 						provider: 'glm',
 						contextWindow: 128000,
@@ -284,7 +284,7 @@ describe('GLM Provider Integration', () => {
 				expect(models.length).toBe(4);
 
 				// Find GLM model
-				const glmModel = models.find((m) => m.id === 'glm-4.7');
+				const glmModel = models.find((m) => m.id === 'glm-5');
 				expect(glmModel).toBeDefined();
 				expect(glmModel!.name).toBe('GLM-4.7');
 				expect(glmModel!.family).toBe('glm');
@@ -357,7 +357,7 @@ describe('GLM Provider Integration', () => {
 				expect(models.length).toBe(3);
 
 				// Should NOT have GLM model
-				const glmModel = models.find((m) => m.id === 'glm-4.7');
+				const glmModel = models.find((m) => m.id === 'glm-5');
 				expect(glmModel).toBeUndefined();
 
 				// Should have Anthropic models
@@ -394,9 +394,9 @@ describe('GLM Provider Integration', () => {
 						description: 'Sonnet 4.5 · Best for everyday tasks',
 					},
 					{
-						id: 'glm-4.7',
+						id: 'glm-5',
 						name: 'GLM-4.7',
-						alias: 'glm-4.7',
+						alias: 'glm-5',
 						family: 'glm' as const,
 						provider: 'glm',
 						contextWindow: 128000,
@@ -415,7 +415,7 @@ describe('GLM Provider Integration', () => {
 				const models = getAvailableModels('global');
 
 				// Should include GLM model
-				const glmModel = models.find((m) => m.id === 'glm-4.7');
+				const glmModel = models.find((m) => m.id === 'glm-5');
 				expect(glmModel).toBeDefined();
 				expect(glmModel!.name).toBe('GLM-4.7');
 				expect(glmModel!.provider).toBe('glm');
@@ -441,7 +441,7 @@ describe('GLM Provider Integration', () => {
 			// Create session with GLM model (model-based detection, no provider config needed)
 			const session = createTestSession(env.testWorkspace, {
 				config: {
-					model: 'glm-4.7', // GLM model ID triggers env var injection
+					model: 'glm-5', // GLM model ID triggers env var injection
 				},
 			});
 
@@ -459,7 +459,7 @@ describe('GLM Provider Integration', () => {
 				expect(options.env).toBeUndefined();
 
 				// The model ID is translated to SDK-recognized ID
-				expect(options.model).toBe('default'); // glm-4.7 → default (Sonnet tier)
+				expect(options.model).toBe('default'); // glm-5 → default (Sonnet tier)
 			} finally {
 				if (originalGlmKey !== undefined) {
 					process.env.GLM_API_KEY = originalGlmKey;
@@ -474,7 +474,7 @@ describe('GLM Provider Integration', () => {
 
 			const session = createTestSession(env.testWorkspace, {
 				config: {
-					model: 'glm-4.7',
+					model: 'glm-5',
 					env: {
 						// API_TIMEOUT_MS is now filtered as provider-specific var
 						// Provider env vars are managed by the provider system, not options.env
@@ -566,7 +566,7 @@ describe('GLM Provider Integration', () => {
 					'anthropic-version': '2023-06-01',
 				},
 				body: JSON.stringify({
-					model: 'glm-4.7',
+					model: 'glm-5',
 					max_tokens: 100,
 					messages: [
 						{

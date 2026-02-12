@@ -200,7 +200,7 @@ describe('discoverCredentials', () => {
 					env: {
 						ANTHROPIC_AUTH_TOKEN: 'zhipu-key',
 						ANTHROPIC_BASE_URL: 'https://open.bigmodel.cn/api/anthropic',
-						ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-4.7',
+						ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5',
 						API_TIMEOUT_MS: '3000000',
 					},
 				})
@@ -211,7 +211,7 @@ describe('discoverCredentials', () => {
 			expect(result.credentialSource).toBe('settings-json');
 			expect(process.env.ANTHROPIC_AUTH_TOKEN).toBe('zhipu-key');
 			expect(process.env.ANTHROPIC_BASE_URL).toBe('https://open.bigmodel.cn/api/anthropic');
-			expect(process.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-4.7');
+			expect(process.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5');
 			expect(process.env.API_TIMEOUT_MS).toBe('3000000');
 		});
 
@@ -299,8 +299,8 @@ describe('discoverCredentials', () => {
 				JSON.stringify({
 					env: {
 						ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-4.5-air',
-						ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-4.7',
-						ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-4.7',
+						ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5',
+						ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5',
 						ANTHROPIC_AUTH_TOKEN: 'zhipu_key',
 						ANTHROPIC_BASE_URL: 'https://open.bigmodel.cn/api/anthropic',
 						API_TIMEOUT_MS: '3000000',
@@ -314,7 +314,7 @@ describe('discoverCredentials', () => {
 			expect(result.settingsEnvApplied).toBe(7);
 			expect(process.env.ANTHROPIC_AUTH_TOKEN).toBe('zhipu_key');
 			expect(process.env.ANTHROPIC_BASE_URL).toBe('https://open.bigmodel.cn/api/anthropic');
-			expect(process.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-4.7');
+			expect(process.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5');
 		});
 	});
 

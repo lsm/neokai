@@ -54,11 +54,11 @@ describe('GLM Model Switching', () => {
 			// Switch to GLM model
 			const result = (await daemon.messageHub.request('session.model.switch', {
 				sessionId,
-				model: 'glm-4.7',
+				model: 'glm-5',
 			})) as { success: boolean; model: string; error?: string };
 
 			expect(result.success).toBe(true);
-			expect(result.model).toBe('glm-4.7');
+			expect(result.model).toBe('glm-5');
 			expect(result.error).toBeUndefined();
 
 			// Verify model was updated in session config
@@ -66,7 +66,7 @@ describe('GLM Model Switching', () => {
 				sessionId,
 			})) as { session: { config: { model: string } } };
 
-			expect(sessionResult.session.config.model).toBe('glm-4.7');
+			expect(sessionResult.session.config.model).toBe('glm-5');
 		});
 
 		test('should preserve session state when switching to GLM', async () => {
@@ -97,7 +97,7 @@ describe('GLM Model Switching', () => {
 			// Switch to GLM model
 			await daemon.messageHub.request('session.model.switch', {
 				sessionId,
-				model: 'glm-4.7',
+				model: 'glm-5',
 			});
 
 			// Get state after switch
@@ -120,7 +120,7 @@ describe('GLM Model Switching', () => {
 			expect(sessionAfter.session.status).toBe(sessionBefore.session.status);
 
 			// Model should be GLM
-			expect(sessionAfter.session.config.model).toBe('glm-4.7');
+			expect(sessionAfter.session.config.model).toBe('glm-5');
 		});
 
 		// Note: Provider config update tests are in tests/online/providers/model-switch-system-init.test.ts
@@ -142,7 +142,7 @@ describe('GLM Model Switching', () => {
 			daemon.trackSession(sessionId);
 
 			// Perform rapid switches between Claude and GLM
-			const switches = ['glm-4.7', 'haiku', 'glm-4.7', 'sonnet', 'glm-4.7'];
+			const switches = ['glm-5', 'haiku', 'glm-5', 'sonnet', 'glm-5'];
 
 			for (const model of switches) {
 				const result = (await daemon.messageHub.request('session.model.switch', {
@@ -152,11 +152,11 @@ describe('GLM Model Switching', () => {
 				expect(result.success).toBe(true);
 			}
 
-			// Final model should be glm-4.7
+			// Final model should be glm-5
 			const modelInfo = (await daemon.messageHub.request('session.model.get', {
 				sessionId,
 			})) as { currentModel: string };
-			expect(modelInfo.currentModel).toBe('glm-4.7');
+			expect(modelInfo.currentModel).toBe('glm-5');
 		});
 
 		test('should switch to GLM before first message', async () => {
@@ -175,17 +175,17 @@ describe('GLM Model Switching', () => {
 			// Switch to GLM before sending any messages
 			const result = (await daemon.messageHub.request('session.model.switch', {
 				sessionId,
-				model: 'glm-4.7',
+				model: 'glm-5',
 			})) as { success: boolean; model: string };
 
 			expect(result.success).toBe(true);
-			expect(result.model).toBe('glm-4.7');
+			expect(result.model).toBe('glm-5');
 
 			// Verify config was updated
 			const sessionResult = (await daemon.messageHub.request('session.get', {
 				sessionId,
 			})) as { session: { config: { model: string } } };
-			expect(sessionResult.session.config.model).toBe('glm-4.7');
+			expect(sessionResult.session.config.model).toBe('glm-5');
 		});
 	});
 });
