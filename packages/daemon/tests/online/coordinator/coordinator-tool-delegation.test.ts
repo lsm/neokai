@@ -96,7 +96,14 @@ describe('Coordinator Tool Delegation - Behavioral', () => {
 	let testDir: string;
 
 	beforeEach(async () => {
-		daemon = await createDaemonServer();
+		daemon = await createDaemonServer({
+			env: {
+				GLM_API_KEY: process.env.GLM_API_KEY!,
+				DEFAULT_PROVIDER: 'glm',
+				CLAUDE_CODE_OAUTH_TOKEN: '',
+				ANTHROPIC_API_KEY: '',
+			},
+		});
 		testDir = join(TMP_DIR, `coordinator-delegation-test-${Date.now()}`);
 		mkdirSync(testDir, { recursive: true });
 	}, 30000);
@@ -121,6 +128,7 @@ describe('Coordinator Tool Delegation - Behavioral', () => {
 			config: {
 				coordinatorMode: true,
 				permissionMode: 'bypassPermissions',
+				model: 'glm-5',
 			},
 		})) as { sessionId: string };
 
@@ -157,6 +165,7 @@ describe('Coordinator Tool Delegation - Behavioral', () => {
 			config: {
 				coordinatorMode: true,
 				permissionMode: 'bypassPermissions',
+				model: 'glm-5',
 			},
 		})) as { sessionId: string };
 

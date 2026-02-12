@@ -153,7 +153,14 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		daemon = await createDaemonServer();
+		daemon = await createDaemonServer({
+			env: {
+				GLM_API_KEY: process.env.GLM_API_KEY!,
+				DEFAULT_PROVIDER: 'glm',
+				CLAUDE_CODE_OAUTH_TOKEN: '',
+				ANTHROPIC_API_KEY: '',
+			},
+		});
 	}, 30000);
 
 	afterEach(async () => {
@@ -171,6 +178,7 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 			config: {
 				coordinatorMode: true,
 				permissionMode: 'acceptEdits',
+				model: 'glm-5',
 			},
 		})) as { sessionId: string };
 
@@ -214,6 +222,7 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 			config: {
 				coordinatorMode: false,
 				permissionMode: 'acceptEdits',
+				model: 'glm-5',
 			},
 		})) as { sessionId: string };
 
@@ -259,6 +268,7 @@ describe('Coordinator Mode Switch - System Init Message', () => {
 			config: {
 				coordinatorMode: true,
 				permissionMode: 'acceptEdits',
+				model: 'glm-5',
 			},
 		})) as { sessionId: string };
 
