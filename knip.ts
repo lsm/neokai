@@ -9,6 +9,10 @@ const config: KnipConfig = {
 		'packages/daemon': {
 			entry: ['src/app.ts', 'src/lib/rpc-handlers/*.ts', 'tests/**/*.ts'],
 		},
+		'packages/neo': {
+			// Neo package exports public API for external use
+			entry: ['src/index.ts'],
+		},
 		'packages/shared': {
 			entry: ['src/mod.ts', 'tests/**/*.ts'],
 		},
@@ -38,6 +42,8 @@ const config: KnipConfig = {
 		'packages/web/tailwind.config.ts',
 		'packages/web/postcss.config.js',
 		'packages/web/src/index.ts', // Standalone dev server, not used in production
+		'packages/web/src/lib/router.ts', // Router functions called via navigateToRoom etc
+		'packages/neo/src/**/*.ts', // Neo package - public API for external use
 		'packages/daemon/scripts/**', // Database recovery scripts
 		'packages/daemon/tests/manual/**', // Manual test scripts
 		'packages/daemon/tests/mocks/**', // Test mocks
