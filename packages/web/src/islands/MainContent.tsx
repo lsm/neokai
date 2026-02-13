@@ -2,7 +2,7 @@ import { currentSessionIdSignal, currentRoomIdSignal } from '../lib/signals.ts';
 import { sessions } from '../lib/state.ts';
 import ChatContainer from './ChatContainer.tsx';
 import Room from './Room.tsx';
-import RecentSessions from '../components/RecentSessions.tsx';
+import Lobby from './Lobby.tsx';
 
 export default function MainContent() {
 	// IMPORTANT: Access .value directly in component body to enable Preact Signals auto-tracking
@@ -20,9 +20,11 @@ export default function MainContent() {
 	// (handles case where session is deleted in another tab)
 	const sessionExists = sessionId && sessionsList.some((s) => s.id === sessionId);
 
-	if (!sessionId || !sessionExists) {
-		return <RecentSessions sessions={sessionsList} />;
+	// If there's a valid session, show the chat
+	if (sessionId && sessionExists) {
+		return <ChatContainer key={sessionId} sessionId={sessionId} />;
 	}
 
-	return <ChatContainer key={sessionId} sessionId={sessionId} />;
+	// Default: Show Lobby (home page)
+	return <Lobby />;
 }
