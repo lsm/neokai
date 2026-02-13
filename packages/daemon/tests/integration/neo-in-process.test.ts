@@ -7,7 +7,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { MessageHub } from '@neokai/shared';
-import { createNeoClientTransport } from '../../src/lib/neo-client';
+import { createNeoClientTransport } from '@neokai/neo';
 
 describe('Neo In-Process Communication', () => {
 	let daemonHub: MessageHub;

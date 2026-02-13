@@ -6,12 +6,11 @@ import { SessionManager } from './lib/session-manager';
 import { AuthManager } from './lib/auth-manager';
 import { SettingsManager } from './lib/settings-manager';
 import { StateManager } from './lib/state-manager';
-import { MessageHub, MessageHubRouter, InProcessTransport } from '@neokai/shared';
+import { MessageHub, MessageHubRouter } from '@neokai/shared';
 import { createDaemonHub } from './lib/daemon-hub';
 import { setupRPCHandlers } from './lib/rpc-handlers';
 import { WebSocketServerTransport } from './lib/websocket-server-transport';
 import { createWebSocketHandlers } from './routes/setup-websocket';
-import { createNeoClientTransport } from './lib/neo-client';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -27,12 +26,6 @@ export interface CreateDaemonAppOptions {
 	 * Default: false
 	 */
 	standalone?: boolean;
-	/**
-	 * Enable Neo AI client for in-process orchestration.
-	 * When enabled, creates an in-process transport for Neo to communicate with daemon.
-	 * @default false
-	 */
-	enableNeo?: boolean;
 }
 
 export interface DaemonAppContext {
@@ -49,14 +42,6 @@ export interface DaemonAppContext {
 	 * Closes all connections, stops sessions, and closes database.
 	 */
 	cleanup: () => Promise<void>;
-	/**
-	 * Neo client MessageHub for AI orchestration (only if enableNeo: true)
-	 */
-	neoClientHub?: MessageHub;
-	/**
-	 * Neo server transport registered with daemon (only if enableNeo: true)
-	 */
-	neoTransport?: InProcessTransport;
 }
 
 /**
@@ -74,7 +59,7 @@ export interface DaemonAppContext {
  * @returns Initialized Bun server and context for management
  */
 export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<DaemonAppContext> {
-	const { config, verbose = true, standalone = false, enableNeo = false } = options;
+	const { config, verbose = true, standalone = false } = options;
 	const logInfo = verbose ? console.log : () => {};
 	const logError = verbose ? console.error : () => {};
 
@@ -126,21 +111,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// 5. Register Transport with MessageHub
 	messageHub.registerTransport(transport);
-
-	// Neo client setup (optional)
-	let neoClientHub: MessageHub | undefined;
-	let neoServerTransport: InProcessTransport | undefined;
-
-	if (enableNeo) {
-		const neoTransport = createNeoClientTransport({ name: 'neo-to-daemon' });
-		neoClientHub = neoTransport.neoClientHub;
-		neoServerTransport = neoTransport.serverTransport;
-
-		// Register Neo's server transport with daemon's MessageHub
-		messageHub.registerTransport(neoServerTransport);
-
-		logInfo('[Daemon] Neo client transport initialized');
-	}
 
 	// Initialize DaemonHub (TypedHub-based event coordination)
 	const eventBus = createDaemonHub('daemon');
@@ -315,11 +285,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				}
 			}
 
-			// Cleanup Neo transport first
-			if (neoClientHub) {
-				neoClientHub.cleanup();
-			}
-
 			// Cleanup MessageHub (rejects remaining calls)
 			messageHub.cleanup();
 
@@ -346,7 +311,5 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		stateManager,
 		transport,
 		cleanup,
-		neoClientHub,
-		neoTransport: neoServerTransport,
 	};
 }

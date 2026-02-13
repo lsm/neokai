@@ -3,6 +3,7 @@ import type { Config } from '@neokai/daemon/config';
 import { createServer as createViteServer } from 'vite';
 import { resolve } from 'path';
 import { createLogger } from '@neokai/shared';
+import { createNeoClientTransport } from '@neokai/neo';
 import {
 	findAvailablePort,
 	createCorsPreflightResponse,
@@ -85,13 +86,13 @@ export async function startDevServer(config: Config) {
 		config,
 		verbose: true,
 		standalone: false, // Skip root info route in embedded mode
-		enableNeo: true, // Enable Neo AI client for in-process orchestration
 	});
 
-	// Log Neo status
-	if (daemonContext.neoClientHub) {
-		log.info('🤖 Neo AI client enabled (in-process transport)');
-	}
+	// Create Neo client with in-process transport
+	// Since Neo is in the same process as daemon, we can use the daemon's MessageHub directly
+	// For now, Neo can access daemonContext.messageHub to make RPC calls
+	// TODO: Implement proper Neo initialization when RoomNeo is ready
+	log.info('🤖 Neo AI client available via daemon MessageHub');
 
 	// Stop the daemon's internal server (we'll create a unified one)
 	daemonContext.server.stop();

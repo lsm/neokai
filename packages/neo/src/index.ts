@@ -19,3 +19,10 @@ export {
 	extractTextResponse,
 	type NeoAction,
 } from './neo-prompt';
+
+// Neo client transport
+export {
+	createNeoClientTransport,
+	type NeoClientConfig,
+	type NeoClientTransport,
+} from './neo-client';
