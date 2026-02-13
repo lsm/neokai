@@ -1,19 +1,22 @@
 /**
- * URL-based Session Router
+ * URL-based Session and Room Router
  *
- * Handles URL-based routing for sessions with pattern: /session/:sessionId
+ * Handles URL-based routing for sessions and rooms with patterns:
+ * - Sessions: /session/:sessionId
+ * - Rooms: /room/:roomId
  *
  * Features:
- * - URL sync: Updates URL when session changes
+ * - URL sync: Updates URL when session/room changes
  * - History navigation: Supports browser back/forward buttons
- * - Deep linking: Restores session from URL on page load
+ * - Deep linking: Restores session/room from URL on page load
  * - Clean URLs: Uses History API for clean URLs without hash
  */
 
-import { currentSessionIdSignal } from './signals.ts';
+import { currentSessionIdSignal, currentRoomIdSignal } from './signals.ts';
 
 /** Route patterns */
 const SESSION_ROUTE_PATTERN = /^\/session\/([a-f0-9-]+)$/;
+const ROOM_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)$/;
 
 /**
  * Router state and configuration
@@ -38,6 +41,15 @@ export function getSessionIdFromPath(path: string): string | null {
 }
 
 /**
+ * Extract room ID from current URL path
+ * Returns null if not on a room route
+ */
+export function getRoomIdFromPath(path: string): string | null {
+	const match = path.match(ROOM_ROUTE_PATTERN);
+	return match ? match[1] : null;
+}
+
+/**
  * Get current path from window.location
  */
 function getCurrentPath(): string {
@@ -49,6 +61,13 @@ function getCurrentPath(): string {
  */
 export function createSessionPath(sessionId: string): string {
 	return `/session/${sessionId}`;
+}
+
+/**
+ * Create room URL path
+ */
+export function createRoomPath(roomId: string): string {
+	return `/room/${roomId}`;
 }
 
 /**
@@ -105,6 +124,7 @@ export function navigateToHome(replace = false): void {
 	const currentPath = getCurrentPath();
 	if (currentPath === '/') {
 		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
 		return;
 	}
 
@@ -112,10 +132,56 @@ export function navigateToHome(replace = false): void {
 
 	try {
 		const historyMethod = replace ? 'replaceState' : 'pushState';
-		window.history[historyMethod]({ sessionId: null, path: '/' }, '', '/');
+		window.history[historyMethod]({ sessionId: null, roomId: null, path: '/' }, '', '/');
 
 		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
 	} finally {
+		setTimeout(() => {
+			routerState.isNavigating = false;
+		}, 0);
+	}
+}
+
+/**
+ * Navigate to a room
+ * Updates both the URL and the signals
+ *
+ * @param roomId - The room ID to navigate to
+ * @param replace - Whether to replace current history entry (default: false)
+ */
+export function navigateToRoom(roomId: string, replace = false): void {
+	if (routerState.isNavigating) {
+		return; // Prevent recursive navigation
+	}
+
+	const targetPath = createRoomPath(roomId);
+	const currentPath = getCurrentPath();
+
+	// Only navigate if the path is different
+	if (currentPath === targetPath) {
+		// Still update the signal in case it's out of sync
+		currentRoomIdSignal.value = roomId;
+		currentSessionIdSignal.value = null;
+		return;
+	}
+
+	routerState.isNavigating = true;
+
+	try {
+		// Update URL using History API
+		const historyMethod = replace ? 'replaceState' : 'pushState';
+		window.history[historyMethod](
+			{ roomId, path: targetPath },
+			'', // title - ignored by most browsers
+			targetPath
+		);
+
+		// Update the signals - room takes priority, clear session
+		currentRoomIdSignal.value = roomId;
+		currentSessionIdSignal.value = null;
+	} finally {
+		// Use setTimeout to break the synchronous cycle
 		setTimeout(() => {
 			routerState.isNavigating = false;
 		}, 0);
@@ -132,27 +198,44 @@ function handlePopState(_event: PopStateEvent): void {
 
 	const path = getCurrentPath();
 	const sessionId = getSessionIdFromPath(path);
+	const roomId = getRoomIdFromPath(path);
 
-	// Update the signal to match the URL
-	currentSessionIdSignal.value = sessionId;
+	// Update the signals to match the URL
+	// Room takes priority - if we're on a room route, clear session
+	if (roomId) {
+		currentRoomIdSignal.value = roomId;
+		currentSessionIdSignal.value = null;
+	} else {
+		currentRoomIdSignal.value = null;
+		currentSessionIdSignal.value = sessionId;
+	}
 }
 
 /**
  * Initialize router
- * - Reads session ID from current URL
+ * - Reads session/room ID from current URL
  * - Sets up history event listeners
  * - Should be called once on app mount
  *
- * @returns The initial session ID from URL, or null if at home
+ * @returns The initial session ID from URL, or null if at home or on room route
  */
 export function initializeRouter(): string | null {
 	if (routerState.isInitialized) {
 		return getSessionIdFromPath(getCurrentPath());
 	}
 
-	// Read initial session from URL
+	// Read initial session/room from URL
 	const initialPath = getCurrentPath();
 	const initialSessionId = getSessionIdFromPath(initialPath);
+	const initialRoomId = getRoomIdFromPath(initialPath);
+
+	// Set initial signals - room takes priority
+	if (initialRoomId) {
+		currentRoomIdSignal.value = initialRoomId;
+		currentSessionIdSignal.value = null;
+	} else {
+		currentSessionIdSignal.value = initialSessionId;
+	}
 
 	// Set up popstate listener for back/forward navigation
 	window.addEventListener('popstate', handlePopState);

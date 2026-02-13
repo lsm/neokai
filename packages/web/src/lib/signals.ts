@@ -5,6 +5,10 @@ import type { Session } from '@neokai/shared';
 // Refreshing the page will return to recent conversations view
 export const currentSessionIdSignal = signal<string | null>(null);
 
+// Shared signal for the current room ID - always starts as null
+// When set, takes priority over session signal
+export const currentRoomIdSignal = signal<string | null>(null);
+
 // Shared signal for sidebar open/closed state on mobile
 export const sidebarOpenSignal = signal<boolean>(false);
 
