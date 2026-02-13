@@ -14,7 +14,7 @@
     },
     "packages/cli": {
       "name": "@neokai/cli",
-      "version": "0.5.0",
+      "version": "0.5.2",
       "bin": {
         "kai": "./main.ts",
       },
@@ -32,7 +32,7 @@
     },
     "packages/daemon": {
       "name": "@neokai/daemon",
-      "version": "0.5.0",
+      "version": "0.5.2",
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "^0.2.39",
         "@neokai/shared": "workspace:*",
@@ -44,23 +44,34 @@
     },
     "packages/e2e": {
       "name": "@neokai/e2e",
-      "version": "0.5.0",
+      "version": "0.5.2",
       "devDependencies": {
         "@playwright/test": "1.57.0",
         "@types/node": "24.10.1",
         "monocart-reporter": "2.9.23",
       },
     },
+    "packages/neo": {
+      "name": "@neokai/neo",
+      "version": "0.5.2",
+      "dependencies": {
+        "@anthropic-ai/claude-agent-sdk": "^0.1.38",
+        "@neokai/shared": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+    },
     "packages/shared": {
       "name": "@neokai/shared",
-      "version": "0.5.0",
+      "version": "0.5.2",
       "devDependencies": {
         "@types/bun": "latest",
       },
     },
     "packages/web": {
       "name": "@neokai/web",
-      "version": "0.5.0",
+      "version": "0.5.2",
       "dependencies": {
         "@preact/signals": "2.7.1",
         "clsx": "2.1.1",
@@ -259,6 +270,8 @@
     "@neokai/daemon": ["@neokai/daemon@workspace:packages/daemon"],
 
     "@neokai/e2e": ["@neokai/e2e@workspace:packages/e2e"],
+
+    "@neokai/neo": ["@neokai/neo@workspace:packages/neo"],
 
     "@neokai/shared": ["@neokai/shared@workspace:packages/shared"],
 
@@ -1001,6 +1014,8 @@
     "zod": ["zod@4.3.6", "", {}, "sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg=="],
 
     "@babel/code-frame/js-tokens": ["js-tokens@4.0.0", "", {}, "sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ=="],
+
+    "@neokai/neo/@anthropic-ai/claude-agent-sdk": ["@anthropic-ai/claude-agent-sdk@0.1.77", "", { "optionalDependencies": { "@img/sharp-darwin-arm64": "^0.33.5", "@img/sharp-darwin-x64": "^0.33.5", "@img/sharp-linux-arm": "^0.33.5", "@img/sharp-linux-arm64": "^0.33.5", "@img/sharp-linux-x64": "^0.33.5", "@img/sharp-linuxmusl-arm64": "^0.33.5", "@img/sharp-linuxmusl-x64": "^0.33.5", "@img/sharp-win32-x64": "^0.33.5" }, "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" } }, "sha512-ZEjWQtkoB2MEY6K16DWMmF+8OhywAynH0m08V265cerbZ8xPD/2Ng2jPzbbO40mPeFSsMDJboShL+a3aObP0Jg=="],
 
     "@playwright/test/playwright": ["playwright@1.57.0", "", { "dependencies": { "playwright-core": "1.57.0" }, "optionalDependencies": { "fsevents": "2.3.2" }, "bin": { "playwright": "cli.js" } }, "sha512-ilYQj1s8sr2ppEJ2YVadYBN0Mb3mdo9J0wQ+UuDhzYqURwSoW4n1Xs5vs7ORwgDGmyEh33tRMeS8KhdkMoLXQw=="],
 

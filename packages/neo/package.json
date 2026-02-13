@@ -1,0 +1,17 @@
+{
+	"name": "@neokai/neo",
+	"version": "0.5.2",
+	"type": "module",
+	"license": "Apache-2.0",
+	"main": "src/index.ts",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"dependencies": {
+		"@neokai/shared": "workspace:*",
+		"@anthropic-ai/claude-agent-sdk": "^0.1.38"
+	},
+	"devDependencies": {
+		"@types/bun": "latest"
+	}
+}
