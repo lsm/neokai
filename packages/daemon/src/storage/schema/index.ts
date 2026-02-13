@@ -113,6 +113,93 @@ export function createTables(db: BunDatabase): void {
       VALUES (1, '${JSON.stringify(DEFAULT_GLOBAL_SETTINGS)}', datetime('now'))
     `);
 
+	// Neo tables - self-aware architecture foundation
+
+	// Rooms table - conceptual workspaces
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS neo_rooms (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        default_workspace TEXT,
+        default_model TEXT,
+        session_ids TEXT DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived')),
+        neo_context_id TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+
+	// Neo memories table - persistent memory storage
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS neo_memories (
+        id TEXT PRIMARY KEY,
+        room_id TEXT NOT NULL,
+        type TEXT NOT NULL CHECK(type IN ('conversation', 'task_result', 'preference', 'pattern', 'note')),
+        content TEXT NOT NULL,
+        tags TEXT DEFAULT '[]',
+        importance TEXT NOT NULL DEFAULT 'normal' CHECK(importance IN ('low', 'normal', 'high')),
+        session_id TEXT,
+        task_id TEXT,
+        created_at INTEGER NOT NULL,
+        last_accessed_at INTEGER NOT NULL,
+        access_count INTEGER DEFAULT 0,
+        FOREIGN KEY (room_id) REFERENCES neo_rooms(id) ON DELETE CASCADE
+      )
+    `);
+
+	// Neo tasks table - task management
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS neo_tasks (
+        id TEXT PRIMARY KEY,
+        room_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        session_id TEXT,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'blocked', 'completed', 'failed')),
+        priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+        progress INTEGER,
+        current_step TEXT,
+        result TEXT,
+        error TEXT,
+        depends_on TEXT DEFAULT '[]',
+        created_at INTEGER NOT NULL,
+        started_at INTEGER,
+        completed_at INTEGER,
+        FOREIGN KEY (room_id) REFERENCES neo_rooms(id) ON DELETE CASCADE
+      )
+    `);
+
+	// Neo contexts table - conversation history per room
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS neo_contexts (
+        id TEXT PRIMARY KEY,
+        room_id TEXT NOT NULL UNIQUE,
+        total_tokens INTEGER DEFAULT 0,
+        last_compacted_at INTEGER,
+        status TEXT NOT NULL DEFAULT 'idle' CHECK(status IN ('idle', 'thinking', 'waiting_for_input')),
+        current_task_id TEXT,
+        current_session_id TEXT,
+        FOREIGN KEY (room_id) REFERENCES neo_rooms(id) ON DELETE CASCADE
+      )
+    `);
+
+	// Neo context messages table
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS neo_context_messages (
+        id TEXT PRIMARY KEY,
+        context_id TEXT NOT NULL,
+        role TEXT NOT NULL CHECK(role IN ('system', 'user', 'assistant')),
+        content TEXT NOT NULL,
+        timestamp INTEGER NOT NULL,
+        token_count INTEGER NOT NULL,
+        session_id TEXT,
+        task_id TEXT,
+        FOREIGN KEY (context_id) REFERENCES neo_contexts(id) ON DELETE CASCADE
+      )
+    `);
+
 	// Create indexes
 	createIndexes(db);
 }
@@ -127,4 +214,13 @@ function createIndexes(db: BunDatabase): void {
       ON sdk_messages(session_id, timestamp)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_type
       ON sdk_messages(message_type, message_subtype)`);
+
+	// Neo indexes
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_neo_memories_room ON neo_memories(room_id)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_neo_memories_type ON neo_memories(type)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_neo_tasks_room ON neo_tasks(room_id)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_neo_tasks_status ON neo_tasks(status)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_neo_context_messages_context ON neo_context_messages(context_id)`
+	);
 }
