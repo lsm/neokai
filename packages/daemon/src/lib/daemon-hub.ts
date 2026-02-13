@@ -26,6 +26,7 @@ import type {
 	RewindResult,
 } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
+import type { Room, NeoTask } from './neo/types';
 
 /**
  * Compaction trigger type
@@ -174,6 +175,18 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		checkpointId: string;
 		mode: RewindMode;
 		error: string;
+	};
+
+	// Room events (global events - use 'global' as sessionId)
+	'room.created': { sessionId: string; roomId: string; room: Room };
+	'room.updated': { sessionId: string; roomId: string; room?: Partial<Room> };
+	'room.archived': { sessionId: string; roomId: string };
+	'task.created': { sessionId: string; roomId: string; taskId: string; task: NeoTask };
+	'task.updated': {
+		sessionId: string;
+		roomId: string;
+		taskId: string;
+		task?: Partial<NeoTask>;
 	};
 }
 
