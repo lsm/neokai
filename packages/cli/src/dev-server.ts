@@ -85,7 +85,13 @@ export async function startDevServer(config: Config) {
 		config,
 		verbose: true,
 		standalone: false, // Skip root info route in embedded mode
+		enableNeo: true, // Enable Neo AI client for in-process orchestration
 	});
+
+	// Log Neo status
+	if (daemonContext.neoClientHub) {
+		log.info('🤖 Neo AI client enabled (in-process transport)');
+	}
 
 	// Stop the daemon's internal server (we'll create a unified one)
 	daemonContext.server.stop();
