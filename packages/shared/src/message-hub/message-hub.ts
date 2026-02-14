@@ -58,7 +58,8 @@ type UnsubscribeFn = () => void;
  * Flow: MessageHub → Router (if server-side) → Transport → Wire
  */
 export class MessageHub {
-	private transport: IMessageTransport | null = null;
+	private transports: Map<string, IMessageTransport> = new Map();
+	private primaryTransportName: string | null = null;
 	private router: MessageHubRouter | null = null; // Server-side only
 	private readonly defaultSessionId: string;
 	private readonly defaultTimeout: number;
@@ -111,26 +112,43 @@ export class MessageHub {
 	// ========================================
 
 	/**
-	 * Register a transport
+	 * Register a transport with a unique name
+	 * @param transport The transport to register
+	 * @param name Unique name for this transport (e.g., 'websocket', 'neo')
+	 * @param isPrimary Whether this is the primary transport for outgoing messages (default: first transport is primary)
 	 */
-	registerTransport(transport: IMessageTransport): UnsubscribeFn {
-		if (this.transport) {
-			throw new Error('Transport already registered. Call unregisterTransport() first.');
+	registerTransport(
+		transport: IMessageTransport,
+		name?: string,
+		isPrimary?: boolean
+	): UnsubscribeFn {
+		const transportName = name || transport.name || `transport-${Date.now()}`;
+
+		if (this.transports.has(transportName)) {
+			throw new Error(`Transport '${transportName}' already registered. Unregister it first.`);
 		}
 
-		this.transport = transport;
-		this.logDebug(`Transport registered: ${transport.name}`);
+		this.transports.set(transportName, transport);
+
+		// First transport becomes primary by default
+		if (this.transports.size === 1 || isPrimary) {
+			this.primaryTransportName = transportName;
+		}
+
+		this.logDebug(
+			`Transport registered: ${transportName} (primary: ${this.primaryTransportName === transportName})`
+		);
 
 		// Subscribe to incoming messages
 		const unsubMessage = transport.onMessage((message) => {
+			// Tag message with transport name for response routing
+			message._transportName = transportName;
 			this.handleIncomingMessage(message);
 		});
 
 		// Subscribe to connection state changes
 		const unsubConnection = transport.onConnectionChange((state, error) => {
-			this.logDebug(`Connection state: ${state}`, error);
-
-			// Notify handlers (e.g., StateChannel.hybridRefresh)
+			this.logDebug(`Connection state: ${state} on ${transportName}`, error);
 			this.notifyConnectionStateHandlers(state, error);
 		});
 
@@ -144,11 +162,15 @@ export class MessageHub {
 
 		// Return unregister function
 		return () => {
-			this.transport = null;
+			this.transports.delete(transportName);
+			if (this.primaryTransportName === transportName) {
+				// Pick new primary if available
+				this.primaryTransportName = this.transports.keys().next().value || null;
+			}
 			unsubMessage();
 			unsubConnection();
 			unsubClientDisconnect?.();
-			this.logDebug(`Transport unregistered: ${transport.name}`);
+			this.logDebug(`Transport unregistered: ${transportName}`);
 		};
 	}
 
@@ -156,14 +178,22 @@ export class MessageHub {
 	 * Get current connection state
 	 */
 	getState(): ConnectionState {
-		return this.transport?.getState() || 'disconnected';
+		// Return state of primary transport
+		const primary = this.primaryTransportName
+			? this.transports.get(this.primaryTransportName)
+			: null;
+		return primary?.getState() || 'disconnected';
 	}
 
 	/**
 	 * Check if connected
 	 */
 	isConnected(): boolean {
-		return this.transport?.isReady() || false;
+		// Check if any transport is ready
+		for (const transport of this.transports.values()) {
+			if (transport.isReady()) return true;
+		}
+		return false;
 	}
 
 	/**
@@ -676,11 +706,7 @@ export class MessageHub {
 	 *   Transport broadcasts directly
 	 */
 	private async sendMessage(message: HubMessage): Promise<void> {
-		if (!this.transport || !this.transport.isReady()) {
-			throw new Error('Transport not ready');
-		}
-
-		// Add sequence number for ordering guarantees
+		// Add sequence number
 		message.sequence = this.messageSequence++;
 
 		this.logDebug(
@@ -708,8 +734,26 @@ export class MessageHub {
 			return;
 		}
 
-		// Client-side or non-EVENT messages: send via transport
-		await this.transport.send(message);
+		// Check if message has a specific transport to use (for responses)
+		const targetTransport = message._transportName
+			? this.transports.get(message._transportName)
+			: null;
+
+		if (targetTransport && targetTransport.isReady()) {
+			await targetTransport.send(message);
+			return;
+		}
+
+		// Send via primary transport (or all transports for broadcast)
+		const primary = this.primaryTransportName
+			? this.transports.get(this.primaryTransportName)
+			: null;
+		if (primary && primary.isReady()) {
+			await primary.send(message);
+			return;
+		}
+
+		throw new Error('No transport ready');
 	}
 
 	/**
@@ -728,17 +772,30 @@ export class MessageHub {
 			const success = this.router.sendToClient(clientId, message);
 			if (!success) {
 				log.warn(`Failed to send response to client ${clientId}, falling back to broadcast`);
-				// Fallback to broadcast if client not found
 				this.router.broadcast(message);
 			}
 			return;
 		}
 
-		// Fallback: send via transport (will broadcast on server-side)
-		if (!this.transport || !this.transport.isReady()) {
-			throw new Error('Transport not ready');
+		// Use the transport the request came from
+		const targetTransport = message._transportName
+			? this.transports.get(message._transportName)
+			: null;
+		if (targetTransport && targetTransport.isReady()) {
+			await targetTransport.send(message);
+			return;
 		}
-		await this.transport.send(message);
+
+		// Fallback to primary transport
+		const primary = this.primaryTransportName
+			? this.transports.get(this.primaryTransportName)
+			: null;
+		if (primary && primary.isReady()) {
+			await primary.send(message);
+			return;
+		}
+
+		throw new Error('No transport ready for response');
 	}
 
 	/**
@@ -793,6 +850,10 @@ export class MessageHub {
 		// FIX P1.3: Clear sequence tracking
 		this.expectedSequence = null;
 		this.expectedSequencePerClient.clear();
+
+		// Clear transports
+		this.transports.clear();
+		this.primaryTransportName = null;
 
 		this.logDebug('MessageHub cleaned up');
 	}

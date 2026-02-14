@@ -2,7 +2,7 @@ import { createDaemonApp } from '@neokai/daemon/app';
 import type { Config } from '@neokai/daemon/config';
 import { createServer as createViteServer } from 'vite';
 import { resolve } from 'path';
-import { createLogger } from '@neokai/shared';
+import { createLogger, type MessageHub } from '@neokai/shared';
 import { createNeoClientTransport } from '@neokai/neo';
 import {
 	findAvailablePort,
@@ -23,6 +23,8 @@ export async function startDevServer(config: Config) {
 	let daemonContext: Awaited<ReturnType<typeof createDaemonApp>> | null = null;
 	let vite: Awaited<ReturnType<typeof createViteServer>> | null = null;
 	let server: ReturnType<typeof Bun.serve> | null = null;
+	let unregisterNeoTransport: (() => void) | null = null;
+	let neoHub: MessageHub | null = null;
 
 	const shutdown = async (signal: string) => {
 		if (isShuttingDown) {
@@ -54,6 +56,14 @@ export async function startDevServer(config: Config) {
 						}, 3000);
 					}),
 				]);
+			}
+
+			if (neoHub) {
+				log.info('🛑 Cleaning up Neo...');
+				neoHub.cleanup();
+				if (unregisterNeoTransport) {
+					unregisterNeoTransport();
+				}
 			}
 
 			if (daemonContext) {
@@ -89,10 +99,25 @@ export async function startDevServer(config: Config) {
 	});
 
 	// Create Neo client with in-process transport
-	// Since Neo is in the same process as daemon, we can use the daemon's MessageHub directly
-	// For now, Neo can access daemonContext.messageHub to make RPC calls
-	// TODO: Implement proper Neo initialization when RoomNeo is ready
-	log.info('🤖 Neo AI client available via daemon MessageHub');
+	// Neo connects to daemon via InProcessTransport, acting as a proper client
+	log.info('🤖 Initializing Neo AI client...');
+
+	const neoTransport = createNeoClientTransport({ name: 'neo-to-daemon' });
+
+	// Register Neo's server transport with daemon's MessageHub
+	// This allows Neo to make RPC calls to daemon through the transport layer
+	unregisterNeoTransport = daemonContext.messageHub.registerTransport(
+		neoTransport.serverTransport,
+		'neo', // Named transport
+		false // Not primary (websocket is primary)
+	);
+
+	// Initialize Neo's client transport
+	await neoTransport.clientTransport.initialize();
+
+	neoHub = neoTransport.neoClientHub;
+
+	log.info('🤖 Neo AI client connected via in-process transport');
 
 	// Stop the daemon's internal server (we'll create a unified one)
 	daemonContext.server.stop();

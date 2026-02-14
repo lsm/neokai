@@ -110,7 +110,8 @@ describe('MessageHub', () => {
 
 			newHub.registerTransport(newTransport);
 
-			expect((newHub as unknown as { transport: unknown }).transport).toBe(newTransport);
+			expect((newHub as unknown as { transports: Map<string, unknown> }).transports.size).toBe(1);
+			expect(newHub.isConnected()).toBe(true);
 		});
 
 		test('should unregister transport successfully', () => {
@@ -118,18 +119,29 @@ describe('MessageHub', () => {
 			const newTransport = new MockTransport();
 
 			const unregister = newHub.registerTransport(newTransport);
-			expect((newHub as unknown as { transport: unknown }).transport).toBe(newTransport);
+			expect((newHub as unknown as { transports: Map<string, unknown> }).transports.size).toBe(1);
 
 			unregister();
-			expect((newHub as unknown as { transport: unknown }).transport).toBe(null);
+			expect((newHub as unknown as { transports: Map<string, unknown> }).transports.size).toBe(0);
 		});
 
-		test('should throw error when registering multiple transports', () => {
+		test('should throw error when registering transport with duplicate name', () => {
 			const newTransport = new MockTransport();
 
 			expect(() => {
-				messageHub.registerTransport(newTransport);
-			}).toThrow('Transport already registered');
+				messageHub.registerTransport(newTransport, 'mock-transport');
+			}).toThrow("Transport 'mock-transport' already registered");
+		});
+
+		test('should allow multiple transports with different names', () => {
+			const newHub = new MessageHub({ defaultSessionId: 'test' });
+			const transport1 = new MockTransport();
+			const transport2 = new MockTransport();
+
+			newHub.registerTransport(transport1, 'transport1');
+			newHub.registerTransport(transport2, 'transport2');
+
+			expect((newHub as unknown as { transports: Map<string, unknown> }).transports.size).toBe(2);
 		});
 
 		test('should return disconnected state when no transport registered', () => {
@@ -694,7 +706,7 @@ describe('MessageHub', () => {
 			const unregister = newHub.registerTransport(newTransport);
 
 			// Verify transport is registered
-			expect((newHub as unknown as { transport: unknown }).transport).toBe(newTransport);
+			expect((newHub as unknown as { transports: Map<string, unknown> }).transports.size).toBe(1);
 
 			// Verify transport has message handlers registered
 			expect(newTransport['messageHandlers'].size).toBe(1);
@@ -703,7 +715,7 @@ describe('MessageHub', () => {
 			unregister();
 
 			// Verify transport is unregistered
-			expect((newHub as unknown as { transport: unknown }).transport).toBe(null);
+			expect((newHub as unknown as { transports: Map<string, unknown> }).transports.size).toBe(0);
 
 			// Verify transport's message handlers are removed
 			expect(newTransport['messageHandlers'].size).toBe(0);

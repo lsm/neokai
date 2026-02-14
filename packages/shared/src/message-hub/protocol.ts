@@ -119,6 +119,12 @@ export interface HubMessage {
 	 * Optional room identifier for scoped messaging
 	 */
 	room?: string;
+
+	/**
+	 * Optional transport name for response routing (internal use)
+	 * Tags message with the transport it came from so responses can be routed correctly
+	 */
+	_transportName?: string;
 }
 
 /**
