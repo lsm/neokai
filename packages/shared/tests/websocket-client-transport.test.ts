@@ -715,63 +715,73 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
 			await expect(transport.send(message)).rejects.toThrow('WebSocket not connected');
 		});
 
-		it('should handle oversized messages', async () => {
-			transport = new WebSocketClientTransport({
-				url: 'ws://localhost:9999',
-				autoReconnect: false,
-			});
+		// 30s timeout needed for creating 51MB payload
+		it(
+			'should handle oversized messages',
+			async () => {
+				transport = new WebSocketClientTransport({
+					url: 'ws://localhost:9999',
+					autoReconnect: false,
+				});
 
-			await transport.initialize();
-			await new Promise((resolve) => setTimeout(resolve, 20));
+				await transport.initialize();
+				await new Promise((resolve) => setTimeout(resolve, 20));
 
-			// Create an oversized message (>50MB)
-			const largeData = 'x'.repeat(51 * 1024 * 1024);
-			const message: HubMessage = {
-				id: 'test-1',
-				type: MessageType.REQUEST,
-				method: 'test',
-				sessionId: 'test-session',
-				timestamp: new Date().toISOString(),
-				data: largeData,
-			};
+				// Create an oversized message (>50MB)
+				const largeData = 'x'.repeat(51 * 1024 * 1024);
+				const message: HubMessage = {
+					id: 'test-1',
+					type: MessageType.REQUEST,
+					method: 'test',
+					sessionId: 'test-session',
+					timestamp: new Date().toISOString(),
+					data: largeData,
+				};
 
-			await expect(transport.send(message)).rejects.toThrow('exceeds maximum');
-		});
+				await expect(transport.send(message)).rejects.toThrow('exceeds maximum');
+			},
+			{ timeout: 30000 }
+		);
 
-		it('should reject oversized incoming messages', async () => {
-			transport = new WebSocketClientTransport({
-				url: 'ws://localhost:9999',
-				autoReconnect: false,
-			});
+		// 30s timeout needed for creating 51MB payload
+		it(
+			'should reject oversized incoming messages',
+			async () => {
+				transport = new WebSocketClientTransport({
+					url: 'ws://localhost:9999',
+					autoReconnect: false,
+				});
 
-			const messages: HubMessage[] = [];
-			transport.onMessage((msg) => {
-				messages.push(msg);
-			});
+				const messages: HubMessage[] = [];
+				transport.onMessage((msg) => {
+					messages.push(msg);
+				});
 
-			await transport.initialize();
-			await new Promise((resolve) => setTimeout(resolve, 20));
+				await transport.initialize();
+				await new Promise((resolve) => setTimeout(resolve, 20));
 
-			// Send oversized message
-			const largeData = 'x'.repeat(51 * 1024 * 1024);
-			const oversizedMessage = JSON.stringify({
-				id: 'test-1',
-				type: 'EVENT',
-				method: 'test',
-				sessionId: 'test-session',
-				timestamp: new Date().toISOString(),
-				data: largeData,
-			});
+				// Send oversized message
+				const largeData = 'x'.repeat(51 * 1024 * 1024);
+				const oversizedMessage = JSON.stringify({
+					id: 'test-1',
+					type: 'EVENT',
+					method: 'test',
+					sessionId: 'test-session',
+					timestamp: new Date().toISOString(),
+					data: largeData,
+				});
 
-			if (mockWebSocketInstance) {
-				mockWebSocketInstance.simulateMessage(oversizedMessage);
-			}
+				if (mockWebSocketInstance) {
+					mockWebSocketInstance.simulateMessage(oversizedMessage);
+				}
 
-			await new Promise((resolve) => setTimeout(resolve, 50));
+				await new Promise((resolve) => setTimeout(resolve, 50));
 
-			// Oversized message should be rejected
-			expect(messages).toHaveLength(0);
-		});
+				// Oversized message should be rejected
+				expect(messages).toHaveLength(0);
+			},
+			{ timeout: 30000 }
+		);
 	});
 
 	describe('PING/PONG and Connection Health', () => {
