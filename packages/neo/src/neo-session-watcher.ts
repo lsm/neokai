@@ -68,8 +68,8 @@ export class NeoSessionWatcher {
 			return;
 		}
 
-		// 1. Join session room for event routing
-		await this.hub.joinRoom(`session:${sessionId}`);
+		// 1. Join session channel for event routing
+		await this.hub.joinChannel(`session:${sessionId}`);
 
 		// 2. Subscribe to state.session events
 		const unsub = this.hub.onEvent<SessionState>(STATE_CHANNELS.SESSION, (state) => {
@@ -102,7 +102,7 @@ export class NeoSessionWatcher {
 			unsub();
 			this.subscriptions.delete(sessionId);
 		}
-		await this.hub.leaveRoom(`session:${sessionId}`);
+		await this.hub.leaveChannel(`session:${sessionId}`);
 		this.logger.debug(`Stopped watching session: ${sessionId}`);
 	}
 
@@ -163,7 +163,7 @@ export class NeoSessionWatcher {
 				if (unsub) {
 					unsub();
 				}
-				await this.hub.leaveRoom(`session:${sessionId}`);
+				await this.hub.leaveChannel(`session:${sessionId}`);
 			})
 		);
 

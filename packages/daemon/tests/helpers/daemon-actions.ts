@@ -106,7 +106,7 @@ async function waitForProcessingState(
 		// we catch it. If it changes after, the event handler catches it.
 		(async () => {
 			try {
-				await daemon.messageHub.joinRoom('session:' + sessionId);
+				await daemon.messageHub.joinChannel('session:' + sessionId);
 			} catch {
 				// Join failed, polling fallback will still work
 			}

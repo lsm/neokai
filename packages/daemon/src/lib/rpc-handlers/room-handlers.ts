@@ -15,7 +15,7 @@
 
 import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
-import type { RoomManager } from '../neo/room-manager';
+import type { RoomManager } from '../room/room-manager';
 
 export function setupRoomHandlers(
 	messageHub: MessageHub,

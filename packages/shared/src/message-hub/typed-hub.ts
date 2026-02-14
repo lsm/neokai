@@ -41,7 +41,7 @@
 
 import { MessageHub } from './message-hub.ts';
 import { InProcessTransportBus, InProcessTransport } from './in-process-transport.ts';
-import type { RoomEventHandler } from './types.ts';
+import type { ChannelEventHandler } from './types.ts';
 
 /**
  * Base constraint for event data
@@ -174,7 +174,7 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 
 		// Also send event via MessageHub for cross-transport delivery
 		// Note: Bus excludes sender, so this only reaches other participants
-		await this.hub.event(event, data, { room: data.sessionId });
+		await this.hub.event(event, data, { channel: data.sessionId });
 	}
 
 	/**
@@ -268,7 +268,7 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 
 		// Also subscribe via MessageHub for cross-transport events (from other participants)
 		// Create wrapper that applies session filtering
-		const hubHandler: RoomEventHandler = (data) => {
+		const hubHandler: ChannelEventHandler = (data) => {
 			const eventData = data as TEventMap[K];
 			if (sessionId && eventData.sessionId !== sessionId) {
 				return;
@@ -277,9 +277,9 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 		};
 		const hubUnsub = this.hub.onEvent(event, hubHandler);
 
-		// Join the room if sessionId is specified
+		// Join the channel if sessionId is specified
 		if (sessionId) {
-			this.hub.joinRoom(sessionId);
+			this.hub.joinChannel(sessionId);
 		}
 
 		// Track MessageHub subscription for cleanup

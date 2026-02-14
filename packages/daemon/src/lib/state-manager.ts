@@ -102,7 +102,7 @@ export class StateManager {
 			});
 
 			// Publish session.created event
-			this.messageHub.event('session.created', { sessionId: session.id }, { room: 'global' });
+			this.messageHub.event('session.created', { sessionId: session.id }, { channel: 'global' });
 		});
 
 		// Session updated - update cache from event data and broadcast immediately
@@ -144,7 +144,7 @@ export class StateManager {
 				removed: [sessionId],
 				timestamp: Date.now(),
 			});
-			this.messageHub.event('session.deleted', { sessionId }, { room: 'global' });
+			this.messageHub.event('session.deleted', { sessionId }, { channel: 'global' });
 		});
 
 		// Auth events
@@ -179,7 +179,7 @@ export class StateManager {
 
 				// Publish dedicated context.updated event
 				this.messageHub.event('context.updated', data.contextInfo, {
-					room: `session:${data.sessionId}`,
+					channel: `session:${data.sessionId}`,
 				});
 
 				// Also update unified session state
@@ -521,7 +521,7 @@ export class StateManager {
 			: { ...(await this.getSessionsState()), version };
 
 		this.messageHub.event(STATE_CHANNELS.GLOBAL_SESSIONS, state, {
-			room: 'global',
+			channel: 'global',
 		});
 	}
 
@@ -533,7 +533,7 @@ export class StateManager {
 	async broadcastSessionsDelta(update: SessionsUpdate): Promise<void> {
 		const version = this.incrementVersion(`${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`);
 		const channel = `${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`;
-		this.messageHub.event(channel, { ...update, version }, { room: 'global' });
+		this.messageHub.event(channel, { ...update, version }, { channel: 'global' });
 	}
 
 	/**
@@ -545,7 +545,7 @@ export class StateManager {
 		const state = { ...(await this.getSystemState()), version };
 
 		this.messageHub.event(STATE_CHANNELS.GLOBAL_SYSTEM, state, {
-			room: 'global',
+			channel: 'global',
 		});
 	}
 
@@ -557,7 +557,7 @@ export class StateManager {
 		const state = { ...(await this.getSettingsState()), version };
 
 		this.messageHub.event(STATE_CHANNELS.GLOBAL_SETTINGS, state, {
-			room: 'global',
+			channel: 'global',
 		});
 	}
 
@@ -573,7 +573,7 @@ export class StateManager {
 			const state = { ...(await this.getSessionState(sessionId)), version };
 
 			this.messageHub.event(STATE_CHANNELS.SESSION, state, {
-				room: `session:${sessionId}`,
+				channel: `session:${sessionId}`,
 			});
 		} catch (error) {
 			// Session may have been deleted or database may be closed during cleanup
@@ -600,7 +600,7 @@ export class StateManager {
 						version,
 					};
 					this.messageHub.event(STATE_CHANNELS.SESSION, fallbackState, {
-						room: `session:${sessionId}`,
+						channel: `session:${sessionId}`,
 					});
 				} catch (fallbackError) {
 					this.logger.error(
@@ -621,7 +621,7 @@ export class StateManager {
 		const state = { ...(await this.getSDKMessagesState(sessionId)), version };
 
 		this.messageHub.event(STATE_CHANNELS.SESSION_SDK_MESSAGES, state, {
-			room: `session:${sessionId}`,
+			channel: `session:${sessionId}`,
 		});
 	}
 
@@ -637,7 +637,7 @@ export class StateManager {
 		this.messageHub.event(
 			`${STATE_CHANNELS.SESSION_SDK_MESSAGES}.delta`,
 			{ ...update, version },
-			{ room: `session:${sessionId}` }
+			{ channel: `session:${sessionId}` }
 		);
 	}
 }

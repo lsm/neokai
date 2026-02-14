@@ -286,7 +286,7 @@ describe('ModelSwitchHandler', () => {
 					expect.objectContaining({
 						from: 'default',
 					}),
-					{ room: 'session:' + mockSession.id }
+					{ channel: 'session:' + mockSession.id }
 				);
 			});
 
@@ -299,7 +299,7 @@ describe('ModelSwitchHandler', () => {
 					expect.objectContaining({
 						from: 'default',
 					}),
-					{ room: 'session:' + mockSession.id }
+					{ channel: 'session:' + mockSession.id }
 				);
 			});
 		});

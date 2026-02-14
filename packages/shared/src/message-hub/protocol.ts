@@ -116,9 +116,9 @@ export interface HubMessage {
 	sequence?: number;
 
 	/**
-	 * Optional room identifier for scoped messaging
+	 * Optional channel identifier for scoped messaging
 	 */
-	room?: string;
+	channel?: string;
 
 	/**
 	 * Optional transport name for response routing (internal use)
@@ -276,7 +276,7 @@ export interface CreateRequestMessageParams {
 	method: string;
 	data?: unknown;
 	sessionId: string;
-	room?: string;
+	channel?: string;
 	id?: string;
 }
 
@@ -288,7 +288,7 @@ export interface CreateResponseMessageParams {
 	data?: unknown;
 	sessionId: string;
 	requestId: string;
-	room?: string;
+	channel?: string;
 	id?: string;
 }
 
@@ -300,7 +300,7 @@ export interface CreateErrorResponseMessageParams {
 	error: string | ErrorDetail;
 	sessionId: string;
 	requestId: string;
-	room?: string;
+	channel?: string;
 	id?: string;
 }
 
@@ -324,14 +324,14 @@ export function createEventMessage(params: CreateEventMessageParams): EventMessa
  * Create a REQUEST message
  */
 export function createRequestMessage(params: CreateRequestMessageParams): RequestMessage {
-	const { method, data, sessionId, room, id } = params;
+	const { method, data, sessionId, channel, id } = params;
 	return {
 		id: id || generateUUID(),
 		type: MessageType.REQUEST,
 		sessionId,
 		method,
 		data,
-		room,
+		channel,
 		timestamp: new Date().toISOString(),
 		version: PROTOCOL_VERSION,
 	};
@@ -341,7 +341,7 @@ export function createRequestMessage(params: CreateRequestMessageParams): Reques
  * Create a RESPONSE message (success)
  */
 export function createResponseMessage(params: CreateResponseMessageParams): ResponseMessage {
-	const { method, data, sessionId, requestId, room, id } = params;
+	const { method, data, sessionId, requestId, channel, id } = params;
 	return {
 		id: id || generateUUID(),
 		type: MessageType.RESPONSE,
@@ -349,7 +349,7 @@ export function createResponseMessage(params: CreateResponseMessageParams): Resp
 		method,
 		data,
 		requestId,
-		room,
+		channel,
 		timestamp: new Date().toISOString(),
 		version: PROTOCOL_VERSION,
 	};
@@ -361,7 +361,7 @@ export function createResponseMessage(params: CreateResponseMessageParams): Resp
 export function createErrorResponseMessage(
 	params: CreateErrorResponseMessageParams
 ): ResponseMessage {
-	const { method, error: errorParam, sessionId, requestId, room, id } = params;
+	const { method, error: errorParam, sessionId, requestId, channel, id } = params;
 	const errorMessage = typeof errorParam === 'string' ? errorParam : errorParam.message;
 	const code = typeof errorParam === 'string' ? undefined : errorParam.code;
 
@@ -373,7 +373,7 @@ export function createErrorResponseMessage(
 		error: errorMessage,
 		errorCode: code,
 		requestId,
-		room,
+		channel,
 		timestamp: new Date().toISOString(),
 		version: PROTOCOL_VERSION,
 	};

@@ -112,7 +112,7 @@ export class MessagePersistence {
 				this.messageHub.event(
 					'state.sdkMessages.delta',
 					{ added: [sdkUserMessage], timestamp: Date.now() },
-					{ room: `session:${sessionId}` }
+					{ channel: `session:${sessionId}` }
 				);
 			} catch (_err) {
 				/* v8 ignore next 2 */

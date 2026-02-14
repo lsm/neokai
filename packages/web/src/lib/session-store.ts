@@ -148,7 +148,7 @@ class SessionStore {
 		if (oldSessionId) {
 			const hub = connectionManager.getHubIfConnected();
 			if (hub) {
-				hub.leaveRoom(`session:${oldSessionId}`);
+				hub.leaveChannel(`session:${oldSessionId}`);
 			}
 		}
 
@@ -191,7 +191,7 @@ class SessionStore {
 			const hub = await connectionManager.getHub();
 
 			// Join the session room first - this subscribes to all session-scoped events
-			hub.joinRoom(`session:${sessionId}`);
+			hub.joinChannel(`session:${sessionId}`);
 
 			// 1. Session state subscription (unified: metadata + agent + commands + context + error)
 			const unsubSessionState = hub.onEvent<SessionState>('state.session', (state) => {

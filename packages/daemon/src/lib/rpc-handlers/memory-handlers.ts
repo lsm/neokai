@@ -11,16 +11,23 @@
  * Renamed from neo.memory.* to memory.* for cleaner API.
  */
 
+import type { Database as BunDatabase } from 'bun:sqlite';
 import type { MessageHub, MemoryType, MemoryImportance } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
-import type { RoomManager } from '../neo/room-manager';
 import type { Database } from '../../storage/database';
-import { getOrCreateRoomNeo } from './task-handlers';
+import { MemoryManager } from '../room';
+
+/**
+ * Create a MemoryManager instance for a room
+ */
+function createMemoryManager(db: Database, roomId: string): MemoryManager {
+	const rawDb = (db as unknown as { db: BunDatabase }).db;
+	return new MemoryManager(rawDb, roomId);
+}
 
 export function setupMemoryHandlers(
 	messageHub: MessageHub,
-	roomManager: RoomManager,
-	daemonHub: DaemonHub,
+	_roomManager: unknown,
+	_daemonHub: unknown,
 	db: Database
 ): void {
 	// memory.add - Add memory to room
@@ -42,8 +49,8 @@ export function setupMemoryHandlers(
 			throw new Error('Memory content is required');
 		}
 
-		const neo = await getOrCreateRoomNeo(params.roomId, daemonHub, db, roomManager);
-		const memory = await neo.getMemoryManager().addMemory({
+		const memoryManager = createMemoryManager(db, params.roomId);
+		const memory = await memoryManager.addMemory({
 			type: params.type ?? 'note',
 			content: params.content,
 			tags: params.tags,
@@ -66,8 +73,8 @@ export function setupMemoryHandlers(
 			throw new Error('Room ID is required');
 		}
 
-		const neo = await getOrCreateRoomNeo(params.roomId, daemonHub, db, roomManager);
-		const memories = await neo.getMemoryManager().listMemories(params.type);
+		const memoryManager = createMemoryManager(db, params.roomId);
+		const memories = await memoryManager.listMemories(params.type);
 
 		return { memories };
 	});
@@ -87,8 +94,8 @@ export function setupMemoryHandlers(
 			throw new Error('Search term is required');
 		}
 
-		const neo = await getOrCreateRoomNeo(params.roomId, daemonHub, db, roomManager);
-		const memories = await neo.getMemoryManager().searchMemories(params.searchTerm, params.limit);
+		const memoryManager = createMemoryManager(db, params.roomId);
+		const memories = await memoryManager.searchMemories(params.searchTerm, params.limit);
 
 		return { memories };
 	});
@@ -106,8 +113,8 @@ export function setupMemoryHandlers(
 			throw new Error('Room ID is required');
 		}
 
-		const neo = await getOrCreateRoomNeo(params.roomId, daemonHub, db, roomManager);
-		const memories = await neo.getMemoryManager().recallMemories({
+		const memoryManager = createMemoryManager(db, params.roomId);
+		const memories = await memoryManager.recallMemories({
 			type: params.type,
 			tags: params.tags,
 			limit: params.limit,
@@ -127,8 +134,8 @@ export function setupMemoryHandlers(
 			throw new Error('Memory ID is required');
 		}
 
-		const neo = await getOrCreateRoomNeo(params.roomId, daemonHub, db, roomManager);
-		const deleted = await neo.getMemoryManager().deleteMemory(params.memoryId);
+		const memoryManager = createMemoryManager(db, params.roomId);
+		const deleted = await memoryManager.deleteMemory(params.memoryId);
 
 		return { success: deleted };
 	});

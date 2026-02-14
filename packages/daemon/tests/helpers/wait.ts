@@ -80,7 +80,7 @@ export async function waitFor(ms: number): Promise<void> {
  *   messageHub,
  *   'state.session',
  *   (collected) => collected.length >= 3,
- *   { room: 'session:abc123' },
+ *   { channel: 'session:abc123' },
  *   5000
  * );
  */
@@ -104,7 +104,7 @@ export async function collectSubscriptionValues<T>(
 			unsubscribe();
 			if (room && messageHub.leaveRoom) {
 				// Leave room (fire-and-forget)
-				messageHub.leaveRoom(room);
+				messageHub.leaveChannel(room);
 			}
 		};
 
@@ -129,7 +129,7 @@ export async function collectSubscriptionValues<T>(
 		// Join the room if specified and wait for acknowledgment
 		// This ensures events are routed to this client
 		if (room && messageHub.joinRoom) {
-			messageHub.joinRoom(room).catch(() => {
+			messageHub.joinChannel(room).catch(() => {
 				// Join failed, but continue - events might still work
 			});
 		}

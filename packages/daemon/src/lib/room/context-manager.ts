@@ -1,5 +1,5 @@
 /**
- * NeoContextManager - Manages Neo's conversation context with compaction support
+ * ContextManager - Manages conversation context with compaction support
  *
  * Handles:
  * - Adding messages to the context
@@ -29,7 +29,7 @@ const MAX_CONTEXT_TOKENS = 150000;
  */
 const COMPACTION_KEEP_RECENT = 20;
 
-export class NeoContextManager {
+export class ContextManager {
 	private contextRepo: NeoContextRepository;
 	private contextId: string | null = null;
 

@@ -64,8 +64,8 @@ describe('MessageHubRouter', () => {
 			const conn1 = createMockConnection(mockWs1);
 			const clientId = router.registerConnection(conn1);
 
-			const roomManager = router.getRoomManager();
-			const globalMembers = roomManager.getRoomMembers('global');
+			const roomManager = router.getChannelManager();
+			const globalMembers = roomManager.getChannelMembers('global');
 			expect(globalMembers).toContain(clientId);
 		});
 
@@ -82,17 +82,17 @@ describe('MessageHubRouter', () => {
 			const conn1 = createMockConnection(mockWs1);
 			const clientId = router.registerConnection(conn1);
 
-			router.joinRoom(clientId, 'session1');
-			router.joinRoom(clientId, 'session2');
+			router.joinChannel(clientId, 'session1');
+			router.joinChannel(clientId, 'session2');
 
-			const roomManager = router.getRoomManager();
-			expect(roomManager.getRoomMembers('session1')).toContain(clientId);
-			expect(roomManager.getRoomMembers('session2')).toContain(clientId);
+			const roomManager = router.getChannelManager();
+			expect(roomManager.getChannelMembers('session1')).toContain(clientId);
+			expect(roomManager.getChannelMembers('session2')).toContain(clientId);
 
 			router.unregisterConnection(clientId);
 
-			expect(roomManager.getRoomMembers('session1')).not.toContain(clientId);
-			expect(roomManager.getRoomMembers('session2')).not.toContain(clientId);
+			expect(roomManager.getChannelMembers('session1')).not.toContain(clientId);
+			expect(roomManager.getChannelMembers('session2')).not.toContain(clientId);
 		});
 
 		test('should get client info by clientId', () => {
@@ -120,10 +120,10 @@ describe('MessageHubRouter', () => {
 			const conn1 = createMockConnection(mockWs1);
 			const clientId = router.registerConnection(conn1);
 
-			router.joinRoom(clientId, 'session1');
+			router.joinChannel(clientId, 'session1');
 
-			const roomManager = router.getRoomManager();
-			const members = roomManager.getRoomMembers('session1');
+			const roomManager = router.getChannelManager();
+			const members = roomManager.getChannelMembers('session1');
 			expect(members).toContain(clientId);
 		});
 
@@ -131,37 +131,37 @@ describe('MessageHubRouter', () => {
 			const conn1 = createMockConnection(mockWs1);
 			const clientId = router.registerConnection(conn1);
 
-			router.joinRoom(clientId, 'session1');
-			router.joinRoom(clientId, 'session2');
-			router.joinRoom(clientId, 'session3');
+			router.joinChannel(clientId, 'session1');
+			router.joinChannel(clientId, 'session2');
+			router.joinChannel(clientId, 'session3');
 
-			const roomManager = router.getRoomManager();
-			expect(roomManager.getRoomMembers('session1')).toContain(clientId);
-			expect(roomManager.getRoomMembers('session2')).toContain(clientId);
-			expect(roomManager.getRoomMembers('session3')).toContain(clientId);
+			const roomManager = router.getChannelManager();
+			expect(roomManager.getChannelMembers('session1')).toContain(clientId);
+			expect(roomManager.getChannelMembers('session2')).toContain(clientId);
+			expect(roomManager.getChannelMembers('session3')).toContain(clientId);
 		});
 
 		test('should remove client from a room', () => {
 			const conn1 = createMockConnection(mockWs1);
 			const clientId = router.registerConnection(conn1);
 
-			router.joinRoom(clientId, 'session1');
-			const roomManager = router.getRoomManager();
-			expect(roomManager.getRoomMembers('session1')).toContain(clientId);
+			router.joinChannel(clientId, 'session1');
+			const roomManager = router.getChannelManager();
+			expect(roomManager.getChannelMembers('session1')).toContain(clientId);
 
-			router.leaveRoom(clientId, 'session1');
-			expect(roomManager.getRoomMembers('session1')).not.toContain(clientId);
+			router.leaveChannel(clientId, 'session1');
+			expect(roomManager.getChannelMembers('session1')).not.toContain(clientId);
 		});
 
 		test('should handle joining room for non-existent client', () => {
 			expect(() => {
-				router.joinRoom('non-existent-id', 'session1');
+				router.joinChannel('non-existent-id', 'session1');
 			}).not.toThrow();
 		});
 
 		test('should handle leaving room for non-existent client', () => {
 			expect(() => {
-				router.leaveRoom('non-existent-id', 'session1');
+				router.leaveChannel('non-existent-id', 'session1');
 			}).not.toThrow();
 		});
 	});
@@ -173,15 +173,15 @@ describe('MessageHubRouter', () => {
 			const clientId1 = router.registerConnection(conn1);
 			const clientId2 = router.registerConnection(conn2);
 
-			router.joinRoom(clientId1, 'session1');
-			router.joinRoom(clientId2, 'session1');
+			router.joinChannel(clientId1, 'session1');
+			router.joinChannel(clientId2, 'session1');
 
 			const eventMessage = createEventMessage({
 				method: 'user.created',
 				data: { userId: '123' },
 				sessionId: 'session1',
 			});
-			eventMessage.room = 'session1';
+			eventMessage.channel = 'session1';
 
 			const result = router.routeEvent(eventMessage);
 
@@ -222,15 +222,15 @@ describe('MessageHubRouter', () => {
 			const clientId1 = router.registerConnection(conn1);
 			const clientId2 = router.registerConnection(conn2);
 
-			router.joinRoom(clientId1, 'session1');
-			router.joinRoom(clientId2, 'session2'); // Different room
+			router.joinChannel(clientId1, 'session1');
+			router.joinChannel(clientId2, 'session2'); // Different room
 
 			const eventMessage = createEventMessage({
 				method: 'user.created',
 				data: { userId: '123' },
 				sessionId: 'session1',
 			});
-			eventMessage.room = 'session1';
+			eventMessage.channel = 'session1';
 
 			router.routeEvent(eventMessage);
 
@@ -242,7 +242,7 @@ describe('MessageHubRouter', () => {
 			const conn1 = createMockConnection(mockWs1);
 			const clientId = router.registerConnection(conn1);
 
-			router.joinRoom(clientId, 'session1');
+			router.joinChannel(clientId, 'session1');
 			mockWs1.close();
 
 			const eventMessage = createEventMessage({
@@ -250,7 +250,7 @@ describe('MessageHubRouter', () => {
 				data: { userId: '123' },
 				sessionId: 'session1',
 			});
-			eventMessage.room = 'session1';
+			eventMessage.channel = 'session1';
 
 			const result = router.routeEvent(eventMessage);
 
@@ -265,7 +265,7 @@ describe('MessageHubRouter', () => {
 				data: {},
 				sessionId: 'session1',
 			});
-			eventMessage.room = 'empty-room';
+			eventMessage.channel = 'empty-room';
 
 			const result = router.routeEvent(eventMessage);
 
@@ -275,24 +275,24 @@ describe('MessageHubRouter', () => {
 		});
 	});
 
-	describe('routeEventToRoom', () => {
+	describe('routeEventToChannel', () => {
 		test('should route event explicitly to room', () => {
 			const conn1 = createMockConnection(mockWs1);
 			const conn2 = createMockConnection(mockWs2);
 			const clientId1 = router.registerConnection(conn1);
 			const clientId2 = router.registerConnection(conn2);
 
-			router.joinRoom(clientId1, 'session1');
-			router.joinRoom(clientId2, 'session1');
+			router.joinChannel(clientId1, 'session1');
+			router.joinChannel(clientId2, 'session1');
 
 			const eventMessage = createEventMessage({
 				method: 'chat.message',
 				data: { text: 'Hello' },
 				sessionId: 'session1',
 			});
-			eventMessage.room = 'session1';
+			eventMessage.channel = 'session1';
 
-			const result = router.routeEventToRoom(eventMessage);
+			const result = router.routeEventToChannel(eventMessage);
 
 			expect(result.sent).toBe(2);
 			expect(result.failed).toBe(0);
@@ -301,7 +301,7 @@ describe('MessageHubRouter', () => {
 			expect(result.method).toBe('chat.message');
 		});
 
-		test('should return delivery statistics from routeEventToRoom', () => {
+		test('should return delivery statistics from routeEventToChannel', () => {
 			const conn1 = createMockConnection(mockWs1);
 			const conn2 = createMockConnection(mockWs2);
 			const mockWs3 = new MockWebSocket();
@@ -310,9 +310,9 @@ describe('MessageHubRouter', () => {
 			const clientId2 = router.registerConnection(conn2);
 			const clientId3 = router.registerConnection(conn3);
 
-			router.joinRoom(clientId1, 'session1');
-			router.joinRoom(clientId2, 'session1');
-			router.joinRoom(clientId3, 'session1');
+			router.joinChannel(clientId1, 'session1');
+			router.joinChannel(clientId2, 'session1');
+			router.joinChannel(clientId3, 'session1');
 
 			// Close one websocket to create a failure
 			mockWs3.close();
@@ -322,9 +322,9 @@ describe('MessageHubRouter', () => {
 				data: { userId: '123' },
 				sessionId: 'session1',
 			});
-			eventMessage.room = 'session1';
+			eventMessage.channel = 'session1';
 
-			const result = router.routeEventToRoom(eventMessage);
+			const result = router.routeEventToChannel(eventMessage);
 
 			expect(result.sent).toBe(2); // mockWs1 and mockWs2
 			expect(result.failed).toBe(1); // mockWs3 is closed
@@ -598,7 +598,7 @@ describe('MessageHubRouter', () => {
 
 	describe('RoomManager Integration', () => {
 		test('should access room manager', () => {
-			const roomManager = router.getRoomManager();
+			const roomManager = router.getChannelManager();
 			expect(roomManager).toBeDefined();
 		});
 
@@ -608,11 +608,11 @@ describe('MessageHubRouter', () => {
 			const clientId1 = router.registerConnection(conn1);
 			const clientId2 = router.registerConnection(conn2);
 
-			router.joinRoom(clientId1, 'session1');
-			router.joinRoom(clientId2, 'session1');
+			router.joinChannel(clientId1, 'session1');
+			router.joinChannel(clientId2, 'session1');
 
-			const roomManager = router.getRoomManager();
-			const members = roomManager.getRoomMembers('session1');
+			const roomManager = router.getChannelManager();
+			const members = roomManager.getChannelMembers('session1');
 
 			expect(members.size).toBe(2);
 			expect(members).toContain(clientId1);
@@ -623,15 +623,15 @@ describe('MessageHubRouter', () => {
 			const conn1 = createMockConnection(mockWs1);
 			const clientId = router.registerConnection(conn1);
 
-			router.joinRoom(clientId, 'temp-room');
+			router.joinChannel(clientId, 'temp-room');
 
-			const roomManager = router.getRoomManager();
-			expect(roomManager.getRoomMembers('temp-room')).toContain(clientId);
+			const roomManager = router.getChannelManager();
+			expect(roomManager.getChannelMembers('temp-room')).toContain(clientId);
 
-			router.leaveRoom(clientId, 'temp-room');
+			router.leaveChannel(clientId, 'temp-room');
 
 			// Empty room should still exist but be empty
-			expect(roomManager.getRoomMembers('temp-room').size).toBe(0);
+			expect(roomManager.getChannelMembers('temp-room').size).toBe(0);
 		});
 	});
 

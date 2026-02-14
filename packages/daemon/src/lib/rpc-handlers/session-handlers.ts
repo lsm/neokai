@@ -66,7 +66,7 @@ export function setupSessionHandlers(
 
 		// Broadcast update to all clients
 		messageHub.event('session.updated', updatedSession, {
-			room: `session:${sessionId}`,
+			channel: `session:${sessionId}`,
 		});
 
 		return { success: true, session: updatedSession };
@@ -129,7 +129,7 @@ export function setupSessionHandlers(
 
 		// Broadcast update event to all clients
 		messageHub.event('session.updated', updates, {
-			room: `session:${targetSessionId}`,
+			channel: `session:${targetSessionId}`,
 		});
 
 		return { success: true };
@@ -144,7 +144,7 @@ export function setupSessionHandlers(
 			'session.deleted',
 			{ sessionId: targetSessionId },
 			{
-				room: 'global',
+				channel: 'global',
 			}
 		);
 
@@ -350,7 +350,7 @@ export function setupSessionHandlers(
 			messageHub.event(
 				'session.updated',
 				{ model: result.model },
-				{ room: `session:${targetSessionId}` }
+				{ channel: `session:${targetSessionId}` }
 			);
 		}
 
@@ -389,7 +389,7 @@ export function setupSessionHandlers(
 		messageHub.event(
 			'session.updated',
 			{ config: { coordinatorMode } },
-			{ room: `session:${targetSessionId}` }
+			{ channel: `session:${targetSessionId}` }
 		);
 
 		return { success: result.success, coordinatorMode, error: result.error };
@@ -432,7 +432,7 @@ export function setupSessionHandlers(
 		messageHub.event(
 			'session.updated',
 			{ config: { sandbox: updatedSandbox } },
-			{ room: `session:${targetSessionId}` }
+			{ channel: `session:${targetSessionId}` }
 		);
 
 		return { success: result.success, sandboxEnabled, error: result.error };
@@ -470,7 +470,7 @@ export function setupSessionHandlers(
 		messageHub.event(
 			'session.updated',
 			{ config: { thinkingLevel } },
-			{ room: `session:${targetSessionId}` }
+			{ channel: `session:${targetSessionId}` }
 		);
 
 		return { success: true, thinkingLevel };

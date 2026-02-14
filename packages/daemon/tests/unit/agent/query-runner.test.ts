@@ -280,7 +280,7 @@ describe('QueryRunner', () => {
 						}),
 					]),
 				}),
-				{ room: 'session:test-session-id' }
+				{ channel: 'session:test-session-id' }
 			);
 		});
 

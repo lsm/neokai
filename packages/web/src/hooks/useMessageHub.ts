@@ -32,15 +32,15 @@ import { useComputed } from '@preact/signals';
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 import { ConnectionNotReadyError } from '../lib/errors';
-import type { MessageHub, RoomEventHandler } from '@neokai/shared';
+import type { MessageHub, ChannelEventHandler } from '@neokai/shared';
 
 // Define SubscribeOptions locally (removed from shared types)
 interface SubscribeOptions {
 	once?: boolean;
 }
 
-// EventHandler is now RoomEventHandler in the new API
-type EventHandler<TData = unknown> = RoomEventHandler<TData>;
+// EventHandler is now ChannelEventHandler in the new API
+type EventHandler<TData = unknown> = ChannelEventHandler<TData>;
 
 /**
  * Options for the useMessageHub hook
@@ -319,7 +319,7 @@ export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHub
 	const joinRoom = useCallback((room: string): void => {
 		const hub = connectionManager.getHubIfConnected();
 		if (hub) {
-			hub.joinRoom(room);
+			hub.joinChannel(room);
 		}
 	}, []);
 
@@ -329,7 +329,7 @@ export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHub
 	const leaveRoom = useCallback((room: string): void => {
 		const hub = connectionManager.getHubIfConnected();
 		if (hub) {
-			hub.leaveRoom(room);
+			hub.leaveChannel(room);
 		}
 	}, []);
 

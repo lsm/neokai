@@ -26,7 +26,7 @@ import type {
 	RewindResult,
 } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
-import type { Room, NeoTask } from './neo/types';
+import type { Room, NeoTask } from '@neokai/shared';
 
 /**
  * Compaction trigger type
@@ -187,6 +187,19 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		roomId: string;
 		taskId: string;
 		task?: Partial<NeoTask>;
+	};
+
+	// Room message events (for Neo chat functionality)
+	'room.message': {
+		sessionId: string;
+		roomId: string;
+		message: {
+			id: string;
+			role: string;
+			content: string;
+			timestamp: number;
+		};
+		source: 'human' | 'neo';
 	};
 }
 

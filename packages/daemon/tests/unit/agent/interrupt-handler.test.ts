@@ -243,7 +243,7 @@ describe('InterruptHandler', () => {
 			expect(publishSpy).toHaveBeenCalledWith(
 				'session.interrupted',
 				{},
-				{ room: 'session:test-session-id' }
+				{ channel: 'session:test-session-id' }
 			);
 		});
 

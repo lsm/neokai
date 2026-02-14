@@ -26,7 +26,7 @@ import type {
 	PendingUserQuestion,
 } from '@neokai/shared';
 import { Logger } from '@neokai/shared';
-import { buildRoomPrompt, parseNeoActions, type NeoAction } from './neo-prompt';
+import { buildRoomPrompt, parseNeoActions, type NeoAction } from '@neokai/shared/neo-prompt';
 import { NeoSessionWatcher, type SessionEventHandlers } from './neo-session-watcher';
 
 /**
@@ -65,6 +65,7 @@ export class RoomNeo {
 	private messageHistory: NeoContextMessage[] = [];
 	private sessionWatcher: NeoSessionWatcher;
 	private watchedSessions: Set<string> = new Set();
+	private roomMessageUnsubscribe: (() => void) | null = null;
 
 	constructor(
 		private roomId: string,
@@ -103,6 +104,27 @@ export class RoomNeo {
 
 		// Load message history via RPC
 		await this.loadHistory();
+
+		// Join room channel to receive messages
+		await this.hub.joinChannel(`room:${this.roomId}`);
+
+		// Subscribe to room.message events
+		this.roomMessageUnsubscribe = this.hub.onEvent('room.message', async (data: unknown) => {
+			const eventData = data as {
+				roomId: string;
+				message: { content: string; role: string };
+				source: 'human' | 'neo';
+			};
+
+			// Only process messages from humans, not our own
+			if (eventData.roomId === this.roomId && eventData.source === 'human') {
+				try {
+					await this.sendMessage(eventData.message.content);
+				} catch (error) {
+					this.logger.error('Error processing room.message event:', error);
+				}
+			}
+		});
 	}
 
 	/**
@@ -111,7 +133,7 @@ export class RoomNeo {
 	private async loadHistory(): Promise<void> {
 		try {
 			const response = await this.hub.request<{ messages: NeoContextMessage[] }>(
-				'neo.message.history',
+				'room.message.history',
 				{ roomId: this.roomId }
 			);
 			this.messageHistory = response.messages ?? [];
@@ -336,6 +358,19 @@ export class RoomNeo {
 	 * Clean up resources
 	 */
 	async destroy(): Promise<void> {
+		// Unsubscribe from room.message events
+		if (this.roomMessageUnsubscribe) {
+			this.roomMessageUnsubscribe();
+			this.roomMessageUnsubscribe = null;
+		}
+
+		// Leave room channel
+		try {
+			await this.hub.leaveChannel(`room:${this.roomId}`);
+		} catch {
+			// Ignore errors when leaving channel
+		}
+
 		// Stop watching all sessions
 		await this.sessionWatcher.unwatchAll();
 		this.watchedSessions.clear();
@@ -461,6 +496,18 @@ export class RoomNeo {
 		};
 		this.messageHistory.push(assistantMessage);
 
+		// Broadcast response to room via RPC
+		try {
+			await this.hub.request('room.message.send', {
+				roomId: this.roomId,
+				content: response,
+				role: 'assistant',
+				metadata,
+			});
+		} catch (error) {
+			this.logger.error('Error broadcasting Neo response:', error);
+		}
+
 		// Parse actions
 		const actions = parseNeoActions(response);
 
@@ -495,7 +542,7 @@ export class RoomNeo {
 					roomId: this.roomId,
 					type: action.params.type || 'note',
 					content: action.params.content || '',
-					tags: action.params.tags?.split(',').map((t) => t.trim()) || [],
+					tags: action.params.tags?.split(',').map((t: string) => t.trim()) || [],
 					importance: action.params.importance || 'normal',
 				});
 				this.logger.info(`Added memory via RPC`);

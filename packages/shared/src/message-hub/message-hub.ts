@@ -36,7 +36,7 @@ import type {
 	IMessageTransport,
 	CallContext,
 	ConnectionState,
-	RoomEventHandler,
+	ChannelEventHandler,
 	QueryOptions,
 	EventOptions,
 	RequestHandler,
@@ -73,8 +73,8 @@ export class MessageHub {
 
 	// Unified request handlers (new API - replaces commandHandlers and queryHandlers)
 	private requestHandlers: Map<string, RequestHandler> = new Map();
-	// Room event handlers (client-side - keyed by method)
-	private roomEventHandlers: Map<string, Set<RoomEventHandler>> = new Map();
+	// Channel event handlers (client-side - keyed by method)
+	private channelEventHandlers: Map<string, Set<ChannelEventHandler>> = new Map();
 
 	// Event handler recursion tracking (prevents infinite loops)
 	private eventDepthMap = new Map<string, number>(); // messageId -> depth
@@ -261,7 +261,7 @@ export class MessageHub {
 		if (!this.isConnected()) {
 			throw new Error('Not connected to transport');
 		}
-		const sessionId = options.room || this.defaultSessionId;
+		const sessionId = options.channel || this.defaultSessionId;
 		if (!validateMethod(method)) {
 			throw new Error(`Invalid method name: ${method}`);
 		}
@@ -298,8 +298,8 @@ export class MessageHub {
 	}
 
 	/**
-	 * Broadcast an event to a room (server-side)
-	 * If no room specified, broadcasts globally
+	 * Broadcast an event to a channel (server-side)
+	 * If no channel specified, broadcasts globally
 	 */
 	event(method: string, data?: unknown, options: EventOptions = {}): void {
 		if (!this.isConnected()) {
@@ -309,10 +309,10 @@ export class MessageHub {
 		if (!validateMethod(method)) {
 			throw new Error(`Invalid method name: ${method}`);
 		}
-		const sessionId = options.room || this.defaultSessionId;
+		const sessionId = options.channel || this.defaultSessionId;
 		const message = createEventMessage({ method, data, sessionId });
-		// Set room field for room-based routing
-		message.room = options.room;
+		// Set channel field for channel-based routing
+		message.channel = options.channel;
 		this.sendMessage(message).catch((error) => {
 			log.error(`Failed to send event ${method}:`, error);
 		});
@@ -346,54 +346,54 @@ export class MessageHub {
 	 * Listen for events (client-side)
 	 * No subscription ceremony - just register handler locally
 	 */
-	onEvent<TData = unknown>(method: string, handler: RoomEventHandler<TData>): UnsubscribeFn {
+	onEvent<TData = unknown>(method: string, handler: ChannelEventHandler<TData>): UnsubscribeFn {
 		if (!validateMethod(method)) {
 			throw new Error(`Invalid method name: ${method}`);
 		}
-		if (!this.roomEventHandlers.has(method)) {
-			this.roomEventHandlers.set(method, new Set());
+		if (!this.channelEventHandlers.has(method)) {
+			this.channelEventHandlers.set(method, new Set());
 		}
-		this.roomEventHandlers.get(method)!.add(handler as RoomEventHandler);
+		this.channelEventHandlers.get(method)!.add(handler as ChannelEventHandler);
 		this.logDebug(`Event handler registered: ${method}`);
 		return () => {
-			this.roomEventHandlers.get(method)?.delete(handler as RoomEventHandler);
+			this.channelEventHandlers.get(method)?.delete(handler as ChannelEventHandler);
 			this.logDebug(`Event handler unregistered: ${method}`);
 		};
 	}
 
 	/**
-	 * Join a room (client → server)
+	 * Join a channel (client → server)
 	 * Sends a request that the router handles
 	 */
-	async joinRoom(room: string): Promise<void> {
+	async joinChannel(channel: string): Promise<void> {
 		if (!this.isConnected()) {
-			this.logDebug(`joinRoom skipped (not connected): ${room}`);
+			this.logDebug(`joinChannel skipped (not connected): ${channel}`);
 			return;
 		}
 		try {
-			await this.request('room.join', { room });
+			await this.request('channel.join', { channel });
 		} catch (error) {
-			// Room join is optional - log but don't throw
-			// This prevents crashes when room join times out or fails
-			this.logDebug(`joinRoom failed for ${room}:`, error);
+			// Channel join is optional - log but don't throw
+			// This prevents crashes when channel join times out or fails
+			this.logDebug(`joinChannel failed for ${channel}:`, error);
 		}
 	}
 
 	/**
-	 * Leave a room (client → server)
+	 * Leave a channel (client → server)
 	 * Sends a request that the router handles
 	 */
-	async leaveRoom(room: string): Promise<void> {
+	async leaveChannel(channel: string): Promise<void> {
 		if (!this.isConnected()) {
-			this.logDebug(`leaveRoom skipped (not connected): ${room}`);
+			this.logDebug(`leaveChannel skipped (not connected): ${channel}`);
 			return;
 		}
 		try {
-			await this.request('room.leave', { room });
+			await this.request('channel.leave', { channel });
 		} catch (error) {
-			// Room leave is optional - log but don't throw
-			// This prevents crashes when room leave times out or fails
-			this.logDebug(`leaveRoom failed for ${room}:`, error);
+			// Channel leave is optional - log but don't throw
+			// This prevents crashes when channel leave times out or fails
+			this.logDebug(`leaveChannel failed for ${channel}:`, error);
 		}
 	}
 
@@ -506,23 +506,23 @@ export class MessageHub {
 	private async handleIncomingRequest(message: HubMessage): Promise<void> {
 		const clientId = (message as import('./protocol').HubMessageWithMetadata).clientId;
 
-		// Handle reserved room commands
-		if (message.method === 'room.join' || message.method === 'room.leave') {
+		// Handle reserved channel commands
+		if (message.method === 'channel.join' || message.method === 'channel.leave') {
 			if (this.router) {
 				if (
 					clientId &&
 					message.data &&
-					typeof (message.data as Record<string, unknown>).room === 'string'
+					typeof (message.data as Record<string, unknown>).channel === 'string'
 				) {
-					const room = (message.data as Record<string, unknown>).room as string;
-					if (message.method === 'room.join') {
-						this.router.joinRoom(clientId, room);
+					const channel = (message.data as Record<string, unknown>).channel as string;
+					if (message.method === 'channel.join') {
+						this.router.joinChannel(clientId, channel);
 					} else {
-						this.router.leaveRoom(clientId, room);
+						this.router.leaveChannel(clientId, channel);
 					}
 				}
 			}
-			// Send ACK response for room commands
+			// Send ACK response for channel commands
 			const ackMsg = createResponseMessage({
 				method: message.method,
 				data: { acknowledged: true },
@@ -631,8 +631,8 @@ export class MessageHub {
 		this.eventDepthMap.set(message.id, currentDepth + 1);
 
 		try {
-			// Dispatch to room event handlers (new API)
-			this.dispatchToRoomEventHandlers(message);
+			// Dispatch to channel event handlers (new API)
+			this.dispatchToChannelEventHandlers(message);
 		} finally {
 			// Clean up depth tracking immediately after handlers complete
 			this.eventDepthMap.delete(message.id);
@@ -640,11 +640,11 @@ export class MessageHub {
 	}
 
 	/**
-	 * Dispatch event to room event handlers (new API)
+	 * Dispatch event to channel event handlers (new API)
 	 * Called from handleEvent alongside existing subscription dispatch
 	 */
-	private dispatchToRoomEventHandlers(message: HubMessage): void {
-		const handlers = this.roomEventHandlers.get(message.method);
+	private dispatchToChannelEventHandlers(message: HubMessage): void {
+		const handlers = this.channelEventHandlers.get(message.method);
 		if (!handlers || handlers.size === 0) return;
 
 		const context = {
@@ -652,16 +652,16 @@ export class MessageHub {
 			sessionId: message.sessionId,
 			method: message.method,
 			timestamp: message.timestamp,
-			room: message.room,
+			channel: message.channel,
 		};
 
 		for (const handler of handlers) {
 			try {
 				Promise.resolve(handler(message.data, context)).catch((error) => {
-					log.error(`Room event handler error for ${message.method}:`, error);
+					log.error(`Channel event handler error for ${message.method}:`, error);
 				});
 			} catch (error) {
-				log.error(`Room event handler sync error for ${message.method}:`, error);
+				log.error(`Channel event handler sync error for ${message.method}:`, error);
 			}
 		}
 	}
@@ -719,9 +719,9 @@ export class MessageHub {
 
 		// Server-side routing for EVENT messages
 		if (this.router && message.type === MessageType.EVENT) {
-			// Room-based routing if room is set
-			if (message.room && this.router) {
-				this.router.routeEventToRoom(message);
+			// Channel-based routing if channel is set
+			if (message.channel && this.router) {
+				this.router.routeEventToChannel(message);
 			} else {
 				// Use router to route EVENT to subscribed clients
 				const result = this.router.routeEvent(message);
@@ -730,7 +730,7 @@ export class MessageHub {
 			// Self-delivery: also invoke local event handlers on the same hub
 			// This ensures server-side onEvent() listeners receive events
 			// (e.g., test helpers, server-side state observers)
-			this.dispatchToRoomEventHandlers(message);
+			this.dispatchToChannelEventHandlers(message);
 			return;
 		}
 
@@ -842,7 +842,7 @@ export class MessageHub {
 
 		// Clear handlers
 		this.requestHandlers.clear();
-		this.roomEventHandlers.clear();
+		this.channelEventHandlers.clear();
 		this.messageHandlers.clear();
 		this.connectionStateHandlers.clear();
 		this.eventDepthMap.clear();

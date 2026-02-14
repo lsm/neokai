@@ -373,7 +373,7 @@ describe('MessageHub', () => {
 		});
 
 		test('should use custom room in query', async () => {
-			const queryPromise = messageHub.request('test.method', {}, { room: 'custom-room' });
+			const queryPromise = messageHub.request('test.method', {}, { channel: 'custom-room' });
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -467,11 +467,11 @@ describe('MessageHub', () => {
 		});
 
 		test('should use custom room when emitting event', () => {
-			messageHub.event('user.created', { userId: '123' }, { room: 'custom-room' });
+			messageHub.event('user.created', { userId: '123' }, { channel: 'custom-room' });
 
 			const sentMessage = transport.sentMessages[0];
 			expect(sentMessage.sessionId).toBe('custom-room');
-			expect(sentMessage.room).toBe('custom-room');
+			expect(sentMessage.channel).toBe('custom-room');
 		});
 
 		test('should not throw when emitting event while disconnected (skips send)', () => {
@@ -568,7 +568,7 @@ describe('MessageHub', () => {
 	describe('Room Management', () => {
 		test('should send room.join request', async () => {
 			// Start joinRoom but don't await yet
-			const joinPromise = messageHub.joinRoom('session-123');
+			const joinPromise = messageHub.joinChannel('session-123');
 
 			// Wait for message to be sent
 			await new Promise((resolve) => setTimeout(resolve, 10));
@@ -576,7 +576,7 @@ describe('MessageHub', () => {
 			const sentMessage = transport.sentMessages[0];
 			expect(sentMessage.type).toBe(MessageType.REQUEST);
 			expect(sentMessage.method).toBe('room.join');
-			expect(sentMessage.data).toEqual({ room: 'session-123' });
+			expect(sentMessage.data).toEqual({ channel: 'session-123' });
 
 			// Simulate ACK response
 			transport.simulateMessage(
@@ -593,7 +593,7 @@ describe('MessageHub', () => {
 
 		test('should send room.leave request', async () => {
 			// Start leaveRoom but don't await yet
-			const leavePromise = messageHub.leaveRoom('session-123');
+			const leavePromise = messageHub.leaveChannel('session-123');
 
 			// Wait for message to be sent
 			await new Promise((resolve) => setTimeout(resolve, 10));
@@ -601,7 +601,7 @@ describe('MessageHub', () => {
 			const sentMessage = transport.sentMessages[0];
 			expect(sentMessage.type).toBe(MessageType.REQUEST);
 			expect(sentMessage.method).toBe('room.leave');
-			expect(sentMessage.data).toEqual({ room: 'session-123' });
+			expect(sentMessage.data).toEqual({ channel: 'session-123' });
 
 			// Simulate ACK response
 			transport.simulateMessage(
@@ -619,8 +619,8 @@ describe('MessageHub', () => {
 		test('should skip room operations when disconnected', async () => {
 			transport.simulateStateChange('disconnected');
 
-			await messageHub.joinRoom('test-room');
-			await messageHub.leaveRoom('test-room');
+			await messageHub.joinChannel('test-room');
+			await messageHub.leaveChannel('test-room');
 
 			expect(transport.sentMessages.length).toBe(0);
 		});

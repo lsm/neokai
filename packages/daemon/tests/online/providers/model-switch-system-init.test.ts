@@ -93,7 +93,7 @@ async function waitForSDKMessage(
 		});
 
 		// Join the session room (idempotent - safe to call multiple times)
-		daemon.messageHub.joinRoom('session:' + sessionId).catch(() => {
+		daemon.messageHub.joinChannel('session:' + sessionId).catch(() => {
 			// Join failed, but continue - events might still work
 		});
 	});

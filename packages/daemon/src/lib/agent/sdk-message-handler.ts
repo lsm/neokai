@@ -173,7 +173,7 @@ export class SDKMessageHandler {
 		messageHub.event(
 			'state.sdkMessages.delta',
 			{ added: [assistantMessage], timestamp: Date.now() },
-			{ room: `session:${session.id}` }
+			{ channel: `session:${session.id}` }
 		);
 	}
 
@@ -254,7 +254,7 @@ export class SDKMessageHandler {
 				timestamp: Date.now(),
 				version: ++this.sdkMessageDeltaVersion,
 			},
-			{ room: `session:${session.id}` }
+			{ channel: `session:${session.id}` }
 		);
 
 		// Handle specific message types

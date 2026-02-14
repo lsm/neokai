@@ -1,5 +1,5 @@
 /**
- * NeoMemoryManager - Memory system with room tagging and retrieval
+ * MemoryManager - Memory system with room tagging and retrieval
  *
  * Handles:
  * - Adding memories with room tags
@@ -12,7 +12,7 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { NeoMemoryRepository } from '../../storage/repositories/memory-repository';
 import type { NeoMemory, MemoryType, MemoryImportance } from '@neokai/shared';
 
-export class NeoMemoryManager {
+export class MemoryManager {
 	private memoryRepo: NeoMemoryRepository;
 
 	constructor(

@@ -56,7 +56,7 @@ describe('Neo In-Process Communication', () => {
 
 	test('should handle room.get RPC', async () => {
 		const result = await neoTransport.neoClientHub.request('room.get', { roomId: 'room-123' });
-		const room = (result as { room: { id: string; name: string; status: string } }).room;
+		const room = (result as { channel: { id: string; name: string; status: string } }).room;
 		expect(room.id).toBe('room-123');
 		expect(room.name).toBe('Test Room');
 	});

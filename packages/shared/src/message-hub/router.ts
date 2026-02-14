@@ -19,7 +19,7 @@
 
 import type { HubMessage } from './protocol.ts';
 import { isEventMessage } from './protocol.ts';
-import { RoomManager } from './room-manager.ts';
+import { ChannelManager } from './channel-manager.ts';
 
 /**
  * Abstract connection interface
@@ -80,12 +80,12 @@ export interface RouteResult {
  *
  * Responsibilities:
  * - Route messages by sessionId
- * - Manage room-based event routing
- * - Broadcast events to clients in rooms
+ * - Manage channel-based event routing
+ * - Broadcast events to clients in channels
  */
 export class MessageHubRouter {
 	private clients: Map<string, ClientInfo> = new Map(); // Now keyed by clientId
-	private roomManager: RoomManager = new RoomManager();
+	private channelManager: ChannelManager = new ChannelManager();
 
 	private logger: RouterLogger;
 	private debug: boolean;
@@ -114,8 +114,8 @@ export class MessageHubRouter {
 		};
 
 		this.clients.set(connection.id, info);
-		// Auto-join global room
-		this.roomManager.joinRoom(connection.id, 'global');
+		// Auto-join global channel
+		this.channelManager.joinChannel(connection.id, 'global');
 		this.log(`Client registered: ${connection.id}`);
 
 		return connection.id;
@@ -123,7 +123,7 @@ export class MessageHubRouter {
 
 	/**
 	 * Unregister a client by clientId
-	 * Cleans up room memberships
+	 * Cleans up channel memberships
 	 */
 	unregisterConnection(clientId: string): void {
 		const info = this.clients.get(clientId);
@@ -131,15 +131,15 @@ export class MessageHubRouter {
 			return;
 		}
 
-		// Clean up room membership
-		this.roomManager.removeClient(clientId);
+		// Clean up channel membership
+		this.channelManager.removeClient(clientId);
 
 		this.clients.delete(clientId);
 		this.log(`Client unregistered: ${info.clientId}`);
 	}
 
 	/**
-	 * Route an EVENT message to room members (legacy method, delegates to routeEventToRoom)
+	 * Route an EVENT message to channel members (legacy method, delegates to routeEventToChannel)
 	 * Returns delivery statistics for observability
 	 */
 	routeEvent(message: HubMessage): RouteResult {
@@ -154,8 +154,8 @@ export class MessageHubRouter {
 			};
 		}
 
-		// Delegate to room-based routing
-		return this.routeEventToRoom(message);
+		// Delegate to channel-based routing
+		return this.routeEventToChannel(message);
 	}
 
 	/**
@@ -271,38 +271,38 @@ export class MessageHubRouter {
 	}
 
 	/**
-	 * Join a client to a room
+	 * Join a client to a channel
 	 */
-	joinRoom(clientId: string, room: string): void {
+	joinChannel(clientId: string, channel: string): void {
 		const client = this.getClientById(clientId);
 		if (!client) {
-			this.logger.warn(`[MessageHubRouter] Cannot join room - client not found: ${clientId}`);
+			this.logger.warn(`[MessageHubRouter] Cannot join channel - client not found: ${clientId}`);
 			return;
 		}
-		this.roomManager.joinRoom(clientId, room);
-		this.log(`Client ${clientId} joined room: ${room}`);
+		this.channelManager.joinChannel(clientId, channel);
+		this.log(`Client ${clientId} joined channel: ${channel}`);
 	}
 
 	/**
-	 * Remove a client from a room
+	 * Remove a client from a channel
 	 */
-	leaveRoom(clientId: string, room: string): void {
-		this.roomManager.leaveRoom(clientId, room);
-		this.log(`Client ${clientId} left room: ${room}`);
+	leaveChannel(clientId: string, channel: string): void {
+		this.channelManager.leaveChannel(clientId, channel);
+		this.log(`Client ${clientId} left channel: ${channel}`);
 	}
 
 	/**
-	 * Route an EVENT message to all clients in the message's room
+	 * Route an EVENT message to all clients in the message's channel
 	 */
-	routeEventToRoom(message: HubMessage): RouteResult {
-		const room = message.room || 'global';
-		const members = this.roomManager.getRoomMembers(room);
+	routeEventToChannel(message: HubMessage): RouteResult {
+		const channel = message.channel || 'global';
+		const members = this.channelManager.getChannelMembers(channel);
 
-		// Only include members of the specific room (no global cross-pollution)
+		// Only include members of the specific channel (no global cross-pollution)
 		const allRecipients = new Set(members);
 
 		if (allRecipients.size === 0) {
-			this.log(`No room members for room ${room}, method ${message.method}`);
+			this.log(`No channel members for channel ${channel}, method ${message.method}`);
 			return {
 				sent: 0,
 				failed: 0,
@@ -317,7 +317,7 @@ export class MessageHubRouter {
 		try {
 			json = JSON.stringify(message);
 		} catch (error) {
-			this.logger.error(`[MessageHubRouter] Failed to serialize room event:`, error);
+			this.logger.error(`[MessageHubRouter] Failed to serialize channel event:`, error);
 			return {
 				sent: 0,
 				failed: allRecipients.size,
@@ -336,7 +336,7 @@ export class MessageHubRouter {
 					client.connection.send(json);
 					sent++;
 				} catch (error) {
-					this.logger.error(`Failed to send room event to client ${clientId}:`, error);
+					this.logger.error(`Failed to send channel event to client ${clientId}:`, error);
 					failed++;
 				}
 			} else {
@@ -345,7 +345,7 @@ export class MessageHubRouter {
 		}
 
 		this.log(
-			`Routed room event ${room}:${message.method} to ${sent}/${allRecipients.size} clients`
+			`Routed channel event ${channel}:${message.method} to ${sent}/${allRecipients.size} clients`
 		);
 
 		return {
@@ -358,10 +358,10 @@ export class MessageHubRouter {
 	}
 
 	/**
-	 * Get the room manager for inspection
+	 * Get the channel manager for inspection
 	 */
-	getRoomManager(): RoomManager {
-		return this.roomManager;
+	getChannelManager(): ChannelManager {
+		return this.channelManager;
 	}
 
 	/**

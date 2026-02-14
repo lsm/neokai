@@ -218,7 +218,7 @@ describe('SDKMessageHandler', () => {
 					timestamp: expect.any(Number),
 					version: expect.any(Number),
 				}),
-				{ room: 'session:test-session-id' }
+				{ channel: 'session:test-session-id' }
 			);
 		});
 

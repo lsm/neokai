@@ -1,5 +1,5 @@
 /**
- * NeoTaskManager - Task management with status transitions
+ * TaskManager - Task management with status transitions
  *
  * Handles:
  * - Creating tasks
@@ -18,7 +18,7 @@ import type {
 	CreateTaskParams,
 } from '@neokai/shared';
 
-export class NeoTaskManager {
+export class TaskManager {
 	private taskRepo: NeoTaskRepository;
 
 	constructor(

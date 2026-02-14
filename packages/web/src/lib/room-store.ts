@@ -119,7 +119,7 @@ class RoomStore {
 		if (oldRoomId) {
 			const hub = connectionManager.getHubIfConnected();
 			if (hub) {
-				hub.leaveRoom(`room:${oldRoomId}`);
+				hub.leaveChannel(`room:${oldRoomId}`);
 			}
 		}
 
@@ -159,7 +159,7 @@ class RoomStore {
 			const hub = await connectionManager.getHub();
 
 			// Join the room channel first
-			hub.joinRoom(`room:${roomId}`);
+			hub.joinChannel(`room:${roomId}`);
 
 			// 1. Room overview subscription (room + sessions + tasks)
 			const unsubRoomOverview = hub.onEvent<RoomOverview>('room.overview', (overview) => {
@@ -280,7 +280,7 @@ class RoomStore {
 			throw new Error('Not connected');
 		}
 
-		await hub.request('neo.message.send', { roomId, content });
+		await hub.request('room.message.send', { roomId, content, role: 'user' });
 	}
 
 	/**

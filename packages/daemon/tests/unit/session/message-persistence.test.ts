@@ -206,7 +206,7 @@ describe('MessagePersistence', () => {
 					added: expect.any(Array),
 					timestamp: expect.any(Number),
 				}),
-				{ room: 'session:test-session-id' }
+				{ channel: 'session:test-session-id' }
 			);
 		});
 	});

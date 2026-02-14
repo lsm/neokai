@@ -56,7 +56,7 @@ export function setupSystemHandlers(
 		const echoMessage = data.message || 'echo';
 
 		// Publish event to all subscribers of 'test.echo' on 'global' session
-		messageHub.event('test.echo', { echo: echoMessage }, { room: 'global' });
+		messageHub.event('test.echo', { echo: echoMessage }, { channel: 'global' });
 
 		return { echoed: echoMessage };
 	});

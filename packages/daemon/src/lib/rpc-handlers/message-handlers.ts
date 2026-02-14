@@ -62,7 +62,7 @@ export function setupMessageHandlers(messageHub: MessageHub, sessionManager: Ses
 		messageHub.event(
 			'sdk.message.updated',
 			{ sessionId: targetSessionId, messageUuid },
-			{ room: `session:${targetSessionId}` }
+			{ channel: `session:${targetSessionId}` }
 		);
 
 		return { success: true };

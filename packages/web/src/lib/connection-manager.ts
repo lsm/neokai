@@ -335,7 +335,7 @@ export class ConnectionManager {
 		await this.waitForConnectionEventDriven(5000);
 
 		// Join global room after connection is established
-		this.messageHub.joinRoom('global');
+		this.messageHub.joinChannel('global');
 
 		// Mark ready for testing
 		if (typeof window !== 'undefined' && window.__messageHub) {
@@ -480,7 +480,7 @@ export class ConnectionManager {
 			// Safari may pause WebSocket without closing it, causing server-side
 			// room memberships to expire while client thinks it's still connected.
 			// This ensures room membership is re-established on the server.
-			this.messageHub.joinRoom('global');
+			this.messageHub.joinChannel('global');
 
 			// CRITICAL: Refresh ALL state (session store, app state, and global state)
 			// This ensures UI is in sync even if events were missed during background

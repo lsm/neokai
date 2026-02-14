@@ -1,18 +1,19 @@
 /**
- * Neo Self-Aware Architecture
+ * Room Package
  *
- * Phase 1: Foundation layer - data structures and persistence.
- * Phase 2: AI logic for Room-Neo.
- *
- * Exports only what's used by the daemon:
+ * Exports room-related managers:
  * - RoomManager for room lifecycle management
- * - Types re-exported from @neokai/shared for convenience
+ * - ContextManager for conversation context
+ * - MemoryManager for memory storage and retrieval
+ * - TaskManager for task management
  */
 
-// Room Manager - main export used by daemon
 export { RoomManager } from './room-manager';
+export { ContextManager } from './context-manager';
+export { MemoryManager } from './memory-manager';
+export { TaskManager } from './task-manager';
 
-// Types - re-exported from @neokai/shared for backward compatibility
+// Types - re-exported from @neokai/shared for convenience
 export type {
 	Room,
 	RoomStatus,

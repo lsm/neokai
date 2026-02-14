@@ -394,7 +394,7 @@ describe('MessageHub - Coverage Tests', () => {
 
 			const joinMsg = createRequestMessage({
 				method: 'room.join',
-				data: { room: 'test-room' },
+				data: { channel: 'test-room' },
 				sessionId: 'test-session',
 			});
 			(joinMsg as unknown as { clientId: string }).clientId = 'client-1';
@@ -421,7 +421,7 @@ describe('MessageHub - Coverage Tests', () => {
 			// First join
 			const joinMsg = createRequestMessage({
 				method: 'room.join',
-				data: { room: 'test-room' },
+				data: { channel: 'test-room' },
 				sessionId: 'test-session',
 			});
 			(joinMsg as unknown as { clientId: string }).clientId = 'client-1';
@@ -431,7 +431,7 @@ describe('MessageHub - Coverage Tests', () => {
 			// Then leave
 			const leaveMsg = createRequestMessage({
 				method: 'room.leave',
-				data: { room: 'test-room' },
+				data: { channel: 'test-room' },
 				sessionId: 'test-session',
 			});
 			(leaveMsg as unknown as { clientId: string }).clientId = 'client-1';
@@ -442,7 +442,7 @@ describe('MessageHub - Coverage Tests', () => {
 		test('should ignore room commands when no router registered', async () => {
 			const joinMsg = createRequestMessage({
 				method: 'room.join',
-				data: { room: 'test-room' },
+				data: { channel: 'test-room' },
 				sessionId: 'test-session',
 			});
 

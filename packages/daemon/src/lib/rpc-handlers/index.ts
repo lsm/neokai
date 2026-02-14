@@ -25,12 +25,12 @@ import { registerSettingsHandlers } from './settings-handlers';
 import { setupConfigHandlers } from './config-handlers';
 import { setupTestHandlers } from './test-handlers';
 import { setupRewindHandlers } from './rewind-handlers';
-import { RoomManager } from '../neo';
+import { RoomManager } from '../room';
 // New split handlers for Neo functionality
 import { setupRoomHandlers } from './room-handlers';
 import { setupTaskHandlers } from './task-handlers';
 import { setupMemoryHandlers } from './memory-handlers';
-import { setupNeoMessageHandlers } from './neo-message-handlers';
+import { setupRoomMessageHandlers } from './room-message-handlers';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -59,10 +59,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
 	setupTestHandlers(deps.messageHub, deps.db);
 	setupRewindHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
 
-	// Neo handlers - using new split handlers
+	// Room handlers
 	const roomManager = new RoomManager(deps.db.getDatabase());
 	setupRoomHandlers(deps.messageHub, roomManager, deps.daemonHub);
 	setupTaskHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
 	setupMemoryHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
-	setupNeoMessageHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
+	setupRoomMessageHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
 }

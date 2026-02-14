@@ -14,49 +14,24 @@
  * Renamed from neo.task.* to task.* for cleaner API.
  */
 
+import type { Database as BunDatabase } from 'bun:sqlite';
 import type { MessageHub, TaskStatus, TaskPriority } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
-import type { RoomManager } from '../neo/room-manager';
 import type { Database } from '../../storage/database';
-import type { RoomNeo } from '../neo/room-neo';
+import { TaskManager } from '../room';
 
 /**
- * Registry of active RoomNeo instances
- * Shared with memory-handlers and neo-message-handlers via getOrCreateRoomNeo
+ * Create a TaskManager instance for a room
  */
-const neoInstances = new Map<string, RoomNeo>();
-
-/**
- * Get or create a RoomNeo instance for a room
- * Exported for sharing with memory-handlers and neo-message-handlers
- */
-export async function getOrCreateRoomNeo(
-	roomId: string,
-	daemonHub: DaemonHub,
-	db: Database,
-	roomManager: RoomManager
-): Promise<RoomNeo> {
-	let neo = neoInstances.get(roomId);
-	if (!neo) {
-		const { RoomNeo: RoomNeoClass } = await import('../neo/room-neo');
-		const room = roomManager.getRoom(roomId);
-		if (!room) {
-			throw new Error(`Room not found: ${roomId}`);
-		}
-		neo = new RoomNeoClass(roomId, daemonHub, db, {
-			workspacePath: room.defaultWorkspace,
-			model: room.defaultModel,
-		});
-		await neo.initialize();
-		neoInstances.set(roomId, neo);
-	}
-	return neo;
+function createTaskManager(db: Database, roomId: string): TaskManager {
+	const rawDb = (db as unknown as { db: BunDatabase }).db;
+	return new TaskManager(rawDb, roomId);
 }
 
 export function setupTaskHandlers(
 	messageHub: MessageHub,
-	roomManager: RoomManager,
-	daemonHub: DaemonHub,
+	_roomManager: unknown,
+	_daemonHub: DaemonHub,
 	db: Database
 ): void {
 	// task.create - Create task in room
@@ -76,25 +51,13 @@ export function setupTaskHandlers(
 			throw new Error('Task title is required');
 		}
 
-		const neo = await getOrCreateRoomNeo(params.roomId, daemonHub, db, roomManager);
-		const task = await neo.getTaskManager().createTask({
+		const taskManager = createTaskManager(db, params.roomId);
+		const task = await taskManager.createTask({
 			title: params.title,
 			description: params.description ?? '',
 			priority: params.priority,
 			dependsOn: params.dependsOn,
 		});
-
-		// Broadcast task creation event
-		daemonHub
-			.emit('task.created', {
-				sessionId: 'global',
-				roomId: params.roomId,
-				taskId: task.id,
-				task,
-			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
-			});
 
 		return { task };
 	});
@@ -112,8 +75,8 @@ export function setupTaskHandlers(
 			throw new Error('Room ID is required');
 		}
 
-		const neo = await getOrCreateRoomNeo(params.roomId, daemonHub, db, roomManager);
-		const tasks = await neo.getTaskManager().listTasks({
+		const taskManager = createTaskManager(db, params.roomId);
+		const tasks = await taskManager.listTasks({
 			status: params.status,
 			priority: params.priority,
 			sessionId: params.sessionId,
@@ -133,8 +96,8 @@ export function setupTaskHandlers(
 			throw new Error('Task ID is required');
 		}
 
-		const neo = await getOrCreateRoomNeo(params.roomId, daemonHub, db, roomManager);
-		const task = await neo.getTaskManager().getTask(params.taskId);
+		const taskManager = createTaskManager(db, params.roomId);
+		const task = await taskManager.getTask(params.taskId);
 
 		if (!task) {
 			throw new Error(`Task not found: ${params.taskId}`);
@@ -162,8 +125,7 @@ export function setupTaskHandlers(
 			throw new Error('Task ID is required');
 		}
 
-		const neo = await getOrCreateRoomNeo(params.roomId, daemonHub, db, roomManager);
-		const taskManager = neo.getTaskManager();
+		const taskManager = createTaskManager(db, params.roomId);
 
 		let task;
 		if (params.status) {
@@ -183,18 +145,6 @@ export function setupTaskHandlers(
 			throw new Error('No update fields provided');
 		}
 
-		// Broadcast task update event
-		daemonHub
-			.emit('task.updated', {
-				sessionId: 'global',
-				roomId: params.roomId,
-				taskId: task.id,
-				task,
-			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
-			});
-
 		return { task };
 	});
 
@@ -212,20 +162,8 @@ export function setupTaskHandlers(
 			throw new Error('Session ID is required');
 		}
 
-		const neo = await getOrCreateRoomNeo(params.roomId, daemonHub, db, roomManager);
-		const task = await neo.getTaskManager().startTask(params.taskId, params.sessionId);
-
-		// Broadcast task update event
-		daemonHub
-			.emit('task.updated', {
-				sessionId: 'global',
-				roomId: params.roomId,
-				taskId: task.id,
-				task,
-			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
-			});
+		const taskManager = createTaskManager(db, params.roomId);
+		const task = await taskManager.startTask(params.taskId, params.sessionId);
 
 		return { task };
 	});
@@ -241,20 +179,8 @@ export function setupTaskHandlers(
 			throw new Error('Task ID is required');
 		}
 
-		const neo = await getOrCreateRoomNeo(params.roomId, daemonHub, db, roomManager);
-		const task = await neo.getTaskManager().completeTask(params.taskId, params.result ?? '');
-
-		// Broadcast task update event
-		daemonHub
-			.emit('task.updated', {
-				sessionId: 'global',
-				roomId: params.roomId,
-				taskId: task.id,
-				task,
-			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
-			});
+		const taskManager = createTaskManager(db, params.roomId);
+		const task = await taskManager.completeTask(params.taskId, params.result ?? '');
 
 		return { task };
 	});
@@ -270,20 +196,8 @@ export function setupTaskHandlers(
 			throw new Error('Task ID is required');
 		}
 
-		const neo = await getOrCreateRoomNeo(params.roomId, daemonHub, db, roomManager);
-		const task = await neo.getTaskManager().failTask(params.taskId, params.error ?? '');
-
-		// Broadcast task update event
-		daemonHub
-			.emit('task.updated', {
-				sessionId: 'global',
-				roomId: params.roomId,
-				taskId: task.id,
-				task,
-			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
-			});
+		const taskManager = createTaskManager(db, params.roomId);
+		const task = await taskManager.failTask(params.taskId, params.error ?? '');
 
 		return { task };
 	});
@@ -299,8 +213,8 @@ export function setupTaskHandlers(
 			throw new Error('Task ID is required');
 		}
 
-		const neo = await getOrCreateRoomNeo(params.roomId, daemonHub, db, roomManager);
-		const deleted = await neo.getTaskManager().deleteTask(params.taskId);
+		const taskManager = createTaskManager(db, params.roomId);
+		const deleted = await taskManager.deleteTask(params.taskId);
 
 		return { success: deleted };
 	});

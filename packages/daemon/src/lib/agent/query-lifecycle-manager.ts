@@ -203,7 +203,7 @@ export class QueryLifecycleManager {
 			messageHub.event(
 				'session.reset',
 				{ message: 'Agent has been reset and is ready for new messages' },
-				{ room: `session:${session.id}` }
+				{ channel: `session:${session.id}` }
 			);
 
 			return { success: true };

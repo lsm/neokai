@@ -130,7 +130,7 @@ export class ModelSwitchHandler {
 					from: previousModel,
 					to: resolvedModel,
 				},
-				{ room: `session:${session.id}` }
+				{ channel: `session:${session.id}` }
 			);
 
 			// Check if query is running AND ProcessTransport is ready
@@ -196,7 +196,7 @@ export class ModelSwitchHandler {
 					to: resolvedModel,
 					modelInfo: modelInfo || null,
 				},
-				{ room: `session:${session.id}` }
+				{ channel: `session:${session.id}` }
 			);
 
 			return {

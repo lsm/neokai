@@ -491,7 +491,7 @@ export class QueryRunner {
 		messageHub.event(
 			'state.sdkMessages.delta',
 			{ added: [assistantMessage], timestamp: Date.now() },
-			{ room: `session:${session.id}` }
+			{ channel: `session:${session.id}` }
 		);
 	}
 }

@@ -454,7 +454,7 @@ export class SessionLifecycle {
 				this.messageHub.event(
 					'session.deleted',
 					{ sessionId, reason: 'deleted' },
-					{ room: 'global' }
+					{ channel: 'global' }
 				);
 				await this.eventBus.emit('session.deleted', { sessionId });
 				completedPhases.push('broadcast');
