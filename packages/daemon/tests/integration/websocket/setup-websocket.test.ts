@@ -260,15 +260,15 @@ describe('Setup WebSocket Handlers', () => {
 	});
 
 	describe('Large Message Rejection', () => {
-		test('should reject messages larger than 10MB', async () => {
+		test('should reject messages larger than 50MB', async () => {
 			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
 			await waitForWebSocketState(ws, WebSocket.OPEN);
 			await firstMessagePromise;
 
 			const responsePromise = waitForWebSocketMessage(ws, 15000);
 
-			// Create a message larger than 10MB
-			const largeContent = 'x'.repeat(11 * 1024 * 1024); // 11MB of 'x'
+			// Create a message larger than 50MB
+			const largeContent = 'x'.repeat(51 * 1024 * 1024); // 51MB of 'x'
 
 			ws.send(
 				JSON.stringify({
@@ -292,7 +292,7 @@ describe('Setup WebSocket Handlers', () => {
 			ws.close();
 		});
 
-		test('should accept messages smaller than 10MB', async () => {
+		test('should accept messages smaller than 50MB', async () => {
 			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(ctx.baseUrl, 'global');
 			await waitForWebSocketState(ws, WebSocket.OPEN);
 			await firstMessagePromise;

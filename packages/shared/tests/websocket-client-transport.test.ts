@@ -724,8 +724,8 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
 			await transport.initialize();
 			await new Promise((resolve) => setTimeout(resolve, 20));
 
-			// Create an oversized message (>10MB)
-			const largeData = 'x'.repeat(11 * 1024 * 1024);
+			// Create an oversized message (>50MB)
+			const largeData = 'x'.repeat(51 * 1024 * 1024);
 			const message: HubMessage = {
 				id: 'test-1',
 				type: MessageType.REQUEST,
@@ -753,7 +753,7 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
 			await new Promise((resolve) => setTimeout(resolve, 20));
 
 			// Send oversized message
-			const largeData = 'x'.repeat(11 * 1024 * 1024);
+			const largeData = 'x'.repeat(51 * 1024 * 1024);
 			const oversizedMessage = JSON.stringify({
 				id: 'test-1',
 				type: 'EVENT',
