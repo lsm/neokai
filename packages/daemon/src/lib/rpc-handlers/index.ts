@@ -46,7 +46,10 @@ export interface RPCHandlerDependencies {
  * Register all RPC handlers on MessageHub
  */
 export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
-	setupSessionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
+	// Room handlers (create roomManager first as session handlers depend on it)
+	const roomManager = new RoomManager(deps.db.getDatabase());
+
+	setupSessionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub, roomManager);
 	setupMessageHandlers(deps.messageHub, deps.sessionManager);
 	setupCommandHandlers(deps.messageHub, deps.sessionManager);
 	setupFileHandlers(deps.messageHub, deps.sessionManager);
@@ -60,7 +63,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
 	setupRewindHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
 
 	// Room handlers
-	const roomManager = new RoomManager(deps.db.getDatabase());
 	setupRoomHandlers(deps.messageHub, roomManager, deps.daemonHub);
 	setupTaskHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
 	setupMemoryHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);

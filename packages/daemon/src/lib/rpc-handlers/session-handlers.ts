@@ -19,11 +19,13 @@ import {
 	scanSDKSessionFiles,
 	identifyOrphanedSDKFiles,
 } from '../sdk-session-file-manager';
+import type { RoomManager } from '../room';
 
 export function setupSessionHandlers(
 	messageHub: MessageHub,
 	sessionManager: SessionManager,
-	daemonHub: DaemonHub
+	daemonHub: DaemonHub,
+	roomManager: RoomManager
 ): void {
 	messageHub.onRequest('session.create', async (data) => {
 		const req = data as CreateSessionRequest;
@@ -33,7 +35,14 @@ export function setupSessionHandlers(
 			config: req.config,
 			worktreeBaseBranch: req.worktreeBaseBranch,
 			title: req.title,
+			roomId: req.roomId,
+			createdBy: req.createdBy ?? 'human',
 		});
+
+		// Add session to room if roomId is provided
+		if (req.roomId) {
+			roomManager.assignSession(req.roomId, sessionId);
+		}
 
 		// Return the full session object so client can optimistically update
 		const agentSession = sessionManager.getSession(sessionId);

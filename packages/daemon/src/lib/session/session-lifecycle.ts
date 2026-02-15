@@ -35,6 +35,8 @@ export interface CreateSessionParams {
 	config?: Partial<Session['config']>;
 	worktreeBaseBranch?: string;
 	title?: string; // Optional title - if provided, skips auto-title generation
+	roomId?: string; // Optional room ID to assign session to
+	createdBy?: 'human' | 'neo'; // Creator type (defaults to 'human')
 }
 
 export class SessionLifecycle {
