@@ -4,6 +4,7 @@
  * Modal form for creating a new room with:
  * - Room name (required)
  * - Description (optional)
+ * - Workspace paths (comma-separated, optional)
  * - Form validation and error handling
  */
 
@@ -14,12 +15,18 @@ import { Button } from '../ui/Button';
 interface CreateRoomModalProps {
 	isOpen: boolean;
 	onClose: () => void;
-	onSubmit: (params: { name: string; description?: string }) => Promise<void>;
+	onSubmit: (params: {
+		name: string;
+		description?: string;
+		allowedPaths?: string[];
+		defaultPath?: string;
+	}) => Promise<void>;
 }
 
 export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalProps) {
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
+	const [pathsInput, setPathsInput] = useState('');
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -33,10 +40,24 @@ export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalPr
 		try {
 			setSubmitting(true);
 			setError(null);
-			await onSubmit({ name: name.trim(), description: description.trim() || undefined });
+
+			// Parse comma-separated paths into array
+			const allowedPaths = pathsInput
+				.split(',')
+				.map((p) => p.trim())
+				.filter((p) => p.length > 0);
+
+			await onSubmit({
+				name: name.trim(),
+				description: description.trim() || undefined,
+				allowedPaths: allowedPaths.length > 0 ? allowedPaths : undefined,
+				defaultPath: allowedPaths.length > 0 ? allowedPaths[0] : undefined,
+			});
+
 			// Reset form on success
 			setName('');
 			setDescription('');
+			setPathsInput('');
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to create room');
 		} finally {
@@ -47,6 +68,7 @@ export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalPr
 	const handleClose = () => {
 		setName('');
 		setDescription('');
+		setPathsInput('');
 		setError(null);
 		onClose();
 	};
@@ -85,6 +107,21 @@ export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalPr
 						class="w-full bg-dark-800 border border-dark-700 rounded-lg px-4 py-2.5 text-gray-100
               placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-none"
 					/>
+				</div>
+
+				<div>
+					<label class="block text-sm font-medium text-gray-300 mb-1.5">
+						Workspace Paths (optional)
+					</label>
+					<input
+						type="text"
+						value={pathsInput}
+						onInput={(e) => setPathsInput((e.target as HTMLInputElement).value)}
+						placeholder="e.g., /home/user/project1, /home/user/project2"
+						class="w-full bg-dark-800 border border-dark-700 rounded-lg px-4 py-2.5 text-gray-100
+              placeholder-gray-500 focus:outline-none focus:border-blue-500"
+					/>
+					<p class="text-xs text-gray-500 mt-1">Comma-separated list of workspace paths</p>
 				</div>
 
 				<div class="flex gap-3 pt-2">

@@ -27,7 +27,8 @@ export function setupRoomHandlers(
 		const params = data as {
 			name: string;
 			description?: string;
-			defaultWorkspace?: string;
+			allowedPaths?: string[];
+			defaultPath?: string;
 			defaultModel?: string;
 		};
 
@@ -38,7 +39,8 @@ export function setupRoomHandlers(
 		const room = roomManager.createRoom({
 			name: params.name,
 			description: params.description,
-			defaultWorkspace: params.defaultWorkspace,
+			allowedPaths: params.allowedPaths,
+			defaultPath: params.defaultPath,
 			defaultModel: params.defaultModel,
 		});
 
@@ -85,7 +87,8 @@ export function setupRoomHandlers(
 			roomId: string;
 			name?: string;
 			description?: string;
-			defaultWorkspace?: string;
+			allowedPaths?: string[];
+			defaultPath?: string;
 			defaultModel?: string;
 		};
 
@@ -96,7 +99,8 @@ export function setupRoomHandlers(
 		const room = roomManager.updateRoom(params.roomId, {
 			name: params.name,
 			description: params.description,
-			defaultWorkspace: params.defaultWorkspace,
+			allowedPaths: params.allowedPaths,
+			defaultPath: params.defaultPath,
 			defaultModel: params.defaultModel,
 		});
 
@@ -207,6 +211,44 @@ export function setupRoomHandlers(
 		}
 
 		const room = roomManager.unassignSession(params.roomId, params.sessionId);
+		if (!room) {
+			throw new Error(`Room not found: ${params.roomId}`);
+		}
+
+		return { room };
+	});
+
+	// room.addPath - Add an allowed path to a room
+	messageHub.onRequest('room.addPath', async (data) => {
+		const params = data as { roomId: string; path: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.path) {
+			throw new Error('Path is required');
+		}
+
+		const room = roomManager.addAllowedPath(params.roomId, params.path);
+		if (!room) {
+			throw new Error(`Room not found: ${params.roomId}`);
+		}
+
+		return { room };
+	});
+
+	// room.removePath - Remove an allowed path from a room
+	messageHub.onRequest('room.removePath', async (data) => {
+		const params = data as { roomId: string; path: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.path) {
+			throw new Error('Path is required');
+		}
+
+		const room = roomManager.removeAllowedPath(params.roomId, params.path);
 		if (!room) {
 			throw new Error(`Room not found: ${params.roomId}`);
 		}

@@ -25,8 +25,10 @@ export interface Room {
 	name: string;
 	/** Optional description of the room's purpose */
 	description?: string;
-	/** Default workspace path for sessions created in this room */
-	defaultWorkspace?: string;
+	/** Allowed workspace paths for this room (multi-path support) */
+	allowedPaths: string[];
+	/** Default workspace path for new sessions (must be in allowedPaths) */
+	defaultPath?: string;
 	/** Default model for sessions created in this room */
 	defaultModel?: string;
 	/** IDs of sessions associated with this room */
@@ -47,7 +49,8 @@ export interface Room {
 export interface CreateRoomParams {
 	name: string;
 	description?: string;
-	defaultWorkspace?: string;
+	allowedPaths?: string[];
+	defaultPath?: string;
 	defaultModel?: string;
 }
 
@@ -57,7 +60,8 @@ export interface CreateRoomParams {
 export interface UpdateRoomParams {
 	name?: string;
 	description?: string;
-	defaultWorkspace?: string;
+	allowedPaths?: string[];
+	defaultPath?: string;
 	defaultModel?: string;
 }
 

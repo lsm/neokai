@@ -21,15 +21,16 @@ export class RoomRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO rooms (id, name, description, default_workspace, default_model, session_ids, status, context_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO rooms (id, name, description, allowed_paths, default_path, default_model, session_ids, status, context_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
 			id,
 			params.name,
 			params.description ?? null,
-			params.defaultWorkspace ?? null,
+			JSON.stringify(params.allowedPaths ?? []),
+			params.defaultPath ?? null,
 			params.defaultModel ?? null,
 			'[]',
 			'active',
@@ -82,9 +83,13 @@ export class RoomRepository {
 			fields.push('description = ?');
 			values.push(params.description ?? null);
 		}
-		if (params.defaultWorkspace !== undefined) {
-			fields.push('default_workspace = ?');
-			values.push(params.defaultWorkspace ?? null);
+		if (params.allowedPaths !== undefined) {
+			fields.push('allowed_paths = ?');
+			values.push(JSON.stringify(params.allowedPaths));
+		}
+		if (params.defaultPath !== undefined) {
+			fields.push('default_path = ?');
+			values.push(params.defaultPath ?? null);
 		}
 		if (params.defaultModel !== undefined) {
 			fields.push('default_model = ?');
@@ -156,6 +161,32 @@ export class RoomRepository {
 	}
 
 	/**
+	 * Add a path to the room's allowed paths
+	 */
+	addPath(id: string, path: string): Room | null {
+		const room = this.getRoom(id);
+		if (!room) return null;
+
+		const allowedPaths = [...new Set([...room.allowedPaths, path])];
+		const stmt = this.db.prepare(`UPDATE rooms SET allowed_paths = ?, updated_at = ? WHERE id = ?`);
+		stmt.run(JSON.stringify(allowedPaths), Date.now(), id);
+		return this.getRoom(id);
+	}
+
+	/**
+	 * Remove a path from the room's allowed paths
+	 */
+	removePath(id: string, path: string): Room | null {
+		const room = this.getRoom(id);
+		if (!room) return null;
+
+		const allowedPaths = room.allowedPaths.filter((p) => p !== path);
+		const stmt = this.db.prepare(`UPDATE rooms SET allowed_paths = ?, updated_at = ? WHERE id = ?`);
+		stmt.run(JSON.stringify(allowedPaths), Date.now(), id);
+		return this.getRoom(id);
+	}
+
+	/**
 	 * Convert a database row to a Room object
 	 */
 	private rowToRoom(row: Record<string, unknown>): Room {
@@ -163,7 +194,8 @@ export class RoomRepository {
 			id: row.id as string,
 			name: row.name as string,
 			description: (row.description as string | null) ?? undefined,
-			defaultWorkspace: (row.default_workspace as string | null) ?? undefined,
+			allowedPaths: JSON.parse((row.allowed_paths as string) ?? '[]') as string[],
+			defaultPath: (row.default_path as string | null) ?? undefined,
 			defaultModel: (row.default_model as string | null) ?? undefined,
 			sessionIds: JSON.parse(row.session_ids as string) as string[],
 			status: row.status as 'active' | 'archived',

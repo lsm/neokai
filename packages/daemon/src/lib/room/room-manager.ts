@@ -89,6 +89,20 @@ export class RoomManager {
 	}
 
 	/**
+	 * Add an allowed path to a room
+	 */
+	addAllowedPath(roomId: string, path: string): Room | null {
+		return this.roomRepo.addPath(roomId, path);
+	}
+
+	/**
+	 * Remove an allowed path from a room
+	 */
+	removeAllowedPath(roomId: string, path: string): Room | null {
+		return this.roomRepo.removePath(roomId, path);
+	}
+
+	/**
 	 * Assign a session to a room
 	 */
 	assignSession(roomId: string, sessionId: string): Room | null {

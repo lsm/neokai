@@ -1,7 +1,7 @@
 /**
  * Database Migrations
  *
- * All 14 migrations for schema changes.
+ * All 15 migrations for schema changes.
  * CRITICAL: Preserve the order of migrations.
  */
 
@@ -59,6 +59,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 14: Rename neo_* tables to generic names
 	runMigration14(db);
+
+	// Migration 15: Add allowed_paths and default_path columns to rooms table
+	runMigration15(db);
 }
 
 /**
@@ -601,5 +604,41 @@ function runMigration14(db: BunDatabase): void {
 	} finally {
 		// Re-enable foreign keys
 		db.exec('PRAGMA foreign_keys = ON');
+	}
+}
+
+/**
+ * Migration 15: Add allowed_paths and default_path columns to rooms table
+ *
+ * Adds multi-path workspace support to rooms:
+ * - allowed_paths: JSON array of workspace paths this room can access
+ * - default_path: Default path for new sessions
+ *
+ * Also migrates existing default_workspace to allowed_paths[0] if present.
+ */
+function runMigration15(db: BunDatabase): void {
+	try {
+		// Check if allowed_paths column already exists
+		db.prepare(`SELECT allowed_paths FROM rooms LIMIT 1`).all();
+	} catch {
+		// Column doesn't exist, add the new columns
+		db.exec(`ALTER TABLE rooms ADD COLUMN allowed_paths TEXT DEFAULT '[]'`);
+		db.exec(`ALTER TABLE rooms ADD COLUMN default_path TEXT`);
+
+		// Migrate existing default_workspace to allowed_paths
+		// For each room with a default_workspace, set allowed_paths to [default_workspace]
+		// and default_path to default_workspace
+		const rooms = db
+			.prepare(`SELECT id, default_workspace FROM rooms WHERE default_workspace IS NOT NULL`)
+			.all() as { id: string; default_workspace: string }[];
+
+		for (const room of rooms) {
+			const allowedPaths = JSON.stringify([room.default_workspace]);
+			db.prepare(`UPDATE rooms SET allowed_paths = ?, default_path = ? WHERE id = ?`).run(
+				allowedPaths,
+				room.default_workspace,
+				room.id
+			);
+		}
 	}
 }
