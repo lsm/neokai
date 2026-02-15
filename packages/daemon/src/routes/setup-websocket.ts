@@ -19,7 +19,9 @@ import type { SessionManager } from '../lib/session-manager';
 const GLOBAL_SESSION_ID = 'global';
 
 // FIX P1.1: Message size validation constants (DoS prevention)
-const MAX_MESSAGE_SIZE = 10 * 1024 * 1024; // 10MB max message size
+// Note: Increased from 10MB to 50MB to support large session state snapshots
+// with long conversation histories
+const MAX_MESSAGE_SIZE = 50 * 1024 * 1024; // 50MB max message size
 const MAX_MESSAGE_SIZE_MB = MAX_MESSAGE_SIZE / (1024 * 1024);
 
 /**

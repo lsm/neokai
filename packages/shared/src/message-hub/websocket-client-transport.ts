@@ -65,7 +65,9 @@ export class WebSocketClientTransport implements IMessageTransport {
 	private connectionHandlers: Set<ConnectionStateHandler> = new Set();
 
 	// FIX P1.1: Message size validation (DoS prevention)
-	private readonly maxMessageSize: number = 10 * 1024 * 1024; // 10MB
+	// Note: Increased from 10MB to 50MB to support large session state snapshots
+	// with long conversation histories
+	private readonly maxMessageSize: number = 50 * 1024 * 1024; // 50MB
 
 	// FIX P1.2: PONG timeout detection (stale connection detection)
 	private lastPongTime: number = Date.now();
