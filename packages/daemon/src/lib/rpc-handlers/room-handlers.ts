@@ -213,10 +213,4 @@ export function setupRoomHandlers(
 
 		return { room };
 	});
-
-	// neo.status - Get global Neo status (kept for backward compatibility)
-	messageHub.onRequest('neo.status', async () => {
-		const status = roomManager.getGlobalStatus();
-		return { status };
-	});
 }

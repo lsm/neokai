@@ -10,7 +10,7 @@ import { generateUUID } from '@neokai/shared';
 import type { NeoTask, TaskFilter, CreateTaskParams, UpdateTaskParams } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
 
-export class NeoTaskRepository {
+export class TaskRepository {
 	constructor(private db: BunDatabase) {}
 
 	/**
@@ -21,7 +21,7 @@ export class NeoTaskRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO neo_tasks (id, room_id, title, description, session_id, status, priority, depends_on, created_at)
+			`INSERT INTO tasks (id, room_id, title, description, session_id, status, priority, depends_on, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
@@ -44,7 +44,7 @@ export class NeoTaskRepository {
 	 * Get a task by ID
 	 */
 	getTask(id: string): NeoTask | null {
-		const stmt = this.db.prepare(`SELECT * FROM neo_tasks WHERE id = ?`);
+		const stmt = this.db.prepare(`SELECT * FROM tasks WHERE id = ?`);
 		const row = stmt.get(id) as Record<string, unknown> | undefined;
 
 		if (!row) return null;
@@ -55,7 +55,7 @@ export class NeoTaskRepository {
 	 * List tasks for a room, optionally filtered
 	 */
 	listTasks(roomId: string, filter?: TaskFilter): NeoTask[] {
-		let query = `SELECT * FROM neo_tasks WHERE room_id = ?`;
+		let query = `SELECT * FROM tasks WHERE room_id = ?`;
 		const params: SQLiteValue[] = [roomId];
 
 		if (filter?.status) {
@@ -137,7 +137,7 @@ export class NeoTaskRepository {
 
 		if (fields.length > 0) {
 			values.push(id);
-			const stmt = this.db.prepare(`UPDATE neo_tasks SET ${fields.join(', ')} WHERE id = ?`);
+			const stmt = this.db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`);
 			stmt.run(...values);
 		}
 
@@ -148,7 +148,7 @@ export class NeoTaskRepository {
 	 * Delete a task by ID
 	 */
 	deleteTask(id: string): void {
-		const stmt = this.db.prepare(`DELETE FROM neo_tasks WHERE id = ?`);
+		const stmt = this.db.prepare(`DELETE FROM tasks WHERE id = ?`);
 		stmt.run(id);
 	}
 
@@ -156,7 +156,7 @@ export class NeoTaskRepository {
 	 * Delete all tasks for a room
 	 */
 	deleteTasksForRoom(roomId: string): void {
-		const stmt = this.db.prepare(`DELETE FROM neo_tasks WHERE room_id = ?`);
+		const stmt = this.db.prepare(`DELETE FROM tasks WHERE room_id = ?`);
 		stmt.run(roomId);
 	}
 
@@ -165,7 +165,7 @@ export class NeoTaskRepository {
 	 */
 	countTasksByStatus(roomId: string, status: string): number {
 		const stmt = this.db.prepare(
-			`SELECT COUNT(*) as count FROM neo_tasks WHERE room_id = ? AND status = ?`
+			`SELECT COUNT(*) as count FROM tasks WHERE room_id = ? AND status = ?`
 		);
 		const result = stmt.get(roomId, status) as { count: number };
 		return result.count;
@@ -176,7 +176,7 @@ export class NeoTaskRepository {
 	 */
 	countActiveTasks(roomId: string): number {
 		const stmt = this.db.prepare(
-			`SELECT COUNT(*) as count FROM neo_tasks WHERE room_id = ? AND status NOT IN ('completed', 'failed')`
+			`SELECT COUNT(*) as count FROM tasks WHERE room_id = ? AND status NOT IN ('completed', 'failed')`
 		);
 		const result = stmt.get(roomId) as { count: number };
 		return result.count;

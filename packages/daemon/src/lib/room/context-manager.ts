@@ -8,7 +8,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { NeoContextRepository } from '../../storage/repositories/context-repository';
+import { ContextRepository } from '../../storage/repositories/context-repository';
 import type { NeoContextMessage, NeoContext, ContextMessageRole } from '@neokai/shared';
 
 /**
@@ -30,14 +30,14 @@ const MAX_CONTEXT_TOKENS = 150000;
 const COMPACTION_KEEP_RECENT = 20;
 
 export class ContextManager {
-	private contextRepo: NeoContextRepository;
+	private contextRepo: ContextRepository;
 	private contextId: string | null = null;
 
 	constructor(
 		private db: BunDatabase,
 		private roomId: string
 	) {
-		this.contextRepo = new NeoContextRepository(db);
+		this.contextRepo = new ContextRepository(db);
 	}
 
 	/**
@@ -166,7 +166,7 @@ export class ContextManager {
 			// Note: This is a simplified approach - in production, we'd want a more efficient method
 			for (const message of messages) {
 				if (!keptIds.has(message.id)) {
-					this.db.prepare('DELETE FROM neo_context_messages WHERE id = ?').run(message.id);
+					this.db.prepare('DELETE FROM context_messages WHERE id = ?').run(message.id);
 				}
 			}
 
@@ -187,7 +187,7 @@ export class ContextManager {
 	 */
 	async clearContext(): Promise<void> {
 		const contextId = await this.getOrCreateContext();
-		this.db.prepare('DELETE FROM neo_context_messages WHERE context_id = ?').run(contextId);
+		this.db.prepare('DELETE FROM context_messages WHERE context_id = ?').run(contextId);
 		this.contextRepo.updateContext(contextId, { totalTokens: 0 });
 	}
 }

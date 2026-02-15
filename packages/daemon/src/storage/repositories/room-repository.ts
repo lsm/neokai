@@ -10,7 +10,7 @@ import { generateUUID } from '@neokai/shared';
 import type { Room, CreateRoomParams, UpdateRoomParams } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
 
-export class NeoRoomRepository {
+export class RoomRepository {
 	constructor(private db: BunDatabase) {}
 
 	/**
@@ -21,7 +21,7 @@ export class NeoRoomRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO neo_rooms (id, name, description, default_workspace, default_model, session_ids, status, neo_context_id, created_at, updated_at)
+			`INSERT INTO rooms (id, name, description, default_workspace, default_model, session_ids, status, context_id, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
@@ -45,7 +45,7 @@ export class NeoRoomRepository {
 	 * Get a room by ID
 	 */
 	getRoom(id: string): Room | null {
-		const stmt = this.db.prepare(`SELECT * FROM neo_rooms WHERE id = ?`);
+		const stmt = this.db.prepare(`SELECT * FROM rooms WHERE id = ?`);
 		const row = stmt.get(id) as Record<string, unknown> | undefined;
 
 		if (!row) return null;
@@ -56,7 +56,7 @@ export class NeoRoomRepository {
 	 * List all rooms, optionally filtering by status
 	 */
 	listRooms(includeArchived = false): Room[] {
-		let query = `SELECT * FROM neo_rooms`;
+		let query = `SELECT * FROM rooms`;
 		if (!includeArchived) {
 			query += ` WHERE status = 'active'`;
 		}
@@ -95,7 +95,7 @@ export class NeoRoomRepository {
 			fields.push('updated_at = ?');
 			values.push(Date.now());
 			values.push(id);
-			const stmt = this.db.prepare(`UPDATE neo_rooms SET ${fields.join(', ')} WHERE id = ?`);
+			const stmt = this.db.prepare(`UPDATE rooms SET ${fields.join(', ')} WHERE id = ?`);
 			stmt.run(...values);
 		}
 
@@ -107,7 +107,7 @@ export class NeoRoomRepository {
 	 */
 	archiveRoom(id: string): Room | null {
 		const stmt = this.db.prepare(
-			`UPDATE neo_rooms SET status = 'archived', updated_at = ? WHERE id = ?`
+			`UPDATE rooms SET status = 'archived', updated_at = ? WHERE id = ?`
 		);
 		stmt.run(Date.now(), id);
 		return this.getRoom(id);
@@ -121,9 +121,7 @@ export class NeoRoomRepository {
 		if (!room) return null;
 
 		const sessionIds = [...new Set([...room.sessionIds, sessionId])];
-		const stmt = this.db.prepare(
-			`UPDATE neo_rooms SET session_ids = ?, updated_at = ? WHERE id = ?`
-		);
+		const stmt = this.db.prepare(`UPDATE rooms SET session_ids = ?, updated_at = ? WHERE id = ?`);
 		stmt.run(JSON.stringify(sessionIds), Date.now(), roomId);
 		return this.getRoom(roomId);
 	}
@@ -136,18 +134,16 @@ export class NeoRoomRepository {
 		if (!room) return null;
 
 		const sessionIds = room.sessionIds.filter((id) => id !== sessionId);
-		const stmt = this.db.prepare(
-			`UPDATE neo_rooms SET session_ids = ?, updated_at = ? WHERE id = ?`
-		);
+		const stmt = this.db.prepare(`UPDATE rooms SET session_ids = ?, updated_at = ? WHERE id = ?`);
 		stmt.run(JSON.stringify(sessionIds), Date.now(), roomId);
 		return this.getRoom(roomId);
 	}
 
 	/**
-	 * Set the neo context ID for a room
+	 * Set the context ID for a room
 	 */
 	setRoomContextId(roomId: string, contextId: string): void {
-		const stmt = this.db.prepare(`UPDATE neo_rooms SET neo_context_id = ? WHERE id = ?`);
+		const stmt = this.db.prepare(`UPDATE rooms SET context_id = ? WHERE id = ?`);
 		stmt.run(contextId, roomId);
 	}
 
@@ -155,7 +151,7 @@ export class NeoRoomRepository {
 	 * Delete a room by ID
 	 */
 	deleteRoom(id: string): void {
-		const stmt = this.db.prepare(`DELETE FROM neo_rooms WHERE id = ?`);
+		const stmt = this.db.prepare(`DELETE FROM rooms WHERE id = ?`);
 		stmt.run(id);
 	}
 
@@ -171,7 +167,7 @@ export class NeoRoomRepository {
 			defaultModel: (row.default_model as string | null) ?? undefined,
 			sessionIds: JSON.parse(row.session_ids as string) as string[],
 			status: row.status as 'active' | 'archived',
-			neoContextId: (row.neo_context_id as string | null) ?? undefined,
+			contextId: (row.context_id as string | null) ?? undefined,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,
 		};

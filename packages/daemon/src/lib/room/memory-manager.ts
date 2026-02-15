@@ -9,17 +9,17 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { NeoMemoryRepository } from '../../storage/repositories/memory-repository';
+import { MemoryRepository } from '../../storage/repositories/memory-repository';
 import type { NeoMemory, MemoryType, MemoryImportance } from '@neokai/shared';
 
 export class MemoryManager {
-	private memoryRepo: NeoMemoryRepository;
+	private memoryRepo: MemoryRepository;
 
 	constructor(
 		private db: BunDatabase,
 		private roomId: string
 	) {
-		this.memoryRepo = new NeoMemoryRepository(db);
+		this.memoryRepo = new MemoryRepository(db);
 	}
 
 	/**
@@ -54,7 +54,7 @@ export class MemoryManager {
 		tags?: string[];
 		limit?: number;
 	}): Promise<NeoMemory[]> {
-		let sql = `SELECT * FROM neo_memories WHERE room_id = ?`;
+		let sql = `SELECT * FROM memories WHERE room_id = ?`;
 		const params: (string | number)[] = [this.roomId];
 
 		if (query.type) {
@@ -87,7 +87,7 @@ export class MemoryManager {
 	 * Search memories by content (simple LIKE for now)
 	 */
 	async searchMemories(searchTerm: string, limit?: number): Promise<NeoMemory[]> {
-		let sql = `SELECT * FROM neo_memories WHERE room_id = ? AND content LIKE ?`;
+		let sql = `SELECT * FROM memories WHERE room_id = ? AND content LIKE ?`;
 		const params: (string | number)[] = [this.roomId, `%${searchTerm}%`];
 
 		sql += ` ORDER BY importance DESC, last_accessed_at DESC`;

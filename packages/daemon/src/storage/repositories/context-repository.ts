@@ -10,7 +10,7 @@ import { generateUUID } from '@neokai/shared';
 import type { NeoContext, NeoContextMessage } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
 
-export class NeoContextRepository {
+export class ContextRepository {
 	constructor(private db: BunDatabase) {}
 
 	/**
@@ -20,7 +20,7 @@ export class NeoContextRepository {
 		const id = generateUUID();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO neo_contexts (id, room_id, total_tokens, status)
+			`INSERT INTO contexts (id, room_id, total_tokens, status)
        VALUES (?, ?, 0, 'idle')`
 		);
 
@@ -33,7 +33,7 @@ export class NeoContextRepository {
 	 * Get a context by ID
 	 */
 	getContext(id: string): NeoContext | null {
-		const stmt = this.db.prepare(`SELECT * FROM neo_contexts WHERE id = ?`);
+		const stmt = this.db.prepare(`SELECT * FROM contexts WHERE id = ?`);
 		const row = stmt.get(id) as Record<string, unknown> | undefined;
 
 		if (!row) return null;
@@ -44,7 +44,7 @@ export class NeoContextRepository {
 	 * Get the context for a room
 	 */
 	getContextForRoom(roomId: string): NeoContext | null {
-		const stmt = this.db.prepare(`SELECT * FROM neo_contexts WHERE room_id = ?`);
+		const stmt = this.db.prepare(`SELECT * FROM contexts WHERE room_id = ?`);
 		const row = stmt.get(roomId) as Record<string, unknown> | undefined;
 
 		if (!row) return null;
@@ -90,7 +90,7 @@ export class NeoContextRepository {
 
 		if (fields.length > 0) {
 			values.push(id);
-			const stmt = this.db.prepare(`UPDATE neo_contexts SET ${fields.join(', ')} WHERE id = ?`);
+			const stmt = this.db.prepare(`UPDATE contexts SET ${fields.join(', ')} WHERE id = ?`);
 			stmt.run(...values);
 		}
 
@@ -112,7 +112,7 @@ export class NeoContextRepository {
 		const timestamp = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO neo_context_messages (id, context_id, role, content, timestamp, token_count, session_id, task_id)
+			`INSERT INTO context_messages (id, context_id, role, content, timestamp, token_count, session_id, task_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
@@ -129,7 +129,7 @@ export class NeoContextRepository {
 
 		// Update total tokens in context
 		this.db
-			.prepare(`UPDATE neo_contexts SET total_tokens = total_tokens + ? WHERE id = ?`)
+			.prepare(`UPDATE contexts SET total_tokens = total_tokens + ? WHERE id = ?`)
 			.run(tokenCount, contextId);
 
 		return this.getMessage(id)!;
@@ -139,7 +139,7 @@ export class NeoContextRepository {
 	 * Get a message by ID
 	 */
 	getMessage(id: string): NeoContextMessage | null {
-		const stmt = this.db.prepare(`SELECT * FROM neo_context_messages WHERE id = ?`);
+		const stmt = this.db.prepare(`SELECT * FROM context_messages WHERE id = ?`);
 		const row = stmt.get(id) as Record<string, unknown> | undefined;
 
 		if (!row) return null;
@@ -151,7 +151,7 @@ export class NeoContextRepository {
 	 */
 	getMessages(contextId: string): NeoContextMessage[] {
 		const stmt = this.db.prepare(
-			`SELECT * FROM neo_context_messages WHERE context_id = ? ORDER BY timestamp ASC`
+			`SELECT * FROM context_messages WHERE context_id = ? ORDER BY timestamp ASC`
 		);
 		const rows = stmt.all(contextId) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToMessage(r));
@@ -162,7 +162,7 @@ export class NeoContextRepository {
 	 */
 	deleteMessagesAfter(contextId: string, timestamp: number): number {
 		const stmt = this.db.prepare(
-			`DELETE FROM neo_context_messages WHERE context_id = ? AND timestamp > ?`
+			`DELETE FROM context_messages WHERE context_id = ? AND timestamp > ?`
 		);
 		const result = stmt.run(contextId, timestamp);
 		return result.changes;
@@ -172,7 +172,7 @@ export class NeoContextRepository {
 	 * Delete a context and all its messages
 	 */
 	deleteContext(id: string): void {
-		const stmt = this.db.prepare(`DELETE FROM neo_contexts WHERE id = ?`);
+		const stmt = this.db.prepare(`DELETE FROM contexts WHERE id = ?`);
 		stmt.run(id);
 	}
 

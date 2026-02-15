@@ -1,7 +1,7 @@
 /**
  * Database Migrations
  *
- * All 13 migrations for schema changes.
+ * All 14 migrations for schema changes.
  * CRITICAL: Preserve the order of migrations.
  */
 
@@ -56,6 +56,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 13: Update CHECK constraint to include 'pending_worktree_choice' status
 	runMigration13(db);
+
+	// Migration 14: Rename neo_* tables to generic names
+	runMigration14(db);
 }
 
 /**
@@ -419,5 +422,184 @@ function runMigration13(db: BunDatabase): void {
 			// Re-enable foreign keys
 			db.exec('PRAGMA foreign_keys = ON');
 		}
+	}
+}
+
+/**
+ * Migration 14: Rename neo_* tables to generic names
+ *
+ * Renames:
+ * - neo_rooms -> rooms
+ * - neo_memories -> memories
+ * - neo_tasks -> tasks
+ * - neo_contexts -> contexts
+ * - neo_context_messages -> context_messages
+ * - neo_context_id column -> context_id
+ * - Indexes idx_neo_* -> idx_*
+ */
+function runMigration14(db: BunDatabase): void {
+	// Check if migration already done by checking if neo_rooms table exists
+	try {
+		db.prepare(`SELECT 1 FROM neo_rooms LIMIT 1`).all();
+	} catch {
+		// neo_rooms doesn't exist, migration already complete
+		return;
+	}
+
+	// Disable foreign keys during table renaming
+	db.exec('PRAGMA foreign_keys = OFF');
+
+	try {
+		// Drop old indexes first
+		db.exec(`DROP INDEX IF EXISTS idx_neo_memories_room`);
+		db.exec(`DROP INDEX IF EXISTS idx_neo_memories_type`);
+		db.exec(`DROP INDEX IF EXISTS idx_neo_tasks_room`);
+		db.exec(`DROP INDEX IF EXISTS idx_neo_tasks_status`);
+		db.exec(`DROP INDEX IF EXISTS idx_neo_context_messages_context`);
+
+		// Rename tables
+		db.exec(`ALTER TABLE neo_context_messages RENAME TO context_messages`);
+		db.exec(`ALTER TABLE neo_contexts RENAME TO contexts`);
+		db.exec(`ALTER TABLE neo_tasks RENAME TO tasks`);
+		db.exec(`ALTER TABLE neo_memories RENAME TO memories`);
+		db.exec(`ALTER TABLE neo_rooms RENAME TO rooms`);
+
+		// Rename neo_context_id column to context_id in rooms table
+		// SQLite doesn't support ALTER COLUMN, so we need to recreate the table
+		db.exec(`
+			CREATE TABLE rooms_new (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				description TEXT,
+				default_workspace TEXT,
+				default_model TEXT,
+				session_ids TEXT DEFAULT '[]',
+				status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived')),
+				context_id TEXT,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL
+			);
+
+			INSERT INTO rooms_new (id, name, description, default_workspace, default_model, session_ids, status, context_id, created_at, updated_at)
+			SELECT id, name, description, default_workspace, default_model, session_ids, status, neo_context_id, created_at, updated_at
+			FROM rooms;
+
+			DROP TABLE rooms;
+
+			ALTER TABLE rooms_new RENAME TO rooms;
+		`);
+
+		// Update foreign key references in contexts table
+		db.exec(`
+			CREATE TABLE contexts_new (
+				id TEXT PRIMARY KEY,
+				room_id TEXT NOT NULL UNIQUE,
+				total_tokens INTEGER DEFAULT 0,
+				last_compacted_at INTEGER,
+				status TEXT NOT NULL DEFAULT 'idle' CHECK(status IN ('idle', 'thinking', 'waiting_for_input')),
+				current_task_id TEXT,
+				current_session_id TEXT,
+				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+			);
+
+			INSERT INTO contexts_new
+			SELECT id, room_id, total_tokens, last_compacted_at, status, current_task_id, current_session_id
+			FROM contexts;
+
+			DROP TABLE contexts;
+
+			ALTER TABLE contexts_new RENAME TO contexts;
+		`);
+
+		// Update foreign key references in memories table
+		db.exec(`
+			CREATE TABLE memories_new (
+				id TEXT PRIMARY KEY,
+				room_id TEXT NOT NULL,
+				type TEXT NOT NULL CHECK(type IN ('conversation', 'task_result', 'preference', 'pattern', 'note')),
+				content TEXT NOT NULL,
+				tags TEXT DEFAULT '[]',
+				importance TEXT NOT NULL DEFAULT 'normal' CHECK(importance IN ('low', 'normal', 'high')),
+				session_id TEXT,
+				task_id TEXT,
+				created_at INTEGER NOT NULL,
+				last_accessed_at INTEGER NOT NULL,
+				access_count INTEGER DEFAULT 0,
+				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+			);
+
+			INSERT INTO memories_new
+			SELECT id, room_id, type, content, tags, importance, session_id, task_id, created_at, last_accessed_at, access_count
+			FROM memories;
+
+			DROP TABLE memories;
+
+			ALTER TABLE memories_new RENAME TO memories;
+		`);
+
+		// Update foreign key references in tasks table
+		db.exec(`
+			CREATE TABLE tasks_new (
+				id TEXT PRIMARY KEY,
+				room_id TEXT NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL,
+				session_id TEXT,
+				status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'blocked', 'completed', 'failed')),
+				priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+				progress INTEGER,
+				current_step TEXT,
+				result TEXT,
+				error TEXT,
+				depends_on TEXT DEFAULT '[]',
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				completed_at INTEGER,
+				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+			);
+
+			INSERT INTO tasks_new
+			SELECT id, room_id, title, description, session_id, status, priority, progress, current_step, result, error, depends_on, created_at, started_at, completed_at
+			FROM tasks;
+
+			DROP TABLE tasks;
+
+			ALTER TABLE tasks_new RENAME TO tasks;
+		`);
+
+		// Update foreign key references in context_messages table
+		db.exec(`
+			CREATE TABLE context_messages_new (
+				id TEXT PRIMARY KEY,
+				context_id TEXT NOT NULL,
+				role TEXT NOT NULL CHECK(role IN ('system', 'user', 'assistant')),
+				content TEXT NOT NULL,
+				timestamp INTEGER NOT NULL,
+				token_count INTEGER NOT NULL,
+				session_id TEXT,
+				task_id TEXT,
+				FOREIGN KEY (context_id) REFERENCES contexts(id) ON DELETE CASCADE
+			);
+
+			INSERT INTO context_messages_new
+			SELECT id, context_id, role, content, timestamp, token_count, session_id, task_id
+			FROM context_messages;
+
+			DROP TABLE context_messages;
+
+			ALTER TABLE context_messages_new RENAME TO context_messages;
+		`);
+
+		// Create new indexes with renamed names
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_room ON memories(room_id)`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type)`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_context_messages_context ON context_messages(context_id)`
+		);
+	} finally {
+		// Re-enable foreign keys
+		db.exec('PRAGMA foreign_keys = ON');
 	}
 }

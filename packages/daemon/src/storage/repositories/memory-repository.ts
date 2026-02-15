@@ -9,7 +9,7 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
 import type { NeoMemory, CreateMemoryParams } from '@neokai/shared';
 
-export class NeoMemoryRepository {
+export class MemoryRepository {
 	constructor(private db: BunDatabase) {}
 
 	/**
@@ -20,7 +20,7 @@ export class NeoMemoryRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO neo_memories (id, room_id, type, content, tags, importance, session_id, task_id, created_at, last_accessed_at, access_count)
+			`INSERT INTO memories (id, room_id, type, content, tags, importance, session_id, task_id, created_at, last_accessed_at, access_count)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
@@ -45,7 +45,7 @@ export class NeoMemoryRepository {
 	 * Get a memory by ID
 	 */
 	getMemory(id: string): NeoMemory | null {
-		const stmt = this.db.prepare(`SELECT * FROM neo_memories WHERE id = ?`);
+		const stmt = this.db.prepare(`SELECT * FROM memories WHERE id = ?`);
 		const row = stmt.get(id) as Record<string, unknown> | undefined;
 
 		if (!row) return null;
@@ -56,7 +56,7 @@ export class NeoMemoryRepository {
 	 * List memories for a room, optionally filtered by type
 	 */
 	listMemories(roomId: string, type?: string): NeoMemory[] {
-		let query = `SELECT * FROM neo_memories WHERE room_id = ?`;
+		let query = `SELECT * FROM memories WHERE room_id = ?`;
 		const params: (string | number)[] = [roomId];
 
 		if (type) {
@@ -76,7 +76,7 @@ export class NeoMemoryRepository {
 	 */
 	touchMemory(id: string): void {
 		const stmt = this.db.prepare(
-			`UPDATE neo_memories SET last_accessed_at = ?, access_count = access_count + 1 WHERE id = ?`
+			`UPDATE memories SET last_accessed_at = ?, access_count = access_count + 1 WHERE id = ?`
 		);
 		stmt.run(Date.now(), id);
 	}
@@ -85,7 +85,7 @@ export class NeoMemoryRepository {
 	 * Delete a memory by ID
 	 */
 	deleteMemory(id: string): void {
-		const stmt = this.db.prepare(`DELETE FROM neo_memories WHERE id = ?`);
+		const stmt = this.db.prepare(`DELETE FROM memories WHERE id = ?`);
 		stmt.run(id);
 	}
 
@@ -93,7 +93,7 @@ export class NeoMemoryRepository {
 	 * Delete all memories for a room
 	 */
 	deleteMemoriesForRoom(roomId: string): void {
-		const stmt = this.db.prepare(`DELETE FROM neo_memories WHERE room_id = ?`);
+		const stmt = this.db.prepare(`DELETE FROM memories WHERE room_id = ?`);
 		stmt.run(roomId);
 	}
 
@@ -101,7 +101,7 @@ export class NeoMemoryRepository {
 	 * Count memories for a room
 	 */
 	countMemories(roomId: string): number {
-		const stmt = this.db.prepare(`SELECT COUNT(*) as count FROM neo_memories WHERE room_id = ?`);
+		const stmt = this.db.prepare(`SELECT COUNT(*) as count FROM memories WHERE room_id = ?`);
 		const result = stmt.get(roomId) as { count: number };
 		return result.count;
 	}

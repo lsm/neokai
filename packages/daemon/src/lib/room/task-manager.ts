@@ -9,7 +9,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { NeoTaskRepository } from '../../storage/repositories/task-repository';
+import { TaskRepository } from '../../storage/repositories/task-repository';
 import type {
 	NeoTask,
 	TaskStatus,
@@ -19,13 +19,13 @@ import type {
 } from '@neokai/shared';
 
 export class TaskManager {
-	private taskRepo: NeoTaskRepository;
+	private taskRepo: TaskRepository;
 
 	constructor(
 		private db: BunDatabase,
 		private roomId: string
 	) {
-		this.taskRepo = new NeoTaskRepository(db);
+		this.taskRepo = new TaskRepository(db);
 	}
 
 	/**

@@ -34,6 +34,7 @@ export function setupRoomMessageHandlers(
 			roomId: string;
 			content: string;
 			role: 'user' | 'assistant';
+			sender?: string;
 			sessionId?: string;
 			taskId?: string;
 			metadata?: { sessionId?: string; taskId?: string };
@@ -50,9 +51,6 @@ export function setupRoomMessageHandlers(
 		}
 
 		const contextManager = createContextManager(db, params.roomId);
-
-		// Determine source based on role
-		const source = params.role === 'user' ? 'human' : 'neo';
 
 		// Store the message in context
 		const savedMessage = await contextManager.addMessage(params.role, params.content, {
@@ -71,7 +69,7 @@ export function setupRoomMessageHandlers(
 					content: params.content,
 					timestamp: savedMessage.timestamp,
 				},
-				source,
+				sender: params.sender,
 			})
 			.catch(() => {});
 

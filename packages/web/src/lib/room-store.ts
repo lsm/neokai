@@ -280,7 +280,7 @@ class RoomStore {
 			throw new Error('Not connected');
 		}
 
-		await hub.request('room.message.send', { roomId, content, role: 'user' });
+		await hub.request('room.message.send', { roomId, content, role: 'user', sender: 'human' });
 	}
 
 	/**

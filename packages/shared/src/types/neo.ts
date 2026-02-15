@@ -33,8 +33,8 @@ export interface Room {
 	sessionIds: string[];
 	/** Current status of the room */
 	status: RoomStatus;
-	/** ID of the Neo context for this room */
-	neoContextId?: string;
+	/** ID of the context for this room */
+	contextId?: string;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Last update timestamp (milliseconds since epoch) */

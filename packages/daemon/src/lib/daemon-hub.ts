@@ -199,7 +199,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 			content: string;
 			timestamp: number;
 		};
-		source: 'human' | 'neo';
+		sender?: string;
 	};
 }
 

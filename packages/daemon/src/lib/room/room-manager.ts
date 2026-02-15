@@ -11,10 +11,10 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { NeoRoomRepository } from '../../storage/repositories/room-repository';
-import { NeoTaskRepository } from '../../storage/repositories/task-repository';
-import { NeoMemoryRepository } from '../../storage/repositories/memory-repository';
-import { NeoContextRepository } from '../../storage/repositories/context-repository';
+import { RoomRepository } from '../../storage/repositories/room-repository';
+import { TaskRepository } from '../../storage/repositories/task-repository';
+import { MemoryRepository } from '../../storage/repositories/memory-repository';
+import { ContextRepository } from '../../storage/repositories/context-repository';
 import type {
 	Room,
 	CreateRoomParams,
@@ -24,16 +24,16 @@ import type {
 } from '@neokai/shared';
 
 export class RoomManager {
-	private roomRepo: NeoRoomRepository;
-	private taskRepo: NeoTaskRepository;
-	private memoryRepo: NeoMemoryRepository;
-	private contextRepo: NeoContextRepository;
+	private roomRepo: RoomRepository;
+	private taskRepo: TaskRepository;
+	private memoryRepo: MemoryRepository;
+	private contextRepo: ContextRepository;
 
 	constructor(db: BunDatabase) {
-		this.roomRepo = new NeoRoomRepository(db);
-		this.taskRepo = new NeoTaskRepository(db);
-		this.memoryRepo = new NeoMemoryRepository(db);
-		this.contextRepo = new NeoContextRepository(db);
+		this.roomRepo = new RoomRepository(db);
+		this.taskRepo = new TaskRepository(db);
+		this.memoryRepo = new MemoryRepository(db);
+		this.contextRepo = new ContextRepository(db);
 	}
 
 	/**
@@ -43,7 +43,7 @@ export class RoomManager {
 		// Create the room
 		const room = this.roomRepo.createRoom(params);
 
-		// Create the Neo context for this room
+		// Create the context for this room
 		const context = this.contextRepo.createContext(room.id);
 
 		// Link the context ID to the room
@@ -122,7 +122,7 @@ export class RoomManager {
 			}));
 
 		// Get context status
-		const context = room.neoContextId ? this.contextRepo.getContext(room.neoContextId) : null;
+		const context = room.contextId ? this.contextRepo.getContext(room.contextId) : null;
 
 		// Build session summaries (placeholder - actual session data would come from SessionManager)
 		const sessions = room.sessionIds.map((id) => ({
@@ -141,13 +141,13 @@ export class RoomManager {
 	}
 
 	/**
-	 * Get Neo status for a room
+	 * Get status for a room
 	 */
 	getRoomStatus(roomId: string) {
 		const room = this.roomRepo.getRoom(roomId);
 		if (!room) return null;
 
-		const context = room.neoContextId ? this.contextRepo.getContext(room.neoContextId) : null;
+		const context = room.contextId ? this.contextRepo.getContext(room.contextId) : null;
 		const activeTaskCount = this.taskRepo.countActiveTasks(roomId);
 		const memoryCount = this.memoryRepo.countMemories(roomId);
 
@@ -162,7 +162,7 @@ export class RoomManager {
 	}
 
 	/**
-	 * Get global status of all Neo instances
+	 * Get global status of all room instances
 	 */
 	getGlobalStatus() {
 		const rooms = this.roomRepo.listRooms(false); // Only active rooms

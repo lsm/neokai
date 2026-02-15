@@ -113,11 +113,11 @@ export class RoomNeo {
 			const eventData = data as {
 				roomId: string;
 				message: { content: string; role: string };
-				source: 'human' | 'neo';
+				sender?: string;
 			};
 
 			// Only process messages from humans, not our own
-			if (eventData.roomId === this.roomId && eventData.source === 'human') {
+			if (eventData.roomId === this.roomId && eventData.sender === 'human') {
 				try {
 					await this.sendMessage(eventData.message.content);
 				} catch (error) {
@@ -176,7 +176,7 @@ export class RoomNeo {
 			// Add user message to local history
 			const userMessage: NeoContextMessage = {
 				id: `local-${Date.now()}`,
-				contextId: this.room.neoContextId ?? '',
+				contextId: this.room.contextId ?? '',
 				role: 'user',
 				content,
 				timestamp: Date.now(),
@@ -195,7 +195,7 @@ export class RoomNeo {
 			const errorMessage = error instanceof Error ? error.message : String(error);
 			const assistantMessage: NeoContextMessage = {
 				id: `local-${Date.now()}`,
-				contextId: this.room?.neoContextId ?? '',
+				contextId: this.room?.contextId ?? '',
 				role: 'assistant',
 				content: `[Error] ${errorMessage}`,
 				timestamp: Date.now(),
@@ -486,7 +486,7 @@ export class RoomNeo {
 		// Add response to local history
 		const assistantMessage: NeoContextMessage = {
 			id: `local-${Date.now()}`,
-			contextId: this.room?.neoContextId ?? '',
+			contextId: this.room?.contextId ?? '',
 			role: 'assistant',
 			content: response,
 			timestamp: Date.now(),
@@ -502,6 +502,7 @@ export class RoomNeo {
 				roomId: this.roomId,
 				content: response,
 				role: 'assistant',
+				sender: 'neo',
 				metadata,
 			});
 		} catch (error) {
