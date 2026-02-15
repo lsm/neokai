@@ -3,9 +3,9 @@
  *
  * Direct test of Claude Agent SDK with GLM using minimal settings.
  * Tests transparent provider mapping for all model tiers:
- * - 'haiku' model → GLM-4.7
- * - 'default' (sonnet) model → GLM-4.7
- * - 'opus' model → GLM-4.7
+ * - 'haiku' model → GLM-5
+ * - 'default' (sonnet) model → GLM-5
+ * - 'opus' model → GLM-5
  *
  * Run with: GLM_API_KEY=xxx bun test packages/daemon/tests/online/glm/glm-sdk-minimal.test.ts
  *
@@ -83,12 +83,33 @@ async function runQueryWithTimeout(
 						responseText += block.text;
 					}
 				}
-			} else if (msg.type === 'result' && msg.subtype === 'success') {
-				console.log('[GLM Test] Result text:', msg.result);
+			}
+
+			if (msg.type === 'result') {
+				const resultText = typeof msg.result === 'string' ? msg.result : '';
+				console.log('[GLM Test] Result text:', resultText);
+
+				if (
+					/failed to authenticate|api error:\s*401|身份验证失败/i.test(resultText) ||
+					/^failed\b/i.test(resultText)
+				) {
+					throw new Error(`SDK authentication/result failure: ${resultText}`);
+				}
+
+				if (msg.subtype !== 'success') {
+					throw new Error(`SDK result failure (${msg.subtype}): ${resultText || 'No error text'}`);
+				}
+
+				console.log('[GLM Test] Query completed', {
+					messageCount,
+					responseLength: responseText.length,
+				});
+
+				return responseText || resultText;
 			}
 		}
 
-		console.log('[GLM Test] Query completed', {
+		console.log('[GLM Test] Query completed without explicit result message', {
 			messageCount,
 			responseLength: responseText.length,
 		});
@@ -159,7 +180,7 @@ describe('GLM SDK - Stable Tests with Promise.race', () => {
 		console.log('[GLM Test] Starting minimal SDK test with default → glm-5...');
 		console.log('[GLM Test] API Key:', GLM_API_KEY.substring(0, 10) + '...');
 
-		const originals = setGlmEnvVars(GLM_API_KEY, 'glm-5');
+		const originals = setGlmEnvVars(GLM_API_KEY, undefined, 'glm-5');
 		const tempDir = mkdtempSync(join(tmpdir(), 'glm-test-'));
 
 		try {
