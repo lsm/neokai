@@ -3,7 +3,8 @@ import type { Config } from '@neokai/daemon/config';
 import { createServer as createViteServer } from 'vite';
 import { resolve } from 'path';
 import { createLogger, type MessageHub } from '@neokai/shared';
-import { createNeoClientTransport } from '@neokai/neo';
+import { createNeoClientTransport, RoomNeo } from '@neokai/neo';
+import { RoomManager } from '@neokai/daemon/lib/room';
 import {
 	findAvailablePort,
 	createCorsPreflightResponse,
@@ -25,6 +26,7 @@ export async function startDevServer(config: Config) {
 	let server: ReturnType<typeof Bun.serve> | null = null;
 	let unregisterNeoTransport: (() => void) | null = null;
 	let neoHub: MessageHub | null = null;
+	let roomNeos: Map<string, RoomNeo> = new Map();
 
 	const shutdown = async (signal: string) => {
 		if (isShuttingDown) {
@@ -64,6 +66,21 @@ export async function startDevServer(config: Config) {
 				if (unregisterNeoTransport) {
 					unregisterNeoTransport();
 				}
+			}
+
+			// Cleanup RoomNeo instances
+			if (roomNeos.size > 0) {
+				log.info('🛑 Cleaning up RoomNeo instances...');
+				await Promise.all(
+					Array.from(roomNeos.values()).map(async (roomNeo) => {
+						try {
+							await roomNeo.destroy();
+						} catch (error) {
+							log.error('Error destroying RoomNeo:', error);
+						}
+					})
+				);
+				roomNeos.clear();
 			}
 
 			if (daemonContext) {
@@ -118,6 +135,24 @@ export async function startDevServer(config: Config) {
 	neoHub = neoTransport.neoClientHub;
 
 	log.info('🤖 Neo AI client connected via in-process transport');
+
+	// Create RoomNeo instances for active rooms
+	log.info('🤖 Initializing RoomNeo instances...');
+	const roomManager = new RoomManager(daemonContext.db.getDatabase());
+	const rooms = roomManager.listRooms(false); // Only active rooms
+
+	for (const room of rooms) {
+		try {
+			const roomNeo = new RoomNeo(room.id, neoHub, { workspacePath: config.workspaceRoot });
+			await roomNeo.initialize();
+			roomNeos.set(room.id, roomNeo);
+			log.info(`   RoomNeo initialized for room ${room.id.slice(0, 8)}`);
+		} catch (error) {
+			log.error(`   Failed to initialize RoomNeo for room ${room.id.slice(0, 8)}:`, error);
+		}
+	}
+
+	log.info(`🤖 ${roomNeos.size} RoomNeo instance(s) initialized`);
 
 	// Stop the daemon's internal server (we'll create a unified one)
 	daemonContext.server.stop();

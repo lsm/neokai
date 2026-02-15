@@ -5,7 +5,9 @@
 
 import { createDaemonApp } from '@neokai/daemon/app';
 import type { Config } from '@neokai/daemon/config';
-import { createLogger } from '@neokai/shared';
+import { createLogger, type MessageHub } from '@neokai/shared';
+import { createNeoClientTransport, RoomNeo } from '@neokai/neo';
+import { RoomManager } from '@neokai/daemon/lib/room';
 import {
 	createCorsPreflightResponse,
 	isWebSocketPath,
@@ -25,6 +27,9 @@ export async function startProdServer(config: Config) {
 	let isShuttingDown = false;
 	let daemonContext: Awaited<ReturnType<typeof createDaemonApp>> | null = null;
 	let server: ReturnType<typeof Bun.serve> | null = null;
+	let unregisterNeoTransport: (() => void) | null = null;
+	let neoHub: MessageHub | null = null;
+	let roomNeos: Map<string, RoomNeo> = new Map();
 
 	const shutdown = async (signal: string) => {
 		if (isShuttingDown) {
@@ -41,6 +46,29 @@ export async function startProdServer(config: Config) {
 			if (server) {
 				log.info('Stopping server...');
 				server.stop();
+			}
+
+			if (neoHub) {
+				log.info('Cleaning up Neo...');
+				neoHub.cleanup();
+				if (unregisterNeoTransport) {
+					unregisterNeoTransport();
+				}
+			}
+
+			// Cleanup RoomNeo instances
+			if (roomNeos.size > 0) {
+				log.info('Cleaning up RoomNeo instances...');
+				await Promise.all(
+					Array.from(roomNeos.values()).map(async (roomNeo) => {
+						try {
+							await roomNeo.destroy();
+						} catch (error) {
+							log.error('Error destroying RoomNeo:', error);
+						}
+					})
+				);
+				roomNeos.clear();
 			}
 
 			if (daemonContext) {
@@ -82,6 +110,43 @@ export async function startProdServer(config: Config) {
 
 	// Stop the daemon's internal server (we'll create a unified one)
 	daemonContext.server.stop();
+
+	// Create Neo client with in-process transport
+	log.info('Initializing Neo AI client...');
+
+	const neoTransport = createNeoClientTransport({ name: 'neo-to-daemon' });
+
+	// Register Neo's server transport with daemon's MessageHub
+	unregisterNeoTransport = daemonContext.messageHub.registerTransport(
+		neoTransport.serverTransport,
+		'neo',
+		false // Not primary (websocket is primary)
+	);
+
+	// Initialize Neo's client transport
+	await neoTransport.clientTransport.initialize();
+
+	neoHub = neoTransport.neoClientHub;
+
+	log.info('Neo AI client connected via in-process transport');
+
+	// Create RoomNeo instances for active rooms
+	log.info('Initializing RoomNeo instances...');
+	const roomManager = new RoomManager(daemonContext.db.getDatabase());
+	const rooms = roomManager.listRooms(false); // Only active rooms
+
+	for (const room of rooms) {
+		try {
+			const roomNeo = new RoomNeo(room.id, neoHub, { workspacePath: config.workspaceRoot });
+			await roomNeo.initialize();
+			roomNeos.set(room.id, roomNeo);
+			log.info(`   RoomNeo initialized for room ${room.id.slice(0, 8)}`);
+		} catch (error) {
+			log.error(`   Failed to initialize RoomNeo for room ${room.id.slice(0, 8)}:`, error);
+		}
+	}
+
+	log.info(`${roomNeos.size} RoomNeo instance(s) initialized`);
 
 	// Get WebSocket handlers from daemon
 	const { createWebSocketHandlers } = await import('@neokai/daemon/routes/setup-websocket');
