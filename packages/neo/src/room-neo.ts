@@ -250,6 +250,40 @@ export class RoomNeo {
 	// ========================================
 
 	/**
+	 * Select workspace path from room's allowed paths
+	 *
+	 * Priority:
+	 * 1. Explicitly requested path (if valid)
+	 * 2. Room's default path
+	 * 3. First allowed path
+	 */
+	private selectWorkspacePath(requestedPath?: string): string {
+		if (!this.room) {
+			throw new Error('Room not initialized');
+		}
+
+		// If specific path requested, validate it
+		if (requestedPath) {
+			if (this.room.allowedPaths.includes(requestedPath)) {
+				return requestedPath;
+			}
+			throw new Error(`Path "${requestedPath}" is not allowed in this room`);
+		}
+
+		// Use room's default path if available and valid
+		if (this.room.defaultPath && this.room.allowedPaths.includes(this.room.defaultPath)) {
+			return this.room.defaultPath;
+		}
+
+		// Fall back to first allowed path
+		if (this.room.allowedPaths.length > 0) {
+			return this.room.allowedPaths[0];
+		}
+
+		throw new Error('No allowed paths configured for this room');
+	}
+
+	/**
 	 * Create a worker session for this room
 	 *
 	 * Creates a new session, assigns it to this room, and starts watching it
@@ -259,27 +293,27 @@ export class RoomNeo {
 		model?: string;
 		title?: string;
 	}): Promise<string> {
+		const selectedPath = this.selectWorkspacePath(params.workspacePath);
+
 		const response = await this.hub.request<{ sessionId: string }>('session.create', {
-			workspacePath: params.workspacePath ?? this.config.workspacePath,
+			workspacePath: selectedPath,
 			title: params.title ?? `Worker session for room ${this.roomId.slice(0, 8)}`,
 			config: {
 				model: params.model ?? this.config.model,
 			},
+			roomId: this.roomId,
+			createdBy: 'neo',
 		});
 
 		const sessionId = response.sessionId;
-
-		// Assign session to this room
-		await this.hub.request('room.assignSession', {
-			roomId: this.roomId,
-			sessionId,
-		});
 
 		// Start watching the session
 		await this.sessionWatcher.watchSession(sessionId);
 		this.watchedSessions.add(sessionId);
 
-		this.logger.info(`Created and watching worker session: ${sessionId}`);
+		this.logger.info(
+			`Created and watching worker session: ${sessionId} in workspace: ${selectedPath}`
+		);
 		return sessionId;
 	}
 
@@ -527,6 +561,16 @@ export class RoomNeo {
 	 */
 	private async executeAction(action: NeoAction): Promise<void> {
 		switch (action.type) {
+			case 'create_session': {
+				const sessionId = await this.createSession({
+					workspacePath: action.params.workspace,
+					model: action.params.model,
+					title: action.params.title,
+				});
+				this.logger.info(`Created session ${sessionId} via action`);
+				break;
+			}
+
 			case 'create_task': {
 				await this.hub.request('task.create', {
 					roomId: this.roomId,
