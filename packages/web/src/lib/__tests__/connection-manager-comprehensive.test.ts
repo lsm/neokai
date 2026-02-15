@@ -18,8 +18,8 @@ const mockHubObj: {
 	query: ReturnType<typeof vi.fn>;
 	command: ReturnType<typeof vi.fn>;
 	onEvent: ReturnType<typeof vi.fn>;
-	joinRoom: ReturnType<typeof vi.fn>;
-	leaveRoom: ReturnType<typeof vi.fn>;
+	joinChannel: ReturnType<typeof vi.fn>;
+	leaveChannel: ReturnType<typeof vi.fn>;
 	forceResubscribe: ReturnType<typeof vi.fn>;
 	subscribe: ReturnType<typeof vi.fn>;
 	subscribeOptimistic: ReturnType<typeof vi.fn>;
@@ -34,8 +34,8 @@ const mockHubObj: {
 	call: vi.fn(() => Promise.resolve({ ok: true })),
 	query: vi.fn(() => Promise.resolve({ ok: true })),
 	onEvent: vi.fn(() => vi.fn()),
-	joinRoom: vi.fn(),
-	leaveRoom: vi.fn(),
+	joinChannel: vi.fn(),
+	leaveChannel: vi.fn(),
 	forceResubscribe: vi.fn(),
 	subscribe: vi.fn(() => Promise.resolve(vi.fn())),
 	subscribeOptimistic: vi.fn(() => vi.fn()),
@@ -112,8 +112,8 @@ describe('ConnectionManager - Comprehensive Coverage', () => {
 		mockHubObj.query = vi.fn(() => Promise.resolve({ ok: true }));
 		mockHubObj.command = vi.fn();
 		mockHubObj.onEvent = vi.fn(() => vi.fn());
-		mockHubObj.joinRoom = vi.fn();
-		mockHubObj.leaveRoom = vi.fn();
+		mockHubObj.joinChannel = vi.fn();
+		mockHubObj.leaveChannel = vi.fn();
 		mockHubObj.forceResubscribe = vi.fn();
 		mockHubObj.subscribe = vi.fn(() => Promise.resolve(vi.fn()));
 		mockHubObj.subscribeOptimistic = vi.fn(() => vi.fn());

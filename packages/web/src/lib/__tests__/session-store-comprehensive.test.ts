@@ -14,8 +14,8 @@ import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 const mockHub = {
 	request: vi.fn().mockResolvedValue({ acknowledged: true }),
 	onEvent: vi.fn(() => vi.fn()),
-	joinRoom: vi.fn(),
-	leaveRoom: vi.fn(),
+	joinChannel: vi.fn(),
+	leaveChannel: vi.fn(),
 	isConnected: vi.fn(() => true),
 	getHubIfConnected: vi.fn(() => mockHub),
 };

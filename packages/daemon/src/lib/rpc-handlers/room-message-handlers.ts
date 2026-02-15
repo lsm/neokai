@@ -59,9 +59,10 @@ export function setupRoomMessageHandlers(
 		});
 
 		// Emit room.message event for clients to receive
+		// Use room:${roomId} as sessionId so TypedHub routes to the room channel
 		daemonHub
 			.emit('room.message', {
-				sessionId: 'global',
+				sessionId: `room:${params.roomId}`,
 				roomId: params.roomId,
 				message: {
 					id: savedMessage.id,

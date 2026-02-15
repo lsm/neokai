@@ -703,15 +703,15 @@ describe('useMessageHub', () => {
 				call: vi.fn(),
 				request: vi.fn().mockResolvedValue({ acknowledged: true }),
 				onEvent: vi.fn(),
-				joinRoom: vi.fn(),
-				leaveRoom: vi.fn(),
+				joinChannel: vi.fn(),
+				leaveChannel: vi.fn(),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
 			const { result } = renderHook(() => useMessageHub());
 
 			result.current.joinRoom('test-room');
 
-			expect(mockHub.joinRoom).toHaveBeenCalledWith('test-room');
+			expect(mockHub.joinChannel).toHaveBeenCalledWith('test-room');
 		});
 
 		it('should not throw when not connected', () => {
@@ -728,15 +728,15 @@ describe('useMessageHub', () => {
 				call: vi.fn(),
 				request: vi.fn().mockResolvedValue({ acknowledged: true }),
 				onEvent: vi.fn(),
-				joinRoom: vi.fn(),
-				leaveRoom: vi.fn(),
+				joinChannel: vi.fn(),
+				leaveChannel: vi.fn(),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
 			const { result } = renderHook(() => useMessageHub());
 
 			result.current.leaveRoom('test-room');
 
-			expect(mockHub.leaveRoom).toHaveBeenCalledWith('test-room');
+			expect(mockHub.leaveChannel).toHaveBeenCalledWith('test-room');
 		});
 
 		it('should not throw when not connected', () => {

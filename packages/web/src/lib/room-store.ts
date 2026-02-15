@@ -23,6 +23,21 @@ import type {
 	NeoContextMessage,
 	RoomOverview,
 } from '@neokai/shared';
+
+/**
+ * Event payload from backend for room.message
+ */
+interface RoomMessageEvent {
+	sessionId: string;
+	roomId: string;
+	message: {
+		id: string;
+		role: string;
+		content: string;
+		timestamp: number;
+	};
+	sender?: string;
+}
 import { Logger } from '@neokai/shared';
 import { connectionManager } from './connection-manager';
 import { toast } from './toast';
@@ -188,14 +203,30 @@ class RoomStore {
 			});
 			this.cleanupFunctions.push(unsubTaskUpdate);
 
-			// 3. Neo context messages
-			const unsubNeoMessage = hub.onEvent<NeoContextMessage>('room.neo.message', (message) => {
-				this.neoMessages.value = [...this.neoMessages.value, message];
+			// 3. Neo context messages (room.message event from backend)
+			const unsubNeoMessage = hub.onEvent<RoomMessageEvent>('room.message', (event) => {
+				// Only process messages for this room
+				if (event.roomId !== roomId) return;
+
+				// Transform backend payload to NeoContextMessage shape
+				const msg: NeoContextMessage = {
+					id: event.message.id,
+					contextId: this.room.value?.contextId ?? '',
+					role: event.message.role as 'user' | 'assistant',
+					content: event.message.content,
+					timestamp: event.message.timestamp,
+					tokenCount: 0, // Not provided in event
+				};
+
+				this.neoMessages.value = [...this.neoMessages.value, msg];
 			});
 			this.cleanupFunctions.push(unsubNeoMessage);
 
 			// 4. Fetch initial state via RPC
 			await this.fetchInitialState(hub, roomId);
+
+			// 5. Load message history
+			await this.loadMessageHistory(hub, roomId);
 		} catch (err) {
 			logger.error('Failed to start room subscriptions:', err);
 			toast.error('Failed to connect to room');
@@ -223,6 +254,25 @@ class RoomStore {
 		} catch (err) {
 			logger.error('Failed to fetch room state:', err);
 			this.error.value = err instanceof Error ? err.message : 'Failed to load room';
+		}
+	}
+
+	/**
+	 * Load message history for the room
+	 */
+	private async loadMessageHistory(
+		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+		roomId: string
+	): Promise<void> {
+		try {
+			const response = await hub.request<{ messages: NeoContextMessage[] }>(
+				'room.message.history',
+				{ roomId }
+			);
+			this.neoMessages.value = response.messages ?? [];
+		} catch (error) {
+			logger.warn('Failed to load message history:', error);
+			this.neoMessages.value = [];
 		}
 	}
 

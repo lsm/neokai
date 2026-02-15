@@ -215,7 +215,11 @@ describe('Router Utility', () => {
 			currentSessionIdSignal.value = '550e8400e29b41d4a716446655440007';
 			navigateToHome();
 
-			expect(mockHistory.pushState).toHaveBeenCalledWith({ sessionId: null, path: '/' }, '', '/');
+			expect(mockHistory.pushState).toHaveBeenCalledWith(
+				{ sessionId: null, roomId: null, path: '/' },
+				'',
+				'/'
+			);
 			expect(currentSessionIdSignal.value).toBeNull();
 		});
 
@@ -225,7 +229,7 @@ describe('Router Utility', () => {
 			navigateToHome(true);
 
 			expect(mockHistory.replaceState).toHaveBeenCalledWith(
-				{ sessionId: null, path: '/' },
+				{ sessionId: null, roomId: null, path: '/' },
 				'',
 				'/'
 			);
