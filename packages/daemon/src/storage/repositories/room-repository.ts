@@ -122,26 +122,44 @@ export class RoomRepository {
 	 * Add a session to a room
 	 */
 	addSessionToRoom(roomId: string, sessionId: string): Room | null {
-		const room = this.getRoom(roomId);
-		if (!room) return null;
+		const tx = this.db.transaction(() => {
+			const room = this.getRoom(roomId);
+			if (!room) return null;
 
-		const sessionIds = [...new Set([...room.sessionIds, sessionId])];
-		const stmt = this.db.prepare(`UPDATE rooms SET session_ids = ?, updated_at = ? WHERE id = ?`);
-		stmt.run(JSON.stringify(sessionIds), Date.now(), roomId);
-		return this.getRoom(roomId);
+			// Idempotent - don't add if already present
+			if (room.sessionIds.includes(sessionId)) {
+				return room;
+			}
+
+			const sessionIds = [...room.sessionIds, sessionId];
+			const stmt = this.db.prepare(`UPDATE rooms SET session_ids = ?, updated_at = ? WHERE id = ?`);
+			stmt.run(JSON.stringify(sessionIds), Date.now(), roomId);
+			return this.getRoom(roomId);
+		});
+
+		return tx() as Room | null;
 	}
 
 	/**
 	 * Remove a session from a room
 	 */
 	removeSessionFromRoom(roomId: string, sessionId: string): Room | null {
-		const room = this.getRoom(roomId);
-		if (!room) return null;
+		const tx = this.db.transaction(() => {
+			const room = this.getRoom(roomId);
+			if (!room) return null;
 
-		const sessionIds = room.sessionIds.filter((id) => id !== sessionId);
-		const stmt = this.db.prepare(`UPDATE rooms SET session_ids = ?, updated_at = ? WHERE id = ?`);
-		stmt.run(JSON.stringify(sessionIds), Date.now(), roomId);
-		return this.getRoom(roomId);
+			// Idempotent - no-op if session not in room
+			if (!room.sessionIds.includes(sessionId)) {
+				return room;
+			}
+
+			const sessionIds = room.sessionIds.filter((id) => id !== sessionId);
+			const stmt = this.db.prepare(`UPDATE rooms SET session_ids = ?, updated_at = ? WHERE id = ?`);
+			stmt.run(JSON.stringify(sessionIds), Date.now(), roomId);
+			return this.getRoom(roomId);
+		});
+
+		return tx() as Room | null;
 	}
 
 	/**
@@ -164,26 +182,48 @@ export class RoomRepository {
 	 * Add a path to the room's allowed paths
 	 */
 	addPath(id: string, path: string): Room | null {
-		const room = this.getRoom(id);
-		if (!room) return null;
+		const tx = this.db.transaction(() => {
+			const room = this.getRoom(id);
+			if (!room) return null;
 
-		const allowedPaths = [...new Set([...room.allowedPaths, path])];
-		const stmt = this.db.prepare(`UPDATE rooms SET allowed_paths = ?, updated_at = ? WHERE id = ?`);
-		stmt.run(JSON.stringify(allowedPaths), Date.now(), id);
-		return this.getRoom(id);
+			// Idempotent - don't add if already present
+			if (room.allowedPaths.includes(path)) {
+				return room;
+			}
+
+			const allowedPaths = [...room.allowedPaths, path];
+			const stmt = this.db.prepare(
+				`UPDATE rooms SET allowed_paths = ?, updated_at = ? WHERE id = ?`
+			);
+			stmt.run(JSON.stringify(allowedPaths), Date.now(), id);
+			return this.getRoom(id);
+		});
+
+		return tx() as Room | null;
 	}
 
 	/**
 	 * Remove a path from the room's allowed paths
 	 */
 	removePath(id: string, path: string): Room | null {
-		const room = this.getRoom(id);
-		if (!room) return null;
+		const tx = this.db.transaction(() => {
+			const room = this.getRoom(id);
+			if (!room) return null;
 
-		const allowedPaths = room.allowedPaths.filter((p) => p !== path);
-		const stmt = this.db.prepare(`UPDATE rooms SET allowed_paths = ?, updated_at = ? WHERE id = ?`);
-		stmt.run(JSON.stringify(allowedPaths), Date.now(), id);
-		return this.getRoom(id);
+			// Idempotent - no-op if path not in allowed paths
+			if (!room.allowedPaths.includes(path)) {
+				return room;
+			}
+
+			const allowedPaths = room.allowedPaths.filter((p) => p !== path);
+			const stmt = this.db.prepare(
+				`UPDATE rooms SET allowed_paths = ?, updated_at = ? WHERE id = ?`
+			);
+			stmt.run(JSON.stringify(allowedPaths), Date.now(), id);
+			return this.getRoom(id);
+		});
+
+		return tx() as Room | null;
 	}
 
 	/**
