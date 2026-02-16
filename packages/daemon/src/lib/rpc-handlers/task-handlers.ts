@@ -14,26 +14,95 @@
  * Renamed from neo.task.* to task.* for cleaner API.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
 import type { MessageHub, TaskStatus, TaskPriority } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
+import type { RoomManager } from '../room/room-manager';
 import { TaskManager } from '../room';
 
 /**
  * Create a TaskManager instance for a room
  */
 function createTaskManager(db: Database, roomId: string): TaskManager {
-	const rawDb = (db as unknown as { db: BunDatabase }).db;
+	const rawDb = db.getDatabase();
 	return new TaskManager(rawDb, roomId);
 }
 
 export function setupTaskHandlers(
 	messageHub: MessageHub,
-	_roomManager: unknown,
-	_daemonHub: DaemonHub,
+	roomManager: RoomManager,
+	daemonHub: DaemonHub,
 	db: Database
 ): void {
+	/**
+	 * Emit room.task.update event to notify UI clients
+	 */
+	const emitTaskUpdate = (
+		roomId: string,
+		task: {
+			id: string;
+			roomId: string;
+			title: string;
+			status: TaskStatus;
+			priority: TaskPriority;
+			progress?: number;
+			currentStep?: string;
+			result?: string;
+			error?: string;
+			dependsOn: string[];
+			createdAt: number;
+			startedAt?: number;
+			completedAt?: number;
+			sessionId?: string;
+			description: string;
+		}
+	) => {
+		daemonHub
+			.emit('room.task.update', {
+				sessionId: `room:${roomId}`,
+				roomId,
+				task: task as typeof task & { roomId: string },
+			})
+			.catch(() => {
+				// Event emission error - non-critical, continue
+			});
+	};
+
+	/**
+	 * Emit room.overview event to notify UI clients of full room state
+	 */
+	const emitRoomOverview = (roomId: string) => {
+		const overview = roomManager.getRoomOverview(roomId);
+		if (overview) {
+			daemonHub
+				.emit('room.overview', {
+					sessionId: `room:${roomId}`,
+					room: overview.room,
+					sessions: overview.sessions,
+					activeTasks: overview.activeTasks as Array<{
+						id: string;
+						roomId: string;
+						title: string;
+						status: TaskStatus;
+						priority: TaskPriority;
+						progress?: number;
+						currentStep?: string;
+						result?: string;
+						error?: string;
+						dependsOn: string[];
+						createdAt: number;
+						startedAt?: number;
+						completedAt?: number;
+						sessionId?: string;
+						description: string;
+					}>,
+				})
+				.catch(() => {
+					// Event emission error - non-critical, continue
+				});
+		}
+	};
+
 	// task.create - Create task in room
 	messageHub.onRequest('task.create', async (data) => {
 		const params = data as {
@@ -58,6 +127,9 @@ export function setupTaskHandlers(
 			priority: params.priority,
 			dependsOn: params.dependsOn,
 		});
+
+		// Emit room.overview for new task creation (significant change)
+		emitRoomOverview(params.roomId);
 
 		return { task };
 	});
@@ -145,6 +217,11 @@ export function setupTaskHandlers(
 			throw new Error('No update fields provided');
 		}
 
+		// Emit task update event
+		if (task) {
+			emitTaskUpdate(params.roomId, task);
+		}
+
 		return { task };
 	});
 
@@ -165,6 +242,11 @@ export function setupTaskHandlers(
 		const taskManager = createTaskManager(db, params.roomId);
 		const task = await taskManager.startTask(params.taskId, params.sessionId);
 
+		// Emit task update event (status change from pending to in_progress)
+		if (task) {
+			emitTaskUpdate(params.roomId, task);
+		}
+
 		return { task };
 	});
 
@@ -181,6 +263,9 @@ export function setupTaskHandlers(
 
 		const taskManager = createTaskManager(db, params.roomId);
 		const task = await taskManager.completeTask(params.taskId, params.result ?? '');
+
+		// Emit room overview for task completion (significant status change)
+		emitRoomOverview(params.roomId);
 
 		return { task };
 	});
@@ -199,6 +284,9 @@ export function setupTaskHandlers(
 		const taskManager = createTaskManager(db, params.roomId);
 		const task = await taskManager.failTask(params.taskId, params.error ?? '');
 
+		// Emit room overview for task failure (significant status change)
+		emitRoomOverview(params.roomId);
+
 		return { task };
 	});
 
@@ -215,6 +303,9 @@ export function setupTaskHandlers(
 
 		const taskManager = createTaskManager(db, params.roomId);
 		const deleted = await taskManager.deleteTask(params.taskId);
+
+		// Emit room overview for task deletion (significant change)
+		emitRoomOverview(params.roomId);
 
 		return { success: deleted };
 	});
