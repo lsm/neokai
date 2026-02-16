@@ -28,7 +28,7 @@ export function createTables(db: BunDatabase): void {
         workspace_path TEXT NOT NULL,
         created_at TEXT NOT NULL,
         last_active_at TEXT NOT NULL,
-        status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived')),
+        status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
         config TEXT NOT NULL,
         metadata TEXT NOT NULL,
         is_worktree INTEGER DEFAULT 0,
