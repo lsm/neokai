@@ -11,7 +11,6 @@
  * Renamed from neo.memory.* to memory.* for cleaner API.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
 import type { MessageHub, MemoryType, MemoryImportance } from '@neokai/shared';
 import type { Database } from '../../storage/database';
 import { MemoryManager } from '../room';
@@ -20,7 +19,7 @@ import { MemoryManager } from '../room';
  * Create a MemoryManager instance for a room
  */
 function createMemoryManager(db: Database, roomId: string): MemoryManager {
-	const rawDb = (db as unknown as { db: BunDatabase }).db;
+	const rawDb = db.getDatabase();
 	return new MemoryManager(rawDb, roomId);
 }
 

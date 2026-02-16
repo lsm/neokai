@@ -8,7 +8,6 @@
  * Generic API - both humans and Neo use the same endpoints.
  */
 
-import type { Database as BunDatabase } from 'bun:sqlite';
 import type { MessageHub } from '@neokai/shared';
 import type { Database } from '../../storage/database';
 import type { DaemonHub } from '../daemon-hub';
@@ -18,7 +17,7 @@ import { ContextManager } from '../room';
  * Create a ContextManager instance for a room
  */
 function createContextManager(db: Database, roomId: string): ContextManager {
-	const rawDb = (db as unknown as { db: BunDatabase }).db;
+	const rawDb = db.getDatabase();
 	return new ContextManager(rawDb, roomId);
 }
 
