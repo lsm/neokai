@@ -529,6 +529,7 @@ export class MessageHub {
 				sessionId: message.sessionId,
 				requestId: message.id,
 			});
+			ackMsg._transportName = message._transportName;
 			await this.sendResponseToClient(ackMsg, clientId);
 			return;
 		}
@@ -545,6 +546,7 @@ export class MessageHub {
 				sessionId: message.sessionId,
 				requestId: message.id,
 			});
+			errorMsg._transportName = message._transportName;
 			await this.sendResponseToClient(errorMsg, clientId);
 			return;
 		}
@@ -567,6 +569,7 @@ export class MessageHub {
 				sessionId: message.sessionId,
 				requestId: message.id,
 			});
+			resultMsg._transportName = message._transportName;
 			await this.sendResponseToClient(resultMsg, clientId);
 		} catch (error) {
 			const errorMsg = createErrorResponseMessage({
@@ -578,6 +581,7 @@ export class MessageHub {
 				sessionId: message.sessionId,
 				requestId: message.id,
 			});
+			errorMsg._transportName = message._transportName;
 			await this.sendResponseToClient(errorMsg, clientId);
 		}
 	}
@@ -781,6 +785,7 @@ export class MessageHub {
 		const targetTransport = message._transportName
 			? this.transports.get(message._transportName)
 			: null;
+
 		if (targetTransport && targetTransport.isReady()) {
 			await targetTransport.send(message);
 			return;
@@ -790,6 +795,7 @@ export class MessageHub {
 		const primary = this.primaryTransportName
 			? this.transports.get(this.primaryTransportName)
 			: null;
+
 		if (primary && primary.isReady()) {
 			await primary.send(message);
 			return;
