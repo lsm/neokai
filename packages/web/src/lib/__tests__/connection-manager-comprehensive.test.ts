@@ -67,6 +67,22 @@ vi.mock('@neokai/shared', () => ({
 			return mockTransportObj;
 		}
 	},
+	Logger: class MockLogger {
+		constructor(_namespace: string = 'kai') {}
+		trace() {}
+		debug() {}
+		info() {}
+		log() {}
+		warn() {}
+		error() {}
+		clearCache() {}
+		child(name: string) {
+			return new MockLogger(name);
+		}
+		getNamespace() {
+			return 'mock';
+		}
+	},
 }));
 
 // Mock dependencies
