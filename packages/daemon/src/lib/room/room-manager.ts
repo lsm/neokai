@@ -15,6 +15,7 @@ import { RoomRepository } from '../../storage/repositories/room-repository';
 import { TaskRepository } from '../../storage/repositories/task-repository';
 import { MemoryRepository } from '../../storage/repositories/memory-repository';
 import { ContextRepository } from '../../storage/repositories/context-repository';
+import { SessionRepository } from '../../storage/repositories/session-repository';
 import type {
 	Room,
 	CreateRoomParams,
@@ -24,33 +25,40 @@ import type {
 } from '@neokai/shared';
 
 export class RoomManager {
+	private db: BunDatabase;
 	private roomRepo: RoomRepository;
 	private taskRepo: TaskRepository;
 	private memoryRepo: MemoryRepository;
 	private contextRepo: ContextRepository;
+	private sessionRepo: SessionRepository;
 
 	constructor(db: BunDatabase) {
+		this.db = db;
 		this.roomRepo = new RoomRepository(db);
 		this.taskRepo = new TaskRepository(db);
 		this.memoryRepo = new MemoryRepository(db);
 		this.contextRepo = new ContextRepository(db);
+		this.sessionRepo = new SessionRepository(db);
 	}
 
 	/**
 	 * Create a new room with auto-generated context
 	 */
 	createRoom(params: CreateRoomParams): Room {
-		// Create the room
-		const room = this.roomRepo.createRoom(params);
+		const createRoomTx = this.db.transaction(() => {
+			// Create the room
+			const room = this.roomRepo.createRoom(params);
 
-		// Create the context for this room
-		const context = this.contextRepo.createContext(room.id);
+			// Create the context for this room
+			const context = this.contextRepo.createContext(room.id);
 
-		// Link the context ID to the room
-		this.roomRepo.setRoomContextId(room.id, context.id);
+			// Link the context ID to the room
+			this.roomRepo.setRoomContextId(room.id, context.id);
 
-		// Return the updated room
-		return this.roomRepo.getRoom(room.id)!;
+			// Return the updated room
+			return this.roomRepo.getRoom(room.id)!;
+		});
+		return createRoomTx();
 	}
 
 	/**
@@ -138,13 +146,24 @@ export class RoomManager {
 		// Get context status
 		const context = room.contextId ? this.contextRepo.getContext(room.contextId) : null;
 
-		// Build session summaries (placeholder - actual session data would come from SessionManager)
-		const sessions = room.sessionIds.map((id) => ({
-			id,
-			title: `Session ${id.slice(0, 8)}`,
-			status: 'active',
-			lastActiveAt: Date.now(),
-		}));
+		// Build session summaries from actual session data
+		const sessions = room.sessionIds.map((id) => {
+			const session = this.sessionRepo.getSession(id);
+			if (!session) {
+				return {
+					id,
+					title: `Session ${id.slice(0, 8)}`,
+					status: 'ended' as const,
+					lastActiveAt: 0,
+				};
+			}
+			return {
+				id: session.id,
+				title: session.title,
+				status: session.status,
+				lastActiveAt: new Date(session.lastActiveAt).getTime(),
+			};
+		});
 
 		return {
 			room,
