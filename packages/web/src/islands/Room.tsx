@@ -86,12 +86,12 @@ export default function Room({ roomId }: RoomProps) {
 			<div class="flex-1 flex overflow-hidden">
 				{/* Dashboard - sessions and tasks */}
 				<div class="flex-1 overflow-y-auto">
-					<RoomDashboard roomId={roomId} />
+					<RoomDashboard />
 				</div>
 
 				{/* Neo chat - right sidebar */}
 				<div class="w-96 border-l border-dark-700 flex flex-col">
-					<NeoChat roomId={roomId} />
+					<NeoChat />
 				</div>
 			</div>
 		</div>

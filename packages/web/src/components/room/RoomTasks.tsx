@@ -7,10 +7,10 @@
  * - Completed
  */
 
-import type { NeoTask } from '@neokai/shared';
+import type { TaskSummary } from '@neokai/shared';
 
 interface RoomTasksProps {
-	tasks: NeoTask[];
+	tasks: TaskSummary[];
 }
 
 export function RoomTasks({ tasks }: RoomTasksProps) {
@@ -105,18 +105,12 @@ export function RoomTasks({ tasks }: RoomTasksProps) {
 	);
 }
 
-function TaskItem({ task }: { task: NeoTask }) {
+function TaskItem({ task }: { task: TaskSummary }) {
 	return (
 		<div class="px-4 py-3">
 			<div class="flex items-start justify-between">
 				<div class="flex-1 min-w-0">
 					<h4 class="text-sm font-medium text-gray-100 truncate">{task.title}</h4>
-					{task.currentStep && (
-						<p class="text-xs text-gray-400 mt-1 truncate">{task.currentStep}</p>
-					)}
-					{task.description && !task.currentStep && (
-						<p class="text-xs text-gray-400 mt-1 truncate">{task.description}</p>
-					)}
 				</div>
 				{task.progress !== undefined && (
 					<div class="ml-4 text-xs text-gray-400">{task.progress}%</div>

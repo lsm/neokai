@@ -32,6 +32,7 @@ import { MessageHub, WebSocketClientTransport } from '@neokai/shared';
 import { appState, connectionState } from './state';
 import { globalStore } from './global-store';
 import { sessionStore } from './session-store';
+import { roomStore } from './room-store';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from './errors';
 import { createDeferred } from './timeout';
 import { currentSessionIdSignal, slashCommandsSignal } from './signals';
@@ -486,7 +487,12 @@ export class ConnectionManager {
 			// This ensures UI is in sync even if events were missed during background
 			// FIX: Added sessionStore.refresh() to sync agent state for status bar
 			// Without this, status bar would show "Online" instead of actual state
-			await Promise.all([sessionStore.refresh(), appState.refreshAll(), globalStore.refresh()]);
+			await Promise.all([
+				sessionStore.refresh(),
+				appState.refreshAll(),
+				globalStore.refresh(),
+				roomStore.refresh(),
+			]);
 		} catch {
 			// FIX: Use forceReconnect() instead of close()
 			// close() sets closed=true which prevents auto-reconnect

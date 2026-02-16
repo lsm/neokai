@@ -18,6 +18,7 @@
 import { signal, computed } from '@preact/signals';
 import type {
 	Room,
+	TaskSummary,
 	NeoTask,
 	SessionSummary,
 	NeoContextMessage,
@@ -56,7 +57,7 @@ class RoomStore {
 	readonly room = signal<Room | null>(null);
 
 	/** Tasks for this room */
-	readonly tasks = signal<NeoTask[]>([]);
+	readonly tasks = signal<TaskSummary[]>([]);
 
 	/** Sessions in this room */
 	readonly sessions = signal<SessionSummary[]>([]);
@@ -181,7 +182,7 @@ class RoomStore {
 				if (overview.room.id === roomId) {
 					this.room.value = overview.room;
 					this.sessions.value = overview.sessions;
-					this.tasks.value = overview.activeTasks as unknown as NeoTask[];
+					this.tasks.value = overview.activeTasks;
 				}
 			});
 			this.cleanupFunctions.push(unsubRoomOverview);
@@ -247,7 +248,7 @@ class RoomStore {
 			if (overview) {
 				this.room.value = overview.room;
 				this.sessions.value = overview.sessions;
-				this.tasks.value = overview.activeTasks as unknown as NeoTask[];
+				this.tasks.value = overview.activeTasks;
 			} else {
 				this.error.value = 'Room not found';
 			}

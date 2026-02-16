@@ -11,11 +11,7 @@ import { roomStore } from '../../lib/room-store';
 import { RoomSessions } from './RoomSessions';
 import { RoomTasks } from './RoomTasks';
 
-interface RoomDashboardProps {
-	roomId: string;
-}
-
-export function RoomDashboard({ roomId: _roomId }: RoomDashboardProps) {
+export function RoomDashboard() {
 	const tasks = roomStore.tasks.value;
 	const sessions = roomStore.sessions.value;
 	const pendingTasks = tasks.filter((t) => t.status === 'pending');
