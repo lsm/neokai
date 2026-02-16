@@ -136,6 +136,15 @@ export async function startDevServer(config: Config) {
 
 	log.info('🤖 Neo AI client connected via in-process transport');
 
+	// Wait for transport to be ready with timeout
+	const readyStart = Date.now();
+	while (!neoTransport.clientTransport.isReady()) {
+		if (Date.now() - readyStart > 5000) {
+			throw new Error('Transport failed to become ready within 5s timeout');
+		}
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+
 	// Create RoomNeo instances for active rooms
 	log.info('🤖 Initializing RoomNeo instances...');
 	const roomManager = new RoomManager(daemonContext.db.getDatabase());
@@ -143,12 +152,13 @@ export async function startDevServer(config: Config) {
 
 	for (const room of rooms) {
 		try {
+			log.info(`   Starting RoomNeo for room ${room.id.slice(0, 8)}...`);
 			const roomNeo = new RoomNeo(room.id, neoHub, { workspacePath: config.workspaceRoot });
 			await roomNeo.initialize();
 			roomNeos.set(room.id, roomNeo);
-			log.info(`   RoomNeo initialized for room ${room.id.slice(0, 8)}`);
+			log.info(`   ✓ RoomNeo initialized for room ${room.id.slice(0, 8)}`);
 		} catch (error) {
-			log.error(`   Failed to initialize RoomNeo for room ${room.id.slice(0, 8)}:`, error);
+			log.error(`   ✗ Failed to initialize RoomNeo for room ${room.id.slice(0, 8)}:`, error);
 		}
 	}
 
