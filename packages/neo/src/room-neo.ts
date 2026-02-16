@@ -7,13 +7,12 @@
  * Handles:
  * - Receiving messages from humans or system events
  * - Processing messages with Claude SDK
- * - Parsing actions from Neo's response
- * - Executing actions via RPC calls
+ * - Executing room operations through native MCP tool-calling
  * - Creating and managing worker sessions
  * - Watching session state changes
  */
 
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type {
 	MessageHub,
@@ -27,7 +26,8 @@ import type {
 	PendingUserQuestion,
 } from '@neokai/shared';
 import { Logger } from '@neokai/shared';
-import { buildRoomPrompt, parseNeoActions, type NeoAction } from '@neokai/shared/neo-prompt';
+import { buildRoomPrompt } from '@neokai/shared/neo-prompt';
+import { z } from 'zod';
 import { NeoSessionWatcher, type SessionEventHandlers } from './neo-session-watcher';
 
 /**
@@ -67,6 +67,7 @@ export class RoomNeo {
 	private sessionWatcher: NeoSessionWatcher;
 	private watchedSessions: Set<string> = new Set();
 	private roomMessageUnsubscribe: (() => void) | null = null;
+	private roomOpsMcpServer: ReturnType<typeof createSdkMcpServer>;
 
 	constructor(
 		private roomId: string,
@@ -89,6 +90,148 @@ export class RoomNeo {
 		};
 
 		this.sessionWatcher = new NeoSessionWatcher(hub, handlers);
+		this.roomOpsMcpServer = this.createRoomOpsMcpServer();
+	}
+
+	private createRoomOpsMcpServer() {
+		return createSdkMcpServer({
+			name: `room-ops-${this.roomId.slice(0, 8)}`,
+			tools: [
+				tool(
+					'room_create_session',
+					'Create a new worker session in this room',
+					{
+						workspacePath: z.string().optional(),
+						model: z.string().optional(),
+						title: z.string().optional(),
+					},
+					async (args) => {
+						const sessionId = await this.createSession({
+							workspacePath: args.workspacePath,
+							model: args.model,
+							title: args.title,
+						});
+
+						return {
+							content: [
+								{
+									type: 'text',
+									text: JSON.stringify({ sessionId }),
+								},
+							],
+						};
+					}
+				),
+				tool(
+					'room_create_task',
+					'Create a task in this room',
+					{
+						title: z.string(),
+						description: z.string().optional(),
+						priority: z.enum(['low', 'normal', 'high', 'urgent']).optional(),
+						dependsOn: z.array(z.string()).optional(),
+					},
+					async (args) => {
+						const { task } = await this.hub.request<{ task: { id: string; status: string } }>(
+							'task.create',
+							{
+								roomId: this.roomId,
+								title: args.title,
+								description: args.description ?? '',
+								priority: args.priority,
+								dependsOn: args.dependsOn,
+							}
+						);
+
+						return {
+							content: [
+								{
+									type: 'text',
+									text: JSON.stringify({ taskId: task.id, status: task.status }),
+								},
+							],
+						};
+					}
+				),
+				tool(
+					'room_assign_task',
+					'Assign a task to a worker session and start execution',
+					{
+						taskId: z.string(),
+						sessionId: z.string(),
+					},
+					async (args) => {
+						const { task } = await this.hub.request<{
+							task: { id: string; status: string; sessionId?: string };
+						}>('task.start', {
+							roomId: this.roomId,
+							taskId: args.taskId,
+							sessionId: args.sessionId,
+						});
+
+						return {
+							content: [
+								{
+									type: 'text',
+									text: JSON.stringify({
+										taskId: task.id,
+										status: task.status,
+										sessionId: task.sessionId,
+									}),
+								},
+							],
+						};
+					}
+				),
+				tool(
+					'room_send_session_message',
+					'Send an instruction message to a worker session',
+					{
+						sessionId: z.string(),
+						content: z.string(),
+					},
+					async (args) => {
+						await this.sendToSession(args.sessionId, args.content);
+						return {
+							content: [
+								{
+									type: 'text',
+									text: JSON.stringify({ sent: true, sessionId: args.sessionId }),
+								},
+							],
+						};
+					}
+				),
+				tool(
+					'room_add_memory',
+					'Store important memory for this room',
+					{
+						type: z.enum(['conversation', 'task_result', 'preference', 'pattern', 'note']),
+						content: z.string(),
+						tags: z.array(z.string()).optional(),
+						importance: z.enum(['low', 'normal', 'high']).optional(),
+					},
+					async (args) => {
+						const { memory } = await this.hub.request<{ memory: { id: string } }>('memory.add', {
+							roomId: this.roomId,
+							type: args.type,
+							content: args.content,
+							tags: args.tags ?? [],
+							importance: args.importance ?? 'normal',
+						});
+
+						return {
+							content: [
+								{
+									type: 'text',
+									text: JSON.stringify({ memoryId: memory.id }),
+								},
+							],
+						};
+					}
+				),
+			],
+		});
 	}
 
 	/**
@@ -436,7 +579,13 @@ export class RoomNeo {
 			options: {
 				model: this.config.model,
 				cwd: this.config.workspacePath,
-				maxTurns: 1, // Single response for Neo
+				maxTurns: 8,
+				// Neo is an orchestrator: expose room operations as MCP tools and disable
+				// built-in local execution tools.
+				tools: [],
+				mcpServers: {
+					roomOps: this.roomOpsMcpServer,
+				},
 			},
 		});
 
@@ -544,92 +693,6 @@ export class RoomNeo {
 			this.logger.error('Error broadcasting Neo response:', error);
 		}
 
-		// Parse actions
-		const actions = parseNeoActions(response);
-
-		// Execute actions via RPC
-		for (const action of actions) {
-			try {
-				await this.executeAction(action);
-			} catch (error) {
-				this.logger.error(`Error executing action ${action.type}:`, error);
-			}
-		}
-	}
-
-	/**
-	 * Execute a parsed action via RPC
-	 */
-	private async executeAction(action: NeoAction): Promise<void> {
-		switch (action.type) {
-			case 'create_session': {
-				const sessionId = await this.createSession({
-					workspacePath: action.params.workspace,
-					model: action.params.model,
-					title: action.params.title,
-				});
-				this.logger.info(`Created session ${sessionId} via action`);
-				break;
-			}
-
-			case 'create_task': {
-				await this.hub.request('task.create', {
-					roomId: this.roomId,
-					title: action.params.title || 'Untitled Task',
-					description: action.params.description || '',
-					priority: action.params.priority || 'normal',
-				});
-				this.logger.info(`Created task via RPC`);
-				break;
-			}
-
-			case 'assign_task': {
-				const taskId = action.params.task_id;
-				const sessionId = action.params.session_id;
-				if (!taskId || !sessionId) {
-					throw new Error('assign_task requires task_id and session_id');
-				}
-
-				await this.hub.request('task.start', {
-					roomId: this.roomId,
-					taskId,
-					sessionId,
-				});
-				this.logger.info(`Assigned task ${taskId} to session ${sessionId}`);
-				break;
-			}
-
-			case 'send_message': {
-				const sessionId = action.params.session_id;
-				const content = action.params.content;
-				if (!sessionId || !content) {
-					throw new Error('send_message requires session_id and content');
-				}
-
-				await this.sendToSession(sessionId, content);
-				this.logger.info(`Sent instruction to session ${sessionId}`);
-				break;
-			}
-
-			case 'add_memory': {
-				await this.hub.request('memory.add', {
-					roomId: this.roomId,
-					type: action.params.type || 'note',
-					content: action.params.content || '',
-					tags: action.params.tags?.split(',').map((t: string) => t.trim()) || [],
-					importance: action.params.importance || 'normal',
-				});
-				this.logger.info(`Added memory via RPC`);
-				break;
-			}
-
-			case 'report_status': {
-				this.logger.info(`Status report: ${action.params.message}`);
-				break;
-			}
-
-			default:
-				this.logger.warn(`Unknown action type: ${action.type}`);
-		}
+		// Room operations are executed via native SDK MCP tool-calling.
 	}
 }

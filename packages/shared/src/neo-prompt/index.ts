@@ -5,8 +5,4 @@
  */
 
 // Action utilities
-export {
-	buildRoomPrompt,
-	parseNeoActions,
-	type NeoAction,
-} from './actions';
+export { buildRoomPrompt } from './actions';
