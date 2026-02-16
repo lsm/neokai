@@ -28,9 +28,21 @@ export function createTables(db: BunDatabase): void {
         workspace_path TEXT NOT NULL,
         created_at TEXT NOT NULL,
         last_active_at TEXT NOT NULL,
-        status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived')),
+        status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
         config TEXT NOT NULL,
-        metadata TEXT NOT NULL
+        metadata TEXT NOT NULL,
+        is_worktree INTEGER DEFAULT 0,
+        worktree_path TEXT,
+        main_repo_path TEXT,
+        worktree_branch TEXT,
+        git_branch TEXT,
+        sdk_session_id TEXT,
+        available_commands TEXT,
+        processing_state TEXT,
+        archived_at TEXT,
+        parent_id TEXT,
+        labels TEXT,
+        sub_session_order INTEGER DEFAULT 0
       )
     `);
 
@@ -73,6 +85,7 @@ export function createTables(db: BunDatabase): void {
         message_subtype TEXT,
         sdk_message TEXT NOT NULL,
         timestamp TEXT NOT NULL,
+        send_status TEXT DEFAULT 'sent' CHECK(send_status IN ('saved', 'queued', 'sent')),
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       )
     `);
@@ -215,6 +228,8 @@ function createIndexes(db: BunDatabase): void {
       ON sdk_messages(session_id, timestamp)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_type
       ON sdk_messages(message_type, message_subtype)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status
+      ON sdk_messages(session_id, send_status)`);
 
 	// Room indexes
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_room ON memories(room_id)`);

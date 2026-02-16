@@ -30,6 +30,8 @@ const MAX_MESSAGE_SIZE_MB = MAX_MESSAGE_SIZE / (1024 * 1024);
 interface WebSocketData {
 	connectionSessionId: string;
 	clientId?: string;
+	// FIX P2: Track channels client has joined for self-healing
+	joinedChannels?: Set<string>;
 }
 
 /**
@@ -102,6 +104,13 @@ export function createWebSocketHandlers(
 					const clientId = ws.data.clientId;
 					if (clientId) {
 						transport.updateClientActivity(clientId);
+
+						// FIX P2: Self-healing - re-verify channel membership on PING
+						// This ensures clients are re-added to channels if they were removed by stale cleanup
+						const expectedChannels: string[] = ws.data.joinedChannels
+							? ['global', ...Array.from<string>(ws.data.joinedChannels)]
+							: ['global'];
+						transport.verifyChannelMembership(clientId, expectedChannels);
 					}
 
 					const pongMsg = {
@@ -146,6 +155,28 @@ export function createWebSocketHandlers(
 				// Message routing is handled by sessionId field, not connection
 				// Cast to HubMessage - the parsed JSON has the same structure
 				if (clientId) {
+					// FIX P2: Track channel joins/leaves for self-healing on PING
+					if (
+						data.method === 'channel.join' &&
+						data.data &&
+						typeof (data.data as Record<string, unknown>).channel === 'string'
+					) {
+						const channel = (data.data as Record<string, unknown>).channel as string;
+						if (!ws.data.joinedChannels) {
+							ws.data.joinedChannels = new Set();
+						}
+						ws.data.joinedChannels.add(channel);
+					} else if (
+						data.method === 'channel.leave' &&
+						data.data &&
+						typeof (data.data as Record<string, unknown>).channel === 'string'
+					) {
+						const channel = (data.data as Record<string, unknown>).channel as string;
+						if (ws.data.joinedChannels) {
+							ws.data.joinedChannels.delete(channel);
+						}
+					}
+
 					transport.handleClientMessage(data as unknown as HubMessage, clientId);
 				}
 			} catch (error) {
