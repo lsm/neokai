@@ -388,7 +388,7 @@ function ToolUseBlock({
 						questions: questions.map((q) => ({
 							question: q.question,
 							header: q.header,
-							options: q.options,
+							options: Array.isArray(q.options) ? q.options : [],
 							multiSelect: q.multiSelect,
 						})),
 						askedAt: Date.now(),
