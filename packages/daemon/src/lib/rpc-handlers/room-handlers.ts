@@ -65,7 +65,7 @@ export function setupRoomHandlers(
 		return { rooms };
 	});
 
-	// room.get - Get a room by ID
+	// room.get - Get room overview with related data
 	messageHub.onRequest('room.get', async (data) => {
 		const params = data as { roomId: string };
 
@@ -73,12 +73,12 @@ export function setupRoomHandlers(
 			throw new Error('Room ID is required');
 		}
 
-		const room = roomManager.getRoom(params.roomId);
-		if (!room) {
+		const overview = roomManager.getRoomOverview(params.roomId);
+		if (!overview) {
 			throw new Error(`Room not found: ${params.roomId}`);
 		}
 
-		return { room };
+		return overview; // Returns RoomOverview directly (not wrapped in { room })
 	});
 
 	// room.update - Update a room

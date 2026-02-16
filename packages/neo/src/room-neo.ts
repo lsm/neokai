@@ -18,6 +18,7 @@ import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type {
 	MessageHub,
 	Room,
+	RoomOverview,
 	NeoContextMessage,
 	SessionSummary,
 	TaskSummary,
@@ -94,9 +95,9 @@ export class RoomNeo {
 	 * Initialize the RoomNeo instance
 	 */
 	async initialize(): Promise<void> {
-		// Fetch room data via RPC
-		const response = await this.hub.request<{ room: Room }>('room.get', { roomId: this.roomId });
-		this.room = response.room;
+		// Fetch room data via RPC - room.get returns RoomOverview directly
+		const overview = await this.hub.request<RoomOverview>('room.get', { roomId: this.roomId });
+		this.room = overview.room;
 
 		if (!this.room) {
 			throw new Error(`Room not found: ${this.roomId}`);
@@ -164,10 +165,10 @@ export class RoomNeo {
 		try {
 			// Reload room data
 			if (!this.room) {
-				const response = await this.hub.request<{ room: Room }>('room.get', {
+				const overview = await this.hub.request<RoomOverview>('room.get', {
 					roomId: this.roomId,
 				});
-				this.room = response.room;
+				this.room = overview.room;
 				if (!this.room) {
 					throw new Error(`Room not found: ${this.roomId}`);
 				}
