@@ -22,6 +22,11 @@ on:
     branches: [main, dev]
   workflow_dispatch:
 
+# Cancel in-progress runs when a new run is triggered on the same branch
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
