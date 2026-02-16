@@ -14,7 +14,7 @@
  * Renamed from neo.task.* to task.* for cleaner API.
  */
 
-import type { MessageHub, TaskStatus, TaskPriority } from '@neokai/shared';
+import type { MessageHub, NeoTask, TaskPriority, TaskStatus } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { RoomManager } from '../room/room-manager';
@@ -37,31 +37,12 @@ export function setupTaskHandlers(
 	/**
 	 * Emit room.task.update event to notify UI clients
 	 */
-	const emitTaskUpdate = (
-		roomId: string,
-		task: {
-			id: string;
-			roomId: string;
-			title: string;
-			status: TaskStatus;
-			priority: TaskPriority;
-			progress?: number;
-			currentStep?: string;
-			result?: string;
-			error?: string;
-			dependsOn: string[];
-			createdAt: number;
-			startedAt?: number;
-			completedAt?: number;
-			sessionId?: string;
-			description: string;
-		}
-	) => {
+	const emitTaskUpdate = (roomId: string, task: NeoTask) => {
 		daemonHub
 			.emit('room.task.update', {
 				sessionId: `room:${roomId}`,
 				roomId,
-				task: task as typeof task & { roomId: string },
+				task,
 			})
 			.catch(() => {
 				// Event emission error - non-critical, continue
@@ -79,23 +60,7 @@ export function setupTaskHandlers(
 					sessionId: `room:${roomId}`,
 					room: overview.room,
 					sessions: overview.sessions,
-					activeTasks: overview.activeTasks as Array<{
-						id: string;
-						roomId: string;
-						title: string;
-						status: TaskStatus;
-						priority: TaskPriority;
-						progress?: number;
-						currentStep?: string;
-						result?: string;
-						error?: string;
-						dependsOn: string[];
-						createdAt: number;
-						startedAt?: number;
-						completedAt?: number;
-						sessionId?: string;
-						description: string;
-					}>,
+					activeTasks: overview.activeTasks,
 				})
 				.catch(() => {
 					// Event emission error - non-critical, continue

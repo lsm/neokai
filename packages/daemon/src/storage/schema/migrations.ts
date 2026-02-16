@@ -489,23 +489,31 @@ function tableExists(db: BunDatabase, tableName: string): boolean {
 /**
  * Helper function to idempotently rename a table
  *
- * Handles three cases:
+ * Handles two safe cases:
  * 1. Old exists, new doesn't -> rename (normal case)
- * 2. Both exist -> drop old (partial migration, data already in new table)
- * 3. Only new exists -> skip (migration already done)
+ * 2. Only new exists -> skip (already migrated)
+ *
+ * IMPORTANT: If both tables exist, this helper intentionally does nothing.
+ * The caller must explicitly merge data first to avoid data loss.
  */
 function renameTableIfExists(db: BunDatabase, oldName: string, newName: string): void {
 	const oldExists = tableExists(db, oldName);
 	const newExists = tableExists(db, newName);
 
-	if (newExists && oldExists) {
-		// Partial migration - data already in new table, drop old
-		db.exec(`DROP TABLE ${oldName}`);
-	} else if (oldExists && !newExists) {
+	if (oldExists && !newExists) {
 		// Normal case - rename needed
 		db.exec(`ALTER TABLE ${oldName} RENAME TO ${newName}`);
 	}
-	// else: migration already done (newExists, !oldExists) or neither exist (shouldn't happen)
+}
+
+/**
+ * Helper to check whether a table has a specific column
+ */
+function tableHasColumn(db: BunDatabase, tableName: string, columnName: string): boolean {
+	const result = db
+		.prepare(`SELECT name FROM pragma_table_info('${tableName}') WHERE name = ?`)
+		.get(columnName);
+	return !!result;
 }
 
 /**
@@ -521,10 +529,11 @@ function renameTableIfExists(db: BunDatabase, oldName: string, newName: string):
  * - Indexes idx_neo_* -> idx_*
  *
  * This migration is idempotent - it can be safely re-run if it failed partway through.
- * The renameTableIfExists helper handles all edge cases:
- * - Old exists, new doesn't -> rename
- * - Both exist -> drop old (partial migration)
- * - Only new exists -> skip (already done)
+ *
+ * Important safety behavior:
+ * - If both neo_* and new tables exist, we MERGE missing rows by id first,
+ *   then drop the legacy table.
+ * - We never blindly drop a populated legacy table.
  */
 function runMigration14(db: BunDatabase): void {
 	// Disable foreign keys during table renaming
@@ -538,7 +547,73 @@ function runMigration14(db: BunDatabase): void {
 		db.exec(`DROP INDEX IF EXISTS idx_neo_tasks_status`);
 		db.exec(`DROP INDEX IF EXISTS idx_neo_context_messages_context`);
 
-		// Rename tables idempotently
+		// If both old and new tables exist, merge missing rows before dropping old tables.
+		// This prevents data loss in partial migration states.
+		if (tableExists(db, 'neo_context_messages') && tableExists(db, 'context_messages')) {
+			db.exec(`
+				INSERT OR IGNORE INTO context_messages (id, context_id, role, content, timestamp, token_count, session_id, task_id)
+				SELECT id, context_id, role, content, timestamp, token_count, session_id, task_id
+				FROM neo_context_messages;
+			`);
+			db.exec(`DROP TABLE neo_context_messages`);
+		}
+
+		if (tableExists(db, 'neo_contexts') && tableExists(db, 'contexts')) {
+			db.exec(`
+				INSERT OR IGNORE INTO contexts (id, room_id, total_tokens, last_compacted_at, status, current_task_id, current_session_id)
+				SELECT id, room_id, total_tokens, last_compacted_at, status, current_task_id, current_session_id
+				FROM neo_contexts;
+			`);
+			db.exec(`DROP TABLE neo_contexts`);
+		}
+
+		if (tableExists(db, 'neo_tasks') && tableExists(db, 'tasks')) {
+			db.exec(`
+				INSERT OR IGNORE INTO tasks (id, room_id, title, description, session_id, status, priority, progress, current_step, result, error, depends_on, created_at, started_at, completed_at)
+				SELECT id, room_id, title, description, session_id, status, priority, progress, current_step, result, error, depends_on, created_at, started_at, completed_at
+				FROM neo_tasks;
+			`);
+			db.exec(`DROP TABLE neo_tasks`);
+		}
+
+		if (tableExists(db, 'neo_memories') && tableExists(db, 'memories')) {
+			db.exec(`
+				INSERT OR IGNORE INTO memories (id, room_id, type, content, tags, importance, session_id, task_id, created_at, last_accessed_at, access_count)
+				SELECT id, room_id, type, content, tags, importance, session_id, task_id, created_at, last_accessed_at, access_count
+				FROM neo_memories;
+			`);
+			db.exec(`DROP TABLE neo_memories`);
+		}
+
+		if (tableExists(db, 'neo_rooms') && tableExists(db, 'rooms')) {
+			if (tableHasColumn(db, 'rooms', 'allowed_paths')) {
+				db.exec(`
+					INSERT OR IGNORE INTO rooms (id, name, description, allowed_paths, default_path, default_model, session_ids, status, context_id, created_at, updated_at)
+					SELECT
+						id,
+						name,
+						description,
+						CASE WHEN default_workspace IS NOT NULL THEN json_array(default_workspace) ELSE '[]' END,
+						default_workspace,
+						default_model,
+						session_ids,
+						status,
+						neo_context_id,
+						created_at,
+						updated_at
+					FROM neo_rooms;
+				`);
+			} else {
+				db.exec(`
+					INSERT OR IGNORE INTO rooms (id, name, description, default_workspace, default_model, session_ids, status, context_id, created_at, updated_at)
+					SELECT id, name, description, default_workspace, default_model, session_ids, status, neo_context_id, created_at, updated_at
+					FROM neo_rooms;
+				`);
+			}
+			db.exec(`DROP TABLE neo_rooms`);
+		}
+
+		// Rename remaining tables idempotently (when only old table exists)
 		renameTableIfExists(db, 'neo_context_messages', 'context_messages');
 		renameTableIfExists(db, 'neo_contexts', 'contexts');
 		renameTableIfExists(db, 'neo_tasks', 'tasks');
