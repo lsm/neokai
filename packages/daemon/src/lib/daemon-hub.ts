@@ -26,7 +26,7 @@ import type {
 	RewindResult,
 } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
-import type { Room, NeoTask } from '@neokai/shared';
+import type { Room, NeoTask, TaskSummary } from '@neokai/shared';
 
 /**
  * Compaction trigger type
@@ -189,7 +189,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		sessionId: string; // 'room:${roomId}' for channel routing
 		room: Room;
 		sessions: { id: string; title: string; status: string; lastActiveAt: number }[];
-		activeTasks: NeoTask[];
+		activeTasks: TaskSummary[];
 	};
 	'room.task.update': {
 		sessionId: string; // 'room:${roomId}' for channel routing

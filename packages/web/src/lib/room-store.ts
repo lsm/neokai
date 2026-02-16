@@ -188,20 +188,24 @@ class RoomStore {
 			this.cleanupFunctions.push(unsubRoomOverview);
 
 			// 2. Task updates
-			const unsubTaskUpdate = hub.onEvent<NeoTask>('room.task.update', (task) => {
-				if (task.roomId === roomId) {
-					const idx = this.tasks.value.findIndex((t) => t.id === task.id);
-					if (idx >= 0) {
-						this.tasks.value = [
-							...this.tasks.value.slice(0, idx),
-							task,
-							...this.tasks.value.slice(idx + 1),
-						];
-					} else {
-						this.tasks.value = [...this.tasks.value, task];
+			const unsubTaskUpdate = hub.onEvent<{ roomId: string; task: NeoTask }>(
+				'room.task.update',
+				(event) => {
+					if (event.roomId === roomId) {
+						const task = event.task;
+						const idx = this.tasks.value.findIndex((t) => t.id === task.id);
+						if (idx >= 0) {
+							this.tasks.value = [
+								...this.tasks.value.slice(0, idx),
+								task,
+								...this.tasks.value.slice(idx + 1),
+							];
+						} else {
+							this.tasks.value = [...this.tasks.value, task];
+						}
 					}
 				}
-			});
+			);
 			this.cleanupFunctions.push(unsubTaskUpdate);
 
 			// 3. Neo context messages (room.message event from backend)
@@ -348,7 +352,7 @@ class RoomStore {
 			throw new Error('Not connected');
 		}
 
-		const task = await hub.request<NeoTask>('room.task.create', {
+		const { task } = await hub.request<{ task: NeoTask }>('task.create', {
 			roomId,
 			title,
 			description,

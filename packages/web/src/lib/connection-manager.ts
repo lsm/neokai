@@ -477,11 +477,14 @@ export class ConnectionManager {
 			// If this fails, the connection is dead and needs reconnect
 			await this.messageHub.request('system.health', {}, { timeout: 3000 });
 
-			// CRITICAL FIX: Re-join global room on resume
+			// CRITICAL FIX: Re-join channels on resume
 			// Safari may pause WebSocket without closing it, causing server-side
-			// room memberships to expire while client thinks it's still connected.
-			// This ensures room membership is re-established on the server.
-			this.messageHub.joinChannel('global');
+			// channel memberships to expire while client thinks it's still connected.
+			await this.messageHub.joinChannel('global');
+			const activeRoomId = roomStore.roomId.value;
+			if (activeRoomId) {
+				await this.messageHub.joinChannel(`room:${activeRoomId}`);
+			}
 
 			// CRITICAL: Refresh ALL state (session store, app state, and global state)
 			// This ensures UI is in sync even if events were missed during background
