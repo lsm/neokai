@@ -583,6 +583,34 @@ export class RoomNeo {
 				break;
 			}
 
+			case 'assign_task': {
+				const taskId = action.params.task_id;
+				const sessionId = action.params.session_id;
+				if (!taskId || !sessionId) {
+					throw new Error('assign_task requires task_id and session_id');
+				}
+
+				await this.hub.request('task.start', {
+					roomId: this.roomId,
+					taskId,
+					sessionId,
+				});
+				this.logger.info(`Assigned task ${taskId} to session ${sessionId}`);
+				break;
+			}
+
+			case 'send_message': {
+				const sessionId = action.params.session_id;
+				const content = action.params.content;
+				if (!sessionId || !content) {
+					throw new Error('send_message requires session_id and content');
+				}
+
+				await this.sendToSession(sessionId, content);
+				this.logger.info(`Sent instruction to session ${sessionId}`);
+				break;
+			}
+
 			case 'add_memory': {
 				await this.hub.request('memory.add', {
 					roomId: this.roomId,

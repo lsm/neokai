@@ -25,6 +25,7 @@ export async function startDevServer(config: Config) {
 	let vite: Awaited<ReturnType<typeof createViteServer>> | null = null;
 	let server: ReturnType<typeof Bun.serve> | null = null;
 	let unregisterNeoTransport: (() => void) | null = null;
+	let unregisterRoomLifecycle: (() => void) | null = null;
 	let neoHub: MessageHub | null = null;
 	let roomNeos: Map<string, RoomNeo> = new Map();
 
@@ -58,6 +59,11 @@ export async function startDevServer(config: Config) {
 						}, 3000);
 					}),
 				]);
+			}
+
+			if (unregisterRoomLifecycle) {
+				unregisterRoomLifecycle();
+				unregisterRoomLifecycle = null;
 			}
 
 			if (neoHub) {
@@ -145,21 +151,59 @@ export async function startDevServer(config: Config) {
 		await new Promise((resolve) => setTimeout(resolve, 10));
 	}
 
-	// Create RoomNeo instances for active rooms
+	const startRoomNeo = async (roomId: string) => {
+		if (roomNeos.has(roomId)) {
+			return;
+		}
+
+		try {
+			log.info(`   Starting RoomNeo for room ${roomId.slice(0, 8)}...`);
+			const roomNeo = new RoomNeo(roomId, neoHub, { workspacePath: config.workspaceRoot });
+			await roomNeo.initialize();
+			roomNeos.set(roomId, roomNeo);
+			log.info(`   ✓ RoomNeo initialized for room ${roomId.slice(0, 8)}`);
+		} catch (error) {
+			log.error(`   ✗ Failed to initialize RoomNeo for room ${roomId.slice(0, 8)}:`, error);
+		}
+	};
+
+	const stopRoomNeo = async (roomId: string) => {
+		const roomNeo = roomNeos.get(roomId);
+		if (!roomNeo) {
+			return;
+		}
+
+		try {
+			log.info(`   Stopping RoomNeo for room ${roomId.slice(0, 8)}...`);
+			await roomNeo.destroy();
+			roomNeos.delete(roomId);
+			log.info(`   ✓ RoomNeo stopped for room ${roomId.slice(0, 8)}`);
+		} catch (error) {
+			log.error(`   ✗ Failed to stop RoomNeo for room ${roomId.slice(0, 8)}:`, error);
+		}
+	};
+
+	// Join global channel to receive room lifecycle events
+	await neoHub.joinChannel('global');
+
+	// Dynamically manage RoomNeo lifecycle as rooms are created/archived
+	const unsubRoomCreated = neoHub.onEvent<{ roomId: string }>('room.created', (event) => {
+		void startRoomNeo(event.roomId);
+	});
+	const unsubRoomArchived = neoHub.onEvent<{ roomId: string }>('room.archived', (event) => {
+		void stopRoomNeo(event.roomId);
+	});
+	unregisterRoomLifecycle = () => {
+		unsubRoomCreated();
+		unsubRoomArchived();
+	};
+
+	// Create RoomNeo instances for active rooms at startup
 	log.info('🤖 Initializing RoomNeo instances...');
 	const roomManager = new RoomManager(daemonContext.db.getDatabase());
 	const rooms = roomManager.listRooms(false); // Only active rooms
-
 	for (const room of rooms) {
-		try {
-			log.info(`   Starting RoomNeo for room ${room.id.slice(0, 8)}...`);
-			const roomNeo = new RoomNeo(room.id, neoHub, { workspacePath: config.workspaceRoot });
-			await roomNeo.initialize();
-			roomNeos.set(room.id, roomNeo);
-			log.info(`   ✓ RoomNeo initialized for room ${room.id.slice(0, 8)}`);
-		} catch (error) {
-			log.error(`   ✗ Failed to initialize RoomNeo for room ${room.id.slice(0, 8)}:`, error);
-		}
+		await startRoomNeo(room.id);
 	}
 
 	log.info(`🤖 ${roomNeos.size} RoomNeo instance(s) initialized`);
