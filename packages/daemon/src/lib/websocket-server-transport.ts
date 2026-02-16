@@ -138,6 +138,37 @@ export class WebSocketServerTransport implements IMessageTransport {
 	}
 
 	/**
+	 * Re-verify channel membership for a client (self-healing)
+	 * Ensures client is in expected channels, re-joins if missing
+	 * This recovers from stale connection cleanup removing clients from channels
+	 *
+	 * @param clientId The client to verify
+	 * @param expectedChannels Channels the client should be in
+	 */
+	verifyChannelMembership(clientId: string, expectedChannels: string[]): void {
+		const router = this.getRouter();
+		if (!router) {
+			this.logger.debug(`Cannot verify channels - no router available`);
+			return;
+		}
+
+		const channelManager = router.getChannelManager();
+		let rejoined = 0;
+
+		for (const channel of expectedChannels) {
+			if (!channelManager.isInChannel(clientId, channel)) {
+				this.logger.debug(`[Self-healing] Re-joining client ${clientId} to channel ${channel}`);
+				router.joinChannel(clientId, channel);
+				rejoined++;
+			}
+		}
+
+		if (rejoined > 0) {
+			this.logger.info(`[Self-healing] Restored ${rejoined} channel(s) for client ${clientId}`);
+		}
+	}
+
+	/**
 	 * Close transport and cleanup all connections
 	 * FIX P2.2: Clear both bidirectional maps
 	 */

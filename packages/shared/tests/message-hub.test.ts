@@ -493,8 +493,8 @@ describe('MessageHub', () => {
 
 			expect(
 				(
-					messageHub as unknown as { roomEventHandlers: Map<string, Set<unknown>> }
-				).roomEventHandlers.has('user.created')
+					messageHub as unknown as { channelEventHandlers: Map<string, Set<unknown>> }
+				).channelEventHandlers.has('user.created')
 			).toBe(true);
 		});
 
@@ -566,8 +566,8 @@ describe('MessageHub', () => {
 	});
 
 	describe('Room Management', () => {
-		test('should send room.join request', async () => {
-			// Start joinRoom but don't await yet
+		test('should send channel.join request', async () => {
+			// Start joinChannel but don't await yet
 			const joinPromise = messageHub.joinChannel('session-123');
 
 			// Wait for message to be sent
@@ -575,13 +575,13 @@ describe('MessageHub', () => {
 
 			const sentMessage = transport.sentMessages[0];
 			expect(sentMessage.type).toBe(MessageType.REQUEST);
-			expect(sentMessage.method).toBe('room.join');
+			expect(sentMessage.method).toBe('channel.join');
 			expect(sentMessage.data).toEqual({ channel: 'session-123' });
 
 			// Simulate ACK response
 			transport.simulateMessage(
 				createResponseMessage({
-					method: 'room.join',
+					method: 'channel.join',
 					data: { acknowledged: true },
 					sessionId: sentMessage.sessionId,
 					requestId: sentMessage.id,
@@ -591,8 +591,8 @@ describe('MessageHub', () => {
 			await joinPromise;
 		});
 
-		test('should send room.leave request', async () => {
-			// Start leaveRoom but don't await yet
+		test('should send channel.leave request', async () => {
+			// Start leaveChannel but don't await yet
 			const leavePromise = messageHub.leaveChannel('session-123');
 
 			// Wait for message to be sent
@@ -600,13 +600,13 @@ describe('MessageHub', () => {
 
 			const sentMessage = transport.sentMessages[0];
 			expect(sentMessage.type).toBe(MessageType.REQUEST);
-			expect(sentMessage.method).toBe('room.leave');
+			expect(sentMessage.method).toBe('channel.leave');
 			expect(sentMessage.data).toEqual({ channel: 'session-123' });
 
 			// Simulate ACK response
 			transport.simulateMessage(
 				createResponseMessage({
-					method: 'room.leave',
+					method: 'channel.leave',
 					data: { acknowledged: true },
 					sessionId: sentMessage.sessionId,
 					requestId: sentMessage.id,
@@ -854,8 +854,8 @@ describe('MessageHub', () => {
 				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.size
 			).toBe(0);
 			expect(
-				(messageHub as unknown as { roomEventHandlers: Map<string, unknown> }).roomEventHandlers
-					.size
+				(messageHub as unknown as { channelEventHandlers: Map<string, unknown> })
+					.channelEventHandlers.size
 			).toBe(0);
 		});
 

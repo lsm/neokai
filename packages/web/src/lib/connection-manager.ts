@@ -98,6 +98,10 @@ export class ConnectionManager {
 	private visibilityHandler: (() => void) | null = null;
 	private pageHideHandler: (() => void) | null = null;
 
+	// FIX P5: Periodic state validation for proactive connection health monitoring
+	private stateValidationInterval: ReturnType<typeof setInterval> | null = null;
+	private readonly stateValidationPeriod: number = 60000; // 1 minute
+
 	// Event-driven connection handlers
 	private connectionHandlers: Set<ConnectionHandler> = new Set();
 
@@ -338,6 +342,9 @@ export class ConnectionManager {
 		// Join global room after connection is established
 		this.messageHub.joinChannel('global');
 
+		// FIX P5: Start periodic state validation
+		this.startPeriodicStateValidation();
+
 		// Mark ready for testing
 		if (typeof window !== 'undefined' && window.__messageHub) {
 			window.__messageHubReady = true;
@@ -394,6 +401,9 @@ export class ConnectionManager {
 	 * Disconnect from WebSocket
 	 */
 	async disconnect(): Promise<void> {
+		// FIX P5: Stop periodic state validation
+		this.stopPeriodicStateValidation();
+
 		// Update connection state
 		connectionState.value = 'disconnected';
 
@@ -502,6 +512,51 @@ export class ConnectionManager {
 			if (this.transport) {
 				this.transport.forceReconnect();
 			}
+		}
+	}
+
+	/**
+	 * Start periodic state validation
+	 * FIX P5: Proactively detects and recovers from stale connections
+	 */
+	private startPeriodicStateValidation(): void {
+		if (this.stateValidationInterval) return;
+
+		this.stateValidationInterval = setInterval(async () => {
+			// Only validate if connected and page is visible
+			if (this.isConnected() && !document.hidden) {
+				await this.validateConnectionState();
+			}
+		}, this.stateValidationPeriod);
+	}
+
+	/**
+	 * Stop periodic state validation
+	 */
+	private stopPeriodicStateValidation(): void {
+		if (this.stateValidationInterval) {
+			clearInterval(this.stateValidationInterval);
+			this.stateValidationInterval = null;
+		}
+	}
+
+	/**
+	 * Lightweight connection state validation
+	 * FIX P5: Uses health check to verify connection is alive
+	 */
+	private async validateConnectionState(): Promise<boolean> {
+		if (!this.messageHub || !this.transport) {
+			return false;
+		}
+
+		try {
+			// Quick health check with short timeout
+			await this.messageHub.request('system.health', {}, { timeout: 3000 });
+			return true;
+		} catch {
+			// Health check failed - trigger reconnect
+			this.transport.forceReconnect();
+			return false;
 		}
 	}
 
