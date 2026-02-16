@@ -7,7 +7,12 @@
 		"strict": true,
 		"skipLibCheck": true,
 		"allowImportingTsExtensions": true,
-		"noEmit": true
+		"noEmit": true,
+		"types": ["bun"],
+		"paths": {
+			"@neokai/shared": ["../shared/src/mod.ts"],
+			"@neokai/shared/*": ["../shared/src/*"]
+		}
 	},
 	"include": ["src/**/*"],
 	"exclude": ["node_modules", "dist"]
