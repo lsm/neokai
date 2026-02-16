@@ -65,8 +65,8 @@ export class MemoryManager {
 		if (query.tags && query.tags.length > 0) {
 			// Simple JSON array contains check using LIKE
 			for (const tag of query.tags) {
-				sql += ` AND tags LIKE ?`;
-				params.push(`%"${tag}"%`);
+				sql += ` AND tags LIKE ? ESCAPE '\\'`;
+				params.push(`%"${this.escapeLikePattern(tag)}"%`);
 			}
 		}
 
@@ -87,8 +87,8 @@ export class MemoryManager {
 	 * Search memories by content (simple LIKE for now)
 	 */
 	async searchMemories(searchTerm: string, limit?: number): Promise<NeoMemory[]> {
-		let sql = `SELECT * FROM memories WHERE room_id = ? AND content LIKE ?`;
-		const params: (string | number)[] = [this.roomId, `%${searchTerm}%`];
+		let sql = `SELECT * FROM memories WHERE room_id = ? AND content LIKE ? ESCAPE '\\'`;
+		const params: (string | number)[] = [this.roomId, `%${this.escapeLikePattern(searchTerm)}%`];
 
 		sql += ` ORDER BY importance DESC, last_accessed_at DESC`;
 
@@ -153,6 +153,14 @@ export class MemoryManager {
 	 */
 	async listMemories(type?: MemoryType): Promise<NeoMemory[]> {
 		return this.memoryRepo.listMemories(this.roomId, type);
+	}
+
+	/**
+	 * Escape special LIKE pattern characters (% and _)
+	 * Used to prevent user input from being interpreted as wildcards
+	 */
+	private escapeLikePattern(pattern: string): string {
+		return pattern.replace(/[%_\\]/g, '\\$&');
 	}
 
 	/**
