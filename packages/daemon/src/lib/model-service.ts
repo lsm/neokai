@@ -97,6 +97,30 @@ const FALLBACK_MODELS: ModelInfo[] = [
 ];
 
 /**
+ * Merge provider-loaded models with FALLBACK_MODELS.
+ * This ensures well-known Anthropic model aliases (opus, sonnet, haiku)
+ * are always available for resolution, even when only non-Anthropic
+ * providers are configured.
+ *
+ * Provider models take precedence over fallback models with same ID.
+ */
+function mergeWithFallbackModels(providerModels: ModelInfo[]): ModelInfo[] {
+	const modelMap = new Map<string, ModelInfo>();
+
+	// Add fallback models first
+	for (const model of FALLBACK_MODELS) {
+		modelMap.set(model.id, model);
+	}
+
+	// Provider models override fallbacks with same ID
+	for (const model of providerModels) {
+		modelMap.set(model.id, model);
+	}
+
+	return Array.from(modelMap.values());
+}
+
+/**
  * Track if a background refresh is in progress for a given cache key
  */
 const refreshInProgress = new Map<string, Promise<void>>();
@@ -162,7 +186,9 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 		try {
 			const models = await loadModelsFromProviders();
 			if (models.length > 0) {
-				modelsCache.set(cacheKey, models);
+				// Merge with fallback models to ensure Anthropic aliases are always available
+				const mergedModels = mergeWithFallbackModels(models);
+				modelsCache.set(cacheKey, mergedModels);
 				cacheTimestamps.set(cacheKey, Date.now());
 			}
 			/* v8 ignore next 2 */
@@ -256,8 +282,11 @@ export async function initializeModels(): Promise<void> {
 	try {
 		const models = await loadModelsFromProviders();
 		if (models.length > 0) {
-			// Cache the models
-			modelsCache.set(cacheKey, models);
+			// Merge provider models with FALLBACK_MODELS to ensure well-known Anthropic
+			// model aliases (opus, sonnet, haiku) are always available for resolution,
+			// even when only non-Anthropic providers are configured
+			const mergedModels = mergeWithFallbackModels(models);
+			modelsCache.set(cacheKey, mergedModels);
 			cacheTimestamps.set(cacheKey, Date.now());
 		} else {
 			throw new Error('No models returned from providers');
