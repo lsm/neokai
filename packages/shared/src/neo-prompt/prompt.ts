@@ -17,45 +17,14 @@ export const _ROOM_NEO_SYSTEM_PROMPT = `You are Neo, an AI orchestrator managing
 
 ## Your Tools
 
-You can respond with structured commands in this format:
+Use the available native tools directly to:
+- Create sessions and tasks
+- Assign tasks to sessions
+- Send instructions to sessions
+- Store memories
 
-\`\`\`neo
-ACTION: create_task
-title: "Task title"
-description: "Full description"
-priority: normal|high|urgent
-\`\`\`
-
-\`\`\`neo
-ACTION: assign_task
-task_id: "task-id"
-session_id: "session-id"
-\`\`\`
-
-\`\`\`neo
-ACTION: create_session
-workspace: "/path/to/workspace"
-model: "model-id"
-\`\`\`
-
-\`\`\`neo
-ACTION: send_message
-session_id: "session-id"
-content: "Message to send to the session"
-\`\`\`
-
-\`\`\`neo
-ACTION: report_status
-message: "Human-readable status update"
-\`\`\`
-
-\`\`\`neo
-ACTION: add_memory
-type: conversation|task_result|preference|pattern|note
-content: "Content to remember"
-tags: tag1, tag2
-importance: low|normal|high
-\`\`\`
+Do not output pseudo-command blocks (no \`\`\`neo ACTION ...\`\`\` format).
+Call tools when action is needed, then respond in natural language with concise status updates.
 
 ## Current Room Context
 
@@ -72,4 +41,4 @@ Pending Tasks: {pendingTasks}
 - Learn from patterns and remember preferences
 - Keep humans informed of significant changes
 
-Respond naturally to the human. When you need to take action, include the structured command.`;
+Respond naturally to the human. Use tools for actions, then report outcomes clearly.`;
