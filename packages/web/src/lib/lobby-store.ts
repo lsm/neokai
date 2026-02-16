@@ -14,7 +14,7 @@
  */
 
 import { signal, computed } from '@preact/signals';
-import type { Room, GlobalStatus } from '@neokai/shared';
+import type { Room, GlobalStatus, CreateRoomParams } from '@neokai/shared';
 import { Logger } from '@neokai/shared';
 import { connectionManager } from './connection-manager';
 import { toast } from './toast';
@@ -70,6 +70,9 @@ class LobbyStore {
 	/** Whether initialized */
 	private initialized = false;
 
+	/** Promise-chain lock for atomic initialization */
+	private initPromise: Promise<void> = Promise.resolve();
+
 	// ========================================
 	// Initialization
 	// ========================================
@@ -79,6 +82,21 @@ class LobbyStore {
 	 * Fetches initial data and sets up subscriptions
 	 */
 	async initialize(): Promise<void> {
+		// Already initialized - return immediately
+		if (this.initialized) {
+			return;
+		}
+
+		// Chain onto existing init promise to prevent races
+		this.initPromise = this.initPromise.then(() => this.doInitialize());
+		return this.initPromise;
+	}
+
+	/**
+	 * Internal initialization logic (called via promise-chain lock)
+	 */
+	private async doInitialize(): Promise<void> {
+		// Double-check after acquiring lock
 		if (this.initialized) {
 			return;
 		}
@@ -125,7 +143,11 @@ class LobbyStore {
 
 			// Subscribe to room creation events
 			const unsubRoomCreated = hub.onEvent<{ room: Room }>('room.created', (data) => {
-				this.rooms.value = [...this.rooms.value, data.room];
+				// Check if room already exists (idempotent)
+				const exists = this.rooms.value.some((r) => r.id === data.room.id);
+				if (!exists) {
+					this.rooms.value = [...this.rooms.value, data.room];
+				}
 			});
 			this.cleanupFunctions.push(unsubRoomCreated);
 
@@ -181,11 +203,7 @@ class LobbyStore {
 	/**
 	 * Create a new room
 	 */
-	async createRoom(params: {
-		name: string;
-		description?: string;
-		defaultWorkspace?: string;
-	}): Promise<Room | null> {
+	async createRoom(params: CreateRoomParams): Promise<Room | null> {
 		try {
 			const hub = connectionManager.getHubIfConnected();
 			if (!hub) {
@@ -194,8 +212,11 @@ class LobbyStore {
 			}
 
 			const { room } = await hub.request<{ room: Room }>('room.create', params);
-			// Room will be added via subscription, but add it immediately for better UX
-			this.rooms.value = [...this.rooms.value, room];
+			// Add room locally for immediate UX, but dedupe in case subscription already added it
+			const exists = this.rooms.value.some((r) => r.id === room.id);
+			if (!exists) {
+				this.rooms.value = [...this.rooms.value, room];
+			}
 			return room;
 		} catch (err) {
 			logger.error('Failed to create room:', err);
