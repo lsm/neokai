@@ -181,6 +181,23 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	'room.created': { sessionId: string; roomId: string; room: Room };
 	'room.updated': { sessionId: string; roomId: string; room?: Partial<Room> };
 	'room.archived': { sessionId: string; roomId: string };
+
+	// Room channel events (emitted to room:${roomId} channel via sessionId)
+	// UI subscribes to these for real-time updates
+	// sessionId is set to 'room:${roomId}' for channel routing
+	'room.overview': {
+		sessionId: string; // 'room:${roomId}' for channel routing
+		room: Room;
+		sessions: { id: string; title: string; status: string; lastActiveAt: number }[];
+		activeTasks: NeoTask[];
+	};
+	'room.task.update': {
+		sessionId: string; // 'room:${roomId}' for channel routing
+		roomId: string;
+		task: NeoTask;
+	};
+
+	// Legacy task events (kept for backward compatibility)
 	'task.created': { sessionId: string; roomId: string; taskId: string; task: NeoTask };
 	'task.updated': {
 		sessionId: string;
