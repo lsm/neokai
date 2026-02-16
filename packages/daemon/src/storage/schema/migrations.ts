@@ -68,6 +68,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
  * Migration 1: Add oauth_token_encrypted column if it doesn't exist
  */
 function runMigration1(db: BunDatabase): void {
+	// First check if auth_config table exists (fresh database)
+	if (!tableExists(db, 'auth_config')) {
+		return;
+	}
 	try {
 		// Check if column exists by trying to query it
 		db.prepare(`SELECT oauth_token_encrypted FROM auth_config LIMIT 1`).all();
@@ -98,6 +102,10 @@ function runMigration2(db: BunDatabase): void {
  * Migration 3: Add worktree columns to sessions table
  */
 function runMigration3(db: BunDatabase): void {
+	// Skip if sessions table doesn't exist (fresh database)
+	if (!tableExists(db, 'sessions')) {
+		return;
+	}
 	try {
 		db.prepare(`SELECT is_worktree FROM sessions LIMIT 1`).all();
 	} catch {
@@ -112,6 +120,10 @@ function runMigration3(db: BunDatabase): void {
  * Migration 4: Add git_branch column for non-worktree git sessions
  */
 function runMigration4(db: BunDatabase): void {
+	// Skip if sessions table doesn't exist (fresh database)
+	if (!tableExists(db, 'sessions')) {
+		return;
+	}
 	try {
 		db.prepare(`SELECT git_branch FROM sessions LIMIT 1`).all();
 	} catch {
@@ -123,6 +135,10 @@ function runMigration4(db: BunDatabase): void {
  * Migration 5: Add sdk_session_id column for session resumption
  */
 function runMigration5(db: BunDatabase): void {
+	// Skip if sessions table doesn't exist (fresh database)
+	if (!tableExists(db, 'sessions')) {
+		return;
+	}
 	try {
 		db.prepare(`SELECT sdk_session_id FROM sessions LIMIT 1`).all();
 	} catch {
@@ -134,6 +150,10 @@ function runMigration5(db: BunDatabase): void {
  * Migration 6: Add available_commands column for slash commands persistence
  */
 function runMigration6(db: BunDatabase): void {
+	// Skip if sessions table doesn't exist (fresh database)
+	if (!tableExists(db, 'sessions')) {
+		return;
+	}
 	try {
 		db.prepare(`SELECT available_commands FROM sessions LIMIT 1`).all();
 	} catch {
@@ -145,6 +165,10 @@ function runMigration6(db: BunDatabase): void {
  * Migration 7: Add processing_state column for agent state persistence
  */
 function runMigration7(db: BunDatabase): void {
+	// Skip if sessions table doesn't exist (fresh database)
+	if (!tableExists(db, 'sessions')) {
+		return;
+	}
 	try {
 		db.prepare(`SELECT processing_state FROM sessions LIMIT 1`).all();
 	} catch {
@@ -156,6 +180,10 @@ function runMigration7(db: BunDatabase): void {
  * Migration 8: Add archived_at column for archive session feature
  */
 function runMigration8(db: BunDatabase): void {
+	// Skip if sessions table doesn't exist (fresh database)
+	if (!tableExists(db, 'sessions')) {
+		return;
+	}
 	try {
 		db.prepare(`SELECT archived_at FROM sessions LIMIT 1`).all();
 	} catch {
@@ -173,6 +201,10 @@ function runMigration8(db: BunDatabase): void {
  * which would delete all messages. This was a data-loss bug.
  */
 function runMigration9(db: BunDatabase): void {
+	// Skip if sessions table doesn't exist (fresh database)
+	if (!tableExists(db, 'sessions')) {
+		return;
+	}
 	try {
 		// Check if the CHECK constraint already includes 'archived'
 		// We do this by trying to insert a test row with status='archived'
@@ -259,6 +291,10 @@ function runMigration9(db: BunDatabase): void {
  * send_status tracks whether a message has been saved, queued, or sent to SDK
  */
 function runMigration10(db: BunDatabase): void {
+	// Skip if sdk_messages table doesn't exist (fresh database)
+	if (!tableExists(db, 'sdk_messages')) {
+		return;
+	}
 	try {
 		db.prepare(`SELECT send_status FROM sdk_messages LIMIT 1`).all();
 	} catch {
@@ -280,6 +316,10 @@ function runMigration10(db: BunDatabase): void {
  * - sub_session_order: Integer for ordering siblings in UI
  */
 function runMigration11(db: BunDatabase): void {
+	// Skip if sessions table doesn't exist (fresh database)
+	if (!tableExists(db, 'sessions')) {
+		return;
+	}
 	try {
 		db.prepare(`SELECT parent_id FROM sessions LIMIT 1`).all();
 	} catch {
@@ -300,6 +340,10 @@ function runMigration11(db: BunDatabase): void {
  * This migration ensures all existing settings have autoScroll: true as default.
  */
 export function runMigration12(db: BunDatabase): void {
+	// Skip if global_settings table doesn't exist (fresh database)
+	if (!tableExists(db, 'global_settings')) {
+		return;
+	}
 	try {
 		const row = db.prepare(`SELECT settings FROM global_settings WHERE id = 1`).get() as
 			| { settings: string }
@@ -340,6 +384,10 @@ export function runMigration12(db: BunDatabase): void {
  * which would delete all messages. This was a data-loss bug.
  */
 function runMigration13(db: BunDatabase): void {
+	// Skip if sessions table doesn't exist (fresh database)
+	if (!tableExists(db, 'sessions')) {
+		return;
+	}
 	try {
 		// Check if the CHECK constraint already includes 'pending_worktree_choice'
 		// We do this by trying to insert a test row with status='pending_worktree_choice'
@@ -429,6 +477,38 @@ function runMigration13(db: BunDatabase): void {
 }
 
 /**
+ * Helper function to check if a table exists in the database
+ */
+function tableExists(db: BunDatabase, tableName: string): boolean {
+	const result = db
+		.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
+		.get(tableName);
+	return !!result;
+}
+
+/**
+ * Helper function to idempotently rename a table
+ *
+ * Handles three cases:
+ * 1. Old exists, new doesn't -> rename (normal case)
+ * 2. Both exist -> drop old (partial migration, data already in new table)
+ * 3. Only new exists -> skip (migration already done)
+ */
+function renameTableIfExists(db: BunDatabase, oldName: string, newName: string): void {
+	const oldExists = tableExists(db, oldName);
+	const newExists = tableExists(db, newName);
+
+	if (newExists && oldExists) {
+		// Partial migration - data already in new table, drop old
+		db.exec(`DROP TABLE ${oldName}`);
+	} else if (oldExists && !newExists) {
+		// Normal case - rename needed
+		db.exec(`ALTER TABLE ${oldName} RENAME TO ${newName}`);
+	}
+	// else: migration already done (newExists, !oldExists) or neither exist (shouldn't happen)
+}
+
+/**
  * Migration 14: Rename neo_* tables to generic names
  *
  * Renames:
@@ -439,16 +519,14 @@ function runMigration13(db: BunDatabase): void {
  * - neo_context_messages -> context_messages
  * - neo_context_id column -> context_id
  * - Indexes idx_neo_* -> idx_*
+ *
+ * This migration is idempotent - it can be safely re-run if it failed partway through.
+ * The renameTableIfExists helper handles all edge cases:
+ * - Old exists, new doesn't -> rename
+ * - Both exist -> drop old (partial migration)
+ * - Only new exists -> skip (already done)
  */
 function runMigration14(db: BunDatabase): void {
-	// Check if migration already done by checking if neo_rooms table exists
-	try {
-		db.prepare(`SELECT 1 FROM neo_rooms LIMIT 1`).all();
-	} catch {
-		// neo_rooms doesn't exist, migration already complete
-		return;
-	}
-
 	// Disable foreign keys during table renaming
 	db.exec('PRAGMA foreign_keys = OFF');
 
@@ -460,147 +538,178 @@ function runMigration14(db: BunDatabase): void {
 		db.exec(`DROP INDEX IF EXISTS idx_neo_tasks_status`);
 		db.exec(`DROP INDEX IF EXISTS idx_neo_context_messages_context`);
 
-		// Rename tables
-		db.exec(`ALTER TABLE neo_context_messages RENAME TO context_messages`);
-		db.exec(`ALTER TABLE neo_contexts RENAME TO contexts`);
-		db.exec(`ALTER TABLE neo_tasks RENAME TO tasks`);
-		db.exec(`ALTER TABLE neo_memories RENAME TO memories`);
-		db.exec(`ALTER TABLE neo_rooms RENAME TO rooms`);
+		// Rename tables idempotently
+		renameTableIfExists(db, 'neo_context_messages', 'context_messages');
+		renameTableIfExists(db, 'neo_contexts', 'contexts');
+		renameTableIfExists(db, 'neo_tasks', 'tasks');
+		renameTableIfExists(db, 'neo_memories', 'memories');
+		renameTableIfExists(db, 'neo_rooms', 'rooms');
 
 		// Rename neo_context_id column to context_id in rooms table
 		// SQLite doesn't support ALTER COLUMN, so we need to recreate the table
-		db.exec(`
-			CREATE TABLE rooms_new (
-				id TEXT PRIMARY KEY,
-				name TEXT NOT NULL,
-				description TEXT,
-				default_workspace TEXT,
-				default_model TEXT,
-				session_ids TEXT DEFAULT '[]',
-				status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived')),
-				context_id TEXT,
-				created_at INTEGER NOT NULL,
-				updated_at INTEGER NOT NULL
-			);
+		// First check if the column rename is still needed
+		const roomsHasNeoContextId = db
+			.prepare(`SELECT name FROM pragma_table_info('rooms') WHERE name='neo_context_id'`)
+			.get();
+		if (roomsHasNeoContextId) {
+			// Clean up any leftover rooms_new from partial migration
+			db.exec(`DROP TABLE IF EXISTS rooms_new`);
+			db.exec(`
+				CREATE TABLE rooms_new (
+					id TEXT PRIMARY KEY,
+					name TEXT NOT NULL,
+					description TEXT,
+					default_workspace TEXT,
+					default_model TEXT,
+					session_ids TEXT DEFAULT '[]',
+					status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived')),
+					context_id TEXT,
+					created_at INTEGER NOT NULL,
+					updated_at INTEGER NOT NULL
+				);
 
-			INSERT INTO rooms_new (id, name, description, default_workspace, default_model, session_ids, status, context_id, created_at, updated_at)
-			SELECT id, name, description, default_workspace, default_model, session_ids, status, neo_context_id, created_at, updated_at
-			FROM rooms;
+				INSERT INTO rooms_new (id, name, description, default_workspace, default_model, session_ids, status, context_id, created_at, updated_at)
+				SELECT id, name, description, default_workspace, default_model, session_ids, status, neo_context_id, created_at, updated_at
+				FROM rooms;
 
-			DROP TABLE rooms;
+				DROP TABLE rooms;
 
-			ALTER TABLE rooms_new RENAME TO rooms;
-		`);
+				ALTER TABLE rooms_new RENAME TO rooms;
+			`);
+		}
 
 		// Update foreign key references in contexts table
-		db.exec(`
-			CREATE TABLE contexts_new (
-				id TEXT PRIMARY KEY,
-				room_id TEXT NOT NULL UNIQUE,
-				total_tokens INTEGER DEFAULT 0,
-				last_compacted_at INTEGER,
-				status TEXT NOT NULL DEFAULT 'idle' CHECK(status IN ('idle', 'thinking', 'waiting_for_input')),
-				current_task_id TEXT,
-				current_session_id TEXT,
-				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-			);
+		// Check if contexts table still needs to be updated (has old schema without proper FK)
+		if (tableExists(db, 'contexts')) {
+			// Clean up any leftover contexts_new from partial migration
+			db.exec(`DROP TABLE IF EXISTS contexts_new`);
+			db.exec(`
+				CREATE TABLE contexts_new (
+					id TEXT PRIMARY KEY,
+					room_id TEXT NOT NULL UNIQUE,
+					total_tokens INTEGER DEFAULT 0,
+					last_compacted_at INTEGER,
+					status TEXT NOT NULL DEFAULT 'idle' CHECK(status IN ('idle', 'thinking', 'waiting_for_input')),
+					current_task_id TEXT,
+					current_session_id TEXT,
+					FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+				);
 
-			INSERT INTO contexts_new
-			SELECT id, room_id, total_tokens, last_compacted_at, status, current_task_id, current_session_id
-			FROM contexts;
+				INSERT INTO contexts_new
+				SELECT id, room_id, total_tokens, last_compacted_at, status, current_task_id, current_session_id
+				FROM contexts;
 
-			DROP TABLE contexts;
+				DROP TABLE contexts;
 
-			ALTER TABLE contexts_new RENAME TO contexts;
-		`);
+				ALTER TABLE contexts_new RENAME TO contexts;
+			`);
+		}
 
 		// Update foreign key references in memories table
-		db.exec(`
-			CREATE TABLE memories_new (
-				id TEXT PRIMARY KEY,
-				room_id TEXT NOT NULL,
-				type TEXT NOT NULL CHECK(type IN ('conversation', 'task_result', 'preference', 'pattern', 'note')),
-				content TEXT NOT NULL,
-				tags TEXT DEFAULT '[]',
-				importance TEXT NOT NULL DEFAULT 'normal' CHECK(importance IN ('low', 'normal', 'high')),
-				session_id TEXT,
-				task_id TEXT,
-				created_at INTEGER NOT NULL,
-				last_accessed_at INTEGER NOT NULL,
-				access_count INTEGER DEFAULT 0,
-				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-			);
+		if (tableExists(db, 'memories')) {
+			// Clean up any leftover memories_new from partial migration
+			db.exec(`DROP TABLE IF EXISTS memories_new`);
+			db.exec(`
+				CREATE TABLE memories_new (
+					id TEXT PRIMARY KEY,
+					room_id TEXT NOT NULL,
+					type TEXT NOT NULL CHECK(type IN ('conversation', 'task_result', 'preference', 'pattern', 'note')),
+					content TEXT NOT NULL,
+					tags TEXT DEFAULT '[]',
+					importance TEXT NOT NULL DEFAULT 'normal' CHECK(importance IN ('low', 'normal', 'high')),
+					session_id TEXT,
+					task_id TEXT,
+					created_at INTEGER NOT NULL,
+					last_accessed_at INTEGER NOT NULL,
+					access_count INTEGER DEFAULT 0,
+					FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+				);
 
-			INSERT INTO memories_new
-			SELECT id, room_id, type, content, tags, importance, session_id, task_id, created_at, last_accessed_at, access_count
-			FROM memories;
+				INSERT INTO memories_new
+				SELECT id, room_id, type, content, tags, importance, session_id, task_id, created_at, last_accessed_at, access_count
+				FROM memories;
 
-			DROP TABLE memories;
+				DROP TABLE memories;
 
-			ALTER TABLE memories_new RENAME TO memories;
-		`);
+				ALTER TABLE memories_new RENAME TO memories;
+			`);
+		}
 
 		// Update foreign key references in tasks table
-		db.exec(`
-			CREATE TABLE tasks_new (
-				id TEXT PRIMARY KEY,
-				room_id TEXT NOT NULL,
-				title TEXT NOT NULL,
-				description TEXT NOT NULL,
-				session_id TEXT,
-				status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'blocked', 'completed', 'failed')),
-				priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
-				progress INTEGER,
-				current_step TEXT,
-				result TEXT,
-				error TEXT,
-				depends_on TEXT DEFAULT '[]',
-				created_at INTEGER NOT NULL,
-				started_at INTEGER,
-				completed_at INTEGER,
-				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-			);
+		if (tableExists(db, 'tasks')) {
+			// Clean up any leftover tasks_new from partial migration
+			db.exec(`DROP TABLE IF EXISTS tasks_new`);
+			db.exec(`
+				CREATE TABLE tasks_new (
+					id TEXT PRIMARY KEY,
+					room_id TEXT NOT NULL,
+					title TEXT NOT NULL,
+					description TEXT NOT NULL,
+					session_id TEXT,
+					status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'blocked', 'completed', 'failed')),
+					priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+					progress INTEGER,
+					current_step TEXT,
+					result TEXT,
+					error TEXT,
+					depends_on TEXT DEFAULT '[]',
+					created_at INTEGER NOT NULL,
+					started_at INTEGER,
+					completed_at INTEGER,
+					FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+				);
 
-			INSERT INTO tasks_new
-			SELECT id, room_id, title, description, session_id, status, priority, progress, current_step, result, error, depends_on, created_at, started_at, completed_at
-			FROM tasks;
+				INSERT INTO tasks_new
+				SELECT id, room_id, title, description, session_id, status, priority, progress, current_step, result, error, depends_on, created_at, started_at, completed_at
+				FROM tasks;
 
-			DROP TABLE tasks;
+				DROP TABLE tasks;
 
-			ALTER TABLE tasks_new RENAME TO tasks;
-		`);
+				ALTER TABLE tasks_new RENAME TO tasks;
+			`);
+		}
 
 		// Update foreign key references in context_messages table
-		db.exec(`
-			CREATE TABLE context_messages_new (
-				id TEXT PRIMARY KEY,
-				context_id TEXT NOT NULL,
-				role TEXT NOT NULL CHECK(role IN ('system', 'user', 'assistant')),
-				content TEXT NOT NULL,
-				timestamp INTEGER NOT NULL,
-				token_count INTEGER NOT NULL,
-				session_id TEXT,
-				task_id TEXT,
-				FOREIGN KEY (context_id) REFERENCES contexts(id) ON DELETE CASCADE
+		if (tableExists(db, 'context_messages')) {
+			// Clean up any leftover context_messages_new from partial migration
+			db.exec(`DROP TABLE IF EXISTS context_messages_new`);
+			db.exec(`
+				CREATE TABLE context_messages_new (
+					id TEXT PRIMARY KEY,
+					context_id TEXT NOT NULL,
+					role TEXT NOT NULL CHECK(role IN ('system', 'user', 'assistant')),
+					content TEXT NOT NULL,
+					timestamp INTEGER NOT NULL,
+					token_count INTEGER NOT NULL,
+					session_id TEXT,
+					task_id TEXT,
+					FOREIGN KEY (context_id) REFERENCES contexts(id) ON DELETE CASCADE
+				);
+
+				INSERT INTO context_messages_new
+				SELECT id, context_id, role, content, timestamp, token_count, session_id, task_id
+				FROM context_messages;
+
+				DROP TABLE context_messages;
+
+				ALTER TABLE context_messages_new RENAME TO context_messages;
+			`);
+		}
+
+		// Create new indexes with renamed names (only if tables exist)
+		if (tableExists(db, 'memories')) {
+			db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_room ON memories(room_id)`);
+			db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type)`);
+		}
+		if (tableExists(db, 'tasks')) {
+			db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
+			db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+		}
+		if (tableExists(db, 'context_messages')) {
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_context_messages_context ON context_messages(context_id)`
 			);
-
-			INSERT INTO context_messages_new
-			SELECT id, context_id, role, content, timestamp, token_count, session_id, task_id
-			FROM context_messages;
-
-			DROP TABLE context_messages;
-
-			ALTER TABLE context_messages_new RENAME TO context_messages;
-		`);
-
-		// Create new indexes with renamed names
-		db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_room ON memories(room_id)`);
-		db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type)`);
-		db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
-		db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
-		db.exec(
-			`CREATE INDEX IF NOT EXISTS idx_context_messages_context ON context_messages(context_id)`
-		);
+		}
 	} finally {
 		// Re-enable foreign keys
 		db.exec('PRAGMA foreign_keys = ON');
@@ -617,6 +726,10 @@ function runMigration14(db: BunDatabase): void {
  * Also migrates existing default_workspace to allowed_paths[0] if present.
  */
 function runMigration15(db: BunDatabase): void {
+	// Skip if rooms table doesn't exist (fresh database)
+	if (!tableExists(db, 'rooms')) {
+		return;
+	}
 	try {
 		// Check if allowed_paths column already exists
 		db.prepare(`SELECT allowed_paths FROM rooms LIMIT 1`).all();
