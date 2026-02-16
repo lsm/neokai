@@ -11,11 +11,7 @@ import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
 import type { NeoContextMessage } from '@neokai/shared';
 
-interface NeoChatProps {
-	roomId: string;
-}
-
-export function NeoChat({ roomId: _roomId }: NeoChatProps) {
+export function NeoChat() {
 	const [input, setInput] = useState('');
 	const [sending, setSending] = useState(false);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
