@@ -362,21 +362,51 @@ export class MessageHub {
 	}
 
 	/**
-	 * Join a channel (client → server)
-	 * Sends a request that the router handles
+	 * Join a channel with retry logic for reliability
+	 *
+	 * @param channel Channel to join
+	 * @param maxRetries Maximum retry attempts (default: 3)
+	 * @param retryDelay Base delay between retries in ms (default: 1000)
 	 */
-	async joinChannel(channel: string): Promise<void> {
+	async joinChannel(
+		channel: string,
+		maxRetries: number = 3,
+		retryDelay: number = 1000
+	): Promise<void> {
 		if (!this.isConnected()) {
 			this.logDebug(`joinChannel skipped (not connected): ${channel}`);
 			return;
 		}
-		try {
-			await this.request('channel.join', { channel });
-		} catch (error) {
-			// Channel join is optional - log but don't throw
-			// This prevents crashes when channel join times out or fails
-			this.logDebug(`joinChannel failed for ${channel}:`, error);
+
+		for (let attempt = 1; attempt <= maxRetries; attempt++) {
+			try {
+				await this.request('channel.join', { channel }, { timeout: 5000 });
+				if (attempt > 1) {
+					this.logDebug(`joinChannel succeeded for ${channel} on attempt ${attempt}`);
+				}
+				return; // Success
+			} catch (error) {
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				this.logDebug(
+					`joinChannel attempt ${attempt}/${maxRetries} failed for ${channel}: ${errorMessage}`
+				);
+
+				if (attempt < maxRetries) {
+					// Check if still connected before retry
+					if (!this.isConnected()) {
+						log.error(`joinChannel aborted for ${channel} - disconnected during retry`);
+						return;
+					}
+
+					// Exponential backoff with jitter
+					const baseDelay = retryDelay * Math.pow(2, attempt - 1);
+					const jitter = Math.random() * baseDelay * 0.3;
+					await new Promise((resolve) => setTimeout(resolve, baseDelay + jitter));
+				}
+			}
 		}
+
+		log.error(`joinChannel failed after ${maxRetries} attempts for ${channel}`);
 	}
 
 	/**

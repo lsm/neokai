@@ -4,6 +4,12 @@
  * Client-side WebSocket transport without sessionId in URL
  */
 
+// FIX P1: Type declaration for requestIdleCallback (browser API not in standard DOM types)
+declare function requestIdleCallback(
+	tcallback: (deadline: { didTimeout: boolean; timeRemaining: () => number }) => void,
+	toptions?: { timeout?: number }
+): number;
+
 import type { IMessageTransport, ConnectionState, ConnectionStateHandler } from './types.ts';
 import type { HubMessage } from './protocol.ts';
 import { generateUUID } from '../utils.ts';
@@ -40,6 +46,12 @@ export interface WebSocketClientTransportOptions {
 	 * Heartbeat/ping interval in milliseconds
 	 */
 	pingInterval?: number;
+
+	/**
+	 * PONG timeout in milliseconds (time to wait for PONG response before considering connection stale)
+	 * FIX P4: Made configurable, reduced default from 60000 to 45000
+	 */
+	pongTimeout?: number;
 }
 
 /**
@@ -55,6 +67,7 @@ export class WebSocketClientTransport implements IMessageTransport {
 	private readonly maxReconnectAttempts: number;
 	private readonly reconnectDelay: number;
 	private readonly pingInterval: number;
+	private readonly pongTimeout: number;
 
 	private reconnectAttempts = 0;
 	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -71,8 +84,12 @@ export class WebSocketClientTransport implements IMessageTransport {
 
 	// FIX P1.2: PONG timeout detection (stale connection detection)
 	private lastPongTime: number = Date.now();
-	private readonly pongTimeout: number = 60000; // 60s timeout for PONG
 	private pongTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+
+	// FIX P1: Backup heartbeat tracking (for background tab throttling detection)
+	private lastPingSentTime: number = 0;
+	private backupHeartbeatScheduled: boolean = false;
+	private readonly stallDetectionThreshold: number = 45000; // 1.5x ping interval
 
 	constructor(options: WebSocketClientTransportOptions) {
 		this.url = options.url;
@@ -80,6 +97,7 @@ export class WebSocketClientTransport implements IMessageTransport {
 		this.maxReconnectAttempts = options.maxReconnectAttempts ?? 5;
 		this.reconnectDelay = options.reconnectDelay ?? 1000;
 		this.pingInterval = options.pingInterval ?? 30000;
+		this.pongTimeout = options.pongTimeout ?? 45000; // FIX P4: Reduced from 60000 to 45000
 	}
 
 	/**
@@ -368,6 +386,7 @@ export class WebSocketClientTransport implements IMessageTransport {
 	 *
 	 * FIX P1.1: Send real PING messages to detect half-open connections
 	 * FIX P1.2: Check for PONG timeout to detect stale connections
+	 * FIX P1: Track lastPingSentTime and schedule backup heartbeat
 	 */
 	private startPing(): void {
 		if (this.pingInterval <= 0) {
@@ -378,6 +397,8 @@ export class WebSocketClientTransport implements IMessageTransport {
 
 		// FIX P1.2: Reset lastPongTime when starting ping
 		this.lastPongTime = Date.now();
+		// FIX P1: Track when we last sent a ping for stall detection
+		this.lastPingSentTime = Date.now();
 
 		this.pingTimer = setInterval(() => {
 			if (this.isReady()) {
@@ -395,28 +416,19 @@ export class WebSocketClientTransport implements IMessageTransport {
 					return;
 				}
 
-				// FIX P1.1: Send actual PING message (not just check readyState)
-				const pingMessage = {
-					id: generateUUID(),
-					type: 'PING' as const,
-					method: 'heartbeat',
-					sessionId: 'global',
-					timestamp: new Date().toISOString(),
-				};
-
-				try {
-					this.ws!.send(JSON.stringify(pingMessage));
-				} catch (error) {
-					log.error(`Failed to send PING:`, error);
-					this.handleDisconnect();
-				}
+				// FIX P1: Use extracted sendPing method
+				this.sendPing();
 			}
 		}, this.pingInterval);
+
+		// FIX P1: Schedule backup heartbeat for background tab throttling detection
+		this.scheduleBackupHeartbeat();
 	}
 
 	/**
 	 * Stop ping/heartbeat
 	 * FIX P1.2: Clear PONG timeout timer
+	 * FIX P1: Reset backup heartbeat flag
 	 */
 	private stopPing(): void {
 		if (this.pingTimer) {
@@ -428,5 +440,72 @@ export class WebSocketClientTransport implements IMessageTransport {
 			clearTimeout(this.pongTimeoutTimer);
 			this.pongTimeoutTimer = null;
 		}
+
+		// FIX P1: Reset backup heartbeat state
+		this.backupHeartbeatScheduled = false;
+	}
+
+	/**
+	 * Send PING message to server
+	 * FIX P1: Extracted for reuse by main timer and backup heartbeat
+	 */
+	private sendPing(): void {
+		if (!this.isReady()) return;
+
+		this.lastPingSentTime = Date.now();
+		const pingMessage = {
+			id: generateUUID(),
+			type: 'PING' as const,
+			method: 'heartbeat',
+			sessionId: 'global',
+			timestamp: new Date().toISOString(),
+		};
+
+		try {
+			this.ws!.send(JSON.stringify(pingMessage));
+		} catch (error) {
+			log.error(`Failed to send PING:`, error);
+			this.handleDisconnect();
+		}
+	}
+
+	/**
+	 * Check if main ping timer appears stalled (background tab throttling)
+	 * FIX P1: Helper for backup heartbeat
+	 */
+	private isPingTimerStalled(): boolean {
+		return Date.now() - this.lastPingSentTime > this.stallDetectionThreshold;
+	}
+
+	/**
+	 * Schedule backup heartbeat check using requestIdleCallback
+	 * FIX P1: This is less susceptible to background tab throttling
+	 */
+	private scheduleBackupHeartbeat(): void {
+		if (this.backupHeartbeatScheduled || typeof requestIdleCallback === 'undefined') {
+			return;
+		}
+
+		this.backupHeartbeatScheduled = true;
+
+		requestIdleCallback(
+			() => {
+				this.backupHeartbeatScheduled = false;
+
+				if (!this.isReady()) return;
+
+				// Check if main timer is stalled
+				if (this.isPingTimerStalled()) {
+					log.debug('Main ping timer appears stalled, sending backup PING');
+					this.sendPing();
+				}
+
+				// Schedule next backup check
+				if (this.isReady()) {
+					this.scheduleBackupHeartbeat();
+				}
+			},
+			{ timeout: 15000 }
+		); // 15s max wait
 	}
 }
