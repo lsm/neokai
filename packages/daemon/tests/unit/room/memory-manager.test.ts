@@ -23,12 +23,14 @@ describe('MemoryManager', () => {
 	let memoryManager: MemoryManager;
 	let roomManager: RoomManager;
 	let roomId: string;
+	let tempDir: string;
 
 	beforeEach(() => {
-		// Create unique in-memory database to avoid sharing between parallel tests
-		// Using a random suffix ensures isolation when tests run in parallel
-		const dbId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-		db = new Database(`file:${dbId}?mode=memory&cache=private`, { create: true });
+		// Create a temp file database to ensure complete isolation in parallel tests
+		// In-memory databases can be shared between tests in some environments
+		tempDir = `/tmp/neokai-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+		require('fs').mkdirSync(tempDir, { recursive: true });
+		db = new Database(`${tempDir}/test.db`);
 		createTables(db);
 
 		// Create room manager and a room
@@ -46,6 +48,12 @@ describe('MemoryManager', () => {
 
 	afterEach(() => {
 		db.close();
+		// Clean up temp directory
+		try {
+			require('fs').rmSync(tempDir, { recursive: true, force: true });
+		} catch {
+			// Ignore cleanup errors
+		}
 	});
 
 	describe('initialization', () => {

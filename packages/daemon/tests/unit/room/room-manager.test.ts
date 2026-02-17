@@ -17,18 +17,25 @@ import type { CreateRoomParams } from '@neokai/shared';
 
 describe('RoomManager', () => {
 	let db: Database;
+	let tempDir: string;
 	let roomManager: RoomManager;
 
 	beforeEach(async () => {
-		// Create in-memory database
-		const dbId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-		db = new Database(`file:${dbId}?mode=memory&cache=private`, { create: true });
+		// Create temp directory and file-based database
+		tempDir = `/tmp/neokai-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+		require('fs').mkdirSync(tempDir, { recursive: true });
+		db = new Database(`${tempDir}/test.db`);
 		await db.initialize();
 		roomManager = new RoomManager(db.getDatabase());
 	});
 
 	afterEach(() => {
 		db.close();
+		try {
+			require('fs').rmSync(tempDir, { recursive: true, force: true });
+		} catch {
+			// Ignore cleanup errors
+		}
 	});
 
 	describe('createRoom', () => {
