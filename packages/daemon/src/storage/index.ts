@@ -172,6 +172,14 @@ export class Database {
 	}
 
 	/**
+	 * Get the SDK message repository
+	 * Used by SessionBridge for direct access to SDK messages
+	 */
+	getSDKMessageRepo(): SDKMessageRepository {
+		return this.sdkMessageRepo;
+	}
+
+	/**
 	 * Get the database file path
 	 * Used by background job queues to create their own connections to the same DB file
 	 */

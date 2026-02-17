@@ -24,6 +24,8 @@ import type {
 	NeoContextStatus,
 	SessionState,
 	PendingUserQuestion,
+	SessionPair,
+	NeoTask,
 } from '@neokai/shared';
 import { Logger } from '@neokai/shared';
 import { buildRoomPrompt } from '@neokai/shared/neo-prompt';
@@ -67,7 +69,9 @@ export class RoomNeo {
 	private sessionWatcher: NeoSessionWatcher;
 	private watchedSessions: Set<string> = new Set();
 	private roomMessageUnsubscribe: (() => void) | null = null;
+	private taskCompletedUnsubscribe: (() => void) | null = null;
 	private roomOpsMcpServer: ReturnType<typeof createSdkMcpServer>;
+	private roomSessionId: string | null = null;
 
 	constructor(
 		private roomId: string,
@@ -93,30 +97,85 @@ export class RoomNeo {
 		this.roomOpsMcpServer = this.createRoomOpsMcpServer();
 	}
 
+	/**
+	 * Set the room session ID for pair creation
+	 */
+	setRoomSessionId(roomSessionId: string): void {
+		this.roomSessionId = roomSessionId;
+	}
+
 	private createRoomOpsMcpServer() {
 		return createSdkMcpServer({
 			name: `room-ops-${this.roomId.slice(0, 8)}`,
 			tools: [
 				tool(
 					'room_create_session',
-					'Create a new worker session in this room',
+					'Create a Manager+Worker pair to execute implementation work autonomously',
 					{
-						workspacePath: z.string().optional(),
-						model: z.string().optional(),
-						title: z.string().optional(),
+						task_title: z.string().describe('Title of the task for the pair to work on'),
+						task_description: z
+							.string()
+							.optional()
+							.describe('High-level description of what needs to be done'),
+						workspace_path: z
+							.string()
+							.optional()
+							.describe('Workspace path (uses room default if not specified)'),
+						model: z
+							.string()
+							.optional()
+							.describe('Model to use (uses room default if not specified)'),
 					},
 					async (args) => {
-						const sessionId = await this.createSession({
-							workspacePath: args.workspacePath,
-							model: args.model,
-							title: args.title,
+						const result = await this.hub.request<{ pair: SessionPair; task: NeoTask }>(
+							'room.createPair',
+							{
+								roomId: this.roomId,
+								roomSessionId: this.roomSessionId ?? undefined,
+								taskTitle: args.task_title,
+								taskDescription: args.task_description,
+								workspacePath: args.workspace_path,
+								model: args.model,
+							}
+						);
+
+						// Watch both sessions in the pair
+						await this.sessionWatcher.watchSession(result.pair.managerSessionId);
+						await this.sessionWatcher.watchSession(result.pair.workerSessionId);
+						this.watchedSessions.add(result.pair.managerSessionId);
+						this.watchedSessions.add(result.pair.workerSessionId);
+
+						return {
+							content: [
+								{
+									type: 'text',
+									text: JSON.stringify({
+										pairId: result.pair.id,
+										managerSessionId: result.pair.managerSessionId,
+										workerSessionId: result.pair.workerSessionId,
+										taskId: result.task.id,
+									}),
+								},
+							],
+						};
+					}
+				),
+				tool(
+					'room_get_pair_status',
+					'Check the status of a Manager+Worker pair',
+					{
+						pair_id: z.string().describe('ID of the pair to check'),
+					},
+					async (args) => {
+						const result = await this.hub.request<{ pair: SessionPair }>('room.getPair', {
+							pairId: args.pair_id,
 						});
 
 						return {
 							content: [
 								{
 									type: 'text',
-									text: JSON.stringify({ sessionId }),
+									text: JSON.stringify(result.pair),
 								},
 							],
 						};
@@ -269,6 +328,30 @@ export class RoomNeo {
 				}
 			}
 		});
+
+		// Subscribe to pair.task_completed events from ManagerAgent
+		this.taskCompletedUnsubscribe = this.hub.onEvent(
+			'pair.task_completed',
+			async (data: unknown) => {
+				const eventData = data as {
+					roomId: string;
+					pairId: string;
+					taskId: string;
+					summary: string;
+					filesChanged?: string[];
+					nextSteps?: string[];
+				};
+
+				// Only process events for this room
+				if (eventData.roomId === this.roomId) {
+					try {
+						await this.handleTaskCompleted(eventData);
+					} catch (error) {
+						this.logger.error('Error processing pair.task_completed event:', error);
+					}
+				}
+			}
+		);
 	}
 
 	/**
@@ -528,6 +611,43 @@ export class RoomNeo {
 		// - Create a new session
 	}
 
+	/**
+	 * Handle task completed event from a Manager+Worker pair
+	 */
+	private async handleTaskCompleted(data: {
+		pairId: string;
+		taskId: string;
+		summary: string;
+		filesChanged?: string[];
+		nextSteps?: string[];
+	}): Promise<void> {
+		this.logger.info(`Task completed: ${data.taskId} in pair ${data.pairId}`);
+
+		// Stop watching the pair sessions if they were being watched
+		// The pair is now completed - sessions will be cleaned up by the daemon
+
+		// Build notification message
+		let message = `Task completed: ${data.summary}`;
+		if (data.filesChanged?.length) {
+			message += `\nFiles changed: ${data.filesChanged.join(', ')}`;
+		}
+		if (data.nextSteps?.length) {
+			message += `\nSuggested next steps: ${data.nextSteps.join(', ')}`;
+		}
+
+		// Broadcast to room that task is complete
+		try {
+			await this.hub.request('room.message.send', {
+				roomId: this.roomId,
+				content: message,
+				role: 'assistant',
+				sender: 'neo',
+			});
+		} catch (error) {
+			this.logger.error('Error broadcasting task completion:', error);
+		}
+	}
+
 	// ========================================
 	// Cleanup
 	// ========================================
@@ -540,6 +660,12 @@ export class RoomNeo {
 		if (this.roomMessageUnsubscribe) {
 			this.roomMessageUnsubscribe();
 			this.roomMessageUnsubscribe = null;
+		}
+
+		// Unsubscribe from pair.task_completed events
+		if (this.taskCompletedUnsubscribe) {
+			this.taskCompletedUnsubscribe();
+			this.taskCompletedUnsubscribe = null;
 		}
 
 		// Leave room channel

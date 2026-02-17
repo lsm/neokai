@@ -37,6 +37,11 @@ export interface CreateSessionParams {
 	title?: string; // Optional title - if provided, skips auto-title generation
 	roomId?: string; // Optional room ID to assign session to
 	createdBy?: 'human' | 'neo'; // Creator type (defaults to 'human')
+	// Dual-session architecture
+	sessionType?: 'room' | 'manager' | 'worker' | 'standalone';
+	pairedSessionId?: string;
+	parentSessionId?: string;
+	currentTaskId?: string;
 }
 
 export class SessionLifecycle {
@@ -181,6 +186,11 @@ export class SessionLifecycle {
 							createdAt: new Date().toISOString(),
 						}
 					: undefined,
+				// Dual-session architecture fields
+				...(params.sessionType && { sessionType: params.sessionType }),
+				...(params.pairedSessionId && { pairedSessionId: params.pairedSessionId }),
+				...(params.parentSessionId && { parentSessionId: params.parentSessionId }),
+				...(params.currentTaskId && { currentTaskId: params.currentTaskId }),
 			},
 			// Worktree set during creation (if enabled)
 			worktree: worktreeMetadata,
