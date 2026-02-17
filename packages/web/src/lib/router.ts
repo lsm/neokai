@@ -12,7 +12,7 @@
  * - Clean URLs: Uses History API for clean URLs without hash
  */
 
-import { currentSessionIdSignal, currentRoomIdSignal } from './signals.ts';
+import { currentSessionIdSignal, currentRoomIdSignal, navSectionSignal } from './signals.ts';
 
 /** Route patterns */
 const SESSION_ROUTE_PATTERN = /^\/session\/([a-f0-9-]+)$/;
@@ -105,6 +105,7 @@ export function navigateToSession(sessionId: string, replace = false): void {
 
 		// Update the signal
 		currentSessionIdSignal.value = sessionId;
+		navSectionSignal.value = 'chats';
 	} finally {
 		// Use setTimeout to break the synchronous cycle
 		setTimeout(() => {
@@ -180,12 +181,44 @@ export function navigateToRoom(roomId: string, replace = false): void {
 		// Update the signals - room takes priority, clear session
 		currentRoomIdSignal.value = roomId;
 		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'rooms';
 	} finally {
 		// Use setTimeout to break the synchronous cycle
 		setTimeout(() => {
 			routerState.isNavigating = false;
 		}, 0);
 	}
+}
+
+/**
+ * Navigate to Chats section
+ * Sets nav section to 'chats' and navigates home if needed
+ */
+export function navigateToChats(): void {
+	navSectionSignal.value = 'chats';
+	// If we're on a room route, navigate home to show session list
+	if (currentRoomIdSignal.value) {
+		navigateToHome();
+	}
+}
+
+/**
+ * Navigate to Rooms section
+ * Sets nav section to 'rooms' and navigates home
+ */
+export function navigateToRooms(): void {
+	navSectionSignal.value = 'rooms';
+	// Always navigate home when switching to rooms section
+	navigateToHome();
+}
+
+/**
+ * Navigate to Settings section
+ * Sets nav section to 'settings' and navigates home
+ */
+export function navigateToSettings(): void {
+	navSectionSignal.value = 'settings';
+	navigateToHome();
 }
 
 /**
