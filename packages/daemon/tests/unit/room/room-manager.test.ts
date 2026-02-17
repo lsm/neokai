@@ -21,7 +21,8 @@ describe('RoomManager', () => {
 
 	beforeEach(async () => {
 		// Create in-memory database
-		db = new Database(':memory:');
+		const dbId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+		db = new Database(`file:${dbId}?mode=memory&cache=private`, { create: true });
 		await db.initialize();
 		roomManager = new RoomManager(db.getDatabase());
 	});
