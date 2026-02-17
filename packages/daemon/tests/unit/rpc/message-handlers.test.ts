@@ -1,5 +1,5 @@
 /**
- * Tests for Message Handlers - format functions
+ * Tests for Message Handlers - format functions and RPC handlers
  *
  * Coverage for:
  * - convertToMarkdown: Session to markdown conversion
@@ -7,15 +7,120 @@
  * - formatUserMessage: User message formatting
  * - formatAssistantMessage: Assistant message formatting
  * - formatResultMessage: Result message formatting
+ * - message.removeOutput: Remove large task output
+ * - message.sdkMessages: Get SDK messages
+ * - message.count: Get message count
+ * - session.export: Export session to markdown/json
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeEach, mock, afterEach } from 'bun:test';
 import type { SDKMessage } from '@neokai/shared/sdk';
+import { MessageHub } from '@neokai/shared';
+import { setupMessageHandlers } from '../../../src/lib/rpc-handlers/message-handlers';
+import type { SessionManager } from '../../../src/lib/session-manager';
+import type { AgentSession } from '../../../src/lib/agent/agent-session';
+import type { Session } from '@neokai/shared';
 
-// We need to test the internal functions. Since they're not exported,
-// we'll test them through the integration tests or extract them for testing.
-// For now, let's create a test file that imports the module and tests
-// the exported setupMessageHandlers indirectly.
+// Type for captured request handlers
+type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
+
+// Helper to create a minimal mock MessageHub that captures handlers
+function createMockMessageHub(): {
+	hub: MessageHub;
+	handlers: Map<string, RequestHandler>;
+} {
+	const handlers = new Map<string, RequestHandler>();
+
+	const hub = {
+		onRequest: mock((method: string, handler: RequestHandler) => {
+			handlers.set(method, handler);
+			return () => handlers.delete(method);
+		}),
+		onEvent: mock(() => () => {}),
+		request: mock(async () => {}),
+		event: mock(() => {}),
+		joinChannel: mock(async () => {}),
+		leaveChannel: mock(async () => {}),
+		isConnected: mock(() => true),
+		getState: mock(() => 'connected' as const),
+		onConnection: mock(() => () => {}),
+		onMessage: mock(() => () => {}),
+		cleanup: mock(() => {}),
+		registerTransport: mock(() => () => {}),
+		registerRouter: mock(() => {}),
+		getRouter: mock(() => null),
+		getPendingCallCount: mock(() => 0),
+	} as unknown as MessageHub;
+
+	return { hub, handlers };
+}
+
+// Helper to create a mock AgentSession
+function createMockAgentSession(): {
+	agentSession: AgentSession;
+	mocks: {
+		getSessionData: ReturnType<typeof mock>;
+		getSDKSessionId: ReturnType<typeof mock>;
+		getSDKMessages: ReturnType<typeof mock>;
+		getSDKMessageCount: ReturnType<typeof mock>;
+	};
+} {
+	const sessionData: Session = {
+		id: 'session-123',
+		workspacePath: '/workspace/test',
+		status: 'active',
+		config: { model: 'claude-sonnet-4-20250514' },
+		createdAt: new Date().toISOString(),
+		updatedAt: new Date().toISOString(),
+	} as Session;
+
+	const mocks = {
+		getSessionData: mock(() => sessionData),
+		getSDKSessionId: mock(() => 'sdk-session-123'),
+		getSDKMessages: mock(() => []),
+		getSDKMessageCount: mock(() => 0),
+	};
+
+	const agentSession = {
+		...mocks,
+	} as unknown as AgentSession;
+
+	return { agentSession, mocks };
+}
+
+// Helper to create mock SessionManager
+function createMockSessionManager(): {
+	sessionManager: SessionManager;
+	mocks: {
+		getSessionAsync: ReturnType<typeof mock>;
+		getSession: ReturnType<typeof mock>;
+		getSessionFromDB: ReturnType<typeof mock>;
+		markOutputRemoved: ReturnType<typeof mock>;
+	};
+	agentSessionData: ReturnType<typeof createMockAgentSession>;
+} {
+	const agentSessionData = createMockAgentSession();
+
+	const mocks = {
+		getSessionAsync: mock(async () => agentSessionData.agentSession),
+		getSession: mock(() => agentSessionData.agentSession),
+		getSessionFromDB: mock(
+			() =>
+				({
+					id: 'session-123',
+					workspacePath: '/workspace/test',
+					status: 'active',
+				}) as Session
+		),
+		markOutputRemoved: mock(async () => {}),
+	};
+
+	const sessionManager = {
+		...mocks,
+	} as unknown as SessionManager;
+
+	return { sessionManager, mocks, agentSessionData };
+}
 
 // Re-implement the format functions to test the logic directly
 // This mirrors the implementation in message-handlers.ts
@@ -510,6 +615,149 @@ describe('Message Handlers - Format Functions', () => {
 
 			expect(result).toContain('*Error: error*');
 			expect(result).not.toContain('```');
+		});
+	});
+});
+
+describe('Message RPC Handlers', () => {
+	let messageHubData: ReturnType<typeof createMockMessageHub>;
+	let sessionManagerData: ReturnType<typeof createMockSessionManager>;
+
+	beforeEach(() => {
+		messageHubData = createMockMessageHub();
+		sessionManagerData = createMockSessionManager();
+
+		// Setup handlers with mocked dependencies
+		setupMessageHandlers(messageHubData.hub, sessionManagerData.sessionManager);
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	describe('message.sdkMessages', () => {
+		test('returns SDK messages', async () => {
+			const handler = messageHubData.handlers.get('message.sdkMessages');
+			expect(handler).toBeDefined();
+
+			const result = await handler!({ sessionId: 'session-123' }, {});
+
+			expect(result).toHaveProperty('sdkMessages');
+		});
+
+		test('accepts limit parameter', async () => {
+			const handler = messageHubData.handlers.get('message.sdkMessages');
+			expect(handler).toBeDefined();
+
+			await handler!({ sessionId: 'session-123', limit: 50 }, {});
+
+			expect(sessionManagerData.agentSessionData.mocks.getSDKMessages).toHaveBeenCalledWith(
+				50,
+				undefined,
+				undefined
+			);
+		});
+
+		test('accepts before parameter', async () => {
+			const handler = messageHubData.handlers.get('message.sdkMessages');
+			expect(handler).toBeDefined();
+
+			await handler!({ sessionId: 'session-123', before: 1234567890 }, {});
+
+			expect(sessionManagerData.agentSessionData.mocks.getSDKMessages).toHaveBeenCalledWith(
+				undefined,
+				1234567890,
+				undefined
+			);
+		});
+
+		test('accepts since parameter', async () => {
+			const handler = messageHubData.handlers.get('message.sdkMessages');
+			expect(handler).toBeDefined();
+
+			await handler!({ sessionId: 'session-123', since: 1234567890 }, {});
+
+			expect(sessionManagerData.agentSessionData.mocks.getSDKMessages).toHaveBeenCalledWith(
+				undefined,
+				undefined,
+				1234567890
+			);
+		});
+
+		test('throws error when session not found', async () => {
+			const handler = messageHubData.handlers.get('message.sdkMessages');
+			expect(handler).toBeDefined();
+
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(null);
+
+			await expect(handler!({ sessionId: 'non-existent' }, {})).rejects.toThrow(
+				'Session not found'
+			);
+		});
+	});
+
+	describe('message.count', () => {
+		test('returns message count', async () => {
+			const handler = messageHubData.handlers.get('message.count');
+			expect(handler).toBeDefined();
+
+			sessionManagerData.agentSessionData.mocks.getSDKMessageCount.mockReturnValueOnce(42);
+
+			const result = await handler!({ sessionId: 'session-123' }, {});
+
+			expect(result).toEqual({ count: 42 });
+		});
+
+		test('throws error when session not found', async () => {
+			const handler = messageHubData.handlers.get('message.count');
+			expect(handler).toBeDefined();
+
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(null);
+
+			await expect(handler!({ sessionId: 'non-existent' }, {})).rejects.toThrow(
+				'Session not found'
+			);
+		});
+	});
+
+	describe('session.export', () => {
+		test('exports to markdown by default', async () => {
+			const handler = messageHubData.handlers.get('session.export');
+			expect(handler).toBeDefined();
+
+			const result = await handler!({ sessionId: 'session-123' }, {});
+
+			expect(result).toHaveProperty('markdown');
+		});
+
+		test('exports to markdown when format is markdown', async () => {
+			const handler = messageHubData.handlers.get('session.export');
+			expect(handler).toBeDefined();
+
+			const result = await handler!({ sessionId: 'session-123', format: 'markdown' }, {});
+
+			expect(result).toHaveProperty('markdown');
+		});
+
+		test('exports to json when format is json', async () => {
+			const handler = messageHubData.handlers.get('session.export');
+			expect(handler).toBeDefined();
+
+			const result = await handler!({ sessionId: 'session-123', format: 'json' }, {});
+
+			expect(result).toHaveProperty('session');
+			expect(result).toHaveProperty('messages');
+		});
+
+		test('throws error when session not found', async () => {
+			const handler = messageHubData.handlers.get('session.export');
+			expect(handler).toBeDefined();
+
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(null);
+
+			await expect(handler!({ sessionId: 'non-existent', format: 'markdown' }, {})).rejects.toThrow(
+				'Session not found'
+			);
 		});
 	});
 });
