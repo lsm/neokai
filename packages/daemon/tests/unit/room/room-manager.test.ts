@@ -17,25 +17,19 @@ import type { CreateRoomParams } from '@neokai/shared';
 
 describe('RoomManager', () => {
 	let db: Database;
-	let tempDir: string;
 	let roomManager: RoomManager;
 
 	beforeEach(async () => {
-		// Create temp directory with UUID for CI parallel test isolation
-		tempDir = `/tmp/neokai-test-${crypto.randomUUID()}`;
-		require('fs').mkdirSync(tempDir, { recursive: true });
-		db = new Database(`${tempDir}/test.db`);
+		// Use a unique named in-memory database for each test
+		// This ensures complete isolation between tests
+		const dbId = crypto.randomUUID();
+		db = new Database(`file:${dbId}?mode=memory&cache=private`);
 		await db.initialize();
 		roomManager = new RoomManager(db.getDatabase());
 	});
 
 	afterEach(() => {
 		db.close();
-		try {
-			require('fs').rmSync(tempDir, { recursive: true, force: true });
-		} catch {
-			// Ignore cleanup errors
-		}
 	});
 
 	describe('createRoom', () => {

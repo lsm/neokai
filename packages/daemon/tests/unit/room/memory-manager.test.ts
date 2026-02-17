@@ -23,14 +23,12 @@ describe('MemoryManager', () => {
 	let memoryManager: MemoryManager;
 	let roomManager: RoomManager;
 	let roomId: string;
-	let tempDir: string;
 
 	beforeEach(() => {
-		// Create a temp file database with unique path using UUID for CI parallel test isolation
-		const testId = `memory-manager-${crypto.randomUUID()}`;
-		tempDir = `/tmp/neokai-${testId}`;
-		require('fs').mkdirSync(tempDir, { recursive: true });
-		db = new Database(`${tempDir}/test.db`);
+		// Use a unique named in-memory database for each test
+		// This ensures complete isolation between tests
+		const dbId = crypto.randomUUID();
+		db = new Database(`file:${dbId}?mode=memory&cache=private`);
 		createTables(db);
 
 		// Create room manager and a room
@@ -48,12 +46,6 @@ describe('MemoryManager', () => {
 
 	afterEach(() => {
 		db.close();
-		// Clean up temp directory
-		try {
-			require('fs').rmSync(tempDir, { recursive: true, force: true });
-		} catch {
-			// Ignore cleanup errors
-		}
 	});
 
 	describe('initialization', () => {

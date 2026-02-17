@@ -19,16 +19,15 @@ import type { NeoContext, NeoContextMessage } from '@neokai/shared';
 
 describe('ContextManager', () => {
 	let db: Database;
-	let tempDir: string;
 	let contextManager: ContextManager;
 	let roomManager: RoomManager;
 	let roomId: string;
 
 	beforeEach(() => {
-		// Create temp directory with UUID for CI parallel test isolation
-		tempDir = `/tmp/neokai-test-${crypto.randomUUID()}`;
-		require('fs').mkdirSync(tempDir, { recursive: true });
-		db = new Database(`${tempDir}/test.db`);
+		// Use a unique named in-memory database for each test
+		// This ensures complete isolation between tests
+		const dbId = crypto.randomUUID();
+		db = new Database(`file:${dbId}?mode=memory&cache=private`);
 		createTables(db);
 
 		// Create room manager and a room
@@ -46,11 +45,6 @@ describe('ContextManager', () => {
 
 	afterEach(() => {
 		db.close();
-		try {
-			require('fs').rmSync(tempDir, { recursive: true, force: true });
-		} catch {
-			// Ignore cleanup errors
-		}
 	});
 
 	describe('initialization', () => {
