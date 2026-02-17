@@ -20,10 +20,9 @@ describe('RoomManager', () => {
 	let roomManager: RoomManager;
 
 	beforeEach(async () => {
-		// Use a unique named in-memory database for each test
+		// Use an anonymous in-memory database for each test
 		// This ensures complete isolation between tests
-		const dbId = crypto.randomUUID();
-		db = new Database(`file:${dbId}?mode=memory&cache=private`);
+		db = new Database(':memory:');
 		await db.initialize();
 		roomManager = new RoomManager(db.getDatabase());
 	});

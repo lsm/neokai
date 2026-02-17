@@ -27,10 +27,9 @@ describe('TaskManager', () => {
 	let roomId: string;
 
 	beforeEach(() => {
-		// Use a unique named in-memory database for each test
+		// Use an anonymous in-memory database for each test
 		// This ensures complete isolation between tests
-		const dbId = crypto.randomUUID();
-		db = new Database(`file:${dbId}?mode=memory&cache=private`);
+		db = new Database(':memory:');
 		createTables(db);
 
 		// Create room manager and a room
