@@ -25,7 +25,8 @@ describe('ContextManager', () => {
 
 	beforeEach(() => {
 		// Create in-memory database with all required tables
-		db = new Database(':memory:');
+		const dbId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+		db = new Database(`file:${dbId}?mode=memory&cache=private`, { create: true });
 		createTables(db);
 
 		// Create room manager and a room
