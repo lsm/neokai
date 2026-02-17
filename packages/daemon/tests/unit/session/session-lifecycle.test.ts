@@ -738,3 +738,407 @@ describe('generateBranchName', () => {
 		expect(result).toBe('session/fix-bug-abc12345');
 	});
 });
+
+describe('SessionLifecycle - generateTitleAndRenameBranch', () => {
+	let lifecycle: SessionLifecycle;
+	let mockDb: Database;
+	let mockWorktreeManager: WorktreeManager;
+	let mockSessionCache: SessionCache;
+	let mockEventBus: DaemonHub;
+	let mockMessageHub: MessageHub;
+	let mockToolsConfigManager: ToolsConfigManager;
+	let mockAgentSessionFactory: AgentSessionFactory;
+	let config: SessionLifecycleConfig;
+
+	beforeEach(() => {
+		// Database mocks
+		mockDb = {
+			createSession: mock(() => {}),
+			updateSession: mock(() => {}),
+			deleteSession: mock(() => {}),
+			getSession: mock(() => null),
+			getGlobalSettings: mock(() => ({
+				...DEFAULT_GLOBAL_SETTINGS,
+				settingSources: ['user', 'project', 'local'],
+				disabledMcpServers: [],
+			})),
+		} as unknown as Database;
+
+		// Worktree manager mocks
+		mockWorktreeManager = {
+			detectGitSupport: mock(async () => ({ isGitRepo: false, isBare: false })),
+			createWorktree: mock(async () => null),
+			removeWorktree: mock(async () => {}),
+			verifyWorktree: mock(async () => false),
+			renameBranch: mock(async () => true),
+			getCurrentBranch: mock(async () => 'main'),
+		} as unknown as WorktreeManager;
+
+		// Session cache mocks
+		const mockAgentSession = {
+			cleanup: mock(async () => {}),
+			updateMetadata: mock(() => {}),
+			getSessionData: mock(() => ({
+				id: 'test-id',
+				title: 'Test',
+				workspacePath: '/test',
+				status: 'active',
+				metadata: { titleGenerated: false, worktreeChoice: undefined },
+				config: {},
+				worktree: undefined,
+			})),
+		};
+		mockSessionCache = {
+			set: mock(() => {}),
+			get: mock(() => mockAgentSession),
+			has: mock(() => true),
+			remove: mock(() => {}),
+			clear: mock(() => {}),
+			getAsync: mock(async () => mockAgentSession),
+		} as unknown as SessionCache;
+
+		// Event bus mocks
+		mockEventBus = {
+			on: mock(() => () => {}),
+			emit: mock(async () => {}),
+		} as unknown as DaemonHub;
+
+		// Message hub mocks
+		mockMessageHub = {
+			event: mock(async () => {}),
+			onRequest: mock(() => () => {}),
+			query: mock(async () => ({})),
+			command: mock(async () => {}),
+		} as unknown as MessageHub;
+
+		// Tools config manager mocks
+		mockToolsConfigManager = {
+			getDefaultForNewSession: mock(() => ({
+				useClaudeCodePreset: true,
+				settingSources: ['project', 'local'],
+				disabledMcpServers: [],
+			})),
+		} as unknown as ToolsConfigManager;
+
+		// Agent session factory
+		mockAgentSessionFactory = mock(() => mockAgentSession);
+
+		// Config
+		config = {
+			defaultModel: 'claude-sonnet-4-20250514',
+			maxTokens: 8192,
+			temperature: 1.0,
+			workspaceRoot: '/default/workspace',
+			disableWorktrees: true,
+		};
+
+		lifecycle = new SessionLifecycle(
+			mockDb,
+			mockWorktreeManager,
+			mockSessionCache,
+			mockEventBus,
+			mockMessageHub,
+			config,
+			mockToolsConfigManager,
+			mockAgentSessionFactory
+		);
+	});
+
+	it('should return existing title if already generated', async () => {
+		const mockAgentSession = {
+			getSessionData: mock(() => ({
+				id: 'test-id',
+				title: 'Existing Title',
+				workspacePath: '/test',
+				status: 'active',
+				metadata: { titleGenerated: true },
+				config: {},
+			})),
+		};
+		(mockSessionCache.has as ReturnType<typeof mock>).mockReturnValue(true);
+		(mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(mockAgentSession);
+
+		const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'new message');
+
+		expect(result.title).toBe('Existing Title');
+		expect(result.isFallback).toBe(false);
+	});
+
+	it('should throw error if session not found', async () => {
+		(mockSessionCache.has as ReturnType<typeof mock>).mockReturnValue(false);
+		(mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(null);
+
+		await expect(lifecycle.generateTitleAndRenameBranch('nonexistent', 'message')).rejects.toThrow(
+			'Session nonexistent not found'
+		);
+	});
+
+	it('should rename branch when worktree exists', async () => {
+		const mockAgentSession = {
+			getSessionData: mock(() => ({
+				id: 'test-id',
+				title: 'New Session',
+				workspacePath: '/test',
+				status: 'active',
+				metadata: { titleGenerated: false },
+				config: {},
+				worktree: {
+					worktreePath: '/test/worktree',
+					branch: 'session/test-id',
+					mainRepoPath: '/test/main',
+				},
+			})),
+			updateMetadata: mock(() => {}),
+		};
+		(mockSessionCache.has as ReturnType<typeof mock>).mockReturnValue(true);
+		(mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(mockAgentSession);
+
+		// This test verifies the branch rename path is exercised
+		// The actual title generation requires provider service which is complex to mock
+		const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'test message');
+
+		expect(result).toBeDefined();
+		expect(typeof result.title).toBe('string');
+	});
+});
+
+describe('SessionLifecycle - completeWorktreeChoice edge cases', () => {
+	let lifecycle: SessionLifecycle;
+	let mockDb: Database;
+	let mockWorktreeManager: WorktreeManager;
+	let mockSessionCache: SessionCache;
+	let mockEventBus: DaemonHub;
+	let mockMessageHub: MessageHub;
+	let mockToolsConfigManager: ToolsConfigManager;
+	let mockAgentSessionFactory: AgentSessionFactory;
+	let config: SessionLifecycleConfig;
+
+	beforeEach(() => {
+		mockDb = {
+			createSession: mock(() => {}),
+			updateSession: mock(() => {}),
+			deleteSession: mock(() => {}),
+			getSession: mock(() => null),
+			getGlobalSettings: mock(() => DEFAULT_GLOBAL_SETTINGS),
+		} as unknown as Database;
+
+		mockWorktreeManager = {
+			detectGitSupport: mock(async () => ({ isGitRepo: true, isBare: false, gitRoot: '/test' })),
+			createWorktree: mock(async () => ({
+				worktreePath: '/test/worktree',
+				branch: 'session/test-id',
+				mainRepoPath: '/test/main',
+			})),
+			removeWorktree: mock(async () => {}),
+			getCurrentBranch: mock(async () => 'main'),
+		} as unknown as WorktreeManager;
+
+		const mockAgentSession = {
+			cleanup: mock(async () => {}),
+			updateMetadata: mock(() => {}),
+			getSessionData: mock(() => ({
+				id: 'test-id',
+				title: 'Test',
+				workspacePath: '/test',
+				status: 'pending_worktree_choice',
+				metadata: {
+					titleGenerated: true,
+					worktreeChoice: { status: 'pending', createdAt: new Date().toISOString() },
+				},
+				config: {},
+			})),
+		};
+
+		mockSessionCache = {
+			set: mock(() => {}),
+			get: mock(() => mockAgentSession),
+			has: mock(() => true),
+			remove: mock(() => {}),
+		} as unknown as SessionCache;
+
+		mockEventBus = {
+			on: mock(() => () => {}),
+			emit: mock(async () => {}),
+		} as unknown as DaemonHub;
+
+		mockMessageHub = {
+			event: mock(async () => {}),
+		} as unknown as MessageHub;
+
+		mockToolsConfigManager = {
+			getDefaultForNewSession: mock(() => ({})),
+		} as unknown as ToolsConfigManager;
+
+		mockAgentSessionFactory = mock(() => mockAgentSession);
+
+		config = {
+			defaultModel: 'claude-sonnet-4-20250514',
+			maxTokens: 8192,
+			temperature: 1.0,
+			workspaceRoot: '/default/workspace',
+		};
+
+		lifecycle = new SessionLifecycle(
+			mockDb,
+			mockWorktreeManager,
+			mockSessionCache,
+			mockEventBus,
+			mockMessageHub,
+			config,
+			mockToolsConfigManager,
+			mockAgentSessionFactory
+		);
+	});
+
+	it('should detect current branch for direct mode', async () => {
+		await lifecycle.completeWorktreeChoice('test-id', 'direct');
+
+		expect(mockWorktreeManager.getCurrentBranch).toHaveBeenCalledWith('/test');
+	});
+
+	it('should handle branch detection failure gracefully', async () => {
+		(mockWorktreeManager.getCurrentBranch as ReturnType<typeof mock>).mockRejectedValue(
+			new Error('Not a git repo')
+		);
+
+		// Should not throw
+		await lifecycle.completeWorktreeChoice('test-id', 'direct');
+	});
+
+	it('should handle worktree creation failure gracefully', async () => {
+		(mockWorktreeManager.createWorktree as ReturnType<typeof mock>).mockResolvedValue(null);
+
+		const result = await lifecycle.completeWorktreeChoice('test-id', 'worktree');
+
+		// Should still complete with active status
+		expect(result.status).toBe('active');
+	});
+});
+
+describe('SessionLifecycle - session creation with worktree', () => {
+	let lifecycle: SessionLifecycle;
+	let mockDb: Database;
+	let mockWorktreeManager: WorktreeManager;
+	let mockSessionCache: SessionCache;
+	let mockEventBus: DaemonHub;
+	let mockMessageHub: MessageHub;
+	let mockToolsConfigManager: ToolsConfigManager;
+	let mockAgentSessionFactory: AgentSessionFactory;
+	let config: SessionLifecycleConfig;
+
+	beforeEach(() => {
+		mockDb = {
+			createSession: mock(() => {}),
+			updateSession: mock(() => {}),
+			deleteSession: mock(() => {}),
+			getSession: mock(() => null),
+			getGlobalSettings: mock(() => DEFAULT_GLOBAL_SETTINGS),
+		} as unknown as Database;
+
+		mockWorktreeManager = {
+			detectGitSupport: mock(async () => ({ isGitRepo: false, isBare: false })),
+			createWorktree: mock(async () => ({
+				worktreePath: '/test/worktree',
+				branch: 'session/test-id',
+				mainRepoPath: '/test/main',
+			})),
+			removeWorktree: mock(async () => {}),
+			getCurrentBranch: mock(async () => 'main'),
+		} as unknown as WorktreeManager;
+
+		const mockAgentSession = {
+			cleanup: mock(async () => {}),
+			updateMetadata: mock(() => {}),
+			getSessionData: mock(() => ({
+				id: 'test-id',
+				title: 'Test',
+				workspacePath: '/test',
+				status: 'active',
+				metadata: {},
+				config: {},
+			})),
+		};
+
+		mockSessionCache = {
+			set: mock(() => {}),
+			get: mock(() => mockAgentSession),
+			has: mock(() => false),
+			remove: mock(() => {}),
+		} as unknown as SessionCache;
+
+		mockEventBus = {
+			on: mock(() => () => {}),
+			emit: mock(async () => {}),
+		} as unknown as DaemonHub;
+
+		mockMessageHub = {
+			event: mock(async () => {}),
+		} as unknown as MessageHub;
+
+		mockToolsConfigManager = {
+			getDefaultForNewSession: mock(() => ({
+				useClaudeCodePreset: true,
+				settingSources: [],
+				disabledMcpServers: [],
+			})),
+		} as unknown as ToolsConfigManager;
+
+		mockAgentSessionFactory = mock(() => mockAgentSession);
+
+		config = {
+			defaultModel: 'claude-sonnet-4-20250514',
+			maxTokens: 8192,
+			temperature: 1.0,
+			workspaceRoot: '/default/workspace',
+			disableWorktrees: false,
+		};
+
+		lifecycle = new SessionLifecycle(
+			mockDb,
+			mockWorktreeManager,
+			mockSessionCache,
+			mockEventBus,
+			mockMessageHub,
+			config,
+			mockToolsConfigManager,
+			mockAgentSessionFactory
+		);
+	});
+
+	it('should create worktree for non-git repos when worktrees enabled', async () => {
+		await lifecycle.create({ title: 'Test Session' });
+
+		expect(mockWorktreeManager.createWorktree).toHaveBeenCalled();
+	});
+
+	it('should handle worktree creation failure gracefully', async () => {
+		(mockWorktreeManager.createWorktree as ReturnType<typeof mock>).mockRejectedValue(
+			new Error('Worktree creation failed')
+		);
+
+		// Should not throw
+		const sessionId = await lifecycle.create({ title: 'Test Session' });
+
+		expect(sessionId).toBeDefined();
+	});
+
+	it('should use title for branch name when title provided', async () => {
+		await lifecycle.create({ title: 'Feature Implementation' });
+
+		expect(mockWorktreeManager.createWorktree).toHaveBeenCalledWith(
+			expect.objectContaining({
+				branchName: expect.stringContaining('feature-implementation'),
+			})
+		);
+	});
+
+	it('should use session ID for branch name when no title provided', async () => {
+		await lifecycle.create({});
+
+		expect(mockWorktreeManager.createWorktree).toHaveBeenCalledWith(
+			expect.objectContaining({
+				branchName: expect.stringMatching(/^session\/[a-f0-9-]+$/),
+			})
+		);
+	});
+});

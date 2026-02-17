@@ -988,4 +988,823 @@ describe('AgentSession', () => {
 			}
 		});
 	});
+
+	describe('startStreamingQuery', () => {
+		let mockSession: Session;
+		let mockDb: Database;
+		let mockMessageHub: MessageHub;
+		let mockDaemonHub: DaemonHub;
+		let mockGetApiKey: () => Promise<string | null>;
+		let agentSession: AgentSession;
+
+		beforeEach(() => {
+			mockSession = {
+				id: 'test-session-id',
+				title: 'Test Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					maxTokens: 8192,
+					temperature: 1.0,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			} as Session;
+
+			mockDb = {
+				getSession: mock(() => mockSession),
+				updateSession: mock(() => {}),
+			} as unknown as Database;
+
+			mockMessageHub = {} as unknown as MessageHub;
+
+			mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+
+			mockGetApiKey = mock(async () => 'test-api-key');
+
+			agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+		});
+
+		it('should delegate to queryRunner.start', async () => {
+			const startSpy = mock(async () => {});
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).queryRunner = {
+				start: startSpy,
+			};
+
+			await agentSession.startStreamingQuery();
+
+			expect(startSpy).toHaveBeenCalled();
+		});
+	});
+
+	describe('ensureQueryStarted', () => {
+		let mockSession: Session;
+		let mockDb: Database;
+		let mockMessageHub: MessageHub;
+		let mockDaemonHub: DaemonHub;
+		let mockGetApiKey: () => Promise<string | null>;
+		let agentSession: AgentSession;
+
+		beforeEach(() => {
+			mockSession = {
+				id: 'test-session-id',
+				title: 'Test Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					maxTokens: 8192,
+					temperature: 1.0,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			} as Session;
+
+			mockDb = {
+				getSession: mock(() => mockSession),
+				updateSession: mock(() => {}),
+			} as unknown as Database;
+
+			mockMessageHub = {} as unknown as MessageHub;
+
+			mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+
+			mockGetApiKey = mock(async () => 'test-api-key');
+
+			agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+		});
+
+		it('should delegate to lifecycleManager.ensureQueryStarted', async () => {
+			const ensureQueryStartedSpy = mock(async () => {});
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).lifecycleManager = {
+				ensureQueryStarted: ensureQueryStartedSpy,
+			};
+
+			await agentSession.ensureQueryStarted();
+
+			expect(ensureQueryStartedSpy).toHaveBeenCalled();
+		});
+	});
+
+	describe('startQueryAndEnqueue', () => {
+		let mockSession: Session;
+		let mockDb: Database;
+		let mockMessageHub: MessageHub;
+		let mockDaemonHub: DaemonHub;
+		let mockGetApiKey: () => Promise<string | null>;
+		let agentSession: AgentSession;
+
+		beforeEach(() => {
+			mockSession = {
+				id: 'test-session-id',
+				title: 'Test Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					maxTokens: 8192,
+					temperature: 1.0,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			} as Session;
+
+			mockDb = {
+				getSession: mock(() => mockSession),
+				updateSession: mock(() => {}),
+			} as unknown as Database;
+
+			mockMessageHub = {} as unknown as MessageHub;
+
+			mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+
+			mockGetApiKey = mock(async () => 'test-api-key');
+
+			agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+		});
+
+		it('should delegate to lifecycleManager.startQueryAndEnqueue', async () => {
+			const startQueryAndEnqueueSpy = mock(async () => {});
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).lifecycleManager = {
+				startQueryAndEnqueue: startQueryAndEnqueueSpy,
+			};
+
+			await agentSession.startQueryAndEnqueue('msg-id', 'test content');
+
+			expect(startQueryAndEnqueueSpy).toHaveBeenCalledWith('msg-id', 'test content');
+		});
+
+		it('should handle MessageContent array', async () => {
+			const startQueryAndEnqueueSpy = mock(async () => {});
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).lifecycleManager = {
+				startQueryAndEnqueue: startQueryAndEnqueueSpy,
+			};
+
+			const content = [{ type: 'text', text: 'hello' }];
+			await agentSession.startQueryAndEnqueue('msg-id', content);
+
+			expect(startQueryAndEnqueueSpy).toHaveBeenCalledWith('msg-id', content);
+		});
+	});
+
+	describe('restartQuery', () => {
+		let mockSession: Session;
+		let mockDb: Database;
+		let mockMessageHub: MessageHub;
+		let mockDaemonHub: DaemonHub;
+		let mockGetApiKey: () => Promise<string | null>;
+		let agentSession: AgentSession;
+
+		beforeEach(() => {
+			mockSession = {
+				id: 'test-session-id',
+				title: 'Test Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					maxTokens: 8192,
+					temperature: 1.0,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			} as Session;
+
+			mockDb = {
+				getSession: mock(() => mockSession),
+				updateSession: mock(() => {}),
+			} as unknown as Database;
+
+			mockMessageHub = {} as unknown as MessageHub;
+
+			mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+
+			mockGetApiKey = mock(async () => 'test-api-key');
+
+			agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+		});
+
+		it('should delegate to lifecycleManager.restartQuery', async () => {
+			const restartQuerySpy = mock(async () => {});
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).lifecycleManager = {
+				restartQuery: restartQuerySpy,
+			};
+
+			await agentSession.restartQuery();
+
+			expect(restartQuerySpy).toHaveBeenCalled();
+		});
+	});
+
+	describe('onSDKMessage', () => {
+		let mockSession: Session;
+		let mockDb: Database;
+		let mockMessageHub: MessageHub;
+		let mockDaemonHub: DaemonHub;
+		let mockGetApiKey: () => Promise<string | null>;
+		let agentSession: AgentSession;
+
+		beforeEach(() => {
+			mockSession = {
+				id: 'test-session-id',
+				title: 'Test Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					maxTokens: 8192,
+					temperature: 1.0,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			} as Session;
+
+			mockDb = {
+				getSession: mock(() => mockSession),
+				updateSession: mock(() => {}),
+			} as unknown as Database;
+
+			mockMessageHub = {} as unknown as MessageHub;
+
+			mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+
+			mockGetApiKey = mock(async () => 'test-api-key');
+
+			agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+		});
+
+		it('should delegate to messageHandler.handleMessage', async () => {
+			const handleMessageSpy = mock(async () => {});
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).messageHandler = {
+				handleMessage: handleMessageSpy,
+			};
+
+			const message = { type: 'assistant', message: { content: [] } };
+			await agentSession.onSDKMessage(message as never);
+
+			expect(handleMessageSpy).toHaveBeenCalledWith(message);
+		});
+	});
+
+	describe('onSlashCommandsFetched', () => {
+		let mockSession: Session;
+		let mockDb: Database;
+		let mockMessageHub: MessageHub;
+		let mockDaemonHub: DaemonHub;
+		let mockGetApiKey: () => Promise<string | null>;
+		let agentSession: AgentSession;
+
+		beforeEach(() => {
+			mockSession = {
+				id: 'test-session-id',
+				title: 'Test Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					maxTokens: 8192,
+					temperature: 1.0,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			} as Session;
+
+			mockDb = {
+				getSession: mock(() => mockSession),
+				updateSession: mock(() => {}),
+			} as unknown as Database;
+
+			mockMessageHub = {} as unknown as MessageHub;
+
+			mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+
+			mockGetApiKey = mock(async () => 'test-api-key');
+
+			agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+		});
+
+		it('should delegate to slashCommandManager.fetchAndCache', async () => {
+			const fetchAndCacheSpy = mock(async () => {});
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).slashCommandManager = {
+				fetchAndCache: fetchAndCacheSpy,
+			};
+
+			await agentSession.onSlashCommandsFetched();
+
+			expect(fetchAndCacheSpy).toHaveBeenCalled();
+		});
+	});
+
+	describe('onMarkApiSuccess', () => {
+		let mockSession: Session;
+		let mockDb: Database;
+		let mockMessageHub: MessageHub;
+		let mockDaemonHub: DaemonHub;
+		let mockGetApiKey: () => Promise<string | null>;
+		let agentSession: AgentSession;
+
+		beforeEach(() => {
+			mockSession = {
+				id: 'test-session-id',
+				title: 'Test Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					maxTokens: 8192,
+					temperature: 1.0,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			} as Session;
+
+			mockDb = {
+				getSession: mock(() => mockSession),
+				updateSession: mock(() => {}),
+			} as unknown as Database;
+
+			mockMessageHub = {} as unknown as MessageHub;
+
+			mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+
+			mockGetApiKey = mock(async () => 'test-api-key');
+
+			agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+		});
+
+		it('should call errorManager.markApiSuccess', async () => {
+			const markApiSuccessSpy = mock(() => {});
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).errorManager = {
+				markApiSuccess: markApiSuccessSpy,
+			};
+
+			await agentSession.onMarkApiSuccess();
+
+			expect(markApiSuccessSpy).toHaveBeenCalled();
+		});
+	});
+
+	describe('getSlashCommands', () => {
+		let mockSession: Session;
+		let mockDb: Database;
+		let mockMessageHub: MessageHub;
+		let mockDaemonHub: DaemonHub;
+		let mockGetApiKey: () => Promise<string | null>;
+		let agentSession: AgentSession;
+
+		beforeEach(() => {
+			mockSession = {
+				id: 'test-session-id',
+				title: 'Test Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					maxTokens: 8192,
+					temperature: 1.0,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			} as Session;
+
+			mockDb = {
+				getSession: mock(() => mockSession),
+				updateSession: mock(() => {}),
+			} as unknown as Database;
+
+			mockMessageHub = {} as unknown as MessageHub;
+
+			mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+
+			mockGetApiKey = mock(async () => 'test-api-key');
+
+			agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+		});
+
+		it('should delegate to slashCommandManager.getSlashCommands', async () => {
+			const mockCommands = ['/test', '/help'];
+			const getSlashCommandsSpy = mock(async () => mockCommands);
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).slashCommandManager = {
+				getSlashCommands: getSlashCommandsSpy,
+			};
+
+			const result = await agentSession.getSlashCommands();
+
+			expect(getSlashCommandsSpy).toHaveBeenCalled();
+			expect(result).toEqual(mockCommands);
+		});
+	});
+
+	describe('cleanupEventSubscriptions', () => {
+		let mockSession: Session;
+		let mockDb: Database;
+		let mockMessageHub: MessageHub;
+		let mockDaemonHub: DaemonHub;
+		let mockGetApiKey: () => Promise<string | null>;
+		let agentSession: AgentSession;
+
+		beforeEach(() => {
+			mockSession = {
+				id: 'test-session-id',
+				title: 'Test Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					maxTokens: 8192,
+					temperature: 1.0,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			} as Session;
+
+			mockDb = {
+				getSession: mock(() => mockSession),
+				updateSession: mock(() => {}),
+			} as unknown as Database;
+
+			mockMessageHub = {} as unknown as MessageHub;
+
+			mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+
+			mockGetApiKey = mock(async () => 'test-api-key');
+
+			agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+		});
+
+		it('should delegate to eventSubscriptionSetup.cleanup', () => {
+			const cleanupSpy = mock(() => {});
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).eventSubscriptionSetup = {
+				cleanup: cleanupSpy,
+			};
+
+			agentSession.cleanupEventSubscriptions();
+
+			expect(cleanupSpy).toHaveBeenCalled();
+		});
+	});
+
+	describe('pendingRestartReason', () => {
+		let mockSession: Session;
+		let mockDb: Database;
+		let mockMessageHub: MessageHub;
+		let mockDaemonHub: DaemonHub;
+		let mockGetApiKey: () => Promise<string | null>;
+		let agentSession: AgentSession;
+
+		beforeEach(() => {
+			mockSession = {
+				id: 'test-session-id',
+				title: 'Test Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					maxTokens: 8192,
+					temperature: 1.0,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			} as Session;
+
+			mockDb = {
+				getSession: mock(() => mockSession),
+				updateSession: mock(() => {}),
+			} as unknown as Database;
+
+			mockMessageHub = {} as unknown as MessageHub;
+
+			mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+
+			mockGetApiKey = mock(async () => 'test-api-key');
+
+			agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+		});
+
+		it('should initialize with null pendingRestartReason', () => {
+			expect(agentSession.pendingRestartReason).toBeNull();
+		});
+
+		it('should allow setting pendingRestartReason', () => {
+			agentSession.pendingRestartReason = 'settings.local.json';
+			expect(agentSession.pendingRestartReason).toBe('settings.local.json');
+
+			agentSession.pendingRestartReason = null;
+			expect(agentSession.pendingRestartReason).toBeNull();
+		});
+	});
+
+	describe('originalEnvVars', () => {
+		let mockSession: Session;
+		let mockDb: Database;
+		let mockMessageHub: MessageHub;
+		let mockDaemonHub: DaemonHub;
+		let mockGetApiKey: () => Promise<string | null>;
+		let agentSession: AgentSession;
+
+		beforeEach(() => {
+			mockSession = {
+				id: 'test-session-id',
+				title: 'Test Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					maxTokens: 8192,
+					temperature: 1.0,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			} as Session;
+
+			mockDb = {
+				getSession: mock(() => mockSession),
+				updateSession: mock(() => {}),
+			} as unknown as Database;
+
+			mockMessageHub = {} as unknown as MessageHub;
+
+			mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+
+			mockGetApiKey = mock(async () => 'test-api-key');
+
+			agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+		});
+
+		it('should initialize with empty originalEnvVars', () => {
+			expect(agentSession.originalEnvVars).toEqual({});
+		});
+
+		it('should allow storing and retrieving env vars', () => {
+			agentSession.originalEnvVars = { ANTHROPIC_API_KEY: 'old-key' };
+			expect(agentSession.originalEnvVars).toEqual({ ANTHROPIC_API_KEY: 'old-key' });
+		});
+	});
+
+	describe('startupTimeoutTimer', () => {
+		let mockSession: Session;
+		let mockDb: Database;
+		let mockMessageHub: MessageHub;
+		let mockDaemonHub: DaemonHub;
+		let mockGetApiKey: () => Promise<string | null>;
+		let agentSession: AgentSession;
+
+		beforeEach(() => {
+			mockSession = {
+				id: 'test-session-id',
+				title: 'Test Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					maxTokens: 8192,
+					temperature: 1.0,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			} as Session;
+
+			mockDb = {
+				getSession: mock(() => mockSession),
+				updateSession: mock(() => {}),
+			} as unknown as Database;
+
+			mockMessageHub = {} as unknown as MessageHub;
+
+			mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+
+			mockGetApiKey = mock(async () => 'test-api-key');
+
+			agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+		});
+
+		it('should initialize with null startupTimeoutTimer', () => {
+			expect(agentSession.startupTimeoutTimer).toBeNull();
+		});
+
+		it('should allow setting and clearing timeout', () => {
+			const timer = setTimeout(() => {}, 1000);
+			agentSession.startupTimeoutTimer = timer;
+			expect(agentSession.startupTimeoutTimer).toBe(timer);
+
+			clearTimeout(timer);
+			agentSession.startupTimeoutTimer = null;
+			expect(agentSession.startupTimeoutTimer).toBeNull();
+		});
+	});
 });
