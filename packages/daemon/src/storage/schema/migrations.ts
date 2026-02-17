@@ -1,7 +1,7 @@
 /**
  * Database Migrations
  *
- * All 15 migrations for schema changes.
+ * All 16 migrations for schema changes.
  * CRITICAL: Preserve the order of migrations.
  */
 
@@ -62,6 +62,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 15: Add allowed_paths and default_path columns to rooms table
 	runMigration15(db);
+
+	// Migration 16: Create session_pairs table for dual-session architecture
+	runMigration16(db);
 }
 
 /**
@@ -829,4 +832,43 @@ function runMigration15(db: BunDatabase): void {
 			);
 		}
 	}
+}
+
+/**
+ * Migration 16: Create session_pairs table for dual-session architecture
+ *
+ * Creates a table to track manager-worker session pairs within rooms:
+ * - id: Unique identifier for the session pair
+ * - room_id: Reference to the room this pair belongs to
+ * - room_session_id: Session ID that created this pair (for reference)
+ * - manager_session_id: The manager session's ID
+ * - worker_session_id: The worker session's ID
+ * - status: Current status of the pair (active, idle, crashed, completed)
+ * - current_task_id: The currently executing task, if any
+ */
+function runMigration16(db: BunDatabase): void {
+	// Skip if session_pairs table already exists (already migrated)
+	if (tableExists(db, 'session_pairs')) {
+		return;
+	}
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS session_pairs (
+			id TEXT PRIMARY KEY,
+			room_id TEXT NOT NULL,
+			room_session_id TEXT NOT NULL,
+			manager_session_id TEXT NOT NULL,
+			worker_session_id TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active'
+				CHECK(status IN ('active', 'idle', 'crashed', 'completed')),
+			current_task_id TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_session_pairs_room ON session_pairs(room_id);
+		CREATE INDEX IF NOT EXISTS idx_session_pairs_manager ON session_pairs(manager_session_id);
+		CREATE INDEX IF NOT EXISTS idx_session_pairs_worker ON session_pairs(worker_session_id);
+	`);
 }

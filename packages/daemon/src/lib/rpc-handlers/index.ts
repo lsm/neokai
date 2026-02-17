@@ -25,7 +25,7 @@ import { registerSettingsHandlers } from './settings-handlers';
 import { setupConfigHandlers } from './config-handlers';
 import { setupTestHandlers } from './test-handlers';
 import { setupRewindHandlers } from './rewind-handlers';
-import { RoomManager } from '../room';
+import { RoomManager, SessionBridge, SessionPairManager } from '../room';
 // New split handlers for Neo functionality
 import { setupRoomHandlers } from './room-handlers';
 import { setupTaskHandlers } from './task-handlers';
@@ -49,6 +49,23 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
 	// Room handlers (create roomManager first as session handlers depend on it)
 	const roomManager = new RoomManager(deps.db.getDatabase());
 
+	// Create SessionPairManager with required dependencies
+	const sessionPairManager = new SessionPairManager(
+		deps.db.getDatabase(),
+		deps.sessionManager.getSessionLifecycle(),
+		roomManager,
+		deps.daemonHub
+	);
+
+	// Create SessionBridge for Worker-Manager session coordination
+	const sessionBridge = new SessionBridge(
+		deps.messageHub,
+		deps.daemonHub,
+		sessionPairManager,
+		deps.sessionManager,
+		deps.db.getSDKMessageRepo()
+	);
+
 	setupSessionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub, roomManager);
 	setupMessageHandlers(deps.messageHub, deps.sessionManager);
 	setupCommandHandlers(deps.messageHub, deps.sessionManager);
@@ -63,7 +80,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
 	setupRewindHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
 
 	// Room handlers
-	setupRoomHandlers(deps.messageHub, roomManager, deps.daemonHub);
+	setupRoomHandlers(
+		deps.messageHub,
+		roomManager,
+		deps.daemonHub,
+		sessionPairManager,
+		sessionBridge
+	);
 	setupTaskHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
 	setupMemoryHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
 	setupRoomMessageHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
