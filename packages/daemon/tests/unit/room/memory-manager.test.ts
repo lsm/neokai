@@ -26,9 +26,10 @@ describe('MemoryManager', () => {
 	let tempDir: string;
 
 	beforeEach(() => {
-		// Create a temp file database to ensure complete isolation in parallel tests
-		// In-memory databases can be shared between tests in some environments
-		tempDir = `/tmp/neokai-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+		// Create a temp file database with unique path including test file identifier
+		// This ensures complete isolation even when tests run in parallel across files
+		const testId = `memory-manager-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+		tempDir = `/tmp/neokai-${testId}`;
 		require('fs').mkdirSync(tempDir, { recursive: true });
 		db = new Database(`${tempDir}/test.db`);
 		createTables(db);
