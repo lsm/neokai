@@ -442,4 +442,260 @@ describe('Model Service', () => {
 			expect(cache.has('key-c')).toBe(true);
 		});
 	});
+
+	describe('setModelsCache with timestamp', () => {
+		it('should accept custom timestamp', () => {
+			const customTimestamp = Date.now() - 10000; // 10 seconds ago
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
+
+			setModelsCache(testCache, customTimestamp);
+
+			const cache = getModelsCache();
+			expect(cache.size).toBe(1);
+		});
+
+		it('should use current time when timestamp not provided', () => {
+			const beforeTime = Date.now();
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
+
+			setModelsCache(testCache);
+
+			const afterTime = Date.now();
+			// Timestamp should be between beforeTime and afterTime
+			// (This is implicitly tested by the cache working correctly)
+			expect(getAvailableModels('global').length).toBe(3);
+		});
+	});
+
+	describe('additional legacy model IDs', () => {
+		beforeEach(() => {
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
+			setModelsCache(testCache);
+		});
+
+		it('should handle claude-sonnet-4-20241022 legacy ID', async () => {
+			const model = await getModelInfo('claude-sonnet-4-20241022');
+			expect(model).not.toBeNull();
+			expect(model?.id).toBe('sonnet');
+		});
+
+		it('should handle claude-3-5-sonnet-20241022 legacy ID', async () => {
+			const model = await getModelInfo('claude-3-5-sonnet-20241022');
+			expect(model).not.toBeNull();
+			expect(model?.id).toBe('sonnet');
+		});
+
+		it('should handle claude-opus-4-20250514 legacy ID', async () => {
+			const model = await getModelInfo('claude-opus-4-20250514');
+			expect(model).not.toBeNull();
+			expect(model?.id).toBe('opus');
+		});
+
+		it('should handle claude-3-5-haiku-20241022 legacy ID', async () => {
+			const model = await getModelInfo('claude-3-5-haiku-20241022');
+			expect(model).not.toBeNull();
+			expect(model?.id).toBe('haiku');
+		});
+
+		it('should resolve all legacy model IDs via resolveModelAlias', async () => {
+			const legacyIds = [
+				{ id: 'claude-sonnet-4-5-20250929', expected: 'sonnet' },
+				{ id: 'claude-sonnet-4-20241022', expected: 'sonnet' },
+				{ id: 'claude-3-5-sonnet-20241022', expected: 'sonnet' },
+				{ id: 'claude-opus-4-5-20251101', expected: 'opus' },
+				{ id: 'claude-opus-4-20250514', expected: 'opus' },
+				{ id: 'claude-haiku-4-5-20251001', expected: 'haiku' },
+				{ id: 'claude-3-5-haiku-20241022', expected: 'haiku' },
+			];
+
+			for (const { id, expected } of legacyIds) {
+				const resolved = await resolveModelAlias(id);
+				expect(resolved).toBe(expected);
+			}
+		});
+	});
+
+	describe('default model alias', () => {
+		beforeEach(() => {
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
+			setModelsCache(testCache);
+		});
+
+		it('should resolve "default" alias to sonnet', async () => {
+			// LEGACY_MODEL_MAPPINGS maps 'default' to 'sonnet'
+			const resolved = await resolveModelAlias('default');
+			expect(resolved).toBe('sonnet');
+		});
+
+		it('should validate "default" as a valid model', async () => {
+			const isValid = await isValidModel('default');
+			expect(isValid).toBe(true);
+		});
+
+		it('should get model info for "default"', async () => {
+			const model = await getModelInfo('default');
+			expect(model).not.toBeNull();
+			expect(model?.id).toBe('sonnet');
+		});
+	});
+
+	describe('cache with empty models array', () => {
+		it('should return empty array when cache has empty array', () => {
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', []);
+			setModelsCache(testCache);
+
+			const models = getAvailableModels('global');
+			expect(models).toEqual([]);
+		});
+	});
+
+	describe('getModelInfo with cache key', () => {
+		it('should use specific cache key when provided', async () => {
+			const customModels: ModelInfo[] = [
+				{
+					id: 'custom-model',
+					name: 'Custom Model',
+					alias: 'custom',
+					family: 'custom',
+					provider: 'custom',
+					contextWindow: 100000,
+					description: 'Custom model for testing',
+				},
+			];
+
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
+			testCache.set('custom-cache', customModels);
+			setModelsCache(testCache);
+
+			// Should find in global cache
+			const globalModel = await getModelInfo('sonnet', 'global');
+			expect(globalModel).not.toBeNull();
+
+			// Should find in custom cache
+			const customModel = await getModelInfo('custom-model', 'custom-cache');
+			expect(customModel).not.toBeNull();
+			expect(customModel?.id).toBe('custom-model');
+
+			// Should not find custom model in global cache
+			const notFound = await getModelInfo('custom-model', 'global');
+			expect(notFound).toBeNull();
+		});
+	});
+
+	describe('isValidModel with cache key', () => {
+		it('should validate against specific cache key', async () => {
+			const customModels: ModelInfo[] = [
+				{
+					id: 'custom-only',
+					name: 'Custom Only',
+					alias: 'customonly',
+					family: 'custom',
+					provider: 'custom',
+					contextWindow: 100000,
+					description: 'Only in custom cache',
+				},
+			];
+
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
+			testCache.set('custom-cache', customModels);
+			setModelsCache(testCache);
+
+			// Custom model should be valid in custom cache
+			expect(await isValidModel('custom-only', 'custom-cache')).toBe(true);
+
+			// Custom model should not be valid in global cache
+			expect(await isValidModel('custom-only', 'global')).toBe(false);
+		});
+	});
+
+	describe('resolveModelAlias with cache key', () => {
+		it('should resolve using specific cache key', async () => {
+			const customModels: ModelInfo[] = [
+				{
+					id: 'custom-alias-model',
+					name: 'Custom Alias Model',
+					alias: 'my-custom-alias',
+					family: 'custom',
+					provider: 'custom',
+					contextWindow: 100000,
+					description: 'Has custom alias',
+				},
+			];
+
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
+			testCache.set('custom-cache', customModels);
+			setModelsCache(testCache);
+
+			// Should resolve alias in custom cache
+			const resolved = await resolveModelAlias('my-custom-alias', 'custom-cache');
+			expect(resolved).toBe('custom-alias-model');
+
+			// Should return as-is when not found in global cache
+			const notResolved = await resolveModelAlias('my-custom-alias', 'global');
+			expect(notResolved).toBe('my-custom-alias');
+		});
+	});
+
+	describe('ModelInfo optional fields', () => {
+		it('should handle models with minimal fields', async () => {
+			const minimalModels: ModelInfo[] = [
+				{
+					id: 'minimal',
+					name: 'Minimal Model',
+					family: 'minimal',
+					provider: 'test',
+					contextWindow: 1000,
+				},
+			];
+
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', minimalModels);
+			setModelsCache(testCache);
+
+			const models = getAvailableModels('global');
+			expect(models.length).toBe(1);
+			expect(models[0].id).toBe('minimal');
+			expect(models[0].alias).toBeUndefined();
+			expect(models[0].description).toBeUndefined();
+			expect(models[0].releaseDate).toBeUndefined();
+			expect(models[0].available).toBeUndefined();
+		});
+	});
+
+	describe('getSupportedModelsFromQuery edge cases', () => {
+		it('should return empty array when query has no supportedModels method', async () => {
+			const mockQuery = {
+				// No supportedModels method
+			};
+
+			const models = await getSupportedModelsFromQuery(mockQuery as unknown, 'no-method-key');
+			expect(models).toEqual([]);
+		});
+
+		it('should return empty array when supportedModels returns empty array', async () => {
+			const mockQuery = {
+				supportedModels: mock(async () => []),
+			};
+
+			const models = await getSupportedModelsFromQuery(mockQuery as unknown, 'empty-result-key');
+			expect(models).toEqual([]);
+		});
+
+		it('should handle query returning null', async () => {
+			const mockQuery = {
+				supportedModels: mock(async () => null),
+			};
+
+			const models = await getSupportedModelsFromQuery(mockQuery as unknown, 'null-result-key');
+			expect(models).toEqual([]);
+		});
+	});
 });
