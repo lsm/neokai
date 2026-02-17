@@ -411,6 +411,21 @@ export interface SessionMetadata {
 		createdAt?: string;
 		completedAt?: string;
 	};
+	// Dual-session architecture fields
+	/** Type of session in dual-architecture context */
+	sessionType?: 'room' | 'manager' | 'worker' | 'standalone';
+	/** For manager/worker: ID of the paired session */
+	pairedSessionId?: string;
+	/** For manager/worker: ID of the parent RoomSession */
+	parentSessionId?: string;
+	/** Current task being managed/executed */
+	currentTaskId?: string;
+	/** Crash recovery context */
+	recoveryContext?: {
+		lastKnownState: string;
+		pendingInstruction?: string;
+		retryCount: number;
+	};
 }
 
 // Message content types for streaming input (supports images and tool results)

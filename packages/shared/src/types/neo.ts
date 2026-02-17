@@ -349,3 +349,60 @@ export interface GlobalStatus {
 	totalActiveTasks: number;
 	totalMemories: number;
 }
+
+// ============================================================================
+// Session Pair Types (Dual-Session Architecture)
+// ============================================================================
+
+/**
+ * Status of a session pair
+ */
+export type SessionPairStatus = 'active' | 'idle' | 'crashed' | 'completed';
+
+/**
+ * Represents a paired Manager + Worker session within a Room.
+ * Created when RoomAgent delegates work to be executed.
+ */
+export interface SessionPair {
+	/** Unique identifier for this pair */
+	id: string;
+	/** Room this pair belongs to */
+	roomId: string;
+	/** The RoomSession that created this pair */
+	roomSessionId: string;
+	/** The manager session ID */
+	managerSessionId: string;
+	/** The worker session ID */
+	workerSessionId: string;
+	/** Current status of the pair */
+	status: SessionPairStatus;
+	/** Current task being worked on */
+	currentTaskId?: string;
+	/** Creation timestamp (milliseconds since epoch) */
+	createdAt: number;
+	/** Last update timestamp (milliseconds since epoch) */
+	updatedAt: number;
+}
+
+/**
+ * Summary view of a session pair for listings.
+ */
+export interface SessionPairSummary {
+	id: string;
+	managerSessionId: string;
+	workerSessionId: string;
+	status: SessionPairStatus;
+	currentTaskId?: string;
+}
+
+/**
+ * Parameters for creating a new session pair.
+ */
+export interface CreateSessionPairParams {
+	roomId: string;
+	roomSessionId: string;
+	taskTitle: string;
+	taskDescription?: string;
+	workspacePath?: string;
+	model?: string;
+}
