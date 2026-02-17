@@ -9,6 +9,10 @@
  * - room.archive - Archive room
  * - room.overview - Get room overview with related data
  * - room.status - Get status for a specific room
+ * - room.createPair - Create a manager+worker session pair
+ * - room.getPairs - List pairs for a room
+ * - room.getPair - Get single pair details
+ * - room.archivePair - Archive a pair
  *
  * Renamed from neo.room.* to room.* for cleaner API.
  */
@@ -16,11 +20,15 @@
 import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { RoomManager } from '../room/room-manager';
+import type { SessionPairManager } from '../room/session-pair-manager';
+import type { SessionBridge } from '../room/session-bridge';
 
 export function setupRoomHandlers(
 	messageHub: MessageHub,
 	roomManager: RoomManager,
-	daemonHub: DaemonHub
+	daemonHub: DaemonHub,
+	sessionPairManager?: SessionPairManager,
+	sessionBridge?: SessionBridge
 ): void {
 	// room.create - Create a new room
 	messageHub.onRequest('room.create', async (data) => {
@@ -254,5 +262,104 @@ export function setupRoomHandlers(
 		}
 
 		return { room };
+	});
+
+	// room.createPair - Create a new manager+worker session pair
+	// TODO: Requires sessionPairManager to be wired up in app.ts and passed here
+	messageHub.onRequest('room.createPair', async (data) => {
+		if (!sessionPairManager) {
+			throw new Error('Session pair functionality not yet available');
+		}
+
+		const params = data as {
+			roomId: string;
+			roomSessionId: string;
+			taskTitle: string;
+			taskDescription?: string;
+			workspacePath?: string;
+			model?: string;
+		};
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.roomSessionId) {
+			throw new Error('Room session ID is required');
+		}
+		if (!params.taskTitle) {
+			throw new Error('Task title is required');
+		}
+
+		const result = await sessionPairManager.createPair(params);
+
+		// Start the bridge to connect Worker and Manager sessions
+		if (sessionBridge) {
+			await sessionBridge.startBridge(result.pair.id);
+		}
+
+		return result;
+	});
+
+	// room.getPairs - List pairs for a room
+	// TODO: Requires sessionPairManager to be wired up in app.ts and passed here
+	messageHub.onRequest('room.getPairs', async (data) => {
+		if (!sessionPairManager) {
+			throw new Error('Session pair functionality not yet available');
+		}
+
+		const params = data as { roomId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+
+		return { pairs: sessionPairManager.getPairsByRoom(params.roomId) };
+	});
+
+	// room.getPair - Get single pair details
+	// TODO: Requires sessionPairManager to be wired up in app.ts and passed here
+	messageHub.onRequest('room.getPair', async (data) => {
+		if (!sessionPairManager) {
+			throw new Error('Session pair functionality not yet available');
+		}
+
+		const params = data as { pairId: string };
+
+		if (!params.pairId) {
+			throw new Error('Pair ID is required');
+		}
+
+		const pair = sessionPairManager.getPair(params.pairId);
+		if (!pair) {
+			throw new Error(`Session pair not found: ${params.pairId}`);
+		}
+
+		return { pair };
+	});
+
+	// room.archivePair - Archive a pair
+	// TODO: Requires sessionPairManager to be wired up in app.ts and passed here
+	messageHub.onRequest('room.archivePair', async (data) => {
+		if (!sessionPairManager) {
+			throw new Error('Session pair functionality not yet available');
+		}
+
+		const params = data as { pairId: string };
+
+		if (!params.pairId) {
+			throw new Error('Pair ID is required');
+		}
+
+		// Stop the bridge before archiving
+		if (sessionBridge) {
+			sessionBridge.stopBridge(params.pairId);
+		}
+
+		const success = await sessionPairManager.archivePair(params.pairId);
+		if (!success) {
+			throw new Error(`Session pair not found: ${params.pairId}`);
+		}
+
+		return { success };
 	});
 }
