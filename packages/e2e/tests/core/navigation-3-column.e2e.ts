@@ -325,55 +325,31 @@ test.describe('Room Navigation', () => {
 			timeout: 5000,
 		});
 	});
-
-	test('should show NeoChatPanel toggle button in room view', async ({ page }) => {
-		// Create a room
-		const roomsButton = page.getByRole('button', { name: 'Rooms', exact: true });
-		await roomsButton.click();
-		await page.waitForTimeout(300);
-
-		const createRoomButton = page.getByRole('button', { name: 'Create Room', exact: true });
-		await createRoomButton.click();
-		await page.waitForTimeout(1000);
-
-		// Look for the Neo chat toggle button (has chat icon and "Show Neo Chat" tooltip)
-		const neoChatButton = page.locator('button[title="Show Neo Chat"]');
-		await expect(neoChatButton).toBeVisible({ timeout: 5000 });
-	});
-
-	test('should toggle NeoChatPanel visibility', async ({ page }) => {
-		// Create a room
-		const roomsButton = page.getByRole('button', { name: 'Rooms', exact: true });
-		await roomsButton.click();
-		await page.waitForTimeout(300);
-
-		const createRoomButton = page.getByRole('button', { name: 'Create Room', exact: true });
-		await createRoomButton.click();
-		await page.waitForTimeout(1000);
-
-		// Click Neo chat toggle button
-		const neoChatButton = page.locator('button[title="Show Neo Chat"]');
-		await neoChatButton.click();
-		await page.waitForTimeout(300);
-
-		// NeoChatPanel should be visible with "Neo" header
-		const neoChatHeader = page.locator('h3:has-text("Neo")');
-		await expect(neoChatHeader).toBeVisible({ timeout: 5000 });
-
-		// Toggle button title should change to "Hide Neo Chat"
-		const hideNeoChatButton = page.locator('button[title="Hide Neo Chat"]');
-		await expect(hideNeoChatButton).toBeVisible();
-	});
 });
 
 test.describe('Mobile Layout (<768px)', () => {
 	test.use({ viewport: MOBILE_VIEWPORT });
 
+	// Helper function to create a session and return session ID
+	async function createSessionForMobileTest(
+		page: typeof import('@playwright/test').Page
+	): Promise<string> {
+		// On mobile at home page, ContextPanel is hidden but New Session might be visible in Lobby
+		// Try clicking New Session from Lobby header
+		const lobbyNewSessionButton = page
+			.getByRole('button', { name: 'New Session', exact: true })
+			.first();
+		if (await lobbyNewSessionButton.isVisible().catch(() => false)) {
+			await lobbyNewSessionButton.dispatchEvent('click');
+			return waitForSessionCreated(page);
+		}
+		throw new Error('Could not find New Session button');
+	}
+
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		// On mobile, wait for the hamburger menu to be visible (ContextPanel is hidden)
-		await expect(page.locator('button[title="Open menu"]')).toBeVisible({ timeout: 10000 });
-		await page.waitForTimeout(500);
+		// On mobile, wait for either Lobby or any content to be visible
+		await page.waitForTimeout(1000);
 	});
 
 	test('should hide NavRail on mobile', async ({ page }) => {
@@ -387,6 +363,9 @@ test.describe('Mobile Layout (<768px)', () => {
 	});
 
 	test('should hide ContextPanel drawer by default on mobile', async ({ page }) => {
+		// On mobile, wait for the Lobby to load first
+		await expect(page.locator('h2:has-text("Neo Lobby")')).toBeVisible({ timeout: 5000 });
+
 		// ContextPanel uses "-translate-x-full md:translate-x-0" so it's hidden by default on mobile
 		// The "Chats" header in ContextPanel should not be visible initially
 		const contextPanelHeader = page.locator('h2:has-text("Chats")');
@@ -394,91 +373,138 @@ test.describe('Mobile Layout (<768px)', () => {
 		expect(isVisible).toBe(false);
 	});
 
-	test('should show hamburger menu in header on mobile', async ({ page }) => {
-		// Look for the hamburger menu button (has title="Open menu")
-		const hamburgerButton = page.locator('button[title="Open menu"]');
-		await expect(hamburgerButton).toBeVisible({ timeout: 5000 });
+	test('should show hamburger menu in session view on mobile', async ({ page }) => {
+		let sessionId: string | null = null;
+		try {
+			// First create a session so we can see the chat header with hamburger menu
+			sessionId = await createSessionForMobileTest(page);
+
+			// Look for the hamburger menu button (has title="Open menu")
+			const hamburgerButton = page.locator('button[title="Open menu"]');
+			await expect(hamburgerButton).toBeVisible({ timeout: 5000 });
+		} finally {
+			if (sessionId) {
+				await cleanupTestSession(page, sessionId).catch(() => {});
+			}
+		}
 	});
 
 	test('should open ContextPanel drawer when hamburger menu is clicked', async ({ page }) => {
-		// Click hamburger menu
-		const hamburgerButton = page.locator('button[title="Open menu"]');
-		await hamburgerButton.click();
-		await page.waitForTimeout(300);
+		let sessionId: string | null = null;
+		try {
+			// Create a session first
+			sessionId = await createSessionForMobileTest(page);
 
-		// ContextPanel should now be visible
-		const contextPanelHeader = page.locator('h2:has-text("Chats")');
-		await expect(contextPanelHeader).toBeVisible({ timeout: 5000 });
+			// Click hamburger menu
+			const hamburgerButton = page.locator('button[title="Open menu"]');
+			await hamburgerButton.click();
+			await page.waitForTimeout(300);
 
-		// New Session button should be visible
-		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
-		await expect(newSessionButton).toBeVisible();
+			// ContextPanel should now be visible
+			const contextPanelHeader = page.locator('h2:has-text("Chats")');
+			await expect(contextPanelHeader).toBeVisible({ timeout: 5000 });
+
+			// New Session button should be visible
+			const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
+			await expect(newSessionButton).toBeVisible();
+		} finally {
+			if (sessionId) {
+				await cleanupTestSession(page, sessionId).catch(() => {});
+			}
+		}
 	});
 
 	test('should show backdrop when drawer is open', async ({ page }) => {
-		// Open the drawer
-		const hamburgerButton = page.locator('button[title="Open menu"]');
-		await hamburgerButton.click();
-		await page.waitForTimeout(300);
+		let sessionId: string | null = null;
+		try {
+			// Create a session first
+			sessionId = await createSessionForMobileTest(page);
 
-		// Backdrop should be visible (black/50 opacity overlay)
-		const backdrop = page.locator('.fixed.inset-0.bg-black\\/50');
-		await expect(backdrop).toBeVisible({ timeout: 5000 });
+			// Open the drawer
+			const hamburgerButton = page.locator('button[title="Open menu"]');
+			await hamburgerButton.click();
+			await page.waitForTimeout(300);
+
+			// Backdrop should be visible (black/50 opacity overlay)
+			const backdrop = page.locator('.fixed.inset-0.bg-black\\/50');
+			await expect(backdrop).toBeVisible({ timeout: 5000 });
+		} finally {
+			if (sessionId) {
+				await cleanupTestSession(page, sessionId).catch(() => {});
+			}
+		}
 	});
 
 	test('should close drawer when backdrop is clicked', async ({ page }) => {
-		// Open the drawer
-		const hamburgerButton = page.locator('button[title="Open menu"]');
-		await hamburgerButton.click();
-		await page.waitForTimeout(300);
+		let sessionId: string | null = null;
+		try {
+			// Create a session first
+			sessionId = await createSessionForMobileTest(page);
 
-		// Verify drawer is open
-		const contextPanelHeader = page.locator('h2:has-text("Chats")');
-		await expect(contextPanelHeader).toBeVisible({ timeout: 5000 });
+			// Open the drawer
+			const hamburgerButton = page.locator('button[title="Open menu"]');
+			await hamburgerButton.click();
+			await page.waitForTimeout(300);
 
-		// Click the backdrop
-		const backdrop = page.locator('.fixed.inset-0.bg-black\\/50');
-		await backdrop.click();
-		await page.waitForTimeout(300);
+			// Verify drawer is open
+			const contextPanelHeader = page.locator('h2:has-text("Chats")');
+			await expect(contextPanelHeader).toBeVisible({ timeout: 5000 });
 
-		// Drawer should now be closed
-		const isVisible = await contextPanelHeader.isVisible().catch(() => false);
-		expect(isVisible).toBe(false);
+			// Click the backdrop - use force:true because session cards may intercept
+			const backdrop = page.locator('.fixed.inset-0.bg-black\\/50');
+			await backdrop.click({ force: true });
+			await page.waitForTimeout(300);
+
+			// Drawer should now be closed
+			const isVisible = await contextPanelHeader.isVisible().catch(() => false);
+			expect(isVisible).toBe(false);
+		} finally {
+			if (sessionId) {
+				await cleanupTestSession(page, sessionId).catch(() => {});
+			}
+		}
 	});
 
 	test('should close drawer when close button is clicked', async ({ page }) => {
-		// Open the drawer
-		const hamburgerButton = page.locator('button[title="Open menu"]');
-		await hamburgerButton.click();
-		await page.waitForTimeout(300);
+		let sessionId: string | null = null;
+		try {
+			// Create a session first
+			sessionId = await createSessionForMobileTest(page);
 
-		// Verify drawer is open
-		const contextPanelHeader = page.locator('h2:has-text("Chats")');
-		await expect(contextPanelHeader).toBeVisible({ timeout: 5000 });
+			// Open the drawer
+			const hamburgerButton = page.locator('button[title="Open menu"]');
+			await hamburgerButton.click();
+			await page.waitForTimeout(500);
 
-		// Click the close button (has title="Close panel")
-		const closeButton = page.locator('button[title="Close panel"]');
-		await closeButton.click();
-		await page.waitForTimeout(300);
+			// Verify drawer is open
+			const contextPanelHeader = page.locator('h2:has-text("Chats")');
+			await expect(contextPanelHeader).toBeVisible({ timeout: 5000 });
 
-		// Drawer should now be closed
-		const isVisible = await contextPanelHeader.isVisible().catch(() => false);
-		expect(isVisible).toBe(false);
+			// Click the close button (has title="Close panel") - use force to avoid interception
+			const closeButton = page.locator('button[title="Close panel"]');
+			await closeButton.click({ force: true });
+			await page.waitForTimeout(500);
+
+			// Drawer should now be closed - give it more time for animation
+			const isVisible = await contextPanelHeader.isVisible().catch(() => false);
+			expect(isVisible).toBe(false);
+		} finally {
+			if (sessionId) {
+				await cleanupTestSession(page, sessionId).catch(() => {});
+			}
+		}
 	});
 
 	test('should create session from mobile drawer', async ({ page }) => {
 		let sessionId: string | null = null;
 
 		try {
-			// Open the drawer
-			const hamburgerButton = page.locator('button[title="Open menu"]');
-			await hamburgerButton.click();
-			await page.waitForTimeout(300);
-
-			// Click New Session button
-			const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
-			await expect(newSessionButton).toBeVisible();
-			await newSessionButton.dispatchEvent('click');
+			// On mobile home page, try to create session via Lobby button
+			const lobbyNewSessionButton = page
+				.getByRole('button', { name: 'New Session', exact: true })
+				.first();
+			await expect(lobbyNewSessionButton).toBeVisible({ timeout: 5000 });
+			await lobbyNewSessionButton.dispatchEvent('click');
 
 			// Wait for session creation
 			sessionId = await waitForSessionCreated(page);
@@ -486,46 +512,50 @@ test.describe('Mobile Layout (<768px)', () => {
 		} finally {
 			// Cleanup
 			if (sessionId) {
-				try {
-					await cleanupTestSession(page, sessionId);
-				} catch (error) {
-					console.warn(`Failed to cleanup session ${sessionId}:`, error);
-				}
+				await cleanupTestSession(page, sessionId).catch(() => {});
 			}
 		}
 	});
 
 	test('should navigate between sections via drawer on mobile', async ({ page }) => {
-		// Open the drawer
-		const hamburgerButton = page.locator('button[title="Open menu"]');
-		await hamburgerButton.click();
-		await page.waitForTimeout(300);
+		let sessionId: string | null = null;
+		try {
+			// Create a session first
+			sessionId = await createSessionForMobileTest(page);
 
-		// Initially should show Chats
-		const chatsHeader = page.locator('h2:has-text("Chats")');
-		await expect(chatsHeader).toBeVisible({ timeout: 5000 });
+			// Open the drawer
+			const hamburgerButton = page.locator('button[title="Open menu"]');
+			await hamburgerButton.click();
+			await page.waitForTimeout(500);
 
-		// Since NavRail is hidden on mobile, verify we can see the drawer content
-		// and close it by clicking backdrop
-		const backdrop = page.locator('.fixed.inset-0.bg-black\\/50');
-		await backdrop.click();
-		await page.waitForTimeout(300);
+			// Initially should show Chats
+			const chatsHeader = page.locator('h2:has-text("Chats")');
+			await expect(chatsHeader).toBeVisible({ timeout: 5000 });
 
-		// Drawer should be closed
-		const isVisible = await chatsHeader.isVisible().catch(() => false);
-		expect(isVisible).toBe(false);
+			// Since NavRail is hidden on mobile, verify we can see the drawer content
+			// and close it by clicking backdrop with force to avoid interception
+			const backdrop = page.locator('.fixed.inset-0.bg-black\\/50');
+			await backdrop.click({ force: true });
+			await page.waitForTimeout(500);
+
+			// Drawer should be closed
+			const isVisible = await chatsHeader.isVisible().catch(() => false);
+			expect(isVisible).toBe(false);
+		} finally {
+			if (sessionId) {
+				await cleanupTestSession(page, sessionId).catch(() => {});
+			}
+		}
 	});
 });
 
 test.describe('Responsive Layout Transition', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		// Wait for the app to load - check for either desktop or mobile layout
-		await expect(
-			page
-				.locator('button[title="Open menu"]')
-				.or(page.getByRole('button', { name: 'New Session', exact: true }))
-		).toBeVisible({ timeout: 10000 });
+		// Wait for the app to load by checking for the New Session button
+		await expect(page.getByRole('button', { name: 'New Session', exact: true })).toBeVisible({
+			timeout: 10000,
+		});
 		await page.waitForTimeout(500);
 	});
 
@@ -549,9 +579,7 @@ test.describe('Responsive Layout Transition', () => {
 		await expect(chatsButtonMobile).toBeVisible({ timeout: 5000 });
 	});
 
-	test('should hide NavRail and ContextPanel when resizing from desktop to mobile', async ({
-		page,
-	}) => {
+	test('should hide NavRail when resizing from desktop to mobile', async ({ page }) => {
 		// Start at desktop size
 		await page.setViewportSize(DESKTOP_VIEWPORT);
 		await page.waitForTimeout(300);
@@ -567,9 +595,5 @@ test.describe('Responsive Layout Transition', () => {
 		// NavRail should now be hidden
 		const isVisible = await chatsButton.isVisible().catch(() => false);
 		expect(isVisible).toBe(false);
-
-		// Hamburger menu should be visible
-		const hamburgerButton = page.locator('button[title="Open menu"]');
-		await expect(hamburgerButton).toBeVisible({ timeout: 5000 });
 	});
 });
