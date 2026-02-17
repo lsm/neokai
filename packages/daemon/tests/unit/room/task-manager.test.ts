@@ -20,8 +20,7 @@ import { TaskManager } from '../../../src/lib/room/task-manager';
 import { RoomManager } from '../../../src/lib/room/room-manager';
 import type { NeoTask, TaskStatus, TaskPriority, TaskFilter } from '@neokai/shared';
 
-// TODO: Fix CI isolation issue - tests pass locally but fail in CI
-describe.skip('TaskManager', () => {
+describe('TaskManager', () => {
 	let db: Database;
 	let tempDir: string;
 	let taskManager: TaskManager;
@@ -29,8 +28,8 @@ describe.skip('TaskManager', () => {
 	let roomId: string;
 
 	beforeEach(() => {
-		// Create temp directory and file-based database
-		tempDir = `/tmp/neokai-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+		// Create temp directory with UUID for CI parallel test isolation
+		tempDir = `/tmp/neokai-test-${crypto.randomUUID()}`;
 		require('fs').mkdirSync(tempDir, { recursive: true });
 		db = new Database(`${tempDir}/test.db`);
 		createTables(db);

@@ -17,8 +17,7 @@ import { ContextManager } from '../../../src/lib/room/context-manager';
 import { RoomManager } from '../../../src/lib/room/room-manager';
 import type { NeoContext, NeoContextMessage } from '@neokai/shared';
 
-// TODO: Fix CI isolation issue - tests pass locally but fail in CI
-describe.skip('ContextManager', () => {
+describe('ContextManager', () => {
 	let db: Database;
 	let tempDir: string;
 	let contextManager: ContextManager;
@@ -26,8 +25,8 @@ describe.skip('ContextManager', () => {
 	let roomId: string;
 
 	beforeEach(() => {
-		// Create temp directory and file-based database
-		tempDir = `/tmp/neokai-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+		// Create temp directory with UUID for CI parallel test isolation
+		tempDir = `/tmp/neokai-test-${crypto.randomUUID()}`;
 		require('fs').mkdirSync(tempDir, { recursive: true });
 		db = new Database(`${tempDir}/test.db`);
 		createTables(db);

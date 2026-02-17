@@ -18,9 +18,7 @@ import { MemoryManager } from '../../../src/lib/room/memory-manager';
 import { RoomManager } from '../../../src/lib/room/room-manager';
 import type { NeoMemory, MemoryType, MemoryImportance } from '@neokai/shared';
 
-// TODO: Fix CI isolation issue - tests pass locally but fail in CI
-// due to cross-test-file database sharing in parallel execution
-describe.skip('MemoryManager', () => {
+describe('MemoryManager', () => {
 	let db: Database;
 	let memoryManager: MemoryManager;
 	let roomManager: RoomManager;
@@ -28,9 +26,8 @@ describe.skip('MemoryManager', () => {
 	let tempDir: string;
 
 	beforeEach(() => {
-		// Create a temp file database with unique path including test file identifier
-		// This ensures complete isolation even when tests run in parallel across files
-		const testId = `memory-manager-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+		// Create a temp file database with unique path using UUID for CI parallel test isolation
+		const testId = `memory-manager-${crypto.randomUUID()}`;
 		tempDir = `/tmp/neokai-${testId}`;
 		require('fs').mkdirSync(tempDir, { recursive: true });
 		db = new Database(`${tempDir}/test.db`);
