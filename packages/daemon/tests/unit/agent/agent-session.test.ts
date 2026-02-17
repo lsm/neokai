@@ -231,6 +231,619 @@ describe('AgentSession', () => {
 		});
 	});
 
+	describe('component initialization', () => {
+		let mockSession: Session;
+		let mockDb: Database;
+		let mockMessageHub: MessageHub;
+		let mockDaemonHub: DaemonHub;
+		let mockGetApiKey: () => Promise<string | null>;
+		let agentSession: AgentSession;
+
+		beforeEach(() => {
+			mockSession = {
+				id: 'test-session-id',
+				title: 'Test Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					maxTokens: 8192,
+					temperature: 1.0,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			} as Session;
+
+			mockDb = {
+				getSession: mock(() => mockSession),
+				updateSession: mock(() => {}),
+				getUserMessages: mock(() => []),
+				getSDKMessages: mock(() => []),
+				deleteMessagesAfter: mock(() => 0),
+				deleteMessagesAtAndAfter: mock(() => 0),
+				getUserMessageByUuid: mock(() => undefined),
+				countMessagesAfter: mock(() => 0),
+				getMessagesByStatus: mock(() => []),
+				updateMessage: mock(() => {}),
+				getSDKMessageCount: mock(() => 0),
+			} as unknown as Database;
+
+			mockMessageHub = {
+				sendMessage: mock(() => {}),
+			} as unknown as MessageHub;
+
+			mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+
+			mockGetApiKey = mock(async () => 'test-api-key');
+
+			agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+		});
+
+		it('should initialize messageQueue component', () => {
+			expect(agentSession.messageQueue).toBeDefined();
+			expect(agentSession.messageQueue.isRunning()).toBe(false);
+		});
+
+		it('should initialize stateManager component', () => {
+			expect(agentSession.stateManager).toBeDefined();
+			expect(agentSession.stateManager.getState().status).toBe('idle');
+		});
+
+		it('should initialize contextTracker component', () => {
+			expect(agentSession.contextTracker).toBeDefined();
+		});
+
+		it('should initialize messageHandler component', () => {
+			expect(agentSession.messageHandler).toBeDefined();
+		});
+
+		it('should initialize lifecycleManager component', () => {
+			expect(agentSession.lifecycleManager).toBeDefined();
+		});
+
+		it('should initialize modelSwitchHandler component', () => {
+			expect(agentSession.modelSwitchHandler).toBeDefined();
+		});
+
+		it('should initialize askUserQuestionHandler component', () => {
+			expect(agentSession.askUserQuestionHandler).toBeDefined();
+		});
+
+		it('should initialize optionsBuilder component', () => {
+			expect(agentSession.optionsBuilder).toBeDefined();
+		});
+
+		it('should initialize interruptHandler component', () => {
+			expect(agentSession.interruptHandler).toBeDefined();
+		});
+
+		it('should initialize queryModeHandler component', () => {
+			expect(agentSession.queryModeHandler).toBeDefined();
+		});
+
+		it('should initialize with null query state', () => {
+			expect(agentSession.queryObject).toBeNull();
+			expect(agentSession.queryPromise).toBeNull();
+			expect(agentSession.queryAbortController).toBeNull();
+		});
+
+		it('should initialize with false firstMessageReceived', () => {
+			expect(agentSession.firstMessageReceived).toBe(false);
+		});
+
+		it('should initialize with false cleaningUp state', () => {
+			expect(agentSession.isCleaningUp()).toBe(false);
+		});
+	});
+
+	describe('getter methods', () => {
+		let mockSession: Session;
+		let mockDb: Database;
+		let mockMessageHub: MessageHub;
+		let mockDaemonHub: DaemonHub;
+		let mockGetApiKey: () => Promise<string | null>;
+		let agentSession: AgentSession;
+
+		beforeEach(() => {
+			mockSession = {
+				id: 'test-session-id',
+				title: 'Test Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					maxTokens: 8192,
+					temperature: 1.0,
+				},
+				metadata: {
+					messageCount: 5,
+					totalTokens: 100,
+					inputTokens: 50,
+					outputTokens: 50,
+					totalCost: 0.01,
+					toolCallCount: 2,
+				},
+			} as Session;
+
+			mockDb = {
+				getSession: mock(() => mockSession),
+				updateSession: mock(() => {}),
+				getSDKMessages: mock(() => [{ id: 'msg1' }]),
+				getSDKMessageCount: mock(() => 10),
+			} as unknown as Database;
+
+			mockMessageHub = {
+				sendMessage: mock(() => {}),
+			} as unknown as MessageHub;
+
+			mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+
+			mockGetApiKey = mock(async () => 'test-api-key');
+
+			agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+		});
+
+		it('getProcessingState should delegate to stateManager', () => {
+			const state = agentSession.getProcessingState();
+			expect(state.status).toBe('idle');
+		});
+
+		it('getContextInfo should delegate to contextTracker', () => {
+			const info = agentSession.getContextInfo();
+			// May be null if no context has been tracked yet
+			expect(info).toBeNull();
+		});
+
+		it('getQueryObject should return query object', () => {
+			expect(agentSession.getQueryObject()).toBeNull();
+		});
+
+		it('getFirstMessageReceived should return firstMessageReceived flag', () => {
+			expect(agentSession.getFirstMessageReceived()).toBe(false);
+		});
+
+		it('getSessionData should return session data', () => {
+			const data = agentSession.getSessionData();
+			expect(data.id).toBe('test-session-id');
+			expect(data.title).toBe('Test Session');
+		});
+
+		it('getSDKMessages should delegate to database', () => {
+			const messages = agentSession.getSDKMessages(10);
+			expect(messages).toEqual([{ id: 'msg1' }]);
+		});
+
+		it('getSDKMessageCount should delegate to database', () => {
+			const count = agentSession.getSDKMessageCount();
+			expect(count).toBe(10);
+		});
+
+		it('getSDKSessionId should return null when no query object', () => {
+			expect(agentSession.getSDKSessionId()).toBeNull();
+		});
+
+		it('getSDKSessionId should return sessionId when query object has it', () => {
+			agentSession.queryObject = {
+				sessionId: 'sdk-session-123',
+			} as unknown as AgentSession['queryObject'];
+			expect(agentSession.getSDKSessionId()).toBe('sdk-session-123');
+		});
+
+		it('getCurrentModel should delegate to modelSwitchHandler', () => {
+			const model = agentSession.getCurrentModel();
+			expect(model.id).toBe('claude-sonnet-4-20250514');
+		});
+	});
+
+	describe('delegation methods', () => {
+		let mockSession: Session;
+		let mockDb: Database;
+		let mockMessageHub: MessageHub;
+		let mockDaemonHub: DaemonHub;
+		let mockGetApiKey: () => Promise<string | null>;
+		let agentSession: AgentSession;
+
+		beforeEach(() => {
+			mockSession = {
+				id: 'test-session-id',
+				title: 'Test Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					maxTokens: 8192,
+					temperature: 1.0,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			} as Session;
+
+			mockDb = {
+				getSession: mock(() => mockSession),
+				updateSession: mock(() => {}),
+				getUserMessages: mock(() => []),
+				getSDKMessages: mock(() => []),
+				deleteMessagesAfter: mock(() => 0),
+				deleteMessagesAtAndAfter: mock(() => 0),
+				getUserMessageByUuid: mock(() => undefined),
+				countMessagesAfter: mock(() => 0),
+				getMessagesByStatus: mock(() => []),
+				updateMessage: mock(() => {}),
+			} as unknown as Database;
+
+			mockMessageHub = {
+				sendMessage: mock(() => {}),
+			} as unknown as MessageHub;
+
+			mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+
+			mockGetApiKey = mock(async () => 'test-api-key');
+
+			agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+		});
+
+		it('handleModelSwitch should delegate to modelSwitchHandler', async () => {
+			const mockResult = { success: true, model: 'claude-opus-4-20250514' };
+			const switchModelSpy = mock(() => mockResult);
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).modelSwitchHandler = {
+				switchModel: switchModelSpy,
+			};
+
+			const result = await agentSession.handleModelSwitch('claude-opus-4-20250514');
+
+			expect(switchModelSpy).toHaveBeenCalledWith('claude-opus-4-20250514');
+			expect(result).toEqual(mockResult);
+		});
+
+		it('handleQuestionResponse should delegate to askUserQuestionHandler', async () => {
+			const handleQuestionResponseSpy = mock(async () => {});
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).askUserQuestionHandler = {
+				handleQuestionResponse: handleQuestionResponseSpy,
+			};
+
+			await agentSession.handleQuestionResponse('tool-123', []);
+
+			expect(handleQuestionResponseSpy).toHaveBeenCalledWith('tool-123', []);
+		});
+
+		it('updateQuestionDraft should delegate to askUserQuestionHandler', async () => {
+			const updateQuestionDraftSpy = mock(async () => {});
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).askUserQuestionHandler = {
+				updateQuestionDraft: updateQuestionDraftSpy,
+			};
+
+			await agentSession.updateQuestionDraft([]);
+
+			expect(updateQuestionDraftSpy).toHaveBeenCalledWith([]);
+		});
+
+		it('handleQuestionCancel should delegate to askUserQuestionHandler', async () => {
+			const handleQuestionCancelSpy = mock(async () => {});
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).askUserQuestionHandler = {
+				handleQuestionCancel: handleQuestionCancelSpy,
+			};
+
+			await agentSession.handleQuestionCancel('tool-456');
+
+			expect(handleQuestionCancelSpy).toHaveBeenCalledWith('tool-456');
+		});
+
+		it('handleInterrupt should delegate to interruptHandler', async () => {
+			const handleInterruptSpy = mock(async () => {});
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).interruptHandler = {
+				handleInterrupt: handleInterruptSpy,
+			};
+
+			await agentSession.handleInterrupt();
+
+			expect(handleInterruptSpy).toHaveBeenCalled();
+		});
+
+		it('resetQuery should delegate to lifecycleManager', async () => {
+			const resetSpy = mock(async () => ({ success: true }));
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).lifecycleManager = {
+				reset: resetSpy,
+			};
+
+			const result = await agentSession.resetQuery({ restartQuery: true });
+
+			expect(resetSpy).toHaveBeenCalledWith({ restartAfter: true });
+			expect(result).toEqual({ success: true });
+		});
+
+		it('updateConfig should delegate to sessionConfigHandler', async () => {
+			const updateConfigSpy = mock(async () => {});
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).sessionConfigHandler = {
+				updateConfig: updateConfigSpy,
+			};
+
+			await agentSession.updateConfig({ maxTokens: 4096 });
+
+			expect(updateConfigSpy).toHaveBeenCalledWith({ maxTokens: 4096 });
+		});
+
+		it('updateMetadata should delegate to sessionConfigHandler', () => {
+			const updateMetadataSpy = mock(() => {});
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).sessionConfigHandler = {
+				updateMetadata: updateMetadataSpy,
+			};
+
+			agentSession.updateMetadata({ title: 'New Title' });
+
+			expect(updateMetadataSpy).toHaveBeenCalledWith({ title: 'New Title' });
+		});
+
+		it('getRewindPoints should delegate to rewindHandler', () => {
+			const mockPoints = [{ id: 'cp1', messageId: 'msg1', timestamp: Date.now() }];
+			const getRewindPointsSpy = mock(() => mockPoints);
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).rewindHandler = {
+				getRewindPoints: getRewindPointsSpy,
+			};
+
+			const result = agentSession.getRewindPoints();
+
+			expect(getRewindPointsSpy).toHaveBeenCalled();
+			expect(result).toEqual(mockPoints);
+		});
+
+		it('previewRewind should delegate to rewindHandler', async () => {
+			const mockPreview = { messagesToDelete: [], filesToRevert: [] };
+			const previewRewindSpy = mock(async () => mockPreview);
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).rewindHandler = {
+				previewRewind: previewRewindSpy,
+			};
+
+			const result = await agentSession.previewRewind('cp-123');
+
+			expect(previewRewindSpy).toHaveBeenCalledWith('cp-123');
+			expect(result).toEqual(mockPreview);
+		});
+
+		it('executeRewind should delegate to rewindHandler', async () => {
+			const mockResult = { success: true, messagesDeleted: 5, filesReverted: [] };
+			const executeRewindSpy = mock(async () => mockResult);
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).rewindHandler = {
+				executeRewind: executeRewindSpy,
+			};
+
+			const result = await agentSession.executeRewind('cp-456', 'conversation');
+
+			expect(executeRewindSpy).toHaveBeenCalledWith('cp-456', 'conversation');
+			expect(result).toEqual(mockResult);
+		});
+
+		it('previewSelectiveRewind should delegate to rewindHandler', async () => {
+			const mockPreview = { messagesToDelete: [], filesToRevert: [] };
+			const previewSelectiveRewindSpy = mock(async () => mockPreview);
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).rewindHandler = {
+				previewSelectiveRewind: previewSelectiveRewindSpy,
+			};
+
+			const result = await agentSession.previewSelectiveRewind(['msg1', 'msg2']);
+
+			expect(previewSelectiveRewindSpy).toHaveBeenCalledWith(['msg1', 'msg2']);
+			expect(result).toEqual(mockPreview);
+		});
+
+		it('setMaxThinkingTokens should delegate to sdkRuntimeConfig', async () => {
+			const mockResult = { success: true };
+			const setMaxThinkingTokensSpy = mock(async () => mockResult);
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).sdkRuntimeConfig = {
+				setMaxThinkingTokens: setMaxThinkingTokensSpy,
+			};
+
+			const result = await agentSession.setMaxThinkingTokens(1000);
+
+			expect(setMaxThinkingTokensSpy).toHaveBeenCalledWith(1000);
+			expect(result).toEqual(mockResult);
+		});
+
+		it('setPermissionMode should delegate to sdkRuntimeConfig', async () => {
+			const mockResult = { success: true };
+			const setPermissionModeSpy = mock(async () => mockResult);
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).sdkRuntimeConfig = {
+				setPermissionMode: setPermissionModeSpy,
+			};
+
+			const result = await agentSession.setPermissionMode('auto');
+
+			expect(setPermissionModeSpy).toHaveBeenCalledWith('auto');
+			expect(result).toEqual(mockResult);
+		});
+
+		it('getMcpServerStatus should delegate to sdkRuntimeConfig', async () => {
+			const mockStatus = [{ name: 'server1', status: 'connected' }];
+			const getMcpServerStatusSpy = mock(async () => mockStatus);
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).sdkRuntimeConfig = {
+				getMcpServerStatus: getMcpServerStatusSpy,
+			};
+
+			const result = await agentSession.getMcpServerStatus();
+
+			expect(getMcpServerStatusSpy).toHaveBeenCalled();
+			expect(result).toEqual(mockStatus);
+		});
+
+		it('updateToolsConfig should delegate to sdkRuntimeConfig', async () => {
+			const mockResult = { success: true };
+			const updateToolsConfigSpy = mock(async () => mockResult);
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).sdkRuntimeConfig = {
+				updateToolsConfig: updateToolsConfigSpy,
+			};
+
+			const result = await agentSession.updateToolsConfig({ allowedTools: ['tool1'] });
+
+			expect(updateToolsConfigSpy).toHaveBeenCalledWith({ allowedTools: ['tool1'] });
+			expect(result).toEqual(mockResult);
+		});
+
+		it('handleQueryTrigger should delegate to queryModeHandler', async () => {
+			const mockResult = { success: true, messageCount: 1 };
+			const handleQueryTriggerSpy = mock(async () => mockResult);
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).queryModeHandler = {
+				handleQueryTrigger: handleQueryTriggerSpy,
+			};
+
+			const result = await agentSession.handleQueryTrigger();
+
+			expect(handleQueryTriggerSpy).toHaveBeenCalled();
+			expect(result).toEqual(mockResult);
+		});
+
+		it('cleanup should delegate to lifecycleManager', async () => {
+			const cleanupSpy = mock(async () => {});
+			// biome-ignore lint: test mock access
+			(agentSession as unknown as Record<string, unknown>).lifecycleManager = {
+				cleanup: cleanupSpy,
+			};
+
+			await agentSession.cleanup();
+
+			expect(cleanupSpy).toHaveBeenCalled();
+		});
+	});
+
+	describe('query generation tracking', () => {
+		let mockSession: Session;
+		let mockDb: Database;
+		let mockMessageHub: MessageHub;
+		let mockDaemonHub: DaemonHub;
+		let mockGetApiKey: () => Promise<string | null>;
+		let agentSession: AgentSession;
+
+		beforeEach(() => {
+			mockSession = {
+				id: 'test-session-id',
+				title: 'Test Session',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-20250514',
+					maxTokens: 8192,
+					temperature: 1.0,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			} as Session;
+
+			mockDb = {
+				getSession: mock(() => mockSession),
+				updateSession: mock(() => {}),
+			} as unknown as Database;
+
+			mockMessageHub = {} as unknown as MessageHub;
+
+			mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+
+			mockGetApiKey = mock(async () => 'test-api-key');
+
+			agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+		});
+
+		it('should start with generation 0', () => {
+			expect(agentSession.getQueryGeneration()).toBe(0);
+		});
+
+		it('incrementQueryGeneration should increment and return new value', () => {
+			const gen1 = agentSession.incrementQueryGeneration();
+			expect(gen1).toBe(1);
+			expect(agentSession.getQueryGeneration()).toBe(1);
+
+			const gen2 = agentSession.incrementQueryGeneration();
+			expect(gen2).toBe(2);
+			expect(agentSession.getQueryGeneration()).toBe(2);
+		});
+
+		it('setCleaningUp should update cleaning up state', () => {
+			expect(agentSession.isCleaningUp()).toBe(false);
+
+			agentSession.setCleaningUp(true);
+			expect(agentSession.isCleaningUp()).toBe(true);
+
+			agentSession.setCleaningUp(false);
+			expect(agentSession.isCleaningUp()).toBe(false);
+		});
+	});
+
 	describe('executeSelectiveRewind', () => {
 		let mockSession: Session;
 		let mockDb: Database;
