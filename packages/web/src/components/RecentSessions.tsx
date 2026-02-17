@@ -1,5 +1,5 @@
 import type { Session } from '@neokai/shared';
-import { sidebarOpenSignal } from '../lib/signals.ts';
+import { contextPanelOpenSignal } from '../lib/signals.ts';
 import { formatRelativeTime, formatTokens } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import { GitBranchIcon } from './icons/GitBranchIcon.tsx';
@@ -17,14 +17,14 @@ export default function RecentSessions({ sessions }: RecentSessionsProps) {
 
 	const handleSessionClick = (sessionId: string) => {
 		navigateToSession(sessionId);
-		// Close sidebar on mobile after selecting a session
+		// Close context panel on mobile after selecting a session
 		if (window.innerWidth < 768) {
-			sidebarOpenSignal.value = false;
+			contextPanelOpenSignal.value = false;
 		}
 	};
 
 	const handleMenuClick = () => {
-		sidebarOpenSignal.value = true;
+		contextPanelOpenSignal.value = true;
 	};
 
 	return (

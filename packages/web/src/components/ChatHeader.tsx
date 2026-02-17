@@ -8,7 +8,7 @@
 import type { Session } from '@neokai/shared';
 import { borderColors } from '../lib/design-tokens';
 import { formatTokens } from '../lib/utils';
-import { sidebarOpenSignal } from '../lib/signals';
+import { contextPanelOpenSignal } from '../lib/signals';
 import { connectionState } from '../lib/state';
 import { IconButton } from './ui/IconButton';
 import { Dropdown } from './ui/Dropdown';
@@ -46,7 +46,7 @@ export function ChatHeader({
 	const isConnected = connectionState.value === 'connected';
 
 	const handleMenuClick = () => {
-		sidebarOpenSignal.value = true;
+		contextPanelOpenSignal.value = true;
 	};
 
 	const getHeaderActions = () => [

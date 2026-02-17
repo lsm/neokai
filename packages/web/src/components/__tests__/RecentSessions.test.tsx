@@ -15,20 +15,20 @@ import type { Session } from '@neokai/shared';
 const { mockNavigateToSession } = vi.hoisted(() => ({
 	mockNavigateToSession: vi.fn(),
 }));
-let mockSidebarOpenSignal: ReturnType<typeof signal<boolean>>;
+let mockContextPanelOpenSignal: ReturnType<typeof signal<boolean>>;
 
 vi.mock('../../lib/router.ts', () => ({
 	navigateToSession: (sessionId: string) => mockNavigateToSession(sessionId),
 }));
 
 vi.mock('../../lib/signals.ts', () => ({
-	get sidebarOpenSignal() {
-		return mockSidebarOpenSignal;
+	get contextPanelOpenSignal() {
+		return mockContextPanelOpenSignal;
 	},
 }));
 
 // Initialize signal after mocks are set up
-mockSidebarOpenSignal = signal(false);
+mockContextPanelOpenSignal = signal(false);
 
 import RecentSessions from '../RecentSessions';
 
@@ -63,7 +63,7 @@ describe('RecentSessions', () => {
 	beforeEach(() => {
 		cleanup();
 		vi.resetAllMocks();
-		mockSidebarOpenSignal.value = false;
+		mockContextPanelOpenSignal.value = false;
 		Object.defineProperty(window, 'innerWidth', {
 			value: 1024,
 			writable: true,
@@ -245,7 +245,7 @@ describe('RecentSessions', () => {
 				writable: true,
 				configurable: true,
 			});
-			mockSidebarOpenSignal.value = true;
+			mockContextPanelOpenSignal.value = true;
 
 			const { container } = render(<RecentSessions sessions={mockSessions} />);
 
@@ -256,7 +256,7 @@ describe('RecentSessions', () => {
 			fireEvent.click(sessionCards[0]);
 
 			expect(mockNavigateToSession).toHaveBeenCalledWith('session-1');
-			expect(mockSidebarOpenSignal.value).toBe(false);
+			expect(mockContextPanelOpenSignal.value).toBe(false);
 		});
 
 		it('should not close sidebar on desktop when session is clicked', () => {
@@ -266,7 +266,7 @@ describe('RecentSessions', () => {
 				writable: true,
 				configurable: true,
 			});
-			mockSidebarOpenSignal.value = true;
+			mockContextPanelOpenSignal.value = true;
 
 			const { container } = render(<RecentSessions sessions={mockSessions} />);
 
@@ -278,7 +278,7 @@ describe('RecentSessions', () => {
 
 			expect(mockNavigateToSession).toHaveBeenCalledWith('session-1');
 			// Sidebar should remain open on desktop
-			expect(mockSidebarOpenSignal.value).toBe(true);
+			expect(mockContextPanelOpenSignal.value).toBe(true);
 		});
 	});
 
@@ -299,14 +299,14 @@ describe('RecentSessions', () => {
 		});
 
 		it('should open sidebar when menu button is clicked', () => {
-			mockSidebarOpenSignal.value = false;
+			mockContextPanelOpenSignal.value = false;
 
 			const { container } = render(<RecentSessions sessions={mockSessions} />);
 
 			const menuButton = container.querySelector('button[title="Open menu"]');
 			fireEvent.click(menuButton!);
 
-			expect(mockSidebarOpenSignal.value).toBe(true);
+			expect(mockContextPanelOpenSignal.value).toBe(true);
 		});
 	});
 
