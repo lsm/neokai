@@ -22,14 +22,16 @@ import type { NeoTask, TaskStatus, TaskPriority, TaskFilter } from '@neokai/shar
 
 describe('TaskManager', () => {
 	let db: Database;
+	let tempDir: string;
 	let taskManager: TaskManager;
 	let roomManager: RoomManager;
 	let roomId: string;
 
 	beforeEach(() => {
-		// Create in-memory database with all required tables
-		const dbId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-		db = new Database(`file:${dbId}?mode=memory&cache=private`, { create: true });
+		// Create temp directory and file-based database
+		tempDir = `/tmp/neokai-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+		require('fs').mkdirSync(tempDir, { recursive: true });
+		db = new Database(`${tempDir}/test.db`);
 		createTables(db);
 
 		// Create room manager and a room
@@ -47,6 +49,11 @@ describe('TaskManager', () => {
 
 	afterEach(() => {
 		db.close();
+		try {
+			require('fs').rmSync(tempDir, { recursive: true, force: true });
+		} catch {
+			// Ignore cleanup errors
+		}
 	});
 
 	describe('initialization', () => {

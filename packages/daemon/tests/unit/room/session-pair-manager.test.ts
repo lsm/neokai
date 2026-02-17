@@ -33,14 +33,16 @@ function createMockSessionLifecycle(): MockSessionLifecycle {
 
 describe('SessionPairManager', () => {
 	let db: Database;
+	let tempDir: string;
 	let sessionPairManager: SessionPairManager;
 	let roomManager: RoomManager;
 	let mockSessionLifecycle: MockSessionLifecycle;
 
 	beforeEach(() => {
-		// Create in-memory database with all required tables
-		const dbId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-		db = new Database(`file:${dbId}?mode=memory&cache=private`, { create: true });
+		// Create temp directory and file-based database
+		tempDir = `/tmp/neokai-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+		require('fs').mkdirSync(tempDir, { recursive: true });
+		db = new Database(`${tempDir}/test.db`);
 		createTables(db);
 
 		// Create session_pairs table (migration 16)
@@ -74,6 +76,11 @@ describe('SessionPairManager', () => {
 
 	afterEach(() => {
 		db.close();
+		try {
+			require('fs').rmSync(tempDir, { recursive: true, force: true });
+		} catch {
+			// Ignore cleanup errors
+		}
 	});
 
 	describe('createPair', () => {
