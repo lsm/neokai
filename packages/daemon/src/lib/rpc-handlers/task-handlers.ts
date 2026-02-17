@@ -20,10 +20,25 @@ import type { Database } from '../../storage/database';
 import type { RoomManager } from '../room/room-manager';
 import { TaskManager } from '../room';
 
+export type TaskManagerLike = Pick<
+	TaskManager,
+	| 'createTask'
+	| 'getTask'
+	| 'listTasks'
+	| 'updateTaskStatus'
+	| 'updateTaskProgress'
+	| 'startTask'
+	| 'completeTask'
+	| 'failTask'
+	| 'deleteTask'
+>;
+
+export type TaskManagerFactory = (db: Database, roomId: string) => TaskManagerLike;
+
 /**
  * Create a TaskManager instance for a room
  */
-function createTaskManager(db: Database, roomId: string): TaskManager {
+function createTaskManager(db: Database, roomId: string): TaskManagerLike {
 	const rawDb = db.getDatabase();
 	return new TaskManager(rawDb, roomId);
 }
@@ -32,7 +47,8 @@ export function setupTaskHandlers(
 	messageHub: MessageHub,
 	roomManager: RoomManager,
 	daemonHub: DaemonHub,
-	db: Database
+	db: Database,
+	taskManagerFactory: TaskManagerFactory = createTaskManager
 ): void {
 	/**
 	 * Emit room.task.update event to notify UI clients
@@ -85,7 +101,7 @@ export function setupTaskHandlers(
 			throw new Error('Task title is required');
 		}
 
-		const taskManager = createTaskManager(db, params.roomId);
+		const taskManager = taskManagerFactory(db, params.roomId);
 		const task = await taskManager.createTask({
 			title: params.title,
 			description: params.description ?? '',
@@ -112,7 +128,7 @@ export function setupTaskHandlers(
 			throw new Error('Room ID is required');
 		}
 
-		const taskManager = createTaskManager(db, params.roomId);
+		const taskManager = taskManagerFactory(db, params.roomId);
 		const tasks = await taskManager.listTasks({
 			status: params.status,
 			priority: params.priority,
@@ -133,7 +149,7 @@ export function setupTaskHandlers(
 			throw new Error('Task ID is required');
 		}
 
-		const taskManager = createTaskManager(db, params.roomId);
+		const taskManager = taskManagerFactory(db, params.roomId);
 		const task = await taskManager.getTask(params.taskId);
 
 		if (!task) {
@@ -162,7 +178,7 @@ export function setupTaskHandlers(
 			throw new Error('Task ID is required');
 		}
 
-		const taskManager = createTaskManager(db, params.roomId);
+		const taskManager = taskManagerFactory(db, params.roomId);
 
 		let task;
 		if (params.status) {
@@ -204,7 +220,7 @@ export function setupTaskHandlers(
 			throw new Error('Session ID is required');
 		}
 
-		const taskManager = createTaskManager(db, params.roomId);
+		const taskManager = taskManagerFactory(db, params.roomId);
 		const task = await taskManager.startTask(params.taskId, params.sessionId);
 
 		// Emit task update event (status change from pending to in_progress)
@@ -226,7 +242,7 @@ export function setupTaskHandlers(
 			throw new Error('Task ID is required');
 		}
 
-		const taskManager = createTaskManager(db, params.roomId);
+		const taskManager = taskManagerFactory(db, params.roomId);
 		const task = await taskManager.completeTask(params.taskId, params.result ?? '');
 
 		// Emit room overview for task completion (significant status change)
@@ -246,7 +262,7 @@ export function setupTaskHandlers(
 			throw new Error('Task ID is required');
 		}
 
-		const taskManager = createTaskManager(db, params.roomId);
+		const taskManager = taskManagerFactory(db, params.roomId);
 		const task = await taskManager.failTask(params.taskId, params.error ?? '');
 
 		// Emit room overview for task failure (significant status change)
@@ -266,7 +282,7 @@ export function setupTaskHandlers(
 			throw new Error('Task ID is required');
 		}
 
-		const taskManager = createTaskManager(db, params.roomId);
+		const taskManager = taskManagerFactory(db, params.roomId);
 		const deleted = await taskManager.deleteTask(params.taskId);
 
 		// Emit room overview for task deletion (significant change)

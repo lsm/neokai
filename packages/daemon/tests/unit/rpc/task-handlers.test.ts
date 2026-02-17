@@ -16,7 +16,10 @@
 
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub, type NeoTask, type TaskPriority, type TaskStatus } from '@neokai/shared';
-import { setupTaskHandlers } from '../../../src/lib/rpc-handlers/task-handlers';
+import {
+	setupTaskHandlers,
+	type TaskManagerLike,
+} from '../../../src/lib/rpc-handlers/task-handlers';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { Database } from '../../../src/storage/database';
 import type { RoomManager } from '../../../src/lib/room/room-manager';
@@ -113,10 +116,7 @@ const mockTaskManager = {
 	deleteTask: mock(async () => true),
 };
 
-// Mock the TaskManager module
-mock.module('../../../src/lib/room', () => ({
-	TaskManager: mock(() => mockTaskManager),
-}));
+const createMockTaskManager = (): TaskManagerLike => mockTaskManager as unknown as TaskManagerLike;
 
 // Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
@@ -235,7 +235,13 @@ describe('Task RPC Handlers', () => {
 		mockTaskManager.deleteTask.mockClear();
 
 		// Setup handlers with mocked dependencies
-		setupTaskHandlers(messageHubData.hub, roomManagerData.roomManager, daemonHubData.daemonHub, db);
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			createMockTaskManager
+		);
 	});
 
 	afterEach(() => {
