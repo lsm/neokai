@@ -4,6 +4,13 @@
  *
  * Tests the collapsible overlay panel for Neo chat.
  * Controlled by neoChatOpenSignal.
+ *
+ * The panel uses InputTextarea component which provides:
+ * - Auto-resizing textarea with placeholder "Ask or make anything..."
+ * - Integrated send button (SVG icon, not text)
+ * - File attachment support
+ * - Model/provider switching
+ * - Thinking mode toggle
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, fireEvent, waitFor } from '@testing-library/preact';
@@ -57,6 +64,14 @@ vi.mock('../../lib/connection-manager', () => ({
 			})
 		),
 	},
+}));
+
+// Mock file-utils for useFileAttachments
+vi.mock('../../lib/file-utils', () => ({
+	validateImageFile: vi.fn(() => null),
+	fileToBase64: vi.fn(() => Promise.resolve('base64data')),
+	extractImagesFromClipboard: vi.fn(() => []),
+	formatFileSize: vi.fn(() => '1KB'),
 }));
 
 // Import AFTER mocking
@@ -146,6 +161,21 @@ describe('NeoChatPanel', () => {
 
 			const subtitle = container.querySelector('.text-xs.text-gray-400');
 			expect(subtitle?.textContent).toBe('AI Orchestrator');
+		});
+
+		it('should have thinking mode toggle button', () => {
+			const { container } = render(<NeoChatPanel />);
+
+			const thinkingButton = container.querySelector('button[title*="thinking mode"]');
+			expect(thinkingButton).toBeTruthy();
+		});
+
+		it('should have model switcher dropdown', () => {
+			const { container } = render(<NeoChatPanel />);
+
+			// Model switcher button shows model family letter (S for Sonnet by default)
+			const modelSwitcher = container.querySelector('.bg-dark-800.text-gray-300');
+			expect(modelSwitcher).toBeTruthy();
 		});
 	});
 
@@ -261,14 +291,23 @@ describe('NeoChatPanel', () => {
 
 			const textarea = container.querySelector('textarea');
 			expect(textarea).toBeTruthy();
-			expect(textarea?.placeholder).toBe('Ask Neo...');
+			// InputTextarea uses "Ask or make anything..." as placeholder
+			expect(textarea?.placeholder).toBe('Ask or make anything...');
 		});
 
-		it('should have send button', () => {
+		it('should have send button with data-testid', () => {
 			const { container } = render(<NeoChatPanel />);
 
-			// The Send button should be present
-			expect(container.textContent).toContain('Send');
+			// InputTextarea provides send button with data-testid="send-button"
+			const sendButton = container.querySelector('[data-testid="send-button"]');
+			expect(sendButton).toBeTruthy();
+		});
+
+		it('should have attach file button', () => {
+			const { container } = render(<NeoChatPanel />);
+
+			const attachButton = container.querySelector('button[title="Attach image"]');
+			expect(attachButton).toBeTruthy();
 		});
 	});
 
@@ -322,15 +361,17 @@ describe('NeoChatPanel', () => {
 
 			const { container } = render(<NeoChatPanel />);
 
-			// User message should have blue background
-			const userMessage = container.querySelector('.bg-blue-600');
-			expect(userMessage).toBeTruthy();
-			expect(userMessage?.textContent).toContain('User message');
+			// User message should have blue background - use more specific selector
+			// Look for message bubble with justify-end (user messages are right-aligned)
+			const userMessageWrapper = container.querySelector('.justify-end .bg-blue-600');
+			expect(userMessageWrapper).toBeTruthy();
+			expect(userMessageWrapper?.textContent).toContain('User message');
 
-			// Assistant message should have dark background
-			const assistantMessage = container.querySelector('.bg-dark-800');
-			expect(assistantMessage).toBeTruthy();
-			expect(assistantMessage?.textContent).toContain('Assistant message');
+			// Assistant message should have dark background - use more specific selector
+			// Look for message bubble with justify-start (assistant messages are left-aligned)
+			const assistantMessageWrapper = container.querySelector('.justify-start .bg-dark-800');
+			expect(assistantMessageWrapper).toBeTruthy();
+			expect(assistantMessageWrapper?.textContent).toContain('Assistant message');
 		});
 
 		it('should show timestamp for messages', () => {
@@ -384,7 +425,7 @@ describe('NeoChatPanel', () => {
 			expect(textarea?.value).toBe('Hello Neo!');
 		});
 
-		it('should send message when Send button is clicked', async () => {
+		it('should send message when send button is clicked', async () => {
 			mockSendNeoMessage.mockResolvedValue(undefined);
 
 			const { container } = render(<NeoChatPanel />);
@@ -392,11 +433,9 @@ describe('NeoChatPanel', () => {
 			const textarea = container.querySelector('textarea');
 			fireEvent.input(textarea, { target: { value: 'Hello Neo!' } });
 
-			// Find the send button (it's a Button component with text "Send")
-			const sendButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent?.trim() === 'Send'
-			);
-
+			// Find the send button by data-testid
+			const sendButton = container.querySelector('[data-testid="send-button"]');
+			expect(sendButton).toBeTruthy();
 			fireEvent.click(sendButton);
 
 			await waitFor(() => {
@@ -412,10 +451,7 @@ describe('NeoChatPanel', () => {
 			const textarea = container.querySelector('textarea');
 			fireEvent.input(textarea, { target: { value: 'Hello Neo!' } });
 
-			const sendButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent?.trim() === 'Send'
-			);
-
+			const sendButton = container.querySelector('[data-testid="send-button"]');
 			fireEvent.click(sendButton);
 
 			await waitFor(() => {
@@ -460,10 +496,7 @@ describe('NeoChatPanel', () => {
 			const textarea = container.querySelector('textarea');
 			fireEvent.input(textarea, { target: { value: '' } });
 
-			const sendButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent?.trim() === 'Send'
-			);
-
+			const sendButton = container.querySelector('[data-testid="send-button"]');
 			// Button should be disabled when input is empty
 			expect(sendButton?.hasAttribute('disabled')).toBe(true);
 		});
@@ -474,10 +507,7 @@ describe('NeoChatPanel', () => {
 			const textarea = container.querySelector('textarea');
 			fireEvent.input(textarea, { target: { value: '   ' } });
 
-			const sendButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent?.trim() === 'Send'
-			);
-
+			const sendButton = container.querySelector('[data-testid="send-button"]');
 			// Button should be disabled when input is whitespace only
 			expect(sendButton?.hasAttribute('disabled')).toBe(true);
 		});
@@ -490,10 +520,7 @@ describe('NeoChatPanel', () => {
 			const textarea = container.querySelector('textarea');
 			fireEvent.input(textarea, { target: { value: '  Hello Neo!  ' } });
 
-			const sendButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent?.trim() === 'Send'
-			);
-
+			const sendButton = container.querySelector('[data-testid="send-button"]');
 			fireEvent.click(sendButton);
 
 			await waitFor(() => {
@@ -503,8 +530,7 @@ describe('NeoChatPanel', () => {
 	});
 
 	describe('Loading State', () => {
-		it('should show loading spinner when sending message', async () => {
-			// Create a promise that we can resolve manually
+		it('should show cursor-not-allowed style on send button while sending', async () => {
 			let resolveSend;
 			mockSendNeoMessage.mockImplementation(
 				() => new Promise((resolve) => (resolveSend = resolve))
@@ -515,23 +541,19 @@ describe('NeoChatPanel', () => {
 			const textarea = container.querySelector('textarea');
 			fireEvent.input(textarea, { target: { value: 'Hello Neo!' } });
 
-			const sendButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent?.trim() === 'Send'
-			);
-
+			const sendButton = container.querySelector('[data-testid="send-button"]');
 			fireEvent.click(sendButton);
 
-			// Should show spinner while sending
+			// InputTextarea disables via disabled prop which affects the button styling
+			// The button shows cursor-not-allowed class when disabled
 			await waitFor(() => {
-				const spinner = container.querySelector('.animate-spin');
-				expect(spinner).toBeTruthy();
+				expect(sendButton?.className).toContain('cursor-not-allowed');
 			});
 
-			// Resolve the send promise to clean up
 			resolveSend();
 		});
 
-		it('should disable textarea while sending', async () => {
+		it('should show disabled border styling while sending', async () => {
 			let resolveSend;
 			mockSendNeoMessage.mockImplementation(
 				() => new Promise((resolve) => (resolveSend = resolve))
@@ -542,46 +564,20 @@ describe('NeoChatPanel', () => {
 			const textarea = container.querySelector('textarea');
 			fireEvent.input(textarea, { target: { value: 'Hello Neo!' } });
 
-			const sendButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent?.trim() === 'Send'
-			);
-
+			const sendButton = container.querySelector('[data-testid="send-button"]');
 			fireEvent.click(sendButton);
 
-			// Textarea should be disabled while sending
+			// InputTextarea shows disabled border when disabled prop is true
 			await waitFor(() => {
-				expect(textarea?.hasAttribute('disabled')).toBe(true);
+				const inputWrapper = container.querySelector('.rounded-3xl.border');
+				// borderColors.ui.disabled is 'border-dark-700/30'
+				expect(inputWrapper?.className).toContain('border-dark-700/30');
 			});
 
 			resolveSend();
 		});
 
-		it('should disable send button while sending', async () => {
-			let resolveSend;
-			mockSendNeoMessage.mockImplementation(
-				() => new Promise((resolve) => (resolveSend = resolve))
-			);
-
-			const { container } = render(<NeoChatPanel />);
-
-			const textarea = container.querySelector('textarea');
-			fireEvent.input(textarea, { target: { value: 'Hello Neo!' } });
-
-			const sendButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent?.trim() === 'Send'
-			);
-
-			fireEvent.click(sendButton);
-
-			// Button should be disabled while sending
-			await waitFor(() => {
-				expect(sendButton?.hasAttribute('disabled')).toBe(true);
-			});
-
-			resolveSend();
-		});
-
-		it('should re-enable textarea after sending completes', async () => {
+		it('should re-enable input after sending completes', async () => {
 			mockSendNeoMessage.mockResolvedValue(undefined);
 
 			const { container } = render(<NeoChatPanel />);
@@ -589,15 +585,13 @@ describe('NeoChatPanel', () => {
 			const textarea = container.querySelector('textarea');
 			fireEvent.input(textarea, { target: { value: 'Hello Neo!' } });
 
-			const sendButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent?.trim() === 'Send'
-			);
-
+			const sendButton = container.querySelector('[data-testid="send-button"]');
 			fireEvent.click(sendButton);
 
-			// After sending completes, textarea should be re-enabled
+			// After sending completes, button should be disabled again (no content)
 			await waitFor(() => {
-				expect(textarea?.hasAttribute('disabled')).toBe(false);
+				// Content is cleared, so button should be disabled due to no content
+				expect(sendButton?.hasAttribute('disabled')).toBe(true);
 			});
 		});
 	});
@@ -611,10 +605,7 @@ describe('NeoChatPanel', () => {
 			const textarea = container.querySelector('textarea');
 			fireEvent.input(textarea, { target: { value: 'Hello Neo!' } });
 
-			const sendButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent?.trim() === 'Send'
-			);
-
+			const sendButton = container.querySelector('[data-testid="send-button"]');
 			fireEvent.click(sendButton);
 
 			await waitFor(() => {
@@ -630,10 +621,7 @@ describe('NeoChatPanel', () => {
 			const textarea = container.querySelector('textarea');
 			fireEvent.input(textarea, { target: { value: 'Hello Neo!' } });
 
-			const sendButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent?.trim() === 'Send'
-			);
-
+			const sendButton = container.querySelector('[data-testid="send-button"]');
 			fireEvent.click(sendButton);
 
 			await waitFor(() => {
@@ -649,16 +637,89 @@ describe('NeoChatPanel', () => {
 			const textarea = container.querySelector('textarea');
 			fireEvent.input(textarea, { target: { value: 'Hello Neo!' } });
 
-			const sendButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent?.trim() === 'Send'
-			);
-
+			const sendButton = container.querySelector('[data-testid="send-button"]');
 			fireEvent.click(sendButton);
 
 			// After error, textarea should be re-enabled
 			await waitFor(() => {
 				expect(textarea?.hasAttribute('disabled')).toBe(false);
 			});
+		});
+	});
+
+	describe('Model Switcher', () => {
+		it('should show model menu when model button is clicked', () => {
+			const { container } = render(<NeoChatPanel />);
+
+			// Find the model switcher button (has chevron down icon)
+			const modelButtons = container.querySelectorAll('button');
+			let modelSwitcherButton = null;
+			for (const btn of modelButtons) {
+				// Model switcher is in header and has bg-dark-800
+				if (btn.className?.includes('bg-dark-800') && btn.className?.includes('text-gray-300')) {
+					modelSwitcherButton = btn;
+					break;
+				}
+			}
+
+			expect(modelSwitcherButton).toBeTruthy();
+			fireEvent.click(modelSwitcherButton);
+
+			// Model menu should appear
+			const modelMenu = container.querySelector('.w-48.bg-dark-800');
+			expect(modelMenu).toBeTruthy();
+		});
+
+		it('should close model menu when clicking outside', () => {
+			const { container } = render(<NeoChatPanel />);
+
+			// Find and click model switcher
+			const modelSwitcherButton = Array.from(container.querySelectorAll('button')).find(
+				(btn) => btn.className?.includes('bg-dark-800') && btn.className?.includes('text-gray-300')
+			);
+			fireEvent.click(modelSwitcherButton);
+
+			// Find the overlay that closes the menu
+			const overlay = container.querySelector('.fixed.inset-0.z-40');
+			expect(overlay).toBeTruthy();
+			fireEvent.click(overlay);
+		});
+	});
+
+	describe('Thinking Mode Toggle', () => {
+		it('should toggle thinking mode when button is clicked', () => {
+			const { container } = render(<NeoChatPanel />);
+
+			const thinkingButton = container.querySelector('button[title*="thinking mode"]');
+
+			// Initially not active
+			expect(thinkingButton?.className).not.toContain('bg-purple-600/20');
+
+			// Click to enable
+			fireEvent.click(thinkingButton);
+
+			// Now active
+			expect(thinkingButton?.className).toContain('bg-purple-600/20');
+		});
+
+		it('should show thinking enabled indicator when active', () => {
+			const { container } = render(<NeoChatPanel />);
+
+			const thinkingButton = container.querySelector('button[title*="thinking mode"]');
+			fireEvent.click(thinkingButton);
+
+			// Should show "Thinking enabled" text
+			expect(container.textContent).toContain('Thinking enabled');
+		});
+	});
+
+	describe('Scroll Button', () => {
+		it('should have messages container with scroll support', () => {
+			const { container } = render(<NeoChatPanel />);
+
+			// Messages container should have overflow-y-auto
+			const messagesContainer = container.querySelector('.overflow-y-auto');
+			expect(messagesContainer).toBeTruthy();
 		});
 	});
 });

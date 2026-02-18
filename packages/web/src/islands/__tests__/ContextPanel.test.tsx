@@ -3,13 +3,13 @@
  * Tests for ContextPanel Component
  *
  * Tests the context panel that shows SessionList or RoomList based on
- * navigation section, with mobile drawer behavior and connection status.
+ * navigation section, with mobile drawer behavior.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, screen } from '@testing-library/preact';
 import { signal, computed } from '@preact/signals';
-import type { AuthStatus, ApiConnectionState } from '@neokai/shared';
+import type { AuthStatus } from '@neokai/shared';
 
 // Define vi.fn() in vi.hoisted
 const {
@@ -19,7 +19,6 @@ const {
 	mockCreateRoom,
 	mockToastError,
 	mockToastSuccess,
-	mockReconnect,
 } = vi.hoisted(() => ({
 	mockCreateSession: vi.fn(),
 	mockNavigateToSession: vi.fn(),
@@ -27,7 +26,6 @@ const {
 	mockCreateRoom: vi.fn().mockResolvedValue({ id: 'room-1', name: 'Test Room' }),
 	mockToastError: vi.fn(),
 	mockToastSuccess: vi.fn(),
-	mockReconnect: vi.fn(),
 }));
 
 // Define signals that will be used in mocks
@@ -35,7 +33,6 @@ let mockNavSectionSignal: ReturnType<typeof signal<string>>;
 let mockContextPanelOpenSignal: ReturnType<typeof signal<boolean>>;
 let mockConnectionStateSignal: ReturnType<typeof signal<string>>;
 let mockAuthStatusSignal: ReturnType<typeof signal<AuthStatus | null>>;
-let mockApiConnectionStatusSignal: ReturnType<typeof signal<ApiConnectionState | null>>;
 let mockRoomsSignal: ReturnType<typeof signal<any[]>>;
 let mockSessionsSignal: ReturnType<typeof signal<any[]>>;
 let mockHasArchivedSessionsSignal: ReturnType<typeof signal<boolean>>;
@@ -59,9 +56,6 @@ vi.mock('../../lib/state.ts', () => ({
 	get authStatus() {
 		return computed(() => mockAuthStatusSignal.value);
 	},
-	get apiConnectionStatus() {
-		return computed(() => mockApiConnectionStatusSignal.value);
-	},
 	// SessionList needs these
 	get sessions() {
 		return computed(() => mockSessionsSignal.value);
@@ -71,13 +65,6 @@ vi.mock('../../lib/state.ts', () => ({
 	},
 	get globalSettings() {
 		return computed(() => mockGlobalSettingsSignal.value);
-	},
-}));
-
-// Mock the connection-manager module
-vi.mock('../../lib/connection-manager.ts', () => ({
-	connectionManager: {
-		reconnect: mockReconnect,
 	},
 }));
 
@@ -122,12 +109,24 @@ vi.mock('../../lib/design-tokens.ts', () => ({
 	},
 }));
 
+// Mock the settings components
+vi.mock('../../components/settings/GeneralSettings.tsx', () => ({
+	GeneralSettings: () => <div data-testid="general-settings">General Settings</div>,
+}));
+
+vi.mock('../../components/settings/McpServersSettings.tsx', () => ({
+	McpServersSettings: () => <div data-testid="mcp-servers-settings">MCP Servers Settings</div>,
+}));
+
+vi.mock('../../components/settings/AboutSection.tsx', () => ({
+	AboutSection: () => <div data-testid="about-section">About Section</div>,
+}));
+
 // Initialize signals after mocks are set up
 mockNavSectionSignal = signal<string>('chats');
 mockContextPanelOpenSignal = signal<boolean>(false);
 mockConnectionStateSignal = signal<string>('connected');
 mockAuthStatusSignal = signal<AuthStatus | null>({ isAuthenticated: true });
-mockApiConnectionStatusSignal = signal<ApiConnectionState | null>({ status: 'connected' });
 mockRoomsSignal = signal<any[]>([]);
 mockSessionsSignal = signal<any[]>([]);
 mockHasArchivedSessionsSignal = signal<boolean>(false);
@@ -144,7 +143,6 @@ describe('ContextPanel', () => {
 		mockContextPanelOpenSignal.value = false;
 		mockConnectionStateSignal.value = 'connected';
 		mockAuthStatusSignal.value = { isAuthenticated: true };
-		mockApiConnectionStatusSignal.value = { status: 'connected' };
 		mockRoomsSignal.value = [];
 		mockSessionsSignal.value = [];
 		mockHasArchivedSessionsSignal.value = false;
@@ -183,13 +181,15 @@ describe('ContextPanel', () => {
 			expect(container.textContent).toContain('Organize rooms into projects');
 		});
 
-		it('should render settings placeholder when navSection is settings', () => {
+		it('should render settings content when navSection is settings', () => {
 			mockNavSectionSignal.value = 'settings';
 
-			const { container } = render(<ContextPanel />);
+			render(<ContextPanel />);
 
-			expect(container.textContent).toContain('Settings');
-			expect(container.textContent).toContain('Click the settings icon to configure');
+			// Should render the settings components
+			expect(screen.getByTestId('general-settings')).toBeTruthy();
+			expect(screen.getByTestId('mcp-servers-settings')).toBeTruthy();
+			expect(screen.getByTestId('about-section')).toBeTruthy();
 		});
 	});
 
@@ -247,19 +247,22 @@ describe('ContextPanel', () => {
 		it('should not show action button for projects section', () => {
 			mockNavSectionSignal.value = 'projects';
 
-			const { container } = render(<ContextPanel />);
+			render(<ContextPanel />);
 
-			// No action button for projects
-			expect(container.querySelector('button[class*="bg-blue-600"]')).toBeNull();
+			// No New Session or Create Room action button for projects
+			expect(screen.queryByRole('button', { name: /New Session/i })).toBeNull();
+			expect(screen.queryByRole('button', { name: /Create Room/i })).toBeNull();
 		});
 
 		it('should not show action button for settings section', () => {
 			mockNavSectionSignal.value = 'settings';
 
-			const { container } = render(<ContextPanel />);
+			render(<ContextPanel />);
 
-			// No action button for settings
-			expect(container.querySelector('button[class*="bg-blue-600"]')).toBeNull();
+			// No New Session or Create Room action button for settings
+			// The action buttons have specific aria-labels
+			expect(screen.queryByRole('button', { name: /New Session/i })).toBeNull();
+			expect(screen.queryByRole('button', { name: /Create Room/i })).toBeNull();
 		});
 
 		it('should disable action button when not connected', () => {
@@ -375,127 +378,6 @@ describe('ContextPanel', () => {
 			await vi.waitFor(() => {
 				expect(mockToastError).toHaveBeenCalledWith('Failed to create room');
 			});
-		});
-	});
-
-	describe('Footer - Daemon Connection Status', () => {
-		it('should show Connected status when connected', () => {
-			mockConnectionStateSignal.value = 'connected';
-
-			const { container } = render(<ContextPanel />);
-
-			expect(container.textContent).toContain('Daemon');
-			expect(container.textContent).toContain('Connected');
-		});
-
-		it('should show Connecting status when connecting', () => {
-			mockConnectionStateSignal.value = 'connecting';
-
-			const { container } = render(<ContextPanel />);
-
-			expect(container.textContent).toContain('Connecting...');
-		});
-
-		it('should show Reconnecting status when reconnecting', () => {
-			mockConnectionStateSignal.value = 'reconnecting';
-
-			const { container } = render(<ContextPanel />);
-
-			expect(container.textContent).toContain('Reconnecting...');
-		});
-
-		it('should show Offline status when disconnected', () => {
-			mockConnectionStateSignal.value = 'disconnected';
-
-			const { container } = render(<ContextPanel />);
-
-			expect(container.textContent).toContain('Offline');
-		});
-
-		it('should show Error status when connection has error', () => {
-			mockConnectionStateSignal.value = 'error';
-
-			const { container } = render(<ContextPanel />);
-
-			expect(container.textContent).toContain('Error');
-		});
-
-		it('should show Error status when connection failed', () => {
-			mockConnectionStateSignal.value = 'failed';
-
-			const { container } = render(<ContextPanel />);
-
-			expect(container.textContent).toContain('Error');
-		});
-
-		it('should show Reconnect button when disconnected', () => {
-			mockConnectionStateSignal.value = 'disconnected';
-
-			render(<ContextPanel />);
-
-			expect(screen.getByRole('button', { name: 'Reconnect' })).toBeTruthy();
-		});
-
-		it('should show Reconnect button when error', () => {
-			mockConnectionStateSignal.value = 'error';
-
-			render(<ContextPanel />);
-
-			expect(screen.getByRole('button', { name: 'Reconnect' })).toBeTruthy();
-		});
-
-		it('should call reconnect when Reconnect button clicked', () => {
-			mockConnectionStateSignal.value = 'disconnected';
-
-			render(<ContextPanel />);
-
-			const button = screen.getByRole('button', { name: 'Reconnect' });
-			fireEvent.click(button);
-
-			expect(mockReconnect).toHaveBeenCalled();
-		});
-
-		it('should not show Reconnect button when connected', () => {
-			mockConnectionStateSignal.value = 'connected';
-
-			const { container } = render(<ContextPanel />);
-
-			expect(container.textContent).not.toContain('Reconnect');
-		});
-	});
-
-	describe('Footer - API Connection Status', () => {
-		it('should show Connected status when API is connected', () => {
-			mockApiConnectionStatusSignal.value = { status: 'connected' };
-
-			const { container } = render(<ContextPanel />);
-
-			expect(container.textContent).toContain('Claude API');
-			expect(container.textContent).toContain('Connected');
-		});
-
-		it('should show Degraded status when API is degraded', () => {
-			mockApiConnectionStatusSignal.value = { status: 'degraded' };
-
-			const { container } = render(<ContextPanel />);
-
-			expect(container.textContent).toContain('Degraded');
-		});
-
-		it('should show Offline status when API is disconnected', () => {
-			mockApiConnectionStatusSignal.value = { status: 'disconnected' };
-
-			const { container } = render(<ContextPanel />);
-
-			expect(container.textContent).toContain('Offline');
-		});
-
-		it('should show Unknown status when API status is null', () => {
-			mockApiConnectionStatusSignal.value = null;
-
-			const { container } = render(<ContextPanel />);
-
-			expect(container.textContent).toContain('Unknown');
 		});
 	});
 
@@ -658,18 +540,6 @@ describe('ContextPanel', () => {
 
 			expect(container.querySelector('.bg-black\\/50')).toBeTruthy();
 		});
-
-		it('should update connection status when connectionState changes', () => {
-			mockConnectionStateSignal.value = 'connected';
-			const { container, rerender } = render(<ContextPanel />);
-
-			expect(container.textContent).toContain('Connected');
-
-			mockConnectionStateSignal.value = 'disconnected';
-			rerender(<ContextPanel />);
-
-			expect(container.textContent).toContain('Offline');
-		});
 	});
 
 	describe('Layout Structure', () => {
@@ -685,13 +555,6 @@ describe('ContextPanel', () => {
 
 			const header = container.querySelector('.border-b');
 			expect(header).toBeTruthy();
-		});
-
-		it('should have footer section with border', () => {
-			const { container } = render(<ContextPanel />);
-
-			const footer = container.querySelector('.border-t');
-			expect(footer).toBeTruthy();
 		});
 
 		it('should have full screen height', () => {

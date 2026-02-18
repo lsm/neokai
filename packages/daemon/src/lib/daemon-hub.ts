@@ -246,6 +246,18 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		filesChanged?: string[];
 		nextSteps?: string[];
 	};
+
+	// Lobby events (for lobby manager chat)
+	'lobby.message': {
+		sessionId: string;
+		message: {
+			id: string;
+			role: 'user' | 'assistant';
+			content: string;
+			images?: MessageImage[];
+			timestamp: string;
+		};
+	};
 }
 
 /**

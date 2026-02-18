@@ -1,55 +1,42 @@
 /**
- * NeoChatPanel - Collapsible overlay panel for Neo chat
+ * LobbyManagerPanel - Collapsible overlay panel for Lobby Manager chat
  *
- * A right-side overlay panel for the AI orchestrator chat.
- * Controlled by neoChatOpenSignal.
+ * A right-side overlay panel for the Lobby Manager AI assistant.
+ * Controlled by lobbyManagerOpenSignal.
  *
  * Features:
  * - Full-featured input with auto-resize, file attachments
- * - Model/provider switching (simplified, no persistence)
- * - Thinking mode toggle
  * - Auto-scroll with scroll button
+ * - Cross-room AI assistant for managing workspaces
  */
 
-import { useState, useCallback, useRef } from 'preact/hooks';
-import { roomStore } from '../lib/room-store';
+import { useState, useCallback, useRef, useEffect } from 'preact/hooks';
+import { lobbyManagerStore } from '../lib/lobby-manager-store';
 import { toast } from '../lib/toast';
-import { neoChatOpenSignal } from '../lib/signals';
+import { lobbyManagerOpenSignal } from '../lib/signals';
 import { IconButton } from '../components/ui/IconButton';
 import { InputTextarea } from '../components/InputTextarea';
 import { AttachmentPreview } from '../components/AttachmentPreview';
 import { useFileAttachments, useAutoScroll } from '../hooks';
-import type { NeoContextMessage } from '@neokai/shared';
+import type { LobbyManagerMessage } from '../lib/lobby-manager-store';
 
-// Available models for Neo (simplified list)
-const NEO_MODELS = [
-	{ id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', family: 'sonnet' },
-	{ id: 'claude-opus-4-20250514', name: 'Claude Opus 4', family: 'opus' },
-	{ id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', family: 'haiku' },
-	{ id: 'glm-4-plus', name: 'GLM-4 Plus', family: 'glm' },
-];
-
-type NeoModelId = (typeof NEO_MODELS)[number]['id'];
-
-const MODEL_FAMILY_ICONS: Record<string, string> = {
-	opus: 'O',
-	sonnet: 'S',
-	haiku: 'H',
-	glm: 'G',
-};
-
-export function NeoChatPanel() {
+export function LobbyManagerPanel() {
 	const [input, setInput] = useState('');
 	const [sending, setSending] = useState(false);
-	const [selectedModel, setSelectedModel] = useState<NeoModelId>(NEO_MODELS[0].id);
-	const [thinkingMode, setThinkingMode] = useState(false);
-	const [showModelMenu, setShowModelMenu] = useState(false);
 
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 
-	const isOpen = neoChatOpenSignal.value;
-	const messages = roomStore.neoMessages.value;
+	const isOpen = lobbyManagerOpenSignal.value;
+	const messages = lobbyManagerStore.messages.value;
+	const loading = lobbyManagerStore.loading.value;
+
+	// Initialize store when panel opens
+	useEffect(() => {
+		if (isOpen) {
+			lobbyManagerStore.initialize();
+		}
+	}, [isOpen]);
 
 	// File attachments hook
 	const {
@@ -78,11 +65,10 @@ export function NeoChatPanel() {
 		try {
 			setSending(true);
 
-			// Get images if any (for future use when roomStore supports images)
+			// Get images if any (for future use)
 			// const images = getImagesForSend();
 
-			// Send message - roomStore.sendNeoMessage currently only accepts content
-			await roomStore.sendNeoMessage(content);
+			await lobbyManagerStore.sendMessage(content);
 
 			// Clear input and attachments
 			setInput('');
@@ -112,10 +98,8 @@ export function NeoChatPanel() {
 	);
 
 	const handleClose = () => {
-		neoChatOpenSignal.value = false;
+		lobbyManagerOpenSignal.value = false;
 	};
-
-	const currentModel = NEO_MODELS.find((m) => m.id === selectedModel) || NEO_MODELS[0];
 
 	return (
 		<>
@@ -139,93 +123,11 @@ export function NeoChatPanel() {
 				<div class="px-4 py-3 border-b border-dark-700 flex items-center justify-between">
 					<div class="flex items-center gap-3">
 						<div>
-							<h3 class="font-semibold text-gray-100">Neo</h3>
-							<p class="text-xs text-gray-400">AI Orchestrator</p>
+							<h3 class="font-semibold text-gray-100">Lobby Manager</h3>
+							<p class="text-xs text-gray-400">Cross-room AI assistant</p>
 						</div>
 					</div>
 					<div class="flex items-center gap-2">
-						{/* Thinking Mode Toggle */}
-						<button
-							onClick={() => setThinkingMode(!thinkingMode)}
-							title={thinkingMode ? 'Disable thinking mode' : 'Enable thinking mode'}
-							class={`p-1.5 rounded-md transition-colors ${
-								thinkingMode
-									? 'bg-purple-600/20 text-purple-400'
-									: 'text-gray-400 hover:text-gray-300'
-							}`}
-						>
-							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
-									d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
-								/>
-							</svg>
-						</button>
-
-						{/* Model Switcher */}
-						<div class="relative">
-							<button
-								onClick={() => setShowModelMenu(!showModelMenu)}
-								class="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-dark-800 text-gray-300 hover:bg-dark-700 transition-colors"
-							>
-								<span class="w-4 h-4 rounded-full bg-blue-600 flex items-center justify-center text-[10px] font-bold text-white">
-									{MODEL_FAMILY_ICONS[currentModel.family]}
-								</span>
-								<span class="hidden sm:inline">{currentModel.name.split(' ').pop()}</span>
-								<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M19 9l-7 7-7-7"
-									/>
-								</svg>
-							</button>
-
-							{showModelMenu && (
-								<div class="absolute right-0 top-full mt-1 w-48 bg-dark-800 border border-dark-700 rounded-lg shadow-lg z-50 py-1">
-									{NEO_MODELS.map((model) => (
-										<button
-											key={model.id}
-											onClick={() => {
-												setSelectedModel(model.id);
-												setShowModelMenu(false);
-											}}
-											class={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-dark-700 ${
-												selectedModel === model.id ? 'text-blue-400' : 'text-gray-300'
-											}`}
-										>
-											<span
-												class={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
-													model.family === 'opus'
-														? 'bg-purple-600'
-														: model.family === 'sonnet'
-															? 'bg-blue-600'
-															: model.family === 'haiku'
-																? 'bg-green-600'
-																: 'bg-orange-600'
-												} text-white`}
-											>
-												{MODEL_FAMILY_ICONS[model.family]}
-											</span>
-											<span>{model.name}</span>
-											{selectedModel === model.id && (
-												<svg class="w-4 h-4 ml-auto" fill="currentColor" viewBox="0 0 20 20">
-													<path
-														fill-rule="evenodd"
-														d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-														clip-rule="evenodd"
-													/>
-												</svg>
-											)}
-										</button>
-									))}
-								</div>
-							)}
-						</div>
-
 						<IconButton onClick={handleClose} title="Close panel" class="lg:hidden">
 							<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path
@@ -241,15 +143,19 @@ export function NeoChatPanel() {
 
 				{/* Messages */}
 				<div ref={messagesContainerRef} class="flex-1 overflow-y-auto p-4 space-y-4">
-					{messages.length === 0 ? (
+					{loading ? (
 						<div class="text-center text-gray-400 py-8">
-							<p>Start a conversation with Neo</p>
+							<p>Loading chat history...</p>
+						</div>
+					) : messages.length === 0 ? (
+						<div class="text-center text-gray-400 py-8">
+							<p>Start a conversation with Lobby Manager</p>
 							<p class="text-sm mt-2">
-								Ask Neo to create tasks, manage sessions, or help with your work.
+								Ask about rooms, sessions, or get help managing your workspaces.
 							</p>
 						</div>
 					) : (
-						messages.map((msg) => <NeoMessage key={msg.id} message={msg} />)
+						messages.map((msg) => <LobbyMessage key={msg.id} message={msg} />)
 					)}
 					<div ref={messagesEndRef} />
 				</div>
@@ -326,16 +232,7 @@ export function NeoChatPanel() {
 
 					{/* Context indicator */}
 					<div class="mt-2 flex items-center justify-between text-xs text-gray-500">
-						<span>
-							{thinkingMode ? (
-								<span class="flex items-center gap-1">
-									<span class="w-1.5 h-1.5 rounded-full bg-purple-400" />
-									Thinking enabled
-								</span>
-							) : (
-								''
-							)}
-						</span>
+						<span></span>
 						<span class="flex items-center gap-1">
 							{attachments.length > 0 && (
 								<span class="text-blue-400">{attachments.length} attachment(s)</span>
@@ -344,26 +241,18 @@ export function NeoChatPanel() {
 					</div>
 				</div>
 			</div>
-
-			{/* Click outside to close model menu */}
-			{showModelMenu && <div class="fixed inset-0 z-40" onClick={() => setShowModelMenu(false)} />}
 		</>
 	);
 }
 
-function NeoMessage({ message }: { message: NeoContextMessage }) {
+function LobbyMessage({ message }: { message: LobbyManagerMessage }) {
 	const isUser = message.role === 'user';
-	const isSystem = message.role === 'system';
 
 	return (
 		<div class={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
 			<div
 				class={`max-w-[80%] rounded-lg px-3 py-2 ${
-					isUser
-						? 'bg-blue-600 text-white'
-						: isSystem
-							? 'bg-dark-700 text-gray-300 text-xs'
-							: 'bg-dark-800 text-gray-100'
+					isUser ? 'bg-blue-600 text-white' : 'bg-dark-800 text-gray-100'
 				}`}
 			>
 				<p class="text-sm whitespace-pre-wrap">{message.content}</p>

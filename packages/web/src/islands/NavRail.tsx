@@ -2,6 +2,8 @@ import { navSectionSignal, type NavSection } from '../lib/signals.ts';
 import { navigateToChats, navigateToRooms, navigateToSettings } from '../lib/router.ts';
 import { NavIconButton } from '../components/ui/NavIconButton.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
+import { connectionState } from '../lib/state.ts';
+import { connectionManager } from '../lib/connection-manager.ts';
 
 export function NavRail() {
 	const navSection = navSectionSignal.value;
@@ -76,8 +78,11 @@ export function NavRail() {
 				</NavIconButton>
 			</nav>
 
-			{/* Bottom - Settings */}
-			<div class="mt-auto">
+			{/* Bottom - Daemon Status & Settings */}
+			<div class="mt-auto flex flex-col gap-1">
+				{/* Daemon Connection Status Indicator */}
+				<DaemonStatusIndicator />
+
 				<NavIconButton
 					active={navSection === 'settings'}
 					onClick={() => handleNavClick('settings')}
@@ -100,5 +105,88 @@ export function NavRail() {
 				</NavIconButton>
 			</div>
 		</div>
+	);
+}
+
+/**
+ * Daemon Status Indicator
+ *
+ * Shows connection status to the daemon with a colored dot:
+ * - Green + pulsing: connected
+ * - Yellow + pulse: connecting/reconnecting
+ * - Gray: disconnected
+ * - Red: error/failed
+ *
+ * Click to reconnect when not connected.
+ */
+function DaemonStatusIndicator() {
+	const state = connectionState.value;
+
+	// Determine status color and label
+	let dotColor: string;
+	let statusLabel: string;
+	let showPulse = false;
+
+	switch (state) {
+		case 'connected':
+			dotColor = 'bg-green-500';
+			statusLabel = 'Daemon: Connected';
+			showPulse = true;
+			break;
+		case 'connecting':
+			dotColor = 'bg-yellow-500';
+			statusLabel = 'Daemon: Connecting...';
+			showPulse = true;
+			break;
+		case 'reconnecting':
+			dotColor = 'bg-yellow-500';
+			statusLabel = 'Daemon: Reconnecting...';
+			showPulse = true;
+			break;
+		case 'disconnected':
+			dotColor = 'bg-gray-500';
+			statusLabel = 'Daemon: Offline';
+			break;
+		case 'error':
+		case 'failed':
+		default:
+			dotColor = 'bg-red-500';
+			statusLabel = 'Daemon: Error';
+			break;
+	}
+
+	const isConnected = state === 'connected';
+	const canReconnect = state === 'disconnected' || state === 'error' || state === 'failed';
+
+	const handleClick = () => {
+		if (canReconnect) {
+			connectionManager.reconnect();
+		}
+	};
+
+	return (
+		<button
+			onClick={handleClick}
+			disabled={!canReconnect}
+			aria-label={statusLabel}
+			aria-pressed={isConnected}
+			class={`
+				w-12 h-12 flex items-center justify-center rounded-lg
+				transition-colors
+				${canReconnect ? 'cursor-pointer hover:bg-dark-800' : 'cursor-default'}
+			`}
+			title={statusLabel}
+		>
+			<div class="relative flex items-center justify-center">
+				{/* Main dot */}
+				<span class={`w-3 h-3 ${dotColor} rounded-full block`} />
+				{/* Pulse animation for connected/connecting states */}
+				{showPulse && (
+					<span
+						class={`absolute inset-0 w-3 h-3 ${dotColor} rounded-full ${isConnected ? 'animate-ping opacity-75' : 'animate-pulse'}`}
+					/>
+				)}
+			</div>
+		</button>
 	);
 }

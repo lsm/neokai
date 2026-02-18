@@ -113,12 +113,13 @@ class LobbyStore {
 
 	/**
 	 * Fetch rooms and global status
+	 * Waits for WebSocket connection before fetching
 	 */
 	async fetchRooms(): Promise<void> {
 		try {
 			this.loading.value = true;
-			const hub = connectionManager.getHubIfConnected();
-			if (!hub) return;
+			// Wait for connection instead of returning early
+			const hub = await connectionManager.getHub();
 
 			const { rooms } = await hub.request<{ rooms: Room[] }>('room.list', {});
 			this.rooms.value = rooms;

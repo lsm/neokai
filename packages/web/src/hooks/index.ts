@@ -36,3 +36,8 @@ export {
 	type AttachmentWithMetadata,
 	type UseFileAttachmentsResult,
 } from './useFileAttachments';
+export {
+	useAutoScroll,
+	type UseAutoScrollOptions,
+	type UseAutoScrollResult,
+} from './useAutoScroll';

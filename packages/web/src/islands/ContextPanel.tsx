@@ -1,7 +1,6 @@
 import { useState } from 'preact/hooks';
 import { navSectionSignal, contextPanelOpenSignal } from '../lib/signals.ts';
-import { authStatus, connectionState, apiConnectionStatus } from '../lib/state.ts';
-import { connectionManager } from '../lib/connection-manager.ts';
+import { authStatus, connectionState } from '../lib/state.ts';
 import { createSession } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
 import { navigateToSession, navigateToRoom } from '../lib/router.ts';
@@ -11,6 +10,9 @@ import { Button } from '../components/ui/Button.tsx';
 import { SessionList } from './SessionList.tsx';
 import { RoomList } from './RoomList.tsx';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
+import { GeneralSettings } from '../components/settings/GeneralSettings.tsx';
+import { McpServersSettings } from '../components/settings/McpServersSettings.tsx';
+import { AboutSection } from '../components/settings/AboutSection.tsx';
 
 export function ContextPanel() {
 	const [creatingSession, setCreatingSession] = useState(false);
@@ -215,105 +217,14 @@ export function ContextPanel() {
 					</div>
 				)}
 				{navSection === 'settings' && (
-					<div class="flex-1 flex items-center justify-center p-6">
-						<div class="text-center">
-							<div class="text-4xl mb-3">⚙️</div>
-							<p class="text-sm text-gray-400">Settings</p>
-							<p class="text-xs text-gray-500 mt-1">Click the settings icon to configure</p>
+					<div class="flex-1 overflow-y-auto">
+						<div class="px-4">
+							<GeneralSettings />
+							<McpServersSettings />
+							<AboutSection />
 						</div>
 					</div>
 				)}
-
-				{/* Footer - Connection Status */}
-				<div
-					class={`p-4 border-t ${borderColors.ui.default} space-y-2`}
-					style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
-				>
-					{/* Daemon Connection */}
-					<div class="flex items-center justify-between text-xs">
-						<span class="text-gray-400">Daemon</span>
-						<div class="flex items-center gap-2">
-							{connectionState.value === 'connected' && (
-								<>
-									<div class="relative">
-										<span class="w-2 h-2 bg-green-500 rounded-full block" />
-										<span class="absolute inset-0 w-2 h-2 bg-green-500 rounded-full animate-ping opacity-75" />
-									</div>
-									<span class="text-gray-300">Connected</span>
-								</>
-							)}
-							{connectionState.value === 'connecting' && (
-								<>
-									<div class="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
-									<span class="text-yellow-300">Connecting...</span>
-								</>
-							)}
-							{connectionState.value === 'reconnecting' && (
-								<>
-									<div class="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
-									<span class="text-yellow-300">Reconnecting...</span>
-								</>
-							)}
-							{connectionState.value === 'disconnected' && (
-								<>
-									<div class="w-2 h-2 bg-gray-500 rounded-full" />
-									<span class="text-gray-500">Offline</span>
-								</>
-							)}
-							{(connectionState.value === 'error' || connectionState.value === 'failed') && (
-								<>
-									<div class="w-2 h-2 bg-red-500 rounded-full" />
-									<span class="text-red-400">Error</span>
-								</>
-							)}
-						</div>
-					</div>
-
-					{/* Reconnect Button */}
-					{(connectionState.value === 'disconnected' ||
-						connectionState.value === 'error' ||
-						connectionState.value === 'failed') && (
-						<button
-							onClick={() => connectionManager.reconnect()}
-							class="w-full px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded-md transition-colors"
-						>
-							Reconnect
-						</button>
-					)}
-
-					{/* API Connection */}
-					<div class="flex items-center justify-between text-xs">
-						<span class="text-gray-400">Claude API</span>
-						<div class="flex items-center gap-2">
-							{apiConnectionStatus.value?.status === 'connected' && (
-								<>
-									<div class="relative">
-										<span class="w-2 h-2 bg-green-500 rounded-full block" />
-									</div>
-									<span class="text-gray-300">Connected</span>
-								</>
-							)}
-							{apiConnectionStatus.value?.status === 'degraded' && (
-								<>
-									<div class="w-2 h-2 bg-yellow-500 rounded-full" />
-									<span class="text-yellow-300">Degraded</span>
-								</>
-							)}
-							{apiConnectionStatus.value?.status === 'disconnected' && (
-								<>
-									<div class="w-2 h-2 bg-red-500 rounded-full" />
-									<span class="text-red-300">Offline</span>
-								</>
-							)}
-							{!apiConnectionStatus.value && (
-								<>
-									<div class="w-2 h-2 bg-gray-500 rounded-full" />
-									<span class="text-gray-500">Unknown</span>
-								</>
-							)}
-						</div>
-					</div>
-				</div>
 			</div>
 		</>
 	);
