@@ -7,6 +7,10 @@
  * - room.get - Get room details
  * - room.update - Update room
  * - room.archive - Archive room
+ * - room.updateContext - Update room context (background/instructions)
+ * - room.getContextVersions - List context version history
+ * - room.getContextVersion - Get specific context version
+ * - room.rollbackContext - Rollback to a previous context version
  * - room.overview - Get room overview with related data
  * - room.status - Get status for a specific room
  * - room.createPair - Create a manager+worker session pair
@@ -153,6 +157,114 @@ export function setupRoomHandlers(
 			.catch(() => {
 				// Event emission error - non-critical, continue
 			});
+
+		return { room };
+	});
+
+	// room.updateContext - Update room background and instructions
+	messageHub.onRequest('room.updateContext', async (data) => {
+		const params = data as {
+			roomId: string;
+			background?: string;
+			instructions?: string;
+		};
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+
+		const room = roomManager.getRoom(params.roomId);
+		if (!room) {
+			throw new Error('Room not found');
+		}
+
+		const updated = roomManager.updateRoom(params.roomId, {
+			background: params.background,
+			instructions: params.instructions,
+		});
+
+		// Emit event for room agents to react
+		await daemonHub.emit('room.contextUpdated', {
+			sessionId: `room:${params.roomId}`,
+			roomId: params.roomId,
+			changes: {
+				background: params.background,
+				instructions: params.instructions,
+			},
+		});
+
+		return { room: updated };
+	});
+
+	// room.getContextVersions - List version history for room context
+	messageHub.onRequest('room.getContextVersions', async (data) => {
+		const params = data as {
+			roomId: string;
+			limit?: number;
+		};
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+
+		const versions = roomManager.getContextVersions(params.roomId, params.limit);
+		return { versions };
+	});
+
+	// room.getContextVersion - Get a specific context version
+	messageHub.onRequest('room.getContextVersion', async (data) => {
+		const params = data as {
+			roomId: string;
+			version: number;
+		};
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (params.version === undefined || params.version === null) {
+			throw new Error('Version number is required');
+		}
+
+		const versionRecord = roomManager.getContextVersion(params.roomId, params.version);
+		if (!versionRecord) {
+			throw new Error(`Version ${params.version} not found for room ${params.roomId}`);
+		}
+
+		return { version: versionRecord };
+	});
+
+	// room.rollbackContext - Rollback room context to a previous version
+	messageHub.onRequest('room.rollbackContext', async (data) => {
+		const params = data as {
+			roomId: string;
+			version: number;
+			changedBy?: 'human' | 'agent';
+		};
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (params.version === undefined || params.version === null) {
+			throw new Error('Version number is required');
+		}
+
+		const room = roomManager.rollbackContext(
+			params.roomId,
+			params.version,
+			params.changedBy ?? 'human'
+		);
+
+		if (!room) {
+			throw new Error(`Failed to rollback room ${params.roomId} to version ${params.version}`);
+		}
+
+		// Emit event for room agents to react
+		await daemonHub.emit('room.contextRolledBack', {
+			sessionId: `room:${params.roomId}`,
+			roomId: params.roomId,
+			rolledBackToVersion: params.version,
+			newVersion: room.contextVersion ?? 0,
+		});
 
 		return { room };
 	});

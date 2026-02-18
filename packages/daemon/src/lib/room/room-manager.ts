@@ -22,7 +22,9 @@ import type {
 	UpdateRoomParams,
 	RoomOverview,
 	TaskSummary,
+	ContextChangedBy,
 } from '@neokai/shared';
+import type { RoomContextVersion } from '@neokai/shared';
 
 export class RoomManager {
 	private db: BunDatabase;
@@ -207,5 +209,26 @@ export class RoomManager {
 			totalActiveTasks: roomStatuses.reduce((sum, r) => sum + (r?.activeTaskCount ?? 0), 0),
 			totalMemories: roomStatuses.reduce((sum, r) => sum + (r?.memoryCount ?? 0), 0),
 		};
+	}
+
+	/**
+	 * Get context version history for a room
+	 */
+	getContextVersions(roomId: string, limit?: number): RoomContextVersion[] {
+		return this.roomRepo.getContextVersions(roomId, limit);
+	}
+
+	/**
+	 * Get a specific context version for a room
+	 */
+	getContextVersion(roomId: string, version: number): RoomContextVersion | null {
+		return this.roomRepo.getContextVersion(roomId, version);
+	}
+
+	/**
+	 * Rollback room context to a previous version
+	 */
+	rollbackContext(roomId: string, targetVersion: number, changedBy: ContextChangedBy): Room | null {
+		return this.roomRepo.rollbackContext(roomId, targetVersion, changedBy);
 	}
 }

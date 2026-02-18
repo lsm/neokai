@@ -7,11 +7,26 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
-import type { Room, CreateRoomParams, UpdateRoomParams } from '@neokai/shared';
+import type { Room, CreateRoomParams, UpdateRoomParams, ContextChangedBy } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
+import { RoomContextVersionRepository } from './room-context-version-repository';
+
+/**
+ * Parameters for updating room context with version tracking
+ */
+export interface UpdateContextParams {
+	background?: string;
+	instructions?: string;
+	changedBy: ContextChangedBy;
+	changeReason?: string;
+}
 
 export class RoomRepository {
-	constructor(private db: BunDatabase) {}
+	private contextVersionRepo: RoomContextVersionRepository;
+
+	constructor(private db: BunDatabase) {
+		this.contextVersionRepo = new RoomContextVersionRepository(db);
+	}
 
 	/**
 	 * Create a new room
@@ -70,6 +85,7 @@ export class RoomRepository {
 
 	/**
 	 * Update a room with partial updates
+	 * Note: For context updates with version tracking, use updateContext instead
 	 */
 	updateRoom(id: string, params: UpdateRoomParams): Room | null {
 		const fields: string[] = [];
@@ -95,6 +111,14 @@ export class RoomRepository {
 			fields.push('default_model = ?');
 			values.push(params.defaultModel ?? null);
 		}
+		if (params.background !== undefined) {
+			fields.push('background_context = ?');
+			values.push(params.background ?? null);
+		}
+		if (params.instructions !== undefined) {
+			fields.push('instructions = ?');
+			values.push(params.instructions ?? null);
+		}
 
 		if (fields.length > 0) {
 			fields.push('updated_at = ?');
@@ -105,6 +129,116 @@ export class RoomRepository {
 		}
 
 		return this.getRoom(id);
+	}
+
+	/**
+	 * Update room context with version tracking
+	 * Creates a new version record each time context changes
+	 */
+	updateContext(id: string, params: UpdateContextParams): Room | null {
+		const tx = this.db.transaction(() => {
+			const room = this.getRoom(id);
+			if (!room) return null;
+
+			const fields: string[] = [];
+			const values: SQLiteValue[] = [];
+
+			// Track if context is actually changing
+			let contextChanged = false;
+
+			if (params.background !== undefined && params.background !== room.background) {
+				fields.push('background_context = ?');
+				values.push(params.background ?? null);
+				contextChanged = true;
+			}
+			if (params.instructions !== undefined && params.instructions !== room.instructions) {
+				fields.push('instructions = ?');
+				values.push(params.instructions ?? null);
+				contextChanged = true;
+			}
+
+			if (contextChanged) {
+				// Create a new version record
+				const version = this.contextVersionRepo.createVersion({
+					roomId: id,
+					background: params.background ?? room.background,
+					instructions: params.instructions ?? room.instructions,
+					changedBy: params.changedBy,
+					changeReason: params.changeReason,
+				});
+
+				// Increment context version on room
+				fields.push('context_version = ?');
+				values.push(version.version);
+			}
+
+			if (fields.length > 0) {
+				fields.push('updated_at = ?');
+				values.push(Date.now());
+				values.push(id);
+				const stmt = this.db.prepare(`UPDATE rooms SET ${fields.join(', ')} WHERE id = ?`);
+				stmt.run(...values);
+			}
+
+			return this.getRoom(id);
+		});
+
+		return tx() as Room | null;
+	}
+
+	/**
+	 * Rollback room context to a specific version
+	 */
+	rollbackContext(id: string, targetVersion: number, changedBy: ContextChangedBy): Room | null {
+		const tx = this.db.transaction(() => {
+			const room = this.getRoom(id);
+			if (!room) return null;
+
+			// Get the target version
+			const targetContextVersion = this.contextVersionRepo.getVersion(id, targetVersion);
+			if (!targetContextVersion) {
+				throw new Error(`Version ${targetVersion} not found for room ${id}`);
+			}
+
+			// Create a new version with the old context (this becomes the new current)
+			const newVersion = this.contextVersionRepo.createVersion({
+				roomId: id,
+				background: targetContextVersion.background,
+				instructions: targetContextVersion.instructions,
+				changedBy,
+				changeReason: `Rollback to version ${targetVersion}`,
+			});
+
+			// Update room with the rolled-back context
+			const stmt = this.db.prepare(
+				`UPDATE rooms SET background_context = ?, instructions = ?, context_version = ?, updated_at = ? WHERE id = ?`
+			);
+			stmt.run(
+				targetContextVersion.background ?? null,
+				targetContextVersion.instructions ?? null,
+				newVersion.version,
+				Date.now(),
+				id
+			);
+
+			return this.getRoom(id);
+		});
+
+		return tx() as Room | null;
+	}
+
+	/**
+	 * Get context version history for a room
+	 */
+	getContextVersions(roomId: string, limit?: number) {
+		return this.contextVersionRepo.getVersions(roomId, limit);
+	}
+
+	/**
+	 * Get a specific context version for a room
+	 */
+	getContextVersion(roomId: string, version: number) {
+		return this.contextVersionRepo.getVersion(roomId, version);
 	}
 
 	/**
@@ -240,6 +374,9 @@ export class RoomRepository {
 			sessionIds: JSON.parse(row.session_ids as string) as string[],
 			status: row.status as 'active' | 'archived',
 			contextId: (row.context_id as string | null) ?? undefined,
+			background: (row.background_context as string | null) ?? undefined,
+			instructions: (row.instructions as string | null) ?? undefined,
+			contextVersion: (row.context_version as number | null) ?? undefined,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,
 		};

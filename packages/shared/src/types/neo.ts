@@ -37,6 +37,12 @@ export interface Room {
 	status: RoomStatus;
 	/** ID of the context for this room */
 	contextId?: string;
+	/** Background context for the room - describes project, goals, constraints */
+	background?: string;
+	/** Custom instructions for how the room agent should behave */
+	instructions?: string;
+	/** Version of the room context (incremented on changes) */
+	contextVersion?: number;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Last update timestamp (milliseconds since epoch) */
@@ -104,6 +110,37 @@ export interface UpdateRoomParams {
 	allowedPaths?: string[];
 	defaultPath?: string;
 	defaultModel?: string;
+	/** Background context for the room */
+	background?: string;
+	/** Custom instructions for the room agent */
+	instructions?: string;
+}
+
+/**
+ * Who made the context change
+ */
+export type ContextChangedBy = 'human' | 'agent';
+
+/**
+ * A versioned snapshot of room context
+ */
+export interface RoomContextVersion {
+	/** Unique identifier */
+	id: string;
+	/** Room this version belongs to */
+	roomId: string;
+	/** Version number (sequential per room) */
+	version: number;
+	/** Background context text */
+	background?: string;
+	/** Instructions context text */
+	instructions?: string;
+	/** Who made the change */
+	changedBy: ContextChangedBy;
+	/** Optional reason for the change */
+	changeReason?: string;
+	/** When this version was created */
+	createdAt: number;
 }
 
 // ============================================================================
@@ -599,6 +636,234 @@ export interface RoomAgentState {
 	lastError?: string;
 	/** Queue of planned actions */
 	pendingActions: string[];
+}
+
+/**
+ * Room agent session metadata (stored in sessions table)
+ */
+export interface RoomAgentSessionMetadata {
+	sessionType: 'room';
+	roomId: string;
+	lifecycleState: RoomAgentLifecycleState;
+	waitingFor?: 'review' | 'escalation' | 'question';
+	waitingContext?: {
+		taskId?: string;
+		reason?: string;
+		questionId?: string;
+	};
+}
+
+/**
+ * Context passed to room agent for planning decisions
+ */
+export interface RoomAgentPlanningContext {
+	type: 'idle_check' | 'event_triggered' | 'goal_review' | 'context_update';
+	activeGoals: RoomGoal[];
+	pendingTasks: NeoTask[];
+	inProgressTasks: NeoTask[];
+	capacity: number;
+	eventContext?: {
+		type: 'github' | 'user_message' | 'timer' | 'job_triggered';
+		data: unknown;
+	};
+	timestamp: number;
+}
+
+/**
+ * Context for reviewing completed work
+ */
+export interface RoomAgentReviewContext {
+	taskId: string;
+	summary: string;
+	filesChanged?: string[];
+	goalProgress?: {
+		goalId: string;
+		previousProgress: number;
+		newProgress: number;
+	}[];
+	timestamp: number;
+}
+
+/**
+ * Human input types for room agent
+ */
+export type RoomAgentHumanInput =
+	| { type: 'review_response'; taskId: string; response: string; approved: boolean }
+	| { type: 'escalation_response'; escalationId: string; response: string }
+	| { type: 'question_response'; questionId: string; responses: Record<string, string | string[]> }
+	| { type: 'message'; content: string };
+
+/**
+ * Room agent waiting context
+ */
+export interface RoomAgentWaitingContext {
+	type: 'review' | 'escalation' | 'question';
+	taskId?: string;
+	escalationId?: string;
+	questionId?: string;
+	reason?: string;
+	since: number;
+}
+
+/**
+ * Room agent configuration
+ */
+export interface RoomAgentConfig {
+	maxConcurrentPairs: number;
+	idleCheckIntervalMs: number;
+	planningTimeoutMs: number;
+	maxErrorCount: number;
+	autoStartOnRoomCreate: boolean;
+}
+
+export const DEFAULT_ROOM_AGENT_CONFIG: RoomAgentConfig = {
+	maxConcurrentPairs: 3,
+	idleCheckIntervalMs: 60000, // 1 minute
+	planningTimeoutMs: 300000, // 5 minutes
+	maxErrorCount: 5,
+	autoStartOnRoomCreate: false,
+};
+
+// ============================================================================
+// Q&A Round Types
+// ============================================================================
+
+/**
+ * Q&A Round status
+ */
+export type QARoundStatus = 'in_progress' | 'completed' | 'cancelled';
+
+/**
+ * A Q&A round for context refinement
+ */
+export interface RoomQARound {
+	/** Unique identifier */
+	id: string;
+	/** Room this Q&A round belongs to */
+	roomId: string;
+	/** What triggered this Q&A round */
+	trigger: 'room_created' | 'context_updated' | 'goal_created';
+	/** Current status */
+	status: QARoundStatus;
+	/** Questions in this round */
+	questions: QAQuestion[];
+	/** When the round started */
+	startedAt: number;
+	/** When the round completed */
+	completedAt?: number;
+	/** Summary of the Q&A round */
+	summary?: string;
+}
+
+/**
+ * A question in a Q&A round
+ */
+export interface QAQuestion {
+	/** Unique identifier */
+	id: string;
+	/** The question text */
+	question: string;
+	/** The answer (if answered) */
+	answer?: string;
+	/** When the question was asked */
+	askedAt: number;
+	/** When the question was answered */
+	answeredAt?: number;
+}
+
+/**
+ * Parameters for starting a Q&A round
+ */
+export interface StartQARoundParams {
+	roomId: string;
+	trigger: 'room_created' | 'context_updated' | 'goal_created';
+}
+
+/**
+ * Parameters for answering a question
+ */
+export interface AnswerQuestionParams {
+	roomId: string;
+	roundId: string;
+	questionId: string;
+	answer: string;
+}
+
+// ============================================================================
+// Proposal Types
+// ============================================================================
+
+/**
+ * Types of proposals an agent can make
+ */
+export type ProposalType =
+	| 'file_change'
+	| 'context_update'
+	| 'goal_create'
+	| 'goal_modify'
+	| 'task_create'
+	| 'task_modify'
+	| 'config_change'
+	| 'custom';
+
+/**
+ * Status of a proposal
+ */
+export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn' | 'applied';
+
+/**
+ * A proposal from a room agent that requires human approval
+ * Part of the human-in-the-loop design for sensitive operations
+ */
+export interface RoomProposal {
+	/** Unique identifier */
+	id: string;
+	/** Room this proposal belongs to */
+	roomId: string;
+	/** Session that created this proposal */
+	sessionId: string;
+	/** Type of proposal */
+	type: ProposalType;
+	/** Short title describing the proposal */
+	title: string;
+	/** Detailed description of what will be done */
+	description: string;
+	/** The proposed changes as structured data */
+	proposedChanges: Record<string, unknown>;
+	/** Why this change is being proposed */
+	reasoning: string;
+	/** Current status */
+	status: ProposalStatus;
+	/** Who approved/rejected (if applicable) */
+	actedBy?: string;
+	/** Response/reason for approval/rejection */
+	actionResponse?: string;
+	/** Creation timestamp (milliseconds since epoch) */
+	createdAt: number;
+	/** Action timestamp (milliseconds since epoch) */
+	actedAt?: number;
+}
+
+/**
+ * Parameters for creating a new proposal
+ */
+export interface CreateProposalParams {
+	roomId: string;
+	sessionId: string;
+	type: ProposalType;
+	title: string;
+	description: string;
+	proposedChanges: Record<string, unknown>;
+	reasoning: string;
+}
+
+/**
+ * Filter options for querying proposals
+ */
+export interface ProposalFilter {
+	status?: ProposalStatus;
+	type?: ProposalType;
+	sessionId?: string;
 }
 
 // ============================================================================
