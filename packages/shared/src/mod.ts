@@ -15,6 +15,7 @@ export * from './models.ts';
 export * from './types/settings.ts';
 export * from './types/rewind.ts';
 export * from './types/neo.ts';
+export * from './types/github.ts';
 
 // Unified logger
 export {

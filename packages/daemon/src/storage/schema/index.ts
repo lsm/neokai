@@ -214,6 +214,45 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
+	// GitHub integration tables
+
+	// Room GitHub mappings - maps repositories to rooms
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS room_github_mappings (
+        id TEXT PRIMARY KEY,
+        room_id TEXT NOT NULL,
+        repositories TEXT NOT NULL,
+        priority INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+      )
+    `);
+
+	// Inbox items - GitHub events awaiting routing
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS inbox_items (
+        id TEXT PRIMARY KEY,
+        source TEXT NOT NULL CHECK(source IN ('github_issue', 'github_comment', 'github_pr')),
+        repository TEXT NOT NULL,
+        issue_number INTEGER NOT NULL,
+        comment_id TEXT,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        author TEXT NOT NULL,
+        author_permission TEXT,
+        labels TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'routed', 'dismissed', 'blocked')),
+        routed_to_room_id TEXT,
+        routed_at INTEGER,
+        security_check TEXT NOT NULL,
+        raw_event TEXT NOT NULL,
+        received_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (routed_to_room_id) REFERENCES rooms(id) ON DELETE SET NULL
+      )
+    `);
+
 	// Create indexes
 	createIndexes(db);
 }
@@ -238,5 +277,14 @@ function createIndexes(db: BunDatabase): void {
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_context_messages_context ON context_messages(context_id)`
+	);
+
+	// GitHub integration indexes
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_room_github_mappings_room ON room_github_mappings(room_id)`
+	);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_inbox_items_status ON inbox_items(status)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_inbox_items_repository ON inbox_items(repository, issue_number)`
 	);
 }

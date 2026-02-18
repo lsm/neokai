@@ -258,6 +258,63 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 			timestamp: string;
 		};
 	};
+
+	// GitHub integration events
+	'github.roomMappingUpdated': {
+		sessionId: string;
+		roomId: string;
+		mapping: import('@neokai/shared').RoomGitHubMapping;
+	};
+	'github.roomMappingDeleted': {
+		sessionId: string;
+		roomId: string;
+	};
+	'github.inboxItemRouted': {
+		sessionId: string;
+		item: import('@neokai/shared').InboxItem;
+		roomId: string;
+	};
+	'github.inboxItemDismissed': {
+		sessionId: string;
+		itemId: string;
+	};
+	'github.filterConfigUpdated': {
+		sessionId: string;
+		repository?: string;
+		config: import('@neokai/shared').GitHubFilterConfig;
+	};
+	'github.eventReceived': {
+		sessionId: string;
+		event: import('./github/types').GitHubEvent;
+	};
+	'github.eventFiltered': {
+		sessionId: string;
+		eventId: string;
+		reason?: string;
+	};
+	'github.eventSecurityFailed': {
+		sessionId: string;
+		eventId: string;
+		securityResult: import('@neokai/shared').SecurityCheckResult;
+	};
+	'github.eventRouted': {
+		sessionId: string;
+		eventId: string;
+		roomId: string;
+		confidence: 'high' | 'medium' | 'low';
+		reason: string;
+	};
+	'github.inboxItemAdded': {
+		sessionId: string;
+		item: import('@neokai/shared').InboxItem;
+		reason: string;
+	};
+	'github.eventError': {
+		sessionId: string;
+		eventId: string;
+		error: string;
+		inboxItemId: string;
+	};
 }
 
 /**
