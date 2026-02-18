@@ -35,8 +35,8 @@ test.describe('Desktop 3-Column Layout (>=768px)', () => {
 	});
 
 	test('should display NavRail with correct width and structure', async ({ page }) => {
-		// NavRail should be visible on desktop (hidden on mobile with md:hidden)
-		const navRail = page.locator('.hidden.md\\:flex').first();
+		// NavRail should be visible on desktop (uses slide-in animation: -translate-x-full md:translate-x-0)
+		const navRail = page.locator('.-translate-x-full.md\\:translate-x-0').first();
 		await expect(navRail).toBeVisible();
 
 		// Verify NavRail has w-16 class (64px width)
@@ -371,13 +371,16 @@ test.describe
 		});
 
 		test('should hide NavRail on mobile', async ({ page }) => {
-			// NavRail uses class "hidden md:flex" so it should be hidden on mobile
-			// Check that the Chats button in NavRail is NOT visible
+			// NavRail uses slide-in animation "-translate-x-full md:translate-x-0" so it's visually hidden on mobile
+			// Check that the Chats button is positioned off-screen (to the left of viewport)
 			const chatsButton = page.getByRole('button', { name: 'Chats', exact: true });
 
-			// The button might exist in DOM but not be visible
-			const isVisible = await chatsButton.isVisible().catch(() => false);
-			expect(isVisible).toBe(false);
+			// The button is transformed off-screen, so its bounding box should be mostly outside viewport
+			const boundingBox = await chatsButton.boundingBox();
+			// If NavRail is hidden via -translate-x-full, the button should be positioned to the left of viewport
+			// (boundingBox.x should be negative or the right edge should be <= 0)
+			expect(boundingBox).not.toBeNull();
+			expect(boundingBox!.x + boundingBox!.width).toBeLessThanOrEqual(0);
 		});
 
 		// Note: This test is skipped because the drawer state can persist across tests due to signal state
@@ -587,16 +590,18 @@ test.describe('Responsive Layout Transition', () => {
 		await page.setViewportSize(MOBILE_VIEWPORT);
 		await page.waitForTimeout(300);
 
-		// NavRail should be hidden
+		// NavRail should be hidden (via -translate-x-full transform)
+		// The button is transformed off-screen, so its bounding box should be outside viewport
 		const chatsButtonMobile = page.getByRole('button', { name: 'Chats', exact: true });
-		let isVisible = await chatsButtonMobile.isVisible().catch(() => false);
-		expect(isVisible).toBe(false);
+		let boundingBox = await chatsButtonMobile.boundingBox();
+		expect(boundingBox).not.toBeNull();
+		expect(boundingBox!.x + boundingBox!.width).toBeLessThanOrEqual(0);
 
 		// Resize to desktop
 		await page.setViewportSize(DESKTOP_VIEWPORT);
 		await page.waitForTimeout(300);
 
-		// NavRail should now be visible
+		// NavRail should now be visible (md:translate-x-0 makes it visible on desktop)
 		await expect(chatsButtonMobile).toBeVisible({ timeout: 5000 });
 	});
 
@@ -605,7 +610,7 @@ test.describe('Responsive Layout Transition', () => {
 		await page.setViewportSize(DESKTOP_VIEWPORT);
 		await page.waitForTimeout(300);
 
-		// NavRail should be visible
+		// NavRail should be visible (md:translate-x-0)
 		const chatsButton = page.getByRole('button', { name: 'Chats', exact: true });
 		await expect(chatsButton).toBeVisible();
 
@@ -613,8 +618,10 @@ test.describe('Responsive Layout Transition', () => {
 		await page.setViewportSize(MOBILE_VIEWPORT);
 		await page.waitForTimeout(300);
 
-		// NavRail should now be hidden
-		const isVisible = await chatsButton.isVisible().catch(() => false);
-		expect(isVisible).toBe(false);
+		// NavRail should now be hidden (via -translate-x-full transform)
+		// The button is transformed off-screen, so its bounding box should be outside viewport
+		const boundingBox = await chatsButton.boundingBox();
+		expect(boundingBox).not.toBeNull();
+		expect(boundingBox!.x + boundingBox!.width).toBeLessThanOrEqual(0);
 	});
 });

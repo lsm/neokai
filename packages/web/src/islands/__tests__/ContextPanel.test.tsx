@@ -37,6 +37,7 @@ let mockRoomsSignal: ReturnType<typeof signal<any[]>>;
 let mockSessionsSignal: ReturnType<typeof signal<any[]>>;
 let mockHasArchivedSessionsSignal: ReturnType<typeof signal<boolean>>;
 let mockGlobalSettingsSignal: ReturnType<typeof signal<any>>;
+let mockSettingsSectionSignal: ReturnType<typeof signal<string>>;
 
 // Mock the signals module
 vi.mock('../../lib/signals.ts', () => ({
@@ -45,6 +46,9 @@ vi.mock('../../lib/signals.ts', () => ({
 	},
 	get contextPanelOpenSignal() {
 		return mockContextPanelOpenSignal;
+	},
+	get settingsSectionSignal() {
+		return mockSettingsSectionSignal;
 	},
 }));
 
@@ -131,6 +135,7 @@ mockRoomsSignal = signal<any[]>([]);
 mockSessionsSignal = signal<any[]>([]);
 mockHasArchivedSessionsSignal = signal<boolean>(false);
 mockGlobalSettingsSignal = signal<any>({ showArchived: false });
+mockSettingsSectionSignal = signal<string>('general');
 
 import { ContextPanel } from '../ContextPanel';
 
@@ -147,6 +152,7 @@ describe('ContextPanel', () => {
 		mockSessionsSignal.value = [];
 		mockHasArchivedSessionsSignal.value = false;
 		mockGlobalSettingsSignal.value = { showArchived: false };
+		mockSettingsSectionSignal.value = 'general';
 	});
 
 	afterEach(() => {
@@ -181,15 +187,15 @@ describe('ContextPanel', () => {
 			expect(container.textContent).toContain('Organize rooms into projects');
 		});
 
-		it('should render settings content when navSection is settings', () => {
+		it('should render settings navigation when navSection is settings', () => {
 			mockNavSectionSignal.value = 'settings';
 
 			render(<ContextPanel />);
 
-			// Should render the settings components
-			expect(screen.getByTestId('general-settings')).toBeTruthy();
-			expect(screen.getByTestId('mcp-servers-settings')).toBeTruthy();
-			expect(screen.getByTestId('about-section')).toBeTruthy();
+			// Should render the settings navigation buttons
+			expect(screen.getByRole('button', { name: 'General' })).toBeTruthy();
+			expect(screen.getByRole('button', { name: 'MCP Servers' })).toBeTruthy();
+			expect(screen.getByRole('button', { name: 'About' })).toBeTruthy();
 		});
 	});
 

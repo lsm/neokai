@@ -1,18 +1,79 @@
 import { useState } from 'preact/hooks';
-import { navSectionSignal, contextPanelOpenSignal } from '../lib/signals.ts';
+import {
+	navSectionSignal,
+	contextPanelOpenSignal,
+	settingsSectionSignal,
+	type SettingsSection,
+} from '../lib/signals.ts';
 import { authStatus, connectionState } from '../lib/state.ts';
 import { createSession } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
 import { navigateToSession, navigateToRoom } from '../lib/router.ts';
 import { lobbyStore } from '../lib/lobby-store.ts';
 import { borderColors } from '../lib/design-tokens.ts';
+import { cn } from '../lib/utils.ts';
 import { Button } from '../components/ui/Button.tsx';
 import { SessionList } from './SessionList.tsx';
 import { RoomList } from './RoomList.tsx';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
-import { GeneralSettings } from '../components/settings/GeneralSettings.tsx';
-import { McpServersSettings } from '../components/settings/McpServersSettings.tsx';
-import { AboutSection } from '../components/settings/AboutSection.tsx';
+
+// Settings section configuration
+const SETTINGS_SECTIONS: Array<{
+	id: SettingsSection;
+	label: string;
+	icon: string;
+}> = [
+	{ id: 'general', label: 'General', icon: 'settings' },
+	{ id: 'mcp-servers', label: 'MCP Servers', icon: 'server' },
+	{ id: 'about', label: 'About', icon: 'info' },
+];
+
+// Helper component for section icons
+function SectionIcon({ type }: { type: string }) {
+	switch (type) {
+		case 'settings':
+			return (
+				<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={2}
+						d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+					/>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={2}
+						d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+					/>
+				</svg>
+			);
+		case 'server':
+			return (
+				<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={2}
+						d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"
+					/>
+				</svg>
+			);
+		case 'info':
+			return (
+				<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={2}
+						d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+					/>
+				</svg>
+			);
+		default:
+			return null;
+	}
+}
 
 export function ContextPanel() {
 	const [creatingSession, setCreatingSession] = useState(false);
@@ -20,6 +81,7 @@ export function ContextPanel() {
 
 	const navSection = navSectionSignal.value;
 	const isPanelOpen = contextPanelOpenSignal.value;
+	const activeSettingsSection = settingsSectionSignal.value;
 
 	// Section config
 	const sectionConfig = {
@@ -217,11 +279,45 @@ export function ContextPanel() {
 					</div>
 				)}
 				{navSection === 'settings' && (
-					<div class="flex-1 overflow-y-auto">
-						<div class="px-4">
-							<GeneralSettings />
-							<McpServersSettings />
-							<AboutSection />
+					<div class="flex-1 flex flex-col overflow-hidden">
+						{/* Settings navigation list */}
+						<div class="flex-1 overflow-y-auto">
+							<nav class="py-2">
+								{SETTINGS_SECTIONS.map((section) => {
+									const isActive = activeSettingsSection === section.id;
+									return (
+										<button
+											key={section.id}
+											onClick={() => (settingsSectionSignal.value = section.id)}
+											class={cn(
+												'w-full px-4 py-3 flex items-center gap-3 text-left',
+												'transition-colors duration-150',
+												isActive
+													? 'bg-dark-800 text-gray-100'
+													: 'text-gray-400 hover:text-gray-200 hover:bg-dark-800/50'
+											)}
+										>
+											<SectionIcon type={section.icon} />
+											<span class="truncate">{section.label}</span>
+											{isActive && (
+												<svg
+													class="w-4 h-4 ml-auto text-blue-400"
+													fill="none"
+													viewBox="0 0 24 24"
+													stroke="currentColor"
+												>
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														stroke-width={2}
+														d="M9 5l7 7-7 7"
+													/>
+												</svg>
+											)}
+										</button>
+									);
+								})}
+							</nav>
 						</div>
 					</div>
 				)}

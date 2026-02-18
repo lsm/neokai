@@ -8,7 +8,7 @@ import ToastContainer from './islands/ToastContainer.tsx';
 import { ConnectionOverlay } from './components/ConnectionOverlay.tsx';
 import { connectionManager } from './lib/connection-manager.ts';
 import { initializeApplicationState } from './lib/state.ts';
-import { currentSessionIdSignal, currentRoomIdSignal } from './lib/signals.ts';
+import { currentSessionIdSignal, currentRoomIdSignal, navRailOpenSignal } from './lib/signals.ts';
 import { initSessionStatusTracking } from './lib/session-status.ts';
 import { globalStore } from './lib/global-store.ts';
 import { sessionStore } from './lib/session-store.ts';
@@ -86,6 +86,25 @@ export function App() {
 	return (
 		<>
 			<div class="flex h-dvh overflow-hidden bg-dark-950 relative" style={{ height: '100dvh' }}>
+				{/* Mobile hamburger menu button - only show when not in a session (lobby/rooms view) */}
+				{!currentSessionIdSignal.value && (
+					<button
+						onClick={() => (navRailOpenSignal.value = true)}
+						class="fixed top-4 left-4 z-30 md:hidden p-2 rounded-lg bg-dark-900 hover:bg-dark-800 text-gray-400 hover:text-gray-100 transition-colors"
+						title="Open navigation"
+						aria-label="Open navigation menu"
+					>
+						<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M4 6h16M4 12h16M4 18h16"
+							/>
+						</svg>
+					</button>
+				)}
+
 				{/* Navigation Rail */}
 				<NavRail />
 
