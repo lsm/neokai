@@ -69,17 +69,15 @@ export interface RPCHandlerDependencies {
 const log = new Logger('rpc-handlers');
 
 /**
- * Result of setting up RPC handlers
+ * Cleanup function type for RPC handlers
  */
-export interface RPCHandlerResult {
-	/** Lobby agent service for lifecycle management */
-	lobbyAgentService?: LobbyAgentService;
-}
+export type RPCHandlerCleanup = () => void;
 
 /**
  * Register all RPC handlers on MessageHub
+ * Returns a cleanup function that should be called to stop background services
  */
-export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerResult {
+export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanup {
 	// Room handlers (create roomManager first as session handlers depend on it)
 	const roomManager = new RoomManager(deps.db.getDatabase());
 
@@ -241,5 +239,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerResult
 	// Q&A handlers
 	setupQAHandlers(deps.messageHub, deps.db);
 
-	return { lobbyAgentService };
+	// Return cleanup function to stop background services
+	return () => {
+		recurringJobScheduler.stop();
+	};
 }

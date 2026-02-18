@@ -182,8 +182,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		logInfo('[Daemon] GitHub integration disabled - authentication required');
 	}
 
-	// Setup RPC handlers
-	const rpcHandlerResult = setupRPCHandlers({
+	// Setup RPC handlers (returns cleanup function)
+	let lobbyAgentService: LobbyAgentService | undefined;
+	const rpcHandlerCleanup = setupRPCHandlers({
 		messageHub,
 		sessionManager,
 		authManager,
@@ -192,8 +193,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		daemonHub: eventBus,
 		db,
 		gitHubService: gitHubService ?? undefined,
+		lobbyAgentService,
 	});
-	const lobbyAgentService = rpcHandlerResult.lobbyAgentService;
 
 	// Create WebSocket handlers
 	const wsHandlers = createWebSocketHandlers(transport, sessionManager);
@@ -350,6 +351,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 			// Cleanup MessageHub (rejects remaining calls)
 			messageHub.cleanup();
+
+			// Cleanup RPC handlers (stops background services like RecurringJobScheduler)
+			rpcHandlerCleanup();
 
 			// Stop GitHub service
 			if (gitHubService) {

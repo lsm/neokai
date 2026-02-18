@@ -31,6 +31,7 @@ export interface TestContext {
 	workspacePath: string;
 	config: Config;
 	cleanup: () => Promise<void>;
+	rpcHandlerCleanup: () => void;
 }
 
 /**
@@ -156,7 +157,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 	);
 
 	// Setup RPC handlers
-	setupRPCHandlers({
+	const rpcHandlerCleanup = setupRPCHandlers({
 		messageHub,
 		sessionManager,
 		authManager,
@@ -343,7 +344,11 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestC
 		baseUrl,
 		workspacePath: config.workspaceRoot,
 		config,
+		rpcHandlerCleanup,
 		cleanup: async () => {
+			// Stop RPC handler background services (e.g., RecurringJobScheduler)
+			rpcHandlerCleanup();
+
 			// Cleanup session resources (interrupts SDK queries and waits for them to stop)
 			// SessionManager.cleanup() now properly awaits all AgentSession.cleanup() calls
 			await sessionManager.cleanup();
