@@ -1,4 +1,4 @@
-.PHONY: dev dev-random serve-random self run build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release sync-sdk-types
+.PHONY: dev dev-random serve-random self self-test run run-test build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release sync-sdk-types
 
 dev:
 	@echo "Starting development server..."
@@ -37,26 +37,44 @@ serve-random:
 # Self-developing mode - production build serving the current directory on port 9983
 # This is a convenience wrapper around `make run`
 self:
-	@$(MAKE) run WORKSPACE=$(shell pwd) PORT=9983
+	@NEOKAI_SELF_MODE=1 $(MAKE) run WORKSPACE=$(shell pwd) PORT=9983
+
+# Run E2E tests against the `make self` instance (requires `make self` to be running)
+# Usage: make self-test TEST=tests/core/navigation-3-column.e2e.ts
+#        make self-test (runs all tests)
+self-test:
+	@PLAYWRIGHT_BASE_URL=http://localhost:9983 cd packages/e2e && bunx playwright test $(TEST)
 
 # Run production server with custom workspace and port
 # Usage: make run WORKSPACE=/path/to/workspace PORT=8080
 run:
 	@if [ -z "$(WORKSPACE)" ]; then \
-		echo "❌ Error: WORKSPACE parameter is required"; \
+		echo "Error: WORKSPACE parameter is required"; \
 		echo "Usage: make run WORKSPACE=/path/to/workspace PORT=8080"; \
 		exit 1; \
 	fi
 	@if [ -z "$(PORT)" ]; then \
-		echo "❌ Error: PORT parameter is required"; \
+		echo "Error: PORT parameter is required"; \
 		echo "Usage: make run WORKSPACE=/path/to/workspace PORT=8080"; \
 		exit 1; \
 	fi
-	@echo "🚀 Starting production server..."
+	@echo "Starting production server..."
 	@echo "   Workspace: $(WORKSPACE)"
 	@echo "   Listening on port $(PORT)"
+	@mkdir -p tmp
+	@echo "$(PORT)" > tmp/.dev-server-running
 	@$(MAKE) build
 	@NODE_ENV=production bun run packages/cli/main.ts --port $(PORT) --workspace $(WORKSPACE)
+
+# Run E2E tests against a `make run` instance (requires server to be running on specified PORT)
+# Usage: make run-test PORT=8399 TEST=tests/core/navigation-3-column.e2e.ts
+#        make run-test PORT=8399 (runs all tests)
+run-test:
+	@if [ -z "$(PORT)" ]; then \
+		echo "Error: PORT is required. Usage: make run-test PORT=8399 TEST=..."; \
+		exit 1; \
+	fi
+	@PLAYWRIGHT_BASE_URL=http://localhost:$(PORT) cd packages/e2e && bunx playwright test $(TEST)
 
 build:
 	@echo "📦 Building web production bundle..."
