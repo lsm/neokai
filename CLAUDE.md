@@ -122,6 +122,30 @@ E2E tests are **pure browser-based Playwright tests** simulating real end-user i
 - `waitForWebSocketConnected()` — may check hub state as fallback alongside UI indicator
 - Global teardown (`global-teardown.ts`) — RPC-based session/worktree cleanup
 
+---
+
+### Self-Development Mode E2E Testing
+
+> **IMPORTANT: Always use the correct test command for your scenario**
+>
+> When a development server is already running, you MUST reuse it instead of starting a new one.
+
+**If using `make self` (port 9983):**
+```bash
+make self-test TEST=tests/core/navigation-3-column.e2e.ts
+```
+
+**If using `make run` with a custom port:**
+```bash
+make run-test PORT=8399 TEST=tests/core/navigation-3-column.e2e.ts
+```
+
+**How it works:**
+- `make self` and `make run` create a lock file at `tmp/.dev-server-running`
+- E2E tests check for this lock file before starting
+- If the lock exists without `PLAYWRIGHT_BASE_URL`, tests fail with instructions
+- This prevents accidentally killing your development server
+
 **Other notes:**
 - Always run a single E2E test file at a time — too slow to run all together
 - If a test scenario can't be triggered through the UI (e.g., token expiry, malformed server responses), it belongs in daemon integration tests, not E2E
