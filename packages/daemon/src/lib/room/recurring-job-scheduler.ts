@@ -334,6 +334,7 @@ export class RecurringJobScheduler {
 			roomId: job.roomId,
 			jobId: job.id,
 			taskId: task.id,
+			timestamp: Date.now(),
 		});
 
 		log.info(`Created task ${task.id} from recurring job ${job.id}`);
