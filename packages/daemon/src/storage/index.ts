@@ -12,6 +12,9 @@ import type {
 	GlobalSettings,
 	RoomGitHubMapping,
 	InboxItem,
+	RoomGoal,
+	RecurringJob,
+	RoomAgentState,
 } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import { DatabaseCore } from './database-core';
@@ -24,10 +27,39 @@ import {
 	type CreateInboxItemParams,
 	type InboxItemFilter,
 } from './repositories/inbox-item-repository';
+import {
+	GoalRepository,
+	type CreateGoalParams,
+	type UpdateGoalParams,
+} from './repositories/goal-repository';
+import {
+	RecurringJobRepository,
+	type CreateRecurringJobParams,
+	type UpdateRecurringJobParams,
+} from './repositories/recurring-job-repository';
+import {
+	RoomAgentStateRepository,
+	type CreateRoomAgentStateParams,
+	type UpdateRoomAgentStateParams,
+} from './repositories/room-agent-state-repository';
 
 export type { SendStatus } from './repositories/sdk-message-repository';
 export type { SQLiteValue } from './types';
 export type { CreateInboxItemParams, InboxItemFilter } from './repositories/inbox-item-repository';
+export type { CreateGoalParams, UpdateGoalParams } from './repositories/goal-repository';
+export type {
+	CreateRecurringJobParams,
+	UpdateRecurringJobParams,
+} from './repositories/recurring-job-repository';
+export type {
+	CreateRoomAgentStateParams,
+	UpdateRoomAgentStateParams,
+} from './repositories/room-agent-state-repository';
+
+// Re-export repository classes for direct use
+export { GoalRepository } from './repositories/goal-repository';
+export { RecurringJobRepository } from './repositories/recurring-job-repository';
+export { RoomAgentStateRepository } from './repositories/room-agent-state-repository';
 
 /**
  * Database facade class that maintains backward compatibility with the original Database class.
@@ -42,6 +74,9 @@ export class Database {
 	private settingsRepo!: SettingsRepository;
 	private githubMappingRepo!: GitHubMappingRepository;
 	private inboxItemRepo!: InboxItemRepository;
+	private goalRepo!: GoalRepository;
+	private recurringJobRepo!: RecurringJobRepository;
+	private roomAgentStateRepo!: RoomAgentStateRepository;
 
 	constructor(dbPath: string) {
 		this.core = new DatabaseCore(dbPath);
@@ -57,6 +92,9 @@ export class Database {
 		this.settingsRepo = new SettingsRepository(db);
 		this.githubMappingRepo = new GitHubMappingRepository(db);
 		this.inboxItemRepo = new InboxItemRepository(db);
+		this.goalRepo = new GoalRepository(db);
+		this.recurringJobRepo = new RecurringJobRepository(db);
+		this.roomAgentStateRepo = new RoomAgentStateRepository(db);
 	}
 
 	// ============================================================================
@@ -285,6 +323,147 @@ export class Database {
 	}
 
 	// ============================================================================
+	// Goal operations (delegated to GoalRepository)
+	// ============================================================================
+
+	createGoal(params: CreateGoalParams): RoomGoal {
+		return this.goalRepo.createGoal(params);
+	}
+
+	getGoal(id: string): RoomGoal | null {
+		return this.goalRepo.getGoal(id);
+	}
+
+	listGoals(roomId: string, status?: import('@neokai/shared').GoalStatus): RoomGoal[] {
+		return this.goalRepo.listGoals(roomId, status);
+	}
+
+	updateGoal(id: string, params: UpdateGoalParams): RoomGoal | null {
+		return this.goalRepo.updateGoal(id, params);
+	}
+
+	deleteGoal(id: string): boolean {
+		return this.goalRepo.deleteGoal(id);
+	}
+
+	linkTaskToGoal(goalId: string, taskId: string): RoomGoal | null {
+		return this.goalRepo.linkTaskToGoal(goalId, taskId);
+	}
+
+	unlinkTaskFromGoal(goalId: string, taskId: string): RoomGoal | null {
+		return this.goalRepo.unlinkTaskFromGoal(goalId, taskId);
+	}
+
+	getGoalsForTask(taskId: string): RoomGoal[] {
+		return this.goalRepo.getGoalsForTask(taskId);
+	}
+
+	getActiveGoalCount(roomId: string): number {
+		return this.goalRepo.getActiveGoalCount(roomId);
+	}
+
+	// ============================================================================
+	// Recurring Job operations (delegated to RecurringJobRepository)
+	// ============================================================================
+
+	createRecurringJob(params: CreateRecurringJobParams): RecurringJob {
+		return this.recurringJobRepo.createJob(params);
+	}
+
+	getRecurringJob(id: string): RecurringJob | null {
+		return this.recurringJobRepo.getJob(id);
+	}
+
+	listRecurringJobs(roomId: string, enabledOnly?: boolean): RecurringJob[] {
+		return this.recurringJobRepo.listJobs(roomId, enabledOnly);
+	}
+
+	getAllEnabledRecurringJobs(): RecurringJob[] {
+		return this.recurringJobRepo.getAllEnabledJobs();
+	}
+
+	getDueRecurringJobs(now?: number): RecurringJob[] {
+		return this.recurringJobRepo.getDueJobs(now);
+	}
+
+	updateRecurringJob(id: string, params: UpdateRecurringJobParams): RecurringJob | null {
+		return this.recurringJobRepo.updateJob(id, params);
+	}
+
+	markRecurringJobRun(id: string, nextRunAt: number): RecurringJob | null {
+		return this.recurringJobRepo.markJobRun(id, nextRunAt);
+	}
+
+	enableRecurringJob(id: string): RecurringJob | null {
+		return this.recurringJobRepo.enableJob(id);
+	}
+
+	disableRecurringJob(id: string): RecurringJob | null {
+		return this.recurringJobRepo.disableJob(id);
+	}
+
+	deleteRecurringJob(id: string): boolean {
+		return this.recurringJobRepo.deleteJob(id);
+	}
+
+	// ============================================================================
+	// Room Agent State operations (delegated to RoomAgentStateRepository)
+	// ============================================================================
+
+	createRoomAgentState(params: CreateRoomAgentStateParams): RoomAgentState {
+		return this.roomAgentStateRepo.createState(params);
+	}
+
+	getRoomAgentState(roomId: string): RoomAgentState | null {
+		return this.roomAgentStateRepo.getState(roomId);
+	}
+
+	getOrCreateRoomAgentState(roomId: string): RoomAgentState {
+		return this.roomAgentStateRepo.getOrCreateState(roomId);
+	}
+
+	updateRoomAgentState(roomId: string, params: UpdateRoomAgentStateParams): RoomAgentState | null {
+		return this.roomAgentStateRepo.updateState(roomId, params);
+	}
+
+	transitionRoomAgentState(
+		roomId: string,
+		newState: import('@neokai/shared').RoomAgentLifecycleState
+	): RoomAgentState | null {
+		return this.roomAgentStateRepo.transitionTo(roomId, newState);
+	}
+
+	recordRoomAgentError(roomId: string, error: string): RoomAgentState | null {
+		return this.roomAgentStateRepo.recordError(roomId, error);
+	}
+
+	clearRoomAgentError(roomId: string): RoomAgentState | null {
+		return this.roomAgentStateRepo.clearError(roomId);
+	}
+
+	addActiveSessionPair(roomId: string, pairId: string): RoomAgentState | null {
+		return this.roomAgentStateRepo.addActiveSessionPair(roomId, pairId);
+	}
+
+	removeActiveSessionPair(roomId: string, pairId: string): RoomAgentState | null {
+		return this.roomAgentStateRepo.removeActiveSessionPair(roomId, pairId);
+	}
+
+	deleteRoomAgentState(roomId: string): boolean {
+		return this.roomAgentStateRepo.deleteState(roomId);
+	}
+
+	getAllRoomAgentStates(): RoomAgentState[] {
+		return this.roomAgentStateRepo.getAllStates();
+	}
+
+	getRoomAgentStatesByLifecycle(
+		lifecycleState: import('@neokai/shared').RoomAgentLifecycleState
+	): RoomAgentState[] {
+		return this.roomAgentStateRepo.getStatesByLifecycle(lifecycleState);
+	}
+
+	// ============================================================================
 	// Core operations (delegated to DatabaseCore)
 	// ============================================================================
 
@@ -302,6 +481,30 @@ export class Database {
 	 */
 	getSDKMessageRepo(): SDKMessageRepository {
 		return this.sdkMessageRepo;
+	}
+
+	/**
+	 * Get the goal repository
+	 * Used by GoalManager for direct access to goals
+	 */
+	getGoalRepo(): GoalRepository {
+		return this.goalRepo;
+	}
+
+	/**
+	 * Get the recurring job repository
+	 * Used by RecurringJobScheduler for direct access to jobs
+	 */
+	getRecurringJobRepo(): RecurringJobRepository {
+		return this.recurringJobRepo;
+	}
+
+	/**
+	 * Get the room agent state repository
+	 * Used by RoomAgentService for direct access to agent states
+	 */
+	getRoomAgentStateRepo(): RoomAgentStateRepository {
+		return this.roomAgentStateRepo;
 	}
 
 	/**

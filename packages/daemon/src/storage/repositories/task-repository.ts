@@ -134,6 +134,22 @@ export class TaskRepository {
 			fields.push('depends_on = ?');
 			values.push(JSON.stringify(params.dependsOn));
 		}
+		if (params.sessionIds !== undefined) {
+			fields.push('session_ids = ?');
+			values.push(JSON.stringify(params.sessionIds));
+		}
+		if (params.executionMode !== undefined) {
+			fields.push('execution_mode = ?');
+			values.push(params.executionMode);
+		}
+		if (params.sessions !== undefined) {
+			fields.push('sessions = ?');
+			values.push(JSON.stringify(params.sessions));
+		}
+		if (params.recurringJobId !== undefined) {
+			fields.push('recurring_job_id = ?');
+			values.push(params.recurringJobId ?? null);
+		}
 
 		if (fields.length > 0) {
 			values.push(id);
@@ -192,6 +208,12 @@ export class TaskRepository {
 			title: row.title as string,
 			description: row.description as string,
 			sessionId: (row.session_id as string | null) ?? undefined,
+			sessionIds: row.session_ids ? (JSON.parse(row.session_ids as string) as string[]) : undefined,
+			executionMode: row.execution_mode as NeoTask['executionMode'],
+			sessions: row.sessions
+				? (JSON.parse(row.sessions as string) as NeoTask['sessions'])
+				: undefined,
+			recurringJobId: (row.recurring_job_id as string | null) ?? undefined,
 			status: row.status as NeoTask['status'],
 			priority: row.priority as NeoTask['priority'],
 			progress: (row.progress as number | null) ?? undefined,

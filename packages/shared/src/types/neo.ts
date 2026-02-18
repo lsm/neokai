@@ -44,6 +44,47 @@ export interface Room {
 }
 
 /**
+ * Room goal status
+ */
+export type GoalStatus = 'pending' | 'in_progress' | 'completed' | 'blocked';
+
+/**
+ * Room goal priority
+ */
+export type GoalPriority = 'low' | 'normal' | 'high' | 'urgent';
+
+/**
+ * A structured objective for a room
+ * Goals track progress via linked tasks
+ */
+export interface RoomGoal {
+	/** Unique identifier */
+	id: string;
+	/** Room this goal belongs to */
+	roomId: string;
+	/** Goal title */
+	title: string;
+	/** Detailed description */
+	description: string;
+	/** Current status */
+	status: GoalStatus;
+	/** Priority level */
+	priority: GoalPriority;
+	/** Progress percentage (0-100), aggregated from linked tasks */
+	progress: number;
+	/** IDs of tasks contributing to this goal */
+	linkedTaskIds: string[];
+	/** Custom progress metrics */
+	metrics?: Record<string, number>;
+	/** Creation timestamp (milliseconds since epoch) */
+	createdAt: number;
+	/** Last update timestamp (milliseconds since epoch) */
+	updatedAt: number;
+	/** Completion timestamp (milliseconds since epoch) */
+	completedAt?: number;
+}
+
+/**
  * Parameters for creating a new room
  */
 export interface CreateRoomParams {
@@ -147,8 +188,16 @@ export interface NeoTask {
 	title: string;
 	/** Detailed description */
 	description: string;
-	/** Session ID if task is being worked on in a session */
+	/** Session ID if task is being worked on in a session (legacy, prefer sessionIds) */
 	sessionId?: string;
+	/** IDs of sessions working on this task (multi-session support) */
+	sessionIds?: string[];
+	/** How multiple sessions should coordinate */
+	executionMode?: TaskExecutionMode;
+	/** Detailed session assignments */
+	sessions?: TaskSession[];
+	/** Link to recurring job if spawned by one */
+	recurringJobId?: string;
 	/** Current status */
 	status: TaskStatus;
 	/** Priority level */
@@ -205,6 +254,111 @@ export interface UpdateTaskParams {
 	result?: string;
 	error?: string;
 	dependsOn?: string[];
+	/** IDs of sessions working on this task (multi-session support) */
+	sessionIds?: string[];
+	/** How multiple sessions should coordinate */
+	executionMode?: TaskExecutionMode;
+	/** Detailed session assignments */
+	sessions?: TaskSession[];
+	/** Link to recurring job if spawned by one */
+	recurringJobId?: string;
+}
+
+// ============================================================================
+// Multi-Session Task Types
+// ============================================================================
+
+/**
+ * Task execution mode for multi-session support
+ */
+export type TaskExecutionMode = 'single' | 'parallel' | 'serial' | 'parallel_then_merge';
+
+/**
+ * Session assignment within a task
+ */
+export interface TaskSession {
+	/** Session ID */
+	sessionId: string;
+	/** Role of this session in the task */
+	role: 'primary' | 'secondary' | 'reviewer';
+	/** Status of this session's work */
+	status: 'pending' | 'active' | 'completed' | 'failed';
+	/** When this session started work */
+	startedAt?: number;
+	/** When this session completed work */
+	completedAt?: number;
+}
+
+// ============================================================================
+// Recurring Job Types
+// ============================================================================
+
+/**
+ * Schedule configuration for recurring jobs
+ */
+export type RecurringJobSchedule =
+	| { type: 'cron'; expression: string }
+	| { type: 'interval'; minutes: number }
+	| { type: 'daily'; hour: number; minute: number }
+	| { type: 'weekly'; dayOfWeek: number; hour: number; minute: number };
+
+/**
+ * Task template for recurring jobs
+ */
+export interface RecurringTaskTemplate {
+	/** Task title template */
+	title: string;
+	/** Task description template */
+	description: string;
+	/** Default priority for spawned tasks */
+	priority: TaskPriority;
+	/** Default execution mode for spawned tasks */
+	executionMode?: TaskExecutionMode;
+}
+
+/**
+ * A recurring job that spawns tasks on a schedule
+ */
+export interface RecurringJob {
+	/** Unique identifier */
+	id: string;
+	/** Room this job belongs to */
+	roomId: string;
+	/** Job name */
+	name: string;
+	/** Detailed description */
+	description: string;
+	/** Schedule configuration */
+	schedule: RecurringJobSchedule;
+	/** Task template for spawned tasks */
+	taskTemplate: RecurringTaskTemplate;
+	/** Whether the job is enabled */
+	enabled: boolean;
+	/** When the job last ran */
+	lastRunAt?: number;
+	/** When the job will run next */
+	nextRunAt?: number;
+	/** Number of times the job has run */
+	runCount: number;
+	/** Maximum number of runs (optional) */
+	maxRuns?: number;
+	/** Creation timestamp (milliseconds since epoch) */
+	createdAt: number;
+	/** Last update timestamp (milliseconds since epoch) */
+	updatedAt: number;
+}
+
+/**
+ * Parameters for creating a recurring job
+ */
+export interface CreateRecurringJobParams {
+	roomId: string;
+	name: string;
+	description: string;
+	schedule: RecurringJobSchedule;
+	taskTemplate: RecurringTaskTemplate;
+	enabled?: boolean;
+	maxRuns?: number;
 }
 
 // ============================================================================
@@ -405,4 +559,78 @@ export interface CreateSessionPairParams {
 	taskDescription?: string;
 	workspacePath?: string;
 	model?: string;
+}
+
+// ============================================================================
+// Room Agent Types
+// ============================================================================
+
+/**
+ * Room agent lifecycle states
+ */
+export type RoomAgentLifecycleState =
+	| 'idle'
+	| 'planning'
+	| 'executing'
+	| 'waiting'
+	| 'reviewing'
+	| 'error'
+	| 'paused';
+
+/**
+ * State of a room's agent
+ */
+export interface RoomAgentState {
+	/** Room this agent manages */
+	roomId: string;
+	/** Current lifecycle state */
+	lifecycleState: RoomAgentLifecycleState;
+	/** Current goal being worked on */
+	currentGoalId?: string;
+	/** Current task being executed */
+	currentTaskId?: string;
+	/** Active session pair IDs */
+	activeSessionPairIds: string[];
+	/** Last activity timestamp */
+	lastActivityAt: number;
+	/** Error count for health monitoring */
+	errorCount: number;
+	/** Last error message */
+	lastError?: string;
+	/** Queue of planned actions */
+	pendingActions: string[];
+}
+
+// ============================================================================
+// Manager Hook Types
+// ============================================================================
+
+/**
+ * Events that trigger manager hooks
+ */
+export type ManagerHookEvent =
+	| 'task_started'
+	| 'task_progress'
+	| 'task_completed'
+	| 'task_failed'
+	| 'task_escalated'
+	| 'review_requested'
+	| 'worker_timeout';
+
+/**
+ * Payload for manager hook events
+ */
+export interface ManagerHookPayload {
+	/** Event type */
+	event: ManagerHookEvent;
+	/** Room ID */
+	roomId: string;
+	/** Session pair ID */
+	pairId: string;
+	/** Task ID */
+	taskId: string;
+	/** Event-specific data */
+	data: Record<string, unknown>;
+	/** Event timestamp */
+	timestamp: number;
 }

@@ -1,7 +1,7 @@
 /**
  * Database Migrations
  *
- * All 16 migrations for schema changes.
+ * All 20 migrations for schema changes.
  * CRITICAL: Preserve the order of migrations.
  */
 
@@ -65,6 +65,21 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 16: Create session_pairs table for dual-session architecture
 	runMigration16(db);
+
+	// Migration 17: Add goals table and rooms.background_context column
+	runMigration17(db);
+
+	// Migration 18: Add multi-session task support columns
+	runMigration18(db);
+
+	// Migration 19: Create recurring_jobs table
+	runMigration19(db);
+
+	// Migration 20: Create room_agent_states table
+	runMigration20(db);
+
+	// Migration 21: Create prompt_templates and rendered_prompts tables
+	runMigration21(db);
 }
 
 /**
@@ -870,5 +885,237 @@ function runMigration16(db: BunDatabase): void {
 		CREATE INDEX IF NOT EXISTS idx_session_pairs_room ON session_pairs(room_id);
 		CREATE INDEX IF NOT EXISTS idx_session_pairs_manager ON session_pairs(manager_session_id);
 		CREATE INDEX IF NOT EXISTS idx_session_pairs_worker ON session_pairs(worker_session_id);
+	`);
+}
+
+/**
+ * Migration 17: Add goals table and rooms.background_context column
+ *
+ * Creates a table for room goals (structured objectives):
+ * - id: Unique identifier
+ * - room_id: Reference to the room
+ * - title, description: Goal details
+ * - status: pending, in_progress, completed, blocked
+ * - priority: low, normal, high, urgent
+ * - progress: 0-100 percentage
+ * - linked_task_ids: JSON array of task IDs contributing to this goal
+ * - metrics: JSON object for custom progress metrics
+ *
+ * Also adds background_context column to rooms for room agent context.
+ */
+function runMigration17(db: BunDatabase): void {
+	// Skip if goals table already exists (already migrated)
+	if (tableExists(db, 'goals')) {
+		return;
+	}
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS goals (
+			id TEXT PRIMARY KEY,
+			room_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'pending'
+				CHECK(status IN ('pending', 'in_progress', 'completed', 'blocked')),
+			priority TEXT NOT NULL DEFAULT 'normal'
+				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+			progress INTEGER DEFAULT 0,
+			linked_task_ids TEXT DEFAULT '[]',
+			metrics TEXT DEFAULT '{}',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			completed_at INTEGER,
+			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_goals_room ON goals(room_id);
+		CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status);
+	`);
+
+	// Add background_context column to rooms if it doesn't exist
+	if (tableExists(db, 'rooms') && !tableHasColumn(db, 'rooms', 'background_context')) {
+		db.exec(`ALTER TABLE rooms ADD COLUMN background_context TEXT`);
+	}
+}
+
+/**
+ * Migration 18: Add multi-session task support columns
+ *
+ * Adds columns to tasks table for multi-session execution:
+ * - session_ids: JSON array of session IDs (replaces single session_id)
+ * - execution_mode: single, parallel, serial, parallel_then_merge
+ * - sessions: JSON array of TaskSession objects with role/status tracking
+ * - recurring_job_id: Reference to recurring job if spawned by one
+ */
+function runMigration18(db: BunDatabase): void {
+	// Skip if tasks table doesn't exist (fresh database)
+	if (!tableExists(db, 'tasks')) {
+		return;
+	}
+
+	// Add session_ids column if it doesn't exist
+	if (!tableHasColumn(db, 'tasks', 'session_ids')) {
+		db.exec(`ALTER TABLE tasks ADD COLUMN session_ids TEXT DEFAULT '[]'`);
+	}
+
+	// Add execution_mode column if it doesn't exist
+	if (!tableHasColumn(db, 'tasks', 'execution_mode')) {
+		db.exec(
+			`ALTER TABLE tasks ADD COLUMN execution_mode TEXT DEFAULT 'single' CHECK(execution_mode IN ('single', 'parallel', 'serial', 'parallel_then_merge'))`
+		);
+	}
+
+	// Add sessions column if it doesn't exist
+	if (!tableHasColumn(db, 'tasks', 'sessions')) {
+		db.exec(`ALTER TABLE tasks ADD COLUMN sessions TEXT DEFAULT '[]'`);
+	}
+
+	// Add recurring_job_id column if it doesn't exist
+	if (!tableHasColumn(db, 'tasks', 'recurring_job_id')) {
+		db.exec(`ALTER TABLE tasks ADD COLUMN recurring_job_id TEXT`);
+	}
+}
+
+/**
+ * Migration 19: Create recurring_jobs table
+ *
+ * Creates a table for scheduled recurring jobs:
+ * - id: Unique identifier
+ * - room_id: Reference to the room
+ * - name, description: Job details
+ * - schedule: JSON object with schedule config (cron, interval, daily, weekly)
+ * - task_template: JSON object for task creation template
+ * - enabled: Whether the job is active
+ * - last_run_at, next_run_at: Timestamps for scheduling
+ * - run_count: Number of times the job has run
+ * - max_runs: Optional maximum run limit
+ */
+function runMigration19(db: BunDatabase): void {
+	// Skip if recurring_jobs table already exists (already migrated)
+	if (tableExists(db, 'recurring_jobs')) {
+		return;
+	}
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS recurring_jobs (
+			id TEXT PRIMARY KEY,
+			room_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			schedule TEXT NOT NULL DEFAULT '{}',
+			task_template TEXT NOT NULL DEFAULT '{}',
+			enabled INTEGER DEFAULT 1,
+			last_run_at INTEGER,
+			next_run_at INTEGER,
+			run_count INTEGER DEFAULT 0,
+			max_runs INTEGER,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_recurring_jobs_room ON recurring_jobs(room_id);
+		CREATE INDEX IF NOT EXISTS idx_recurring_jobs_enabled ON recurring_jobs(enabled);
+		CREATE INDEX IF NOT EXISTS idx_recurring_jobs_next_run ON recurring_jobs(next_run_at);
+	`);
+}
+
+/**
+ * Migration 20: Create room_agent_states table
+ *
+ * Creates a table to track room agent lifecycle state:
+ * - room_id: Reference to the room (unique, one agent per room)
+ * - lifecycle_state: idle, planning, executing, waiting, reviewing, error, paused
+ * - current_goal_id, current_task_id: Current focus
+ * - active_session_pair_ids: JSON array of active pairs
+ * - last_activity_at: Timestamp of last activity
+ * - error_count: Health monitoring counter
+ * - last_error: Last error message
+ * - pending_actions: JSON array of planned actions
+ */
+function runMigration20(db: BunDatabase): void {
+	// Skip if room_agent_states table already exists (already migrated)
+	if (tableExists(db, 'room_agent_states')) {
+		return;
+	}
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS room_agent_states (
+			room_id TEXT PRIMARY KEY,
+			lifecycle_state TEXT NOT NULL DEFAULT 'idle'
+				CHECK(lifecycle_state IN ('idle', 'planning', 'executing', 'waiting', 'reviewing', 'error', 'paused')),
+			current_goal_id TEXT,
+			current_task_id TEXT,
+			active_session_pair_ids TEXT DEFAULT '[]',
+			last_activity_at INTEGER NOT NULL,
+			error_count INTEGER DEFAULT 0,
+			last_error TEXT,
+			pending_actions TEXT DEFAULT '[]',
+			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
+			FOREIGN KEY (current_goal_id) REFERENCES goals(id) ON DELETE SET NULL,
+			FOREIGN KEY (current_task_id) REFERENCES tasks(id) ON DELETE SET NULL
+		);
+	`);
+}
+
+/**
+ * Migration 21: Create prompt_templates and rendered_prompts tables
+ *
+ * Creates tables for centralized prompt template management:
+ *
+ * prompt_templates:
+ * - id: Unique identifier (e.g., 'room_agent_system')
+ * - category: room_agent, manager_agent, worker_agent, lobby_agent, etc.
+ * - name, description: Human-readable info
+ * - template: The template content with {{variable}} placeholders
+ * - variables: JSON array of variable definitions
+ * - version: Template version for update tracking
+ *
+ * rendered_prompts:
+ * - template_id: Reference to template
+ * - room_id: Room this prompt is rendered for
+ * - content: The rendered content
+ * - rendered_with: Variables used for rendering
+ * - template_version: Version of template at render time
+ * - customizations: Agent-made customizations
+ */
+function runMigration21(db: BunDatabase): void {
+	// Skip if prompt_templates table already exists (already migrated)
+	if (tableExists(db, 'prompt_templates')) {
+		return;
+	}
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS prompt_templates (
+			id TEXT PRIMARY KEY,
+			category TEXT NOT NULL
+				CHECK(category IN ('room_agent', 'manager_agent', 'worker_agent', 'lobby_agent', 'security_agent', 'router_agent')),
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			template TEXT NOT NULL,
+			variables TEXT DEFAULT '[]',
+			version INTEGER DEFAULT 1,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_prompt_templates_category ON prompt_templates(category);
+
+		CREATE TABLE IF NOT EXISTS rendered_prompts (
+			id TEXT PRIMARY KEY,
+			template_id TEXT NOT NULL,
+			room_id TEXT NOT NULL,
+			content TEXT NOT NULL,
+			rendered_with TEXT DEFAULT '{}',
+			template_version INTEGER DEFAULT 1,
+			rendered_at INTEGER NOT NULL,
+			customizations TEXT,
+			FOREIGN KEY (template_id) REFERENCES prompt_templates(id) ON DELETE CASCADE,
+			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
+			UNIQUE(template_id, room_id)
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_rendered_prompts_room ON rendered_prompts(room_id);
+		CREATE INDEX IF NOT EXISTS idx_rendered_prompts_template ON rendered_prompts(template_id);
 	`);
 }

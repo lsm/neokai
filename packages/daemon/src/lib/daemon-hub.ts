@@ -315,6 +315,166 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		error: string;
 		inboxItemId: string;
 	};
+
+	// Goal events
+	'goal.created': {
+		sessionId: string;
+		roomId: string;
+		goalId: string;
+		goal: import('@neokai/shared').RoomGoal;
+	};
+	'goal.updated': {
+		sessionId: string;
+		roomId: string;
+		goalId: string;
+		goal?: Partial<import('@neokai/shared').RoomGoal>;
+	};
+	'goal.progressUpdated': {
+		sessionId: string;
+		roomId: string;
+		goalId: string;
+		progress: number;
+	};
+	'goal.completed': {
+		sessionId: string;
+		roomId: string;
+		goalId: string;
+		goal: import('@neokai/shared').RoomGoal;
+	};
+
+	// Recurring job events
+	'recurringJob.created': {
+		sessionId: string;
+		roomId: string;
+		jobId: string;
+		job: import('@neokai/shared').RecurringJob;
+	};
+	'recurringJob.updated': {
+		sessionId: string;
+		roomId: string;
+		jobId: string;
+		job?: Partial<import('@neokai/shared').RecurringJob>;
+	};
+	'recurringJob.triggered': {
+		sessionId: string;
+		roomId: string;
+		jobId: string;
+		taskId: string;
+	};
+	'recurringJob.completed': {
+		sessionId: string;
+		roomId: string;
+		jobId: string;
+		taskId: string;
+	};
+	'recurringJob.enabled': {
+		sessionId: string;
+		roomId: string;
+		jobId: string;
+	};
+	'recurringJob.disabled': {
+		sessionId: string;
+		roomId: string;
+		jobId: string;
+	};
+	'recurringJob.deleted': {
+		sessionId: string;
+		roomId: string;
+		jobId: string;
+	};
+
+	// Room agent lifecycle events
+	'roomAgent.stateChanged': {
+		sessionId: string;
+		roomId: string;
+		previousState: import('@neokai/shared').RoomAgentLifecycleState;
+		newState: import('@neokai/shared').RoomAgentLifecycleState;
+		reason?: string;
+	};
+	'roomAgent.hook': {
+		sessionId: string;
+		roomId: string;
+		event: import('@neokai/shared').ManagerHookEvent;
+		payload: import('@neokai/shared').ManagerHookPayload;
+	};
+	'roomAgent.error': {
+		sessionId: string;
+		roomId: string;
+		error: string;
+		errorCount: number;
+	};
+	'roomAgent.idle': {
+		sessionId: string;
+		roomId: string;
+		hasPendingTasks: boolean;
+		hasIncompleteGoals: boolean;
+	};
+
+	// Multi-session task events
+	'task.sessionStarted': {
+		sessionId: string;
+		roomId: string;
+		taskId: string;
+		taskSessionId: string;
+		role: 'primary' | 'secondary' | 'reviewer';
+	};
+	'task.sessionCompleted': {
+		sessionId: string;
+		roomId: string;
+		taskId: string;
+		taskSessionId: string;
+		role: 'primary' | 'secondary' | 'reviewer';
+		result?: string;
+	};
+	'task.allSessionsCompleted': {
+		sessionId: string;
+		roomId: string;
+		taskId: string;
+	};
+
+	// Lobby Agent events (for external message processing)
+	'lobby.messageReceived': {
+		sessionId: string;
+		message: import('./lobby/types').ExternalMessage;
+	};
+	'lobby.messageRouted': {
+		sessionId: string;
+		messageId: string;
+		roomId: string;
+		confidence: 'high' | 'medium' | 'low';
+		reason: string;
+	};
+	'lobby.messageToInbox': {
+		sessionId: string;
+		messageId: string;
+		reason: string;
+	};
+	'lobby.messageRejected': {
+		sessionId: string;
+		messageId: string;
+		reason: string;
+	};
+	'lobby.messageSecurityFailed': {
+		sessionId: string;
+		messageId: string;
+		securityCheck: import('./lobby/types').ExternalSecurityCheck;
+	};
+
+	// Prompt Template events
+	'promptTemplate.updated': {
+		sessionId: string;
+		templateId: string;
+		version: number;
+	};
+	'promptTemplate.deleted': {
+		sessionId: string;
+		templateId: string;
+	};
+	'promptTemplate.roomUpdated': {
+		sessionId: string;
+		roomId: string;
+		templateId: string;
+	};
 }
 
 /**

@@ -34,6 +34,18 @@ import { setupRoomMessageHandlers } from './room-message-handlers';
 import { setupLobbyHandlers } from './lobby-handlers';
 import { setupGitHubHandlers } from './github-handlers';
 import type { GitHubService } from '../github/github-service';
+// New handlers for goals, jobs, and room agents
+import { setupGoalHandlers } from './goal-handlers';
+import { setupRecurringJobHandlers } from './recurring-job-handlers';
+import {
+	setupRoomAgentHandlers,
+	RoomAgentManager,
+	type TaskManagerFactory,
+	type GoalManagerFactory,
+} from './room-agent-handlers';
+import { GoalManager } from '../room/goal-manager';
+import { RecurringJobScheduler } from '../room/recurring-job-scheduler';
+import { TaskManager } from '../room/task-manager';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -70,6 +82,31 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
 		deps.db.getSDKMessageRepo()
 	);
 
+	// Create factory functions for per-room managers
+	const taskManagerFactory: TaskManagerFactory = (roomId: string): TaskManager => {
+		return new TaskManager(deps.db.getDatabase(), roomId);
+	};
+
+	const goalManagerFactory: GoalManagerFactory = (roomId: string): GoalManager => {
+		return new GoalManager(deps.db.getDatabase(), roomId, deps.daemonHub);
+	};
+
+	// Create RecurringJobScheduler singleton
+	const recurringJobScheduler = new RecurringJobScheduler(deps.db.getDatabase(), deps.daemonHub);
+	recurringJobScheduler.start();
+
+	// Create RoomAgentManager to track active room agents
+	const roomAgentManager = new RoomAgentManager({
+		db: deps.db.getDatabase(),
+		daemonHub: deps.daemonHub,
+		messageHub: deps.messageHub,
+		roomManager,
+		sessionPairManager,
+		taskManagerFactory,
+		goalManagerFactory,
+		scheduler: recurringJobScheduler,
+	});
+
 	setupSessionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub, roomManager);
 	setupMessageHandlers(deps.messageHub, deps.sessionManager);
 	setupCommandHandlers(deps.messageHub, deps.sessionManager);
@@ -94,6 +131,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
 	setupTaskHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
 	setupMemoryHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
 	setupRoomMessageHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
+
+	// Goal handlers
+	setupGoalHandlers(deps.messageHub, deps.daemonHub, goalManagerFactory);
+
+	// Recurring job handlers
+	setupRecurringJobHandlers(deps.messageHub, deps.daemonHub, recurringJobScheduler);
+
+	// Room agent handlers
+	setupRoomAgentHandlers(deps.messageHub, deps.daemonHub, roomAgentManager);
 
 	// Lobby handlers
 	setupLobbyHandlers(deps.messageHub, deps.daemonHub);
