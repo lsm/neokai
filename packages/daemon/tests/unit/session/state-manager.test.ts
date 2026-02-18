@@ -269,7 +269,7 @@ describe('StateManager', () => {
 				getProcessingState: mock(() => ({ status: 'idle' })),
 				getSlashCommands: mock(async () => []),
 				getContextInfo: mock(() => null),
-				getSDKMessages: mock(() => []),
+				getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
 			};
 			(mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
 				mockAgentSession

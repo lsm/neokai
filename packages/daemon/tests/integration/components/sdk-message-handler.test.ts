@@ -70,7 +70,7 @@ describe('SDKMessageHandler', () => {
 		mockDb = {
 			saveSDKMessage: dbSaveSpy,
 			updateSession: mock(() => {}),
-			getSDKMessages: mock(() => []),
+			getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
 		} as unknown as Database;
 
 		// Mock MessageHub
