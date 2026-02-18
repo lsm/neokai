@@ -45,7 +45,7 @@ describe('MessageRecoveryHandler', () => {
 		};
 
 		getMessagesByStatusSpy = mock(() => []);
-		getSDKMessagesSpy = mock(() => []);
+		getSDKMessagesSpy = mock(() => ({ messages: [], hasMore: false }));
 		updateMessageStatusSpy = mock(() => {});
 		mockDb = {
 			getMessagesByStatus: getMessagesByStatusSpy,
@@ -110,7 +110,7 @@ describe('MessageRecoveryHandler', () => {
 				timestamp: 1000,
 			} as unknown as SDKMessage;
 
-			getSDKMessagesSpy.mockReturnValue([systemInitMessage]);
+			getSDKMessagesSpy.mockReturnValue({ messages: [systemInitMessage], hasMore: false });
 
 			handler.recoverOrphanedSentMessages();
 
@@ -138,7 +138,7 @@ describe('MessageRecoveryHandler', () => {
 				timestamp: 2000,
 			} as unknown as SDKMessage;
 
-			getSDKMessagesSpy.mockReturnValue([systemInitMessage]);
+			getSDKMessagesSpy.mockReturnValue({ messages: [systemInitMessage], hasMore: false });
 
 			handler.recoverOrphanedSentMessages();
 
@@ -157,7 +157,7 @@ describe('MessageRecoveryHandler', () => {
 
 			getMessagesByStatusSpy.mockReturnValueOnce([assistantMessage]).mockReturnValueOnce([]);
 
-			getSDKMessagesSpy.mockReturnValue([]);
+			getSDKMessagesSpy.mockReturnValue({ messages: [], hasMore: false });
 
 			handler.recoverOrphanedSentMessages();
 
@@ -192,7 +192,7 @@ describe('MessageRecoveryHandler', () => {
 				timestamp: 1000,
 			} as unknown as SDKMessage;
 
-			getSDKMessagesSpy.mockReturnValue([systemInitMessage]);
+			getSDKMessagesSpy.mockReturnValue({ messages: [systemInitMessage], hasMore: false });
 
 			handler.recoverOrphanedSentMessages();
 
@@ -224,7 +224,7 @@ describe('MessageRecoveryHandler', () => {
 
 			getMessagesByStatusSpy.mockReturnValueOnce([queuedUserMessage]).mockReturnValueOnce([]);
 
-			getSDKMessagesSpy.mockReturnValue([]);
+			getSDKMessagesSpy.mockReturnValue({ messages: [], hasMore: false });
 
 			handler.recoverOrphanedSentMessages();
 
@@ -244,7 +244,7 @@ describe('MessageRecoveryHandler', () => {
 
 			getMessagesByStatusSpy.mockReturnValueOnce([queuedUserMessage]).mockReturnValueOnce([]);
 
-			getSDKMessagesSpy.mockReturnValue([]);
+			getSDKMessagesSpy.mockReturnValue({ messages: [], hasMore: false });
 
 			handler.recoverOrphanedSentMessages();
 
@@ -287,7 +287,7 @@ describe('MessageRecoveryHandler', () => {
 				} as unknown as SDKMessage,
 			];
 
-			getSDKMessagesSpy.mockReturnValue(systemInitMessages);
+			getSDKMessagesSpy.mockReturnValue({ messages: systemInitMessages, hasMore: false });
 
 			handler.recoverOrphanedSentMessages();
 

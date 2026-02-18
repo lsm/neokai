@@ -65,8 +65,27 @@ export class SDKMessageRepository {
 	 * @param limit - Maximum number of top-level messages to return (default: 100)
 	 * @param before - Cursor: get messages older than this timestamp (milliseconds)
 	 * @param since - Get messages newer than this timestamp (milliseconds)
+	 * @returns Object with messages array and hasMore boolean
 	 */
-	getSDKMessages(sessionId: string, limit = 100, before?: number, since?: number): SDKMessage[] {
+	getSDKMessages(
+		sessionId: string,
+		limit?: number,
+		before?: number,
+		since?: number
+	): { messages: SDKMessage[]; hasMore: boolean } {
+		return this._getSDKMessagesImpl(sessionId, limit ?? 100, before, since);
+	}
+
+	/**
+	 * Internal implementation for getSDKMessages
+	 * @private
+	 */
+	private _getSDKMessagesImpl(
+		sessionId: string,
+		limit: number,
+		before?: number,
+		since?: number
+	): { messages: SDKMessage[]; hasMore: boolean } {
 		// Step 1: Get top-level messages (excluding subagent messages)
 		let query = `SELECT sdk_message, timestamp FROM sdk_messages WHERE session_id = ? AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL`;
 		const params: SQLiteValue[] = [sessionId];
@@ -100,6 +119,9 @@ export class SDKMessageRepository {
 
 		// Reverse to get chronological order (oldest to newest) for display
 		const topLevelMessages = messages.reverse();
+
+		// Determine hasMore: if we got exactly `limit` top-level messages, there might be more
+		const hasMore = topLevelMessages.length === limit;
 
 		// Step 2: Get all subagent messages for the returned top-level messages
 		// Extract tool use IDs from Task blocks in the top-level messages
@@ -137,7 +159,11 @@ export class SDKMessageRepository {
 		}
 
 		// Combine and return: top-level messages + their associated subagent messages
-		return [...topLevelMessages, ...subagentMessages];
+		// hasMore is based on top-level message count only (not including subagent messages)
+		return {
+			messages: [...topLevelMessages, ...subagentMessages],
+			hasMore,
+		};
 	}
 
 	/**

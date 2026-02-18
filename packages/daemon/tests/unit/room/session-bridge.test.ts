@@ -97,7 +97,7 @@ function createMockSessionManager() {
 // Helper to create mock SDKMessageRepository
 function createMockSDKMessageRepository() {
 	return {
-		getSDKMessages: mock(() => [] as unknown[]),
+		getSDKMessages: mock(() => ({ messages: [] as unknown[], hasMore: false })),
 	};
 }
 
@@ -446,9 +446,10 @@ describe('SessionBridge', () => {
 			await sessionBridge.startBridge('pair-123');
 
 			// Simulate assistant messages from worker
-			mockSDKMessageRepo.getSDKMessages.mockReturnValue([
-				{ type: 'assistant', message: { content: 'Worker response' } },
-			]);
+			mockSDKMessageRepo.getSDKMessages.mockReturnValue({
+				messages: [{ type: 'assistant', message: { content: 'Worker response' } }],
+				hasMore: false,
+			});
 
 			// Get the worker state change handler
 			const workerHandler = mockMessageHub.onEvent.mock.calls[0][1];
@@ -587,9 +588,10 @@ describe('SessionBridge', () => {
 			await sessionBridge.startBridge('pair-123');
 
 			// Simulate assistant messages from manager
-			mockSDKMessageRepo.getSDKMessages.mockReturnValue([
-				{ type: 'assistant', message: { content: 'Manager response' } },
-			]);
+			mockSDKMessageRepo.getSDKMessages.mockReturnValue({
+				messages: [{ type: 'assistant', message: { content: 'Manager response' } }],
+				hasMore: false,
+			});
 
 			// Get the manager state change handler (second onEvent call)
 			const managerHandler = mockMessageHub.onEvent.mock.calls[1][1];
@@ -631,9 +633,10 @@ describe('SessionBridge', () => {
 			await sessionBridge.startBridge('pair-123');
 
 			// Simulate no assistant messages
-			mockSDKMessageRepo.getSDKMessages.mockReturnValue([
-				{ type: 'user', message: { content: 'User message' } },
-			]);
+			mockSDKMessageRepo.getSDKMessages.mockReturnValue({
+				messages: [{ type: 'user', message: { content: 'User message' } }],
+				hasMore: false,
+			});
 
 			// Get the manager state change handler
 			const managerHandler = mockMessageHub.onEvent.mock.calls[1][1];
@@ -676,17 +679,20 @@ describe('SessionBridge', () => {
 			await sessionBridge.startBridge('pair-123');
 
 			// Simulate assistant messages with content blocks
-			mockSDKMessageRepo.getSDKMessages.mockReturnValue([
-				{
-					type: 'assistant',
-					message: {
-						content: [
-							{ type: 'text', text: 'First block' },
-							{ type: 'text', text: 'Second block' },
-						],
+			mockSDKMessageRepo.getSDKMessages.mockReturnValue({
+				messages: [
+					{
+						type: 'assistant',
+						message: {
+							content: [
+								{ type: 'text', text: 'First block' },
+								{ type: 'text', text: 'Second block' },
+							],
+						},
 					},
-				},
-			]);
+				],
+				hasMore: false,
+			});
 
 			// Get the worker state change handler
 			const workerHandler = mockMessageHub.onEvent.mock.calls[0][1];
@@ -723,18 +729,21 @@ describe('SessionBridge', () => {
 			await sessionBridge.startBridge('pair-123');
 
 			// Simulate assistant messages with mixed content
-			mockSDKMessageRepo.getSDKMessages.mockReturnValue([
-				{
-					type: 'assistant',
-					message: {
-						content: [
-							{ type: 'text', text: 'Text block' },
-							{ type: 'tool_use', name: 'some_tool' }, // Non-text block
-							{ type: 'text', text: 'Another text block' },
-						],
+			mockSDKMessageRepo.getSDKMessages.mockReturnValue({
+				messages: [
+					{
+						type: 'assistant',
+						message: {
+							content: [
+								{ type: 'text', text: 'Text block' },
+								{ type: 'tool_use', name: 'some_tool' }, // Non-text block
+								{ type: 'text', text: 'Another text block' },
+							],
+						},
 					},
-				},
-			]);
+				],
+				hasMore: false,
+			});
 
 			// Get the worker state change handler
 			const workerHandler = mockMessageHub.onEvent.mock.calls[0][1];
@@ -766,7 +775,7 @@ describe('SessionBridge', () => {
 
 			// Create a fresh mock for this test
 			const freshMockSDKMessageRepo = {
-				getSDKMessages: mock(() => mockMessages),
+				getSDKMessages: mock(() => ({ messages: mockMessages, hasMore: false })),
 			};
 
 			// Create a fresh SessionBridge with the new mock

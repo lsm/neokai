@@ -82,7 +82,7 @@ describe('RewindHandler', () => {
 			getUserMessages: getUserMessagesSpy,
 			getUserMessageByUuid: getUserMessageByUuidSpy,
 			countMessagesAfter: countMessagesAfterSpy,
-			getSDKMessages: mock(() => []),
+			getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
 		} as unknown as Database;
 
 		restartSpy = mock(async () => {});
@@ -530,7 +530,10 @@ describe('RewindHandler', () => {
 		});
 
 		it('should return error when no valid messages found', async () => {
-			mockDb.getSDKMessages = mock(() => [{ uuid: 'different-uuid', timestamp: 1000 }]);
+			mockDb.getSDKMessages = mock(() => ({
+				messages: [{ uuid: 'different-uuid', timestamp: 1000 }],
+				hasMore: false,
+			}));
 			handler = createHandler();
 			const result = await handler.previewSelectiveRewind([testRewindPoint.uuid]);
 
@@ -539,11 +542,14 @@ describe('RewindHandler', () => {
 		});
 
 		it('should count messages to delete and preview file changes', async () => {
-			mockDb.getSDKMessages = mock(() => [
-				{ uuid: testRewindPoint.uuid, timestamp: testTimestamp },
-				{ uuid: 'msg-2', timestamp: testTimestamp + 1000 },
-				{ uuid: 'msg-3', timestamp: testTimestamp + 2000 },
-			]);
+			mockDb.getSDKMessages = mock(() => ({
+				messages: [
+					{ uuid: testRewindPoint.uuid, timestamp: testTimestamp },
+					{ uuid: 'msg-2', timestamp: testTimestamp + 1000 },
+					{ uuid: 'msg-3', timestamp: testTimestamp + 2000 },
+				],
+				hasMore: false,
+			}));
 
 			handler = createHandler();
 			const result = await handler.previewSelectiveRewind([testRewindPoint.uuid]);
@@ -575,10 +581,13 @@ describe('RewindHandler', () => {
 		});
 
 		it('should rewind files, delete messages, and restart query', async () => {
-			mockDb.getSDKMessages = mock(() => [
-				{ uuid: testRewindPoint.uuid, timestamp: testTimestamp },
-				{ uuid: 'msg-2', timestamp: testTimestamp + 1000 },
-			]);
+			mockDb.getSDKMessages = mock(() => ({
+				messages: [
+					{ uuid: testRewindPoint.uuid, timestamp: testTimestamp },
+					{ uuid: 'msg-2', timestamp: testTimestamp + 1000 },
+				],
+				hasMore: false,
+			}));
 
 			handler = createHandler();
 			const result = await handler.executeSelectiveRewind([testRewindPoint.uuid]);
@@ -595,9 +604,10 @@ describe('RewindHandler', () => {
 				timestamp: testTimestamp - 10000,
 				content: 'Previous message',
 			};
-			mockDb.getSDKMessages = mock(() => [
-				{ uuid: testRewindPoint.uuid, timestamp: testTimestamp },
-			]);
+			mockDb.getSDKMessages = mock(() => ({
+				messages: [{ uuid: testRewindPoint.uuid, timestamp: testTimestamp }],
+				hasMore: false,
+			}));
 			// After deletion, getUserMessages returns only the previous message
 			getUserMessagesSpy.mockReturnValue([previousMessage]);
 
@@ -1009,10 +1019,13 @@ describe('RewindHandler', () => {
 				const userMessageUuid = 'user-msg-1';
 				const userTimestamp = 1000;
 
-				mockDb.getSDKMessages = mock(() => [
-					{ uuid: userMessageUuid, type: 'user', timestamp: userTimestamp },
-					{ uuid: 'msg-2', type: 'assistant', timestamp: userTimestamp + 1000 },
-				]);
+				mockDb.getSDKMessages = mock(() => ({
+					messages: [
+						{ uuid: userMessageUuid, type: 'user', timestamp: userTimestamp },
+						{ uuid: 'msg-2', type: 'assistant', timestamp: userTimestamp + 1000 },
+					],
+					hasMore: false,
+				}));
 				getUserMessagesSpy.mockReturnValue([
 					{ uuid: userMessageUuid, timestamp: userTimestamp, content: 'User message' },
 				]);
@@ -1030,10 +1043,13 @@ describe('RewindHandler', () => {
 				const userMessageUuid = 'user-msg-1';
 				const userTimestamp = 1000;
 
-				mockDb.getSDKMessages = mock(() => [
-					{ uuid: userMessageUuid, type: 'user', timestamp: userTimestamp },
-					{ uuid: 'msg-2', type: 'assistant', timestamp: userTimestamp + 1000 },
-				]);
+				mockDb.getSDKMessages = mock(() => ({
+					messages: [
+						{ uuid: userMessageUuid, type: 'user', timestamp: userTimestamp },
+						{ uuid: 'msg-2', type: 'assistant', timestamp: userTimestamp + 1000 },
+					],
+					hasMore: false,
+				}));
 				getUserMessagesSpy.mockReturnValue([
 					{ uuid: userMessageUuid, timestamp: userTimestamp, content: 'User message' },
 				]);
@@ -1051,10 +1067,13 @@ describe('RewindHandler', () => {
 				const userMessageUuid = 'user-msg-1';
 				const userTimestamp = 1000;
 
-				mockDb.getSDKMessages = mock(() => [
-					{ uuid: userMessageUuid, type: 'user', timestamp: userTimestamp },
-					{ uuid: 'msg-2', type: 'assistant', timestamp: userTimestamp + 1000 },
-				]);
+				mockDb.getSDKMessages = mock(() => ({
+					messages: [
+						{ uuid: userMessageUuid, type: 'user', timestamp: userTimestamp },
+						{ uuid: 'msg-2', type: 'assistant', timestamp: userTimestamp + 1000 },
+					],
+					hasMore: false,
+				}));
 				getUserMessagesSpy.mockReturnValue([
 					{ uuid: userMessageUuid, timestamp: userTimestamp, content: 'User message' },
 				]);
@@ -1075,26 +1094,29 @@ describe('RewindHandler', () => {
 				const assistantMessageUuid = 'assistant-msg-1';
 				const assistantTimestamp = 1000;
 
-				mockDb.getSDKMessages = mock(() => [
-					{
-						uuid: assistantMessageUuid,
-						type: 'assistant',
-						timestamp: assistantTimestamp,
-						content: [
-							{
-								type: 'tool_use',
-								id: 'tool-1',
-								name: 'Edit',
-								input: {
-									file_path: '/tmp/test.ts',
-									old_string: 'old',
-									new_string: 'new',
+				mockDb.getSDKMessages = mock(() => ({
+					messages: [
+						{
+							uuid: assistantMessageUuid,
+							type: 'assistant',
+							timestamp: assistantTimestamp,
+							content: [
+								{
+									type: 'tool_use',
+									id: 'tool-1',
+									name: 'Edit',
+									input: {
+										file_path: '/tmp/test.ts',
+										old_string: 'old',
+										new_string: 'new',
+									},
 								},
-							},
-						],
-					},
-					{ uuid: 'assistant-msg-2', type: 'assistant', timestamp: assistantTimestamp + 1000 },
-				]);
+							],
+						},
+						{ uuid: 'assistant-msg-2', type: 'assistant', timestamp: assistantTimestamp + 1000 },
+					],
+					hasMore: false,
+				}));
 				getUserMessagesSpy.mockReturnValue([]);
 
 				handler = createHandler();
@@ -1116,11 +1138,14 @@ describe('RewindHandler', () => {
 				const assistantMessageUuid = 'assistant-msg-1';
 				const userMessageUuid = 'user-msg-1';
 
-				mockDb.getSDKMessages = mock(() => [
-					{ uuid: assistantMessageUuid, type: 'assistant', timestamp: 1000 },
-					{ uuid: userMessageUuid, type: 'user', timestamp: 2000 },
-					{ uuid: 'assistant-msg-2', type: 'assistant', timestamp: 3000 },
-				]);
+				mockDb.getSDKMessages = mock(() => ({
+					messages: [
+						{ uuid: assistantMessageUuid, type: 'assistant', timestamp: 1000 },
+						{ uuid: userMessageUuid, type: 'user', timestamp: 2000 },
+						{ uuid: 'assistant-msg-2', type: 'assistant', timestamp: 3000 },
+					],
+					hasMore: false,
+				}));
 				getUserMessagesSpy.mockReturnValue([
 					{ uuid: userMessageUuid, timestamp: 2000, content: 'User message' },
 				]);

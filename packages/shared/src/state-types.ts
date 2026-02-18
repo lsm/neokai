@@ -199,6 +199,7 @@ export interface SessionState {
 // State channel: {sessionId}:state.sdkMessages
 export interface SDKMessagesState {
 	sdkMessages: SDKMessage[];
+	hasMore: boolean;
 	timestamp: number;
 }
 

@@ -115,8 +115,8 @@ describe('SDKMessageRepository', () => {
 			repository.saveSDKMessage('session-1', msg1);
 			repository.saveSDKMessage('session-2', msg2);
 
-			const session1Messages = repository.getSDKMessages('session-1');
-			const session2Messages = repository.getSDKMessages('session-2');
+			const { messages: session1Messages } = repository.getSDKMessages('session-1');
+			const { messages: session2Messages } = repository.getSDKMessages('session-2');
 
 			expect(session1Messages.length).toBe(1);
 			expect(session2Messages.length).toBe(1);
@@ -131,7 +131,7 @@ describe('SDKMessageRepository', () => {
 			await new Promise((r) => setTimeout(r, 5));
 			repository.saveSDKMessage('session-1', createUserMessage('Third'));
 
-			const messages = repository.getSDKMessages('session-1');
+			const { messages } = repository.getSDKMessages('session-1');
 
 			expect(messages.length).toBe(3);
 			// Messages should be in chronological order (oldest first)
@@ -150,7 +150,7 @@ describe('SDKMessageRepository', () => {
 		});
 
 		it('should return empty array for non-existent session', () => {
-			const messages = repository.getSDKMessages('non-existent');
+			const { messages } = repository.getSDKMessages('non-existent');
 
 			expect(messages).toEqual([]);
 		});
@@ -160,7 +160,7 @@ describe('SDKMessageRepository', () => {
 				repository.saveSDKMessage('session-1', createUserMessage(`Message ${i}`));
 			}
 
-			const messages = repository.getSDKMessages('session-1', 50);
+			const { messages } = repository.getSDKMessages('session-1', 50);
 
 			expect(messages.length).toBe(50);
 		});
@@ -174,7 +174,7 @@ describe('SDKMessageRepository', () => {
 			await new Promise((r) => setTimeout(r, 10));
 			repository.saveSDKMessage('session-1', createUserMessage('Third'));
 
-			const messages = repository.getSDKMessages('session-1', 100, middleTime);
+			const { messages } = repository.getSDKMessages('session-1', 100, middleTime);
 
 			// Should only get messages before middleTime
 			expect(messages.length).toBe(1);
@@ -193,7 +193,7 @@ describe('SDKMessageRepository', () => {
 			await new Promise((r) => setTimeout(r, 10));
 			repository.saveSDKMessage('session-1', createUserMessage('Third'));
 
-			const messages = repository.getSDKMessages('session-1', 100, undefined, middleTime);
+			const { messages } = repository.getSDKMessages('session-1', 100, undefined, middleTime);
 
 			// Should only get messages after middleTime
 			expect(messages.length).toBe(2);
@@ -205,7 +205,7 @@ describe('SDKMessageRepository', () => {
 			repository.saveSDKMessage('session-1', createSubagentMessage('Subagent work', toolUseId));
 			repository.saveSDKMessage('session-1', createSubagentMessage('Another subagent', toolUseId));
 
-			const messages = repository.getSDKMessages('session-1');
+			const { messages } = repository.getSDKMessages('session-1');
 
 			// Should include both top-level and subagent messages
 			expect(messages.length).toBe(3);
@@ -218,7 +218,7 @@ describe('SDKMessageRepository', () => {
 				createSubagentMessage('Orphan subagent', 'non-existent-tool')
 			);
 
-			const messages = repository.getSDKMessages('session-1');
+			const { messages } = repository.getSDKMessages('session-1');
 
 			// Only top-level message should be returned
 			expect(messages.length).toBe(1);
@@ -227,11 +227,47 @@ describe('SDKMessageRepository', () => {
 		it('should inject timestamp into returned messages', () => {
 			repository.saveSDKMessage('session-1', createUserMessage('Test'));
 
-			const messages = repository.getSDKMessages('session-1');
+			const { messages } = repository.getSDKMessages('session-1');
 
 			expect(messages.length).toBe(1);
 			expect((messages[0] as { timestamp?: number }).timestamp).toBeDefined();
 			expect(typeof (messages[0] as { timestamp?: number }).timestamp).toBe('number');
+		});
+
+		it('should return hasMore=true when there are more messages', () => {
+			// Create more than limit messages
+			for (let i = 0; i < 110; i++) {
+				repository.saveSDKMessage('session-1', createUserMessage(`Message ${i}`));
+			}
+
+			const { messages, hasMore } = repository.getSDKMessages('session-1', 100);
+
+			expect(messages.length).toBe(100);
+			expect(hasMore).toBe(true);
+		});
+
+		it('should return hasMore=false when there are no more messages', () => {
+			// Create fewer messages than limit
+			for (let i = 0; i < 50; i++) {
+				repository.saveSDKMessage('session-1', createUserMessage(`Message ${i}`));
+			}
+
+			const { messages, hasMore } = repository.getSDKMessages('session-1', 100);
+
+			expect(messages.length).toBe(50);
+			expect(hasMore).toBe(false);
+		});
+
+		it('should return hasMore=true when exactly limit messages exist', () => {
+			// Create exactly limit messages
+			for (let i = 0; i < 100; i++) {
+				repository.saveSDKMessage('session-1', createUserMessage(`Message ${i}`));
+			}
+
+			const { messages, hasMore } = repository.getSDKMessages('session-1', 100);
+
+			expect(messages.length).toBe(100);
+			expect(hasMore).toBe(true); // Can't know for sure, so assume there might be more
 		});
 	});
 

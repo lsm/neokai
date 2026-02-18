@@ -387,7 +387,7 @@ describe('AgentSession', () => {
 			mockDb = {
 				getSession: mock(() => mockSession),
 				updateSession: mock(() => {}),
-				getSDKMessages: mock(() => [{ id: 'msg1' }]),
+				getSDKMessages: mock(() => ({ messages: [{ id: 'msg1' }], hasMore: false })),
 				getSDKMessageCount: mock(() => 10),
 			} as unknown as Database;
 
@@ -437,8 +437,9 @@ describe('AgentSession', () => {
 		});
 
 		it('getSDKMessages should delegate to database', () => {
-			const messages = agentSession.getSDKMessages(10);
+			const { messages, hasMore } = agentSession.getSDKMessages(10);
 			expect(messages).toEqual([{ id: 'msg1' }]);
+			expect(hasMore).toBe(false);
 		});
 
 		it('getSDKMessageCount should delegate to database', () => {

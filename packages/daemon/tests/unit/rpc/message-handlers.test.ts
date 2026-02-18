@@ -77,7 +77,7 @@ function createMockAgentSession(): {
 	const mocks = {
 		getSessionData: mock(() => sessionData),
 		getSDKSessionId: mock(() => 'sdk-session-123'),
-		getSDKMessages: mock(() => []),
+		getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
 		getSDKMessageCount: mock(() => 0),
 	};
 

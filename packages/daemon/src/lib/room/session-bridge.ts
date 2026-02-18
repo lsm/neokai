@@ -278,7 +278,7 @@ export class SessionBridge {
 		const { workerSessionId, managerSessionId, lastWorkerMessageTimestamp } = bridge;
 
 		// Get Worker's assistant messages since last check
-		const messages = this.sdkMessageRepo.getSDKMessages(
+		const { messages } = this.sdkMessageRepo.getSDKMessages(
 			workerSessionId,
 			100, // limit
 			undefined, // before
@@ -331,7 +331,7 @@ export class SessionBridge {
 		const { workerSessionId, managerSessionId, lastManagerMessageTimestamp } = bridge;
 
 		// Get Manager's assistant messages since last check
-		const messages = this.sdkMessageRepo.getSDKMessages(
+		const { messages } = this.sdkMessageRepo.getSDKMessages(
 			managerSessionId,
 			100, // limit
 			undefined, // before

@@ -84,6 +84,7 @@ import type {
 	SystemPromptConfig,
 	McpServerConfig,
 } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk';
 import type { DaemonHub } from '../daemon-hub';
 import { Database } from '../../storage/database';
 import { ErrorManager } from '../error-manager';
@@ -522,7 +523,11 @@ export class AgentSession
 		return this.session;
 	}
 
-	getSDKMessages(limit?: number, before?: number, since?: number) {
+	getSDKMessages(
+		limit?: number,
+		before?: number,
+		since?: number
+	): { messages: SDKMessage[]; hasMore: boolean } {
 		return this.db.getSDKMessages(this.session.id, limit, before, since);
 	}
 

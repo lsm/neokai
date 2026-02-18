@@ -498,10 +498,11 @@ export class StateManager {
 		}
 
 		// Use 'since' for incremental sync on reconnection
-		const sdkMessages = agentSession.getSDKMessages(100, undefined, since);
+		const { messages: sdkMessages, hasMore } = agentSession.getSDKMessages(100, undefined, since);
 
 		return {
 			sdkMessages,
+			hasMore,
 			timestamp: Date.now(),
 		};
 	}

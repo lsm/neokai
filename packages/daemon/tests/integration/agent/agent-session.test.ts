@@ -56,10 +56,11 @@ describe('AgentSession', () => {
 			});
 
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-			const sdkMessages = agentSession!.getSDKMessages();
+			const { messages: sdkMessages, hasMore } = agentSession!.getSDKMessages();
 
 			expect(sdkMessages).toBeArray();
 			expect(sdkMessages.length).toBe(0);
+			expect(hasMore).toBe(false);
 		});
 
 		test('should support pagination and since parameter', async () => {
@@ -68,9 +69,14 @@ describe('AgentSession', () => {
 			});
 
 			const agentSession = await ctx.sessionManager.getSessionAsync(sessionId);
-			const sdkMessages = agentSession!.getSDKMessages(10, 0, Date.now() - 1000);
+			const { messages: sdkMessages, hasMore } = agentSession!.getSDKMessages(
+				10,
+				0,
+				Date.now() - 1000
+			);
 
 			expect(sdkMessages).toBeArray();
+			expect(hasMore).toBe(false);
 		});
 	});
 

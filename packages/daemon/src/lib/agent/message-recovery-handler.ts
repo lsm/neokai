@@ -53,7 +53,7 @@ export class MessageRecoveryHandler {
 			}
 
 			// Get all SDK messages to check for responses
-			const allMessages = db.getSDKMessages(session.id, 10000);
+			const { messages: allMessages } = db.getSDKMessages(session.id, 10000);
 
 			// Find the latest system:init message timestamp
 			let latestInitTimestamp = 0;

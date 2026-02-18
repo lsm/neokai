@@ -87,8 +87,8 @@ export function setupMessageHandlers(messageHub: MessageHub, sessionManager: Ses
 			throw new Error('Session not found');
 		}
 
-		const sdkMessages = agentSession.getSDKMessages(limit, before, since);
-		return { sdkMessages };
+		const { messages: sdkMessages, hasMore } = agentSession.getSDKMessages(limit, before, since);
+		return { sdkMessages, hasMore };
 	});
 
 	// Get total message count for a session (useful for pagination UI)
@@ -119,7 +119,7 @@ export function setupMessageHandlers(messageHub: MessageHub, sessionManager: Ses
 		}
 
 		// Get all SDK messages (no limit)
-		const sdkMessages = agentSession.getSDKMessages(10000);
+		const { messages: sdkMessages } = agentSession.getSDKMessages(10000);
 		const sessionData = agentSession.getSessionData();
 
 		if (format === 'json') {
