@@ -46,6 +46,8 @@ import {
 import { GoalManager } from '../room/goal-manager';
 import { RecurringJobScheduler } from '../room/recurring-job-scheduler';
 import { TaskManager } from '../room/task-manager';
+import { PromptTemplateManager } from '../prompts/prompt-template-manager';
+import { setupProposalHandlers } from './proposal-handlers';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -95,9 +97,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
 	const recurringJobScheduler = new RecurringJobScheduler(deps.db.getDatabase(), deps.daemonHub);
 	recurringJobScheduler.start();
 
+	// Create PromptTemplateManager singleton
+	const promptTemplateManager = new PromptTemplateManager(deps.db.getDatabase(), deps.daemonHub);
+
 	// Create RoomAgentManager to track active room agents
 	const roomAgentManager = new RoomAgentManager({
-		db: deps.db.getDatabase(),
+		db: deps.db,
 		daemonHub: deps.daemonHub,
 		messageHub: deps.messageHub,
 		roomManager,
@@ -105,6 +110,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
 		taskManagerFactory,
 		goalManagerFactory,
 		scheduler: recurringJobScheduler,
+		getApiKey: () => deps.authManager.getCurrentApiKey(),
+		promptTemplateManager,
 	});
 
 	setupSessionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub, roomManager);
@@ -152,4 +159,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
 		roomManager,
 		deps.gitHubService ?? null
 	);
+
+	// Proposal handlers
+	setupProposalHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
 }

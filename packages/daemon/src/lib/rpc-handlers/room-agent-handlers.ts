@@ -16,13 +16,14 @@
 import type { MessageHub } from '@neokai/shared';
 import type { RoomAgentState, RoomAgentLifecycleState } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
-import type { Database as BunDatabase } from 'bun:sqlite';
+import type { Database } from '../../storage/index';
 import { RoomAgentService, type RoomAgentContext } from '../room/room-agent-service';
 import { RoomManager } from '../room/room-manager';
 import type { SessionPairManager } from '../room/session-pair-manager';
 import { TaskManager } from '../room/task-manager';
 import { GoalManager } from '../room/goal-manager';
 import { RecurringJobScheduler } from '../room/recurring-job-scheduler';
+import type { PromptTemplateManager } from '../prompts/prompt-template-manager';
 
 /**
  * Factory types for creating per-room managers
@@ -52,7 +53,7 @@ export type RecurringJobSchedulerLike = Pick<
  * Dependencies for RoomAgentManager
  */
 export interface RoomAgentManagerDeps {
-	db: BunDatabase;
+	db: Database;
 	daemonHub: DaemonHub;
 	messageHub: MessageHub;
 	roomManager: RoomManager;
@@ -60,6 +61,10 @@ export interface RoomAgentManagerDeps {
 	taskManagerFactory: TaskManagerFactory;
 	goalManagerFactory: GoalManagerFactory;
 	scheduler: RecurringJobSchedulerLike;
+	/** API key provider function */
+	getApiKey: () => Promise<string | null>;
+	/** Prompt template manager */
+	promptTemplateManager: PromptTemplateManager;
 }
 
 /**
@@ -196,6 +201,9 @@ export class RoomAgentManager {
 			daemonHub: this.deps.daemonHub,
 			messageHub: this.deps.messageHub,
 			sessionPairManager: this.deps.sessionPairManager,
+			getApiKey: this.deps.getApiKey,
+			promptTemplateManager: this.deps.promptTemplateManager,
+			recurringJobScheduler: this.deps.scheduler as RecurringJobScheduler,
 		};
 
 		return new RoomAgentService(context);
@@ -345,5 +353,109 @@ export function setupRoomAgentHandlers(
 	messageHub.onRequest('roomAgent.list', async () => {
 		const agents = roomAgentManager.listAgents();
 		return { agents };
+	});
+
+	// roomAgent.submitReview - Submit a review response (approve/reject)
+	messageHub.onRequest('roomAgent.submitReview', async (data) => {
+		const params = data as {
+			roomId: string;
+			taskId: string;
+			approved: boolean;
+			response: string;
+		};
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+
+		const agent = roomAgentManager.getAgent(params.roomId);
+		if (!agent) {
+			throw new Error('Room agent not found');
+		}
+
+		await agent.handleHumanInput({
+			type: 'review_response',
+			taskId: params.taskId,
+			approved: params.approved,
+			response: params.response,
+		});
+
+		return { success: true };
+	});
+
+	// roomAgent.resolveEscalation - Resolve an escalation
+	messageHub.onRequest('roomAgent.resolveEscalation', async (data) => {
+		const params = data as {
+			roomId: string;
+			escalationId: string;
+			response: string;
+		};
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.escalationId) {
+			throw new Error('Escalation ID is required');
+		}
+
+		const agent = roomAgentManager.getAgent(params.roomId);
+		if (!agent) {
+			throw new Error('Room agent not found');
+		}
+
+		await agent.handleHumanInput({
+			type: 'escalation_response',
+			escalationId: params.escalationId,
+			response: params.response,
+		});
+
+		return { success: true };
+	});
+
+	// roomAgent.sendMessage - Send a message to the room agent (human chat)
+	messageHub.onRequest('roomAgent.sendMessage', async (data) => {
+		const params = data as {
+			roomId: string;
+			message: string;
+		};
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.message) {
+			throw new Error('Message is required');
+		}
+
+		const agent = roomAgentManager.getAgent(params.roomId);
+		if (!agent) {
+			throw new Error('Room agent not found');
+		}
+
+		await agent.handleHumanInput({
+			type: 'message',
+			content: params.message,
+		});
+
+		return { success: true };
+	});
+
+	// roomAgent.getWaitingContext - Get what the agent is waiting for
+	messageHub.onRequest('roomAgent.getWaitingContext', async (data) => {
+		const params = data as { roomId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+
+		const agent = roomAgentManager.getAgent(params.roomId);
+		if (!agent) {
+			return { waitingContext: null };
+		}
+
+		const waitingContext = agent.getWaitingContext();
+		return { waitingContext };
 	});
 }
