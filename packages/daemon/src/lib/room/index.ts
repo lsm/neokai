@@ -26,6 +26,10 @@ export {
 	type RoomAgentConfig,
 } from './room-agent-service';
 
+// Room Agent Session and Lifecycle
+export { RoomAgentSession, type RoomAgentSessionContext } from './room-agent-session';
+export { RoomAgentLifecycleManager } from './room-agent-lifecycle-manager';
+
 // Types - re-exported from @neokai/shared for convenience
 export type {
 	Room,
@@ -68,6 +72,14 @@ export type {
 	TaskSession,
 	RoomAgentState,
 	RoomAgentLifecycleState,
+	RoomAgentSessionMetadata,
+	RoomAgentPlanningContext,
+	RoomAgentReviewContext,
+	RoomAgentHumanInput,
+	RoomAgentWaitingContext,
 	ManagerHookEvent,
 	ManagerHookPayload,
 } from '@neokai/shared';
+
+// Constants - re-exported from @neokai/shared
+export { DEFAULT_ROOM_AGENT_CONFIG } from '@neokai/shared';
