@@ -44,6 +44,10 @@ export interface Config {
 	nodeEnv: string;
 	workspaceRoot: string;
 	disableWorktrees?: boolean; // For testing - disables git worktree creation
+	// GitHub integration
+	githubWebhookSecret?: string; // Secret for verifying webhook signatures
+	githubPollingInterval?: number; // Polling interval in seconds (0 = disabled)
+	githubDefaultFilter?: string; // Default filter config as JSON string
 }
 
 export interface ConfigOverrides {
@@ -101,5 +105,9 @@ export function getConfig(overrides?: ConfigOverrides): Config {
 		maxSessions: parseInt(process.env.MAX_SESSIONS || '10'),
 		nodeEnv,
 		workspaceRoot,
+		// GitHub integration
+		githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
+		githubPollingInterval: parseInt(process.env.GITHUB_POLLING_INTERVAL || '0'),
+		githubDefaultFilter: process.env.GITHUB_DEFAULT_FILTER,
 	};
 }

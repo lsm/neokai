@@ -6,15 +6,28 @@
  */
 
 import { Database as BunDatabase } from 'bun:sqlite';
-import type { Session, GlobalToolsConfig, GlobalSettings } from '@neokai/shared';
+import type {
+	Session,
+	GlobalToolsConfig,
+	GlobalSettings,
+	RoomGitHubMapping,
+	InboxItem,
+} from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import { DatabaseCore } from './database-core';
 import { SessionRepository } from './repositories/session-repository';
 import { SDKMessageRepository, type SendStatus } from './repositories/sdk-message-repository';
 import { SettingsRepository } from './repositories/settings-repository';
+import { GitHubMappingRepository } from './repositories/github-mapping-repository';
+import {
+	InboxItemRepository,
+	type CreateInboxItemParams,
+	type InboxItemFilter,
+} from './repositories/inbox-item-repository';
 
 export type { SendStatus } from './repositories/sdk-message-repository';
 export type { SQLiteValue } from './types';
+export type { CreateInboxItemParams, InboxItemFilter } from './repositories/inbox-item-repository';
 
 /**
  * Database facade class that maintains backward compatibility with the original Database class.
@@ -27,6 +40,8 @@ export class Database {
 	private sessionRepo!: SessionRepository;
 	private sdkMessageRepo!: SDKMessageRepository;
 	private settingsRepo!: SettingsRepository;
+	private githubMappingRepo!: GitHubMappingRepository;
+	private inboxItemRepo!: InboxItemRepository;
 
 	constructor(dbPath: string) {
 		this.core = new DatabaseCore(dbPath);
@@ -40,6 +55,8 @@ export class Database {
 		this.sessionRepo = new SessionRepository(db);
 		this.sdkMessageRepo = new SDKMessageRepository(db);
 		this.settingsRepo = new SettingsRepository(db);
+		this.githubMappingRepo = new GitHubMappingRepository(db);
+		this.inboxItemRepo = new InboxItemRepository(db);
 	}
 
 	// ============================================================================
@@ -157,6 +174,114 @@ export class Database {
 
 	updateGlobalSettings(updates: Partial<GlobalSettings>): GlobalSettings {
 		return this.settingsRepo.updateGlobalSettings(updates);
+	}
+
+	// ============================================================================
+	// GitHub Mapping operations (delegated to GitHubMappingRepository)
+	// ============================================================================
+
+	createGitHubMapping(params: {
+		roomId: string;
+		repositories: Array<{
+			owner: string;
+			repo: string;
+			labels?: string[];
+			issueNumbers?: number[];
+		}>;
+		priority?: number;
+	}): RoomGitHubMapping {
+		return this.githubMappingRepo.createMapping(params);
+	}
+
+	getGitHubMapping(id: string): RoomGitHubMapping | null {
+		return this.githubMappingRepo.getMapping(id);
+	}
+
+	getGitHubMappingByRoomId(roomId: string): RoomGitHubMapping | null {
+		return this.githubMappingRepo.getMappingByRoomId(roomId);
+	}
+
+	listGitHubMappings(): RoomGitHubMapping[] {
+		return this.githubMappingRepo.listMappings();
+	}
+
+	listGitHubMappingsForRepository(owner: string, repo: string): RoomGitHubMapping[] {
+		return this.githubMappingRepo.listMappingsForRepository(owner, repo);
+	}
+
+	updateGitHubMapping(
+		id: string,
+		params: {
+			repositories?: Array<{
+				owner: string;
+				repo: string;
+				labels?: string[];
+				issueNumbers?: number[];
+			}>;
+			priority?: number;
+		}
+	): RoomGitHubMapping | null {
+		return this.githubMappingRepo.updateMapping(id, params);
+	}
+
+	deleteGitHubMapping(id: string): void {
+		this.githubMappingRepo.deleteMapping(id);
+	}
+
+	deleteGitHubMappingByRoomId(roomId: string): void {
+		this.githubMappingRepo.deleteMappingByRoomId(roomId);
+	}
+
+	// ============================================================================
+	// Inbox Item operations (delegated to InboxItemRepository)
+	// ============================================================================
+
+	createInboxItem(params: CreateInboxItemParams): InboxItem {
+		return this.inboxItemRepo.createItem(params);
+	}
+
+	getInboxItem(id: string): InboxItem | null {
+		return this.inboxItemRepo.getItem(id);
+	}
+
+	listInboxItems(filter?: InboxItemFilter): InboxItem[] {
+		return this.inboxItemRepo.listItems(filter);
+	}
+
+	listPendingInboxItems(limit?: number): InboxItem[] {
+		return this.inboxItemRepo.listPendingItems(limit);
+	}
+
+	updateInboxItemStatus(
+		id: string,
+		status: 'pending' | 'routed' | 'dismissed' | 'blocked',
+		routedToRoomId?: string
+	): InboxItem | null {
+		return this.inboxItemRepo.updateItemStatus(id, status, routedToRoomId);
+	}
+
+	dismissInboxItem(id: string): InboxItem | null {
+		return this.inboxItemRepo.dismissItem(id);
+	}
+
+	routeInboxItem(id: string, roomId: string): InboxItem | null {
+		return this.inboxItemRepo.routeItem(id, roomId);
+	}
+
+	blockInboxItem(id: string): InboxItem | null {
+		return this.inboxItemRepo.blockItem(id);
+	}
+
+	deleteInboxItem(id: string): void {
+		this.inboxItemRepo.deleteItem(id);
+	}
+
+	deleteInboxItemsForRepository(repository: string): number {
+		return this.inboxItemRepo.deleteItemsForRepository(repository);
+	}
+
+	countInboxItemsByStatus(status: 'pending' | 'routed' | 'dismissed' | 'blocked'): number {
+		return this.inboxItemRepo.countByStatus(status);
 	}
 
 	// ============================================================================

@@ -32,6 +32,8 @@ import { setupTaskHandlers } from './task-handlers';
 import { setupMemoryHandlers } from './memory-handlers';
 import { setupRoomMessageHandlers } from './room-message-handlers';
 import { setupLobbyHandlers } from './lobby-handlers';
+import { setupGitHubHandlers } from './github-handlers';
+import type { GitHubService } from '../github/github-service';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -41,6 +43,7 @@ export interface RPCHandlerDependencies {
 	config: Config;
 	daemonHub: DaemonHub;
 	db: Database;
+	gitHubService?: GitHubService;
 }
 
 /**
@@ -94,4 +97,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
 
 	// Lobby handlers
 	setupLobbyHandlers(deps.messageHub, deps.daemonHub);
+
+	// GitHub handlers
+	setupGitHubHandlers(
+		deps.messageHub,
+		deps.daemonHub,
+		deps.db,
+		roomManager,
+		deps.gitHubService ?? null
+	);
 }
