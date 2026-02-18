@@ -1,5 +1,26 @@
 import { defineConfig, devices } from '@playwright/test';
 import type { CoverageReportOptions } from 'monocart-reporter';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { mkdirSync } from 'fs';
+import { randomUUID } from 'crypto';
+
+// Create isolated temp directories for this test run
+// This ensures e2e tests NEVER affect production databases or workspaces
+const testRunId = `e2e-${Date.now()}-${randomUUID().slice(0, 8)}`;
+const e2eTempDir = join(tmpdir(), 'neokai-e2e', testRunId);
+const e2eWorkspaceDir = join(e2eTempDir, 'workspace');
+const e2eDatabaseDir = join(e2eTempDir, 'database');
+
+// Ensure directories exist
+mkdirSync(e2eWorkspaceDir, { recursive: true });
+mkdirSync(e2eDatabaseDir, { recursive: true });
+
+console.log(`\n📁 E2E Test Isolation:
+   Temp Dir: ${e2eTempDir}
+   Workspace: ${e2eWorkspaceDir}
+   Database: ${e2eDatabaseDir}/daemon.db
+\n`);
 
 /**
  * Monocart Coverage Reporter Configuration
@@ -212,17 +233,19 @@ export default defineConfig({
 		// This avoids HMR overhead and tests against production-like environment
 		command: 'cd ../web && bun run build && cd ../cli && NODE_ENV=test bun run main.ts',
 		url: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:9283',
-		// In CI, we start the server separately to get better logging
-		// Use PW_TEST_REUSE_CONTEXT=1 to skip server startup in CI
-		// Also skip when PLAYWRIGHT_BASE_URL is set (in-process server mode)
-		reuseExistingServer:
-			!!process.env.PW_TEST_REUSE_CONTEXT || !!process.env.PLAYWRIGHT_BASE_URL || !process.env.CI,
+		// NEVER reuse existing server - always start a fresh isolated test server
+		// This prevents tests from accidentally connecting to production servers
+		// and ensures teardown can safely clean up all test data
+		reuseExistingServer: false,
 		stdout: 'ignore',
 		stderr: 'pipe',
 		timeout: 120 * 1000,
 		env: {
 			NODE_ENV: 'test',
 			DEFAULT_MODEL: 'sonnet', // Maps to GLM-4.7 for E2E tests
+			// Isolated paths for this test run
+			NEOKAI_WORKSPACE_PATH: e2eWorkspaceDir,
+			DB_PATH: join(e2eDatabaseDir, 'daemon.db'),
 		},
 	},
 });
