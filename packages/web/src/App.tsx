@@ -1,12 +1,14 @@
 import { useEffect } from 'preact/hooks';
 import { effect, batch } from '@preact/signals';
-import Sidebar from './islands/Sidebar.tsx';
+import { NavRail } from './islands/NavRail.tsx';
+import { ContextPanel } from './islands/ContextPanel.tsx';
+import { NeoChatPanel } from './islands/NeoChatPanel.tsx';
 import MainContent from './islands/MainContent.tsx';
 import ToastContainer from './islands/ToastContainer.tsx';
 import { ConnectionOverlay } from './components/ConnectionOverlay.tsx';
 import { connectionManager } from './lib/connection-manager.ts';
 import { initializeApplicationState } from './lib/state.ts';
-import { currentSessionIdSignal } from './lib/signals.ts';
+import { currentSessionIdSignal, currentRoomIdSignal } from './lib/signals.ts';
 import { initSessionStatusTracking } from './lib/session-status.ts';
 import { globalStore } from './lib/global-store.ts';
 import { sessionStore } from './lib/session-store.ts';
@@ -84,11 +86,17 @@ export function App() {
 	return (
 		<>
 			<div class="flex h-dvh overflow-hidden bg-dark-950 relative" style={{ height: '100dvh' }}>
-				{/* Sidebar */}
-				<Sidebar />
+				{/* Navigation Rail */}
+				<NavRail />
+
+				{/* Context Panel */}
+				<ContextPanel />
 
 				{/* Main Content */}
 				<MainContent />
+
+				{/* Neo Chat Panel - only show when in a room */}
+				{currentRoomIdSignal.value && <NeoChatPanel />}
 			</div>
 
 			{/* Global Toast Container */}

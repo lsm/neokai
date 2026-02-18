@@ -12,6 +12,7 @@
 
 import { useEffect, useState } from 'preact/hooks';
 import { lobbyStore } from '../lib/lobby-store';
+import { globalStore } from '../lib/global-store';
 import { navigateToRoom, navigateToSession } from '../lib/router';
 import { GlobalStatus } from '../components/lobby/GlobalStatus';
 import { RoomGrid } from '../components/lobby/RoomGrid';
@@ -24,19 +25,16 @@ import { getRecentPaths, addRecentPath } from '../lib/recent-paths';
 import { formatRelativeTime } from '../lib/utils';
 import { createSession } from '../lib/api-helpers';
 import { toast } from '../lib/toast';
-import type { Session } from '@neokai/shared';
+import { lobbyManagerOpenSignal } from '../lib/signals';
+import { LobbyManagerPanel } from './LobbyManagerPanel';
 
 export default function Lobby() {
 	const [initialLoad, setInitialLoad] = useState(true);
-	const [recentSessions, setRecentSessions] = useState<Session[]>([]);
 	const createRoomModal = useModal();
 	const newSessionModal = useModal();
 
 	useEffect(() => {
 		lobbyStore.initialize().finally(() => setInitialLoad(false));
-
-		// Load recent sessions
-		loadRecentSessions();
 
 		return () => {
 			// Cleanup on unmount is optional - lobby store is a singleton
@@ -46,28 +44,14 @@ export default function Lobby() {
 	const loading = lobbyStore.loading.value;
 	const rooms = lobbyStore.rooms.value;
 	const error = lobbyStore.error.value;
+	// Use globalStore.recentSessions which is already fetched at app startup
+	// and filtered to show active sessions sorted by lastActiveAt
+	const recentSessions = globalStore.activeSessions.value.slice(0, 5);
 	const recentPaths = getRecentPaths().map((p) => ({
 		path: p.path,
 		relativeTime: formatRelativeTime(p.usedAt),
 		absoluteTime: p.usedAt,
 	}));
-
-	async function loadRecentSessions() {
-		try {
-			// Use the listSessions API helper
-			const { listSessions: fetchSessions } = await import('../lib/api-helpers');
-			const { sessions } = await fetchSessions();
-
-			// Get recent active sessions (max 5)
-			const recent = sessions
-				.filter((s) => s.status === 'active')
-				.sort((a, b) => new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime())
-				.slice(0, 5);
-			setRecentSessions(recent);
-		} catch {
-			// Silently fail - recent sessions are optional
-		}
-	}
 
 	async function handleCreateSession(params: { workspacePath: string; roomId?: string }) {
 		try {
@@ -121,6 +105,24 @@ export default function Lobby() {
 					<p class="text-sm text-gray-400">Manage your AI-powered workspaces</p>
 				</div>
 				<div class="flex gap-2">
+					<Button
+						variant="secondary"
+						onClick={() => {
+							lobbyManagerOpenSignal.value = !lobbyManagerOpenSignal.value;
+						}}
+						icon={
+							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+								/>
+							</svg>
+						}
+					>
+						Lobby Manager
+					</Button>
 					<Button variant="secondary" onClick={newSessionModal.open} icon="+">
 						New Session
 					</Button>
@@ -231,6 +233,9 @@ export default function Lobby() {
 					return room;
 				}}
 			/>
+
+			{/* Lobby Manager Panel */}
+			<LobbyManagerPanel />
 		</div>
 	);
 }

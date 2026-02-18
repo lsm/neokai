@@ -11,9 +11,10 @@ import { useEffect, useState } from 'preact/hooks';
 import { roomStore } from '../lib/room-store';
 import { navigateToHome } from '../lib/router';
 import { RoomDashboard } from '../components/room/RoomDashboard';
-import { NeoChat } from '../components/room/NeoChat';
 import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
+import { IconButton } from '../components/ui/IconButton';
+import { neoChatOpenSignal } from '../lib/signals';
 
 interface RoomProps {
 	roomId: string;
@@ -76,23 +77,29 @@ export default function Room({ roomId }: RoomProps) {
 					{room.description && <p class="text-sm text-gray-400 mt-1">{room.description}</p>}
 				</div>
 				<div class="flex gap-2">
+					<IconButton
+						onClick={() => (neoChatOpenSignal.value = !neoChatOpenSignal.value)}
+						title={neoChatOpenSignal.value ? 'Hide Neo Chat' : 'Show Neo Chat'}
+						variant={neoChatOpenSignal.value ? 'solid' : 'ghost'}
+					>
+						<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+							/>
+						</svg>
+					</IconButton>
 					<Button variant="ghost" size="sm" onClick={() => navigateToHome()}>
 						Leave Room
 					</Button>
 				</div>
 			</div>
 
-			{/* Main content - split layout */}
-			<div class="flex-1 flex overflow-hidden">
-				{/* Dashboard - sessions and tasks */}
-				<div class="flex-1 overflow-y-auto">
-					<RoomDashboard />
-				</div>
-
-				{/* Neo chat - right sidebar */}
-				<div class="w-96 border-l border-dark-700 flex flex-col">
-					<NeoChat />
-				</div>
+			{/* Main content - full width dashboard */}
+			<div class="flex-1 overflow-y-auto">
+				<RoomDashboard />
 			</div>
 		</div>
 	);

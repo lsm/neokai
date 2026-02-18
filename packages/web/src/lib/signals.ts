@@ -22,3 +22,16 @@ export const sessionsSignal = signal<Session[]>([]);
 // Shared signal for available slash commands from SDK
 // TODO: Migrate to state channels when slash commands are added to state management
 export const slashCommandsSignal = signal<string[]>([]);
+
+// Navigation section signal - which nav item is active
+export type NavSection = 'chats' | 'rooms' | 'projects' | 'settings';
+export const navSectionSignal = signal<NavSection>('chats');
+
+// Mobile drawer signals
+export const contextPanelOpenSignal = signal<boolean>(false);
+
+// NeoChat overlay signal (for room view)
+export const neoChatOpenSignal = signal<boolean>(true);
+
+// Lobby Manager panel signal
+export const lobbyManagerOpenSignal = signal<boolean>(false);

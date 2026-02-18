@@ -31,6 +31,7 @@ import { setupRoomHandlers } from './room-handlers';
 import { setupTaskHandlers } from './task-handlers';
 import { setupMemoryHandlers } from './memory-handlers';
 import { setupRoomMessageHandlers } from './room-message-handlers';
+import { setupLobbyHandlers } from './lobby-handlers';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -90,4 +91,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
 	setupTaskHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
 	setupMemoryHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
 	setupRoomMessageHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
+
+	// Lobby handlers
+	setupLobbyHandlers(deps.messageHub, deps.daemonHub);
 }
