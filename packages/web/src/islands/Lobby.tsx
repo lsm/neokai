@@ -98,19 +98,52 @@ export default function Lobby() {
 
 	return (
 		<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden">
-			{/* Header */}
-			<div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 p-4 flex items-center justify-between">
-				<div>
-					<h2 class="text-xl font-bold text-gray-100">Neo Lobby</h2>
-					<p class="text-sm text-gray-400">Manage your AI-powered workspaces</p>
-				</div>
-				<div class="flex gap-2">
-					<Button
-						variant="secondary"
-						onClick={() => {
-							lobbyManagerOpenSignal.value = !lobbyManagerOpenSignal.value;
-						}}
-						icon={
+			{/* Header - compact on mobile, expanded on desktop */}
+			<div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 px-3 py-2 md:px-4 md:py-4 pl-12 md:pl-4">
+				<div class="flex items-center justify-between gap-2">
+					{/* Mobile: title only (no subtitle to save space) */}
+					<div class="min-w-0">
+						<h2 class="text-lg md:text-xl font-bold text-gray-100 truncate">Neo Lobby</h2>
+						<p class="hidden md:block text-sm text-gray-400 mt-0.5">
+							Manage your AI-powered workspaces
+						</p>
+					</div>
+					{/* Desktop: full buttons with text */}
+					<div class="hidden md:flex gap-2 shrink-0">
+						<Button
+							variant="secondary"
+							onClick={() => {
+								lobbyManagerOpenSignal.value = !lobbyManagerOpenSignal.value;
+							}}
+							icon={
+								<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+									/>
+								</svg>
+							}
+						>
+							Lobby Manager
+						</Button>
+						<Button variant="secondary" onClick={newSessionModal.open} icon="+">
+							New Session
+						</Button>
+						<Button onClick={createRoomModal.open} icon="+">
+							Create Room
+						</Button>
+					</div>
+					{/* Mobile: icon-only buttons */}
+					<div class="flex md:hidden gap-1.5 shrink-0">
+						<button
+							onClick={() => {
+								lobbyManagerOpenSignal.value = !lobbyManagerOpenSignal.value;
+							}}
+							class="p-1.5 rounded-md bg-dark-800 hover:bg-dark-700 text-gray-400 hover:text-gray-100 transition-colors"
+							title="Lobby Manager"
+						>
 							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path
 									stroke-linecap="round"
@@ -119,16 +152,36 @@ export default function Lobby() {
 									d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
 								/>
 							</svg>
-						}
-					>
-						Lobby Manager
-					</Button>
-					<Button variant="secondary" onClick={newSessionModal.open} icon="+">
-						New Session
-					</Button>
-					<Button onClick={createRoomModal.open} icon="+">
-						Create Room
-					</Button>
+						</button>
+						<button
+							onClick={newSessionModal.open}
+							class="p-1.5 rounded-md bg-dark-800 hover:bg-dark-700 text-gray-400 hover:text-gray-100 transition-colors"
+							title="New Session"
+						>
+							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M12 4v16m8-8H4"
+								/>
+							</svg>
+						</button>
+						<button
+							onClick={createRoomModal.open}
+							class="p-1.5 rounded-md bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+							title="Create Room"
+						>
+							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"
+								/>
+							</svg>
+						</button>
+					</div>
 				</div>
 			</div>
 
