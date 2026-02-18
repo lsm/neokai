@@ -110,6 +110,10 @@ export interface RoomAgentToolsConfig {
 	onCancelJob?: (jobId: string) => Promise<void>;
 	/** Callback to update room prompts */
 	onUpdatePrompts?: (params: RoomUpdatePromptsParams) => Promise<void>;
+	/** Callback to ask a Q&A question */
+	onAskQuestion?: (question: string) => Promise<{ questionId: string }>;
+	/** Callback to complete the Q&A round */
+	onCompleteQARound?: (summary?: string) => Promise<void>;
 }
 
 /**
@@ -430,8 +434,73 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 			]
 		: [];
 
+	const askQuestionTool = config.onAskQuestion
+		? [
+				tool(
+					'room_ask_question',
+					'Ask a clarifying question to the human during a Q&A round. Use this to gather information needed to refine the room context.',
+					{
+						question: z.string().describe('The question to ask the human'),
+					},
+					async (args) => {
+						const result = await config.onAskQuestion!(args.question);
+
+						return {
+							content: [
+								{
+									type: 'text',
+									text: JSON.stringify({
+										success: true,
+										questionId: result.questionId,
+										message: 'Question asked. Waiting for human response.',
+									}),
+								},
+							],
+						};
+					}
+				),
+			]
+		: [];
+
+	const completeQARoundTool = config.onCompleteQARound
+		? [
+				tool(
+					'room_complete_qa_round',
+					'Complete the current Q&A round after all questions have been answered or when done gathering information.',
+					{
+						summary: z
+							.string()
+							.optional()
+							.describe('Summary of what was learned in this Q&A round'),
+					},
+					async (args) => {
+						await config.onCompleteQARound!(args.summary);
+
+						return {
+							content: [
+								{
+									type: 'text',
+									text: JSON.stringify({
+										success: true,
+										message: 'Q&A round completed',
+									}),
+								},
+							],
+						};
+					}
+				),
+			]
+		: [];
+
 	// Combine all tools
-	const tools = [...baseTools, ...scheduleJobTool, ...cancelJobTool, ...updatePromptsTool];
+	const tools = [
+		...baseTools,
+		...scheduleJobTool,
+		...cancelJobTool,
+		...updatePromptsTool,
+		...askQuestionTool,
+		...completeQARoundTool,
+	];
 
 	return createSdkMcpServer({
 		name: `room-agent-${config.roomId.slice(0, 8)}`,

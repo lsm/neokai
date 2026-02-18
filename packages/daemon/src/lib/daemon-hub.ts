@@ -181,6 +181,20 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	'room.created': { sessionId: string; roomId: string; room: Room };
 	'room.updated': { sessionId: string; roomId: string; room?: Partial<Room> };
 	'room.archived': { sessionId: string; roomId: string };
+	'room.contextUpdated': {
+		sessionId: string;
+		roomId: string;
+		changes: {
+			background?: string;
+			instructions?: string;
+		};
+	};
+	'room.contextRolledBack': {
+		sessionId: string;
+		roomId: string;
+		rolledBackToVersion: number;
+		newVersion: number;
+	};
 
 	// Room channel events (emitted to room:${roomId} channel via sessionId)
 	// UI subscribes to these for real-time updates
@@ -360,6 +374,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		roomId: string;
 		jobId: string;
 		taskId: string;
+		timestamp: number;
 	};
 	'recurringJob.completed': {
 		sessionId: string;
@@ -408,6 +423,25 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		roomId: string;
 		hasPendingTasks: boolean;
 		hasIncompleteGoals: boolean;
+	};
+	'roomAgent.reviewReceived': {
+		sessionId: string;
+		roomId: string;
+		taskId: string;
+		approved: boolean;
+		response: string;
+	};
+	'roomAgent.escalationResolved': {
+		sessionId: string;
+		roomId: string;
+		escalationId: string;
+		response: string;
+	};
+	'roomAgent.questionAnswered': {
+		sessionId: string;
+		roomId: string;
+		questionId: string;
+		responses: Record<string, string | string[]>;
 	};
 
 	// Multi-session task events
@@ -474,6 +508,61 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		sessionId: string;
 		roomId: string;
 		templateId: string;
+	};
+
+	// Proposal events
+	'proposal.created': {
+		sessionId: string;
+		roomId: string;
+		proposalId: string;
+		proposal: import('@neokai/shared').RoomProposal;
+	};
+	'proposal.approved': {
+		sessionId: string;
+		roomId: string;
+		proposalId: string;
+		proposal: import('@neokai/shared').RoomProposal;
+	};
+	'proposal.rejected': {
+		sessionId: string;
+		roomId: string;
+		proposalId: string;
+		proposal: import('@neokai/shared').RoomProposal;
+	};
+
+	// Q&A Round events
+	'qa.roundStarted': {
+		sessionId: string;
+		roomId: string;
+		roundId: string;
+		trigger: 'room_created' | 'context_updated' | 'goal_created';
+	};
+	'qa.questionAsked': {
+		sessionId: string;
+		roomId: string;
+		roundId: string;
+		questionId: string;
+		question: string;
+	};
+	'qa.questionAnswered': {
+		sessionId: string;
+		roomId: string;
+		roundId: string;
+		questionId: string;
+		answer: string;
+	};
+	'qa.roundCompleted': {
+		sessionId: string;
+		roomId: string;
+		roundId: string;
+		summary?: string;
+		questionsCount: number;
+		answeredCount: number;
+	};
+	'qa.roundCancelled': {
+		sessionId: string;
+		roomId: string;
+		roundId: string;
 	};
 }
 
