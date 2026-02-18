@@ -13,6 +13,7 @@
  * - room.getPairs - List pairs for a room
  * - room.getPair - Get single pair details
  * - room.archivePair - Archive a pair
+ * - neo.status - Get global status (all rooms, sessions, pairs)
  *
  * Renamed from neo.room.* to room.* for cleaner API.
  */
@@ -186,6 +187,11 @@ export function setupRoomHandlers(
 		}
 
 		return { status };
+	});
+
+	// neo.status - Get global status (all rooms, sessions, pairs)
+	messageHub.onRequest('neo.status', async () => {
+		return roomManager.getGlobalStatus();
 	});
 
 	// room.assignSession - Assign a session to a room
