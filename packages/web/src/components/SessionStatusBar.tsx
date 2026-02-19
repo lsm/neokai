@@ -14,7 +14,8 @@
 
 import { useSignalEffect } from '@preact/signals';
 import { useState, useCallback, useEffect } from 'preact/hooks';
-import type { ContextInfo, ModelInfo, ThinkingLevel } from '@neokai/shared';
+import type { ContextInfo, ModelInfo, ThinkingLevel, SessionFeatures } from '@neokai/shared';
+import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
 import { connectionState, type ConnectionState } from '../lib/state.ts';
 import ConnectionStatus from './ConnectionStatus.tsx';
 import ContextUsageBar from './ContextUsageBar.tsx';
@@ -134,6 +135,8 @@ interface SessionStatusBarProps {
 	streamingPhase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing' | null;
 	contextUsage?: ContextInfo;
 	maxContextTokens?: number;
+	// Feature flags (for unified session architecture)
+	features?: SessionFeatures;
 	// Model switcher
 	currentModel: string;
 	currentModelInfo: ModelInfo | null;
@@ -163,6 +166,7 @@ export default function SessionStatusBar({
 	streamingPhase,
 	contextUsage,
 	maxContextTokens = 200000,
+	features = DEFAULT_WORKER_FEATURES,
 	currentModel: _currentModel,
 	currentModelInfo,
 	availableModels,
@@ -275,61 +279,65 @@ export default function SessionStatusBar({
 
 			{/* Right: Interactive controls and context usage */}
 			<div class="flex items-center gap-3 sm:gap-4">
-				{/* Coordinator Mode Toggle */}
-				<button
-					class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-						coordinatorMode ? 'border-2 border-purple-500' : 'border border-gray-600'
-					}`}
-					onClick={handleCoordinatorModeToggle}
-					disabled={coordinatorSwitching || modelSwitching}
-					title={`Coordinator Mode (${coordinatorMode ? 'enabled' : 'disabled'})`}
-				>
-					{coordinatorSwitching ? (
-						<Spinner size="sm" />
-					) : (
-						<svg
-							class={`w-4 h-4 transition-colors ${coordinatorMode ? 'text-purple-400' : 'text-gray-500'}`}
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
-							/>
-						</svg>
-					)}
-				</button>
+				{/* Coordinator Mode Toggle - only show if feature is enabled */}
+				{features.coordinator && (
+					<button
+						class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+							coordinatorMode ? 'border-2 border-purple-500' : 'border border-gray-600'
+						}`}
+						onClick={handleCoordinatorModeToggle}
+						disabled={coordinatorSwitching || modelSwitching}
+						title={`Coordinator Mode (${coordinatorMode ? 'enabled' : 'disabled'})`}
+					>
+						{coordinatorSwitching ? (
+							<Spinner size="sm" />
+						) : (
+							<svg
+								class={`w-4 h-4 transition-colors ${coordinatorMode ? 'text-purple-400' : 'text-gray-500'}`}
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
+								/>
+							</svg>
+						)}
+					</button>
+				)}
 
-				{/* Sandbox Mode Toggle */}
-				<button
-					class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-						sandboxEnabled ? 'border-2 border-green-500' : 'border border-gray-600'
-					}`}
-					onClick={handleSandboxModeToggle}
-					disabled={sandboxSwitching || modelSwitching}
-					title={`Sandbox Mode (${sandboxEnabled ? 'enabled' : 'disabled'})`}
-				>
-					{sandboxSwitching ? (
-						<Spinner size="sm" />
-					) : (
-						<svg
-							class={`w-4 h-4 transition-colors ${sandboxEnabled ? 'text-green-400' : 'text-gray-500'}`}
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-							/>
-						</svg>
-					)}
-				</button>
+				{/* Sandbox Mode Toggle - only show if feature is enabled */}
+				{features.worktree && (
+					<button
+						class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+							sandboxEnabled ? 'border-2 border-green-500' : 'border border-gray-600'
+						}`}
+						onClick={handleSandboxModeToggle}
+						disabled={sandboxSwitching || modelSwitching}
+						title={`Sandbox Mode (${sandboxEnabled ? 'enabled' : 'disabled'})`}
+					>
+						{sandboxSwitching ? (
+							<Spinner size="sm" />
+						) : (
+							<svg
+								class={`w-4 h-4 transition-colors ${sandboxEnabled ? 'text-green-400' : 'text-gray-500'}`}
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+								/>
+							</svg>
+						)}
+					</button>
+				)}
 
 				{/* Model Switcher */}
 				<div class="relative">

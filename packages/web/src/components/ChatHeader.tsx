@@ -3,9 +3,14 @@
  *
  * Header section for the chat container with session title, stats, and action menu.
  * Extracted from ChatContainer.tsx for better separation of concerns.
+ *
+ * Unified Session Architecture:
+ * - Features prop controls visibility of UI elements (sessionInfo, archive, etc.)
+ * - Room/lobby sessions hide features that aren't applicable
  */
 
-import type { Session } from '@neokai/shared';
+import type { Session, SessionFeatures } from '@neokai/shared';
+import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
 import { borderColors } from '../lib/design-tokens';
 import { formatTokens } from '../lib/utils';
 import { contextPanelOpenSignal } from '../lib/signals';
@@ -21,6 +26,7 @@ export interface ChatHeaderProps {
 		totalTokens: number;
 		totalCost: number;
 	};
+	features?: SessionFeatures;
 	onToolsClick: () => void;
 	onInfoClick: () => void;
 	onExportClick: () => void;
@@ -34,6 +40,7 @@ export interface ChatHeaderProps {
 export function ChatHeader({
 	session,
 	displayStats,
+	features = DEFAULT_WORKER_FEATURES,
 	onToolsClick,
 	onInfoClick,
 	onExportClick,
@@ -49,8 +56,20 @@ export function ChatHeader({
 		contextPanelOpenSignal.value = true;
 	};
 
-	const getHeaderActions = () => [
-		{
+	const getHeaderActions = () => {
+		const actions: Array<
+			| {
+					label: string;
+					onClick: () => void;
+					icon: preact.JSX.Element;
+					disabled?: boolean;
+					danger?: boolean;
+			  }
+			| { type: 'divider' }
+		> = [];
+
+		// Tools - always available
+		actions.push({
 			label: 'Tools',
 			onClick: onToolsClick,
 			icon: (
@@ -63,22 +82,28 @@ export function ChatHeader({
 					/>
 				</svg>
 			),
-		},
-		{
-			label: 'Session Info',
-			onClick: onInfoClick,
-			icon: (
-				<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width={2}
-						d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-					/>
-				</svg>
-			),
-		},
-		{
+		});
+
+		// Session Info - conditional based on features
+		if (features.sessionInfo) {
+			actions.push({
+				label: 'Session Info',
+				onClick: onInfoClick,
+				icon: (
+					<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width={2}
+							d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+						/>
+					</svg>
+				),
+			});
+		}
+
+		// Export - always available
+		actions.push({
 			label: 'Export Chat',
 			onClick: onExportClick,
 			disabled: !isConnected,
@@ -92,8 +117,10 @@ export function ChatHeader({
 					/>
 				</svg>
 			),
-		},
-		{
+		});
+
+		// Reset Agent - always available
+		actions.push({
 			label: resettingAgent ? 'Resetting...' : 'Reset Agent',
 			onClick: onResetClick,
 			disabled: resettingAgent || !isConnected,
@@ -107,40 +134,46 @@ export function ChatHeader({
 					/>
 				</svg>
 			),
-		},
-		{ type: 'divider' as const },
-		{
-			label: 'Archive Session',
-			onClick: onArchiveClick,
-			disabled: archiving || session?.status === 'archived' || !isConnected,
-			icon: (
-				<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width={2}
-						d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
-					/>
-				</svg>
-			),
-		},
-		{
-			label: 'Delete Chat',
-			onClick: onDeleteClick,
-			danger: true,
-			disabled: !isConnected,
-			icon: (
-				<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width={2}
-						d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-					/>
-				</svg>
-			),
-		},
-	];
+		});
+
+		// Archive/Delete section - conditional based on features
+		if (features.archive) {
+			actions.push({ type: 'divider' as const });
+			actions.push({
+				label: 'Archive Session',
+				onClick: onArchiveClick,
+				disabled: archiving || session?.status === 'archived' || !isConnected,
+				icon: (
+					<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width={2}
+							d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
+						/>
+					</svg>
+				),
+			});
+			actions.push({
+				label: 'Delete Chat',
+				onClick: onDeleteClick,
+				danger: true,
+				disabled: !isConnected,
+				icon: (
+					<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width={2}
+							d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+						/>
+					</svg>
+				),
+			});
+		}
+
+		return actions;
+	};
 
 	return (
 		<div

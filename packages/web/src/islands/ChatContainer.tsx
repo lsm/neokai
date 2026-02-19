@@ -16,7 +16,8 @@
  * agent state from state.session channel.
  */
 
-import type { MessageImage, ResolvedQuestion } from '@neokai/shared';
+import type { MessageImage, ResolvedQuestion, SessionFeatures } from '@neokai/shared';
+import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
 import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useSignalEffect } from '@preact/signals';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -270,6 +271,13 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			setSandboxEnabled(info.config.sandbox.enabled);
 		}
 	});
+
+	// Get feature flags from session config (for unified session architecture)
+	// Falls back to DEFAULT_WORKER_FEATURES for existing sessions
+	const features: SessionFeatures = useMemo(
+		() => session?.config?.features ?? DEFAULT_WORKER_FEATURES,
+		[session?.config?.features]
+	);
 
 	// Sync context from sessionStore
 	useSignalEffect(() => {
@@ -705,6 +713,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			<ChatHeader
 				session={session}
 				displayStats={displayStats}
+				features={features}
 				onToolsClick={toolsModal.open}
 				onInfoClick={infoModal.open}
 				onExportClick={sessionActions.handleExportChat}
@@ -717,8 +726,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 			{/* Messages */}
 			<div class="flex-1 relative min-h-0">
-				{/* Rewind Mode Banner */}
-				{rewindMode && (
+				{/* Rewind Mode Banner - only show if feature is enabled */}
+				{features.rewind && rewindMode && (
 					<div class="absolute top-0 left-0 right-0 z-20 bg-amber-500/10 backdrop-blur-sm border-b border-amber-500/30 px-4 py-3">
 						<div class="max-w-4xl mx-auto flex items-center justify-between">
 							<div class="flex items-center gap-3">
@@ -907,6 +916,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 						streamingPhase={streamingPhase}
 						contextUsage={contextUsage ?? undefined}
 						maxContextTokens={200000}
+						features={features}
 						currentModel={currentModel}
 						currentModelInfo={currentModelInfo}
 						availableModels={availableModels}
