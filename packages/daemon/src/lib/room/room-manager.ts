@@ -85,17 +85,65 @@ export class RoomManager {
 	}
 
 	/**
-	 * Archive a room
+	 * Archive a room and all its sessions (atomic transaction)
+	 *
+	 * This sets:
+	 * - Room status to 'archived'
+	 * - All associated sessions status to 'archived'
 	 */
 	archiveRoom(id: string): Room | null {
-		return this.roomRepo.archiveRoom(id);
+		const room = this.roomRepo.getRoom(id);
+		if (!room) {
+			return null;
+		}
+
+		const tx = this.db.transaction(() => {
+			// Archive all sessions associated with this room
+			for (const sessionId of room.sessionIds) {
+				this.sessionRepo.archiveSession(sessionId);
+			}
+
+			// Archive the room
+			return this.roomRepo.archiveRoom(id);
+		});
+
+		return tx() as Room | null;
 	}
 
 	/**
-	 * Delete a room (and its associated data via CASCADE)
+	 * Delete a room and all its associated data (atomic transaction)
+	 *
+	 * This includes:
+	 * - All sessions associated with the room (and their messages/state via CASCADE)
+	 * - All session pairs (via CASCADE)
+	 * - All tasks (via CASCADE)
+	 * - All goals (via CASCADE)
+	 * - All recurring jobs (via CASCADE)
+	 * - All proposals (via CASCADE)
+	 * - All Q&A rounds (via CASCADE)
+	 * - All memories (via CASCADE)
+	 * - All context versions (via CASCADE)
+	 * - The room itself
 	 */
 	deleteRoom(id: string): void {
-		this.roomRepo.deleteRoom(id);
+		const room = this.roomRepo.getRoom(id);
+		if (!room) {
+			return;
+		}
+
+		const tx = this.db.transaction(() => {
+			// Delete all sessions associated with this room
+			// This will cascade delete messages and state for each session
+			for (const sessionId of room.sessionIds) {
+				this.sessionRepo.deleteSession(sessionId);
+			}
+
+			// Delete the room - CASCADE will handle:
+			// - session_pairs, tasks, goals, recurring_jobs, proposals, qa_rounds, memories, context_versions
+			this.roomRepo.deleteRoom(id);
+		});
+
+		tx();
 	}
 
 	/**

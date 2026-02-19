@@ -181,6 +181,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	'room.created': { sessionId: string; roomId: string; room: Room };
 	'room.updated': { sessionId: string; roomId: string; room?: Partial<Room> };
 	'room.archived': { sessionId: string; roomId: string };
+	'room.deleted': { sessionId: string; roomId: string };
 	'room.contextUpdated': {
 		sessionId: string;
 		roomId: string;

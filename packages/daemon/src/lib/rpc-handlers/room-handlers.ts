@@ -161,6 +161,35 @@ export function setupRoomHandlers(
 		return { room };
 	});
 
+	// room.delete - Permanently delete a room
+	messageHub.onRequest('room.delete', async (data) => {
+		const params = data as { roomId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+
+		const room = roomManager.getRoom(params.roomId);
+		if (!room) {
+			throw new Error(`Room not found: ${params.roomId}`);
+		}
+
+		// Broadcast room deletion event before deleting
+		await daemonHub
+			.emit('room.deleted', {
+				sessionId: 'global',
+				roomId: room.id,
+			})
+			.catch(() => {
+				// Event emission error - non-critical, continue
+			});
+
+		// Permanently delete the room (CASCADE will delete related data)
+		roomManager.deleteRoom(params.roomId);
+
+		return { success: true };
+	});
+
 	// room.updateContext - Update room background and instructions
 	messageHub.onRequest('room.updateContext', async (data) => {
 		const params = data as {

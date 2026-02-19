@@ -186,6 +186,14 @@ export class SessionRepository {
 	}
 
 	/**
+	 * Archive a session by ID (soft delete)
+	 */
+	archiveSession(id: string): void {
+		const stmt = this.db.prepare(`UPDATE sessions SET status = 'archived' WHERE id = ?`);
+		stmt.run(id);
+	}
+
+	/**
 	 * Convert a database row to a Session object
 	 * Shared helper for getSession and listSessions
 	 */
