@@ -43,6 +43,76 @@ export type {
 	ModelTier,
 } from './provider/types';
 
+// ============================================================================
+// Unified Session Architecture Types
+// ============================================================================
+
+/**
+ * Session type for unified session architecture
+ * - 'worker': Standard coding session
+ * - 'room': Room-level agent session
+ * - 'lobby': Instance-level agent session
+ */
+export type SessionType = 'worker' | 'room' | 'lobby';
+
+/**
+ * Context for room/lobby sessions
+ */
+export interface SessionContext {
+	roomId?: string;
+	lobbyId?: string;
+}
+
+/**
+ * Feature flags for session UI
+ * Controls which features are available in ChatContainer
+ */
+export interface SessionFeatures {
+	/** Enable rewind/checkpoint functionality */
+	rewind: boolean;
+	/** Enable worktree mode toggle */
+	worktree: boolean;
+	/** Enable coordinator mode toggle */
+	coordinator: boolean;
+	/** Enable archive/delete buttons */
+	archive: boolean;
+	/** Enable session info panel */
+	sessionInfo: boolean;
+}
+
+/**
+ * Default features for worker sessions (all enabled)
+ */
+export const DEFAULT_WORKER_FEATURES: SessionFeatures = {
+	rewind: true,
+	worktree: true,
+	coordinator: true,
+	archive: true,
+	sessionInfo: true,
+};
+
+/**
+ * Default features for room sessions (all disabled)
+ */
+export const DEFAULT_ROOM_FEATURES: SessionFeatures = {
+	rewind: false,
+	worktree: false,
+	coordinator: false,
+	archive: false,
+	sessionInfo: false,
+};
+
+/**
+ * Default features for lobby sessions (all disabled)
+ */
+export const DEFAULT_LOBBY_FEATURES: SessionFeatures = {
+	rewind: false,
+	worktree: false,
+	coordinator: false,
+	archive: false,
+	sessionInfo: false,
+};
+
 // Core session types
 export interface SessionInfo {
 	id: string;
@@ -59,6 +129,10 @@ export interface SessionInfo {
 	availableCommands?: string[]; // Available slash commands for this session (persisted)
 	processingState?: string; // Persisted agent processing state (JSON serialized AgentProcessingState)
 	archivedAt?: string; // ISO timestamp when session was archived
+	/** Session type - defaults to 'worker' for existing sessions */
+	type?: SessionType;
+	/** Context for room/lobby sessions */
+	context?: SessionContext;
 }
 
 // Backward compatibility alias (use SessionInfo in new code)
@@ -274,6 +348,29 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
 	// - maxBudgetUsd: Cost limit
 	// - fallbackModel: Fallback model ID
 	// - permissionMode: Permission mode for SDK operations
+
+	// ============================================================================
+	// Unified Session Architecture Fields
+	// ============================================================================
+
+	/**
+	 * Session type for unified architecture
+	 * @default 'worker'
+	 */
+	type?: SessionType;
+
+	/**
+	 * Context for room/lobby sessions
+	 */
+	context?: SessionContext;
+
+	/**
+	 * Feature flags controlling UI capabilities
+	 * Defaults based on session type:
+	 * - worker: all features enabled
+	 * - room/lobby: all features disabled
+	 */
+	features?: SessionFeatures;
 }
 
 /**

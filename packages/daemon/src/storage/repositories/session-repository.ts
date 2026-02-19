@@ -8,7 +8,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { Session } from '@neokai/shared';
+import type { Session, SessionType, SessionContext } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
 
 export class SessionRepository {
@@ -19,8 +19,8 @@ export class SessionRepository {
 	 */
 	createSession(session: Session): void {
 		const stmt = this.db.prepare(
-			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state, archived_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state, archived_at, type, session_context)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 		stmt.run(
 			session.id,
@@ -39,7 +39,9 @@ export class SessionRepository {
 			session.sdkSessionId ?? null,
 			session.availableCommands ? JSON.stringify(session.availableCommands) : null,
 			session.processingState ?? null,
-			session.archivedAt ?? null
+			session.archivedAt ?? null,
+			session.type ?? 'worker',
+			session.context ? JSON.stringify(session.context) : null
 		);
 	}
 
@@ -156,6 +158,18 @@ export class SessionRepository {
 			}
 		}
 
+		// Handle type update (for unified session architecture)
+		if (updates.type !== undefined) {
+			fields.push('type = ?');
+			values.push(updates.type);
+		}
+
+		// Handle context update (for unified session architecture)
+		if ('context' in updates) {
+			fields.push('session_context = ?');
+			values.push(updates.context ? JSON.stringify(updates.context) : null);
+		}
+
 		if (fields.length > 0) {
 			values.push(id);
 			const stmt = this.db.prepare(`UPDATE sessions SET ${fields.join(', ')} WHERE id = ?`);
@@ -191,6 +205,12 @@ export class SessionRepository {
 				? (JSON.parse(row.available_commands) as string[])
 				: undefined;
 
+		// Parse session_context JSON if present
+		const sessionContext =
+			row.session_context && typeof row.session_context === 'string'
+				? (JSON.parse(row.session_context) as SessionContext)
+				: undefined;
+
 		return {
 			id: row.id as string,
 			title: row.title as string,
@@ -206,6 +226,48 @@ export class SessionRepository {
 			availableCommands,
 			processingState: (row.processing_state as string | null) ?? undefined,
 			archivedAt: (row.archived_at as string | null) ?? undefined,
+			type: (row.type as SessionType) ?? 'worker',
+			context: sessionContext,
 		};
+	}
+
+	/**
+	 * Find a room session by room ID
+	 * Returns the room's session if it exists
+	 */
+	findByRoomId(roomId: string): Session | null {
+		const stmt = this.db.prepare(
+			`SELECT * FROM sessions WHERE type = 'room' AND json_extract(session_context, '$.roomId') = ?`
+		);
+		const row = stmt.get(roomId) as Record<string, unknown> | undefined;
+
+		if (!row) return null;
+
+		return this.rowToSession(row);
+	}
+
+	/**
+	 * Find the lobby session
+	 * Returns the lobby session if it exists
+	 */
+	findLobbySession(): Session | null {
+		const stmt = this.db.prepare(`SELECT * FROM sessions WHERE type = 'lobby' LIMIT 1`);
+		const row = stmt.get() as Record<string, unknown> | undefined;
+
+		if (!row) return null;
+
+		return this.rowToSession(row);
+	}
+
+	/**
+	 * List sessions by type
+	 */
+	listSessionsByType(type: SessionType): Session[] {
+		const stmt = this.db.prepare(
+			`SELECT * FROM sessions WHERE type = ? ORDER BY last_active_at DESC`
+		);
+		const rows = stmt.all(type) as Record<string, unknown>[];
+
+		return rows.map((r) => this.rowToSession(r));
 	}
 }

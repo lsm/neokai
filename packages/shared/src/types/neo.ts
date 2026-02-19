@@ -508,6 +508,10 @@ export interface TaskSummary {
 	status: TaskStatus;
 	priority: TaskPriority;
 	progress?: number;
+	/** Detailed session assignments */
+	sessions?: TaskSession[];
+	/** How multiple sessions should coordinate */
+	executionMode?: TaskExecutionMode;
 }
 
 /**
@@ -716,6 +720,10 @@ export interface RoomAgentConfig {
 	autoStartOnRoomCreate: boolean;
 }
 
+/**
+ * Default configuration for room agents.
+ * @public
+ */
 export const DEFAULT_ROOM_AGENT_CONFIG: RoomAgentConfig = {
 	maxConcurrentPairs: 3,
 	idleCheckIntervalMs: 60000, // 1 minute

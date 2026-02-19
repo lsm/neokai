@@ -89,6 +89,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 24: Create qa_rounds table for Q&A rounds
 	runMigration24(db);
+
+	// Migration 25: Add type and context columns to sessions table
+	runMigration25(db);
 }
 
 /**
@@ -1264,5 +1267,48 @@ function runMigration24(db: BunDatabase): void {
 
 		CREATE INDEX IF NOT EXISTS idx_qa_rounds_room ON qa_rounds(room_id);
 		CREATE INDEX IF NOT EXISTS idx_qa_rounds_status ON qa_rounds(room_id, status);
+	`);
+}
+
+/**
+ * Migration 25: Add type and context columns to sessions table
+ *
+ * Adds columns for unified session architecture:
+ * - type: Session type ('worker', 'room', 'lobby') - defaults to 'worker'
+ * - session_context: JSON object with roomId/lobbyId for room/lobby sessions
+ *
+ * This enables the unified session architecture where worker/room/lobby
+ * sessions all use the same sessions table with different types.
+ */
+function runMigration25(db: BunDatabase): void {
+	// Skip if sessions table doesn't exist (fresh database)
+	if (!tableExists(db, 'sessions')) {
+		return;
+	}
+
+	// Add type column if it doesn't exist
+	if (!tableHasColumn(db, 'sessions', 'type')) {
+		db.exec(
+			`ALTER TABLE sessions ADD COLUMN type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room', 'lobby'))`
+		);
+	}
+
+	// Add session_context column if it doesn't exist (renamed from 'context' to avoid SQL keyword conflict)
+	if (!tableHasColumn(db, 'sessions', 'session_context')) {
+		db.exec(`ALTER TABLE sessions ADD COLUMN session_context TEXT`);
+	}
+
+	// Create index for room sessions lookup
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_sessions_room
+		ON sessions(json_extract(session_context, '$.roomId'))
+		WHERE type = 'room'
+	`);
+
+	// Create index for lobby sessions lookup
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_sessions_lobby
+		ON sessions(json_extract(session_context, '$.lobbyId'))
+		WHERE type = 'lobby'
 	`);
 }
