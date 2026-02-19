@@ -2,13 +2,12 @@ import { useEffect } from 'preact/hooks';
 import { effect, batch } from '@preact/signals';
 import { NavRail } from './islands/NavRail.tsx';
 import { ContextPanel } from './islands/ContextPanel.tsx';
-import { NeoChatPanel } from './islands/NeoChatPanel.tsx';
 import MainContent from './islands/MainContent.tsx';
 import ToastContainer from './islands/ToastContainer.tsx';
 import { ConnectionOverlay } from './components/ConnectionOverlay.tsx';
 import { connectionManager } from './lib/connection-manager.ts';
 import { initializeApplicationState } from './lib/state.ts';
-import { currentSessionIdSignal, currentRoomIdSignal, navRailOpenSignal } from './lib/signals.ts';
+import { currentSessionIdSignal, navRailOpenSignal } from './lib/signals.ts';
 import { initSessionStatusTracking } from './lib/session-status.ts';
 import { globalStore } from './lib/global-store.ts';
 import { sessionStore } from './lib/session-store.ts';
@@ -113,9 +112,6 @@ export function App() {
 
 				{/* Main Content */}
 				<MainContent />
-
-				{/* Neo Chat Panel - only show when in a room */}
-				{currentRoomIdSignal.value && <NeoChatPanel />}
 			</div>
 
 			{/* Global Toast Container */}
