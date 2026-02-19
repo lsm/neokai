@@ -9,7 +9,7 @@
  * - Output: The sub-agent's final response (markdown rendered)
  */
 
-import { useState } from 'preact/hooks';
+import { useState, useMemo } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import type { AgentInput } from '@neokai/shared/sdk/sdk-tools.d.ts';
@@ -22,6 +22,27 @@ import {
 } from '@neokai/shared/sdk/type-guards';
 import { ToolResultCard } from './tools/index.ts';
 import { ThinkingBlock } from './ThinkingBlock.tsx';
+
+/**
+ * Extract text content from a user message for comparison with input prompt
+ */
+function getUserMessageText(message: SDKMessage): string | null {
+	if (message.type !== 'user') return null;
+
+	const content = message.message?.content;
+	if (!content) return null;
+
+	if (typeof content === 'string') {
+		return content;
+	}
+
+	if (Array.isArray(content)) {
+		const textBlock = content.find((b) => b.type === 'text');
+		return textBlock?.text || null;
+	}
+
+	return null;
+}
 
 interface SubagentBlockProps {
 	/** The Task tool input containing subagent_type, description, prompt */
@@ -224,6 +245,33 @@ export function SubagentBlock({
 	const colors = getSubagentColors(input.subagent_type);
 	const outputText = extractOutputText(output);
 
+	/**
+	 * Filter out the first user message that duplicates the input prompt.
+	 *
+	 * When the SDK invokes a Task tool (sub-agent), it creates an initial user message
+	 * containing the prompt text. This is redundant since we already show the input
+	 * in the "Input" section, so we filter it out to avoid showing the same content twice.
+	 */
+	const filteredNestedMessages = useMemo(() => {
+		if (nestedMessages.length === 0) return [];
+
+		return nestedMessages.filter((msg, idx) => {
+			// Only check the first message
+			if (idx !== 0) return true;
+
+			// Only filter user messages
+			if (msg.type !== 'user') return true;
+
+			// Check if the message content matches the input prompt
+			const msgText = getUserMessageText(msg);
+			if (msgText && msgText === input.prompt) {
+				return false; // Filter out this duplicate
+			}
+
+			return true;
+		});
+	}, [nestedMessages, input.prompt]);
+
 	return (
 		<div class={cn('border rounded-lg overflow-hidden', colors.bg, colors.border, className)}>
 			{/* Header */}
@@ -251,9 +299,9 @@ export function SubagentBlock({
 
 				<div class="flex items-center gap-2 flex-shrink-0">
 					{/* Message counter */}
-					{nestedMessages.length > 0 && (
+					{filteredNestedMessages.length > 0 && (
 						<span class="text-xs font-semibold px-1.5 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
-							{nestedMessages.length}
+							{filteredNestedMessages.length}
 						</span>
 					)}
 					{isError && (
@@ -294,13 +342,13 @@ export function SubagentBlock({
 					</div>
 
 					{/* Nested messages section */}
-					{nestedMessages.length > 0 && (
+					{filteredNestedMessages.length > 0 && (
 						<div class="border-b border-gray-200 dark:border-gray-700 p-3">
 							<div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
-								Messages ({nestedMessages.length})
+								Messages ({filteredNestedMessages.length})
 							</div>
 							<div class="space-y-3">
-								{nestedMessages.map((msg, idx) => (
+								{filteredNestedMessages.map((msg, idx) => (
 									<NestedMessageRenderer
 										key={msg.uuid || `nested-${idx}`}
 										message={msg}
