@@ -37,6 +37,7 @@ export interface GitHubAdapterConfig {
  * GitHub External Source Adapter
  *
  * Converts GitHub webhooks and polling events into normalized ExternalMessages.
+ * @public
  */
 export class GitHubAdapter implements ExternalSourceAdapter {
 	readonly sourceType = 'github' as const;

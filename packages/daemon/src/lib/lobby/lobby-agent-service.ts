@@ -9,16 +9,26 @@
  * 3. Route messages to appropriate rooms or inbox
  * 4. Emit events for monitoring and logging
  * 5. Provide statistics on message processing
+ * 6. Act as an AI agent for human interaction
  *
  * Architecture:
  * - Adapters convert source-specific events to ExternalMessage
  * - LobbyAgent normalizes and routes all messages
  * - SecurityAgent checks for prompt injection
  * - RouterAgent determines destination
+ *
+ * Unified Session Architecture:
+ * - Uses AgentSession.fromInit() for AI orchestration
+ * - Lobby session is persisted to sessions table with type='lobby'
+ * - Session ID: lobby:default
+ * - Features are disabled (no rewind, worktree, coordinator, archive, sessionInfo)
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { DaemonHub } from '../daemon-hub';
+import type { Session, SessionFeatures, Room, McpServerConfig } from '@neokai/shared';
+import { DEFAULT_LOBBY_FEATURES } from '@neokai/shared';
+import type { MessageHub } from '@neokai/shared';
 import type {
 	ExternalMessage,
 	ExternalRoutingResult,
@@ -33,8 +43,23 @@ import { DEFAULT_LOBBY_AGENT_CONFIG } from './types';
 import { InboxManager } from '../github/inbox-manager';
 import { Database } from '../../storage/database';
 import { Logger } from '../logger';
+import { AgentSession, type AgentSessionInit } from '../agent/agent-session';
+import {
+	createLobbyAgentMcpServer,
+	type LobbyAgentToolsConfig,
+	type LobbyCreateRoomParams,
+	type LobbyRouteMessageParams,
+	type LobbySendToInboxParams,
+} from '../agent/lobby-agent-tools';
+import { RoomManager } from '../room/room-manager';
 
 const log = new Logger('lobby-agent');
+
+/** Default model for lobby agent */
+const DEFAULT_MODEL = 'claude-sonnet-4-5-20250929';
+
+/** Lobby session ID for unified session architecture */
+export const LOBBY_SESSION_ID = 'lobby:default';
 
 /**
  * Context for the Lobby Agent
@@ -46,19 +71,31 @@ export interface LobbyAgentContext {
 	rawDb: BunDatabase;
 	/** DaemonHub for events */
 	daemonHub: DaemonHub;
-	/** API key for AI operations */
-	apiKey: string;
+	/** MessageHub for RPC */
+	messageHub: MessageHub;
+	/** Function to get API key */
+	getApiKey: () => Promise<string | null>;
+	/** RoomManager for room operations */
+	roomManager: RoomManager;
+	/** Default workspace path for lobby operations */
+	defaultWorkspacePath?: string;
+	/** Default model for lobby agent */
+	defaultModel?: string;
 }
 
 /**
  * Lobby Agent Service
  *
- * Central hub for all external message processing.
+ * Central hub for all external message processing and AI interaction.
  */
 export class LobbyAgentService {
+	/** Session ID for unified session architecture */
+	readonly sessionId = LOBBY_SESSION_ID;
+
 	private config: LobbyAgentConfig;
 	private adapters: Map<string, ExternalSourceAdapter> = new Map();
 	private inboxManager: InboxManager;
+	private roomManager: RoomManager;
 	private stats: LobbyAgentStats = {
 		messagesReceived: 0,
 		messagesRouted: 0,
@@ -71,12 +108,39 @@ export class LobbyAgentService {
 	private processingTimes: number[] = [];
 	private started = false;
 
+	/** AgentSession for AI orchestration */
+	private agentSession: AgentSession | null = null;
+
+	/** MCP server for lobby agent tools */
+	private lobbyMcpServer: ReturnType<typeof createLobbyAgentMcpServer> | null = null;
+
+	/** Event unsubscriptions */
+	private unsubscribers: Array<() => void> = [];
+
 	constructor(
 		private ctx: LobbyAgentContext,
 		config?: Partial<LobbyAgentConfig>
 	) {
 		this.config = { ...DEFAULT_LOBBY_AGENT_CONFIG, ...config };
 		this.inboxManager = new InboxManager(ctx.db);
+		this.roomManager = ctx.roomManager;
+	}
+
+	/**
+	 * Get the lobby session info for unified session architecture
+	 */
+	getLobbySession(): Session | null {
+		if (this.agentSession) {
+			return this.agentSession.getSessionData();
+		}
+		return this.ctx.db.getSession(this.sessionId);
+	}
+
+	/**
+	 * Get the feature flags for this lobby agent
+	 */
+	getFeatures(): SessionFeatures {
+		return DEFAULT_LOBBY_FEATURES;
 	}
 
 	/**
@@ -120,6 +184,12 @@ export class LobbyAgentService {
 
 		log.info('Starting lobby agent');
 
+		// Initialize AgentSession for AI orchestration
+		await this.initializeAgentSession();
+
+		// Subscribe to events
+		this.subscribeToEvents();
+
 		// Start all registered adapters
 		for (const [sourceType, adapter] of this.adapters) {
 			try {
@@ -137,6 +207,184 @@ export class LobbyAgentService {
 	}
 
 	/**
+	 * Initialize the AgentSession for AI orchestration
+	 */
+	private async initializeAgentSession(): Promise<void> {
+		// Create the MCP server for lobby agent tools
+		this.lobbyMcpServer = this.createLobbyAgentMcp();
+
+		// Get the system prompt
+		const systemPrompt = await this.getSystemPrompt();
+
+		// Build the AgentSessionInit
+		const init: AgentSessionInit = {
+			sessionId: this.sessionId,
+			workspacePath: this.ctx.defaultWorkspacePath ?? process.cwd(),
+			systemPrompt,
+			mcpServers: {
+				'lobby-agent-tools': this.lobbyMcpServer as unknown as McpServerConfig,
+			},
+			features: DEFAULT_LOBBY_FEATURES,
+			context: { lobbyId: 'default' },
+			type: 'lobby',
+			model: this.ctx.defaultModel ?? DEFAULT_MODEL,
+		};
+
+		// Create AgentSession using the factory method
+		this.agentSession = AgentSession.fromInit(
+			init,
+			this.ctx.db,
+			this.ctx.messageHub,
+			this.ctx.daemonHub,
+			this.ctx.getApiKey,
+			DEFAULT_MODEL
+		);
+
+		log.info('Lobby agent session initialized with AgentSession');
+	}
+
+	/**
+	 * Subscribe to daemon events
+	 */
+	private subscribeToEvents(): void {
+		// Subscribe to external messages for AI processing
+		const unsubMessageReceived = this.ctx.daemonHub.on(
+			'lobby.messageReceived',
+			async (event: { sessionId: string; message: ExternalMessage }) => {
+				if (this.agentSession) {
+					await this.injectExternalMessage(event.message);
+				}
+			},
+			{ sessionId: this.sessionId }
+		);
+		this.unsubscribers.push(unsubMessageReceived);
+
+		// Subscribe to message routed events
+		const unsubMessageRouted = this.ctx.daemonHub.on(
+			'lobby.messageRouted',
+			async (event: { sessionId: string; messageId: string; roomId: string; reason: string }) => {
+				if (this.agentSession) {
+					await this.injectRoutingResult('routed', event.messageId, event.roomId, event.reason);
+				}
+			},
+			{ sessionId: this.sessionId }
+		);
+		this.unsubscribers.push(unsubMessageRouted);
+
+		// Subscribe to message to inbox events
+		const unsubMessageToInbox = this.ctx.daemonHub.on(
+			'lobby.messageToInbox',
+			async (event: { sessionId: string; messageId: string; reason: string }) => {
+				if (this.agentSession) {
+					await this.injectRoutingResult('inbox', event.messageId, undefined, event.reason);
+				}
+			},
+			{ sessionId: this.sessionId }
+		);
+		this.unsubscribers.push(unsubMessageToInbox);
+
+		// Subscribe to room events for monitoring
+		const unsubRoomCreated = this.ctx.daemonHub.on(
+			'room.created',
+			async (event: { roomId: string; room: Room }) => {
+				if (this.agentSession) {
+					await this.injectRoomEvent('created', event.room);
+				}
+			},
+			{ sessionId: this.sessionId }
+		);
+		this.unsubscribers.push(unsubRoomCreated);
+	}
+
+	/**
+	 * Inject an external message event into the agent
+	 */
+	private async injectExternalMessage(message: ExternalMessage): Promise<void> {
+		if (!this.agentSession) return;
+
+		const prompt = this.buildExternalMessagePrompt(message);
+		await this.agentSession.messageQueue.enqueue(prompt, true);
+	}
+
+	/**
+	 * Inject a routing result event into the agent
+	 */
+	private async injectRoutingResult(
+		action: 'routed' | 'inbox',
+		messageId: string,
+		roomId?: string,
+		reason?: string
+	): Promise<void> {
+		if (!this.agentSession) return;
+
+		const prompt =
+			action === 'routed'
+				? `Message ${messageId} was routed to room ${roomId}. Reason: ${reason}`
+				: `Message ${messageId} was sent to inbox. Reason: ${reason}`;
+
+		await this.agentSession.messageQueue.enqueue(prompt, true);
+	}
+
+	/**
+	 * Inject a room event into the agent
+	 */
+	private async injectRoomEvent(
+		eventType: 'created' | 'updated' | 'deleted',
+		room: Room
+	): Promise<void> {
+		if (!this.agentSession) return;
+
+		const prompt = `Room ${eventType}: ${room.name} (${room.id})`;
+		await this.agentSession.messageQueue.enqueue(prompt, true);
+	}
+
+	/**
+	 * Build a prompt for an external message
+	 */
+	private buildExternalMessagePrompt(message: ExternalMessage): string {
+		const parts: string[] = [];
+
+		parts.push('# External Message Received\n');
+		parts.push(`**Source:** ${message.source}`);
+		parts.push(`**Sender:** ${message.sender.name}`);
+		parts.push(`**Time:** ${new Date(message.timestamp).toISOString()}\n`);
+
+		if (message.content.title) {
+			parts.push(`**Title:** ${message.content.title}`);
+		}
+
+		if (message.context?.repository) {
+			parts.push(`**Repository:** ${message.context.repository}`);
+		}
+
+		if (message.context?.number) {
+			parts.push(`**Number:** #${message.context.number}`);
+		}
+
+		if (message.context?.eventType) {
+			parts.push(`**Event Type:** ${message.context.eventType}`);
+		}
+
+		if (message.content.labels && message.content.labels.length > 0) {
+			parts.push(`**Labels:** ${message.content.labels.join(', ')}`);
+		}
+
+		parts.push('\n**Content:**');
+		const truncated =
+			message.content.body.length > 1000
+				? message.content.body.slice(0, 1000) + '...'
+				: message.content.body;
+		parts.push(truncated);
+
+		parts.push('\n**Available Actions:**');
+		parts.push('- Use `lobby_route_message` to route this to a room');
+		parts.push('- Use `lobby_send_to_inbox` to send this for manual triage');
+		parts.push('- Use `lobby_create_room` if no suitable room exists');
+
+		return parts.join('\n');
+	}
+
+	/**
 	 * Stop the lobby agent and all adapters
 	 */
 	async stop(): Promise<void> {
@@ -145,6 +393,15 @@ export class LobbyAgentService {
 		}
 
 		log.info('Stopping lobby agent');
+
+		// Clean up agent session
+		this.agentSession = null;
+
+		// Unsubscribe from events
+		for (const unsubscribe of this.unsubscribers) {
+			unsubscribe();
+		}
+		this.unsubscribers = [];
 
 		// Stop all adapters
 		for (const [sourceType, adapter] of this.adapters) {
@@ -179,9 +436,9 @@ export class LobbyAgentService {
 
 		log.debug(`Processing external message: ${message.id} from ${message.source}`);
 
-		// Emit message received event
+		// Emit message received event (will be picked up by AI if enabled)
 		await this.ctx.daemonHub.emit('lobby.messageReceived', {
-			sessionId: 'lobby',
+			sessionId: this.sessionId,
 			message,
 		});
 
@@ -201,7 +458,7 @@ export class LobbyAgentService {
 				this.addToInbox(message, securityCheck, 'Security check failed');
 
 				await this.ctx.daemonHub.emit('lobby.messageSecurityFailed', {
-					sessionId: 'lobby',
+					sessionId: this.sessionId,
 					messageId: message.id,
 					securityCheck,
 				});
@@ -289,10 +546,6 @@ export class LobbyAgentService {
 				riskLevel = riskLevel === 'none' ? 'low' : 'medium';
 			}
 		}
-
-		// If we have an API key, use AI for more thorough check
-		// (This would integrate with the existing SecurityAgent)
-		// For now, we use basic pattern matching
 
 		// Cast to full union type since TypeScript narrows through control flow
 		const finalRiskLevel = riskLevel as 'none' | 'low' | 'medium' | 'high' | 'critical';
@@ -448,7 +701,7 @@ export class LobbyAgentService {
 			await this.deliverToRoom(message, result.roomId);
 
 			await this.ctx.daemonHub.emit('lobby.messageRouted', {
-				sessionId: 'lobby',
+				sessionId: this.sessionId,
 				messageId: message.id,
 				roomId: result.roomId,
 				confidence: result.confidence,
@@ -459,14 +712,14 @@ export class LobbyAgentService {
 			this.addToInbox(message, result.securityCheck, result.reason);
 
 			await this.ctx.daemonHub.emit('lobby.messageToInbox', {
-				sessionId: 'lobby',
+				sessionId: this.sessionId,
 				messageId: message.id,
 				reason: result.reason,
 			});
 		} else {
 			// Rejected
 			await this.ctx.daemonHub.emit('lobby.messageRejected', {
-				sessionId: 'lobby',
+				sessionId: this.sessionId,
 				messageId: message.id,
 				reason: result.reason,
 			});
@@ -608,5 +861,139 @@ export class LobbyAgentService {
 	 */
 	getInboxManager(): InboxManager {
 		return this.inboxManager;
+	}
+
+	// ========================
+	// MCP Tools Configuration
+	// ========================
+
+	/**
+	 * Create the MCP server for lobby agent tools
+	 */
+	private createLobbyAgentMcp() {
+		const config: LobbyAgentToolsConfig = {
+			sessionId: this.sessionId,
+			onListRooms: async () => {
+				const rooms = this.roomManager.listRooms();
+				return rooms;
+			},
+			onGetRoom: async (roomId: string) => {
+				return this.roomManager.getRoom(roomId);
+			},
+			onCreateRoom: async (params: LobbyCreateRoomParams) => {
+				let room = this.roomManager.createRoom({
+					name: params.name,
+					description: params.description,
+					allowedPaths: params.allowedPaths ?? [],
+					defaultPath: params.defaultPath,
+				});
+
+				// Update instructions if provided (separate step since it's not in CreateRoomParams)
+				if (params.instructions) {
+					room =
+						this.roomManager.updateRoom(room.id, { instructions: params.instructions }) ?? room;
+				}
+
+				// Link repositories if provided
+				if (params.repositories && params.repositories.length > 0) {
+					for (const repo of params.repositories) {
+						const [owner, repoName] = repo.split('/');
+						if (owner && repoName) {
+							this.ctx.db.createGitHubMapping({
+								roomId: room.id,
+								repositories: [{ owner, repo: repoName }],
+								priority: 50,
+							});
+						}
+					}
+				}
+
+				return { roomId: room.id, room };
+			},
+			onRouteMessage: async (params: LobbyRouteMessageParams) => {
+				log.info(`Routing message ${params.messageId} to room ${params.roomId}: ${params.reason}`);
+				// The actual routing is handled by the processMessage flow
+				// This is for manual routing by the AI agent
+			},
+			onSendToInbox: async (params: LobbySendToInboxParams) => {
+				log.info(`Sending message ${params.messageId} to inbox: ${params.reason}`);
+				// The actual inbox handling is done elsewhere
+			},
+			onListInbox: async () => {
+				// Return inbox items from GitHub inbox
+				const inboxItems = this.inboxManager.getPendingItems();
+				return inboxItems.map((item) => ({
+					id: item.id,
+					source: 'github',
+					title: item.title,
+					preview: item.body?.slice(0, 200) ?? '',
+					timestamp: item.updatedAt,
+				}));
+			},
+			onCreateTask: async (params) => {
+				// Create task via RPC
+				const result = await this.ctx.messageHub.request<{ taskId: string }>('task.create', {
+					roomId: params.roomId,
+					title: params.title,
+					description: params.description,
+					priority: params.priority,
+				});
+				return result;
+			},
+		};
+
+		return createLobbyAgentMcpServer(config);
+	}
+
+	// ========================
+	// System Prompt
+	// ========================
+
+	/**
+	 * Get the system prompt for the lobby agent
+	 */
+	private async getSystemPrompt(): Promise<string> {
+		return this.getDefaultSystemPrompt();
+	}
+
+	/**
+	 * Get the default system prompt for the lobby agent
+	 */
+	private getDefaultSystemPrompt(): string {
+		return `You are the Lobby Agent, the central orchestrator for NeoKai.
+
+## Your Role
+
+You are the primary interface between humans and the NeoKai system. You manage:
+- External messages from GitHub, Slack, and other sources
+- Room creation and management
+- Message routing to appropriate rooms
+- Human interaction and system monitoring
+
+## Available Tools
+
+- \`lobby_list_rooms\` - List all available rooms
+- \`lobby_get_room\` - Get details about a specific room
+- \`lobby_create_room\` - Create a new room for a project or topic
+- \`lobby_route_message\` - Route an external message to a room
+- \`lobby_send_to_inbox\` - Send a message to the inbox for manual triage
+- \`lobby_list_inbox\` - List items in the inbox awaiting triage
+- \`lobby_create_task\` - Create a task in a specific room
+
+## Your Responsibilities
+
+1. **Message Processing**: When external messages arrive, analyze them and route appropriately
+2. **Room Management**: Create and manage rooms for different projects/topics
+3. **Human Interaction**: Communicate with humans about system status and events
+4. **Monitoring**: Keep track of system health and activity
+
+## Guidelines
+
+- Be proactive in routing messages to the right rooms
+- Communicate clearly about what's happening in the system
+- Create rooms when you identify new projects or topics that need dedicated attention
+- Escalate issues to humans when you're unsure about routing decisions
+
+You are the face of NeoKai - be helpful, efficient, and transparent.`;
 	}
 }

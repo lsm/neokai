@@ -37,6 +37,9 @@ import type { GitHubService } from '../github/github-service';
 // New handlers for goals, jobs, and room agents
 import { setupGoalHandlers } from './goal-handlers';
 import { setupRecurringJobHandlers } from './recurring-job-handlers';
+import { createGitHubAdapter } from '../lobby/adapters/github-adapter';
+import { LobbyAgentService } from '../lobby/lobby-agent-service';
+import { Logger } from '../logger';
 import {
 	setupRoomAgentHandlers,
 	RoomAgentManager,
@@ -58,12 +61,24 @@ export interface RPCHandlerDependencies {
 	daemonHub: DaemonHub;
 	db: Database;
 	gitHubService?: GitHubService;
+	/** Lobby agent service for lobby AI interaction */
+	lobbyAgentService?: LobbyAgentService;
+}
+
+const log = new Logger('rpc-handlers');
+
+/**
+ * Result of setting up RPC handlers
+ */
+export interface RPCHandlerResult {
+	/** Lobby agent service for lifecycle management */
+	lobbyAgentService?: LobbyAgentService;
 }
 
 /**
  * Register all RPC handlers on MessageHub
  */
-export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
+export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerResult {
 	// Room handlers (create roomManager first as session handlers depend on it)
 	const roomManager = new RoomManager(deps.db.getDatabase());
 
@@ -148,8 +163,53 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
 	// Room agent handlers
 	setupRoomAgentHandlers(deps.messageHub, deps.daemonHub, roomAgentManager);
 
+	// Create LobbyAgentService if authenticated
+	let lobbyAgentService: LobbyAgentService | undefined = deps.lobbyAgentService;
+	if (!lobbyAgentService) {
+		try {
+			const apiKey =
+				deps.config.anthropicApiKey ||
+				deps.config.claudeCodeOAuthToken ||
+				deps.config.anthropicAuthToken;
+			if (apiKey) {
+				lobbyAgentService = new LobbyAgentService({
+					db: deps.db,
+					rawDb: deps.db.getDatabase(),
+					daemonHub: deps.daemonHub,
+					messageHub: deps.messageHub,
+					getApiKey: () => deps.authManager.getCurrentApiKey(),
+					roomManager,
+					defaultWorkspacePath: deps.config.workspaceRoot,
+					defaultModel: deps.config.defaultModel,
+				});
+
+				// Register GitHub adapter if GitHub is configured
+				if (deps.gitHubService) {
+					const gitHubAdapter = createGitHubAdapter({
+						db: deps.db,
+						daemonHub: deps.daemonHub,
+						config: deps.config,
+						apiKey,
+						githubToken: process.env.GITHUB_TOKEN,
+						onMessage: async (msg) => {
+							await lobbyAgentService!.processMessage(msg);
+						},
+					});
+					lobbyAgentService.registerAdapter(gitHubAdapter);
+				}
+
+				// Start the lobby agent
+				lobbyAgentService.start().catch((error) => {
+					log.error('Failed to start LobbyAgentService:', error);
+				});
+			}
+		} catch (error) {
+			log.error('Failed to initialize LobbyAgentService:', error);
+		}
+	}
+
 	// Lobby handlers
-	setupLobbyHandlers(deps.messageHub, deps.daemonHub);
+	setupLobbyHandlers(deps.messageHub, deps.daemonHub, lobbyAgentService);
 
 	// GitHub handlers
 	setupGitHubHandlers(
@@ -162,4 +222,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): void {
 
 	// Proposal handlers
 	setupProposalHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
+
+	return { lobbyAgentService };
 }

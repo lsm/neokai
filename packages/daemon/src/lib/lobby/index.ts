@@ -22,6 +22,7 @@ export type {
 } from './types';
 export { DEFAULT_LOBBY_AGENT_CONFIG } from './types';
 export {
+	// @public - Library export
 	GitHubAdapter,
 	createGitHubAdapter,
 	type GitHubAdapterConfig,
