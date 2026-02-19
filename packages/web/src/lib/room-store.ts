@@ -1113,6 +1113,60 @@ class RoomStore {
 			throw err;
 		}
 	}
+
+	// ========================================
+	// Room Management Methods
+	// ========================================
+
+	/**
+	 * Archive the current room (soft delete, data preserved)
+	 */
+	async archiveRoom(): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) {
+			throw new Error('No room selected');
+		}
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			throw new Error('Not connected');
+		}
+
+		try {
+			await hub.request('room.archive', { roomId });
+			// Clear the current room selection
+			this.roomId.value = null;
+			this.room.value = null;
+		} catch (err) {
+			logger.error('Failed to archive room:', err);
+			throw err;
+		}
+	}
+
+	/**
+	 * Permanently delete the current room and all associated data
+	 */
+	async deleteRoom(): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) {
+			throw new Error('No room selected');
+		}
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			throw new Error('Not connected');
+		}
+
+		try {
+			await hub.request('room.delete', { roomId });
+			// Clear the current room selection
+			this.roomId.value = null;
+			this.room.value = null;
+		} catch (err) {
+			logger.error('Failed to delete room:', err);
+			throw err;
+		}
+	}
 }
 
 /** Singleton room store instance */
