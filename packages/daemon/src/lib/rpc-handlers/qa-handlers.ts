@@ -2,77 +2,21 @@
  * Q&A Round RPC Handlers
  *
  * RPC handlers for Q&A round operations:
- * - qa.startRound - Start a new Q&A round
- * - qa.answerQuestion - Answer a question in the round
  * - qa.getActiveRound - Get the active Q&A round
- * - qa.completeRound - Complete the current round
- * - qa.cancelRound - Cancel the current round
  * - qa.getRoundHistory - Get Q&A round history for a room
+ * - qa.answerQuestion - Answer a question in the round
+ * - qa.completeRound - Complete the current round
+ *
+ * Note: Q&A rounds are primarily managed by QARoundManager in the room-agent-service.
+ * These handlers provide read-only access for the UI.
  */
 
 import type { MessageHub } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
-import type { QARoundManager } from '../room/qa-round-manager';
+import type { Database } from '../../storage/database';
+import { QARoundRepository } from '../../storage/repositories/qa-round-repository';
 
-export function setupQAHandlers(
-	messageHub: MessageHub,
-	daemonHub: DaemonHub,
-	getQARoundManager: (roomId: string) => QARoundManager | null
-): void {
-	// qa.startRound - Start a new Q&A round
-	messageHub.onRequest('qa.startRound', async (data) => {
-		const params = data as {
-			roomId: string;
-			trigger: 'room_created' | 'context_updated' | 'goal_created';
-		};
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-
-		if (!params.trigger) {
-			throw new Error('Trigger is required');
-		}
-
-		const qaManager = getQARoundManager(params.roomId);
-		if (!qaManager) {
-			throw new Error('Q&A round manager not available for this room');
-		}
-
-		const round = await qaManager.startRound(params.trigger);
-		return { round };
-	});
-
-	// qa.answerQuestion - Answer a question in the round
-	messageHub.onRequest('qa.answerQuestion', async (data) => {
-		const params = data as {
-			roomId: string;
-			roundId: string;
-			questionId: string;
-			answer: string;
-		};
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-		if (!params.roundId) {
-			throw new Error('Round ID is required');
-		}
-		if (!params.questionId) {
-			throw new Error('Question ID is required');
-		}
-		if (!params.answer) {
-			throw new Error('Answer is required');
-		}
-
-		const qaManager = getQARoundManager(params.roomId);
-		if (!qaManager) {
-			throw new Error('Q&A round manager not available for this room');
-		}
-
-		const question = await qaManager.answerQuestion(params.questionId, params.answer);
-		return { question };
-	});
+export function setupQAHandlers(messageHub: MessageHub, db: Database): void {
+	const getRepo = () => new QARoundRepository(db.getDatabase());
 
 	// qa.getActiveRound - Get the active Q&A round
 	messageHub.onRequest('qa.getActiveRound', async (data) => {
@@ -82,49 +26,7 @@ export function setupQAHandlers(
 			throw new Error('Room ID is required');
 		}
 
-		const qaManager = getQARoundManager(params.roomId);
-		if (!qaManager) {
-			throw new Error('Q&A round manager not available for this room');
-		}
-
-		const round = qaManager.getActiveRound();
-		return { round };
-	});
-
-	// qa.completeRound - Complete the current round
-	messageHub.onRequest('qa.completeRound', async (data) => {
-		const params = data as {
-			roomId: string;
-			summary?: string;
-		};
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-
-		const qaManager = getQARoundManager(params.roomId);
-		if (!qaManager) {
-			throw new Error('Q&A round manager not available for this room');
-		}
-
-		const round = await qaManager.completeRound(params.summary);
-		return { round };
-	});
-
-	// qa.cancelRound - Cancel the current round
-	messageHub.onRequest('qa.cancelRound', async (data) => {
-		const params = data as { roomId: string };
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-
-		const qaManager = getQARoundManager(params.roomId);
-		if (!qaManager) {
-			throw new Error('Q&A round manager not available for this room');
-		}
-
-		const round = await qaManager.cancelRound();
+		const round = getRepo().getActiveRound(params.roomId);
 		return { round };
 	});
 
@@ -139,35 +41,56 @@ export function setupQAHandlers(
 			throw new Error('Room ID is required');
 		}
 
-		const qaManager = getQARoundManager(params.roomId);
-		if (!qaManager) {
-			throw new Error('Q&A round manager not available for this room');
-		}
-
-		const rounds = qaManager.getRoundHistory(params.limit);
+		const rounds = getRepo().listRounds(params.roomId, params.limit);
 		return { rounds };
 	});
 
-	// qa.askQuestion - Agent asks a question (for use by room agent)
-	messageHub.onRequest('qa.askQuestion', async (data) => {
+	// qa.answerQuestion - Answer a question in the active round
+	messageHub.onRequest('qa.answerQuestion', async (data) => {
 		const params = data as {
 			roomId: string;
-			question: string;
+			questionId: string;
+			answer: string;
 		};
 
 		if (!params.roomId) {
 			throw new Error('Room ID is required');
 		}
-		if (!params.question) {
-			throw new Error('Question is required');
+		if (!params.questionId) {
+			throw new Error('Question ID is required');
+		}
+		if (!params.answer) {
+			throw new Error('Answer is required');
 		}
 
-		const qaManager = getQARoundManager(params.roomId);
-		if (!qaManager) {
-			throw new Error('Q&A round manager not available for this room');
+		const repo = getRepo();
+		const activeRound = repo.getActiveRound(params.roomId);
+		if (!activeRound) {
+			throw new Error('No active Q&A round for this room');
 		}
 
-		const question = await qaManager.askQuestion(params.question);
+		const question = repo.answerQuestion(activeRound.id, params.questionId, params.answer);
 		return { question };
+	});
+
+	// qa.completeRound - Complete the active round
+	messageHub.onRequest('qa.completeRound', async (data) => {
+		const params = data as {
+			roomId: string;
+			summary?: string;
+		};
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+
+		const repo = getRepo();
+		const activeRound = repo.getActiveRound(params.roomId);
+		if (!activeRound) {
+			throw new Error('No active Q&A round for this room');
+		}
+
+		const round = repo.completeRound(activeRound.id, params.summary);
+		return { round };
 	});
 }

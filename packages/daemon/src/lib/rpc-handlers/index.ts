@@ -51,6 +51,7 @@ import { RecurringJobScheduler } from '../room/recurring-job-scheduler';
 import { TaskManager } from '../room/task-manager';
 import { PromptTemplateManager } from '../prompts/prompt-template-manager';
 import { setupProposalHandlers } from './proposal-handlers';
+import { setupQAHandlers } from './qa-handlers';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -128,6 +129,20 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerResult
 		getApiKey: () => deps.authManager.getCurrentApiKey(),
 		promptTemplateManager,
 	});
+
+	// Start RoomAgentService for all active rooms
+	// This ensures room chat sessions are available when humans access them
+	const activeRooms = roomManager.listRooms(false); // Only active rooms
+	for (const room of activeRooms) {
+		try {
+			const agent = roomAgentManager.getOrCreateAgent(room.id);
+			agent.start().catch((error) => {
+				log.error(`Failed to start RoomAgentService for room ${room.id}:`, error);
+			});
+		} catch (error) {
+			log.error(`Failed to create RoomAgentService for room ${room.id}:`, error);
+		}
+	}
 
 	setupSessionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub, roomManager);
 	setupMessageHandlers(deps.messageHub, deps.sessionManager);
@@ -222,6 +237,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerResult
 
 	// Proposal handlers
 	setupProposalHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
+
+	// Q&A handlers
+	setupQAHandlers(deps.messageHub, deps.db);
 
 	return { lobbyAgentService };
 }
