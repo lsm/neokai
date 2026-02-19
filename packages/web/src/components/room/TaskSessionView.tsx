@@ -366,5 +366,3 @@ export function TaskSessionView({ taskId, sessions, executionMode }: TaskSession
 		</div>
 	);
 }
-
-export default TaskSessionView;

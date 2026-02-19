@@ -7,7 +7,9 @@
  * - Completed
  */
 
-import type { TaskSummary } from '@neokai/shared';
+import { useState } from 'preact/hooks';
+import type { TaskSummary, TaskSession, TaskExecutionMode } from '@neokai/shared';
+import { TaskSessionView } from './TaskSessionView';
 
 interface RoomTasksProps {
 	tasks: TaskSummary[];
@@ -106,10 +108,19 @@ export function RoomTasks({ tasks }: RoomTasksProps) {
 }
 
 function TaskItem({ task }: { task: TaskSummary }) {
+	const [isExpanded, setIsExpanded] = useState(false);
+
+	// Check if task has sessions to display
+	const hasSessions = task.sessions && task.sessions.length > 0;
+
 	return (
 		<div class="px-4 py-3">
-			<div class="flex items-start justify-between">
-				<div class="flex-1 min-w-0">
+			<div
+				class="flex items-start justify-between cursor-pointer"
+				onClick={() => hasSessions && setIsExpanded(!isExpanded)}
+			>
+				<div class="flex-1 min-w-0 flex items-center gap-2">
+					{hasSessions && <span class="text-gray-500 text-xs">{isExpanded ? '▼' : '▶'}</span>}
 					<h4 class="text-sm font-medium text-gray-100 truncate">{task.title}</h4>
 				</div>
 				{task.progress !== undefined && (
@@ -121,6 +132,17 @@ function TaskItem({ task }: { task: TaskSummary }) {
 					<div
 						class="h-full bg-blue-500 transition-all duration-300"
 						style={{ width: `${task.progress}%` }}
+					/>
+				</div>
+			)}
+
+			{/* Expanded TaskSessionView */}
+			{isExpanded && hasSessions && (
+				<div class="mt-3 pt-3 border-t border-dark-700">
+					<TaskSessionView
+						taskId={task.id}
+						sessions={task.sessions as TaskSession[]}
+						executionMode={(task.executionMode as TaskExecutionMode) ?? 'single'}
 					/>
 				</div>
 			)}
