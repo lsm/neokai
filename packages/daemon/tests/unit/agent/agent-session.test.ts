@@ -1739,6 +1739,186 @@ describe('AgentSession', () => {
 		});
 	});
 
+	describe('createSessionFromInit', () => {
+		it('should create a session without mcpServers in config to avoid cyclic serialization errors', () => {
+			// Simulate what createSdkMcpServer returns - an object with a non-serializable instance
+			const mockMcpServer = {
+				type: 'sdk' as const,
+				name: 'lobby-agent-tools',
+				// This instance property contains cyclic references
+				instance: {
+					connect: () => {},
+					// Create a cyclic reference
+					self: null as unknown,
+				},
+			};
+			mockMcpServer.instance.self = mockMcpServer.instance;
+
+			const init = {
+				sessionId: 'lobby:default',
+				workspacePath: '/test/workspace',
+				systemPrompt: 'Test system prompt',
+				mcpServers: {
+					'lobby-agent-tools': mockMcpServer,
+				},
+				features: {
+					rewind: false,
+					worktree: false,
+					coordinator: false,
+					archive: false,
+					sessionInfo: false,
+				},
+				context: { lobbyId: 'default' },
+				type: 'lobby' as const,
+				model: 'claude-sonnet-4-5-20250929',
+			};
+
+			const session = AgentSession.createSessionFromInit(init, 'claude-sonnet-4-5-20250929');
+
+			// Verify the session was created
+			expect(session.id).toBe('lobby:default');
+			expect(session.type).toBe('lobby');
+			expect(session.config.model).toBe('claude-sonnet-4-5-20250929');
+
+			// Most importantly, mcpServers should NOT be in the persisted config
+			// because it contains non-serializable objects
+			expect(session.config.mcpServers).toBeUndefined();
+
+			// The config should be JSON-serializable without errors
+			expect(() => JSON.stringify(session.config)).not.toThrow();
+
+			// Verify the serialized JSON doesn't contain mcpServers
+			const serialized = JSON.stringify(session.config);
+			expect(serialized).not.toContain('mcpServers');
+		});
+
+		it('should create a room session with serializable config', () => {
+			const init = {
+				sessionId: 'room:test-room',
+				workspacePath: '/test/workspace',
+				systemPrompt: 'Room system prompt',
+				mcpServers: {
+					'room-agent-tools': {
+						type: 'sdk' as const,
+						name: 'room-agent-tools',
+						instance: { cyclic: null as unknown },
+					},
+				},
+				features: {
+					rewind: false,
+					worktree: false,
+					coordinator: false,
+					archive: false,
+					sessionInfo: false,
+				},
+				context: { roomId: 'test-room' },
+				type: 'room' as const,
+				model: 'claude-sonnet-4-5-20250929',
+			};
+			init.mcpServers!['room-agent-tools'].instance.cyclic =
+				init.mcpServers!['room-agent-tools'].instance;
+
+			const session = AgentSession.createSessionFromInit(init, 'claude-sonnet-4-5-20250929');
+
+			expect(session.id).toBe('room:test-room');
+			expect(session.type).toBe('room');
+			expect(session.context?.roomId).toBe('test-room');
+
+			// Config should not contain mcpServers
+			expect(session.config.mcpServers).toBeUndefined();
+
+			// Should be serializable
+			expect(() => JSON.stringify(session.config)).not.toThrow();
+		});
+
+		it('should preserve other config fields like systemPrompt and features', () => {
+			const init = {
+				sessionId: 'test-session',
+				workspacePath: '/test/workspace',
+				systemPrompt: 'Custom system prompt',
+				features: {
+					rewind: true,
+					worktree: true,
+					coordinator: false,
+					archive: false,
+					sessionInfo: true,
+				},
+				type: 'room' as const,
+				model: 'claude-opus-4-20250514',
+			};
+
+			const session = AgentSession.createSessionFromInit(init, 'claude-sonnet-4-5-20250929');
+
+			expect(session.config.systemPrompt).toBe('Custom system prompt');
+			expect(session.config.features).toEqual({
+				rewind: true,
+				worktree: true,
+				coordinator: false,
+				archive: false,
+				sessionInfo: true,
+			});
+			expect(session.config.model).toBe('claude-opus-4-20250514');
+		});
+	});
+
+	describe('fromInit', () => {
+		it('should merge mcpServers into session config at runtime for query options builder', () => {
+			// Create a mock cyclic MCP server instance
+			const mockMcpServer = {
+				type: 'sdk' as const,
+				name: 'test-tools',
+				instance: { self: null as unknown },
+			};
+			mockMcpServer.instance.self = mockMcpServer.instance;
+
+			const init = {
+				sessionId: 'test:runtime',
+				workspacePath: '/test/workspace',
+				mcpServers: {
+					'test-tools': mockMcpServer,
+				},
+				type: 'lobby' as const,
+				model: 'claude-sonnet-4-5-20250929',
+			};
+
+			// Create a mock database that returns null for getSession (new session)
+			const mockDb = {
+				getSession: mock(() => null),
+				createSession: mock(() => {}),
+				updateSession: mock(() => {}),
+				getMessagesByStatus: mock(() => []),
+			} as unknown as Database;
+
+			const mockMessageHub = {} as MessageHub;
+			const mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+			const mockGetApiKey = mock(async () => 'test-key');
+
+			const agentSession = AgentSession.fromInit(
+				init,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey,
+				'claude-sonnet-4-5-20250929'
+			);
+
+			// The runtime session should have mcpServers available for query options builder
+			const sessionData = agentSession.getSessionData();
+			expect(sessionData.config.mcpServers).toBeDefined();
+			expect(sessionData.config.mcpServers!['test-tools']).toEqual(mockMcpServer);
+
+			// The database should have been called with a session that has NO mcpServers
+			// (because we don't persist non-serializable objects)
+			const createSessionCall = (mockDb as unknown as { createSession: ReturnType<typeof mock> })
+				.createSession.mock.calls[0];
+			const persistedSession = createSessionCall[0] as Session;
+			expect(persistedSession.config.mcpServers).toBeUndefined();
+		});
+	});
+
 	describe('startupTimeoutTimer', () => {
 		let mockSession: Session;
 		let mockDb: Database;

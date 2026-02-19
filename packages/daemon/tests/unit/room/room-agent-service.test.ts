@@ -119,6 +119,41 @@ describe('RoomAgentService', () => {
 			)
 		`);
 
+		db.exec(`
+			CREATE TABLE IF NOT EXISTS proposals (
+				id TEXT PRIMARY KEY,
+				room_id TEXT NOT NULL,
+				session_id TEXT NOT NULL,
+				type TEXT NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				proposed_changes TEXT DEFAULT '{}',
+				reasoning TEXT NOT NULL DEFAULT '',
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('pending', 'approved', 'rejected', 'withdrawn', 'applied')),
+				acted_by TEXT,
+				action_response TEXT,
+				created_at INTEGER NOT NULL,
+				acted_at INTEGER,
+				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+			)
+		`);
+
+		db.exec(`
+			CREATE TABLE IF NOT EXISTS qa_rounds (
+				id TEXT PRIMARY KEY,
+				room_id TEXT NOT NULL,
+				trigger TEXT NOT NULL CHECK(trigger IN ('room_created', 'context_updated', 'goal_created')),
+				status TEXT NOT NULL DEFAULT 'in_progress'
+					CHECK(status IN ('in_progress', 'completed', 'cancelled')),
+				questions TEXT DEFAULT '[]',
+				started_at INTEGER NOT NULL,
+				completed_at INTEGER,
+				summary TEXT,
+				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+			)
+		`);
+
 		// Create room manager and a room
 		roomManager = new RoomManager(db);
 		room = roomManager.createRoom({
@@ -292,8 +327,9 @@ describe('RoomAgentService', () => {
 		it('should start the agent and subscribe to events', async () => {
 			await agentService.start();
 
-			// Should have subscribed to room.message and pair.task_completed
-			expect(mockDaemonHub.on).toHaveBeenCalledTimes(2);
+			// Should have subscribed to all room events (room.message, room.contextUpdated, pair.task_completed,
+			// recurringJob.triggered, proposal.approved, proposal.rejected, qa.questionAnswered)
+			expect(mockDaemonHub.on).toHaveBeenCalledTimes(7);
 			expect(mockDaemonHub.on).toHaveBeenCalledWith('room.message', expect.any(Function), {
 				sessionId: `room:${room.id}`,
 			});
@@ -348,8 +384,8 @@ describe('RoomAgentService', () => {
 
 			await agentService.stop();
 
-			// The unsubscriber functions should have been called twice (for both subscriptions)
-			expect(unsubscriberCalls).toBe(2);
+			// The unsubscriber functions should have been called for all 7 subscriptions
+			expect(unsubscriberCalls).toBe(7);
 		});
 
 		it('should clear idle check timer on stop', async () => {

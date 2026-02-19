@@ -19,6 +19,7 @@ import { createTables } from '../../../src/storage/schema';
 import { RoomManager } from '../../../src/lib/room/room-manager';
 import { LobbyAgentService } from '../../../src/lib/lobby/lobby-agent-service';
 import { createDaemonHub, type DaemonHub } from '../../../src/lib/daemon-hub';
+import { MessageHub } from '@neokai/shared';
 import type {
 	ExternalMessage,
 	ExternalSourceAdapter,
@@ -70,6 +71,7 @@ function createMockAdapter(
 describe('LobbyAgentService', () => {
 	let db: Database;
 	let daemonHub: DaemonHub;
+	let messageHub: MessageHub;
 	let service: LobbyAgentService;
 	let roomManager: RoomManager;
 
@@ -78,6 +80,12 @@ describe('LobbyAgentService', () => {
 		db = new Database(':memory:');
 		createTables(db);
 
+		// Add migration columns for unified session architecture
+		db.exec(
+			`ALTER TABLE sessions ADD COLUMN type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room', 'lobby'))`
+		);
+		db.exec(`ALTER TABLE sessions ADD COLUMN session_context TEXT`);
+
 		// Create room manager for creating rooms (needed for GitHub mappings FK)
 		roomManager = new RoomManager(db);
 
@@ -85,13 +93,22 @@ describe('LobbyAgentService', () => {
 		daemonHub = createDaemonHub('test-lobby');
 		await daemonHub.initialize();
 
+		// Create MessageHub for tests
+		messageHub = new MessageHub({
+			send: async () => {},
+			subscribe: async () => {},
+			close: async () => {},
+		});
+
 		// Create service with test context
 		service = new LobbyAgentService(
 			{
 				db: createDatabaseFacade(db),
 				rawDb: db,
 				daemonHub,
-				apiKey: 'test-api-key',
+				messageHub,
+				getApiKey: async () => 'test-api-key',
+				roomManager,
 			},
 			{
 				enableSecurityCheck: true,
@@ -922,7 +939,9 @@ function validate(input: string): boolean {
 					db: createDatabaseFacade(db),
 					rawDb: db,
 					daemonHub,
-					apiKey: 'test-key',
+					messageHub,
+					getApiKey: async () => 'test-key',
+					roomManager,
 				},
 				{
 					enableSecurityCheck: false,
@@ -942,7 +961,9 @@ function validate(input: string): boolean {
 					db: createDatabaseFacade(db),
 					rawDb: db,
 					daemonHub,
-					apiKey: 'test-key',
+					messageHub,
+					getApiKey: async () => 'test-key',
+					roomManager,
 				},
 				{
 					enableSecurityCheck: false,
@@ -1126,5 +1147,147 @@ function createDatabaseFacade(db: Database) {
 		listInboxItems: () => [],
 		countInboxItemsByStatus: () => 0,
 		updateInboxItemStatus: () => null,
+		// Methods needed for unified session architecture
+		listRooms: () => {
+			const rows = db.prepare(`SELECT * FROM rooms`).all() as Array<{
+				id: string;
+				name: string;
+				description: string | null;
+				status: string;
+			}>;
+			return rows.map((row) => ({
+				id: row.id,
+				name: row.name,
+				description: row.description ?? undefined,
+				status: row.status as 'active' | 'archived',
+				allowedPaths: [],
+				sessionIds: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			}));
+		},
+		getRoom: (roomId: string) => {
+			const row = db.prepare(`SELECT * FROM rooms WHERE id = ?`).get(roomId) as
+				| {
+						id: string;
+						name: string;
+						description: string | null;
+						status: string;
+				  }
+				| undefined;
+			if (!row) return null;
+			return {
+				id: row.id,
+				name: row.name,
+				description: row.description ?? undefined,
+				status: row.status as 'active' | 'archived',
+				allowedPaths: [],
+				sessionIds: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			};
+		},
+		createRoom: (params: { name: string; description?: string; allowedPaths?: string[] }) => {
+			const id = `room-${Date.now()}`;
+			db.prepare(
+				`INSERT INTO rooms (id, name, description, status, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?)`
+			).run(id, params.name, params.description ?? null, Date.now(), Date.now());
+			return {
+				id,
+				name: params.name,
+				description: params.description,
+				status: 'active' as const,
+				allowedPaths: params.allowedPaths ?? [],
+				sessionIds: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			};
+		},
+		createGitHubMapping: (params: {
+			roomId: string;
+			repositories: Array<{ owner: string; repo: string }>;
+			priority: number;
+		}) => {
+			const id = `mapping-${Date.now()}`;
+			db.prepare(
+				`INSERT INTO room_github_mappings (id, room_id, repositories, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+			).run(
+				id,
+				params.roomId,
+				JSON.stringify(params.repositories),
+				params.priority,
+				Date.now(),
+				Date.now()
+			);
+			return {
+				id,
+				roomId: params.roomId,
+				repositories: params.repositories,
+				priority: params.priority,
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			};
+		},
+		getSession: (sessionId: string) => {
+			const row = db
+				.prepare(`SELECT *, session_context as context FROM sessions WHERE id = ?`)
+				.get(sessionId) as
+				| {
+						id: string;
+						title: string;
+						workspace_path: string;
+						created_at: string;
+						last_active_at: string;
+						status: string;
+						config: string;
+						metadata: string;
+						type: string | null;
+						context: string | null;
+				  }
+				| undefined;
+			if (!row) return null;
+			return {
+				id: row.id,
+				title: row.title,
+				workspacePath: row.workspace_path,
+				createdAt: row.created_at,
+				lastActiveAt: row.last_active_at,
+				status: row.status as 'active' | 'idle' | 'completed' | 'archived',
+				config: JSON.parse(row.config),
+				metadata: JSON.parse(row.metadata),
+				type: (row.type as 'worker' | 'room' | 'lobby') ?? 'worker',
+				context: row.context ? JSON.parse(row.context) : undefined,
+			};
+		},
+		createSession: (session: {
+			id: string;
+			title: string;
+			workspacePath: string;
+			status: string;
+			config: unknown;
+			metadata: unknown;
+			type?: string;
+			context?: unknown;
+		}) => {
+			// Simplify config to avoid circular reference issues in tests
+			const safeConfig = {
+				model: (session.config as { model?: string })?.model ?? 'default',
+				features: (session.config as { features?: unknown })?.features,
+			};
+			db.prepare(
+				`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, type, session_context) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			).run(
+				session.id,
+				session.title,
+				session.workspacePath,
+				new Date().toISOString(),
+				new Date().toISOString(),
+				session.status,
+				JSON.stringify(safeConfig),
+				JSON.stringify(session.metadata),
+				session.type ?? 'worker',
+				session.context ? JSON.stringify(session.context) : null
+			);
+		},
 	};
 }

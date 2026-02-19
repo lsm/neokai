@@ -62,7 +62,9 @@ describe('SessionRepository', () => {
 				sdk_session_id TEXT,
 				available_commands TEXT,
 				processing_state TEXT,
-				archived_at TEXT
+				archived_at TEXT,
+				type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room', 'lobby')),
+				session_context TEXT
 			);
 
 			CREATE INDEX idx_sessions_last_active ON sessions(last_active_at);
