@@ -32,20 +32,6 @@ import type { Room, SessionPair, NeoTask, RoomGoal } from '@neokai/shared';
  * Helper to create additional room-related tables
  */
 function createRoomTables(db: BunDatabase): void {
-	// Add missing columns to sessions table for unified session architecture
-	try {
-		db.exec(
-			`ALTER TABLE sessions ADD COLUMN type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room', 'lobby'))`
-		);
-	} catch {
-		/* column already exists */
-	}
-	try {
-		db.exec(`ALTER TABLE sessions ADD COLUMN session_context TEXT`);
-	} catch {
-		/* column already exists */
-	}
-
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS goals (
 			id TEXT PRIMARY KEY,
