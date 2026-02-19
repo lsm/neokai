@@ -464,6 +464,23 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// Effects
 	// ========================================
 
+	// Select session on mount or when sessionId changes
+	// This is needed when ChatContainer is used outside the main navigation flow
+	// (e.g., in Room.tsx for room chat with sessionId="room:{roomId}")
+	useEffect(() => {
+		// Only select if this sessionId is different from the current active session
+		if (sessionId && sessionId !== sessionStore.activeSessionId.value) {
+			sessionStore.select(sessionId);
+		}
+		// Cleanup: deselect session when component unmounts
+		return () => {
+			// Only clear if we're the ones who selected this session
+			if (sessionStore.activeSessionId.value === sessionId) {
+				sessionStore.select(null);
+			}
+		};
+	}, [sessionId]);
+
 	// Restore scroll position after older messages are loaded and DOM has updated
 	useEffect(() => {
 		if (!scrollPositionRestoreRef.current?.shouldRestore) return;

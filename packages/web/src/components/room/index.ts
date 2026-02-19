@@ -3,7 +3,9 @@
  *
  * Components for room-based agent orchestration and task management.
  * These components handle room agent status, task sessions, goals configuration,
- * recurring job scheduling, Q&A rounds, chat interface, and context editing within the room context.
+ * recurring job scheduling, Q&A rounds, and context editing within the room context.
+ *
+ * Note: Room chat uses unified session architecture via ChatContainer with sessionId="room:{roomId}"
  */
 
 // @public - Library export
@@ -11,13 +13,10 @@ export { RoomAgentStatus } from './RoomAgentStatus';
 export { TaskSessionView } from './TaskSessionView';
 export { GoalsEditor } from './GoalsEditor';
 export { RecurringJobsConfig } from './RecurringJobsConfig';
-// @public - Library export
-export { RoomChatPanel } from './RoomChatPanel';
 export { QARoundPanel } from './QARoundPanel';
 // @public - Library export
 export { QAQuestionCard } from './QAQuestionCard';
 export { QARoundHistory } from './QARoundHistory';
-export type { RoomChatPanelProps, RoomChatMessage } from './RoomChatPanel';
 export type { QARoundPanelProps } from './QARoundPanel';
 export type { QAQuestionCardProps } from './QAQuestionCard';
 export type { QARoundHistoryProps } from './QARoundHistory';
