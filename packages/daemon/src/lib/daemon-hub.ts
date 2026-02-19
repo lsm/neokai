@@ -524,47 +524,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		proposalId: string;
 		proposal: import('@neokai/shared').RoomProposal;
 	};
-	'proposal.rejected': {
-		sessionId: string;
-		roomId: string;
-		proposalId: string;
-		proposal: import('@neokai/shared').RoomProposal;
-	};
-
-	// Q&A Round events
-	'qa.roundStarted': {
-		sessionId: string;
-		roomId: string;
-		roundId: string;
-		trigger: 'room_created' | 'context_updated' | 'goal_created';
-	};
-	'qa.questionAsked': {
-		sessionId: string;
-		roomId: string;
-		roundId: string;
-		questionId: string;
-		question: string;
-	};
-	'qa.questionAnswered': {
-		sessionId: string;
-		roomId: string;
-		roundId: string;
-		questionId: string;
-		answer: string;
-	};
-	'qa.roundCompleted': {
-		sessionId: string;
-		roomId: string;
-		roundId: string;
-		summary?: string;
-		questionsCount: number;
-		answeredCount: number;
-	};
-	'qa.roundCancelled': {
-		sessionId: string;
-		roomId: string;
-		roundId: string;
-	};
 }
 
 /**

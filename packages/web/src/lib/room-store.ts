@@ -13,8 +13,6 @@
  * - tasks: Task list for the room
  * - sessions: Session summaries for the room
  * - proposals: Proposals for the room
- * - activeQARound: Active Q&A round
- * - qaRoundHistory: Q&A round history
  * - goals: Room goals
  * - recurringJobs: Recurring jobs for the room
  */
@@ -28,8 +26,6 @@ import type {
 	RoomOverview,
 	RoomProposal,
 	ProposalStatus,
-	RoomQARound,
-	QAQuestion,
 	RoomGoal,
 	GoalPriority,
 	RecurringJob,
@@ -54,23 +50,6 @@ interface CreateGoalParams {
 interface ProposalEventPayload {
 	roomId: string;
 	proposal: RoomProposal;
-}
-
-/**
- * Event payload for Q&A round events
- */
-interface QARoundEventPayload {
-	roomId: string;
-	round: RoomQARound;
-}
-
-/**
- * Event payload for Q&A question events
- */
-interface QAQuestionEventPayload {
-	roomId: string;
-	roundId: string;
-	question: QAQuestion;
 }
 
 /**
@@ -143,16 +122,6 @@ class RoomStore {
 
 	/** Proposal loading state */
 	readonly proposalLoading = signal<boolean>(false);
-
-	// ========================================
-	// Q&A Signals
-	// ========================================
-
-	/** Active Q&A round */
-	readonly activeQARound = signal<RoomQARound | null>(null);
-
-	/** Q&A round history */
-	readonly qaRoundHistory = signal<RoomQARound[]>([]);
 
 	// ========================================
 	// Goals Signals
@@ -261,8 +230,6 @@ class RoomStore {
 		this.sessions.value = [];
 		this.error.value = null;
 		this.proposals.value = [];
-		this.activeQARound.value = null;
-		this.qaRoundHistory.value = [];
 		this.goals.value = [];
 		this.recurringJobs.value = [];
 
@@ -373,74 +340,7 @@ class RoomStore {
 			);
 			this.cleanupFunctions.push(unsubProposalRejected);
 
-			// 4. Q&A round events
-			const unsubQARoundStarted = hub.onEvent<QARoundEventPayload>('qa.roundStarted', (event) => {
-				if (event.roomId === roomId) {
-					this.activeQARound.value = event.round;
-				}
-			});
-			this.cleanupFunctions.push(unsubQARoundStarted);
-
-			const unsubQAQuestionAsked = hub.onEvent<QAQuestionEventPayload>(
-				'qa.questionAsked',
-				(event) => {
-					if (event.roomId === roomId && this.activeQARound.value?.id === event.roundId) {
-						this.activeQARound.value = {
-							...this.activeQARound.value,
-							questions: [...this.activeQARound.value.questions, event.question],
-						};
-					}
-				}
-			);
-			this.cleanupFunctions.push(unsubQAQuestionAsked);
-
-			const unsubQAQuestionAnswered = hub.onEvent<QAQuestionEventPayload>(
-				'qa.questionAnswered',
-				(event) => {
-					if (event.roomId === roomId && this.activeQARound.value?.id === event.roundId) {
-						const idx = this.activeQARound.value.questions.findIndex(
-							(q) => q.id === event.question.id
-						);
-						if (idx >= 0) {
-							const updatedQuestions = [
-								...this.activeQARound.value.questions.slice(0, idx),
-								event.question,
-								...this.activeQARound.value.questions.slice(idx + 1),
-							];
-							this.activeQARound.value = {
-								...this.activeQARound.value,
-								questions: updatedQuestions,
-							};
-						}
-					}
-				}
-			);
-			this.cleanupFunctions.push(unsubQAQuestionAnswered);
-
-			const unsubQARoundCompleted = hub.onEvent<QARoundEventPayload>(
-				'qa.roundCompleted',
-				(event) => {
-					if (event.roomId === roomId) {
-						this.qaRoundHistory.value = [event.round, ...this.qaRoundHistory.value];
-						if (this.activeQARound.value?.id === event.round.id) {
-							this.activeQARound.value = null;
-						}
-					}
-				}
-			);
-			this.cleanupFunctions.push(unsubQARoundCompleted);
-
-			const unsubQARoundCancelled = hub.onEvent<QARoundEventPayload>(
-				'qa.roundCancelled',
-				(event) => {
-					if (event.roomId === roomId && this.activeQARound.value?.id === event.round.id) {
-						this.activeQARound.value = null;
-					}
-				}
-			);
-			this.cleanupFunctions.push(unsubQARoundCancelled);
-
-			// 5. Goal events
+			// 4. Goal events
 			const unsubGoalCreated = hub.onEvent<GoalEventPayload>('room.goalCreated', (event) => {
 				if (event.roomId === roomId) {
 					this.goals.value = [...this.goals.value, event.goal];
@@ -469,7 +369,7 @@ class RoomStore {
 			});
 			this.cleanupFunctions.push(unsubGoalDeleted);
 
-			// 6. Recurring job events
+			// 5. Recurring job events
 			const unsubJobCreated = hub.onEvent<RecurringJobEventPayload>(
 				'recurringJob.created',
 				(event) => {
@@ -524,7 +424,7 @@ class RoomStore {
 			);
 			this.cleanupFunctions.push(unsubJobTriggered);
 
-			// 7. Fetch initial state via RPC
+			// 6. Fetch initial state via RPC
 			await this.fetchInitialState(hub, roomId);
 		} catch (err) {
 			logger.error('Failed to start room subscriptions:', err);
@@ -552,12 +452,7 @@ class RoomStore {
 			}
 
 			// Fetch additional data for new features
-			await Promise.all([
-				this.fetchGoals(),
-				this.fetchRecurringJobs(),
-				this.fetchProposals(),
-				this.fetchActiveQARound(),
-			]);
+			await Promise.all([this.fetchGoals(), this.fetchRecurringJobs(), this.fetchProposals()]);
 		} catch (err) {
 			logger.error('Failed to fetch room state:', err);
 			this.error.value = err instanceof Error ? err.message : 'Failed to load room';
@@ -704,103 +599,6 @@ class RoomStore {
 		} catch (err) {
 			logger.error('Failed to reject proposal:', err);
 			throw err;
-		}
-	}
-
-	// ========================================
-	// Q&A Methods
-	// ========================================
-
-	/**
-	 * Fetch active Q&A round
-	 */
-	async fetchActiveQARound(): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) {
-			return;
-		}
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			return;
-		}
-
-		try {
-			const response = await hub.request<{ round: RoomQARound | null }>('qa.getActiveRound', {
-				roomId,
-			});
-			this.activeQARound.value = response.round ?? null;
-		} catch (err) {
-			logger.error('Failed to fetch active Q&A round:', err);
-		}
-	}
-
-	/**
-	 * Answer a question in the active Q&A round
-	 */
-	async answerQuestion(questionId: string, answer: string): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) {
-			throw new Error('No room selected');
-		}
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			throw new Error('Not connected');
-		}
-
-		try {
-			await hub.request('qa.answerQuestion', { roomId, questionId, answer });
-		} catch (err) {
-			logger.error('Failed to answer question:', err);
-			throw err;
-		}
-	}
-
-	/**
-	 * Complete the active Q&A round
-	 */
-	async completeQARound(summary?: string): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) {
-			throw new Error('No room selected');
-		}
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			throw new Error('Not connected');
-		}
-
-		try {
-			await hub.request('qa.completeRound', { roomId, summary });
-		} catch (err) {
-			logger.error('Failed to complete Q&A round:', err);
-			throw err;
-		}
-	}
-
-	/**
-	 * Fetch Q&A round history
-	 */
-	async fetchQARoundHistory(limit?: number): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) {
-			return;
-		}
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			return;
-		}
-
-		try {
-			const response = await hub.request<{ rounds: RoomQARound[] }>('qa.getRoundHistory', {
-				roomId,
-				limit,
-			});
-			this.qaRoundHistory.value = response.rounds ?? [];
-		} catch (err) {
-			logger.error('Failed to fetch Q&A round history:', err);
 		}
 	}
 

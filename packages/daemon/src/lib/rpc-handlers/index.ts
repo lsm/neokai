@@ -51,7 +51,6 @@ import { RecurringJobScheduler } from '../room/recurring-job-scheduler';
 import { TaskManager } from '../room/task-manager';
 import { PromptTemplateManager } from '../prompts/prompt-template-manager';
 import { setupProposalHandlers } from './proposal-handlers';
-import { setupQAHandlers } from './qa-handlers';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -235,9 +234,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 
 	// Proposal handlers
 	setupProposalHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
-
-	// Q&A handlers
-	setupQAHandlers(deps.messageHub, deps.db);
 
 	// Return cleanup function to stop background services
 	return () => {

@@ -124,21 +124,6 @@ function createRoomTables(db: BunDatabase): void {
 	`);
 
 	db.exec(`
-		CREATE TABLE IF NOT EXISTS qa_rounds (
-			id TEXT PRIMARY KEY,
-			room_id TEXT NOT NULL,
-			trigger TEXT NOT NULL CHECK(trigger IN ('room_created', 'context_updated', 'goal_created')),
-			status TEXT NOT NULL DEFAULT 'in_progress'
-				CHECK(status IN ('in_progress', 'completed', 'cancelled')),
-			questions TEXT DEFAULT '[]',
-			started_at INTEGER NOT NULL,
-			completed_at INTEGER,
-			summary TEXT,
-			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-		)
-	`);
-
-	db.exec(`
 		CREATE TABLE IF NOT EXISTS prompt_templates (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -1049,52 +1034,6 @@ describe('RoomAgentService Integration', () => {
 			expect(agentService2.getState().errorCount).toBe(1);
 
 			await agentService2.stop();
-		});
-	});
-
-	describe('QARoundManager Integration', () => {
-		test('should have QARoundManager available', async () => {
-			const agentService = new RoomAgentService({
-				room: ctx.room,
-				db: ctx.bunDb,
-				daemonHub: ctx.daemonHub,
-				messageHub: ctx.messageHub,
-				sessionPairManager: ctx.sessionPairManager.manager as unknown as SessionPairManager,
-			});
-
-			await agentService.start();
-
-			expect(agentService.getQARoundManager()).not.toBeNull();
-
-			await agentService.stop();
-		});
-
-		test('should trigger Q&A round on room created', async () => {
-			const events: Array<{ event: string; data: unknown }> = [];
-			ctx.daemonHub.on('qa.roundStarted', (data) => {
-				events.push({ event: 'qa.roundStarted', data });
-			});
-
-			const agentService = new RoomAgentService({
-				room: ctx.room,
-				db: ctx.bunDb,
-				daemonHub: ctx.daemonHub,
-				messageHub: ctx.messageHub,
-				sessionPairManager: ctx.sessionPairManager.manager as unknown as SessionPairManager,
-			});
-
-			await agentService.start();
-
-			// Trigger Q&A round
-			await agentService.triggerQARound('room_created');
-
-			await Bun.sleep(50);
-
-			// Should have started Q&A round
-			expect(events.length).toBe(1);
-			expect((events[0].data as { roomId: string }).roomId).toBe(ctx.room.id);
-
-			await agentService.stop();
 		});
 	});
 });

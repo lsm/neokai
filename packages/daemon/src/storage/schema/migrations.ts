@@ -87,9 +87,6 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 23: Create proposals table for room agent proposals
 	runMigration23(db);
 
-	// Migration 24: Create qa_rounds table for Q&A rounds
-	runMigration24(db);
-
 	// Migration 25: Add type and context columns to sessions table
 	runMigration25(db);
 }
@@ -1229,44 +1226,6 @@ function runMigration23(db: BunDatabase): void {
 		CREATE INDEX IF NOT EXISTS idx_proposals_room ON proposals(room_id);
 		CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals(room_id, status);
 		CREATE INDEX IF NOT EXISTS idx_proposals_session ON proposals(session_id);
-	`);
-}
-
-/**
- * Migration 24: Create qa_rounds table for Q&A rounds
- *
- * Creates a table for Q&A rounds used for context refinement:
- * - id: Unique identifier
- * - room_id: Reference to the room
- * - trigger: What triggered this Q&A round (room_created, context_updated, goal_created)
- * - status: Current status (in_progress, completed, cancelled)
- * - questions: JSON array of QAQuestion objects
- * - started_at: When the round started
- * - completed_at: When the round completed
- * - summary: Summary of the Q&A round
- */
-function runMigration24(db: BunDatabase): void {
-	// Skip if qa_rounds table already exists (already migrated)
-	if (tableExists(db, 'qa_rounds')) {
-		return;
-	}
-
-	db.exec(`
-		CREATE TABLE IF NOT EXISTS qa_rounds (
-			id TEXT PRIMARY KEY,
-			room_id TEXT NOT NULL,
-			trigger TEXT NOT NULL CHECK(trigger IN ('room_created', 'context_updated', 'goal_created')),
-			status TEXT NOT NULL DEFAULT 'in_progress'
-				CHECK(status IN ('in_progress', 'completed', 'cancelled')),
-			questions TEXT DEFAULT '[]',
-			started_at INTEGER NOT NULL,
-			completed_at INTEGER,
-			summary TEXT,
-			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_qa_rounds_room ON qa_rounds(room_id);
-		CREATE INDEX IF NOT EXISTS idx_qa_rounds_status ON qa_rounds(room_id, status);
 	`);
 }
 
