@@ -30,9 +30,6 @@ export const navSectionSignal = signal<NavSection>('chats');
 // Mobile drawer signals
 export const contextPanelOpenSignal = signal<boolean>(false);
 
-// NeoChat overlay signal (for room view)
-export const neoChatOpenSignal = signal<boolean>(true);
-
 // Lobby Manager panel signal
 export const lobbyManagerOpenSignal = signal<boolean>(false);
 

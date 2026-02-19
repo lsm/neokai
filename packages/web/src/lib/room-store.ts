@@ -12,7 +12,6 @@
  * - room: Room metadata
  * - tasks: Task list for the room
  * - sessions: Session summaries for the room
- * - neoMessages: Neo context messages
  * - proposals: Proposals for the room
  * - activeQARound: Active Q&A round
  * - qaRoundHistory: Q&A round history
@@ -26,7 +25,6 @@ import type {
 	TaskSummary,
 	NeoTask,
 	SessionSummary,
-	NeoContextMessage,
 	RoomOverview,
 	RoomProposal,
 	ProposalStatus,
@@ -48,21 +46,6 @@ interface CreateGoalParams {
 	description: string;
 	priority?: GoalPriority;
 	metrics?: Record<string, number>;
-}
-
-/**
- * Event payload from backend for room.message
- */
-interface RoomMessageEvent {
-	sessionId: string;
-	roomId: string;
-	message: {
-		id: string;
-		role: string;
-		content: string;
-		timestamp: number;
-	};
-	sender?: string;
 }
 
 /**
@@ -144,9 +127,6 @@ class RoomStore {
 
 	/** Sessions in this room */
 	readonly sessions = signal<SessionSummary[]>([]);
-
-	/** Neo context messages */
-	readonly neoMessages = signal<NeoContextMessage[]>([]);
 
 	/** Loading state */
 	readonly loading = signal<boolean>(false);
@@ -279,7 +259,6 @@ class RoomStore {
 		this.room.value = null;
 		this.tasks.value = [];
 		this.sessions.value = [];
-		this.neoMessages.value = [];
 		this.error.value = null;
 		this.proposals.value = [];
 		this.activeQARound.value = null;
@@ -349,26 +328,7 @@ class RoomStore {
 			);
 			this.cleanupFunctions.push(unsubTaskUpdate);
 
-			// 3. Neo context messages (room.message event from backend)
-			const unsubNeoMessage = hub.onEvent<RoomMessageEvent>('room.message', (event) => {
-				// Only process messages for this room
-				if (event.roomId !== roomId) return;
-
-				// Transform backend payload to NeoContextMessage shape
-				const msg: NeoContextMessage = {
-					id: event.message.id,
-					contextId: this.room.value?.contextId ?? '',
-					role: event.message.role as 'user' | 'assistant',
-					content: event.message.content,
-					timestamp: event.message.timestamp,
-					tokenCount: 0, // Not provided in event
-				};
-
-				this.neoMessages.value = [...this.neoMessages.value, msg];
-			});
-			this.cleanupFunctions.push(unsubNeoMessage);
-
-			// 4. Proposal events
+			// 3. Proposal events
 			const unsubProposalCreated = hub.onEvent<ProposalEventPayload>(
 				'proposal.created',
 				(event) => {
@@ -413,7 +373,7 @@ class RoomStore {
 			);
 			this.cleanupFunctions.push(unsubProposalRejected);
 
-			// 5. Q&A round events
+			// 4. Q&A round events
 			const unsubQARoundStarted = hub.onEvent<QARoundEventPayload>('qa.roundStarted', (event) => {
 				if (event.roomId === roomId) {
 					this.activeQARound.value = event.round;
@@ -480,7 +440,7 @@ class RoomStore {
 			);
 			this.cleanupFunctions.push(unsubQARoundCancelled);
 
-			// 6. Goal events
+			// 5. Goal events
 			const unsubGoalCreated = hub.onEvent<GoalEventPayload>('room.goalCreated', (event) => {
 				if (event.roomId === roomId) {
 					this.goals.value = [...this.goals.value, event.goal];
@@ -509,7 +469,7 @@ class RoomStore {
 			});
 			this.cleanupFunctions.push(unsubGoalDeleted);
 
-			// 7. Recurring job events
+			// 6. Recurring job events
 			const unsubJobCreated = hub.onEvent<RecurringJobEventPayload>(
 				'recurringJob.created',
 				(event) => {
@@ -564,11 +524,8 @@ class RoomStore {
 			);
 			this.cleanupFunctions.push(unsubJobTriggered);
 
-			// 8. Fetch initial state via RPC
+			// 7. Fetch initial state via RPC
 			await this.fetchInitialState(hub, roomId);
-
-			// 9. Load message history
-			await this.loadMessageHistory(hub, roomId);
 		} catch (err) {
 			logger.error('Failed to start room subscriptions:', err);
 			toast.error('Failed to connect to room');
@@ -604,25 +561,6 @@ class RoomStore {
 		} catch (err) {
 			logger.error('Failed to fetch room state:', err);
 			this.error.value = err instanceof Error ? err.message : 'Failed to load room';
-		}
-	}
-
-	/**
-	 * Load message history for the room
-	 */
-	private async loadMessageHistory(
-		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
-		roomId: string
-	): Promise<void> {
-		try {
-			const response = await hub.request<{ messages: NeoContextMessage[] }>(
-				'room.message.history',
-				{ roomId }
-			);
-			this.neoMessages.value = response.messages ?? [];
-		} catch (error) {
-			logger.warn('Failed to load message history:', error);
-			this.neoMessages.value = [];
 		}
 	}
 
@@ -663,25 +601,8 @@ class RoomStore {
 	}
 
 	// ========================================
-	// Neo Chat Methods
+	// Task Methods
 	// ========================================
-
-	/**
-	 * Send a message to Neo
-	 */
-	async sendNeoMessage(content: string): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) {
-			throw new Error('No room selected');
-		}
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			throw new Error('Not connected');
-		}
-
-		await hub.request('room.message.send', { roomId, content, role: 'user', sender: 'human' });
-	}
 
 	/**
 	 * Create a new task in the room
