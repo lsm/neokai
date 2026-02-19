@@ -18,26 +18,38 @@
  * - reviewing: Reviewing completed work
  * - error: Error state, needs intervention
  * - paused: Manually paused
+ *
+ * Unified Session Architecture:
+ * - Uses AgentSession.fromInit() for AI orchestration
+ * - Room sessions are persisted to sessions table with type='room'
+ * - Session ID format: room:{roomId}
+ * - Features are disabled (no rewind, worktree, coordinator, archive, sessionInfo)
  */
 
 import type { DaemonHub } from '../daemon-hub';
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub, SessionFeatures, TaskPriority, RoomProposal } from '@neokai/shared';
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { Database } from '../../storage/index';
 import { RoomAgentStateRepository } from '../../storage/repositories/room-agent-state-repository';
 import { TaskRepository } from '../../storage/repositories/task-repository';
 import { GoalRepository } from '../../storage/repositories/goal-repository';
+import { ProposalRepository } from '../../storage/repositories/proposal-repository';
 import { SessionPairManager } from './session-pair-manager';
 import { TaskManager } from './task-manager';
 import { GoalManager } from './goal-manager';
 import { RecurringJobScheduler } from './recurring-job-scheduler';
-import {
-	RoomAgentSession,
-	type RoomAgentSessionContext,
-	type RoomAgentHumanInput as SessionHumanInput,
-} from './room-agent-session';
 import { RoomAgentLifecycleManager } from './room-agent-lifecycle-manager';
 import { QARoundManager, type QARoundManagerContext } from './qa-round-manager';
+import { AgentSession, type AgentSessionInit } from '../agent/agent-session';
+import {
+	createRoomAgentMcpServer,
+	type RoomAgentToolsConfig,
+	type RoomCompleteGoalParams,
+	type RoomCreateTaskParams,
+	type RoomSpawnWorkerParams,
+	type RoomUpdateGoalProgressParams,
+	type RoomScheduleJobParams,
+} from '../agent/room-agent-tools';
 import type { PromptTemplateManager } from '../prompts/prompt-template-manager';
 import type {
 	Room,
@@ -47,10 +59,46 @@ import type {
 	RoomAgentWaitingContext,
 	NeoTask,
 	SessionPair,
+	RoomGoal,
+	McpServerConfig,
 } from '@neokai/shared';
+import { DEFAULT_ROOM_FEATURES } from '@neokai/shared';
 import { Logger } from '../logger';
 
 const log = new Logger('room-agent-service');
+
+/**
+ * Context for planning phase messages
+ */
+export interface RoomAgentPlanningContext {
+	activeGoals: RoomGoal[];
+	pendingTasks: NeoTask[];
+	inProgressTasks: NeoTask[];
+	recentEvents: Array<{ type: string; summary: string; timestamp: number }>;
+	availableCapacity: number;
+}
+
+/**
+ * Context for review phase messages
+ */
+export interface RoomAgentReviewContext {
+	task: NeoTask;
+	sessionPair?: SessionPair;
+	summary: string;
+	success: boolean;
+	error?: string;
+}
+
+/**
+ * Event message from external sources
+ */
+export interface RoomMessageEvent {
+	type: string;
+	source: string;
+	content: string;
+	metadata?: Record<string, unknown>;
+	timestamp: number;
+}
 
 /**
  * Context passed to RoomAgentService
@@ -77,34 +125,34 @@ export interface RoomAgentContext {
  * Configuration for room agent behavior
  */
 export interface RoomAgentConfig {
-	/** Maximum concurrent session pairs per room */
 	maxConcurrentPairs: number;
-	/** Interval for idle check (ms) */
 	idleCheckIntervalMs: number;
-	/** Maximum error count before pausing */
 	maxErrorCount: number;
-	/** Auto-retry on task failure */
 	autoRetryTasks: boolean;
 }
 
 const DEFAULT_CONFIG: RoomAgentConfig = {
 	maxConcurrentPairs: 3,
-	idleCheckIntervalMs: 60000, // 1 minute
+	idleCheckIntervalMs: 60000,
 	maxErrorCount: 5,
 	autoRetryTasks: true,
 };
+
+const DEFAULT_MODEL = 'claude-sonnet-4-5-20250929';
 
 /**
  * Room Agent Service
  *
  * Manages the lifecycle of a room's automation agent.
- * Integrates RoomAgentSession for AI orchestration and
- * RoomAgentLifecycleManager for state transitions.
+ * Uses AgentSession for AI orchestration with room-specific configuration.
  */
 export class RoomAgentService {
+	readonly sessionId: string;
+
 	private stateRepo: RoomAgentStateRepository;
 	private taskRepo: TaskRepository;
 	private goalRepo: GoalRepository;
+	private proposalRepo: ProposalRepository;
 	private taskManager: TaskManager;
 	private goalManager: GoalManager;
 	private state: RoomAgentState;
@@ -112,29 +160,30 @@ export class RoomAgentService {
 	private idleCheckTimer: Timer | null = null;
 	private unsubscribers: Array<() => void> = [];
 	private config: RoomAgentConfig;
+	private lifecycleState: RoomAgentLifecycleState = 'idle';
 
-	// New components for AI-driven orchestration
 	private lifecycleManager: RoomAgentLifecycleManager | null = null;
-	private agentSession: RoomAgentSession | null = null;
+	private agentSession: AgentSession | null = null;
 	private qaRoundManager: QARoundManager | null = null;
+	private roomMcpServer: ReturnType<typeof createRoomAgentMcpServer> | null = null;
 
 	constructor(
 		private ctx: RoomAgentContext,
 		config?: Partial<RoomAgentConfig>
 	) {
 		this.config = { ...DEFAULT_CONFIG, ...config };
-		// Handle both Database wrapper and raw BunDatabase
+		this.sessionId = `room:${ctx.room.id}`;
+
 		const rawDb = 'getDatabase' in ctx.db ? ctx.db.getDatabase() : ctx.db;
 		this.stateRepo = new RoomAgentStateRepository(rawDb);
 		this.taskRepo = new TaskRepository(rawDb);
 		this.goalRepo = new GoalRepository(rawDb);
+		this.proposalRepo = new ProposalRepository(rawDb);
 		this.taskManager = new TaskManager(rawDb, ctx.room.id);
 		this.goalManager = new GoalManager(rawDb, ctx.room.id, ctx.daemonHub);
 
-		// Get or create initial state
 		this.state = this.stateRepo.getOrCreateState(ctx.room.id);
 
-		// Initialize Q&A round manager
 		const qaContext: QARoundManagerContext = {
 			room: ctx.room,
 			db: rawDb,
@@ -144,13 +193,9 @@ export class RoomAgentService {
 		this.qaRoundManager = new QARoundManager(qaContext);
 	}
 
-	/**
-	 * Start the room agent
-	 */
 	async start(): Promise<void> {
 		log.info(`Starting room agent for room: ${this.ctx.room.name} (${this.ctx.room.id})`);
 
-		// Initialize lifecycle manager
 		this.lifecycleManager = new RoomAgentLifecycleManager(
 			this.ctx.room.id,
 			this.ctx.db,
@@ -158,75 +203,68 @@ export class RoomAgentService {
 		);
 		this.state = this.lifecycleManager.initialize();
 
-		// Create and start the active agent session only if we have the Database wrapper
-		// (raw BunDatabase is not sufficient for RoomAgentSession)
 		const dbWrapper = 'getDatabase' in this.ctx.db ? this.ctx.db : null;
-		if (
-			dbWrapper &&
-			this.ctx.getApiKey &&
-			this.ctx.promptTemplateManager &&
-			this.ctx.recurringJobScheduler
-		) {
-			const sessionContext: RoomAgentSessionContext = {
-				room: this.ctx.room,
-				db: dbWrapper,
-				daemonHub: this.ctx.daemonHub,
-				messageHub: this.ctx.messageHub,
-				getApiKey: this.ctx.getApiKey,
-				taskManager: this.taskManager,
-				goalManager: this.goalManager,
-				sessionPairManager: this.ctx.sessionPairManager,
-				recurringJobScheduler: this.ctx.recurringJobScheduler,
-				promptTemplateManager: this.ctx.promptTemplateManager,
-				qaRoundManager: this.qaRoundManager ?? undefined,
-				model: this.ctx.model,
-				maxConcurrentWorkers: this.ctx.maxConcurrentWorkers ?? this.config.maxConcurrentPairs,
+		if (dbWrapper && this.ctx.getApiKey && this.ctx.promptTemplateManager) {
+			// Create the MCP server for room agent tools
+			this.roomMcpServer = this.createRoomAgentMcp();
+
+			// Get the system prompt
+			const systemPrompt = await this.getSystemPrompt();
+
+			// Build the AgentSessionInit
+			const init: AgentSessionInit = {
+				sessionId: this.sessionId,
+				workspacePath: this.ctx.room.defaultPath ?? this.ctx.room.allowedPaths[0] ?? process.cwd(),
+				systemPrompt,
+				mcpServers: {
+					'room-agent-tools': this.roomMcpServer as unknown as McpServerConfig,
+				},
+				features: DEFAULT_ROOM_FEATURES,
+				context: { roomId: this.ctx.room.id },
+				type: 'room',
+				model: this.ctx.model ?? DEFAULT_MODEL,
 			};
 
-			this.agentSession = new RoomAgentSession(sessionContext);
-			await this.agentSession.start();
-			log.info('Room agent session started with AI orchestration');
+			// Create AgentSession using the factory method
+			this.agentSession = AgentSession.fromInit(
+				init,
+				dbWrapper,
+				this.ctx.messageHub,
+				this.ctx.daemonHub,
+				this.ctx.getApiKey,
+				DEFAULT_MODEL
+			);
+
+			log.info('Room agent session started with AgentSession');
 		} else {
-			log.info('Room agent running in legacy mode (no AI session)');
+			log.info('Room agent running in legacy mode (no AgentSession)');
 		}
 
-		// Subscribe to events (keep existing subscriptions for backward compatibility)
 		this.subscribeToEvents();
-
-		// Start idle check timer
 		this.startIdleCheck();
 
-		// Transition to appropriate state
 		if (this.state.lifecycleState === 'error') {
-			// Clear error state on restart
 			await this.transitionTo('idle', 'Agent restarted');
 		}
 
 		log.info(`Room agent started in state: ${this.state.lifecycleState}`);
 	}
 
-	/**
-	 * Stop the room agent
-	 */
 	async stop(): Promise<void> {
 		log.info(`Stopping room agent for room: ${this.ctx.room.id}`);
 
-		// Stop the agent session first
 		if (this.agentSession) {
-			await this.agentSession.stop();
+			// AgentSession doesn't have a stop method, but we can clean up
 			this.agentSession = null;
 		}
 
-		// Stop idle check
 		this.stopIdleCheck();
 
-		// Unsubscribe from events
 		for (const unsubscribe of this.unsubscribers) {
 			unsubscribe();
 		}
 		this.unsubscribers = [];
 
-		// Transition to paused via lifecycle manager
 		if (this.lifecycleManager) {
 			await this.lifecycleManager.pause();
 			this.state = this.lifecycleManager.getState();
@@ -234,70 +272,85 @@ export class RoomAgentService {
 			await this.transitionTo('paused', 'Agent stopped');
 		}
 
-		log.info(`Room agent stopped`);
+		log.info('Room agent stopped');
+	}
+
+	getFeatures(): SessionFeatures {
+		return DEFAULT_ROOM_FEATURES;
 	}
 
 	/**
-	 * Subscribe to events (backward compatible with existing subscriptions)
+	 * Inject a planning message to trigger agent reasoning
 	 */
+	async injectPlanningMessage(context: RoomAgentPlanningContext): Promise<void> {
+		if (!this.agentSession) {
+			log.warn('No agent session available for planning message');
+			return;
+		}
+
+		log.debug('Injecting planning message');
+		const prompt = this.buildPlanningPrompt(context);
+
+		await this.setLifecycleState('planning');
+		await this.agentSession.messageQueue.enqueue(prompt, true);
+	}
+
+	/**
+	 * Inject a review message for completed work
+	 */
+	async injectReviewMessage(context: RoomAgentReviewContext): Promise<void> {
+		if (!this.agentSession) {
+			log.warn('No agent session available for review message');
+			return;
+		}
+
+		log.debug(`Injecting review message for task ${context.task.id}`);
+		const prompt = this.buildReviewPrompt(context);
+
+		await this.setLifecycleState('reviewing');
+		await this.agentSession.messageQueue.enqueue(prompt, true);
+	}
+
+	/**
+	 * Inject an external event message
+	 */
+	async injectEventMessage(event: RoomMessageEvent): Promise<void> {
+		if (!this.agentSession) {
+			log.warn('No agent session available for event message');
+			return;
+		}
+
+		log.debug(`Injecting event message: ${event.type}`);
+		const prompt = this.buildEventPrompt(event);
+
+		if (this.lifecycleState === 'idle') {
+			await this.setLifecycleState('planning');
+		}
+
+		await this.agentSession.messageQueue.enqueue(prompt, true);
+	}
+
 	private subscribeToEvents(): void {
-		// Subscribe to room.message events
 		const unsubRoomMessage = this.ctx.daemonHub.on(
 			'room.message',
 			async (event) => {
 				if (event.roomId === this.ctx.room.id) {
-					// Inject into agent session if available
 					if (this.agentSession && this.lifecycleManager?.canProcessEvent()) {
-						await this.agentSession.injectEventMessage({
+						await this.injectEventMessage({
 							type: event.message.role,
 							source: event.sender ?? 'unknown',
 							content: event.message.content,
 							timestamp: event.message.timestamp,
 						});
 					} else {
-						// Fall back to legacy handler
 						await this.handleRoomMessage(event);
 					}
 				}
 			},
-			{ sessionId: `room:${this.ctx.room.id}` }
+			{ sessionId: this.sessionId }
 		);
 		this.unsubscribers.push(unsubRoomMessage);
 
-		// Subscribe to task completion events
-		const unsubTaskComplete = this.ctx.daemonHub.on(
-			'pair.task_completed',
-			async (event) => {
-				const pair = this.ctx.sessionPairManager.getPair(event.pairId);
-				if (pair && pair.roomId === this.ctx.room.id) {
-					// The agent session handles task completion via its own subscription
-					// This is a fallback for legacy handling
-					if (!this.agentSession) {
-						await this.handleTaskCompleted(event.taskId, event.summary);
-					}
-				}
-			},
-			{ sessionId: `room:${this.ctx.room.id}` }
-		);
-		this.unsubscribers.push(unsubTaskComplete);
-
-		// Subscribe to recurring job triggers (legacy handling when no agent session)
-		const unsubRecurringJob = this.ctx.daemonHub.on(
-			'recurringJob.triggered',
-			async (event: { roomId: string; jobId: string; taskId: string; timestamp: number }) => {
-				if (event.roomId !== this.ctx.room.id) return;
-
-				// Agent session handles this via its own subscription
-				if (this.agentSession) return;
-
-				// Legacy: spawn worker for the triggered task
-				await this.handleRecurringJobTriggered(event.taskId, event.jobId);
-			},
-			{ sessionId: `room:${this.ctx.room.id}` }
-		);
-		this.unsubscribers.push(unsubRecurringJob);
-
-		// Subscribe to room context updated events to trigger Q&A rounds
 		const unsubContextUpdated = this.ctx.daemonHub.on(
 			'room.contextUpdated',
 			async (event: {
@@ -306,39 +359,128 @@ export class RoomAgentService {
 			}) => {
 				if (event.roomId !== this.ctx.room.id) return;
 
-				// Trigger Q&A round on context update if configured
+				if (this.agentSession) {
+					await this.injectEventMessage({
+						type: 'context_update',
+						source: 'system',
+						content: this.buildContextUpdateMessage(event.changes),
+						metadata: event.changes,
+						timestamp: Date.now(),
+					});
+				}
+
 				if (this.qaRoundManager?.shouldAutoTriggerOnContextUpdate()) {
 					await this.triggerQARound('context_updated');
 				}
 			},
-			{ sessionId: `room:${this.ctx.room.id}` }
+			{ sessionId: this.sessionId }
 		);
 		this.unsubscribers.push(unsubContextUpdated);
 
-		// Subscribe to Q&A round question answered events
+		const unsubTaskComplete = this.ctx.daemonHub.on(
+			'pair.task_completed',
+			async (event: { pairId: string; taskId: string; summary: string; error?: string }) => {
+				const pair = this.ctx.sessionPairManager.getPair(event.pairId);
+				if (pair && pair.roomId === this.ctx.room.id) {
+					const task = await this.taskManager.getTask(event.taskId);
+					if (task && this.agentSession) {
+						await this.injectReviewMessage({
+							task,
+							sessionPair: pair,
+							summary: event.summary,
+							success: !event.error,
+							error: event.error,
+						});
+					} else if (!this.agentSession) {
+						await this.handleTaskCompleted(event.taskId, event.summary);
+					}
+				}
+			},
+			{ sessionId: this.sessionId }
+		);
+		this.unsubscribers.push(unsubTaskComplete);
+
+		const unsubRecurringJob = this.ctx.daemonHub.on(
+			'recurringJob.triggered',
+			async (event: { roomId: string; jobId: string; taskId: string; timestamp: number }) => {
+				if (event.roomId !== this.ctx.room.id) return;
+
+				const task = await this.taskManager.getTask(event.taskId);
+				if (!task) return;
+
+				if (this.agentSession) {
+					await this.injectPlanningMessage({
+						activeGoals: [],
+						pendingTasks: [task],
+						inProgressTasks: [],
+						recentEvents: [
+							{
+								type: 'job_triggered',
+								summary: `Recurring job ${event.jobId} triggered, created task: ${task.title}`,
+								timestamp: event.timestamp,
+							},
+						],
+						availableCapacity: this.config.maxConcurrentPairs,
+					});
+				} else {
+					await this.handleRecurringJobTriggered(event.taskId, event.jobId);
+				}
+			},
+			{ sessionId: this.sessionId }
+		);
+		this.unsubscribers.push(unsubRecurringJob);
+
+		const unsubProposalApproved = this.ctx.daemonHub.on(
+			'proposal.approved',
+			async (event: { roomId: string; proposalId: string; proposal: RoomProposal }) => {
+				if (event.roomId !== this.ctx.room.id || !this.agentSession) return;
+
+				await this.injectEventMessage({
+					type: 'proposal_approved',
+					source: 'human',
+					content: this.buildProposalApprovedMessage(event.proposal),
+					metadata: { proposalId: event.proposalId },
+					timestamp: Date.now(),
+				});
+			},
+			{ sessionId: this.sessionId }
+		);
+		this.unsubscribers.push(unsubProposalApproved);
+
+		const unsubProposalRejected = this.ctx.daemonHub.on(
+			'proposal.rejected',
+			async (event: { roomId: string; proposalId: string; proposal: RoomProposal }) => {
+				if (event.roomId !== this.ctx.room.id || !this.agentSession) return;
+
+				await this.injectEventMessage({
+					type: 'proposal_rejected',
+					source: 'human',
+					content: this.buildProposalRejectedMessage(event.proposal),
+					metadata: { proposalId: event.proposalId },
+					timestamp: Date.now(),
+				});
+			},
+			{ sessionId: this.sessionId }
+		);
+		this.unsubscribers.push(unsubProposalRejected);
+
 		const unsubQuestionAnswered = this.ctx.daemonHub.on(
 			'qa.questionAnswered',
 			async (event) => {
-				if (event.roomId !== this.ctx.room.id) return;
+				if (event.roomId !== this.ctx.room.id || !this.agentSession) return;
 
-				// Inject the answer into agent session for processing
-				if (this.agentSession) {
-					await this.agentSession.injectEventMessage({
-						type: 'qa_answer',
-						source: 'human',
-						content: `Q&A Answer: ${event.answer}`,
-						timestamp: Date.now(),
-					});
-				}
+				await this.injectEventMessage({
+					type: 'qa_answer',
+					source: 'human',
+					content: `Q&A Answer: ${event.answer}`,
+					timestamp: Date.now(),
+				});
 			},
-			{ sessionId: `room:${this.ctx.room.id}` }
+			{ sessionId: this.sessionId }
 		);
 		this.unsubscribers.push(unsubQuestionAnswered);
 	}
 
-	/**
-	 * Get current agent state
-	 */
 	getState(): RoomAgentState {
 		if (this.lifecycleManager) {
 			return this.lifecycleManager.getState();
@@ -346,9 +488,6 @@ export class RoomAgentService {
 		return this.state;
 	}
 
-	/**
-	 * Pause the agent
-	 */
 	async pause(): Promise<void> {
 		if (this.lifecycleManager) {
 			await this.lifecycleManager.pause();
@@ -359,9 +498,6 @@ export class RoomAgentService {
 		this.stopIdleCheck();
 	}
 
-	/**
-	 * Resume the agent
-	 */
 	async resume(): Promise<void> {
 		if (this.lifecycleManager) {
 			await this.lifecycleManager.resume();
@@ -372,19 +508,12 @@ export class RoomAgentService {
 		this.startIdleCheck();
 	}
 
-	/**
-	 * Transition to a new lifecycle state (legacy method)
-	 */
 	private async transitionTo(newState: RoomAgentLifecycleState, reason?: string): Promise<void> {
 		const previousState = this.state.lifecycleState;
-
-		if (previousState === newState) {
-			return;
-		}
+		if (previousState === newState) return;
 
 		log.info(`Room agent transitioning: ${previousState} -> ${newState}`, { reason });
 
-		// Update state in database and sync with lifecycle manager
 		if (this.lifecycleManager) {
 			const result = await this.lifecycleManager.transitionTo(newState, reason);
 			if (result) {
@@ -394,9 +523,10 @@ export class RoomAgentService {
 			this.state = this.stateRepo.transitionTo(this.ctx.room.id, newState) ?? this.state;
 		}
 
-		// Emit state change event
+		this.lifecycleState = newState;
+
 		await this.ctx.daemonHub.emit('roomAgent.stateChanged', {
-			sessionId: `room:${this.ctx.room.id}`,
+			sessionId: this.sessionId,
 			roomId: this.ctx.room.id,
 			previousState,
 			newState,
@@ -404,9 +534,21 @@ export class RoomAgentService {
 		});
 	}
 
-	/**
-	 * Handle incoming room message (from GitHub, user, etc.) - Legacy handler
-	 */
+	private async setLifecycleState(state: RoomAgentLifecycleState): Promise<void> {
+		const previousState = this.lifecycleState;
+		if (previousState === state) return;
+
+		this.lifecycleState = state;
+		log.debug(`Lifecycle state: ${previousState} -> ${state}`);
+
+		await this.ctx.daemonHub.emit('roomAgent.stateChanged', {
+			sessionId: this.sessionId,
+			roomId: this.ctx.room.id,
+			previousState,
+			newState: state,
+		});
+	}
+
 	private async handleRoomMessage(event: {
 		roomId: string;
 		message: { id: string; role: string; content: string; timestamp: number };
@@ -414,24 +556,20 @@ export class RoomAgentService {
 	}): Promise<void> {
 		log.debug(`Room message received:`, event.message.role);
 
-		// Don't process if paused
 		if (this.state.lifecycleState === 'paused') {
-			log.debug(`Ignoring message - agent is paused`);
+			log.debug('Ignoring message - agent is paused');
 			return;
 		}
 
-		// Transition to planning
 		await this.transitionTo('planning', `Processing ${event.message.role} message`);
 
 		try {
-			// Parse message based on role
 			if (event.message.role === 'github_event') {
 				await this.handleGitHubEvent(event.message.content);
 			} else if (event.message.role === 'user') {
 				await this.handleUserMessage(event.message.content, event.sender);
 			}
 
-			// Transition to executing or idle based on whether we spawned work
 			const activePairs = this.state.activeSessionPairIds.length;
 			if (activePairs > 0) {
 				await this.transitionTo('executing', `Working on ${activePairs} tasks`);
@@ -444,14 +582,9 @@ export class RoomAgentService {
 		}
 	}
 
-	/**
-	 * Handle GitHub event (issue, PR, comment, etc.) - Legacy handler
-	 */
 	private async handleGitHubEvent(content: string): Promise<void> {
-		log.info(`Processing GitHub event`);
+		log.info('Processing GitHub event');
 
-		// Parse GitHub event content
-		// Format: "**{event_type} {action}**\nRepository: {repo}\nIssue #{number}: {title}\n..."
 		const lines = content.split('\n');
 		let eventType = '';
 		let issueNumber = '';
@@ -472,7 +605,6 @@ export class RoomAgentService {
 			}
 		}
 
-		// Create task from GitHub event
 		const task = await this.taskManager.createTask({
 			title: issueTitle || `GitHub ${eventType}`,
 			description: `GitHub Event: ${eventType}\n\nIssue #${issueNumber}\n\n${body}`,
@@ -480,24 +612,17 @@ export class RoomAgentService {
 		});
 
 		log.info(`Created task ${task.id} from GitHub event`);
-
-		// Spawn worker if capacity available
 		await this.maybeSpawnWorker(task);
 	}
 
-	/**
-	 * Handle user message (from room chat) - Legacy handler
-	 */
 	private async handleUserMessage(content: string, sender?: string): Promise<void> {
 		log.info(`Processing user message from ${sender ?? 'unknown'}`);
 
-		// Check if this is a command
 		if (content.startsWith('/')) {
 			await this.handleCommand(content);
 			return;
 		}
 
-		// Create task from user message
 		const task = await this.taskManager.createTask({
 			title: content.slice(0, 100),
 			description: `User request from ${sender ?? 'unknown'}:\n\n${content}`,
@@ -505,22 +630,16 @@ export class RoomAgentService {
 		});
 
 		log.info(`Created task ${task.id} from user message`);
-
-		// Spawn worker if capacity available
 		await this.maybeSpawnWorker(task);
 	}
 
-	/**
-	 * Handle slash commands
-	 */
 	private async handleCommand(content: string): Promise<void> {
 		const command = content.split(' ')[0].toLowerCase();
 
 		switch (command) {
 			case '/status':
-				// Report current status (emit as room message)
 				await this.ctx.daemonHub.emit('room.message', {
-					sessionId: `room:${this.ctx.room.id}`,
+					sessionId: this.sessionId,
 					roomId: this.ctx.room.id,
 					message: {
 						id: `status-${Date.now()}`,
@@ -546,7 +665,7 @@ export class RoomAgentService {
 					.map((g) => `- ${g.title} (${g.status}, ${g.progress}%)`)
 					.join('\n');
 				await this.ctx.daemonHub.emit('room.message', {
-					sessionId: `room:${this.ctx.room.id}`,
+					sessionId: this.sessionId,
 					roomId: this.ctx.room.id,
 					message: {
 						id: `goals-${Date.now()}`,
@@ -563,19 +682,12 @@ export class RoomAgentService {
 		}
 	}
 
-	/**
-	 * Maybe spawn a worker for a task
-	 */
 	private async maybeSpawnWorker(task: NeoTask): Promise<SessionPair | null> {
-		// Check capacity
 		if (this.state.activeSessionPairIds.length >= this.config.maxConcurrentPairs) {
-			log.info(
-				`At capacity (${this.state.activeSessionPairIds.length}/${this.config.maxConcurrentPairs}), queuing task ${task.id}`
-			);
+			log.info(`At capacity, queuing task ${task.id}`);
 			return null;
 		}
 
-		// Check if lifecycle manager allows spawning
 		if (this.lifecycleManager && !this.lifecycleManager.canSpawnWorker()) {
 			log.info(
 				`Cannot spawn worker in current state: ${this.lifecycleManager.getLifecycleState()}`
@@ -583,22 +695,17 @@ export class RoomAgentService {
 			return null;
 		}
 
-		// Check if we have a room session to create pairs from
-		// For now, we need to create a room session first
-		// This will be enhanced when we have the Neo room session
 		log.info(`Spawning worker for task ${task.id}`);
 
 		try {
-			// Create session pair with task
 			const result = await this.ctx.sessionPairManager.createPair({
 				roomId: this.ctx.room.id,
-				roomSessionId: `room:${this.ctx.room.id}`, // Placeholder
+				roomSessionId: this.sessionId,
 				taskTitle: task.title,
 				taskDescription: task.description,
 				workspacePath: this.ctx.room.defaultPath ?? this.ctx.room.allowedPaths[0],
 			});
 
-			// Update agent state with active pair
 			if (this.lifecycleManager) {
 				this.lifecycleManager.addActiveSessionPair(result.pair.id);
 				this.state = this.lifecycleManager.getState();
@@ -607,12 +714,7 @@ export class RoomAgentService {
 					this.stateRepo.addActiveSessionPair(this.ctx.room.id, result.pair.id) ?? this.state;
 			}
 
-			// Start the task
 			await this.taskManager.startTask(task.id, result.pair.workerSessionId);
-
-			// Update pair with task ID
-			// Note: SessionPairManager.createPair already creates a task
-			// We should link our task to the pair instead
 
 			log.info(`Spawned session pair ${result.pair.id} for task ${task.id}`);
 			return result.pair;
@@ -622,20 +724,12 @@ export class RoomAgentService {
 		}
 	}
 
-	/**
-	 * Handle task completion - Legacy handler
-	 */
 	private async handleTaskCompleted(taskId: string, summary: string): Promise<void> {
-		log.info(`Task ${taskId} completed: ${summary.slice(0, 100)}...`);
+		log.info(`Task ${taskId} completed`);
 
-		// Complete the task
 		await this.taskManager.completeTask(taskId, summary);
-
-		// Update goals linked to this task
 		await this.goalManager.updateGoalsForTask(taskId);
 
-		// Remove from active pairs
-		// Note: We need to find which pair was working on this task
 		const pairs = this.ctx.sessionPairManager.getPairsByRoom(this.ctx.room.id);
 		const completedPair = pairs.find((p) => p.currentTaskId === taskId);
 		if (completedPair) {
@@ -648,7 +742,6 @@ export class RoomAgentService {
 			}
 		}
 
-		// Check if we should transition to idle
 		if (this.state.activeSessionPairIds.length === 0) {
 			if (this.lifecycleManager) {
 				await this.lifecycleManager.finishExecution();
@@ -659,38 +752,28 @@ export class RoomAgentService {
 		}
 	}
 
-	/**
-	 * Handle recurring job triggered - Legacy handler
-	 */
 	private async handleRecurringJobTriggered(taskId: string, jobId: string): Promise<void> {
 		log.info(`Recurring job ${jobId} triggered, created task ${taskId}`);
 
-		// Don't process if paused
 		if (this.state.lifecycleState === 'paused') {
-			log.debug(`Ignoring job trigger - agent is paused`);
+			log.debug('Ignoring job trigger - agent is paused');
 			return;
 		}
 
-		// Get the task
 		const task = await this.taskManager.getTask(taskId);
 		if (!task) {
 			log.warn(`Task ${taskId} not found for triggered job ${jobId}`);
 			return;
 		}
 
-		// Spawn worker if capacity available
 		await this.maybeSpawnWorker(task);
 	}
 
-	/**
-	 * Record an error
-	 */
 	private async recordError(error: string): Promise<void> {
 		if (this.lifecycleManager) {
 			await this.lifecycleManager.recordError(new Error(error), false);
 			this.state = this.lifecycleManager.getState();
 
-			// Transition to error if too many errors
 			if (this.state.errorCount >= this.config.maxErrorCount) {
 				await this.lifecycleManager.recordError(
 					new Error(`Max errors reached (${this.state.errorCount})`),
@@ -702,15 +785,13 @@ export class RoomAgentService {
 		} else {
 			this.state = this.stateRepo.recordError(this.ctx.room.id, error) ?? this.state;
 
-			// Emit error event
 			await this.ctx.daemonHub.emit('roomAgent.error', {
-				sessionId: `room:${this.ctx.room.id}`,
+				sessionId: this.sessionId,
 				roomId: this.ctx.room.id,
 				error,
 				errorCount: this.state.errorCount,
 			});
 
-			// Transition to error if too many errors
 			if (this.state.errorCount >= this.config.maxErrorCount) {
 				await this.transitionTo('error', `Max errors reached (${this.state.errorCount})`);
 				this.stopIdleCheck();
@@ -718,9 +799,6 @@ export class RoomAgentService {
 		}
 	}
 
-	/**
-	 * Start idle check timer
-	 */
 	private startIdleCheck(): void {
 		if (this.idleCheckTimer) {
 			clearInterval(this.idleCheckTimer);
@@ -733,9 +811,6 @@ export class RoomAgentService {
 		}, this.config.idleCheckIntervalMs);
 	}
 
-	/**
-	 * Stop idle check timer
-	 */
 	private stopIdleCheck(): void {
 		if (this.idleCheckTimer) {
 			clearInterval(this.idleCheckTimer);
@@ -743,40 +818,27 @@ export class RoomAgentService {
 		}
 	}
 
-	/**
-	 * Check idle state and take action if needed
-	 */
 	private async checkIdleState(): Promise<void> {
-		// Only check if idle and not paused
-		if (this.state.lifecycleState !== 'idle') {
-			return;
-		}
+		if (this.state.lifecycleState !== 'idle') return;
 
 		log.debug('Checking idle state...');
 
-		// Check for pending tasks
 		const pendingTasks = await this.taskManager.listTasks({ status: 'pending' });
 		const inProgressTasks = await this.taskManager.listTasks({ status: 'in_progress' });
-
-		// Check for incomplete goals
 		const activeGoals = await this.goalManager.getActiveGoals();
 
-		// Emit idle event with status
 		await this.ctx.daemonHub.emit('roomAgent.idle', {
-			sessionId: `room:${this.ctx.room.id}`,
+			sessionId: this.sessionId,
 			roomId: this.ctx.room.id,
 			hasPendingTasks: pendingTasks.length > 0,
 			hasIncompleteGoals: activeGoals.length > 0,
 		});
 
-		// If agent session is available, inject planning message
 		if (this.agentSession && this.lifecycleManager?.canStartPlanning()) {
 			if (activeGoals.length > 0 || pendingTasks.length > 0) {
-				const availableCapacity =
-					(this.ctx.maxConcurrentWorkers ?? this.config.maxConcurrentPairs) -
-					inProgressTasks.length;
+				const availableCapacity = this.config.maxConcurrentPairs - inProgressTasks.length;
 
-				await this.agentSession.injectPlanningMessage({
+				await this.injectPlanningMessage({
 					activeGoals,
 					pendingTasks,
 					inProgressTasks,
@@ -787,7 +849,6 @@ export class RoomAgentService {
 			}
 		}
 
-		// Legacy: If there are pending tasks, try to spawn workers
 		if (pendingTasks.length > 0 && inProgressTasks.length < this.config.maxConcurrentPairs) {
 			log.info(`Found ${pendingTasks.length} pending tasks, attempting to spawn workers`);
 			const nextTask = await this.taskManager.getNextPendingTask();
@@ -797,19 +858,10 @@ export class RoomAgentService {
 		}
 	}
 
-	/**
-	 * Force a specific state (for debugging/testing)
-	 * Bypasses lifecycle manager validation
-	 */
 	async forceState(newState: RoomAgentLifecycleState): Promise<void> {
 		const previousState = this.state.lifecycleState;
+		if (previousState === newState) return;
 
-		// Skip if already in the target state
-		if (previousState === newState) {
-			return;
-		}
-
-		// Use lifecycle manager's forceState if available, otherwise direct update
 		if (this.lifecycleManager) {
 			this.state = this.lifecycleManager.forceState(newState);
 		} else {
@@ -818,9 +870,8 @@ export class RoomAgentService {
 				this.stateRepo.updateState(this.ctx.room.id, { lastActivityAt: Date.now() }) ?? this.state;
 		}
 
-		// Emit state change event
 		await this.ctx.daemonHub.emit('roomAgent.stateChanged', {
-			sessionId: `room:${this.ctx.room.id}`,
+			sessionId: this.sessionId,
 			roomId: this.ctx.room.id,
 			previousState,
 			newState,
@@ -828,46 +879,32 @@ export class RoomAgentService {
 		});
 	}
 
-	/**
-	 * Get the current waiting context (what the agent is waiting for)
-	 */
 	getWaitingContext(): RoomAgentWaitingContext | null {
-		if (this.state.lifecycleState !== 'waiting') {
-			return null;
-		}
+		if (this.state.lifecycleState !== 'waiting') return null;
 		return this.waitingContext;
 	}
 
-	/**
-	 * Handle human input (review response, escalation, or message)
-	 * Routes to the agent session if available, otherwise falls back to legacy handlers.
-	 */
 	async handleHumanInput(input: RoomAgentHumanInput): Promise<void> {
 		log.info(`Handling human input: ${input.type}`);
 
-		// If agent session is available, delegate to it
 		if (this.agentSession) {
-			// Convert shared type to session type
-			const sessionInput: SessionHumanInput = {
-				type:
-					input.type === 'escalation_response'
-						? 'review_response'
-						: input.type === 'question_response'
-							? 'review_response'
-							: input.type,
-				content:
-					'response' in input
-						? String((input as { response: unknown }).response)
-						: input.type === 'message'
-							? (input as { content: string }).content
-							: '',
-				taskId: 'taskId' in input ? (input as { taskId?: string }).taskId : undefined,
-			};
-			await this.agentSession.handleHumanInput(sessionInput);
+			if (input.type === 'message') {
+				await this.injectEventMessage({
+					type: 'user_message',
+					source: 'human',
+					content: (input as { content: string }).content,
+					timestamp: Date.now(),
+				});
+			} else if (input.type === 'review_response' && this.lifecycleState === 'waiting') {
+				await this.setLifecycleState('reviewing');
+				await this.agentSession.messageQueue.enqueue(
+					`Review response received: ${(input as { response?: string }).response ?? 'approved'}`,
+					true
+				);
+			}
 			return;
 		}
 
-		// Legacy handling
 		switch (input.type) {
 			case 'review_response':
 				await this.handleReviewResponse(input);
@@ -886,9 +923,6 @@ export class RoomAgentService {
 		}
 	}
 
-	/**
-	 * Handle review response (approve/reject) - Legacy handler
-	 */
 	private async handleReviewResponse(
 		input: Extract<RoomAgentHumanInput, { type: 'review_response' }>
 	): Promise<void> {
@@ -896,12 +930,10 @@ export class RoomAgentService {
 			`Review response for task ${input.taskId}: ${input.approved ? 'approved' : 'rejected'}`
 		);
 
-		// Clear waiting context
 		this.waitingContext = null;
 
-		// Emit review received event
 		await this.ctx.daemonHub.emit('roomAgent.reviewReceived', {
-			sessionId: `room:${this.ctx.room.id}`,
+			sessionId: this.sessionId,
 			roomId: this.ctx.room.id,
 			taskId: input.taskId,
 			approved: input.approved,
@@ -909,65 +941,48 @@ export class RoomAgentService {
 		});
 
 		if (input.approved) {
-			// Mark task as approved - complete it
 			await this.taskManager.completeTask(input.taskId, `Approved: ${input.response}`);
 			await this.transitionTo('idle', 'Review approved');
 		} else {
-			// Task rejected - mark as blocked or create follow-up
 			await this.taskManager.blockTask(input.taskId, `Rejected: ${input.response}`);
 			await this.transitionTo('idle', 'Review rejected');
 		}
 	}
 
-	/**
-	 * Handle escalation response - Legacy handler
-	 */
 	private async handleEscalationResponse(
 		input: Extract<RoomAgentHumanInput, { type: 'escalation_response' }>
 	): Promise<void> {
 		log.info(`Escalation response for ${input.escalationId}: ${input.response}`);
 
-		// Clear waiting context
 		this.waitingContext = null;
 
-		// Emit escalation resolved event
 		await this.ctx.daemonHub.emit('roomAgent.escalationResolved', {
-			sessionId: `room:${this.ctx.room.id}`,
+			sessionId: this.sessionId,
 			roomId: this.ctx.room.id,
 			escalationId: input.escalationId,
 			response: input.response,
 		});
 
-		// Transition back to idle to continue
 		await this.transitionTo('idle', 'Escalation resolved');
 	}
 
-	/**
-	 * Handle question response - Legacy handler
-	 */
 	private async handleQuestionResponse(
 		input: Extract<RoomAgentHumanInput, { type: 'question_response' }>
 	): Promise<void> {
 		log.info(`Question response for ${input.questionId}`);
 
-		// Clear waiting context
 		this.waitingContext = null;
 
-		// Emit question answered event
 		await this.ctx.daemonHub.emit('roomAgent.questionAnswered', {
-			sessionId: `room:${this.ctx.room.id}`,
+			sessionId: this.sessionId,
 			roomId: this.ctx.room.id,
 			questionId: input.questionId,
 			responses: input.responses,
 		});
 
-		// Continue with the answer
 		await this.transitionTo('planning', 'Processing question response');
 	}
 
-	/**
-	 * Set waiting context and transition to waiting state
-	 */
 	async setWaiting(context: RoomAgentWaitingContext): Promise<void> {
 		this.waitingContext = context;
 		if (this.lifecycleManager) {
@@ -978,30 +993,18 @@ export class RoomAgentService {
 		}
 	}
 
-	/**
-	 * Get the underlying agent session (for testing/debugging)
-	 */
-	getAgentSession(): RoomAgentSession | null {
+	getAgentSession(): AgentSession | null {
 		return this.agentSession;
 	}
 
-	/**
-	 * Get the lifecycle manager (for testing/debugging)
-	 */
 	getLifecycleManager(): RoomAgentLifecycleManager | null {
 		return this.lifecycleManager;
 	}
 
-	/**
-	 * Get the Q&A round manager
-	 */
 	getQARoundManager(): QARoundManager | null {
 		return this.qaRoundManager;
 	}
 
-	/**
-	 * Trigger a Q&A round for context refinement
-	 */
 	async triggerQARound(
 		trigger: 'room_created' | 'context_updated' | 'goal_created'
 	): Promise<void> {
@@ -1010,7 +1013,6 @@ export class RoomAgentService {
 			return;
 		}
 
-		// Don't start a new round if one is already active
 		if (this.qaRoundManager.hasActiveRound()) {
 			log.info(`Q&A round already active, skipping trigger: ${trigger}`);
 			return;
@@ -1021,9 +1023,8 @@ export class RoomAgentService {
 		try {
 			const round = await this.qaRoundManager.startRound(trigger);
 
-			// Inject a message into the agent session to ask clarifying questions
 			if (this.agentSession) {
-				await this.agentSession.injectEventMessage({
+				await this.injectEventMessage({
 					type: 'qa_round_started',
 					source: 'system',
 					content: this.buildQARoundPrompt(round, trigger),
@@ -1035,9 +1036,166 @@ export class RoomAgentService {
 		}
 	}
 
-	/**
-	 * Build the prompt for a Q&A round
-	 */
+	// ========================
+	// Prompt Building Methods
+	// ========================
+
+	private buildPlanningPrompt(context: RoomAgentPlanningContext): string {
+		const parts: string[] = [];
+
+		parts.push('# Room Agent Planning Phase\n');
+		parts.push(`Room: ${this.ctx.room.name}`);
+		parts.push(`Current Lifecycle State: ${this.lifecycleState}\n`);
+
+		if (context.activeGoals.length > 0) {
+			parts.push('## Active Goals');
+			for (const goal of context.activeGoals) {
+				parts.push(`- ${goal.title} (${goal.status}, ${goal.progress}%)`);
+			}
+			parts.push('');
+		}
+
+		if (context.pendingTasks.length > 0) {
+			parts.push('## Pending Tasks');
+			for (const task of context.pendingTasks) {
+				parts.push(`- [${task.priority}] ${task.title}`);
+			}
+			parts.push('');
+		}
+
+		if (context.inProgressTasks.length > 0) {
+			parts.push('## In-Progress Tasks');
+			for (const task of context.inProgressTasks) {
+				parts.push(`- ${task.title} (${task.progress ?? 0}%)`);
+			}
+			parts.push('');
+		}
+
+		if (context.recentEvents.length > 0) {
+			parts.push('## Recent Events');
+			for (const event of context.recentEvents) {
+				parts.push(`- [${event.type}] ${event.summary}`);
+			}
+			parts.push('');
+		}
+
+		parts.push(`## Available Capacity: ${context.availableCapacity} workers`);
+
+		parts.push('\n## Instructions');
+		parts.push('Analyze the current state and decide:');
+		parts.push('1. Should any goals be updated or completed?');
+		parts.push('2. Should new tasks be created from pending work?');
+		parts.push('3. Should workers be spawned for pending tasks?');
+		parts.push('4. Are there any blockers or issues to address?');
+
+		return parts.join('\n');
+	}
+
+	private buildReviewPrompt(context: RoomAgentReviewContext): string {
+		const parts: string[] = [];
+
+		parts.push('# Task Review\n');
+		parts.push(`Task: ${context.task.title}`);
+		parts.push(`Status: ${context.success ? 'Completed' : 'Failed'}`);
+		parts.push(`\nSummary: ${context.summary}`);
+
+		if (context.error) {
+			parts.push(`\nError: ${context.error}`);
+		}
+
+		parts.push('\n## Instructions');
+		parts.push('Review this task completion and:');
+		parts.push('1. If successful, should any goals be updated?');
+		parts.push('2. If failed, should the task be retried or escalated?');
+		parts.push('3. Are there follow-up tasks to create?');
+
+		return parts.join('\n');
+	}
+
+	private buildEventPrompt(event: RoomMessageEvent): string {
+		const parts: string[] = [];
+
+		parts.push('# External Event\n');
+		parts.push(`Type: ${event.type}`);
+		parts.push(`Source: ${event.source}`);
+		parts.push(`Time: ${new Date(event.timestamp).toISOString()}`);
+		parts.push(`\nContent:\n${event.content}`);
+
+		parts.push('\n## Instructions');
+		parts.push('Process this event and take appropriate action:');
+
+		if (event.type === 'github_event' || event.type.startsWith('github_')) {
+			parts.push('- Create a task if this requires work');
+			parts.push('- Link the task to a goal if appropriate');
+			parts.push('- Spawn a worker if capacity is available');
+		} else if (event.type === 'user_message') {
+			parts.push('- Respond to the user if needed');
+			parts.push('- Create a task if the user is requesting work');
+		}
+
+		return parts.join('\n');
+	}
+
+	private buildContextUpdateMessage(changes: {
+		background?: string;
+		instructions?: string;
+	}): string {
+		const parts: string[] = [];
+
+		parts.push('# Room Context Updated\n');
+		parts.push(
+			'The room context has been updated. Please review and adjust your behavior accordingly.\n'
+		);
+
+		if (changes.background !== undefined) {
+			parts.push('## Background Context');
+			parts.push(changes.background || '(cleared)');
+			parts.push('');
+		}
+
+		if (changes.instructions !== undefined) {
+			parts.push('## Instructions');
+			parts.push(changes.instructions || '(cleared)');
+			parts.push('');
+		}
+
+		parts.push('## Action Required');
+		parts.push('Review the updated context and:');
+		parts.push('1. Adjust any pending plans to align with the new context');
+		parts.push('2. Update any affected goals if needed');
+		parts.push('3. Communicate any significant changes to the user if appropriate');
+
+		return parts.join('\n');
+	}
+
+	private buildProposalApprovedMessage(proposal: RoomProposal): string {
+		return `# Proposal Approved
+
+**Proposal ID:** ${proposal.id}
+**Title:** ${proposal.title}
+**Type:** ${proposal.type}
+
+Your proposal has been approved by ${proposal.actedBy ?? 'a human'}.
+
+**Response:** ${proposal.actionResponse ?? 'No additional response provided.'}
+
+You may now proceed to apply the proposed changes.`;
+	}
+
+	private buildProposalRejectedMessage(proposal: RoomProposal): string {
+		return `# Proposal Rejected
+
+**Proposal ID:** ${proposal.id}
+**Title:** ${proposal.title}
+**Type:** ${proposal.type}
+
+Your proposal has been rejected by ${proposal.actedBy ?? 'a human'}.
+
+**Reason:** ${proposal.actionResponse ?? 'No reason provided.'}
+
+Please consider alternative approaches or address the concerns raised.`;
+	}
+
 	private buildQARoundPrompt(
 		round: { id: string; trigger: string },
 		trigger: 'room_created' | 'context_updated' | 'goal_created'
@@ -1069,5 +1227,161 @@ export class RoomAgentService {
 		parts.push('The human will answer and you can then refine the room context accordingly.');
 
 		return parts.join('\n');
+	}
+
+	// ========================
+	// MCP Tools Creation
+	// ========================
+
+	private createRoomAgentMcp(): ReturnType<typeof createRoomAgentMcpServer> {
+		const config: RoomAgentToolsConfig = {
+			roomId: this.ctx.room.id,
+			sessionId: this.sessionId,
+			onCompleteGoal: async (params: RoomCompleteGoalParams) => {
+				await this.goalManager.completeGoal(params.goalId);
+				log.info(`Goal completed: ${params.goalId}`);
+			},
+			onCreateTask: async (params: RoomCreateTaskParams) => {
+				const task = await this.taskManager.createTask({
+					title: params.title,
+					description: params.description,
+					priority: params.priority as TaskPriority | undefined,
+				});
+				if (params.goalId) {
+					await this.goalManager.linkTaskToGoal(params.goalId, task.id);
+				}
+				log.info(`Task created: ${task.id}`);
+				return { taskId: task.id };
+			},
+			onSpawnWorker: async (params: RoomSpawnWorkerParams) => {
+				const task = await this.taskManager.getTask(params.taskId);
+				if (!task) {
+					throw new Error(`Task not found: ${params.taskId}`);
+				}
+
+				const result = await this.ctx.sessionPairManager.createPair({
+					roomId: this.ctx.room.id,
+					roomSessionId: this.sessionId,
+					taskTitle: task.title,
+					taskDescription: task.description,
+					workspacePath: this.ctx.room.defaultPath ?? this.ctx.room.allowedPaths[0],
+				});
+
+				await this.taskManager.startTask(params.taskId, result.pair.workerSessionId);
+
+				log.info(`Worker spawned: ${result.pair.workerSessionId} for task ${params.taskId}`);
+				return { pairId: result.pair.id, workerSessionId: result.pair.workerSessionId };
+			},
+			onRequestReview: async (taskId: string, reason: string) => {
+				await this.setLifecycleState('waiting');
+				await this.ctx.daemonHub.emit('roomAgent.reviewRequested', {
+					sessionId: this.sessionId,
+					roomId: this.ctx.room.id,
+					taskId,
+					reason,
+				} as unknown as Parameters<typeof this.ctx.daemonHub.emit>[1]);
+				log.info(`Review requested for task ${taskId}: ${reason}`);
+			},
+			onEscalate: async (taskId: string, reason: string) => {
+				await this.setLifecycleState('waiting');
+				await this.ctx.daemonHub.emit('roomAgent.escalated', {
+					sessionId: this.sessionId,
+					roomId: this.ctx.room.id,
+					taskId,
+					reason,
+				} as unknown as Parameters<typeof this.ctx.daemonHub.emit>[1]);
+				log.warn(`Task ${taskId} escalated: ${reason}`);
+			},
+			onUpdateGoalProgress: async (params: RoomUpdateGoalProgressParams) => {
+				await this.goalManager.updateGoalProgress(params.goalId, params.progress, params.metrics);
+				log.debug(`Goal progress updated: ${params.goalId} -> ${params.progress}%`);
+			},
+			onScheduleJob: async (params: RoomScheduleJobParams) => {
+				// Map RoomScheduleJobParams to CreateRecurringJobParams
+				let schedule: import('@neokai/shared').RecurringJobSchedule;
+				if (params.scheduleType === 'interval') {
+					schedule = { type: 'interval', minutes: params.intervalMinutes ?? 60 };
+				} else if (params.scheduleType === 'daily') {
+					schedule = { type: 'daily', hour: params.hour ?? 9, minute: params.minute ?? 0 };
+				} else {
+					schedule = {
+						type: 'weekly',
+						dayOfWeek: params.dayOfWeek ?? 1,
+						hour: params.hour ?? 9,
+						minute: params.minute ?? 0,
+					};
+				}
+
+				const result = await this.ctx.recurringJobScheduler.createJob({
+					roomId: this.ctx.room.id,
+					name: params.name,
+					description: params.description,
+					schedule,
+					taskTemplate: {
+						title: params.taskTemplate.title,
+						description: params.taskTemplate.description,
+						priority: (params.taskTemplate.priority as TaskPriority) ?? 'normal',
+					},
+					enabled: true,
+					maxRuns: params.maxRuns,
+				});
+				log.info(`Recurring job scheduled: ${result.id}`);
+				return { jobId: result.id };
+			},
+			onAskQuestion: this.qaRoundManager
+				? async (question: string) => {
+						const qa = await this.qaRoundManager!.askQuestion(question);
+						log.info(`Q&A question asked: ${qa.id}`);
+						return { questionId: qa.id };
+					}
+				: undefined,
+			onCompleteQARound: this.qaRoundManager
+				? async (summary?: string) => {
+						await this.qaRoundManager!.completeRound(summary);
+						log.info('Q&A round completed');
+					}
+				: undefined,
+		};
+
+		return createRoomAgentMcpServer(config);
+	}
+
+	// ========================
+	// System Prompt
+	// ========================
+
+	private async getSystemPrompt(): Promise<string> {
+		const rendered = this.ctx.promptTemplateManager.getRenderedPrompt(
+			this.ctx.room.id,
+			'room_agent_system'
+		);
+
+		if (rendered) {
+			return rendered.content;
+		}
+
+		return this.getDefaultSystemPrompt();
+	}
+
+	private getDefaultSystemPrompt(): string {
+		return `You are a Room Agent for the "${this.ctx.room.name}" room.
+
+Your responsibilities:
+1. Process incoming events and create appropriate tasks
+2. Monitor goal progress and update goals as needed
+3. Spawn worker sessions to execute tasks
+4. Review completed work and take follow-up actions
+
+You have access to room-level tools for:
+- Completing goals
+- Creating and managing tasks
+- Spawning worker sessions
+- Requesting human reviews
+- Escalating issues
+- Updating goal progress
+- Scheduling recurring jobs
+
+Always consider the room's goals and priorities when making decisions.
+Maximum concurrent workers: ${this.config.maxConcurrentPairs}`;
 	}
 }

@@ -56,9 +56,12 @@ export type {
 	UpdateRoomAgentStateParams,
 } from './repositories/room-agent-state-repository';
 
+// @public - Library export
 // Re-export repository classes for direct use
 export { GoalRepository } from './repositories/goal-repository';
+// @public - Library export
 export { RecurringJobRepository } from './repositories/recurring-job-repository';
+// @public - Library export
 export { RoomAgentStateRepository } from './repositories/room-agent-state-repository';
 
 /**

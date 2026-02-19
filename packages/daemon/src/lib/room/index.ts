@@ -10,6 +10,10 @@
  * - GoalManager for goal management with progress tracking
  * - RecurringJobScheduler for scheduled recurring jobs
  * - RoomAgentService for room agent lifecycle management
+ *
+ * Unified Session Architecture:
+ * - RoomAgentService uses AgentSession.fromInit() for AI orchestration
+ * - Session ID format: room:{roomId}
  */
 
 export { RoomManager } from './room-manager';
@@ -18,16 +22,22 @@ export { MemoryManager } from './memory-manager';
 export { TaskManager } from './task-manager';
 export { SessionPairManager } from './session-pair-manager';
 export { SessionBridge } from './session-bridge';
+// @public - Library export
 export { GoalManager } from './goal-manager';
+// @public - Library export
 export { RecurringJobScheduler } from './recurring-job-scheduler';
+// @public - Library export
 export {
 	RoomAgentService,
 	type RoomAgentContext,
 	type RoomAgentConfig,
+	type RoomAgentPlanningContext,
+	type RoomAgentReviewContext,
+	type RoomMessageEvent,
 } from './room-agent-service';
 
-// Room Agent Session and Lifecycle
-export { RoomAgentSession, type RoomAgentSessionContext } from './room-agent-session';
+// @public - Library export
+// Room Agent Lifecycle
 export { RoomAgentLifecycleManager } from './room-agent-lifecycle-manager';
 
 // Types - re-exported from @neokai/shared for convenience
@@ -73,13 +83,13 @@ export type {
 	RoomAgentState,
 	RoomAgentLifecycleState,
 	RoomAgentSessionMetadata,
-	RoomAgentPlanningContext,
-	RoomAgentReviewContext,
+	// Note: RoomAgentPlanningContext and RoomAgentReviewContext are exported from RoomAgentService
 	RoomAgentHumanInput,
 	RoomAgentWaitingContext,
 	ManagerHookEvent,
 	ManagerHookPayload,
 } from '@neokai/shared';
 
+// @public - Library export
 // Constants - re-exported from @neokai/shared
 export { DEFAULT_ROOM_AGENT_CONFIG } from '@neokai/shared';
