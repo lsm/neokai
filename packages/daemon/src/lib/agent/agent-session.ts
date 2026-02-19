@@ -67,6 +67,11 @@ import type {
 	AgentProcessingState,
 	MessageContent,
 	Session,
+	SessionType,
+	SessionContext,
+	SessionFeatures,
+	SessionConfig,
+	SessionMetadata,
 	ContextInfo,
 	QuestionDraftResponse,
 	MessageHub,
@@ -76,12 +81,47 @@ import type {
 	RewindMode,
 	SelectiveRewindPreview,
 	SelectiveRewindResult,
+	SystemPromptConfig,
+	McpServerConfig,
 } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { Database } from '../../storage/database';
 import { ErrorManager } from '../error-manager';
 import { Logger } from '../logger';
 import { SettingsManager } from '../settings-manager';
+import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@neokai/shared';
+
+/**
+ * AgentSessionInit - Configuration for creating a new AgentSession
+ *
+ * Used by RoomAgentService and LobbyAgentService to create sessions
+ * with custom system prompts, MCP servers, and feature flags.
+ */
+export interface AgentSessionInit {
+	/** Session ID (e.g., 'room:abc123', 'lobby:default', or UUID for worker) */
+	sessionId: string;
+
+	/** Workspace path for this session */
+	workspacePath: string;
+
+	/** System prompt configuration - provided by caller */
+	systemPrompt?: SystemPromptConfig;
+
+	/** MCP servers configuration - provided by caller (merged with user config) */
+	mcpServers?: Record<string, McpServerConfig>;
+
+	/** Feature flags controlling UI capabilities */
+	features?: SessionFeatures;
+
+	/** Optional context for room/lobby sessions */
+	context?: SessionContext;
+
+	/** Session type - defaults to 'worker' */
+	type?: SessionType;
+
+	/** Model ID - defaults to default model */
+	model?: string;
+}
 
 // Extracted components
 import { MessageQueue } from './message-queue';
@@ -256,6 +296,106 @@ export class AgentSession
 
 		// Setup event subscriptions (moved callbacks into EventSubscriptionSetup)
 		this.eventSubscriptionSetup.setup();
+	}
+
+	// ============================================================================
+	// Factory Method for Unified Session Architecture
+	// ============================================================================
+
+	/**
+	 * Create an AgentSession from init configuration
+	 *
+	 * This is the preferred way to create room/lobby sessions.
+	 * For worker sessions, use SessionManager.createSession() which handles
+	 * title generation, worktree setup, etc.
+	 *
+	 * @param init - Session initialization config
+	 * @param db - Database instance
+	 * @param messageHub - MessageHub for WebSocket communication
+	 * @param daemonHub - DaemonHub for event bus
+	 * @param getApiKey - Function to get API key
+	 * @param defaultModel - Default model to use if not specified in init
+	 * @returns AgentSession instance
+	 */
+	static fromInit(
+		init: AgentSessionInit,
+		db: Database,
+		messageHub: MessageHub,
+		daemonHub: DaemonHub,
+		getApiKey: () => Promise<string | null>,
+		defaultModel: string
+	): AgentSession {
+		// Check if session already exists in DB
+		let session = db.getSession(init.sessionId);
+
+		if (!session) {
+			// Create new session from init
+			session = AgentSession.createSessionFromInit(init, defaultModel);
+			db.createSession(session);
+		}
+
+		// Merge runtime-only config (mcpServers with non-serializable instances)
+		// into the session config for use by query options builder.
+		// This is NOT persisted to DB - only available in memory.
+		if (init.mcpServers) {
+			session = {
+				...session,
+				config: {
+					...session.config,
+					mcpServers: init.mcpServers,
+				},
+			};
+		}
+
+		return new AgentSession(session, db, messageHub, daemonHub, getApiKey);
+	}
+
+	/**
+	 * Create a Session object from AgentSessionInit
+	 *
+	 * This creates the session data structure that can be persisted to DB.
+	 */
+	static createSessionFromInit(init: AgentSessionInit, defaultModel: string): Session {
+		const now = new Date().toISOString();
+		const type = init.type ?? 'worker';
+		const features = init.features ?? WORKER_FEATURES;
+
+		const config: SessionConfig = {
+			model: init.model ?? defaultModel,
+			maxTokens: 4096,
+			temperature: 1.0,
+			// Pass through system prompt from init
+			systemPrompt: init.systemPrompt,
+			// NOTE: mcpServers is intentionally NOT stored here because it may contain
+			// non-serializable objects (e.g., McpSdkServerConfigWithInstance with live McpServer).
+			// MCP servers are passed to AgentSession at runtime and don't need persistence.
+			// Store features in config for frontend access
+			features,
+			// Default tools config for non-worker sessions
+			tools: type !== 'worker' ? { useClaudeCodePreset: false } : undefined,
+		};
+
+		const metadata: SessionMetadata = {
+			messageCount: 0,
+			totalTokens: 0,
+			inputTokens: 0,
+			outputTokens: 0,
+			totalCost: 0,
+			toolCallCount: 0,
+		};
+
+		return {
+			id: init.sessionId,
+			title: type === 'room' ? 'Room Agent' : type === 'lobby' ? 'Lobby Agent' : 'New Session',
+			workspacePath: init.workspacePath,
+			createdAt: now,
+			lastActiveAt: now,
+			status: 'active',
+			config,
+			metadata,
+			type,
+			context: init.context,
+		};
 	}
 
 	// ============================================================================
