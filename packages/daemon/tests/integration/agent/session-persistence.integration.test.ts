@@ -144,7 +144,7 @@ describe('Session Persistence Integration', () => {
 			expect(persistedState.messageId).toBe(messageId);
 
 			// Verify SDK messages were persisted
-			const messages = env.db.getSDKMessages(sessionId);
+			const { messages } = env.db.getSDKMessages(sessionId);
 			expect(messages.length).toBe(2);
 			expect(messages[0].type).toBe('user');
 			expect(messages[1].type).toBe('assistant');

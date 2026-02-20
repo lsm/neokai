@@ -161,7 +161,7 @@ describe('Instant Message Persistence UX', () => {
 		const duration = Date.now() - startTime;
 
 		// Verify message was saved to DB
-		const savedMessages = db.getSDKMessages(session.id);
+		const { messages: savedMessages } = db.getSDKMessages(session.id);
 
 		// Filter for only user messages (SDK query may have started and produced other messages)
 		const userMessages = savedMessages.filter((msg: { type: string }) => msg.type === 'user');
@@ -239,7 +239,7 @@ describe('Instant Message Persistence UX', () => {
 		await persistedPromise;
 
 		// Verify message was saved to DB
-		const savedMessages = db.getSDKMessages(session.id);
+		const { messages: savedMessages } = db.getSDKMessages(session.id);
 		const userMessages = savedMessages.filter((msg: { type: string }) => msg.type === 'user');
 		expect(userMessages.length).toBe(1);
 

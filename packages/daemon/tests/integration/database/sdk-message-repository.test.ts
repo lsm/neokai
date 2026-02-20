@@ -98,7 +98,7 @@ describe('SDKMessageRepository', () => {
 		});
 
 		it('should return messages in chronological order', () => {
-			const messages = db.getSDKMessages(sessionId);
+			const { messages } = db.getSDKMessages(sessionId);
 
 			expect(messages.length).toBe(10);
 			// Messages should be in chronological order (oldest to newest)
@@ -109,19 +109,19 @@ describe('SDKMessageRepository', () => {
 		});
 
 		it('should respect limit parameter', () => {
-			const messages = db.getSDKMessages(sessionId, 5);
+			const { messages } = db.getSDKMessages(sessionId, 5);
 
 			expect(messages.length).toBe(5);
 		});
 
 		it('should return empty array for non-existent session', () => {
-			const messages = db.getSDKMessages('non-existent-session');
+			const { messages } = db.getSDKMessages('non-existent-session');
 
 			expect(messages).toEqual([]);
 		});
 
 		it('should inject timestamp into returned messages', () => {
-			const messages = db.getSDKMessages(sessionId);
+			const { messages } = db.getSDKMessages(sessionId);
 
 			expect(messages.length).toBeGreaterThan(0);
 			for (const msg of messages) {
@@ -458,7 +458,7 @@ describe('SDKMessageRepository', () => {
 			}
 
 			// Initial load: get newest 5 messages (no cursor)
-			const page1 = db.getSDKMessages(sessionId, 5);
+			const { messages: page1 } = db.getSDKMessages(sessionId, 5);
 			expect(page1.length).toBe(5);
 			expect(page1[0].uuid).toBe('msg-5');
 			expect(page1[4].uuid).toBe('msg-9');
@@ -467,7 +467,7 @@ describe('SDKMessageRepository', () => {
 			const cursor = (page1[0] as { timestamp: number }).timestamp;
 
 			// Load older: get messages before the cursor
-			const page2 = db.getSDKMessages(sessionId, 5, cursor);
+			const { messages: page2 } = db.getSDKMessages(sessionId, 5, cursor);
 			expect(page2.length).toBe(5);
 			expect(page2[0].uuid).toBe('msg-0');
 			expect(page2[4].uuid).toBe('msg-4');
@@ -498,7 +498,7 @@ describe('SDKMessageRepository', () => {
 			} as unknown as SDKMessage;
 
 			db.saveSDKMessage(sessionId, sdkMessage);
-			const messages = db.getSDKMessages(sessionId);
+			const { messages } = db.getSDKMessages(sessionId);
 
 			expect(messages.length).toBe(1);
 			expect(messages[0].message.content.length).toBe(2);
@@ -531,7 +531,7 @@ describe('SDKMessageRepository', () => {
 			} as unknown as SDKMessage;
 
 			db.saveSDKMessage(sessionId, sdkMessage);
-			const messages = db.getSDKMessages(sessionId);
+			const { messages } = db.getSDKMessages(sessionId);
 
 			expect(messages[0].message.content.length).toBe(2);
 			expect(messages[0].message.content[0].name).toBe('read_file');

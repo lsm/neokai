@@ -3,33 +3,25 @@
  *
  * Main room page component with:
  * - Room dashboard showing sessions and tasks
- * - Tabs for context, goals, jobs, proposals, Q&A
+ * - Tabs for context, goals, jobs
  * - Real-time updates via state channels
  * - Room chat using unified session architecture (ChatContainer)
  */
 
-import { useEffect, useState, useMemo } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import type { RoomContextVersion } from '@neokai/shared';
 import { roomStore } from '../lib/room-store';
 import { navigateToHome } from '../lib/router';
 import { RoomDashboard } from '../components/room/RoomDashboard';
 import ChatContainer from './ChatContainer';
-import {
-	ContextEditor,
-	GoalsEditor,
-	RecurringJobsConfig,
-	ProposalList,
-	ProposalHistory,
-	QARoundPanel,
-	QARoundHistory,
-} from '../components/room';
+import { ContextEditor, GoalsEditor, RecurringJobsConfig } from '../components/room';
 import type { CreateJobParams } from '../components/room/RecurringJobsConfig';
 import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { toast } from '../lib/toast';
 
-type RoomTab = 'dashboard' | 'context' | 'goals' | 'jobs' | 'proposals' | 'qa';
+type RoomTab = 'dashboard' | 'context' | 'goals' | 'jobs';
 
 interface RoomProps {
 	roomId: string;
@@ -147,29 +139,6 @@ export default function Room({ roomId }: RoomProps) {
 		await roomStore.triggerRecurringJob(jobId);
 	};
 
-	// Proposals computed - filter resolved proposals for history
-	const resolvedProposals = useMemo(() => {
-		return roomStore.proposals.value.filter((p) => p.status !== 'pending');
-	}, [roomStore.proposals.value]);
-
-	// Proposals handlers
-	const handleApproveProposal = async (proposalId: string) => {
-		await roomStore.approveProposal(proposalId);
-	};
-
-	const handleRejectProposal = async (proposalId: string, reason: string) => {
-		await roomStore.rejectProposal(proposalId, reason);
-	};
-
-	// Q&A handlers
-	const handleAnswerQuestion = async (_roundId: string, questionId: string, answer: string) => {
-		await roomStore.answerQuestion(questionId, answer);
-	};
-
-	const handleCompleteQARound = async (_roundId: string, summary?: string) => {
-		await roomStore.completeQARound(summary);
-	};
-
 	// Room archive handler
 	const handleArchiveRoom = async () => {
 		setIsArchiving(true);
@@ -275,26 +244,6 @@ export default function Room({ roomId }: RoomProps) {
 					>
 						Jobs
 					</button>
-					<button
-						class={`px-4 py-2 text-sm font-medium transition-colors ${
-							activeTab === 'proposals'
-								? 'text-blue-400 border-b-2 border-blue-400'
-								: 'text-gray-400 hover:text-gray-200'
-						}`}
-						onClick={() => setActiveTab('proposals')}
-					>
-						Proposals
-					</button>
-					<button
-						class={`px-4 py-2 text-sm font-medium transition-colors ${
-							activeTab === 'qa'
-								? 'text-blue-400 border-b-2 border-blue-400'
-								: 'text-gray-400 hover:text-gray-200'
-						}`}
-						onClick={() => setActiveTab('qa')}
-					>
-						Q&A
-					</button>
 				</div>
 
 				{/* Tab content */}
@@ -339,29 +288,6 @@ export default function Room({ roomId }: RoomProps) {
 								onTriggerJob={handleTriggerJob}
 								isLoading={roomStore.jobsLoading.value}
 							/>
-						</div>
-					)}
-					{activeTab === 'proposals' && (
-						<div class="h-full overflow-y-auto p-4 space-y-6">
-							<ProposalList
-								roomId={roomId}
-								proposals={roomStore.proposals}
-								onApprove={handleApproveProposal}
-								onReject={handleRejectProposal}
-								isLoading={roomStore.proposalLoading.value}
-							/>
-							<ProposalHistory proposals={resolvedProposals} />
-						</div>
-					)}
-					{activeTab === 'qa' && (
-						<div class="h-full overflow-y-auto p-4 space-y-6">
-							<QARoundPanel
-								roomId={roomId}
-								activeRound={roomStore.activeQARound}
-								onAnswer={handleAnswerQuestion}
-								onComplete={handleCompleteQARound}
-							/>
-							<QARoundHistory rounds={roomStore.qaRoundHistory.value} />
 						</div>
 					)}
 				</div>

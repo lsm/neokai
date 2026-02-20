@@ -139,7 +139,7 @@ export class RoomManager {
 			}
 
 			// Delete the room - CASCADE will handle:
-			// - session_pairs, tasks, goals, recurring_jobs, proposals, qa_rounds, memories, context_versions
+			// - session_pairs, tasks, goals, recurring_jobs, proposals, memories, context_versions
 			this.roomRepo.deleteRoom(id);
 		});
 

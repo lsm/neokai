@@ -36,7 +36,7 @@ describe('Database', () => {
 			assertExists(messageId);
 
 			// Messages should appear in getSDKMessages (which gets all messages)
-			const messages = db.getSDKMessages('session-1');
+			const { messages } = db.getSDKMessages('session-1');
 			assertEquals(messages.length, 1);
 
 			// Check count by status - should be 1 'sent'

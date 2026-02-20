@@ -269,7 +269,7 @@ describe('StateManager', () => {
 				getProcessingState: mock(() => ({ status: 'idle' })),
 				getSlashCommands: mock(async () => []),
 				getContextInfo: mock(() => null),
-				getSDKMessages: mock(() => []),
+				getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
 			};
 			(mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
 				mockAgentSession
@@ -678,7 +678,7 @@ describe('StateManager', () => {
 	describe('broadcastSDKMessagesChange', () => {
 		it('should broadcast SDK messages state', async () => {
 			const mockAgentSession = {
-				getSDKMessages: mock(() => [{ id: 'msg1' }]),
+				getSDKMessages: mock(() => ({ messages: [{ id: 'msg1' }], hasMore: false })),
 			};
 			(mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
 				mockAgentSession
@@ -690,6 +690,7 @@ describe('StateManager', () => {
 				STATE_CHANNELS.SESSION_SDK_MESSAGES,
 				expect.objectContaining({
 					sdkMessages: expect.any(Array),
+					hasMore: false,
 				}),
 				{ channel: 'session:test-id' }
 			);

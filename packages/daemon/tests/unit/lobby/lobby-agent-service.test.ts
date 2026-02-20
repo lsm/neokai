@@ -80,12 +80,6 @@ describe('LobbyAgentService', () => {
 		db = new Database(':memory:');
 		createTables(db);
 
-		// Add migration columns for unified session architecture
-		db.exec(
-			`ALTER TABLE sessions ADD COLUMN type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room', 'lobby'))`
-		);
-		db.exec(`ALTER TABLE sessions ADD COLUMN session_context TEXT`);
-
 		// Create room manager for creating rooms (needed for GitHub mappings FK)
 		roomManager = new RoomManager(db);
 

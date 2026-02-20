@@ -89,14 +89,9 @@ class SessionStore {
 
 	/**
 	 * Whether there are more messages to load (pagination)
-	 * Inferred from initial message load: if we got exactly 100, there might be more
+	 * Set from server response - determined by checking if we got exactly `limit` top-level messages
 	 */
-	readonly hasMoreMessages = computed<boolean>(() => {
-		// If initial load returned exactly 100 messages, there might be more
-		// Once we've loaded older messages, this inference becomes less accurate,
-		// but it's still a reasonable default that avoids an expensive COUNT query
-		return this._initialMessageCount.value === 100;
-	});
+	readonly hasMoreMessages = computed<boolean>(() => this._hasMoreMessages.value);
 
 	// ========================================
 	// Private State
@@ -113,6 +108,9 @@ class SessionStore {
 
 	/** Track initial message load count for pagination inference */
 	private readonly _initialMessageCount = signal(0);
+
+	/** Track whether there are more messages to load (from server response) */
+	private readonly _hasMoreMessages = signal(false);
 
 	// ========================================
 	// Session Selection (with Promise-Chain Lock)
@@ -156,6 +154,7 @@ class SessionStore {
 		this.sessionState.value = null;
 		this.sdkMessages.value = [];
 		this._initialMessageCount.value = 0;
+		this._hasMoreMessages.value = false;
 		// Record session switch time to only show errors that occur AFTER this point
 		// This prevents showing stale errors that were already in the session state
 		this.sessionSwitchTime = Date.now();
@@ -251,7 +250,7 @@ class SessionStore {
 			// Fetch session state and messages in parallel
 			const [sessionState, messagesState] = await Promise.all([
 				hub.request<SessionState>('state.session', { sessionId }),
-				hub.request<{ sdkMessages: SDKMessage[] }>('state.sdkMessages', {
+				hub.request<{ sdkMessages: SDKMessage[]; hasMore: boolean }>('state.sdkMessages', {
 					sessionId,
 				}),
 			]);
@@ -281,9 +280,9 @@ class SessionStore {
 				const currentMessages = this.sdkMessages.value;
 				const initialSnapshot = messagesState.sdkMessages;
 
-				// Track initial message count for pagination inference
-				// If we got exactly 100 messages, there might be more
+				// Track initial message count and hasMore from server response
 				this._initialMessageCount.value = initialSnapshot.length;
+				this._hasMoreMessages.value = messagesState.hasMore ?? false;
 
 				if (snapshotTimestamp && currentMessages.length > 0) {
 					// Preserve newer messages that arrived via delta during reconnection
@@ -451,16 +450,24 @@ class SessionStore {
 
 		try {
 			const hub = await connectionManager.getHub();
-			const result = await hub.request<{ sdkMessages: SDKMessage[] }>('message.sdkMessages', {
-				sessionId,
-				before: beforeTimestamp,
-				limit,
-			});
+			const result = await hub.request<{ sdkMessages: SDKMessage[]; hasMore: boolean }>(
+				'message.sdkMessages',
+				{
+					sessionId,
+					before: beforeTimestamp,
+					limit,
+				}
+			);
 
 			const messages = result?.sdkMessages ?? [];
+			const hasMore = result?.hasMore ?? false;
+
+			// Update hasMore signal from server response
+			this._hasMoreMessages.value = hasMore;
+
 			return {
 				messages,
-				hasMore: messages.length === limit,
+				hasMore,
 			};
 		} catch (err) {
 			logger.error('Failed to load older messages:', err);

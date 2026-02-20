@@ -769,7 +769,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
 				}
 				if (method === 'state.sdkMessages') {
-					return Promise.resolve({ sdkMessages: messages });
+					return Promise.resolve({ sdkMessages: messages, hasMore: true });
 				}
 				return Promise.resolve(undefined);
 			});
@@ -849,7 +849,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 					content: [{ type: 'text', text: `Message ${i}` }],
 				}));
 
-			mockHub.request.mockResolvedValue({ sdkMessages: messages });
+			mockHub.request.mockResolvedValue({ sdkMessages: messages, hasMore: true });
 
 			await sessionStore.select('session-1');
 

@@ -151,7 +151,7 @@ function createMockAgentSession(overrides: Partial<AgentSession> = {}): {
 		setMaxThinkingTokens: mock(async () => ({ success: true })),
 		setPermissionMode: mock(async () => ({ success: true })),
 		updateConfig: mock(async () => {}),
-		getSDKMessages: mock(() => []),
+		getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
 		getSDKMessageCount: mock(() => 0),
 		getMcpServerStatus: mock(async () => ({})),
 	};

@@ -44,9 +44,10 @@ describe('Message RPC Handlers', () => {
 			getSessionAsync: mock(async (sessionId: string) => {
 				if (sessionId === 'valid-session') {
 					return {
-						getSDKMessages: mock(
-							(_limit?: number, _before?: number, _since?: number) => mockSDKMessages
-						),
+						getSDKMessages: mock((_limit?: number, _before?: number, _since?: number) => ({
+							messages: mockSDKMessages,
+							hasMore: false,
+						})),
 						getSDKMessageCount: mock(() => mockSDKMessages.length),
 					};
 				}
@@ -315,7 +316,7 @@ describe('Message RPC Handlers - Extended', () => {
 			getSessionAsync: mock(async (sessionId: string) => {
 				if (sessionId === 'valid-session' || sessionId === 'test-session') {
 					return {
-						getSDKMessages: mock(() => mockSDKMessages),
+						getSDKMessages: mock(() => ({ messages: mockSDKMessages, hasMore: false })),
 						getSDKMessageCount: mock(() => mockSDKMessages.length),
 						getSessionData: mock(() => mockSession),
 						getSDKSessionId: mock(() => 'sdk-session-123'),

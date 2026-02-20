@@ -27,19 +27,17 @@
  */
 
 import type { DaemonHub } from '../daemon-hub';
-import type { MessageHub, SessionFeatures, TaskPriority, RoomProposal } from '@neokai/shared';
+import type { MessageHub, SessionFeatures, TaskPriority } from '@neokai/shared';
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { Database } from '../../storage/index';
 import { RoomAgentStateRepository } from '../../storage/repositories/room-agent-state-repository';
 import { TaskRepository } from '../../storage/repositories/task-repository';
 import { GoalRepository } from '../../storage/repositories/goal-repository';
-import { ProposalRepository } from '../../storage/repositories/proposal-repository';
 import { SessionPairManager } from './session-pair-manager';
 import { TaskManager } from './task-manager';
 import { GoalManager } from './goal-manager';
 import { RecurringJobScheduler } from './recurring-job-scheduler';
 import { RoomAgentLifecycleManager } from './room-agent-lifecycle-manager';
-import { QARoundManager, type QARoundManagerContext } from './qa-round-manager';
 import { AgentSession, type AgentSessionInit } from '../agent/agent-session';
 import {
 	createRoomAgentMcpServer,
@@ -152,7 +150,6 @@ export class RoomAgentService {
 	private stateRepo: RoomAgentStateRepository;
 	private taskRepo: TaskRepository;
 	private goalRepo: GoalRepository;
-	private proposalRepo: ProposalRepository;
 	private taskManager: TaskManager;
 	private goalManager: GoalManager;
 	private state: RoomAgentState;
@@ -164,7 +161,6 @@ export class RoomAgentService {
 
 	private lifecycleManager: RoomAgentLifecycleManager | null = null;
 	private agentSession: AgentSession | null = null;
-	private qaRoundManager: QARoundManager | null = null;
 	private roomMcpServer: ReturnType<typeof createRoomAgentMcpServer> | null = null;
 
 	constructor(
@@ -178,19 +174,10 @@ export class RoomAgentService {
 		this.stateRepo = new RoomAgentStateRepository(rawDb);
 		this.taskRepo = new TaskRepository(rawDb);
 		this.goalRepo = new GoalRepository(rawDb);
-		this.proposalRepo = new ProposalRepository(rawDb);
 		this.taskManager = new TaskManager(rawDb, ctx.room.id);
 		this.goalManager = new GoalManager(rawDb, ctx.room.id, ctx.daemonHub);
 
 		this.state = this.stateRepo.getOrCreateState(ctx.room.id);
-
-		const qaContext: QARoundManagerContext = {
-			room: ctx.room,
-			db: rawDb,
-			daemonHub: ctx.daemonHub,
-			messageHub: ctx.messageHub,
-		};
-		this.qaRoundManager = new QARoundManager(qaContext);
 	}
 
 	async start(): Promise<void> {
@@ -368,10 +355,6 @@ export class RoomAgentService {
 						timestamp: Date.now(),
 					});
 				}
-
-				if (this.qaRoundManager?.shouldAutoTriggerOnContextUpdate()) {
-					await this.triggerQARound('context_updated');
-				}
 			},
 			{ sessionId: this.sessionId }
 		);
@@ -429,56 +412,6 @@ export class RoomAgentService {
 			{ sessionId: this.sessionId }
 		);
 		this.unsubscribers.push(unsubRecurringJob);
-
-		const unsubProposalApproved = this.ctx.daemonHub.on(
-			'proposal.approved',
-			async (event: { roomId: string; proposalId: string; proposal: RoomProposal }) => {
-				if (event.roomId !== this.ctx.room.id || !this.agentSession) return;
-
-				await this.injectEventMessage({
-					type: 'proposal_approved',
-					source: 'human',
-					content: this.buildProposalApprovedMessage(event.proposal),
-					metadata: { proposalId: event.proposalId },
-					timestamp: Date.now(),
-				});
-			},
-			{ sessionId: this.sessionId }
-		);
-		this.unsubscribers.push(unsubProposalApproved);
-
-		const unsubProposalRejected = this.ctx.daemonHub.on(
-			'proposal.rejected',
-			async (event: { roomId: string; proposalId: string; proposal: RoomProposal }) => {
-				if (event.roomId !== this.ctx.room.id || !this.agentSession) return;
-
-				await this.injectEventMessage({
-					type: 'proposal_rejected',
-					source: 'human',
-					content: this.buildProposalRejectedMessage(event.proposal),
-					metadata: { proposalId: event.proposalId },
-					timestamp: Date.now(),
-				});
-			},
-			{ sessionId: this.sessionId }
-		);
-		this.unsubscribers.push(unsubProposalRejected);
-
-		const unsubQuestionAnswered = this.ctx.daemonHub.on(
-			'qa.questionAnswered',
-			async (event) => {
-				if (event.roomId !== this.ctx.room.id || !this.agentSession) return;
-
-				await this.injectEventMessage({
-					type: 'qa_answer',
-					source: 'human',
-					content: `Q&A Answer: ${event.answer}`,
-					timestamp: Date.now(),
-				});
-			},
-			{ sessionId: this.sessionId }
-		);
-		this.unsubscribers.push(unsubQuestionAnswered);
 	}
 
 	getState(): RoomAgentState {
@@ -1001,41 +934,6 @@ export class RoomAgentService {
 		return this.lifecycleManager;
 	}
 
-	getQARoundManager(): QARoundManager | null {
-		return this.qaRoundManager;
-	}
-
-	async triggerQARound(
-		trigger: 'room_created' | 'context_updated' | 'goal_created'
-	): Promise<void> {
-		if (!this.qaRoundManager) {
-			log.warn('Q&A round manager not available');
-			return;
-		}
-
-		if (this.qaRoundManager.hasActiveRound()) {
-			log.info(`Q&A round already active, skipping trigger: ${trigger}`);
-			return;
-		}
-
-		log.info(`Triggering Q&A round for: ${trigger}`);
-
-		try {
-			const round = await this.qaRoundManager.startRound(trigger);
-
-			if (this.agentSession) {
-				await this.injectEventMessage({
-					type: 'qa_round_started',
-					source: 'system',
-					content: this.buildQARoundPrompt(round, trigger),
-					timestamp: Date.now(),
-				});
-			}
-		} catch (error) {
-			log.error('Failed to trigger Q&A round:', error);
-		}
-	}
-
 	// ========================
 	// Prompt Building Methods
 	// ========================
@@ -1168,67 +1066,6 @@ export class RoomAgentService {
 		return parts.join('\n');
 	}
 
-	private buildProposalApprovedMessage(proposal: RoomProposal): string {
-		return `# Proposal Approved
-
-**Proposal ID:** ${proposal.id}
-**Title:** ${proposal.title}
-**Type:** ${proposal.type}
-
-Your proposal has been approved by ${proposal.actedBy ?? 'a human'}.
-
-**Response:** ${proposal.actionResponse ?? 'No additional response provided.'}
-
-You may now proceed to apply the proposed changes.`;
-	}
-
-	private buildProposalRejectedMessage(proposal: RoomProposal): string {
-		return `# Proposal Rejected
-
-**Proposal ID:** ${proposal.id}
-**Title:** ${proposal.title}
-**Type:** ${proposal.type}
-
-Your proposal has been rejected by ${proposal.actedBy ?? 'a human'}.
-
-**Reason:** ${proposal.actionResponse ?? 'No reason provided.'}
-
-Please consider alternative approaches or address the concerns raised.`;
-	}
-
-	private buildQARoundPrompt(
-		round: { id: string; trigger: string },
-		trigger: 'room_created' | 'context_updated' | 'goal_created'
-	): string {
-		const parts: string[] = [];
-
-		parts.push('# Q&A Round Started\n');
-		parts.push(`A Q&A round has been started (ID: ${round.id}).`);
-		parts.push(`Trigger: ${trigger}\n`);
-
-		if (trigger === 'room_created') {
-			parts.push('## Context');
-			parts.push('This room was just created. Ask clarifying questions to better understand:');
-			parts.push('- The project goals and priorities');
-			parts.push('- Any constraints or preferences');
-			parts.push('- What success looks like for this room');
-		} else if (trigger === 'context_updated') {
-			parts.push('## Context');
-			parts.push('The room context (background/instructions) was updated.');
-			parts.push('Ask clarifying questions if the changes are unclear or incomplete.');
-		} else if (trigger === 'goal_created') {
-			parts.push('## Context');
-			parts.push('A new goal was created.');
-			parts.push('Ask clarifying questions to better understand the goal requirements.');
-		}
-
-		parts.push('\n## Instructions');
-		parts.push('Use the `askQuestion` tool to ask clarifying questions.');
-		parts.push('The human will answer and you can then refine the room context accordingly.');
-
-		return parts.join('\n');
-	}
-
 	// ========================
 	// MCP Tools Creation
 	// ========================
@@ -1328,19 +1165,6 @@ Please consider alternative approaches or address the concerns raised.`;
 				log.info(`Recurring job scheduled: ${result.id}`);
 				return { jobId: result.id };
 			},
-			onAskQuestion: this.qaRoundManager
-				? async (question: string) => {
-						const qa = await this.qaRoundManager!.askQuestion(question);
-						log.info(`Q&A question asked: ${qa.id}`);
-						return { questionId: qa.id };
-					}
-				: undefined,
-			onCompleteQARound: this.qaRoundManager
-				? async (summary?: string) => {
-						await this.qaRoundManager!.completeRound(summary);
-						log.info('Q&A round completed');
-					}
-				: undefined,
 		};
 
 		return createRoomAgentMcpServer(config);

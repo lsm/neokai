@@ -132,7 +132,12 @@ export class Database {
 		return this.sdkMessageRepo.saveSDKMessage(sessionId, message);
 	}
 
-	getSDKMessages(sessionId: string, limit = 100, before?: number, since?: number): SDKMessage[] {
+	getSDKMessages(
+		sessionId: string,
+		limit?: number,
+		before?: number,
+		since?: number
+	): { messages: SDKMessage[]; hasMore: boolean } {
 		return this.sdkMessageRepo.getSDKMessages(sessionId, limit, before, since);
 	}
 

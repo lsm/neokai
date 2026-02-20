@@ -49,11 +49,13 @@ const config: KnipConfig = {
 		'packages/daemon/tests/mocks/**', // Test mocks
 		'packages/daemon/tests/helpers/**', // Test helpers (used by online tests outside knip scan)
 		'packages/shared/src/sdk/**', // SDK types from Claude Agent SDK (not all used)
-		// Library index files - exports intended for external consumers
-		'packages/daemon/src/lib/lobby/index.ts',
-		'packages/daemon/src/lib/room/index.ts',
-		'packages/daemon/src/storage/index.ts',
+		// Room/lobby work-in-progress features (not yet integrated)
+		'packages/daemon/src/lib/agent/room-agent-tools.ts',
+		'packages/daemon/src/lib/lobby/**',
+		'packages/daemon/src/lib/room/index.ts', // Re-exports unused room managers
+		'packages/daemon/src/storage/index.ts', // Re-exports unused repositories
 		'packages/web/src/components/room/index.ts',
+		'packages/web/src/components/room/TaskSessionView.tsx', // Default export unused
 	],
 
 	// Workspace dependencies (don't flag as unlisted)
