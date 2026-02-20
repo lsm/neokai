@@ -260,10 +260,11 @@ export default defineConfig({
 		// This avoids HMR overhead and tests against production-like environment
 		command: 'cd ../web && bun run build && cd ../cli && NODE_ENV=test bun run main.ts',
 		url: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:9283',
-		// NEVER reuse existing server - always start a fresh isolated test server
+		// When PLAYWRIGHT_BASE_URL is set externally (CI, self-test, run-test),
+		// reuse that server. Otherwise, start a fresh isolated test server.
 		// This prevents tests from accidentally connecting to production servers
-		// and ensures teardown can safely clean up all test data
-		reuseExistingServer: false,
+		// and ensures teardown can safely clean up all test data.
+		reuseExistingServer: !!process.env.PLAYWRIGHT_BASE_URL,
 		stdout: 'ignore',
 		stderr: 'pipe',
 		timeout: 120 * 1000,
