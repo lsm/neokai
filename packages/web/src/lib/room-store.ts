@@ -12,7 +12,6 @@
  * - room: Room metadata
  * - tasks: Task list for the room
  * - sessions: Session summaries for the room
- * - proposals: Proposals for the room
  * - goals: Room goals
  * - recurringJobs: Recurring jobs for the room
  */
@@ -24,8 +23,6 @@ import type {
 	NeoTask,
 	SessionSummary,
 	RoomOverview,
-	RoomProposal,
-	ProposalStatus,
 	RoomGoal,
 	GoalPriority,
 	RecurringJob,
@@ -42,14 +39,6 @@ interface CreateGoalParams {
 	description: string;
 	priority?: GoalPriority;
 	metrics?: Record<string, number>;
-}
-
-/**
- * Event payload for proposal events
- */
-interface ProposalEventPayload {
-	roomId: string;
-	proposal: RoomProposal;
 }
 
 /**
@@ -114,16 +103,6 @@ class RoomStore {
 	readonly error = signal<string | null>(null);
 
 	// ========================================
-	// Proposals Signals
-	// ========================================
-
-	/** Proposals for this room */
-	readonly proposals = signal<RoomProposal[]>([]);
-
-	/** Proposal loading state */
-	readonly proposalLoading = signal<boolean>(false);
-
-	// ========================================
 	// Goals Signals
 	// ========================================
 
@@ -163,11 +142,6 @@ class RoomStore {
 
 	/** Session count */
 	readonly sessionCount = computed(() => this.sessions.value.length);
-
-	/** Pending proposals */
-	readonly pendingProposals = computed(() =>
-		this.proposals.value.filter((p) => p.status === 'pending')
-	);
 
 	/** Active goals */
 	readonly activeGoals = computed(() =>
@@ -229,7 +203,6 @@ class RoomStore {
 		this.tasks.value = [];
 		this.sessions.value = [];
 		this.error.value = null;
-		this.proposals.value = [];
 		this.goals.value = [];
 		this.recurringJobs.value = [];
 
@@ -295,52 +268,7 @@ class RoomStore {
 			);
 			this.cleanupFunctions.push(unsubTaskUpdate);
 
-			// 3. Proposal events
-			const unsubProposalCreated = hub.onEvent<ProposalEventPayload>(
-				'proposal.created',
-				(event) => {
-					if (event.roomId === roomId) {
-						this.proposals.value = [...this.proposals.value, event.proposal];
-					}
-				}
-			);
-			this.cleanupFunctions.push(unsubProposalCreated);
-
-			const unsubProposalApproved = hub.onEvent<ProposalEventPayload>(
-				'proposal.approved',
-				(event) => {
-					if (event.roomId === roomId) {
-						const idx = this.proposals.value.findIndex((p) => p.id === event.proposal.id);
-						if (idx >= 0) {
-							this.proposals.value = [
-								...this.proposals.value.slice(0, idx),
-								event.proposal,
-								...this.proposals.value.slice(idx + 1),
-							];
-						}
-					}
-				}
-			);
-			this.cleanupFunctions.push(unsubProposalApproved);
-
-			const unsubProposalRejected = hub.onEvent<ProposalEventPayload>(
-				'proposal.rejected',
-				(event) => {
-					if (event.roomId === roomId) {
-						const idx = this.proposals.value.findIndex((p) => p.id === event.proposal.id);
-						if (idx >= 0) {
-							this.proposals.value = [
-								...this.proposals.value.slice(0, idx),
-								event.proposal,
-								...this.proposals.value.slice(idx + 1),
-							];
-						}
-					}
-				}
-			);
-			this.cleanupFunctions.push(unsubProposalRejected);
-
-			// 4. Goal events
+			// 3. Goal events
 			const unsubGoalCreated = hub.onEvent<GoalEventPayload>('room.goalCreated', (event) => {
 				if (event.roomId === roomId) {
 					this.goals.value = [...this.goals.value, event.goal];
@@ -369,7 +297,7 @@ class RoomStore {
 			});
 			this.cleanupFunctions.push(unsubGoalDeleted);
 
-			// 5. Recurring job events
+			// 4. Recurring job events
 			const unsubJobCreated = hub.onEvent<RecurringJobEventPayload>(
 				'recurringJob.created',
 				(event) => {
@@ -424,7 +352,7 @@ class RoomStore {
 			);
 			this.cleanupFunctions.push(unsubJobTriggered);
 
-			// 6. Fetch initial state via RPC
+			// 5. Fetch initial state via RPC
 			await this.fetchInitialState(hub, roomId);
 		} catch (err) {
 			logger.error('Failed to start room subscriptions:', err);
@@ -452,7 +380,7 @@ class RoomStore {
 			}
 
 			// Fetch additional data for new features
-			await Promise.all([this.fetchGoals(), this.fetchRecurringJobs(), this.fetchProposals()]);
+			await Promise.all([this.fetchGoals(), this.fetchRecurringJobs()]);
 		} catch (err) {
 			logger.error('Failed to fetch room state:', err);
 			this.error.value = err instanceof Error ? err.message : 'Failed to load room';
@@ -524,82 +452,6 @@ class RoomStore {
 		}
 
 		return task;
-	}
-
-	// ========================================
-	// Proposals Methods
-	// ========================================
-
-	/**
-	 * Fetch proposals for the room
-	 */
-	async fetchProposals(status?: ProposalStatus): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) {
-			return;
-		}
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			return;
-		}
-
-		try {
-			this.proposalLoading.value = true;
-			const response = await hub.request<{ proposals: RoomProposal[] }>('proposal.list', {
-				roomId,
-				status,
-			});
-			this.proposals.value = response.proposals ?? [];
-		} catch (err) {
-			logger.error('Failed to fetch proposals:', err);
-		} finally {
-			this.proposalLoading.value = false;
-		}
-	}
-
-	/**
-	 * Approve a proposal
-	 */
-	async approveProposal(proposalId: string): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) {
-			throw new Error('No room selected');
-		}
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			throw new Error('Not connected');
-		}
-
-		try {
-			await hub.request('proposal.approve', { roomId, proposalId });
-		} catch (err) {
-			logger.error('Failed to approve proposal:', err);
-			throw err;
-		}
-	}
-
-	/**
-	 * Reject a proposal
-	 */
-	async rejectProposal(proposalId: string, reason: string): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) {
-			throw new Error('No room selected');
-		}
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			throw new Error('Not connected');
-		}
-
-		try {
-			await hub.request('proposal.reject', { roomId, proposalId, reason });
-		} catch (err) {
-			logger.error('Failed to reject proposal:', err);
-			throw err;
-		}
 	}
 
 	// ========================================

@@ -50,7 +50,6 @@ import { GoalManager } from '../room/goal-manager';
 import { RecurringJobScheduler } from '../room/recurring-job-scheduler';
 import { TaskManager } from '../room/task-manager';
 import { PromptTemplateManager } from '../prompts/prompt-template-manager';
-import { setupProposalHandlers } from './proposal-handlers';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -231,9 +230,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		roomManager,
 		deps.gitHubService ?? null
 	);
-
-	// Proposal handlers
-	setupProposalHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
 
 	// Return cleanup function to stop background services
 	return () => {

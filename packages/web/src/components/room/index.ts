@@ -13,13 +13,6 @@ export { RoomAgentStatus } from './RoomAgentStatus';
 export { TaskSessionView } from './TaskSessionView';
 export { GoalsEditor } from './GoalsEditor';
 export { RecurringJobsConfig } from './RecurringJobsConfig';
-export { ProposalList } from './ProposalList';
-export type { ProposalListProps } from './ProposalList';
-// @public - Library export
-export { ProposalCard } from './ProposalCard';
-export type { ProposalCardProps } from './ProposalCard';
-export { ProposalHistory } from './ProposalHistory';
-export type { ProposalHistoryProps } from './ProposalHistory';
 export { ContextEditor } from './ContextEditor';
 export type { ContextEditorProps } from './ContextEditor';
 // @public - Library export

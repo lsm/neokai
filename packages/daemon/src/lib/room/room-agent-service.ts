@@ -27,13 +27,12 @@
  */
 
 import type { DaemonHub } from '../daemon-hub';
-import type { MessageHub, SessionFeatures, TaskPriority, RoomProposal } from '@neokai/shared';
+import type { MessageHub, SessionFeatures, TaskPriority } from '@neokai/shared';
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { Database } from '../../storage/index';
 import { RoomAgentStateRepository } from '../../storage/repositories/room-agent-state-repository';
 import { TaskRepository } from '../../storage/repositories/task-repository';
 import { GoalRepository } from '../../storage/repositories/goal-repository';
-import { ProposalRepository } from '../../storage/repositories/proposal-repository';
 import { SessionPairManager } from './session-pair-manager';
 import { TaskManager } from './task-manager';
 import { GoalManager } from './goal-manager';
@@ -151,7 +150,6 @@ export class RoomAgentService {
 	private stateRepo: RoomAgentStateRepository;
 	private taskRepo: TaskRepository;
 	private goalRepo: GoalRepository;
-	private proposalRepo: ProposalRepository;
 	private taskManager: TaskManager;
 	private goalManager: GoalManager;
 	private state: RoomAgentState;
@@ -176,7 +174,6 @@ export class RoomAgentService {
 		this.stateRepo = new RoomAgentStateRepository(rawDb);
 		this.taskRepo = new TaskRepository(rawDb);
 		this.goalRepo = new GoalRepository(rawDb);
-		this.proposalRepo = new ProposalRepository(rawDb);
 		this.taskManager = new TaskManager(rawDb, ctx.room.id);
 		this.goalManager = new GoalManager(rawDb, ctx.room.id, ctx.daemonHub);
 
@@ -415,40 +412,6 @@ export class RoomAgentService {
 			{ sessionId: this.sessionId }
 		);
 		this.unsubscribers.push(unsubRecurringJob);
-
-		const unsubProposalApproved = this.ctx.daemonHub.on(
-			'proposal.approved',
-			async (event: { roomId: string; proposalId: string; proposal: RoomProposal }) => {
-				if (event.roomId !== this.ctx.room.id || !this.agentSession) return;
-
-				await this.injectEventMessage({
-					type: 'proposal_approved',
-					source: 'human',
-					content: this.buildProposalApprovedMessage(event.proposal),
-					metadata: { proposalId: event.proposalId },
-					timestamp: Date.now(),
-				});
-			},
-			{ sessionId: this.sessionId }
-		);
-		this.unsubscribers.push(unsubProposalApproved);
-
-		const unsubProposalRejected = this.ctx.daemonHub.on(
-			'proposal.rejected',
-			async (event: { roomId: string; proposalId: string; proposal: RoomProposal }) => {
-				if (event.roomId !== this.ctx.room.id || !this.agentSession) return;
-
-				await this.injectEventMessage({
-					type: 'proposal_rejected',
-					source: 'human',
-					content: this.buildProposalRejectedMessage(event.proposal),
-					metadata: { proposalId: event.proposalId },
-					timestamp: Date.now(),
-				});
-			},
-			{ sessionId: this.sessionId }
-		);
-		this.unsubscribers.push(unsubProposalRejected);
 	}
 
 	getState(): RoomAgentState {
@@ -1101,34 +1064,6 @@ export class RoomAgentService {
 		parts.push('3. Communicate any significant changes to the user if appropriate');
 
 		return parts.join('\n');
-	}
-
-	private buildProposalApprovedMessage(proposal: RoomProposal): string {
-		return `# Proposal Approved
-
-**Proposal ID:** ${proposal.id}
-**Title:** ${proposal.title}
-**Type:** ${proposal.type}
-
-Your proposal has been approved by ${proposal.actedBy ?? 'a human'}.
-
-**Response:** ${proposal.actionResponse ?? 'No additional response provided.'}
-
-You may now proceed to apply the proposed changes.`;
-	}
-
-	private buildProposalRejectedMessage(proposal: RoomProposal): string {
-		return `# Proposal Rejected
-
-**Proposal ID:** ${proposal.id}
-**Title:** ${proposal.title}
-**Type:** ${proposal.type}
-
-Your proposal has been rejected by ${proposal.actedBy ?? 'a human'}.
-
-**Reason:** ${proposal.actionResponse ?? 'No reason provided.'}
-
-Please consider alternative approaches or address the concerns raised.`;
 	}
 
 	// ========================

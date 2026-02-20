@@ -510,20 +510,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		roomId: string;
 		templateId: string;
 	};
-
-	// Proposal events
-	'proposal.created': {
-		sessionId: string;
-		roomId: string;
-		proposalId: string;
-		proposal: import('@neokai/shared').RoomProposal;
-	};
-	'proposal.approved': {
-		sessionId: string;
-		roomId: string;
-		proposalId: string;
-		proposal: import('@neokai/shared').RoomProposal;
-	};
 }
 
 /**
