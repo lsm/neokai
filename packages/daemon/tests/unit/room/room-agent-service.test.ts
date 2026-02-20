@@ -313,8 +313,8 @@ describe('RoomAgentService', () => {
 			await agentService.start();
 
 			// Should have subscribed to all room events (room.message, room.contextUpdated, pair.task_completed,
-			// recurringJob.triggered, proposal.approved, proposal.rejected)
-			expect(mockDaemonHub.on).toHaveBeenCalledTimes(6);
+			// recurringJob.triggered)
+			expect(mockDaemonHub.on).toHaveBeenCalledTimes(4);
 			expect(mockDaemonHub.on).toHaveBeenCalledWith('room.message', expect.any(Function), {
 				sessionId: `room:${room.id}`,
 			});
@@ -369,8 +369,8 @@ describe('RoomAgentService', () => {
 
 			await agentService.stop();
 
-			// The unsubscriber functions should have been called for all 6 subscriptions
-			expect(unsubscriberCalls).toBe(6);
+			// The unsubscriber functions should have been called for all 4 subscriptions
+			expect(unsubscriberCalls).toBe(4);
 		});
 
 		it('should clear idle check timer on stop', async () => {
