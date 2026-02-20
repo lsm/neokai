@@ -11,6 +11,9 @@ import { useState, useRef, useEffect, useCallback } from 'preact/hooks';
 import type { ContextInfo } from '@neokai/shared';
 import { borderColors } from '../lib/design-tokens.ts';
 
+// Width threshold for switching between pie chart and bar layout
+const COMPACT_WIDTH_THRESHOLD = 400;
+
 interface ContextUsageBarProps {
 	contextUsage?: ContextInfo;
 	maxContextTokens?: number;
@@ -22,6 +25,7 @@ export default function ContextUsageBar({
 }: ContextUsageBarProps) {
 	const [showContextDetails, setShowContextDetails] = useState(false);
 	const [dropdownBottom, setDropdownBottom] = useState(96); // Default 24*4px = 96px
+	const [useCompactLayout, setUseCompactLayout] = useState(false);
 	const indicatorRef = useRef<HTMLDivElement>(null);
 	const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -72,6 +76,24 @@ export default function ContextUsageBar({
 			// Force close on unmount to prevent stale backdrop
 			setShowContextDetails(false);
 		};
+	}, []);
+
+	// Detect container width to switch between pie chart and bar layout
+	// We measure the grandparent (ContentContainer) not the immediate parent (status bar flex)
+	// because the status bar flex is always narrow due to its flex layout
+	useEffect(() => {
+		const container = indicatorRef.current?.parentElement?.parentElement;
+		if (!container) return;
+
+		const resizeObserver = new ResizeObserver((entries) => {
+			for (const entry of entries) {
+				const width = entry.contentRect.width;
+				setUseCompactLayout(width < COMPACT_WIDTH_THRESHOLD);
+			}
+		});
+
+		resizeObserver.observe(container);
+		return () => resizeObserver.disconnect();
 	}, []);
 
 	// Calculate dropdown position dynamically when it opens
@@ -199,8 +221,8 @@ export default function ContextUsageBar({
 				onClick={() => totalTokens > 0 && setShowContextDetails(!showContextDetails)}
 				title={totalTokens > 0 ? 'Click for context details' : 'Context data loading...'}
 			>
-				{/* Mobile: Pie Chart only */}
-				<div class="sm:hidden">
+				{/* Compact: Pie Chart only (container width < threshold) */}
+				{useCompactLayout && (
 					<svg width="32" height="32" viewBox="0 0 36 36" class="relative">
 						<g class="transform rotate-[-90deg]" transform-origin="18 18">
 							{/* Background circle */}
@@ -246,20 +268,25 @@ export default function ContextUsageBar({
 							{Math.round(contextPercentage)}
 						</text>
 					</svg>
-				</div>
+				)}
 
-				{/* Desktop: Percentage + Bar */}
-				<div class="hidden sm:flex items-center gap-3">
-					<span class={`text-xs font-medium ${getContextColor()}`} data-testid="context-percentage">
-						{contextPercentage.toFixed(1)}%
-					</span>
-					<div class="w-16 sm:w-24 h-2 bg-dark-700 rounded-full overflow-hidden">
-						<div
-							class={`h-full transition-all duration-300 ${getContextBarColor()}`}
-							style={{ width: `${Math.min(contextPercentage, 100)}%` }}
-						/>
+				{/* Full: Percentage + Bar (container width >= threshold) */}
+				{!useCompactLayout && (
+					<div class="flex items-center gap-3">
+						<span
+							class={`text-xs font-medium ${getContextColor()}`}
+							data-testid="context-percentage"
+						>
+							{contextPercentage.toFixed(1)}%
+						</span>
+						<div class="w-16 sm:w-24 h-2 bg-dark-700 rounded-full overflow-hidden">
+							<div
+								class={`h-full transition-all duration-300 ${getContextBarColor()}`}
+								style={{ width: `${Math.min(contextPercentage, 100)}%` }}
+							/>
+						</div>
 					</div>
-				</div>
+				)}
 			</div>
 
 			{/* Context Details Dropdown - uses document click detection instead of backdrop */}

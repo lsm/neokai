@@ -7,9 +7,51 @@
 import { describe, it, expect } from 'vitest';
  */
 
-import { render, cleanup, fireEvent } from '@testing-library/preact';
+import { render, cleanup, fireEvent, act } from '@testing-library/preact';
 import type { ContextInfo } from '@neokai/shared';
 import ContextUsageBar from '../ContextUsageBar';
+
+// Helper to create a mock ResizeObserver that fires with a specific width
+function createMockResizeObserver(width: number) {
+	return class MockResizeObserver {
+		private callback: ResizeObserverCallback;
+
+		constructor(callback: ResizeObserverCallback) {
+			this.callback = callback;
+		}
+
+		observe(_element: Element) {
+			// Fire immediately with the mocked width
+			const entry: ResizeObserverEntry = {
+				target: _element as Element,
+				contentRect: {
+					width,
+					height: 100,
+					top: 0,
+					left: 0,
+					bottom: 100,
+					right: width,
+					x: 0,
+					y: 0,
+					toJSON: () => ({}),
+				},
+				borderBoxSize: [] as unknown as ResizeObserverSize[],
+				contentBoxSize: [] as unknown as ResizeObserverSize[],
+				devicePixelContentBoxSize: [] as unknown as ResizeObserverSize[],
+			};
+
+			// Use setTimeout to simulate async behavior
+			setTimeout(() => {
+				act(() => {
+					this.callback([entry], this as unknown as ResizeObserver);
+				});
+			}, 0);
+		}
+
+		unobserve() {}
+		disconnect() {}
+	};
+}
 
 describe('ContextUsageBar', () => {
 	const mockContextUsage: ContextInfo = {
@@ -24,12 +66,16 @@ describe('ContextUsageBar', () => {
 		},
 	};
 
+	let originalResizeObserver: typeof ResizeObserver;
+
 	beforeEach(() => {
 		cleanup();
+		originalResizeObserver = window.ResizeObserver;
 	});
 
 	afterEach(() => {
 		cleanup();
+		window.ResizeObserver = originalResizeObserver;
 	});
 
 	describe('Basic Rendering', () => {
@@ -46,15 +92,27 @@ describe('ContextUsageBar', () => {
 			expect(progressBar).toBeTruthy();
 		});
 
-		it('should render mobile pie chart', () => {
+		it('should render compact pie chart when container is narrow', async () => {
+			// Mock ResizeObserver to report narrow width (< 400px threshold)
+			window.ResizeObserver = createMockResizeObserver(300);
+
 			const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
+
+			// Wait for ResizeObserver callback to fire
+			await act(() => new Promise((resolve) => setTimeout(resolve, 10)));
 
 			const pieChart = container.querySelector('svg');
 			expect(pieChart).toBeTruthy();
 		});
 
-		it('should render percentage in pie chart center', () => {
+		it('should render percentage in pie chart center when compact', async () => {
+			// Mock ResizeObserver to report narrow width (< 400px threshold)
+			window.ResizeObserver = createMockResizeObserver(300);
+
 			const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
+
+			// Wait for ResizeObserver callback to fire
+			await act(() => new Promise((resolve) => setTimeout(resolve, 10)));
 
 			const svgText = container.querySelector('svg text');
 			expect(svgText?.textContent).toBe('25');
