@@ -125,6 +125,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		scheduler: recurringJobScheduler,
 		getApiKey: () => deps.authManager.getCurrentApiKey(),
 		promptTemplateManager,
+		settingsManager: deps.settingsManager,
 	});
 
 	// Start RoomAgentService for all active rooms
@@ -160,7 +161,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		roomManager,
 		deps.daemonHub,
 		sessionPairManager,
-		sessionBridge
+		sessionBridge,
+		roomAgentManager,
+		deps.config.workspaceRoot
 	);
 	setupTaskHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
 	setupMemoryHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);

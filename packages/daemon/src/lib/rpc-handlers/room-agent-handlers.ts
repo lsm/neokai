@@ -16,6 +16,7 @@
 import type { MessageHub } from '@neokai/shared';
 import type { RoomAgentState, RoomAgentLifecycleState } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
+import type { SettingsManager } from '../settings-manager';
 import type { Database } from '../../storage/index';
 import { RoomAgentService, type RoomAgentContext } from '../room/room-agent-service';
 import { RoomManager } from '../room/room-manager';
@@ -65,6 +66,8 @@ export interface RoomAgentManagerDeps {
 	getApiKey: () => Promise<string | null>;
 	/** Prompt template manager */
 	promptTemplateManager: PromptTemplateManager;
+	/** Settings manager for global configuration */
+	settingsManager: SettingsManager;
 }
 
 /**
@@ -206,7 +209,10 @@ export class RoomAgentManager {
 			recurringJobScheduler: this.deps.scheduler as RecurringJobScheduler,
 		};
 
-		return new RoomAgentService(context);
+		const settings = this.deps.settingsManager.getGlobalSettings();
+		return new RoomAgentService(context, {
+			maxConcurrentPairs: settings.maxConcurrentWorkers ?? 3,
+		});
 	}
 }
 
