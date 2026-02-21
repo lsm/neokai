@@ -210,7 +210,7 @@ export class RoomAgentService {
 				features: DEFAULT_ROOM_FEATURES,
 				context: { roomId: this.ctx.room.id },
 				type: 'room',
-				model: this.ctx.model ?? DEFAULT_MODEL,
+				model: this.ctx.room.defaultModel ?? DEFAULT_MODEL,
 			};
 
 			// Create AgentSession using the factory method
@@ -220,7 +220,7 @@ export class RoomAgentService {
 				this.ctx.messageHub,
 				this.ctx.daemonHub,
 				this.ctx.getApiKey,
-				DEFAULT_MODEL
+				this.ctx.room.defaultModel ?? DEFAULT_MODEL
 			);
 
 			log.info('Room agent session started with AgentSession');

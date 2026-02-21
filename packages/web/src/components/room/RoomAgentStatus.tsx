@@ -111,7 +111,8 @@ export function RoomAgentStatus({ roomId: _roomId, state, onAction }: RoomAgentS
 	const colors = STATE_COLORS[state.lifecycleState];
 	const stateLabel = STATE_LABELS[state.lifecycleState];
 	const isPaused = state.lifecycleState === 'paused';
-	const isRunning = !isPaused && state.lifecycleState !== 'idle';
+	const isIdle = state.lifecycleState === 'idle';
+	const isRunning = !isPaused && !isIdle;
 
 	return (
 		<div class="flex items-center justify-between p-3 bg-dark-800 border border-gray-700 rounded-lg">
@@ -154,7 +155,14 @@ export function RoomAgentStatus({ roomId: _roomId, state, onAction }: RoomAgentS
 				{/* Action buttons */}
 				{onAction && (
 					<div class="flex items-center gap-2">
-						{isPaused ? (
+						{isIdle ? (
+							<button
+								class="px-3 py-1.5 text-xs font-medium bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors"
+								onClick={() => onAction('start')}
+							>
+								Start
+							</button>
+						) : isPaused ? (
 							<button
 								class="px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors"
 								onClick={() => onAction('resume')}

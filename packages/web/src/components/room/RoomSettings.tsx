@@ -29,6 +29,7 @@ export interface RoomSettingsProps {
 interface ModelInfo {
 	id: string;
 	name: string;
+	display_name?: string;
 }
 
 export function RoomSettings({ room, onSave, isLoading = false }: RoomSettingsProps) {
@@ -49,7 +50,10 @@ export function RoomSettings({ room, onSave, isLoading = false }: RoomSettingsPr
 			try {
 				const hub = await connectionManager.getHub();
 				const response = await hub.request<{ models: ModelInfo[] }>('models.list');
-				availableModels.value = response.models ?? [];
+				availableModels.value = (response.models ?? []).map((m) => ({
+					id: m.id,
+					name: m.display_name ?? m.name ?? m.id,
+				}));
 			} catch {
 				// Silently fail - models dropdown will just be empty
 			} finally {
