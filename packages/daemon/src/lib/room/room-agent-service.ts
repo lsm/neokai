@@ -60,7 +60,7 @@ import type {
 	RoomGoal,
 	McpServerConfig,
 } from '@neokai/shared';
-import { DEFAULT_ROOM_FEATURES } from '@neokai/shared';
+import { DEFAULT_ROOM_FEATURES, buildRoomAgentSystemPrompt } from '@neokai/shared';
 import { Logger } from '../logger';
 
 const log = new Logger('room-agent-service');
@@ -1231,46 +1231,21 @@ export class RoomAgentService {
 			'room_agent_system'
 		);
 
-		if (rendered) {
-			return rendered.content;
-		}
+		const base = rendered ? rendered.content : this.buildFallbackSystemPrompt();
 
-		return this.getDefaultSystemPrompt();
+		// Append the current concurrency limit dynamically so it stays accurate
+		// even if the setting changes after the rendered template was stored.
+		return base + `\n\nMaximum concurrent workers: ${this.config.maxConcurrentPairs}`;
 	}
 
-	private getDefaultSystemPrompt(): string {
-		const { background, instructions } = this.ctx.room;
-
-		let prompt = `You are a Room Agent for the "${this.ctx.room.name}" room.\n`;
-
-		if (background) {
-			prompt += `\n## Room Background\n${background}\n`;
-		}
-
-		if (instructions) {
-			prompt += `\n## Instructions\n${instructions}\n`;
-		}
-
-		prompt += `
-Your responsibilities:
-1. Process incoming events and create appropriate tasks
-2. Monitor goal progress and update goals as needed
-3. Spawn worker sessions to execute tasks
-4. Review completed work and take follow-up actions
-
-You have access to room-level tools for:
-- Completing goals
-- Creating and managing tasks
-- Spawning worker sessions
-- Requesting human reviews
-- Escalating issues
-- Updating goal progress
-- Scheduling recurring jobs
-- Listing current goals, jobs, and tasks on demand
-
-Always consider the room's goals and priorities when making decisions.
-Maximum concurrent workers: ${this.config.maxConcurrentPairs}`;
-
-		return prompt;
+	private buildFallbackSystemPrompt(): string {
+		return buildRoomAgentSystemPrompt({
+			roomName: this.ctx.room.name,
+			background: this.ctx.room.background,
+			instructions: this.ctx.room.instructions,
+			allowedPaths: this.ctx.room.allowedPaths.map((p) => p.path),
+			defaultPath: this.ctx.room.defaultPath,
+			maxConcurrentWorkers: this.config.maxConcurrentPairs,
+		});
 	}
 }
