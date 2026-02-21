@@ -117,6 +117,8 @@ export interface RoomAgentContext {
 	model?: string;
 	/** Maximum concurrent workers */
 	maxConcurrentWorkers?: number;
+	/** Default workspace root from server config (fallback when room has no paths) */
+	workspaceRoot?: string;
 }
 
 /**
@@ -202,7 +204,10 @@ export class RoomAgentService {
 			const init: AgentSessionInit = {
 				sessionId: this.sessionId,
 				workspacePath:
-					this.ctx.room.defaultPath ?? this.ctx.room.allowedPaths[0]?.path ?? process.cwd(),
+					this.ctx.room.defaultPath ??
+					this.ctx.room.allowedPaths[0]?.path ??
+					this.ctx.workspaceRoot ??
+					process.cwd(),
 				systemPrompt,
 				mcpServers: {
 					'room-agent-tools': this.roomMcpServer as unknown as McpServerConfig,
@@ -651,7 +656,10 @@ export class RoomAgentService {
 				roomSessionId: this.sessionId,
 				taskTitle: task.title,
 				taskDescription: task.description,
-				workspacePath: this.ctx.room.defaultPath ?? this.ctx.room.allowedPaths[0]?.path,
+				workspacePath:
+					this.ctx.room.defaultPath ??
+					this.ctx.room.allowedPaths[0]?.path ??
+					this.ctx.workspaceRoot,
 			});
 
 			if (this.lifecycleManager) {
@@ -1116,7 +1124,10 @@ export class RoomAgentService {
 					roomSessionId: this.sessionId,
 					taskTitle: task.title,
 					taskDescription: task.description,
-					workspacePath: this.ctx.room.defaultPath ?? this.ctx.room.allowedPaths[0]?.path,
+					workspacePath:
+						this.ctx.room.defaultPath ??
+						this.ctx.room.allowedPaths[0]?.path ??
+						this.ctx.workspaceRoot,
 				});
 
 				await this.taskManager.startTask(params.taskId, result.pair.workerSessionId);

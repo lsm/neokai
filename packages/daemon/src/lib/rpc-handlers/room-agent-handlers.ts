@@ -68,6 +68,8 @@ export interface RoomAgentManagerDeps {
 	promptTemplateManager: PromptTemplateManager;
 	/** Settings manager for global configuration */
 	settingsManager: SettingsManager;
+	/** Default workspace root from server config */
+	workspaceRoot?: string;
 }
 
 /**
@@ -207,6 +209,7 @@ export class RoomAgentManager {
 			getApiKey: this.deps.getApiKey,
 			promptTemplateManager: this.deps.promptTemplateManager,
 			recurringJobScheduler: this.deps.scheduler as RecurringJobScheduler,
+			workspaceRoot: this.deps.workspaceRoot,
 		};
 
 		const settings = this.deps.settingsManager.getGlobalSettings();

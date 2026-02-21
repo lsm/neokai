@@ -126,6 +126,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		getApiKey: () => deps.authManager.getCurrentApiKey(),
 		promptTemplateManager,
 		settingsManager: deps.settingsManager,
+		workspaceRoot: deps.config.workspaceRoot,
 	});
 
 	// Start RoomAgentService for all active rooms
