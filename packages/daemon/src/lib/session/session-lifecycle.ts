@@ -504,6 +504,14 @@ export class SessionLifecycle {
 	}
 
 	/**
+	 * Get the in-memory AgentSession for a session ID.
+	 * Returns null if the session is not cached (e.g., not yet created or already deleted).
+	 */
+	getAgentSession(sessionId: string): import('../agent/agent-session').AgentSession | null {
+		return this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
+	}
+
+	/**
 	 * Mark a message's tool output as removed from SDK session file
 	 * This updates the session metadata to track which outputs were deleted
 	 */

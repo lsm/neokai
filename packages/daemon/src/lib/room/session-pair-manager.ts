@@ -23,6 +23,7 @@ import type {
 	SessionPairStatus,
 	CreateSessionPairParams,
 	NeoTask,
+	McpServerConfig,
 } from '@neokai/shared';
 import type { McpSdkServerConfigWithInstance } from '@neokai/shared/sdk';
 import type { SessionLifecycle } from '../session/session-lifecycle';
@@ -146,6 +147,25 @@ export class SessionPairManager {
 			},
 		});
 		this.managerTools.set(managerSessionId, managerToolsMcp);
+
+		// 9. Auto-start worker and manager sessions with initial prompts
+		const workerSession = this.sessionLifecycle.getAgentSession(workerSessionId);
+		if (workerSession) {
+			const workerPrompt = `You have been assigned the following task:\n\n**${task.title}**\n\n${task.description ?? ''}\n\nPlease complete this task using the available tools. When finished, summarize what you accomplished.`;
+			workerSession.messageQueue.enqueue(workerPrompt, true);
+		}
+
+		const managerSession = this.sessionLifecycle.getAgentSession(managerSessionId);
+		if (managerSession) {
+			// Inject manager tools into the manager session's runtime config (not persisted to DB)
+			managerSession.session.config.mcpServers = {
+				...managerSession.session.config.mcpServers,
+				'manager-tools': managerToolsMcp as unknown as McpServerConfig,
+			};
+
+			const managerPrompt = `You are managing the execution of the following task:\n\n**${task.title}** (Task ID: \`${task.id}\`)\n\n${task.description ?? ''}\n\nWorker session ID: \`${workerSessionId}\`\n\nMonitor the worker's progress. When the task is complete, use the \`manager_complete_task\` tool to signal completion with a clear summary of what was accomplished.`;
+			managerSession.messageQueue.enqueue(managerPrompt, true);
+		}
 
 		return { pair, task };
 	}
