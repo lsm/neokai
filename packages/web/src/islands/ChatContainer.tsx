@@ -53,6 +53,7 @@ import { connectionState } from '../lib/state.ts';
 import { getCurrentAction } from '../lib/status-actions.ts';
 import { toast } from '../lib/toast.ts';
 import { cn } from '../lib/utils.ts';
+import { contextPanelOpenSignal } from '../lib/signals.ts';
 
 interface ChatContainerProps {
 	sessionId: string;
@@ -686,8 +687,29 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		return (
 			<div class="flex-1 flex flex-col bg-dark-900">
 				<div class={`bg-dark-850/50 backdrop-blur-sm border-b ${borderColors.ui.default} p-4`}>
-					<Skeleton width="200px" height={24} class="mb-2" />
-					<Skeleton width="150px" height={16} />
+					<div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center gap-3">
+						{/* Hamburger menu button - visible only on mobile */}
+						<button
+							onClick={() => {
+								contextPanelOpenSignal.value = true;
+							}}
+							class={`md:hidden p-2 -ml-2 bg-dark-850 border ${borderColors.ui.default} rounded-lg hover:bg-dark-800 transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0`}
+							title="Open menu"
+						>
+							<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M4 6h16M4 12h16M4 18h16"
+								/>
+							</svg>
+						</button>
+						<div class="flex-1 min-w-0">
+							<Skeleton width="200px" height={24} class="mb-2" />
+							<Skeleton width="150px" height={16} />
+						</div>
+					</div>
 				</div>
 				<div class="flex-1 overflow-y-auto">
 					{Array.from({ length: 3 }).map((_, i) => (

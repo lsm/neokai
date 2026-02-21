@@ -261,6 +261,22 @@ class SessionStore {
 				if (sessionState.commandsData?.availableCommands) {
 					slashCommandsSignal.value = sessionState.commandsData.availableCommands;
 				}
+			} else {
+				// sessionState RPC returned null - set error state so UI shows error instead of infinite loading
+				logger.error('Session state RPC returned null for session:', sessionId);
+				this.sessionState.value = {
+					sessionInfo: null,
+					agentState: { status: 'idle' },
+					commandsData: { availableCommands: [] },
+					contextInfo: null,
+					error: {
+						message: 'Session not found',
+						details: { sessionId },
+						occurredAt: Date.now(),
+					},
+					timestamp: Date.now(),
+				};
+				return;
 			}
 
 			if (messagesState?.sdkMessages) {
@@ -327,7 +343,19 @@ class SessionStore {
 			}
 		} catch (err) {
 			logger.error('Failed to fetch initial state:', err);
-			// Don't show toast here - subscriptions are still active and will receive updates
+			// Set error state so UI shows error instead of infinite loading
+			this.sessionState.value = {
+				sessionInfo: null,
+				agentState: { status: 'idle' },
+				commandsData: { availableCommands: [] },
+				contextInfo: null,
+				error: {
+					message: 'Failed to load session',
+					details: err,
+					occurredAt: Date.now(),
+				},
+				timestamp: Date.now(),
+			};
 		}
 	}
 
