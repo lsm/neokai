@@ -39,8 +39,8 @@ describe('RoomList', () => {
 	const mockRoom1: Room = {
 		id: 'room-1',
 		name: 'Test Room',
-		description: 'A test room description',
-		allowedPaths: ['/test/path'],
+		background: 'A test room description',
+		allowedPaths: [{ path: '/test/path' }],
 		sessionIds: ['session-1', 'session-2'],
 		status: 'active',
 		createdAt: Date.now(),
@@ -50,8 +50,8 @@ describe('RoomList', () => {
 	const mockRoom2: Room = {
 		id: 'room-2',
 		name: 'Another Room',
-		description: 'Another description',
-		allowedPaths: ['/another/path'],
+		background: 'Another description',
+		allowedPaths: [{ path: '/another/path' }],
 		sessionIds: ['session-3'],
 		status: 'active',
 		createdAt: Date.now(),
@@ -61,8 +61,8 @@ describe('RoomList', () => {
 	const mockArchivedRoom: Room = {
 		id: 'room-archived',
 		name: 'Archived Room',
-		description: 'This room is archived',
-		allowedPaths: ['/archived/path'],
+		background: 'This room is archived',
+		allowedPaths: [{ path: '/archived/path' }],
 		sessionIds: [],
 		status: 'archived',
 		createdAt: Date.now(),
@@ -136,7 +136,7 @@ describe('RoomList', () => {
 			expect(title?.textContent).toBe('Test Room');
 		});
 
-		it('should render room description', () => {
+		it('should render room background', () => {
 			mockRooms.value = [mockRoom1];
 
 			const { container } = render(<RoomList />);
@@ -144,12 +144,12 @@ describe('RoomList', () => {
 			expect(container.textContent).toContain('A test room description');
 		});
 
-		it('should not render description element when description is undefined', () => {
-			const roomWithoutDescription: Room = {
+		it('should not render background element when background is undefined', () => {
+			const roomWithoutBackground: Room = {
 				...mockRoom1,
-				description: undefined,
+				background: undefined,
 			};
-			mockRooms.value = [roomWithoutDescription];
+			mockRooms.value = [roomWithoutBackground];
 
 			const { container } = render(<RoomList />);
 
