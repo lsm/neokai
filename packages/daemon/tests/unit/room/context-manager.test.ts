@@ -33,7 +33,7 @@ describe('ContextManager', () => {
 		roomManager = new RoomManager(db);
 		const room = roomManager.createRoom({
 			name: 'Test Room',
-			allowedPaths: ['/workspace/test'],
+			allowedPaths: [{ path: '/workspace/test' }],
 			defaultPath: '/workspace/test',
 		});
 		roomId = room.id;
@@ -404,7 +404,7 @@ describe('ContextManager', () => {
 			// Create another room
 			const room2 = roomManager.createRoom({
 				name: 'Test Room 2',
-				allowedPaths: ['/workspace/test2'],
+				allowedPaths: [{ path: '/workspace/test2' }],
 			});
 			const contextManager2 = new ContextManager(db, room2.id);
 
