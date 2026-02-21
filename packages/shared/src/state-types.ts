@@ -178,8 +178,8 @@ export interface SessionError {
  * - state.context (context info)
  */
 export interface SessionState {
-	// Session metadata
-	sessionInfo: SessionInfo;
+	// Session metadata (null in error states when session doesn't exist)
+	sessionInfo: SessionInfo | null;
 
 	// Agent processing state
 	agentState: AgentProcessingState;
